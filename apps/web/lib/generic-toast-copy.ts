@@ -16,6 +16,7 @@ import {
   RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
   UNCONFIRMED_COPY,
   noResponse,
+  orderBoundCopy,
 } from "./credit-note-error-copy";
 import { activationEndedCopy, activationOverlapsPaidCopy } from "./activation-error-copy";
 import { creditLimitSentence } from "./credit-limit-copy";
@@ -138,6 +139,8 @@ const CODE_COPY: Record<string, string> = {
   [API_ERROR_CODES.BARCODE_TAKEN]: "Another product already uses that barcode.",
   [API_ERROR_CODES.FAMILY_NOT_PRICEABLE]:
     "A product family can't be priced or promoted. Use its variants instead.",
+  [API_ERROR_CODES.PACK_CONVERSION_TOO_LARGE]:
+    "That many pieces won't fit. Choose Pieces, or use a smaller pack size.",
   [API_ERROR_CODES.PACK_SIZE_UNKNOWN]:
     "Some lines don't have a pack size yet. Set each line's pack size, or confirm them as loose pieces, then try again.",
   // B986-7 (Opus): coded refusals whose server sentence tells the user what to fix. Fixed sentences, no ids or typed text. Keys are
@@ -175,6 +178,8 @@ const CODE_COPY: Record<string, string> = {
     "The source line's pack size or price isn't valid. Check the pack and price, then try again.",
   [API_ERROR_CODES.LINE_PACK_UNDERIVABLE]:
     "This line has no pack size, so it can't be rolled to the next delivery. Set its pack size first.",
+  [API_ERROR_CODES.STORED_LINE_PACK_UNREADABLE]:
+    "This line's pack size can't be read from the sale, so its total wasn't changed. To fix the amount, use a return or a credit note.",
   [API_ERROR_CODES.RECIPE_PACK_MISMATCH]:
     "The recipe's pack size differs from the line's pack size. Make them match, then try again.",
   [API_ERROR_CODES.COMPOSITION_CORRUPT]:
@@ -347,6 +352,20 @@ export function billHasPaymentsCopy(data: Record<string, unknown>): string {
   return `This bill has ${amount ?? "payments"}${amount ? " in payments" : ""}. Move them to a supplier credit first.`;
 }
 
+/** SA-1093: a document received before its units per box were set. A bill has a void; a purchase order keeps its stock. */
+function receivedBeforePackCopy(data: Record<string, unknown>): string {
+  return data.document === "purchase-order"
+    ? "This purchase order was received before its units per box were set. Save the edit without changing stock."
+    : "This bill was received before its units per box were set. To change it, void it and enter a new bill.";
+}
+
+/** SA-1093: an open order holds a line in its own unit, so the product can't move to boxes yet. */
+function packOpenLinesCopy(data: Record<string, unknown>): string {
+  const order =
+    typeof data.orderNumber === "string" ? `Order ${data.orderNumber}` : "An open order";
+  return `${order} has a line in its own unit. Finish or cancel the order first, or choose pieces.`;
+}
+
 /** A payment's allocations add up to more than the payment: the two amounts come from structured body fields. */
 function allocationsCopy(data: Record<string, unknown>): string {
   const allocated = usd(data.allocatedTotal);
@@ -483,6 +502,8 @@ export function codedToastCopy(err: unknown): string | null {
   if (code === API_ERROR_CODES.ALLOCATIONS_EXCEED_PAYMENT) return allocationsCopy(data);
   if (code === API_ERROR_CODES.UNLINKED_ITEMS) return unlinkedCopy(data);
   if (code === API_ERROR_CODES.BILL_HAS_PAYMENTS) return billHasPaymentsCopy(data);
+  if (code === API_ERROR_CODES.RECEIVED_BEFORE_PACK) return receivedBeforePackCopy(data);
+  if (code === API_ERROR_CODES.PACK_OPEN_LINES) return packOpenLinesCopy(data);
   if (code === API_ERROR_CODES.DUPLICATE_VENDOR_BILL) return duplicateBillCopy(data);
   if (code === API_ERROR_CODES.RECEIVE_EXCEEDS_OUTSTANDING) return receiveExceedsCopy(data);
   // Row 563: a backdated stock write into a filed period (tobacco report / regulated filing). Fixed copy, the period from
@@ -504,6 +525,14 @@ export function codedToastCopy(err: unknown): string | null {
   // CQ-06: the license refusal says what is wrong (expired / none on file) and where to fix it (shared with mobile).
   if (code === API_ERROR_CODES.REGULATED_AUTH_REQUIRED)
     return regulatedAuthCopy(data.blockedCategories);
+  // SA-1091: an order-wide over-credit names the room left (structured `remaining`); no marker, the fixed copy below.
+  if (
+    code === API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM ||
+    code === API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM
+  ) {
+    const bound = orderBoundCopy(data);
+    if (bound) return bound;
+  }
   if (Object.prototype.hasOwnProperty.call(CREDIT_NOTE_ERROR_COPY, code))
     return CREDIT_NOTE_ERROR_COPY[code as keyof typeof CREDIT_NOTE_ERROR_COPY];
   if (Object.prototype.hasOwnProperty.call(CODE_COPY, code)) return CODE_COPY[code];

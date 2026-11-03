@@ -21,20 +21,13 @@ jest.mock("next/script", () => ({
 }));
 
 const FAKE_ID = "00000000-test-test-test-000000000000";
-const MARKETING = [
-  "/",
-  "/product",
-  "/wholesalers",
-  "/retailers",
-  "/pricing",
-  "/company",
-  "/contact",
-  "/privacy",
-  "/terms",
-  "/book-a-demo",
-];
+const MARKETING = ["/", "/product", "/pricing", "/company", "/contact", "/privacy", "/terms"];
 // Everything a signed-in or signing-in person sees, plus the marketing "choose an account" page.
 const NEVER = [
+  // old marketing pages: they redirect and carry no script
+  "/wholesalers",
+  "/retailers",
+  "/book-a-demo",
   "/sign-in",
   "/login",
   "/admin-login",

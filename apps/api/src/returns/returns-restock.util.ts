@@ -40,11 +40,12 @@ export async function restockReturnItems(
   userId: string | null,
   resolvePieces?: (item: RestockableReturnItem) => Promise<RestockPieces>,
 ): Promise<void> {
-  // Two or more products: lock them all once, in lock-rank order, before the per-item writes. Each
+  // Lock every product once, in lock-rank order, before the per-item reads and writes. Each
   // bookRestockMovement then re-locks a product this tx already holds (a no-op), so two returns (or a
-  // return and an order) over the same products cannot lock them in opposite orders.
+  // return and an order) over the same products cannot lock them in opposite orders, and a resolver
+  // reads a product's Boxes answers only after any answer still open has committed (SA-1093 G5).
   const restockIds = [...new Set(ret.items.filter((i) => i.restock).map((i) => i.productId))];
-  if (restockIds.length > 1) {
+  if (restockIds.length > 0) {
     await lockProductsForStock(tx, await currentTenantId(tx), restockIds);
   }
   for (const item of ret.items) {

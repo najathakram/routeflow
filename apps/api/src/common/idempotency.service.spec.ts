@@ -1,11 +1,6 @@
 /**
- * REG-IDEM-SVC — the shared replay guard, whose semantics were COPIED from
- * RoutesService's three private RF-019 helpers (makeKeyHash /
- * checkIdempotencyKey / saveIdempotencyKey). RoutesService keeps its own
- * copies and still uses them for production driver traffic — it was not
- * refactored onto this service. Any change to the semantics pinned below
- * must be mirrored by hand in RoutesService's copies, or the two guards will
- * silently diverge.
+ * REG-IDEM-SVC — the shared replay guard, the one implementation since stop
+ * completions moved onto it (SA-953 S2, routes/stop-completion-key.ts).
  *
  * These pin the three semantics that make it safe to reuse: the sha256 scoping,
  * the 24h read window, and the FAIL-OPEN catches. A replay guard that throws

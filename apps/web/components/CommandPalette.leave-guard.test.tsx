@@ -10,6 +10,8 @@ import {
 
 /** POS-7: a palette selection is one of the ways to leave the counter; it must not while a sale is being recorded. */
 const mockPush = jest.fn();
+// SA-1087: the palette's Product insights entry reads the shared access rule; pinned in CommandPalette.insights.test.tsx.
+jest.mock("@/components/insights/use-insights-access", () => ({ useInsightsAccess: () => false }));
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push: mockPush }) }));
 jest.mock("@/lib/auth-context", () => ({ useAuth: () => ({ user: { role: "OPERATOR" } }) }));
 jest.mock("@/lib/api-client", () => ({

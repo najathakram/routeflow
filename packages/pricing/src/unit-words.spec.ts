@@ -22,6 +22,8 @@ describe("plural", () => {
   });
   it.each([
     "Cases",
+    "Each",
+    "each",
     "Dozen",
     "dozen",
     "Gross",

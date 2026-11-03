@@ -904,6 +904,19 @@ describe("ProductsService", () => {
       );
     });
 
+    it("packReading (SA-946) is the answer to a question, never a column: it does not reach the write", async () => {
+      prisma.product.findUnique.mockResolvedValue(MOCK_PRODUCT);
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.update.mockResolvedValue({ ...MOCK_PRODUCT, name: "Updated" });
+
+      await service.update("prod-1", { name: "Updated", packReading: "piece" } as any, {
+        packPrecondition: "internal",
+      });
+
+      const data = prisma.product.update.mock.calls[0][0].data;
+      expect(Object.keys(data)).not.toContain("packReading");
+    });
+
     it("should throw NotFoundException when product does not exist", async () => {
       prisma.product.findUnique.mockResolvedValue(null);
       await expect(

@@ -15,15 +15,16 @@ export const STATIC_SITE_PATHS = [
   "/does-and-doesnt",
   "/data-in-and-out",
   "/security",
+  "/company",
+  "/contact",
 ] as const;
 
-// The marketing routes come from the one `routes` table; /book-a-demo is a marketing page that is
-// not a nav route (see app/sitemap.ts). `/sign-in` is deliberately not here.
+// The marketing routes come from the one `routes` table. The old /book-a-demo and /sign-in pages
+// redirect and are deliberately not here.
 const COUNTED_PATHS: ReadonlySet<string> = new Set([
   "/",
   ...routes.map((route) => `/${route.slug}`),
   ...STATIC_SITE_PATHS,
-  "/book-a-demo",
   "/signup",
 ]);
 

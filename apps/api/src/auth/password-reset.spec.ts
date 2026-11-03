@@ -10,6 +10,7 @@ import { UsersService } from "../users/users.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { mockClaimTransaction } from "../testing/link-claim-tx";
 
 jest.mock("bcrypt", () => ({ compare: jest.fn(), hash: jest.fn(), genSalt: jest.fn() }));
 
@@ -180,20 +181,49 @@ describe("AuthService — password reset (RF-018)", () => {
     });
 
     beforeEach(() => {
-      // $transaction: call the callback with an array of operations
-      (prisma.$transaction as jest.Mock).mockImplementation((ops: any[]) =>
-        Promise.all(ops.map(() => ({}))),
-      );
+      mockClaimTransaction(prisma);
+      (prisma.passwordResetToken.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
       (bcrypt.hash as jest.Mock).mockResolvedValue("$2b$10$newhash");
     });
 
-    it("updates password when token is valid", async () => {
+    it("updates password when token is valid, claiming the link with its own predicate", async () => {
       (prisma.passwordResetToken.findUnique as jest.Mock).mockResolvedValue(baseRecord);
 
       const result = await service.resetPassword(rawToken, "NewPass1!");
 
       expect(result.message).toContain("Password reset successfully");
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.passwordResetToken.updateMany).toHaveBeenCalledWith({
+        where: { tokenHash: fakeHash, usedAt: null, expiresAt: { gt: expect.any(Date) } },
+        data: { usedAt: expect.any(Date) },
+      });
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: "user-1" },
+        data: { password: "$2b$10$newhash", forcePasswordChange: false },
+      });
+    });
+
+    it("a lost claim (count 0) writes no password and no session delete", async () => {
+      (prisma.passwordResetToken.findUnique as jest.Mock).mockResolvedValue(baseRecord);
+      (prisma.passwordResetToken.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
+
+      await expect(service.resetPassword(rawToken, "NewPass1!")).rejects.toThrow(
+        "Reset link is invalid or has already been used.",
+      );
+      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(prisma.refreshToken.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it("a non-active account is refused with the spent-link text, after the claim", async () => {
+      (prisma.passwordResetToken.findUnique as jest.Mock).mockResolvedValue(baseRecord);
+      mockClaimTransaction(prisma, { status: "SUSPENDED", deletedAt: null });
+
+      await expect(service.resetPassword(rawToken, "NewPass1!")).rejects.toThrow(
+        "Reset link is invalid or has already been used.",
+      );
+      expect(prisma.passwordResetToken.updateMany).toHaveBeenCalledTimes(1);
+      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(prisma.refreshToken.deleteMany).not.toHaveBeenCalled();
     });
 
     it("throws 400 when token is not found", async () => {

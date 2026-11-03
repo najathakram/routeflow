@@ -378,6 +378,8 @@ describe("ReturnsService receive() and cancel() (B665)", () => {
       },
       // B562 PR-2: update() returns the written row — the reversing movement reads its counter.
       product: { update: jest.fn().mockResolvedValue({ currentStock: 4, averageCost: 2 }) },
+      // SA-1093 Rule 4: no Boxes answer on this product, so every factor is 1.
+      auditLog: { findMany: jest.fn().mockResolvedValue([]) },
       stockMovement: {
         findMany: jest.fn().mockResolvedValue([{ productId: "p1", quantity: 36 }]),
         deleteMany: jest.fn(),
@@ -400,7 +402,7 @@ describe("ReturnsService receive() and cancel() (B665)", () => {
     await service.cancel("ret-12345678", { sub: "u1", role: "OPERATOR" } as any);
     expect(tx.stockMovement.findMany).toHaveBeenCalledWith({
       where: { reference: "RET-ret-1234", type: "RETURN" },
-      select: { productId: true, quantity: true },
+      select: { productId: true, quantity: true, createdAt: true },
     });
     expect(tx.product.update).toHaveBeenCalledTimes(1);
     expect(tx.product.update.mock.calls[0][0].where).toEqual({ id: "p1" });
