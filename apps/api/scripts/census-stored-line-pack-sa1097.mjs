@@ -23,6 +23,13 @@
  *   railway run --service postgres node apps/api/scripts/census-stored-line-pack-sa1097.mjs --denominators   (the owner's per-call yes)
  * SA-1097-denominators.sql is embedded byte for byte as DENOMINATORS_SQL (sha-256 pinned by the script spec); counts and dates only.
  *
+ * SA-1098 A-3 (rf-specs 29603388, unchanged at f72e1c1678): `--unbilled` runs the SA's one count INSTEAD of the census, in the same
+ * read-only session: live order lines with a delivered quantity that no non-void invoice bills, by tenant class (counts and dates only;
+ * an upper bound, since an office partial's remainder looks the same). One SELECT, run as one query named `unbilled`:
+ *   railway run --service postgres node apps/api/scripts/census-stored-line-pack-sa1097.mjs --unbilled   (the owner's per-call yes)
+ * SA-1098-unbilled.sql is embedded byte for byte as UNBILLED_SQL (sha-256 pinned by the script spec, and run against the SA's fixture
+ * by the db spec).
+ *
  * SAFETY: the session is read-only before any query (`default_transaction_read_only = on`, confirmed with SHOW, exit 2
  * otherwise) and each query runs in its own BEGIN READ ONLY ... ROLLBACK; `statement_timeout` is set; SELECTs only. The target
  * (redacted) goes to stderr, the JSON to stdout. NEVER RUN FROM AN IMPLEMENTATION SESSION AGAINST PRODUCTION.
@@ -36,6 +43,7 @@ const require = createRequire(import.meta.url);
 const NAME = "census-stored-line-pack-sa1097";
 export const SPEC_SQL_COMMIT = "1375ac917b11ea85a13190e487e73f5ef548cf56";
 export const DENOMINATORS_SQL_COMMIT = "6faf86cde43fa28f4499fd1eb749c6bb0eaf2fc3";
+export const UNBILLED_SQL_COMMIT = "29603388630276e43374e2368e959ee35d874045";
 export const DEFAULT_TIMEOUT_S = 300;
 
 export const CENSUS_SQL = String.raw`-- SA-1097 census. SELECT only, counts and totals, no ids or names. Every query is a plain WITH, because a read-only session can't create a view.
@@ -295,8 +303,48 @@ GROUP BY 1, 2 ORDER BY 1, 2;
 
 export const DENOMINATORS_SQL_SHA256 = createHash("sha256").update(DENOMINATORS_SQL).digest("hex");
 
+export const UNBILLED_SQL = String.raw`-- SA-1098 A-3 count. SELECT only, plain WITH, for a read-only session. No ids, names, prices or line totals: counts by tenant class.
+-- Live order lines with a delivered quantity that no non-void invoice bills. A line delivered at 0 leaves its draft; if it is delivered later the draft can't see it (SA-1098 A-3). An office partial's remainder looks the same, so this is an upper bound. No rows means none.
+WITH billed AS (
+  SELECT DISTINCT it."orderItemId" AS id
+  FROM "InvoiceItem" it
+  JOIN "Invoice" i ON i.id = it."invoiceId"
+  WHERE i.status <> 'VOID' AND it."orderItemId" IS NOT NULL
+), inv AS (
+  SELECT i."orderId",
+         count(*) FILTER (WHERE i.status = 'DRAFT' AND i."deliveryBatchId" IS NULL)::int AS open_drafts,
+         count(*) FILTER (WHERE NOT (i.status = 'DRAFT' AND i."deliveryBatchId" IS NULL))::int AS finalized,
+         count(*) FILTER (WHERE i.status = 'DRAFT' AND i."deliveryBatchId" IS NULL AND NOT EXISTS (SELECT 1 FROM "InvoiceItem" x WHERE x."invoiceId" = i.id))::int AS empty_drafts,
+         count(*) FILTER (WHERE EXISTS (SELECT 1 FROM "InvoiceItem" x WHERE x."invoiceId" = i.id AND x."orderItemId" IS NULL))::int AS untracked
+  FROM "Invoice" i
+  WHERE i.status <> 'VOID' AND i."orderId" IS NOT NULL
+  GROUP BY 1
+)
+SELECT COALESCE(t.class::text, 'NO_TENANT') AS tenant_class,
+       count(*)::int AS lines,
+       count(DISTINCT oi."orderId")::int AS orders,
+       count(*) FILTER (WHERE o.status = 'DELIVERED')::int AS on_delivered_order,
+       count(*) FILTER (WHERE COALESCE(inv.open_drafts, 0) > 0 AND COALESCE(inv.finalized, 0) = 0)::int AS open_draft_only,
+       count(*) FILTER (WHERE COALESCE(inv.empty_drafts, 0) > 0)::int AS on_order_with_empty_draft,
+       count(*) FILTER (WHERE COALESCE(inv.finalized, 0) > 0)::int AS has_finalized,
+       count(*) FILTER (WHERE inv."orderId" IS NULL)::int AS no_invoice_at_all,
+       count(*) FILTER (WHERE COALESCE(inv.untracked, 0) > 0)::int AS has_untracked_lines,
+       min(oi."createdAt")::date AS first_line, max(oi."createdAt")::date AS last_line
+FROM "OrderItem" oi
+JOIN "Order" o ON o.id = oi."orderId"
+LEFT JOIN "Tenant" t ON t.id = o."tenantId"
+LEFT JOIN inv ON inv."orderId" = oi."orderId"
+WHERE oi.status <> 'CANCELLED' AND o.status NOT IN ('CANCELLED', 'DRAFT') AND oi."deliveredQty" > 0
+  AND NOT EXISTS (SELECT 1 FROM billed WHERE billed.id = oi.id)
+GROUP BY 1 ORDER BY 1;
+`;
+
+export const UNBILLED_SQL_SHA256 = createHash("sha256").update(UNBILLED_SQL).digest("hex");
+
 /** The queries, split at the SQL's own `-- Q<n> ` markers (Q1-Q3 for the census, Q4-Q8 for the denominators); each runs as written. */
 export function splitCensusSql(text = CENSUS_SQL) {
+  // The unbilled count is one plain SELECT with no `-- Q<n> ` markers: it runs whole, as written.
+  if (text === UNBILLED_SQL) return [{ name: "unbilled", sql: text.trim() }];
   const parts = text.split(/^-- (?=Q\d )/m).slice(1);
   return parts.map((p) => ({
     name: p.slice(0, p.indexOf(" ")).toLowerCase(),
@@ -307,39 +355,54 @@ export function splitCensusSql(text = CENSUS_SQL) {
 export function checkArgs(argv) {
   let timeoutS = DEFAULT_TIMEOUT_S;
   let denominators = false;
+  let unbilled = false;
   for (const a of argv) {
     if (a === "--denominators") {
       denominators = true;
+      continue;
+    }
+    if (a === "--unbilled") {
+      unbilled = true;
       continue;
     }
     const m = /^--timeout-s=(\d+)$/.exec(a);
     if (!m || Number(m[1]) < 1 || Number(m[1]) > 1800) {
       return {
         ok: false,
-        message: `unknown or invalid argument: ${a} (usage: [--denominators] [--timeout-s=<1-1800>])`,
+        message: `unknown or invalid argument: ${a} (usage: [--denominators | --unbilled] [--timeout-s=<1-1800>])`,
       };
     }
     timeoutS = Number(m[1]);
   }
-  return { ok: true, timeoutS, denominators };
+  if (denominators && unbilled) {
+    return {
+      ok: false,
+      message: "--denominators and --unbilled are separate counts: run one at a time",
+    };
+  }
+  return { ok: true, timeoutS, denominators, unbilled };
 }
 
 export async function runCensus(
   client,
-  { timeoutS = DEFAULT_TIMEOUT_S, log = () => {}, denominators = false } = {},
+  { timeoutS = DEFAULT_TIMEOUT_S, log = () => {}, denominators = false, unbilled = false } = {},
 ) {
   await client.query("SET default_transaction_read_only = on");
   const [{ transaction_read_only: ro }] = (await client.query("SHOW transaction_read_only")).rows;
   if (ro !== "on") throw Object.assign(new Error("session is not read-only"), { exitCode: 2 });
   await client.query(`SET statement_timeout = '${timeoutS}s'`);
   const out = {
-    spec: denominators
-      ? { sqlCommit: DENOMINATORS_SQL_COMMIT, sqlSha256: DENOMINATORS_SQL_SHA256 }
-      : { sqlCommit: SPEC_SQL_COMMIT, sqlSha256: CENSUS_SQL_SHA256 },
+    spec: unbilled
+      ? { sqlCommit: UNBILLED_SQL_COMMIT, sqlSha256: UNBILLED_SQL_SHA256 }
+      : denominators
+        ? { sqlCommit: DENOMINATORS_SQL_COMMIT, sqlSha256: DENOMINATORS_SQL_SHA256 }
+        : { sqlCommit: SPEC_SQL_COMMIT, sqlSha256: CENSUS_SQL_SHA256 },
     timingMs: {},
   };
   const t0 = Date.now();
-  for (const q of splitCensusSql(denominators ? DENOMINATORS_SQL : CENSUS_SQL)) {
+  for (const q of splitCensusSql(
+    unbilled ? UNBILLED_SQL : denominators ? DENOMINATORS_SQL : CENSUS_SQL,
+  )) {
     const t = Date.now();
     await client.query("BEGIN READ ONLY");
     try {
@@ -370,6 +433,7 @@ async function main(argv) {
       timeoutS: args.timeoutS,
       log: console.error,
       denominators: args.denominators,
+      unbilled: args.unbilled,
     });
     console.log(JSON.stringify(census, null, 2));
   } catch (e) {

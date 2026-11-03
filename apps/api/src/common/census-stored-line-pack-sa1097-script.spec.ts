@@ -16,10 +16,12 @@ const SOURCE = fs.readFileSync(SCRIPT, "utf8");
 const SA_FILE_SHA256 = "9b75d69a820faf304eb60ac3b5fcf9fb8ed1761b8f9635f4883651eb52ecef08";
 // SA-1097 A-5: rf-specs decisions/sa/SA-1097-denominators.sql at 6faf86cde4 (unchanged at 42d50272b2), LF line endings as filed.
 const SA_DENOMINATORS_SHA256 = "3291839e87910afc1c9c4b1ca6acd2703f885fc5a881ae0868c2c94e882d2e81";
+// SA-1098 A-3: rf-specs decisions/sa/SA-1098-unbilled.sql at 29603388 (unchanged at f72e1c1678), LF line endings as filed.
+const SA_UNBILLED_SHA256 = "4f1b503172b2e3a3aead159fe413ea55b01b22c418aa28a011f62d545eff48c1";
 
 function run(body: string): any {
   const code = `
-import { CENSUS_SQL, CENSUS_SQL_SHA256, DENOMINATORS_SQL, DENOMINATORS_SQL_SHA256, splitCensusSql, checkArgs, runCensus } from "${HREF}";
+import { CENSUS_SQL, CENSUS_SQL_SHA256, DENOMINATORS_SQL, DENOMINATORS_SQL_SHA256, UNBILLED_SQL, UNBILLED_SQL_SHA256, splitCensusSql, checkArgs, runCensus } from "${HREF}";
 ${body}
 `;
   const res = spawnSync(process.execPath, ["--input-type=module", "-e", code], {
@@ -181,6 +183,56 @@ describe("SA-1097 census script", () => {
       "SET default_transaction_read_only = on",
       "SHOW transaction_read_only",
     ]);
+  });
+
+  // SA-1098 A-3: the third count, behind --unbilled.
+  it("embeds the SA's unbilled SQL unchanged (sha-256 of rf-specs SA-1098-unbilled.sql)", () => {
+    expect(run(`console.log(JSON.stringify(UNBILLED_SQL_SHA256));`)).toBe(SA_UNBILLED_SHA256);
+    expect(run(`console.log(JSON.stringify(UNBILLED_SQL.includes("\\r")));`)).toBe(false);
+  });
+
+  it("--unbilled is one query named unbilled, a plain WITH ... SELECT that writes nothing", () => {
+    const qs = run(`console.log(JSON.stringify(splitCensusSql(UNBILLED_SQL)));`);
+    expect(qs.map((q: any) => q.name)).toEqual(["unbilled"]);
+    const code = qs[0].sql.replace(/^--.*$/gm, "");
+    expect(code).toMatch(/^\s*WITH\b/);
+    expect(code).not.toMatch(
+      /\b(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|GRANT|COPY|SET)\b/i,
+    );
+    expect(code.trim().endsWith(";")).toBe(true);
+  });
+
+  it("--unbilled is its own flag: it refuses to run together with --denominators or a write flag", () => {
+    const out = run(`
+      console.log(JSON.stringify([
+        checkArgs(["--unbilled"]), checkArgs(["--unbilled", "--timeout-s=60"]),
+        checkArgs(["--unbilled", "--denominators"]), checkArgs(["--unbilled", "--apply"]), checkArgs(["--unbilled=1"]),
+      ].map((r) => r.ok ? [r.timeoutS, r.denominators, r.unbilled] : "refused")));
+    `);
+    expect(out).toEqual([[300, false, true], [60, false, true], "refused", "refused", "refused"]);
+  });
+
+  it("with --unbilled: read-only before any read, the one query in its own READ ONLY transaction, rolled back", () => {
+    const seen = run(`
+      const log = [];
+      const client = { async query(sql) {
+        log.push(sql.trim().split("\\n")[0].slice(0, 40));
+        if (sql === "SHOW transaction_read_only") return { rows: [{ transaction_read_only: "on" }] };
+        return { rows: [] };
+      } };
+      const out = await runCensus(client, { timeoutS: 60, unbilled: true });
+      console.log(JSON.stringify({ log, spec: out.spec, keys: Object.keys(out) }));
+    `);
+    expect(seen.log).toEqual([
+      "SET default_transaction_read_only = on",
+      "SHOW transaction_read_only",
+      "SET statement_timeout = '60s'",
+      "BEGIN READ ONLY",
+      expect.stringMatching(/^-- SA-1098 A-3 count/),
+      "ROLLBACK",
+    ]);
+    expect(seen.spec.sqlSha256).toBe(SA_UNBILLED_SHA256);
+    expect(seen.keys).toEqual(["spec", "timingMs", "unbilled"]);
   });
 
   it("is import-safe and uses the shared report resolver, with no write path in the source", () => {
