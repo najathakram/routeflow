@@ -210,6 +210,22 @@ describe("SA-962 G5 census script (unbooked regulated partial invoices)", () => 
     ]);
   });
 
+  it("the plain census says on stderr that its counts are candidates and --booked-check is the answer; --booked-check does not", () => {
+    const out = run(`
+      const client = { async query(sql) {
+        if (sql === "SHOW transaction_read_only") return { rows: [{ transaction_read_only: "on" }] };
+        return { rows: [] };
+      } };
+      const plain = [], booked = [];
+      await runCensus(client, { log: (m) => plain.push(m) });
+      await runCensus(client, { log: (m) => booked.push(m), bookedCheck: true });
+      console.log(JSON.stringify({ plain, booked }));
+    `);
+    expect(out.plain.filter((m: string) => /CANDIDATES/.test(m))).toHaveLength(1);
+    expect(out.plain.join(" ")).toMatch(/--booked-check is the answer/);
+    expect(out.booked.join(" ")).not.toMatch(/CANDIDATES/);
+  });
+
   it("is import-safe and uses the shared report resolver, with no write path in the source", () => {
     expect(SOURCE).toContain('from "./lib/report-db-url.mjs"');
     expect(SOURCE).toContain("process.argv[1] === fileURLToPath(import.meta.url)");

@@ -217,6 +217,11 @@ export async function runCensus(
     log(`${NAME}: ${q.name} ${out[q.name].length} rows in ${out.timingMs[q.name]} ms`);
   }
   out.timingMs.total = Date.now() - t0;
+  if (!bookedCheck) {
+    log(
+      `${NAME}: these counts are CANDIDATES, not findings (a sale left on an old line id reads unbooked, a failed filing reads filed): --booked-check is the answer`,
+    );
+  }
   return out;
 }
 
