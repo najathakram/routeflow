@@ -53,6 +53,9 @@ module.exports = {
     // lib/internal-email.ts re-exports the SUBPATH module — resolve that one to
     // SOURCE, same as pricing/scanning/returns.
     "^@routeflow/types/internal-email$": "<rootDir>/../../packages/types/internal-email.ts",
+    // SA-1098 PR-2a: the stop-completion key rule, shared with the web driver screen (package root is stubbed).
+    "^@routeflow/types/stop-completion-key$":
+      "<rootDir>/../../packages/types/stop-completion-key.ts",
     // SA-714: the pure staff "Backorder" tag rule, same subpath trick (the package root is stubbed).
     "^@routeflow/types/order-line-backorder$":
       "<rootDir>/../../packages/types/order-line-backorder.ts",
