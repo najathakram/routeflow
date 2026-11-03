@@ -1988,3 +1988,73 @@ test.describe("T23 — the phone's rising headings", () => {
     });
   }
 });
+
+// ─── T24 — the hover label never repeats a name the piece already carries ────
+// Owner (Lead, 1440 x 900): the first screen showed a white "Customers" pill right above the Customers tile, which already says
+// "Customers". The hover/focus label (.rfw-tip) is for a piece with only its icon: it stays away while the piece carries its own
+// name (the first screen on a desktop) and shows whenever the name is not on the piece (an inner piece at rest, any piece on a phone).
+test.describe("T24 — the hover label does not repeat a drawn name", () => {
+  const OUTER = 8; // Customers
+  const INNER = 11; // an inner piece: icon only at rest on a desktop
+
+  const open = async (browser: import("@playwright/test").Browser, w: number, h: number) => {
+    const context = await browser.newContext({ viewport: { width: w, height: h } });
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.goto("/", { waitUntil: "load" });
+    await page.waitForSelector(".rfw-live", { state: "attached", timeout: 30_000 });
+    await page.waitForTimeout(3500);
+    return { context, page, errors };
+  };
+  const tip = (page: import("@playwright/test").Page) =>
+    page.evaluate(() => {
+      const t = document.querySelector(".rfw-tip") as HTMLElement;
+      return { on: t.classList.contains("on"), text: t.textContent || "" };
+    });
+  const focusPiece = async (page: import("@playwright/test").Page, i: number) => {
+    await page.locator(`.rfw-b[data-i="${i}"]`).focus();
+    await page.waitForTimeout(700);
+    return tip(page);
+  };
+
+  test("T24 — 1440x900: no label on a tile that names itself, a label on an icon-only piece", async ({
+    browser,
+  }) => {
+    test.setTimeout(120_000);
+    const { context, page, errors } = await open(browser, 1440, 900);
+    // the pointer resting on the tile (the owner's case): the Customers tile sits at about (811, 428) on this first screen
+    await page.mouse.move(780, 400);
+    await page.mouse.move(811, 428, { steps: 4 });
+    await page.waitForTimeout(700);
+    expect((await tip(page)).on, "hover on the tile at rest shows no repeat").toBe(false);
+    await page.mouse.move(1085, 405);
+    await page.mouse.move(1125, 435, { steps: 4 });
+    await page.waitForTimeout(700);
+    expect((await tip(page)).on, "hover on an icon-only piece shows its label").toBe(true);
+    // keyboard focus
+    expect((await focusPiece(page, OUTER)).on, "Customers tile carries its name").toBe(false);
+    const inner = await focusPiece(page, INNER);
+    expect(inner.on, "an icon-only piece still gets its label").toBe(true);
+    expect(inner.text.length).toBeGreaterThan(0);
+    expect(errors).toEqual([]);
+    await context.close();
+  });
+
+  for (const s of [
+    { w: 768, h: 1024 },
+    { w: 390, h: 844 },
+  ]) {
+    test(`T24 — ${s.w}x${s.h}: a tile with no name drawn still gets its label`, async ({
+      browser,
+    }) => {
+      test.setTimeout(120_000);
+      const { context, page, errors } = await open(browser, s.w, s.h);
+      const t = await focusPiece(page, OUTER);
+      expect(t.on, "label shows when the tile has no name of its own").toBe(true);
+      expect(t.text).toBe("Customers");
+      expect(errors).toEqual([]);
+      await context.close();
+    });
+  }
+});
