@@ -139,6 +139,10 @@ export const ROUTE_PARITY: Readonly<Record<string, ParityRow>> = {
   // ─── Operator dashboard: analytics, settings, billing (plan §1.3) ───
   "(dashboard)/analytics": { mobile: ["(operator)/analytics/index"] },
   // SA-1087: one product's sales insights. Phones get the new web (owner ruling): the hybrid shell's WebView renders it.
+  "(dashboard)/insights": {
+    webOnly:
+      "the product finder (SA-1087 PR-2); the hybrid shell's WebView renders it, and scanning uses the web page's camera button",
+  },
   "(dashboard)/insights/products/[id]": {
     webOnly:
       "one product's sales insights (SA-1087); the hybrid shell's WebView renders it, no native screen",

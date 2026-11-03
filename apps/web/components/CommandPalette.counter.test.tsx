@@ -4,6 +4,8 @@ import { CommandPalette } from "./CommandPalette";
 
 /** POS-7a: the "New counter sale" palette action is gated by useCounterSaleGate (same as the dashboard button). */
 const mockPush = jest.fn();
+// SA-1087: the palette's Product insights entry reads the shared access rule; pinned in CommandPalette.insights.test.tsx.
+jest.mock("@/components/insights/use-insights-access", () => ({ useInsightsAccess: () => false }));
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push: mockPush }) }));
 let mockRole = "OPERATOR";
 jest.mock("@/lib/auth-context", () => ({ useAuth: () => ({ user: { role: mockRole } }) }));

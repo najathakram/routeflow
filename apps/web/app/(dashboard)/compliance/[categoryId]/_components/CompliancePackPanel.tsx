@@ -7,7 +7,7 @@ import { Download, FileText, RefreshCcw } from "lucide-react";
 import { Badge, Button, Card, cn, useToast } from "@routeflow/ui/web";
 import { isLicenceExpired } from "@routeflow/types";
 import { useAuth } from "@/lib/auth-context";
-import { useTenantTimeZone } from "@/lib/tenant-timezone";
+import { useOnTenantToday, useTenantTimeZone, useTenantTimeZoneQuery } from "@/lib/tenant-timezone";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { unitsLabel } from "@/lib/stock-label";
 import {
@@ -294,10 +294,56 @@ function InventoryTab() {
 // ─── Purchases / Sales tabs ───────────────────────────────────────────────────
 
 function useRangeState() {
-  const year = new Date().getUTCFullYear();
-  const [from, setFrom] = React.useState(`${year}-01-01`);
-  const [to, setTo] = React.useState(new Date().toISOString().slice(0, 10));
-  return { from, to, setFrom, setTo };
+  const [from, setFrom] = React.useState("");
+  const [to, setTo] = React.useState("");
+  const [seeded, setSeeded] = React.useState(false);
+  // SA-964 §4: the range is the TENANT's year-to-date, seeded when the zone resolves (nothing is queried before).
+  useOnTenantToday((day) => {
+    setFrom((cur) => cur || `${day.slice(0, 4)}-01-01`);
+    setTo((cur) => cur || day);
+    setSeeded(true);
+  });
+  // A disabled query reports isLoading false, so while the range is unset (the zone is loading or failed) the tab
+  // would fall through to its "No ... in this range." text. `wait` names that state so the tab shows it instead. Once the
+  // zone has seeded the range, a cleared From or To is "choose": the query is off, so the empty text would claim a result.
+  const zoneQ = useTenantTimeZoneQuery();
+  const wait: "loading" | "failed" | "choose" | null =
+    from && to ? null : zoneQ.isError ? "failed" : !zoneQ.zone || !seeded ? "loading" : "choose";
+  return { from, to, setFrom, setTo, wait, retry: zoneQ.retry };
+}
+
+function RangeWait({ wait, retry }: { wait: "loading" | "failed" | "choose"; retry: () => void }) {
+  if (wait === "choose")
+    return (
+      <div
+        role="status"
+        data-testid="range-choose"
+        className="rounded-xl border border-surface-border bg-white px-4 py-6 text-sm text-navy/70"
+      >
+        Choose both dates.
+      </div>
+    );
+  if (wait === "loading")
+    return (
+      <div
+        data-testid="range-loading"
+        className="h-24 animate-pulse rounded-lg bg-surface-raised"
+      />
+    );
+  return (
+    <div
+      role="status"
+      data-testid="range-zone-failed"
+      className="flex items-center justify-between gap-3 rounded-xl border border-surface-border bg-white px-4 py-6 text-sm text-navy/70"
+    >
+      <span>
+        We couldn&apos;t load your business&apos;s time zone, so there is no date range yet.
+      </span>
+      <Button type="button" variant="secondary" size="sm" onClick={retry}>
+        Retry
+      </Button>
+    </div>
+  );
 }
 
 function RangePicker(props: ReturnType<typeof useRangeState>) {
@@ -322,14 +368,16 @@ function RangePicker(props: ReturnType<typeof useRangeState>) {
 
 function PurchasesTab() {
   const range = useRangeState();
-  const { data: purchases = [], isLoading } = useTobaccoPurchases({
-    from: range.from,
-    to: range.to,
-  });
+  const { data: purchases = [], isLoading } = useTobaccoPurchases(
+    { from: range.from, to: range.to },
+    { enabled: !!range.from && !!range.to },
+  );
   return (
     <div>
       <RangePicker {...range} />
-      {isLoading ? (
+      {range.wait ? (
+        <RangeWait wait={range.wait} retry={range.retry} />
+      ) : isLoading ? (
         <div className="h-24 animate-pulse rounded-lg bg-surface-raised" />
       ) : purchases.length === 0 ? (
         <div className="rounded-xl border border-surface-border bg-white py-10 text-center text-navy/70">
@@ -380,11 +428,16 @@ function PurchasesTab() {
 function SalesTab() {
   const range = useRangeState();
   const zone = useTenantTimeZone();
-  const { data: sales = [], isLoading } = useTobaccoSales({ from: range.from, to: range.to });
+  const { data: sales = [], isLoading } = useTobaccoSales(
+    { from: range.from, to: range.to },
+    { enabled: !!range.from && !!range.to },
+  );
   return (
     <div>
       <RangePicker {...range} />
-      {isLoading ? (
+      {range.wait ? (
+        <RangeWait wait={range.wait} retry={range.retry} />
+      ) : isLoading ? (
         <div className="h-24 animate-pulse rounded-lg bg-surface-raised" />
       ) : sales.length === 0 ? (
         <div className="rounded-xl border border-surface-border bg-white py-10 text-center text-navy/70">

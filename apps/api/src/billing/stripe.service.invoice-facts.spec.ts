@@ -1,4 +1,5 @@
 import { StripeService } from "./stripe.service";
+import { assertStripeExpandable } from "../testing/stripe-expand-rule";
 
 // SA-733r4 N2: the invoice facts the catch-up claim is judged from, under API 2026-08-26.dahlia - the invoice
 // has no `payment_intent`; a payment still `processing` (ACH) lives on `payments.data[].payment.payment_intent`,
@@ -17,7 +18,8 @@ describe("StripeService.getInvoiceFacts (dahlia shape)", () => {
     ...over,
   });
   function make(inv: unknown | Error, intents: Record<string, string> = {}) {
-    const retrieve = jest.fn(async () => {
+    const retrieve = jest.fn(async (_id: string, params?: { expand?: string[] }) => {
+      assertStripeExpandable(params?.expand); // the fake refuses what Stripe refuses (B1270)
       if (inv instanceof Error) throw inv;
       return inv;
     });

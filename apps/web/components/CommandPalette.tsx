@@ -32,6 +32,7 @@ import {
   Route as RouteIcon,
   type LucideIcon,
   PackageCheck,
+  ScanSearch,
   Store,
 } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
@@ -42,6 +43,7 @@ import { useI18n } from "@/lib/i18n";
 import { useRoutesAccess, useDeliveryAccess } from "@/lib/api/addons";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { useReadOnlyGate } from "@/lib/read-only-gate";
+import { useInsightsAccess } from "@/components/insights/use-insights-access";
 
 /**
  * `?action=new` for a list route, preserving that list's own query state when
@@ -85,6 +87,8 @@ const ROUTES_COMMAND_IDS = ["nav-routes", "nav-drivers", "act-new-route"];
 const DELIVERY_COMMAND_IDS = ["act-plan-trip", "nav-deliveries"];
 /** POS-7a: shown only when the tenant's counter capability is always|optional (useCounterSaleGate.showButton). */
 const COUNTER_COMMAND_IDS = ["act-counter-sale"];
+/** SA-1087: the product finder — same audience as the insights endpoint (useInsightsAccess). */
+const INSIGHTS_COMMAND_IDS = ["nav-product-insights"];
 
 function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] {
   const { user } = useAuth();
@@ -92,6 +96,7 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
   const { enabled: deliveryAccess } = useDeliveryAccess();
   const staffRole = user?.role !== "CUSTOMER" && user?.role !== "DRIVER";
   const { showButton: counterEnabled } = useCounterSaleGate({ enabled: staffRole });
+  const insightsAccess = useInsightsAccess();
   // SA-1032: promotions off (back office) drops the Promotions command; unloaded ⇒ shown.
   const { data: tenantFeatures } = useTenantFeatures({ enabled: staffRole });
   const modes = tenantFeatures?.modes;
@@ -241,6 +246,14 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
           action: () => router.push("/analytics"),
         },
         {
+          id: "nav-product-insights",
+          group: "Navigate",
+          label: "Product insights",
+          icon: ScanSearch,
+          action: () => router.push("/insights"),
+          keywords: "look up find scan barcode sales history demand trend buyers",
+        },
+        {
           id: "nav-settings",
           group: "Navigate",
           label: "Settings",
@@ -313,10 +326,11 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
         if (ROUTES_COMMAND_IDS.includes(c.id)) return routesAccess;
         if (DELIVERY_COMMAND_IDS.includes(c.id)) return deliveryAccess;
         if (COUNTER_COMMAND_IDS.includes(c.id)) return counterEnabled;
+        if (INSIGHTS_COMMAND_IDS.includes(c.id)) return insightsAccess;
         if (c.id === "nav-promotions") return modeGatedVisible("/promotions", modes);
         return true;
       }),
-    [router, routesAccess, deliveryAccess, counterEnabled, modes],
+    [router, routesAccess, deliveryAccess, counterEnabled, insightsAccess, modes],
   );
 }
 
