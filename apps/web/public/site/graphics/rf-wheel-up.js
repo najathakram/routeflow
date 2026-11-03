@@ -307,7 +307,7 @@
     const RING = sprite((t) => smooth(0.2, 0.62, t) * Math.pow(1 - smooth(0.72, 1, t), 1.5));
     const FLOOR = sprite((t) => smooth(0.42, 0.52, t) * Math.pow(1 - smooth(0.74, 1, t), 1.5));
 
-    let dpr = 1, K = 1, cx = 0, cy = 0, ct = 1, st = 0, px = 0, py = 0, pp = 1, dirty = true, focusI = -1, hc = false, pinTop = 0, tokPx = 120, ox = 0, oy = 0, stageBg = "#f5f5f7";
+    let hubUp = 0, hubF = 0, hubSet = false, dpr = 1, K = 1, cx = 0, cy = 0, ct = 1, st = 0, px = 0, py = 0, pp = 1, dirty = true, focusI = -1, hc = false, pinTop = 0, tokPx = 120, ox = 0, oy = 0, stageBg = "#f5f5f7";
     const F = { flat: { k: 0.4, x: 0, y: 0 }, end: { k: 0.4, x: 0, y: 0 }, burst: { k: 0.4, x: 0, y: 0 }, apart: { k: 0.4, x: 0, y: 0 }, story: { k: 0.4, x: 0, y: 0 } };
     const cam = { tilt: 0, zO: 0, zI: 0, zH: 0, k: 0.4, x: 0, y: 0 };
     const mark = () => { dirty = true; };
@@ -485,14 +485,18 @@
         up = fb - ft > 1 ? clamp(0, 1, (1.6 * (fb - ft) - (ft - lt)) / (0.8 * (fb - ft))) : 0;
       }
       proj(0, 0, z + THH); const ox = px, oy = py; proj(100, 0, z + THH); const ax = (px - ox) / 100, ay = (py - oy) / 100; proj(0, 100 * hy, z + THH);
-      if (up < 0.5) {
-        ctx.globalAlpha = (0.5 - up) / 0.2 > 1 ? 1 : (0.5 - up) / 0.2;
+      /* Which mark stands is decided by the geometry with a margin (so it cannot flicker), and the fade between them runs on the clock
+         (see tick), never on the scroll: a page can rest anywhere, and a fade tied to the scroll would rest half done. */
+      if (up > 0.55) hubUp = 1; else if (up < 0.45) hubUp = 0;
+      if (!hubSet) { hubSet = true; hubF = hubUp; }
+      if (hubF < 0.5) {
+        ctx.globalAlpha = (0.5 - hubF) * 2;
         ctx.setTransform(ax, ay, (px - ox) / 100, (py - oy) / 100, ox, oy); ctx.translate(-30, -40); ctx.scale(0.75, 0.75);
         ctx.lineWidth = 13; ctx.lineCap = ctx.lineJoin = "round"; ctx.strokeStyle = "#fff"; ctx.stroke(MARKP);
       }
-      if (up > 0.5) {
+      if (hubF > 0.5) {
         const s = (0.62 * (fb - ft)) / 96;
-        ctx.globalAlpha = (up - 0.5) / 0.2 > 1 ? 1 : (up - 0.5) / 0.2;
+        ctx.globalAlpha = (hubF - 0.5) * 2;
         ctx.setTransform(s, 0, 0, s, ox - 40 * s, (ft + fb) / 2 - 49 * s);
         ctx.lineWidth = 15; ctx.lineCap = ctx.lineJoin = "round"; ctx.strokeStyle = "#fff"; ctx.stroke(MARKP);
       }
@@ -800,6 +804,7 @@
       const dt = Math.min(ms / 1000, 0.05);
       if (Sp.o.on) stepSp(Sp.o, dt); else Sp.o.home = false;
       if (Sp.i.on) stepSp(Sp.i, dt); else Sp.i.home = false;
+      if (hubF !== hubUp) { hubF = hubF < hubUp ? Math.min(hubUp, hubF + dt * 8) : Math.max(hubUp, hubF - dt * 8); force = true; mark(); }
       if (dirty) draw();
     };
     const onDown = (e) => {
