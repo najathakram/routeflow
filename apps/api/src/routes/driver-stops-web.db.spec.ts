@@ -43,6 +43,7 @@ import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { IdempotencyService } from "../common/idempotency.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { attachInvoicesNeedReview } from "../orders/order-invoices-review";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -189,6 +190,7 @@ describeDb("SA-1098 PR-2 driver stop on the web — real Postgres", () => {
   beforeEach(() => jest.clearAllMocks());
 
   async function cleanupTenant(tenantId: string): Promise<void> {
+    await prisma.regulatedSalesLedger.deleteMany({ where: { tenantId } }); // D-43b's real ledger
     await prisma.auditLog.deleteMany({ where: { tenantId } });
     await prisma.advancePayment.deleteMany({ where: { tenantId } });
     await prisma.invoicePayment.deleteMany({ where: { invoice: { tenantId } } });
@@ -839,6 +841,111 @@ describeDb("SA-1098 PR-2 driver stop on the web — real Postgres", () => {
       await splitGo(sp, splitDto(sp, [3], [3]), "k-d43b");
       const calls = settleLedger.mock.calls.map((c) => c[1] as { lines: Array<{ qty: number }> });
       expect(calls.at(-1)?.lines.map((l) => l.qty)).toEqual([3]);
+    });
+
+    it("D-43b (guard): the same entry through the REAL ledger: the line's rows net to the delivered quantity, once", async () => {
+      const real = new RegulatedLedgerService(prisma);
+      settleLedger.mockImplementation((db: unknown, event: never) =>
+        real.settleRegulatedLedger(db, event),
+      );
+      try {
+        const sp = await seedSplit("d43r", ["R"], [{ cat: 0, qty: 3 }], [[0]]);
+        const rowsFor = () =>
+          prisma.regulatedSalesLedger.findMany({
+            where: { orderItemId: sp.made[0].id },
+            orderBy: { createdAt: "asc" },
+            select: { entryType: true, qty: true, unitBasisQty: true, netSales: true },
+          });
+        await splitGo(sp, splitDto(sp, [0], [3]), "k-d43ra");
+        const afterRefused = (await rowsFor()).map((r) => `${r.entryType}:${Number(r.qty)}`);
+        await splitUndo(sp);
+        const afterUndo = (await rowsFor()).map((r) => `${r.entryType}:${Number(r.qty)}`);
+        await splitGo(sp, splitDto(sp, [3], [3]), "k-d43rb");
+        const rows = await rowsFor();
+        // eslint-disable-next-line no-console
+        console.info(
+          "D-43b observed:",
+          JSON.stringify({
+            afterRefused,
+            afterUndo,
+            final: rows.map((r) => `${r.entryType}:${Number(r.qty)}`),
+          }),
+        );
+        const net = rows.reduce((sum, r) => sum + Number(r.qty), 0);
+        expect(net).toBe(3);
+        expect(rows.filter((r) => r.entryType === "SALE" && Number(r.qty) > 0)).toHaveLength(1);
+      } finally {
+        settleLedger.mockReset();
+        settleLedger.mockResolvedValue({ written: 0, amendedPeriod: null });
+      }
+    });
+
+    /** What the office's order read stamps on the order (the staff attach `orders.service.findOne` calls). */
+    const officeReads = (sp: { tenantId: string; orderId: string }) =>
+      tenantCtx.run(sp.tenantId, async () => {
+        const order: { id: string; tenantId: string; invoicesNeedReview?: unknown } = {
+          id: sp.orderId,
+          tenantId: sp.tenantId,
+        };
+        await attachInvoicesNeedReview(prisma.forTenant() as never, order, { role: "OPERATOR" });
+        return order.invoicesNeedReview;
+      });
+    const LEFT_OFF_REASON =
+      "A delivered line on this order isn't on any invoice. Create an invoice for it.";
+    /** D-41's arrangement: the S line (index 2) is on no draft and cannot be placed. */
+    const seedLeftOff = async (label: string) => {
+      const sp = await seedSplit(
+        label,
+        ["R", "S"],
+        [
+          { cat: null, qty: 1 },
+          { cat: 0, qty: 3 },
+          { cat: 1, qty: 2 },
+        ],
+        [[0], [1]],
+      );
+      await splitGo(sp, splitDto(sp, [1, 3, 2], [1, 3, 2]), `k-${label}`);
+      return sp;
+    };
+
+    it("D-41b (red): after D-41 the office's order read flags the line left off, with the reason", async () => {
+      const sp = await seedLeftOff("d41b");
+      expect(await officeReads(sp)).toEqual({ flagged: true, reason: LEFT_OFF_REASON });
+    });
+
+    it("D-41c (guard): the office creates an invoice for that line: not refused, the line bills, the flag clears", async () => {
+      const sp = await seedLeftOff("d41c");
+      expect(await officeReads(sp)).toMatchObject({ flagged: true });
+      await tenantCtx.run(sp.tenantId, () =>
+        invoicesService.createPartialFromOrder(sp.orderId, {
+          items: [{ orderItemId: sp.made[2].id, qty: 2 }],
+        } as never),
+      );
+      const billed = await prisma.invoiceItem.findMany({
+        where: { orderItemId: sp.made[2].id, invoice: { status: { not: "VOID" } } },
+        select: { qty: true },
+      });
+      expect(billed.map((b) => Number(b.qty))).toEqual([2]);
+      expect(await officeReads(sp)).toEqual({ flagged: false });
+    });
+
+    it("D-41d (guard): an office partial's remainder, delivered, with no left-off audit row is not flagged", async () => {
+      const s = await seedRun("d41d", 2);
+      const st = s.stops[0];
+      // an office partial on line 1 only; line 2 delivered and on no invoice, but nothing left it off
+      await prisma.invoiceItem.deleteMany({ where: { orderItemId: st.line2.id } });
+      await prisma.invoice.updateMany({
+        where: { orderId: st.orderId },
+        data: { subtotal: 100, total: 100 },
+      });
+      await prisma.orderItem.update({
+        where: { id: st.line2.id },
+        data: { invoicedQty: 0, deliveredQty: 4 },
+      });
+      expect(await needsReviewRows(s, st.orderId)).toBe(0);
+      expect(await officeReads({ tenantId: s.tenantId, orderId: st.orderId })).toEqual({
+        flagged: false,
+      });
     });
 
     it("D-44 (record): between Undo and the next completion the draft keeps the last numbers", async () => {

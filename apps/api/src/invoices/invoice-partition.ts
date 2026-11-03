@@ -340,6 +340,9 @@ export async function placeUnbilledLinesFor(
   );
 }
 
+/** `meta.kind` of the row below: the marker the office's order read looks for (SA-1098 A-3, never the note's text). */
+export const LINE_LEFT_OFF_KIND = "line-left-off";
+
 /** The same audit row the stop completion writes when it cannot create an invoice (SA-687c), for a line left off. */
 export async function flagUnplacedLines(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a tenant (transaction) client
@@ -354,6 +357,7 @@ export async function flagUnplacedLines(
       entityId: orderId,
       meta: {
         context: "stop-completion",
+        kind: LINE_LEFT_OFF_KIND,
         note: "a delivered line is on no invoice and could not be placed on a draft",
       },
     },
