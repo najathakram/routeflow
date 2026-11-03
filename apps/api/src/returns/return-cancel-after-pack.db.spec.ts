@@ -795,20 +795,78 @@ describeDb("SA-1093 Rule 4: a return's cancel after a Boxes answer", () => {
         await returnOfThreeAddsThree(w);
       }, 60_000);
 
-      it("C-6d: a box split with no snapshot, edited per line once delivered: adds 3", async () => {
+      /** The per-line edit C-6d and C-6i share: the line stays on the order, delivered. */
+      const editToEleven = (w: World, id: string) =>
+        inTenant(w, () =>
+          orders.updateOrderItems(
+            w.orderId,
+            { replaceAll: false, items: [{ id, qty: 11, boxes: 0, pieces: 11 }] },
+            staff(w),
+          ),
+        );
+
+      // SA-1093 A-5. Stock is reset to 120 before the return, so this row says nothing about what the edit moved.
+      it("C-6d (A2-14): a no-pack line edited per line stays null; a return of 3 is 3 old units, 72", async () => {
         const w = await beforeBoxes("c6d", SPLIT);
+        const line = await liveLine(w);
+
+        await editToEleven(w, line.id);
+
+        const edited = await liveLine(w);
+        expect(edited.createdAt).toEqual(line.createdAt);
+        expect(edited.unitsPerBox).toBeNull();
+        expect([Number(edited.qty), edited.boxes, edited.pieces]).toEqual([11, 11, 0]);
+        expect(Number(edited.subtotal)).toBe(110);
+
+        await prisma.order.update({ where: { id: w.orderId }, data: { status: "DELIVERED" } });
+        await stocked(w, { currentStock: 120 });
+        await standardReturn(w, 3);
+
+        expect(await stock(w)).toBe(192);
+        expect((await restockRow(w))[0]).toBe(72);
+        expect(await parks(w)).toHaveLength(0);
+      }, 60_000);
+
+      // A fixture row: a line priced at 24 before 24 was answered needs a pack cleared and answered again (A-3).
+      it("C-6i: the same edit on stored money that fits 24 only takes 24: adds 3", async () => {
+        const w = await beforeBoxes("c6i", { ...SPLIT, subtotal: 4.17 });
+        const line = await liveLine(w);
+
+        await editToEleven(w, line.id);
+
+        await expectRewritten(w, line.createdAt);
+        const edited = await liveLine(w);
+        expect([Number(edited.qty), edited.boxes, edited.pieces]).toEqual([11, 0, 11]);
+        expect(Number(edited.subtotal)).toBe(4.58);
+        await returnOfThreeAddsThree(w);
+      }, 60_000);
+
+      // SA-1097 A2-15. The line names its own pack of 12 and the answer is 24, so 12 is not today's pack.
+      it("A2-15: an own-pack line with no snapshot, edited, takes the line's factor on a return of 3", async () => {
+        const w = await beforeBoxes("a215", { qty: 30, boxes: 2, pieces: 6, subtotal: 25 });
         const line = await liveLine(w);
 
         await inTenant(w, () =>
           orders.updateOrderItems(
             w.orderId,
-            { replaceAll: false, items: [{ id: line.id, qty: 11, boxes: 0, pieces: 11 }] },
+            { replaceAll: false, items: [{ id: line.id, qty: 31, boxes: 2, pieces: 7 }] },
             staff(w),
           ),
         );
 
-        await expectRewritten(w, line.createdAt);
-        await returnOfThreeAddsThree(w);
+        const edited = await liveLine(w);
+        expect(edited.createdAt).toEqual(line.createdAt);
+        expect(edited.unitsPerBox).toBe(12);
+        expect([Number(edited.qty), edited.boxes, edited.pieces]).toEqual([31, 2, 7]);
+        expect(Number(edited.subtotal)).toBe(25.83);
+
+        await prisma.order.update({ where: { id: w.orderId }, data: { status: "DELIVERED" } });
+        await stocked(w, { currentStock: 120 });
+        await standardReturn(w, 3);
+
+        expect(await stock(w)).toBe(192);
+        expect((await restockRow(w))[0]).toBe(72);
+        expect(await parks(w)).toHaveLength(0);
       }, 60_000);
 
       it("C-6e: a snapshot of 24 with a second answer after it multiplies by that answer", async () => {
