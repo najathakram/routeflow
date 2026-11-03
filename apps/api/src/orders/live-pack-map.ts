@@ -71,3 +71,34 @@ export async function storedLinePackForEdit(
   }
   return { pack: stored.pack ?? 0, soldWithNoPack: stored.pack === null };
 }
+
+/**
+ * The pack `updateOrderItems` splits a line at: a STORED box-split line reads the pack it was sold in
+ * (`storedLinePackForEdit`); a plain line whose payload adds a split takes the write moment's (live) pack.
+ */
+export async function packForLineEdit(
+  db: Parameters<typeof loadLiveUnitsPerBoxByProduct>[0],
+  line: StoredSplitLine,
+  editHasSplit: boolean,
+): Promise<{ pack: number | null; soldWithNoPack: boolean }> {
+  if (line.productId && line.boxes != null && !(Number(line.unitsPerBox ?? 0) > 1)) {
+    const stored = await storedLinePackForEdit(db, line);
+    return { pack: stored.pack || null, soldWithNoPack: stored.soldWithNoPack };
+  }
+  const own = line.unitsPerBox == null ? null : Number(line.unitsPerBox);
+  if (own == null && line.productId && editHasSplit) {
+    const live = (await loadLiveUnitsPerBoxByProduct(db, [line.productId])).get(line.productId);
+    return { pack: live || null, soldWithNoPack: false };
+  }
+  return { pack: own, soldWithNoPack: false };
+}
+
+/** The qty of an edit to a line sold with no pack: the sent qty, else the sent boxes + pieces, else the held qty. */
+export function noPackEditQty(
+  item: { qty?: number | null; boxes?: number | null; pieces?: number | null },
+  heldQty: unknown,
+): number {
+  const sentSplit = (item.boxes ?? 0) > 0 || (item.pieces ?? 0) > 0;
+  const qty = item.qty ?? (sentSplit ? (item.boxes ?? 0) + (item.pieces ?? 0) : Number(heldQty));
+  return Math.max(0, Math.trunc(qty));
+}
