@@ -166,6 +166,9 @@ const NON_WRITERS = new Set([
   // SA-946: reads a product's stored pack only to judge whether this save is its first pack. It builds no line, derives
   // no line factor or price, and the stock and cost it scales go through applyStockMovements.
   "products/pack-intro.ts",
+  // SA-1093 A-3: reads the live pack ONLY to compare it with a line's own snapshot, to say the line is already in
+  // today's unit. The pack it restocks at still comes from the line (SA-158). It builds no line and writes nothing.
+  "returns/returns-restock-pieces.ts",
 ]);
 
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
