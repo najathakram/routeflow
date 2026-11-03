@@ -112,3 +112,4 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 | [api/landing-2026-11-02-z.md](api/landing-2026-11-02-z.md) | Train z (904cbbec87..93282c147c): inline STORE_CREDIT capture in one transaction, served cash tendered gate; no migration |
 | [api/landing-2026-11-02-ac.md](api/landing-2026-11-02-ac.md) | Train ac (93282c147c..4b2516c9f2): credit-notes summary, live stock read, run detail fallback; no migration |
 | [api/landing-2026-11-02-ad.md](api/landing-2026-11-02-ad.md) | Train ad (4b2516c9f2..9e782a5dfc): order-wide refund bound, inline return priced as charged, dead-source refusal; no migration |
+| [api/landing-2026-11-03-af.md](api/landing-2026-11-03-af.md) | Train af (6e9dae10eb..d6d5c56cb1): read-only corrected-units sheet script + b681 classifier (SA-1088); no migration, no route |
