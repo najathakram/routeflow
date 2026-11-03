@@ -1,4 +1,4 @@
-import { expectedPhysicalCash } from "@routeflow/pricing";
+import { expectedPhysicalCash, shouldForceSettlement } from "@routeflow/pricing";
 import type { RouteRun } from "@/lib/api/routes";
 
 /**
@@ -34,7 +34,7 @@ export type DriverRunFooter = "SETTLE" | "FINISH" | null;
  */
 export function driverRunFooter(run: RunView): DriverRunFooter {
   if (run.status !== "IN_PROGRESS" || noStopLeft(run) !== true) return null;
-  return runHoldsMoney(run) && !isSettled(run) ? "SETTLE" : "FINISH";
+  return shouldForceSettlement(run) ? "SETTLE" : "FINISH";
 }
 
 export interface OfficeSettlementControls {
@@ -54,17 +54,16 @@ export function officeSettlementControls(
 ): OfficeSettlementControls {
   const none = { settle: false, finish: false, amend: false };
   if (!isOperator) return none;
-  const holds = runHoldsMoney(run);
   const settled = isSettled(run);
   if (run.status === "IN_PROGRESS") {
     if (noStopLeft(run) !== true) return none;
-    return holds && !settled ? { ...none, settle: true } : { ...none, finish: true };
+    return shouldForceSettlement(run) ? { ...none, settle: true } : { ...none, finish: true };
   }
   if (run.status === "COMPLETED" || run.status === "CANCELLED") {
     if (settled) return { ...none, amend: true };
     // A cancelled run with money and no count is settled after the fact. A COMPLETED run with money and no count
     // cannot exist (the server refuses to finish one, R7a), so it gets no Settle (A-6, SE-16).
-    if (holds && run.status === "CANCELLED") return { ...none, settle: true };
+    if (run.status === "CANCELLED" && shouldForceSettlement(run)) return { ...none, settle: true };
   }
   return none;
 }

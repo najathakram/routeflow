@@ -8,6 +8,13 @@
  */
 import { roundMoney } from "./pricing";
 
+/**
+ * The largest count a settlement takes: $10,000,000. `RouteRun.settlementVariance` is DECIMAL(10,2), so a bigger
+ * figure overflowed the column into an uncoded 500. The web form never sends past it; the server refuses it with
+ * `RUN_COUNT_TOO_LARGE` (review-b on #4188).
+ */
+export const SETTLE_MAX_COUNT = 10_000_000;
+
 export interface ForceSettlementRun {
   collectedPayments?: { cashTotal: number; checkTotal?: number; count?: number } | null;
   settlementNote?: string | null;

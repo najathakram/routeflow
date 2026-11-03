@@ -1,6 +1,11 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { RouteRunStatus, UserRole } from "@prisma/client";
-import { computeVariance, roundMoney, varianceNeedsReason } from "@routeflow/pricing";
+import {
+  SETTLE_MAX_COUNT,
+  computeVariance,
+  roundMoney,
+  varianceNeedsReason,
+} from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import { SettleRunDto } from "./dto/settle-run.dto";
@@ -18,6 +23,14 @@ export async function settleRunInTx(
   user: JwtPayload,
   readCollected: (startedAt: Date | null) => Promise<{ cashTotal: number; checkTotal: number }>,
 ) {
+  // A count past the money column overflowed into an uncoded 500; refuse it before anything is locked or written.
+  if (dto.countedCash > SETTLE_MAX_COUNT) {
+    throw new BadRequestException({
+      code: API_ERROR_CODES.RUN_COUNT_TOO_LARGE,
+      message: "That count is too large. Check the amount and try again.",
+    });
+  }
+
   await lockRunStopsForTerminalStatus(tx, id);
   const current = await tx.routeRun.findUnique({ where: { id } });
   if (!current) throw new NotFoundException("Route run not found");

@@ -589,6 +589,17 @@ describeDb("SA-1098 A-1 run settlement writer — real Postgres", () => {
     expect(earlier).toContain("recorded by");
   });
 
+  it("SE-18: a count past the money column is refused with a code, nothing is written (it was an uncoded 500)", async () => {
+    const s = await seed("se18", 1);
+    await complete(s, 0, { amount: 60, method: "CASH" });
+    const res = await refusal(settle(s, 1_000_000_000, OPERATOR, "Typo"));
+    expect(res.code).toBe("RUN_COUNT_TOO_LARGE");
+    expect((await readRun(s)).settlementNote).toBeNull();
+    // The largest count the form allows still settles.
+    await settle(s, 10_000_000, OPERATOR, "Big drop");
+    expect((await readRun(s)).settlementNote).toContain("Counted: $10000000.00");
+  });
+
   it("SE-11: reopening an unpaid stop after settling drops the settlement, so Settle returns once the stop is done again", async () => {
     const s = await seed("se11", 2);
     await complete(s, 0, { amount: 60, method: "CASH" });

@@ -4,6 +4,7 @@ import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button, Input, Textarea, useToast } from "@routeflow/ui/web";
 import {
+  SETTLE_MAX_COUNT,
   computeVariance,
   expectedPhysicalCash,
   roundMoney,
@@ -41,13 +42,18 @@ const SUBMIT_LABEL: Record<RunSettlementMode, string> = {
   amend: "Save new count",
 };
 
-/** A typed count, or null when it is empty (a lone "$" is empty, not zero), not a number, or negative. */
+// A plain money amount: digits, optional thousands commas in groups of three, at most two decimals.
+const MONEY_AMOUNT = /^(?:\d{1,3}(?:,\d{3})+|\d+)?(?:\.\d{1,2})?$/;
+
+/**
+ * A typed count, or null when it is empty (a lone "$" is empty, not zero), not a plain amount ("1e3", "0x10" and
+ * "12,50" are refused, not guessed at), or past what a settlement takes.
+ */
 export function parseCount(raw: string): number | null {
-  const stripped = raw.replace(/[$,\s]/g, "");
-  if (stripped === "") return null;
-  const n = Number(stripped);
-  if (!Number.isFinite(n) || n < 0) return null;
-  return roundMoney(n);
+  const stripped = raw.replace(/[$\s]/g, "");
+  if (!/\d/.test(stripped) || !MONEY_AMOUNT.test(stripped)) return null;
+  const n = roundMoney(Number(stripped.replace(/,/g, "")));
+  return n > SETTLE_MAX_COUNT ? null : n;
 }
 
 function errorCode(e: unknown): string | undefined {

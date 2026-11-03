@@ -225,7 +225,18 @@ describe("parseCount", () => {
     ["0", 0],
     ["$0", 0],
     ["$1,234.5", 1234.5],
-    ["60.004", 60],
+    ["60.5", 60.5],
+    [".5", 0.5],
+    ["1,000", 1000],
+    ["10000000", 10000000],
+    // Review-b on #4188 (ask 4): only a plain money amount. Each of these used to be read as a number.
+    ["60.004", null],
+    ["1e3", null],
+    ["0x10", null],
+    ["12,50", null],
+    ["1,00", null],
+    ["1.", null],
+    ["10000001", null],
   ])("%j reads as %j", (raw, want) => {
     expect(parseCount(raw)).toBe(want);
   });

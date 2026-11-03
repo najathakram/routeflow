@@ -18,7 +18,13 @@ import type { RouteRun } from "@/lib/api/routes";
  */
 export function RunSettleFooter({ run }: { run: RouteRun }) {
   const [open, setOpen] = React.useState(false);
-  if (driverRunFooter(run) !== "SETTLE") return null;
+  const offered = driverRunFooter(run) === "SETTLE";
+  // A refresh can take the footer away under an open sheet (a stop reopened, or the run settled). Close it then, so it
+  // never opens by itself when the run needs settling again.
+  React.useEffect(() => {
+    if (!offered) setOpen(false);
+  }, [offered]);
+  if (!offered) return null;
 
   return (
     <div className="px-5 pb-5">
