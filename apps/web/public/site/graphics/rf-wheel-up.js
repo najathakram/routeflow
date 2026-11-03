@@ -469,21 +469,21 @@
       walls(48, css(HUBW));
       ctx.beginPath(); trace(tx, ty, 48); ctx.fillStyle = css(NVY); ctx.fill();
       /* On a phone, while the lid is a sliver the mark would be a squashed smear, so it stands upright and unsquashed on the front of
-         the puck; as the lid opens to the eye the mark lies on it again. The two cross-fade. */
+         the puck; as the lid opens to the eye the mark lies on it again. Never both at once: each fades out before the other fades in. */
       let up = 0, ft = -1e9, fb = -1e9, lt = 1e9;
       if (phone) {
         for (let j = 0; j < 48; j++) { if (ty[j] > ft) ft = ty[j]; if (ty[j] < lt) lt = ty[j]; if (by[j] > fb) fb = by[j]; }
         up = clamp(0, 1, (1.6 * (fb - ft) - (ft - lt)) / (0.8 * (fb - ft) + 1e-6));
       }
       proj(0, 0, z + THH); const ox = px, oy = py; proj(100, 0, z + THH); const ax = (px - ox) / 100, ay = (py - oy) / 100; proj(0, 100 * hy, z + THH);
-      if (up < 1) {
-        ctx.globalAlpha = 1 - up;
+      if (up < 0.5) {
+        ctx.globalAlpha = (0.5 - up) / 0.2 > 1 ? 1 : (0.5 - up) / 0.2;
         ctx.setTransform(ax, ay, (px - ox) / 100, (py - oy) / 100, ox, oy); ctx.translate(-30, -40); ctx.scale(0.75, 0.75);
         ctx.lineWidth = 13; ctx.lineCap = ctx.lineJoin = "round"; ctx.strokeStyle = "#fff"; ctx.stroke(MARKP);
       }
-      if (up > 0) {
+      if (up > 0.5) {
         const s = (0.62 * (fb - ft)) / 96;
-        ctx.globalAlpha = up;
+        ctx.globalAlpha = (up - 0.5) / 0.2 > 1 ? 1 : (up - 0.5) / 0.2;
         ctx.setTransform(s, 0, 0, s, ox - 40 * s, (ft + fb) / 2 - 49 * s);
         ctx.lineWidth = 15; ctx.lineCap = ctx.lineJoin = "round"; ctx.strokeStyle = "#fff"; ctx.stroke(MARKP);
       }

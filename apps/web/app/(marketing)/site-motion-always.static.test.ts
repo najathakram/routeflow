@@ -121,8 +121,8 @@ describe("the public site's motion does not depend on the visitor's motion setti
     });
     it("the hub mark stands upright on the puck's front while the lid is a sliver, and lies on it as the lid opens", () => {
       expect(wheel).toContain("let up = 0, ft = -1e9, fb = -1e9, lt = 1e9;");
-      expect(wheel).toContain("if (up < 1) {");
-      expect(wheel).toContain("if (up > 0) {");
+      expect(wheel).toContain("if (up < 0.5) {");
+      expect(wheel).toContain("if (up > 0.5) {");
     });
   });
 
