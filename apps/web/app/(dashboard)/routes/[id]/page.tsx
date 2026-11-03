@@ -950,7 +950,7 @@ export default function RouteRunDetailPage() {
         title={settleMode === "amend" ? "Amend settlement" : "Settle run"}
         description={
           settleMode === "amend"
-            ? "Write a new count over the one on record. The new count replaces the old one."
+            ? "Write a new count over the one on record. The old count stays in the note."
             : "Count the cash and checks this run collected."
         }
       >

@@ -2,7 +2,7 @@ import * as React from "react";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { RunSettlementForm } from "./RunSettlementForm";
+import { RunSettlementForm, parseCount } from "./RunSettlementForm";
 
 // SA-1098 A-1 (PR-S): the one settlement form behind the driver's footer and the office run page.
 // Rows SE-1 (settle then finish), SE-2 (the server asks for a reason), SE-3 (one cent / two cents),
@@ -210,6 +210,31 @@ describe("RunSettlementForm", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(/enter the cash and checks you counted/i);
     await userEvent.type(counted(), "abc");
     await userEvent.click(screen.getByRole("button", { name: /settle and finish route/i }));
+    expect(settle).not.toHaveBeenCalled();
+  });
+});
+
+describe("parseCount", () => {
+  it.each([
+    ["", null],
+    ["   ", null],
+    ["$", null],
+    ["$ ,", null],
+    ["abc", null],
+    ["-5", null],
+    ["0", 0],
+    ["$0", 0],
+    ["$1,234.5", 1234.5],
+    ["60.004", 60],
+  ])("%j reads as %j", (raw, want) => {
+    expect(parseCount(raw)).toBe(want);
+  });
+
+  it("a lone $ sends nothing and asks for the count", async () => {
+    renderForm();
+    await userEvent.type(counted(), "$");
+    await userEvent.click(screen.getByRole("button", { name: /settle and finish route/i }));
+    expect(screen.getByRole("alert")).toHaveTextContent(/enter the cash and checks you counted/i);
     expect(settle).not.toHaveBeenCalled();
   });
 });

@@ -104,8 +104,9 @@ describe("officeSettlementControls (SE-8)", () => {
     expect(officeSettlementControls(run({ stops: left }), true)).toEqual(off);
   });
 
-  it("completed with money and no note (legacy): Settle run, the server accepts it", () => {
-    expect(officeSettlementControls(run({ status: "COMPLETED" }), true)).toEqual({
+  it("SE-16: completed with money and no note shows no Settle (it cannot happen); cancelled still does", () => {
+    expect(officeSettlementControls(run({ status: "COMPLETED" }), true)).toEqual(off);
+    expect(officeSettlementControls(run({ status: "CANCELLED" }), true)).toEqual({
       ...off,
       settle: true,
     });

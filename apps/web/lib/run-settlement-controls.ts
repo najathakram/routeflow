@@ -29,7 +29,8 @@ export type DriverRunFooter = "SETTLE" | "FINISH" | null;
 /**
  * The driver's one primary action on a run once no stop is left. A settled run, or one holding no cash
  * or checks, finishes; otherwise the driver settles first. Nothing while a stop is left (the server
- * accepts a settlement then, but cash taken after it would not be counted), or off an in-progress run.
+ * refuses a settlement then, RUN_HAS_STOPS_LEFT, since cash taken after it would not be counted), or off
+ * an in-progress run.
  */
 export function driverRunFooter(run: RunView): DriverRunFooter {
   if (run.status !== "IN_PROGRESS" || noStopLeft(run) !== true) return null;
@@ -61,8 +62,9 @@ export function officeSettlementControls(
   }
   if (run.status === "COMPLETED" || run.status === "CANCELLED") {
     if (settled) return { ...none, amend: true };
-    // Money with no settlement on a finished run: the server accepts the post-hoc settle.
-    if (holds) return { ...none, settle: true };
+    // A cancelled run with money and no count is settled after the fact. A COMPLETED run with money and no count
+    // cannot exist (the server refuses to finish one, R7a), so it gets no Settle (A-6, SE-16).
+    if (holds && run.status === "CANCELLED") return { ...none, settle: true };
   }
   return none;
 }

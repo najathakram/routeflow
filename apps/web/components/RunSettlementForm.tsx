@@ -16,6 +16,7 @@ import { genericToastCopy } from "@/lib/generic-toast-copy";
 
 // An uncoded 400 here is a stop reopened since the page loaded, or a run that moved on: the screen
 // refreshes, so the sentence points at it.
+const STOPS_LEFT_COPY = "A stop was reopened. Finish it, then settle.";
 const REFUSAL_COPY = "The run changed while you were saving. Check its stops, then try again.";
 
 /**
@@ -40,9 +41,12 @@ const SUBMIT_LABEL: Record<RunSettlementMode, string> = {
   amend: "Save new count",
 };
 
-function parseCount(raw: string): number | null {
-  const n = Number(raw.replace(/[$,\s]/g, ""));
-  if (raw.trim() === "" || !Number.isFinite(n) || n < 0) return null;
+/** A typed count, or null when it is empty (a lone "$" is empty, not zero), not a number, or negative. */
+export function parseCount(raw: string): number | null {
+  const stripped = raw.replace(/[$,\s]/g, "");
+  if (stripped === "") return null;
+  const n = Number(stripped);
+  if (!Number.isFinite(n) || n < 0) return null;
   return roundMoney(n);
 }
 
@@ -133,6 +137,9 @@ export function RunSettlementForm({
         // reason and refresh the figure.
         setServerDemandsReason(true);
         setError("The expected amount changed. Add a reason for the difference and save again.");
+      } else if (errorCode(e) === API_ERROR_CODES.RUN_HAS_STOPS_LEFT) {
+        // A stop was reopened since this page loaded. One message, inline; the refetch below puts the footer back on the stop.
+        setError(STOPS_LEFT_COPY);
       } else {
         toast({
           title: "Couldn't save the settlement",

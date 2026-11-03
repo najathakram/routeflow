@@ -6,8 +6,8 @@
  * expected figure the settlement compares against is the one `getRunCashCollections` reads from real
  * `InvoicePayment` rows. Nothing about the figure is mocked.
  *
- * Rows that are "Observe" record what the server does today and pin it, so a later change shows up as a
- * red line instead of a silent difference (SE-6, SE-10).
+ * SA-1098 A-6 rows (SE-6, SE-7b, SE-8b, SE-10, SE-14, SE-15) pin the one-lock settlement writer; the two race rows
+ * (SE-7b, SE-14) repeat so a lock that is missing shows up as a red line, not a lucky pass.
  *
  * Collected only by `jest.db.config.js`; run via `npm run local:test:db`. SAFETY: throwaway
  * `qa-prs-<run>-<n>-<label>` tenants approved by `assertTestTenant`; `afterAll` deletes exactly the
@@ -312,6 +312,11 @@ describeDb("SA-1098 A-1 run settlement writer — real Postgres", () => {
   }
   type Seeded = Awaited<ReturnType<typeof seed>>;
 
+  /** Rounds for the race rows: enough that a missing lock shows (the old code failed every round). */
+  const RACE_ROUNDS = 6;
+  /** What separates the new note from the kept one (A-6: the new note leads, the whole old note follows). */
+  const EARLIER = "\nEarlier count:\n";
+
   const OPERATOR = { sub: "prs-operator", role: "OPERATOR", username: "operator" } as never;
   const inTenant = <T>(s: Seeded, fn: () => Promise<T>) => tenantCtx.run(s.tenantId, fn);
 
@@ -428,7 +433,7 @@ describeDb("SA-1098 A-1 run settlement writer — real Postgres", () => {
     expect(stranger.message).toBe("You can only settle your own route runs");
   });
 
-  it("SE-6 (observe): COMPLETED sent twice, the second write is allowed and moves nothing the office sees", async () => {
+  it("SE-6: COMPLETED sent twice, the second write is allowed and moves nothing the office sees (completedAt stays)", async () => {
     const s = await seed("se6", 2);
     await skip(s, 1);
     await complete(s, 0, { amount: 60, method: "CASH" });
@@ -441,7 +446,7 @@ describeDb("SA-1098 A-1 run settlement writer — real Postgres", () => {
     const after = await readRun(s);
     const releasedAfter = await readOrder(s, 1);
 
-    // Recorded on this build: what the second write does to completedAt, the status and the release.
+    // A-6: a repeat of COMPLETED is not a second completion, so the stamp stays on the first one.
     expect({
       secondRefused: second !== null,
       status: after.status,
@@ -450,7 +455,7 @@ describeDb("SA-1098 A-1 run settlement writer — real Postgres", () => {
     }).toEqual({
       secondRefused: false,
       status: "COMPLETED",
-      completedAtMoved: true,
+      completedAtMoved: false,
       releaseMoved: false,
     });
   });
@@ -469,10 +474,11 @@ describeDb("SA-1098 A-1 run settlement writer — real Postgres", () => {
     const amended = await readRun(a);
     expect(Number(amended.settlementVariance)).toBe(-5);
     expect(amended.settlementNote).toContain("Reason: Recount");
-    // Amend REPLACES the note: the old count is kept nowhere, so the Amend sheet says "replaces" (review-a on #4188).
-    // If the SA rules the old count is kept, this assertion flips and the sheet's copy changes with it.
-    expect(amended.settlementNote).toContain("Counted: $55.00");
-    expect(amended.settlementNote).not.toContain("Counted: $60.00");
+    // SE-8b (A-6): Amend keeps the old count. The new note leads, and ends with "Earlier count:" and the whole old note.
+    const [head, earlier] = (amended.settlementNote as string).split(EARLIER);
+    expect(head).toContain("Counted: $55.00");
+    expect(head).not.toContain("Counted: $60.00");
+    expect(earlier).toBe(firstNote);
 
     // Cancelled with money collected: settles, and Finish is refused by the server.
     const b = await seed("se8b", 2);
@@ -501,24 +507,86 @@ describeDb("SA-1098 A-1 run settlement writer — real Postgres", () => {
     expect((await readRun(s)).settlementNote).toContain("Expected (cash + checks): $85.00");
   });
 
-  it("SE-10 (observe): a settlement sent with a stop left, then cash on that stop, finishes nothing and leaves the cash uncounted", async () => {
+  it("SE-10: a settlement sent with a stop left is refused, nothing is written; the cash on that stop then holds the run in progress", async () => {
     const s = await seed("se10", 2);
     await complete(s, 0, { amount: 60, method: "CASH" });
-    await settle(s, 60, s.drv.jwt); // the server accepts this with stop 2 still PENDING
-    await complete(s, 1, { amount: 60, method: "CASH" }); // cash taken after the count
 
-    const run = await readRun(s);
+    const res = await refusal(settle(s, 60, s.drv.jwt)); // stop 2 is still PENDING
+    expect(res.code).toBe("RUN_HAS_STOPS_LEFT");
+    expect(res.message).toBeTruthy();
+    // An operator gets the same refusal: the rule is about the stops, not the role.
+    expect((await refusal(settle(s, 60, OPERATOR))).code).toBe("RUN_HAS_STOPS_LEFT");
+    let run = await readRun(s);
+    expect(run.settlementNote).toBeNull();
+    expect(run.settlementVariance).toBeNull();
+
+    await complete(s, 1, { amount: 60, method: "CASH" }); // cash taken on the last stop
+    run = await readRun(s);
+    expect(run.status).toBe("IN_PROGRESS");
     const mine: any = await inTenant(s, () => routes.findMyRuns(s.drv.jwt));
-    const figure = mine.data?.[0]?.collectedPayments;
-    // Recorded on this build: the run reads as settled while the server's figure is now 120 against the
-    // 60 counted. No screen reaches this (the web offers Settle only once no stop is left); SA gets the
-    // finding, not a fix in this PR.
-    expect({
-      settledNote: run.settlementNote !== null,
-      status: run.status,
-      figure: figure ? figure.cashTotal : null,
-      counted: Number(run.settlementVariance),
-    }).toEqual({ settledNote: true, status: "COMPLETED", figure: null, counted: 0 });
+    expect(mine.data[0].collectedPayments.cashTotal).toBe(120);
+    // The count now covers the whole run.
+    const settled: any = await settle(s, 120, s.drv.jwt);
+    expect(settled).toMatchObject({ expectedCash: 120, variance: 0 });
+  });
+
+  it("SE-14: Settle and a reopen of the last stop together never leave a note with a stop PENDING (repeated)", async () => {
+    const outcomes: string[] = [];
+    let violations = 0;
+    for (let n = 0; n < RACE_ROUNDS; n++) {
+      const s = await seed(`se14${n}`, 2);
+      await complete(s, 0, { amount: 60, method: "CASH" });
+      await complete(s, 1); // on account, no money
+      const results = await Promise.allSettled([
+        settle(s, 60, s.drv.jwt),
+        inTenant(s, () => routes.reopenStop(s.run.id, s.stops[1].stop.id, s.drv.jwt)),
+      ]);
+      const run = await readRun(s);
+      const stop = await prisma.routeRunStop.findUniqueOrThrow({
+        where: { id: s.stops[1].stop.id },
+      });
+      const stopLeft = !["COMPLETED", "SKIPPED"].includes(stop.status);
+      outcomes.push(
+        `${results[0].status}/${results[1].status}:${run.settlementNote !== null ? "note" : "none"}/${stop.status}`,
+      );
+      // The one thing that must never hold: a settled run with a stop left.
+      if (run.settlementNote !== null && stopLeft) violations++;
+    }
+    // eslint-disable-next-line no-console
+    console.log(`SE-14 violations ${violations}/${RACE_ROUNDS}:`, outcomes.join(" | "));
+    expect(violations).toBe(0);
+  }, 180_000);
+
+  it("SE-7b: the same driver settles $60 and $55 together: one 200, one RUN_ALREADY_SETTLED, the note holds the winner's count (repeated)", async () => {
+    for (let n = 0; n < RACE_ROUNDS; n++) {
+      const s = await seed(`se7b${n}`, 1);
+      await complete(s, 0, { amount: 60, method: "CASH" });
+      const results = await Promise.allSettled([
+        settle(s, 60, s.drv.jwt),
+        settle(s, 55, s.drv.jwt, "Recount"),
+      ]);
+      const won = results.filter((r) => r.status === "fulfilled");
+      const lost = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
+      expect({ won: won.length, lost: lost.length }).toEqual({ won: 1, lost: 1 });
+      expect(lost[0].reason?.getResponse?.().code).toBe("RUN_ALREADY_SETTLED");
+      const winnerCount = results[0].status === "fulfilled" ? "$60.00" : "$55.00";
+      const run = await readRun(s);
+      expect(run.settlementNote).toContain(`Counted: ${winnerCount}`);
+      expect(run.settlementNote).not.toContain("Earlier count:");
+    }
+  }, 180_000);
+
+  it("SE-15: the driver settles, then the office settles from a stale page: both counts are in the note", async () => {
+    const s = await seed("se15", 1);
+    await complete(s, 0, { amount: 60, method: "CASH" });
+    await settle(s, 60, s.drv.jwt);
+    await settle(s, 55, OPERATOR, "Office recount");
+    const note = (await readRun(s)).settlementNote as string;
+    const [head, earlier] = note.split(EARLIER);
+    expect(head).toContain("Counted: $55.00");
+    expect(head).toContain("Reason: Office recount");
+    expect(earlier).toContain("Counted: $60.00");
+    expect(earlier).toContain("recorded by");
   });
 
   it("SE-11: reopening an unpaid stop after settling drops the settlement, so Settle returns once the stop is done again", async () => {

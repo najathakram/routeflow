@@ -95,6 +95,37 @@ describe("RunSettlementForm: one message per refusal", () => {
   });
 });
 
+describe("RunSettlementForm: SE-17, a stop was reopened under the form", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    post.mockResolvedValue({ data: {} });
+    patch.mockResolvedValue({ data: {} });
+  });
+
+  it("RUN_HAS_STOPS_LEFT: one message, no toast of either kind, the run is refetched, nothing is finished", async () => {
+    post.mockRejectedValue(
+      refusal(400, { code: "RUN_HAS_STOPS_LEFT", message: "This run still has a stop left." }),
+    );
+    const queryClient = queryClientWithGlobalErrorToast(mockGlobalToast);
+    const invalidate = jest.spyOn(queryClient, "invalidateQueries");
+    const onDone = jest.fn();
+    renderWithProviders(<RunSettlementForm run={RUN} mode="driver" onDone={onDone} />, {
+      queryClient,
+    });
+    await userEvent.type(screen.getByLabelText(/cash and checks counted/i), "60");
+    await userEvent.click(screen.getByRole("button", { name: /settle and finish route/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "A stop was reopened. Finish it, then settle.",
+    );
+    expect(mockToast).not.toHaveBeenCalled();
+    expect(mockGlobalToast).not.toHaveBeenCalled();
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["route-runs"] });
+    expect(patch).not.toHaveBeenCalled();
+    expect(onDone).not.toHaveBeenCalled();
+  });
+});
+
 describe("run hooks: localErrorToast keeps the app-wide toast off, the default leaves it on", () => {
   function runHook<T>(hook: () => T) {
     const queryClient = queryClientWithGlobalErrorToast(mockGlobalToast);
