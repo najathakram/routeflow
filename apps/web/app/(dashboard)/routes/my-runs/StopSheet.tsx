@@ -179,6 +179,8 @@ export interface StopSheetProps {
   /** The run's status. Deliveries are recorded only while it is IN_PROGRESS (the server refuses them otherwise). */
   runStatus?: RouteRun["status"];
   onClose: () => void;
+  /** A completion landed (not a skip or an Undo). The page uses it to keep a run that finished itself on screen for Undo. */
+  onCompleted?: (done: { runId: string; stopId: string }) => void;
 }
 
 /**
@@ -187,7 +189,13 @@ export interface StopSheetProps {
  * through the shared `buildStopDeliveries`; a short delivery is a changed quantity. It records what was delivered and never takes
  * money (no `payment` in the request).
  */
-export function StopSheet({ stop, runId, runStatus = "IN_PROGRESS", onClose }: StopSheetProps) {
+export function StopSheet({
+  stop,
+  runId,
+  runStatus = "IN_PROGRESS",
+  onClose,
+  onCompleted,
+}: StopSheetProps) {
   const updateStatus = useUpdateStopStatus();
   const complete = useCompleteStop();
   const reopen = useReopenStop();
@@ -280,6 +288,7 @@ export function StopSheet({ stop, runId, runStatus = "IN_PROGRESS", onClose }: S
       {
         onSuccess: () => {
           inFlight.current = false;
+          onCompleted?.({ runId, stopId: stop.id });
           onClose();
         },
         onError: fail,

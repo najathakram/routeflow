@@ -232,6 +232,18 @@ export function finishRouteBlocker(run: RouteRun, stops: RouteRunStop[]): string
   return "";
 }
 
+/**
+ * SA-1098 A-2 (D-32): the run as the driver's page keeps it once their completion has finished it. The server ends the run when
+ * its last stop lands and the run leaves `my-runs`; this copy stays in memory so the stop's Undo is still one step away.
+ */
+export function finishedRunView(run: RouteRun, stopId: string): RouteRun {
+  return {
+    ...run,
+    status: "COMPLETED",
+    stops: (run.stops ?? []).map((s) => (s.id === stopId ? { ...s, status: "COMPLETED" } : s)),
+  };
+}
+
 function runActionError(err: unknown): string {
   const data = (err as { response?: { data?: { message?: unknown } } } | null)?.response?.data;
   return typeof data?.message === "string" && data.message
@@ -300,8 +312,11 @@ function TodayRunHero({
   run,
   onOpenStop,
   canAddOrder,
+  finished,
 }: {
   run: RouteRun;
+  /** The run finished itself under this driver and is held here for Undo (D-32). */
+  finished?: boolean;
   onOpenStop?: (stop: RouteRunStop) => void;
   /** B966: false for a pure DRIVER, who cannot reach /orders (RouteGuard bounces them). */
   canAddOrder: boolean;
@@ -342,6 +357,9 @@ function TodayRunHero({
         />
       </div>
 
+      {finished && (
+        <p className="px-5 pb-4 text-sm text-navy/70">Route finished. Tap a stop to undo it.</p>
+      )}
       <RunLifecycle run={run} stops={stops} />
 
       {/* Primary action row — big touch targets, scanner shortcut front and center */}
@@ -389,6 +407,16 @@ export default function MyRunsPage() {
     setTitle("My Routes");
   }, [setTitle]);
 
+  // D-32: a completion that finishes the run takes it out of `my-runs`. The page keeps that run (marked finished, in memory only)
+  // until it is back in the list (Undo) or the driver leaves the page. Finish route and a reload do not hold it.
+  const [candidate, setCandidate] = React.useState<{
+    runId: string;
+    stopId: string;
+    at: number;
+  } | null>(null);
+  const [held, setHeld] = React.useState<RouteRun | null>(null);
+  const seen = React.useRef(new Map<string, RouteRun>());
+
   // PHASE 1a: a pure DRIVER-role account gets this view directly (its own
   // GET /route-runs/my-runs, server-scoped to the authenticated driver) —
   // the pre-existing canActAsDriver path (a dual-role operator toggled into
@@ -412,7 +440,21 @@ export default function MyRunsPage() {
   const driverRunsOpen = baseIsDriver && (routesAccess || deliveryAccess || addonsFailed);
   const driverQuery = useMyRuns({ refetchInterval: 60_000, enabled: driverRunsOpen });
   const activeQuery = baseIsDriver ? driverQuery : operatorQuery;
-  const { data, isError } = activeQuery;
+  const { data, isError, dataUpdatedAt } = activeQuery;
+
+  React.useEffect(() => {
+    const list = data?.data ?? [];
+    // Only a list read AFTER the completion can say the run left it because of that completion.
+    if (candidate && dataUpdatedAt >= candidate.at) {
+      const before = seen.current.get(candidate.runId);
+      if (before && !list.some((r) => r.id === candidate.runId)) {
+        setHeld(finishedRunView(before, candidate.stopId));
+      }
+      setCandidate(null);
+    }
+    if (held && list.some((r) => r.id === held.id)) setHeld(null);
+    for (const r of list) seen.current.set(r.id, r);
+  }, [data, dataUpdatedAt, candidate, held]);
   const isLoading = activeQuery.isLoading || (baseIsDriver && !driverRunsOpen);
 
   // A pure driver has no "operator view" to toggle back to — always field layout.
@@ -441,13 +483,16 @@ export default function MyRunsPage() {
   // Today's active/next run gets promoted to the drive-mode hero card — the rest
   // of today's runs (if more than one) still render in the compact list below it.
   const heroRun =
+    held ??
     todayRuns.find((r) => r.status === "IN_PROGRESS") ??
     todayRuns.find((r) => r.status === "SCHEDULED") ??
     todayRuns[0];
   const restOfToday = todayRuns.filter((r) => r.id !== heroRun?.id);
   // The open stop is read from the LATEST run data by id, so the 60 s refetch updates the sheet (what is left, its status)
   // without closing it; the tapped snapshot is the fallback if the run left the list.
-  const openRun = openStop ? (data?.data ?? []).find((r) => r.id === openStop.runId) : undefined;
+  const openRun = openStop
+    ? [...(held ? [held] : []), ...(data?.data ?? [])].find((r) => r.id === openStop.runId)
+    : undefined;
   const liveStop = openStop
     ? (openRun?.stops?.find((s) => s.id === openStop.stop.id) ?? openStop.stop)
     : null;
@@ -493,6 +538,7 @@ export default function MyRunsPage() {
         ) : heroRun ? (
           <TodayRunHero
             run={heroRun}
+            finished={heroRun === held}
             onOpenStop={(stop) => setOpenStop({ stop, runId: heroRun.id })}
             canAddOrder={!baseIsDriver}
           />
@@ -529,6 +575,7 @@ export default function MyRunsPage() {
           runId={openStop?.runId ?? null}
           runStatus={openRun?.status}
           onClose={() => setOpenStop(null)}
+          onCompleted={({ runId, stopId }) => setCandidate({ runId, stopId, at: Date.now() })}
         />
       </div>
     );

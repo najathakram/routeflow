@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, waitFor, within } from "@/test-utils/render";
 import { StopSheet } from "./StopSheet";
 import type { RouteRunStop, RunStopLine } from "@/lib/api/routes";
+import { STOP_REOPENED_COPY } from "@/lib/driver-stop-copy";
 
 const post = jest.fn();
 const patch = jest.fn().mockResolvedValue({ data: {} });
@@ -259,7 +260,7 @@ describe("StopSheet: Delivered and Refused (SA-1098 PR-2)", () => {
     await waitFor(() => expect(window.sessionStorage.getItem("rf-stop-key:stop-1")).toBeNull());
   });
 
-  it("D-22: a refresh that shows the stop done releases the kept key", async () => {
+  it("D-29: a refresh that shows the stop done releases the kept key", async () => {
     post.mockRejectedValueOnce({ message: "Network Error" });
     const user = userEvent.setup();
     const view = renderWithProviders(<StopSheet stop={STOP()} runId="run-1" onClose={jest.fn()} />);
@@ -274,7 +275,7 @@ describe("StopSheet: Delivered and Refused (SA-1098 PR-2)", () => {
     await waitFor(() => expect(window.sessionStorage.getItem("rf-stop-key:stop-1")).toBeNull());
   });
 
-  it("D-22b: Undo releases the key, so Delivered on the reopened stop is a NEW request (never answered 'completed' by the old key)", async () => {
+  it("D-28: Undo releases the key, so Delivered on the reopened stop is a NEW request (never answered 'completed' by the old key)", async () => {
     window.sessionStorage.setItem("rf-stop-key:stop-1", "stop-stop-1-old");
     const user = userEvent.setup();
     const view = renderWithProviders(
@@ -293,6 +294,89 @@ describe("StopSheet: Delivered and Refused (SA-1098 PR-2)", () => {
     await user.click(screen.getByRole("button", { name: "Delivered" }));
     await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
     expect(headers(1)["Idempotency-Key"]).not.toBe("stop-stop-1-old");
+  });
+
+  it("D-30: a refresh that shows the stop still open keeps the key: the next attempt is the SAME request", async () => {
+    post.mockRejectedValueOnce({ message: "Network Error" }).mockResolvedValue({ data: {} });
+    const user = userEvent.setup();
+    const view = renderWithProviders(<StopSheet stop={STOP()} runId="run-1" onClose={jest.fn()} />);
+
+    await user.click(screen.getByRole("button", { name: "Delivered" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+    const kept = headers(0)["Idempotency-Key"];
+
+    view.rerender(
+      <StopSheet stop={STOP({ status: "IN_PROGRESS" })} runId="run-1" onClose={jest.fn()} />,
+    );
+    expect(window.sessionStorage.getItem("rf-stop-key:stop-1")).toBe(kept);
+    await user.click(screen.getByRole("button", { name: "Delivered" }));
+
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    expect(headers(1)["Idempotency-Key"]).toBe(kept);
+  });
+
+  it("D-28b: an Undo the server refused leaves the stop done, so the kept key stays", async () => {
+    post.mockRejectedValueOnce({
+      response: { status: 409, data: { message: "Money was confirmed." } },
+    });
+    const user = userEvent.setup();
+    renderWithProviders(
+      <StopSheet stop={STOP({ status: "COMPLETED" })} runId="run-1" onClose={jest.fn()} />,
+    );
+    window.sessionStorage.setItem("rf-stop-key:stop-1", "stop-stop-1-old");
+
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+
+    expect(window.sessionStorage.getItem("rf-stop-key:stop-1")).toBe("stop-stop-1-old");
+  });
+
+  it("D-31: 409 STOP_REOPENED reads as the reopened line, keeps what was typed, and the next tap is a NEW request", async () => {
+    post
+      .mockRejectedValueOnce({
+        response: { status: 409, data: { code: "STOP_REOPENED", message: "raw server words" } },
+      })
+      .mockResolvedValue({ data: {} });
+    const user = userEvent.setup();
+    renderWithProviders(<StopSheet stop={STOP()} runId="run-1" onClose={jest.fn()} />);
+
+    const qty = screen.getByRole("spinbutton", { name: "Delivered Napkins" });
+    await user.clear(qty);
+    await user.type(qty, "7");
+    await user.click(screen.getByRole("button", { name: "Delivered" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(STOP_REOPENED_COPY);
+    expect(alert).not.toHaveTextContent("raw server words");
+    expect(screen.getByRole("spinbutton", { name: "Delivered Napkins" })).toHaveValue(7);
+    expect(window.sessionStorage.getItem("rf-stop-key:stop-1")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Delivered" }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    expect(headers(1)["Idempotency-Key"]).not.toBe(headers(0)["Idempotency-Key"]);
+    expect(
+      post.mock.calls[1][1].deliveries.map(
+        (d: { quantityDelivered: number }) => d.quantityDelivered,
+      ),
+    ).toEqual([7, 4, 6]);
+  });
+
+  it("D-16 pin (web): a refusal never sends a quantity above 0 on a REFUSED line", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<StopSheet stop={STOP()} runId="run-1" onClose={jest.fn()} />);
+    const qty = screen.getByRole("spinbutton", { name: "Delivered Napkins" });
+    await user.clear(qty);
+    await user.type(qty, "5"); // typed before the driver changes their mind and refuses the stop
+
+    await user.click(screen.getByRole("button", { name: "Refused" }));
+    await user.type(screen.getByLabelText("Why was it refused?"), "Closed");
+    await user.click(screen.getByRole("button", { name: "Confirm refusal" }));
+
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    for (const d of body().deliveries) {
+      expect(d.type).toBe("REFUSED");
+      expect(d.quantityDelivered).toBe(0);
+    }
   });
 
   it("D-10b: a refusal the server answered releases the key (the next attempt is a new request)", async () => {

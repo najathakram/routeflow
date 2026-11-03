@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "fs";
 import { resolve } from "path";
-import { stopCompletionRequestHash } from "./stop-completion-key";
+import { replayStopKey, stopCompletionRequestHash } from "./stop-completion-key";
 
 const line = (over: Record<string, unknown> = {}) => ({
   orderItemId: "a",
@@ -71,5 +71,74 @@ describe("I-5 Pin. One model: RoutesService keeps no key code of its own (SA-953
     expect(src).not.toMatch(/route-idempotency|check\w*IdempotencyKey|save\w*IdempotencyKey/);
     expect(src).not.toMatch(/createHash\(|"IdempotencyKey"/);
     expect(src).toMatch(/from "\.\/stop-completion-key"/);
+  });
+});
+
+describe("replayStopKey reads the stop after the row (SA-1098 A-2)", () => {
+  const stopKey = { key: "k", tenantId: "t", scope: "s", requestHash: "h" } as never;
+  const prismaFor = (queryRaw: unknown[], stop: { status: string } | null | Error) => {
+    const findUnique = jest.fn(() =>
+      stop instanceof Error ? Promise.reject(stop) : Promise.resolve(stop),
+    );
+    const tx = {
+      $executeRaw: jest.fn().mockResolvedValue(0),
+      $queryRaw: jest.fn().mockResolvedValue(queryRaw),
+      routeRunStop: { findUnique },
+    };
+    return {
+      findUnique,
+      prisma: { tenantTransaction: (fn: (t: typeof tx) => Promise<unknown>) => fn(tx) } as never,
+    };
+  };
+  const row = (hash: string) => [
+    { response: JSON.stringify({ requestHash: hash, response: { id: "stop-1" } }) },
+  ];
+
+  it("no stored row: nothing is read, the completion goes on", async () => {
+    const { prisma, findUnique } = prismaFor([], { status: "PENDING" });
+    await expect(replayStopKey(prisma, stopKey, "stop-1")).resolves.toBeNull();
+    expect(findUnique).not.toHaveBeenCalled();
+  });
+
+  it.each(["PENDING", "IN_PROGRESS", "SKIPPED"])(
+    "a row for a stop that is now %s: 409 STOP_REOPENED",
+    async (status) => {
+      const { prisma } = prismaFor(row("h"), { status });
+      await expect(replayStopKey(prisma, stopKey, "stop-1")).rejects.toMatchObject({
+        response: { code: "STOP_REOPENED" },
+      });
+    },
+  );
+
+  it("a row for a stop that is gone: 409 STOP_REOPENED too", async () => {
+    const { prisma } = prismaFor(row("h"), null);
+    await expect(replayStopKey(prisma, stopKey, "stop-1")).rejects.toMatchObject({
+      response: { code: "STOP_REOPENED" },
+    });
+  });
+
+  it("the status is checked before the hash: a changed request on a reopened stop is STOP_REOPENED", async () => {
+    const { prisma } = prismaFor(row("another-hash"), { status: "PENDING" });
+    await expect(replayStopKey(prisma, stopKey, "stop-1")).rejects.toMatchObject({
+      response: { code: "STOP_REOPENED" },
+    });
+  });
+
+  it("COMPLETED: the same request replays, a changed one is the existing conflict", async () => {
+    const same = prismaFor(row("h"), { status: "COMPLETED" });
+    await expect(replayStopKey(same.prisma, stopKey, "stop-1")).resolves.toEqual({ id: "stop-1" });
+    const changed = prismaFor(row("other"), { status: "COMPLETED" });
+    await expect(replayStopKey(changed.prisma, stopKey, "stop-1")).rejects.toMatchObject({
+      response: { code: "IDEMPOTENCY_KEY_CONFLICT" },
+    });
+  });
+
+  it("a failed status read is an error, never a replay (the client keeps its key)", async () => {
+    const { prisma } = prismaFor(row("h"), new Error("connection lost"));
+    await expect(replayStopKey(prisma, stopKey, "stop-1")).rejects.toThrow("connection lost");
+  });
+
+  it("the helper takes no status argument, so no caller can hand it a stale one", () => {
+    expect(replayStopKey.length).toBe(3);
   });
 });

@@ -4,6 +4,7 @@ import {
   STOP_KEY_CONFLICT_COPY,
   STOP_MOVED_COPY,
   STOP_REGULATED_COPY,
+  STOP_REOPENED_COPY,
   stopErrorCopy,
 } from "./driver-stop-copy";
 import { releaseStopKey, stopKey } from "./stop-completion-key";
@@ -40,6 +41,13 @@ describe("stopErrorCopy", () => {
       "409 STOP_ALREADY_COMPLETED refreshes",
       err(409, "STOP_ALREADY_COMPLETED"),
       STOP_MOVED_COPY,
+      true,
+      false,
+    ],
+    [
+      "D-31: 409 STOP_REOPENED reads as the reopened line and refreshes",
+      err(409, "STOP_REOPENED", "raw server words"),
+      STOP_REOPENED_COPY,
       true,
       false,
     ],

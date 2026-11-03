@@ -1,7 +1,7 @@
 /**
- * SA-1098 PR-2 server rows (D-4, D-6, D-13, D-16) for the web driver stop: what the SAME `complete-with-payment` request the web
- * screen sends (no `payment`, one explicit entry per line) does on real Postgres. No server change ships in PR-2; these rows record
- * what master does today. D-9 (the dropped-response replay) is PR-1's I-1/I-2, unchanged.
+ * SA-1098 PR-2 server rows for the web driver stop: what the SAME `complete-with-payment` request the web screen sends (no `payment`,
+ * one explicit entry per line) does on real Postgres (D-4, D-6, D-13, D-16 pin), and the A-2 kept-key rows D-22..D-27 on BOTH completion
+ * paths (a key kept across a reopen answers 409 STOP_REOPENED and writes nothing). D-9 (the dropped-response replay) is PR-1's I-1/I-2.
  *
  * SAFETY: throwaway `qa-sa1098-<run>-<n>-<label>` tenants approved by `assertTestTenant`; `afterAll` deletes exactly the tenants
  * this run created, best-effort. Collected only by `jest.db.config.js`.
@@ -422,7 +422,7 @@ describeDb("SA-1098 PR-2 driver stop on the web — real Postgres", () => {
     expect(Number(lines?.deliveredQty ?? 0)).toBe(10);
   });
 
-  it("D-16 (observe): REFUSED with a quantity of 5 sent directly", async () => {
+  it("D-16 (pin): a REFUSED line never bills, whichever answer the server gives", async () => {
     const s = await seedRun("d16", 2);
     const st = s.stops[0];
     const dto = {
@@ -439,9 +439,24 @@ describeDb("SA-1098 PR-2 driver stop on the web — real Postgres", () => {
     // eslint-disable-next-line no-console
     console.info("D-16 observed:", outcome, JSON.stringify(f));
     expect(["accepted", "refused 400"]).toContain(outcome);
+    if (outcome === "accepted") {
+      // line 1 (the refused one) delivered 0 and bills 0: the invoice is line 2 alone, 4 x $5
+      expect(f.delivered).toContain(4);
+      expect(f.delivered.filter((q) => q > 0)).toEqual([4]);
+      expect(f.invoiceTotal).toBe(20);
+    } else {
+      // a refusal writes nothing
+      expect(f).toEqual({
+        stop: "IN_PROGRESS",
+        mutations: 0,
+        payments: 0,
+        delivered: [0, 0],
+        invoiceTotal: 120,
+      });
+    }
   });
 
-  it("D-13 (observe): Undo on the last stop of a run that finished itself", async () => {
+  it("D-13: Undo on the last stop of a run that finished itself gives run IN_PROGRESS, stop PENDING", async () => {
     const s = await seedRun("d13", 1);
     const st = s.stops[0];
     await driverComplete(s, st, web(st, 10), "k-d13");
@@ -453,8 +468,128 @@ describeDb("SA-1098 PR-2 driver stop on the web — real Postgres", () => {
 
     const run = await prisma.routeRun.findUnique({ where: { id: s.runId } });
     const stop = await prisma.routeRunStop.findUnique({ where: { id: st.stopId } });
-    // eslint-disable-next-line no-console
-    console.info("D-13 observed: run", run?.status, "stop", stop?.status);
-    expect(stop?.status).not.toBe("COMPLETED");
+    expect(run?.status).toBe("IN_PROGRESS");
+    expect(stop?.status).toBe("PENDING");
+  });
+
+  /** SA-1098 A-2: a kept key after a reopen. Both completion paths share `replayStopKey`, so every row runs on both. */
+  describe.each(PATHS)("A-2 kept key, %s", (path) => {
+    const attempt = (p: Promise<unknown>) =>
+      p.then(
+        () => ({ ok: true as const, status: 200, code: undefined as string | undefined }),
+        (e: {
+          getStatus?: () => number;
+          status?: number;
+          getResponse?: () => { code?: string };
+          response?: { code?: string };
+        }) => ({
+          ok: false as const,
+          status: e.getStatus?.() ?? e.status ?? 0,
+          code: (e.getResponse?.() ?? e.response)?.code,
+        }),
+      );
+    const reopen = (s: Seed, st: Stop) =>
+      tenantCtx.run(s.tenantId, () => routesService.reopenStop(s.runId, st.stopId, operator));
+    const go = (s: Seed, st: Stop, dto: object, key: string) =>
+      attempt(complete(s, st, path, { ...dto, idempotencyKey: key }));
+
+    it("D-22: complete with K, reopen, K again with the same body: 409 STOP_REOPENED, stop PENDING, nothing written", async () => {
+      const s = await seedRun(`d22-${path.slice(8, 12)}`, 2);
+      const st = s.stops[0];
+      await go(s, st, body(st), "k-d22");
+      await reopen(s, st);
+      const reopened = await footprint(s, st);
+      expect(reopened.stop).toBe("PENDING");
+
+      const again = await go(s, st, body(st), "k-d22");
+
+      expect(again).toMatchObject({ ok: false, status: 409, code: "STOP_REOPENED" });
+      expect(await footprint(s, st)).toEqual(reopened);
+      expect(reopened.mutations).toBe(0);
+    });
+
+    it("D-23: the same, with a changed quantity: still 409 STOP_REOPENED (the status read comes before the hash check)", async () => {
+      const s = await seedRun(`d23-${path.slice(8, 12)}`, 2);
+      const st = s.stops[0];
+      await go(s, st, body(st), "k-d23");
+      await reopen(s, st);
+      const reopened = await footprint(s, st);
+
+      const again = await go(s, st, body(st, 7), "k-d23");
+
+      expect(again).toMatchObject({ ok: false, status: 409, code: "STOP_REOPENED" });
+      expect(await footprint(s, st)).toEqual(reopened);
+    });
+
+    it("D-24: after a reopen, a NEW key completes the stop correctly", async () => {
+      const s = await seedRun(`d24-${path.slice(8, 12)}`, 2);
+      const st = s.stops[0];
+      await go(s, st, body(st), "k-d24");
+      await reopen(s, st);
+
+      const again = await go(s, st, body(st, 7), "k-d24-new");
+
+      expect(again.ok).toBe(true);
+      const f = await footprint(s, st);
+      expect(f.stop).toBe("COMPLETED");
+      expect([...f.delivered].sort()).toEqual([4, 7]);
+      expect(f.mutations).toBe(2);
+    });
+
+    it.each([2, 1])(
+      "D-25: a lost response, K again while the stop is still COMPLETED, replays with one set of rows (%i stops)",
+      async (stopCount) => {
+        const s = await seedRun(`d25-${stopCount}-${path.slice(8, 12)}`, stopCount);
+        const st = s.stops[stopCount - 1]; // the last stop: the run finishes itself when it is the only open one
+        for (const earlier of s.stops.slice(0, -1)) {
+          // eslint-disable-next-line no-await-in-loop
+          await go(s, earlier, body(earlier), `k-d25-${earlier.stopId}`);
+        }
+        await go(s, st, body(st), "k-d25");
+        const done = await footprint(s, st);
+
+        const again = await go(s, st, body(st), "k-d25");
+
+        expect(again.ok).toBe(true);
+        expect(await footprint(s, st)).toEqual(done);
+        expect(done.mutations).toBe(2);
+      },
+    );
+
+    it("D-26: reopened, completed with K2, then K: replays with no new rows; a changed quantity gets the existing conflict", async () => {
+      const s = await seedRun(`d26-${path.slice(8, 12)}`, 2);
+      const st = s.stops[0];
+      await go(s, st, body(st), "k-d26");
+      await reopen(s, st);
+      await go(s, st, body(st), "k-d26-2");
+      const done = await footprint(s, st);
+
+      const replay = await go(s, st, body(st), "k-d26");
+      expect(replay.ok).toBe(true);
+      expect(await footprint(s, st)).toEqual(done);
+
+      const changed = await go(s, st, body(st, 7), "k-d26");
+      expect(changed).toMatchObject({ ok: false, status: 409, code: "IDEMPOTENCY_KEY_CONFLICT" });
+      expect(await footprint(s, st)).toEqual(done);
+    });
+
+    it("D-27: two at once with the same key, repeated: 200 or STOP_ALREADY_COMPLETED, never STOP_REOPENED", async () => {
+      const s = await seedRun(`d27-${path.slice(8, 12)}`, 4);
+      for (const st of s.stops) {
+        // eslint-disable-next-line no-await-in-loop
+        const [a, b] = await Promise.all([
+          go(s, st, body(st), `k-d27-${st.stopId}`),
+          go(s, st, body(st), `k-d27-${st.stopId}`),
+        ]);
+        for (const r of [a, b]) {
+          if (!r.ok) expect(r.code).toBe("STOP_ALREADY_COMPLETED");
+        }
+        expect([a, b].some((r) => r.ok)).toBe(true);
+        // eslint-disable-next-line no-await-in-loop
+        const f = await footprint(s, st);
+        expect(f.stop).toBe("COMPLETED");
+        expect(f.mutations).toBe(2);
+      }
+    });
   });
 });

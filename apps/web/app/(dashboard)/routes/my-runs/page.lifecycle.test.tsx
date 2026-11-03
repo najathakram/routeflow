@@ -2,14 +2,19 @@ import * as React from "react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import { RECURRING_ROUTES_ADDON } from "@routeflow/types";
-import MyRunsPage, { finishRouteBlocker } from "./page";
+import MyRunsPage, { finishRouteBlocker, finishedRunView } from "./page";
 import type { RouteRun, RouteRunStop } from "@/lib/api/routes";
 
 const get = jest.fn();
 const patch = jest.fn();
+const post = jest.fn();
 jest.mock("@/lib/api-client", () => ({
   ...jest.requireActual("@/lib/api-client"),
-  apiClient: { get: (...a: unknown[]) => get(...a), patch: (...a: unknown[]) => patch(...a) },
+  apiClient: {
+    get: (...a: unknown[]) => get(...a),
+    patch: (...a: unknown[]) => patch(...a),
+    post: (...a: unknown[]) => post(...a),
+  },
 }));
 jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
@@ -41,14 +46,16 @@ const run = (over: Partial<RouteRun> = {}): RouteRun => ({
   stops: [stop("s1", "PENDING")],
   ...over,
 });
-const serve = (r: RouteRun) =>
+/** The list the server answers: `current` is read at call time, so a test can take the run out of the list (it finished) or put it back (Undo). */
+const serveList = (current: () => RouteRun[]) =>
   get.mockImplementation((url: string) =>
     url === "/tenants/me/addons"
       ? Promise.resolve({ data: { addons: [RECURRING_ROUTES_ADDON] } })
       : Promise.resolve({
-          data: { data: [r], meta: { total: 1, page: 1, limit: 100, totalPages: 1 } },
+          data: { data: current(), meta: { total: 1, page: 1, limit: 100, totalPages: 1 } },
         }),
   );
+const serve = (r: RouteRun) => serveList(() => [r]);
 
 /** SA-1098 PR-2 rows D-3 (Start route), D-17 (Finish route after a skipped last stop), D-18 (a run with no stops), D-19 (money taken in the app). */
 describe("finishRouteBlocker (D-17, D-18, D-19)", () => {
@@ -160,5 +167,138 @@ describe("MyRunsPage: Start route / Finish route (SA-1098 PR-2)", () => {
       hook.indexOf("export function useReopenStop"),
     );
     expect(completeHook).not.toMatch(/\bpayment\s*[:,}]|driver_payments/);
+  });
+});
+
+/** SA-1098 A-2: the last stop's way back. The server ends the run when its last stop lands and `my-runs` stops listing it. */
+describe("MyRunsPage: a run that finished itself stays for Undo (A-2, D-32, D-33)", () => {
+  const openStop = (): RouteRunStop => ({
+    ...stop("s1", "IN_PROGRESS"),
+    orders: [
+      {
+        id: "o1",
+        orderNumber: "SO-1",
+        status: "OUT_FOR_DELIVERY",
+        lineItems: [
+          {
+            id: "l1",
+            productId: "p1",
+            product: { id: "p1", name: "Napkins" },
+            qty: 10,
+            remaining: 10,
+            status: "CONFIRMED",
+            subtotal: 20,
+            boxes: null,
+            pieces: null,
+            unitsPerBox: null,
+            unitLabel: null,
+          },
+        ],
+      },
+    ],
+  });
+  const live = () => run({ status: "IN_PROGRESS", stops: [openStop()] });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.spyOn(window, "confirm").mockReturnValue(true);
+    patch.mockResolvedValue({ data: {} });
+    post.mockResolvedValue({ data: {} });
+  });
+
+  it("finishedRunView marks the run COMPLETED and the stop COMPLETED, nothing else", () => {
+    const view = finishedRunView(live(), "s1");
+    expect(view.status).toBe("COMPLETED");
+    expect(view.stops?.[0].status).toBe("COMPLETED");
+    expect(view.stops?.[0].orders).toEqual(openStop().orders);
+  });
+
+  it("D-32: the last stop's completion keeps the run on the page, finished; Undo reopens it and the run returns to the list", async () => {
+    let listed = true;
+    serveList(() => (listed ? [live()] : []));
+    const user = userEvent.setup();
+    renderWithProviders(<MyRunsPage />);
+
+    await user.click(await screen.findByRole("button", { name: /Shop s1/ }));
+    // the server finishes the run when this lands, and the list stops carrying it
+    post.mockImplementationOnce(() => {
+      listed = false;
+      return Promise.resolve({ data: {} });
+    });
+    await user.click(await screen.findByRole("button", { name: "Delivered" }));
+
+    expect(await screen.findByText("Route finished. Tap a stop to undo it.")).toBeInTheDocument();
+    expect(screen.getByText("North loop")).toBeInTheDocument();
+    expect(screen.queryByText("No runs scheduled for you today.")).not.toBeInTheDocument();
+
+    // Undo from the held run: the same reopen, then the run is back in the list and the hold ends
+    await user.click(await screen.findByRole("button", { name: /Shop s1/ }));
+    post.mockImplementationOnce(() => {
+      listed = true;
+      return Promise.resolve({ data: {} });
+    });
+    await user.click(await screen.findByRole("button", { name: "Undo" }));
+
+    await waitFor(() => expect(post).toHaveBeenLastCalledWith("/route-runs/run-1/stops/s1/reopen"));
+    await waitFor(() =>
+      expect(screen.queryByText("Route finished. Tap a stop to undo it.")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByText("North loop")).toBeInTheDocument();
+  });
+
+  it("a completion that leaves the run in the list holds nothing", async () => {
+    serveList(() => [
+      run({
+        status: "IN_PROGRESS",
+        stops: [openStop(), { ...stop("s2", "PENDING"), stopNumber: 2 }],
+      }),
+    ]);
+    const user = userEvent.setup();
+    renderWithProviders(<MyRunsPage />);
+
+    await user.click(await screen.findByRole("button", { name: /Shop s1/ }));
+    await user.click(await screen.findByRole("button", { name: "Delivered" }));
+
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(get.mock.calls.length).toBeGreaterThan(2));
+    expect(screen.queryByText("Route finished. Tap a stop to undo it.")).not.toBeInTheDocument();
+  });
+
+  it("D-33: Finish route does not hold the run", async () => {
+    let listed = true;
+    serveList(() =>
+      listed ? [run({ status: "IN_PROGRESS", stops: [stop("s1", "COMPLETED")] })] : [],
+    );
+    patch.mockImplementationOnce(() => {
+      listed = false;
+      return Promise.resolve({ data: {} });
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<MyRunsPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Finish route" }));
+
+    expect(await screen.findByText("No runs scheduled for you today.")).toBeInTheDocument();
+    expect(screen.queryByText("Route finished. Tap a stop to undo it.")).not.toBeInTheDocument();
+  });
+
+  it("D-33b: a reload after a held run shows no run (the hold is in memory only)", async () => {
+    let listed = true;
+    serveList(() => (listed ? [live()] : []));
+    const user = userEvent.setup();
+    const first = renderWithProviders(<MyRunsPage />);
+    await user.click(await screen.findByRole("button", { name: /Shop s1/ }));
+    post.mockImplementationOnce(() => {
+      listed = false;
+      return Promise.resolve({ data: {} });
+    });
+    await user.click(await screen.findByRole("button", { name: "Delivered" }));
+    await screen.findByText("Route finished. Tap a stop to undo it.");
+
+    first.unmount();
+    renderWithProviders(<MyRunsPage />);
+
+    expect(await screen.findByText("No runs scheduled for you today.")).toBeInTheDocument();
+    expect(screen.queryByText("Route finished. Tap a stop to undo it.")).not.toBeInTheDocument();
   });
 });

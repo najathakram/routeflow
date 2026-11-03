@@ -18,6 +18,7 @@ export const STOP_KEY_CONFLICT_COPY =
 export const STOP_REGULATED_COPY = "This stop needs a signature and an ID check. Call your office.";
 export const STOP_GENERIC_COPY = "That did not go through. Check your connection and try again.";
 export const STOP_MOVED_COPY = "This stop changed. The list is up to date now.";
+export const STOP_REOPENED_COPY = "This stop was reopened. Check it and record it again.";
 export const STOP_BUSY_COPY = "The office is updating this order. Try again in a moment.";
 
 type Shape = { response?: { status?: number; data?: { code?: unknown; message?: unknown } } };
@@ -41,6 +42,10 @@ export function stopErrorCopy(err: unknown): StopErrorCopy {
   }
   if (status === 409 && code === API_ERROR_CODES.MERGE_IN_PROGRESS) {
     return { message: STOP_BUSY_COPY, refresh: false, retry: true };
+  }
+  if (status === 409 && code === API_ERROR_CODES.STOP_REOPENED) {
+    // A kept key met a stop someone reopened: the server wrote nothing, the key is released, and the next tap is a new request.
+    return { message: STOP_REOPENED_COPY, refresh: true, retry: false };
   }
   if (status === 409 || status === 403 || status === 404) {
     // A lost race (STOP_ALREADY_COMPLETED or a 409 with no code), a run that is not in progress or not this driver's.
