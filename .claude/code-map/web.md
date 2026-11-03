@@ -79,3 +79,4 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/landing-2026-11-02-ad.md](web/landing-2026-11-02-ad.md) | Train ad (4b2516c9f2..9e782a5dfc): product insights page, cleared tier blank in Quick Edit, site wording, refusal copy |
 | [web/landing-2026-11-03-ae.md](web/landing-2026-11-03-ae.md) | Train ae + #4143 (9e782a5dfc..6e9dae10eb): site audit fixes, `/` always home, Open dashboard header script; web only |
 | [web/landing-2026-11-03-af.md](web/landing-2026-11-03-af.md) | Train af (6e9dae10eb..d6d5c56cb1): no old look left (site frame, auth card, Company, Contact, 308 redirects) |
+| [web/landing-2026-11-03-aj.md](web/landing-2026-11-03-aj.md) | Train aj (d6d5c56cb1..9dfd480c30): home anchor landing, F14 tenant-day dates, product finder at /insights (SA-1087 PR-2) |
