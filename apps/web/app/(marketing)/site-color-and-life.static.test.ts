@@ -146,10 +146,10 @@ describe("the colour is decoration, not a new claim", () => {
     expect(css).toMatch(/#use-cases .kick{--k-bg:#[0-9a-f]{6};--k-ink:#[0-9a-f]{6};--k-dot:/);
   });
 
-  it("all fourteen use-case cards carry their piece colour", () => {
+  it("all twenty-two use-case cards carry their piece colour", () => {
     const cards =
       home.match(/<li class="inc-i" style="--pc:#[0-9a-f]{6};--pi:#[0-9a-f]{3,6}"/gi) ?? [];
-    expect(cards).toHaveLength(14);
+    expect(cards).toHaveLength(22);
   });
 
   it("the FAQ delivery van is hidden from assistive tech and holds only a question mark glyph", () => {
