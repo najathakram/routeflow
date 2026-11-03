@@ -941,3 +941,139 @@ test.describe("T19 — ready-made pages are served, linked and clean", () => {
     }
   });
 });
+
+// T20 — owner report "when I tap Use cases it goes to the top of the page". Arriving on the home page
+// with a hash used to wait for the deferred scripts (about 220 KB), so on a slow phone the person sat
+// at the top for seconds. The page now moves to the target as soon as it can be laid out, and keeps it
+// there while the layout settles. Measured in the page, under a slow phone's CPU and network.
+test.describe("T20 — a home anchor is reached as soon as the page paints", () => {
+  const SLOW = { cpu: 6, latencyMs: 300, bytesPerSecond: 90_000 };
+  const HEADER = 68;
+
+  const views = [
+    { name: "phone", use: iPhone13, menu: true },
+    {
+      name: "desktop",
+      use: { ...desktopChrome, viewport: { width: 1440, height: 900 } },
+      menu: false,
+    },
+  ] as const;
+
+  for (const view of views) {
+    // Use cases and For stores are in the header; Founder and Questions have no header link, so they
+    // are reached the way a shared link reaches them.
+    for (const hash of ["use-cases", "stores", "founder", "faq"]) {
+      const viaHeader = hash === "use-cases" || hash === "stores";
+      test(`T20 — ${view.name}: ${viaHeader ? "/pricing to " : ""}/#${hash} lands before the scripts finish and stays put`, async ({
+        browser,
+      }) => {
+        test.setTimeout(150_000);
+        const context = await browser.newContext(view.use);
+        const page = await context.newPage();
+        await page.addInitScript(() => {
+          const m: Record<string, number> = {};
+          (window as unknown as { __m: typeof m }).__m = m;
+          addEventListener(
+            "scroll",
+            () => {
+              if (scrollY > 100 && !m.firstScroll) m.firstScroll = Math.round(performance.now());
+            },
+            true,
+          );
+          document.addEventListener("DOMContentLoaded", () => {
+            m.dcl = Math.round(performance.now());
+          });
+        });
+        const cdp = await context.newCDPSession(page);
+        await cdp.send("Emulation.setCPUThrottlingRate", { rate: SLOW.cpu });
+        await cdp.send("Network.enable");
+        await cdp.send("Network.emulateNetworkConditions", {
+          offline: false,
+          latency: SLOW.latencyMs,
+          downloadThroughput: SLOW.bytesPerSecond,
+          uploadThroughput: SLOW.bytesPerSecond,
+        });
+
+        const href = `/#${hash}`;
+        if (viaHeader) {
+          await page.goto("/pricing", { waitUntil: "commit" });
+          await page.waitForSelector(".menu-btn, header a", { timeout: 60_000 });
+          if (view.menu) {
+            await page.locator(".menu-btn").click();
+            await page.locator(`#mobile-menu a[href="${href}"]`).click();
+          } else {
+            await page.locator(`header a[href="${href}"]`).click();
+          }
+        } else {
+          await page.goto(href, { waitUntil: "commit" });
+        }
+        await page.waitForURL(`**/#${hash}`, { waitUntil: "commit", timeout: 60_000 });
+
+        // The page lands on the target before DOMContentLoaded (that is when the scripts have run):
+        // the person is never left looking at the top while the rest loads.
+        await page.waitForFunction(
+          () => !!(window as unknown as { __m: { dcl?: number } }).__m.dcl,
+          null,
+          {
+            timeout: 90_000,
+          },
+        );
+        const m = await page.evaluate(
+          () => (window as unknown as { __m: { firstScroll?: number; dcl: number } }).__m,
+        );
+        expect(
+          m.firstScroll,
+          `first scroll (ms) before DOMContentLoaded (${m.dcl} ms)`,
+        ).toBeDefined();
+        expect(m.firstScroll!).toBeLessThan(m.dcl);
+
+        // And it stays: once the layout has settled the target sits just under the header.
+        await page.waitForLoadState("load", { timeout: 90_000 });
+        await expect
+          .poll(
+            async () =>
+              page.evaluate(
+                (id) => Math.round(document.getElementById(id)!.getBoundingClientRect().top),
+                hash,
+              ),
+            { timeout: 20_000, intervals: [500] },
+          )
+          .toBeGreaterThanOrEqual(HEADER - 4);
+        const top = await page.evaluate(
+          (id) => Math.round(document.getElementById(id)!.getBoundingClientRect().top),
+          hash,
+        );
+        expect(top).toBeLessThanOrEqual(HEADER + 4);
+        await context.close();
+      });
+    }
+  }
+
+  test("T20 — a person who scrolls is left alone", async ({ browser }) => {
+    test.setTimeout(150_000);
+    const context = await browser.newContext({
+      ...desktopChrome,
+      viewport: { width: 1440, height: 900 },
+    });
+    const page = await context.newPage();
+    const cdp = await context.newCDPSession(page);
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: SLOW.cpu });
+    await cdp.send("Network.enable");
+    await cdp.send("Network.emulateNetworkConditions", {
+      offline: false,
+      latency: SLOW.latencyMs,
+      downloadThroughput: SLOW.bytesPerSecond,
+      uploadThroughput: SLOW.bytesPerSecond,
+    });
+    await page.goto("/pricing", { waitUntil: "commit" });
+    await page.waitForSelector("header a", { timeout: 60_000 });
+    await page.locator('header a[href="/#use-cases"]').click();
+    await page.waitForFunction(() => scrollY > 100, null, { timeout: 90_000 });
+    await page.mouse.move(700, 400);
+    await page.mouse.wheel(0, -100000);
+    await page.waitForLoadState("load", { timeout: 90_000 });
+    await page.waitForTimeout(4000);
+    expect(await page.evaluate(() => Math.round(scrollY))).toBeLessThan(200);
+    await context.close();
+  });
+});

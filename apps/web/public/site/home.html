@@ -605,6 +605,27 @@
   <div class="foot-bottom"><span>© 2026 RouteFlow</span><button class="rm-toggle" type="button" data-rm aria-pressed="false">Reduce motion</button><span><a href="/privacy">Privacy Policy</a> · <a href="/terms">Terms of Service</a></span></div>
 </div></footer>
 
+<script>/* Land on a home anchor (#use-cases, #stores, #founder ...) as soon as the page can be laid out, then keep the
+   target at the top while the layout settles (fonts, scroll pins, wheel stage). Browsers do this only after the
+   deferred scripts have run, which on a slow phone is many seconds with the page sitting at the top. Stops at the
+   first touch, wheel, key or click, and on any later hash change. Not for reload or back/forward. */
+(function(w,d){var id=decodeURIComponent(location.hash.slice(1));if(!id)return;
+var nav=w.performance&&performance.getEntriesByType&&performance.getEntriesByType("navigation")[0];
+if(nav&&(nav.type==="reload"||nav.type==="back_forward"))return;
+var root=d.documentElement,t0=Date.now(),loaded=false,last=t0,done=false,ro,iv;
+function stop(){if(done)return;done=true;clearInterval(iv);if(ro)ro.disconnect();
+["wheel","touchstart","pointerdown","keydown"].forEach(function(e){w.removeEventListener(e,stop,true)});w.removeEventListener("hashchange",stop)}
+function go(){if(done)return;var el=d.getElementById(id);if(!el)return;
+var m=parseFloat(getComputedStyle(el).scrollMarginTop)||0,y=Math.max(0,Math.round(el.getBoundingClientRect().top+w.pageYOffset-m));
+if(Math.abs(w.pageYOffset-y)<2)return;
+var s=root.style.scrollBehavior;root.style.scrollBehavior="auto";w.scrollTo(0,y);root.style.scrollBehavior=s;last=Date.now()}
+["wheel","touchstart","pointerdown","keydown"].forEach(function(e){w.addEventListener(e,stop,{capture:true,passive:true})});
+w.addEventListener("hashchange",stop);
+go();
+if(w.ResizeObserver){ro=new ResizeObserver(go);ro.observe(root);if(d.body)ro.observe(d.body)}
+w.addEventListener("load",function(){loaded=true;go()});
+if(d.fonts&&d.fonts.ready)d.fonts.ready.then(go);
+iv=setInterval(function(){go();var n=Date.now();if(n-t0>30000||(loaded&&n-last>1500))stop()},250)})(window,document);</script>
 <script src="/site/js/vendor/gsap.min.js" defer></script><script src="/site/js/vendor/ScrollTrigger.min.js" defer></script>
 <script src="/site/js/prices.js"></script><script src="/site/graphics/rf-wheel-up.js" defer></script>
 <script src="/site/js/home-up.js" defer></script>
