@@ -224,6 +224,7 @@ import {
   draftBillsLessThanOrder,
   isCleanDraftPartition,
   isSoleBillingDraftIn,
+  placeUnbilledLinesFor,
 } from "./invoice-partition";
 import { loadResyncInputs } from "./resync-plan";
 import { loadReopenableInvoice } from "./invoice-reopen-guard";
@@ -1787,7 +1788,7 @@ export class InvoicesService {
         deliveryBatchId: true,
         discount: true,
         shippingFee: true,
-        items: { select: { orderItemId: true, unitsPerBox: true } },
+        items: { select: { orderItemId: true, unitsPerBox: true, trackedCategoryId: true } },
       },
     });
     const drafts = invoices.filter(
@@ -1819,12 +1820,17 @@ export class InvoicesService {
     // proved no line is shared across drafts or with a finalized invoice), then rebuild
     // each draft from its own lines on the delivered basis.
     const lineById = new Map<string, any>(order.lineItems.map((li: any) => [li.id, li]));
-    const pairs = drafts.map((d: any) => {
-      const memberIds = [
-        ...new Set((d.items ?? []).map((it: any) => it.orderItemId).filter(Boolean)),
-      ] as string[];
-      return { draft: d, lines: memberIds.map((id) => lineById.get(id)).filter(Boolean) };
+    // SA-1098 A-3: a live line on NO non-void invoice (delivered at 0, so it left its draft) goes back on one first.
+    const members = await placeUnbilledLinesFor(db, orderId, {
+      invoices,
+      drafts,
+      lines: order.lineItems,
+      groupLines: (items) => this.groupOrderLinesForInvoicing(items, db),
     });
+    const pairs = drafts.map((d: any) => ({
+      draft: d,
+      lines: (members.get(d.id) ?? []).map((id) => lineById.get(id)).filter(Boolean),
+    }));
     return this.rebuildSiblingDrafts(order, pairs, "delivered", db);
   }
 

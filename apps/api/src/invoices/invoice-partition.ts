@@ -207,3 +207,179 @@ export async function isSoleBillingDraftIn(
   });
   return isSoleBillingDraft(draftId, nonVoid);
 }
+
+/** What `placeUnbilledLines` needs from a draft: its id and the invoice lines it still holds. */
+export interface PlacementDraft {
+  id: string;
+  items?: Array<{ orderItemId?: string | null; trackedCategoryId?: string | null }> | null;
+}
+
+/**
+ * SA-1098 A-3: a delivered-basis rebuild keeps only the lines that bill above 0, so a line delivered
+ * at 0 (refused, then undone) loses its invoice item, and the next completion reads a draft's lines
+ * from the items it still holds and never sees it again. This decides, WITHOUT touching the DB,
+ * which draft each live order line that NO non-void invoice bills goes back on before the rebuild
+ * (the only reads are the caller's own `groupsOf`, called whenever a line is unbilled and a draft is open).
+ * The rebuild's own filter still drops a line delivered at 0, so a refused line never bills.
+ *
+ *   - one draft, one group: every unbilled line goes on it;
+ *   - one draft, several groups (A-4): the draft takes only its OWN group's unbilled lines, read from the
+ *     category its items carry; every other unbilled line is left OFF with `needsReview`. A draft with no
+ *     items, two categories, or a category that is not a group, has no readable group: all stay off;
+ *   - several drafts: a line goes on the draft that holds its group's category (`groupsOf` is the one
+ *     grouping function's answer over the live lines: the standard group first, then each
+ *     SEPARATE_INVOICE category in numbering order). When a draft has no items left, the category
+ *     cannot be read, so the group order is matched against the draft order (base, -R1, -R2) and
+ *     only when the group count equals the draft count;
+ *   - anything less certain (counts differ, two separate categories on one draft, a draft whose
+ *     category is not the group at its position): the line is left OFF and `needsReview` is set,
+ *     never guessed and never folded.
+ *
+ * `invoices` is every non-void invoice of the order, `drafts` the open ones in creation order.
+ */
+export async function placeUnbilledLines(input: {
+  invoices: Array<{ items?: Array<{ orderItemId?: string | null }> | null }>;
+  drafts: PlacementDraft[];
+  lineIds: string[];
+  groupsOf: () => Promise<Array<{ trackedCategoryId: string | null; lineIds: string[] }>>;
+}): Promise<{ placed: Map<string, string[]>; needsReview: boolean }> {
+  const placed = new Map<string, string[]>();
+  const billed = new Set<string>(
+    input.invoices.flatMap((i) => (i.items ?? []).map((it) => it.orderItemId as string)),
+  );
+  const unbilled = input.lineIds.filter((id) => !billed.has(id));
+  if (unbilled.length === 0 || input.drafts.length === 0) return { placed, needsReview: false };
+  const put = (draftId: string, lineId: string) =>
+    placed.set(draftId, [...(placed.get(draftId) ?? []), lineId]);
+
+  const { drafts } = input;
+  const groups = await input.groupsOf();
+  const sepCats = new Set(groups.map((g) => g.trackedCategoryId).filter(Boolean));
+  // A draft's category: the one separate category its items carry, null for the base, undefined if ambiguous.
+  const catOf = (d: PlacementDraft): string | null | undefined => {
+    const cats = new Set<string>();
+    for (const it of d.items ?? []) {
+      if (it.trackedCategoryId && sepCats.has(it.trackedCategoryId)) cats.add(it.trackedCategoryId);
+    }
+    if (cats.size > 1) return undefined;
+    return cats.size === 1 ? [...cats][0] : null;
+  };
+
+  if (drafts.length === 1) {
+    const only = drafts[0];
+    if (groups.length <= 1) {
+      // one group: the one draft takes any unbilled line
+      for (const id of unbilled) put(only.id, id);
+      return { placed, needsReview: false };
+    }
+    // Several groups, one draft left: it takes only its own group's lines. An empty draft has no category to
+    // read (catOf answers null for no items, which would read as the base), so items are tested first (D-54).
+    const own = (only.items ?? []).length > 0 ? catOf(only) : undefined;
+    const ownGroup =
+      own === undefined ? undefined : groups.find((g) => g.trackedCategoryId === own);
+    let left = false;
+    const ownIds = new Set(ownGroup?.lineIds ?? []);
+    for (const id of unbilled) {
+      if (ownIds.has(id)) put(only.id, id);
+      else left = true;
+    }
+    return { placed, needsReview: left };
+  }
+
+  const anyEmpty = drafts.some((d) => (d.items ?? []).length === 0);
+  const draftForGroup = new Map<string | null, string>();
+  if (groups.length !== drafts.length) return { placed, needsReview: true };
+  if (anyEmpty) {
+    // by position; a draft that still holds items must agree with the group at its position
+    for (const [i, d] of drafts.entries()) {
+      if ((d.items ?? []).length > 0 && catOf(d) !== groups[i].trackedCategoryId) {
+        return { placed, needsReview: true };
+      }
+      draftForGroup.set(groups[i].trackedCategoryId, d.id);
+    }
+  } else {
+    for (const d of drafts) {
+      const c = catOf(d);
+      if (c === undefined || draftForGroup.has(c)) return { placed, needsReview: true };
+      draftForGroup.set(c, d.id);
+    }
+  }
+  let needsReview = false;
+  for (const g of groups) {
+    const draftId = draftForGroup.get(g.trackedCategoryId);
+    for (const id of g.lineIds) {
+      if (!unbilled.includes(id)) continue;
+      if (draftId) put(draftId, id);
+      else needsReview = true;
+    }
+  }
+  return { placed, needsReview };
+}
+
+/**
+ * The service's one call: place the unbilled live lines (see `placeUnbilledLines`) using the one grouping
+ * function, and write the needs-review audit row when a line had to be left off. Returns, per draft id,
+ * the order-line ids that draft is rebuilt from: the lines it still holds plus the ones placed on it.
+ */
+export async function placeUnbilledLinesFor(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a tenant (transaction) client
+  db: any,
+  orderId: string,
+  input: {
+    invoices: Array<{ items?: Array<{ orderItemId?: string | null }> | null }>;
+    drafts: PlacementDraft[];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the order's live lines, as loaded
+    lines: any[];
+    groupLines: (
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the grouping function's own shape
+      items: Array<{ li: any; remainingQty: number }>,
+    ) => Promise<Array<{ trackedCategoryId: string | null; items: Array<{ li: { id: string } }> }>>;
+  },
+): Promise<Map<string, string[]>> {
+  const { placed, needsReview } = await placeUnbilledLines({
+    invoices: input.invoices,
+    drafts: input.drafts,
+    lineIds: input.lines.map((li) => li.id),
+    groupsOf: async () =>
+      (await input.groupLines(input.lines.map((li) => ({ li, remainingQty: 1 })))).map((g) => ({
+        trackedCategoryId: g.trackedCategoryId,
+        lineIds: g.items.map((x) => x.li.id),
+      })),
+  });
+  if (needsReview) await flagUnplacedLines(db, orderId);
+  return new Map(
+    input.drafts.map((d) => [
+      d.id,
+      [
+        ...new Set([
+          ...(d.items ?? []).map((it) => it.orderItemId).filter((id): id is string => !!id),
+          ...(placed.get(d.id) ?? []),
+        ]),
+      ],
+    ]),
+  );
+}
+
+/** `meta.kind` of the row below: the marker the office's order read looks for (SA-1098 A-3, never the note's text). */
+export const LINE_LEFT_OFF_KIND = "line-left-off";
+
+/** The same audit row the stop completion writes when it cannot create an invoice (SA-687c), for a line left off. */
+export async function flagUnplacedLines(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a tenant (transaction) client
+  db: any,
+  orderId: string,
+): Promise<void> {
+  await db.auditLog.create({
+    data: {
+      userId: null,
+      action: API_ERROR_CODES.ORDER_INVOICES_NEED_REVIEW,
+      entityType: "order",
+      entityId: orderId,
+      meta: {
+        context: "stop-completion",
+        kind: LINE_LEFT_OFF_KIND,
+        note: "a delivered line is on no invoice and could not be placed on a draft",
+      },
+    },
+  });
+}

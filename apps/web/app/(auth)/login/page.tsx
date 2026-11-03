@@ -17,7 +17,6 @@ import { readLastWorkspace } from "@/lib/last-workspace";
 import { safeOperatorRedirect, landingForRole } from "@/lib/portal-routing";
 import { usePortalPresence } from "@/lib/hooks/usePortalPresence";
 import { AuthShell } from "@/components/auth";
-import { DRIVER_APP_LOGIN_URL } from "@/lib/driver-app-link";
 import { isInShell } from "@/lib/in-shell";
 import { postSignInDestination, readAlsoBuyer } from "@/lib/role-choice";
 
@@ -214,12 +213,6 @@ export default function LoginPage() {
             New to RouteFlow?{" "}
             <a href="/signup" className="text-brand-600 hover:underline font-medium">
               Start your 14-day free trial
-            </a>
-          </p>
-          <p className="text-xs text-navy/70">
-            Driver?{" "}
-            <a href={DRIVER_APP_LOGIN_URL} className="text-brand-600 hover:underline font-medium">
-              Open the driver app →
             </a>
           </p>
         </>

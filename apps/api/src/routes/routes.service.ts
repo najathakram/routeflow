@@ -2162,7 +2162,7 @@ export class RoutesService {
     }
     // SA-953 S1: the key answers before run and stop state, or a committed retry never reaches it.
     const stopKey = stopKeyFor("completeStop", run, stopId, dto);
-    const cached = await replayStopKey<CompletedStop>(this.prisma, stopKey);
+    const cached = await replayStopKey<CompletedStop>(this.prisma, stopKey, stopId);
     if (cached) return cached;
     assertRunInProgress(run.status); // #2514: RUN state only after ownership too
     // #2415: stop STATE only after the B72 ownership check, so a driver with no claim on this run
@@ -2380,7 +2380,7 @@ export class RoutesService {
     }
     // SA-953 S1: the key answers before run and stop state, or a committed retry never reaches it.
     const stopKey = stopKeyFor("completeWithPayment", run, stopId, dto);
-    const cached = await replayStopKey<CompletedStopWithPayment>(this.prisma, stopKey);
+    const cached = await replayStopKey<CompletedStopWithPayment>(this.prisma, stopKey, stopId);
     if (cached) return cached;
     assertRunInProgress(run.status); // #2514: RUN state only after ownership too
     // #2415: stop STATE only after the B72 ownership check, so a driver with no claim on this run
