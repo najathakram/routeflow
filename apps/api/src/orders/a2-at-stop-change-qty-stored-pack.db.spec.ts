@@ -70,6 +70,7 @@ describeDb(
       pieces: number;
       subtotal: number;
       snapshot?: number;
+      promoFreeUnits?: number;
     }) {
       n += 1;
       const product = await raw.product.create({
@@ -103,6 +104,7 @@ describeDb(
           pieces: shape.pieces,
           ...(shape.snapshot ? { unitsPerBox: shape.snapshot } : {}),
           deliveredQty: 0,
+          ...(shape.promoFreeUnits ? { promoFreeUnits: shape.promoFreeUnits } : {}),
           unitPrice: 10,
           subtotal: shape.subtotal,
         } as any,
@@ -137,8 +139,13 @@ describeDb(
     }
     type Seeded = Awaited<ReturnType<typeof seed>>;
 
-    async function changeQty(s: Seeded, newQty: number) {
-      const cr = await raw.changeRequest.create({
+    /** Files the CHANGE_QTY as `by` (a driver at the door by default; a buyer's request has requestedByRole CUSTOMER) and approves it. */
+    async function changeQty(s: Seeded, newQty: number, by: "DRIVER" | "CUSTOMER" = "DRIVER") {
+      const cr = await fileChangeQty(s, newQty, by);
+      return tenantCtx.run(tenantId, () => orders.approveChangeRequestAtStop(cr.id, driver()));
+    }
+    async function fileChangeQty(s: Seeded, newQty: number, by: "DRIVER" | "CUSTOMER" = "DRIVER") {
+      return raw.changeRequest.create({
         data: {
           tenantId,
           orderId: s.orderId,
@@ -146,16 +153,23 @@ describeDb(
           orderItemId: s.lineId,
           routeRunStopId: s.stopId,
           type: "CHANGE_QTY" as any,
+          requestedByRole: by,
           payload: { orderItemId: s.lineId, newQty },
         } as any,
       });
-      return tenantCtx.run(tenantId, () => orders.approveChangeRequestAtStop(cr.id, driver()));
     }
 
     async function state(s: Seeded) {
       const l = await raw.orderItem.findUniqueOrThrow({ where: { id: s.lineId } });
       const o = await raw.order.findUniqueOrThrow({ where: { id: s.orderId } });
+      const product = await raw.product.findUniqueOrThrow({ where: { id: s.productId } });
+      const moves = await raw.stockMovement.findMany({
+        where: { productId: s.productId },
+        orderBy: { createdAt: "asc" },
+      });
       return {
+        stock: Number(product.currentStock),
+        ledger: moves.map((m) => ({ type: m.type, qty: Number(m.quantity) })),
         line: {
           qty: Number(l.qty),
           boxes: l.boxes == null ? null : Number(l.boxes),
@@ -163,6 +177,7 @@ describeDb(
           unitsPerBox: (l as any).unitsPerBox ?? null,
           unitPrice: Number(l.unitPrice),
           subtotal: Number(l.subtotal),
+          promoFreeUnits: Number((l as any).promoFreeUnits ?? 0),
         },
         order: { subtotal: Number(o.subtotal), total: Number(o.total) },
       };
@@ -274,11 +289,30 @@ describeDb(
       }
     }, 120_000);
 
+    /** The door edit books the exact delta: qty released goes back to stock, one SALE row of that size, read as pieces. */
+    const restocked = (before: any, after: any, units: number) => {
+      expect(after.stock - before.stock).toBe(units);
+      expect(after.ledger.slice(before.ledger.length)).toEqual(
+        units === 0 ? [] : [{ type: "SALE", qty: units }],
+      );
+    };
+    const unmoved = (before: any, after: any) => restocked(before, after, 0);
+    const refused = async (s: Seeded, newQty: number) => {
+      try {
+        await changeQty(s, newQty);
+      } catch (e: any) {
+        return e?.getResponse?.() ?? String(e);
+      }
+      return null;
+    };
+
     it("B-1: a line sold under a 12-pack (now a 24-pack), 120 -> 108, is 9 boxes of 12 at the stored price: 90.00, snapshot 12", async () => {
       const s = await seed({ qty: 120, boxes: 10, pieces: 0, subtotal: 100 });
+      const before = await state(s);
       await changeQty(s, 108);
       const after = await state(s);
       measure("B-1 after", after);
+      restocked(before, after, 12);
       expect(after.line).toMatchObject({
         qty: 108,
         boxes: 9,
@@ -290,10 +324,18 @@ describeDb(
 
     it("B-2: a line sold with no pack (10 boxes, qty 10), 10 -> 9, is 90.00 at the stored price, not 9 pieces of the live 24 (3.75)", async () => {
       const s = await seed({ qty: 10, boxes: 10, pieces: 0, subtotal: 100 });
+      const before = await state(s);
       await changeQty(s, 9);
       const after = await state(s);
       measure("B-2 after", after);
-      expect(after.line).toMatchObject({ qty: 9, unitsPerBox: null, subtotal: 90 });
+      expect(after.line).toMatchObject({
+        qty: 9,
+        boxes: 9,
+        pieces: 0,
+        unitsPerBox: null,
+        subtotal: 90,
+      });
+      restocked(before, after, 1);
     }, 120_000);
 
     it("B-3: 0 boxes + 6 pieces with no snapshot and a subtotal that fits neither pack (7.00) is refused with the code, nothing written", async () => {
@@ -314,15 +356,85 @@ describeDb(
 
     it("B-4 (guard): a line WITH its snapshot (12) resizes at it: 120 -> 108 is 9 boxes, 90.00", async () => {
       const s = await seed({ qty: 120, boxes: 10, pieces: 0, subtotal: 100, snapshot: 12 });
+      const before = await state(s);
       await changeQty(s, 108);
       const after = await state(s);
       measure("B-4 after", after);
+      restocked(before, after, 12);
       expect(after.line).toMatchObject({
         qty: 108,
         boxes: 9,
         unitsPerBox: 12,
         subtotal: 90,
       });
+    }, 120_000);
+
+    it("B-5: a no-pack line (10 boxes, qty 10), CHANGE_QTY 9.5, is refused (whole units only), nothing written", async () => {
+      const s = await seed({ qty: 10, boxes: 10, pieces: 0, subtotal: 100 });
+      const before = await state(s);
+      const thrown = await refused(s, 9.5);
+      const after = await state(s);
+      measure("B-5 after", after);
+      measure("B-5 thrown", thrown);
+      expect(thrown).toMatchObject({ code: "INVALID_LINE_SPLIT" });
+      expect(after).toEqual(before);
+    }, 120_000);
+
+    it("B-5b: a no-pack line, CHANGE_QTY 0.5, is refused, not written as qty 0 / 0.00", async () => {
+      const s = await seed({ qty: 10, boxes: 10, pieces: 0, subtotal: 100 });
+      const before = await state(s);
+      const thrown = await refused(s, 0.5);
+      const after = await state(s);
+      measure("B-5b after", after);
+      measure("B-5b thrown", thrown);
+      expect(thrown).toMatchObject({ code: "INVALID_LINE_SPLIT" });
+      expect(after).toEqual(before);
+    }, 120_000);
+
+    it("B-6 (guard): B-1 filed by a driver and by a buyer gives the same money and stock", async () => {
+      const a = await seed({ qty: 120, boxes: 10, pieces: 0, subtotal: 100 });
+      const b = await seed({ qty: 120, boxes: 10, pieces: 0, subtotal: 100 });
+      const beforeA = await state(a);
+      const beforeB = await state(b);
+      await changeQty(a, 108, "DRIVER");
+      await changeQty(b, 108, "CUSTOMER");
+      const afterA = await state(a);
+      const afterB = await state(b);
+      measure("B-6 driver", afterA);
+      measure("B-6 buyer", afterB);
+      expect(afterB.line).toEqual(afterA.line);
+      expect(afterB.order).toEqual(afterA.order);
+      restocked(beforeA, afterA, 12);
+      restocked(beforeB, afterB, 12);
+    }, 120_000);
+
+    it("B-7 (guard): a no-pack line with 2 free units, 10 -> 9, keeps its shape and the free units rescale on whole units", async () => {
+      const s = await seed({ qty: 10, boxes: 10, pieces: 0, subtotal: 80, promoFreeUnits: 2 });
+      const before = await state(s);
+      await changeQty(s, 9);
+      const after = await state(s);
+      measure("B-7 before", before);
+      measure("B-7 after", after);
+      expect(after.line).toMatchObject({ qty: 9, boxes: 9, pieces: 0, unitsPerBox: null });
+      expect(Number.isInteger(after.line.promoFreeUnits)).toBe(true);
+      expect(after.line.subtotal).toBe((9 - after.line.promoFreeUnits) * 10);
+      restocked(before, after, 1);
+    }, 120_000);
+
+    it("B-8 (guard): a refused request (B-3) stays PENDING and can still be rejected", async () => {
+      const s = await seed({ qty: 6, boxes: 0, pieces: 6, subtotal: 7 });
+      const cr = await fileChangeQty(s, 5);
+      let thrown: any = null;
+      try {
+        await tenantCtx.run(tenantId, () => orders.approveChangeRequestAtStop(cr.id, driver()));
+      } catch (e) {
+        thrown = e;
+      }
+      const row = await raw.changeRequest.findUniqueOrThrow({ where: { id: cr.id } });
+      measure("B-8 status after refusal", row.status);
+      expect(thrown?.getResponse?.()).toMatchObject({ code: "STORED_LINE_PACK_UNREADABLE" });
+      expect(row.status).toBe("PENDING");
+      expect(row.resolvedAt).toBeNull();
     }, 120_000);
   },
 );

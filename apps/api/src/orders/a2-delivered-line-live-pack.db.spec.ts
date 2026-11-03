@@ -3,7 +3,7 @@
  * pack after the sale, is edited through the REAL OrdersService.updateOrderItems. The edit's box-size fallback reads the LIVE
  * product (orders.service.ts, "unitsPerBox = product?.unitsPerBox"), so a price-only edit re-derives the line's boxes/pieces
  * from the new pack and re-prices the line. Real: OrdersService (Object.create harness), InvoicesService, ReturnsService,
- * RegulatedLedgerService, PrismaService. Rows A2-1, A2-1b, A2-2, A2-3, A2-5, A2-6, A2-7 and A2-9 are RED on master (A2-0, A2-8, A2-10, A2-11a/b and A2-12 are guards). Every case prints a MEASURE line (line, header, invoice, stock ledger) so the values
+ * RegulatedLedgerService, PrismaService. Rows A2-1, A2-1b, A2-2, A2-3, A2-5, A2-5b, A2-6, A2-7, A2-9, A2-13, A2-16, A2-17, A2-19 and A2-21 are RED on master (A2-0, A2-8, A2-10, A2-11a/b, A2-12, A2-18, A2-20 and A2-22 are guards). Every case prints a MEASURE line (line, header, invoice, stock ledger) so the values
  * can be quoted; the asserts pin the CORRECT value, so each row is RED on master where the bug is real.
  *
  * SAFETY: throwaway `qa-a2pack-<run>-<n>` tenants approved by assertTestTenant, deleted in afterAll.
@@ -206,7 +206,7 @@ describeDb(
     async function seed(
       label: string,
       soldUpb: number | null,
-      livePack: number,
+      livePack: number | null,
       shape: SeedShape = {},
     ) {
       seq += 1;
@@ -299,7 +299,7 @@ describeDb(
         });
       }
       // the pack is gained AFTER the sale, by hand (no Boxes answer, no stock conversion): the SA's "any route"
-      await prisma.product.update({ where: { id: product.id }, data: { unitsPerBox: livePack } });
+      await prisma.product.update({ where: { id: product.id }, data: { unitsPerBox: livePack } }); // null: the pack was cleared
       return {
         tenantId,
         orderId: order.id,
@@ -556,6 +556,156 @@ describeDb(
       measure("A2-11b after", after);
       expect(after.line).toMatchObject({ qty: 240, boxes: 10, unitsPerBox: 24, subtotal: 120 });
       expect(after.invoices[0]!.total).toBe(120);
+    }, 120_000);
+
+    const unmoved = (before: any, after: any) => {
+      expect(after.stock).toBe(before.stock);
+      expect(after.ledger).toEqual(before.ledger);
+    };
+    const refusal = async (s: Seeded, item: Record<string, unknown>) => {
+      try {
+        await edit(s, item);
+      } catch (e: any) {
+        return e?.getResponse?.() ?? String(e);
+      }
+      return null;
+    };
+
+    it("A2-5b: the A2-5 payload with the price UNCHANGED (qty 120, boxes 10) keeps qty 120, 100.00 and stock 90", async () => {
+      const s = await seed("boxesecho2", 12, 24);
+      const before = await state(s);
+      await edit(s, { qty: 120, boxes: 10, pieces: 0 });
+      const after = await state(s);
+      measure("A2-5b before", before);
+      measure("A2-5b after", after);
+      expect(after.line).toMatchObject({ qty: 120, boxes: 10, unitsPerBox: 12, subtotal: 100 });
+      expect(after.invoices[0]!.total).toBe(100);
+      unmoved(before, after);
+    }, 120_000);
+
+    it("A2-13: sold at a 12-pack, the product's pack since CLEARED, values echoed: 100.00, qty 120, snapshot 12", async () => {
+      const s = await seed("cleared", 12, null);
+      const before = await state(s);
+      await edit(s, { qty: 120, unitPrice: 10 });
+      const after = await state(s);
+      measure("A2-13 before", before);
+      measure("A2-13 after", after);
+      expect(after.line).toMatchObject({ qty: 120, boxes: 10, unitsPerBox: 12, subtotal: 100 });
+      expect(after.invoices[0]!.total).toBe(100);
+      unmoved(before, after);
+    }, 120_000);
+
+    it("A2-16: the web's real (pre-fix) payload on the 12-pack line - qty 120, boxes 5, price 12 - disagrees at the line's own pack: refused, nothing written", async () => {
+      const s = await seed("webpayload", 12, 24);
+      const before = await state(s);
+      const thrown = await refusal(s, { qty: 120, boxes: 5, pieces: 0, unitPrice: 12 });
+      const after = await state(s);
+      measure("A2-16 after", after);
+      measure("A2-16 thrown", thrown);
+      expect(thrown).toMatchObject({ code: "QTY_SPLIT_MISMATCH" });
+      expect(after).toEqual(before);
+    }, 120_000);
+
+    it("A2-17: the old web's payload on the no-pack line - qty 10, boxes 0, pieces 10, price 12 - is 120.00, boxes = qty, stock unmoved", async () => {
+      const s = await seed("oldweb", null, 24);
+      const before = await state(s);
+      await edit(s, { qty: 10, boxes: 0, pieces: 10, unitPrice: 12 });
+      const after = await state(s);
+      measure("A2-17 before", before);
+      measure("A2-17 after", after);
+      expect(after.line).toMatchObject({
+        qty: 10,
+        boxes: 10,
+        pieces: 0,
+        unitsPerBox: null,
+        subtotal: 120,
+      });
+      expect(after.invoices[0]!.total).toBe(120);
+      unmoved(before, after);
+    }, 120_000);
+
+    it("A2-18 (guard): a split with NO qty on the 12-pack line - boxes 8, pieces 4 - is qty 100 at the line's own pack", async () => {
+      const s = await seed("splitonly", 12, 24);
+      const before = await state(s);
+      await edit(s, { boxes: 8, pieces: 4 });
+      const after = await state(s);
+      measure("A2-18 after", after);
+      expect(after.line).toMatchObject({ qty: 100, boxes: 8, pieces: 4, unitsPerBox: 12 });
+      unmoved(before, after);
+    }, 120_000);
+
+    it("A2-19: a fractional qty on the no-pack line is refused, nothing written", async () => {
+      const s = await seed("fraction", null, 24);
+      const before = await state(s);
+      const thrown = await refusal(s, { qty: 9.5 });
+      const after = await state(s);
+      measure("A2-19 after", after);
+      measure("A2-19 thrown", thrown);
+      expect(thrown).toMatchObject({ code: "INVALID_LINE_SPLIT" });
+      expect(after).toEqual(before);
+    }, 120_000);
+
+    it("A2-20 (guard): the no-pack line edited twice - qty 10 -> 9, then price 12 - gives the same shape both times, stock 90", async () => {
+      const s = await seed("twice", null, 24);
+      const before = await state(s);
+      await edit(s, { qty: 9 });
+      const one = await state(s);
+      await edit(s, { qty: 9, unitPrice: 12 });
+      const two = await state(s);
+      measure("A2-20 one", one.line);
+      measure("A2-20 two", two.line);
+      expect(one.line).toMatchObject({
+        qty: 9,
+        boxes: 9,
+        pieces: 0,
+        unitsPerBox: null,
+        subtotal: 90,
+      });
+      expect(two.line).toMatchObject({
+        qty: 9,
+        boxes: 9,
+        pieces: 0,
+        unitsPerBox: null,
+        subtotal: 108,
+      });
+      unmoved(before, one);
+      unmoved(before, two);
+    }, 120_000);
+
+    it("A2-21: the no-pack line whose product has NO pack now, qty 10 -> 9: boxes 9, 90.00, stock unmoved", async () => {
+      const s = await seed("nopack-nolive", null, null);
+      const before = await state(s);
+      await edit(s, { qty: 9 });
+      const after = await state(s);
+      measure("A2-21 before", before);
+      measure("A2-21 after", after);
+      expect(after.line).toMatchObject({
+        qty: 9,
+        boxes: 9,
+        pieces: 0,
+        unitsPerBox: null,
+        subtotal: 90,
+      });
+      expect(after.invoices[0]!.total).toBe(90);
+      unmoved(before, after);
+    }, 120_000);
+
+    it("A2-22 (guard): A2-21, then the product gains a 24-pack, then another edit: still boxes 9, 99.00, stock unmoved", async () => {
+      const s = await seed("nopack-gains", null, null);
+      const before = await state(s);
+      await edit(s, { qty: 9 });
+      await prisma.product.update({ where: { id: s.productId }, data: { unitsPerBox: 24 } });
+      await edit(s, { qty: 9, unitPrice: 11 });
+      const after = await state(s);
+      measure("A2-22 after", after);
+      expect(after.line).toMatchObject({
+        qty: 9,
+        boxes: 9,
+        pieces: 0,
+        unitsPerBox: null,
+        subtotal: 99,
+      });
+      unmoved(before, after);
     }, 120_000);
 
     it("A2-12 (guard): after the qty edit 10 -> 9, a STANDARD return of 3 restocks 3 (measured on master: 3) - anything but 3 or a park goes back to the SA", async () => {
