@@ -196,3 +196,285 @@ describeDb("SA-1097 census on the SA's fixture, real Postgres", () => {
     });
   });
 });
+
+/**
+ * SA-1097 A-5 (rf-specs 42d50272b2): `--denominators` on the SA's second fixture (SA-1097-denominators-fixture.sql, loaded after the
+ * census fixture, copied below unchanged). The totals below were also read from `psql` running the unchanged SA-1097-denominators.sql on
+ * the same two fixtures: every row identical.
+ */
+const DENOMINATORS_FIXTURE = String.raw`-- Throwaway fixture, loaded after SA-1097-census-fixture.sql: only what the denominators read beyond the census.
+ALTER TABLE "OrderItem" ADD COLUMN "createdAt" timestamp DEFAULT timestamp '2026-10-01';
+ALTER TABLE "Order" ADD COLUMN "createdAt" timestamp DEFAULT timestamp '2026-10-01';
+INSERT INTO "Tenant" VALUES ('t9','DEMO');
+INSERT INTO "Order" VALUES ('n1',NULL,'DELIVERED','2026-10-01'),('old1','t9','DELIVERED','2026-06-01'),('d1','t9','DELIVERED','2026-10-01'),('rev0','t9','DELIVERED','2026-10-01');
+INSERT INTO "OrderItem" (id,"orderId","productId",status,qty,boxes,pieces,"unitsPerBox","unitLabel","unitPrice",subtotal,"promoFreeUnits","createdAt") VALUES
+ ('d-tenant','n1','p24','DELIVERED',120,10,0,NULL,NULL,10,100,NULL,'2026-10-01'),   -- no tenant, no snapshot
+ ('d-free','d1',NULL,'DELIVERED',120,10,0,NULL,NULL,10,100,NULL,'2026-10-01'),      -- free text, no snapshot
+ ('d-label','d1','p24','DELIVERED',120,10,0,NULL,'Case',10,100,NULL,'2026-10-01'),  -- label, no snapshot
+ ('d-zero','d1','p24','DELIVERED',120,10,0,0,NULL,10,100,NULL,'2026-10-01'),        -- snapshot 0
+ ('d-one','d1','p24','DELIVERED',10,10,0,1,NULL,10,100,NULL,'2026-10-01'),          -- snapshot 1
+ ('d-good','d1','p24','DELIVERED',240,10,0,24,NULL,10,100,NULL,'2026-10-01'),       -- agrees, equals live
+ ('d-wrong','old1','p24','DELIVERED',120,10,0,24,NULL,10,100,NULL,'2026-06-01'),    -- backfill's wrong pack: own 12, snapshot 24, on an old order
+ ('d-money','d1','p24','DELIVERED',240,10,0,24,NULL,10,55,NULL,'2026-10-01'),       -- agrees on qty, money doesn't
+ ('d-live','d1','p0','DELIVERED',120,10,0,12,NULL,10,100,NULL,'2026-10-01'),        -- snapshot, product has no pack now
+ ('d-plain','d1','p24','DELIVERED',5,NULL,NULL,12,NULL,10,50,NULL,'2026-10-01'),    -- no split, snapshot
+ ('d-gone','o3','p24','DELIVERED',120,10,0,NULL,NULL,10,100,NULL,'2026-10-01');     -- cancelled order, no snapshot
+INSERT INTO "OrderRevision" (id,"orderId","revisionNumber",snapshot,source) VALUES
+ ('s1','d1',1,'{"lineItems":[{"productId":"p24","qty":120,"boxes":10,"pieces":0,"unitsPerBox":null,"subtotal":100}]}','CHANGE_REQUEST'),
+ ('s2','d1',2,'{"lineItems":[{"productId":"p24","qty":120,"boxes":5,"pieces":0,"unitsPerBox":24,"subtotal":60}]}','CHANGE_REQUEST'),  -- at-door hit Q3 can't see
+ ('s3','old1',1,'{"lineItems":[{"productId":"p24","qty":120,"boxes":5,"pieces":0,"unitsPerBox":24,"subtotal":60}]}','EDIT'),          -- first edit, no earlier state
+ ('s4','d1',3,'{"subtotal":1}','SYSTEM_MERGE'),                                                                                       -- no line list
+ ('s5','rev0',1,'{"lineItems":[{"productId":"p24","name":"old shape","qty":5}]}','EDIT');                                              -- entry with none of the keys`;
+
+describeDb("SA-1097 A-5 --denominators on the SA's two fixtures, real Postgres", () => {
+  const DEN_SCHEMA = `sa1097_den_${randomUUID().slice(0, 8)}`;
+  let den: any;
+  let plainCensus: any;
+
+  async function runScript(scopedUrl: string, args: string[]) {
+    const r = spawnSync(process.execPath, [SCRIPT, ...args], {
+      encoding: "utf8",
+      env: { ...process.env, DATABASE_URL: scopedUrl },
+      timeout: 120_000,
+    });
+    if (r.status !== 0) throw new Error(`census exit ${r.status}: ${r.stderr}`);
+    return { out: JSON.parse(r.stdout), err: r.stderr };
+  }
+
+  beforeAll(async () => {
+    const url = requireLocalDatabaseUrl();
+    const admin = new Client({ connectionString: url });
+    await admin.connect();
+    try {
+      await admin.query(`CREATE SCHEMA ${DEN_SCHEMA}`);
+      await admin.query(`SET search_path TO ${DEN_SCHEMA}`);
+      await admin.query(FIXTURE);
+      await admin.query(DENOMINATORS_FIXTURE);
+    } finally {
+      await admin.end();
+    }
+    const scoped = new URL(url);
+    scoped.searchParams.set("options", `-c search_path=${DEN_SCHEMA}`);
+    den = (await runScript(scoped.toString(), ["--denominators"])).out;
+    plainCensus = (await runScript(scoped.toString(), [])).out;
+  }, 180_000);
+
+  afterAll(async () => {
+    const admin = new Client({ connectionString: requireLocalDatabaseUrl() });
+    await admin.connect();
+    try {
+      await admin.query(`DROP SCHEMA IF EXISTS ${DEN_SCHEMA} CASCADE`);
+    } finally {
+      await admin.end();
+    }
+  }, 60_000);
+
+  it("names its SQL: the rf-specs commit and the sha-256 of SA-1097-denominators.sql, and runs Q4 to Q8 only", () => {
+    expect(den.spec).toEqual({
+      sqlCommit: "6faf86cde43fa28f4499fd1eb749c6bb0eaf2fc3",
+      sqlSha256: "3291839e87910afc1c9c4b1ca6acd2703f885fc5a881ae0868c2c94e882d2e81",
+    });
+    expect(Object.keys(den).filter((k) => /^q\d$/.test(k))).toEqual(["q4", "q5", "q6", "q7", "q8"]);
+  });
+
+  it("without the flag the census still runs Q1 to Q3 and nothing else, on the same database", () => {
+    expect(Object.keys(plainCensus).filter((k) => /^q\d$/.test(k))).toEqual(["q1", "q2", "q3"]);
+    expect(plainCensus.spec.sqlSha256).toBe(
+      "9b75d69a820faf304eb60ac3b5fcf9fb8ed1761b8f9635f4883651eb52ecef08",
+    );
+  });
+
+  const countsOf = (rows: any[]) =>
+    rows.map((r) => {
+      const { first_line_at, last_line_at, ...rest } = r;
+      expect(new Date(first_line_at).getTime()).not.toBeNaN();
+      expect(new Date(last_line_at).getTime()).not.toBeNaN();
+      return rest;
+    });
+
+  it("Q4: every line by tenant class, each fixture row in the bucket its comment names", () => {
+    expect(countsOf(den.q4)).toEqual([
+      {
+        tenant_class: "DEMO",
+        lines_all: 9,
+        lines_alive: 9,
+        split_alive: 8,
+        split_cancelled: 0,
+        split_snap_above_1: 4,
+        split_snap_1: 1,
+        split_snap_0: 1,
+        split_no_snap: 2,
+        split_no_snap_cancelled: 0,
+        split_no_snap_labelled: 1,
+        split_no_snap_free_text: 1,
+        split_no_snap_no_tenant: 0,
+        snap_qty_agrees: 3,
+        snap_qty_differs: 1,
+        snap_qty_differs_total: "100.00",
+        snap_qty_differs_unlabelled: 1,
+        snap_money_differs: 1,
+        snap_equals_live: 3,
+        snap_differs_live: 0,
+        snap_live_none: 1,
+        labelled_alive: 1,
+        plain_snap_above_1: 1,
+        alive_on_old_order: 1,
+        split_on_old_order: 1,
+        old_order_snap_qty_differs: 1,
+        alive_old_order_revised: 1,
+      },
+      {
+        tenant_class: "NO_TENANT",
+        lines_all: 1,
+        lines_alive: 1,
+        split_alive: 1,
+        split_cancelled: 0,
+        split_snap_above_1: 0,
+        split_snap_1: 0,
+        split_snap_0: 0,
+        split_no_snap: 1,
+        split_no_snap_cancelled: 0,
+        split_no_snap_labelled: 0,
+        split_no_snap_free_text: 0,
+        split_no_snap_no_tenant: 1,
+        snap_qty_agrees: 0,
+        snap_qty_differs: 0,
+        snap_qty_differs_total: "0",
+        snap_qty_differs_unlabelled: 0,
+        snap_money_differs: 0,
+        snap_equals_live: 0,
+        snap_differs_live: 0,
+        snap_live_none: 0,
+        labelled_alive: 0,
+        plain_snap_above_1: 0,
+        alive_on_old_order: 0,
+        split_on_old_order: 0,
+        old_order_snap_qty_differs: 0,
+        alive_old_order_revised: 0,
+      },
+      {
+        tenant_class: "PRODUCTION",
+        lines_all: 16,
+        lines_alive: 13,
+        split_alive: 13,
+        split_cancelled: 3,
+        split_snap_above_1: 1,
+        split_snap_1: 0,
+        split_snap_0: 0,
+        split_no_snap: 12,
+        split_no_snap_cancelled: 3,
+        split_no_snap_labelled: 1,
+        split_no_snap_free_text: 0,
+        split_no_snap_no_tenant: 0,
+        snap_qty_agrees: 1,
+        snap_qty_differs: 0,
+        snap_qty_differs_total: "0",
+        snap_qty_differs_unlabelled: 0,
+        snap_money_differs: 0,
+        snap_equals_live: 0,
+        snap_differs_live: 1,
+        snap_live_none: 0,
+        labelled_alive: 1,
+        plain_snap_above_1: 0,
+        alive_on_old_order: 0,
+        split_on_old_order: 0,
+        old_order_snap_qty_differs: 0,
+        alive_old_order_revised: 0,
+      },
+      {
+        tenant_class: "TEST",
+        lines_all: 1,
+        lines_alive: 1,
+        split_alive: 1,
+        split_cancelled: 0,
+        split_snap_above_1: 0,
+        split_snap_1: 0,
+        split_snap_0: 0,
+        split_no_snap: 1,
+        split_no_snap_cancelled: 0,
+        split_no_snap_labelled: 0,
+        split_no_snap_free_text: 0,
+        split_no_snap_no_tenant: 0,
+        snap_qty_agrees: 0,
+        snap_qty_differs: 0,
+        snap_qty_differs_total: "0",
+        snap_qty_differs_unlabelled: 0,
+        snap_money_differs: 0,
+        snap_equals_live: 0,
+        snap_differs_live: 0,
+        snap_live_none: 0,
+        labelled_alive: 0,
+        plain_snap_above_1: 0,
+        alive_on_old_order: 0,
+        split_on_old_order: 0,
+        old_order_snap_qty_differs: 0,
+        alive_old_order_revised: 0,
+      },
+    ]);
+  });
+
+  it("Q5: split lines by the month written (the backfill shows as the June row)", () => {
+    expect(
+      den.q5.map(
+        (r: any) =>
+          `${r.tenant_class}:${r.month}:${r.lines}:${r.split}:${r.split_snap_above_1}:${r.split_no_snap}`,
+      ),
+    ).toEqual([
+      "DEMO:2026-06:1:1:1:0",
+      "DEMO:2026-10:8:7:3:2",
+      "NO_TENANT:2026-10:1:1:0:1",
+      "PRODUCTION:2026-10:16:16:1:15",
+      "TEST:2026-10:1:1:0:1",
+    ]);
+  });
+
+  it("Q6: revisions by source, and an order's first edit counted apart", () => {
+    expect(
+      den.q6.map(
+        (r: any) =>
+          `${r.tenant_class}:${r.source}:${r.revisions}:${r.orders}:${r.with_line_list}:${r.first_of_order}`,
+      ),
+    ).toEqual([
+      "DEMO:CHANGE_REQUEST:2:1:2:1",
+      "DEMO:EDIT:2:2:2:2",
+      "DEMO:SYSTEM_MERGE:1:1:0:0",
+      "PRODUCTION:EDIT:18:10:17:10",
+      "PRODUCTION:SYSTEM_INVOICE_SYNC:1:1:1:0",
+      "TEST:DELIVERED:1:1:1:1",
+      "TEST:EDIT:1:1:1:0",
+    ]);
+  });
+
+  it("Q7: the keys line entries carry, the entry with none of them drops out, shape dates only where a shape exists", () => {
+    expect(
+      den.q7.map(
+        (r: any) =>
+          `${r.tenant_class}:${r.source}:${r.entries}:${r.has_boxes_key}:${r.has_pieces_key}:${r.has_pack_key}:${r.has_subtotal_key}:${r.split_entries}:${r.split_no_snap_entries}:${r.orders_with_shape}:${r.shape_first_at ? "dated" : "none"}`,
+      ),
+    ).toEqual([
+      "DEMO:CHANGE_REQUEST:2:2:2:2:2:2:1:1:dated",
+      "DEMO:EDIT:2:1:1:1:1:1:0:0:none",
+      "PRODUCTION:EDIT:19:19:19:19:19:16:8:8:dated",
+      "PRODUCTION:SYSTEM_INVOICE_SYNC:1:1:1:1:1:1:0:0:none",
+      "TEST:DELIVERED:1:1:1:1:1:1:1:1:dated",
+      "TEST:EDIT:1:1:1:1:1:1:0:0:none",
+    ]);
+  });
+
+  it("Q8: Q3's pairs from every source: the at-door change Q3 cannot see is a hit here, and PRODUCTION EDIT matches Q3", () => {
+    expect(
+      den.q8.map(
+        (r: any) =>
+          `${r.tenant_class}:${r.source}:${r.pairs}:${r.orders}:${r.moved}:${r.hit}:${r.fell_by}`,
+      ),
+    ).toEqual([
+      "DEMO:CHANGE_REQUEST:1:1:1:1:40",
+      "PRODUCTION:EDIT:6:6:6:4:136.25",
+      "PRODUCTION:SYSTEM_INVOICE_SYNC:1:1:1:1:40",
+      "TEST:EDIT:1:1:1:1:95",
+    ]);
+    const q3 = plainCensus.q3.find((r: any) => r.tenant_class === "PRODUCTION");
+    const q8 = den.q8.find((r: any) => r.tenant_class === "PRODUCTION" && r.source === "EDIT");
+    expect([q8.hit, q8.fell_by]).toEqual([q3.line_changes, q3.fell_by]);
+  });
+});

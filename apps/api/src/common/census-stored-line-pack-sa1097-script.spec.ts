@@ -14,10 +14,12 @@ const HREF = pathToFileURL(SCRIPT).href;
 const SOURCE = fs.readFileSync(SCRIPT, "utf8");
 
 const SA_FILE_SHA256 = "9b75d69a820faf304eb60ac3b5fcf9fb8ed1761b8f9635f4883651eb52ecef08";
+// SA-1097 A-5: rf-specs decisions/sa/SA-1097-denominators.sql at 6faf86cde4 (unchanged at 42d50272b2), LF line endings as filed.
+const SA_DENOMINATORS_SHA256 = "3291839e87910afc1c9c4b1ca6acd2703f885fc5a881ae0868c2c94e882d2e81";
 
 function run(body: string): any {
   const code = `
-import { CENSUS_SQL, CENSUS_SQL_SHA256, splitCensusSql, checkArgs, runCensus } from "${HREF}";
+import { CENSUS_SQL, CENSUS_SQL_SHA256, DENOMINATORS_SQL, DENOMINATORS_SQL_SHA256, splitCensusSql, checkArgs, runCensus } from "${HREF}";
 ${body}
 `;
   const res = spawnSync(process.execPath, ["--input-type=module", "-e", code], {
@@ -92,14 +94,93 @@ describe("SA-1097 census script", () => {
     ]);
   });
 
-  it("takes one argument, --timeout-s=<1-1800>; anything else (a write flag too) is refused", () => {
+  it("takes --timeout-s=<1-1800> and --denominators; anything else (a write flag too) is refused", () => {
     const out = run(`
       console.log(JSON.stringify([
         checkArgs([]), checkArgs(["--timeout-s=60"]), checkArgs(["--timeout-s=0"]), checkArgs(["--timeout-s=1801"]),
         checkArgs(["--apply"]), checkArgs(["--write"]), checkArgs(["--tenant=acme"]),
-      ].map((r) => r.ok ? r.timeoutS : "refused")));
+        checkArgs(["--denominators"]), checkArgs(["--denominators", "--timeout-s=60"]), checkArgs(["--denominators=1"]),
+        checkArgs(["--denominators", "--apply"]),
+      ].map((r) => r.ok ? [r.timeoutS, r.denominators] : "refused")));
     `);
-    expect(out).toEqual([300, 60, "refused", "refused", "refused", "refused", "refused"]);
+    expect(out).toEqual([
+      [300, false],
+      [60, false],
+      "refused",
+      "refused",
+      "refused",
+      "refused",
+      "refused",
+      [300, true],
+      [60, true],
+      "refused",
+      "refused",
+    ]);
+  });
+
+  // SA-1097 A-5: the second count, behind --denominators.
+  it("embeds the SA's denominators SQL unchanged (sha-256 of rf-specs SA-1097-denominators.sql)", () => {
+    expect(run(`console.log(JSON.stringify(DENOMINATORS_SQL_SHA256));`)).toBe(
+      SA_DENOMINATORS_SHA256,
+    );
+    expect(run(`console.log(JSON.stringify(DENOMINATORS_SQL.includes("\\r")));`)).toBe(false);
+  });
+
+  it("splits the denominators into Q4 to Q8, every one a SELECT that writes nothing", () => {
+    const qs = run(`console.log(JSON.stringify(splitCensusSql(DENOMINATORS_SQL)));`);
+    expect(qs.map((q: any) => q.name)).toEqual(["q4", "q5", "q6", "q7", "q8"]);
+    for (const q of qs) {
+      const code = q.sql.replace(/^--.*$/gm, "");
+      expect(code).toMatch(/^\s*(WITH|SELECT)\b/);
+      expect(code).not.toMatch(
+        /\b(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|GRANT|COPY|SET)\b/i,
+      );
+      expect(code.trim().endsWith(";")).toBe(true);
+    }
+  });
+
+  it("with the flag: read-only before any read, Q4 to Q8 each in its own READ ONLY transaction, rolled back, and the census does not run", () => {
+    const seen = run(`
+      const log = [];
+      const client = { async query(sql) {
+        log.push(sql.trim().split("\\n")[0].slice(0, 40));
+        if (sql === "SHOW transaction_read_only") return { rows: [{ transaction_read_only: "on" }] };
+        return { rows: [] };
+      } };
+      const out = await runCensus(client, { timeoutS: 60, denominators: true });
+      console.log(JSON.stringify({ log, spec: out.spec, keys: Object.keys(out) }));
+    `);
+    expect(seen.log).toEqual([
+      "SET default_transaction_read_only = on",
+      "SHOW transaction_read_only",
+      "SET statement_timeout = '60s'",
+      ...["Q4", "Q5", "Q6", "Q7", "Q8"].flatMap((q) => [
+        "BEGIN READ ONLY",
+        expect.stringMatching(new RegExp(`^-- ${q} `)),
+        "ROLLBACK",
+      ]),
+    ]);
+    expect(seen.spec.sqlSha256).toBe(SA_DENOMINATORS_SHA256);
+    expect(seen.keys).toEqual(["spec", "timingMs", "q4", "q5", "q6", "q7", "q8"]);
+  });
+
+  it("with the flag, a session that does not come up read-only is refused before any read", () => {
+    const out = run(`
+      const log = [];
+      const client = { async query(sql) {
+        log.push(sql);
+        if (sql === "SHOW transaction_read_only") return { rows: [{ transaction_read_only: "off" }] };
+        return { rows: [] };
+      } };
+      let exitCode = null;
+      try { await runCensus(client, { denominators: true }); } catch (e) { exitCode = e.exitCode; }
+      console.log(JSON.stringify({ exitCode, log }));
+    `);
+    expect(out.exitCode).toBe(2);
+    expect(out.log).toEqual([
+      "SET default_transaction_read_only = on",
+      "SHOW transaction_read_only",
+    ]);
   });
 
   it("is import-safe and uses the shared report resolver, with no write path in the source", () => {

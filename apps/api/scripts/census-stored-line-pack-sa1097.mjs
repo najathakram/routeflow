@@ -11,7 +11,17 @@
  *
  *   node apps/api/scripts/census-stored-line-pack-sa1097.mjs                                  (the DATABASE_URL target; local)
  *   railway run --service postgres node apps/api/scripts/census-stored-line-pack-sa1097.mjs   (the owner's per-call yes)
- *   optional: --timeout-s=<1-1800, default 300>  (statement timeout for each of the three queries)
+ *   optional: --timeout-s=<1-1800, default 300>  (statement timeout for each query)
+ *
+ * SA-1097 A-5 (rf-specs 42d50272b2): `--denominators` runs the SA's second count INSTEAD of the census, in the same read-only session:
+ *   Q4  every order line by tenant class: split, snapshot above 1 / 1 / 0 / none, label, free text, no tenant, cancelled; qty and
+ *       money against the snapshot; snapshot against live; old-order counts
+ *   Q5  split lines by month written (shows the July backfill and any later no-snapshot write)
+ *   Q6  revisions by source, and how many are an order's first edit
+ *   Q7  revision line entries: which keys they carry, and whether any revision ever recorded the shape, with dates
+ *   Q8  Q3's pairs from every source (at-door changes and merges too)
+ *   railway run --service postgres node apps/api/scripts/census-stored-line-pack-sa1097.mjs --denominators   (the owner's per-call yes)
+ * SA-1097-denominators.sql is embedded byte for byte as DENOMINATORS_SQL (sha-256 pinned by the script spec); counts and dates only.
  *
  * SAFETY: the session is read-only before any query (`default_transaction_read_only = on`, confirmed with SHOW, exit 2
  * otherwise) and each query runs in its own BEGIN READ ONLY ... ROLLBACK; `statement_timeout` is set; SELECTs only. The target
@@ -25,6 +35,7 @@ import { resolveReportDbUrl } from "./lib/report-db-url.mjs";
 const require = createRequire(import.meta.url);
 const NAME = "census-stored-line-pack-sa1097";
 export const SPEC_SQL_COMMIT = "1375ac917b11ea85a13190e487e73f5ef548cf56";
+export const DENOMINATORS_SQL_COMMIT = "6faf86cde43fa28f4499fd1eb749c6bb0eaf2fc3";
 export const DEFAULT_TIMEOUT_S = 300;
 
 export const CENSUS_SQL = String.raw`-- SA-1097 census. SELECT only, counts and totals, no ids or names. Every query is a plain WITH, because a read-only session can't create a view.
@@ -158,7 +169,133 @@ FROM agg a ORDER BY 1;
 
 export const CENSUS_SQL_SHA256 = createHash("sha256").update(CENSUS_SQL).digest("hex");
 
-/** The three queries, split at the SQL's own `-- Q1` / `-- Q2` / `-- Q3` markers; each runs as written. */
+export const DENOMINATORS_SQL = String.raw`-- SA-1097 denominators. SELECT only, counts and dates, no ids or names. Every query is a plain WITH, for a read-only session. LEFT JOINs on purpose: Q1 to Q3 dropped orders with no tenant and lines with no product.
+-- Q4 Every order line, by tenant class. Backfill = migration 20260714000000, which wrote the live pack onto split lines. Nothing here reads a pack at sale.
+WITH l AS (
+  SELECT COALESCE(t.class::text, 'NO_TENANT') AS tenant_class, oi."createdAt" AS at, oi.qty, COALESCE(oi.boxes, 0) AS b, COALESCE(oi.pieces, 0) AS pc,
+         oi."unitsPerBox" AS snap, COALESCE(btrim(oi."unitLabel"), '') <> '' AS labelled, oi."productId" IS NULL AS free_text,
+         oi."unitPrice" AS price, oi.subtotal, COALESCE(oi."promoFreeUnits", 0) AS free, COALESCE(p."unitsPerBox", 0) AS live,
+         (oi.boxes IS NOT NULL OR oi.pieces IS NOT NULL) AS split,
+         (oi.status <> 'CANCELLED' AND o.status <> 'CANCELLED') AS alive,
+         o."createdAt" < timestamp '2026-07-14' AS old_order,
+         EXISTS (SELECT 1 FROM "OrderRevision" r WHERE r."orderId" = o.id) AS revised
+  FROM "OrderItem" oi
+  JOIN "Order" o ON o.id = oi."orderId"
+  LEFT JOIN "Product" p ON p.id = oi."productId"
+  LEFT JOIN "Tenant" t ON t.id = o."tenantId"
+)
+SELECT tenant_class,
+       count(*)::int AS lines_all,
+       count(*) FILTER (WHERE alive)::int AS lines_alive,
+       min(at) AS first_line_at,
+       max(at) AS last_line_at,
+       count(*) FILTER (WHERE alive AND split)::int AS split_alive,
+       count(*) FILTER (WHERE NOT alive AND split)::int AS split_cancelled,
+       count(*) FILTER (WHERE alive AND split AND snap > 1)::int AS split_snap_above_1,
+       count(*) FILTER (WHERE alive AND split AND snap = 1)::int AS split_snap_1,
+       count(*) FILTER (WHERE alive AND split AND snap = 0)::int AS split_snap_0,
+       count(*) FILTER (WHERE alive AND split AND snap IS NULL)::int AS split_no_snap,
+       count(*) FILTER (WHERE NOT alive AND split AND snap IS NULL)::int AS split_no_snap_cancelled,
+       count(*) FILTER (WHERE alive AND split AND snap IS NULL AND labelled)::int AS split_no_snap_labelled,
+       count(*) FILTER (WHERE alive AND split AND snap IS NULL AND free_text)::int AS split_no_snap_free_text,
+       count(*) FILTER (WHERE alive AND split AND snap IS NULL AND tenant_class = 'NO_TENANT')::int AS split_no_snap_no_tenant,
+       count(*) FILTER (WHERE alive AND split AND snap > 1 AND qty = b * snap + pc)::int AS snap_qty_agrees,
+       count(*) FILTER (WHERE alive AND split AND snap > 1 AND qty <> b * snap + pc)::int AS snap_qty_differs,
+       COALESCE(sum(subtotal) FILTER (WHERE alive AND split AND snap > 1 AND qty <> b * snap + pc), 0) AS snap_qty_differs_total,
+       count(*) FILTER (WHERE alive AND split AND snap > 1 AND qty <> b * snap + pc AND NOT labelled)::int AS snap_qty_differs_unlabelled,
+       count(*) FILTER (WHERE alive AND split AND snap > 1 AND abs(subtotal - round(price * (GREATEST(b - free, 0) + pc::numeric / snap), 2)) > 0.01)::int AS snap_money_differs,
+       count(*) FILTER (WHERE alive AND split AND snap > 1 AND snap = live)::int AS snap_equals_live,
+       count(*) FILTER (WHERE alive AND split AND snap > 1 AND live > 1 AND snap <> live)::int AS snap_differs_live,
+       count(*) FILTER (WHERE alive AND split AND snap > 1 AND live <= 1)::int AS snap_live_none,
+       count(*) FILTER (WHERE alive AND labelled)::int AS labelled_alive,
+       count(*) FILTER (WHERE alive AND NOT split AND snap > 1)::int AS plain_snap_above_1,
+       count(*) FILTER (WHERE alive AND old_order)::int AS alive_on_old_order,
+       count(*) FILTER (WHERE alive AND old_order AND split)::int AS split_on_old_order,
+       count(*) FILTER (WHERE alive AND old_order AND split AND snap > 1 AND qty <> b * snap + pc)::int AS old_order_snap_qty_differs,
+       count(*) FILTER (WHERE alive AND old_order AND revised)::int AS alive_old_order_revised
+FROM l GROUP BY 1 ORDER BY 1;
+
+-- Q5 Split lines by the month the line was written, by tenant class.
+SELECT COALESCE(t.class::text, 'NO_TENANT') AS tenant_class, to_char(oi."createdAt", 'YYYY-MM') AS month,
+       count(*)::int AS lines,
+       count(*) FILTER (WHERE oi.boxes IS NOT NULL OR oi.pieces IS NOT NULL)::int AS split,
+       count(*) FILTER (WHERE (oi.boxes IS NOT NULL OR oi.pieces IS NOT NULL) AND oi."unitsPerBox" > 1)::int AS split_snap_above_1,
+       count(*) FILTER (WHERE (oi.boxes IS NOT NULL OR oi.pieces IS NOT NULL) AND oi."unitsPerBox" IS NULL)::int AS split_no_snap
+FROM "OrderItem" oi
+JOIN "Order" o ON o.id = oi."orderId"
+LEFT JOIN "Tenant" t ON t.id = o."tenantId"
+GROUP BY 1, 2 ORDER BY 1, 2;
+
+-- Q6 Revisions by tenant class and source. first_of_order = no earlier state, so Q3 could not see that edit.
+WITH r AS (
+  SELECT COALESCE(t.class::text, 'NO_TENANT') AS tenant_class, r.source, r."orderId", r."createdAt" AS at,
+         jsonb_typeof(r.snapshot->'lineItems') = 'array' AS has_lines,
+         r."revisionNumber" = min(r."revisionNumber") OVER (PARTITION BY r."orderId") AS first_of_order
+  FROM "OrderRevision" r
+  JOIN "Order" o ON o.id = r."orderId"
+  LEFT JOIN "Tenant" t ON t.id = o."tenantId"
+)
+SELECT tenant_class, source, count(*)::int AS revisions, count(DISTINCT "orderId")::int AS orders,
+       count(*) FILTER (WHERE has_lines)::int AS with_line_list,
+       count(*) FILTER (WHERE first_of_order)::int AS first_of_order,
+       min(at) AS first_at, max(at) AS last_at
+FROM r GROUP BY 1, 2 ORDER BY 1, 2;
+
+-- Q7 Line entries inside revisions: which keys they carry, and whether any revision ever recorded a split with no snapshot.
+WITH e AS (
+  SELECT COALESCE(t.class::text, 'NO_TENANT') AS tenant_class, r.source, r."orderId", r."createdAt" AS at, x AS item
+  FROM "OrderRevision" r
+  JOIN "Order" o ON o.id = r."orderId"
+  LEFT JOIN "Tenant" t ON t.id = o."tenantId"
+  CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(r.snapshot->'lineItems') = 'array' THEN r.snapshot->'lineItems' ELSE '[]'::jsonb END) x
+)
+SELECT tenant_class, source, count(*)::int AS entries,
+       count(*) FILTER (WHERE jsonb_exists(item, 'boxes'))::int AS has_boxes_key,
+       count(*) FILTER (WHERE jsonb_exists(item, 'pieces'))::int AS has_pieces_key,
+       count(*) FILTER (WHERE jsonb_exists(item, 'unitsPerBox'))::int AS has_pack_key,
+       count(*) FILTER (WHERE jsonb_exists(item, 'subtotal'))::int AS has_subtotal_key,
+       count(*) FILTER (WHERE item->>'boxes' IS NOT NULL OR item->>'pieces' IS NOT NULL)::int AS split_entries,
+       count(*) FILTER (WHERE (item->>'boxes' IS NOT NULL OR item->>'pieces' IS NOT NULL) AND item->>'unitsPerBox' IS NULL)::int AS split_no_snap_entries,
+       count(DISTINCT "orderId") FILTER (WHERE (item->>'boxes' IS NOT NULL OR item->>'pieces' IS NOT NULL) AND item->>'unitsPerBox' IS NULL)::int AS orders_with_shape,
+       min(at) FILTER (WHERE (item->>'boxes' IS NOT NULL OR item->>'pieces' IS NOT NULL) AND item->>'unitsPerBox' IS NULL) AS shape_first_at,
+       max(at) FILTER (WHERE (item->>'boxes' IS NOT NULL OR item->>'pieces' IS NOT NULL) AND item->>'unitsPerBox' IS NULL) AS shape_last_at
+FROM e GROUP BY 1, 2 ORDER BY 1, 2;
+
+-- Q8 Q3's pairs from every source, not only operator edits: at-door changes and merges read the same pack. Earlier state a split with no snapshot. moved = money or qty changed. hit = Q3's test.
+WITH rev AS (
+  SELECT r."orderId", r."revisionNumber" AS n, r.source, r.snapshot->'lineItems' AS items,
+         lag(r.snapshot->'lineItems') OVER (PARTITION BY r."orderId" ORDER BY r."revisionNumber") AS prev_items
+  FROM "OrderRevision" r
+  WHERE jsonb_typeof(r.snapshot->'lineItems') = 'array'
+), pairs AS (
+  SELECT rev."orderId", rev.source, (p->>'subtotal')::numeric AS before_total, (x->>'subtotal')::numeric AS after_total,
+         (p->>'qty')::numeric AS q, COALESCE((p->>'boxes')::int, 0) AS b, COALESCE((p->>'pieces')::int, 0) AS pc,
+         (x->>'qty')::numeric AS next_q, (x->>'unitsPerBox')::int AS next_pack, x->>'boxes' AS next_boxes, x->>'pieces' AS next_pieces
+  FROM rev
+  CROSS JOIN LATERAL jsonb_array_elements(rev.prev_items) p
+  CROSS JOIN LATERAL jsonb_array_elements(rev.items) x
+  WHERE rev.prev_items IS NOT NULL
+    AND p->>'productId' = x->>'productId'
+    AND (SELECT count(*) FROM jsonb_array_elements(rev.prev_items) e WHERE e->>'productId' = p->>'productId') = 1
+    AND (SELECT count(*) FROM jsonb_array_elements(rev.items) e WHERE e->>'productId' = p->>'productId') = 1
+    AND (p->>'boxes' IS NOT NULL OR p->>'pieces' IS NOT NULL)
+    AND p->>'unitsPerBox' IS NULL
+)
+SELECT COALESCE(t.class::text, 'NO_TENANT') AS tenant_class, pairs.source, count(*)::int AS pairs, count(DISTINCT pairs."orderId")::int AS orders,
+       count(*) FILTER (WHERE before_total <> after_total OR q <> next_q)::int AS moved,
+       count(*) FILTER (WHERE (before_total <> after_total OR q <> next_q)
+                          AND ((next_boxes IS NULL AND next_pieces IS NULL)
+                               OR (next_pack > 1 AND NOT (b > 0 AND mod(q - pc, b) = 0 AND (q - pc) / b = next_pack))))::int AS hit,
+       COALESCE(sum(before_total - after_total) FILTER (WHERE after_total < before_total), 0) AS fell_by
+FROM pairs
+JOIN "Order" o ON o.id = pairs."orderId"
+LEFT JOIN "Tenant" t ON t.id = o."tenantId"
+GROUP BY 1, 2 ORDER BY 1, 2;
+`;
+
+export const DENOMINATORS_SQL_SHA256 = createHash("sha256").update(DENOMINATORS_SQL).digest("hex");
+
+/** The queries, split at the SQL's own `-- Q<n> ` markers (Q1-Q3 for the census, Q4-Q8 for the denominators); each runs as written. */
 export function splitCensusSql(text = CENSUS_SQL) {
   const parts = text.split(/^-- (?=Q\d )/m).slice(1);
   return parts.map((p) => ({
@@ -169,27 +306,40 @@ export function splitCensusSql(text = CENSUS_SQL) {
 
 export function checkArgs(argv) {
   let timeoutS = DEFAULT_TIMEOUT_S;
+  let denominators = false;
   for (const a of argv) {
+    if (a === "--denominators") {
+      denominators = true;
+      continue;
+    }
     const m = /^--timeout-s=(\d+)$/.exec(a);
     if (!m || Number(m[1]) < 1 || Number(m[1]) > 1800) {
       return {
         ok: false,
-        message: `unknown or invalid argument: ${a} (usage: [--timeout-s=<1-1800>])`,
+        message: `unknown or invalid argument: ${a} (usage: [--denominators] [--timeout-s=<1-1800>])`,
       };
     }
     timeoutS = Number(m[1]);
   }
-  return { ok: true, timeoutS };
+  return { ok: true, timeoutS, denominators };
 }
 
-export async function runCensus(client, { timeoutS = DEFAULT_TIMEOUT_S, log = () => {} } = {}) {
+export async function runCensus(
+  client,
+  { timeoutS = DEFAULT_TIMEOUT_S, log = () => {}, denominators = false } = {},
+) {
   await client.query("SET default_transaction_read_only = on");
   const [{ transaction_read_only: ro }] = (await client.query("SHOW transaction_read_only")).rows;
   if (ro !== "on") throw Object.assign(new Error("session is not read-only"), { exitCode: 2 });
   await client.query(`SET statement_timeout = '${timeoutS}s'`);
-  const out = { spec: { sqlCommit: SPEC_SQL_COMMIT, sqlSha256: CENSUS_SQL_SHA256 }, timingMs: {} };
+  const out = {
+    spec: denominators
+      ? { sqlCommit: DENOMINATORS_SQL_COMMIT, sqlSha256: DENOMINATORS_SQL_SHA256 }
+      : { sqlCommit: SPEC_SQL_COMMIT, sqlSha256: CENSUS_SQL_SHA256 },
+    timingMs: {},
+  };
   const t0 = Date.now();
-  for (const q of splitCensusSql()) {
+  for (const q of splitCensusSql(denominators ? DENOMINATORS_SQL : CENSUS_SQL)) {
     const t = Date.now();
     await client.query("BEGIN READ ONLY");
     try {
@@ -216,7 +366,11 @@ async function main(argv) {
   const client = new Client({ connectionString: url });
   await client.connect();
   try {
-    const census = await runCensus(client, { timeoutS: args.timeoutS, log: console.error });
+    const census = await runCensus(client, {
+      timeoutS: args.timeoutS,
+      log: console.error,
+      denominators: args.denominators,
+    });
     console.log(JSON.stringify(census, null, 2));
   } catch (e) {
     console.error(`${NAME}: ${e.message}`);
