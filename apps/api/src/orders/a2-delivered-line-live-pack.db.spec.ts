@@ -194,14 +194,18 @@ describeDb(
      */
     interface SeedShape {
       /** the stored split (default boxes 10, pieces 0, qty 10 x the pack at sale) */
-      boxes?: number;
+      boxes?: number | null;
       pieces?: number;
+      /** the stored line price (default 10) */
+      unitPrice?: number;
       qty?: number;
       subtotal?: number;
       /** the line's own unitsPerBox snapshot (default none) */
       snapshot?: number;
       status?: string;
       invoiced?: boolean;
+      /** OrderItem.promoFreeUnits (a promo's free units, priced out of the line) */
+      freeUnits?: number;
     }
     async function seed(
       label: string,
@@ -260,12 +264,13 @@ describeDb(
           orderId: order.id,
           productId: product.id,
           qty: soldQty,
-          boxes: shape.boxes ?? 10,
+          boxes: shape.boxes === undefined ? 10 : shape.boxes,
           pieces: shape.pieces ?? 0,
           ...(shape.snapshot ? { unitsPerBox: shape.snapshot } : {}),
+          ...(shape.freeUnits ? { promoFreeUnits: shape.freeUnits } : {}),
           deliveredQty: shape.invoiced === false ? 0 : soldQty,
           invoicedQty: shape.invoiced === false ? 0 : soldQty,
-          unitPrice: 10,
+          unitPrice: shape.unitPrice ?? 10,
           subtotal: lineSubtotal,
         } as any,
       });
@@ -293,7 +298,7 @@ describeDb(
             productId: product.id,
             description: `Acme cola ${label}`,
             qty: soldQty,
-            unitPrice: 10,
+            unitPrice: shape.unitPrice ?? 10,
             subtotal: lineSubtotal,
           } as any,
         });
@@ -734,6 +739,228 @@ describeDb(
       measure("A2-12 stock after return", after.stock);
       measure("A2-12 ledger after return", after.ledger);
       expect(after.stock - mid.stock).toBe(3);
+    }, 120_000);
+    // ── SA-1097 A-6 rows A6-1..A6-9: a stored line with pieces and NO boxes ({boxes null, pieces 6}) ─────────────────
+    const OPEN = { status: "PENDING", invoiced: false } as const;
+    const refusedWith = async (s: Seeded, item: Record<string, unknown>) => {
+      try {
+        await edit(s, item);
+      } catch (e: any) {
+        return e?.getResponse?.() ?? String(e);
+      }
+      return null;
+    };
+
+    it("A6-1 (red): {boxes null, pieces 6}, pack never changed (24), 2.50, an echo of qty 6 at price 10 stays 2.50 and stock does not move", async () => {
+      const s = await seed("a6-1", null, 24, {
+        boxes: null,
+        pieces: 6,
+        qty: 6,
+        subtotal: 2.5,
+        ...OPEN,
+      });
+      const before = await state(s);
+      await edit(s, { qty: 6, unitPrice: 10 });
+      const after = await state(s);
+      measure("A6-1 after", after);
+      expect(after.line.subtotal).toBe(2.5);
+      expect(after.stock).toBe(before.stock);
+      expect(after.ledger).toEqual(before.ledger);
+    }, 120_000);
+
+    it("A6-2 (red): the same shape sold at 12 and now 24 (5.00): the echo is refused and nothing is written", async () => {
+      const s = await seed("a6-2", 12, 24, {
+        boxes: null,
+        pieces: 6,
+        qty: 6,
+        subtotal: 5,
+        ...OPEN,
+      });
+      const before = await state(s);
+      const thrown = await refusedWith(s, { qty: 6, unitPrice: 10 });
+      measure("A6-2 thrown", thrown);
+      expect(thrown).toMatchObject({ code: "STORED_LINE_PACK_UNREADABLE" });
+      expect(await state(s)).toEqual(before);
+    }, 120_000);
+
+    it("A6-3a (red): A6-2's line and the web's payload {qty 6, boxes 0, pieces 6, price 10} is refused, nothing written", async () => {
+      const s = await seed("a6-3a", 12, 24, {
+        boxes: null,
+        pieces: 6,
+        qty: 6,
+        subtotal: 5,
+        ...OPEN,
+      });
+      const before = await state(s);
+      const thrown = await refusedWith(s, { qty: 6, boxes: 0, pieces: 6, unitPrice: 10 });
+      measure("A6-3a thrown", thrown);
+      expect(thrown).toMatchObject({ code: "STORED_LINE_PACK_UNREADABLE" });
+      expect(await state(s)).toEqual(before);
+    }, 120_000);
+
+    it("A6-3b (red): the same line delivered and invoiced, the web's payload with price 12, is refused: the line and the invoice keep 5.00", async () => {
+      const s = await seed("a6-3b", 12, 24, { boxes: null, pieces: 6, qty: 6, subtotal: 5 });
+      const before = await state(s);
+      const thrown = await refusedWith(s, { qty: 6, boxes: 0, pieces: 6, unitPrice: 12 });
+      measure("A6-3b thrown", thrown);
+      expect(thrown).toMatchObject({ code: "STORED_LINE_PACK_UNREADABLE" });
+      expect(await state(s)).toEqual(before);
+    }, 120_000);
+
+    it("A6-4 (red): {boxes null, pieces 6}, no pack at sale, 60.00: an echo at price 12 is 72.00 and stock does not move", async () => {
+      const s = await seed("a6-4", null, 24, {
+        boxes: null,
+        pieces: 6,
+        qty: 6,
+        subtotal: 60,
+        ...OPEN,
+      });
+      const before = await state(s);
+      await edit(s, { qty: 6, unitPrice: 12 });
+      const after = await state(s);
+      measure("A6-4 after", after);
+      expect(after.line.subtotal).toBe(72);
+      expect(after.stock).toBe(before.stock);
+    }, 120_000);
+
+    it("A6-5 (red): an add of {productId, pieces 6} on a pack product stamps the product's pack on the new line", async () => {
+      const s = await seed("a6-5", 24, 24, { snapshot: 24, qty: 240, ...OPEN });
+      await tenantCtx.run(s.tenantId, () =>
+        orders.updateOrderItems(
+          s.orderId,
+          { replaceAll: false, items: [{ productId: s.productId, pieces: 6 }] },
+          operatorOf(s),
+        ),
+      );
+      const added = await prisma.orderItem.findFirstOrThrow({
+        where: { orderId: s.orderId, id: { not: s.lineId } },
+      });
+      measure("A6-5 added line", {
+        qty: Number(added.qty),
+        boxes: added.boxes,
+        pieces: added.pieces,
+        unitsPerBox: (added as any).unitsPerBox,
+        subtotal: Number(added.subtotal),
+      });
+      expect(Number((added as any).unitsPerBox)).toBe(24);
+    }, 120_000);
+
+    it("A6-6 (guard): a zero line on a 12-pack typed up to 2 boxes is 24 units, 20.00, stock 66", async () => {
+      const s = await seed("a6-6", 12, 12, { boxes: 0, pieces: 0, qty: 0, subtotal: 0, ...OPEN });
+      await edit(s, { boxes: 2, pieces: 0, unitPrice: 10 });
+      const after = await state(s);
+      measure("A6-6 after", after);
+      expect(after.line).toMatchObject({ qty: 24, subtotal: 20 });
+      expect(after.stock).toBe(66);
+    }, 120_000);
+
+    it("A6-7 (guard): a no-charge line of 6 pieces on a 12-pack, priced to 5.00, is 2.50", async () => {
+      const s = await seed("a6-7", 12, 12, {
+        boxes: 0,
+        pieces: 6,
+        qty: 6,
+        subtotal: 0,
+        unitPrice: 0,
+        ...OPEN,
+      });
+      await edit(s, { qty: 6, unitPrice: 5 });
+      const after = await state(s);
+      measure("A6-7 after", after);
+      expect(after.line.subtotal).toBe(2.5);
+    }, 120_000);
+
+    it("A6-8 (guard): a zero line echoed beside another line's edit does not stop the other line saving", async () => {
+      const s = await seed("a6-8", 12, 12, { boxes: 0, pieces: 0, qty: 0, subtotal: 0, ...OPEN });
+      const other = await prisma.product.create({
+        data: {
+          tenantId: s.tenantId,
+          name: "Acme tea a6-8",
+          unit: "each",
+          pricePerUnit: 10,
+        } as any,
+      });
+      const otherLine = await prisma.orderItem.create({
+        data: {
+          tenantId: s.tenantId,
+          orderId: s.orderId,
+          productId: other.id,
+          qty: 5,
+          unitPrice: 10,
+          subtotal: 50,
+        } as any,
+      });
+      await tenantCtx.run(s.tenantId, () =>
+        orders.updateOrderItems(
+          s.orderId,
+          {
+            replaceAll: false,
+            items: [
+              { id: s.lineId, qty: 0, unitPrice: 10 },
+              { id: otherLine.id, qty: 4, unitPrice: 10 },
+            ],
+          },
+          operatorOf(s),
+        ),
+      );
+      const saved = await prisma.orderItem.findUniqueOrThrow({ where: { id: otherLine.id } });
+      measure("A6-8 other line", { qty: Number(saved.qty), subtotal: Number(saved.subtotal) });
+      expect(Number(saved.qty)).toBe(4);
+    }, 120_000);
+
+    it("A6-9 (guard): 6 pieces at price 12 with a stored subtotal of 0 fits neither pack: refused", async () => {
+      const s = await seed("a6-9", 12, 12, {
+        boxes: 0,
+        pieces: 6,
+        qty: 6,
+        subtotal: 0,
+        unitPrice: 12,
+        ...OPEN,
+      });
+      const before = await state(s);
+      const thrown = await refusedWith(s, { qty: 6, unitPrice: 12 });
+      expect(thrown).toMatchObject({ code: "STORED_LINE_PACK_UNREADABLE" });
+      expect(await state(s)).toEqual(before);
+    }, 120_000);
+
+    // ── SA-1097 A-6 item 6: rows for the mutants the reviews found no lane for ───────────────────────────────────────
+    it("A6-M1 (mutant: native echo / no-pack agreement at the live axis): native's payload on the no-pack line - qty 10, boxes 10, pieces 0, price 12 - is 120.00 and stock does not move", async () => {
+      const s = await seed("a6-m1", null, 24);
+      const before = await state(s);
+      await edit(s, { qty: 10, boxes: 10, pieces: 0, unitPrice: 12 });
+      const after = await state(s);
+      measure("A6-M1 after", after);
+      expect(after.line).toMatchObject({
+        qty: 10,
+        boxes: 10,
+        pieces: 0,
+        unitsPerBox: null,
+        subtotal: 120,
+      });
+      expect(after.invoices[0]!.total).toBe(120);
+      expect(after.stock).toBe(before.stock);
+      expect(after.ledger).toEqual(before.ledger);
+    }, 120_000);
+
+    it("A6-M2 (mutant: the server read ignores free units): a no-pack line of 10 boxes with 2 free (80.00) echoed at the same price stays 80.00", async () => {
+      const s = await seed("a6-m2", null, 24, { subtotal: 80, freeUnits: 2, ...OPEN });
+      const before = await state(s);
+      await edit(s, { qty: 10, unitPrice: 10 });
+      const after = await state(s);
+      measure("A6-M2 after", after);
+      expect(after.line.subtotal).toBe(80);
+      expect(after.stock).toBe(before.stock);
+      expect(after.ledger).toEqual(before.ledger);
+    }, 120_000);
+
+    it("A6-M3 (mutant: a snapshot of 1 is a pack / skips the helper): a line stamped 1 (no pack) with a 24-pack product now, qty 10 -> 9, is 9 boxes, 90.00", async () => {
+      const s = await seed("a6-m3", null, 24, { snapshot: 1, ...OPEN });
+      const before = await state(s);
+      await edit(s, { qty: 9, unitPrice: 10 });
+      const after = await state(s);
+      measure("A6-M3 after", after);
+      expect(after.line).toMatchObject({ qty: 9, boxes: 9, pieces: 0, subtotal: 90 });
+      expect(after.line.unitsPerBox === null || after.line.unitsPerBox === 1).toBe(true);
+      expect(after.stock - before.stock).toBe(1); // an open order: the 1 box released goes back on the shelf, at the line's own pack (1)
     }, 120_000);
   },
 );

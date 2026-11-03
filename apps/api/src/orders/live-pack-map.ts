@@ -81,7 +81,11 @@ export async function packForLineEdit(
   line: StoredSplitLine,
   editHasSplit: boolean,
 ): Promise<{ pack: number | null; soldWithNoPack: boolean; stored: boolean }> {
-  if (line.productId && line.boxes != null && !(Number(line.unitsPerBox ?? 0) > 1)) {
+  if (
+    line.productId &&
+    (line.boxes != null || line.pieces != null) &&
+    !(Number(line.unitsPerBox ?? 0) > 1)
+  ) {
     const stored = await storedLinePackForEdit(db, line);
     return { pack: stored.pack || null, soldWithNoPack: stored.soldWithNoPack, stored: true };
   }

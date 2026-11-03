@@ -3502,7 +3502,8 @@ export class OrdersService implements OnApplicationBootstrap {
                     pieces: piecesForLine,
                     // Snapshot the sale-time box size on box-split lines (see create()).
                     unitsPerBox:
-                      boxesForLine != null && Number(product.unitsPerBox ?? 0) > 1
+                      (boxesForLine != null || piecesForLine != null) &&
+                      Number(product.unitsPerBox ?? 0) > 1
                         ? Number(product.unitsPerBox)
                         : null,
                     unitPrice,
@@ -4664,12 +4665,12 @@ export class OrdersService implements OnApplicationBootstrap {
             // money), never today's product pack; one it can't read is refused, nothing written.
             let upb = Number(src.unitsPerBox ?? 0);
             let soldWithNoPack = false;
-            if (!(upb > 1) && li.productId && src.boxes != null) {
+            if (!(upb > 1) && li.productId && (src.boxes != null || src.pieces != null)) {
               const stored = await storedLinePackForEdit(tx as any, src);
               upb = stored.pack;
               soldWithNoPack = stored.soldWithNoPack;
             }
-            const wasBoxSplit = src.boxes != null;
+            const wasBoxSplit = src.boxes != null || src.pieces != null;
             const split = soldWithNoPack
               ? { qty: noPackEditQty(newQty), boxes: noPackEditQty(newQty), pieces: 0 } // sold with no pack: shape kept
               : wasBoxSplit && upb > 1

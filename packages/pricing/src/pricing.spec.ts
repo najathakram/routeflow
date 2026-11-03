@@ -519,7 +519,8 @@ describe("pricing — money discipline", () => {
       });
     });
 
-    it("step 4: both reproduce it -> unreadable (a zero price can't tell the packs apart)", () => {
+    it("step 4 (A-6): both fit and the stored subtotal is 0 -> the live pack (no money to misread)", () => {
+      // a no-charge line
       expect(
         resolveStoredLinePack({
           qty: 6,
@@ -529,7 +530,54 @@ describe("pricing — money discipline", () => {
           subtotal: 0,
           livePack: 24,
         }),
-      ).toMatchObject({ ok: false });
+      ).toEqual({ ok: true, pack: 24, basis: "MONEY_LIVE_PACK" });
+      // a zero line (boxes and pieces both null or 0)
+      expect(
+        resolveStoredLinePack({
+          qty: 0,
+          boxes: null,
+          pieces: 0,
+          unitPrice: 10,
+          subtotal: 0,
+          livePack: 12,
+        }),
+      ).toEqual({ ok: true, pack: 12, basis: "MONEY_LIVE_PACK" });
+    });
+
+    it("step 4 (A-6): both fit but the stored subtotal is real money -> still unreadable", () => {
+      // 1 piece at 0.01: no-pack prices 0.01, the live 24 prices ~0.0004; both are within a cent of 0.01
+      expect(
+        resolveStoredLinePack({
+          qty: 1,
+          boxes: 0,
+          pieces: 1,
+          unitPrice: 0.01,
+          subtotal: 0.01,
+          livePack: 24,
+        }),
+      ).toMatchObject({ ok: false, basis: "UNREADABLE" });
+    });
+
+    it("step 4 (A-6): a zero stored subtotal that fits NEITHER pack is still unreadable", () => {
+      expect(
+        resolveStoredLinePack({
+          qty: 6,
+          boxes: 0,
+          pieces: 6,
+          unitPrice: 12,
+          subtotal: 0,
+          livePack: 12,
+        }),
+      ).toMatchObject({ ok: false, basis: "UNREADABLE" });
+    });
+
+    it("A-6: a line with pieces and NO boxes reads the same evidence as one with 0 boxes", () => {
+      expect(
+        resolveStoredLinePack({ ...line, qty: 6, boxes: null, pieces: 6, subtotal: 2.5 }),
+      ).toEqual({ ok: true, pack: 24, basis: "MONEY_LIVE_PACK" });
+      expect(
+        resolveStoredLinePack({ ...line, qty: 6, boxes: null, pieces: 6, subtotal: 60 }),
+      ).toEqual({ ok: true, pack: null, basis: "MONEY_NO_PACK" });
     });
 
     it("with no live candidate (0, 1 or null) only no-pack can be vouched for", () => {

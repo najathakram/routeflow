@@ -102,7 +102,7 @@ describeDb(
           qty: shape.qty,
           boxes: shape.boxes,
           pieces: shape.pieces,
-          ...(shape.snapshot ? { unitsPerBox: shape.snapshot } : {}),
+          ...(shape.snapshot !== undefined ? { unitsPerBox: shape.snapshot } : {}),
           deliveredQty: 0,
           ...(shape.promoFreeUnits ? { promoFreeUnits: shape.promoFreeUnits } : {}),
           unitPrice: 10,
@@ -336,6 +336,18 @@ describeDb(
         subtotal: 90,
       });
       restocked(before, after, 1);
+    }, 120_000);
+
+    it("B-2b (mutant: the at-door snapshot gate): a line stamped 0 or 1 (no pack) is read like an unstamped one - 10 -> 9 is 90.00, not 9 pieces of the live 24", async () => {
+      for (const snapshot of [0, 1]) {
+        const s = await seed({ qty: 10, boxes: 10, pieces: 0, subtotal: 100, snapshot });
+        const before = await state(s);
+        await changeQty(s, 9);
+        const after = await state(s);
+        measure(`B-2b snapshot ${snapshot} after`, after);
+        expect(after.line).toMatchObject({ qty: 9, boxes: 9, pieces: 0, subtotal: 90 });
+        restocked(before, after, 1);
+      }
     }, 120_000);
 
     it("B-3: 0 boxes + 6 pieces with no snapshot and a subtotal that fits neither pack (7.00) is refused with the code, nothing written", async () => {

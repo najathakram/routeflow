@@ -29,12 +29,13 @@ export type LineOwnPack =
   | { kind: "unreadable" };
 
 export function lineOwnPack(li: OwnPackLine): LineOwnPack {
-  if (!li.productId || li.unitLabel != null || li.boxes == null) return { kind: "as-stored" };
+  if (!li.productId || li.unitLabel != null || (li.boxes == null && li.pieces == null))
+    return { kind: "as-stored" };
   if (Number(li.unitsPerBox ?? 0) > 1) return { kind: "as-stored" };
   const livePack = li.product?.unitsPerBox == null ? undefined : Number(li.product.unitsPerBox);
   const r = resolveStoredLinePack({
     qty: Number(li.qty),
-    boxes: Number(li.boxes),
+    boxes: li.boxes == null ? null : Number(li.boxes),
     pieces: li.pieces == null ? null : Number(li.pieces),
     unitsPerBox: li.unitsPerBox == null ? null : Number(li.unitsPerBox),
     unitPrice: Number(li.unitPrice),

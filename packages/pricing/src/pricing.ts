@@ -142,7 +142,8 @@ export type StoredLinePack =
  *  3. Otherwise only the money can tell (0 boxes, or a quotient that is not whole): price the stored fields through
  *     {@link computeLineSubtotal}, free units included. The live pack reproducing the stored subtotal within a cent while
  *     no-pack does not -> the live pack; only no-pack does -> no pack.
- *  4. Neither, or both: `ok: false` (the caller refuses; nothing is written).
+ *  4. Neither, or both: `ok: false` (the caller refuses; nothing is written) - except that when both fit and the stored
+ *     subtotal is 0 (A-6: no money to misread) the live pack answers.
  * `pack: null` with `ok: true` means no pack at sale: the line prices as qty x unitPrice.
  */
 export function resolveStoredLinePack(input: {
@@ -187,6 +188,11 @@ export function resolveStoredLinePack(input: {
   const fitsNone = fits(null);
   if (fitsLive && !fitsNone) return { ok: true, pack: live, basis: "MONEY_LIVE_PACK" };
   if (fitsNone && !fitsLive) return { ok: true, pack: null, basis: "MONEY_NO_PACK" };
+  // A-6: both fit only when the stored money is 0 (a zero line, a no-charge line): there is no money to misread, so
+  // refusing protects nothing - the live pack answers. A both-fit line with real money still refuses.
+  if (fitsLive && fitsNone && Math.abs(stored) <= 0.005) {
+    return { ok: true, pack: live, basis: "MONEY_LIVE_PACK" };
+  }
   return { ok: false, pack: null, basis: "UNREADABLE" };
 }
 
