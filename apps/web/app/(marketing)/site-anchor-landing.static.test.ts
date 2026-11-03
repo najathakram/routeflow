@@ -88,7 +88,16 @@ describe("home anchor landing script", () => {
       }
     });
 
-    it("stops on a later hash change, and after the layout has stayed put once loaded", () => {
+    it("stops on a later hash change", () => {
+      run("#use-cases");
+      window.dispatchEvent(new Event("hashchange"));
+      scrollTo.mockClear();
+      top = 8000;
+      jest.advanceTimersByTime(600);
+      expect(scrollTo).not.toHaveBeenCalled();
+    });
+
+    it("stops after the layout has stayed put once loaded", () => {
       run("#use-cases");
       window.dispatchEvent(new Event("load"));
       jest.advanceTimersByTime(2000);
@@ -98,9 +107,63 @@ describe("home anchor landing script", () => {
       expect(scrollTo).not.toHaveBeenCalled();
     });
 
+    it("keeps the #hash off the address until load, then puts it back (the browser's own jump cannot pull a scrolling person back)", () => {
+      run("#use-cases");
+      expect(window.location.hash).toBe("");
+      window.dispatchEvent(new Event("wheel"));
+      jest.advanceTimersByTime(600);
+      expect(window.location.hash).toBe("");
+      window.dispatchEvent(new Event("load"));
+      jest.advanceTimersByTime(10);
+      expect(window.location.hash).toBe("#use-cases");
+    });
+
+    it("does not put the old hash back over a hash the person has since chosen", () => {
+      run("#use-cases");
+      window.history.replaceState(null, "", "#stores");
+      window.dispatchEvent(new Event("load"));
+      jest.advanceTimersByTime(10);
+      expect(window.location.hash).toBe("#stores");
+    });
+
+    it("gives up at once when the target is fixed (a menu, a bar)", () => {
+      target.style.position = "fixed";
+      run("#use-cases");
+      jest.advanceTimersByTime(3000);
+      expect(scrollTo).not.toHaveBeenCalled();
+    });
+
+    it("gives up when its moves do not bring the target to the top (pinned, or below what the page can scroll)", () => {
+      // the page cannot scroll past 1000, so the target never gets near the top
+      scrollTo = jest.fn((_x: number, ny: number) => {
+        y = Math.min(ny, 1000);
+      });
+      window.scrollTo = scrollTo as unknown as typeof window.scrollTo;
+      run("#use-cases");
+      window.dispatchEvent(new Event("load"));
+      jest.advanceTimersByTime(2000);
+      const calls = scrollTo.mock.calls.length;
+      expect(calls).toBeLessThan(10);
+      jest.advanceTimersByTime(30000);
+      expect(scrollTo.mock.calls.length).toBe(calls);
+    });
+
+    it("does not keep the 30 second timer alive when a target cannot move", () => {
+      scrollTo = jest.fn();
+      window.scrollTo = scrollTo as unknown as typeof window.scrollTo;
+      run("#use-cases");
+      window.dispatchEvent(new Event("load"));
+      jest.advanceTimersByTime(2000);
+      const calls = scrollTo.mock.calls.length;
+      jest.advanceTimersByTime(30000);
+      expect(scrollTo.mock.calls.length).toBe(calls);
+    });
+
     it("leaves a page with no hash, an unknown hash, a reload and back/forward alone", () => {
       run("");
       run("#nothing-here");
+      expect(window.location.hash).toBe("#nothing-here");
+      run("#%");
       run("#use-cases", "reload");
       run("#use-cases", "back_forward");
       jest.advanceTimersByTime(1000);

@@ -19,7 +19,7 @@
  * Signed-out throughout — no storageState, dependencies: [] on the "marketing" project
  * (playwright.config.ts).
  */
-import { test, expect, devices } from "@playwright/test";
+import { test, expect, devices, type BrowserContext, type Page } from "@playwright/test";
 
 // The pages that wear the site header and footer, with their one h1.
 const H1_BY_ROUTE: Record<string, string> = {
@@ -970,6 +970,8 @@ test.describe("T20 — a home anchor is reached as soon as the page paints", () 
         test.setTimeout(150_000);
         const context = await browser.newContext(view.use);
         const page = await context.newPage();
+        const errors: string[] = [];
+        page.on("pageerror", (e) => errors.push(e.message));
         await page.addInitScript(() => {
           const m: Record<string, number> = {};
           (window as unknown as { __m: typeof m }).__m = m;
@@ -1007,16 +1009,16 @@ test.describe("T20 — a home anchor is reached as soon as the page paints", () 
         } else {
           await page.goto(href, { waitUntil: "commit" });
         }
-        await page.waitForURL(`**/#${hash}`, { waitUntil: "commit", timeout: 60_000 });
 
         // The page lands on the target before DOMContentLoaded (that is when the scripts have run):
         // the person is never left looking at the top while the rest loads.
+        // (the init script runs again for every document, so /pricing's own DOMContentLoaded is not
+        // mistaken for the home page's)
         await page.waitForFunction(
-          () => !!(window as unknown as { __m: { dcl?: number } }).__m.dcl,
+          () =>
+            location.pathname === "/" && !!(window as unknown as { __m: { dcl?: number } }).__m.dcl,
           null,
-          {
-            timeout: 90_000,
-          },
+          { timeout: 90_000 },
         );
         const m = await page.evaluate(
           () => (window as unknown as { __m: { firstScroll?: number; dcl: number } }).__m,
@@ -1044,18 +1046,83 @@ test.describe("T20 — a home anchor is reached as soon as the page paints", () 
           hash,
         );
         expect(top).toBeLessThanOrEqual(HEADER + 4);
+
+        // The address keeps the #hash (it is taken off only until load, so the browser's own jump
+        // cannot pull a scrolling person back), and no script threw on the way.
+        await expect.poll(() => page.url(), { timeout: 10_000 }).toContain(`#${hash}`);
+        expect(errors, "page errors while landing").toEqual([]);
         await context.close();
       });
     }
   }
 
-  test("T20 — a person who scrolls is left alone", async ({ browser }) => {
-    test.setTimeout(150_000);
-    const context = await browser.newContext({
-      ...desktopChrome,
-      viewport: { width: 1440, height: 900 },
+  // A person who scrolls away before the page has finished loading is left where they went. The scroll
+  // scripts are held back by `hold` ms so DOMContentLoaded and load come well after the wheel, as on a
+  // slow phone: the browser's own jump to the #hash used to pull them back to the target at load.
+  // Run twice each, so a pass is not luck.
+  for (const [hold, run] of [
+    [0, 1],
+    [6000, 1],
+    [0, 2],
+    [6000, 2],
+  ] as const) {
+    test(`T20 — a person who scrolls is left alone (scripts held ${hold} ms, run ${run})`, async ({
+      browser,
+    }) => {
+      test.setTimeout(150_000);
+      const context = await browser.newContext({
+        ...desktopChrome,
+        viewport: { width: 1440, height: 900 },
+      });
+      if (hold)
+        await context.route("**/vendor/ScrollTrigger.min.js", async (route) => {
+          await new Promise((r) => setTimeout(r, hold));
+          await route.continue();
+        });
+      const page = await context.newPage();
+      const cdp = await context.newCDPSession(page);
+      await cdp.send("Emulation.setCPUThrottlingRate", { rate: SLOW.cpu });
+      await cdp.send("Network.enable");
+      await cdp.send("Network.emulateNetworkConditions", {
+        offline: false,
+        latency: SLOW.latencyMs,
+        downloadThroughput: SLOW.bytesPerSecond,
+        uploadThroughput: SLOW.bytesPerSecond,
+      });
+      await page.goto("/pricing", { waitUntil: "commit" });
+      await page.waitForSelector("header a", { timeout: 60_000 });
+      await page.locator('header a[href="/#use-cases"]').click();
+      await page.waitForFunction(() => location.pathname === "/" && scrollY > 100, null, {
+        timeout: 90_000,
+      });
+      await page.mouse.move(700, 400);
+      await page.mouse.wheel(0, -100000);
+      await page.waitForLoadState("load", { timeout: 90_000 });
+      await page.waitForTimeout(4000);
+      expect(await page.evaluate(() => Math.round(scrollY))).toBeLessThan(200);
+      await context.close();
     });
-    const page = await context.newPage();
+  }
+
+  // Phone: landing on #founder, #pricing or #faq used to throw inside ScrollTrigger (a once-trigger built
+  // after its start had passed is removed in its own first refresh, and a later trigger's refresh walks
+  // the same list by index and read a missing entry). Everything built after it stayed hidden for good:
+  // the founder section blank, the pricing table missing. Anyone who scrolls before the scripts run hits
+  // the same trap without an anchor.
+  const hiddenOnScreen = (page: Page) =>
+    page.evaluate(() => {
+      const hidden: string[] = [];
+      for (const el of document.querySelectorAll("#founder *, #pricing *")) {
+        if (el.children.length || !el.textContent?.trim()) continue;
+        const r = el.getBoundingClientRect();
+        if (!r.width || r.bottom <= 0 || r.top >= innerHeight) continue;
+        let o = 1;
+        for (let a: Element | null = el; a; a = a.parentElement) o *= +getComputedStyle(a).opacity;
+        if (o < 0.5) hidden.push((el.textContent ?? "").trim().slice(0, 24));
+      }
+      return hidden;
+    });
+  const slowPhone = async (context: BrowserContext, page: Page) => {
     const cdp = await context.newCDPSession(page);
     await cdp.send("Emulation.setCPUThrottlingRate", { rate: SLOW.cpu });
     await cdp.send("Network.enable");
@@ -1065,15 +1132,59 @@ test.describe("T20 — a home anchor is reached as soon as the page paints", () 
       downloadThroughput: SLOW.bytesPerSecond,
       uploadThroughput: SLOW.bytesPerSecond,
     });
-    await page.goto("/pricing", { waitUntil: "commit" });
-    await page.waitForSelector("header a", { timeout: 60_000 });
-    await page.locator('header a[href="/#use-cases"]').click();
-    await page.waitForFunction(() => scrollY > 100, null, { timeout: 90_000 });
-    await page.mouse.move(700, 400);
-    await page.mouse.wheel(0, -100000);
+  };
+
+  for (const hash of ["founder", "pricing", "faq"]) {
+    test(`T20 — phone: /#${hash} throws nothing, and the founder section and pricing show`, async ({
+      browser,
+    }) => {
+      test.setTimeout(150_000);
+      const context = await browser.newContext(iPhone13);
+      const page = await context.newPage();
+      const errors: string[] = [];
+      page.on("pageerror", (e) => errors.push(e.message));
+      await slowPhone(context, page);
+      await page.goto(`/#${hash}`, { waitUntil: "load", timeout: 90_000 });
+      await page.waitForTimeout(3000);
+      expect(errors, "page errors").toEqual([]);
+      // whatever is on the screen is shown (it rises on the clock a moment after it arrives) ...
+      await expect.poll(() => hiddenOnScreen(page), { timeout: 15_000 }).toEqual([]);
+      // ... and so is the founder section, and the pricing table, when the person gets to them
+      for (const id of ["founder", "pricing"]) {
+        await page.evaluate((i) => {
+          document.documentElement.style.scrollBehavior = "auto";
+          document.getElementById(i)!.scrollIntoView();
+        }, id);
+        await page.waitForTimeout(500);
+        await expect.poll(() => hiddenOnScreen(page), { timeout: 15_000 }).toEqual([]);
+      }
+      expect(errors, "page errors").toEqual([]);
+      await context.close();
+    });
+  }
+
+  test("T20 — phone: scrolling to the founder section before the scripts run throws nothing", async ({
+    browser,
+  }) => {
+    test.setTimeout(150_000);
+    const context = await browser.newContext(iPhone13);
+    await context.route("**/vendor/ScrollTrigger.min.js", async (route) => {
+      await new Promise((r) => setTimeout(r, 4000));
+      await route.continue();
+    });
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.goto("/", { waitUntil: "commit" });
+    await page.waitForSelector("#founder", { state: "attached", timeout: 60_000 });
+    await page.evaluate(() => {
+      document.documentElement.style.scrollBehavior = "auto";
+      document.getElementById("founder")!.scrollIntoView();
+    });
     await page.waitForLoadState("load", { timeout: 90_000 });
-    await page.waitForTimeout(4000);
-    expect(await page.evaluate(() => Math.round(scrollY))).toBeLessThan(200);
+    await page.waitForTimeout(3000);
+    expect(errors, "page errors").toEqual([]);
+    await expect.poll(() => hiddenOnScreen(page), { timeout: 15_000 }).toEqual([]);
     await context.close();
   });
 });
