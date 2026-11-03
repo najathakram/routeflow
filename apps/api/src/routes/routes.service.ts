@@ -43,7 +43,7 @@ import {
   InvoiceStatus,
   ChangeRequestStatus,
 } from "@prisma/client";
-import { roundMoney } from "@routeflow/pricing";
+import { computeVariance, roundMoney, varianceNeedsReason } from "@routeflow/pricing";
 import { LIVE_CUSTOMER_STOP_WHERE, SCHEDULED_ROUTE_KIND_WHERE } from "./route-stop-filters.util";
 import {
   assertAddressBelongsToCustomer,
@@ -1899,11 +1899,15 @@ export class RoutesService {
     // `summarizeCollections().cashTotal`, and `shouldForceSettlement`.
     const expected = await this.getRunCashCollections(id, run.startedAt);
     const expectedPhysical = roundMoney(expected.cashTotal + expected.checkTotal);
-    const variance = roundMoney(dto.countedCash - expectedPhysical);
-    if (Math.abs(variance) > 0.01 && !dto.varianceReason) {
-      throw new BadRequestException(
-        "Counted cash does not match the expected amount — a varianceReason is required.",
-      );
+    const variance = computeVariance(expectedPhysical, dto.countedCash);
+    // The one rule the web and the native screen share (@routeflow/pricing). Coded so a client can reopen
+    // its reason field when the expected figure moved; the MESSAGE stays word for word because the native
+    // screen matches `includes("varianceReason")` and old builds stay in the field.
+    if (varianceNeedsReason(expectedPhysical, dto.countedCash) && !dto.varianceReason) {
+      throw new BadRequestException({
+        code: API_ERROR_CODES.RUN_VARIANCE_REASON_REQUIRED,
+        message: "Counted cash does not match the expected amount — a varianceReason is required.",
+      });
     }
 
     const when = new Date();
