@@ -1,0 +1,139 @@
+/* Colour and life for the home page. The ten colours below are the wheel's own piece colours (graphics/rf-wheel-up.js):
+   each section carries the colour of the piece it is about, so the wheel and the page read as one thing.
+   White stays the base. Fields are soft tints of the piece colour; text on them stays the navy ink (AA and better),
+   and a colour is never the only carrier of meaning. Motion is pointer and scroll only, off for reduced motion. */
+:root{
+  --pc-orders:#4caed9;--pc-boxpiece:#355695;--pc-price:#4d5da4;--pc-counter:#6261af;--pc-routes:#33afb1;
+  --pc-delivery:#44bd92;--pc-invoices:#e7b64a;--pc-payments:#ec9040;--pc-customers:#e56a5d;--pc-reports:#a462b4;
+  --fld-blue:#e8f0fc;--fld-indigo:#eceefb;--fld-gold:#fff5df;--fld-teal:#e3f5f4;--fld-coral:#ffeae6;
+}
+
+/* ---------- kicker pills: the small label above each heading, in its section's colour ---------- */
+.home .hx .kick,.home #sell .kick,.home #journey .kick,.home #stores .kick,.home #counter .kick,.home #use-cases .kick{
+  display:inline-flex;align-items:center;gap:9px;padding:6px 16px 6px 13px;border-radius:999px;font-size:15px;line-height:1.2;
+  background:var(--k-bg,var(--rf-brand-100));color:var(--k-ink,var(--rf-brand-700));margin-bottom:18px;
+}
+.home .hx .kick::before,.home #sell .kick::before,.home #journey .kick::before,.home #stores .kick::before,.home #counter .kick::before,.home #use-cases .kick::before{
+  content:"";flex:none;width:10px;height:10px;border-radius:50%;background:var(--k-dot,var(--rf-brand-500));
+}
+.home #use-cases .kick::before{width:auto;height:auto;border-radius:0;background:none}
+.home .hx .kick{--k-bg:#dff3fb;--k-ink:#0b4660;--k-dot:var(--pc-orders)}
+.home #sell .kick{--k-bg:#d3e2fa;--k-ink:#1b3566;--k-dot:var(--pc-boxpiece)}
+.home #journey .kick{--k-bg:#ffe6ad;--k-ink:#5e3b00;--k-dot:var(--pc-invoices)}
+.home #stores .kick{--k-bg:#c4f0dc;--k-ink:#065f46;--k-dot:var(--pc-delivery)}
+.home #counter .kick{--k-bg:#dad9f7;--k-ink:#312f78;--k-dot:var(--pc-counter)}
+.home #use-cases .kick{--k-bg:#ffdcd6;--k-ink:#7d2118}
+/* the use-case kicker carries the wheel’s colours as a small bar */
+.home #use-cases .kick::after{
+  content:"";width:62px;height:10px;border-radius:5px;
+  background:
+    linear-gradient(90deg,var(--pc-orders) 0 20%,var(--pc-routes) 20% 40%,var(--pc-delivery) 40% 55%,var(--pc-invoices) 55% 70%,var(--pc-payments) 70% 85%,var(--pc-customers) 85% 93%,var(--pc-reports) 93%);
+}
+
+/* ---------- colour fields: each section sits on the tint of its piece ---------- */
+.home .sl{background:linear-gradient(180deg,var(--fld-blue) 0,var(--fld-indigo) 100%)}
+.home .jr{background:linear-gradient(180deg,var(--fld-gold) 0,#fffaf0 100%)}
+.home .ct{background:var(--fld-indigo)}
+.home .fq{background:var(--fld-teal)}
+.home .sl .sub,.home .jr .sub,.home .ct .sub{color:var(--ink-2)}
+
+/* The product pictures keep a white sheet so a screen always looks like the screen in the app. */
+.home .sl-line,.home .tier,.home .ct-win,.home .st-shop{box-shadow:0 0 0 1px rgba(15,27,45,.05),0 18px 40px -16px rgba(16,38,77,.28)}
+
+/* ---------- use cases: a coloured tile and a tinted card for each of the twelve ---------- */
+.home .inc{position:relative;overflow:hidden;background:#fff}
+.home .inc>.w{position:relative;z-index:1}
+.home .inc::before,.home .inc::after{content:"";position:absolute;pointer-events:none;border-radius:50%;filter:blur(2px)}
+.home .inc::before{width:520px;height:520px;left:-200px;top:-180px;background:radial-gradient(circle,rgba(76,174,217,.22),transparent 68%)}
+.home .inc::after{width:560px;height:560px;right:-220px;top:20%;background:radial-gradient(circle,rgba(229,106,93,.16),transparent 68%)}
+@media (min-width:900px){
+  .home .inc-i{
+    padding:24px 22px 26px;border-radius:var(--rf-r-card);
+    background:#fff;background:color-mix(in oklch,var(--pc) 17%,#fff);
+    box-shadow:inset 0 0 0 1px color-mix(in oklch,var(--pc) 34%,transparent);
+  }
+  .home .inc-i .inc-ic{width:56px;height:56px;padding:13px;border-radius:18px;box-shadow:0 10px 20px -10px var(--pc)}
+  .home .inc-i h3{margin-top:18px}
+  .home .inc-i p{color:var(--ink-2)}
+  .home .inc-more .inc-i{background:color-mix(in oklch,var(--pc) 13%,#fff)}
+}
+@media (max-width:899.98px){
+  /* phones: the rows keep the accordion, each on a soft tint of its colour */
+  .home .inc-i,.home .inc-more .inc-i{
+    margin-bottom:10px;padding:2px 14px;border-radius:18px;box-shadow:none;
+    background:#fff;background:color-mix(in oklch,var(--pc) 16%,#fff);
+  }
+  .home .inc summary{min-height:56px;padding:8px 0}
+  .home .inc-i .inc-ic,.home .inc-more .inc-ic{width:34px;height:34px;padding:7px;border-radius:11px}
+  .home .inc-i p{padding:0 8px 14px 44px}
+  .home .inc-more .cap{margin-left:44px}
+}
+
+/* Small grey text that now sits on a tint or a glow goes one step darker, so it stays above 4.5:1 everywhere. */
+.home .sy-list span,.home .sy-eye,.home .uc-t p,.home .hx-cap,.home .hx-note,.home .rfw-keys li span,.home .sl-prod{color:#44546b}
+
+/* ---------- warm abstract shapes behind the dark bands ---------- */
+.home #founder{position:relative}
+.home .end{position:relative;overflow:hidden;
+  background-image:
+    radial-gradient(520px 320px at 12% 8%,rgba(255,201,51,.26),transparent 70%),
+    radial-gradient(520px 340px at 92% 88%,rgba(255,94,77,.24),transparent 70%),
+    radial-gradient(460px 300px at 66% 0%,rgba(20,201,143,.2),transparent 70%);
+}
+.home .end>*{position:relative}
+.home .pb-pin,.home .sy{position:relative}
+
+/* ---------- FAQ: a friendly delivery van, so the page is not only words ---------- */
+.home .fq .fq-art{display:block;width:min(260px,64%);margin:0 auto 18px}
+@media (min-width:1100px){
+  .home .fq>.wrap{position:relative}
+  .home .fq .fq-art{position:absolute;right:-8px;top:-8px;width:230px;margin:0}
+}
+.home .fq .faq details{background:#fff;border-radius:18px;box-shadow:0 0 0 1px rgba(11,90,92,.1);margin-bottom:10px;padding:0 22px}
+.home .fq .faq details[open]{box-shadow:0 0 0 1.5px var(--pc-routes)}
+.home .fq .faq summary{min-height:60px}
+.home .fq .faq details p{padding-bottom:20px}
+.home .fq .faq summary .ico{color:#0d7c7e}
+
+/* ---------- life: press and scroll motion, off for reduced motion and the reduce switch ---------- */
+@media (prefers-reduced-motion:no-preference){
+  html:not(.rm) .btn{transition:transform .18s var(--ease),background .2s,box-shadow .25s}
+  html:not(.rm) .btn-primary:hover{box-shadow:0 12px 26px -12px var(--rf-brand-700);transform:translateY(-1px)}
+  html:not(.rm) .btn:active{transform:scale(.965)}
+  @media (min-width:900px) and (hover:hover){
+    html:not(.rm) .home .inc-i:hover{transform:translateY(-4px);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--pc) 40%,transparent),0 18px 34px -18px var(--pc)}
+    html:not(.rm) .home .inc-i:hover .inc-ic{transform:rotate(-6deg) scale(1.06)}
+  }
+  html:not(.rm) .home .inc-i{transition:transform .35s var(--ease),box-shadow .35s var(--ease)}
+  html:not(.rm) .home .inc-i .inc-ic{transition:transform .35s var(--ease)}
+  html:not(.rm) .home .inc-i:active{transform:scale(.985)}
+  @supports (animation-timeline:view()){
+    html:not(.rm) .home .inc-i .inc-ic{animation:rf-tile-pop linear both;animation-timeline:view();animation-range:entry 0% entry 70%}
+    html:not(.rm) .home .fq .fq-art{animation:rf-van-in linear both;animation-timeline:view();animation-range:entry 0% entry 80%}
+  }
+}
+@keyframes rf-tile-pop{from{transform:scale(.55) rotate(-14deg);opacity:.2}to{transform:none;opacity:1}}
+@keyframes rf-van-in{from{transform:translateX(60px);opacity:0}to{transform:none;opacity:1}}
+
+/* ---------- the first screen and the founder band ---------- */
+:root{
+  --hero-wash:radial-gradient(58% 70% at 88% 8%,rgba(76,174,217,.32),transparent 70%),radial-gradient(52% 62% at 100% 92%,rgba(255,201,51,.34),transparent 70%),radial-gradient(48% 60% at 58% 104%,rgba(229,106,93,.2),transparent 70%),radial-gradient(44% 56% at 0% 96%,rgba(20,201,143,.2),transparent 70%),#f3f6fb;
+}
+.js-motion .hx-up .rfw--static::before{background:var(--hero-wash)}
+html:not(.js-motion) .hx-up{background:var(--hero-wash)}
+/* the live wheel paints an opaque canvas over its tile, so the wash goes on top of the canvas and blends in */
+.home .hx-up .rfw-cvw::after{content:"";position:absolute;inset:0;pointer-events:none;border-radius:var(--rf-r-stage);mix-blend-mode:multiply;background-image:radial-gradient(58% 70% at 88% 8%,rgba(76,174,217,.34),transparent 70%),radial-gradient(52% 62% at 100% 92%,rgba(255,201,51,.4),transparent 70%),radial-gradient(48% 60% at 58% 104%,rgba(229,106,93,.22),transparent 70%),radial-gradient(44% 56% at 0% 96%,rgba(20,201,143,.22),transparent 70%)}
+#founder .fd-in{background-image:radial-gradient(480px 300px at 6% 0%,rgba(255,201,51,.2),transparent 70%),radial-gradient(520px 320px at 100% 100%,rgba(255,94,77,.2),transparent 70%),radial-gradient(420px 260px at 70% 0%,rgba(76,174,217,.18),transparent 70%)}
+#founder .fd-mono{background:var(--rf-coral);color:#4b1e19}
+
+/* Where the browser can build a colour from another, every card tint is the same light, soft shade of its own hue,
+   so the deep-blue pieces turn periwinkle instead of grey. Older browsers keep the mix above. */
+@supports (color:oklch(from red l c h)){
+  @media (min-width:900px){
+    .home .inc-i{background:oklch(from var(--pc) .96 .036 h);box-shadow:inset 0 0 0 1px oklch(from var(--pc) .8 .08 h)}
+    .home .inc-more .inc-i{background:oklch(from var(--pc) .97 .03 h)}
+  }
+  @media (max-width:899.98px){
+    .home .inc-i,.home .inc-more .inc-i{background:oklch(from var(--pc) .96 .036 h)}
+  }
+}

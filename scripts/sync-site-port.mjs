@@ -39,6 +39,8 @@ for (const rel of [
   "css/site.css",
   "css/home.css",
   "css/home-up.css",
+  "css/home-color.css",
+  "css/color-deep.css",
   "css/product.css",
   "css/does.css",
   "css/start.css",
