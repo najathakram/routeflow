@@ -22,6 +22,8 @@ const PAGES = [
   "does-and-doesnt.html",
   "data-in-and-out.html",
   "security.html",
+  "company.html",
+  "contact.html",
 ];
 
 const nav = require(path.join(SITE, "js/auth-nav.js")) as {
@@ -74,7 +76,7 @@ describe("auth-nav target", () => {
   });
 });
 
-describe("every new page carries the swap", () => {
+describe("every page carries the swap", () => {
   it.each(PAGES)(
     "%s: header, phone menu and footer Sign in are marked, and the script loads",
     (file) => {
