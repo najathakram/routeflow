@@ -609,7 +609,7 @@ function StateReadoutText({ readout, tenantId }: { readout: StateReadout; tenant
   return readout.linkTab ? (
     <Link
       href={`/admin/tenants/${tenantId}?tab=${readout.linkTab}`}
-      className="underline-offset-2 hover:underline"
+      className="admin-inline underline-offset-2 hover:underline"
     >
       {chip}
     </Link>
