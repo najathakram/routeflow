@@ -330,6 +330,8 @@ export async function placeUnbilledLinesFor(
     drafts: PlacementDraft[];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the order's live lines, as loaded
     lines: any[];
+    /** Place what can be placed but write no needs-review row (the Undo rebuild: nothing is delivered). */
+    quiet?: boolean;
     groupLines: (
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the grouping function's own shape
       items: Array<{ li: any; remainingQty: number }>,
@@ -346,7 +348,7 @@ export async function placeUnbilledLinesFor(
         lineIds: g.items.map((x) => x.li.id),
       })),
   });
-  if (needsReview) await flagUnplacedLines(db, orderId);
+  if (needsReview && !input.quiet) await flagUnplacedLines(db, orderId);
   return new Map(
     input.drafts.map((d) => [
       d.id,
@@ -378,7 +380,7 @@ export async function flagUnplacedLines(
       meta: {
         context: "stop-completion",
         kind: LINE_LEFT_OFF_KIND,
-        note: "a delivered line is on no invoice and could not be placed on a draft",
+        note: "a line is on no invoice and could not be placed on a draft",
       },
     },
   });
