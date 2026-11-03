@@ -37,6 +37,8 @@ const STYLES = [
   "css/does.css",
   "css/start.css",
   "css/company.css",
+  "css/home-color.css",
+  "css/color-deep.css",
   "graphics/rf-graphics.css",
   "graphics/rf-wheel-up.css",
 ];
