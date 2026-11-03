@@ -83,7 +83,9 @@ describe("the public site's motion does not depend on the visitor's motion setti
 
   it("the wheel runs on every height: no still for a short window, and a sideways phone takes the wide layout", () => {
     const wheel = read("graphics/rf-wheel-up.js");
-    expect(wheel).not.toContain("max-height: 499.98px");
+    // a window under 500 px tall is a condition for the names and the burst (`low`), never a reason for the still
+    expect(wheel).not.toContain('short: "(max-height: 499.98px)"');
+    expect(wheel).toContain('low: "(max-height: 499.98px)"');
     expect(wheel).not.toContain("c.conditions.short");
     expect(wheel).toContain(
       `land: "(max-width: 899.98px) and (max-height: 599.98px) and (min-aspect-ratio: 1/1)"`,

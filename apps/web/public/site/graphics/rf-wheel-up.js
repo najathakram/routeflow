@@ -226,7 +226,7 @@
       /* One matchMedia owns every tween, trigger and listener; a change of width class reverts all of it and
          builds again. The motion always runs (owner ruling 2026-11-03), on every height; a phone held sideways (narrow, short, wider than tall) gets the wide layout, the words beside the wheel. */
       mm = g.matchMedia(el);
-      mm.add({ wide: "(min-width: 900px)", land: "(max-width: 899.98px) and (max-height: 599.98px) and (min-aspect-ratio: 1/1)", narrow: "(max-width: 899.98px)" }, (c) => {
+      mm.add({ wide: "(min-width: 900px)", land: "(max-width: 899.98px) and (max-height: 599.98px) and (min-aspect-ratio: 1/1)", narrow: "(max-width: 899.98px)", low: "(max-height: 499.98px)" }, (c) => {
         return live(g, ST, el, inst, !c.conditions.wide && !c.conditions.land, opts, c, { headerTop, pageTop, settled, slices: () => slow && !inst.built });
       });
     };
@@ -267,6 +267,10 @@
   }
 
   function live(g, ST, el, inst, phone, opts, mctx, site) {
+    /* The phone rules for names and icons (11 px or icon only, a small icon floor) hold for a phone held either way; the layout is the wide one when it is held sideways. */
+    const small = phone || !!(mctx && mctx.conditions && mctx.conditions.land);
+    /* Short screens, where the names and the burst need the extra care below: a phone either way, or a wide window under 500 px tall. Every other window draws as it did. */
+    const brief = small || !!(mctx && mctx.conditions && mctx.conditions.low);
     const { headerTop, pageTop, settled, slices } = site;
     const ends = () => el.getBoundingClientRect().bottom + root.scrollY, held0 = ends();
     headerTop();
@@ -359,7 +363,7 @@
         const g = washCv.getContext("2d", { alpha: false });
         g.fillStyle = stageBg; g.fillRect(0, 0, W, H);
         g.globalCompositeOperation = "multiply";
-        for (const [x, y, rx, ry, r, gr, b, a, e] of H > W * 1.05 ? WASH_NARROW : WASH) {
+        for (const [x, y, rx, ry, r, gr, b, a, e] of phone && H > W * 1.05 ? WASH_NARROW : WASH) {
           const grad = g.createRadialGradient(0, 0, 0, 0, 0, 1);
           grad.addColorStop(0, "rgba(" + r + "," + gr + "," + b + "," + a + ")"); grad.addColorStop(e, "rgba(" + r + "," + gr + "," + b + ",0)");
           g.save(); g.translate(x * W, y * H); g.scale(rx * W, ry * H); g.fillStyle = grad; g.fillRect(-x / rx, -y / ry, 1 / rx, 1 / ry); g.restore();
@@ -453,12 +457,12 @@
                   for (let j = 0; j < n; j++) { const k = (j + 1) % n, y1 = ty[j], y2 = ty[k]; if ((y1 <= yy && y2 > yy) || (y2 <= yy && y1 > yy)) { const xx = tx[j] + ((yy - y1) * (tx[k] - tx[j])) / (y2 - y1); if (xx <= ax && xx > l) l = xx; if (xx >= ax && xx < r) r = xx; } }
                   if (l > -1e8 && r < 1e8) hw = Math.min(hw, ax - l, r - ax);
                 }
-                const room = 2 * hw * 0.88, floor = ((phone ? 11 : 10.5) * dpr) / 31;
+                const room = 2 * hw * 0.88, floor = ((small ? 11 : 10.5) * dpr) / 31;
                 const fitN = Math.min(nk, room / Math.max(1, ...w.lines.map(wid)));
                 /* No name is drawn under 11 px on a phone: a piece whose name would be smaller shows its icon only, as at rest. */
-                shy = phone && fitN < floor;
+                shy = small && fitN < floor;
                 nf = Math.max(floor, fitN);
-                if (w.d.n) { const nw = room / Math.max(1, ...(nt ? lines2(w.d.n) : [w.d.n]).map(wid)); noteShy = phone && nw < (11 * dpr) / 31; mf = Math.max(((phone ? 11 : 10) * dpr) / 31, Math.min(mf, nf * 0.8, nw)); }
+                if (w.d.n) { const nw = room / Math.max(1, ...(nt ? lines2(w.d.n) : [w.d.n]).map(wid)); noteShy = small && nw < (11 * dpr) / 31; mf = Math.max(((small ? 11 : 10) * dpr) / 31, Math.min(mf, nf * 0.8, nw)); }
                 const lf = lum(f), ld = lum(mix(INK, w.ink, p.c));
                 lit = 1.05 / (lf + 0.05) > (Math.max(lf, ld) + 0.05) / (Math.min(lf, ld) + 0.05);
                 if (shy) lit = false;
@@ -477,12 +481,12 @@
                 let x0 = 1e9, x1 = -1e9;
                 for (let j = 0; j < n; j++) { if (tx[j] < x0) x0 = tx[j]; if (tx[j] > x1) x1 = tx[j]; }
                 const lim = uy < 0 ? 0.6 * cx : (x1 - x0) * 0.82, tw = uy < 0 ? Math.max(...list.map((v) => wid(v.d.t))) : wid(w.d.t);
-                ckf = Math.max(((phone ? 11 : 10.5) * dpr) / 31, Math.min(ck, lim / Math.max(1, tw)));
+                ckf = Math.max(((small ? 11 : 10.5) * dpr) / 31, Math.min(ck, lim / Math.max(1, tw)));
                 /* On a small wheel the two back names would sit on top of each other: each then reads outward from its own piece, as far as the stage lets it. */
-                if (uy < 0 && 2 * Math.abs(px - cx) < tw * ckf * 1.02) { out = true; ckf = Math.max(((phone ? 11 : 9) * dpr) / 31, Math.min(ckf, ((ux > 0 ? cv.width - px : px) - 8 * dpr) / Math.max(1, tw))); }
-              } else {
+                if (brief && uy < 0 && 2 * Math.abs(px - cx) < tw * ckf * 1.02) { out = true; ckf = Math.max(((small ? 11 : 9) * dpr) / 31, Math.min(ckf, ((ux > 0 ? cv.width - px : px) - 8 * dpr) / Math.max(1, tw))); }
+              } else if (brief) {
                 /* A name beside the wheel never runs off the stage: it shrinks, a little, to stay on it. */
-                ckf = Math.max(((phone ? 11 : 9) * dpr) / 31, Math.min(ckf, ((ux > 0 ? cv.width - px : px) - gap - 8 * dpr) / Math.max(1, wid(w.d.t))));
+                ckf = Math.max(((small ? 11 : 9) * dpr) / 31, Math.min(ckf, ((ux > 0 ? cv.width - px : px) - gap - 8 * dpr) / Math.max(1, wid(w.d.t))));
               }
               ctx.textAlign = side || out ? (ux > 0 ? "left" : "right") : "center";
               ctx.fillStyle = css(INK);
@@ -492,7 +496,7 @@
               ctx.textAlign = "center"; ctx.fillStyle = css(mix(INK, w.ink, p.c));
             }
           }
-          const is = Math.max(1.25 * sc, (phone ? 0.62 : 0.8) * dpr) * (outer ? 1 : rg + lift * 0.4);
+          const is = Math.max(1.25 * sc, (small ? 0.62 : 0.8) * dpr) * (outer ? 1 : rg + lift * 0.4);
           /* Once it is named, a daily-work plate carries the name alone: its icon would crowd it. */
           ctx.globalAlpha = vis * (outer ? 1 - p.n * shown * (1 - flat) : 1);
           if (ctx.globalAlpha > 0.01) {
@@ -625,7 +629,7 @@
         /* The words keep one column, on the left where the hero's words were; the wheel keeps the right of the stage. */
         const cr = copy ? copy.getBoundingClientRect() : null, L = cr ? Math.max(pad, cr.left - tr.left) : pad, gap = Math.max(24, W * 0.02);
         tile.style.setProperty("--rfw-l", L + "px");
-        const colR = hx[0].offsetLeft + hx[0].offsetWidth, restL = (cr ? cr.right - tr.left : colR) + gap, pv = H < 480 ? Math.round(H * 0.04) : pad, side = { l: colR + gap, t: pv, r: W - pad, b: H - pv };
+        const colR = hx[0].offsetLeft + hx[0].offsetWidth, restL = (cr ? cr.right - tr.left : colR) + gap, pv = brief && H < 480 ? Math.round(H * 0.04) : pad, side = { l: colR + gap, t: pv, r: W - pad, b: H - pv };
         F.flat = F.end = fitTo(flatBB, { l: restL, t: pad, r: W - pad, b: H - pad - 28 }, H * 0.74);
         hintAt(true);
         /* Centre stage: for this one moment the words have gone, so it may use the whole tile. */
@@ -704,7 +708,7 @@
     T.to(S, { lO: 1, duration: 5.2, ease: HEAVY }, 1.3);
     T.to(S, { dr: 1, duration: 5, ease: "sine.out" }, 3.3);
     /* On a short stage the names wait until the pieces have landed, so they never sit on a piece still in flight. */
-    const late = tile.clientHeight < 520 ? 2.7 : 1.7;
+    const late = brief && tile.clientHeight < 520 ? 2.7 : 1.7;
     WD.forEach((w) => {
       const p = P[w.i], at = w.o ? 1.4 + w.rank * 0.4 : 1.1 + w.rank * 0.36;
       T.to(p, { e: -0.03, duration: 0.5, ease: "sine.inOut" }, 0.35);

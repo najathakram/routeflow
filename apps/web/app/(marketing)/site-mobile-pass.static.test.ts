@@ -126,7 +126,7 @@ describe("the first screen on a phone is not grey", () => {
 
   it("a tall stage gets its own six glows, painted into the canvas under the pieces", () => {
     expect(wheel).toContain("const WASH_NARROW = [");
-    expect(wheel).toContain("of H > W * 1.05 ? WASH_NARROW : WASH)");
+    expect(wheel).toContain("of phone && H > W * 1.05 ? WASH_NARROW : WASH)");
     // six glows, every one soft (alpha at most 0.5, so the stage stays light behind the pieces)
     const body = wheel.slice(wheel.indexOf("const WASH_NARROW = ["), wheel.indexOf("const washCv"));
     const alphas = [...body.matchAll(/\d+, \d+, \d+, (0\.\d+), 0\.7\d?\]/g)].map((m) =>
@@ -148,15 +148,31 @@ describe("the first screen on a phone is not grey", () => {
   });
 
   it("a phone never draws a wheel name under 11 px; the icon stays when the name is left out", () => {
-    expect(wheel).toContain("((phone ? 11 : 10.5) * dpr) / 31");
-    expect(wheel).toContain("shy = phone && fitN < floor");
+    expect(wheel).toContain("((small ? 11 : 10.5) * dpr) / 31");
+    expect(wheel).toContain("shy = small && fitN < floor");
+    // a phone held sideways is small too; its icon floor is the phone's
+    expect(wheel).toContain(
+      "const small = phone || !!(mctx && mctx.conditions && mctx.conditions.land);",
+    );
+    expect(wheel).toContain("(small ? 0.62 : 0.8) * dpr");
     expect(wheel).toContain("if (!shy)");
     expect(wheel).toContain("vis * (outer ? 1 - p.n * shown * (1 - flat) : 1)");
   });
 
   it("on a short screen the names wait until the pieces settle", () => {
-    expect(wheel).toContain("tile.clientHeight < 520 ? 2.7 : 1.7");
+    expect(wheel).toContain("brief && tile.clientHeight < 520 ? 2.7 : 1.7");
+    // only short screens: a window 500 px or taller draws exactly as before
+    expect(wheel).toContain("const brief = small ||");
     expect(wheel).toContain("at + late");
+  });
+
+  it("the short-screen CSS reaches a sideways phone and a wide window under 500 px only", () => {
+    const css2 = read("css/home-up.css");
+    const q =
+      "@media (max-width:899.98px) and (max-height:599.98px) and (min-aspect-ratio:1/1),(min-width:900px) and (max-height:499.98px){";
+    expect(css2.split(q)).toHaveLength(3);
+    // no bare height block that would reach a laptop window
+    expect(css2).not.toContain("@media (max-height:599.98px) and (min-aspect-ratio:1/1){");
   });
 
   it("the phone wheel and its hint sit above the browser bar", () => {
