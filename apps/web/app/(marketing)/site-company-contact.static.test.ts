@@ -78,9 +78,15 @@ describe("Company page", () => {
     // the short version on a phone opens on the same first sentence and the same ask for help
     const short = paragraphs(home, 'class="fd-short"', "</div>");
     expect(short).toHaveLength(3);
+    // "co-founder’s" is one unbreakable word in the short version and in the full note, with a rule that holds at every width
+    expect(short[1]).toContain('my <span class="nb">co-founder’s</span> father');
+    expect(note).toContain('with my <span class="nb">co-founder’s</span> father, a wholesaler.');
+    expect(read("css/site.css")).toContain(
+      ".fd-short .nb,.fd-note .nb,.co-body .nb{white-space:nowrap}",
+    );
     expect(short[0]).toBe(paragraphs(home, 'id="fd-note"', "</div>")[0]);
     expect(short[1]).toBe(
-      "We built RouteFlow with wholesalers who use it every day, starting with my co-founder’s father. Many software teams have to imagine a wholesaler’s day. We live it with them.",
+      'We built RouteFlow with wholesalers who use it every day, starting with my <span class="nb">co-founder’s</span> father. Many software teams have to imagine a wholesaler’s day. We live it with them.',
     );
     expect(short[2]).toBe(
       "It takes you from order to payment. If we don’t have something you need, tell us. We’ll customize it for your business at no cost.",

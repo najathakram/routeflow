@@ -2025,6 +2025,46 @@ test.describe("T25 — the founder's note", () => {
     });
   }
 
+  // owner: "co-founder’s" never breaks at its hyphen, on either page, at any width
+  for (const w of [1440, 1100, 1024, 768, 390]) {
+    test(`T25 — ${w}: "co-founder’s" stays on one line (home short and full note, company)`, async ({
+      browser,
+    }) => {
+      test.setTimeout(120_000);
+      const context = await browser.newContext({ viewport: { width: w, height: 900 } });
+      const page = await context.newPage();
+      const rects = () =>
+        page.evaluate(() =>
+          [...document.querySelectorAll(".nb")]
+            .filter(
+              (n) => (n.textContent || "") === "co-founder’s" && n.getClientRects().length > 0,
+            )
+            .map((n) => n.getClientRects().length),
+        );
+      await page.goto("/", { waitUntil: "load" });
+      await page.waitForSelector("#founder", { state: "attached", timeout: 60_000 });
+      await page.waitForTimeout(2500);
+      // the short version shows below 900 px, the full note at 900 and up; open the note on a phone to check it too
+      let seen = await rects();
+      expect(seen.length, "a co-founder’s span is on screen").toBeGreaterThan(0);
+      const more = page.locator(".fd-more");
+      if (await more.isVisible()) {
+        await more.click();
+        await page.waitForTimeout(800);
+        seen = seen.concat(await rects());
+      }
+      await page.goto("/company", { waitUntil: "load" });
+      await page.waitForSelector(".co-body", { state: "attached" });
+      await page.waitForTimeout(1500);
+      seen = seen.concat(await rects());
+      expect(
+        seen.every((n) => n === 1),
+        "every span is a single line box: " + seen,
+      ).toBe(true);
+      await context.close();
+    });
+  }
+
   for (const v of VIEWS) {
     test(`T25 — ${v.name}: home #founder heading wraps in 3 lines or fewer, Read the rest opens in place`, async ({
       browser,
