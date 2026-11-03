@@ -91,6 +91,19 @@ describe("middleware — signed-in landing redirect is UA-independent (R-MKT T11
     expect(response.headers.get("location")).toMatch(expected);
   });
 
+  // Site audit 2026-11-02, defect 1: next.config.mjs gives "/" a public max-age/stale-while-revalidate
+  // Cache-Control, and the 307 inherited it. A browser then replayed the cached 307 to /dashboard
+  // after the sign-in cookie was gone, so home stayed out of reach for minutes. A redirect that
+  // depends on a cookie is never stored.
+  it.each([
+    ["an operator", `${OP_PRESENCE_COOKIE}=1`],
+    ["a buyer", `${BUYER_PRESENCE_COOKIE}=1`],
+  ])("sends the / redirect for %s with no-store", (_label, cookie) => {
+    const response = middleware(requestFor("/", DESKTOP_UA, cookie));
+    expect(response.status).toBe(307);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+
   it("does not redirect / for a first-time visitor on any UA", () => {
     for (const ua of [IPHONE_UA, ANDROID_UA, DESKTOP_UA]) {
       const response = middleware(requestFor("/", ua));

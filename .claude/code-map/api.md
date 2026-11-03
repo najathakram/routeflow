@@ -111,3 +111,4 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 | [api/landing-2026-11-02-y.md](api/landing-2026-11-02-y.md) | Train y (96aedaf2c0..904cbbec87): family-move ask, customer identity omit, deliveredQty, delete guard; no migration |
 | [api/landing-2026-11-02-z.md](api/landing-2026-11-02-z.md) | Train z (904cbbec87..93282c147c): inline STORE_CREDIT capture in one transaction, served cash tendered gate; no migration |
 | [api/landing-2026-11-02-ac.md](api/landing-2026-11-02-ac.md) | Train ac (93282c147c..4b2516c9f2): credit-notes summary, live stock read, run detail fallback; no migration |
+| [api/landing-2026-11-02-ad.md](api/landing-2026-11-02-ad.md) | Train ad (4b2516c9f2..9e782a5dfc): order-wide refund bound, inline return priced as charged, dead-source refusal; no migration |

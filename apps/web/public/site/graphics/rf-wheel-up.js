@@ -90,9 +90,9 @@
   const hd = (a, b, p, was) => `<div class="rfw-hd"><div class="rfw-id"><b>${a}</b><span>${b}</span></div>${p ? `<span class="rfw-pill"${was ? ` data-was="${was}"` : ""}>${p}</span>` : ""}</div>`;
   const row = (n, q, m, c) => `<div class="rfw-row${c ? " " + c : ""}" data-r><span class="n">${n}</span>${q ? `<span class="q">${q}</span>` : ""}${m != null ? `<span class="m">${m}</span>` : ""}</div>`;
   const CARD = {
-    orders: hd("ORD-01042", "Corner Market", "Confirmed", "Pending") + row("Sparkling water", "2 boxes + 6 pcs", "$45.00") + row("Spring water", "3 boxes", "$36.00") + row("Mixed nuts", "1 box", "$30.00") + row("Total", "", num(0, 111, "u"), "t"),
+    orders: hd("ORD-01042", "Corner Market", "Confirmed", "Pending") + row("Sparkling water", "2 boxes + 6 pcs", "$45.00") + row("Spring water", "3 boxes", "$36.00") + row("Mixed nuts", "1 box", "$30.00") + row("Total", "", "$111.00", "t"),
     inventory: hd("Bottled water", "In stock") + `<div class="rfw-big" data-r>${num(88, 128, "i")}<small>boxes</small></div>` + row("Stock Value (cost)", "", num(1584, 2304, "u")),
-    payments: hd("INV-2026-0147", "Lake Mart", "Paid", "Sent") + row("Check", "Nov 10, 2026", "$163.80") + row("Payments received", "", "$163.80") + row("Balance due", "", num(163.8, 0, "u"), "t"),
+    payments: hd("INV-2026-0147", "Lake Mart", "Paid", "Sent") + row("Check", "Nov 10, 2026", "$163.80") + row("Payments received", "", "$163.80") + row("Balance due", "", "$0.00", "t"),
   };
 
   /* The one object, drawn from one isometric projection: the order, then the goods on the shelf, then the check. */
@@ -411,7 +411,7 @@
         const vis = (outer ? 1 - S.obj * p.w : 1) * (1 - m * 0.55);
         if (vis > 0.03) {
           proj(ux * (w.mid * rg + sl), uy * (w.mid * rg + sl), zT);
-          const sc = K * pp, ax = px, ay = py, sq = 0.62 + 0.38 * ct, size = (sc / dpr) * 31, nk = Math.max(phone ? sc * 1.22 : sc, (10.5 * dpr) / 31), nq = phone ? 0.9 : sq;
+          const sc = K * pp, ax = px, ay = py, sq = 0.62 + 0.38 * ct, size = (sc / dpr) * 31, nk = Math.max(phone ? sc * 1.22 : sc, ((phone ? 13 : 10.5) * dpr) / 31), nq = phone ? 0.9 : sq;
           /* A piece's name: on the plate at rest, then back on it in the air as it comes off. A daily-work plate is big enough to
              carry its name. A core plate is not, so its name hangs in the clear air beside it. The names keep a readable size
              whatever the plate's. At the stops one piece is featured, so the rest carry their icons and no words. */
@@ -423,9 +423,9 @@
               const two = w.lines.length > 1, note = w.d.n && p.n > 0.01, y0 = p.n > 0.01 ? 12 - (two ? 16 : 0) - (note && noteTwo ? 24 : 0) : 54 - (two ? 8 : 0);
               ctx.setTransform(nk, 0, 0, nk * nq, ax, ay);
               for (let j = 0; j < w.lines.length; j++) ctx.fillText(w.lines[j], 0, y0 + j * 31);
-              if (note) { const m2 = Math.max(phone ? nk * 0.62 : sc * 0.56, (10 * dpr) / 31), yn = ((y0 + 34) * nk) / m2, ls = noteTwo ? lines2(w.d.n) : [w.d.n]; ctx.setTransform(m2, 0, 0, m2 * nq, ax, ay); for (let j = 0; j < ls.length; j++) ctx.fillText(ls[j], 0, yn + j * 34); }
+              if (note) { const m2 = Math.max(phone ? nk * 0.62 : sc * 0.56, ((phone ? 12 : 10) * dpr) / 31), yn = ((y0 + 34) * nk) / m2, ls = noteTwo ? lines2(w.d.n) : [w.d.n]; ctx.setTransform(m2, 0, 0, m2 * nq, ax, ay); for (let j = 0; j < ls.length; j++) ctx.fillText(ls[j], 0, yn + j * 34); }
             } else {
-              const side = Math.abs(ux) > 0.7, r = (side || uy < 0 ? r1 : r0) + sl, gap = (phone ? 6 : 12) * dpr, ck = Math.max(phone ? sc * 0.9 : sc * 0.76, (10.5 * dpr) / 31);
+              const side = Math.abs(ux) > 0.7, r = (side || uy < 0 ? r1 : r0) + sl, gap = (phone ? 6 : 12) * dpr, ck = Math.max(phone ? sc * 0.9 : sc * 0.76, ((phone ? 13 : 10.5) * dpr) / 31);
               proj(ux * r, uy * r, zT);
               ctx.textAlign = side ? (ux > 0 ? "left" : "right") : "center";
               ctx.fillStyle = css(INK);
@@ -520,7 +520,7 @@
       if (phone) {
         /* The hero's words sit above the stage, in the page. At rest the wheel takes what the first screen shows of the stage, and at
            the end what the last words leave it. A short phone shows the top of it and scrolling brings the rest. */
-        const elTop = el.getBoundingClientRect().top + root.scrollY, vis = pin.offsetHeight + pinTop - elTop - tile.offsetTop, low = W * 0.72 + 14, room = vis > low + 36;
+        const elTop = el.getBoundingClientRect().top + root.scrollY, vis = pin.offsetHeight + pinTop - elTop - tile.offsetTop, low = Math.min(W * 0.72, 460) + 14, room = vis > low + 36;
         F.flat = fitTo(flatBB, { l: pad, t: 14, r: W - pad, b: clamp(low, H - 14, vis - (room ? 40 : 14)) }, W * 0.86);
         hintAt(room);
         F.end = fitTo(flatBB, { l: pad, t: bottomOf(hx[1], hx[1].querySelector(".rfw-sub")) + 18, r: W - pad, b: H - 18 }, W * 0.86);
