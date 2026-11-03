@@ -259,6 +259,42 @@ describe("StopSheet: Delivered and Refused (SA-1098 PR-2)", () => {
     await waitFor(() => expect(window.sessionStorage.getItem("rf-stop-key:stop-1")).toBeNull());
   });
 
+  it("D-22: a refresh that shows the stop done releases the kept key", async () => {
+    post.mockRejectedValueOnce({ message: "Network Error" });
+    const user = userEvent.setup();
+    const view = renderWithProviders(<StopSheet stop={STOP()} runId="run-1" onClose={jest.fn()} />);
+
+    await user.click(screen.getByRole("button", { name: "Delivered" }));
+    await waitFor(() => expect(window.sessionStorage.getItem("rf-stop-key:stop-1")).not.toBeNull());
+
+    view.rerender(
+      <StopSheet stop={STOP({ status: "COMPLETED" })} runId="run-1" onClose={jest.fn()} />,
+    );
+
+    await waitFor(() => expect(window.sessionStorage.getItem("rf-stop-key:stop-1")).toBeNull());
+  });
+
+  it("D-22b: Undo releases the key, so Delivered on the reopened stop is a NEW request (never answered 'completed' by the old key)", async () => {
+    window.sessionStorage.setItem("rf-stop-key:stop-1", "stop-stop-1-old");
+    const user = userEvent.setup();
+    const view = renderWithProviders(
+      <StopSheet stop={STOP({ status: "COMPLETED" })} runId="run-1" onClose={jest.fn()} />,
+    );
+    // opened on a done stop: already released by the refresh rule, so put the old key back as a phone holding it would
+    window.sessionStorage.setItem("rf-stop-key:stop-1", "stop-stop-1-old");
+
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith("/route-runs/run-1/stops/stop-1/reopen"));
+    await waitFor(() => expect(window.sessionStorage.getItem("rf-stop-key:stop-1")).toBeNull());
+
+    view.rerender(
+      <StopSheet stop={STOP({ status: "PENDING" })} runId="run-1" onClose={jest.fn()} />,
+    );
+    await user.click(screen.getByRole("button", { name: "Delivered" }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    expect(headers(1)["Idempotency-Key"]).not.toBe("stop-stop-1-old");
+  });
+
   it("D-10b: a refusal the server answered releases the key (the next attempt is a new request)", async () => {
     post.mockRejectedValueOnce({
       response: { status: 400, data: { message: "Only 7 left to deliver." } },

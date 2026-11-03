@@ -454,7 +454,10 @@ export function useReopenStop() {
   return useMutation<unknown, Error, { runId: string; stopId: string }>({
     mutationFn: ({ runId, stopId }) =>
       apiClient.post(`/route-runs/${runId}/stops/${stopId}/reopen`).then((r) => r.data),
-    onSettled: (_d, _e, { runId }) => {
+    onSettled: (_d, _e, { runId, stopId }) => {
+      // A kept completion key answers "completed" for a stop that is open again (review-b on #4165): once the driver has
+      // reopened the stop, the earlier attempt's outcome is known, so the next completion is a new request.
+      releaseStopKey(stopId);
       qc.invalidateQueries({ queryKey: ["route-runs", "my-runs"] });
       qc.invalidateQueries({ queryKey: ["route-runs", runId] });
       qc.invalidateQueries({ queryKey: ["route-runs"] });

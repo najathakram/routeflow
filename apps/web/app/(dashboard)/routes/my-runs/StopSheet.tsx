@@ -23,6 +23,7 @@ import {
   type RunStopOrder,
 } from "@/lib/api/routes";
 import { stopErrorCopy, type StopErrorCopy } from "@/lib/driver-stop-copy";
+import { releaseStopKey } from "@/lib/stop-completion-key";
 
 /** Apple Maps on iOS/iPadOS, Google Maps everywhere else — mirrors the native
  *  app's openInMaps.ts choice of provider (see apps/mobile/components/openInMaps.ts). */
@@ -205,6 +206,13 @@ export function StopSheet({ stop, runId, runStatus = "IN_PROGRESS", onClose }: S
     setReason("");
     setError(null);
   }, [stopId]);
+
+  // A refresh that shows the stop done settles an earlier attempt whose answer was lost: its key must not outlive it, or after an
+  // Undo the same key would answer "completed" for a stop that is open again.
+  const shownDone = stop?.status === "COMPLETED" || stop?.status === "SKIPPED";
+  React.useEffect(() => {
+    if (stopId && shownDone) releaseStopKey(stopId);
+  }, [stopId, shownDone]);
 
   const mapsUrl = stop ? stopMapsUrl(stop) : null;
   const phone = stop?.customer?.phone?.trim();

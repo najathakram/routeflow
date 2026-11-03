@@ -85,6 +85,22 @@ describe("assertStopNotSkipped / claimStopCompletion (#2409)", () => {
       "This stop was already completed by another request.",
     );
   });
+
+  // SA-1098 D-21: the lost race carries a code (the web sheet reads it, never the words); the message is unchanged.
+  it("D-21: the lost race's 409 carries STOP_ALREADY_COMPLETED and the same message", async () => {
+    const tx = {
+      routeRunStop: {
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        findUnique: jest.fn().mockResolvedValue({ status: "COMPLETED" }),
+      },
+    };
+    const err = await claimStopCompletion(tx, "stop-1", { status: "COMPLETED" }).catch((e) => e);
+    expect(err.getStatus()).toBe(409);
+    expect(err.getResponse()).toEqual({
+      code: "STOP_ALREADY_COMPLETED",
+      message: "This stop was already completed by another request.",
+    });
+  });
 });
 
 describe("RoutesService: both completion paths refuse a SKIPPED stop before any write (#2409)", () => {
