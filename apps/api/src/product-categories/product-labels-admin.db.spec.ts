@@ -105,16 +105,32 @@ describeDb("label write side against real Postgres", () => {
     });
   });
 
-  it("the lock + SET LOCAL lock_timeout run through the real wrapped tx, and the timeout is restored to 0", async () => {
+  it("the lock waits at most 2s under SET LOCAL lock_timeout through the real wrapped tx, and the timeout is restored to 0", async () => {
     await asA(() => service.setLabel(A.gp, A.cat, { mode: "INCLUDE" }, user));
     expect(await labelsOf(A.gp)).toHaveLength(1);
+    const atLockRequest: string[] = [];
     const shown = await asA(() =>
       prisma.tenantTransaction(async (tx: any) => {
-        await (service as any).lockCategory(tx, A.tenantId, A.cat);
+        // Reads Postgres's own setting just before the lock is asked for. That setting is what keeps the wait
+        // inside Prisma's 5 s budget, and reading it holds under any host load.
+        const watched = new Proxy(tx, {
+          get: (target, key) =>
+            key !== "$executeRaw"
+              ? target[key]
+              : async (strings: TemplateStringsArray, ...values: unknown[]) => {
+                  if (strings.join("").includes("pg_advisory_xact_lock")) {
+                    const rows = await target.$queryRawUnsafe("SHOW lock_timeout");
+                    atLockRequest.push(rows[0].lock_timeout);
+                  }
+                  return target.$executeRaw(strings, ...values);
+                },
+        });
+        await (service as any).lockCategory(watched, A.tenantId, A.cat);
         const rows = await tx.$queryRawUnsafe("SHOW lock_timeout");
         return rows[0].lock_timeout as string;
       }),
     );
+    expect(atLockRequest).toEqual(["2s"]);
     expect(shown).toBe("0");
   }, 30_000);
 
@@ -139,7 +155,7 @@ describeDb("label write side against real Postgres", () => {
     }
   }, 60_000);
 
-  it("a held lock surfaces as a fast 409 (~2 s), not a 5 s interactive-transaction timeout", async () => {
+  it("a held lock surfaces as a 409 after waiting for it, and nothing is written", async () => {
     const holder = await pool.connect();
     try {
       await holder.query("BEGIN");
@@ -152,8 +168,8 @@ describeDb("label write side against real Postgres", () => {
         asA(() => service.setLabel(A.gp, A.cat, { mode: "INCLUDE" }, user)),
       ).rejects.toBeInstanceOf(ConflictException);
       const waited = Date.now() - t0;
-      // Lower bound only: it waited for the lock instead of failing at once. There is no upper bound; if the 5 s
-      // interactive-transaction timeout had won, the error would not be a ConflictException (asserted above).
+      // Lower bound only: it waited for the lock instead of failing at once. A wait of 6 s still comes back a
+      // ConflictException, so this row can't show the wait is short. The 2s row above pins the setting that does.
       expect(waited).toBeGreaterThanOrEqual(1500);
       expect(await labelsOf(A.gp)).toHaveLength(0); // nothing was written
     } finally {
