@@ -21,11 +21,34 @@ const paragraphs = (html: string, from: string, to: string) => {
 };
 
 describe("Company page", () => {
-  it("tells the founder's story in the same four paragraphs as the home page", () => {
+  it("tells the founder's story in the same six paragraphs as the home page", () => {
     const onHome = paragraphs(home, 'id="fd-note"', "</div>");
     const onCompany = paragraphs(company, 'class="co-body"', 'class="co-sig"');
-    expect(onHome).toHaveLength(4);
+    expect(onHome).toHaveLength(6);
     expect(onCompany).toEqual(onHome);
+  });
+
+  it("has the same heading on both pages, a plain sentence and not a quote", () => {
+    const h = "It started when a wholesaler asked us for help.";
+    expect(home).toContain(`<h2 id="fd-h" class="fd-q">${h}</h2>`);
+    expect(company).toContain(`<h2 id="story-h" class="co-q">${h}</h2>`);
+    expect(home).not.toContain("fd-qm");
+    expect(home).not.toContain("None of them fit");
+    expect(company).not.toContain("None of them fit");
+  });
+
+  it("every claim in the note is one the site and the code back (the links go to real pages)", () => {
+    const note = paragraphs(home, 'id="fd-note"', "</div>").join(" ");
+    for (const href of ["/does-and-doesnt", "/pricing", "mailto:hello@routeflow.info"]) {
+      expect(note).toContain(`href="${href}"`);
+    }
+    expect(fs.existsSync(path.join(SITE, "does-and-doesnt.html"))).toBe(true);
+    expect(note).toContain("14 days, with no card");
+    expect(note).toContain("We reply within one business day.");
+    // the short version on a phone opens on the same first sentence and the same ask for help
+    const short = paragraphs(home, 'class="fd-short"', "</div>");
+    expect(short).toHaveLength(3);
+    expect(short[0]).toBe(paragraphs(home, 'id="fd-note"', "</div>")[0]);
   });
 
   it("signs it as the co-founder, as the home page does", () => {
