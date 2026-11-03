@@ -76,6 +76,8 @@ describeQueue(
     let otherTenantId: string;
     const pricingMode = "off";
     const N = IMPORT_FAMILY_SYNC_MAX_ROWS + 1;
+    // Bull closes only the clients it creates itself, so these stay open unless this suite ends them.
+    const redisClients: Array<{ disconnect(): void }> = [];
 
     beforeAll(async () => {
       requireLocalDatabaseUrl();
@@ -96,11 +98,14 @@ describeQueue(
       ).id;
       queue = new Bull(PRODUCT_IMPORT_QUEUE, {
         prefix: `qa-${RUN}`,
-        createClient: (type: string) =>
-          new RealRedis(
+        createClient: (type: string) => {
+          const client = new RealRedis(
             REDIS_URL as string,
             type === "client" ? {} : { enableReadyCheck: false, maxRetriesPerRequest: null },
-          ),
+          );
+          redisClients.push(client);
+          return client;
+        },
       });
       jobs = new ProductImportJobService(queue as never, prisma);
 
@@ -158,6 +163,7 @@ describeQueue(
     afterAll(async () => {
       await queue?.obliterate({ force: true }).catch(() => {});
       await queue?.close().catch(() => {});
+      redisClients.forEach((client) => client.disconnect());
       for (const t of [tenantId, otherTenantId].filter(Boolean)) {
         await prisma.auditLog.deleteMany({ where: { tenantId: t } }).catch(() => {});
         await prisma.product
