@@ -197,7 +197,7 @@ describeDb("SA-1093 Rule 4: a return's cancel after a Boxes answer", () => {
     tenantId: w.tenantId,
     tenantSlug: "x",
   });
-  const boxes = (w: World, to: number) =>
+  const boxes = (w: World, to: number, whileOpen?: () => Promise<void>) =>
     inTenant(w, () =>
       prisma.tenantTransaction(async (tx) => {
         const data: Record<string, unknown> = { unitsPerBox: to };
@@ -211,6 +211,7 @@ describeDb("SA-1093 Rule 4: a return's cancel after a Boxes answer", () => {
           actorId: null,
         });
         await tx.product.update({ where: { id: w.productId }, data });
+        await whileOpen?.();
       }),
     );
   const stock = async (w: World) =>
@@ -504,6 +505,100 @@ describeDb("SA-1093 Rule 4: a return's cancel after a Boxes answer", () => {
       );
 
       expect(events.returned.map((r: { qty: number | null }) => r.qty)).toEqual([3]);
+    }, 60_000);
+
+    /** Some session in this database is waiting on a lock. A return's create blocks behind the answer too, so run it first. */
+    const blockedOnALock = async () => {
+      for (let tries = 0; tries < 80; tries += 1) {
+        const [{ waiting }] = await prisma.$queryRaw<{ waiting: number }[]>`
+          SELECT count(*)::int AS waiting FROM pg_stat_activity
+          WHERE datname = current_database() AND wait_event_type = 'Lock'
+        `;
+        if (waiting > 0) return;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      throw new Error("receive never reached the stock lock, so this row proved nothing");
+    };
+
+    it("C-4i: a receive that arrives while the answer is open waits for it: 120 goes to 192", async () => {
+      const w = await seed("c4i");
+      await sold(w, SPLIT);
+      await stocked(w, { currentStock: 5, averageCost: 2.4 });
+      const ret = await inTenant(w, async () => {
+        const created = await returns.create(
+          {
+            orderId: w.orderId,
+            reason: "EXCESS_ORDER",
+            items: [{ productId: w.productId, qty: 3, restock: true }],
+          },
+          w.userId,
+          "CUSTOMER",
+        );
+        await returns.approve(created.id);
+        return created;
+      });
+
+      let receiving: Promise<unknown> | undefined;
+      await boxes(w, 24, async () => {
+        receiving = inTenant(w, () => returns.receive(ret.id, w.userId, { restock: true }));
+        await blockedOnALock();
+      });
+      await receiving;
+
+      expect(await stock(w)).toBe(192);
+      expect(await restockRow(w)).toEqual([72, 0.1]);
+      expect(await parks(w)).toHaveLength(0);
+    }, 60_000);
+
+    it("guard: a second product's line dated after the answer has no vote", async () => {
+      const w = await beforeBoxes("c4other", SPLIT);
+      const other = await prisma.product.create({
+        data: { tenantId: w.tenantId, name: `Other ${w.tenantId}`, unit: "each", pricePerUnit: 10 },
+      });
+      await prisma.orderItem.create({
+        data: {
+          tenantId: w.tenantId,
+          orderId: w.orderId,
+          productId: other.id,
+          name: other.name,
+          qty: 10,
+          unitPrice: 10,
+          subtotal: 100,
+          ...SPLIT,
+        } as any,
+      });
+
+      await standardReturn(w, 3);
+
+      expect(await stock(w)).toBe(192);
+      expect(await parks(w)).toHaveLength(0);
+    }, 60_000);
+
+    it("guard: a cancelled line dated after the answer has no vote", async () => {
+      const w = await beforeBoxes("c4cancelled", SPLIT);
+      await newLine(w, { ...SPLIT, status: "CANCELLED" });
+
+      await standardReturn(w, 3);
+
+      expect(await stock(w)).toBe(192);
+      expect(await parks(w)).toHaveLength(0);
+    }, 60_000);
+
+    it("guard: a line dated at the answer's own instant counts as after it", async () => {
+      const w = await beforeBoxes("c4instant", SPLIT);
+      const intro = await prisma.auditLog.findFirstOrThrow({
+        where: { entityType: "Product", entityId: w.productId },
+        orderBy: { createdAt: "desc" },
+      });
+      await prisma.orderItem.updateMany({
+        where: { orderId: w.orderId },
+        data: { createdAt: intro.createdAt },
+      });
+
+      await standardReturn(w, 3);
+
+      expect(await stock(w)).toBe(123);
+      expect(await parks(w)).toHaveLength(0);
     }, 60_000);
 
     it("guard: a plain line sold before still parks", async () => {
