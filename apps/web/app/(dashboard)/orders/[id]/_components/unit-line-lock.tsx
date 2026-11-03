@@ -20,6 +20,8 @@ export interface LockableEditLine {
   isNew?: boolean;
   cancelled: boolean;
   countLocked?: boolean;
+  /** SA-1097 A-2: locked on its pack, not its count - its note stays editable. */
+  packLocked?: boolean;
   unitPrice: number;
   notes?: string;
   qty: number;
@@ -43,7 +45,12 @@ export function findLockedUnitLineEdit<T extends LockableEditLine>(
     const priceChanged = Math.abs(edited.unitPrice - Number(orig.unitPrice)) > 0.0001;
     const noteChanged = (edited.notes ?? "").trim() !== ((orig.notes as string) ?? "").trim();
     const qtyChanged = Math.abs(edited.qty - edited.originalQty) > 0.0001;
-    return priceChanged || noteChanged || qtyChanged || !!edited.substituteProductId;
+    return (
+      priceChanged ||
+      (noteChanged && !edited.packLocked) ||
+      qtyChanged ||
+      !!edited.substituteProductId
+    );
   });
 }
 
@@ -113,5 +120,17 @@ export function LockedUnitLineBadge({ display }: { display?: LockedUnitLineDispl
     >
       This line needs repair
     </span>
+  );
+}
+
+/** SA-1097 A-2: the copy of a stored split line whose own pack can't be read. The toast (generic-toast-copy) says the same of the refused save. */
+export const PACK_LOCKED_COPY =
+  "This line's pack size can't be read from the sale, so its total can't be changed here. To fix the amount, use a return or a credit note. You can still edit its note.";
+
+export function PackLockedBadge() {
+  return (
+    <p role="status" className="basis-full text-xs text-danger">
+      {PACK_LOCKED_COPY}
+    </p>
   );
 }

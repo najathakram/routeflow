@@ -112,8 +112,18 @@ describe("row 620: Edit Items keeps a legacy boxed line's own pack size through 
     },
   );
 
-  it("a line with no snapshot falls back to the live product size", () => {
+  it("SA-1097: a split line with no snapshot reads the pack its own split shows (12), not the live product size (24)", () => {
     const line = { ...(storedLine(24) as object), unitsPerBox: null } as never;
+    expect(buildEditItemFromLine(line).packUnitsPerBox).toBe(12);
+  });
+
+  it("a line with no snapshot and no split falls back to the live product size", () => {
+    const line = {
+      ...(storedLine(24) as object),
+      unitsPerBox: null,
+      boxes: null,
+      pieces: null,
+    } as never;
     expect(buildEditItemFromLine(line).packUnitsPerBox).toBe(24);
   });
 });

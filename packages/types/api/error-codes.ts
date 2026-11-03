@@ -422,6 +422,8 @@ export const API_ERROR_CODES = {
   INVALID_LINE_SPLIT: "INVALID_LINE_SPLIT",
   INVALID_RESOLUTION_FOR_TYPE: "INVALID_RESOLUTION_FOR_TYPE",
   LINE_PACK_UNDERIVABLE: "LINE_PACK_UNDERIVABLE",
+  /** SA-1097: an order edit that would re-price a stored split line whose own pack can't be read (409). */
+  STORED_LINE_PACK_UNREADABLE: "STORED_LINE_PACK_UNREADABLE",
   LINE_ALREADY_DELIVERED: "LINE_ALREADY_DELIVERED",
   /**
    * W-871 (SA-948): a replace (staff replace-all, a driver's full-list save) on a post-delivery order is refused

@@ -176,6 +176,8 @@ const CODE_COPY: Record<string, string> = {
     "The source line's pack size or price isn't valid. Check the pack and price, then try again.",
   [API_ERROR_CODES.LINE_PACK_UNDERIVABLE]:
     "This line has no pack size, so it can't be rolled to the next delivery. Set its pack size first.",
+  [API_ERROR_CODES.STORED_LINE_PACK_UNREADABLE]:
+    "This line's pack size can't be read from the sale, so its total wasn't changed. To fix the amount, use a return or a credit note.",
   [API_ERROR_CODES.RECIPE_PACK_MISMATCH]:
     "The recipe's pack size differs from the line's pack size. Make them match, then try again.",
   [API_ERROR_CODES.COMPOSITION_CORRUPT]:
