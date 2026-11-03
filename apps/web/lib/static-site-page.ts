@@ -10,6 +10,12 @@ export const STATIC_SITE_PAGES = {
   pricing: "/pricing",
   product: "/product",
   landing: "/landing",
+  "getting-started": "/getting-started",
+  "does-and-doesnt": "/does-and-doesnt",
+  "data-in-and-out": "/data-in-and-out",
+  security: "/security",
+  company: "/company",
+  contact: "/contact",
 } as const satisfies Record<string, (typeof STATIC_SITE_PATHS)[number]>;
 
 export type StaticSitePage = keyof typeof STATIC_SITE_PAGES;

@@ -64,7 +64,7 @@ export default function ChooseRolePage() {
   };
 
   const option =
-    "flex w-full items-center gap-4 rounded-xl border border-surface-border bg-surface-raised px-4 py-4 text-left transition hover:border-[#0B6E6B] disabled:opacity-60 min-h-[64px]";
+    "flex w-full items-center gap-4 rounded-xl border border-surface-border bg-surface-raised px-4 py-4 text-left transition hover:border-brand-600 disabled:opacity-60 min-h-[64px]";
 
   return (
     <AuthShell
@@ -81,14 +81,14 @@ export default function ChooseRolePage() {
             disabled={leaving}
             onClick={() => router.replace(landing)}
           >
-            <Car className="h-6 w-6 shrink-0 text-[#0B6E6B]" aria-hidden />
+            <Car className="h-6 w-6 shrink-0 text-brand-600" aria-hidden />
             <span>
               <span className="block text-base font-semibold text-navy">Drive</span>
               <span className="block text-sm text-navy/70">Your route and deliveries</span>
             </span>
           </button>
           <button type="button" className={option} disabled={leaving} onClick={() => void shop()}>
-            <ShoppingBag className="h-6 w-6 shrink-0 text-[#0B6E6B]" aria-hidden />
+            <ShoppingBag className="h-6 w-6 shrink-0 text-brand-600" aria-hidden />
             <span>
               <span className="block text-base font-semibold text-navy">Shop</span>
               <span className="block text-sm text-navy/70">

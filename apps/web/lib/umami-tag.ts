@@ -6,15 +6,25 @@ import { routes, site } from "@/app/(marketing)/lib/site";
 export const UMAMI_SCRIPT_SRC = "https://cloud.umami.is/script.js";
 
 // The ready-made pages (public/site). Not in `routes`: /landing is an ad page, not a nav route.
-export const STATIC_SITE_PATHS = ["/", "/pricing", "/product", "/landing"] as const;
+export const STATIC_SITE_PATHS = [
+  "/",
+  "/pricing",
+  "/product",
+  "/landing",
+  "/getting-started",
+  "/does-and-doesnt",
+  "/data-in-and-out",
+  "/security",
+  "/company",
+  "/contact",
+] as const;
 
-// The marketing routes come from the one `routes` table; /book-a-demo is a marketing page that is
-// not a nav route (see app/sitemap.ts). `/sign-in` is deliberately not here.
+// The marketing routes come from the one `routes` table. The old /book-a-demo and /sign-in pages
+// redirect and are deliberately not here.
 const COUNTED_PATHS: ReadonlySet<string> = new Set([
   "/",
   ...routes.map((route) => `/${route.slug}`),
   ...STATIC_SITE_PATHS,
-  "/book-a-demo",
   "/signup",
 ]);
 

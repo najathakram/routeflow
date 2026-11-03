@@ -15,6 +15,7 @@ import { formatMoney } from "@/lib/format";
 import { orderBuilderTotals } from "@/lib/order-builder-totals";
 import { PENDING, TotalsSummary } from "@/components/money/TotalsSummary";
 import { useProducts } from "@/lib/api/products";
+import { useNewOrderLineStock } from "@/lib/api/stock-availability";
 import {
   attachParent,
   groupSearchRows,
@@ -2366,6 +2367,9 @@ export function CreateOrderModal({
     );
   })();
 
+  // SA-1086: the live stock note per line (one read for the draft; a note only, the server decides at save).
+  const lineStock = useNewOrderLineStock(lineItems, selectedCustomer?.id);
+
   // The same LineItemRow for the create-order list and the scan screen, so the two can never drift.
   const renderLine = (
     li: LineItem,
@@ -2393,6 +2397,7 @@ export function CreateOrderModal({
           : undefined
       }
       highlighted={ctx?.highlighted}
+      stock={lineStock.get(li.tempId)}
       onTapPrice={ctx?.onTapPrice}
       active={
         li.tempId ===

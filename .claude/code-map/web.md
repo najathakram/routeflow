@@ -73,3 +73,8 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/landing-2026-11-01-t.md](web/landing-2026-11-01-t.md) | Train t (5f26068001..1d20b7f38d): customers list Open balance cell, BuyerOpenBalanceButton, StatementSheetFrame, StatementPrintControl |
 | [web/landing-2026-11-01-v.md](web/landing-2026-11-01-v.md) | Train v (7b4cc4b972..d3ab3e7eff): Piece row price input, order-editor Create new product, ?statement drop |
 | [web/landing-2026-11-02-w.md](web/landing-2026-11-02-w.md) | Train w (d3ab3e7eff..96aedaf2c0): Privacy and Terms pages, legal-dates helpers, Dependabot group bump |
+| [web/landing-2026-11-02-y.md](web/landing-2026-11-02-y.md) | Train y (96aedaf2c0..904cbbec87): FamilyMoveAsk, identity form, static site pages, delete copy |
+| [web/landing-2026-11-02-z.md](web/landing-2026-11-02-z.md) | Train z (904cbbec87..93282c147c): customers list edit door, four static site pages, verify fs-read specs |
+| [web/landing-2026-11-02-ac.md](web/landing-2026-11-02-ac.md) | Train ac (93282c147c..4b2516c9f2): credit-notes tiles from the summary, live stock note under each order line |
+| [web/landing-2026-11-02-ad.md](web/landing-2026-11-02-ad.md) | Train ad (4b2516c9f2..9e782a5dfc): product insights page, cleared tier blank in Quick Edit, site wording, refusal copy |
+| [web/landing-2026-11-03-ae.md](web/landing-2026-11-03-ae.md) | Train ae + #4143 (9e782a5dfc..6e9dae10eb): site audit fixes, `/` always home, Open dashboard header script; web only |

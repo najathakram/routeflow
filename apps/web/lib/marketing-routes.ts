@@ -8,7 +8,7 @@
  * elsewhere (lesson L-072); import it.
  *
  * Kept set-equal to the marketing `routes` table in
- * `app/(marketing)/lib/site.ts` (plus "/" and "/distributors", which have no
+ * `app/(marketing)/lib/site.ts` (plus "/", which has no
  * `routes` row) by the parity test in
  * `app/(marketing)/middleware.marketing.test.ts`.
  *
@@ -25,12 +25,9 @@
 export const MARKETING_PAGE_PATHS = [
   "/",
   "/product",
-  "/wholesalers",
-  "/retailers",
   "/pricing",
   "/company",
   "/contact",
   "/privacy",
   "/terms",
-  "/distributors",
 ] as const;

@@ -79,31 +79,35 @@ describe("middleware — no user-agent-based rewriting (R-MKT T11, red-first)", 
   });
 });
 
-describe("middleware — signed-in landing redirect is UA-independent (R-MKT T11)", () => {
+describe("middleware — / is always the home page (owner order 2026-11-03)", () => {
+  // The site is live for everyone: a signed-in visitor sees home too. The header offers "Open dashboard"
+  // (public/site/js/auth-nav.js) instead of a redirect, so nothing a cookie decides is ever cached or bounced.
+  const BOTH = `${OP_PRESENCE_COOKIE}=1; ${BUYER_PRESENCE_COOKIE}=1; rf-last-portal=buyer`;
   it.each([
-    ["an operator on iPhone", IPHONE_UA, `${OP_PRESENCE_COOKIE}=1`, /\/dashboard$/],
-    ["an operator on Android", ANDROID_UA, `${OP_PRESENCE_COOKIE}=1`, /\/dashboard$/],
-    ["an operator on desktop", DESKTOP_UA, `${OP_PRESENCE_COOKIE}=1`, /\/dashboard$/],
-    ["a buyer on iPhone", IPHONE_UA, `${BUYER_PRESENCE_COOKIE}=1`, /\/buyer\/portal$/],
-  ])("307s / to the right surface for %s", (_label, ua, cookie, expected) => {
-    const response = middleware(requestFor("/", ua, cookie));
-    expect(response.status).toBe(307);
-    expect(response.headers.get("location")).toMatch(expected);
-  });
-
-  it("does not redirect / for a first-time visitor on any UA", () => {
+    ["an operator", `${OP_PRESENCE_COOKIE}=1`],
+    ["a buyer", `${BUYER_PRESENCE_COOKIE}=1`],
+    ["someone with both sessions", BOTH],
+    ["a first-time visitor", undefined],
+  ])("does not redirect / for %s on any UA", (_label, cookie) => {
     for (const ua of [IPHONE_UA, ANDROID_UA, DESKTOP_UA]) {
-      const response = middleware(requestFor("/", ua));
-      expect(response.status).not.toBe(307);
+      const response = middleware(requestFor("/", ua, cookie));
+      expect(response.status).toBe(200);
+      expect(response.headers.get("location")).toBeNull();
       expect(rewriteTarget(response)).toBeNull();
     }
   });
 
-  it("does not redirect /pricing for a signed-in operator on any UA — scoped to exactly /", () => {
+  it("does not redirect /pricing for a signed-in operator on any UA", () => {
     for (const ua of [IPHONE_UA, ANDROID_UA, DESKTOP_UA]) {
       const response = middleware(requestFor("/pricing", ua, `${OP_PRESENCE_COOKIE}=1`));
       expect(response.status).not.toBe(307);
     }
+  });
+
+  it("the buyer-only guard on operator paths still holds", () => {
+    const response = middleware(requestFor("/dashboard", DESKTOP_UA, `${BUYER_PRESENCE_COOKIE}=1`));
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toContain("/login?redirect=");
   });
 });
 
@@ -125,8 +129,8 @@ describe("middleware — ?desktop=1 / prefer-desktop are accepted and inert (R-M
 // here per lib/marketing-routes.ts's own header pointer, even though the
 // export it validates is no longer consumed by this middleware itself.
 describe("marketing path list parity — MKT-PIN T11-parity", () => {
-  it("MARKETING_PAGE_PATHS equals site.ts routes plus / and /distributors (MKT-PIN T11-parity)", () => {
-    const fromSite = ["/", "/distributors", ...routes.map((route) => `/${route.slug}`)];
+  it("MARKETING_PAGE_PATHS equals site.ts routes plus / (MKT-PIN T11-parity)", () => {
+    const fromSite = ["/", ...routes.map((route) => `/${route.slug}`)];
     expect([...MARKETING_PAGE_PATHS].sort()).toEqual(fromSite.sort());
   });
 });

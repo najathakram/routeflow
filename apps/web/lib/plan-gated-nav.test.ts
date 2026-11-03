@@ -7,6 +7,12 @@ describe("matchPlanGatedRoute", () => {
     }
   });
 
+  it("IN-3: /insights/products/[id] takes the same lock /analytics shows", () => {
+    expect(matchPlanGatedRoute("/insights")).toBe("flag.analytics");
+    expect(matchPlanGatedRoute("/insights/products/p1")).toBe("flag.analytics");
+    expect(matchPlanGatedRoute("/insightsx")).toBeNull();
+  });
+
   it("matches a nested path under a gated prefix", () => {
     expect(matchPlanGatedRoute("/estimates/123")).toBe("flag.estimates");
     expect(matchPlanGatedRoute("/finance/reports/export")).toBe("flag.reports");
