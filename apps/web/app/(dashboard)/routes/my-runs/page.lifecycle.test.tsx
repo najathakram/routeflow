@@ -76,12 +76,12 @@ describe("finishRouteBlocker (D-17, D-18, D-19)", () => {
   it("a run that has not started has no Finish route", () => {
     expect(finishRouteBlocker(run(), [])).toBeNull();
   });
-  it("D-19: money collected in the app with no settlement note keeps Finish route off, and says why", () => {
+  it("D-19 (A-1): cash held with no settlement note keeps Finish route off; Settle your run takes its place", () => {
     const r = run({
       status: "IN_PROGRESS",
       collectedPayments: { cashTotal: 40, checkTotal: 0, count: 1 },
     });
-    expect(finishRouteBlocker(r, [stop("s1", "COMPLETED")])).toMatch(/Settle it in the driver app/);
+    expect(finishRouteBlocker(r, [stop("s1", "COMPLETED")])).toBeNull();
   });
   it("D-19b: once the run carries its settlement note, Finish route is offered again", () => {
     const r = run({

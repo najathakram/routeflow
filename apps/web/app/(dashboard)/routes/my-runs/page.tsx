@@ -27,6 +27,8 @@ import { useTenantAddons } from "@/lib/api/tobacco";
 import { fmtCalendarDateWithWeekday } from "@/lib/calendar-date";
 import { runActionErrorCopy } from "@/lib/driver-stop-copy";
 import { StopSheet } from "./StopSheet";
+import { driverRunFooter } from "@/lib/run-settlement-controls";
+import { RunSettleFooter } from "./RunSettleFooter";
 
 /** The line on a run the driver's own completion finished (D-32). A refused stop keeps its Undo; a released skipped stop has none (A-3). */
 const FINISHED_RUN_NOTE = "Route finished. To undo a delivered or refused stop, tap it.";
@@ -226,16 +228,10 @@ function FieldStopRow({
   );
 }
 
-/** SA-1098 PR-2: why Finish route is not offered yet, or null when it is. Money the driver took at the door in the app
- *  (collectedPayments) stays with that app's settlement — the web screen never settles it. */
+/** SA-1098 PR-2 / A-1: "" when Finish route is the run's one primary, null otherwise. The decision is the shared
+ *  `driverRunFooter`: a run holding cash or checks with no settlement gets "Settle your run" (RunSettleFooter) instead. */
 export function finishRouteBlocker(run: RouteRun, stops: RouteRunStop[]): string | null {
-  if (run.status !== "IN_PROGRESS") return null;
-  if (stops.some((s) => s.status === "PENDING" || s.status === "IN_PROGRESS")) return null;
-  const collected = run.collectedPayments;
-  if (collected && collected.count > 0 && !run.settlementNote) {
-    return "You collected money on this route. Settle it in the driver app, then finish the route.";
-  }
-  return "";
+  return driverRunFooter({ ...run, stops }) === "FINISH" ? "" : null;
 }
 
 /**
@@ -297,7 +293,6 @@ function RunLifecycle({ run, stops }: { run: RouteRun; stops: RouteRunStop[] }) 
           Finish route
         </Button>
       )}
-      {blocker && <p className="text-sm text-navy/70">{blocker}</p>}
       {error && (
         <p role="alert" className="mt-2 text-sm text-danger">
           {error}
@@ -366,7 +361,11 @@ function TodayRunHero({
       </div>
 
       {finished && <p className="px-5 pb-4 text-sm text-navy/70">{FINISHED_RUN_NOTE}</p>}
+      {/* PR-S: once no stop is left, the one primary (Finish route, or Settle your run when cash or checks are
+          held) sits above the secondary links and the (all-done) stop list, so it is in thumb reach however many
+          stops the run had. The two never show together: both read `driverRunFooter`. */}
       <RunLifecycle run={run} stops={stops} />
+      <RunSettleFooter run={{ ...run, stops }} />
 
       {/* Primary action row — big touch targets, scanner shortcut front and center */}
       <div className="flex flex-wrap gap-3 px-5 pb-5">

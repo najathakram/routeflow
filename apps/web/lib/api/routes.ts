@@ -112,9 +112,6 @@ export interface RouteRun {
    *  gate reads this figure, never the `driver_payments` add-on. */
   collectedPayments?: { cashTotal: number; checkTotal?: number; count?: number } | null;
   stops?: RouteRunStop[];
-  /** GET /route-runs/my-runs only — what this driver collected at the door on the run (SA-1098: the web screen never
-   *  collects, so a non-zero count that is not yet settled keeps "Finish route" off). */
-  collectedPayments?: { cashTotal: number; checkTotal: number; count: number };
   _count?: { stops: number };
   /** Dispatch response only — how many orders the sweep actually attached to
    *  this run (an ad-hoc trip can lose orders between build and send). */
