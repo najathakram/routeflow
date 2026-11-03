@@ -1,5 +1,5 @@
-import { ConflictException } from "@nestjs/common";
-import { resolveStoredLinePack } from "@routeflow/pricing";
+import { BadRequestException, ConflictException } from "@nestjs/common";
+import { normalizeBoxesPieces, resolveStoredLinePack } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
@@ -80,25 +80,67 @@ export async function packForLineEdit(
   db: Parameters<typeof loadLiveUnitsPerBoxByProduct>[0],
   line: StoredSplitLine,
   editHasSplit: boolean,
-): Promise<{ pack: number | null; soldWithNoPack: boolean }> {
+): Promise<{ pack: number | null; soldWithNoPack: boolean; stored: boolean }> {
   if (line.productId && line.boxes != null && !(Number(line.unitsPerBox ?? 0) > 1)) {
     const stored = await storedLinePackForEdit(db, line);
-    return { pack: stored.pack || null, soldWithNoPack: stored.soldWithNoPack };
+    return { pack: stored.pack || null, soldWithNoPack: stored.soldWithNoPack, stored: true };
   }
   const own = line.unitsPerBox == null ? null : Number(line.unitsPerBox);
   if (own == null && line.productId && editHasSplit) {
     const live = (await loadLiveUnitsPerBoxByProduct(db, [line.productId])).get(line.productId);
-    return { pack: live || null, soldWithNoPack: false };
+    return { pack: live || null, soldWithNoPack: false, stored: false };
   }
-  return { pack: own, soldWithNoPack: false };
+  return { pack: own, soldWithNoPack: false, stored: false };
 }
 
-/** The qty of an edit to a line sold with no pack: the sent qty, else the sent boxes + pieces, else the held qty. */
-export function noPackEditQty(
-  item: { qty?: number | null; boxes?: number | null; pieces?: number | null },
+/** A qty typed for a line sold with no pack: whole (`boxes` is whole, so the shape can't hold a fraction) or refused. */
+export function noPackEditQty(qty: number): number {
+  if (!Number.isInteger(qty)) {
+    throw new BadRequestException({
+      code: API_ERROR_CODES.INVALID_LINE_SPLIT,
+      message: "This line is sold in whole units. Enter a whole number.",
+    });
+  }
+  return Math.max(0, qty);
+}
+
+type EditSplitItem = { qty?: number | null; boxes?: number | null; pieces?: number | null };
+
+/**
+ * SA-1097 A-2/A-3: the qty + split an edit writes to a STORED split line with no snapshot, at the pack it was sold in
+ * (`pack`; `soldWithNoPack` = 1 and keeps boxes = qty). A payload naming BOTH qty and a split must agree at that pack
+ * (QTY_SPLIT_MISMATCH, nothing written - never normalized: the web's pre-fix 5-case payload would otherwise write qty 60);
+ * a split alone normalizes at the pack; no split re-splits qty.
+ */
+export function storedLineEditShape(
+  item: EditSplitItem,
   heldQty: unknown,
-): number {
-  const sentSplit = (item.boxes ?? 0) > 0 || (item.pieces ?? 0) > 0;
-  const qty = item.qty ?? (sentSplit ? (item.boxes ?? 0) + (item.pieces ?? 0) : Number(heldQty));
-  return Math.max(0, Math.trunc(qty));
+  pack: number | null,
+  soldWithNoPack: boolean,
+): { qty: number; boxes: number; pieces: number } {
+  const splitSent = (item.boxes ?? 0) > 0 || (item.pieces ?? 0) > 0;
+  const factor = soldWithNoPack ? 1 : Number(pack ?? 0);
+  if (
+    splitSent &&
+    item.qty != null &&
+    (item.boxes ?? 0) * factor + (item.pieces ?? 0) !== item.qty
+  ) {
+    throw new BadRequestException({
+      code: API_ERROR_CODES.QTY_SPLIT_MISMATCH,
+      message: "The quantity and the box split of a line disagree. Review the line and try again.",
+    });
+  }
+  if (soldWithNoPack) {
+    const qty = noPackEditQty(
+      item.qty ?? (splitSent ? (item.boxes ?? 0) + (item.pieces ?? 0) : Number(heldQty)),
+    );
+    return { qty, boxes: qty, pieces: 0 };
+  }
+  const split = normalizeBoxesPieces({
+    boxes: splitSent && item.qty == null ? item.boxes : undefined,
+    pieces: splitSent && item.qty == null ? item.pieces : undefined,
+    qty: item.qty ?? Number(heldQty),
+    unitsPerBox: factor,
+  });
+  return { qty: split.qty, boxes: split.boxes ?? 0, pieces: split.pieces ?? 0 };
 }
