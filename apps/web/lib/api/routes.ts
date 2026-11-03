@@ -107,6 +107,10 @@ export interface RouteRun {
   /** Prisma `Decimal` column — serializes over JSON as a numeric string, so
    *  callers must `Number(...)` before formatting or comparing it. */
   settlementVariance?: number | string | null;
+  /** The cash and checks the server counts as collected on this run (`getRunCashCollections`). The run
+   *  page read and the driver's own list always carry it; other list reads leave it off. The settlement
+   *  gate reads this figure, never the `driver_payments` add-on. */
+  collectedPayments?: { cashTotal: number; checkTotal?: number; count?: number } | null;
   stops?: RouteRunStop[];
   /** GET /route-runs/my-runs only — what this driver collected at the door on the run (SA-1098: the web screen never
    *  collects, so a non-zero count that is not yet settled keeps "Finish route" off). */
@@ -543,6 +547,27 @@ export function useUpdateRouteRunStatus(options?: { localErrorToast?: boolean })
       qc.invalidateQueries({ queryKey: ["trip-eligibility"] });
     },
   });
+}
+
+/**
+ * SA-1098 A-1 (PR-S): POST /route-runs/:id/settlement. The server computes the expected figure itself
+ * and refuses a count that differs by more than a cent without a reason (`RUN_VARIANCE_REASON_REQUIRED`).
+ * A driver settles once (`RUN_ALREADY_SETTLED` after that); an operator may amend.
+ */
+export function useSettleRun() {
+  const qc = useQueryClient();
+  return useMutation<RouteRun, Error, { id: string; countedCash: number; varianceReason?: string }>(
+    {
+      mutationFn: ({ id, countedCash, varianceReason }) =>
+        apiClient
+          .post(`/route-runs/${id}/settlement`, { countedCash, varianceReason })
+          .then((r) => r.data),
+      onSuccess: (_, { id }) => {
+        qc.invalidateQueries({ queryKey: ["route-runs"] });
+        qc.invalidateQueries({ queryKey: ["route-runs", id] });
+      },
+    },
+  );
 }
 
 export function useUpdateRouteRun() {

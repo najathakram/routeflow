@@ -73,6 +73,9 @@ import {
   type RoutePlanningDriverOption,
 } from "@/components/RoutePlanningControls";
 import { RouteVariantsPanel } from "@/components/RouteVariantsPanel";
+import { RunSettlementForm } from "@/components/RunSettlementForm";
+import { officeSettlementControls } from "@/lib/run-settlement-controls";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { buildGoogleMapsLegs, type GmapsPoint } from "@/lib/gmaps-export";
 import { EditRunModal } from "../_components/EditRunModal";
 import { RouteMap, type VariantOverlay } from "./RouteMap";
@@ -478,6 +481,9 @@ export default function RouteRunDetailPage() {
   const [showEditModal, setShowEditModal] = React.useState(false);
   const [confirmDelete, setConfirmDelete] = React.useState(false);
   const [confirmCancel, setConfirmCancel] = React.useState(false);
+  // SA-1098 A-1 (PR-S): the office writes the run settlement here — settle, amend, finish.
+  const [settleMode, setSettleMode] = React.useState<"office" | "amend" | null>(null);
+  const [confirmFinish, setConfirmFinish] = React.useState(false);
   const [atDoorStop, setAtDoorStop] = React.useState<RouteRunStop | null>(null);
 
   // Local stops state for optimistic DnD reordering
@@ -631,6 +637,28 @@ export default function RouteRunDetailPage() {
         },
         onError: (err) =>
           toast({ title: "Cancel failed", description: err.message, variant: "error" }),
+      },
+    );
+  };
+
+  const handleFinish = () => {
+    if (isCancelling) return;
+    updateStatus(
+      { id: id, status: "COMPLETED" },
+      {
+        onSuccess: () => {
+          toast({ title: "Run finished", variant: "success" });
+          setConfirmFinish(false);
+        },
+        onError: (err) =>
+          toast({
+            title: "Couldn't finish the run",
+            description: genericToastCopy(
+              err,
+              "Settle the run's cash and checks first, then finish it.",
+            ),
+            variant: "error",
+          }),
       },
     );
   };
@@ -854,6 +882,10 @@ export default function RouteRunDetailPage() {
   const canEdit = isOperator && run.status !== "COMPLETED" && run.status !== "CANCELLED";
   const canDelete = isOperator && run.status === "SCHEDULED";
   const canCancel = isOperator && (run.status === "IN_PROGRESS" || run.status === "SCHEDULED");
+  // SA-1098 A-1: Settle run / Finish run / Amend, from the run's own figures (never the add-on).
+  const settlementControls = officeSettlementControls(run, isOperator);
+  const hasSettlementControls =
+    settlementControls.settle || settlementControls.finish || settlementControls.amend;
 
   // ── Settlement (F05 / R9, B167) — read-only, rendered for EVERY run status
   // so a driver's end-of-day cash reconciliation stays visible after the run
@@ -868,7 +900,8 @@ export default function RouteRunDetailPage() {
     settlementVarianceNumber !== null && !Number.isNaN(settlementVarianceNumber);
   const hasSettlementNote = Boolean(run.settlementNote);
   const hasLegacyNotes = Boolean(run.notes);
-  const showSettlementCard = hasSettlementNote || hasSettlementVariance || hasLegacyNotes;
+  const showSettlementCard =
+    hasSettlementNote || hasSettlementVariance || hasLegacyNotes || hasSettlementControls;
 
   const selectedVariant =
     routeVariants.data?.variants.find((v) => v.key === selectedVariantKey) ?? null;
@@ -905,6 +938,56 @@ export default function RouteRunDetailPage() {
       >
         <p className="text-sm text-navy/70">
           Any in-progress stops will stop counting toward this run. This cannot be undone.
+        </p>
+      </Modal>
+
+      <Modal
+        open={settleMode !== null}
+        onClose={() => setSettleMode(null)}
+        title={settleMode === "amend" ? "Amend settlement" : "Settle run"}
+        description={
+          settleMode === "amend"
+            ? "Write a new count over the one on record. The old count stays in the note."
+            : "Count the cash and checks this run collected."
+        }
+      >
+        {settleMode && (
+          <RunSettlementForm
+            run={run}
+            mode={settleMode}
+            onDone={() => {
+              toast({
+                title: settleMode === "amend" ? "Settlement amended" : "Settlement recorded",
+                variant: "success",
+              });
+              setSettleMode(null);
+            }}
+          />
+        )}
+      </Modal>
+
+      <Modal
+        open={confirmFinish}
+        onClose={() => setConfirmFinish(false)}
+        title="Finish this run?"
+        description={`Every stop on ${run.route?.name ?? "this route"} is done. Finishing closes the run.`}
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              onClick={() => setConfirmFinish(false)}
+              disabled={isCancelling}
+            >
+              Not yet
+            </Button>
+            <Button variant="primary" onClick={handleFinish} loading={isCancelling}>
+              Finish run
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-navy/70">
+          Orders on skipped stops go back to be dispatched again.
         </p>
       </Modal>
 
@@ -1061,7 +1144,7 @@ export default function RouteRunDetailPage() {
         </div>
       </div>
 
-      {/* Settlement — read-only for every run status (F05 / R9, B167) */}
+      {/* Settlement — shown for every run status (F05 / R9, B167); the office writes it here (SA-1098 A-1) */}
       {showSettlementCard && (
         <div className="shrink-0 border-b border-surface-border bg-surface-raised px-6 py-4">
           <Card title="Settlement" className="max-w-2xl">
@@ -1088,6 +1171,30 @@ export default function RouteRunDetailPage() {
                     Run notes
                   </p>
                   <p className="whitespace-pre-line text-sm text-navy/80">{run.notes}</p>
+                </div>
+              )}
+              {settlementControls.settle && !hasSettlementNote && (
+                <p className="text-sm text-navy/80">
+                  This run collected cash and checks that haven&apos;t been settled yet.
+                </p>
+              )}
+              {hasSettlementControls && (
+                <div className="flex flex-wrap items-center gap-2" data-testid="settlement-actions">
+                  {settlementControls.settle && (
+                    <Button variant="primary" size="sm" onClick={() => setSettleMode("office")}>
+                      Settle run
+                    </Button>
+                  )}
+                  {settlementControls.finish && (
+                    <Button variant="primary" size="sm" onClick={() => setConfirmFinish(true)}>
+                      Finish run
+                    </Button>
+                  )}
+                  {settlementControls.amend && (
+                    <Button variant="secondary" size="sm" onClick={() => setSettleMode("amend")}>
+                      Amend
+                    </Button>
+                  )}
                 </div>
               )}
             </div>
