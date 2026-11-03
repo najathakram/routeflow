@@ -30,9 +30,10 @@ export function stockLineOfSaleLine(l: SaleLine): StockLine {
 /**
  * The live stock note for every line of the counter: one read for the whole cart, keyed by the line's `tempId`.
  * A counter sale is created by the same path as a staff order, so the read is the `entry` one (its oversell verdict
- * and its customer rules). A note only: it never gates the sale.
+ * and its customer rules). A note only: it never gates the sale. A till sale hands the goods over now, so the
+ * over-stock note says that (`deliversNow`), not "backorder" (SA-1086 A-1).
  */
 export function useCounterLineStock(lines: SaleLine[], customerId?: string | null) {
   const stockLines = React.useMemo(() => lines.map(stockLineOfSaleLine), [lines]);
-  return useLineStockViews({ lines: stockLines, mode: "entry", customerId });
+  return useLineStockViews({ lines: stockLines, mode: "entry", customerId, deliversNow: true });
 }

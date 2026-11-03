@@ -121,7 +121,12 @@ describe("CounterSaleScreen live stock (LS-9)", () => {
     await waitFor(() =>
       expect(screen.getAllByTestId("line-stock")[0]).toHaveAttribute("data-level", "low"),
     );
-    expect(screen.getByTestId("line-stock-message")).toHaveTextContent("extra goes on backorder");
+    // LS-9a: a till sale hands the goods over now, so the note says what the sale does, never "backorder".
+    const message = screen.getByTestId("line-stock-message");
+    expect(message).toHaveTextContent(
+      "Only 1 box and 8 pieces left. You can still sell it. Stock will go below zero.",
+    );
+    expect(message.textContent).not.toMatch(/backorder/i);
     await scan("COLA"); // 0 on hand
     await waitFor(() =>
       expect(

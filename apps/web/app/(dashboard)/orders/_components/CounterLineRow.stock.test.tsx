@@ -40,12 +40,17 @@ describe("CounterLineRow stock note", () => {
   });
 
   it("R2: a ready view prints the count under the item; over stock adds the message", () => {
-    renderRow(ready("low", "Only 1 box and 8 pieces left. The extra goes on backorder."));
+    renderRow(
+      ready(
+        "low",
+        "Only 1 box and 8 pieces left. You can still sell it. Stock will go below zero.",
+      ),
+    );
     const note = screen.getByTestId("line-stock");
     expect(note).toHaveAttribute("data-level", "low");
     expect(note).toHaveTextContent("1 box and 8 pieces left");
     expect(screen.getByTestId("line-stock-message")).toHaveTextContent(
-      "The extra goes on backorder",
+      "You can still sell it. Stock will go below zero.",
     );
   });
 
@@ -55,7 +60,7 @@ describe("CounterLineRow stock note", () => {
   });
 
   it("R4: even at 'out' the row's own controls stay live (a note, never a gate)", () => {
-    renderRow(ready("out", "None left. The extra goes on backorder."));
+    renderRow(ready("out", "None left. You can still sell it. Stock will go below zero."));
     expect(screen.getByTestId("line-stock")).toHaveAttribute("data-level", "out");
     expect(screen.getByRole("button", { name: "Remove Cola" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Add a note to Cola" })).toBeEnabled();
