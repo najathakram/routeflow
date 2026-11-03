@@ -23,7 +23,7 @@
     { k: "inventory", t: "Inventory", s: "See what you have, box by box.", a: "mint", c: "#4397db", w: "#256fa8", i: "#07304e" },
     { k: "orders", t: "Orders", s: "Take orders in boxes or pieces.", a: "coral", c: "#4caed9", w: "#2f84a8", i: "#023345" },
     { k: "routes", t: "Routes", s: "Put the stops in a good order.", a: "sun", c: "#33afb1", w: "#108586", i: "#023536", n: ADD },
-    { k: "delivery", t: "Delivery", s: "The driver can take a signature and a photo at each stop.", a: "mint", c: "#44bd92", w: "#27926e", i: "#003726", n: ADD },
+    { k: "delivery", t: "Delivery", s: "Drivers see each stop and can start or skip it.", a: "mint", c: "#44bd92", w: "#27926e", i: "#003726", n: ADD },
     { k: "invoices", t: "Invoices", s: "Turn the order into an invoice. Send it after delivery.", a: "sun", c: "#e7b64a", w: "#b88e31", i: "#3c2b02" },
     { k: "payments", t: "Payments", s: "Record the check. The balance goes to zero, and you see who still owes you.", a: "mint", c: "#ec9040", w: "#b96c26", i: "#472302" },
     { k: "customers", t: "Customers", s: "One page for each customer.", a: "coral", c: "#e56a5d", w: "#b0493f", i: "#4b1e19" },
