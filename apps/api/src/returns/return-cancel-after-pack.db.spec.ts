@@ -5,7 +5,15 @@
  *
  * Throwaway `qa-retpack-<run>-<n>` tenants (approved by `assertTestTenant`). Runs only under jest.db.config.js.
  */
+jest.mock("../invoices/invoices.service", () => ({
+  InvoicesService: jest.fn().mockImplementation(() => ({})),
+}));
+jest.mock("../notifications/notifications.service", () => ({
+  NotificationsService: jest.fn().mockImplementation(() => ({})),
+}));
+
 import { randomUUID } from "crypto";
+import { Logger } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { AuditService } from "../audit/audit.service";
 import { EntitlementsService } from "../billing/entitlements.service";
@@ -19,6 +27,8 @@ import {
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NumberingService } from "../import/numbering.service";
+import { OrdersService } from "../orders/orders.service";
+import { INVOICE_EDIT_STUBS } from "../orders/testing/invoice-edit-stubs";
 import { PrismaService } from "../prisma/prisma.service";
 import { applyPackIntroduction } from "../products/pack-intro-apply";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
@@ -41,6 +51,7 @@ describeDb("SA-1093 Rule 4: a return's cancel after a Boxes answer", () => {
   let tenantCtx: TenantContextService;
   let returns: any;
   let inline: any;
+  let orders: any;
   const tenantIds: string[] = [];
   let seq = 0;
   let numSeq = 0;
@@ -84,6 +95,32 @@ describeDb("SA-1093 Rule 4: a return's cancel after a Boxes answer", () => {
       ),
       idempotency: new IdempotencyService(),
     });
+    // C-6 writes its lines through the real merge and edit paths, built as b1050-delivered-edit.db.spec.ts does.
+    orders = Object.assign(Object.create(OrdersService.prototype), {
+      prisma,
+      gateway: { emitOrderStatusChanged: jest.fn(), emitOrderCreated: jest.fn() },
+      systemConfig: new SystemConfigService(
+        prisma,
+        new EncryptionService({ get: () => undefined } as any),
+      ),
+      entitlements: { hasFlag: async () => true },
+      sellingRestrictions: {
+        getPolicy: async () => ({ enabled: false, addressPrecedence: "BILLING_FIRST" }),
+        assertLinesSellable: async () => undefined,
+      },
+      authGuard: { assertAuthorizedOrThrow: async () => undefined },
+      promotionsService: { activeForCatalog: async () => [] },
+      tenantCtx,
+      invoicesService: {
+        revertLinkedInvoicesForOrderEdit: async () => undefined,
+        resyncOrderInvoicesForEdit: async () => [],
+        ...INVOICE_EDIT_STUBS,
+        reconcileOrderDraftInvoice: async () => undefined,
+      },
+      logger: new Logger(OrdersService.name),
+      inlineReturns: {},
+      creditNotes: { settleOrderCreditsInTx: async () => ({ applied: 0, unapplied: 0 }) },
+    });
   }, 120_000);
 
   afterAll(async () => {
@@ -98,6 +135,7 @@ describeDb("SA-1093 Rule 4: a return's cancel after a Boxes answer", () => {
       await prisma.creditNote.deleteMany(where).catch(swallow);
       await prisma.invoiceItem.deleteMany(where).catch(swallow);
       await prisma.invoice.deleteMany(where).catch(swallow);
+      await prisma.orderRevision.deleteMany({ where: { order: { tenantId } } }).catch(swallow);
       await prisma.orderItem.deleteMany(where).catch(swallow);
       await prisma.order.deleteMany(where).catch(swallow);
       await prisma.stockMovement.deleteMany({ where: { product: { tenantId } } }).catch(swallow);
@@ -650,5 +688,199 @@ describeDb("SA-1093 Rule 4: a return's cancel after a Boxes answer", () => {
       expect(await parks(w)).toHaveLength(0);
       expect(await stock(w)).toBe(64);
     }, 60_000);
+
+    // C-6h is C-4a, C-4b and the own-pack row above: none of them moves.
+    describe("C-6 (SA-1093 A-3): a line rewritten after the answer reads by its stored unit", () => {
+      const liveLine = (w: World) =>
+        prisma.orderItem.findFirstOrThrow({
+          where: { orderId: w.orderId, status: { not: "CANCELLED" } },
+        });
+      /** A plain line still open when Boxes x24 passes; its invoice comes with the delivery. */
+      const openAtAnswer = async (label: string) => {
+        const w = await seed(label);
+        await prisma.invoiceItem.deleteMany({ where: { tenantId: w.tenantId } });
+        await prisma.invoice.deleteMany({ where: { tenantId: w.tenantId } });
+        await prisma.order.update({ where: { id: w.orderId }, data: { status: "PENDING" } });
+        await stocked(w, { currentStock: 5 });
+        await boxes(w, 24);
+        return { w, line: await liveLine(w) };
+      };
+      /** The rewrite kept the line's old date and stamped today's pack, which is what makes it this shape. */
+      const expectRewritten = async (w: World, soldAt: Date) => {
+        const line = await liveLine(w);
+        expect(line.createdAt).toEqual(soldAt);
+        expect(line.unitsPerBox).toBe(24);
+      };
+      /** From stock 120 on the delivered order, so only the return moves it. */
+      const returnOfThreeAddsThree = async (w: World) => {
+        await prisma.order.update({ where: { id: w.orderId }, data: { status: "DELIVERED" } });
+        await stocked(w, { currentStock: 120 });
+
+        await standardReturn(w, 3);
+
+        expect(await stock(w)).toBe(123);
+        expect((await restockRow(w))[0]).toBe(3);
+        expect(await parks(w)).toHaveLength(0);
+      };
+      const oneBoxSixPieces = (w: World) => ({
+        productId: w.productId,
+        qty: 30,
+        boxes: 1,
+        pieces: 6,
+      });
+
+      it("C-6a: a second order with boxes merges onto the line: adds 3", async () => {
+        const { w, line } = await openAtAnswer("c6a");
+        await prisma.order.create({
+          data: {
+            tenantId: w.tenantId,
+            customerId: w.customerId,
+            orderNumber: `ORD-RETPACK-${RUN}-${++seq}`,
+            subtotal: 240,
+            tax: 0,
+            total: 240,
+            status: "PENDING",
+            lineItems: {
+              create: {
+                tenantId: w.tenantId,
+                productId: w.productId,
+                name: "Widget",
+                qty: 24,
+                boxes: 1,
+                pieces: 0,
+                unitsPerBox: 24,
+                unitPrice: 240,
+                subtotal: 240,
+              },
+            },
+          } as any,
+        });
+        // The order touched last is the one a merge keeps, so it updates this line in place.
+        await prisma.order.update({ where: { id: w.orderId }, data: { updatedAt: new Date() } });
+
+        await inTenant(w, () => orders.mergeAllPendingForCustomer(w.customerId));
+
+        await expectRewritten(w, line.createdAt);
+        await returnOfThreeAddsThree(w);
+      }, 60_000);
+
+      it("C-6b: a staff replace names the line with a split: adds 3", async () => {
+        const { w, line } = await openAtAnswer("c6b");
+
+        await inTenant(w, () =>
+          orders.updateOrderItems(
+            w.orderId,
+            { replaceAll: true, items: [{ ...oneBoxSixPieces(w), id: line.id, unitPrice: 240 }] },
+            staff(w),
+          ),
+        );
+
+        await expectRewritten(w, line.createdAt);
+        await returnOfThreeAddsThree(w);
+      }, 60_000);
+
+      it("C-6c: a buyer edit names the line by orderItemId with a split: adds 3", async () => {
+        const { w, line } = await openAtAnswer("c6c");
+
+        await inTenant(w, () =>
+          orders.updateOrderItems(
+            w.orderId,
+            { replaceAll: true, items: [{ ...oneBoxSixPieces(w), orderItemId: line.id }] },
+            { ...staff(w), role: "CUSTOMER" },
+            { buyerLineIds: true },
+          ),
+        );
+
+        await expectRewritten(w, line.createdAt);
+        await returnOfThreeAddsThree(w);
+      }, 60_000);
+
+      it("C-6d: a box split with no snapshot, edited per line once delivered: adds 3", async () => {
+        const w = await beforeBoxes("c6d", SPLIT);
+        const line = await liveLine(w);
+
+        await inTenant(w, () =>
+          orders.updateOrderItems(
+            w.orderId,
+            { replaceAll: false, items: [{ id: line.id, qty: 11, boxes: 0, pieces: 11 }] },
+            staff(w),
+          ),
+        );
+
+        await expectRewritten(w, line.createdAt);
+        await returnOfThreeAddsThree(w);
+      }, 60_000);
+
+      it("C-6e: a snapshot of 24 with a second answer after it multiplies by that answer", async () => {
+        const w = await seed("c6e");
+        await prisma.orderItem.deleteMany({ where: { orderId: w.orderId } });
+        await stocked(w, { currentStock: 5 });
+        await boxes(w, 24);
+        await newLine(w, { ...SPLIT, unitsPerBox: 24 });
+        await boxes(w, 2);
+        expect(await stock(w)).toBe(240);
+
+        await standardReturn(w, 3);
+
+        expect(await stock(w)).toBe(246);
+        expect(await parks(w)).toHaveLength(0);
+      }, 60_000);
+
+      it("C-6f: one rewritten line and one old line on the order park, and stock doesn't move", async () => {
+        const w = await beforeBoxes("c6f", SPLIT);
+        const old = await liveLine(w);
+        await newLine(w, { ...SPLIT, unitsPerBox: 24, createdAt: old.createdAt });
+
+        await standardReturn(w, 3);
+
+        expect(await stock(w)).toBe(120);
+        const parked = await parks(w);
+        expect(parked).toHaveLength(1);
+        expect(parked[0].reason).toBe("the product is on order lines with different packs");
+      }, 60_000);
+
+      it("C-6g: a second product's rewritten line has no vote", async () => {
+        const w = await beforeBoxes("c6g", SPLIT);
+        const old = await liveLine(w);
+        const other = await prisma.product.create({
+          data: {
+            tenantId: w.tenantId,
+            name: `Other ${w.tenantId}`,
+            unit: "each",
+            pricePerUnit: 10,
+            unitsPerBox: 24,
+          },
+        });
+        await prisma.orderItem.create({
+          data: {
+            tenantId: w.tenantId,
+            orderId: w.orderId,
+            productId: other.id,
+            name: other.name,
+            qty: 10,
+            unitPrice: 10,
+            subtotal: 100,
+            createdAt: old.createdAt,
+            ...SPLIT,
+            unitsPerBox: 24,
+          } as any,
+        });
+
+        await standardReturn(w, 3);
+
+        expect(await stock(w)).toBe(192);
+        expect(await parks(w)).toHaveLength(0);
+      }, 60_000);
+
+      it("guard: no snapshot isn't today's unit, even where the pack has since been cleared", async () => {
+        const w = await beforeBoxes("c6cleared", SPLIT);
+        await stocked(w, { unitsPerBox: null });
+
+        await standardReturn(w, 3);
+
+        expect(await stock(w)).toBe(192);
+        expect(await parks(w)).toHaveLength(0);
+      }, 60_000);
+    });
   });
 });
