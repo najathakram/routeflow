@@ -550,11 +550,13 @@ export function useUpdateRouteRunStatus(options?: { localErrorToast?: boolean })
  * SA-1098 A-1 (PR-S): POST /route-runs/:id/settlement. The server computes the expected figure itself
  * and refuses a count that differs by more than a cent without a reason (`RUN_VARIANCE_REASON_REQUIRED`).
  * A driver settles once (`RUN_ALREADY_SETTLED` after that); an operator may amend.
+ * `localErrorToast`: the settlement form shows every refusal itself, so the app-wide toast stays off (one toast, B594).
  */
-export function useSettleRun() {
+export function useSettleRun(options?: { localErrorToast?: boolean }) {
   const qc = useQueryClient();
   return useMutation<RouteRun, Error, { id: string; countedCash: number; varianceReason?: string }>(
     {
+      meta: options?.localErrorToast ? { localErrorToast: true } : undefined,
       mutationFn: ({ id, countedCash, varianceReason }) =>
         apiClient
           .post(`/route-runs/${id}/settlement`, { countedCash, varianceReason })

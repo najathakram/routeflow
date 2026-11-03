@@ -61,8 +61,10 @@ export function RunSettlementForm({
 }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const settleRun = useSettleRun();
-  const updateStatus = useUpdateRouteRunStatus();
+  // The form words every refusal itself (inline, or its own toast), so the app-wide toast stays off: one message per
+  // refusal, and never a red "details aren't valid" beside the green "already recorded" (B594, Row 348).
+  const settleRun = useSettleRun({ localErrorToast: true });
+  const updateStatus = useUpdateRouteRunStatus({ localErrorToast: true });
 
   const [counted, setCounted] = React.useState("");
   const [reason, setReason] = React.useState("");

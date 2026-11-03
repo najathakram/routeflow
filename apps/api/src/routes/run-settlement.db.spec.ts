@@ -463,10 +463,16 @@ describeDb("SA-1098 A-1 run settlement writer — real Postgres", () => {
     await setStatus(a, "COMPLETED", OPERATOR);
     expect((await readRun(a)).status).toBe("COMPLETED");
     // Completed run: Amend moves the variance and rewrites the note.
+    const firstNote = (await readRun(a)).settlementNote as string;
+    expect(firstNote).toContain("Counted: $60.00");
     await settle(a, 55, OPERATOR, "Recount");
     const amended = await readRun(a);
     expect(Number(amended.settlementVariance)).toBe(-5);
     expect(amended.settlementNote).toContain("Reason: Recount");
+    // Amend REPLACES the note: the old count is kept nowhere, so the Amend sheet says "replaces" (review-a on #4188).
+    // If the SA rules the old count is kept, this assertion flips and the sheet's copy changes with it.
+    expect(amended.settlementNote).toContain("Counted: $55.00");
+    expect(amended.settlementNote).not.toContain("Counted: $60.00");
 
     // Cancelled with money collected: settles, and Finish is refused by the server.
     const b = await seed("se8b", 2);

@@ -474,7 +474,10 @@ export default function RouteRunDetailPage() {
   const { mutate: optimizeRoute, isPending: isOptimizing } = useOptimizeRoute();
   const { mutate: reorderRunStops } = useReorderRunStops();
   const { mutate: deleteRun, isPending: isDeleting } = useDeleteRouteRun();
-  const { mutate: updateStatus, isPending: isCancelling } = useUpdateRouteRunStatus();
+  // Cancel and Finish both show their own refusal (onError below), so the app-wide toast stays off: one toast, B594.
+  const { mutate: updateStatus, isPending: isCancelling } = useUpdateRouteRunStatus({
+    localErrorToast: true,
+  });
 
   const isOperator = user?.role === "OPERATOR";
   const queryClient = useQueryClient();
@@ -947,7 +950,7 @@ export default function RouteRunDetailPage() {
         title={settleMode === "amend" ? "Amend settlement" : "Settle run"}
         description={
           settleMode === "amend"
-            ? "Write a new count over the one on record. The old count stays in the note."
+            ? "Write a new count over the one on record. The new count replaces the old one."
             : "Count the cash and checks this run collected."
         }
       >
