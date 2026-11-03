@@ -219,6 +219,7 @@ describe("RoutesService → RouteRealtime wiring (#2095)", () => {
               }),
             },
           ]),
+          routeRunStop: { findUnique: jest.fn().mockResolvedValue({ status: "COMPLETED" }) },
         }),
       );
 

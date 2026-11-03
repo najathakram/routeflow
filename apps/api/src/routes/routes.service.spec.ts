@@ -2537,6 +2537,8 @@ describe("RoutesService", () => {
               }),
             },
           ]),
+          // A-2: the stop the key completed is still COMPLETED, so the replay is served.
+          routeRunStop: { findUnique: jest.fn().mockResolvedValue({ status: "COMPLETED" }) },
         }),
       );
 

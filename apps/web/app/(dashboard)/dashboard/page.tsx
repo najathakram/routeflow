@@ -48,7 +48,6 @@ import { ORDER_STATUS_VALUES, lowStockThreshold, staffMay } from "@routeflow/typ
 import type { OrderStatusValue } from "@routeflow/types";
 import { useLastKnownRoutesAccess } from "@/lib/last-known-routes-access";
 import { DRIVER_LANDING } from "@/lib/portal-routing";
-import { DriverAppBanner } from "./DriverAppBanner";
 import { GetTheAppStrip } from "./GetTheAppStrip";
 import { FirstRunCard } from "./FirstRunCard";
 import { useFirstRun } from "@/lib/api/first-run";
@@ -735,8 +734,6 @@ export default function DashboardPage() {
     if (driverHasRunsAccess) router.replace(DRIVER_LANDING);
   }, [driverHasRunsAccess, router]);
 
-  const [driverBannerDismissed, setDriverBannerDismissed] = React.useState(false);
-
   // View mode for dual-role users — persisted across visits
   const [viewMode, setViewMode] = React.useState<ViewMode>("operator");
   React.useEffect(() => {
@@ -932,13 +929,7 @@ export default function DashboardPage() {
       {/* ── The first question on a new account (W1) ── */}
       {firstRunEnabled && <FirstRunCard status={firstRun} />}
 
-      {/* ── Driver-app nudge (DRIVER-role account, web) ── */}
-      <DriverAppBanner
-        visible={baseIsDriver && !driverBannerDismissed}
-        onDismiss={() => setDriverBannerDismissed(true)}
-      />
-
-      {/* ── Install-the-app nudge (row 559; never for drivers, who get the banner above) ── */}
+      {/* ── Install-the-app nudge (row 559; never for drivers) ── */}
       {!firstRunOpen && <GetTheAppStrip isDriver={baseIsDriver} />}
 
       {/* ── Install banner (SA-1069 A-2 P-1): staff home only, never the shell — it is fixed

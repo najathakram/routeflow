@@ -73,17 +73,39 @@ export function stopKeyFor(
   };
 }
 
-/** The committed attempt's response, null when this key has none, or SA-824's 409 for a changed request. */
+/**
+ * The committed attempt's response, null when this key has none, SA-824's 409 for a changed request, or (SA-1098 A-2)
+ * 409 STOP_REOPENED when the stop is no longer COMPLETED.
+ *
+ * The stop's status is read in the SAME transaction as the key row, AFTER the row is found and BEFORE the hash check, never
+ * from a stop loaded earlier: the row and COMPLETED commit together, so a read made after finding the row sees COMPLETED unless
+ * the stop really was reopened. A retry that loaded PENDING and then found the winner's row is therefore never refused. It takes
+ * the stop's id and no status, so no caller can pass a stale one. If the read fails the request errors (5xx); it never replays.
+ */
 export async function replayStopKey<R>(
   prisma: { tenantTransaction: <T>(fn: (tx: any) => Promise<T>) => Promise<T> },
   stopKey: StopCompletionKey | null,
+  stopId: string,
 ): Promise<R | null> {
   if (!stopKey) return null;
   const { key, tenantId, scope, requestHash } = stopKey;
-  const stored = await prisma.tenantTransaction((tx) =>
-    idempotency.check<StoredStopCompletion>(key, tenantId, scope, tx),
-  );
-  if (!stored) return null;
+  const found = await prisma.tenantTransaction(async (tx) => {
+    const row = await idempotency.check<StoredStopCompletion>(key, tenantId, scope, tx);
+    if (!row) return null;
+    const stop = await tx.routeRunStop.findUnique({
+      where: { id: stopId },
+      select: { status: true },
+    });
+    return { row, status: stop?.status ?? null };
+  });
+  if (!found) return null;
+  if (found.status !== "COMPLETED") {
+    throw new ConflictException({
+      code: API_ERROR_CODES.STOP_REOPENED,
+      message: "This stop was reopened after it was completed. This request wrote nothing.",
+    });
+  }
+  const stored = found.row;
   if (stored.requestHash !== requestHash) {
     throw new ConflictException({
       code: IDEMPOTENCY_KEY_CONFLICT,
