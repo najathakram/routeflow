@@ -145,6 +145,7 @@
       <li class="pd-c"><h4>Box or piece</h4><p>Take orders in boxes, pieces, or both.</p><details class="pd-more"><summary>Read more <svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg></summary><p>Each product has one record. A piece costs its share of the box price. Extra pieces roll into boxes.</p></details></li>
       <li class="pd-c"><h4>Price levels</h4><p>Put a group of stores on a price level. Their orders use that price.</p></li>
       <li class="pd-c"><h4>A store’s own price</h4><p>Set a price for just one store.</p></li>
+      <li class="pd-c"><h4>Last price</h4><p>See what a store paid last time. Use that price again.</p></li>
       <li class="pd-c"><h4>Promotions</h4><p>Run a promotion. New orders use its price.</p><details class="pd-more"><summary>Read more <svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg></summary><p>Set a start date and an end date. Take a percent off, or a dollar amount off.</p></details></li>
       <li class="pd-c"><h4>Estimates</h4><p>Send an estimate first. Turn it into an invoice.</p></li>
     </ul>
@@ -160,8 +161,11 @@
 
   <article class="pd-g" id="stores" aria-labelledby="g-stores">
     <div class="pd-gh"><svg class="ico pd-ic" style="--pc:#244f7c;--pi:#fff" aria-hidden="true"><use href="#i-store"/></svg><h3 id="g-stores">Let stores order</h3><p>Stores order online, on a phone or a computer.</p></div>
-    <ul class="pd-cs pd-cs--one" role="list">
+    <ul class="pd-cs" role="list">
       <li class="pd-c"><h4>Store ordering</h4><p>Each store sees its own prices and your stock. It’s free for the store.</p><details class="pd-more"><summary>Read more <svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg></summary><p>After a store has ordered, it also sees what it usually reorders. Stores use a web browser.</p></details><a class="link pd-in" href="/#stores">See it on the home page <svg class="ico" aria-hidden="true"><use href="#i-arrow"/></svg></a></li>
+      <li class="pd-c"><h4>Their account</h4><p>Each store sees its invoices and payments.</p><details class="pd-more"><summary>Read more <svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg></summary><p>It can also save its statement as a PDF.</p></details></li>
+      <li class="pd-c"><h4>Their orders</h4><p>Each store sees where its order is.</p></li>
+      <li class="pd-c"><h4>Their regular order</h4><p>Set up an order a store repeats. The store reorders it from its own page.</p></li>
     </ul>
     <figure class="pd-s uc-card reveal" role="img" aria-label="Illustration with sample data: three products with the prices one store sees.">
       <div class="rfw-hd"><div class="rfw-id"><b>Shop</b><span>Corner Market’s prices</span></div></div>
@@ -181,6 +185,14 @@
       <li class="pd-c"><h4>Credit notes</h4><p>Give a store a credit in writing.</p></li>
       <li class="pd-c"><h4>Repeat invoices</h4><p>Repeat an invoice on a schedule.</p></li>
       <li class="pd-c"><h4>Credit limits</h4><p>Set a limit for each store. RouteFlow stops a change to an order that takes the store over it.</p></li>
+      <li class="pd-c"><h4>Who’s late</h4><p>See what’s owed by days late: 1 to 15, 16 to 30, 31 to 45, or more than 45.</p></li>
+      <li class="pd-c"><h4>Statements</h4><p>Email a store its statement, or save it as a PDF.</p></li>
+      <li class="pd-c"><h4>Reminders</h4><p>Remind a store about an invoice it hasn’t paid.</p><details class="pd-more"><summary>Read more <svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg></summary><p>You send each reminder yourself, one invoice at a time.</p></details></li>
+      <li class="pd-c"><h4>Checks</h4><p>Follow each check: recorded, deposited, cleared, or bounced.</p><details class="pd-more"><summary>Read more <svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg></summary><p>If a check bounces, the payment is voided and the invoice opens again. For a post-dated check, enter the day the money reaches your bank.</p></details></li>
+      <li class="pd-c"><h4>Part payments</h4><p>Record part of an invoice. Split one payment across invoices.</p></li>
+      <li class="pd-c"><h4>Advances</h4><p>Record money a store pays early. Use it on a later invoice.</p></li>
+      <li class="pd-c"><h4>Sales tax</h4><p>Set your tax rate. Orders add it.</p><details class="pd-more"><summary>Read more <svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg></summary><p>Goods with an excise tax can have a set amount per unit. Orders add that too.</p></details></li>
+      <li class="pd-c"><h4>Tax-exempt stores</h4><p>Mark a store tax-exempt. It pays no tax. Keep its certificate on its page.</p></li>
     </ul>
     <figure class="pd-s uc-card reveal" role="img" aria-label="Illustration with sample data: a draft invoice for Corner Market. Balance due $111.00. Send is greyed out, because you send it after delivery or shipment.">
       <div class="rfw-hd"><div class="rfw-id"><b>INV-2026-0148</b><span>Corner Market</span></div><span class="rfw-pill was">Draft</span></div>
@@ -214,6 +226,7 @@
     <div class="pd-gh"><svg class="ico pd-ic" style="--pc:#44bd92;--pi:#003726" aria-hidden="true"><use href="#i-truck"/></svg><h3 id="g-deliver">Deliver</h3><span class="cap">If you deliver</span><p>Make the route. Drivers see the stops on the web.</p></div>
     <ul class="pd-cs" role="list">
       <li class="pd-c"><h4>Routes and stops</h4><p>Put orders on a route. See each delivery.</p></li>
+      <li class="pd-c"><h4>Packing list</h4><p>See what to load for a route. Print the list.</p></li>
       <li class="pd-c"><h4>Driver view</h4><p>Your drivers see their stops in a web browser. They can start or skip a stop.</p></li>
       <li class="pd-c"><h4>Finishing a stop</h4><p>On a new account, drivers can’t finish a stop, or take a photo or a signature.</p></li>
       <li class="pd-c"><h4>Delivered</h4><p>An order on a run is delivered when its stop is completed. Its invoice unlocks then.</p></li>
