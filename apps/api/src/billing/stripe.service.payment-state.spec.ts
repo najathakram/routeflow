@@ -1,4 +1,5 @@
 import { StripeService } from "./stripe.service";
+import { assertStripeExpandable } from "../testing/stripe-expand-rule";
 
 // B1158: the subscription's PAYMENT state under API 2026-08-26.dahlia. `Invoice.payment_intent` no longer
 // exists there: an invoice carries `payments` (InvoicePayment list) and each entry names its PaymentIntent at
@@ -26,7 +27,9 @@ describe("B1158 StripeService.getSubscriptionPaymentState (dahlia shape)", () =>
   });
 
   function make(subscription: unknown | Error, intents: Record<string, string> = {}) {
-    const subRetrieve = jest.fn(async () => {
+    // the fake refuses what Stripe refuses: an expand path deeper than 4 levels (B1270)
+    const subRetrieve = jest.fn(async (_id: string, params?: { expand?: string[] }) => {
+      assertStripeExpandable(params?.expand);
       if (subscription instanceof Error) throw subscription;
       return subscription;
     });
@@ -43,18 +46,16 @@ describe("B1158 StripeService.getSubscriptionPaymentState (dahlia shape)", () =>
     return { svc, subRetrieve, piRetrieve };
   }
 
-  it("expands the PaymentIntent in the same retrieve: processing -> true, no second call", async () => {
-    const { svc, subRetrieve, piRetrieve } = make(
-      sub("incomplete", [piPayment({ id: "pi_1", status: "processing" })]),
-    );
+  it("expands only the invoice's payments (a depth Stripe accepts) and reads each PaymentIntent by id: processing -> true", async () => {
+    const { svc, subRetrieve, piRetrieve } = make(sub("incomplete", [piPayment("pi_1")]), {
+      pi_1: "processing",
+    });
     await expect(svc.getSubscriptionPaymentState("sub_old")).resolves.toEqual({
       status: "incomplete",
       paymentProcessing: true,
     });
-    expect(subRetrieve).toHaveBeenCalledWith("sub_old", {
-      expand: ["latest_invoice.payments.data.payment.payment_intent"],
-    });
-    expect(piRetrieve).not.toHaveBeenCalled();
+    expect(subRetrieve).toHaveBeenCalledWith("sub_old", { expand: ["latest_invoice.payments"] });
+    expect(piRetrieve).toHaveBeenCalledWith("pi_1");
   });
 
   it("a PaymentIntent that comes back as a string id falls back to one retrieve", async () => {

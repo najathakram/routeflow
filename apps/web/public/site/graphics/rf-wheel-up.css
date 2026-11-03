@@ -59,7 +59,7 @@
 .rfw-big small{font-size:17px;font-weight:500;letter-spacing:-.01em;color:var(--c-mu)}
 .rfw-list{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .rfw-keys{display:none}
-/* Static: reduced motion and no JavaScript. The whole wheel, calm, on the same stage, every word readable. */
+/* Static: no JavaScript, or a browser that cannot run the wheel. The whole wheel, calm, on the same stage, every word readable. */
 .rfw--static{height:auto}
 /* Waiting to be built: the height the live wheel will take, so nothing below it ever shifts. */
 .rfw--static.rfw-wait{display:flow-root;height:calc(100vh - var(--rfw-top,0px) + 100vh*var(--rfw-run))}
@@ -85,7 +85,7 @@
 .rfw-keys span{display:block;margin-top:2px;font-size:15px;font-weight:400;letter-spacing:0;color:var(--muted)}
 .rfw-keyh{margin:24px 0 0;font-size:15px;font-weight:500;color:var(--muted)}
 .rfw-keyh+.rfw-keys{margin-top:8px}
-@media (max-width:899px){
+@media (max-width:899px) and (min-height:600px),(max-width:899px) and (max-aspect-ratio:1/1){
   .rfw{--rfw-run:2;--rfw-grid:calc(100% - 24px)}
   .rfw-h,.rfw-s{left:var(--rfw-in);right:var(--rfw-in);width:auto;text-align:center}
   .rfw-h{justify-content:flex-start}

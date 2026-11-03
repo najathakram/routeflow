@@ -27,6 +27,9 @@ import "./(marketing)/glass-pages.css";
 // glass-site.css's own header for why this is a separate file from
 // glass-pages.css (booking/auth) rather than a merge.
 import "./(marketing)/glass-site.css";
+// The frame the public React pages wear (Privacy, Terms, sign-in, sign-up, 404). Root import: see
+// the not-found note above.
+import "@/components/site-frame/site-frame.css";
 import { Providers } from "./providers";
 import { TenantProvider } from "@/components/tenant-provider";
 import { ServiceWorkerRegistry } from "@/components/ServiceWorkerRegistry";

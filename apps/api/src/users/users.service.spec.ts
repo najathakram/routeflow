@@ -419,10 +419,11 @@ describe("UsersService", () => {
         "OPERATOR" as any,
       );
 
-      expect(prisma.passwordResetToken.updateMany).toHaveBeenCalledWith({
-        where: { userId: "u1", usedAt: null },
-        data: { usedAt: expect.any(Date) },
-      });
+      // burned with the write, in the same transaction (raw SQL: reset + verification tables)
+      expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
+      expect(prisma.txExecuteRaw).toHaveBeenCalledTimes(2);
+      for (const call of prisma.txExecuteRaw.mock.calls) expect(call.slice(1)).toEqual([["u1"]]);
+      expect(String(prisma.txExecuteRaw.mock.calls[0][0])).toContain("PasswordResetToken");
     });
 
     it("N2 review fix (#811): sends a fresh set-password invite to the corrected address when the user never set their own password", async () => {
@@ -437,6 +438,7 @@ describe("UsersService", () => {
         username: "acme_op",
         email: "corrected@acme.example",
         role: "OPERATOR",
+        status: "ACTIVE", // the update's select returns it; only an ACTIVE account is mailed an invite (SA-1096)
         forcePasswordChange: true, // never completed the invite flow
       } as any);
 

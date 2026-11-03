@@ -216,14 +216,6 @@
     "count": 2,
     "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
   },
-  "app/(marketing)/components/demo-scheduler.tsx": {
-    "count": 1,
-    "why": "B986-3 settings + auth: per-surface raw message read, pending"
-  },
-  "app/(marketing)/lib/demo-booking.ts": {
-    "count": 1,
-    "why": "B986-3 settings + auth: per-surface raw message read, pending"
-  },
   "app/(platform-admin)/admin/audit-logs/page.tsx": {
     "count": 1,
     "why": "B986-2 platform-admin: per-surface raw message read, pending"

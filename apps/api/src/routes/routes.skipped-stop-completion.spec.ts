@@ -142,33 +142,20 @@ describe("RoutesService: both completion paths refuse a SKIPPED stop before any 
     [
       "completeWithPayment",
       (s: RoutesService) =>
-        s.completeWithPayment(
-          "run-1",
-          "stop-1",
-          { deliveries: [], idempotencyKey: "k1" } as any,
-          driverPayload,
-        ),
+        s.completeWithPayment("run-1", "stop-1", { deliveries: [] } as any, driverPayload),
     ],
     [
       "completeStop",
       (s: RoutesService) =>
-        s.completeStop(
-          "run-1",
-          "stop-1",
-          { deliveries: [], idempotencyKey: "k1" } as any,
-          driverPayload,
-        ),
+        s.completeStop("run-1", "stop-1", { deliveries: [] } as any, driverPayload),
     ],
-  ])(
-    "%s on a SKIPPED stop: 409 STOP_SKIPPED, no transaction, no idempotency hit",
-    async (_n, call) => {
-      prisma.routeRunStop.findFirst.mockResolvedValue(skipped);
-      await expect(call(service)).rejects.toMatchObject({
-        response: expect.objectContaining({ code: "STOP_SKIPPED" }),
-      });
-      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
-    },
-  );
+  ])("%s on a SKIPPED stop: 409 STOP_SKIPPED, no transaction", async (_n, call) => {
+    prisma.routeRunStop.findFirst.mockResolvedValue(skipped);
+    await expect(call(service)).rejects.toMatchObject({
+      response: expect.objectContaining({ code: "STOP_SKIPPED" }),
+    });
+    expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+  });
 
   it("a COMPLETED stop still gets the exact 400 'Stop is already completed' (mobile classifies on it)", async () => {
     prisma.routeRunStop.findFirst.mockResolvedValue({ ...skipped, status: "COMPLETED" });

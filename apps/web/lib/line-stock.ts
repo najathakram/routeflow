@@ -59,13 +59,16 @@ export type LineStockView =
 
 /**
  * The words, in one place for the wording pass. "Backorder" agrees with the backorder tag the same
- * line carries once it is saved (`BACKORDER_TAG_LABEL`, W-667).
+ * line carries once it is saved (`BACKORDER_TAG_LABEL`, W-667). A sale that hands the goods over now
+ * (the counter) carries no tag and owes nothing, so it says what the sale does instead (SA-1086 A-1).
  */
 export const LINE_STOCK_WORDS = {
   loading: "Checking stock…",
   none: "None left",
   over: (label: string) => `Only ${label}`,
   overAllowed: (head: string) => `${head}. The extra goes on backorder.`,
+  overAllowedDeliveredNow: (head: string) =>
+    `${head}. You can still sell it. Stock will go below zero.`,
   overRefused: (head: string) => `${head}. Lower the quantity or this order won't save.`,
 } as const;
 
@@ -142,6 +145,11 @@ export function lineStockViews(args: {
   fetching: boolean;
   /** Edit: the pieces each product already holds on the saved order. Omitted on New Order. */
   savedPiecesByProduct?: ReadonlyMap<string, number>;
+  /**
+   * The sale hands the goods over now (a till sale), so the extra is not on backorder. Describes what the
+   * sale does and reads no tenant type; a counter that later sells for delivery passes false. Default false.
+   */
+  deliversNow?: boolean;
 }): Map<string, LineStockView> {
   const out = new Map<string, LineStockView>();
   const { availability } = args;
@@ -173,7 +181,9 @@ export function lineStockViews(args: {
     const message = !over
       ? null
       : availability.allowOversell
-        ? LINE_STOCK_WORDS.overAllowed(head)
+        ? args.deliversNow
+          ? LINE_STOCK_WORDS.overAllowedDeliveredNow(head)
+          : LINE_STOCK_WORDS.overAllowed(head)
         : LINE_STOCK_WORDS.overRefused(head);
     out.set(line.key, { state: "ready", level, label, message, requestedPieces: requested });
   }

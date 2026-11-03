@@ -113,7 +113,13 @@ import {
   deliveredQtyRecomputeForRows,
 } from "./delivered-so-far";
 import { withPayableInvoicesFlat } from "./run-projections";
-import { checkRouteIdempotencyKey, saveRouteIdempotencyKey } from "./route-idempotency";
+import {
+  replayStopKey,
+  saveStopKey,
+  stopKeyFor,
+  type CompletedStop,
+  type CompletedStopWithPayment,
+} from "./stop-completion-key";
 import { withRunStopProjections, withRunStopProjectionsForRunsPage } from "./run-projections";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 export {
@@ -2154,18 +2160,15 @@ export class RoutesService {
     if (user.role === UserRole.DRIVER && (!driver || run.driverId !== driver.id)) {
       throw new ForbiddenException("You do not have access to this route run");
     }
+    // SA-953 S1: the key answers before run and stop state, or a committed retry never reaches it.
+    const stopKey = stopKeyFor("completeStop", run, stopId, dto);
+    const cached = await replayStopKey<CompletedStop>(this.prisma, stopKey);
+    if (cached) return cached;
     assertRunInProgress(run.status); // #2514: RUN state only after ownership too
     // #2415: stop STATE only after the B72 ownership check, so a driver with no claim on this run
     // can't learn whether the stop is completed or skipped.
     if (stop.status === "COMPLETED") throw new BadRequestException("Stop is already completed");
     assertStopNotSkipped(stop.status); // #2409
-
-    // RF-019: Idempotency check (outside transaction for speed)
-    if (dto.idempotencyKey) {
-      const scope = `completeStop:${runId}:${stopId}`;
-      const cached = await checkRouteIdempotencyKey(this.prisma, dto.idempotencyKey, scope);
-      if (cached) return cached;
-    }
 
     // Durable POD: rewrite data-URL artifacts to storage keys before the tx
     // (after the idempotency check so a cached replay never re-uploads).
@@ -2309,6 +2312,7 @@ export class RoutesService {
             autoCompleted = true;
           }
         }
+        await saveStopKey(tx, stopKey, stopId); // SA-953 S2: commits with the completion
       }),
     );
 
@@ -2335,12 +2339,6 @@ export class RoutesService {
     const result = await this.prisma
       .forTenant()
       .routeRunStop.findUniqueOrThrow({ where: { id: stopId } });
-
-    // RF-019: persist idempotency key after successful write
-    if (dto.idempotencyKey) {
-      const scope = `completeStop:${runId}:${stopId}`;
-      await saveRouteIdempotencyKey(this.prisma, dto.idempotencyKey, scope, result);
-    }
 
     return result;
   }
@@ -2380,6 +2378,10 @@ export class RoutesService {
     if (user.role === UserRole.DRIVER && (!driver || run.driverId !== driver.id)) {
       throw new ForbiddenException("You do not have access to this route run");
     }
+    // SA-953 S1: the key answers before run and stop state, or a committed retry never reaches it.
+    const stopKey = stopKeyFor("completeWithPayment", run, stopId, dto);
+    const cached = await replayStopKey<CompletedStopWithPayment>(this.prisma, stopKey);
+    if (cached) return cached;
     assertRunInProgress(run.status); // #2514: RUN state only after ownership too
     // #2415: stop STATE only after the B72 ownership check, so a driver with no claim on this run
     // can't learn whether the stop is completed or skipped.
@@ -2394,13 +2396,6 @@ export class RoutesService {
           `Payment amount must be greater than 0 for ${dto.payment.method} payments.`,
         );
       }
-    }
-
-    // RF-019: Idempotency check
-    if (dto.idempotencyKey) {
-      const scope = `completeWithPayment:${runId}:${stopId}`;
-      const cached = await checkRouteIdempotencyKey(this.prisma, dto.idempotencyKey, scope);
-      if (cached) return cached;
     }
 
     // Durable POD: rewrite data-URL artifacts to storage keys before the tx
@@ -2591,6 +2586,8 @@ export class RoutesService {
             autoCompleted = true;
           }
         }
+        // SA-953 S2: commits with the completion.
+        await saveStopKey(tx, stopKey, stopId, { paymentIds, excess, advancePaymentId });
       }),
     );
 
@@ -2636,12 +2633,6 @@ export class RoutesService {
     // payment was collected). Consumed by the driver app to attach a best-effort
     // payment photo to paymentIds[0] after the stop completes.
     const response = { ...result, paymentIds, excess, advancePaymentId };
-
-    // RF-019: persist idempotency key
-    if (dto.idempotencyKey) {
-      const scope = `completeWithPayment:${runId}:${stopId}`;
-      await saveRouteIdempotencyKey(this.prisma, dto.idempotencyKey, scope, response);
-    }
 
     return response;
   }

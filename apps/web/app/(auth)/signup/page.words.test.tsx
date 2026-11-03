@@ -37,10 +37,12 @@ describe("SignupPage — words (W2 B4)", () => {
     expect(screen.queryByText("Distributor workspace")).not.toBeInTheDocument();
   });
 
-  it("says the Workspace ID is needed to sign in, in plain words", () => {
+  it("says what the Workspace ID is and that it is typed to sign in, in plain words", () => {
     render(<SignupPage />);
     expect(
-      screen.getByText("You’ll need this to sign in. Use small letters, numbers, and dashes (-)."),
+      screen.getByText(
+        "A short name for your business. You’ll type it every time you sign in. Use small letters, numbers, and dashes (-).",
+      ),
     ).toBeInTheDocument();
   });
 
@@ -86,7 +88,7 @@ describe("SignupPage — hands the Workspace ID on (W2 B1)", () => {
 describe("SignupPage — password rule under the field (W2 B6)", () => {
   beforeEach(() => mockFetch());
 
-  const rule = () => screen.getByText(/^At least 8 characters\./);
+  const rule = () => screen.getByText(/^Use 8 or more characters/);
 
   it("shows the rule under the password field from the start", () => {
     render(<SignupPage />);
@@ -110,7 +112,7 @@ describe("SignupPage — password rule under the field (W2 B6)", () => {
       target: { value: "abc" },
     });
     fireEvent.submit(document.querySelector("form") as HTMLFormElement);
-    expect(await screen.findByText("Password must be at least 8 characters")).toBeInTheDocument();
+    expect(await screen.findByText("Use at least 8 characters.")).toBeInTheDocument();
     expect(rule()).toBeInTheDocument();
   });
 });

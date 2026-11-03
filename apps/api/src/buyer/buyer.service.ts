@@ -170,8 +170,14 @@ export class BuyerService {
         throw new ConflictException("You are already connected to this seller");
       }
 
-      const updated = await tx.customerLink.update({
-        where: { id: link.id },
+      // F03 slice 2 (SA-1096): the claim is one conditional write (the token and a redeemable status are in its
+      // predicate), so two accepts of one invite cannot both win: the loser reads the spent invite's answer.
+      const claim = await tx.customerLink.updateMany({
+        where: {
+          id: link.id,
+          inviteToken: token,
+          status: { in: ["INVITED", "PENDING_SELLER_APPROVAL"] },
+        },
         data: {
           buyerAccountId,
           status: "ACTIVE",
@@ -179,15 +185,15 @@ export class BuyerService {
           inviteToken: null,
           inviteExpiresAt: null,
         },
-        include: { tenant: { select: { name: true, slug: true } } },
       });
+      if (claim.count !== 1) throw new ConflictException("This invite has already been used");
 
       this.logger.log(`BuyerAccount ${buyerAccountId} linked to tenant ${link.tenantId}`);
 
       return {
         message: `Successfully connected to ${link.tenant.name}`,
         tenantSlug: link.tenant.slug,
-        linkId: updated.id,
+        linkId: link.id,
       };
     });
   }
