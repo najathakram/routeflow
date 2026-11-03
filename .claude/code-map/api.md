@@ -118,3 +118,4 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 | [api/landing-2026-11-03-al.md](api/landing-2026-11-03-al.md) | Train al (d833210811..1f6f32a341): stop completion idempotent by key + request hash (SA-1098 PR-1; B1034, B870); no migration |
 | [api/landing-2026-11-03-an.md](api/landing-2026-11-03-an.md) | Train am (1f6f32a341..06813470de): stored box-split line edits read the pack it was sold in (SA-1097); "each" plural; no migration |
 | [api/landing-2026-11-03-ao.md](api/landing-2026-11-03-ao.md) | Train an (fedb9c4fa7..f9f1a592ed): delivery plan and stop-key rule move to packages/pricing and types (SA-1098 PR-2a); no migration |
+| [api/landing-2026-11-03-ap.md](api/landing-2026-11-03-ap.md) | Train ao (f9f1a592ed..f10b57ce34): one claim per account link (SA-1096); first pack asks boxes or pieces (W-867); no migration |
