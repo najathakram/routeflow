@@ -1001,7 +1001,18 @@ test.describe("T20 — a home anchor is reached as soon as the page paints", () 
           await page.goto("/pricing", { waitUntil: "commit" });
           await page.waitForSelector(".menu-btn, header a", { timeout: 60_000 });
           if (view.menu) {
-            await page.locator(".menu-btn").click();
+            // The button is in the HTML before the deferred script that opens it, and a tap before
+            // that does nothing: tap again until it opens (only the script sets aria-expanded).
+            await expect
+              .poll(
+                async () => {
+                  const btn = page.locator(".menu-btn");
+                  if ((await btn.getAttribute("aria-expanded")) !== "true") await btn.click();
+                  return btn.getAttribute("aria-expanded");
+                },
+                { timeout: 60_000, intervals: [500] },
+              )
+              .toBe("true");
             await page.locator(`#mobile-menu a[href="${href}"]`).click();
           } else {
             await page.locator(`header a[href="${href}"]`).click();
