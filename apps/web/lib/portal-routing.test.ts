@@ -140,6 +140,23 @@ describe("resolveLandingTarget", () => {
   });
 });
 
+describe("IN-1: /insights is an operator path", () => {
+  it.each([["/insights"], ["/insights/products/p1"]])(
+    "a buyer-only browser asking for %s is sent to the operator sign-in",
+    (pathname) => {
+      expect(routing.isOperatorPath?.(pathname)).toBe(true);
+      expect(
+        routing.resolveOperatorPathGuard?.({
+          opAuthed: false,
+          buyerAuthed: true,
+          pathname,
+          search: "",
+        }),
+      ).toBe(`/login?redirect=${encodeURIComponent(pathname)}`);
+    },
+  );
+});
+
 describe("safeOperatorRedirect", () => {
   // T8/R4: a genuinely safe, same-origin operator path is returned unchanged.
   it.each([["/dashboard"], ["/orders/abc?tab=1"], ["/settings/users"]])(

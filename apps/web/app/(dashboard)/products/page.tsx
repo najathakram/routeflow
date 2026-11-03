@@ -47,6 +47,7 @@ import { RegulatedScopeTabs } from "@/components/RegulatedScopeTabs";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { QuickEditCell, type CellEdit, type EditRecord } from "./_components/QuickEditCell";
 import { quickPackEdit } from "@/lib/quick-edit-pack";
+import { usePackReadingSave } from "@/components/PackReadingAsk";
 import { SectionEditCell } from "./_components/SectionEditCell";
 import {
   PortalBulkButtons,
@@ -394,15 +395,17 @@ function makeTableColumns(
       const p = row.original;
       if (quickEditMode) {
         return (
-          <QuickEditCell
-            productId={p.id}
-            productName={p.name}
-            field="msrp"
-            type="number"
-            value={p.msrp != null ? parseFloat(String(p.msrp)).toFixed(2) : ""}
-            quickEditMode={quickEditMode}
-            onSave={(newVal, rec) => onQuickSave(p, "msrp", newVal, rec)}
-          />
+          <div onClick={(e) => e.stopPropagation()}>
+            <QuickEditCell
+              productId={p.id}
+              productName={p.name}
+              field="msrp"
+              type="number"
+              value={p.msrp != null ? parseFloat(String(p.msrp)).toFixed(2) : ""}
+              quickEditMode={quickEditMode}
+              onSave={(newVal, rec) => onQuickSave(p, "msrp", newVal, rec)}
+            />
+          </div>
         );
       }
       return (
@@ -660,18 +663,21 @@ function makeTableColumns(
       cell: ({ row }) => {
         const p = row.original;
         if (quickEditMode) {
+          // The row click opens the product, and that would take the first-pack question away with this page.
           return (
-            <QuickEditCell
-              productId={p.id}
-              productName={p.name}
-              field="unitsPerBox"
-              type="number"
-              min={1}
-              step={1}
-              value={p.unitsPerBox != null ? String(p.unitsPerBox) : ""}
-              quickEditMode={quickEditMode}
-              onSave={(val, rec) => onQuickSave(p, "unitsPerBox", val, rec)}
-            />
+            <div onClick={(e) => e.stopPropagation()}>
+              <QuickEditCell
+                productId={p.id}
+                productName={p.name}
+                field="unitsPerBox"
+                type="number"
+                min={1}
+                step={1}
+                value={p.unitsPerBox != null ? String(p.unitsPerBox) : ""}
+                quickEditMode={quickEditMode}
+                onSave={(val, rec) => onQuickSave(p, "unitsPerBox", val, rec)}
+              />
+            </div>
           );
         }
         return <span className="text-navy/70">{p.unitsPerBox ?? "—"}</span>;
@@ -697,9 +703,15 @@ function makeTableColumns(
                 productId={p.id}
                 productName={p.name}
                 field={`priceTier${tier}`}
-                value={val ? parseFloat(String(val)).toFixed(2) : ""}
+                value={parseFloat(String(val)) > 0 ? parseFloat(String(val)).toFixed(2) : ""}
                 quickEditMode={quickEditMode}
-                onSave={(newVal, rec) => onQuickSave(p, `priceTier${tier}`, newVal || "0", rec)}
+                // SA-1092: "0" is how a clear is saved, and how Undo takes a blank cell back ("" reads as unchanged).
+                onSave={(newVal, rec) =>
+                  onQuickSave(p, `priceTier${tier}`, newVal || "0", {
+                    ...rec,
+                    oldValue: rec.oldValue || "0",
+                  })
+                }
               />
             </div>
           );
@@ -794,6 +806,7 @@ export default function ProductsPage() {
   const hasMsrpAddon = useHasAddon(MSRP_ADDON);
   const { data: tierLabels } = useTierLabels();
   const updateProduct = useUpdateProduct();
+  const packSave = usePackReadingSave(updateProduct);
   const bulkDelete = useBulkDeleteProducts();
 
   // Section names must resolve for deactivated sections too (a product can still
@@ -845,8 +858,12 @@ export default function ProductsPage() {
           toast({ title: pack.message, variant: "error" });
           return false;
         }
-        await updateProduct.mutateAsync({ id: product.id, ...pack.save });
+        // SA-946: closed: nothing saved, the cell stays open. Answered: Undo can't take a conversion back, so no record.
+        const stock = Number(product.currentStock ?? 0);
+        const saved = await packSave.mutateAsync({ id: product.id, ...pack.save }, stock);
+        if (!saved) return false;
         toast({ title: `${field} updated`, variant: "success" });
+        if (saved.answered) return;
         setUndoStack((prev) => [
           ...prev.slice(-19),
           { ...record, kind: product.kind, oldValue: pack.undo, newValue: pack.redo },
@@ -1843,6 +1860,7 @@ export default function ProductsPage() {
           </button>
         </div>
       )}
+      {packSave.dialog}
     </div>
   );
 }

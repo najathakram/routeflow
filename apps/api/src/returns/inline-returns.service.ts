@@ -38,6 +38,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { MovementType, Prisma, UserRole } from "@prisma/client";
+import { lockProductsForStock } from "../common/product-locks";
 import { applyStockMovements } from "../inventory/stock-movements";
 import { roundMoney, scaleFrozenSplit } from "@routeflow/pricing";
 import { PrismaService } from "../prisma/prisma.service";
@@ -57,6 +58,8 @@ import {
   lineTakeRefusal,
   loadLineCredits,
   loadOrderPool,
+  loadOrderRefundRoom,
+  orderRoomRefusal,
   pooledTakeRefusal,
   toHeadroomLine,
   type HeadroomLine,
@@ -66,6 +69,7 @@ import { IdempotencyService } from "../common/idempotency.service";
 import { AddonService } from "../billing/addon.service";
 import { NO_RESTOCK_REASONS } from "./returns.service";
 import { restockReturnItems } from "./returns-restock.util";
+import { inlineRestockFactors } from "../products/pack-intro-undo";
 import { sumInlineReturnCredit } from "./inline-return-credit.util";
 import { InlineReturnsQuoteService } from "./inline-returns-quote.service";
 import { creditOverrideAuditItems } from "./inline-returns-pricing";
@@ -75,6 +79,7 @@ import type { CaptureInlineReturnDto, InlineReturnLinesDto } from "./dto/capture
 import type { ApproveInlineReturnDto } from "./dto/approve-inline-return.dto";
 import type { RefundInlineReturnDto } from "./dto/refund-inline-return.dto";
 import {
+  assertInlineSourcesOpen,
   EXTERNAL_REFUND_METHOD,
   INLINE_REFUND_AUDIT_ACTION,
   INLINE_STORE_CREDIT_AUDIT_ACTION,
@@ -825,7 +830,13 @@ export class InlineReturnsService {
    */
   private async assertWithinLineHeadroom(
     tx: any,
-    chunks: Array<{ sourceInvoiceItemId: string | null; pieces: number; subtotal: number }>,
+    chunks: Array<{
+      sourceInvoiceItemId: string | null;
+      pieces: number;
+      subtotal: number;
+      taxAmount?: number;
+      categoryTax?: number;
+    }>,
     opts: { readOnly?: boolean } = {},
   ): Promise<void> {
     const takes = new Map<string, { qty: number; amount: number }>();
@@ -952,6 +963,38 @@ export class InlineReturnsService {
             qtyUnit: refusal.qtyUnit,
           });
       }
+    }
+    // SA-1091 (row 631): the order-wide bound, per SOURCE order. The line and pool reads above are net and per line; a lump credit
+    // note (no lines) or a recorded refund is invisible to them. The gross of what this return takes from an order's invoices, plus
+    // everything that order has already given back, may not pass what it billed (refused, never clipped). Same rows, same locks
+    // (the source invoices were written above), and the same check serves the quote (readOnly) and the capture.
+    const grossBySource = new Map<
+      string,
+      { orderId: string | null; invoiceId: string; gross: number }
+    >();
+    for (const c of chunks) {
+      if (!c.sourceInvoiceItemId) continue;
+      const invoiceId = srcRows.find((r) => r.id === c.sourceInvoiceItemId)?.invoiceId;
+      if (!invoiceId) continue;
+      const orderId = invoiceOrder.get(invoiceId) ?? null;
+      const key = orderId ?? `invoice:${invoiceId}`;
+      const prev = grossBySource.get(key) ?? { orderId, invoiceId, gross: 0 };
+      prev.gross += Number(c.subtotal) + Number(c.taxAmount ?? 0) + Number(c.categoryTax ?? 0);
+      grossBySource.set(key, prev);
+    }
+    for (const [, src] of [...grossBySource].sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0))) {
+      const roomRefusal = orderRoomRefusal(
+        await loadOrderRefundRoom(tx, { orderId: src.orderId, invoiceId: src.invoiceId }),
+        roundMoney(src.gross),
+      );
+      if (roomRefusal)
+        throw new ConflictException({
+          code: API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM,
+          message: roomRefusal.message,
+          orderBound: true,
+          requested: roundMoney(src.gross),
+          remaining: roomRefusal.left,
+        });
     }
   }
 
@@ -1291,6 +1334,15 @@ export class InlineReturnsService {
         return;
       // SA-706c (house order Return → Order): the Order BEFORE the intent insert below takes KEY SHARE on it.
       await lockOrderRow(tx, tenantId, fresh.orderId);
+      // SA-1091 piece 3: a stuck row is re-issued only while the invoices its goods were sold on are still billed (409 before the mint).
+      await assertInlineSourcesOpen(
+        tx,
+        tenantId,
+        await tx.returnItem.findMany({
+          where: { returnId },
+          select: { sourceInvoiceItemId: true },
+        }),
+      );
 
       const amount = roundMoney(
         Number(fresh.creditSubtotal ?? 0) +
@@ -1385,6 +1437,9 @@ export class InlineReturnsService {
         fresh.orderId,
         ...fresh.items.map((i: any) => i.sourceOrderId).filter(Boolean),
       ]);
+      // SA-1091 piece 3: a source invoice voided or written off since the capture refuses the approval (409), before any
+      // restock, ledger reversal or mint below. Locks the source invoices (Return -> Order -> Invoice).
+      await assertInlineSourcesOpen(tx, tenantId, fresh.items);
       const heldAmount = roundMoney(Number(fresh.heldAmount ?? 0));
       const amount = dto?.amount != null ? roundMoney(dto.amount) : heldAmount;
       if (amount > heldAmount + 0.001) {
@@ -1953,6 +2008,11 @@ export class InlineReturnsService {
         // across two returns whose ids happen to share their first 8 characters).
         // SA-927: through the one writer (lock, tenant-scoped counter read, stockAfter, one insert).
         const restocked = (fresh.items as any[]).filter((item) => item.restock);
+        // SA-1093 Rule 4: the restock counted in its own day's units, and stock has been converted since a later Boxes answer.
+        // G5: read inside the stock lock, so an answer still open has committed first. The writer below re-locks (a no-op).
+        const restockedIds = restocked.map((item) => item.productId as string);
+        await lockProductsForStock(tx, this.prisma.getTenantId(), restockedIds);
+        const factors = await inlineRestockFactors(tx, `RET-${fresh.id.slice(0, 8)}`, restockedIds);
         await applyStockMovements(
           tx,
           this.prisma.getTenantId() as string,
@@ -1960,13 +2020,13 @@ export class InlineReturnsService {
             restocked.map((item) => ({
               productId: item.productId as string,
               type: MovementType.RETURN,
-              quantity: new Prisma.Decimal(item.qty).neg(),
+              quantity: new Prisma.Decimal(item.qty).mul(factors.get(item.productId) ?? 1).neg(),
               unitCost: locked.get(item.productId)?.averageCost ?? null,
               average: "keep" as const,
               performedById: user.sub,
               reference: `RET-CANCEL-${fresh.id.slice(0, 8)}`,
             })),
-          { productIds: restocked.map((item) => item.productId as string) },
+          { productIds: restockedIds },
         );
         // SA-839 (B705): counter-entries for this return's rows (claimed CANCELLED above); a VOID or
         // deleted source invoice is netted to 0 again.

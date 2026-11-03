@@ -16,6 +16,8 @@ import {
 import { formatMoney } from "@/lib/format";
 import { EditCasesPieces } from "./EditCasesPieces";
 import { isCasesPiecesLine } from "../edit-cases-pieces";
+import { useEditLineStock } from "../edit-line-stock";
+import { LineStockNote } from "@/components/LineStockNote";
 import { EDIT_QTY_INPUT, EDIT_TAP_BELOW_LG } from "../edit-line-controls";
 import { EditScanBar } from "./EditScanBar";
 import { DeliveredLockedHint, DeliveredLockedQty } from "./DeliveredLineLock";
@@ -25,6 +27,7 @@ import {
   lockedUnitLineDisplay,
   type LockedUnitLineDisplay,
   LockedUnitLineError,
+  PackLockedBadge,
   unitLineCount,
 } from "./unit-line-lock";
 import { useProducts } from "@/lib/api/products";
@@ -44,6 +47,7 @@ import { newProductPrefill, type PrefillDoor } from "@/lib/product-prefill";
 import { resolveProductByCode } from "@/lib/barcode-resolve";
 import * as scan from "../scan-level-line";
 import { storedPackBasis } from "../stored-pack-basis";
+import { lineDisplayPack, lineOwnPack } from "@/lib/line-own-pack";
 import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
 import { priceFieldUnitWord } from "@/lib/product-unit-label";
 import { derivedUnitPatch } from "@/lib/edit-line-derived-unit";
@@ -79,6 +83,8 @@ export interface EditItemState {
   originalQty: number;
   /** SA-388 (unit-line-lock.tsx): no derivable count; lockedSubtotal = its stored money. */
   countLocked?: boolean;
+  /** SA-1097 A-2: a stored split line whose own pack can't be read (the server refuses its edit): locked like a unit line, except its note stays editable. */
+  packLocked?: boolean;
   lockedDisplay?: LockedUnitLineDisplay; // #2266
   lockedSubtotal?: number;
   /** The line's own denomination, restored when a substitution is undone (a
@@ -327,6 +333,10 @@ export function buildEditItemFromLine(li: OrderItem): EditItemState {
   const unitCount = isUnitLine ? unitLineCount(li) : null;
   const countLocked = isUnitLine && unitCount == null;
   const count = isUnitLine ? (unitCount ?? 0) : Math.round(Number(li.qty));
+  // SA-1097 A-2: a stored split line with no snapshot reads the pack it was SOLD in (the server's answer), never today's.
+  const own = lineOwnPack(li);
+  const ownLinePack = lineDisplayPack(li);
+  const noPack = own.kind === "none"; // sold with no pack: a plain line, no split sent
   return {
     id: li.id,
     isUnlisted,
@@ -339,6 +349,9 @@ export function buildEditItemFromLine(li: OrderItem): EditItemState {
           lockedSubtotal: Number(li.subtotal ?? 0),
           lockedDisplay: lockedUnitLineDisplay(li),
         }
+      : {}),
+    ...(own.kind === "unreadable"
+      ? { countLocked: true, packLocked: true, lockedSubtotal: Number(li.subtotal ?? 0) }
       : {}),
     productId: li.productId ?? "",
     productName: label,
@@ -353,11 +366,11 @@ export function buildEditItemFromLine(li: OrderItem): EditItemState {
     overrideReason: li.overrideReason ?? undefined,
     unitCost: li.product?.averageCost != null ? Number(li.product.averageCost) : null,
     // Prefer the line's sale-time box-size snapshot over the live product.
-    unitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox ?? null,
-    originalUnitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox ?? null,
+    unitsPerBox: ownLinePack,
+    originalUnitsPerBox: ownLinePack,
     category: li.product?.category ?? null,
-    boxSplit: isUnitLine ? false : li.boxes != null || li.pieces != null,
-    originalBoxSplit: isUnitLine ? false : li.boxes != null || li.pieces != null,
+    boxSplit: isUnitLine || noPack ? false : li.boxes != null || li.pieces != null,
+    originalBoxSplit: isUnitLine || noPack ? false : li.boxes != null || li.pieces != null,
     originalUnitLabel: li.unitLabel ?? undefined,
     heldUnitsPerBox: li.unitsPerBox ?? null,
     // BUY_N_GET_M snapshot + the whole-unit count it was earned at.
@@ -374,10 +387,10 @@ export function buildEditItemFromLine(li: OrderItem): EditItemState {
     // re-denominate a Piece pick). A unit line's snapshot is the picked unit's factor, so it keeps the live pack.
     packUnitsPerBox: isUnitLine
       ? (li.product?.unitsPerBox ?? undefined)
-      : (li.unitsPerBox ?? li.product?.unitsPerBox ?? undefined),
+      : (ownLinePack ?? undefined),
     originalPackUnitsPerBox: isUnitLine
       ? (li.product?.unitsPerBox ?? undefined)
-      : (li.unitsPerBox ?? li.product?.unitsPerBox ?? undefined),
+      : (ownLinePack ?? undefined),
     unitLabel: li.unitLabel ?? undefined,
     priceType: li.priceType,
   };
@@ -459,6 +472,9 @@ export function buildItemUpdates(items: EditItemState[], original: OrderItem[]):
         ...(priceChanged ? { unitPrice: edited.unitPrice } : {}),
         ...notePatch,
       });
+    } else if (edited.packLocked) {
+      // SA-1097 A-2: a pack-locked line takes a note only - no qty or split, so the server's note-only path writes it.
+      if (noteChanged) updates.push({ id: edited.id, action: "UPDATE", ...notePatch });
     } else if (qtyChanged || priceChanged || noteChanged) {
       updates.push({
         id: edited.id,
@@ -714,6 +730,7 @@ export function EditableLineItems({
   customer,
   orderId,
   lockedLineIds,
+  orderStatus,
   focusFirstQty = false,
 }: {
   /** F08: edit opened from the keyboard - focus the first quantity instead of the scan bar. */
@@ -749,6 +766,8 @@ export function EditableLineItems({
   orderId?: string;
   /** B1234: delivered lines of a PARTIALLY_DELIVERED order; no editing control is rendered for them. */
   lockedLineIds?: ReadonlySet<string>;
+  /** SA-1086: a DRAFT holds no stock, so the live stock note counts its saved lines whole. */
+  orderStatus?: string;
 }) {
   const isLocked = (id: string) => lockedLineIds?.has(id) === true;
   const { toast } = useToast();
@@ -757,6 +776,8 @@ export function EditableLineItems({
   const [scrollToId, setScrollToId] = React.useState<string | null>(null);
   // Live cost/margin floor for the edit builder (pos-cost-roles-spec §1).
   const { data: marginConfig } = useMarginConfig();
+  // SA-1086: live stock note per line, keyed by line id (a note only; the server decides at save).
+  const lineStock = useEditLineStock(items, orderStatus);
   React.useEffect(() => {
     if (!scrollToId) return;
     rowRefs.current.get(scrollToId)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
@@ -1088,12 +1109,14 @@ export function EditableLineItems({
                 </span>
               )}
               {item.cancelled && <span className="text-xs text-danger ml-1.5">Not available</span>}
+              {!item.cancelled && <LineStockNote stock={lineStock.get(item.id)} />}
             </div>
 
             {/* SA-388: a LOCKED unit line takes no qty edit; saves refuse any edit to it. */}
-            {!item.cancelled && item.countLocked && (
+            {!item.cancelled && item.countLocked && !item.packLocked && (
               <LockedUnitLineBadge display={item.lockedDisplay} />
             )}
+            {!item.cancelled && item.packLocked && <PackLockedBadge />}
 
             {/* B1234: a delivered line shows its quantity as text, no input */}
             {!item.cancelled && isLocked(item.id) && <DeliveredLockedQty qty={item.qty} />}
@@ -1297,44 +1320,49 @@ export function EditableLineItems({
 
           {/* Per-line price + discount editor — DRAFT catalog lines, or any unlisted
               line (its price is intrinsic, so always editable in edit mode). */}
-          {(canEditPrice || item.isUnlisted) && !item.cancelled && !isLocked(item.id) && (
-            <PriceEditRow
-              basePrice={item.basePrice}
-              unitPrice={item.unitPrice}
-              unitWord={priceFieldUnitWord(item)}
-              // B465 fix round 5: a substitution's own baseline wins over the
-              // REPLACED product's originalUnitPrice — same resolution as
-              // needsSpecialTierReason, so the required-field styling and the
-              // save-time check never disagree.
-              originalUnitPrice={item.reasonBaselinePrice ?? item.originalUnitPrice}
-              overrideReason={item.overrideReason}
-              onPriceChange={(net) => update(item.id, { unitPrice: net, priceEdited: true })}
-              onReasonChange={(reason) => update(item.id, { overrideReason: reason || undefined })}
-              unitCost={item.unitCost}
-              unitsPerBox={item.unitsPerBox}
-              floor={floorForCategory(marginConfig, item.category)}
-              isSpecial={
-                !item.isUnlisted &&
-                item.productId != null &&
-                isSpecialTierFor({ id: item.productId } as SubstituteOption, item)
-              }
-              history={
-                item.isUnlisted
-                  ? undefined
-                  : {
-                      customerId: customer?.id,
-                      customerName: customer?.name,
-                      productId: item.productId,
-                      productName: item.productName,
-                      unitHint:
-                        item.unitLabel ??
-                        (item.unitsPerBox && item.unitsPerBox > 1 ? "case" : item.unit),
-                      packHint: item.unitsPerBox ?? null,
-                      excludeOrderId: orderId,
-                    }
-              }
-            />
-          )}
+          {(canEditPrice || item.isUnlisted) &&
+            !item.cancelled &&
+            !item.packLocked &&
+            !isLocked(item.id) && (
+              <PriceEditRow
+                basePrice={item.basePrice}
+                unitPrice={item.unitPrice}
+                unitWord={priceFieldUnitWord(item)}
+                // B465 fix round 5: a substitution's own baseline wins over the
+                // REPLACED product's originalUnitPrice — same resolution as
+                // needsSpecialTierReason, so the required-field styling and the
+                // save-time check never disagree.
+                originalUnitPrice={item.reasonBaselinePrice ?? item.originalUnitPrice}
+                overrideReason={item.overrideReason}
+                onPriceChange={(net) => update(item.id, { unitPrice: net, priceEdited: true })}
+                onReasonChange={(reason) =>
+                  update(item.id, { overrideReason: reason || undefined })
+                }
+                unitCost={item.unitCost}
+                unitsPerBox={item.unitsPerBox}
+                floor={floorForCategory(marginConfig, item.category)}
+                isSpecial={
+                  !item.isUnlisted &&
+                  item.productId != null &&
+                  isSpecialTierFor({ id: item.productId } as SubstituteOption, item)
+                }
+                history={
+                  item.isUnlisted
+                    ? undefined
+                    : {
+                        customerId: customer?.id,
+                        customerName: customer?.name,
+                        productId: item.productId,
+                        productName: item.productName,
+                        unitHint:
+                          item.unitLabel ??
+                          (item.unitsPerBox && item.unitsPerBox > 1 ? "case" : item.unit),
+                        packHint: item.unitsPerBox ?? null,
+                        excludeOrderId: orderId,
+                      }
+                }
+              />
+            )}
 
           {isLocked(item.id) && !item.cancelled && <DeliveredLockedHint />}
 

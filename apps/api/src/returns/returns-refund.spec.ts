@@ -73,7 +73,9 @@ function mockExternalRefundSources(
   prisma.invoice.findMany.mockImplementation(async ({ where }: any) => {
     if (where?.id?.in) return invoices.filter((i) => where.id.in.includes(i.id));
     const notIn: string[] = where?.status?.notIn ?? [];
-    return invoices.filter((i) => !notIn.includes(i.status)).map((i) => ({ id: i.id }));
+    return invoices
+      .filter((i) => !notIn.includes(i.status))
+      .map((i) => ({ id: i.id, total: i.total }));
   });
 }
 const PAID = (total: number) => [{ amount: total, status: "PAID", method: "CASH" }];
@@ -178,11 +180,9 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
     // T16 pin (REG-B68): a successful mint never triggers the compensation path — the
     // claim fires exactly once.
     expect(prisma.return.updateMany).toHaveBeenCalledTimes(1);
-    expect(prisma.return.update).toHaveBeenCalledTimes(1);
-    expect(prisma.return.update).toHaveBeenCalledWith({
-      where: { id: "ret-1" },
-      data: { creditNoteId: "cn-1" },
-    });
+    // SA-1091 piece 2 (LK-1): the link is written by the mint itself (returnId), never by a second write after the commit
+    expect(prisma.return.update).not.toHaveBeenCalled();
+    expect(creditNotesCreate.mock.calls[0][1]).toMatchObject({ returnId: "ret-1" });
     expect(result.creditNoteId).toBe("cn-1");
   });
 
@@ -267,10 +267,8 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
     expect(creditNotesCreate).toHaveBeenCalledTimes(1);
     const dto = creditNotesCreate.mock.calls[0][0];
     expect(dto.invoiceId).toBeUndefined();
-    expect(prisma.return.update).toHaveBeenCalledWith({
-      where: { id: "ret-12" },
-      data: { creditNoteId: "cn-12" },
-    });
+    expect(prisma.return.update).not.toHaveBeenCalled(); // SA-1091: linked inside the mint
+    expect(creditNotesCreate.mock.calls[0][1]).toMatchObject({ returnId: "ret-12" });
     expect(result.creditNoteId).toBe("cn-12");
   });
 
@@ -971,6 +969,40 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
 
   // ─── F08: B68 a failed mint compensates the claim instead of stranding the return ──
 
+  it("LK-1 (SA-1091 piece 2): a non-pooled refund's note is linked by the mint; a failing step after the mint cannot strand it", async () => {
+    prisma.return.findUnique.mockResolvedValue({
+      id: "ret-lk1",
+      returnNumber: "RET-2026-LK1",
+      status: "RECEIVED",
+      customerId: "cust-1",
+      items: [{ productId: "p1", qty: 2 }],
+      order: {
+        orderNumber: "ORD-LK1",
+        invoices: [
+          {
+            id: "inv-1",
+            status: "SENT",
+            total: 100,
+            taxAmount: 0,
+            discount: 0,
+            items: [{ productId: "p1", qty: 10, subtotal: 100 }],
+          },
+        ],
+        lineItems: [{ productId: "p1", qty: 10, unitPrice: 10, subtotal: 100 }],
+      },
+    });
+    prisma.return.updateMany.mockResolvedValue({ count: 1 });
+    // today the link was a SECOND write after the mint committed: when it fails the note is live and the return is not linked to it
+    prisma.return.update.mockRejectedValue(new Error("process died after the mint"));
+    creditNotesCreate.mockResolvedValue({ id: "cn-lk1", creditNoteNumber: "CN-2026-LK1" });
+
+    const result = await service.processRefund("ret-lk1");
+
+    expect(result.creditNoteId).toBe("cn-lk1");
+    expect(creditNotesCreate.mock.calls[0][1]).toMatchObject({ returnId: "ret-lk1" });
+    expect(prisma.return.update).not.toHaveBeenCalled();
+  });
+
   it("REG-B68 a failed credit-note mint compensates the RECEIVED→REFUNDED claim", async () => {
     prisma.return.findUnique.mockResolvedValue({
       id: "ret-68",
@@ -1383,6 +1415,8 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
         // B562 PR-2: update() returns the written row — the reversing movement reads its counter.
         product: { update: jest.fn().mockResolvedValue({ currentStock: 8, averageCost: 3 }) },
         // B665: cancel undoes exactly the RET-<id> movements receive() booked (in pieces)
+        // SA-1093 Rule 4: no Boxes answer on this product, so every factor is 1.
+        auditLog: { findMany: jest.fn().mockResolvedValue([]) },
         stockMovement: {
           findMany: jest.fn().mockResolvedValue([{ productId: "p1", quantity: 2 }]),
           deleteMany: jest.fn(),
@@ -1427,8 +1461,9 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
       expect(ledger.settleRegulatedLedger).toHaveBeenCalledTimes(1);
       // The fresh read alone is still a TOCTOU: pin the FOR UPDATE row lock, and pin that
       // it ran BEFORE the fresh read, so deleting it turns this test red.
-      // the return-row FOR UPDATE, then the stock helper's product locks (two statements) after the fresh read
-      expect(tx.$executeRaw).toHaveBeenCalledTimes(3);
+      // the return-row FOR UPDATE, then after the fresh read the product locks (two statements) before the Boxes answers
+      // are read (SA-1093 G5), and the same two again in the stock helper, which is a no-op in this transaction
+      expect(tx.$executeRaw).toHaveBeenCalledTimes(5);
       expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
         txReturnFindUnique.mock.invocationCallOrder[0],
       );

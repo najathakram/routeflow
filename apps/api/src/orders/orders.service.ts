@@ -75,7 +75,13 @@ import { assertCustomerMayNotDraft, type CreateOrderOptions } from "./order-crea
 import { checkQtySplitConsistency, warnQtySplit, type QtySplitLine } from "./qty-split-consistency";
 import { warnOrderLine } from "./order-line-ambiguity";
 import { mergeIntoStoredLine, pickHeldMergeTarget } from "./stored-line-merge";
-import { loadLiveUnitsPerBoxByProduct } from "./live-pack-map";
+import {
+  loadLiveUnitsPerBoxByProduct,
+  noPackEditQty,
+  packForLineEdit,
+  storedLineEditShape,
+  storedLinePackForEdit,
+} from "./live-pack-map";
 import {
   oldestFirst,
   resolveSaleDelivery,
@@ -3496,7 +3502,8 @@ export class OrdersService implements OnApplicationBootstrap {
                     pieces: piecesForLine,
                     // Snapshot the sale-time box size on box-split lines (see create()).
                     unitsPerBox:
-                      boxesForLine != null && Number(product.unitsPerBox ?? 0) > 1
+                      (boxesForLine != null || piecesForLine != null) &&
+                      Number(product.unitsPerBox ?? 0) > 1
                         ? Number(product.unitsPerBox)
                         : null,
                     unitPrice,
@@ -3734,19 +3741,14 @@ export class OrdersService implements OnApplicationBootstrap {
                 // silently discarding a real item.qty typed alongside it (the
                 // `if (editHasSplit)` branch below ignores item.qty entirely).
                 const editHasSplit = (item.boxes ?? 0) > 0 || (item.pieces ?? 0) > 0;
-                const wasBoxSplit = li.boxes != null;
-                // Resolve the box size for a catalog line even on a qty-ONLY edit —
-                // prefer the line's sale-time snapshot, fall back to the live product.
-                // Without this a qty-only edit of a box-split line dropped to non-boxed
-                // math (per-piece × BOX price → overcharge) and left stale boxes/pieces.
-                let unitsPerBox: number | null = (li as any).unitsPerBox ?? null;
-                if (unitsPerBox == null && li.productId && (editHasSplit || wasBoxSplit)) {
-                  const product = await tx.product.findFirst({
-                    where: { id: li.productId },
-                    select: { unitsPerBox: true },
-                  });
-                  unitsPerBox = product?.unitsPerBox ?? null;
-                }
+                const wasBoxSplit = li.boxes != null || li.pieces != null;
+                // Resolve the box size for a catalog line even on a qty-ONLY edit. A STORED split line reads the
+                // pack it was sold in, never today's product pack; one that can't be read is refused (SA-1097, L-332).
+                const {
+                  pack: unitsPerBox,
+                  soldWithNoPack,
+                  stored,
+                } = await packForLineEdit(tx as any, li, editHasSplit);
                 const upb = Number(unitsPerBox ?? 0);
 
                 // Resolve qty + the box/piece split, PRESERVING the line's denomination:
@@ -3757,7 +3759,15 @@ export class OrdersService implements OnApplicationBootstrap {
                 let qty: number;
                 let boxes: number | null;
                 let pieces: number | null;
-                if (editHasSplit) {
+                if (stored) {
+                  // SA-1097: a stored split line is edited at the pack it was sold in, never today's (live-pack-map.ts).
+                  ({ qty, boxes, pieces } = storedLineEditShape(
+                    item,
+                    li.qty,
+                    unitsPerBox,
+                    soldWithNoPack,
+                  ));
+                } else if (editHasSplit) {
                   this.warnSplit("orders.update", { ...item, productId: li.productId }, upb);
                   const split = normalizeBoxesPieces({
                     boxes: item.boxes,
@@ -4651,17 +4661,19 @@ export class OrdersService implements OnApplicationBootstrap {
             if (!(newQty > 0)) {
               throw new BadRequestException("newQty must be > 0 — use REMOVE_ITEM instead");
             }
+            // SA-1097: a stored split line is resized at the pack it was sold in (its snapshot, split or stored
+            // money), never today's product pack; one it can't read is refused, nothing written.
             let upb = Number(src.unitsPerBox ?? 0);
-            if (upb === 0 && li.productId && src.boxes != null) {
-              const p = await tx.product.findFirst({
-                where: { id: li.productId },
-                select: { unitsPerBox: true },
-              });
-              upb = Number(p?.unitsPerBox ?? 0);
+            let soldWithNoPack = false;
+            if (!(upb > 1) && li.productId && (src.boxes != null || src.pieces != null)) {
+              const stored = await storedLinePackForEdit(tx as any, src);
+              upb = stored.pack;
+              soldWithNoPack = stored.soldWithNoPack;
             }
-            const wasBoxSplit = src.boxes != null;
-            const split =
-              wasBoxSplit && upb > 1
+            const wasBoxSplit = src.boxes != null || src.pieces != null;
+            const split = soldWithNoPack
+              ? { qty: noPackEditQty(newQty), boxes: noPackEditQty(newQty), pieces: 0 } // sold with no pack: shape kept
+              : wasBoxSplit && upb > 1
                 ? normalizeBoxesPieces({ qty: newQty, unitsPerBox: upb })
                 : { qty: newQty, boxes: null as number | null, pieces: null as number | null };
             const unitPrice = Number(src.unitPrice);

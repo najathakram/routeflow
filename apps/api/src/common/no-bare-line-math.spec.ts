@@ -104,6 +104,11 @@ const PINNED_B: Record<string, PinB> = {
     { CLASS: 3, EDIT: 1 },
     "CLASS: create() lines :1696 (orders.create.lines / counter.sale, priced :1819), the SUBSTITUTE line :3645 (orders.update.substitute: a new sale of a new product on an old row id, priced :3690; SA-982a) and the change-request add :4958 (orders.cr.add, priced :4993, created :4980). EDIT: :3831 orders.update, the same-product line edit that resolves against the line's own pack (B717 / SA-077e); never converts",
   ],
+  "orders/live-pack-map.ts": [
+    1,
+    { EDIT: 1 },
+    "packForLineEdit re-splits a STORED line's qty at the line's own pack (resolveStoredLinePack, SA-1097); nothing is created and the client's boxes never reach it when a qty is sent; never converts",
+  ],
   "orders/counter-sale/counter-sale-lines.ts": [
     1,
     { OUT: 1 },
@@ -224,7 +229,7 @@ describe("row 139 pin B: hand-built pack-axis builders (normalizeBoxesPieces wit
     const editSites = Object.entries(PINNED_B)
       .filter(([, [, tags]]) => (tags.EDIT ?? 0) > 0)
       .map(([f]) => f);
-    expect(editSites).toEqual(["orders/orders.service.ts"]); // :3831 only; an edit never converts
+    expect(editSites).toEqual(["orders/orders.service.ts", "orders/live-pack-map.ts"]); // an edit never converts
   });
 
   it("the detector counts a boxes: argument (key, shorthand), and not a qty-only re-split, or a comment", () => {

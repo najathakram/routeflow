@@ -131,7 +131,7 @@ describe("ReturnsService — a STANDARD return is priced in PIECES on both sides
         invoiceId: "inv-1",
         items: [{ invoiceItemId: "i1", amount: 60, qty: 12 }],
       }),
-      { ledgerReversedByReturn: true },
+      { ledgerReversedByReturn: true, returnId: "ret-1" },
     );
   });
 

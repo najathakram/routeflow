@@ -8,6 +8,7 @@ import {
 } from "@nestjs/common";
 import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
+import { revokeBuyerLinkTokens } from "../auth/link-token-revocation";
 import { EmailService } from "../email/email.service";
 import { AppleOAuthService } from "../auth/apple-oauth.service";
 import { BuyerMergeRequestStatus, MergeInitiator } from "@prisma/client";
@@ -485,6 +486,8 @@ export class BuyerMergeService {
           mergedIntoId: primaryAccount.id,
         },
       });
+      // F03 slice 2 (SA-1096): the removed account's live links die with it.
+      await revokeBuyerLinkTokens(tx, secondaryAccount.id);
       // 6. The merge request was completed by the claim above (row 424).
       return { linksToTransfer, conflictingLinks };
     });

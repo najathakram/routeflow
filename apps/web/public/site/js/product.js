@@ -1,11 +1,9 @@
 /* The Product page's one moment: the loop runs once. A dot goes round and each step lights as it passes, then the picture rests.
-   Transform and opacity only. Same motion test as js/site.js. With reduced motion or no JS, the still picture is all there is. */
+   Transform and opacity only. It always runs; with no JS the still picture is all there is. */
 (function () {
   "use strict";
   if (!window.gsap) return;
-  var on = /[?&]motion=on(&|$)/.test(location.search) ? "all" : "(prefers-reduced-motion: no-preference)";
-  gsap.matchMedia().add(on, function () {
-    if (document.documentElement.classList.contains("rm")) return;
+  gsap.matchMedia().add("all", function () {
     var icons = gsap.utils.toArray(".lp-ic"), run = document.querySelector(".lp-run"), dot = document.querySelector(".lp-dot");
     if (!icons.length || !run || !dot) return;
     var tl = gsap.timeline({ delay: 0.25 });
