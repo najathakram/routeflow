@@ -22,22 +22,32 @@ import { FullInsightsLink } from "./FullInsightsLink";
  * without flag.analytics (the same gate the endpoint enforces), never a broken button.
  *
  * SA-1087: also carries the "Full insights" link to the dedicated page, so the product page file
- * (at its size cap) gains no lines. The insights page passes `hideFullLink`: no link to itself.
+ * (at its size cap) gains no lines. The insights page passes `hideFullLink`: no link to itself, and
+ * `seedFrom` / `seedTo`, so the boxes open on the period the panel is showing. Picking another
+ * period there reseeds them; the boxes stay editable.
  */
 export function ProductInsightsExport({
   productId,
   sku,
   hideFullLink = false,
+  seedFrom,
+  seedTo,
 }: {
   productId: string;
   sku: string;
   hideFullLink?: boolean;
+  seedFrom?: string;
+  seedTo?: string;
 }) {
   const { user } = useAuth();
   const { toast } = useToast();
   const analytics = usePlanFlag("flag.analytics");
-  const [from, setFrom] = React.useState("");
-  const [to, setTo] = React.useState("");
+  const [from, setFrom] = React.useState(seedFrom ?? "");
+  const [to, setTo] = React.useState(seedTo ?? "");
+  React.useEffect(() => {
+    setFrom(seedFrom ?? "");
+    setTo(seedTo ?? "");
+  }, [seedFrom, seedTo]);
   const [busy, setBusy] = React.useState(false);
   // J10: nothing to export for a product that never sold. Same query key as the Sales card (shared
   // cache); hidden while loading (no flash), shown if the lookup failed (never lose the export).

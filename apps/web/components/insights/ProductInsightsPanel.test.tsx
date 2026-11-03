@@ -22,16 +22,22 @@ jest.mock("@/app/(dashboard)/products/[id]/ProductInsightsExport", () => ({
     productId,
     sku,
     hideFullLink,
+    seedFrom,
+    seedTo,
   }: {
     productId: string;
     sku: string;
     hideFullLink?: boolean;
+    seedFrom?: string;
+    seedTo?: string;
   }) => (
     <div
       data-testid="csv-control"
       data-product={productId}
       data-sku={sku}
       data-hide-full-link={String(!!hideFullLink)}
+      data-seed-from={seedFrom}
+      data-seed-to={seedTo}
     />
   ),
 }));
@@ -260,6 +266,9 @@ describe("ProductInsightsPanel (#2119)", () => {
     expect(control).toHaveAttribute("data-sku", "SW-12");
     // This page is the "Full insights" destination: the control must not link back to itself.
     expect(control).toHaveAttribute("data-hide-full-link", "true");
+    // PR-2: its From / To boxes open on the period the panel is showing.
+    expect(control).toHaveAttribute("data-seed-from", "2025-10-01");
+    expect(control).toHaveAttribute("data-seed-to", "2026-09-26");
     expect(screen.getAllByTestId("csv-control")).toHaveLength(1);
     expect(screen.queryByRole("button", { name: /Export CSV/ })).not.toBeInTheDocument();
   });
