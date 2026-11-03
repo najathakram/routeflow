@@ -70,7 +70,7 @@
     return `M${x + r} ${y}h${w - 2 * r}a${r} ${r} 0 0 1 ${r} ${r}v${h - 2 * r}a${r} ${r} 0 0 1 -${r} ${r}h-${w - 2 * r}a${r} ${r} 0 0 1 -${r} -${r}v-${h - 2 * r}a${r} ${r} 0 0 1 ${r} -${r}z`;
   }).replace(/<circle cx="(\S+)" cy="(\S+)" r="(\S+)"\/>/g, (m, x, y, r) => `M${+x - +r} ${y}a${r} ${r} 0 1 0 ${2 * r} 0a${r} ${r} 0 1 0 -${2 * r} 0z`).replace(/<path d="([^"]+)"\/>/g, "$1 ");
 
-  /* The still: a calm white dial. Used for reduced motion and no JavaScript. */
+  /* The still: a calm white dial. Used for no JavaScript and for a window under 500 px tall. */
   const R0 = 250, R1 = 480, r0 = 128, r1 = 236, HUB = 116, GAP = 7, RC = 10;
   const sector = (a, b, c, d, gap) => {
     const g = gap / 2 + RC, X = b - RC, Y = a + RC, dx = (g / X) / RAD, dy = (g / Y) / RAD;
@@ -136,7 +136,6 @@
     `<div class="rfw-words"><p class="rfw-hint">${HINT}</p>${HERO.map((h, i) => `<div class="rfw-h h${i}">${i ? `<h2 class="rfw-title">${h.t}</h2>` : `<p class="rfw-title">${h.t}</p>`}<p class="rfw-sub">${h.s}</p></div>`).join("")}` +
     `</div>` +
     `</div></div><ol class="rfw-list">${ALL.map((d) => li(d)).join("")}</ol>`;
-  const forced = () => !!(root.location && /[?&]motion=on(&|$)/.test(root.location.search));
 
   /* A stop's act: its screen card rises as one piece, then the one thing that matters on it happens. No bounce anywhere. */
   function act(g, card, d) {
@@ -201,7 +200,7 @@
   function mount(el, opts) {
     if (el._rfw) return el._rfw;
     opts = opts || {};
-    const g = root.gsap, ST = root.ScrollTrigger, html = document.documentElement;
+    const g = root.gsap, ST = root.ScrollTrigger;
     const saved = { html: el.innerHTML, cls: el.getAttribute("class") || "" };
     /* Keep the stage clear of a sticky page header, unless the page sets --rfw-top or opts.top itself. */
     const pageTop = getComputedStyle(el).getPropertyValue("--rfw-top").trim();
@@ -213,18 +212,18 @@
       el.style.setProperty("--rfw-top", v + "px");
     };
     const can = !!(g && ST && g.matchMedia && root.Path2D && root.ResizeObserver);
-    let mm = null, rm = html.classList.contains("rm"), dead = false;
+    let mm = null, dead = false;
     const inst = (el._rfw = { el, live: false, beats: planOf(false).BEATS.map((b) => b.slice()), destroy });
     el.classList.add("rfw");
     const still = () => { settled(); const tall = el.classList.contains("rfw-wait"); el.classList.add("rfw--static"); el.classList.remove("rfw-live", "rfw-wait"); el.innerHTML = staticHTML(); inst.live = false; if (tall && ST) Promise.resolve().then(() => ST.refresh()); };
     const start = () => {
       if (!can) return still();
       if (!registered) { g.registerPlugin(ST); registered = true; }
-      /* One matchMedia owns every tween, trigger and listener; a change of width class, motion setting or the site's
-         Reduce motion switch reverts all of it and builds again. ?motion=on keeps it live for a review. */
+      /* One matchMedia owns every tween, trigger and listener; a change of width class reverts all of it and
+         builds again. The motion always runs (owner ruling 2026-11-03); only a window under 500 px tall gets the still. */
       mm = g.matchMedia(el);
-      mm.add({ wide: "(min-width: 900px)", narrow: "(max-width: 899.98px)", reduce: "(prefers-reduced-motion: reduce)", short: "(max-height: 499.98px)" }, (c) => {
-        if (c.conditions.short || (!forced() && (c.conditions.reduce || html.classList.contains("rm")))) { still(); return undefined; }
+      mm.add({ wide: "(min-width: 900px)", narrow: "(max-width: 899.98px)", short: "(max-height: 499.98px)" }, (c) => {
+        if (c.conditions.short) { still(); return undefined; }
         return live(g, ST, el, inst, !c.conditions.wide, opts, c, { headerTop, pageTop, settled, slices: () => slow && !inst.built });
       });
     };
@@ -248,28 +247,17 @@
       io.observe(el);
       if (document.readyState === "complete") kick(); else root.addEventListener("load", kick);
     };
-    const watch = root.MutationObserver && new MutationObserver(() => {
-      const now = html.classList.contains("rm");
-      if (now === rm || dead) return;
-      rm = now;
-      settled();
-      slow = false;
-      if (mm) mm.revert();
-      start();
-    });
-    if (watch) watch.observe(html, { attributes: true, attributeFilter: ["class"] });
     function destroy() {
       if (dead) return;
       dead = true;
       settled();
-      if (watch) watch.disconnect();
       if (mm) mm.revert();
       el.innerHTML = saved.html;
       el.setAttribute("class", saved.cls);
       el.style.removeProperty("--rfw-top");
       el._rfw = null;
     }
-    const liveWanted = can && (forced() || !(rm || root.matchMedia("(prefers-reduced-motion: reduce)").matches));
+    const liveWanted = can;
     const far = () => { const r = el.getBoundingClientRect(), h = root.innerHeight; return r.top > 2.5 * h || r.bottom < -1.5 * h; };
     if (opts.lazy && liveWanted && root.IntersectionObserver && far()) wait(); else start();
     return inst;

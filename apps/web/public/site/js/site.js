@@ -1,6 +1,6 @@
 /* RouteFlow site behaviour, design preview 2026-11-01. Shared by every page.
-   Menu, prices, reduce-motion switch, and GSAP motion (ported from the Grok baseline's M1/M2/M4 patterns).
-   Rules: transform + opacity only; one matchMedia; reduced motion and no-JS show the final state; pins only >= 900px; no snap. */
+   Menu, prices, and GSAP motion (ported from the Grok baseline's M1/M2/M4 patterns).
+   Rules: transform + opacity only; one matchMedia; no-JS shows the final state (the motion always runs, owner ruling 2026-11-03); pins only >= 900px; no snap. */
 (function () {
   "use strict";
   var doc = document.documentElement;
@@ -49,19 +49,6 @@
   var sticky = $(".sticky-cta"), heroEl = $(".hero");
   if (sticky && heroEl && "IntersectionObserver" in window) new IntersectionObserver(function (en) { sticky.classList.toggle("show", !en[0].isIntersecting); }).observe(heroEl);
 
-  /* User reduce-motion switch */
-  var userRM = function () { return doc.classList.contains("rm"); };
-  $$("[data-rm]").forEach(function (b) {
-    b.setAttribute("aria-pressed", String(userRM()));
-    b.addEventListener("click", function () {
-      var on = !userRM();
-      try { localStorage.setItem("rf-rm", on ? "1" : "0"); } catch (e) {}
-      doc.classList.toggle("rm", on); if (on) doc.classList.remove("js-motion");
-      $$("[data-rm]").forEach(function (x) { x.setAttribute("aria-pressed", String(on)); });
-      if (window.gsap && gsap.matchMediaRefresh) gsap.matchMediaRefresh();
-    });
-  });
-
   if (!window.gsap) { doc.classList.remove("js-motion"); return; }
   gsap.registerPlugin.apply(gsap, [window.ScrollTrigger, window.SplitText, window.DrawSVGPlugin, window.MotionPathPlugin].filter(Boolean));
   var ST = window.ScrollTrigger, started = performance.now();
@@ -79,8 +66,7 @@
   };
 
   var mm = gsap.matchMedia();
-  mm.add({ motion: /[?&]motion=on(&|$)/.test(location.search) ? "all" : "(prefers-reduced-motion: no-preference)", desk: "(min-width: 900px)" }, function (ctx) {
-    if (!ctx.conditions.motion || userRM()) return;
+  mm.add({ desk: "(min-width: 900px)" }, function (ctx) {
     var desk = ctx.conditions.desk, cleanups = [];
 
     /* Hero: plays once (about 2 s) and ends on the still frame. Headline lines rise, route draws, truck follows, cards settle. */

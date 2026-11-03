@@ -889,7 +889,7 @@ test.describe("T19 — ready-made pages are served, linked and clean", () => {
   test("T19 — the animation script runs on the home page, and the file behind it stays out of search", async ({
     page,
   }) => {
-    await page.goto("/?motion=on");
+    await page.goto("/");
     await page.waitForFunction(() => Boolean((window as unknown as { gsap?: unknown }).gsap));
     await expect(page.locator("html")).toHaveClass(/\bjs\b/);
     const direct = await page.request.get("/site/home.html");
@@ -939,5 +939,154 @@ test.describe("T19 — ready-made pages are served, linked and clean", () => {
     for (const a of await mails.all()) {
       await expect(a).toHaveAttribute("href", "mailto:hello@routeflow.info");
     }
+  });
+});
+
+// ─── T21 — the motion does not depend on the visitor's motion setting ───────
+// Owner ruling 2026-11-03: the wheel comes apart on scroll for everyone. The OS "reduce motion" setting, the
+// footer switch and ?motion=on are gone; a computer with animations off used to get a still dial and a page
+// 8,000 px shorter (no ScrollTriggers at all). Only no-JS and a window under 500 px tall keep the still.
+test.describe("T21 — the motion does not depend on the visitor's motion setting", () => {
+  const VIEWS = [
+    { name: "1440", width: 1440, height: 900 },
+    { name: "390", width: 390, height: 844 },
+  ];
+
+  const measure = (page: import("@playwright/test").Page) =>
+    page.evaluate(() => ({
+      height: document.documentElement.scrollHeight,
+      triggers: (
+        window as unknown as { ScrollTrigger?: { getAll(): unknown[] } }
+      ).ScrollTrigger?.getAll().length,
+      live: !!document.querySelector(".rfw-live"),
+      still: !!document.querySelector(".rfw--static"),
+      js: document.documentElement.className,
+      reduce: matchMedia("(prefers-reduced-motion: reduce)").matches,
+    }));
+
+  const load = async (
+    browser: import("@playwright/test").Browser,
+    view: (typeof VIEWS)[number],
+    reducedMotion: "reduce" | "no-preference",
+    seed?: () => void,
+  ) => {
+    const context = await browser.newContext({
+      viewport: { width: view.width, height: view.height },
+      reducedMotion,
+    });
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    if (seed) await page.addInitScript(seed);
+    await page.goto("/", { waitUntil: "load" });
+    await page.waitForFunction(() => !!document.querySelector(".rfw-live, .rfw--static"), null, {
+      timeout: 30_000,
+    });
+    await page.waitForTimeout(2500);
+    return { context, page, errors };
+  };
+
+  for (const view of VIEWS) {
+    test(`T21 — reduce at ${view.name}: the page is built the same as with no preference`, async ({
+      browser,
+    }) => {
+      test.setTimeout(120_000);
+      const normal = await load(browser, view, "no-preference");
+      const a = await measure(normal.page);
+      await normal.context.close();
+      const reduced = await load(browser, view, "reduce");
+      const b = await measure(reduced.page);
+      expect(b.reduce, "the browser really reports reduced motion").toBe(true);
+      expect(b.still, "no still dial").toBe(false);
+      expect(b.live, "the live wheel").toBe(true);
+      expect(b.triggers, "ScrollTriggers").toBe(a.triggers);
+      expect(b.triggers ?? 0).toBeGreaterThan(20);
+      expect(Math.abs(b.height - a.height), "page height").toBeLessThanOrEqual(4);
+      expect(b.js).toContain("js-motion");
+      expect(b.js).not.toMatch(/\brm\b|motion-on/);
+      expect(reduced.errors).toEqual([]);
+      await reduced.context.close();
+    });
+
+    test(`T21 — reduce at ${view.name}: the wheel pieces move apart on scroll`, async ({
+      browser,
+    }) => {
+      test.setTimeout(120_000);
+      const { context, page, errors } = await load(browser, view, "reduce");
+      const box = await page.evaluate(() => {
+        const r = document.querySelector(".rfw")!.getBoundingClientRect();
+        return { top: Math.round(r.top + scrollY), height: Math.round(r.height) };
+      });
+      expect(box.height, "the wheel section is tall (it pins)").toBeGreaterThan(view.height * 1.5);
+      // A coarse picture of the canvas: where it is not white/grey, on a 4-px grid.
+      const snap = () =>
+        page.evaluate(() => {
+          const cv = document.querySelector<HTMLCanvasElement>(".rfw-cv")!;
+          const c = cv.getContext("2d")!;
+          const { width: W, height: H } = cv;
+          const d = c.getImageData(0, 0, W, H).data;
+          const cells: number[] = [];
+          for (let y = 0; y < H; y += 8)
+            for (let x = 0; x < W; x += 8) {
+              const i = (y * W + x) * 4;
+              cells.push(d[i]! + d[i + 1]! + d[i + 2]!);
+            }
+          return cells;
+        });
+      const at = async (f: number) => {
+        await page.evaluate(
+          (y) => {
+            document.documentElement.style.scrollBehavior = "auto";
+            scrollTo(0, y);
+          },
+          box.top + f * (box.height - view.height),
+        );
+        await page.waitForTimeout(1500);
+        return snap();
+      };
+      const rest = await at(0);
+      let moved = 0;
+      for (const f of [0.2, 0.4, 0.6, 0.8]) {
+        const now = await at(f);
+        const changed = now.filter((v, i) => Math.abs(v - rest[i]!) > 60).length / now.length;
+        moved = Math.max(moved, changed);
+      }
+      expect(
+        moved,
+        "share of the canvas that changed while scrolling through the wheel",
+      ).toBeGreaterThan(0.05);
+      expect(errors).toEqual([]);
+      await context.close();
+    });
+  }
+
+  test("T21 — a leftover Reduce motion switch value in the browser changes nothing", async ({
+    browser,
+  }) => {
+    test.setTimeout(120_000);
+    const { context, page } = await load(browser, VIEWS[0]!, "no-preference", () => {
+      try {
+        localStorage.setItem("rf-rm", "1");
+      } catch {
+        /* storage blocked: nothing to leave behind */
+      }
+    });
+    const m = await measure(page);
+    expect(m.live).toBe(true);
+    expect(m.triggers ?? 0).toBeGreaterThan(20);
+    expect(m.js).not.toMatch(/\brm\b/);
+    await context.close();
+  });
+
+  test("T21 — no page offers a Reduce motion switch, and ?motion=on is just a link", async ({
+    request,
+  }) => {
+    for (const route of READY_MADE_ROUTES) {
+      const body = await (await request.get(route)).text();
+      expect(body, `${route} switch`).not.toMatch(/rm-toggle|data-rm|Reduce motion/);
+    }
+    const plain = await (await request.get("/")).text();
+    const forced = await (await request.get("/?motion=on")).text();
+    expect(forced).toBe(plain);
   });
 });
