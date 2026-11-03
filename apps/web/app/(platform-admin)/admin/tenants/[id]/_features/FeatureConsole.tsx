@@ -12,7 +12,13 @@ import {
   previewTenantFeatures,
   writeTenantFeatureConfig,
 } from "@/lib/platform-admin/features";
-import { BADGE_COLORS, deriveReadout, endDateText, type StateReadout } from "./badge";
+import {
+  BADGE_COLORS,
+  deriveReadout,
+  endDateText,
+  overrideKindWords,
+  type StateReadout,
+} from "./badge";
 import {
   blockedReason,
   explainModeSentence,
@@ -720,10 +726,12 @@ function explainSentence(feature: EffectiveFeature): string {
       return `This is off because an admin override removed it${detail.reason ? ` — "${detail.reason}"` : ""}.${expiresSentence(
         detail.expiresAt,
       )}`;
-    case "OVERRIDE_GRANT":
-      return `This is on because an admin override added it (${detail.kind ?? "override"})${
+    case "OVERRIDE_GRANT": {
+      const kindWords = overrideKindWords(detail.kind);
+      return `This is on because an admin override added it${kindWords ? ` (${kindWords})` : ""}${
         detail.reason ? ` — "${detail.reason}"` : ""
       }.${expiresSentence(detail.expiresAt)}`;
+    }
     case "ADDON_SKU":
       return `This is on because the tenant purchased it (${detail.sku ?? "add-on"})${
         billing.charged ? " — billed." : "."

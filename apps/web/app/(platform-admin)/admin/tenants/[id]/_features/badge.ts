@@ -91,6 +91,22 @@ export const READOUT_CHIPS: Partial<
   grandfathered: { text: () => "On, kept from an earlier plan", on: true },
 };
 
+/**
+ * SA-963 A-1: the Details panel's words for an override's kind, in ONE map. A raw enum ("COMP", "GRANDFATHER") never reaches the
+ * screen; a kind this map does not know (or none) gets no phrase at all rather than a guess.
+ */
+export const OVERRIDE_KIND_WORDS: Record<string, string> = {
+  PILOT: "for a pilot",
+  SUPPORT: "for support",
+  COMP: "at no charge",
+  TRIAL: "for a trial",
+  GRANDFATHER: "kept from an earlier plan",
+};
+
+export function overrideKindWords(kind: string | null | undefined): string | null {
+  return (kind && OVERRIDE_KIND_WORDS[kind]) || null;
+}
+
 export function deriveReadout(
   gate: Pick<FeatureRegistryRow["gate"], "state">,
   feature: EffectiveFeature | undefined,

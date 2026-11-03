@@ -1146,6 +1146,21 @@ describe("BO-12: one state readout per console row", () => {
     expect(panelOf("developer_mode")).toHaveTextContent(`Expires ${date}.`);
   });
 
+  // SA-963 A-1 (F13): the resolver now fills the override's kind; the panel says it in words, never the raw enum.
+  it("the Details panel says an override's kind in words, with the reason and the end date, and never a raw enum", async () => {
+    const { open, panelOf } = await renderAll();
+    open("developer_mode");
+    expect(panelOf("developer_mode")).toHaveTextContent(
+      'This is on because an admin override added it (for a pilot) — "Piloting the mobile driver-app preview.". Expires Dec 31, 2026.',
+    );
+    expect(panelOf("developer_mode").textContent).not.toMatch(/PILOT|COMP|SUPPORT|GRANDFATHER/);
+    open("msrp");
+    expect(panelOf("msrp")).toHaveTextContent(
+      'This is on because an admin override added it (kept from an earlier plan) — "Grandfathered from the legacy MSRP pilot cohort.".',
+    );
+    expect(panelOf("msrp").textContent).not.toMatch(/GRANDFATHER|Expires/);
+  });
+
   it("the Details sentences take their end date from the chip's own helper, never the admin's locale", () => {
     const src = readFileSync(join(__dirname, "FeatureConsole.tsx"), "utf8");
     expect(src).toContain("endDateText(");

@@ -1,5 +1,32 @@
-import { BADGE_COLORS, deriveBadge, deriveReadout } from "./badge";
+import {
+  BADGE_COLORS,
+  OVERRIDE_KIND_WORDS,
+  deriveBadge,
+  deriveReadout,
+  overrideKindWords,
+} from "./badge";
 import type { EffectiveFeature } from "./types";
+
+// SA-963 A-1: the panel's kind words, one map. Every kind the schema has is in it; no word is a raw enum.
+describe("overrideKindWords", () => {
+  it("has words for every FeatureOverrideKind, none of them the enum itself", () => {
+    for (const kind of ["PILOT", "SUPPORT", "COMP", "TRIAL", "GRANDFATHER"]) {
+      const words = overrideKindWords(kind);
+      expect(words).toBeTruthy();
+      expect(words).not.toBe(kind);
+      expect(words).not.toMatch(/^[A-Z_]+$/);
+    }
+    expect(Object.keys(OVERRIDE_KIND_WORDS).sort()).toEqual(
+      ["COMP", "GRANDFATHER", "PILOT", "SUPPORT", "TRIAL"].sort(),
+    );
+  });
+
+  it("gives nothing for a missing or unknown kind, never a guess", () => {
+    expect(overrideKindWords(undefined)).toBeNull();
+    expect(overrideKindWords(null)).toBeNull();
+    expect(overrideKindWords("SOMETHING_NEW")).toBeNull();
+  });
+});
 
 function feature(
   source: EffectiveFeature["source"],
