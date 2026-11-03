@@ -650,7 +650,7 @@ describeDb("SA-1098 PR-2 driver stop on the web — real Postgres", () => {
       };
       const runStop = await mkStop(1);
       await mkStop(2); // keeps the run open
-      const categories = [];
+      const categories: Array<{ id: string }> = [];
       for (const [i, name] of cats.entries()) {
         // eslint-disable-next-line no-await-in-loop
         categories.push(
