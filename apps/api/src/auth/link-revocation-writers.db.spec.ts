@@ -275,6 +275,66 @@ describeDb("account writers burn live links through the real tenant transaction 
     expect(sent("sendSetPasswordEmail")).toBe(1);
   });
 
+  // SA-1096: every issuer mints only for an ACTIVE, undeleted account. A link minted while the account is off would
+  // survive to its reactivation, handing a locked-out person a way back in (the admin reset's own N2 rule).
+  describe.each([
+    ["an INACTIVE account", { status: UserStatus.INACTIVE }],
+    ["a SUSPENDED account", { status: UserStatus.SUSPENDED }],
+    [
+      "a soft-deleted account still marked ACTIVE",
+      { status: UserStatus.ACTIVE, deletedAt: new Date() },
+    ],
+  ])("S13: no invite is minted or mailed for %s", (_label, off) => {
+    const setUp = async (name: string) => {
+      const op = await mkUser(name);
+      await prisma.user.update({
+        where: { id: op.id },
+        data: { forcePasswordChange: true, ...off },
+      });
+      await mintLinks(op.id);
+      return op;
+    };
+    /** The call may be refused outright (a deleted row is not found); either way nothing may be minted or mailed. */
+    const settle = (run: () => Promise<unknown>) => run().catch(() => undefined);
+
+    it("the admin flag", async () => {
+      const op = await setUp("offflag");
+      await settle(() => ctx.run(tenantId, () => users.toggleAdmin(op.id, true)));
+      expect(await liveLinks(op.id)).toBe(0);
+      expect(sent("sendSetPasswordEmail")).toBe(0);
+    });
+    it("a role change", async () => {
+      const op = await setUp("offrole");
+      await settle(() =>
+        ctx.run(tenantId, () =>
+          users.updateUser(
+            op.id,
+            { role: UserRole.DRIVER } as never,
+            "admin",
+            UserRole.TENANT_ADMIN,
+          ),
+        ),
+      );
+      expect(await liveLinks(op.id)).toBe(0);
+      expect(sent("sendSetPasswordEmail")).toBe(0);
+    });
+    it("an email correction", async () => {
+      const op = await setUp("offmail");
+      await settle(() =>
+        ctx.run(tenantId, () =>
+          users.updateUser(
+            op.id,
+            { email: `off-${RUN}-${++seq}@example.invalid` } as never,
+            "admin",
+            UserRole.TENANT_ADMIN,
+          ),
+        ),
+      );
+      expect(await liveLinks(op.id)).toBe(0);
+      expect(sent("sendSetPasswordEmail")).toBe(0);
+    });
+  });
+
   describe("customers, through the real CustomersService", () => {
     const mkCustomer = async (name: string) => {
       const user = await prisma.user.create({

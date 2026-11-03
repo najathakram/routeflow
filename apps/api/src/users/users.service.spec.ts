@@ -438,6 +438,7 @@ describe("UsersService", () => {
         username: "acme_op",
         email: "corrected@acme.example",
         role: "OPERATOR",
+        status: "ACTIVE", // the update's select returns it; only an ACTIVE account is mailed an invite (SA-1096)
         forcePasswordChange: true, // never completed the invite flow
       } as any);
 

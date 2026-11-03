@@ -41,6 +41,19 @@ export class UsersService {
   ) {}
 
   /**
+   * SA-1096: the ONE rule for issuing a set-password link to an account: it has an address, is ACTIVE and is not
+   * deleted. A link minted while the account is off survives to its reactivation, which hands a locked-out person
+   * a way back in (the admin reset's N2 rule). Every issuer in this service asks here.
+   */
+  private mayMintInvite(account: {
+    email: string | null;
+    status: string;
+    deletedAt?: Date | null;
+  }): boolean {
+    return !!account.email && account.status === "ACTIVE" && !account.deletedAt;
+  }
+
+  /**
    * Creates a single-use, 72h PasswordResetToken (the same model/consuming endpoint as
    * self-service password reset — POST /auth/reset-password) and emails a set-password
    * link. Used by both createOperator (staff invite) and resetPassword (admin-triggered).
@@ -395,7 +408,11 @@ export class UsersService {
       // any outstanding token; then — only if the user has never set their own password — mint and
       // send a fresh one to the corrected address so they aren't left with no way in at all.
       await this.notifyEmailChanged(userId, previousEmail, updated.email, updated.username);
-      if (updated.forcePasswordChange && updated.email) {
+      if (
+        updated.forcePasswordChange &&
+        updated.email &&
+        this.mayMintInvite({ ...updated, deletedAt: user.deletedAt })
+      ) {
         await this.sendSetPasswordInvite(userId, updated.email, updated.username);
       }
     }
@@ -410,7 +427,12 @@ export class UsersService {
         changedByUsername ?? "an administrator",
       );
       // The same rule as the email branch: a person who has never set a password is not left with a dead first mail.
-      if (!emailChanged && updated.forcePasswordChange && updated.email) {
+      if (
+        !emailChanged &&
+        updated.forcePasswordChange &&
+        updated.email &&
+        this.mayMintInvite({ ...updated, deletedAt: user.deletedAt })
+      ) {
         await this.sendSetPasswordInvite(userId, updated.email, updated.username);
       }
     }
@@ -519,7 +541,7 @@ export class UsersService {
     // N2 review fix: never email a set-password link for a deactivated/deleted
     // account — an admin resetting a SUSPENDED/INACTIVE user's password (e.g. to
     // lock them out) must not hand them a working way back in.
-    if (user.email && user.status === "ACTIVE" && !user.deletedAt) {
+    if (user.email && this.mayMintInvite(user)) {
       await this.sendSetPasswordInvite(userId, user.email, user.username);
     }
 
@@ -555,7 +577,11 @@ export class UsersService {
       return row;
     });
     // Same rule as an email or role change: a person who has never set a password is not left with a dead first mail.
-    if (user.forcePasswordChange && updated.email) {
+    if (
+      user.forcePasswordChange &&
+      updated.email &&
+      this.mayMintInvite({ ...updated, deletedAt: user.deletedAt })
+    ) {
       await this.sendSetPasswordInvite(userId, updated.email, updated.username);
     }
     return updated;
