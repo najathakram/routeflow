@@ -114,3 +114,5 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 | [api/landing-2026-11-02-ad.md](api/landing-2026-11-02-ad.md) | Train ad (4b2516c9f2..9e782a5dfc): order-wide refund bound, inline return priced as charged, dead-source refusal; no migration |
 | [api/landing-2026-11-03-af.md](api/landing-2026-11-03-af.md) | Train af (6e9dae10eb..d6d5c56cb1): read-only corrected-units sheet script + b681 classifier (SA-1088); no migration, no route |
 | [api/landing-2026-11-03-aj.md](api/landing-2026-11-03-aj.md) | Train aj (d6d5c56cb1..9dfd480c30): Stripe payment-state read within the 4-level expand limit + class pin (B1270); no migration |
+| [api/landing-2026-11-03-ak.md](api/landing-2026-11-03-ak.md) | Train ak (9dfd480c30..d833210811): effective-features answer carries override kind, reason, end date (F13, SA-963 A-1); no migration |
+| [api/landing-2026-11-03-al.md](api/landing-2026-11-03-al.md) | Train al (d833210811..1f6f32a341): stop completion idempotent by key + request hash (SA-1098 PR-1; B1034, B870); no migration |
