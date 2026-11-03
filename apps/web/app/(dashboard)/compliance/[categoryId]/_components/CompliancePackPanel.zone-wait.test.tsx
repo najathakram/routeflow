@@ -86,4 +86,20 @@ describe.each(TABS)("$tab tab waits for the business's zone (F14)", ({ tab, empt
     expect(screen.queryByTestId("range-zone-failed")).not.toBeInTheDocument();
     expect(hook().mock.calls.at(-1)?.[0]).toEqual({ from: "2026-01-01", to: "2026-11-02" });
   });
+
+  it.each([
+    ["From", 0],
+    ["To", 1],
+  ])("says to choose both dates, not that nothing matched, when %s is cleared", async (_n, at) => {
+    mockZone = { zone: "America/Chicago", isError: false };
+    mockDay = "2026-11-02";
+    await open();
+    expect(screen.getByText(empty)).toBeInTheDocument();
+    const inputs = document.querySelectorAll<HTMLInputElement>('input[type="date"]');
+    await userEvent.clear(inputs[at]!);
+    expect(screen.getByTestId("range-choose")).toHaveTextContent("Choose both dates.");
+    expect(screen.queryByText(empty)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("range-loading")).not.toBeInTheDocument();
+    expect(hook().mock.calls.at(-1)?.[1]?.enabled).toBe(false);
+  });
 });

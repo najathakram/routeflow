@@ -296,20 +296,33 @@ function InventoryTab() {
 function useRangeState() {
   const [from, setFrom] = React.useState("");
   const [to, setTo] = React.useState("");
+  const [seeded, setSeeded] = React.useState(false);
   // SA-964 §4: the range is the TENANT's year-to-date, seeded when the zone resolves (nothing is queried before).
   useOnTenantToday((day) => {
     setFrom((cur) => cur || `${day.slice(0, 4)}-01-01`);
     setTo((cur) => cur || day);
+    setSeeded(true);
   });
   // A disabled query reports isLoading false, so while the range is unset (the zone is loading or failed) the tab
-  // would fall through to its "No ... in this range." text. `wait` names that state so the tab shows it instead.
+  // would fall through to its "No ... in this range." text. `wait` names that state so the tab shows it instead. Once the
+  // zone has seeded the range, a cleared From or To is "choose": the query is off, so the empty text would claim a result.
   const zoneQ = useTenantTimeZoneQuery();
-  const wait: "loading" | "failed" | null =
-    from && to ? null : zoneQ.isError ? "failed" : zoneQ.zone ? null : "loading";
+  const wait: "loading" | "failed" | "choose" | null =
+    from && to ? null : zoneQ.isError ? "failed" : !zoneQ.zone || !seeded ? "loading" : "choose";
   return { from, to, setFrom, setTo, wait, retry: zoneQ.retry };
 }
 
-function RangeWait({ wait, retry }: { wait: "loading" | "failed"; retry: () => void }) {
+function RangeWait({ wait, retry }: { wait: "loading" | "failed" | "choose"; retry: () => void }) {
+  if (wait === "choose")
+    return (
+      <div
+        role="status"
+        data-testid="range-choose"
+        className="rounded-xl border border-surface-border bg-white px-4 py-6 text-sm text-navy/70"
+      >
+        Choose both dates.
+      </div>
+    );
   if (wait === "loading")
     return (
       <div

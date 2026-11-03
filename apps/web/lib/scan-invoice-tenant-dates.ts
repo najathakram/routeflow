@@ -2,6 +2,7 @@ import * as React from "react";
 import { useTenantToday } from "@/lib/tenant-timezone";
 
 interface DatedInvoice {
+  id: string;
   billDate: string;
   expenseDate: string;
 }
@@ -17,7 +18,8 @@ export function fillEmptyDates<T extends DatedInvoice>(invoices: T[], day: strin
 
 /**
  * The scan modal's bill and expense dates default to the TENANT's day, never the browser's: a new scanned invoice starts with
- * both empty and any empty one is filled as soon as the zone is known, for invoices scanned before or after it resolves.
+ * both empty and is filled ONCE, as soon as the zone is known, for invoices scanned before or after it resolves. Once an invoice
+ * has had its fill, a date the user clears stays cleared (the server refuses an empty date and the modal says so).
  */
 export function useFillTenantDates<T extends DatedInvoice>(
   invoices: T[],
@@ -25,10 +27,17 @@ export function useFillTenantDates<T extends DatedInvoice>(
   setInvoices: (update: (prev: T[]) => T[]) => void,
 ): void {
   const tenantToday = useTenantToday();
+  const filled = React.useRef(new Set<string>());
   React.useEffect(() => {
     if (!tenantToday) return;
-    if (!invoicesRef.current.some((inv) => !inv.billDate || !inv.expenseDate)) return;
-    setInvoices((prev) => fillEmptyDates(prev, tenantToday));
+    const fresh = new Set(
+      invoicesRef.current.filter((inv) => !filled.current.has(inv.id)).map((inv) => inv.id),
+    );
+    if (fresh.size === 0) return;
+    for (const id of fresh) filled.current.add(id);
+    setInvoices((prev) =>
+      prev.map((inv) => (fresh.has(inv.id) ? fillEmptyDates([inv], tenantToday)[0]! : inv)),
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantToday, invoices]);
 }
