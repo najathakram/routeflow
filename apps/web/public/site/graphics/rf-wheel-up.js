@@ -172,6 +172,7 @@
   };
   const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
   const mix = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+  const lum = (c) => { const l = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * l(c[0]) + 0.7152 * l(c[1]) + 0.0722 * l(c[2]); };
   const css = (c, al) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${al == null ? 1 : +al.toFixed(3)})`;
   const WHITE = [255, 255, 255], INK = [15, 27, 45], NVY = hex("#10264d"), HUBW = hex("#0a1a38");
   const NEU = [WHITE, hex("#fafafc")], WNEU = hex("#d6dee8"), MUTE = hex("#e2e8f0"), MUTEW = hex("#d6dee8");
@@ -377,6 +378,7 @@
       cam.tilt = TILT * m;
       cam.k = lerp(lerp(R.k, N.k, e), lerp(lerp(M.k, L.k, l), G.k, s), m); cam.x = lerp(lerp(R.x, N.x, e), lerp(lerp(M.x, L.x, l), G.x, s), m); cam.y = lerp(lerp(R.y, N.y, e), lerp(lerp(M.y, L.y, l), G.y, s), m);
     };
+    const wc = {}, wid = (t) => wc[t] || (wc[t] = ctx.measureText(t).width);
     const plates = (list, spin, zB, th, outer) => {
       const cs = Math.cos(spin), sn = Math.sin(spin), flat = 1 - clamp(0, 1, cam.tilt / 22), far = (outer ? EX.o : EX.i) * (1 + DRIFT * S.dr);
       ord.length = 0;
@@ -399,7 +401,7 @@
         const vis = (outer ? 1 - S.obj * p.w : 1) * (1 - m * 0.55);
         if (vis > 0.03) {
           proj(ux * (w.mid * rg + sl), uy * (w.mid * rg + sl), zT);
-          const sc = K * pp, ax = px, ay = py, sq = 0.62 + 0.38 * ct, size = (sc / dpr) * 31, nk = Math.max(phone ? sc * 1.22 : sc, ((phone ? 13 : 10.5) * dpr) / 31), nq = phone ? 0.9 : sq;
+          const sc = K * pp, ax = px, ay = py, sq = 0.62 + 0.38 * ct, size = (sc / dpr) * 31, nk = Math.max(phone ? sc * 1.22 : sc, ((phone ? 13 : 10.5) * dpr) / 31), nq = phone ? 1 : sq;
           /* A piece's name: on the plate at rest, then back on it in the air as it comes off. A daily-work plate is big enough to
              carry its name. A core plate is not, so its name hangs in the clear air beside it. The names keep a readable size
              whatever the plate's. At the stops one piece is featured, so the rest carry their icons and no words. */
@@ -408,16 +410,39 @@
           if (name > 0.01) {
             ctx.globalAlpha = vis * name;
             if (outer) {
-              const two = w.lines.length > 1, note = w.d.n && p.n > 0.01, y0 = p.n > 0.01 ? 12 - (two ? 16 : 0) - (note && noteTwo ? 24 : 0) : 54 - (two ? 8 : 0);
-              ctx.setTransform(nk, 0, 0, nk * nq, ax, ay);
+              /* On a phone a name is fitted inside its own piece: never wider than the piece's face, never crossing its edge.
+                 Its ink is whichever of the piece's dark ink and white reads better on the piece's colour right now. */
+              let nf = nk, mf = phone ? nk * 0.62 : sc * 0.56, lit = false;
+              const nt = phone && w.d.n && w.d.n.length > 9;
+              if (phone) {
+                let x0 = 1e9, x1 = -1e9;
+                for (let j = 0; j < n; j++) { if (tx[j] < x0) x0 = tx[j]; if (tx[j] > x1) x1 = tx[j]; }
+                const room = 2 * Math.min(ax - x0, x1 - ax) * 0.66, floor = (9.5 * dpr) / 31;
+                nf = Math.max(floor, Math.min(nk, room / Math.max(1, ...w.lines.map(wid))));
+                if (w.d.n) mf = Math.max((9.5 * dpr) / 31, Math.min(mf, nf * 0.8, room / Math.max(1, ...(nt ? lines2(w.d.n) : [w.d.n]).map(wid))));
+                const lf = lum(f), ld = lum(mix(INK, w.ink, p.c));
+                lit = 1.05 / (lf + 0.05) > (Math.max(lf, ld) + 0.05) / (Math.min(lf, ld) + 0.05);
+                if (lit) { ctx.fillStyle = ctx.strokeStyle = "#fff"; ctx.shadowColor = "rgba(0,0,0,0.34)"; ctx.shadowBlur = 2.5 * dpr; ctx.shadowOffsetY = 0.6 * dpr; }
+              }
+              const two = w.lines.length > 1, note = w.d.n && p.n > 0.01, y0 = p.n > 0.01 ? 12 - (two ? 16 : 0) - (note && nt ? 24 : 0) : 54 - (two ? 8 : 0);
+              ctx.setTransform(nf, 0, 0, nf * nq, ax, ay);
               for (let j = 0; j < w.lines.length; j++) ctx.fillText(w.lines[j], 0, y0 + j * 31);
-              if (note) { const m2 = Math.max(phone ? nk * 0.62 : sc * 0.56, ((phone ? 12 : 10) * dpr) / 31), yn = ((y0 + 34) * nk) / m2, ls = noteTwo ? lines2(w.d.n) : [w.d.n]; ctx.setTransform(m2, 0, 0, m2 * nq, ax, ay); for (let j = 0; j < ls.length; j++) ctx.fillText(ls[j], 0, yn + j * 34); }
+              if (note) { const yn = ((y0 + 34) * nf) / mf, ls = nt ? lines2(w.d.n) : [w.d.n]; ctx.setTransform(mf, 0, 0, mf * nq, ax, ay); for (let j = 0; j < ls.length; j++) ctx.fillText(ls[j], 0, yn + j * 34); }
+              if (lit) { ctx.shadowColor = "rgba(0,0,0,0)"; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0; }
             } else {
               const side = Math.abs(ux) > 0.7, r = (side || uy < 0 ? r1 : r0) + sl, gap = (phone ? 6 : 12) * dpr, ck = Math.max(phone ? sc * 0.9 : sc * 0.76, ((phone ? 13 : 10.5) * dpr) / 31);
               proj(ux * r, uy * r, zT);
+              let ckf = ck;
+              if (phone && !side) {
+                /* the two back names sit side by side and share one size (the longest fits in 30% of the stage); the front one fits its piece */
+                let x0 = 1e9, x1 = -1e9;
+                for (let j = 0; j < n; j++) { if (tx[j] < x0) x0 = tx[j]; if (tx[j] > x1) x1 = tx[j]; }
+                const lim = uy < 0 ? 0.6 * cx : (x1 - x0) * 0.82, tw = uy < 0 ? Math.max(...list.map((v) => wid(v.d.t))) : wid(w.d.t);
+                ckf = Math.max((9.5 * dpr) / 31, Math.min(ck, lim / Math.max(1, tw)));
+              }
               ctx.textAlign = side ? (ux > 0 ? "left" : "right") : "center";
               ctx.fillStyle = css(INK);
-              ctx.setTransform(ck, 0, 0, ck * nq, px + (side ? (ux > 0 ? gap : -gap) : 0), py + (side ? 5 * dpr : -gap));
+              ctx.setTransform(ckf, 0, 0, ckf * nq, px + (side ? (ux > 0 ? gap : -gap) : 0), py + (side ? 5 * dpr : -gap));
               const ls = phone && side ? w.lines : [w.d.t];
               for (let j = 0; j < ls.length; j++) ctx.fillText(ls[j], 0, (j - (ls.length - 1) / 2) * 34);
               ctx.textAlign = "center"; ctx.fillStyle = css(mix(INK, w.ink, p.c));
@@ -439,9 +464,26 @@
       ry = hy; rot(HC, 48, 1, 0, 0, 0, z + THH, tx, ty); rot(HC, 48, 1, 0, 0, 0, z, bx, by); ry = 1;
       walls(48, css(HUBW));
       ctx.beginPath(); trace(tx, ty, 48); ctx.fillStyle = css(NVY); ctx.fill();
+      /* On a phone, while the lid is a sliver the mark would be a squashed smear, so it stands upright and unsquashed on the front of
+         the puck; as the lid opens to the eye the mark lies on it again. The two cross-fade. */
+      let up = 0, ft = -1e9, fb = -1e9, lt = 1e9;
+      if (phone) {
+        for (let j = 0; j < 48; j++) { if (ty[j] > ft) ft = ty[j]; if (ty[j] < lt) lt = ty[j]; if (by[j] > fb) fb = by[j]; }
+        up = clamp(0, 1, (1.6 * (fb - ft) - (ft - lt)) / (0.8 * (fb - ft) + 1e-6));
+      }
       proj(0, 0, z + THH); const ox = px, oy = py; proj(100, 0, z + THH); const ax = (px - ox) / 100, ay = (py - oy) / 100; proj(0, 100 * hy, z + THH);
-      ctx.setTransform(ax, ay, (px - ox) / 100, (py - oy) / 100, ox, oy); ctx.translate(-30, -40); ctx.scale(0.75, 0.75);
-      ctx.lineWidth = 13; ctx.lineCap = ctx.lineJoin = "round"; ctx.strokeStyle = "#fff"; ctx.stroke(MARKP);
+      if (up < 1) {
+        ctx.globalAlpha = 1 - up;
+        ctx.setTransform(ax, ay, (px - ox) / 100, (py - oy) / 100, ox, oy); ctx.translate(-30, -40); ctx.scale(0.75, 0.75);
+        ctx.lineWidth = 13; ctx.lineCap = ctx.lineJoin = "round"; ctx.strokeStyle = "#fff"; ctx.stroke(MARKP);
+      }
+      if (up > 0) {
+        const s = (0.62 * (fb - ft)) / 96;
+        ctx.globalAlpha = up;
+        ctx.setTransform(s, 0, 0, s, ox - 40 * s, (ft + fb) / 2 - 49 * s);
+        ctx.lineWidth = 15; ctx.lineCap = ctx.lineJoin = "round"; ctx.strokeStyle = "#fff"; ctx.stroke(MARKP);
+      }
+      ctx.globalAlpha = 1;
       ctx.setTransform(1, 0, 0, 1, 0, 0);
     };
     /* How far the path has risen with the piece under it, so the line and the object stay on the piece. The step at a
@@ -557,6 +599,7 @@
       FK[0] = NaN;
       ctx.imageSmoothingEnabled = false;
       ctx.font = `600 31px ${root.getComputedStyle(el).fontFamily || "sans-serif"}`; ctx.textAlign = "center";
+      for (const k in wc) delete wc[k];
       /* The object is sized once, where it stands: on the front piece of the exploded ring. */
       const Z = (RT + FS + eo) * Math.sin(TILT * RAD) + (POSE.story.zO + THO + LF) * Math.cos(TILT * RAD);
       tokPx = Math.round(F.story.k * (DEPTH / (DEPTH - Z)) * TOKW);
