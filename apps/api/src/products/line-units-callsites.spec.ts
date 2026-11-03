@@ -165,6 +165,12 @@ const NON_WRITERS = new Set([
   // SA-1027: the catalog-copy script READS a source product's pack columns (unitsPerBox among them) into the pure plan,
   // which hands them whole to ProductsService.create; it builds no order or invoice line and derives no factor/price.
   "catalog-copy/catalog-copy.service.ts",
+  // SA-946: reads a product's stored pack only to judge whether this save is its first pack. It builds no line, derives
+  // no line factor or price, and the stock and cost it scales go through applyStockMovements.
+  "products/pack-intro.ts",
+  // SA-1093 A-3: reads the live pack ONLY to compare it with a line's own snapshot, to say the line is already in
+  // today's unit. The pack it restocks at still comes from the line (SA-158). It builds no line and writes nothing.
+  "returns/returns-restock-pieces.ts",
 ]);
 
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");

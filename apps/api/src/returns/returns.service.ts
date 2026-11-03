@@ -25,6 +25,7 @@ export const VALID_RETURN_REASONS = [
 // default; the rest go back into stock unless the caller says otherwise.
 export const NO_RESTOCK_REASONS = new Set(["DAMAGED", "QUALITY_ISSUE"]);
 import { MovementType, Prisma } from "@prisma/client";
+import { lockProductsForStock } from "../common/product-locks";
 import { applyStockMovements } from "../inventory/stock-movements";
 import type { UnbilledReturnItem } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
@@ -110,6 +111,7 @@ import {
   withLines,
 } from "./return-line-items";
 import { restockReturnItems } from "./returns-restock.util";
+import { boxIntrosOf, introsAfter, packFactor, type BoxIntro } from "../products/pack-intro-undo";
 import {
   NO_SPLIT,
   addSplit,
@@ -800,7 +802,13 @@ export class ReturnsService {
       } else {
         // PR-1c: shared with InlineReturnsService.capture() — see returns-restock.util.ts.
         // B665: a STANDARD return is typed in the line's own unit; stock is in pieces.
-        await restockReturnItems(tx, ret, userId, standardRestockResolver(tx, ret.orderId));
+        // SA-1093 A-1: and a line sold before a Boxes answer restocks in today's pieces.
+        await restockReturnItems(
+          tx,
+          ret,
+          userId,
+          standardRestockResolver(tx, ret.orderId, { inTodaysPieces: true }),
+        );
       }
       // W5c: reverse the regulated sales ledger for the returned goods (pro-rated,
       // idempotent per return). Independent of `restock` — a returned regulated
@@ -1833,11 +1841,22 @@ export class ReturnsService {
         // or restock:false item has no movement, so there is nothing to undo for it.
         const moved: any[] = await tx.stockMovement.findMany({
           where: { reference: returnRef, type: "RETURN" },
-          select: { productId: true, quantity: true },
+          select: { productId: true, quantity: true, createdAt: true },
         });
+        // SA-1093 Rule 4: each row counted in its own day's units, and stock has been converted since a later Boxes answer.
+        // G5: read inside the stock lock, so an answer still open has committed first. The writer below re-locks (a no-op).
+        const movedIds = [...new Set(moved.map((m) => m.productId as string))];
+        await lockProductsForStock(tx, this.prisma.getTenantId(), movedIds);
+        const introsOf = new Map<string, BoxIntro[]>();
+        for (const productId of movedIds) {
+          introsOf.set(productId, await boxIntrosOf(tx, productId));
+        }
         const undo = new Map<string, number>();
-        for (const m of moved)
-          undo.set(m.productId, (undo.get(m.productId) ?? 0) + Number(m.quantity));
+        for (const m of moved) {
+          const factor = packFactor(introsAfter(introsOf.get(m.productId) ?? [], m.createdAt));
+          const pieces = Number(new Prisma.Decimal(m.quantity).mul(factor));
+          undo.set(m.productId, (undo.get(m.productId) ?? 0) + pieces);
+        }
         // B562 PR-2 (SA-136 §2): nothing deletes a movement. The undo APPENDS one reversing RETURN row
         // per product (negative quantity, same reference, notes RETURN_CANCELLED), so the reference nets
         // to zero and the history stays. SA-927: through the one writer (stockAfter from the locked read).
