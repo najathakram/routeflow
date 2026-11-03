@@ -1,7 +1,7 @@
 /* Colour and life for the home page. The ten colours below are the wheel's own piece colours (graphics/rf-wheel-up.js):
    each section carries the colour of the piece it is about, so the wheel and the page read as one thing.
    White stays the base. Fields are soft tints of the piece colour; text on them stays the navy ink (AA and better),
-   and a colour is never the only carrier of meaning. Motion is pointer and scroll only, off for reduced motion. */
+   and a colour is never the only carrier of meaning. Motion is pointer and scroll, and runs for everyone. */
 :root{
   --pc-orders:#4caed9;--pc-boxpiece:#355695;--pc-price:#4d5da4;--pc-counter:#6261af;--pc-routes:#33afb1;
   --pc-delivery:#44bd92;--pc-invoices:#e7b64a;--pc-payments:#ec9040;--pc-customers:#e56a5d;--pc-reports:#a462b4;
@@ -69,7 +69,7 @@
 .home #founder{position:relative}
 .home .end{position:relative;overflow:hidden;
   background-image:
-    radial-gradient(520px 320px at 12% 8%,rgba(255,201,51,.26),transparent 70%),
+    radial-gradient(520px 320px at 12% 8%,rgba(76,174,217,.26),transparent 70%),
     radial-gradient(520px 340px at 92% 88%,rgba(255,94,77,.24),transparent 70%),
     radial-gradient(460px 300px at 66% 0%,rgba(20,201,143,.2),transparent 70%);
 }
@@ -78,7 +78,9 @@
 
 /* ---------- FAQ: a friendly delivery van, so the page is not only words ---------- */
 .home .fq .fq-art{display:block;width:min(260px,64%);margin:0 auto 18px}
-@media (min-width:1100px){
+/* the van drives in from the right; the band clips that run so it can never widen the page, and the settled van is not cut */
+.home .fq{overflow-x:clip}
+@media (min-width:1280px){
   .home .fq>.wrap{position:relative}
   .home .fq .fq-art{position:absolute;right:-8px;top:-8px;width:230px;margin:0}
 }
@@ -112,8 +114,7 @@
 }
 .js-motion .hx-up .rfw--static::before{background:var(--hero-wash)}
 html:not(.js-motion) .hx-up{background:var(--hero-wash)}
-/* the live wheel paints an opaque canvas over its tile, so the wash goes on top of the canvas and blends in */
-.home .hx-up .rfw-cvw::after{content:"";position:absolute;inset:0;pointer-events:none;border-radius:var(--rf-r-stage);mix-blend-mode:multiply;background-image:radial-gradient(58% 70% at 88% 8%,rgba(76,174,217,.48),transparent 72%),radial-gradient(52% 62% at 100% 92%,rgba(255,201,51,.56),transparent 72%),radial-gradient(48% 60% at 58% 104%,rgba(229,106,93,.32),transparent 72%),radial-gradient(44% 56% at 0% 96%,rgba(20,201,143,.32),transparent 70%)}
+/* the live wheel paints an opaque canvas over its tile, so the same wash is painted into the canvas background by graphics/rf-wheel-up.js (WASH), under the pieces */
 #founder .fd-in{background-image:radial-gradient(480px 300px at 6% 0%,rgba(255,201,51,.2),transparent 70%),radial-gradient(520px 320px at 100% 100%,rgba(255,94,77,.2),transparent 70%),radial-gradient(420px 260px at 70% 0%,rgba(76,174,217,.18),transparent 70%)}
 #founder .fd-mono{background:var(--rf-coral);color:#4b1e19}
 

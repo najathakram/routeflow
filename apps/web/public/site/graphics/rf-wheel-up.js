@@ -345,8 +345,29 @@
        that plain sampling looks the same as smooth sampling, at a fraction of the cost. */
     const fc = document.createElement("canvas"), fctx = fc.getContext("2d", { alpha: false }), FK = new Float64Array(8), CL = [0, 0, 0, 0];
     let held = 0, cached = false, whole = true;
+    /* The soft colour wash behind the wheel is painted into the stage itself, under the pieces. A layer laid over the finished
+       canvas would also tint the pieces and turn the lower right ones to slate. Same four glows as the first screen's static
+       picture (css/home-color.css --hero-wash): x, y, half-width, half-height (as a share of the stage), then the colour. */
+    const WASH = [[0.88, 0.08, 0.58, 0.7, 76, 174, 217, 0.48, 0.72], [1, 0.92, 0.52, 0.62, 255, 201, 51, 0.56, 0.72], [0.58, 1.04, 0.48, 0.6, 229, 106, 93, 0.32, 0.72], [0, 0.96, 0.44, 0.56, 20, 201, 143, 0.32, 0.7]];
+    const washCv = document.createElement("canvas");
+    let wkey = "";
+    const washed = (W, H) => {
+      const key = W + "x" + H + stageBg;
+      if (wkey !== key) {
+        wkey = key; washCv.width = W; washCv.height = H;
+        const g = washCv.getContext("2d", { alpha: false });
+        g.fillStyle = stageBg; g.fillRect(0, 0, W, H);
+        g.globalCompositeOperation = "multiply";
+        for (const [x, y, rx, ry, r, gr, b, a, e] of WASH) {
+          const grad = g.createRadialGradient(0, 0, 0, 0, 0, 1);
+          grad.addColorStop(0, "rgba(" + r + "," + gr + "," + b + "," + a + ")"); grad.addColorStop(e, "rgba(" + r + "," + gr + "," + b + ",0)");
+          g.save(); g.translate(x * W, y * H); g.scale(rx * W, ry * H); g.fillStyle = grad; g.fillRect(-x / rx, -y / ry, 1 / rx, 1 / ry); g.restore();
+        }
+      }
+      return washCv;
+    };
     const stage = (c, zo, zi, zh, W, H, ea) => {
-      c.fillStyle = stageBg; c.fillRect(0, 0, W, H);
+      c.drawImage(washed(W, H), 0, 0);
       const lift = cam.tilt / TILT, fl = zo - 1 - AIR * lift, gi = zi - fl, gh = zh - fl;
       shade(c, FLOOR, 0, 14 + 12 * lift, fl, (R1 + EX.o * ea) * 1.2, (0.1 + 0.05 * lift) * (1 - ea));
       shade(c, RING, 0, 10 + gi * 0.05, fl, (r1 + EX.i * ea) * (1.12 + gi * 0.0005), 0.1 * clamp(0, 1, gi / 60) * (1 - 0.6 * ea) * (1 - clamp(0, 1, gi / 1500)));
