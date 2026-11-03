@@ -77,7 +77,8 @@ describe("run-settlement no-mirrors (SE-13)", () => {
   });
 
   it("settleRun uses the shared rule", () => {
-    const service = readFileSync(join(REPO_ROOT, "apps/api/src/routes/routes.service.ts"), "utf8");
+    // SA-1098 A-6: the settle transaction lives in run-settlement.ts.
+    const service = readFileSync(join(REPO_ROOT, "apps/api/src/routes/run-settlement.ts"), "utf8");
     expect(service).toMatch(/varianceNeedsReason\(/);
   });
 });

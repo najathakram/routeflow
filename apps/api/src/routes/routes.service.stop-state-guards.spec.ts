@@ -705,7 +705,16 @@ describe("RoutesService — F10 stop-state guards (REG-B54/B55/B71/B72/B120/B121
         order: { update: jest.fn().mockResolvedValue({}) },
         transaction: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
         routeRunStop: { update: jest.fn().mockResolvedValue({}) },
-        routeRun: { update: jest.fn().mockResolvedValue({}) },
+        routeRun: {
+          update: jest.fn().mockResolvedValue({}),
+          findUnique: jest
+            .fn()
+            .mockResolvedValue({
+              status: "IN_PROGRESS",
+              settlementNote: null,
+              settlementVariance: null,
+            }),
+        },
       };
       (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
 
@@ -782,7 +791,16 @@ describe("RoutesService — F10 stop-state guards (REG-B54/B55/B71/B72/B120/B121
         order: { update: jest.fn().mockResolvedValue({}) },
         transaction: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
         routeRunStop: { update: jest.fn().mockResolvedValue({}) },
-        routeRun: { update: jest.fn().mockResolvedValue({}) },
+        routeRun: {
+          update: jest.fn().mockResolvedValue({}),
+          findUnique: jest
+            .fn()
+            .mockResolvedValue({
+              status: "IN_PROGRESS",
+              settlementNote: null,
+              settlementVariance: null,
+            }),
+        },
       };
       (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
 
