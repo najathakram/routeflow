@@ -15,6 +15,10 @@
   var d = document, html = d.documentElement, W = window;
   var $ = function (s, r) { return (r || d).querySelector(s); };
   var $$ = function (s, r) { return Array.prototype.slice.call((r || d).querySelectorAll(s)); };
+  /* No `once: true` on a trigger that is built after its start has passed (a visitor who arrives already scrolled: an anchor, a reload,
+     a scroll before the scripts ran). ScrollTrigger kills a `once` trigger inside its own first refresh, and a later trigger's refresh walks
+     the same list by index, so the kill shifts the list under it and it throws on a missing entry (reading 'end'); everything built after
+     that stays hidden. "play none none none" plays the same single time and never removes itself. */
   var refreshSoon = null; // set once ScrollTrigger is known to exist
 
   /* ---------- chrome ---------- */
@@ -445,7 +449,7 @@
     var marks = [];
     items.forEach(function (it) {
       var card = $(".uc-card", it), ticks = $$(".rfw-tk path", it), pill = $("[data-was]", it), nums = $$("[data-to]", it);
-      var tl = g.timeline({ defaults: { ease: "power2.out", duration: 0.6 }, scrollTrigger: { trigger: it, start: EDGE, once: true, refreshPriority: BELOW } });
+      var tl = g.timeline({ defaults: { ease: "power2.out", duration: 0.6 }, scrollTrigger: { trigger: it, start: EDGE, toggleActions: "play none none none", refreshPriority: BELOW } });
       tl.fromTo(it, { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.7, ease: "power3.out" }, 0)
         .fromTo(card, { y: 18 }, { y: 0, duration: 0.8, ease: "power3.out" }, 0.08);
       if (ticks.length) tl.fromTo(ticks, { strokeDashoffset: 1 }, { strokeDashoffset: 0, duration: 0.36, ease: "power2.inOut", stagger: 0.14 }, 0.45);
@@ -473,7 +477,7 @@
   }
   function initFounder(s) {
     return section(s, function (c, s) {
-      g.fromTo($(".fd-in", s), { opacity: 0, y: 64 }, { opacity: 1, y: 0, duration: 1, ease: "power3.out", scrollTrigger: { trigger: s, start: EDGE, once: true, refreshPriority: BELOW } });
+      g.fromTo($(".fd-in", s), { opacity: 0, y: 64 }, { opacity: 1, y: 0, duration: 1, ease: "power3.out", scrollTrigger: { trigger: s, start: EDGE, toggleActions: "play none none none", refreshPriority: BELOW } });
       settle($(".fd-q", s), BELOW, c.desk ? 1.08 : 1.05, c.desk ? "top 88%" : EDGE);
       revealOnce($$(".fd .kick, .fd-short p, .fd-more, .fd-note p, .fd-sig", s), BELOW, 18, 0.1);
     });
@@ -487,7 +491,7 @@
       if (!cards.length) return;
       /* Each card rises in order, then its bar fills. The customer count never counts up: a contract number reads right at every moment. Once, on the clock. */
       g.set(cards, { opacity: 0, y: 44 });
-      var tl = g.timeline({ scrollTrigger: { trigger: $(".pgrid", s), start: "top 88%", once: true, refreshPriority: BELOW } });
+      var tl = g.timeline({ scrollTrigger: { trigger: $(".pgrid", s), start: "top 88%", toggleActions: "play none none none", refreshPriority: BELOW } });
       cards.forEach(function (card, i) {
         var at = i * 0.13, bar = $(".pm-bar i", card);
         tl.to(card, { opacity: 1, y: 0, duration: 0.8, ease: "power3.out" }, at);
