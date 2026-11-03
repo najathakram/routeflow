@@ -62,13 +62,13 @@
   </ul></nav>
   <div class="nav-actions">
     <a class="nav-price" href="/pricing">Pricing</a>
-    <a class="nav-signin" href="/login">Sign in</a>
+    <a class="nav-signin" href="/login" data-signin>Sign in</a>
     <a class="btn btn-primary btn-sm" href="/signup" data-track="trial_start_click" data-where="header">Start free trial</a>
     <button class="menu-btn" type="button" aria-expanded="false" aria-controls="mobile-menu" aria-label="Open menu"><svg class="ico"><use href="#i-menu"/></svg></button>
   </div>
 </div></header>
 <div class="mobile-menu" id="mobile-menu"><nav aria-label="Mobile">
-  <a href="/product">Product</a><a href="/#use-cases">Use cases</a><a href="/#stores">For stores</a><a href="/pricing">Pricing</a><a href="/getting-started" aria-current="page">Getting started</a><a href="/does-and-doesnt">What it does and doesn’t do</a><a href="/data-in-and-out">Data in and out</a><a href="/security">Security and your data</a><a href="/#founder">Company</a><a href="/#faq">Questions</a><a href="/login">Sign in</a>
+  <a href="/product">Product</a><a href="/#use-cases">Use cases</a><a href="/#stores">For stores</a><a href="/pricing">Pricing</a><a href="/getting-started" aria-current="page">Getting started</a><a href="/does-and-doesnt">What it does and doesn’t do</a><a href="/data-in-and-out">Data in and out</a><a href="/security">Security and your data</a><a href="/#founder">Company</a><a href="/#faq">Questions</a><a href="/login" data-signin>Sign in</a>
   <a class="btn btn-primary btn-lg" href="/signup" data-track="trial_start_click" data-where="mobile_menu">Start free trial</a>
 </nav></div>
 
@@ -234,11 +234,12 @@
     <div><a class="brand" href="/"><img src="/site/img/routeflow-mark-64.png" width="28" height="28" alt=""><span>RouteFlow</span></a><p class="foot-about">We make wholesalers’ lives easier.</p><p class="foot-mail">Email: <a href="mailto:hello@routeflow.info">hello@routeflow.info</a></p></div>
     <div><h2>Explore</h2><ul><li><a href="/product">Product</a></li><li><a href="/#use-cases">Use cases</a></li><li><a href="/#stores">For stores</a></li><li><a href="/pricing">Pricing</a></li><li><a href="/getting-started" aria-current="page">Getting started</a></li><li class="foot-depth"><a href="/does-and-doesnt">What it does and doesn’t do</a></li><li class="foot-depth"><a href="/data-in-and-out">Data in and out</a></li><li class="foot-depth"><a href="/security">Security and your data</a></li></ul></div>
     <div><h2>Company</h2><ul><li><a href="/#founder">About us</a></li><li><a href="/#faq">Questions</a></li></ul></div>
-    <div><h2>Account</h2><ul><li><a href="/signup" data-track="trial_start_click" data-where="footer">Start free trial</a></li><li><a href="/login">Sign in</a></li><li><a href="/buyer/login">Store sign in</a></li></ul></div>
+    <div><h2>Account</h2><ul><li><a href="/signup" data-track="trial_start_click" data-where="footer">Start free trial</a></li><li><a href="/login" data-signin>Sign in</a></li><li><a href="/buyer/login">Store sign in</a></li></ul></div>
   </div>
   <div class="foot-bottom"><span>© 2026 RouteFlow</span><button class="rm-toggle" type="button" data-rm aria-pressed="false">Reduce motion</button><span><a href="/privacy">Privacy Policy</a> · <a href="/terms">Terms of Service</a></span></div>
 </div></footer>
 <script src="/site/js/vendor/gsap.min.js" defer></script><script src="/site/js/vendor/ScrollTrigger.min.js" defer></script><script src="/site/js/vendor/SplitText.min.js" defer></script>
 <script src="/site/js/prices.js"></script><script src="/site/js/site.js" defer></script>
+<script src="/site/js/auth-nav.js"></script>
 </body>
 </html>

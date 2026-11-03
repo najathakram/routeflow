@@ -1,12 +1,8 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { tenantSlugFromHostname } from "@/lib/tenant-host";
-import {
-  BUYER_PRESENCE_COOKIE,
-  LAST_PORTAL_COOKIE,
-  OP_PRESENCE_COOKIE,
-} from "@/lib/presence-cookies";
-import { resolveLandingTarget, resolveOperatorPathGuard } from "@/lib/portal-routing";
+import { BUYER_PRESENCE_COOKIE, OP_PRESENCE_COOKIE } from "@/lib/presence-cookies";
+import { resolveOperatorPathGuard } from "@/lib/portal-routing";
 
 // Platform-level subdomains and hosting-provider base domains live in
 // `@/lib/tenant-host` so the login page derives the workspace with exactly these
@@ -27,35 +23,11 @@ export function middleware(request: NextRequest) {
   const buyerAuthed = request.cookies.get(BUYER_PRESENCE_COOKIE)?.value === "1";
   const isProd = process.env.NODE_ENV === "production";
 
-  // Signed-in users skip the landing page: operators → dashboard, buyers →
-  // buyer portal; when both sessions are live the portal used last wins
-  // (rf-last-portal, written by each portal's authenticated layout) and the
-  // seller dashboard is the default. Keyed on the presence cookies, which track
-  // the live session (30-day sliding window re-set on every token refresh,
-  // cleared on refresh failure — see lib/presence-cookies.ts). Deliberately
-  // scoped to exactly "/": every other marketing page stays reachable while
-  // signed in. Everyone reaches this block now — phones included: the
-  // mobile-web (Expo) proxy this middleware used to run for phone UAs is
-  // gone (owner ruling: phones get the same redesigned web site as desktop;
-  // drivers use the installed app). 307 (never 308) so nothing is cached if
-  // the user signs out. Decisions live in lib/portal-routing.ts.
-  if (pathname === "/") {
-    const target = resolveLandingTarget({
-      opAuthed,
-      buyerAuthed,
-      lastPortal: request.cookies.get(LAST_PORTAL_COOKIE)?.value,
-    });
-    if (target) {
-      const dest = url.clone();
-      dest.pathname = target;
-      dest.search = "";
-      // no-store: the cookie decides this redirect, and next.config.mjs gives "/" a public,
-      // stale-while-revalidate Cache-Control that a bare redirect would inherit.
-      const redirect = NextResponse.redirect(dest, 307);
-      redirect.headers.set("Cache-Control", "no-store");
-      return redirect;
-    }
-  }
+  // "/" is the marketing home for everyone, signed in or not (owner order 2026-11-03). It used to
+  // 307 a signed-in visitor to their dashboard or portal; now the site header shows "Open dashboard"
+  // instead (public/site/js/auth-nav.js, same rule), so no cookie decides what "/" serves and the
+  // page stays cacheable. The installed apps do not need the redirect: the PWA manifests start at
+  // /dashboard and /buyer/portal, and the mobile shell loads its own entry URLs.
 
   // Buyer-only guard: a signed-in buyer with no operator session who asks for an
   // operator surface goes to the operator sign-in with the destination kept, so

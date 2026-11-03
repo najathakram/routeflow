@@ -216,18 +216,14 @@ test.describe("Cross-cutting — Auth Guards & Role Isolation", () => {
   });
 });
 
-// ── Landing-page auto-redirect (middleware, keyed on presence cookies) ────────
-// The middleware 307s signed-in users away from exactly "/": rf-op-auth →
-// /dashboard, rf-buyer-auth → /buyer/portal, operator wins when both are set.
-// The raw-request tests pin the middleware contract; CC-15 covers the
-// stale-cookie journey that killed the earlier client-side redirect.
-// When BOTH cookies are set, the portal named by rf-last-portal ("op" |
-// "buyer") wins, and the seller dashboard is the default when that
-// preference is absent or invalid (CC-18..CC-20). A buyer-only session
-// requesting an operator path is sent to /login?redirect=<path> instead of
-// the buyer portal (CC-16/17).
+// ── Home is home for everyone (middleware, keyed on presence cookies) ─────────
+// Owner order 2026-11-03: "/" is never redirected, signed in or not. The site header swaps "Sign in"
+// for "Open dashboard" instead (public/site/js/auth-nav.js): rf-op-auth → /dashboard, rf-buyer-auth →
+// /buyer/portal; when BOTH are set the portal named by rf-last-portal ("op" | "buyer") wins and the
+// seller dashboard is the default when that preference is absent or invalid (CC-18..CC-20). A buyer-only
+// session requesting an operator path is still sent to /login?redirect=<path> (CC-16/17).
 
-test.describe("Cross-cutting — Landing-page auto-redirect", () => {
+test.describe("Cross-cutting — Home is home for everyone", () => {
   const BASE_URL =
     process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
 
@@ -251,48 +247,62 @@ test.describe("Cross-cutting — Landing-page auto-redirect", () => {
     await context.clearCookies();
   });
 
-  test("CC-11 landing 307s operators to /dashboard", async ({ context }) => {
+  const headerLink = (page: import("@playwright/test").Page) =>
+    page.locator("header a[data-signin]").first();
+
+  test("CC-11 an operator sees home, with Open dashboard in the header", async ({
+    page,
+    context,
+  }) => {
     await seedPresenceCookies(context, ["rf-op-auth"]);
-    const resp = await context.request.get("/", { maxRedirects: 0 });
-    expect(resp.status()).toBe(307);
-    expect(resp.headers()["location"]).toContain("/dashboard");
-  });
-
-  test("CC-12 landing 307s buyers to /buyer/portal", async ({ context }) => {
-    await seedPresenceCookies(context, ["rf-buyer-auth"]);
-    const resp = await context.request.get("/", { maxRedirects: 0 });
-    expect(resp.status()).toBe(307);
-    expect(resp.headers()["location"]).toContain("/buyer/portal");
-  });
-
-  test("CC-13 operator wins when both presence cookies are set", async ({ context }) => {
-    await seedPresenceCookies(context, ["rf-op-auth", "rf-buyer-auth"]);
-    const resp = await context.request.get("/", { maxRedirects: 0 });
-    expect(resp.status()).toBe(307);
-    expect(resp.headers()["location"]).toContain("/dashboard");
-  });
-
-  test("CC-14 signed-out landing renders marketing with no redirect", async ({ page, context }) => {
     const resp = await context.request.get("/", { maxRedirects: 0 });
     expect(resp.status()).toBe(200);
     await page.goto("/");
     await expect(page).toHaveURL(`${BASE_URL.replace(/\/$/, "")}/`);
+    await expect(headerLink(page)).toHaveText("Open dashboard");
+    await expect(headerLink(page)).toHaveAttribute("href", "/dashboard");
   });
 
-  test("CC-15 stale op cookie → bounded bounce to /login, then self-heals", async ({
+  test("CC-12 a buyer sees home, with Open dashboard going to the portal", async ({
+    page,
+    context,
+  }) => {
+    await seedPresenceCookies(context, ["rf-buyer-auth"]);
+    expect((await context.request.get("/", { maxRedirects: 0 })).status()).toBe(200);
+    await page.goto("/");
+    await expect(headerLink(page)).toHaveText("Open dashboard");
+    await expect(headerLink(page)).toHaveAttribute("href", "/buyer/portal");
+  });
+
+  test("CC-13 operator wins when both presence cookies are set", async ({ page, context }) => {
+    await seedPresenceCookies(context, ["rf-op-auth", "rf-buyer-auth"]);
+    await page.goto("/");
+    await expect(headerLink(page)).toHaveAttribute("href", "/dashboard");
+  });
+
+  test("CC-14 signed-out landing renders marketing with Sign in", async ({ page, context }) => {
+    const resp = await context.request.get("/", { maxRedirects: 0 });
+    expect(resp.status()).toBe(200);
+    await page.goto("/");
+    await expect(page).toHaveURL(`${BASE_URL.replace(/\/$/, "")}/`);
+    await expect(headerLink(page)).toHaveText("Sign in");
+    await expect(headerLink(page)).toHaveAttribute("href", "/login");
+  });
+
+  test("CC-15 a stale op cookie never hides home; the dashboard link bounces to /login once", async ({
     page,
     context,
   }) => {
     // Presence cookie without any localStorage tokens = the dead-session case.
     await seedPresenceCookies(context, ["rf-op-auth"]);
     await page.goto("/");
-    // / → 307 /dashboard → AuthGuard finds no tokens → /login. Bounded, no loop.
-    await page.waitForURL(/\/login/, { timeout: 20_000 });
-    await expect(page).toHaveURL(/\/login/);
-    // AuthProvider's failed restore cleared the stale cookie — the landing page
-    // must render normally now (self-healing, marketing site never hidden).
-    await page.goto("/");
     await expect(page).toHaveURL(`${BASE_URL.replace(/\/$/, "")}/`);
+    await headerLink(page).click();
+    // /dashboard → AuthGuard finds no tokens → /login. Bounded, no loop, and the failed restore
+    // clears the stale cookie, so the header offers Sign in again.
+    await page.waitForURL(/\/login/, { timeout: 20_000 });
+    await page.goto("/");
+    await expect(headerLink(page)).toHaveText("Sign in");
   });
 
   // ── Portal switcher: middleware contract (T20–T25, spec R1/R2/R3/R14) ──────
@@ -322,7 +332,8 @@ test.describe("Cross-cutting — Landing-page auto-redirect", () => {
     expect(location.replace(origin, "")).not.toMatch(/https?:\/\//i);
   });
 
-  test("CC-18 both sessions + rf-last-portal=buyer → landing goes to /buyer/portal", async ({
+  test("CC-18 both sessions + rf-last-portal=buyer → Open dashboard goes to /buyer/portal", async ({
+    page,
     context,
   }) => {
     await seedPresenceCookies(context, [
@@ -330,12 +341,12 @@ test.describe("Cross-cutting — Landing-page auto-redirect", () => {
       "rf-buyer-auth",
       { name: "rf-last-portal", value: "buyer" },
     ]);
-    const resp = await context.request.get("/", { maxRedirects: 0 });
-    expect(resp.status()).toBe(307);
-    expect(resp.headers()["location"]).toContain("/buyer/portal");
+    await page.goto("/");
+    await expect(headerLink(page)).toHaveAttribute("href", "/buyer/portal");
   });
 
-  test("CC-19 both sessions + rf-last-portal=op → landing goes to /dashboard", async ({
+  test("CC-19 both sessions + rf-last-portal=op → Open dashboard goes to /dashboard", async ({
+    page,
     context,
   }) => {
     await seedPresenceCookies(context, [
@@ -343,18 +354,16 @@ test.describe("Cross-cutting — Landing-page auto-redirect", () => {
       "rf-buyer-auth",
       { name: "rf-last-portal", value: "op" },
     ]);
-    const resp = await context.request.get("/", { maxRedirects: 0 });
-    expect(resp.status()).toBe(307);
-    expect(resp.headers()["location"]).toContain("/dashboard");
+    await page.goto("/");
+    await expect(headerLink(page)).toHaveAttribute("href", "/dashboard");
   });
 
-  test("CC-20 a preference never overrides a missing session", async ({ context }) => {
+  test("CC-20 a preference never overrides a missing session", async ({ page, context }) => {
     // Operator session only, but the last portal used was the buyer one — the
     // preference must be ignored because that session no longer exists.
     await seedPresenceCookies(context, ["rf-op-auth", { name: "rf-last-portal", value: "buyer" }]);
-    const resp = await context.request.get("/", { maxRedirects: 0 });
-    expect(resp.status()).toBe(307);
-    expect(resp.headers()["location"]).toContain("/dashboard");
+    await page.goto("/");
+    await expect(headerLink(page)).toHaveAttribute("href", "/dashboard");
   });
 
   test("CC-21 the operator-path guard never fires for an operator or off an operator path", async ({
