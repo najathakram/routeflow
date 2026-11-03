@@ -141,7 +141,7 @@ describe("lineStockViews", () => {
     const line = plain("a", 3, { unitLabel: "Each", unitFactor: 1 });
     const view = ready(run([line], avail(2)), "a");
     expect(view.requestedPieces).toBe(3);
-    expect(view.label).toBe("2 eaches left");
+    expect(view.label).toBe("2 each left");
   });
 
   it("a named-unit line with no known factor shows nothing, and so does its product's other line", () => {
