@@ -90,11 +90,11 @@ describe("the public site's motion does not depend on the visitor's motion setti
   // The pixels are checked by eye on stills at 390 and 360 (and WebKit); these pin the rules the drawing follows.
   describe("the phone wheel's words", () => {
     const wheel = read("graphics/rf-wheel-up.js");
-    it("names stay upright (no squash on a phone)", () => {
-      expect(wheel).toContain("nq = phone ? 1 : sq");
+    it("names stay upright at every width (no squash)", () => {
+      expect(wheel).toContain("nq = 1;");
       expect(wheel).not.toMatch(/nq = phone \? 0\.\d+/);
     });
-    it("a name is fitted to the width of its own piece, never wider", () => {
+    it("a name is fitted to the width of its own piece, never wider, at every width", () => {
       expect(wheel).toContain(
         "const wc = {}, wid = (t) => wc[t] || (wc[t] = ctx.measureText(t).width);",
       );

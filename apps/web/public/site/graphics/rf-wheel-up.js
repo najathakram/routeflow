@@ -401,7 +401,7 @@
         const vis = (outer ? 1 - S.obj * p.w : 1) * (1 - m * 0.55);
         if (vis > 0.03) {
           proj(ux * (w.mid * rg + sl), uy * (w.mid * rg + sl), zT);
-          const sc = K * pp, ax = px, ay = py, sq = 0.62 + 0.38 * ct, size = (sc / dpr) * 31, nk = Math.max(phone ? sc * 1.22 : sc, ((phone ? 13 : 10.5) * dpr) / 31), nq = phone ? 1 : sq;
+          const sc = K * pp, ax = px, ay = py, sq = 0.62 + 0.38 * ct, size = (sc / dpr) * 31, nk = Math.max(phone ? sc * 1.22 : sc, ((phone ? 13 : 12) * dpr) / 31), nq = 1;
           /* A piece's name: on the plate at rest, then back on it in the air as it comes off. A daily-work plate is big enough to
              carry its name. A core plate is not, so its name hangs in the clear air beside it. The names keep a readable size
              whatever the plate's. At the stops one piece is featured, so the rest carry their icons and no words. */
@@ -414,12 +414,12 @@
                  Its ink is whichever of the piece's dark ink and white reads better on the piece's colour right now. */
               let nf = nk, mf = phone ? nk * 0.62 : sc * 0.56, lit = false;
               const nt = phone && w.d.n && w.d.n.length > 9;
-              if (phone) {
+              {
                 let x0 = 1e9, x1 = -1e9;
                 for (let j = 0; j < n; j++) { if (tx[j] < x0) x0 = tx[j]; if (tx[j] > x1) x1 = tx[j]; }
-                const room = 2 * Math.min(ax - x0, x1 - ax) * 0.66, floor = (9.5 * dpr) / 31;
+                const room = 2 * Math.min(ax - x0, x1 - ax) * 0.66, floor = ((phone ? 9.5 : 10.5) * dpr) / 31;
                 nf = Math.max(floor, Math.min(nk, room / Math.max(1, ...w.lines.map(wid))));
-                if (w.d.n) mf = Math.max((9.5 * dpr) / 31, Math.min(mf, nf * 0.8, room / Math.max(1, ...(nt ? lines2(w.d.n) : [w.d.n]).map(wid))));
+                if (w.d.n) mf = Math.max(((phone ? 9.5 : 10) * dpr) / 31, Math.min(mf, nf * 0.8, room / Math.max(1, ...(nt ? lines2(w.d.n) : [w.d.n]).map(wid))));
                 const lf = lum(f), ld = lum(mix(INK, w.ink, p.c));
                 lit = 1.05 / (lf + 0.05) > (Math.max(lf, ld) + 0.05) / (Math.min(lf, ld) + 0.05);
                 if (lit) { ctx.fillStyle = ctx.strokeStyle = "#fff"; ctx.shadowColor = "rgba(0,0,0,0.34)"; ctx.shadowBlur = 2.5 * dpr; ctx.shadowOffsetY = 0.6 * dpr; }
@@ -430,15 +430,15 @@
               if (note) { const yn = ((y0 + 34) * nf) / mf, ls = nt ? lines2(w.d.n) : [w.d.n]; ctx.setTransform(mf, 0, 0, mf * nq, ax, ay); for (let j = 0; j < ls.length; j++) ctx.fillText(ls[j], 0, yn + j * 34); }
               if (lit) { ctx.shadowColor = "rgba(0,0,0,0)"; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0; }
             } else {
-              const side = Math.abs(ux) > 0.7, r = (side || uy < 0 ? r1 : r0) + sl, gap = (phone ? 6 : 12) * dpr, ck = Math.max(phone ? sc * 0.9 : sc * 0.76, ((phone ? 13 : 10.5) * dpr) / 31);
+              const side = Math.abs(ux) > 0.7, r = (side || uy < 0 ? r1 : r0) + sl, gap = (phone ? 6 : 12) * dpr, ck = Math.max(phone ? sc * 0.9 : sc * 0.76, ((phone ? 13 : 12) * dpr) / 31);
               proj(ux * r, uy * r, zT);
               let ckf = ck;
-              if (phone && !side) {
+              if (!side) {
                 /* the two back names sit side by side and share one size (the longest fits in 30% of the stage); the front one fits its piece */
                 let x0 = 1e9, x1 = -1e9;
                 for (let j = 0; j < n; j++) { if (tx[j] < x0) x0 = tx[j]; if (tx[j] > x1) x1 = tx[j]; }
                 const lim = uy < 0 ? 0.6 * cx : (x1 - x0) * 0.82, tw = uy < 0 ? Math.max(...list.map((v) => wid(v.d.t))) : wid(w.d.t);
-                ckf = Math.max((9.5 * dpr) / 31, Math.min(ck, lim / Math.max(1, tw)));
+                ckf = Math.max(((phone ? 9.5 : 10.5) * dpr) / 31, Math.min(ck, lim / Math.max(1, tw)));
               }
               ctx.textAlign = side ? (ux > 0 ? "left" : "right") : "center";
               ctx.fillStyle = css(INK);
