@@ -129,7 +129,9 @@ describe("the public site's motion does not depend on the visitor's motion setti
     expect(home).toContain('mob: "(max-width: 899.98px), (max-height: 599.98px)"');
     expect(home).not.toMatch(/reduce\s*:|c\.reduce|userRM/);
     const site = read("js/site.js");
-    expect(site).toContain('mm.add({ desk: "(min-width: 900px)" }');
+    // matchMedia runs its handler only when a key matches; the handler is what takes js-motion off. Below 900 px `desk`
+    // is false, so without an always-matching key the words stay hidden (review-a, #4153).
+    expect(site).toContain('mm.add({ all: "all", desk: "(min-width: 900px)" }');
     expect(site).not.toMatch(/ctx\.conditions\.motion|userRM/);
   });
 });

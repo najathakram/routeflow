@@ -1078,6 +1078,49 @@ test.describe("T21 — the motion does not depend on the visitor's motion settin
     await context.close();
   });
 
+  // review-a, #4153: below 900 px the site.js handler never ran (no matching condition), so html.js-motion stayed on and
+  // every .reveal block stayed at opacity 0. Every page that loads site.js shows its words at tablet and phone widths.
+  for (const route of [
+    "/company",
+    "/contact",
+    "/data-in-and-out",
+    "/does-and-doesnt",
+    "/getting-started",
+    "/pricing",
+    "/product",
+    "/security",
+  ]) {
+    for (const width of [768, 390]) {
+      test(`T21 — ${route} at ${width}: motion is off the page and no words stay hidden`, async ({
+        browser,
+      }) => {
+        const context = await browser.newContext({ viewport: { width, height: 844 } });
+        const page = await context.newPage();
+        await page.goto(route, { waitUntil: "load" });
+        await page.waitForTimeout(2500);
+        // blocks rise as they scroll into view: walk down the page, then count what is still invisible
+        const state = await page.evaluate(async () => {
+          const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+          document.documentElement.style.scrollBehavior = "auto";
+          for (const el of document.querySelectorAll(".reveal")) {
+            el.scrollIntoView({ block: "center" });
+            await wait(120);
+          }
+          await wait(1500);
+          return {
+            js: document.documentElement.classList.contains("js-motion"),
+            hidden: [...document.querySelectorAll(".reveal")].filter(
+              (el) => getComputedStyle(el).opacity === "0",
+            ).length,
+          };
+        });
+        await context.close();
+        expect(state.js, "js-motion still on").toBe(false);
+        expect(state.hidden, "hidden .reveal blocks").toBe(0);
+      });
+    }
+  }
+
   test("T21 — no page offers a Reduce motion switch, and ?motion=on is just a link", async ({
     request,
   }) => {

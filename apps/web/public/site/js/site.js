@@ -66,7 +66,8 @@
   };
 
   var mm = gsap.matchMedia();
-  mm.add({ desk: "(min-width: 900px)" }, function (ctx) {
+  /* `all` always matches, so this runs at every width (it is what takes js-motion off); `desk` only adds the desktop scenes. */
+  mm.add({ all: "all", desk: "(min-width: 900px)" }, function (ctx) {
     var desk = ctx.conditions.desk, cleanups = [];
 
     /* Hero: plays once (about 2 s) and ends on the still frame. Headline lines rise, route draws, truck follows, cards settle. */
