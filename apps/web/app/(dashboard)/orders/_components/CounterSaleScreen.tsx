@@ -150,6 +150,7 @@ import { CounterBuyerChoice } from "./CounterBuyerChoice";
 import { CounterRunningTotal } from "./CounterRunningTotal";
 import { BUYER_REASON_COPY, kindOfPick } from "./counter-buyer-choice";
 import { useCounterBuyerChoice } from "./useCounterBuyerChoice";
+import { useCounterLineStock } from "./counter-line-stock";
 import { useNewCustomerDoor } from "./useNewCustomerDoor";
 import { useCounterScanFocus } from "./useCounterScanFocus";
 import { CounterReceiptActions } from "./CounterReceiptActions";
@@ -582,6 +583,7 @@ export function CounterSaleScreen() {
   const tenderedNum = tenderAmount(tendered);
   // W-863: a named customer's inline return nets against the sale; `payTotal` is what the till asks for.
   const namedCustomer = customer !== null && !customer.isWalkIn;
+  const lineStock = useCounterLineStock(lines, namedCustomer ? customer.id : null); // SA-1086 PR-2: a note per line, never a gate
   const ret = useCounterInlineReturn(totals.total, namedCustomer, setError);
   const payTotal = ret.payTotal;
   // the server owns what credit it applies: the same shared statement read the customer panel uses
@@ -1898,6 +1900,7 @@ export function CounterSaleScreen() {
               <CounterLineRow
                 key={l.tempId}
                 line={l}
+                stock={lineStock.get(l.tempId)}
                 needsLicense={needsLicense(l)}
                 locked={lineLocked}
                 onStep={stepItem}

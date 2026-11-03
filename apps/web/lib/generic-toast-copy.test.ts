@@ -529,6 +529,10 @@ describe("genericToastCopy: codes users rely on", () => {
       ["SOURCE_LINE_AMBIGUOUS", /more than one line.*order lines directly/],
       ["SOURCE_LINE_INVALID", /pack size or price isn't valid/],
       ["LINE_PACK_UNDERIVABLE", /no pack size.*next delivery.*Set its pack size/],
+      [
+        "STORED_LINE_PACK_UNREADABLE",
+        /pack size can't be read from the sale.*total wasn't changed.*return or a credit note/,
+      ],
       ["RECIPE_PACK_MISMATCH", /recipe's pack size differs.*match/],
       ["COMPOSITION_CORRUPT", /mixed-pack composition is inconsistent.*pack split/],
       ["ORDER_BELOW_RETURN_CREDIT", /can't drop below the credit already issued.*returns/],
@@ -712,6 +716,7 @@ describe("B986-7 fold: codes #3051 registered are spelled through API_ERROR_CODE
     "SOURCE_LINE_AMBIGUOUS",
     "SOURCE_LINE_INVALID",
     "LINE_PACK_UNDERIVABLE",
+    "STORED_LINE_PACK_UNREADABLE",
     "RECIPE_PACK_MISMATCH",
     "COMPOSITION_CORRUPT",
     "ORDER_BELOW_RETURN_CREDIT",

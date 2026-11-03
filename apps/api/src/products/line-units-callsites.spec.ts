@@ -26,7 +26,9 @@ const BASELINE: Record<string, number> = {
   // Round-4 prefactor (SA-124h, absorbing origin/master's unrelated growth under the size
   // ratchet): the per-item price/data builder moved verbatim to replace-all-line-build.ts,
   // taking 5 of these reads with it — 21 -> 16.
-  "orders/orders.service.ts": 15,
+  // SA-1097: updateOrderItems' stored-line pack comes from resolveStoredLinePack, the live pack a candidate read
+  // through live-pack-map.ts (a listed non-writer); the at-door CHANGE_QTY took the same helper — two direct reads fewer.
+  "orders/orders.service.ts": 13,
   // Round-4 prefactor (SA-124h): buildReplaceAllLineData, moved verbatim out of
   // orders.service.ts's replaceAll rebuild (see that file's own comment above) — same 5 reads,
   // same behavior, only relocated.

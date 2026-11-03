@@ -196,7 +196,7 @@ export default function BuyerInvitePage() {
         {/* A paused seller's page offers the portal only to someone who is signed in. */}
         {(!sellerPaused || isAuthenticated) && (
           // eslint-disable-next-line @next/next/no-html-link-for-pages
-          <a href="/buyer/portal" className="text-[#0B6E6B] hover:underline text-sm">
+          <a href="/buyer/portal" className="text-brand-600 hover:underline text-sm">
             Go to your portal
           </a>
         )}

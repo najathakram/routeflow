@@ -11,8 +11,8 @@ import { displayProductName } from "@/lib/product-display";
 import { ProductInsightsPanel } from "@/components/insights/ProductInsightsPanel";
 
 /**
- * #2119 / plan §B: one product's sales insights (the finder that leads here is PR-2). The product identity, loading and unknown-id
- * states come from the product read; everything else — KPI tiles, trend, buyers, sold lines,
+ * #2119 / plan §B: one product's sales insights (the finder at `/insights` leads here). The product identity, loading and
+ * unknown-id states come from the product read; everything else — KPI tiles, trend, buyers, sold lines,
  * CSV — is `ProductInsightsPanel` on #2179's accrual-net API
  * (`GET /analytics/products/:id/insights`, `/sales`, `/insights.csv`).
  */
@@ -48,10 +48,10 @@ export default function ProductInsightsPage() {
         <Card className="space-y-4 p-6">
           <p className="text-sm text-navy">No product found for that id.</p>
           <Link
-            href="/products"
+            href="/insights"
             className="text-sm font-medium text-brand-600 hover:text-brand-700"
           >
-            Go to products
+            Find a product
           </Link>
         </Card>
       ) : (

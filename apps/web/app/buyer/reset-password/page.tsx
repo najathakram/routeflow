@@ -75,7 +75,7 @@ function BuyerResetPasswordInner() {
           </p>
           <Link
             href="/buyer/forgot-password"
-            className="text-sm font-medium text-[#0B6E6B] hover:underline"
+            className="text-sm font-medium text-brand-600 hover:underline"
           >
             Request a new reset link
           </Link>
@@ -89,7 +89,7 @@ function BuyerResetPasswordInner() {
           </p>
           <Link
             href="/buyer/login"
-            className="mt-1 text-sm font-medium text-[#0B6E6B] hover:underline"
+            className="mt-1 text-sm font-medium text-brand-600 hover:underline"
           >
             Go to sign in
           </Link>

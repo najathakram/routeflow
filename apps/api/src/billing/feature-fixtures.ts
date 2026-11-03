@@ -30,7 +30,12 @@ export interface FeatureFixture {
   /** Canonical SKU codes the tenant's active addons resolve to (Entitlements.addons shape). */
   activeSkuCodes: string[];
   /** Active overrides for this tenant, by featureKey. */
-  overrides: Array<{ featureKey: string; effect: "GRANT" | "DENY" }>;
+  overrides: Array<{
+    featureKey: string;
+    effect: "GRANT" | "DENY";
+    /** SA-963 A-1: the display detail `activeDetail` returns for this override (omit for a fixture that does not care). */
+    detail?: { kind: string; reason: string; expiresAt: string | null };
+  }>;
   /** Registry keys `usage(key) > 0` per design's grandfather probe (PR-0b consumes this; kept
    *  here so every slice references the SAME usage set even before PR-0b reads it). */
   usageKeys: string[];
@@ -191,6 +196,11 @@ export function mockCollaborators(fixture: FeatureFixture, flagsOverride?: strin
       return m;
     }),
     allActive: jest.fn().mockResolvedValue(overrideMap),
+    activeDetail: jest
+      .fn()
+      .mockResolvedValue(
+        new Map(fixture.overrides.flatMap((o) => (o.detail ? [[o.featureKey, o.detail]] : []))),
+      ),
   };
 
   // getPublishedCatalog defaults to the SAME version/definitions as getVersionForTenant — most
@@ -243,6 +253,7 @@ export function featureConfigOver(stored: Record<string, string> = {}) {
     {
       get: jest.fn().mockResolvedValue(null),
       allActive: jest.fn().mockResolvedValue(new Map()),
+      activeDetail: jest.fn().mockResolvedValue(new Map()),
     } as any, // featureOverrides: no override
   );
   return { service, prisma, reads };

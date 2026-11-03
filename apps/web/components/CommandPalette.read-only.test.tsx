@@ -10,6 +10,8 @@ import { CommandPalette } from "./CommandPalette";
  * (Reports, Settings ...) and the non-write actions are untouched.
  */
 const mockPush = jest.fn();
+// SA-1087: the palette's Product insights entry reads the shared access rule; pinned in CommandPalette.insights.test.tsx.
+jest.mock("@/components/insights/use-insights-access", () => ({ useInsightsAccess: () => false }));
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push: mockPush }) }));
 jest.mock("@/lib/auth-context", () => ({ useAuth: () => ({ user: { role: "OPERATOR" } }) }));
 jest.mock("@/lib/api-client", () => ({

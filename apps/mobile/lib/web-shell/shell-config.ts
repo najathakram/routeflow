@@ -15,9 +15,10 @@ export type ShellRole = "operator" | "buyer" | "driver";
  */
 export const BUYER_SHELL_ENTRY = "/buyer/login";
 /**
- * Staff land on the web's own login. NOT "/": the web redirects "/" into the app only for a
- * signed-in WEB session, so a natively signed-in operator (no web session yet, until the Q1
- * handoff) got the marketing page (sim proof F1, #2554).
+ * Staff land on the web's own login. NOT "/": "/" is the marketing home for everyone now (it no longer
+ * redirects a signed-in visitor), and before that it only redirected a signed-in WEB session, so a
+ * natively signed-in operator (no web session yet, until the Q1 handoff) got the marketing page
+ * (sim proof F1, #2554).
  */
 export const STAFF_SHELL_ENTRY = "/login";
 
