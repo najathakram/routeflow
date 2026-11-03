@@ -48,6 +48,24 @@ export async function boxIntrosOf(tx: IntroTx, productId: string): Promise<BoxIn
 export const introsAfter = (intros: readonly BoxIntro[], rowCreatedAt: Date): BoxIntro[] =>
   intros.filter((i) => i.at > rowCreatedAt);
 
+/**
+ * SA-1093 A-4: the answers a sold line still has to cross. A stored snapshot above 1 says the line was written at that pack, so
+ * it's past the answer that set it, and one equal to today's pack is past them all. A split with no snapshot says nothing, so
+ * that line takes every answer since its date. A pack cleared and answered again at a line's own number reads as past it, which
+ * adds too little, never too much.
+ */
+export function introsAfterLine(
+  intros: readonly BoxIntro[],
+  line: { createdAt: Date; unitsPerBox?: number | null },
+  todaysPack: number | null | undefined,
+): BoxIntro[] {
+  const after = introsAfter(intros, line.createdAt);
+  const snapshot = line.unitsPerBox ?? 1;
+  if (snapshot <= 1) return after;
+  if (snapshot === todaysPack) return [];
+  return after.slice(after.map((i) => i.to).lastIndexOf(snapshot) + 1);
+}
+
 export const packFactor = (intros: readonly BoxIntro[]): number =>
   intros.reduce((f, i) => f * i.to, 1);
 

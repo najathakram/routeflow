@@ -823,6 +823,7 @@ describeDb("SA-1093 Rule 4: a return's cancel after a Boxes answer", () => {
         await standardReturn(w, 3);
 
         expect(await stock(w)).toBe(246);
+        expect((await restockRow(w))[0]).toBe(6);
         expect(await parks(w)).toHaveLength(0);
       }, 60_000);
 
@@ -837,6 +838,9 @@ describeDb("SA-1093 Rule 4: a return's cancel after a Boxes answer", () => {
         const parked = await parks(w);
         expect(parked).toHaveLength(1);
         expect(parked[0].reason).toBe("the product is on order lines with different packs");
+        expect(
+          await prisma.stockMovement.count({ where: { productId: w.productId, type: "RETURN" } }),
+        ).toBe(0);
       }, 60_000);
 
       it("C-6g: a second product's rewritten line has no vote", async () => {
@@ -869,6 +873,7 @@ describeDb("SA-1093 Rule 4: a return's cancel after a Boxes answer", () => {
         await standardReturn(w, 3);
 
         expect(await stock(w)).toBe(192);
+        expect((await restockRow(w))[0]).toBe(72);
         expect(await parks(w)).toHaveLength(0);
       }, 60_000);
 
@@ -879,7 +884,72 @@ describeDb("SA-1093 Rule 4: a return's cancel after a Boxes answer", () => {
         await standardReturn(w, 3);
 
         expect(await stock(w)).toBe(192);
+        expect((await restockRow(w))[0]).toBe(72);
         expect(await parks(w)).toHaveLength(0);
+      }, 60_000);
+    });
+
+    describe("C-7 (SA-1093 A-4): a snapshot says which answers the line is past", () => {
+      const SNAPSHOT_24 = { ...SPLIT, unitsPerBox: 24 };
+      const again = async (w: World, to: number) => {
+        await stocked(w, { unitsPerBox: null });
+        await boxes(w, to);
+      };
+      const returnOfThreeAdds = async (w: World, from: number, added: number) => {
+        await stocked(w, { currentStock: from });
+
+        await standardReturn(w, 3);
+
+        expect(await stock(w)).toBe(from + added);
+        expect((await restockRow(w))[0]).toBe(added);
+        expect(await parks(w)).toHaveLength(0);
+      };
+
+      it("C-7a: snapshot 24, old date, cleared and answered x2: adds 6", async () => {
+        const w = await beforeBoxes("c7a", SNAPSHOT_24);
+        await again(w, 2);
+        expect(await stock(w)).toBe(240);
+
+        await returnOfThreeAdds(w, 240, 6);
+      }, 60_000);
+
+      it("C-7b: snapshot 24, old date, pack edited 24 to 12 with no answer: adds 3", async () => {
+        const w = await beforeBoxes("c7b", SNAPSHOT_24);
+        await stocked(w, { unitsPerBox: 12 });
+
+        await returnOfThreeAdds(w, 120, 3);
+      }, 60_000);
+
+      it("C-7c: answers x24, x2, x24, x3: only what follows the last x24 counts, so adds 9", async () => {
+        const w = await beforeBoxes("c7c", SNAPSHOT_24);
+        await again(w, 2);
+        await again(w, 24);
+        await again(w, 3);
+
+        await returnOfThreeAdds(w, 120, 9);
+      }, 60_000);
+
+      it("C-7d: a snapshot of 1 on a product cleared back to 1 keeps the answer's factor", async () => {
+        const w = await beforeBoxes("c7d", { ...SPLIT, unitsPerBox: 1 });
+        await stocked(w, { unitsPerBox: 1 });
+
+        await returnOfThreeAdds(w, 120, 72);
+      }, 60_000);
+
+      it("C-7e: an own-pack line never rewritten, a later answer at another number, multiplies by it", async () => {
+        const w = await beforeBoxes("c7e", { ...SPLIT, unitsPerBox: 12 });
+
+        await returnOfThreeAdds(w, 120, 72);
+      }, 60_000);
+
+      it("C-7f: a snapshot equal to today's pack, which no answer set, adds 3", async () => {
+        const w = await seed("c7f");
+        await sold(w, SNAPSHOT_24);
+        await stocked(w, { currentStock: 5 });
+        await boxes(w, 2);
+        await stocked(w, { unitsPerBox: 24 });
+
+        await returnOfThreeAdds(w, 120, 3);
       }, 60_000);
     });
   });

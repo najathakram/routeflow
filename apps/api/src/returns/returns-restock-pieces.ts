@@ -1,5 +1,5 @@
 import { resolvePackFactors } from "../common/line-pack-factors";
-import { boxIntrosOf, introsAfter, packFactor } from "../products/pack-intro-undo";
+import { boxIntrosOf, introsAfterLine, packFactor } from "../products/pack-intro-undo";
 import type { RestockPieces, RestockableReturnItem } from "./returns-restock.util";
 
 /**
@@ -83,8 +83,8 @@ const DIFFERENT_PACKS = "the product is on order lines with different packs";
  * guessed. A product with no ambiguous line restocks exactly as before (factor 1).
  *
  * SA-1093 A-1: `inTodaysPieces` is the receive() path's. A line's old units each became N at a Boxes answer, so what
- * it restocks is multiplied by the answers since the line, unless the line is already in today's unit (A-3). Lines
- * that disagree park. Sales facts read without it.
+ * it restocks is multiplied by the answers the line hasn't crossed yet (A-4, `introsAfterLine`). Lines that disagree
+ * park. Sales facts read without it.
  */
 export function standardRestockResolver(
   tx: any,
@@ -140,14 +140,10 @@ export function standardRestockResolver(
     }
     if (inTodaysPieces) {
       const intros = await boxIntrosOf(tx, item.productId);
-      // SA-1093 A-3: a rewrite can keep a line's old date, but whatever re-splits at today's pack stamps it
-      // as the snapshot, so that line is already in today's unit.
-      const inTodaysUnit = (l: any) =>
-        l.unitsPerBox > 1 && l.unitsPerBox === l.product?.unitsPerBox;
       const answers = new Set(
         lines
           .filter((l) => l.productId === item.productId)
-          .map((l) => (inTodaysUnit(l) ? 1 : packFactor(introsAfter(intros, l.createdAt)))),
+          .map((l) => packFactor(introsAfterLine(intros, l, l.product?.unitsPerBox))),
       );
       if (answers.size > 1) return { unknown: true, reason: DIFFERENT_PACKS };
       return { pieces: qty * basis.factor * [...answers][0] };
