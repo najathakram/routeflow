@@ -48,6 +48,7 @@ import {
   isSpecialPrice,
   normalizeBoxesPieces,
   regulatedUnitBasis,
+  resolveStoredLinePack,
   roundMoney,
   withinStaffOverrideTolerance,
   type CategoryTaxType,
@@ -3735,17 +3736,43 @@ export class OrdersService implements OnApplicationBootstrap {
                 // `if (editHasSplit)` branch below ignores item.qty entirely).
                 const editHasSplit = (item.boxes ?? 0) > 0 || (item.pieces ?? 0) > 0;
                 const wasBoxSplit = li.boxes != null;
-                // Resolve the box size for a catalog line even on a qty-ONLY edit —
-                // prefer the line's sale-time snapshot, fall back to the live product.
+                // Resolve the box size for a catalog line even on a qty-ONLY edit. A STORED split
+                // line reads the pack it was sold in (SA-1097, L-332): its snapshot, else its own
+                // split, else the money; today's product pack is only a candidate the stored money
+                // has to vouch for, and a line none of that can read is refused, never re-priced.
+                // A plain line whose payload adds a split takes the write moment's (live) pack.
                 // Without this a qty-only edit of a box-split line dropped to non-boxed
                 // math (per-piece × BOX price → overcharge) and left stale boxes/pieces.
                 let unitsPerBox: number | null = (li as any).unitsPerBox ?? null;
-                if (unitsPerBox == null && li.productId && (editHasSplit || wasBoxSplit)) {
-                  const product = await tx.product.findFirst({
-                    where: { id: li.productId },
-                    select: { unitsPerBox: true },
+                let soldWithNoPack = false;
+                if (li.productId && wasBoxSplit && !(Number(unitsPerBox ?? 0) > 1)) {
+                  const livePack = (
+                    await loadLiveUnitsPerBoxByProduct(tx as any, [li.productId])
+                  ).get(li.productId);
+                  const stored = resolveStoredLinePack({
+                    qty: Number(li.qty),
+                    boxes: li.boxes,
+                    pieces: li.pieces,
+                    unitsPerBox,
+                    unitPrice: Number(li.unitPrice),
+                    subtotal: Number(li.subtotal),
+                    freeUnits: Number((li as any).promoFreeUnits ?? 0),
+                    livePack,
                   });
-                  unitsPerBox = product?.unitsPerBox ?? null;
+                  if (!stored.ok) {
+                    throw new ConflictException({
+                      code: API_ERROR_CODES.STORED_LINE_PACK_UNREADABLE,
+                      message:
+                        "This line's pack size can't be read from the sale, so its total was not changed. Use a return or a credit note to correct the amount.",
+                    });
+                  }
+                  unitsPerBox = stored.pack;
+                  soldWithNoPack = stored.pack === null;
+                } else if (unitsPerBox == null && li.productId && editHasSplit) {
+                  const livePack = (
+                    await loadLiveUnitsPerBoxByProduct(tx as any, [li.productId])
+                  ).get(li.productId);
+                  unitsPerBox = livePack ? livePack : null;
                 }
                 const upb = Number(unitsPerBox ?? 0);
 
@@ -3757,7 +3784,20 @@ export class OrdersService implements OnApplicationBootstrap {
                 let qty: number;
                 let boxes: number | null;
                 let pieces: number | null;
-                if (editHasSplit) {
+                if (soldWithNoPack) {
+                  // SA-1097: sold with no pack - the line prices as qty x price and KEEPS its stored shape (boxes = qty,
+                  // no pieces, no snapshot). Clearing the split would make a bare qty on a product that has a pack since
+                  // read as BOXES of it by the stock settle (order-stock.ts needsLivePack), and book 24x the units.
+                  qty = Math.max(
+                    0,
+                    Math.trunc(
+                      item.qty ??
+                        (editHasSplit ? (item.boxes ?? 0) + (item.pieces ?? 0) : Number(li.qty)),
+                    ),
+                  );
+                  boxes = qty;
+                  pieces = 0;
+                } else if (editHasSplit) {
                   this.warnSplit("orders.update", { ...item, productId: li.productId }, upb);
                   const split = normalizeBoxesPieces({
                     boxes: item.boxes,

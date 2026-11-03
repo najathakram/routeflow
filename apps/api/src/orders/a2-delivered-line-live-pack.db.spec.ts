@@ -395,8 +395,9 @@ describeDb(
       expect(after.line.subtotal).toBe(120);
       expect(after.order.total).toBe(120);
       expect(after.invoices[0]!.total).toBe(120);
-      expect(after.line.unitsPerBox).toBeNull(); // no pack at sale: the split clears, the line prices as qty x price
-      expect(after.line.boxes).toBeNull();
+      expect(after.stock).toBe(before.stock); // a price/qty edit of a delivered line books no stock
+      expect(after.ledger).toEqual(before.ledger);
+      expect(after.line.unitsPerBox).toBeNull(); // no pack at sale: priced as qty x price, shape kept (see order-stock needsLivePack)
     }, 120_000);
 
     it("A2-1b: an ECHO of the stored values (qty 10, unitPrice 10) changes nothing: the line stays 100.00", async () => {
@@ -408,6 +409,8 @@ describeDb(
       measure("A2-1b after", after);
       expect(after.line.subtotal).toBe(100);
       expect(after.invoices[0]!.total).toBe(100);
+      expect(after.stock).toBe(before.stock); // a price/qty edit of a delivered line books no stock
+      expect(after.ledger).toEqual(before.ledger);
     }, 120_000);
 
     it("A2-2: a price-only edit on a line sold under a 12-pack that is now a 24-pack keeps 10 boxes (120.00)", async () => {
@@ -446,6 +449,8 @@ describeDb(
       measure("A2-3 after", after);
       expect(after.line.subtotal).toBe(90);
       expect(after.invoices[0]!.total).toBe(90);
+      expect(after.stock).toBe(before.stock); // a price/qty edit of a delivered line books no stock
+      expect(after.ledger).toEqual(before.ledger);
     }, 120_000);
 
     it("A2-6: the 12-pack line, qty 120 -> 100, is 8 boxes + 4 pieces of a 12-pack at the stored price (83.33), not of the live 24", async () => {
