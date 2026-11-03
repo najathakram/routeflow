@@ -80,3 +80,6 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/landing-2026-11-03-ae.md](web/landing-2026-11-03-ae.md) | Train ae + #4143 (9e782a5dfc..6e9dae10eb): site audit fixes, `/` always home, Open dashboard header script; web only |
 | [web/landing-2026-11-03-af.md](web/landing-2026-11-03-af.md) | Train af (6e9dae10eb..d6d5c56cb1): no old look left (site frame, auth card, Company, Contact, 308 redirects) |
 | [web/landing-2026-11-03-aj.md](web/landing-2026-11-03-aj.md) | Train aj (d6d5c56cb1..9dfd480c30): home anchor landing, F14 tenant-day dates, product finder at /insights (SA-1087 PR-2) |
+| [web/landing-2026-11-03-ak.md](web/landing-2026-11-03-ak.md) | Train ak (9dfd480c30..d833210811): site motion always on, truth pass + HSTS, feature console source chips (F13) |
+| [web/landing-2026-11-03-al.md](web/landing-2026-11-03-al.md) | Train al (d833210811..1f6f32a341): 20 use-case cards, site colour and life (W-1129), 22-card pin |
+| [web/landing-2026-11-03-an.md](web/landing-2026-11-03-an.md) | Train am (1f6f32a341..06813470de): web editor reads a line's own pack (SA-1097); counter rows show the live stock note (SA-1086 PR-2) |
