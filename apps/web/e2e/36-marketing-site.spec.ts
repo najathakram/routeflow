@@ -1492,6 +1492,77 @@ test.describe("T21 — the motion does not depend on the visitor's motion settin
     });
   }
 
+  // The hub is found by its own navy (the biggest connected blob of its two navies); the logo is the white in the
+  // middle of it. `maxR` is the brightest red value there: 255 is full strength, a faded mark reads far less.
+  const hubLogo = (page: import("@playwright/test").Page) =>
+    page.evaluate(() => {
+      const cv = document.querySelector<HTMLCanvasElement>(".rfw-cv")!;
+      const { width: W, height: H } = cv;
+      const d = cv.getContext("2d")!.getImageData(0, 0, W, H).data;
+      const near = (i: number, t: number[]) =>
+        Math.abs(d[i]! - t[0]!) < 7 &&
+        Math.abs(d[i + 1]! - t[1]!) < 7 &&
+        Math.abs(d[i + 2]! - t[2]!) < 7;
+      // the biggest connected blob of the hub's two navies
+      const m = new Uint8Array(W * H);
+      for (let i = 0; i < W * H; i++) {
+        const p = i * 4;
+        if (d[p + 3]! > 250 && (near(p, [16, 38, 77]) || near(p, [10, 26, 56]))) m[i] = 1;
+      }
+      const seen = new Uint8Array(W * H);
+      let best: { n: number; x0: number; y0: number; x1: number; y1: number } | null = null;
+      for (let s = 0; s < W * H; s++) {
+        if (!m[s] || seen[s]) continue;
+        const st = [s];
+        seen[s] = 1;
+        const b = { n: 0, x0: W, y0: H, x1: -1, y1: -1 };
+        while (st.length) {
+          const q = st.pop()!;
+          const x = q % W;
+          const y = (q / W) | 0;
+          b.n++;
+          b.x0 = Math.min(b.x0, x);
+          b.x1 = Math.max(b.x1, x);
+          b.y0 = Math.min(b.y0, y);
+          b.y1 = Math.max(b.y1, y);
+          for (const k of [q - 1, q + 1, q - W, q + W])
+            if (k >= 0 && k < W * H && m[k] && !seen[k]) {
+              seen[k] = 1;
+              st.push(k);
+            }
+        }
+        if (!best || b.n > best.n) best = b;
+      }
+      if (!best) return { found: false, white: 0, maxR: 0, w: 0 };
+      const w = best.x1 - best.x0;
+      const h = best.y1 - best.y0;
+      // bright pixels with dark navy (lid or wall) close on all four sides, on the hub or just under its lid: the
+      // logo, never the page around the hub
+      const R = 14;
+      const navyNear = (x: number, y: number, dx: number, dy: number) => {
+        for (let k = 1; k <= R; k++) {
+          const xx = x + dx * k;
+          const yy = y + dy * k;
+          if (xx < 0 || yy < 0 || xx >= W || yy >= H) return false;
+          const q = (yy * W + xx) * 4;
+          if (d[q]! < 70 && d[q + 1]! < 90 && d[q + 2]! < 140 && d[q + 3]! > 250) return true;
+        }
+        return false;
+      };
+      let white = 0;
+      let maxR = 0;
+      for (let y = best.y0; y <= Math.min(H - 1, best.y1 + Math.round(0.5 * h)); y++)
+        for (let x = best.x0; x <= best.x1; x++) {
+          const p = (y * W + x) * 4;
+          if (d[p]! < 100) continue;
+          if (!(navyNear(x, y, -1, 0) && navyNear(x, y, 1, 0))) continue;
+          if (!(navyNear(x, y, 0, -1) && navyNear(x, y, 0, 1))) continue;
+          if (d[p]! > maxR) maxR = d[p]!;
+          if (d[p]! > 200 && d[p + 1]! > 200 && d[p + 2]! > 200) white++;
+        }
+      return { found: true, white, maxR, w };
+    });
+
   // review-a, #4153: below 900 px the closed wheel, as loaded and never scrolled, drew a plain navy hub. Looking
   // straight down the puck's base sits inside its lid, so the "stand the mark upright" blend clamped to 1 and drew
   // it at almost no size. The hub is found by its own navy; the logo is white pixels in the middle of it.
@@ -1502,58 +1573,39 @@ test.describe("T21 — the motion does not depend on the visitor's motion settin
     test(`T21 — the hub shows the logo at rest at ${view.name}`, async ({ browser }) => {
       test.setTimeout(120_000);
       const { context, page, errors } = await load(browser, view, "no-preference");
-      const hub = await page.evaluate(() => {
-        const cv = document.querySelector<HTMLCanvasElement>(".rfw-cv")!;
-        const { width: W, height: H } = cv;
-        const d = cv.getContext("2d")!.getImageData(0, 0, W, H).data;
-        const near = (i: number, t: number[]) =>
-          Math.abs(d[i]! - t[0]!) < 7 &&
-          Math.abs(d[i + 1]! - t[1]!) < 7 &&
-          Math.abs(d[i + 2]! - t[2]!) < 7;
-        // the biggest connected blob of the hub's two navies
-        const m = new Uint8Array(W * H);
-        for (let i = 0; i < W * H; i++) {
-          const p = i * 4;
-          if (d[p + 3]! > 250 && (near(p, [16, 38, 77]) || near(p, [10, 26, 56]))) m[i] = 1;
-        }
-        const seen = new Uint8Array(W * H);
-        let best: { n: number; x0: number; y0: number; x1: number; y1: number } | null = null;
-        for (let s = 0; s < W * H; s++) {
-          if (!m[s] || seen[s]) continue;
-          const st = [s];
-          seen[s] = 1;
-          const b = { n: 0, x0: W, y0: H, x1: -1, y1: -1 };
-          while (st.length) {
-            const q = st.pop()!;
-            const x = q % W;
-            const y = (q / W) | 0;
-            b.n++;
-            b.x0 = Math.min(b.x0, x);
-            b.x1 = Math.max(b.x1, x);
-            b.y0 = Math.min(b.y0, y);
-            b.y1 = Math.max(b.y1, y);
-            for (const k of [q - 1, q + 1, q - W, q + W])
-              if (k >= 0 && k < W * H && m[k] && !seen[k]) {
-                seen[k] = 1;
-                st.push(k);
-              }
-          }
-          if (!best || b.n > best.n) best = b;
-        }
-        if (!best) return { found: false, white: 0, w: 0 };
-        const w = best.x1 - best.x0;
-        const h = best.y1 - best.y0;
-        let white = 0;
-        for (let y = Math.round(best.y0 + 0.3 * h); y <= best.y1 - 0.3 * h; y++)
-          for (let x = Math.round(best.x0 + 0.3 * w); x <= best.x1 - 0.3 * w; x++) {
-            const p = (y * W + x) * 4;
-            if (d[p]! > 200 && d[p + 1]! > 200 && d[p + 2]! > 200) white++;
-          }
-        return { found: true, white, w };
-      });
+      const hub = await hubLogo(page);
       expect(hub.found, "a navy hub on the canvas").toBe(true);
       expect(hub.w, "the hub is a real size").toBeGreaterThan(60);
       expect(hub.white, "white logo pixels in the middle of the hub").toBeGreaterThan(40);
+      expect(errors).toEqual([]);
+      await context.close();
+    });
+  }
+
+  // review-a, #4153 note 1: on 360x740, 393x760 and 412x780 the page rests for hundreds of pixels with the puck's
+  // geometry still, and the mark's opacity followed that geometry, so it stayed at half strength (a grey logo).
+  // The fade now runs on the clock, so wherever the page rests the logo is at full strength.
+  for (const view of [
+    { name: "360x740", width: 360, height: 740 },
+    { name: "393x760", width: 393, height: 760 },
+    { name: "412x780", width: 412, height: 780 },
+  ]) {
+    test(`T21 — the hub logo is at full strength wherever the page rests at ${view.name}`, async ({
+      browser,
+    }) => {
+      test.setTimeout(180_000);
+      const { context, page, errors } = await load(browser, view, "no-preference");
+      const weak: string[] = [];
+      for (let y = 900; y <= 1700; y += 100) {
+        await page.evaluate((to) => {
+          document.documentElement.style.scrollBehavior = "auto";
+          scrollTo(0, to);
+        }, y);
+        await page.waitForTimeout(1200);
+        const hub = await hubLogo(page);
+        if (hub.maxR < 230) weak.push(`y ${y}: brightest ${hub.maxR}`);
+      }
+      expect(weak, "scroll positions where the logo is faded").toEqual([]);
       expect(errors).toEqual([]);
       await context.close();
     });

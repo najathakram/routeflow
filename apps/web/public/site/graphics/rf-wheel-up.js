@@ -77,10 +77,11 @@
     const P1 = pt(X, c + dx), P2 = pt(X, d - dx), P3 = pt(Y, d - dy), P4 = pt(Y, c + dy);
     return `M${P1}A${X} ${X} 0 0 1 ${P2}L${P3}A${Y} ${Y} 0 0 0 ${P4}Z`;
   };
+  const pastel = (c, k) => "#" + [1, 3, 5].map((n) => Math.round(255 - (255 - parseInt(c.slice(n, n + 2), 16)) * k).toString(16).padStart(2, "0")).join("");
   const lines2 = (t) => (t.length > 9 ? t.replace(/ (?=\S+$)/, "\n").split("\n") : [t]);
   const piece = (d, i, A, B, step, inner) => {
     const a = -90 + i * step, s = sector(A, B, a - step / 2, a + step / 2, GAP), c = pt((A + B) / 2 + (inner ? 0 : 4), a);
-    return `<path class="rfw-ln" d="${s}"/><path class="rfw-w${i % 2 ? " g" : ""}" d="${s}"/><g class="rfw-up" transform="translate(${c[0]} ${c[1]})"><g class="${inner ? "rfw-i2w" : "rfw-icw"}"><g class="rfw-ic" transform="translate(-24 -24)">${ICON[d.k]}</g></g>${inner ? "" : `<text class="rfw-lb" y="${lines2(d.t).length > 1 ? 46 : 54}">${lines2(d.t).map((l, j) => `<tspan x="0"${j ? ' dy="31"' : ""}>${l}</tspan>`).join("")}</text>`}</g>`;
+    return `<path class="rfw-ln" d="${s}"/><path class="rfw-w${i % 2 ? " g" : ""}" style="fill:${pastel(d.c, inner ? 0.5 : 0.4)};stroke:${pastel(d.c, inner ? 0.5 : 0.4)}" d="${s}"/><g class="rfw-up" transform="translate(${c[0]} ${c[1]})"><g class="${inner ? "rfw-i2w" : "rfw-icw"}"><g class="rfw-ic" transform="translate(-24 -24)">${ICON[d.k]}</g></g>${inner ? "" : `<text class="rfw-lb" y="${lines2(d.t).length > 1 ? 46 : 54}">${lines2(d.t).map((l, j) => `<tspan x="0"${j ? ' dy="31"' : ""}>${l}</tspan>`).join("")}</text>`}</g>`;
   };
   const dial = () => `<svg class="rfw-svg" viewBox="-520 -520 1040 1040" role="img" aria-label="The RouteFlow wheel: ${OUTER.map((d) => d.t.toLowerCase()).join(", ")}, around ${INNER.map((d) => d.t.toLowerCase()).join(", ")}, all one system.">${OUTER.map((d, i) => piece(d, i, R0, R1, STEP_O)).join("")}${INNER.map((d, i) => piece(d, i, r0, r1, 72, 1)).join("")}<circle r="${HUB}" fill="#10264d"/><g transform="translate(-30 -40) scale(.75)"><g class="mk"><path d="M0 96V34a18 18 0 0 1 18-18h56"/><path d="M66 2l14 14l-14 14"/><path d="M26 96V52a8 8 0 0 1 8-8h22a15 15 0 0 1 0 30h-14l24 22"/></g></g></svg>`;
 
@@ -174,6 +175,8 @@
   const mix = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
   const lum = (c) => { const l = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * l(c[0]) + 0.7152 * l(c[1]) + 0.0722 * l(c[2]); };
   const css = (c, al) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${al == null ? 1 : +al.toFixed(3)})`;
+  /* At rest a piece already wears a soft tint of its own colour (the share of the full colour it carries), so the first screen is not white. */
+  const REST_TINT = 0.4;
   const WHITE = [255, 255, 255], INK = [15, 27, 45], NVY = hex("#10264d"), HUBW = hex("#0a1a38");
   const NEU = [WHITE, hex("#fafafc")], WNEU = hex("#d6dee8"), MUTE = hex("#e2e8f0"), MUTEW = hex("#d6dee8");
   const THO = 40, THI = 34, THH = 58, DEPTH = 2000, FS = 46, FSI = 62, LF = 48, RT = 418, TOKW = 150, TILT = 68, YC = -260, HUB_R = 0.62, AIR = 90, DRIFT = 0.05, PITCH = 0.5, REST = 0.05;
@@ -304,7 +307,7 @@
     const RING = sprite((t) => smooth(0.2, 0.62, t) * Math.pow(1 - smooth(0.72, 1, t), 1.5));
     const FLOOR = sprite((t) => smooth(0.42, 0.52, t) * Math.pow(1 - smooth(0.74, 1, t), 1.5));
 
-    let dpr = 1, K = 1, cx = 0, cy = 0, ct = 1, st = 0, px = 0, py = 0, pp = 1, dirty = true, focusI = -1, hc = false, pinTop = 0, tokPx = 120, ox = 0, oy = 0, stageBg = "#f5f5f7";
+    let hubUp = 0, hubF = 0, hubSet = false, dpr = 1, K = 1, cx = 0, cy = 0, ct = 1, st = 0, px = 0, py = 0, pp = 1, dirty = true, focusI = -1, hc = false, pinTop = 0, tokPx = 120, ox = 0, oy = 0, stageBg = "#f5f5f7";
     const F = { flat: { k: 0.4, x: 0, y: 0 }, end: { k: 0.4, x: 0, y: 0 }, burst: { k: 0.4, x: 0, y: 0 }, apart: { k: 0.4, x: 0, y: 0 }, story: { k: 0.4, x: 0, y: 0 } };
     const cam = { tilt: 0, zO: 0, zI: 0, zH: 0, k: 0.4, x: 0, y: 0 };
     const mark = () => { dirty = true; };
@@ -342,8 +345,29 @@
        that plain sampling looks the same as smooth sampling, at a fraction of the cost. */
     const fc = document.createElement("canvas"), fctx = fc.getContext("2d", { alpha: false }), FK = new Float64Array(8), CL = [0, 0, 0, 0];
     let held = 0, cached = false, whole = true;
+    /* The soft colour wash behind the wheel is painted into the stage itself, under the pieces. A layer laid over the finished
+       canvas would also tint the pieces and turn the lower right ones to slate. Same four glows as the first screen's static
+       picture (css/home-color.css --hero-wash): x, y, half-width, half-height (as a share of the stage), then the colour. */
+    const WASH = [[0.88, 0.08, 0.58, 0.7, 76, 174, 217, 0.48, 0.72], [1, 0.92, 0.52, 0.62, 255, 201, 51, 0.56, 0.72], [0.58, 1.04, 0.48, 0.6, 229, 106, 93, 0.32, 0.72], [0, 0.96, 0.44, 0.56, 20, 201, 143, 0.32, 0.7]];
+    const washCv = document.createElement("canvas");
+    let wkey = "";
+    const washed = (W, H) => {
+      const key = W + "x" + H + stageBg;
+      if (wkey !== key) {
+        wkey = key; washCv.width = W; washCv.height = H;
+        const g = washCv.getContext("2d", { alpha: false });
+        g.fillStyle = stageBg; g.fillRect(0, 0, W, H);
+        g.globalCompositeOperation = "multiply";
+        for (const [x, y, rx, ry, r, gr, b, a, e] of WASH) {
+          const grad = g.createRadialGradient(0, 0, 0, 0, 0, 1);
+          grad.addColorStop(0, "rgba(" + r + "," + gr + "," + b + "," + a + ")"); grad.addColorStop(e, "rgba(" + r + "," + gr + "," + b + ",0)");
+          g.save(); g.translate(x * W, y * H); g.scale(rx * W, ry * H); g.fillStyle = grad; g.fillRect(-x / rx, -y / ry, 1 / rx, 1 / ry); g.restore();
+        }
+      }
+      return washCv;
+    };
     const stage = (c, zo, zi, zh, W, H, ea) => {
-      c.fillStyle = stageBg; c.fillRect(0, 0, W, H);
+      c.drawImage(washed(W, H), 0, 0);
       const lift = cam.tilt / TILT, fl = zo - 1 - AIR * lift, gi = zi - fl, gh = zh - fl;
       shade(c, FLOOR, 0, 14 + 12 * lift, fl, (R1 + EX.o * ea) * 1.2, (0.1 + 0.05 * lift) * (1 - ea));
       shade(c, RING, 0, 10 + gi * 0.05, fl, (r1 + EX.i * ea) * (1.12 + gi * 0.0005), 0.1 * clamp(0, 1, gi / 60) * (1 - 0.6 * ea) * (1 - clamp(0, 1, gi / 1500)));
@@ -389,7 +413,8 @@
         rot(w.pts, n, cs, sn, ux * sl, uy * sl, zT, tx, ty, q, ux, uy, w.mid * rg); rot(w.pts, n, cs, sn, ux * sl, uy * sl, zT - th, bx, by, q, ux, uy, w.mid * rg);
         /* Neutral at rest, its own colour when apart; softened toward a light neutral while another piece has the stage. */
         const m = outer ? S.focO * (1 - lift) * 0.34 : S.focO * 0.2;
-        let f = mix(w.neu, w.col, p.c), wl = mix(WNEU, w.wall, p.c);
+        const cc = Math.max(p.c, outer ? REST_TINT : REST_TINT + 0.1);
+        let f = mix(w.neu, w.col, cc), wl = mix(WNEU, w.wall, cc);
         if (m > 0.001) { f = mix(f, MUTE, m * p.c); wl = mix(wl, MUTEW, m * p.c); }
         walls(n, css(wl));
         ctx.beginPath(); trace(tx, ty, n); ctx.fillStyle = css(f); ctx.fill();
@@ -481,14 +506,18 @@
         up = fb - ft > 1 ? clamp(0, 1, (1.6 * (fb - ft) - (ft - lt)) / (0.8 * (fb - ft))) : 0;
       }
       proj(0, 0, z + THH); const ox = px, oy = py; proj(100, 0, z + THH); const ax = (px - ox) / 100, ay = (py - oy) / 100; proj(0, 100 * hy, z + THH);
-      if (up < 0.5) {
-        ctx.globalAlpha = (0.5 - up) / 0.2 > 1 ? 1 : (0.5 - up) / 0.2;
+      /* Which mark stands is decided by the geometry with a margin (so it cannot flicker), and the fade between them runs on the clock
+         (see tick), never on the scroll: a page can rest anywhere, and a fade tied to the scroll would rest half done. */
+      if (up > 0.55) hubUp = 1; else if (up < 0.45) hubUp = 0;
+      if (!hubSet) { hubSet = true; hubF = hubUp; }
+      if (hubF < 0.5) {
+        ctx.globalAlpha = (0.5 - hubF) * 2;
         ctx.setTransform(ax, ay, (px - ox) / 100, (py - oy) / 100, ox, oy); ctx.translate(-30, -40); ctx.scale(0.75, 0.75);
         ctx.lineWidth = 13; ctx.lineCap = ctx.lineJoin = "round"; ctx.strokeStyle = "#fff"; ctx.stroke(MARKP);
       }
-      if (up > 0.5) {
+      if (hubF > 0.5) {
         const s = (0.62 * (fb - ft)) / 96;
-        ctx.globalAlpha = (up - 0.5) / 0.2 > 1 ? 1 : (up - 0.5) / 0.2;
+        ctx.globalAlpha = (hubF - 0.5) * 2;
         ctx.setTransform(s, 0, 0, s, ox - 40 * s, (ft + fb) / 2 - 49 * s);
         ctx.lineWidth = 15; ctx.lineCap = ctx.lineJoin = "round"; ctx.strokeStyle = "#fff"; ctx.stroke(MARKP);
       }
@@ -796,6 +825,7 @@
       const dt = Math.min(ms / 1000, 0.05);
       if (Sp.o.on) stepSp(Sp.o, dt); else Sp.o.home = false;
       if (Sp.i.on) stepSp(Sp.i, dt); else Sp.i.home = false;
+      if (hubF !== hubUp) { hubF = hubF < hubUp ? Math.min(hubUp, hubF + dt * 8) : Math.max(hubUp, hubF - dt * 8); force = true; mark(); }
       if (dirty) draw();
     };
     const onDown = (e) => {

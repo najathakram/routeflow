@@ -37,6 +37,8 @@ const STYLES = [
   "css/does.css",
   "css/start.css",
   "css/company.css",
+  "css/home-color.css",
+  "css/color-deep.css",
   "graphics/rf-graphics.css",
   "graphics/rf-wheel-up.css",
 ];
@@ -131,8 +133,17 @@ describe("the public site's motion does not depend on the visitor's motion setti
       // straight down (the page at rest) the base sits inside the lid: no front face, so the mark lies flat (review-a, #4153)
       expect(wheel).toContain("up = fb - ft > 1 ? clamp(0, 1,");
       expect(wheel).not.toContain("0.8 * (fb - ft) + 1e-6");
-      expect(wheel).toContain("if (up < 0.5) {");
-      expect(wheel).toContain("if (up > 0.5) {");
+      expect(wheel).toContain("if (hubF < 0.5) {");
+      expect(wheel).toContain("if (hubF > 0.5) {");
+    });
+    // review-a, #4153 note 1: a page can rest anywhere, so a fade tied to the scroll's geometry rested half done (a grey logo).
+    it("which mark stands is chosen with a margin, and the fade between them runs on the clock, not on the scroll", () => {
+      expect(wheel).toContain("if (up > 0.55) hubUp = 1; else if (up < 0.45) hubUp = 0;");
+      expect(wheel).toContain(
+        "hubF = hubF < hubUp ? Math.min(hubUp, hubF + dt * 8) : Math.max(hubUp, hubF - dt * 8);",
+      );
+      expect(wheel).not.toContain("(up - 0.5) / 0.2");
+      expect(wheel).not.toContain("(0.5 - up) / 0.2");
     });
   });
 
