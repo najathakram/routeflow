@@ -309,7 +309,7 @@ for (const vp of VIEWPORTS) {
         "Not reported",
       );
       await expect(rowLocator(page, "tobacco_dealer").getByTestId("readout")).toHaveText(
-        "Off, removed by override",
+        "Off for this business",
       );
       await expect(rowLocator(page, "fulfilment_model").getByTestId("readout")).toContainText(
         "Ship by carrier · Set for this business",

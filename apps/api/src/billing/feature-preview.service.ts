@@ -1,7 +1,11 @@
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "./entitlements.service";
-import { FeatureOverrideService, FeatureOverrideEffect } from "./feature-override.service";
+import {
+  FeatureOverrideService,
+  FeatureOverrideEffect,
+  FeatureOverrideDetail,
+} from "./feature-override.service";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { FeatureConfigService } from "./feature-config.service";
 import { FEATURE_REGISTRY } from "./feature-registry";
@@ -29,18 +33,20 @@ export class FeaturePreviewService {
   ) {}
 
   async preview(tenantId: string, request: FeaturePreviewRequest): Promise<FeaturePreviewResponse> {
-    const [ent, activeAddonRows, currentOverrides, publishedCatalog] = await Promise.all([
-      this.entitlements.resolve(tenantId),
-      this.prisma.tenantAddon.findMany({
-        where: { tenantId, active: true },
-        select: { addonKey: true },
-      }),
-      this.featureOverrides.allActive(tenantId),
-      // Opus review of 9923b87c, item 6: a hypothetical plan swap targets what an admin would
-      // ACTUALLY move the tenant onto — the current published catalog — never the tenant's own
-      // (possibly stale) pinned version, which may not even carry the target plan key.
-      this.catalog.getPublishedCatalog(),
-    ]);
+    const [ent, activeAddonRows, currentOverrides, currentDetail, publishedCatalog] =
+      await Promise.all([
+        this.entitlements.resolve(tenantId),
+        this.prisma.tenantAddon.findMany({
+          where: { tenantId, active: true },
+          select: { addonKey: true },
+        }),
+        this.featureOverrides.allActive(tenantId),
+        this.featureOverrides.activeDetail(tenantId),
+        // Opus review of 9923b87c, item 6: a hypothetical plan swap targets what an admin would
+        // ACTUALLY move the tenant onto — the current published catalog — never the tenant's own
+        // (possibly stale) pinned version, which may not even carry the target plan key.
+        this.catalog.getPublishedCatalog(),
+      ]);
     const activeAddonKeys = activeAddonRows.map((a) => a.addonKey);
     const version = await this.catalog.getVersionForTenant(ent.planVersionId);
     const currentDef = findPlanDefinition(version.definitions, ent.planKey);
@@ -54,6 +60,7 @@ export class FeaturePreviewService {
 
     const beforeCtx: ResolveContext = {
       overrides: currentOverrides,
+      overrideDetail: currentDetail,
       activeAddonSet,
       planFeatureFlags: new Set(currentPlanFlags),
       entFlags: ent.flags,
@@ -61,8 +68,17 @@ export class FeaturePreviewService {
     };
 
     const afterOverrides = new Map<string, FeatureOverrideEffect>(currentOverrides);
+    // SA-963 A-1: each requested key REPLACES the stored detail with the request's own, so a preview of a DENY over a
+    // stored dated GRANT never shows the old grant's date.
+    const afterDetail = new Map<string, FeatureOverrideDetail>(currentDetail);
     for (const o of request.overrides ?? []) {
       afterOverrides.set(o.featureKey, o.effect);
+      const ends = o.expiresAt ? new Date(o.expiresAt) : null;
+      afterDetail.set(o.featureKey, {
+        kind: o.kind ?? "COMP",
+        reason: o.reason,
+        expiresAt: ends && !Number.isNaN(ends.getTime()) ? ends.toISOString() : null,
+      });
     }
     const afterPlanKey = request.planKey ?? ent.planKey;
     const isSwap = afterPlanKey !== ent.planKey;
@@ -93,6 +109,7 @@ export class FeaturePreviewService {
 
     const afterCtx: ResolveContext = {
       overrides: afterOverrides,
+      overrideDetail: afterDetail,
       activeAddonSet,
       planFeatureFlags: new Set(afterPlanFlags),
       entFlags: afterEntFlags,
