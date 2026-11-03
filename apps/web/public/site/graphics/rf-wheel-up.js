@@ -414,25 +414,33 @@
           if (name > 0.01) {
             ctx.globalAlpha = vis * name;
             if (outer) {
-              /* On a phone a name is fitted inside its own piece: never wider than the piece's face, never crossing its edge.
+              /* A name is fitted inside its own piece at every width: never wider than the piece's face, never crossing its edge.
                  Its ink is whichever of the piece's dark ink and white reads better on the piece's colour right now. */
               let nf = nk, mf = phone ? nk * 0.62 : sc * 0.56, lit = false;
               const nt = phone && w.d.n && w.d.n.length > 9;
+              const two = w.lines.length > 1, note = w.d.n && p.n > 0.01, y0 = p.n > 0.01 ? 12 - (two ? 16 : 0) - (note && nt ? 24 : 0) : 54 - (two ? 8 : 0);
               {
                 let x0 = 1e9, x1 = -1e9;
                 for (let j = 0; j < n; j++) { if (tx[j] < x0) x0 = tx[j]; if (tx[j] > x1) x1 = tx[j]; }
-                const room = 2 * Math.min(ax - x0, x1 - ax) * 0.66, floor = ((phone ? 9.5 : 10.5) * dpr) / 31;
+                /* the room is the piece's real width on the rows the words cover (a wedge is narrower near the hub than its bounding box says) */
+                let hw = Math.min(ax - x0, x1 - ax);
+                const yt = ay + (y0 - 22) * nk, yb = ay + (y0 + (w.lines.length - 1) * 31 + 6 + (note ? (nt ? 68 : 34) * 0.8 : 0)) * nk;
+                for (let q = 0; q < 5; q++) {
+                  const yy = yt + ((yb - yt) * q) / 4; let l = -1e9, r = 1e9;
+                  for (let j = 0; j < n; j++) { const k = (j + 1) % n, y1 = ty[j], y2 = ty[k]; if ((y1 <= yy && y2 > yy) || (y2 <= yy && y1 > yy)) { const xx = tx[j] + ((yy - y1) * (tx[k] - tx[j])) / (y2 - y1); if (xx <= ax && xx > l) l = xx; if (xx >= ax && xx < r) r = xx; } }
+                  if (l > -1e8 && r < 1e8) hw = Math.min(hw, ax - l, r - ax);
+                }
+                const room = 2 * hw * 0.88, floor = ((phone ? 9.5 : 10.5) * dpr) / 31;
                 nf = Math.max(floor, Math.min(nk, room / Math.max(1, ...w.lines.map(wid))));
                 if (w.d.n) mf = Math.max(((phone ? 9.5 : 10) * dpr) / 31, Math.min(mf, nf * 0.8, room / Math.max(1, ...(nt ? lines2(w.d.n) : [w.d.n]).map(wid))));
                 const lf = lum(f), ld = lum(mix(INK, w.ink, p.c));
                 lit = 1.05 / (lf + 0.05) > (Math.max(lf, ld) + 0.05) / (Math.min(lf, ld) + 0.05);
                 if (lit) { ctx.fillStyle = ctx.strokeStyle = "#fff"; ctx.shadowColor = "rgba(0,0,0,0.34)"; ctx.shadowBlur = 2.5 * dpr; ctx.shadowOffsetY = 0.6 * dpr; }
               }
-              const two = w.lines.length > 1, note = w.d.n && p.n > 0.01, y0 = p.n > 0.01 ? 12 - (two ? 16 : 0) - (note && nt ? 24 : 0) : 54 - (two ? 8 : 0);
               ctx.setTransform(nf, 0, 0, nf * nq, ax, ay);
               for (let j = 0; j < w.lines.length; j++) ctx.fillText(w.lines[j], 0, y0 + j * 31);
               if (note) { const yn = ((y0 + 34) * nf) / mf, ls = nt ? lines2(w.d.n) : [w.d.n]; ctx.setTransform(mf, 0, 0, mf * nq, ax, ay); for (let j = 0; j < ls.length; j++) ctx.fillText(ls[j], 0, yn + j * 34); }
-              if (lit) { ctx.shadowColor = "rgba(0,0,0,0)"; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0; }
+              if (lit) { ctx.shadowColor = "rgba(0,0,0,0)"; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0; ctx.fillStyle = ctx.strokeStyle = css(mix(INK, w.ink, p.c)); } /* the icon keeps the piece's own ink */
             } else {
               const side = Math.abs(ux) > 0.7, r = (side || uy < 0 ? r1 : r0) + sl, gap = (phone ? 6 : 12) * dpr, ck = Math.max(phone ? sc * 0.9 : sc * 0.76, ((phone ? 13 : 12) * dpr) / 31);
               proj(ux * r, uy * r, zT);
@@ -473,7 +481,8 @@
       let up = 0, ft = -1e9, fb = -1e9, lt = 1e9;
       if (phone) {
         for (let j = 0; j < 48; j++) { if (ty[j] > ft) ft = ty[j]; if (ty[j] < lt) lt = ty[j]; if (by[j] > fb) fb = by[j]; }
-        up = clamp(0, 1, (1.6 * (fb - ft) - (ft - lt)) / (0.8 * (fb - ft) + 1e-6));
+        /* Looking straight down (the page at rest) the base sits inside the lid, so fb - ft is negative: no front face to stand on, the mark lies flat. */
+        up = fb - ft > 1 ? clamp(0, 1, (1.6 * (fb - ft) - (ft - lt)) / (0.8 * (fb - ft))) : 0;
       }
       proj(0, 0, z + THH); const ox = px, oy = py; proj(100, 0, z + THH); const ax = (px - ox) / 100, ay = (py - oy) / 100; proj(0, 100 * hy, z + THH);
       if (up < 0.5) {
