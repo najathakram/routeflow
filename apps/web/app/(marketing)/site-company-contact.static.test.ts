@@ -21,19 +21,20 @@ const paragraphs = (html: string, from: string, to: string) => {
 };
 
 describe("Company page", () => {
-  it("tells the founder's story in the same six paragraphs as the home page", () => {
+  it("tells the founder's story in the same eight paragraphs as the home page", () => {
     const onHome = paragraphs(home, 'id="fd-note"', "</div>");
     const onCompany = paragraphs(company, 'class="co-body"', 'class="co-sig"');
-    expect(onHome).toHaveLength(6);
+    expect(onHome).toHaveLength(8);
     expect(onCompany).toEqual(onHome);
   });
 
   it("has the same heading on both pages, a plain sentence and not a quote", () => {
-    const h = "It started when a wholesaler asked us for help.";
+    const h = "We built this with a wholesaler, for wholesalers.";
     expect(home).toContain(`<h2 id="fd-h" class="fd-q">${h}</h2>`);
     expect(company).toContain(`<h2 id="story-h" class="co-q">${h}</h2>`);
     expect(home).not.toContain("fd-qm");
     expect(home).not.toContain("None of them fit");
+    expect(home).not.toContain("It started when");
     expect(company).not.toContain("None of them fit");
   });
 
@@ -48,6 +49,23 @@ describe("Company page", () => {
     // the review's wording: "honest", and the plan names (Starter, Growth, Scale) the pricing page shows
     expect(note).toContain("I want to be honest with you.");
     expect(note).not.toContain("I’ll be straight with you.");
+    // the owner's brief: no degrees, what RouteFlow does, and the owner's own offer to customize
+    for (const gone of ["PhD", "University of Texas", "graduated"])
+      expect(note).not.toContain(gone);
+    expect(note).toContain("RouteFlow runs your selling, from order to payment.");
+    expect(note).toContain("Stores can order for themselves, each at its own price.");
+    expect(note).toContain("It also covers buying, simple stock, and delivery routes.");
+    expect(note).toContain("When a line has 2 boxes and 3 pieces, the bill adds up right.");
+    expect(note).toContain(
+      "We can customize it for your business, and we’ll tell you what that takes and what it costs.",
+    );
+    // that line is the boxed-line proration the pricing package pins (2 boxes + 3 pieces of an 11-pack at 220 = 500)
+    expect(
+      fs.readFileSync(
+        path.resolve(__dirname, "../../../../packages/pricing/src/pricing.spec.ts"),
+        "utf8",
+      ),
+    ).toContain("prorates loose pieces below a full box");
     expect(note).toContain(
       'so we show the <a href="/pricing">prices</a> for Starter, Growth, and Scale before you start.',
     );
@@ -58,7 +76,10 @@ describe("Company page", () => {
     expect(short).toHaveLength(3);
     expect(short[0]).toBe(paragraphs(home, 'id="fd-note"', "</div>")[0]);
     expect(short[1]).toBe(
-      "My co-founder’s father is a wholesaler. He tried several apps and services, and none of them fit the way he works. So he asked us for help.",
+      "My co-founder’s father is a wholesaler. He tried several apps and services, and none of them fit the way he works. So he asked us for help, and we built RouteFlow with him.",
+    );
+    expect(short[2]).toBe(
+      "It takes you from order to payment. If you need something it doesn’t do, tell us. We can customize it for your business.",
     );
   });
 
