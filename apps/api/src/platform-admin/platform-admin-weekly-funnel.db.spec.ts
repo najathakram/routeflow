@@ -42,6 +42,8 @@ type Week = {
   verified: number;
   firstOrder: number;
   firstRoute: number;
+  firstInvoiceSent: number;
+  firstPayment: number;
   demoBookings: number;
 };
 type Column = keyof Omit<Week, "weekStart">;
@@ -270,7 +272,9 @@ describeDb("W3 weekly sign-up funnel (real Postgres)", () => {
     expect(funnelWeeks.map((w: Week) => Object.keys(w).sort())).toEqual(
       WEEK_STARTS.map(() => [
         "demoBookings",
+        "firstInvoiceSent",
         "firstOrder",
+        "firstPayment",
         "firstRoute",
         "signups",
         "verified",

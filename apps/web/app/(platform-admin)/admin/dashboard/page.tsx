@@ -70,6 +70,8 @@ interface FunnelWeek {
   verified: number;
   firstOrder: number;
   firstRoute: number;
+  firstInvoiceSent: number;
+  firstPayment: number;
   demoBookings: number;
 }
 
@@ -78,6 +80,8 @@ const FUNNEL_COLUMNS: Array<[keyof Omit<FunnelWeek, "weekStart">, string]> = [
   ["verified", "Verified"],
   ["firstOrder", "First order"],
   ["firstRoute", "First route"],
+  ["firstInvoiceSent", "First invoice sent"],
+  ["firstPayment", "First payment"],
   ["demoBookings", "Demo bookings"],
 ];
 

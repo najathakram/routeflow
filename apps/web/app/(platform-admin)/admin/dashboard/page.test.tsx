@@ -102,6 +102,8 @@ describe("AdminDashboardPage — weekly funnel (W3 M1)", () => {
       verified: 2,
       firstOrder: 1,
       firstRoute: 0,
+      firstInvoiceSent: 7,
+      firstPayment: 6,
       demoBookings: 4,
     },
     {
@@ -110,11 +112,13 @@ describe("AdminDashboardPage — weekly funnel (W3 M1)", () => {
       verified: 4,
       firstOrder: 2,
       firstRoute: 1,
+      firstInvoiceSent: 8,
+      firstPayment: 9,
       demoBookings: 0,
     },
   ];
 
-  it("shows each week's five numbers under their labels, with the week named by its Monday", async () => {
+  it("shows each week's seven numbers under their labels, with the week named by its Monday", async () => {
     mockStatsAndGrowth(baseStats({ weeklyFunnel: { weeks } }));
 
     render(<AdminDashboardPage />);
@@ -129,6 +133,8 @@ describe("AdminDashboardPage — weekly funnel (W3 M1)", () => {
       "Verified",
       "First order",
       "First route",
+      "First invoice sent",
+      "First payment",
       "Demo bookings",
     ]);
     const rows = within(region).getAllByRole("row").slice(1);
@@ -139,8 +145,8 @@ describe("AdminDashboardPage — weekly funnel (W3 M1)", () => {
           .map((c) => c.textContent),
       ),
     ).toEqual([
-      ["Oct 19", "3", "2", "1", "0", "4"],
-      ["Oct 26", "5", "4", "2", "1", "0"],
+      ["Oct 19", "3", "2", "1", "0", "7", "6", "4"],
+      ["Oct 26", "5", "4", "2", "1", "8", "9", "0"],
     ]);
   });
 
