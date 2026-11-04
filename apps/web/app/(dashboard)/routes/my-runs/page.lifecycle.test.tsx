@@ -3,7 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import { RECURRING_ROUTES_ADDON } from "@routeflow/types";
 import { STOP_GENERIC_COPY } from "@/lib/driver-stop-copy";
-import MyRunsPage, { finishRouteBlocker, finishedRunView } from "./page";
+import MyRunsPage from "./page";
+import { finishRouteBlocker, finishedRunView } from "./run-lifecycle";
 import type { RouteRun, RouteRunStop } from "@/lib/api/routes";
 import { fmtCalendarDateWithWeekday } from "@/lib/calendar-date";
 
@@ -76,12 +77,12 @@ describe("finishRouteBlocker (D-17, D-18, D-19)", () => {
   it("a run that has not started has no Finish route", () => {
     expect(finishRouteBlocker(run(), [])).toBeNull();
   });
-  it("D-19: money collected in the app with no settlement note keeps Finish route off, and says why", () => {
+  it("D-19 (A-1): cash held with no settlement note keeps Finish route off; Settle your run takes its place", () => {
     const r = run({
       status: "IN_PROGRESS",
       collectedPayments: { cashTotal: 40, checkTotal: 0, count: 1 },
     });
-    expect(finishRouteBlocker(r, [stop("s1", "COMPLETED")])).toMatch(/Settle it in the driver app/);
+    expect(finishRouteBlocker(r, [stop("s1", "COMPLETED")])).toBeNull();
   });
   it("D-19b: once the run carries its settlement note, Finish route is offered again", () => {
     const r = run({
@@ -153,6 +154,14 @@ describe("MyRunsPage: Start route / Finish route (SA-1098 PR-2)", () => {
     renderWithProviders(<MyRunsPage />);
     await user.click(await screen.findByRole("button", { name: "Finish route" }));
     expect(window.confirm).toHaveBeenLastCalledWith("Finish this route?");
+  });
+
+  it("the page file exports only its default: Next types a page's exports, so a helper there breaks tsc where .next/types exists", () => {
+    const fs = require("fs") as typeof import("fs");
+    const path = require("path") as typeof import("path");
+    const src = fs.readFileSync(path.join(__dirname, "page.tsx"), "utf8");
+    const named = src.match(/^export (?!default\b)\w+/gm) ?? [];
+    expect(named).toEqual([]);
   });
 
   it("D-15 pin: the web app no longer carries the driver-app link", () => {

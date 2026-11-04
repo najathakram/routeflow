@@ -27,6 +27,7 @@ import {
 import { retryOnTxConflict, retryRouteTx } from "../common/tx-retry";
 import { PrismaService } from "../prisma/prisma.service";
 import { reorderRunStopsInTx } from "./run-stop-reorder";
+import { settleRunInTx } from "./run-settlement";
 import { reorderRouteStopsInTx } from "./route-stop-reorder";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import {
@@ -1498,7 +1499,10 @@ export class RoutesService {
 
     const updates: any = { status: dto.status };
     if (dto.status === RouteRunStatus.IN_PROGRESS && !run.startedAt) updates.startedAt = new Date();
-    if (dto.status === RouteRunStatus.COMPLETED) updates.completedAt = new Date();
+    // SA-1098 A-6 (SE-6): a repeat of COMPLETED is not a second completion, so the first stamp stays. A reopen clears
+    // it, so a real second completion still stamps.
+    if (dto.status === RouteRunStatus.COMPLETED && run.status !== RouteRunStatus.COMPLETED)
+      updates.completedAt = new Date();
 
     const include = {
       driver: { select: { id: true, contactName: true, user: { select: { username: true } } } },
@@ -1575,7 +1579,7 @@ export class RoutesService {
    * `client` lets a caller already inside a transaction (`completeStop` /
    * `completeWithPayment`'s RF-016 gate) pass its `tx` so a payment just
    * recorded earlier in THAT SAME transaction is visible here; every
-   * out-of-transaction caller (`findOneRun`, `updateRunStatus`, `settleRun`,
+   * out-of-transaction caller (`findOneRun`, `updateRunStatus`,
    * the list enrichments) omits it and reads through `forTenant()`.
    */
   private async getRunCashCollections(
@@ -1880,47 +1884,16 @@ export class RoutesService {
       if (!driver || run.driverId !== driver.id) {
         throw new ForbiddenException("You can only settle your own route runs");
       }
-      // A driver settles once; only an operator may amend/overwrite an
-      // existing settlement (e.g. after a dispute or a counting correction).
-      // Coded so a client whose settle response was lost can tell "your write
-      // already landed" apart from a real refusal and carry on to the COMPLETED
-      // flip instead of dead-ending on the settlement screen.
-      if (run.settlementNote != null) {
-        throw new BadRequestException({
-          code: API_ERROR_CODES.RUN_ALREADY_SETTLED,
-          message: "This run has already been settled. Ask an operator to amend it.",
-        });
-      }
     }
 
-    // The reconciliation basis is the PHYSICAL money the driver carries —
-    // cash AND checks. `getRunCashCollections` keeps the two split for
-    // reporting; every settlement comparison uses their sum, matching the
-    // mobile screen's "Cash & checks to reconcile" line, its device-local
-    // `summarizeCollections().cashTotal`, and `shouldForceSettlement`.
-    const expected = await this.getRunCashCollections(id, run.startedAt);
-    const expectedPhysical = roundMoney(expected.cashTotal + expected.checkTotal);
-    const variance = roundMoney(dto.countedCash - expectedPhysical);
-    if (Math.abs(variance) > 0.01 && !dto.varianceReason) {
-      throw new BadRequestException(
-        "Counted cash does not match the expected amount — a varianceReason is required.",
-      );
-    }
-
-    const when = new Date();
-    const sign = variance < 0 ? "-" : "+";
-    const noteLines = [
-      `Settlement recorded by ${user.username} at ${when.toISOString()}`,
-      `Expected (cash + checks): $${roundMoney(expectedPhysical).toFixed(2)}`,
-      `Counted: $${roundMoney(dto.countedCash).toFixed(2)}`,
-      `Variance: ${sign}$${roundMoney(Math.abs(variance)).toFixed(2)}`,
-    ];
-    if (dto.varianceReason) noteLines.push(`Reason: ${dto.varianceReason}`);
-
-    const updated = await this.prisma.forTenant().routeRun.update({
-      where: { id },
-      data: { settlementNote: noteLines.join("\n"), settlementVariance: variance },
-    });
+    // SA-1098 A-6: the rest is one transaction under the run's stop-row lock (see run-settlement.ts).
+    const { updated, expectedPhysical, variance } = await retryRouteTx("routes.settleRun", () =>
+      this.prisma.tenantTransaction((tx) =>
+        settleRunInTx(tx, id, dto, user, (startedAt) =>
+          this.getRunCashCollections(id, startedAt, tx),
+        ),
+      ),
+    );
 
     return {
       ...updated,
@@ -3088,11 +3061,19 @@ export class RoutesService {
         // count would disarm every one of them for the re-collection AND keep
         // the web Settlement card describing a count that no longer covers the
         // run. The driver/operator settles again after the re-delivery.
+        //
+        // A-6 (SE-14): read the run AGAIN here, after the stop update holds the stop's row lock. The pre-tx read
+        // above is stale by now: a settle that committed in between wrote a note it never saw this reopen for, and
+        // a finish may have moved the status. A settle waits on this stop's lock, so what is read now is final.
+        const fresh = await tx.routeRun.findUnique({
+          where: { id: runId },
+          select: { status: true, settlementNote: true, settlementVariance: true },
+        });
         const settlementReset =
-          run.settlementNote != null || run.settlementVariance != null
+          fresh && (fresh.settlementNote != null || fresh.settlementVariance != null)
             ? { settlementNote: null, settlementVariance: null }
             : null;
-        if (run.status === "COMPLETED") {
+        if (fresh?.status === "COMPLETED") {
           await tx.routeRun.update({
             where: { id: runId },
             data: { status: "IN_PROGRESS", completedAt: null, ...(settlementReset ?? {}) },
