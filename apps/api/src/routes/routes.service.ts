@@ -44,7 +44,7 @@ import {
   InvoiceStatus,
   ChangeRequestStatus,
 } from "@prisma/client";
-import { roundMoney } from "@routeflow/pricing";
+import { roundMoney, type StopOrderOutcome } from "@routeflow/pricing";
 import { LIVE_CUSTOMER_STOP_WHERE, SCHEDULED_ROUTE_KIND_WHERE } from "./route-stop-filters.util";
 import {
   assertAddressBelongsToCustomer,
@@ -69,6 +69,12 @@ import { ListRunsDto } from "./dto/list-runs.dto";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NotificationsService } from "../notifications/notifications.service";
 import { MessagingService } from "../messaging/messaging.service";
+import { applyStopOutcomes, notifyStopOutcomes } from "./stop-outcome";
+import {
+  TERMINAL_ORDER_STATUSES,
+  isPostDeliveryOrderStatus,
+  isTerminalOrderStatus,
+} from "../common/terminal-order-statuses";
 import { InvoicesService } from "../invoices/invoices.service";
 import { rebuildDraftsAfterUndo } from "../invoices/undo-draft-rebuild";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
@@ -1310,7 +1316,7 @@ export class RoutesService {
               notIn:
                 run.status === RouteRunStatus.COMPLETED
                   ? [OrderStatus.CANCELLED]
-                  : [OrderStatus.CANCELLED, OrderStatus.DELIVERED],
+                  : [...TERMINAL_ORDER_STATUSES],
             },
             fulfillPath: DISPATCH_PATH_WHERE.route, // SA-655
           },
@@ -1498,7 +1504,12 @@ export class RoutesService {
     }
 
     const updates: any = { status: dto.status };
-    if (dto.status === RouteRunStatus.IN_PROGRESS && !run.startedAt) updates.startedAt = new Date();
+    // SA-1101 (B782): a run completed from SCHEDULED (every stop skipped) has started too; a cancel has not.
+    if (
+      (dto.status === RouteRunStatus.IN_PROGRESS || dto.status === RouteRunStatus.COMPLETED) &&
+      !run.startedAt
+    )
+      updates.startedAt = new Date();
     // SA-1098 A-6 (SE-6): a repeat of COMPLETED is not a second completion, so the first stamp stays. A reopen clears
     // it, so a real second completion still stamps.
     if (dto.status === RouteRunStatus.COMPLETED && run.status !== RouteRunStatus.COMPLETED)
@@ -1736,7 +1747,7 @@ export class RoutesService {
       id: { in: locked },
       routeRunStopId: { in: stopIds },
       ...stopStillOpen,
-      status: { notIn: [OrderStatus.DELIVERED, OrderStatus.CANCELLED] },
+      status: { notIn: [...TERMINAL_ORDER_STATUSES] },
     };
     const releasedIds: string[] = (
       await tx.order.findMany({ where: releaseWhere, select: { id: true } })
@@ -2149,6 +2160,9 @@ export class RoutesService {
     await ingestPodCapture(this.podDeps, dto, stopId, { idempotencyKey: dto.idempotencyKey }); // #3723: retries overwrite
 
     let autoCompleted = false;
+    // SA-1101: one close time for the stop and the orders it delivers; the map is what the close made each order.
+    const closedAt = new Date();
+    let outcomes = new Map<string, StopOrderOutcome>();
     // SA-706f: a 40P01/40001 victim re-runs the WHOLE tx (DB writes only; each attempt starts clean).
     await retryRouteTx("routes.completeStop", () =>
       this.prisma.tenantTransaction(async (tx) => {
@@ -2175,7 +2189,7 @@ export class RoutesService {
         // 1. Mark stop completed (SA-151, see claimStopCompletion).
         await claimStopCompletion(tx, stopId, {
           status: "COMPLETED",
-          completedAt: new Date(),
+          completedAt: closedAt,
           ...(dto.driverNote !== undefined ? { driverNote: dto.driverNote } : {}),
           ...(dto.podPhotoUrls ? { podPhotoUrls: dto.podPhotoUrls } : {}),
           ...(dto.signatureUrl !== undefined ? { signatureUrl: dto.signatureUrl } : {}),
@@ -2223,17 +2237,8 @@ export class RoutesService {
           }
         }
 
-        // 3. Mark linked orders as DELIVERED
-        const orderIds = stop.orders.map((o) => o.id);
-        if (orderIds.length > 0) {
-          await tx.order.updateMany({
-            where: {
-              id: { in: orderIds },
-              status: { notIn: NON_ROUTABLE_ORDER_STATUSES },
-            },
-            data: { status: OrderStatus.DELIVERED },
-          });
-        }
+        // 3. SA-1101: each order becomes DELIVERED or REFUSED from its lines (stop-outcome.ts).
+        outcomes = await applyStopOutcomes(tx, stop.orders, closedAt);
 
         // RF-016: Auto-complete run when last stop is done
         const allStops = await tx.routeRunStop.findMany({
@@ -2290,25 +2295,12 @@ export class RoutesService {
       }),
     );
 
-    // P6-5: DELIVERED per order this completion flipped (driver bypasses
-    // changeStatus). AFTER the tx, fire-and-forget; skip DRAFT/CANCELLED/DELIVERED.
-    for (const o of stop.orders) {
-      if (NON_ROUTABLE_ORDER_STATUSES.includes(o.status)) continue;
-      this.messaging
-        .notifyEvent(NotificationEvent.DELIVERED, {
-          customerId: o.customerId,
-          senderId: user.sub || null,
-          vars: {
-            orderNumber: o.orderNumber ?? "",
-            orderTotal: formatMoney(o.total),
-            deliveredAt: formatDate(new Date()),
-          },
-        })
-        .catch(() => {});
-    }
+    // P6-5 / SA-1101: one notice per order this completion flipped, of its own kind (driver bypasses
+    // changeStatus). AFTER the tx, fire-and-forget; an order that was already terminal is not in the map.
+    notifyStopOutcomes(this.messaging, outcomes, stop.orders, user.sub || null, closedAt);
 
     // #2095: post-commit order/stop/driver/progress events — see route-realtime.ts.
-    await this.live.stopCompleted(runId, stop, autoCompleted);
+    await this.live.stopCompleted(runId, stop, autoCompleted, outcomes);
 
     const result = await this.prisma
       .forTenant()
@@ -2379,6 +2371,8 @@ export class RoutesService {
     const baseLabels = await this.invoicesService.loadBaseLabels(stop); // SA-1029: once, before the tx
 
     let autoCompleted = false;
+    const closedAt = new Date(); // SA-1101: the stop's completedAt and the delivered orders' deliveredAt
+    let outcomes = new Map<string, StopOrderOutcome>();
     let paymentIds: string[] = [];
     // B83: over-collection additively surfaced on the response (undefined when
     // no payment was collected this completion — no payment call, no fields).
@@ -2406,7 +2400,7 @@ export class RoutesService {
         // 1. Mark stop completed — SA-151 review, see claimStopCompletion (delivery-lines.util.ts).
         await claimStopCompletion(tx, stopId, {
           status: "COMPLETED",
-          completedAt: new Date(),
+          completedAt: closedAt,
           ...(dto.driverNote !== undefined ? { driverNote: dto.driverNote } : {}),
           ...(dto.podPhotoUrls ? { podPhotoUrls: dto.podPhotoUrls } : {}),
           ...(dto.signatureUrl !== undefined ? { signatureUrl: dto.signatureUrl } : {}),
@@ -2456,17 +2450,8 @@ export class RoutesService {
           }
         }
 
-        // 3. Mark linked orders as DELIVERED
-        const orderIds = stop.orders.map((o) => o.id);
-        if (orderIds.length > 0) {
-          await tx.order.updateMany({
-            where: {
-              id: { in: orderIds },
-              status: { notIn: NON_ROUTABLE_ORDER_STATUSES },
-            },
-            data: { status: OrderStatus.DELIVERED },
-          });
-        }
+        // 3. SA-1101: each order becomes DELIVERED or REFUSED from its lines (stop-outcome.ts).
+        outcomes = await applyStopOutcomes(tx, stop.orders, closedAt);
 
         // 4. B663: reconcile every delivered order's invoice onto the DELIVERED
         // quantities, UNCONDITIONALLY — see complete-payment-reconcile.ts for the
@@ -2565,39 +2550,27 @@ export class RoutesService {
       }),
     );
 
-    // P6-5: DELIVERED per order this completion flipped (driver bypasses
-    // changeStatus). AFTER the tx, fire-and-forget; skip DRAFT/CANCELLED/DELIVERED.
+    // P6-5 / SA-1101: one notice per order this completion flipped, of its own kind (driver bypasses
+    // changeStatus). AFTER the tx, fire-and-forget.
     //
-    // B663/I2: see complete-payment-reconcile.ts — orderTotal must read the
-    // reconciled invoice(s) post-tx, never the stale pre-reconcile Order.total.
-    const routableOrderIds = stop.orders
-      .filter((o) => !NON_ROUTABLE_ORDER_STATUSES.includes(o.status))
-      .map((o) => o.id);
+    // B663/I2: see complete-payment-reconcile.ts — a DELIVERED notice's orderTotal must read the
+    // reconciled invoice(s) post-tx, never the stale pre-reconcile Order.total. A refused order has no total.
     const postReconcileTotalByOrder = await resolvePostReconcileOrderTotals(
       this.prisma.forTenant(),
-      routableOrderIds,
+      [...outcomes].filter(([, v]) => v === "DELIVERED").map(([id]) => id),
       this.logger,
     );
-    for (const o of stop.orders) {
-      if (NON_ROUTABLE_ORDER_STATUSES.includes(o.status)) continue;
-      // No non-void invoice at all (shouldn't happen for a routed order, but never
-      // silently notify a wrong amount) falls back to the pre-tx order total.
-      const total = postReconcileTotalByOrder.get(o.id) ?? Number(o.total);
-      this.messaging
-        .notifyEvent(NotificationEvent.DELIVERED, {
-          customerId: o.customerId,
-          senderId: user.sub || null,
-          vars: {
-            orderNumber: o.orderNumber ?? "",
-            orderTotal: formatMoney(total),
-            deliveredAt: formatDate(new Date()),
-          },
-        })
-        .catch(() => {});
-    }
+    notifyStopOutcomes(
+      this.messaging,
+      outcomes,
+      stop.orders,
+      user.sub || null,
+      closedAt,
+      postReconcileTotalByOrder,
+    );
 
     // #2095: post-commit order/stop/driver/progress events — see route-realtime.ts.
-    await this.live.stopCompleted(runId, stop, autoCompleted);
+    await this.live.stopCompleted(runId, stop, autoCompleted, outcomes);
 
     const result = await this.prisma
       .forTenant()
@@ -2627,7 +2600,7 @@ export class RoutesService {
             },
             customerAddress: true,
             orders: {
-              where: { status: { notIn: [OrderStatus.CANCELLED, OrderStatus.DELIVERED] } },
+              where: { status: { notIn: [...TERMINAL_ORDER_STATUSES] } },
               include: {
                 lineItems: {
                   include: { product: { select: { id: true, name: true, sku: true } } },
@@ -2672,7 +2645,7 @@ export class RoutesService {
         const orders = await this.prisma.forTenant().order.findMany({
           where: {
             customerId: { in: customerIds },
-            status: { notIn: [OrderStatus.CANCELLED, OrderStatus.DELIVERED] },
+            status: { notIn: [...TERMINAL_ORDER_STATUSES] },
             fulfillPath: DISPATCH_PATH_WHERE.route, // SA-655
           },
           include: {
@@ -2863,9 +2836,7 @@ export class RoutesService {
     // never report anything to fix. Only an order the release WOULD have taken
     // and did not means "this row predates the fix".
     if (stop.status === "SKIPPED" && run.status === "COMPLETED") {
-      const stranded = stop.orders.some(
-        (o) => o.status !== OrderStatus.DELIVERED && o.status !== OrderStatus.CANCELLED,
-      );
+      const stranded = stop.orders.some((o) => !isTerminalOrderStatus(o.status));
       throw new BadRequestException(
         stranded
           ? "This run is complete and this skipped stop's orders are still attached to it (they predate the release fix) — ask an operator to run the F11 stranded-order repair, which frees them for a new run."
@@ -2961,8 +2932,12 @@ export class RoutesService {
             where: { orderId: order.id, status: { not: "CANCELLED" } },
             data: { status: "PENDING" },
           });
-          if (order.status === "DELIVERED" || order.status === "OUT_FOR_DELIVERY") {
-            await tx.order.update({ where: { id: order.id }, data: { status: "CONFIRMED" } });
+          if (isPostDeliveryOrderStatus(order.status) || order.status === "OUT_FOR_DELIVERY") {
+            // SA-1101 (B778): the delivered date goes with the delivery; a REFUSED order comes back too.
+            await tx.order.update({
+              where: { id: order.id },
+              data: { status: "CONFIRMED", deliveredAt: null },
+            });
             reopened.push(order);
           }
           await tx.transaction.deleteMany({ where: { orderId: order.id, status: "UNPAID" } });

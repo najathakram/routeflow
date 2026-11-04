@@ -283,7 +283,7 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
           id: { in: ["B", "C"] },
           routeRunStopId: { in: ["s2", "s3"] },
           routeRunStop: { status: { not: "COMPLETED" } },
-          status: { notIn: ["DELIVERED", "CANCELLED"] },
+          status: { notIn: ["DELIVERED", "REFUSED", "CANCELLED"] },
         },
         data: { routeRunId: null, routeRunStopId: null },
       });
@@ -293,7 +293,7 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
           id: { in: ["B", "C"] },
           routeRunStopId: { in: ["s2", "s3"] },
           routeRunStop: { status: { not: "COMPLETED" } },
-          status: { notIn: ["DELIVERED", "CANCELLED"] },
+          status: { notIn: ["DELIVERED", "REFUSED", "CANCELLED"] },
         },
         select: { id: true },
       });
@@ -327,7 +327,7 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
           id: { in: ["B", "C"] },
           routeRunStopId: { in: ["s2", "s3"] },
           routeRunStop: { status: { not: "COMPLETED" } },
-          status: { notIn: ["DELIVERED", "CANCELLED"] },
+          status: { notIn: ["DELIVERED", "REFUSED", "CANCELLED"] },
         },
         data: { routeRunId: null, routeRunStopId: null },
       });
@@ -754,7 +754,7 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
           id: { in: ["B"] },
           routeRunStopId: { in: ["s3"] },
           routeRunStop: { status: { not: "COMPLETED" } },
-          status: { notIn: ["DELIVERED", "CANCELLED"] },
+          status: { notIn: ["DELIVERED", "REFUSED", "CANCELLED"] },
         },
         data: { routeRunId: null, routeRunStopId: null },
       });
@@ -800,14 +800,14 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
           id: { in: ["C"] },
           routeRunStopId: { in: ["s3"] },
           routeRunStop: { status: { not: "COMPLETED" } },
-          status: { notIn: ["DELIVERED", "CANCELLED"] },
+          status: { notIn: ["DELIVERED", "REFUSED", "CANCELLED"] },
         },
         data: { routeRunId: null, routeRunStopId: null },
       });
       // Control — the pre-existing DELIVERED flip still fires, proving the
       // fixture actually completed the stop.
       expect(tx.order.updateMany).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { status: "DELIVERED" } }),
+        expect.objectContaining({ data: { status: "DELIVERED", deliveredAt: expect.any(Date) } }),
       );
     });
   });
@@ -845,7 +845,7 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
           id: { in: ["C"] },
           routeRunStopId: { in: ["s3"] },
           routeRunStop: { status: { not: "COMPLETED" } },
-          status: { notIn: ["DELIVERED", "CANCELLED"] },
+          status: { notIn: ["DELIVERED", "REFUSED", "CANCELLED"] },
         },
         data: { routeRunId: null, routeRunStopId: null },
       });
@@ -1034,7 +1034,7 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
           id: { in: [] },
           routeRunStopId: { in: ["s2"] },
           routeRunStop: { status: { not: "COMPLETED" } },
-          status: { notIn: ["DELIVERED", "CANCELLED"] },
+          status: { notIn: ["DELIVERED", "REFUSED", "CANCELLED"] },
         },
         data: { routeRunId: null, routeRunStopId: null },
       });
