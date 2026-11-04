@@ -1,10 +1,12 @@
 import * as React from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ImportCsvPanel, type ImportCsvResult } from "./ImportCsvPanel";
+import { downloadCsv } from "@/lib/export";
 
 const post = jest.fn();
 const toast = jest.fn();
 
+jest.mock("@/lib/export", () => ({ downloadCsv: jest.fn() }));
 jest.mock("@/lib/api-client", () => ({ apiClient: { post: (...a: unknown[]) => post(...a) } }));
 jest.mock("@routeflow/ui/web", () => ({
   ...jest.requireActual("@routeflow/ui/web"),
@@ -52,6 +54,7 @@ describe("ImportCsvPanel", () => {
     post.mockResolvedValueOnce({ data: previewResult });
     render(
       <ImportCsvPanel
+        template={{ headers: ["Item Name"], fileName: "t.csv" }}
         endpoint="/import/products"
         title="Products"
         columns={columns}
@@ -78,6 +81,7 @@ describe("ImportCsvPanel", () => {
     });
     render(
       <ImportCsvPanel
+        template={{ headers: ["Item Name"], fileName: "t.csv" }}
         endpoint="/import/products"
         title="Products"
         columns={columns}
@@ -102,6 +106,7 @@ describe("ImportCsvPanel", () => {
   it("disables Import until a preview has run", () => {
     render(
       <ImportCsvPanel
+        template={{ headers: ["Item Name"], fileName: "t.csv" }}
         endpoint="/import/products"
         title="Products"
         columns={columns}
@@ -121,6 +126,7 @@ describe("ImportCsvPanel", () => {
     });
     render(
       <ImportCsvPanel
+        template={{ headers: ["Item Name"], fileName: "t.csv" }}
         endpoint="/import/products"
         title="Products"
         columns={columns}
@@ -145,6 +151,7 @@ describe("ImportCsvPanel", () => {
       });
       render(
         <ImportCsvPanel
+          template={{ headers: ["Item Name"], fileName: "t.csv" }}
           endpoint="/import/products"
           title="Products"
           columns={columns}
@@ -166,6 +173,7 @@ describe("ImportCsvPanel", () => {
     post.mockRejectedValueOnce({ response: { status: 500, data: { message: "db down" } } });
     render(
       <ImportCsvPanel
+        template={{ headers: ["Item Name"], fileName: "t.csv" }}
         endpoint="/import/products"
         title="Products"
         columns={columns}
@@ -190,6 +198,7 @@ describe("ImportCsvPanel", () => {
     });
     render(
       <ImportCsvPanel
+        template={{ headers: ["Item Name"], fileName: "t.csv" }}
         endpoint="/import/products"
         title="Products"
         columns={columns}
@@ -222,6 +231,7 @@ describe("ImportCsvPanel", () => {
     });
     render(
       <ImportCsvPanel
+        template={{ headers: ["Item Name"], fileName: "t.csv" }}
         endpoint="/import/products"
         title="Products"
         columns={columns}
@@ -237,5 +247,21 @@ describe("ImportCsvPanel", () => {
     expect(screen.getByTestId("products-row-1")).toHaveTextContent("SKU already exists");
     expect(screen.getByTestId("products-skipped-rows")).toHaveTextContent("SKU already exists");
     expect(screen.getByTestId("products-errors")).toHaveTextContent("SKU already exists");
+  });
+});
+
+describe("ImportCsvPanel: download template", () => {
+  it("downloads the header row it was given, with no rows", () => {
+    render(
+      <ImportCsvPanel
+        endpoint="/import/products"
+        title="Products"
+        columns={[]}
+        template={{ headers: ["Item Name", "SKU"], fileName: "products-template.csv" }}
+        testIdPrefix="tpl"
+      />,
+    );
+    fireEvent.click(screen.getByTestId("tpl-template"));
+    expect(downloadCsv).toHaveBeenCalledWith("products-template.csv", ["Item Name", "SKU"], []);
   });
 });

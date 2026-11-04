@@ -132,6 +132,33 @@ export const CUSTOMER_IMPORT_COLUMNS: ImportColumnAlias[] = [
 ];
 
 /** SA-823 (row 655): the key a Family row matched its existing product by (`null` = a new variant is created). */
+/** Customer headers the contacts import reads by name, outside the alias list above. */
+export const CUSTOMER_IMPORT_LITERAL_HEADERS: string[] = [
+  "Phone",
+  "MobilePhone",
+  "Email",
+  "First Name",
+  "Last Name",
+  "Billing Address",
+  "Billing City",
+  "Billing State",
+  "Billing Code",
+  "Shipping Address",
+  "Shipping City",
+  "Shipping State",
+  "Shipping Code",
+  "Notes",
+];
+
+/** What a download template carries: the columns the importer accepts, and nothing typed by hand. */
+export const PRODUCT_IMPORT_TEMPLATE_HEADERS: string[] = PRODUCT_IMPORT_COLUMNS.map(
+  (c) => c.canonical,
+);
+export const CUSTOMER_IMPORT_TEMPLATE_HEADERS: string[] = [
+  ...CUSTOMER_IMPORT_COLUMNS.map((c) => c.canonical),
+  ...CUSTOMER_IMPORT_LITERAL_HEADERS,
+];
+
 export type ImportFamilyMatchKey = "id" | "sku" | "barcode";
 
 /** Per-row family detail on a product-import plan row (preview and apply return the same shape). */

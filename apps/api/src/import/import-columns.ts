@@ -1,4 +1,8 @@
-import { PRODUCT_IMPORT_COLUMNS, CUSTOMER_IMPORT_COLUMNS } from "./import-column-aliases";
+import {
+  PRODUCT_IMPORT_COLUMNS,
+  CUSTOMER_IMPORT_COLUMNS,
+  CUSTOMER_IMPORT_LITERAL_HEADERS,
+} from "./import-column-aliases";
 import { parseImportMoney, parseImportNumber } from "./parse-import-number";
 import { roundUnitCost } from "@routeflow/pricing";
 
@@ -526,6 +530,12 @@ export function resolveColumns(headers: string[], registry: ColumnDef[]): Resolv
   }
 
   return { byField, unknownColumns };
+}
+
+/** The contacts import reads these by name, so the preview must not call them unknown. */
+export function withoutCustomerLiteralHeaders(headers: string[]): string[] {
+  const literal = new Set(CUSTOMER_IMPORT_LITERAL_HEADERS.map(normalizeHeader));
+  return headers.filter((h) => !literal.has(normalizeHeader(h)));
 }
 
 export interface ParsedRow {

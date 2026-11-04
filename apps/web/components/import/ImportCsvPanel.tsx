@@ -24,7 +24,8 @@ function importFailureCopy(err: unknown): string {
   const status = (err as { response?: { status?: number } } | null)?.response?.status;
   return status === 400 || status === 413 ? FILE_PROBLEM_COPY : genericToastCopy(err);
 }
-import { Upload, AlertCircle, CheckCircle2, ChevronDown, ChevronUp } from "lucide-react";
+import { Upload, AlertCircle, CheckCircle2, ChevronDown, ChevronUp, Download } from "lucide-react";
+import { downloadCsv } from "@/lib/export";
 import { cn, useToast } from "@routeflow/ui/web";
 import type { ImportColumnAlias } from "@routeflow/types";
 import type { ImportFamilyRowInfo, ImportFamilySummary } from "@routeflow/types";
@@ -113,6 +114,8 @@ export interface ImportCsvPanelProps {
   title: string;
   /** Accepted-column help (canonical header + its aliases) — from PRODUCT/CUSTOMER_IMPORT_COLUMNS. */
   columns: ImportColumnAlias[];
+  /** The template's header row and file name, from the shared `*_IMPORT_TEMPLATE_HEADERS`. */
+  template: { headers: string[]; fileName: string };
   /** Fired once after a successful (non-dry-run) import. */
   onImported?: (result: ImportCsvResult) => void;
   /** Namespaces data-testid hooks when more than one panel renders on the same page. Defaults to a
@@ -403,6 +406,7 @@ export function ImportCsvPanel({
   endpoint,
   title,
   columns,
+  template,
   onImported,
   testIdPrefix,
 }: ImportCsvPanelProps) {
@@ -623,6 +627,16 @@ export function ImportCsvPanel({
           </ul>
         )}
       </div>
+
+      <button
+        type="button"
+        data-testid={`${prefix}-template`}
+        onClick={() => downloadCsv(template.fileName, template.headers, [])}
+        className="inline-flex items-center gap-1.5 self-start text-xs font-medium text-brand-600 hover:underline"
+      >
+        <Download className="h-3.5 w-3.5" />
+        Download template
+      </button>
 
       {/* Drop zone */}
       <div

@@ -16,7 +16,6 @@ import {
   Upload,
   ArrowUpDown,
   Merge,
-  AlertCircle,
   UserCheck,
   ChevronDown,
   ChevronUp,
@@ -61,7 +60,7 @@ import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useU
 import { fmt, displayEmail, NO_EMAIL_COPY } from "@/lib/formatting";
 import { ImportCsvPanel } from "@/components/import/ImportCsvPanel";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
-import { CUSTOMER_IMPORT_COLUMNS } from "@routeflow/types";
+import { CUSTOMER_IMPORT_COLUMNS, CUSTOMER_IMPORT_TEMPLATE_HEADERS } from "@routeflow/types";
 import {
   OpenBalanceButton,
   useDropStatementParamNotOnPage,
@@ -151,21 +150,16 @@ function ImportCustomersModal({
         </div>
 
         <div className="space-y-4 px-6 py-5">
-          {/* How-to hint */}
-          <div className="flex items-start gap-2 rounded-lg bg-surface-raised px-3 py-2.5 text-xs text-navy/70">
-            <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-navy/70" />
-            <span>
-              <strong className="text-navy/70">How to export from Zoho:</strong> Zoho Invoices →
-              Contacts → ⋮ → Export Contacts (CSV)
-            </span>
-          </div>
-
           {/* B858/B859 (FIX5): same preview-then-import panel as settings/import — one renderer
            *  for one result shape, so the modal shows the same plan/diff before writing. */}
           <ImportCsvPanel
             endpoint="/import/contacts"
             title="Customers"
             columns={CUSTOMER_IMPORT_COLUMNS}
+            template={{
+              headers: CUSTOMER_IMPORT_TEMPLATE_HEADERS,
+              fileName: "customers-template.csv",
+            }}
             testIdPrefix="import-customers-modal"
             onImported={() => {
               setImported(true);
