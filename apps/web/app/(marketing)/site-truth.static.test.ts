@@ -64,8 +64,10 @@ describe("public site sentences the code backs", () => {
   });
 
   // apps/mobile/app/_layout.tsx: a pure DRIVER on a tenant without the staff-only developer_mode add-on lands on the
-  // "Desktop Only" screen, so a new account's driver has no phone app. The web StopSheet (routes/my-runs) starts or skips a
-  // stop; its "Delivered / Refused / Collect payment" button is disabled. Photo and signature exist only in the native app.
+  // "Desktop Only" screen, so a new account's driver has no phone app. The web StopSheet (routes/my-runs, #4165 #4172 #4173
+  // #4188 #4189) starts, skips, delivers (a short delivery is a changed quantity), refuses with a reason, and undoes a stop.
+  // It sends no payment, and nothing on the web takes a proof photo or a signature. A new account opens driver runs when
+  // its setup answer is "delivery" (first-run turns on routes), as the pricing page says.
   it("drivers: the pages say what a new account's driver can do on the web, not the phone app", () => {
     for (const name of [
       "home",
@@ -82,7 +84,12 @@ describe("public site sentences the code backs", () => {
       expect(html).not.toMatch(/the driver (can take|takes) a (photo|signature)/i);
       expect(html).not.toMatch(/Complete stop/);
     }
-    expect(page("product")).toContain("drivers can’t finish a stop");
+    expect(page("product")).not.toMatch(/can’t finish a stop/i);
+    expect(page("product")).toContain("Drivers finish a stop as delivered.");
+    expect(page("product")).toContain("If a store gets less, the driver changes the amount.");
+    expect(page("product")).toContain("A stop can also be refused, with a reason, or undone.");
+    expect(page("product")).toContain("Drivers can’t take payment at the door.");
+    expect(page("product")).toContain("There’s no proof photo or signature.");
     expect(page("product")).toContain("An order on a run is delivered when its stop is completed.");
     expect(page("home")).toContain(
       "Drivers see the stops on the web and can start or skip a stop.",
@@ -109,8 +116,8 @@ describe("public site sentences the code backs", () => {
   });
 
   // The only path that records a short delivery is the driver app's stop-complete call (routes.controller.ts
-  // POST :id/stops/:stopId/complete); the web has no per-line delivered quantity, and "mark delivered" stamps the full
-  // quantity. So a new account's staff cannot make a draft invoice follow a short delivery, and the pages must not say it.
+  // POST :id/stops/:stopId/complete). The web driver can now change a line's amount, but no page has checked that a draft
+  // invoice follows a short delivery, so the pages must not say it.
   it("home, product: no claim that the invoice follows what was delivered", () => {
     for (const name of ["home", "product"]) {
       expect(page(name)).not.toMatch(/what was delivered/i);
