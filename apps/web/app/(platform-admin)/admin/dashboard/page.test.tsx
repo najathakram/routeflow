@@ -133,7 +133,7 @@ describe("AdminDashboardPage — weekly funnel (W3 M1)", () => {
       "Verified",
       "First order",
       "First route",
-      "First invoice sent",
+      "First invoice issued",
       "First payment",
       "Demo bookings",
     ]);

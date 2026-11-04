@@ -2089,7 +2089,9 @@ export class PlatformAdminService {
    *                verifyEmailAndLogin writes with reason `email_verify`)
    *   firstOrder   tenants signed up inside the window whose earliest order was placed that week
    *   firstRoute   tenants signed up inside the window whose earliest route was made that week
-   *   firstInvoiceSent the same cohort's earliest `Invoice.sentAt`; only a send stamps it, the import never does
+   *   firstInvoiceSent the same cohort's earliest `Invoice.sentAt`. The key name is historical: `sentAt` means "issued",
+   *                not "emailed". A send stamps it, and so do a counter sale (send with suppressNotify), a deposit
+   *                auto-issued at order placement and a door payment on a draft; the import never does. Shown as "First invoice issued".
    *   firstPayment the same cohort's earliest money recorded: status PAID, not a credit note, on an
    *                invoice that was sent or came from an order. Imported history has neither, so it
    *                can't pass for a first payment; a hand-made invoice paid unsent isn't counted either.

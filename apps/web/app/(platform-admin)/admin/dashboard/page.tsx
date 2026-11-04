@@ -80,7 +80,7 @@ const FUNNEL_COLUMNS: Array<[keyof Omit<FunnelWeek, "weekStart">, string]> = [
   ["verified", "Verified"],
   ["firstOrder", "First order"],
   ["firstRoute", "First route"],
-  ["firstInvoiceSent", "First invoice sent"],
+  ["firstInvoiceSent", "First invoice issued"],
   ["firstPayment", "First payment"],
   ["demoBookings", "Demo bookings"],
 ];

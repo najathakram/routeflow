@@ -7,6 +7,9 @@
  *                 week of its first verification; an admin reactivation or a login that carries the same reason does not
  *   firstOrder    sign-up cohort tenants only (created inside the window); the earliest order must fall inside the window
  *   firstRoute    the same two bounds on routes
+ *   firstInvoiceSent / firstPayment  the same cohort bounds on `Invoice.sentAt` (an invoice ISSUED: sent, counter sale, deposit
+ *                 auto-issue; an import never stamps it) and on the first PAID, non-credit-note payment on an invoice that was
+ *                 issued or came from an order (second test)
  *   demoBookings  bookings by the week they were made
  *
  * "Live" is `class: PRODUCTION` and not soft-deleted: TEST, DEMO, INTERNAL and deleted tenants add nothing to any column.
@@ -60,6 +63,8 @@ describeDb("W3 weekly sign-up funnel (real Postgres)", () => {
     user: [] as string[],
     customer: [] as string[],
     order: [] as string[],
+    invoice: [] as string[],
+    payment: [] as string[],
     route: [] as string[],
     audit: [] as string[],
     booking: [] as string[],
@@ -69,9 +74,9 @@ describeDb("W3 weekly sign-up funnel (real Postgres)", () => {
   const funnel = async (): Promise<Week[]> =>
     ((svc as any)._weeklyFunnel(NOW) as Promise<{ weeks: Week[] }>).then((r) => r.weeks);
   /** The funnel now minus the funnel before the spec's rows, per week and column. */
-  const delta = (before: Week[], after: Week[]) =>
+  const delta = (before: Week[], after: Week[], cols: Column[] = COLUMNS) =>
     Object.fromEntries(
-      COLUMNS.map((c) => [c, after.map((w, i) => w[c] - before[i][c])] as [Column, number[]]),
+      cols.map((c) => [c, after.map((w, i) => w[c] - before[i][c])] as [Column, number[]]),
     ) as Record<Column, number[]>;
   /** A column's expected delta: `{ weekIndex: count }`, every other week 0. */
   const weeks = (counts: Record<number, number>) => WEEK_STARTS.map((_, i) => counts[i] ?? 0);
@@ -111,7 +116,7 @@ describeDb("W3 weekly sign-up funnel (real Postgres)", () => {
     ids.audit.push(a.id);
   }
   const customerOf = new Map<string, string>();
-  async function order(tenantId: string, createdAt: string) {
+  async function customerIdOf(tenantId: string) {
     let customerId = customerOf.get(tenantId);
     if (!customerId) {
       const user = await prisma.user.create({
@@ -130,10 +135,51 @@ describeDb("W3 weekly sign-up funnel (real Postgres)", () => {
       customerId = customer.id;
       customerOf.set(tenantId, customerId);
     }
+    return customerId;
+  }
+  async function order(tenantId: string, createdAt: string) {
+    const customerId = await customerIdOf(tenantId);
     const o = await prisma.order.create({
       data: { customerId, tenantId, createdAt: at(createdAt) },
     });
     ids.order.push(o.id);
+    return o.id;
+  }
+  /** An invoice row. `sentAt` null + no order = an imported one (the import never stamps `sentAt`). */
+  async function invoice(tenantId: string, over: { sentAt?: string; orderId?: string } = {}) {
+    seq += 1;
+    const i = await prisma.invoice.create({
+      data: {
+        invoiceNumber: `W3F-${run}-${seq}`,
+        customerId: await customerIdOf(tenantId),
+        tenantId,
+        status: "SENT",
+        subtotal: 10,
+        total: 10,
+        sentAt: over.sentAt ? at(over.sentAt) : null,
+        orderId: over.orderId ?? null,
+      },
+    });
+    ids.invoice.push(i.id);
+    return i.id;
+  }
+  async function payment(
+    tenantId: string,
+    invoiceId: string,
+    createdAt: string,
+    over: { status?: "PAID" | "VOID"; method?: "CASH" | "CREDIT_NOTE" } = {},
+  ) {
+    const p = await prisma.invoicePayment.create({
+      data: {
+        invoiceId,
+        tenantId,
+        amount: 10,
+        method: over.method ?? "CASH",
+        status: over.status ?? "PAID",
+        createdAt: at(createdAt),
+      },
+    });
+    ids.payment.push(p.id);
   }
   async function route(tenantId: string, createdAt: string) {
     const r = await prisma.route.create({
@@ -172,6 +218,8 @@ describeDb("W3 weekly sign-up funnel (real Postgres)", () => {
 
   afterAll(async () => {
     try {
+      await prisma.invoicePayment.deleteMany({ where: { id: { in: ids.payment } } });
+      await prisma.invoice.deleteMany({ where: { id: { in: ids.invoice } } });
       await prisma.order.deleteMany({ where: { id: { in: ids.order } } });
       await prisma.customer.deleteMany({ where: { id: { in: ids.customer } } });
       await prisma.user.deleteMany({ where: { id: { in: ids.user } } });
@@ -260,6 +308,56 @@ describeDb("W3 weekly sign-up funnel (real Postgres)", () => {
       firstRoute: weeks({ 2: 1, 3: 1, 7: 1 }),
       // Two in week 2, one in week 5.
       demoBookings: weeks({ 2: 2, 5: 1 }),
+    });
+  });
+
+  it("firstInvoiceSent / firstPayment: each cohort business counts once, in the week of its first issued invoice and first real payment", async () => {
+    const cols: Column[] = ["firstInvoiceSent", "firstPayment"];
+    const before = await funnel();
+
+    // A: first invoice issued 10-01 (week 2); a later one on 10-14 is not a first. Its real payment is 10-08 (week 3),
+    // but a VOID payment (09-29) and a credit-note payment (09-30) come earlier, so a group-by that ignored the
+    // status or method filter would put A's first payment in week 2.
+    const a = await tenant("2026-09-15T10:00:00.000Z");
+    const a1 = await invoice(a, { sentAt: "2026-10-01T10:00:00.000Z" });
+    await invoice(a, { sentAt: "2026-10-14T10:00:00.000Z" });
+    await payment(a, a1, "2026-09-29T10:00:00.000Z", { status: "VOID" });
+    await payment(a, a1, "2026-09-30T10:00:00.000Z", { method: "CREDIT_NOTE" });
+    await payment(a, a1, "2026-10-08T10:00:00.000Z");
+    await payment(a, a1, "2026-10-22T10:00:00.000Z"); // a later payment is not a first
+
+    // B: only imported history (no sentAt, no order) with a PAID payment: counts as neither.
+    const b = await tenant("2026-09-22T10:00:00.000Z");
+    const b1 = await invoice(b);
+    await payment(b, b1, "2026-10-10T10:00:00.000Z");
+
+    // C: an order-linked invoice never sent, paid 10-13 (week 4): the payment counts through the order branch.
+    // Its first issued invoice is the one stamped 10-20 (week 5).
+    const c = await tenant("2026-09-23T10:00:00.000Z");
+    const c1 = await invoice(c, { orderId: await order(c, "2026-09-24T10:00:00.000Z") });
+    await payment(c, c1, "2026-10-13T10:00:00.000Z");
+    await invoice(c, { sentAt: "2026-10-20T10:00:00.000Z" });
+
+    // An older tenant (signed up before the window) and every non-live tenant add nothing.
+    const older = await tenant("2026-08-01T10:00:00.000Z");
+    const o1 = await invoice(older, { sentAt: "2026-10-01T10:00:00.000Z" });
+    await payment(older, o1, "2026-10-02T10:00:00.000Z");
+    for (const over of [
+      { class: "TEST" as const },
+      { class: "DEMO" as const },
+      { class: "INTERNAL" as const },
+      { deletedAt: at("2026-10-01T00:00:00.000Z") },
+    ]) {
+      const ghost = await tenant("2026-09-22T11:00:00.000Z", over);
+      const g1 = await invoice(ghost, { sentAt: "2026-09-22T12:00:00.000Z" });
+      await payment(ghost, g1, "2026-09-22T13:00:00.000Z");
+    }
+
+    expect(delta(before, await funnel(), cols)).toEqual({
+      // A week 2, C week 5.
+      firstInvoiceSent: weeks({ 2: 1, 5: 1 }),
+      // A week 3, C week 4.
+      firstPayment: weeks({ 3: 1, 4: 1 }),
     });
   });
 
