@@ -532,10 +532,10 @@ export function resolveColumns(headers: string[], registry: ColumnDef[]): Resolv
   return { byField, unknownColumns };
 }
 
-/** The contacts import reads these by name, so the preview must not call them unknown. */
+/** The contacts import reads these by exact key (`row["Phone"]`), so only an exact match is not unknown; `phone` or `Billing_City` is still dropped and must still warn. */
 export function withoutCustomerLiteralHeaders(headers: string[]): string[] {
-  const literal = new Set(CUSTOMER_IMPORT_LITERAL_HEADERS.map(normalizeHeader));
-  return headers.filter((h) => !literal.has(normalizeHeader(h)));
+  const literal = new Set(CUSTOMER_IMPORT_LITERAL_HEADERS);
+  return headers.filter((h) => !literal.has(h));
 }
 
 export interface ParsedRow {

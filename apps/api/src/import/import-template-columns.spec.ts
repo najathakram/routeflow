@@ -3,6 +3,7 @@ import { join } from "node:path";
 import {
   CUSTOMER_IMPORT_LITERAL_HEADERS as SHARED_LITERAL_HEADERS,
   CUSTOMER_IMPORT_TEMPLATE_HEADERS,
+  LEGACY_IMPORT_KEY_COLUMNS,
   PRODUCT_IMPORT_TEMPLATE_HEADERS,
 } from "@routeflow/types";
 import { CUSTOMER_IMPORT_LITERAL_HEADERS } from "./import-column-aliases";
@@ -47,8 +48,21 @@ describe("import template columns", () => {
   });
 
   it("the preview keeps calling a truly unknown column unknown, and stops flagging named ones", () => {
-    expect(withoutCustomerLiteralHeaders(["Phone", "billing city", "Average Cost"])).toEqual([
+    expect(withoutCustomerLiteralHeaders(["Phone", "Billing City", "Average Cost"])).toEqual([
       "Average Cost",
     ]);
+  });
+
+  it("matches the by-name headers exactly: a case or spacing variant is still reported unknown", () => {
+    const variants = ["phone", "Billing_City", "billing city", "First  Name"];
+    expect(withoutCustomerLiteralHeaders(variants)).toEqual(variants);
+  });
+
+  it("the key columns named on the invoices, payments and expenses cards are read by the service", () => {
+    for (const names of Object.values(LEGACY_IMPORT_KEY_COLUMNS)) {
+      for (const name of names) {
+        expect(serviceSource).toContain(`["${name}"]`);
+      }
+    }
   });
 });

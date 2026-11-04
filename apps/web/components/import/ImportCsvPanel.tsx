@@ -419,6 +419,11 @@ export function ImportCsvPanel({
   const [gateError, setGateError] = React.useState<string | null>(null);
   const [job, setJob] = React.useState<JobView | null>(null);
   const [showColumns, setShowColumns] = React.useState(false);
+  // One source: the template's header row. Headers the importer reads by name but that have no alias
+  // entry still count and are listed, so the count and the downloaded file cannot disagree.
+  const aliasCanonicals = new Set(columns.map((c) => c.canonical));
+  const extraHeaders = template.headers.filter((h) => !aliasCanonicals.has(h));
+  const acceptedCount = columns.length + extraHeaders.length;
   const [noResult, setNoResult] = React.useState(false);
   const summaryRef = React.useRef<HTMLDivElement>(null);
   const bannerRef = React.useRef<HTMLDivElement>(null);
@@ -601,7 +606,7 @@ export function ImportCsvPanel({
           onClick={() => setShowColumns((v) => !v)}
           className="flex min-h-[44px] w-full items-center justify-between px-3 py-2 text-xs font-medium text-navy/70"
         >
-          <span>Accepted columns ({columns.length})</span>
+          <span>Accepted columns ({acceptedCount})</span>
           {showColumns ? (
             <ChevronUp className="h-3.5 w-3.5" />
           ) : (
@@ -622,6 +627,11 @@ export function ImportCsvPanel({
                     (also: {c.aliases.filter((a) => a !== c.canonical).join(", ")})
                   </span>
                 )}
+              </li>
+            ))}
+            {extraHeaders.map((h) => (
+              <li key={`extra-${h}`}>
+                <span className="font-medium text-navy">{h}</span>
               </li>
             ))}
           </ul>

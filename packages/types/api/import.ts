@@ -131,7 +131,6 @@ export const CUSTOMER_IMPORT_COLUMNS: ImportColumnAlias[] = [
   { field: "waConsent", canonical: "WhatsApp Consent", aliases: ["WhatsApp Consent"] },
 ];
 
-/** SA-823 (row 655): the key a Family row matched its existing product by (`null` = a new variant is created). */
 /** Customer headers the contacts import reads by name, outside the alias list above. */
 export const CUSTOMER_IMPORT_LITERAL_HEADERS: string[] = [
   "Phone",
@@ -159,6 +158,14 @@ export const CUSTOMER_IMPORT_TEMPLATE_HEADERS: string[] = [
   ...CUSTOMER_IMPORT_LITERAL_HEADERS,
 ];
 
+/** Key columns the invoices, payments and expenses importers read by exact name (shown on those cards). */
+export const LEGACY_IMPORT_KEY_COLUMNS = {
+  invoices: ["Invoice Number", "Customer Name", "Invoice Date", "Item Name", "Quantity", "SKU"],
+  payments: ["Invoice Number", "Amount", "Mode", "Date"],
+  expenses: ["Expense Category", "Total", "Expense Date"],
+} as const;
+
+/** SA-823 (row 655): the key a Family row matched its existing product by (`null` = a new variant is created). */
 export type ImportFamilyMatchKey = "id" | "sku" | "barcode";
 
 /** Per-row family detail on a product-import plan row (preview and apply return the same shape). */
