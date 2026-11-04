@@ -250,6 +250,15 @@ describe("genericToastCopy: codes users rely on", () => {
     expect(copy).toBe("Enter what was delivered for every line before finishing this stop.");
   });
 
+  it("ORDER_HAS_RETURN (SA-1101 A-3, Deliver again) is A-3's exact sentence, never the server message", () => {
+    const copy = genericToastCopy(
+      err(409, { code: API_ERROR_CODES.ORDER_HAS_RETURN, message: "raw server text" }),
+    );
+    expect(copy).toBe(
+      "This order has a return. To deliver it again, cancel the return first, or create a new order.",
+    );
+  });
+
   it("ORDER_INVOICES_NEED_REVIEW (SA-687) shows the fixed review copy, never the server message", () => {
     expect(
       genericToastCopy(
@@ -733,6 +742,7 @@ describe("B986-7 fold: codes #3051 registered are spelled through API_ERROR_CODE
     "INVOICE_TAX_STATE_STALE",
     "INVOICE_TOTAL_BELOW_PAID",
     "LINE_ALREADY_DELIVERED",
+    "ORDER_HAS_RETURN",
   ];
   it.each(REGISTERED)("%s is a computed [API_ERROR_CODES.X] key", (code) => {
     expect(src).toContain(`[API_ERROR_CODES.${code}]:`);

@@ -125,6 +125,10 @@ const CODE_COPY: Record<string, string> = {
   // SA-1101 (B785): a stop close that left out a line with something still to deliver; nothing was written.
   [API_ERROR_CODES.STOP_DELIVERY_LINES_MISSING]:
     "Enter what was delivered for every line before finishing this stop.",
+  // SA-1101 A-3 (N1): Deliver again on a refused order that has a live return; nothing was changed. The office reads this
+  // sentence on the order page, so it names both ways forward.
+  [API_ERROR_CODES.ORDER_HAS_RETURN]:
+    "This order has a return. To deliver it again, cancel the return first, or create a new order.",
   [API_ERROR_CODES.UNITS_RENAME_IN_PROGRESS]:
     "Another change is in progress. Try again in a moment.",
   [API_ERROR_CODES.ORDER_LINE_CHANGED]:
