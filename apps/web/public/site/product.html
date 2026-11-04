@@ -230,7 +230,7 @@
       <li class="pd-c"><h4>Routes and stops</h4><p>Put orders on a route. See each delivery.</p></li>
       <li class="pd-c"><h4>Packing list</h4><p>See what to load for a route. Print the list.</p></li>
       <li class="pd-c"><h4>Driver view</h4><p>Your drivers see their stops in a web browser. They can start or skip a stop.</p></li>
-      <li class="pd-c"><h4>Finishing a stop</h4><p>Drivers finish a stop as delivered. If a store gets less, the driver changes the amount. A stop can also be undone. Drivers can’t complete a stop with regulated items. They call the office.</p></li>
+      <li class="pd-c"><h4>Finishing a stop</h4><p>Drivers finish a stop as delivered. If a store gets less, the driver changes the amount. If a store refuses the order, the driver taps Refused and gives a reason. The order shows Refused, and the store gets a note saying so. A stop can also be undone. Drivers can’t complete a stop with regulated items. They call the office.</p></li>
       <li class="pd-c"><h4>Delivered</h4><p>An order on a run is delivered when its stop is completed. Its invoice unlocks then.</p></li>
     </ul>
     <p class="pd-know"><b>Three limits.</b> There’s no live map of your drivers on the web. Drivers can’t take payment at the door. There’s no proof photo or signature.</p>
@@ -320,7 +320,7 @@
         <tr><th scope="row">Estimate</th><td>You send it. It turns into an invoice.</td><td>You can skip this step.</td></tr>
         <tr><th scope="row">Order</th><td>Staff enter it, or the store orders online.</td><td>Extra pieces roll into boxes. The price comes from the store’s level or its own price.</td></tr>
         <tr><th scope="row">Invoice</th><td>It starts as a draft, built from the order.</td><td>It can’t be sent or edited until the order is delivered. Edit the order instead.</td></tr>
-        <tr><th scope="row">Delivery</th><td>If you deliver, drivers start, finish, or skip each stop.</td><td>An order on a run is delivered when its stop is completed. That unlocks its invoice.</td></tr>
+        <tr><th scope="row">Delivery</th><td>If you deliver, drivers start, finish, or skip each stop.</td><td>An order on a run is delivered when its stop is completed, unless the store refused all of it. That unlocks its invoice.</td></tr>
         <tr><th scope="row">Payment</th><td>You record the amount and how it was paid.</td><td>You see who has paid and who still owes you.</td></tr>
         <tr><th scope="row">Return</th><td>You take goods back and give store credit.</td><td>Cash back needs a fully paid invoice.</td></tr>
       </tbody>
@@ -331,7 +331,7 @@
     <div class="pd-q" id="driver">
       <h3>What can a driver do?</h3>
       <div class="pd-two">
-        <div><h4>Can do</h4><ul class="pd-tick" role="list"><li>See the route and the stops</li><li>Open a stop in maps</li><li>Call the store</li><li>Start or skip a stop</li><li>Finish a stop</li><li>Undo a stop</li></ul></div>
+        <div><h4>Can do</h4><ul class="pd-tick" role="list"><li>See the route and the stops</li><li>Open a stop in maps</li><li>Call the store</li><li>Start or skip a stop</li><li>Finish a stop</li><li>Record a refusal</li><li>Undo a stop</li></ul></div>
         <div><h4>Can’t do</h4><ul class="pd-cross" role="list"><li>Take a photo or a signature</li><li>Take payment at the door</li></ul></div>
       </div>
     </div>
