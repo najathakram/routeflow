@@ -3240,7 +3240,11 @@ describe("PlatformAdminService — audit provenance", () => {
         return { synced: true };
       });
 
-      await service.updatePlanPrices("GROWTH", { monthly: 150 } as any, ADMIN_ID);
+      await service.updatePlanPrices(
+        "GROWTH",
+        { monthly: 150, expectedAffected: 2 } as any,
+        ADMIN_ID,
+      );
 
       expect(withLock.mock.calls.map((c) => c[0].key)).toEqual(["tenant-a", "tenant-b"]);
       expect(seen).toEqual([true, true]);
@@ -3289,7 +3293,11 @@ describe("PlatformAdminService — audit provenance", () => {
         downgradeToPlanKey: where.tenantId === "tenant-b" ? "STARTER" : null,
       }));
 
-      const out = await service.updatePlanPrices("GROWTH", { monthly: 150 } as any, ADMIN_ID);
+      const out = await service.updatePlanPrices(
+        "GROWTH",
+        { monthly: 150, expectedAffected: 1 } as any,
+        ADMIN_ID,
+      );
 
       expect(billingServiceMock.syncStripeSubscriptionPrice.mock.calls.map((c) => c[0])).toEqual([
         "tenant-a",
@@ -3313,7 +3321,11 @@ describe("PlatformAdminService — audit provenance", () => {
         downgradeToPlanKey: "STARTER",
       });
 
-      const out = await service.updatePlanPrices("GROWTH", { monthly: 150 } as any, ADMIN_ID);
+      const out = await service.updatePlanPrices(
+        "GROWTH",
+        { monthly: 150, expectedAffected: 1 } as any,
+        ADMIN_ID,
+      );
 
       expect(billingServiceMock.syncStripeSubscriptionPrice).not.toHaveBeenCalled();
       // A tenant skipped under its lock is not "updated" (review nit 2).
@@ -3403,7 +3415,11 @@ describe("PlatformAdminService — audit provenance", () => {
       it("is synced (Stripe moves to the NEW price), and when the downgrade is then CANCELLED Stripe stays on the new price", async () => {
         const { stripe, row, scheduled } = arrange(24900); // the OLD price: the early push has not happened
 
-        const out = await service.updatePlanPrices("GROWTH", { monthly: 299 } as any, ADMIN_ID);
+        const out = await service.updatePlanPrices(
+          "GROWTH",
+          { monthly: 299, expectedAffected: 1 } as any,
+          ADMIN_ID,
+        );
 
         expect(billingServiceMock.syncStripeSubscriptionPrice).toHaveBeenCalledWith("tenant-b");
         expect(out).toMatchObject({ updated: 1, synced: 1, skippedDowngrade: 0 });
@@ -3418,7 +3434,11 @@ describe("PlatformAdminService — audit provenance", () => {
       it("whose lower price is ALREADY pushed to Stripe is still skipped (the fan-out must not revert it)", async () => {
         const { stripe } = arrange(5900); // the pre-renewal push put the downgrade target's price here
 
-        const out = await service.updatePlanPrices("GROWTH", { monthly: 299 } as any, ADMIN_ID);
+        const out = await service.updatePlanPrices(
+          "GROWTH",
+          { monthly: 299, expectedAffected: 0 } as any,
+          ADMIN_ID,
+        );
 
         expect(billingServiceMock.syncStripeSubscriptionPrice).not.toHaveBeenCalled();
         expect(out).toMatchObject({ updated: 0, synced: 0, skippedDowngrade: 1 });
@@ -3428,7 +3448,11 @@ describe("PlatformAdminService — audit provenance", () => {
       it("an unreadable Stripe leaves it alone (never revert blind)", async () => {
         const { stripe } = arrange(24900);
         stripe.getSubscription.mockRejectedValue(new Error("stripe down"));
-        const out = await service.updatePlanPrices("GROWTH", { monthly: 299 } as any, ADMIN_ID);
+        const out = await service.updatePlanPrices(
+          "GROWTH",
+          { monthly: 299, expectedAffected: 0 } as any,
+          ADMIN_ID,
+        );
         expect(billingServiceMock.syncStripeSubscriptionPrice).not.toHaveBeenCalled();
         expect(out.skippedDowngrade).toBe(1);
       });

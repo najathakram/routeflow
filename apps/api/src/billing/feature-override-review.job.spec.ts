@@ -65,7 +65,12 @@ function build(rows: ReturnType<typeof overrideRow>[], auditedIds: string[] = []
   const audit = { log: jest.fn().mockResolvedValue(undefined) } as any;
   const ownerAlerts = { pilotEnding: jest.fn().mockResolvedValue(undefined) } as any;
   const catalog = { getVersionForTenant: jest.fn() } as any;
-  return { job: new FeatureOverrideReviewJob(prisma, audit, ownerAlerts, catalog), prisma, audit };
+  const entitlements = { resolve: jest.fn() } as any;
+  return {
+    job: new FeatureOverrideReviewJob(prisma, audit, ownerAlerts, catalog, entitlements),
+    prisma,
+    audit,
+  };
 }
 
 describe("FeatureOverrideReviewJob.reviewExpiredOverrides", () => {
@@ -237,8 +242,20 @@ const DAY = 86_400_000;
 const PRICED_CATALOG = {
   id: "v-1",
   addonSkus: [
-    { sku: "SALES_AGENTS", name: "Sales agents", monthlyPrice: "29.00", includedAtPlan: null },
-    { sku: "MSRP", name: "MSRP pricing", monthlyPrice: "0.00", includedAtPlan: null },
+    {
+      sku: "REGULATED_ITEMS",
+      name: "Regulated items",
+      monthlyPrice: "39.00",
+      meteredKey: null,
+      includedAtPlan: "SCALE",
+    },
+    {
+      sku: "MSRP",
+      name: "MSRP pricing",
+      monthlyPrice: "0.00",
+      meteredKey: null,
+      includedAtPlan: null,
+    },
   ],
 };
 
@@ -246,7 +263,7 @@ function pilotRow(over: Record<string, unknown> = {}) {
   return {
     id: "ov-pilot",
     tenantId: "t1",
-    featureKey: "flag.sales_agents",
+    featureKey: "tobacco_dealer",
     kind: "PILOT",
     effect: "GRANT",
     revokedAt: null as Date | null,
@@ -257,6 +274,7 @@ function pilotRow(over: Record<string, unknown> = {}) {
       plan: "GROWTH",
       planVersionId: "v-1",
       deletedAt: null as Date | null,
+      class: "PRODUCTION",
       subscription: { planKey: "GROWTH" },
     },
     ...over,
@@ -266,19 +284,35 @@ function pilotRow(over: Record<string, unknown> = {}) {
 // The mock APPLIES the real where clause (kind, effect, revokedAt, the window, the feature keys,
 // the NOT of already-warned id+date pairs) and keeps the audit rows the job writes so a second
 // tick sees them: dropping any clause changes what comes back and a test below goes red.
-function buildPilot(rows: ReturnType<typeof pilotRow>[], catalogVersion: unknown = PRICED_CATALOG) {
+function buildPilot(
+  rows: ReturnType<typeof pilotRow>[],
+  catalogVersion: unknown = PRICED_CATALOG,
+  facts: {
+    addonRows?: { addonKey: string; sku: string | null; active: boolean }[];
+    planFlags?: string[];
+    planKey?: string;
+    otherOverrides?: { featureKey: string; effect: string }[];
+  } = {},
+) {
   const auditRows: { entityId: string; meta: { expiresAt: string } }[] = [];
   const events: string[] = [];
   const prisma = {
     tenantFeatureOverride: {
       findMany: jest.fn().mockImplementation(({ where }: any) => {
+        // the per-business read of the OTHER live overrides (served-answer facts), not the candidate page
+        if (where?.tenantId) {
+          expect(where.revokedAt).toBeNull();
+          expect(where.id).toEqual({ not: expect.any(String) });
+          return Promise.resolve(facts.otherOverrides ?? []);
+        }
         const { gt, lte } = where?.expiresAt ?? {};
+        const kinds: string[] | undefined = where?.kind?.in;
         const keys: string[] | undefined = where?.featureKey?.in;
         const not: { id: string; expiresAt: Date }[] = where?.NOT ?? [];
         return Promise.resolve(
           rows.filter(
             (r) =>
-              r.kind === where?.kind &&
+              (kinds ? kinds.includes(r.kind) : r.kind === where?.kind) &&
               r.effect === where?.effect &&
               r.revokedAt === where?.revokedAt &&
               r.expiresAt != null &&
@@ -288,10 +322,14 @@ function buildPilot(rows: ReturnType<typeof pilotRow>[], catalogVersion: unknown
               r.expiresAt.getTime() <= lte.getTime() &&
               (!keys || keys.includes(r.featureKey)) &&
               (where?.tenant?.deletedAt !== null || r.tenant.deletedAt === null) &&
+              (where?.tenant?.class === undefined || r.tenant.class === where.tenant.class) &&
               !not.some((n) => n.id === r.id && n.expiresAt.getTime() === r.expiresAt!.getTime()),
           ),
         );
       }),
+    },
+    tenantAddon: {
+      findMany: jest.fn().mockImplementation(() => Promise.resolve(facts.addonRows ?? [])),
     },
     auditLog: {
       findMany: jest.fn().mockImplementation(() => Promise.resolve([...auditRows])),
@@ -312,8 +350,15 @@ function buildPilot(rows: ReturnType<typeof pilotRow>[], catalogVersion: unknown
     }),
   } as any;
   const catalog = { getVersionForTenant: jest.fn().mockResolvedValue(catalogVersion) } as any;
+  const entitlements = {
+    resolve: jest.fn().mockResolvedValue({
+      planKey: facts.planKey ?? "GROWTH",
+      flags: facts.planFlags ?? [],
+    }),
+  } as any;
   return {
-    job: new FeatureOverrideReviewJob(prisma, audit, ownerAlerts, catalog),
+    job: new FeatureOverrideReviewJob(prisma, audit, ownerAlerts, catalog, entitlements),
+    entitlements,
     prisma,
     ownerAlerts,
     catalog,
@@ -333,9 +378,9 @@ describe("FeatureOverrideReviewJob.warnBillablePilotsEnding (R25 / T25)", () => 
     expect(out).toEqual({ warned: 1 });
     expect(ownerAlerts.pilotEnding).toHaveBeenCalledTimes(1);
     expect(ownerAlerts.pilotEnding).toHaveBeenCalledWith("t1", {
-      featureName: "Sales agents",
+      featureName: "Regulated items",
       endsAt: row.expiresAt,
-      monthlyPrice: 29,
+      monthlyPrice: 39,
     });
     expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
     expect(prisma.auditLog.create).toHaveBeenCalledWith({
@@ -393,13 +438,15 @@ describe("FeatureOverrideReviewJob.warnBillablePilotsEnding (R25 / T25)", () => 
   it.each([
     ["revoked", { revokedAt: new Date() }],
     ["a comp (not a pilot)", { kind: "COMP" }],
-    ["a trial (not a pilot)", { kind: "TRIAL" }],
+    ["a support grant (not a free period)", { kind: "SUPPORT" }],
     ["a deny", { effect: "DENY" }],
     ["ending in 8 days", { expiresAt: new Date(Date.now() + 8 * DAY) }],
     ["already ended", { expiresAt: new Date(Date.now() - DAY) }],
     ["no end date", { expiresAt: null }],
     ["a feature that has no paid add-on", { featureKey: "flag.units_v1" }],
     ["a deleted business", { tenant: { ...pilotRow().tenant, deletedAt: new Date() } }],
+    ["a TEST-class business (BP-4)", { tenant: { ...pilotRow().tenant, class: "TEST" } }],
+    ["a DEMO-class business (BP-4)", { tenant: { ...pilotRow().tenant, class: "DEMO" } }],
   ])("sends nothing for %s", async (_label, over) => {
     const { job, ownerAlerts, prisma } = buildPilot([pilotRow(over)]);
     const out = await job.warnBillablePilotsEnding();
@@ -417,15 +464,131 @@ describe("FeatureOverrideReviewJob.warnBillablePilotsEnding (R25 / T25)", () => 
       id: "v-1",
       addonSkus: [
         {
-          sku: "SALES_AGENTS",
-          name: "Sales agents",
-          monthlyPrice: "29.00",
+          sku: "REGULATED_ITEMS",
+          name: "Regulated items",
+          monthlyPrice: "39.00",
+          meteredKey: null,
           includedAtPlan: "GROWTH",
         },
       ],
     });
     await included.job.warnBillablePilotsEnding();
     expect(included.ownerAlerts.pilotEnding).not.toHaveBeenCalled();
+  });
+
+  describe("SA-1100 §1 red rows: the free period must really cost something afterwards", () => {
+    const withForecasting = {
+      id: "v-1",
+      addonSkus: [
+        ...PRICED_CATALOG.addonSkus,
+        {
+          sku: "FORECASTING",
+          name: "Forecasting",
+          monthlyPrice: "19.00",
+          meteredKey: null,
+          includedAtPlan: "SCALE",
+        },
+      ],
+    };
+    const saved = process.env.PLAN_FLAG_ENFORCEMENT;
+    afterEach(() => {
+      if (saved === undefined) delete process.env.PLAN_FLAG_ENFORCEMENT;
+      else process.env.PLAN_FLAG_ENFORCEMENT = saved;
+    });
+
+    it("BP-1: an analytics pilot on Starter with the switch off sends nothing (the plan flag is served anyway)", async () => {
+      delete process.env.PLAN_FLAG_ENFORCEMENT;
+      const { job, ownerAlerts, prisma } = buildPilot(
+        [
+          pilotRow({
+            featureKey: "flag.analytics",
+            tenant: { ...pilotRow().tenant, plan: "STARTER", subscription: { planKey: "STARTER" } },
+          }),
+        ],
+        withForecasting,
+        { planKey: "STARTER" },
+      );
+      expect(await job.warnBillablePilotsEnding()).toEqual({ warned: 0 });
+      expect(ownerAlerts.pilotEnding).not.toHaveBeenCalled();
+      expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it("the same pilot warns once enforcement is on (ending it then really removes the feature)", async () => {
+      process.env.PLAN_FLAG_ENFORCEMENT = "on";
+      const { job, ownerAlerts } = buildPilot(
+        [
+          pilotRow({
+            featureKey: "flag.analytics",
+            tenant: { ...pilotRow().tenant, plan: "STARTER", subscription: { planKey: "STARTER" } },
+          }),
+        ],
+        withForecasting,
+        { planKey: "STARTER" },
+      );
+      expect(await job.warnBillablePilotsEnding()).toEqual({ warned: 1 });
+      expect(ownerAlerts.pilotEnding).toHaveBeenCalledWith("t1", {
+        featureName: "Forecasting",
+        endsAt: expect.any(Date),
+        monthlyPrice: 19,
+      });
+    });
+
+    it("BP-2: a Regulated pilot on Growth with no add-on row warns once", async () => {
+      const { job, ownerAlerts } = buildPilot([pilotRow()]);
+      expect(await job.warnBillablePilotsEnding()).toEqual({ warned: 1 });
+      expect(ownerAlerts.pilotEnding).toHaveBeenCalledTimes(1);
+    });
+
+    it("a TRIAL free period warns the same way", async () => {
+      const { job, ownerAlerts } = buildPilot([pilotRow({ kind: "TRIAL" })]);
+      expect(await job.warnBillablePilotsEnding()).toEqual({ warned: 1 });
+      expect(ownerAlerts.pilotEnding).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ["a paid", { addonKey: "tobacco_dealer", sku: "REGULATED_ITEMS", active: true }],
+      ["a comp", { addonKey: "tobacco_dealer", sku: null, active: true }],
+    ])("BP-3: an active %s add-on row holding the SKU sends nothing", async (_l, row) => {
+      const { job, ownerAlerts, prisma } = buildPilot([pilotRow()], PRICED_CATALOG, {
+        addonRows: [row],
+      });
+      expect(await job.warnBillablePilotsEnding()).toEqual({ warned: 0 });
+      expect(ownerAlerts.pilotEnding).not.toHaveBeenCalled();
+      expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it("another live GRANT on the same feature keeps it served, so nothing is warned", async () => {
+      const { job, ownerAlerts } = buildPilot([pilotRow()], PRICED_CATALOG, {
+        otherOverrides: [{ featureKey: "tobacco_dealer", effect: "GRANT" }],
+      });
+      expect(await job.warnBillablePilotsEnding()).toEqual({ warned: 0 });
+      expect(ownerAlerts.pilotEnding).not.toHaveBeenCalled();
+    });
+
+    it("a capacity SKU is out: its cost depends on how many are needed", async () => {
+      const capacity = {
+        id: "v-1",
+        addonSkus: [
+          {
+            sku: "REGULATED_ITEMS",
+            name: "Regulated items",
+            monthlyPrice: "39.00",
+            meteredKey: "CUSTOMERS",
+            includedAtPlan: "SCALE",
+          },
+        ],
+      };
+      const { job, ownerAlerts } = buildPilot([pilotRow()], capacity);
+      expect(await job.warnBillablePilotsEnding()).toEqual({ warned: 0 });
+      expect(ownerAlerts.pilotEnding).not.toHaveBeenCalled();
+    });
+
+    it("a business whose plan cannot be resolved is skipped, not warned", async () => {
+      const { job, ownerAlerts, entitlements } = buildPilot([pilotRow()]);
+      entitlements.resolve.mockRejectedValue(new Error("no plan"));
+      expect(await job.warnBillablePilotsEnding()).toEqual({ warned: 0 });
+      expect(ownerAlerts.pilotEnding).not.toHaveBeenCalled();
+    });
   });
 
   it("only reads the overrides: no revoke, no price or plan write", async () => {

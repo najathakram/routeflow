@@ -415,7 +415,12 @@ export default function AdminTenantsPage() {
             <button
               disabled={actionLoading === "bulk"}
               onClick={executeBulk}
-              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+              // SA-1100 §2: a plan move changes what several businesses pay, so its confirm is the red one.
+              className={`rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 ${
+                bulkAction === "change-plan"
+                  ? "bg-red-600 hover:bg-red-500"
+                  : "bg-indigo-600 hover:bg-indigo-500"
+              }`}
             >
               {actionLoading === "bulk" ? "Processing…" : "Confirm"}
             </button>

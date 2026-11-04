@@ -128,8 +128,10 @@ export class OwnerAlertService {
   }
 
   /**
-   * R25: a free period for a paid add-on ends within a week. The owner decides: extend it, or let it become a paid
-   * add-on. Plain words only; the caller has already decided that the add-on really costs money afterwards.
+   * R25 / SA-1100 §1: a billable free period ends within a week. A grant never bills: when it ends the business LOSES
+   * the feature and nothing is charged automatically, so the mail says exactly that and never claims a paid add-on
+   * starts by itself. The owner decides: extend the free period, or turn on the paid add-on. Plain words only; the
+   * caller (`billablePilotEnding`) has already decided that the feature is really lost and has a flat paid add-on.
    */
   async pilotEnding(
     tenantId: string,
@@ -142,8 +144,8 @@ export class OwnerAlertService {
       const price = p.monthlyPrice % 1 === 0 ? String(p.monthlyPrice) : p.monthlyPrice.toFixed(2);
       await this.deliver(`${t.name}: ${p.featureName} free period ends ${ends}`, [
         `The free period of ${p.featureName} for ${t.name} ends on ${ends}.`,
-        `After that it becomes a paid add-on at $${price}/mo, unless you extend the free period or remove the add-on first.`,
-        `Extend it or remove it from the business page: ${this.backOfficeLink(t)}`,
+        `After that, ${t.name} loses ${p.featureName}. Nothing is charged automatically.`,
+        `To keep it, extend the free period or turn on the paid add-on ($${price} a month) from the business page: ${this.backOfficeLink(t)}`,
       ]);
     });
   }

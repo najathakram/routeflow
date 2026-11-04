@@ -8,6 +8,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
   fetchPlanCatalog,
   fetchPlanPriceImpact,
+  isPlanPriceImpactChanged,
   updatePlanPrices,
   platformPricingErrorMessage,
   type PlanCatalogEntry,
@@ -33,8 +34,10 @@ const priceLabel = (n: number) =>
 const businesses = (n: number) => `${n} ${n === 1 ? "business" : "businesses"}`;
 
 /** R24: the confirm's body. Who is re-priced, by how much in total, and who keeps their own price. */
-function priceConfirmBody(i: PlanPriceImpact): string {
+function priceConfirmBody(i: PlanPriceImpact, changed = false): string {
   const parts: string[] = [];
+  // SA-1100 §2: the count moved between the first look and Confirm; the admin reads the new number first.
+  if (changed) parts.push("The number of businesses changed since you looked.");
   if (i.affected === 0) {
     parts.push("No business pays this price yet.");
   } else {
@@ -63,6 +66,8 @@ interface PendingPriceChange {
   monthly: number;
   annual: number | null;
   impact: PlanPriceImpact;
+  /** The server's 409: the count moved after the admin first looked, and this impact is the fresh one. */
+  changed?: boolean;
 }
 
 // ─── Row edit state ────────────────────────────────────────────────────────────
@@ -143,23 +148,42 @@ export default function PlansPage() {
 
   const confirmSave = async () => {
     if (!pending || savingKey) return;
-    const { plan, monthly, annual } = pending;
+    const { plan, monthly, annual, impact } = pending;
     setSavingKey(plan.planKey);
     try {
-      const result = await updatePlanPrices(plan.planKey, { monthly, annual });
+      // SA-1100 §2: the PATCH carries the count the admin confirmed; the server re-checks it before any write.
+      const result = await updatePlanPrices(plan.planKey, {
+        monthly,
+        annual,
+        expectedAffected: impact.affected,
+      });
       setToast({
         type: "success",
         text: `Saved ${plan.name} — ${result.updated} tenant${result.updated === 1 ? "" : "s"} updated, ${result.synced} synced to Stripe${result.failed ? `, ${result.failed} failed` : ""}.`,
       });
       load();
+      setPending(null);
     } catch (err) {
+      if (isPlanPriceImpactChanged(err)) {
+        // Nothing was saved. Fetch the count again and keep the dialog open on the new number, so the
+        // admin confirms what will really happen. If the fresh count cannot be read, never save blind.
+        try {
+          const fresh = await fetchPlanPriceImpact(plan.planKey, monthly);
+          setPending({ plan, monthly, annual, impact: fresh, changed: true });
+          return;
+        } catch {
+          setCheckFailedKey(plan.planKey);
+          setPending(null);
+          return;
+        }
+      }
       setToast({
         type: "error",
         text: platformPricingErrorMessage(err, `Failed to save ${plan.name}`),
       });
+      setPending(null);
     } finally {
       setSavingKey(null);
-      setPending(null);
     }
   };
 
@@ -297,8 +321,13 @@ export default function PlansPage() {
         open={pending !== null}
         onClose={() => setPending(null)}
         onConfirm={confirmSave}
-        title={pending ? `Change ${pending.plan.name} to ${priceLabel(pending.monthly)}/mo?` : ""}
-        description={pending ? priceConfirmBody(pending.impact) : undefined}
+        variant="danger"
+        title={
+          pending
+            ? `Change ${pending.plan.name} from ${priceLabel(pending.impact.currentMonthly)} to ${priceLabel(pending.monthly)} a month?`
+            : ""
+        }
+        description={pending ? priceConfirmBody(pending.impact, pending.changed) : undefined}
         confirmLabel={
           pending && pending.impact.affected > 0
             ? `Change price for ${businesses(pending.impact.affected)}`

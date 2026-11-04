@@ -302,6 +302,21 @@ describe("R49 / T49: a plan move needs a reason", () => {
     ]);
   });
 
+  it("SA-1100 §2: the bulk plan move's Confirm is the red danger button (it changes what several businesses pay); the title stays as built", async () => {
+    await openBulkPlanMove(["acme"]);
+    const confirm = screen.getByRole("button", { name: "Confirm" });
+    expect(confirm.className).toContain("bg-red-");
+    expect(confirm.className).not.toContain("bg-indigo-");
+    expect(screen.getByText(/Change plan for 1 tenant/)).toBeInTheDocument();
+  });
+
+  it("suspend and activate keep the ordinary Confirm button", async () => {
+    render(<AdminTenantsPage />);
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Select acme" }));
+    fireEvent.click(screen.getByRole("button", { name: "Suspend All" }));
+    expect(screen.getByRole("button", { name: "Confirm" }).className).toContain("bg-indigo-");
+  });
+
   it("suspend and activate do not ask for a reason", async () => {
     render(<AdminTenantsPage />);
     fireEvent.click(await screen.findByRole("checkbox", { name: "Select acme" }));

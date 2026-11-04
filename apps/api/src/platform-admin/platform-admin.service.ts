@@ -79,7 +79,9 @@ import type { ManualActivationAddons } from "@routeflow/types";
 import { roundMoney } from "@routeflow/pricing";
 import {
   buildPlanPriceImpact,
+  countAffectedTargets,
   parseImpactMonthly,
+  planPriceImpactChanged,
   type PlanPriceImpact,
 } from "./plan-price-impact";
 import { StripeService } from "../billing/stripe.service";
@@ -2596,6 +2598,14 @@ export class PlatformAdminService {
   async updatePlanPrices(planKeyParam: string, dto: UpdatePlanPricesDto, adminId: string | null) {
     const { planKey, version, definition } = await this.resolveCatalogPlan(planKeyParam);
 
+    // SA-1100 §2: count again from the SAME selection BEFORE any write. A number that is not the one the admin
+    // confirmed (or no number at all) is a 409 and nothing is changed; the dialog then fetches the count again.
+    const onPlan = await this.selectPlanPriceTargets(version.id, planKey);
+    const affected = await countAffectedTargets(onPlan, (id) => this.downgradePricePushed(id));
+    if (dto.expectedAffected !== affected) {
+      throw planPriceImpactChanged(dto.expectedAffected, affected);
+    }
+
     const annualPrice =
       dto.annual === undefined
         ? new Prisma.Decimal(dto.monthly).mul(10)
@@ -2608,8 +2618,7 @@ export class PlatformAdminService {
       data: { monthlyPrice: dto.monthly, annualPrice },
     });
 
-    // Fan-out targets: see selectPlanPriceTargets (shared with the R24 price-impact read).
-    const onPlan = await this.selectPlanPriceTargets(version.id, planKey);
+    // Fan-out targets: `onPlan`, the selection counted above (see selectPlanPriceTargets, shared with the R24 read).
     // N3 (R1 Option B): a tenant whose scheduled DOWNGRADE price has ALREADY been pushed onto its Stripe base item
     // (ScheduledPriceChangeService, before the renewal) must not be synced here: that would price Stripe from the
     // plan it is LEAVING and revert the push, so the renewal bills the old plan again. Only THOSE tenants are
@@ -2744,9 +2753,13 @@ export class PlatformAdminService {
       newMonthly,
       targets: await this.selectPlanPriceTargets(version.id, planKey),
       ownPrice: (await this.selectPlanPriceTargets(version.id, planKey, true)).length,
-      downgradePushed: async (id) =>
-        (await this.scheduledPrice?.isDowngradePricePushed(id)) ?? true,
+      downgradePushed: (id) => this.downgradePricePushed(id),
     });
+  }
+
+  /** Has this business's scheduled-downgrade price already been pushed to Stripe? (Without the service: yes, the conservative answer.) */
+  private async downgradePricePushed(tenantId: string): Promise<boolean> {
+    return (await this.scheduledPrice?.isDowngradePricePushed(tenantId)) ?? true;
   }
 
   // ─── Trial extension ─────────────────────────────────────────────────────────

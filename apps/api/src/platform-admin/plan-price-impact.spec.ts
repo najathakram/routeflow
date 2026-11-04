@@ -8,9 +8,10 @@ jest.mock("../common/db-locks", () => ({
   })),
 }));
 
-import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PlatformAdminService } from "./platform-admin.service";
+import { PLAN_PRICE_IMPACT_CHANGED } from "./plan-price-impact";
 
 /**
  * R24 / T24 (API leg): `GET platform-admin/plans/:planKey/price-impact?monthly=<n>` answers "how many
@@ -140,7 +141,11 @@ describe("R24 plan price impact (the count behind the price-change confirm)", ()
     const { service, prisma } = make(100);
     prisma.planDefinition.update.mockResolvedValue({ monthlyPrice: 149, annualPrice: 1490 });
     const impact = await service.getPlanPriceImpact("GROWTH", "149");
-    const patched = await service.updatePlanPrices("GROWTH", { monthly: 149 } as any, "admin-1");
+    const patched = await service.updatePlanPrices(
+      "GROWTH",
+      { monthly: 149, expectedAffected: impact.affected } as any,
+      "admin-1",
+    );
     expect(patched.updated).toBe(impact.affected);
     expect(patched.skippedDowngrade).toBe(1);
   });
@@ -181,5 +186,84 @@ describe("R24 plan price impact (the count behind the price-change confirm)", ()
     await expect(service.getPlanPriceImpact("SCALE", "10")).rejects.toBeInstanceOf(
       NotFoundException,
     );
+  });
+});
+
+// SA-1100 §2: the PATCH carries the count the admin confirmed. Before ANY write the server counts again from the same
+// selection; a different number answers 409 PLAN_PRICE_IMPACT_CHANGED and nothing is changed.
+describe("SA-1100 §2 plan price edit: the confirmed count is re-checked on the server", () => {
+  const conflictBody = async (p: Promise<unknown>) => {
+    try {
+      await p;
+    } catch (e) {
+      expect(e).toBeInstanceOf(ConflictException);
+      return (e as ConflictException).getResponse() as Record<string, unknown>;
+    }
+    throw new Error("expected a 409");
+  };
+
+  it("the code is PLAN_PRICE_IMPACT_CHANGED", () => {
+    expect(PLAN_PRICE_IMPACT_CHANGED).toBe("PLAN_PRICE_IMPACT_CHANGED");
+  });
+
+  it("a count that moved since the confirm answers 409 with the code and the current count", async () => {
+    const { service } = make(100);
+    const body = await conflictBody(
+      service.updatePlanPrices("GROWTH", { monthly: 149, expectedAffected: 2 } as any, "admin-1"),
+    );
+    expect(body).toMatchObject({
+      code: PLAN_PRICE_IMPACT_CHANGED,
+      expectedAffected: 2,
+      affected: 3,
+    });
+  });
+
+  it("writes NOTHING on a 409: no plan row, no Stripe sync, no audit row", async () => {
+    const { service, prisma, billingService, auditService } = make(100);
+    await expect(
+      service.updatePlanPrices("GROWTH", { monthly: 149, expectedAffected: 9 } as any, "admin-1"),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(prisma.planDefinition.update).not.toHaveBeenCalled();
+    expect(billingService.syncStripeSubscriptionPrice).not.toHaveBeenCalled();
+    expect(auditService.log).not.toHaveBeenCalled();
+  });
+
+  it("a missing count is a 409 too: an unconfirmed save never writes", async () => {
+    const { service, prisma } = make(100);
+    await expect(
+      service.updatePlanPrices("GROWTH", { monthly: 149 } as any, "admin-1"),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(prisma.planDefinition.update).not.toHaveBeenCalled();
+  });
+
+  it("the matching count goes through and the fan-out reports the same number", async () => {
+    const { service, prisma } = make(100);
+    prisma.planDefinition.update.mockResolvedValue({ monthlyPrice: 149, annualPrice: 1490 });
+    const out = await service.updatePlanPrices(
+      "GROWTH",
+      { monthly: 149, expectedAffected: 3 } as any,
+      "admin-1",
+    );
+    expect(prisma.planDefinition.update).toHaveBeenCalledTimes(1);
+    expect(out.updated).toBe(3);
+  });
+
+  it("the re-count leaves out a pushed-downgrade business exactly as the impact read does", async () => {
+    const { service, prisma } = make(100);
+    prisma.planDefinition.update.mockResolvedValue({ monthlyPrice: 149, annualPrice: 1490 });
+    // 4 businesses are on the plan without an own price, but d is pushed: confirming 4 is the wrong number
+    await expect(
+      service.updatePlanPrices("GROWTH", { monthly: 149, expectedAffected: 4 } as any, "admin-1"),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it("the re-count happens before the plan row is touched (check, then write)", async () => {
+    const { service, prisma } = make(100);
+    prisma.planDefinition.update.mockImplementation(() => {
+      throw new Error("must not be reached");
+    });
+    await expect(
+      service.updatePlanPrices("GROWTH", { monthly: 149, expectedAffected: 0 } as any, "admin-1"),
+    ).rejects.toBeInstanceOf(ConflictException);
   });
 });

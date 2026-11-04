@@ -158,6 +158,18 @@ describe("OwnerAlertService", () => {
       expect(sentTo(email)).toEqual(["owner@example.test", "second@example.test"]);
     });
 
+    it("SA-1100 §1: the body says the business loses the feature and nothing is charged; it never claims a paid add-on starts", async () => {
+      const { svc, email } = build();
+      await svc.pilotEnding("t-1", call());
+      const lines = first(email).text.split("\n\n");
+      expect(lines).toEqual([
+        "The free period of Sales agents for Acme Foods ends on 12 Jan.",
+        "After that, Acme Foods loses Sales agents. Nothing is charged automatically.",
+        "To keep it, extend the free period or turn on the paid add-on ($29 a month) from the business page: https://app.example.test/admin/tenants/t-1",
+      ]);
+      expect(first(email).text).not.toMatch(/becomes a paid add-on/i);
+    });
+
     it("body is plain: what ends, when, the price afterwards, the way out, and the tenant page link", async () => {
       const { svc, email } = build();
       await svc.pilotEnding("t-1", call());
@@ -165,9 +177,8 @@ describe("OwnerAlertService", () => {
       expect(text.split("\n\n").length).toBeLessThanOrEqual(4);
       expect(text).toContain("Sales agents");
       expect(text).toContain("12 Jan");
-      expect(text).toContain("$29/mo");
+      expect(text).toContain("$29 a month");
       expect(text).toMatch(/extend/i);
-      expect(text).toMatch(/remove/i);
       expect(text).toContain("https://app.example.test/admin/tenants/t-1");
       expect(text).not.toMatch(/override|SKU|grant/i);
     });
@@ -175,7 +186,7 @@ describe("OwnerAlertService", () => {
     it("a price with cents keeps them; a whole price does not", async () => {
       const { svc, email } = build();
       await svc.pilotEnding("t-1", call({ monthlyPrice: 29.5 }));
-      expect(first(email).text).toContain("$29.50/mo");
+      expect(first(email).text).toContain("$29.50 a month");
     });
 
     it("never throws and an unknown business sends nothing", async () => {
