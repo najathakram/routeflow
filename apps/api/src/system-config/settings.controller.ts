@@ -631,6 +631,7 @@ export class SettingsController {
     const defaultTerms = await this.svc.get("invoice.defaultTerms");
     const hideOriginalPriceRaw = await this.svc.get("invoice.hideOriginalPrice");
     const hideBarcodesRaw = await this.svc.get("invoice.hideBarcodes");
+    const hidePerPieceRaw = await this.svc.get("invoice.hidePerPiece");
     const depositDefaultPercentRaw = await this.svc.get("invoice.depositDefaultPercent");
     const depositCollectAtOrderRaw = await this.svc.get("invoice.depositCollectAtOrder");
     // SA-436 (#2401): lives on TenantConfig (the send tx reads it there); no row reads as OFF.
@@ -646,6 +647,8 @@ export class SettingsController {
       hideOriginalPrice: hideOriginalPriceRaw === "true",
       // SA-1031: only the string "true" hides; a tenant that never wrote the key keeps its barcodes.
       hideBarcodes: hideBarcodesRaw === "true",
+      // Owner ruling 2026-11-04: only the string "true" hides the Per piece column; a business that never wrote the key keeps it.
+      hidePerPiece: hidePerPieceRaw === "true",
       // WP-D1: absent/unset -> null (no tenant deposit default). Row 652: the web clears the field by sending 0, so a
       // stored "0" is also "no tenant default" (every reader treats it as no deposit; the form shows both as blank).
       depositDefaultPercent:
@@ -669,6 +672,9 @@ export class SettingsController {
     }
     if (dto.hideBarcodes !== undefined) {
       await this.svc.set("invoice.hideBarcodes", String(dto.hideBarcodes));
+    }
+    if (dto.hidePerPiece !== undefined) {
+      await this.svc.set("invoice.hidePerPiece", String(dto.hidePerPiece));
     }
     if (dto.depositDefaultPercent !== undefined) {
       await this.svc.set("invoice.depositDefaultPercent", String(dto.depositDefaultPercent));

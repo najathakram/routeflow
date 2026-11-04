@@ -46,10 +46,15 @@ export function invoiceItemDisplayLines(item: LayoutItem): InvoiceDisplayLines {
   );
 }
 
-/** The Per piece column shows when at least one line renders in today's layout with a per-piece price. */
+/**
+ * The Per piece column shows when at least one line renders in today's layout with a per-piece price, unless the business
+ * turned it off (`hide`, the invoice's `hidePerPiece`; owner ruling 2026-11-04).
+ */
 export function showPerPieceColumn(
   items: ReadonlyArray<LayoutItem & { perBaseUnit?: unknown }> | null | undefined,
+  opts?: { hide?: boolean },
 ): boolean {
+  if (opts?.hide) return false;
   return (items ?? []).some(
     (it) => !!it.perBaseUnit && invoiceItemDisplayLines(it).layout === "today",
   );

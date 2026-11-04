@@ -96,12 +96,14 @@ export async function sendReminder(deps: ReminderEmailDeps, id: string, override
   // F03/R9: see sendEmail's matching comment — the reminder renders the same item
   // table, so it honours the same hide-original-price setting.
   const hideOriginalPrice = (await deps.systemConfig.get("invoice.hideOriginalPrice")) === "true";
+  const hidePerPiece = (await deps.systemConfig.get("invoice.hidePerPiece")) === "true";
 
   const reminderPayload = buildReminderEmailPayload(inv, {
     recipientEmail,
     pdfUrl,
     attachment,
     hideOriginalPrice,
+    hidePerPiece,
   });
   const sendResult = await deps.emailService.sendInvoice(reminderPayload);
 

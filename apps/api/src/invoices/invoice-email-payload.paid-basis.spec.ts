@@ -131,3 +131,18 @@ describe("SA-1029 email payload carries perBaseUnit", () => {
     expect((out.items[0] as any).perBaseUnit).toBeNull();
   });
 });
+
+describe("the email payloads carry the tenant's hidePerPiece (owner ruling 2026-11-04)", () => {
+  const parts = { recipientEmail: "ap@example.test", pdfUrl: undefined, attachment: undefined };
+
+  it("the invoice email and the reminder both pass hidePerPiece through, defaulting to false", () => {
+    for (const build of [buildInvoiceEmailPayload, buildReminderEmailPayload]) {
+      expect(build(inv, { ...parts, hideOriginalPrice: false, hidePerPiece: true })).toEqual(
+        expect.objectContaining({ hidePerPiece: true }),
+      );
+      expect(build(inv, { ...parts, hideOriginalPrice: false })).toEqual(
+        expect.objectContaining({ hidePerPiece: false }),
+      );
+    }
+  });
+});
