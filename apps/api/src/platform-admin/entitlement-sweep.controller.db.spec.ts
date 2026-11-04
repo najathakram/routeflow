@@ -92,7 +92,7 @@ describeDb("FG-1 WP1: entitlement sweep endpoint (real Postgres)", () => {
 
   beforeAll(async () => {
     pool = new Pool({ connectionString: requireLocalDatabaseUrl() });
-    prisma = new PrismaClient({ adapter: new PrismaPg(pool) } as never);
+    prisma = new PrismaClient({ adapter: new PrismaPg(pool) } as any);
 
     createdVersionId = await ensurePublishedCatalog(
       prisma,
