@@ -1,6 +1,6 @@
 import { decideAddonAccess } from "./addon-access";
 import { FEATURE_REGISTRY, addonGateState, gateVia } from "./feature-registry";
-import { isCourtesyServed } from "./plan-flag-policy";
+import { DARK_PLAN_FLAGS, allowsFlag, isCourtesyServed } from "./plan-flag-policy";
 
 /**
  * SA-1100 §3 — the ONE courtesy predicate. Worked by hand from the three clauses (the oracle):
@@ -162,6 +162,40 @@ describe("isCourtesyServed === decideAddonAccess 'dark' outcome", () => {
           expect({ label, courtesy: isCourtesyServed(f, OFF) }).toEqual({
             label,
             courtesy: decision.outcome === "dark",
+          });
+        }
+      }
+    }
+  });
+});
+
+/**
+ * Class pin (reader A note 3): the flag clause against allowsFlag, the rule behind
+ * computeOldPathAll, over every DARK_PLAN_FLAGS entry x switch x plan x flag held. With no
+ * override, a served answer comes from the courtesy allow exactly when allowsFlag says yes
+ * although the plan lacks the flag. Red if the two rules diverge.
+ */
+describe("isCourtesyServed flag clause === allowsFlag courtesy over every DARK_PLAN_FLAGS entry", () => {
+  const envs: [string, NodeJS.ProcessEnv][] = [
+    ["switch unset", {} as NodeJS.ProcessEnv],
+    ["switch off", { PLAN_FLAG_ENFORCEMENT: "off" } as NodeJS.ProcessEnv],
+    ["switch on", { PLAN_FLAG_ENFORCEMENT: "on" } as NodeJS.ProcessEnv],
+  ];
+
+  it.each([...DARK_PLAN_FLAGS].sort())("%s", (key) => {
+    expect(gateVia(key)).toBe("RequirePlanFlag");
+    for (const [envName, env] of envs) {
+      for (const planKey of ["STARTER", "GROWTH", "LITE"]) {
+        for (const carries of [false, true]) {
+          const planFlags = carries ? [key] : [];
+          const label = `${key} ${envName} plan=${planKey} carries=${carries}`;
+          const courtesyAllow = allowsFlag({ planKey, flags: planFlags }, key, env) && !carries;
+          expect({
+            label,
+            courtesy: isCourtesyServed(facts([key], { planKey, planFlags }), env),
+          }).toEqual({
+            label,
+            courtesy: courtesyAllow,
           });
         }
       }

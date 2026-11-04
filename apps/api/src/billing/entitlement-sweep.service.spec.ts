@@ -18,6 +18,8 @@ interface Setup {
   overrides?: Record<string, Effect>;
   overrideRows?: { featureKey: string; effect: Effect; kind: string; expiresAt: Date | null }[];
   hasFlag?: boolean;
+  mode?: "shadow" | "live";
+  modeError?: boolean;
   effective?: (key: string) => boolean;
 }
 
@@ -61,7 +63,14 @@ function build(setup: Setup = {}) {
     // today's guards: everything true, so the sweep's own `old` rules are what a spec observes
     computeOldPathAll: jest.fn(async () => new Map(FEATURE_REGISTRY.map((f) => [f.key, true]))),
   };
-  const modeService = { invalidate: jest.fn(), getMode: jest.fn(async () => "shadow") };
+  const modeService = {
+    invalidate: jest.fn(),
+    getMode: jest.fn(async () => "shadow"),
+    getModeStrict: jest.fn(async () => {
+      if (setup.modeError) throw new Error("db down");
+      return setup.mode ?? "shadow";
+    }),
+  };
   const addons = {
     getActiveAddons: jest.fn(async () => setup.addons ?? []),
   };
@@ -171,5 +180,25 @@ describe("EntitlementSweepService: inputsHash covers whether each override is li
       await hashAt(new Date("2026-11-04T11:00:00.000Z"), expiry),
     );
     expect(await hashAt(T0, null)).toBe(await hashAt(new Date("2027-01-01T00:00:00.000Z"), null));
+  });
+});
+
+describe("EntitlementSweepService: the mode on page 1 (SA-1100 §3, S1 reads it)", () => {
+  it("reports the stored mode, live included, read without the fail-open fallback", async () => {
+    expect((await build({ mode: "live" }).service.sweep({})).mode).toBe("live");
+    expect((await build({ mode: "shadow" }).service.sweep({})).mode).toBe("shadow");
+  });
+
+  it("a failed mode read is recorded as modeReadFailed and never reported as shadow", async () => {
+    const page = await build({ modeError: true }).service.sweep({});
+    expect(page.modeReadFailed).toBe(true);
+    expect(page.mode).toBeUndefined();
+    expect(page.planFlagEnforcement).toBe("off");
+  });
+
+  it("later pages carry neither", async () => {
+    const { service } = build();
+    const first = await service.sweep({ limit: 1 });
+    expect(first.modeReadFailed).toBeUndefined();
   });
 });

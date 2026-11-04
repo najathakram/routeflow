@@ -259,8 +259,8 @@ try {
     write("check-live.json", withEnv(one({ k: bits({ courtesy: false }) }), { mode: "live" })),
   ]);
   check(
-    "--check: mode live prints the WP2 stop line (exit unchanged)",
-    live.status === 0 && /WP2-STOP/.test(live.stdout),
+    "--check: mode live prints the WP2 stop line and exits 4 (never 0)",
+    live.status === 4 && /WP2-STOP/.test(live.stdout),
     true,
   );
   const envOn = run([
@@ -271,9 +271,98 @@ try {
     ),
   ]);
   check(
-    "--check: planFlagEnforcement on prints the WP2 stop line",
-    /WP2-STOP/.test(envOn.stdout),
+    "--check: planFlagEnforcement on prints the WP2 stop line and exits 4",
+    envOn.status === 4 && /WP2-STOP/.test(envOn.stdout),
     true,
+  );
+  const stopAndUnexplained = run([
+    "--check",
+    write(
+      "check-live-unexplained.json",
+      withEnv(one({ k: bits({ effective: false, courtesy: false }) }), { mode: "live" }),
+    ),
+  ]);
+  check(
+    "--check: a stop plus an unexplained row exits 4 and prints both lines",
+    stopAndUnexplained.status === 4 &&
+      /WP2-STOP/.test(stopAndUnexplained.stdout) &&
+      /UNEXPLAINED/.test(stopAndUnexplained.stdout),
+    true,
+  );
+  // An unusable file is refused (exit 3), never read as a pass.
+  const refuseCheck = (name, obj) => run(["--check", write(name, obj)]);
+  check(
+    "--check: a file with no tenants -> exit 3",
+    refuseCheck("c-empty.json", { mode: "shadow", planFlagEnforcement: "off", tenants: [] }).status,
+    3,
+  );
+  check(
+    "--check: a headerless file ({ tenants: [] }) -> exit 3",
+    refuseCheck("c-headerless.json", { tenants: [] }).status,
+    3,
+  );
+  check(
+    "--check: mode missing -> exit 3",
+    refuseCheck("c-nomode.json", { planFlagEnforcement: "off", tenants: one({}).tenants }).status,
+    3,
+  );
+  check(
+    "--check: planFlagEnforcement missing -> exit 3",
+    refuseCheck("c-noenv.json", { mode: "shadow", tenants: one({}).tenants }).status,
+    3,
+  );
+  check(
+    "--check: the API said the mode read failed (modeReadFailed) -> exit 3",
+    refuseCheck("c-modefail.json", {
+      modeReadFailed: true,
+      planFlagEnforcement: "off",
+      tenants: one({}).tenants,
+    }).status,
+    3,
+  );
+  check(
+    "--compare: a file whose mode read failed is not comparable -> exit 3",
+    run([
+      "--compare",
+      a,
+      write("c-modefail2.json", { ...file("in-1", bits()), mode: undefined, modeReadFailed: true }),
+    ]).status,
+    3,
+  );
+  // A tenant that resolved in A and errors in B (or the reverse) is a difference, not a skip.
+  const errored = file("in-9", bits());
+  errored.tenants[0] = {
+    id: "h-0001",
+    class: "PRODUCTION",
+    inputsHash: "in-9",
+    keys: {},
+    sets: {},
+    error: "resolve_failed",
+  };
+  const bothTenants = (f) => {
+    const copy = JSON.parse(JSON.stringify(f));
+    copy.tenants.push({
+      id: "h-0002",
+      class: "PRODUCTION",
+      inputsHash: "x",
+      keys: { "flag.reports": bits(), "flag.analytics": bits() },
+      sets: { "order_delivery|developer_mode": { old: true, effective: true } },
+    });
+    return copy;
+  };
+  const okTwo = write("two-ok.json", bothTenants(file("in-1", bits())));
+  const errTwo = write("two-err.json", bothTenants(errored));
+  const errRun = run(["--compare", okTwo, errTwo]);
+  check("--compare: a tenant that resolved in A and errors in B -> exit 2", errRun.status, 2);
+  check(
+    "the report names the tenant and the error",
+    /DIFF h-0001 \(resolve_failed\) error/.test(errRun.stdout),
+    true,
+  );
+  check(
+    "--compare: the reverse (errors in A, resolves in B) -> exit 2",
+    run(["--compare", errTwo, okTwo]).status,
+    2,
   );
   check(
     "WP2's --after-wp2 is refused in WP1 (exit 3), not ignored",

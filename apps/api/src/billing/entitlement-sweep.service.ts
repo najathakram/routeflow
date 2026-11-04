@@ -74,6 +74,8 @@ export interface SweepTenant {
 
 export interface SweepPage {
   mode?: EntitlementsMode;
+  /** Page 1 only, when the mode could not be read: `mode` is then absent, never a guessed "shadow". */
+  modeReadFailed?: true;
   planFlagEnforcement?: "on" | "off";
   tenants: SweepTenant[];
   nextCursor: string | null;
@@ -111,8 +113,13 @@ export class EntitlementSweepService {
 
     const page: SweepPage = { tenants: [], nextCursor: null };
     if (!opts.cursor) {
-      this.modeService.invalidate();
-      page.mode = await this.modeService.getMode();
+      // Read without the fail-open fallback: a failed read must not look like "shadow".
+      try {
+        page.mode = await this.modeService.getModeStrict();
+      } catch (err) {
+        this.logger.error("Sweep: the entitlements mode could not be read", err as Error);
+        page.modeReadFailed = true;
+      }
       page.planFlagEnforcement = isPlanFlagEnforcementOn() ? "on" : "off";
     }
     for (const t of slice) page.tenants.push(await this.sweepTenant(t.id, String(t.class)));

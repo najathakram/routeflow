@@ -27,7 +27,9 @@
 //                 stage stops and comes back to the architect.
 //   client drift  clientFlag != old on a flag key, or clientAddon != old on an add-on key. Listed
 //                 per key as WP8's input; it never fails the check.
-//   Prints mode + planFlagEnforcement; a "live" mode or planFlagEnforcement "on" prints a WP2-STOP line.
+//   Prints mode + planFlagEnforcement. A "live" mode or planFlagEnforcement "on" prints a WP2-STOP
+//   line and exits 4: WP2 must not merge. A file that cannot be trusted at all (no tenants, mode or
+//   planFlagEnforcement missing, or the API reported modeReadFailed) is refused with exit 3.
 //
 // --compare a.json b.json (BETWEEN two sweeps): "no change" means all of
 //   - mode and planFlagEnforcement are equal, else REFUSED (exit 3, "not comparable"): a switch flip
@@ -39,9 +41,12 @@
 //     clientFlag are identical, else exit 2. (WP2's `--expect wp2` arrives with WP2 and is refused.)
 //   inputsHash covers each override's live bit at sweep time, so a lapse is a changed input.
 //
-// Exit codes: 0 fine; 2 an unexplained difference (check) / a difference with unchanged inputs or a
-// key-set change (compare); 3 refused (bad URL, missing env, path outside local-assets, not
-// comparable, a WP2-only flag); 1 any other failure.
+// Exit codes: 0 fine; 2 an unexplained difference (check) / a difference with unchanged inputs, a
+// key-set change or a tenant whose resolve_failed state differs (compare); 3 refused (bad URL,
+// missing env, path outside local-assets, an unusable or not-comparable file, a WP2-only flag);
+// 4 --check only: WP2-STOP (mode live or planFlagEnforcement on); 1 any other failure.
+// --check precedence when several apply: 3, then 4, then 2 (every line is still printed). Only exit 0
+// is "go"; S1 and S2 read anything else as a stop.
 // Reports print only hashed tenant ids and key names.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -84,6 +89,18 @@ export function compareSweeps(a, b, { newKeys = [] } = {}) {
   for (const [id, ta] of ma) {
     const tb = mb.get(id);
     if (!tb) continue;
+    // A tenant that resolved in one sweep and not in the other is a difference whatever its hash says
+    // (a resolve_failed row hashes without plan or version, so it always reads as "inputs changed").
+    if ((ta.error ?? null) !== (tb.error ?? null)) {
+      differences.push({
+        tenant: id,
+        key: "(resolve_failed)",
+        bit: "error",
+        a: ta.error ?? "resolved",
+        b: tb.error ?? "resolved",
+      });
+      continue;
+    }
     if (ta.inputsHash !== tb.inputsHash) {
       inputsChanged += 1;
       continue;
@@ -118,6 +135,11 @@ export function compareSweeps(a, b, { newKeys = [] } = {}) {
 
 /** The reason two sweeps cannot be compared, or null. A switch flip changes answers under equal inputs. */
 export function notComparable(a, b) {
+  for (const f of [a, b]) {
+    if (f.modeReadFailed || f.mode === undefined || f.planFlagEnforcement === undefined) {
+      return "not comparable: a file has no mode or planFlagEnforcement (or its mode read failed)";
+    }
+  }
   if (a.mode !== b.mode || a.planFlagEnforcement !== b.planFlagEnforcement) {
     return (
       `not comparable: mode ${a.mode} -> ${b.mode}, planFlagEnforcement ` +
@@ -183,9 +205,17 @@ function runCheck(args) {
   const file = args[args.indexOf("--check") + 1];
   if (!file || file.startsWith("--")) refuse("--check needs a file: --check a.json");
   const f = readJson(file);
+  // A file that cannot show what production is doing is never a pass.
+  if ((f.tenants ?? []).length === 0)
+    refuse("the file has no tenants (truncated, wrong file or empty)");
+  if (f.modeReadFailed) refuse("the API could not read the entitlements mode (modeReadFailed)");
+  if (f.mode === undefined || f.planFlagEnforcement === undefined) {
+    refuse("the file has no mode or planFlagEnforcement (it must be page 1 of a sweep)");
+  }
   const r = checkSweep(f);
   console.log(`mode ${f.mode}, planFlagEnforcement ${f.planFlagEnforcement}`);
-  if (f.mode === "live" || f.planFlagEnforcement === "on") {
+  const stop = f.mode === "live" || f.planFlagEnforcement === "on";
+  if (stop) {
     console.log(
       "WP2-STOP: mode is live or planFlagEnforcement is on; WP2 must not merge, this goes back to the architect",
     );
@@ -207,7 +237,7 @@ function runCheck(args) {
     `${r.agree} agree; ${r.gaps.length} courtesy gap(s); ${r.unexplained.length} unexplained; ` +
       `${r.drift.length} client drift (WP8 input, never fails)`,
   );
-  process.exit(r.unexplained.length > 0 ? 2 : 0);
+  process.exit(stop ? 4 : r.unexplained.length > 0 ? 2 : 0);
 }
 
 function runCompare(args) {
@@ -270,7 +300,12 @@ async function runFetch(args) {
   if (!out.startsWith(assets)) refuse("--out must be a file under local-assets/");
   const limit = flag("--limit", "50");
 
-  const result = { mode: undefined, planFlagEnforcement: undefined, tenants: [] };
+  const result = {
+    mode: undefined,
+    planFlagEnforcement: undefined,
+    modeReadFailed: undefined,
+    tenants: [],
+  };
   let cursor = null;
   do {
     const qs = `limit=${encodeURIComponent(limit)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
@@ -284,6 +319,7 @@ async function runFetch(args) {
     const page = await res.json();
     if (!cursor) {
       result.mode = page.mode;
+      result.modeReadFailed = page.modeReadFailed;
       result.planFlagEnforcement = page.planFlagEnforcement;
     }
     result.tenants.push(...page.tenants);
