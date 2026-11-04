@@ -84,3 +84,5 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/landing-2026-11-03-al.md](web/landing-2026-11-03-al.md) | Train al (d833210811..1f6f32a341): 20 use-case cards, site colour and life (W-1129), 22-card pin |
 | [web/landing-2026-11-03-an.md](web/landing-2026-11-03-an.md) | Train am (1f6f32a341..06813470de): web editor reads a line's own pack (SA-1097); counter rows show the live stock note (SA-1086 PR-2) |
 | [web/landing-2026-11-03-ao.md](web/landing-2026-11-03-ao.md) | Train an (fedb9c4fa7..f9f1a592ed): public site phone pass, mobile.css, wheel on short screens |
+| [web/landing-2026-11-03-ap.md](web/landing-2026-11-03-ap.md) | Train ao (f9f1a592ed..f10b57ce34): wheel hover label skips a named piece; PackReadingAsk dialog for the first pack |
+| [web/landing-2026-11-03-aq.md](web/landing-2026-11-03-aq.md) | Train ap (f10b57ce34..c8221d4b46): driver StopSheet in my-runs, founder note rewritten on home and company |

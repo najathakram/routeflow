@@ -17,9 +17,8 @@ function readDismissed(): boolean {
 }
 
 /**
- * Row 559: a one-line nudge to install the app, in the dashboard's top strip slot (same shape as
- * `DriverAppBanner`). Only when an install link is ready, outside the app shell, not dismissed,
- * and never for a DRIVER (drivers already get the driver-app banner; one strip at a time).
+ * Row 559: a one-line nudge to install the app, in the dashboard's top strip slot. Only when an install link is ready, outside the app shell, not dismissed,
+ * and never for a DRIVER (drivers record their stops on Today's route).
  */
 export function GetTheAppStrip({ isDriver }: { isDriver: boolean }) {
   const { data: links } = useAppLinks();

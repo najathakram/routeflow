@@ -38,7 +38,11 @@ export async function claimStopCompletion(
       select: { status: true },
     });
     assertStopNotSkipped(current?.status);
-    throw new ConflictException("This stop was already completed by another request.");
+    // SA-1098 D-21: the lost race carries a code, so a client reads the code, never the words. The message is unchanged.
+    throw new ConflictException({
+      code: API_ERROR_CODES.STOP_ALREADY_COMPLETED,
+      message: "This stop was already completed by another request.",
+    });
   }
 }
 

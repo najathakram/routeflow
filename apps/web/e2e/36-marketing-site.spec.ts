@@ -2058,3 +2058,178 @@ test.describe("T24 — the hover label does not repeat a drawn name", () => {
     });
   }
 });
+
+// ─── T25 — the founder's note: one heading that wraps cleanly, and Read the rest never moves the page ───
+// Owner: the note opens "We built this with the people who use it every day." on the home page (#founder) and the company page (#story).
+// On a phone the home page shows a short version with a Read the rest button; the tap opens the full note in place.
+test.describe("T25 — the founder's note", () => {
+  const HEADING = "We built this with the people who use it every day.";
+  const VIEWS = [
+    { name: "1440", w: 1440, h: 900, touch: false },
+    { name: "768", w: 768, h: 1024, touch: true },
+    { name: "390", w: 390, h: 844, touch: true },
+  ];
+
+  // review-b: at two-column widths the spare height of the tall note used to open a gap between the kicker and the heading
+  for (const w of [1440, 1280, 1100, 1024, 768, 390]) {
+    test(`T25 — ${w}: the heading sits right under the kicker (no gap from spare height)`, async ({
+      browser,
+    }) => {
+      const context = await browser.newContext({ viewport: { width: w, height: 900 } });
+      const page = await context.newPage();
+      await page.goto("/#founder", { waitUntil: "load" });
+      await page.waitForSelector("#founder", { state: "attached", timeout: 60_000 });
+      await page.waitForTimeout(3000);
+      await page.evaluate(() =>
+        document.querySelector("#founder")!.scrollIntoView({ block: "start" }),
+      );
+      await page.waitForTimeout(1500);
+      const gap = await page.evaluate(
+        () =>
+          document.querySelector(".fd-q")!.getBoundingClientRect().top -
+          document.querySelector("#founder .kick")!.getBoundingClientRect().bottom,
+      );
+      expect(gap, "kicker to heading").toBeGreaterThanOrEqual(8);
+      expect(gap, "kicker to heading").toBeLessThanOrEqual(24);
+      await context.close();
+    });
+  }
+
+  // owner: "co-founder’s" never breaks at its hyphen, on either page, at any width
+  for (const w of [1440, 1100, 1024, 768, 390]) {
+    test(`T25 — ${w}: "co-founder’s" stays on one line (home short and full note, company)`, async ({
+      browser,
+    }) => {
+      test.setTimeout(120_000);
+      const context = await browser.newContext({ viewport: { width: w, height: 900 } });
+      const page = await context.newPage();
+      const rects = () =>
+        page.evaluate(() =>
+          [...document.querySelectorAll(".nb")]
+            .filter(
+              (n) => (n.textContent || "") === "co-founder’s" && n.getClientRects().length > 0,
+            )
+            .map((n) => n.getClientRects().length),
+        );
+      await page.goto("/", { waitUntil: "load" });
+      await page.waitForSelector("#founder", { state: "attached", timeout: 60_000 });
+      await page.waitForTimeout(2500);
+      // the short version shows below 900 px, the full note at 900 and up; open the note on a phone to check it too
+      let seen = await rects();
+      expect(seen.length, "a co-founder’s span is on screen").toBeGreaterThan(0);
+      const more = page.locator(".fd-more");
+      if (await more.isVisible()) {
+        await more.click();
+        await page.waitForTimeout(800);
+        seen = seen.concat(await rects());
+      }
+      await page.goto("/company", { waitUntil: "load" });
+      await page.waitForSelector(".co-body", { state: "attached" });
+      await page.waitForTimeout(1500);
+      seen = seen.concat(await rects());
+      expect(
+        seen.every((n) => n === 1),
+        "every span is a single line box: " + seen,
+      ).toBe(true);
+      await context.close();
+    });
+  }
+
+  for (const v of VIEWS) {
+    test(`T25 — ${v.name}: home #founder heading wraps in 3 lines or fewer, Read the rest opens in place`, async ({
+      browser,
+    }) => {
+      test.setTimeout(120_000);
+      const context = await browser.newContext({
+        viewport: { width: v.w, height: v.h },
+        hasTouch: v.touch,
+      });
+      const page = await context.newPage();
+      const errors: string[] = [];
+      page.on("pageerror", (e) => errors.push(e.message));
+      await page.goto("/#founder", { waitUntil: "load" });
+      await page.waitForSelector("#founder", { state: "attached", timeout: 60_000 });
+      await page.waitForTimeout(3500);
+      await page.evaluate(() =>
+        document.querySelector("#founder")!.scrollIntoView({ block: "start" }),
+      );
+      await page.waitForTimeout(2000);
+      const h = await page.evaluate(() => {
+        const q = document.querySelector(".fd-q") as HTMLElement;
+        const r = q.getBoundingClientRect();
+        return {
+          text: (q.textContent || "").replace(/\s+/g, " ").trim(),
+          lines: Math.round(r.height / parseFloat(getComputedStyle(q).lineHeight)),
+          right: r.right,
+          docW: document.documentElement.scrollWidth,
+          winW: window.innerWidth,
+          kick: (document.querySelector("#founder .kick")!.textContent || "").trim(),
+          sig: (document.querySelector(".fd-sig b")!.textContent || "").trim(),
+        };
+      });
+      expect(h.text).toBe(HEADING);
+      expect(h.kick).toBe("Why we built it");
+      expect(h.sig).toBe("Dr. Najath Akram");
+      expect(h.lines, "heading lines").toBeLessThanOrEqual(3);
+      expect(h.right, "heading stays on screen").toBeLessThanOrEqual(h.winW);
+      expect(h.docW, "no sideways scroll").toBeLessThanOrEqual(h.winW);
+      const more = page.locator(".fd-more");
+      if (await more.isVisible()) {
+        const y0 = await page.evaluate(() => window.scrollY);
+        await more.click();
+        await page.waitForTimeout(1200);
+        const after = await page.evaluate(() => ({
+          y: window.scrollY,
+          expanded: document.querySelector(".fd-more")!.getAttribute("aria-expanded"),
+          paras: [...document.querySelectorAll(".fd-note p")].filter(
+            (p) => (p as HTMLElement).offsetHeight > 0,
+          ).length,
+        }));
+        expect(Math.abs(after.y - y0), "the tap does not move the page").toBeLessThanOrEqual(1);
+        expect(after.expanded).toBe("true");
+        expect(after.paras, "the full note shows all nine paragraphs").toBe(9);
+      } else {
+        // desktop shows the whole note with no button
+        const paras = await page.evaluate(
+          () =>
+            [...document.querySelectorAll(".fd-note p")].filter(
+              (p) => (p as HTMLElement).offsetHeight > 0,
+            ).length,
+        );
+        expect(paras).toBe(9);
+      }
+      expect(errors).toEqual([]);
+      await context.close();
+    });
+
+    test(`T25 — ${v.name}: company #story has the same heading and wraps in 3 lines or fewer`, async ({
+      browser,
+    }) => {
+      const context = await browser.newContext({
+        viewport: { width: v.w, height: v.h },
+        hasTouch: v.touch,
+      });
+      const page = await context.newPage();
+      await page.goto("/company", { waitUntil: "load" });
+      await page.waitForSelector(".co-q", { state: "attached" });
+      await page.waitForTimeout(1500);
+      const c = await page.evaluate(() => {
+        const q = document.querySelector(".co-q") as HTMLElement;
+        return {
+          text: (q.textContent || "").replace(/\s+/g, " ").trim(),
+          lines: Math.round(
+            q.getBoundingClientRect().height / parseFloat(getComputedStyle(q).lineHeight),
+          ),
+          docW: document.documentElement.scrollWidth,
+          winW: window.innerWidth,
+          paras: document.querySelectorAll(".co-body p:not(.co-sig)").length,
+        };
+      });
+      expect(c.text).toBe(HEADING);
+      expect(c.lines).toBeLessThanOrEqual(3);
+      expect(c.docW).toBeLessThanOrEqual(c.winW);
+      expect(c.paras).toBe(9);
+      await context.close();
+    });
+  }
+});

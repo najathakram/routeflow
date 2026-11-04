@@ -2537,6 +2537,8 @@ describe("RoutesService", () => {
               }),
             },
           ]),
+          // A-2: the stop the key completed is still COMPLETED, so the replay is served.
+          routeRunStop: { findUnique: jest.fn().mockResolvedValue({ status: "COMPLETED" }) },
         }),
       );
 
@@ -3026,6 +3028,46 @@ describe("RoutesService", () => {
       await expect(
         (service as any).settleRun("run-1", { countedCash: 50 }, operatorPayload),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    // SE-2 (SA-1098 A-1): master throws an uncoded 400. The code lets the web re-open the reason field when
+    // the expected figure moved under it. The MESSAGE stays word for word: the native screen matches
+    // `includes("varianceReason")` and old builds stay in the field.
+    async function refusal(counted: number): Promise<{ code?: string; message?: string }> {
+      try {
+        await (service as any).settleRun("run-1", { countedCash: counted }, operatorPayload);
+      } catch (e: any) {
+        return e.getResponse();
+      }
+      throw new Error("settleRun did not refuse");
+    }
+
+    it("SE-2: a mismatch without a reason is refused with RUN_VARIANCE_REASON_REQUIRED and the same message", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(SETTLE_RUN);
+      prisma.invoicePayment.findMany.mockResolvedValue([{ amount: 70, method: "CASH" }]);
+
+      const res = await refusal(50);
+
+      expect(res.code).toBe("RUN_VARIANCE_REASON_REQUIRED");
+      expect(res.message).toBe(
+        "Counted cash does not match the expected amount — a varianceReason is required.",
+      );
+      expect(prisma.routeRun.update).not.toHaveBeenCalled();
+    });
+
+    it("SE-3: a count one cent off settles without a reason; two cents off, over or short, is refused (the shared rule)", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(SETTLE_RUN);
+      prisma.invoicePayment.findMany.mockResolvedValue([{ amount: 70, method: "CASH" }]);
+
+      const within: any = await (service as any).settleRun(
+        "run-1",
+        { countedCash: 70.01 },
+        operatorPayload,
+      );
+      expect(within.variance).toBe(0.01);
+
+      expect((await refusal(70.02)).code).toBe("RUN_VARIANCE_REASON_REQUIRED");
+      expect((await refusal(69.98)).code).toBe("RUN_VARIANCE_REASON_REQUIRED");
     });
 
     it("REG-B152: a reasoned mismatch settles with the signed variance and the reason in the note", async () => {

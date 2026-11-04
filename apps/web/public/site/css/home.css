@@ -376,7 +376,6 @@
 .fd{background:#fff}
 .fd-in{max-width:880px;padding:clamp(100px,11vw,160px) 0}
 .fd-q{font-size:clamp(40px,5.6vw,84px);line-height:1.04;letter-spacing:-.04em;font-weight:650;text-wrap:balance}
-.fd-qm{color:var(--rf-link)}
 .fd-note{margin-top:clamp(36px,4vw,56px);font-size:clamp(19px,1.45vw,21px);line-height:1.62;color:var(--ink-2);max-width:37em}
 .fd-note p+p{margin-top:1em}
 .fd-note:focus{outline:none}
