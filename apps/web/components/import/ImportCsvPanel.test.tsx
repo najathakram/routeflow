@@ -265,3 +265,27 @@ describe("ImportCsvPanel: download template", () => {
     expect(downloadCsv).toHaveBeenCalledWith("products-template.csv", ["Item Name", "SKU"], []);
   });
 });
+
+describe("ImportCsvPanel: accepted-columns count", () => {
+  it("counts the customer template's headers (aliased + read-by-name), not just the alias list", () => {
+    const { CUSTOMER_IMPORT_COLUMNS, CUSTOMER_IMPORT_TEMPLATE_HEADERS } =
+      jest.requireActual("@routeflow/types");
+    render(
+      <ImportCsvPanel
+        endpoint="/import/contacts"
+        title="Customers"
+        columns={CUSTOMER_IMPORT_COLUMNS}
+        template={{ headers: CUSTOMER_IMPORT_TEMPLATE_HEADERS, fileName: "c.csv" }}
+        testIdPrefix="cnt"
+      />,
+    );
+    expect(CUSTOMER_IMPORT_TEMPLATE_HEADERS.length).toBeGreaterThan(CUSTOMER_IMPORT_COLUMNS.length);
+    expect(screen.getByTestId("cnt-columns-toggle")).toHaveTextContent(
+      `Accepted columns (${CUSTOMER_IMPORT_TEMPLATE_HEADERS.length})`,
+    );
+    fireEvent.click(screen.getByTestId("cnt-columns-toggle"));
+    const items = screen.getByTestId("cnt-columns-help").querySelectorAll("li");
+    expect(items).toHaveLength(CUSTOMER_IMPORT_TEMPLATE_HEADERS.length);
+    expect(screen.getByTestId("cnt-columns-help")).toHaveTextContent("Billing City");
+  });
+});
