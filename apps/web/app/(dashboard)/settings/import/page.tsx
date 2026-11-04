@@ -43,10 +43,10 @@ import {
   CUSTOMER_IMPORT_TEMPLATE_HEADERS,
   LEGACY_IMPORT_KEY_COLUMNS,
 } from "@routeflow/types";
+import { validateDocumentPrefix } from "@/lib/document-prefix";
 
 const keyColumns = (k: keyof typeof LEGACY_IMPORT_KEY_COLUMNS) =>
   ` Key columns: ${LEGACY_IMPORT_KEY_COLUMNS[k].join(", ")}.`;
-import { validateDocumentPrefix } from "@/lib/document-prefix";
 
 interface ImportResult {
   imported?: number;

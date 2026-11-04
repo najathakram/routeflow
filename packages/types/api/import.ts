@@ -160,7 +160,16 @@ export const CUSTOMER_IMPORT_TEMPLATE_HEADERS: string[] = [
 
 /** Key columns the invoices, payments and expenses importers read by exact name (shown on those cards). */
 export const LEGACY_IMPORT_KEY_COLUMNS = {
-  invoices: ["Invoice Number", "Customer Name", "Invoice Date", "Item Name", "Quantity", "SKU"],
+  invoices: [
+    "Invoice Number",
+    "Customer Name",
+    "Invoice Date",
+    "Item Name",
+    "Quantity",
+    "Item Price",
+    "Total",
+    "SKU",
+  ],
   payments: ["Invoice Number", "Amount", "Mode", "Date"],
   expenses: ["Expense Category", "Total", "Expense Date"],
 } as const;
