@@ -13,6 +13,8 @@
  *   - LITE (always enforced) with a GRANT override on tobacco_dealer: that key true everywhere,
  *     `ocr` and `flag.reports` false (no courtesy for an always-enforced plan).
  *   - GROWTH with an active `ocr` row and a DENY override on it: old false, effective false.
+ * SA-1100 §3: every row carries `courtesy` (the served answer came from the courtesy allow): true for
+ * the STARTER gaps above, false when the plan, an add-on row or an override is the source.
  * Output safety: the body names no tenant name, slug or raw id. Only super admin may call it.
  *
  * Collected only by `jest.db.config.js`. SAFETY: throwaway `qa-sweep-<run>-*` tenants approved by
@@ -238,21 +240,47 @@ describeDb("FG-1 WP1: entitlement sweep endpoint (real Postgres)", () => {
       expect({ key, ...bitsFor(res.body, tenantId, key) }).toMatchObject({ key, ...want });
 
     // STARTER, no rows
-    expectBits(t.starter, "tobacco_dealer", { old: false, effective: false, clientAddon: false });
-    expectBits(t.starter, "ocr", { old: true, effective: false, clientAddon: false });
-    expectBits(t.starter, "flag.reports", { old: true, effective: false });
+    expectBits(t.starter, "tobacco_dealer", {
+      old: false,
+      effective: false,
+      clientAddon: false,
+      courtesy: false,
+    });
+    expectBits(t.starter, "ocr", {
+      old: true,
+      effective: false,
+      clientAddon: false,
+      courtesy: true,
+    });
+    expectBits(t.starter, "flag.reports", { old: true, effective: false, courtesy: true });
     // SA-1099 §2: the credit check runs for a Starter while the switch is not on
-    expectBits(t.starter, "flag.credit_limits", { old: true, effective: false });
+    expectBits(t.starter, "flag.credit_limits", { old: true, effective: false, courtesy: true });
     // GROWTH carrying the flags, tobacco_dealer row active
-    expectBits(t.growth, "tobacco_dealer", { old: true, effective: true, clientAddon: true });
-    expectBits(t.growth, "flag.reports", { old: true, effective: true });
-    expectBits(t.growth, "flag.credit_limits", { old: true, effective: true });
+    expectBits(t.growth, "tobacco_dealer", {
+      old: true,
+      effective: true,
+      clientAddon: true,
+      courtesy: false,
+    });
+    expectBits(t.growth, "flag.reports", { old: true, effective: true, courtesy: false });
+    // courtesy follows the switch, not the plan: the check runs for everyone while it is not "on"
+    expectBits(t.growth, "flag.credit_limits", { old: true, effective: true, courtesy: true });
     // LITE (always enforced) + GRANT on tobacco_dealer
     expectBits(t.lite, "tobacco_dealer", { old: true, effective: true, clientAddon: true });
-    expectBits(t.lite, "ocr", { old: false, effective: false, clientAddon: false });
-    expectBits(t.lite, "flag.reports", { old: false, effective: false });
+    expectBits(t.lite, "ocr", {
+      old: false,
+      effective: false,
+      clientAddon: false,
+      courtesy: false,
+    });
+    expectBits(t.lite, "flag.reports", { old: false, effective: false, courtesy: false });
     // GROWTH, ocr row active but DENY override
-    expectBits(t.deny, "ocr", { old: false, effective: false, clientAddon: false });
+    expectBits(t.deny, "ocr", {
+      old: false,
+      effective: false,
+      clientAddon: false,
+      courtesy: false,
+    });
     // strict is a bit on every gated key (WP2 makes it differ from effective)
     expect(typeof bitsFor(res.body, t.growth, "ocr")?.strict).toBe("boolean");
 
@@ -273,6 +301,9 @@ describeDb("FG-1 WP1: entitlement sweep endpoint (real Postgres)", () => {
     expect(res.body.planFlagEnforcement).toBe("on");
     expect(bitsFor(res.body, t.starter, "flag.credit_limits")?.old).toBe(false);
     expect(bitsFor(res.body, t.growth, "flag.credit_limits")?.old).toBe(true);
+    // switch on: the credit row is no longer courtesy (the flag decides)
+    expect(bitsFor(res.body, t.starter, "flag.credit_limits")?.courtesy).toBe(false);
+    expect(bitsFor(res.body, t.growth, "flag.credit_limits")?.courtesy).toBe(false);
   }, 60_000);
 
   it("the first page carries mode + planFlagEnforcement and no other env; later pages omit them", async () => {

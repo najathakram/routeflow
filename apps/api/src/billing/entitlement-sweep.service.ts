@@ -12,7 +12,7 @@ import { FeatureOverrideService } from "./feature-override.service";
 import { FeatureResolverService } from "./feature-resolver.service";
 import { FEATURE_REGISTRY, gateVia } from "./feature-registry";
 import { heldAddonKeys } from "./fulfilment-capability";
-import { computeServedFlags, isPlanFlagEnforcementOn } from "./plan-flag-policy";
+import { computeServedFlags, isCourtesyServed, isPlanFlagEnforcementOn } from "./plan-flag-policy";
 
 /**
  * FG-1 WP1 (R10): the read-only entitlement sweep. For every tenant it answers, per gated registry
@@ -21,9 +21,14 @@ import { computeServedFlags, isPlanFlagEnforcementOn } from "./plan-flag-policy"
  * `/tenants/me/addons`, `clientFlag` for flag keys = `subscription.flags`). Plus one row per
  * distinct multi-key `@RequireAddon` gate set, decided by the real `decideAddonAccess`.
  *
+ * Every row also carries `courtesy` (SA-1100 §3): the served answer came from the courtesy allow,
+ * from the ONE predicate `isCourtesyServed` in `plan-flag-policy.ts` (WP2's resolver imports the
+ * same function). The scripts cannot import the API, so the bit travels on the wire.
+ *
  * Nothing in the output names a business: the tenant id is a stable one-way hash, the cursor is
- * that same hash, and `inputsHash` covers plan, plan version, add-on rows and override rows so
- * the compare script can tell "the answer moved" from "the inputs moved".
+ * that same hash, and `inputsHash` covers plan, plan version, add-on rows and override rows (each
+ * override with whether it is still live at sweep time) so the compare script can tell "the answer
+ * moved" from "the inputs moved".
  *
  * Every tenant is computed fresh: its entitlement, override and resolver caches are dropped
  * first (a cache drop, not a write). Read-only.
@@ -54,6 +59,8 @@ export interface SweepBits {
   clientAddon: boolean | null;
   /** `subscription.flags` verdict; null for an add-on keyed key. */
   clientFlag: boolean | null;
+  /** The served answer (`old`) came from the courtesy allow: `isCourtesyServed`, SA-1100 §3. */
+  courtesy: boolean;
 }
 
 export interface SweepTenant {
@@ -122,7 +129,8 @@ export class EntitlementSweepService {
     this.resolver.invalidate(tenantId);
 
     const id = hashTenantId(tenantId);
-    const [addonRows, overrideRows] = await Promise.all([
+    const sweptAt = Date.now();
+    const [addonRows, rawOverrideRows] = await Promise.all([
       this.prisma.tenantAddon.findMany({
         where: { tenantId },
         select: { addonKey: true, sku: true, quantity: true, active: true, isComp: true },
@@ -134,6 +142,12 @@ export class EntitlementSweepService {
         orderBy: [{ featureKey: "asc" }, { createdAt: "asc" }],
       }),
     ]);
+    // SA-1100 §3: hash whether each override is still live at sweep time. `expiresAt` alone is
+    // constant while an override lapses, so the answer would move under an unchanged hash.
+    const overrideRows = rawOverrideRows.map((r) => ({
+      ...r,
+      live: r.expiresAt == null || r.expiresAt.getTime() > sweptAt,
+    }));
     const resolved = await this.resolver.resolve(tenantId);
     if (!resolved) {
       this.logger.error("Sweep: the resolver could not resolve a tenant");
@@ -160,7 +174,6 @@ export class EntitlementSweepService {
     ]);
     const held = await heldAddonKeys(this.addons, this.featureOverrides, tenantId);
     const served = new Set(computeServedFlags(ent.planKey, ent.flags, overrides));
-    const switchValue = process.env.PLAN_FLAG_ENFORCEMENT;
 
     const keys: Record<string, SweepBits> = {};
     for (const feature of FEATURE_REGISTRY) {
@@ -169,11 +182,12 @@ export class EntitlementSweepService {
       const effective = resolved.byKey.get(key)?.effective ?? false;
       const addonKeyed = gateVia(key) === "RequireAddon" || gateVia(key) === "guard";
       // SA-1099 §2: the credit check is not the plan-flag courtesy `computeOldPathAll` models.
+      // It is the guard's own rule over the guard's own read (`entitlements.hasFlag`).
       const old =
         key === "flag.credit_limits"
           ? creditLimitCheckApplies(
-              switchValue,
-              overrides.has(key) ? overrides.get(key) === "GRANT" : ent.flags.includes(key),
+              process.env.PLAN_FLAG_ENFORCEMENT,
+              await this.entitlements.hasFlag(tenantId, key),
             )
           : (oldAll.get(key) ?? false);
       keys[key] = {
@@ -182,6 +196,13 @@ export class EntitlementSweepService {
         strict: effective,
         clientAddon: addonKeyed ? held.has(key) : null,
         clientFlag: addonKeyed ? null : served.has(key),
+        courtesy: isCourtesyServed({
+          keys: [key],
+          planKey: ent.planKey,
+          planFlags: ent.flags,
+          overrides,
+          held,
+        }),
       };
     }
 
@@ -194,6 +215,13 @@ export class EntitlementSweepService {
         effective,
         strict: effective,
         clientAddon: setKeys.some((k) => held.has(k)),
+        courtesy: isCourtesyServed({
+          keys: setKeys,
+          planKey: ent.planKey,
+          planFlags: ent.flags,
+          overrides,
+          held,
+        }),
       };
     }
     return { id, class: tenantClass, inputsHash, keys, sets };
