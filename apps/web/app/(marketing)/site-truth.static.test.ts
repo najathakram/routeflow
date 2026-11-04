@@ -113,6 +113,11 @@ describe("public site sentences the code backs", () => {
     expect(page("product")).toContain(
       "An order on a run is delivered when its stop is completed, unless the store refused all of it.",
     );
+    // The Delivered card says it too: the unqualified sentence is a false claim for a refused order.
+    expect(page("product")).toContain(
+      "<h4>Delivered</h4><p>An order on a run is delivered when its stop is completed, unless the store refused all of it. Its invoice unlocks then.</p>",
+    );
+    expect(page("product")).not.toContain("when its stop is completed. Its invoice unlocks then.");
     expect(page("home")).toContain(
       "Drivers see the stops on the web and can start or skip a stop.",
     );
