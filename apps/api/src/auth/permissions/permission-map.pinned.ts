@@ -339,6 +339,7 @@ export const PERMISSION_MAP: Readonly<Record<string, string>> = {
   "DriversController.remove": "DISPATCH",
   "DriversController.update": "DISPATCH",
   "DriversController.updateMe": "UNGUARDED",
+  "EntitlementSweepController.page": "UNGUARDED",
   "EstimatesController.accept": "ORDERS",
   "EstimatesController.convert": "ORDERS",
   "EstimatesController.convertToInvoice": "ORDERS",

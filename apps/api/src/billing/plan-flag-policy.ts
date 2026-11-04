@@ -1,5 +1,6 @@
 import { isAlwaysEnforcedPlan, FLAG_KEYS } from "./plan-catalog.constants";
-import { gateVia } from "./feature-registry";
+import { addonGateState, featureDefByKey, gateVia } from "./feature-registry";
+import { creditLimitCheckApplies } from "../orders/credit-limit-guard";
 
 /**
  * Flags whose server-side enforcement the 2026-08-23 rollout (and the WP2 Lite
@@ -88,4 +89,57 @@ export function computeServedFlags(
     else flagSet.delete(key);
   }
   return Array.from(flagSet);
+}
+
+/**
+ * SA-1100 §3 — the ONE courtesy predicate: "the answer today's guards serve for this key (or any-of
+ * key set) came from the courtesy allow", not from the plan, an add-on or an override. The
+ * entitlement sweep puts it on the wire as `SweepBits.courtesy` (the compare script cannot import the
+ * API), and WP2's resolver imports this same function — never a second copy of the clauses.
+ *
+ * Three clauses, by gate:
+ *  1. the credit check (`gate.via === "service" && gate.envSwitched`, SA-1099 §1 third clause):
+ *     courtesy while `creditLimitCheckApplies(switch, false)` — the check runs for everyone unless
+ *     the switch is exactly "on" — with NO always-enforced exception and no override reading (the
+ *     guard ignores both while the switch is not "on");
+ *  2. an add-on keyed gate (`RequireAddon` / `guard`): exactly `decideAddonAccess`'s "dark"
+ *     outcome — no GRANT override, no key held (row or default grant) that a DENY does not rule out,
+ *     every key left a dark gate, and a plan that is not always enforced;
+ *  3. a plan-flag keyed gate (everything else): no override, a dark flag (`isDarkFlag`) on a plan
+ *     that is not always enforced and does not carry the flag (`allowsFlag`'s courtesy line).
+ */
+export interface CourtesyFacts {
+  /** One registry key, or the keys of one any-of `@RequireAddon(a, b, ...)` set. */
+  keys: readonly string[];
+  planKey: string;
+  /** The plan's own flags (`Entitlements.flags`), no courtesy folded in. */
+  planFlags: readonly string[];
+  /** Active overrides (`FeatureOverrideService.allActive`). */
+  overrides: ReadonlyMap<string, "GRANT" | "DENY">;
+  /** Add-on keys held through a row or a default grant (`AddonService.getActiveAddons`). */
+  held: ReadonlySet<string>;
+}
+
+export function isCourtesyServed(facts: CourtesyFacts, env = process.env): boolean {
+  const { keys, planKey, planFlags, overrides, held } = facts;
+  if (keys.length === 0) return false;
+  const first = keys[0];
+
+  const gate = featureDefByKey(first)?.gate;
+  if (gate?.via === "service" && gate.envSwitched) {
+    return creditLimitCheckApplies(env.PLAN_FLAG_ENFORCEMENT, false);
+  }
+
+  if (isAlwaysEnforcedPlan(planKey)) return false;
+
+  const via = gateVia(first);
+  if (via === "RequireAddon" || via === "guard") {
+    if (keys.some((k) => overrides.get(k) === "GRANT")) return false;
+    if (keys.some((k) => overrides.get(k) !== "DENY" && held.has(k))) return false;
+    const remaining = keys.filter((k) => overrides.get(k) !== "DENY");
+    return remaining.length > 0 && remaining.every((k) => addonGateState(k) === "dark");
+  }
+
+  if (overrides.has(first)) return false;
+  return isDarkFlag(first, env) && !planFlags.includes(first);
 }
