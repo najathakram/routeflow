@@ -589,7 +589,10 @@ export class AuthService {
     // The base URL is resolved strictly server-side from config — accepting a
     // client-supplied URL here would let an attacker exfiltrate reset tokens.
     const urls = this.configService.get<AppConfig["urls"]>("urls")!;
-    const base = surface === "web" ? urls.web : urls.mobileWeb;
+    // 2026-11-04: the old Expo mobile-web build only redirects now, so every surface (native app
+    // included) links to the current website's /reset-password page.
+    void surface;
+    const base = urls.web;
     const resetUrl = `${base}/reset-password?token=${rawToken}`;
 
     // B212-class fix: this used to be fire-and-forget with the result

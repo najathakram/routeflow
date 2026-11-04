@@ -1,7 +1,7 @@
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "apps/mobile/Dockerfile"
-watchPatterns = ["apps/mobile/**", "packages/**"]
+watchPatterns = ["apps/mobile/redirect/**", "apps/mobile/Dockerfile"]
 
 [deploy]
 healthcheckPath = "/"

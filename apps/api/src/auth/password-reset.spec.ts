@@ -135,14 +135,15 @@ describe("AuthService — password reset (RF-018)", () => {
       expect(prisma.passwordResetToken.create).not.toHaveBeenCalled();
     });
 
-    it("links to the mobile-web base URL by default (surface omitted)", async () => {
+    it("links to the current website by default (surface omitted), never the retired mobile-web address", async () => {
       (prisma.user.findFirst as jest.Mock).mockResolvedValue(ACTIVE_USER);
 
       await service.requestPasswordReset("alice@example.com");
       await Promise.resolve();
 
       const html = emailService.send.mock.calls[0]![0].html as string;
-      expect(html).toContain("https://mobile.test/reset-password?token=");
+      expect(html).toContain("https://web.test/reset-password?token=");
+      expect(html).not.toContain("https://mobile.test");
       // The URL comes from config, never a hardcoded domain
       expect(html).not.toContain("routeflowmobile-production");
     });
