@@ -48,6 +48,7 @@ export function formatDeliveryWindow(window: {
 
 export type TrackingView =
   | { kind: "cancelled" }
+  | { kind: "refused" }
   | { kind: "delivered"; deliveredAt: string | null }
   | { kind: "unscheduled" }
   | { kind: "out-for-delivery" }
@@ -68,7 +69,7 @@ export type TrackingView =
 export type TrackingViewKind = TrackingView["kind"];
 
 /**
- * Which state the card is in. The order's own status decides first (a cancelled or delivered
+ * Which state the card is in. The order's own status decides first (a cancelled, refused or delivered
  * order is that, whatever its run says); then the own stop (a skipped or finished stop outranks
  * the run, so a skipped stop can never read "You're next"); then the run.
  */
@@ -79,6 +80,8 @@ export function deriveTrackingView(args: {
 }): TrackingView {
   const { status, tracking } = args;
   if (status === "CANCELLED") return { kind: "cancelled" };
+  // SA-1101: a wholly refused order is its own state, never "Delivered" (checked before DELIVERED).
+  if (status === "REFUSED") return { kind: "refused" };
   if (status === "DELIVERED") return { kind: "delivered", deliveredAt: args.deliveredAt ?? null };
 
   if (!tracking) {
@@ -110,6 +113,7 @@ export function deriveTrackingView(args: {
 /** The card's status pill text per state. Each platform maps the kind to its own badge tone. */
 export const TRACKING_PILL_LABEL: Record<TrackingViewKind, string> = {
   cancelled: "Cancelled",
+  refused: "Refused",
   delivered: "Delivered",
   unscheduled: "Not scheduled",
   "out-for-delivery": "Out for delivery",
@@ -146,6 +150,11 @@ export function describeTrackingView(view: TrackingView): { headline: string; de
   switch (view.kind) {
     case "cancelled":
       return { headline: "This order was cancelled", detail: "There's no delivery to track." };
+    case "refused":
+      return {
+        headline: "Refused at delivery",
+        detail: "Your order was refused at delivery. Contact us if this is wrong.",
+      };
     case "delivered":
       return {
         headline: "Delivered",

@@ -7,7 +7,12 @@
 // has no build step, so a runtime import would reach Node as TypeScript. `isTrackingLive` below
 // is therefore a client-side helper (web + mobile).
 
-import type { OrderStatusValue, RouteRunStatusValue, RouteRunStopStatusValue } from "./enums";
+import {
+  isTerminalOrderStatus,
+  type OrderStatusValue,
+  type RouteRunStatusValue,
+  type RouteRunStopStatusValue,
+} from "./enums";
 
 /** An order's place on the route run it is booked on. */
 export interface OrderTracking {
@@ -54,7 +59,7 @@ export interface OrderTrackingResponse {
  * Whether a tracking payload can still change without the buyer doing anything, so a client
  * should keep refreshing it: the order is OUT_FOR_DELIVERY or PARTIALLY_DELIVERED, or its run is
  * IN_PROGRESS (a CONFIRMED order on a live run must still see its own stop get skipped, F11/B146).
- * A DELIVERED or CANCELLED order is never live, even while its run still is: a terminal order
+ * A terminal order (DELIVERED, REFUSED or CANCELLED) is never live, even while its run still is: a terminal order
  * keeps its stop pointer, so its payload goes on reporting the run for the rest of the trip.
  * Each client picks its own interval; this is the one rule for WHEN.
  */
@@ -62,7 +67,7 @@ export function isTrackingLive(
   data: { status: string; tracking: { runStatus: string } | null } | null | undefined,
 ): boolean {
   if (!data) return false;
-  if (data.status === "DELIVERED" || data.status === "CANCELLED") return false;
+  if (isTerminalOrderStatus(data.status)) return false;
   if (data.status === "OUT_FOR_DELIVERY" || data.status === "PARTIALLY_DELIVERED") return true;
   return data.tracking?.runStatus === "IN_PROGRESS";
 }

@@ -243,6 +243,13 @@ describe("genericToastCopy: codes users rely on", () => {
     expect(copy).not.toMatch(/[–—]/);
   });
 
+  it("STOP_DELIVERY_LINES_MISSING (SA-1101, B785) is fixed copy, never the server message", () => {
+    const copy = genericToastCopy(
+      err(400, { code: API_ERROR_CODES.STOP_DELIVERY_LINES_MISSING, message: "raw server text" }),
+    );
+    expect(copy).toBe("Enter what was delivered for every line before finishing this stop.");
+  });
+
   it("ORDER_INVOICES_NEED_REVIEW (SA-687) shows the fixed review copy, never the server message", () => {
     expect(
       genericToastCopy(

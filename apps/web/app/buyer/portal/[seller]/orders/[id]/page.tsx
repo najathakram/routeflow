@@ -143,6 +143,7 @@ function getStatusVariant(s: string): "success" | "warning" | "danger" | "neutra
   if (s === "DELIVERED" || s === "COMPLETED") return "success";
   if (s === "PARTIALLY_DELIVERED") return "warning";
   if (s === "PENDING" || s === "CONFIRMED" || s === "OUT_FOR_DELIVERY") return "warning";
+  if (s === "REFUSED") return "warning";
   if (s === "CANCELLED") return "danger";
   return "neutral";
 }
@@ -202,14 +203,16 @@ function timelineFor(order: BuyerOrder, view: BuyerOrderTravelView) {
 
 function OrderTimeline({ order, view }: { order: BuyerOrder; view: BuyerOrderTravelView }) {
   const isCancelled = order.status === "CANCELLED";
+  // SA-1101: a refused order did not reach "Delivered": no step reads complete, and it ends on a Refused marker.
+  const isRefused = order.status === "REFUSED";
   const { icons, currentIdx } = timelineFor(order, view);
 
   return (
     <div data-testid="order-timeline" className="flex items-center justify-between gap-0">
       {icons.map((step, i) => {
         const Icon = step.icon;
-        const isComplete = !isCancelled && i <= currentIdx;
-        const isCurrent = !isCancelled && i === currentIdx;
+        const isComplete = !isCancelled && !isRefused && i <= currentIdx;
+        const isCurrent = !isCancelled && !isRefused && i === currentIdx;
 
         return (
           <React.Fragment key={step.label}>
@@ -250,6 +253,14 @@ function OrderTimeline({ order, view }: { order: BuyerOrder; view: BuyerOrderTra
             <XCircle className="h-4 w-4" />
           </div>
           <span className="text-[10px] font-medium text-danger">Cancelled</span>
+        </div>
+      )}
+      {isRefused && (
+        <div className="flex flex-col items-center gap-1 ml-4" data-testid="timeline-refused">
+          <div className="flex h-9 w-9 items-center justify-center rounded-full border-2 border-warning bg-warning-bg text-warning">
+            <XCircle className="h-4 w-4" />
+          </div>
+          <span className="text-[10px] font-medium text-warning">Refused</span>
         </div>
       )}
     </div>

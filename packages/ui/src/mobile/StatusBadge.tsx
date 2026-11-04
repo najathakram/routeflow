@@ -13,6 +13,7 @@ export type BadgeStatus =
   | "OUT_FOR_DELIVERY"
   | "DELIVERED"
   | "CANCELLED"
+  | "REFUSED"
   | "SCHEDULED"
   | "IN_PROGRESS"
   | "COMPLETED";
@@ -26,6 +27,7 @@ const STATUS_MAP: Record<BadgeStatus, { variant: BadgeVariant; label: string }> 
   OUT_FOR_DELIVERY: { variant: "info", label: "Out for Delivery" },
   DELIVERED: { variant: "success", label: "Delivered" },
   CANCELLED: { variant: "danger", label: "Cancelled" },
+  REFUSED: { variant: "warning", label: "Refused" },
   SCHEDULED: { variant: "neutral", label: "Scheduled" },
   IN_PROGRESS: { variant: "info", label: "In Progress" },
   COMPLETED: { variant: "success", label: "Completed" },

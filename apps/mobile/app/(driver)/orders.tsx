@@ -37,6 +37,8 @@ function statusPill(status: string): {
       return { variant: "brand", label: "Out for delivery" };
     case "DELIVERED":
       return { variant: "green", label: "Delivered" };
+    case "REFUSED":
+      return { variant: "orange", label: "Refused" };
     case "CANCELLED":
       return { variant: "red", label: "Cancelled" };
     default:

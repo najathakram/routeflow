@@ -14,6 +14,7 @@ export type BadgeStatus =
   | "PARTIALLY_DELIVERED"
   | "DELIVERED"
   | "CANCELLED"
+  | "REFUSED"
   | "SCHEDULED"
   | "IN_PROGRESS"
   | "COMPLETED"
@@ -61,6 +62,8 @@ const STATUS_MAP: Record<BadgeStatus, { variant: BadgeVariant; label: string }> 
   PARTIALLY_DELIVERED: { variant: "warning", label: "Partly delivered" },
   DELIVERED: { variant: "success", label: "Delivered" },
   CANCELLED: { variant: "danger", label: "Cancelled" },
+  // SA-1101: a wholly refused order is a problem to follow up (warning tone), not a cancel and never "Delivered".
+  REFUSED: { variant: "warning", label: "Refused" },
   SCHEDULED: { variant: "neutral", label: "Scheduled" },
   IN_PROGRESS: { variant: "info", label: "In progress" },
   COMPLETED: { variant: "success", label: "Completed" },

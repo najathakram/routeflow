@@ -147,6 +147,26 @@ describe("StopSheet (PHASE 1a)", () => {
     expect(screen.getByRole("button", { name: "Start stop" })).toBeDisabled();
   });
 
+  // SA-1101 §4.2: a wholly refused order reads Refused beside its done stop, never Completed or Delivered.
+  it("a REFUSED order on a completed stop shows Refused; a DELIVERED one still shows Completed", () => {
+    renderWithProviders(
+      <StopSheet
+        stop={STOP({
+          status: "COMPLETED",
+          orders: [
+            { id: "o1", orderNumber: "SO-1001", status: "REFUSED" },
+            { id: "o2", orderNumber: "SO-1002", status: "DELIVERED" },
+          ],
+        })}
+        runId="run-1"
+        onClose={jest.fn()}
+      />,
+    );
+    expect(screen.getAllByText("Refused")).toHaveLength(1);
+    expect(screen.getAllByText("Completed")).toHaveLength(1);
+    expect(screen.queryByText("Delivered")).not.toBeInTheDocument();
+  });
+
   it("REG-1a: Skip is disabled once the stop is already COMPLETED or SKIPPED", () => {
     renderWithProviders(
       <StopSheet stop={STOP({ status: "COMPLETED" })} runId="run-1" onClose={jest.fn()} />,

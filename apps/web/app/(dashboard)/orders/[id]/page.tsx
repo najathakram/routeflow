@@ -99,6 +99,7 @@ import { useReadyForPickupAction } from "./_components/use-ready-for-pickup";
 import { ReadyEmailLine } from "./_components/ReadyEmailLine";
 import { DeleteOrderTier } from "./_components/DeleteOrderTier";
 import { ReopenDeliveredTier } from "./_components/ReopenDeliveredTier";
+import { DeliverAgainTier } from "./_components/DeliverAgainTier";
 import { isPosOrder } from "@/lib/api/pos-orders";
 import { FulfillPathMoveConfirm } from "./_components/FulfillPathMoveConfirm";
 import { OrderStaffFlags } from "./_components/OrderStaffFlags";
@@ -114,6 +115,7 @@ import { parseSellingRestricted } from "@/lib/api/selling-restricted";
 import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
 import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
 import { postDeliveryInvoicePrompt, routeHeldNotice, type BlockedLine } from "@routeflow/types";
+import { isPostDeliveryOrderStatus, isTerminalOrderStatus } from "@routeflow/types";
 import { CreditLimitGuardDialog } from "@/components/CreditLimitGuardDialog";
 import { parseCreditLimitError, type CreditLimitInfo } from "@/lib/api/credit-limit";
 import { customerTierFor, roundMoney } from "@routeflow/pricing";
@@ -453,9 +455,7 @@ export default function OrderDetailPage() {
   // Fulfillment path can only change while the order is open — mirrors the
   // server's PATCH /orders/:id/fulfill-path rejection rule exactly.
   const fulfillPathLocked =
-    localStatus === "OUT_FOR_DELIVERY" ||
-    localStatus === "DELIVERED" ||
-    localStatus === "CANCELLED";
+    localStatus === "OUT_FOR_DELIVERY" || isTerminalOrderStatus(localStatus);
 
   // B1134: what THIS session may do on the action bar (customers reach this page; fails closed). A status the
   // local copy has not yet caught up with (or has moved past) is no status at all, never the stale initial one.
@@ -863,7 +863,7 @@ export default function OrderDetailPage() {
    */
   const hasPostedInvoice = order.invoices?.some((inv) => inv.status !== "DRAFT") ?? false;
   const orderOperationallyOpen =
-    localStatus !== "DELIVERED" && localStatus !== "PARTIALLY_DELIVERED";
+    !isPostDeliveryOrderStatus(localStatus) && localStatus !== "PARTIALLY_DELIVERED";
   const renderDeleteOrderAction = (confirmMessage: string, successTitle = "Order deleted") =>
     !orderOperationallyOpen || hasPostedInvoice ? null : showDeleteConfirm ? (
       <div className="flex items-center gap-2">
@@ -1335,6 +1335,14 @@ export default function OrderDetailPage() {
                 )}
               </ActionTier>
             </>
+          )}
+
+          {access.staff && (
+            <DeliverAgainTier
+              status={localStatus}
+              onDeliverAgain={handleConfirm} // SA-1101: REFUSED to CONFIRMED, no reason
+              loading={updateStatus.isPending}
+            />
           )}
 
           {/* CANCELLED */}

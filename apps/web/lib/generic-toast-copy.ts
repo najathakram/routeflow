@@ -122,6 +122,9 @@ const CODE_COPY: Record<string, string> = {
   // screen toasts its own sentence for the same code (mutation-error-toast HANDLED_CODES).
   [API_ERROR_CODES.LINE_ALREADY_DELIVERED]:
     "A delivered line can't be changed or removed. Nothing was saved. Undelivered lines can still be edited.",
+  // SA-1101 (B785): a stop close that left out a line with something still to deliver; nothing was written.
+  [API_ERROR_CODES.STOP_DELIVERY_LINES_MISSING]:
+    "Enter what was delivered for every line before finishing this stop.",
   [API_ERROR_CODES.UNITS_RENAME_IN_PROGRESS]:
     "Another change is in progress. Try again in a moment.",
   [API_ERROR_CODES.ORDER_LINE_CHANGED]:

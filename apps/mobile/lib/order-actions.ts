@@ -159,6 +159,17 @@ function routeStatusActions(current: OrderStatus): StatusAction[] {
             "Reopen this delivered order back to Confirmed? Its delivered date is cleared.",
         },
       ];
+    case "REFUSED":
+      // SA-1101 §2.5: "Deliver again". Not a demotion (the driver's reason is already on the stop), so no reason sheet
+      // (`demotionRequiresReason` is false for it). No Cancel: a cancel credits stock a return may already have credited.
+      return [
+        {
+          label: "Deliver again",
+          toStatus: "CONFIRMED",
+          style: "primary",
+          icon: "refresh-outline",
+        },
+      ];
     // CANCELLED reopens through the dedicated /reopen endpoint below
     // (reopenCancelled), not PATCH /status like DELIVERED's reopen above.
     case "CANCELLED":

@@ -114,6 +114,7 @@ export type OrderStatus =
   | "OUT_FOR_DELIVERY"
   | "PARTIALLY_DELIVERED"
   | "DELIVERED"
+  | "REFUSED"
   | "CANCELLED";
 
 export interface Order {

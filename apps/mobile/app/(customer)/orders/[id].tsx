@@ -34,6 +34,10 @@ import { showToast } from "../../../lib/toast";
 import { reorderErrorCopy } from "../../../lib/buyer-qty-split";
 import { confirm } from "../../../lib/confirm";
 import { fmtCalendarDate } from "../../../lib/format-date";
+import { describeTrackingView } from "@routeflow/types/api/order-tracking-view";
+
+/** SA-1101 §4.1: the shared buyer-card words for a refused order (web and mobile read the same source). */
+const refusedCopy = describeTrackingView({ kind: "refused" });
 
 function orderPill(status: string) {
   switch (status) {
@@ -49,6 +53,8 @@ function orderPill(status: string) {
       return { variant: "brand" as const, label: "In transit" };
     case "DELIVERED":
       return { variant: "green" as const, label: "Delivered" };
+    case "REFUSED":
+      return { variant: "orange" as const, label: "Refused" };
     case "CANCELLED":
       return { variant: "gray" as const, label: "Cancelled" };
     default:
@@ -231,7 +237,18 @@ export default function CustomerOrderDetailScreen() {
         </View>
 
         {/* Delivery tracking */}
-        {order.status !== "DRAFT" && order.status !== "CANCELLED" ? (
+        {order.status === "REFUSED" ? (
+          // SA-1101 §4.1: a refused order has no steps to walk and no live stop: the shared buyer-card words, never "Delivered".
+          <>
+            <View style={styles.sectionRow}>
+              <Text style={styles.sectionTitle}>Delivery tracking</Text>
+            </View>
+            <View style={styles.trackingCard}>
+              <Text style={styles.trackingLine}>{refusedCopy.headline}</Text>
+              <Text style={styles.trackingLine}>{refusedCopy.detail}</Text>
+            </View>
+          </>
+        ) : order.status !== "DRAFT" && order.status !== "CANCELLED" ? (
           <>
             <View style={styles.sectionRow}>
               <Text style={styles.sectionTitle}>Delivery tracking</Text>
