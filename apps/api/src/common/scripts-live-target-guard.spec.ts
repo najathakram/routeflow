@@ -76,6 +76,7 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/check-discrepancies.js": "read-only",
   "apps/api/scripts/check-tenant-logo.js": "read-only",
   "apps/api/scripts/census-base-label-row621.mjs": "read-only",
+  "apps/api/scripts/census-partial-invoice-unbooked-sa962.mjs": "read-only", // SA-962 G5 / A-1: counts only, default_transaction_read_only = on, each query READ ONLY then ROLLBACK
   "apps/api/scripts/data-questions-report.mjs": "read-only",
   "apps/api/scripts/demo-bookings.mjs": "global-catalog",
   "apps/api/scripts/demo-seed.js": "test-slug-only",
