@@ -19,10 +19,7 @@ const SECRET = "RAW SERVER TEXT cn=CN-2026-0042 cust=Acme Mart";
 
 describe("B921: credit-note Apply refusals map by code", () => {
   const cases: Array<[string, string]> = [
-    [
-      API_ERROR_CODES.CREDIT_NOTE_NOT_APPLICABLE,
-      "This credit note is already used up or void, so it can't be applied.",
-    ],
+    [API_ERROR_CODES.CREDIT_NOTE_NOT_APPLICABLE, "This credit note can't be applied any more."],
     [API_ERROR_CODES.CREDIT_NOTE_EXPIRED, "This credit note has expired, so it can't be applied."],
     [
       API_ERROR_CODES.CREDIT_NOTE_CUSTOMER_MISMATCH,
