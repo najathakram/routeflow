@@ -29,6 +29,12 @@ function redirectTarget(requestUrl, env) {
 
 function createServer(env) {
   return http.createServer((req, res) => {
+    // Railway healthcheck: must answer 2xx, so it is never redirected.
+    if ((req.url || "").split("?")[0] === "/healthz") {
+      res.writeHead(200, { "Content-Type": "text/plain", "Cache-Control": "no-store" });
+      res.end("ok");
+      return;
+    }
     res.writeHead(302, {
       Location: redirectTarget(req.url, env),
       "Cache-Control": "no-store",

@@ -55,6 +55,29 @@ describe("old mobile site redirect mapping", () => {
   });
 });
 
+describe("Railway healthcheck", () => {
+  it("GET /healthz answers 200 text, not a redirect", async () => {
+    const server = createServer({});
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const { port } = server.address() as AddressInfo;
+    try {
+      const res = await new Promise<http.IncomingMessage>((resolve, reject) => {
+        http.get({ host: "127.0.0.1", port, path: "/healthz" }, resolve).on("error", reject);
+      });
+      res.resume();
+      expect(res.statusCode).toBe(200);
+      expect(res.headers.location).toBeUndefined();
+      expect(res.headers["cache-control"]).toBe("no-store");
+    } finally {
+      await new Promise((r) => server.close(r));
+    }
+  });
+  it("railway.toml checks /healthz, never the redirecting /", () => {
+    const toml = readFileSync(join(__dirname, "..", "railway.toml"), "utf8");
+    expect(toml).toMatch(/^healthcheckPath = "[/]healthz"$/m);
+  });
+});
+
 describe("mobile Dockerfile serves only the redirect", () => {
   const dockerfile = readFileSync(join(__dirname, "..", "Dockerfile"), "utf8");
   it("does not build or serve the Expo web export", () => {
