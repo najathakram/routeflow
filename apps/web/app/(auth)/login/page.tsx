@@ -17,7 +17,6 @@ import { readLastWorkspace } from "@/lib/last-workspace";
 import { safeOperatorRedirect, landingForRole } from "@/lib/portal-routing";
 import { usePortalPresence } from "@/lib/hooks/usePortalPresence";
 import { AuthShell } from "@/components/auth";
-import { DRIVER_APP_LOGIN_URL } from "@/lib/driver-app-link";
 import { isInShell } from "@/lib/in-shell";
 import { postSignInDestination, readAlsoBuyer } from "@/lib/role-choice";
 
@@ -206,20 +205,14 @@ export default function LoginPage() {
         <>
           <p className="text-xs text-navy/70">
             Buying from a seller?{" "}
-            <a href="/buyer/login" className="text-[#0B6E6B] hover:underline font-medium">
+            <a href="/buyer/login" className="text-brand-600 hover:underline font-medium">
               Sign in to the buyer portal
             </a>
           </p>
           <p className="text-xs text-navy/70">
             New to RouteFlow?{" "}
-            <a href="/signup" className="text-[#0B6E6B] hover:underline font-medium">
+            <a href="/signup" className="text-brand-600 hover:underline font-medium">
               Start your 14-day free trial
-            </a>
-          </p>
-          <p className="text-xs text-navy/70">
-            Driver?{" "}
-            <a href={DRIVER_APP_LOGIN_URL} className="text-[#0B6E6B] hover:underline font-medium">
-              Open the driver app →
             </a>
           </p>
         </>
@@ -238,7 +231,7 @@ export default function LoginPage() {
                 app-router-aware in @next/eslint-plugin-next 15 (14.x matched `pages/` routes
                 only), which is why this line is newly flagged by the Next 15 upgrade. */}
             {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
-            <a href="/buyer/portal" className="text-[#0B6E6B] hover:underline font-medium">
+            <a href="/buyer/portal" className="text-brand-600 hover:underline font-medium">
               Go to buyer portal
             </a>
           </p>
@@ -304,7 +297,7 @@ export default function LoginPage() {
         <div className="-mt-2 text-right">
           <Link
             href="/forgot-password"
-            className="text-xs font-medium text-[#0B6E6B] hover:underline"
+            className="text-xs font-medium text-brand-600 hover:underline"
           >
             Forgot password?
           </Link>

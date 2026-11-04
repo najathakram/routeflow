@@ -224,6 +224,7 @@ import {
   draftBillsLessThanOrder,
   isCleanDraftPartition,
   isSoleBillingDraftIn,
+  placeUnbilledLinesFor,
 } from "./invoice-partition";
 import { loadResyncInputs } from "./resync-plan";
 import { loadReopenableInvoice } from "./invoice-reopen-guard";
@@ -1761,20 +1762,19 @@ export class InvoicesService {
    * absorbing the rounding remainder (mirrors createSplitInvoices), so on a CLEAN full
    * delivery Σ(sibling total) == order total to the cent. Each line's invoicedQty is
    * reset to what its one sibling now bills (0 for refused) — a plain SET since a line
-   * belongs to a single sibling. No-op (null) when the order has no open draft.
+   * belongs to a single sibling. No-op (null) when the order has no open draft. `onOrder`: the order basis (Undo, undo-draft-rebuild.ts).
    *
-   * Re-syncs the regulated-sales ledger to the rebuilt qty via `resyncInvoiceLedger`
-   * (in the shared rebuildSiblingDrafts core) — a short/refused regulated line now
-   * reports its delivered qty, not the full-order qty createSplitInvoices first wrote.
+   * Re-syncs the regulated-sales ledger to the rebuilt qty via `resyncInvoiceLedger` (the shared rebuildSiblingDrafts core):
+   * a short/refused regulated line reports its delivered qty, not the full-order qty createSplitInvoices first wrote.
    */
-  async reconcileOrderDeliveredInvoices(orderId: string, tx?: any) {
+  async reconcileOrderDeliveredInvoices(orderId: string, tx?: any, onOrder = false) {
     // SA-760 R-1: always in a tx, Order -> Invoices locked before the open drafts are read.
     return inOrderBillingTx(this.prisma, tx, orderId, (t) =>
-      this.reconcileOrderDeliveredInvoicesLocked(orderId, t),
+      this.reconcileOrderDeliveredInvoicesLocked(orderId, t, onOrder),
     );
   }
 
-  private async reconcileOrderDeliveredInvoicesLocked(orderId: string, db: any) {
+  private async reconcileOrderDeliveredInvoicesLocked(orderId: string, db: any, onOrder = false) {
     // All the order's live invoices — so we can tell the open pending/sibling DRAFTs
     // (status DRAFT, deliveryBatchId null) apart from finalized or delivery-batch
     // invoices that already bill some of the lines.
@@ -1787,7 +1787,7 @@ export class InvoicesService {
         deliveryBatchId: true,
         discount: true,
         shippingFee: true,
-        items: { select: { orderItemId: true, unitsPerBox: true } },
+        items: { select: { orderItemId: true, unitsPerBox: true, trackedCategoryId: true } },
       },
     });
     const drafts = invoices.filter(
@@ -1819,13 +1819,19 @@ export class InvoicesService {
     // proved no line is shared across drafts or with a finalized invoice), then rebuild
     // each draft from its own lines on the delivered basis.
     const lineById = new Map<string, any>(order.lineItems.map((li: any) => [li.id, li]));
-    const pairs = drafts.map((d: any) => {
-      const memberIds = [
-        ...new Set((d.items ?? []).map((it: any) => it.orderItemId).filter(Boolean)),
-      ] as string[];
-      return { draft: d, lines: memberIds.map((id) => lineById.get(id)).filter(Boolean) };
+    // SA-1098 A-3: a live line on NO non-void invoice (delivered at 0, so it left its draft) goes back on one first.
+    const members = await placeUnbilledLinesFor(db, orderId, {
+      invoices,
+      drafts,
+      lines: order.lineItems,
+      quiet: onOrder, // Undo: nothing is delivered, so a line left off is not flagged as a delivered one
+      groupLines: (items) => this.groupOrderLinesForInvoicing(items, db),
     });
-    return this.rebuildSiblingDrafts(order, pairs, "delivered", db);
+    const pairs = drafts.map((d: any) => ({
+      draft: d,
+      lines: (members.get(d.id) ?? []).map((id) => lineById.get(id)).filter(Boolean),
+    }));
+    return this.rebuildSiblingDrafts(order, pairs, onOrder ? "order" : "delivered", db);
   }
 
   /**
@@ -2806,6 +2812,8 @@ export class InvoicesService {
 
       // #2070 / SA-523: each line's bump is a CAS on what was read; any miss rolls back the partial.
       await bumpInvoicedQtyCas(tx, dto.items, itemById);
+      // SA-962 row 721: the partial's regulated lines book in this tx (under the Order lock above).
+      await this.resyncInvoiceLedger(created.id, order.id, created.items ?? [], tx);
 
       await this.creditNotes.settleOrderCreditsInTx(tx, order.id, tenantId);
       return created;

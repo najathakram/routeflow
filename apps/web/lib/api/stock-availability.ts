@@ -49,13 +49,14 @@ export function useLineStockViews(args: {
   mode: "entry" | "edit";
   customerId?: string | null;
   savedPiecesByProduct?: ReadonlyMap<string, number>;
+  deliversNow?: boolean;
 }): Map<string, LineStockView> {
   const query = useStockAvailability({
     productIds: args.lines.filter((l) => !l.isUnlisted).map((l) => l.productId),
     mode: args.mode,
     customerId: args.customerId,
   });
-  const { lines, savedPiecesByProduct } = args;
+  const { lines, savedPiecesByProduct, deliversNow } = args;
   return React.useMemo(
     () =>
       lineStockViews({
@@ -64,8 +65,9 @@ export function useLineStockViews(args: {
         failed: query.isError,
         fetching: query.isFetching,
         savedPiecesByProduct,
+        deliversNow,
       }),
-    [lines, query.data, query.isError, query.isFetching, savedPiecesByProduct],
+    [lines, query.data, query.isError, query.isFetching, savedPiecesByProduct, deliversNow],
   );
 }
 

@@ -1,4 +1,5 @@
 import * as React from "react";
+import { within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen } from "@/test-utils/render";
 import CheckEmailPage from "./page";
@@ -155,9 +156,9 @@ describe("CheckEmailPage — Workspace ID box and wrong-email line (W2)", () => 
       "Wrong email? Sign up again with a new Workspace ID, or email hello@routeflow.info.",
     );
     expect(screen.getByRole("link", { name: "Sign up again" })).toHaveAttribute("href", "/signup");
-    expect(screen.getByRole("link", { name: "hello@routeflow.info" })).toHaveAttribute(
-      "href",
-      "mailto:hello@routeflow.info",
-    );
+    // the site footer carries the same address, so look inside the line itself
+    expect(
+      within(screen.getByText(/^Wrong email/)).getByRole("link", { name: "hello@routeflow.info" }),
+    ).toHaveAttribute("href", "mailto:hello@routeflow.info");
   });
 });

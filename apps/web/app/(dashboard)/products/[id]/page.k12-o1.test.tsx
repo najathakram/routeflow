@@ -196,3 +196,46 @@ describe("K12 O1: a pack size typed into the prompt is saved with the header Sav
     expect(body.unitsPerBox).toBeNull();
   });
 });
+
+describe("SA-961 R1: a first pack on a product holding stock", () => {
+  /** Types a pack into the editor's prompt and saves; the server answers with the question's 409. */
+  async function saveAPack(user: ReturnType<typeof userEvent.setup>) {
+    patch.mockRejectedValueOnce({
+      response: { status: 409, data: { code: "PACK_READING_REQUIRED", message: "x" } },
+    });
+    await renderPage();
+    await edit(user);
+    await user.type(await screen.findByRole("spinbutton", { name: /per (box|case)/i }), "24");
+    await rename(user);
+    await user.click(screen.getAllByRole("button", { name: /save/i })[0]);
+    await screen.findByText("Your stock shows 5. Is that 5 boxes or 5 pieces?");
+  }
+
+  it("PI-W14: Boxes sends the same save with the answer, and the form closes", async () => {
+    const user = userEvent.setup();
+    await saveAPack(user);
+    expect(screen.getByText(/Stock will be 120 pieces \(5 × 24\)/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Boxes" }));
+
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(2));
+    const [first, second] = patch.mock.calls.map((c) => c[1]);
+    expect(first.unitsPerBox).toBe(24);
+    expect(first.packReading).toBeUndefined();
+    expect(second).toEqual({ ...first, packReading: "box" });
+    await waitFor(() =>
+      expect(screen.queryByDisplayValue("Acme Widget 2")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("PI-W15: closing it saves nothing and keeps what was typed", async () => {
+    const user = userEvent.setup();
+    await saveAPack(user);
+
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => expect(screen.queryByText(/Your stock shows/)).not.toBeInTheDocument());
+    expect(patch).toHaveBeenCalledTimes(1);
+    expect(screen.getByDisplayValue("Acme Widget 2")).toBeInTheDocument();
+  });
+});

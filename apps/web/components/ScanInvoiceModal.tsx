@@ -34,6 +34,7 @@ import {
   type BillLineDenomination,
 } from "@/lib/scan-line-units";
 import { useSuppliers } from "@/lib/api/inventory";
+import { useFillTenantDates } from "@/lib/scan-invoice-tenant-dates";
 import {
   useCheckVendorBillDuplicate,
   useCreateVendorBill,
@@ -235,13 +236,13 @@ const makeInvoice = (kind: "pdf" | "images", files: File[], raisePo = false): In
   invoiceNumber: "",
   supplierId: "",
   supplierMatchAmbiguous: false,
-  billDate: new Date().toISOString().slice(0, 10),
+  billDate: "", // filled with the TENANT's day once known (useFillTenantDates)
   dueDate: "",
   createMode: "bill",
   raisePo,
   expenseCategoryId: "",
   expenseDescription: "",
-  expenseDate: new Date().toISOString().slice(0, 10),
+  expenseDate: "", // same
   expensePaymentMethod: "CASH",
   expenseNotes: "",
   createdBillId: null,
@@ -406,11 +407,9 @@ export function ScanInvoiceModal({
   // can never capture a stale activeIndex.
   const [invoices, setInvoicesRaw] = React.useState<InvoiceGroup[]>([]);
   const [activeIndex, setActiveIndex] = React.useState(0);
-  // Bumped on reset / re-upload / scan-again; async scan callbacks compare it
-  // so a stale response can never clobber a fresh session's state.
+  // Bumped on reset / re-upload / scan-again; async scan callbacks compare it (no stale clobber).
   const runIdRef = React.useRef(0);
-  // In-flight scan requests, aborted on reset so cancelled batches stop
-  // burning Claude tokens (not just stop writing state).
+  // In-flight scan requests, aborted on reset so cancelled batches stop burning Claude tokens.
   const abortersRef = React.useRef(new Map<string, AbortController>());
   // Synchronous mirror of `invoices` — read by the async create loop and the
   // unmount cleanup, updated inside the setter so it can't lag a render.
@@ -423,6 +422,7 @@ export function ScanInvoiceModal({
       invoicesRef.current = next;
       return next;
     });
+  useFillTenantDates(invoices, invoicesRef, setInvoices); // SA-964 §4 / F14
   const patchInvoiceById = (id: string, patch: Partial<InvoiceGroup>) =>
     setInvoices((prev) => prev.map((inv) => (inv.id === id ? { ...inv, ...patch } : inv)));
 
@@ -471,7 +471,7 @@ export function ScanInvoiceModal({
     });
     if (active) scheduleDuplicateCheck(active.id);
   };
-  const billDate = active?.billDate ?? new Date().toISOString().slice(0, 10);
+  const billDate = active?.billDate ?? "";
   const setBillDate = (v: string) => updateActive({ billDate: v });
   const dueDate = active?.dueDate ?? "";
   const setDueDate = (v: string) => updateActive({ dueDate: v });
@@ -490,7 +490,7 @@ export function ScanInvoiceModal({
   const setExpenseCategoryId = (v: string) => updateActive({ expenseCategoryId: v });
   const expenseDescription = active?.expenseDescription ?? "";
   const setExpenseDescription = (v: string) => updateActive({ expenseDescription: v });
-  const expenseDate = active?.expenseDate ?? new Date().toISOString().slice(0, 10);
+  const expenseDate = active?.expenseDate ?? "";
   const setExpenseDate = (v: string) => updateActive({ expenseDate: v });
   const expensePaymentMethod = active?.expensePaymentMethod ?? "CASH";
   const setExpensePaymentMethod = (v: string) => updateActive({ expensePaymentMethod: v });

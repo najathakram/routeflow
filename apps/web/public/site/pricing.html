@@ -23,9 +23,10 @@
 <meta name="theme-color" content="#ffffff">
 <link rel="icon" href="/site/img/routeflow-mark-64.png" type="image/png">
 <link rel="preload" href="/site/fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
-<script>(function(d){d.className+=" js";try{var r=localStorage.getItem("rf-rm")==="1";if(r)d.className+=" rm";if(!r&&(/[?&]motion=on(&|$)/.test(location.search)&&(d.className+=" motion-on")||matchMedia("(prefers-reduced-motion: no-preference)").matches)){d.className+=" js-motion";setTimeout(function(){if(!window.gsap)d.classList.remove("js-motion")},2500)}}catch(e){}})(document.documentElement)</script>
+<script>(function(d){d.className+=" js";try{localStorage.removeItem("rf-rm")}catch(e){}d.className+=" js-motion";setTimeout(function(){if(!window.gsap)d.classList.remove("js-motion")},2500)})(document.documentElement)</script>
 <link rel="stylesheet" href="/site/graphics/rf-graphics.css">
 <link rel="stylesheet" href="/site/css/site.css">
+<link rel="stylesheet" href="/site/css/mobile.css" media="(max-width:899.98px)">
 </head>
 <body>
 <svg class="sprite" aria-hidden="true" focusable="false"><defs>
@@ -74,7 +75,7 @@
 <header class="site-header hero-btn-in"><div class="wrap nav">
   <a class="brand" href="/" aria-label="RouteFlow home"><img src="/site/img/routeflow-mark-64.png" width="30" height="30" alt=""><span>RouteFlow</span></a>
   <nav aria-label="Main"><ul class="nav-links">
-    <li><a href="/product">Product</a></li><li><a href="/#use-cases">Use cases</a></li><li><a href="/#stores">For stores</a></li><li><a href="/pricing">Pricing</a></li><li><a href="/getting-started">Getting started</a></li><li><a href="/#founder">Company</a></li>
+    <li><a href="/product">Product</a></li><li><a href="/#use-cases">Use cases</a></li><li><a href="/#stores">For stores</a></li><li><a href="/pricing">Pricing</a></li><li><a href="/getting-started">Getting started</a></li><li><a href="/company">Company</a></li>
   </ul></nav>
   <div class="nav-actions">
     <a class="nav-price" href="/pricing">Pricing</a>
@@ -84,7 +85,7 @@
   </div>
 </div></header>
 <div class="mobile-menu" id="mobile-menu"><nav aria-label="Mobile">
-  <a href="/product">Product</a><a href="/#use-cases">Use cases</a><a href="/#stores">For stores</a><a href="/pricing">Pricing</a><a href="/getting-started">Getting started</a><a href="/does-and-doesnt">What it does and doesn’t do</a><a href="/data-in-and-out">Data in and out</a><a href="/security">Security and your data</a><a href="/#founder">Company</a><a href="/#faq">Questions</a><a href="/login" data-signin>Sign in</a>
+  <a href="/product">Product</a><a href="/#use-cases">Use cases</a><a href="/#stores">For stores</a><a href="/pricing">Pricing</a><a href="/getting-started">Getting started</a><a href="/does-and-doesnt">What it does and doesn’t do</a><a href="/data-in-and-out">Data in and out</a><a href="/security">Security and your data</a><a href="/company">Company</a><a href="/#faq">Questions</a><a href="/login" data-signin>Sign in</a>
   <a class="btn btn-primary btn-lg" href="/signup" data-track="trial_start_click" data-where="mobile_menu">Start free trial</a>
 </nav></div>
 
@@ -143,7 +144,7 @@
     <details><summary>Can I get my data out?<svg class="ico"><use href="#i-plus"/></svg></summary><p>Yes. Download your customers, products, orders, invoices, and payments as CSV files. Orders and invoices download as summaries, without line items, up to 1,000 rows at a time. <a href="/data-in-and-out">See what you can download.</a></p></details>
     <details><summary>Does it connect to my other tools?<svg class="ico"><use href="#i-plus"/></svg></summary><p>Not directly. RouteFlow doesn’t connect to QuickBooks, Xero, or Zoho. Move data with CSV files.</p></details>
     <details><summary>What doesn’t RouteFlow do?<svg class="ico"><use href="#i-plus"/></svg></summary><p>It doesn’t keep stock in separate warehouses, keep a general ledger, or connect by EDI.</p></details>
-    <details><summary>What do drivers and stores need?<svg class="ico"><use href="#i-plus"/></svg></summary><p>Stores use a web browser on a phone or a computer. If you deliver, drivers use the RouteFlow phone app for the route, stops, and proof of delivery.</p></details>
+    <details><summary>What do drivers and stores need?<svg class="ico"><use href="#i-plus"/></svg></summary><p>Stores and drivers use a web browser on a phone or a computer. Drivers see the route and the stops, and can start or skip a stop.</p></details>
   </div>
   <p class="center small muted" style="margin-top:32px">More questions? Email <a href="mailto:hello@routeflow.info">hello@routeflow.info</a>.</p>
 </div></section>
@@ -156,10 +157,10 @@
   <div class="footer-grid">
     <div><a class="brand" href="/"><img src="/site/img/routeflow-mark-64.png" width="28" height="28" alt=""><span>RouteFlow</span></a><p class="foot-about">We make wholesalers’ lives easier.</p><p class="foot-mail">Email: <a href="mailto:hello@routeflow.info">hello@routeflow.info</a></p></div>
     <div><h2>Explore</h2><ul><li><a href="/product">Product</a></li><li><a href="/#use-cases">Use cases</a></li><li><a href="/#stores">For stores</a></li><li><a href="/pricing">Pricing</a></li><li><a href="/getting-started">Getting started</a></li><li class="foot-depth"><a href="/does-and-doesnt">What it does and doesn’t do</a></li><li class="foot-depth"><a href="/data-in-and-out">Data in and out</a></li><li class="foot-depth"><a href="/security">Security and your data</a></li></ul></div>
-    <div><h2>Company</h2><ul><li><a href="/#founder">About us</a></li><li><a href="/#faq">Questions</a></li></ul></div>
+    <div><h2>Company</h2><ul><li><a href="/company">About us</a></li><li><a href="/#faq">Questions</a></li><li><a href="/contact">Contact</a></li></ul></div>
     <div><h2>Account</h2><ul><li><a href="/signup" data-track="trial_start_click" data-where="footer">Start free trial</a></li><li><a href="/login" data-signin>Sign in</a></li><li><a href="/buyer/login">Store sign in</a></li></ul></div>
   </div>
-  <div class="foot-bottom"><span>© 2026 RouteFlow</span><button class="rm-toggle" type="button" data-rm aria-pressed="false">Reduce motion</button><span><a href="/privacy">Privacy Policy</a> · <a href="/terms">Terms of Service</a></span></div>
+  <div class="foot-bottom"><span>© 2026 RouteFlow</span><span><a href="/privacy">Privacy Policy</a> · <a href="/terms">Terms of Service</a></span></div>
 </div></footer>
 <script src="/site/js/vendor/gsap.min.js" defer></script><script src="/site/js/vendor/ScrollTrigger.min.js" defer></script><script src="/site/js/vendor/SplitText.min.js" defer></script>
 <script src="/site/js/prices.js"></script><script src="/site/js/site.js" defer></script>

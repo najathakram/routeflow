@@ -1,5 +1,11 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import {
+  keepsStopCompletionKey,
+  retryOnLockUnavailable,
+} from "@routeflow/types/stop-completion-key";
+import type { StopDeliveryEntry } from "@routeflow/pricing";
+import { releaseStopKey, stopKey } from "../stop-completion-key";
 import type {
   RouteAnalysisResult,
   RouteSettings,
@@ -101,6 +107,10 @@ export interface RouteRun {
   /** Prisma `Decimal` column — serializes over JSON as a numeric string, so
    *  callers must `Number(...)` before formatting or comparing it. */
   settlementVariance?: number | string | null;
+  /** The cash and checks the server counts as collected on this run (`getRunCashCollections`). The run
+   *  page read and the driver's own list always carry it; other list reads leave it off. The settlement
+   *  gate reads this figure, never the `driver_payments` add-on. */
+  collectedPayments?: { cashTotal: number; checkTotal?: number; count?: number } | null;
   stops?: RouteRunStop[];
   _count?: { stops: number };
   /** Dispatch response only — how many orders the sweep actually attached to
@@ -119,7 +129,32 @@ export interface RouteRunStop {
   status: "PENDING" | "IN_PROGRESS" | "COMPLETED" | "SKIPPED";
   completedAt?: string;
   driverNote?: string;
-  orders?: { id: string; orderNumber: string; status: string }[];
+  orders?: RunStopOrder[];
+}
+
+/** One order's line on a run stop, as the run read serves it (RUN_LINE_ITEMS_SELECT + `remaining`/`deliveredSoFar`). */
+export interface RunStopLine {
+  id: string;
+  productId: string | null;
+  product?: { id: string; name: string; unit?: string | null } | null;
+  qty: number | string;
+  deliveredQty?: number | string | null;
+  status?: string | null;
+  subtotal?: number | string | null;
+  boxes?: number | null;
+  pieces?: number | null;
+  unitsPerBox?: number | null;
+  unitLabel?: string | null;
+  /** SA-366: what this visit can still deliver (the server's own number; the client never derives it). */
+  remaining?: number | string | null;
+  deliveredSoFar?: number | string | null;
+}
+
+export interface RunStopOrder {
+  id: string;
+  orderNumber: string;
+  status: string;
+  lineItems?: RunStopLine[];
 }
 
 interface PaginatedResponse<T> {
@@ -357,6 +392,8 @@ export function useUpdateStopStatus() {
     Error,
     { runId: string; stopId: string; status: "IN_PROGRESS" | "SKIPPED"; driverNote?: string }
   >({
+    // The driver's sheet shows this refusal itself, in fixed words next to the buttons: no second toast on top.
+    meta: { localErrorToast: true },
     mutationFn: ({ runId, stopId, status, driverNote }) =>
       apiClient
         .patch(`/route-runs/${runId}/stops/${stopId}`, { status, driverNote })
@@ -365,6 +402,76 @@ export function useUpdateStopStatus() {
       qc.invalidateQueries({ queryKey: ["route-runs", "my-runs"] });
       qc.invalidateQueries({ queryKey: ["route-runs", runId] });
       qc.invalidateQueries({ queryKey: ["route-runs"] });
+    },
+  });
+}
+
+/**
+ * SA-1098 PR-2: POST /route-runs/:id/stops/:stopId/complete-with-payment WITHOUT a `payment` — the web screen records what was
+ * delivered and never takes money. One Idempotency-Key per stop (sessionStorage), kept while the outcome is unknown and released
+ * on any known answer; a 503 LOCK_UNAVAILABLE is retried with the same key.
+ */
+export function useCompleteStop() {
+  const qc = useQueryClient();
+  return useMutation<
+    unknown,
+    Error,
+    { runId: string; stopId: string; deliveries: StopDeliveryEntry[]; driverNote?: string }
+  >({
+    // The driver's sheet shows this refusal itself, in fixed words next to the buttons: no second toast on top.
+    meta: { localErrorToast: true },
+    mutationFn: async ({ runId, stopId, deliveries, driverNote }) => {
+      const key = stopKey(stopId);
+      const body = {
+        deliveries: deliveries.map((d) => ({
+          orderItemId: d.orderItemId,
+          productId: d.productId,
+          type: d.type,
+          quantityDelivered: d.quantityDelivered,
+        })),
+        ...(driverNote ? { driverNote } : {}),
+      };
+      try {
+        const res = await retryOnLockUnavailable(() =>
+          apiClient.post(`/route-runs/${runId}/stops/${stopId}/complete-with-payment`, body, {
+            headers: { "Idempotency-Key": key },
+          }),
+        );
+        releaseStopKey(stopId);
+        return res.data;
+      } catch (err) {
+        if (!keepsStopCompletionKey(err)) releaseStopKey(stopId);
+        throw err;
+      }
+    },
+    onSettled: (_d, _e, { runId }) => {
+      qc.invalidateQueries({ queryKey: ["route-runs", "my-runs"] });
+      qc.invalidateQueries({ queryKey: ["route-runs", runId] });
+      qc.invalidateQueries({ queryKey: ["route-runs"] });
+      qc.invalidateQueries({ queryKey: ["orders"] });
+    },
+  });
+}
+
+/** SA-1098 PR-2: undo a completed or skipped stop. The server refuses it once the stop's money is confirmed. */
+export function useReopenStop() {
+  const qc = useQueryClient();
+  return useMutation<unknown, Error, { runId: string; stopId: string }>({
+    // The driver's sheet shows this refusal itself, in fixed words next to the buttons: no second toast on top.
+    meta: { localErrorToast: true },
+    mutationFn: ({ runId, stopId }) =>
+      apiClient.post(`/route-runs/${runId}/stops/${stopId}/reopen`).then((r) => r.data),
+    onSuccess: (_d, { stopId }) => {
+      // A kept completion key answers "completed" for a stop that is open again (review-b on #4165): once the stop is
+      // reopened, the earlier attempt's outcome is known, so the next completion is a new request. A refused or lost Undo
+      // leaves the stop as it was, so its key stays.
+      releaseStopKey(stopId);
+    },
+    onSettled: (_d, _e, { runId }) => {
+      qc.invalidateQueries({ queryKey: ["route-runs", "my-runs"] });
+      qc.invalidateQueries({ queryKey: ["route-runs", runId] });
+      qc.invalidateQueries({ queryKey: ["route-runs"] });
+      qc.invalidateQueries({ queryKey: ["orders"] });
     },
   });
 }
@@ -418,9 +525,11 @@ export function useCreateRouteRun() {
   });
 }
 
-export function useUpdateRouteRunStatus() {
+/** `localErrorToast`: the caller shows the refusal itself (the driver's Today's route does), so the app-wide toast stays off. */
+export function useUpdateRouteRunStatus(options?: { localErrorToast?: boolean }) {
   const qc = useQueryClient();
   return useMutation<RouteRun, Error, { id: string; status: string }>({
+    meta: options?.localErrorToast ? { localErrorToast: true } : undefined,
     mutationFn: ({ id, status }) =>
       apiClient.patch(`/route-runs/${id}/status`, { status }).then((r) => r.data),
     onSuccess: (_, { id }) => {
@@ -435,6 +544,29 @@ export function useUpdateRouteRunStatus() {
       qc.invalidateQueries({ queryKey: ["trip-eligibility"] });
     },
   });
+}
+
+/**
+ * SA-1098 A-1 (PR-S): POST /route-runs/:id/settlement. The server computes the expected figure itself
+ * and refuses a count that differs by more than a cent without a reason (`RUN_VARIANCE_REASON_REQUIRED`).
+ * A driver settles once (`RUN_ALREADY_SETTLED` after that); an operator may amend.
+ * `localErrorToast`: the settlement form shows every refusal itself, so the app-wide toast stays off (one toast, B594).
+ */
+export function useSettleRun(options?: { localErrorToast?: boolean }) {
+  const qc = useQueryClient();
+  return useMutation<RouteRun, Error, { id: string; countedCash: number; varianceReason?: string }>(
+    {
+      meta: options?.localErrorToast ? { localErrorToast: true } : undefined,
+      mutationFn: ({ id, countedCash, varianceReason }) =>
+        apiClient
+          .post(`/route-runs/${id}/settlement`, { countedCash, varianceReason })
+          .then((r) => r.data),
+      onSuccess: (_, { id }) => {
+        qc.invalidateQueries({ queryKey: ["route-runs"] });
+        qc.invalidateQueries({ queryKey: ["route-runs", id] });
+      },
+    },
+  );
 }
 
 export function useUpdateRouteRun() {
