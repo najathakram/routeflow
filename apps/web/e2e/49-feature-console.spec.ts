@@ -475,6 +475,12 @@ for (const vp of VIEWPORTS) {
         fulfillJson(route, { ok: true }),
       );
       await page.getByRole("button", { name: "Confirm" }).click();
+      // R49: a plan move asks why before it is sent.
+      await page.getByLabel("Why is this business moving?").fill("Customer asked to downsize");
+      await page
+        .getByRole("dialog", { name: /^Change plan to/ })
+        .getByRole("button", { name: "Change plan" })
+        .click();
       await expect(page.getByRole("heading", { name: "Preview plan change" })).not.toBeVisible();
     });
 

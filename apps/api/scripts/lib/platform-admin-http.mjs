@@ -116,11 +116,14 @@ export async function getResolvedSubscription(base, adminToken, tenantId) {
   return request(base, "GET", "/billing/subscription", { token: accessToken });
 }
 
-/** `PATCH /platform-admin/tenants/:id/plan` — the same write a platform-admin UI click makes. */
-export async function updateTenantPlan(base, adminToken, tenantId, plan) {
+/**
+ * `PATCH /platform-admin/tenants/:id/plan` — the same write a platform-admin UI click makes. R49: the route needs a
+ * reason (3 to 500 characters); it lands in the plan-change audit row.
+ */
+export async function updateTenantPlan(base, adminToken, tenantId, plan, reason) {
   return request(base, "PATCH", `/platform-admin/tenants/${tenantId}/plan`, {
     token: adminToken,
-    body: { plan },
+    body: { plan, reason },
   });
 }
 

@@ -77,6 +77,11 @@ import {
 } from "../billing/manual-activation-addons";
 import type { ManualActivationAddons } from "@routeflow/types";
 import { roundMoney } from "@routeflow/pricing";
+import {
+  buildPlanPriceImpact,
+  parseImpactMonthly,
+  type PlanPriceImpact,
+} from "./plan-price-impact";
 import { StripeService } from "../billing/stripe.service";
 import { stripeGateBeforeTermination, tenantChangedRefusal } from "./stripe-termination-gate";
 import { ScheduledPriceChangeService } from "../billing/scheduled-price-change";
@@ -1098,6 +1103,7 @@ export class PlatformAdminService {
         to: dto.plan,
         scheduled: true,
         effectiveAt: priorSub.periodEnd,
+        reason: dto.reason, // R49
       });
 
       // Nothing about current entitlements changed (only the schedule was armed) — no
@@ -1362,6 +1368,7 @@ export class PlatformAdminService {
     await this.recordAdminAction(id, adminId, AdminAuditAction.TENANT_PLAN_CHANGED, {
       from: before.plan,
       to: tenant.plan,
+      reason: dto.reason, // R49
     });
     return {
       id: tenant.id,
@@ -2587,21 +2594,7 @@ export class PlatformAdminService {
    * tenants keep their own pricing untouched.
    */
   async updatePlanPrices(planKeyParam: string, dto: UpdatePlanPricesDto, adminId: string | null) {
-    const planKey = normalizePlanKey(planKeyParam);
-    if (!planKey) {
-      throw new BadRequestException(`Unknown plan key "${planKeyParam}"`);
-    }
-
-    const version = await this.planCatalogService.getPublishedVersion();
-    if (!version) {
-      throw new NotFoundException(
-        "No published plan catalog exists. Seed the billing catalog first.",
-      );
-    }
-    const definition = version.definitions.find((d) => normalizePlanKey(d.planKey) === planKey);
-    if (!definition) {
-      throw new NotFoundException(`Plan ${planKey} not found in the current catalog version`);
-    }
+    const { planKey, version, definition } = await this.resolveCatalogPlan(planKeyParam);
 
     const annualPrice =
       dto.annual === undefined
@@ -2615,34 +2608,8 @@ export class PlatformAdminService {
       data: { monthlyPrice: dto.monthly, annualPrice },
     });
 
-    // Fan-out targets: tenants that actually resolve against THIS (latest) version for
-    // this plan key and have no custom MONTHLY fee of their own.
-    //   • `planVersionId: null` is included on purpose — PlanCatalogService.
-    //     getVersionForTenant(null) resolves to the PUBLISHED version, so an unpinned
-    //     tenant IS priced from this catalog row. Every Stripe-checkout tenant is
-    //     unpinned (only self-service subscribe/upgrade ever writes the pin), so
-    //     matching on `planVersionId: version.id` alone reaches no live subscription
-    //     at all and a catalog price edit would never leave the database.
-    //   • Only `priceOverrideMonthly` disqualifies: a tenant with an annual-only custom
-    //     fee still takes its monthly from the catalog, so it must be re-synced too.
-    const candidates = await this.prisma.tenantSubscription.findMany({
-      where: {
-        priceOverrideMonthly: null,
-        tenant: {
-          deletedAt: null,
-          OR: [{ planVersionId: version.id }, { planVersionId: null }],
-        },
-      },
-      select: {
-        tenantId: true,
-        planKey: true,
-        downgradeToPlanKey: true,
-        tenant: { select: { plan: true } },
-      },
-    });
-    const onPlan = candidates.filter(
-      (c) => normalizePlanKey(c.planKey ?? c.tenant.plan) === planKey,
-    );
+    // Fan-out targets: see selectPlanPriceTargets (shared with the R24 price-impact read).
+    const onPlan = await this.selectPlanPriceTargets(version.id, planKey);
     // N3 (R1 Option B): a tenant whose scheduled DOWNGRADE price has ALREADY been pushed onto its Stripe base item
     // (ScheduledPriceChangeService, before the renewal) must not be synced here: that would price Stripe from the
     // plan it is LEAVING and revert the push, so the renewal bills the old plan again. Only THOSE tenants are
@@ -2712,6 +2679,74 @@ export class PlatformAdminService {
       failed,
       skippedDowngrade,
     };
+  }
+
+  /** The plan key, the published catalog version and that plan's definition in it (400 / 404 as the price edit always answered). */
+  private async resolveCatalogPlan(planKeyParam: string) {
+    const planKey = normalizePlanKey(planKeyParam);
+    if (!planKey) {
+      throw new BadRequestException(`Unknown plan key "${planKeyParam}"`);
+    }
+    const version = await this.planCatalogService.getPublishedVersion();
+    if (!version) {
+      throw new NotFoundException(
+        "No published plan catalog exists. Seed the billing catalog first.",
+      );
+    }
+    const definition = version.definitions.find((d) => normalizePlanKey(d.planKey) === planKey);
+    if (!definition) {
+      throw new NotFoundException(`Plan ${planKey} not found in the current catalog version`);
+    }
+    return { planKey, version, definition };
+  }
+
+  /**
+   * THE selection behind a plan price edit, used by the PATCH fan-out and by the R24 price-impact read, so the
+   * count a dialog shows can never disagree with the `updated` the PATCH then reports. `ownPrice` flips it to the
+   * businesses on the plan that keep their own monthly price (not touched by the edit).
+   */
+  private async selectPlanPriceTargets(versionId: string, planKey: string, ownPrice = false) {
+    // Fan-out targets: tenants that actually resolve against THIS (latest) version for
+    // this plan key and have no custom MONTHLY fee of their own.
+    //   • `planVersionId: null` is included on purpose — PlanCatalogService.
+    //     getVersionForTenant(null) resolves to the PUBLISHED version, so an unpinned
+    //     tenant IS priced from this catalog row. Every Stripe-checkout tenant is
+    //     unpinned (only self-service subscribe/upgrade ever writes the pin), so
+    //     matching on `planVersionId: version.id` alone reaches no live subscription
+    //     at all and a catalog price edit would never leave the database.
+    //   • Only `priceOverrideMonthly` disqualifies: a tenant with an annual-only custom
+    //     fee still takes its monthly from the catalog, so it must be re-synced too.
+    const candidates = await this.prisma.tenantSubscription.findMany({
+      where: {
+        priceOverrideMonthly: ownPrice ? { not: null } : null,
+        tenant: {
+          deletedAt: null,
+          OR: [{ planVersionId: versionId }, { planVersionId: null }],
+        },
+      },
+      select: {
+        tenantId: true,
+        planKey: true,
+        downgradeToPlanKey: true,
+        tenant: { select: { plan: true } },
+      },
+    });
+    return candidates.filter((c) => normalizePlanKey(c.planKey ?? c.tenant.plan) === planKey);
+  }
+
+  /** R24: how many businesses a catalog price edit would re-price, and by how much. Read-only. */
+  async getPlanPriceImpact(planKeyParam: string, monthlyRaw: unknown): Promise<PlanPriceImpact> {
+    const newMonthly = parseImpactMonthly(monthlyRaw);
+    const { planKey, version, definition } = await this.resolveCatalogPlan(planKeyParam);
+    return buildPlanPriceImpact({
+      planKey,
+      currentMonthly: Number(definition.monthlyPrice ?? 0),
+      newMonthly,
+      targets: await this.selectPlanPriceTargets(version.id, planKey),
+      ownPrice: (await this.selectPlanPriceTargets(version.id, planKey, true)).length,
+      downgradePushed: async (id) =>
+        (await this.scheduledPrice?.isDowngradePricePushed(id)) ?? true,
+    });
   }
 
   // ─── Trial extension ─────────────────────────────────────────────────────────

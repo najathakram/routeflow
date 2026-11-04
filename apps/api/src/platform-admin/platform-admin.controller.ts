@@ -379,6 +379,15 @@ export class PlatformAdminController {
     return this.svc.updateTenantPriceOverride(id, dto, admin.sub);
   }
 
+  @Get("plans/:planKey/price-impact")
+  @ApiOperation({
+    summary:
+      "R24: how many businesses a plan price edit would re-price, how many keep their own price, and the monthly total (read-only)",
+  })
+  getPlanPriceImpact(@Param("planKey") planKey: string, @Query("monthly") monthly?: string) {
+    return this.svc.getPlanPriceImpact(planKey, monthly);
+  }
+
   @Patch("plans/:planKey/prices")
   @ApiOperation({
     summary:

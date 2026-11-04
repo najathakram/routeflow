@@ -143,6 +143,48 @@ describe("OwnerAlertService", () => {
     });
   });
 
+  describe("R25: a free period is about to end", () => {
+    const call = (over: Record<string, unknown> = {}) => ({
+      featureName: "Sales agents",
+      endsAt: new Date("2027-01-12T00:00:00.000Z"),
+      monthlyPrice: 29,
+      ...over,
+    });
+
+    it("subject names the business, the feature and the end date as day + short month", async () => {
+      const { svc, email } = build();
+      await svc.pilotEnding("t-1", call());
+      expect(first(email).subject).toBe("Acme Foods: Sales agents free period ends 12 Jan");
+      expect(sentTo(email)).toEqual(["owner@example.test", "second@example.test"]);
+    });
+
+    it("body is plain: what ends, when, the price afterwards, the way out, and the tenant page link", async () => {
+      const { svc, email } = build();
+      await svc.pilotEnding("t-1", call());
+      const text = first(email).text;
+      expect(text.split("\n\n").length).toBeLessThanOrEqual(4);
+      expect(text).toContain("Sales agents");
+      expect(text).toContain("12 Jan");
+      expect(text).toContain("$29/mo");
+      expect(text).toMatch(/extend/i);
+      expect(text).toMatch(/remove/i);
+      expect(text).toContain("https://app.example.test/admin/tenants/t-1");
+      expect(text).not.toMatch(/override|SKU|grant/i);
+    });
+
+    it("a price with cents keeps them; a whole price does not", async () => {
+      const { svc, email } = build();
+      await svc.pilotEnding("t-1", call({ monthlyPrice: 29.5 }));
+      expect(first(email).text).toContain("$29.50/mo");
+    });
+
+    it("never throws and an unknown business sends nothing", async () => {
+      const { svc, email } = build(null, null);
+      await expect(svc.pilotEnding("t-1", call())).resolves.toBeUndefined();
+      expect(email.send).not.toHaveBeenCalled();
+    });
+  });
+
   describe("never throws", () => {
     it("no list set: the demo-booking default address gets it, as the booking notices do", async () => {
       delete process.env.DEMO_BOOKING_ADMIN_EMAIL;

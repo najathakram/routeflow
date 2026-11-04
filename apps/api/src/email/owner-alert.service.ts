@@ -28,6 +28,13 @@ function dateLabel(d: Date | null | undefined): string | null {
     : null;
 }
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** `12 Jan`: the day and the short month, in UTC (the end of a free period is a UTC date everywhere else). */
+function shortDayMonth(d: Date): string {
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
+}
+
 /**
  * W1 (COPY 2q): a short mail to the owner when a trial needs a person. It goes to the same list that gets the
  * demo-booking notices (`DEMO_BOOKING_ADMIN_EMAIL`, with its default), one send per address, and it NEVER throws: an alert that fails
@@ -116,6 +123,27 @@ export class OwnerAlertService {
       await this.deliver(`Check this new account: ${t.name}`, [
         `${t.name} answered the first question, but its setup had already changed, so we left it alone. It may be half set up.`,
         this.backOfficeLink(t),
+      ]);
+    });
+  }
+
+  /**
+   * R25: a free period for a paid add-on ends within a week. The owner decides: extend it, or let it become a paid
+   * add-on. Plain words only; the caller has already decided that the add-on really costs money afterwards.
+   */
+  async pilotEnding(
+    tenantId: string,
+    p: { featureName: string; endsAt: Date; monthlyPrice: number },
+  ): Promise<void> {
+    await this.guarded("pilot-ending", tenantId, async () => {
+      const t = await this.tenant(tenantId);
+      if (!t) return;
+      const ends = shortDayMonth(p.endsAt);
+      const price = p.monthlyPrice % 1 === 0 ? String(p.monthlyPrice) : p.monthlyPrice.toFixed(2);
+      await this.deliver(`${t.name}: ${p.featureName} free period ends ${ends}`, [
+        `The free period of ${p.featureName} for ${t.name} ends on ${ends}.`,
+        `After that it becomes a paid add-on at $${price}/mo, unless you extend the free period or remove the add-on first.`,
+        `Extend it or remove it from the business page: ${this.backOfficeLink(t)}`,
       ]);
     });
   }

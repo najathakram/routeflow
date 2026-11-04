@@ -564,6 +564,7 @@ export const PERMISSION_MAP: Readonly<Record<string, string>> = {
   "PlatformAdminController.getConfigSnapshotFlag": "UNGUARDED",
   "PlatformAdminController.getEntitlementsMode": "UNGUARDED",
   "PlatformAdminController.getGrowthStats": "UNGUARDED",
+  "PlatformAdminController.getPlanPriceImpact": "UNGUARDED",
   "PlatformAdminController.getStats": "UNGUARDED",
   "PlatformAdminController.getTenant": "UNGUARDED",
   "PlatformAdminController.getTenantAdmin": "UNGUARDED",

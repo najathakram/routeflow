@@ -71,6 +71,19 @@ export interface PlanPriceFanoutResult {
   failed: number;
 }
 
+/** `GET /platform-admin/plans/:planKey/price-impact` (R24): who a catalog price edit would re-price, before it is saved. */
+export interface PlanPriceImpact {
+  planKey: string;
+  currentMonthly: number;
+  newMonthly: number;
+  /** Businesses the edit re-prices: the number the PATCH then reports as `updated`. */
+  affected: number;
+  /** Businesses on the plan with their own monthly price: not affected. */
+  ownPrice: number;
+  /** The change in what is billed each month across `affected`, in dollars (negative = less). */
+  monthlyDelta: number;
+}
+
 /** `PlanDefinition` row as projected by the public catalog (`GET /billing/plans`). Decimal
  *  fields serialize as strings — see plan-catalog.controller.ts. */
 export interface PlanCatalogEntry {
@@ -160,5 +173,16 @@ export async function updatePlanPrices(
   body: { monthly: number; annual?: number | null },
 ): Promise<PlanPriceFanoutResult> {
   const res = await superAdminClient.patch(`/platform-admin/plans/${planKey}/prices`, body);
+  return res.data;
+}
+
+/** R24: read-only. How many businesses a monthly price edit would re-price, and the monthly total. */
+export async function fetchPlanPriceImpact(
+  planKey: string,
+  monthly: number,
+): Promise<PlanPriceImpact> {
+  const res = await superAdminClient.get(`/platform-admin/plans/${planKey}/price-impact`, {
+    params: { monthly },
+  });
   return res.data;
 }

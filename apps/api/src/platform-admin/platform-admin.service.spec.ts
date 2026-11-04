@@ -1218,6 +1218,87 @@ describe("PlatformAdminService — audit provenance", () => {
     expect(planChanged?.[3]?.amountDelta).toBe(0);
   });
 
+  // R49 / T49: the reason an admin gives for a plan move lands in the plan-change audit row.
+  describe("R49 updatePlan - the reason is written to the audit row", () => {
+    const planChangedMeta = () =>
+      auditLog.mock.calls
+        .map((c: any[]) => c[0])
+        .find((a: any) => a.action === AdminAuditAction.TENANT_PLAN_CHANGED)?.meta;
+    const periodEnd = new Date("2026-12-01T00:00:00.000Z");
+
+    it("an instant move records the reason", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "STARTER",
+        status: "ACTIVE",
+        class: "PRODUCTION",
+        deletedAt: null,
+      } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "PROFESSIONAL",
+      } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-9",
+        definitions: [
+          { planKey: "STARTER", monthlyPrice: 99 },
+          { planKey: "SCALE", monthlyPrice: 499 },
+        ],
+      });
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        planKey: "STARTER",
+        basePriceSnapshot: 99,
+        priceOverrideMonthly: null,
+        discount: null,
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+      });
+      await service.updatePlan(
+        TENANT_ID,
+        { plan: "PROFESSIONAL", reason: "Moved up after the sales call" } as any,
+        ADMIN_ID,
+      );
+      expect(planChangedMeta()).toMatchObject({ reason: "Moved up after the sales call" });
+    });
+
+    it("a scheduled downgrade records the reason too", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "PROFESSIONAL",
+        status: "ACTIVE",
+      } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-9",
+        definitions: [
+          { planKey: "STARTER", monthlyPrice: 99 },
+          { planKey: "SCALE", monthlyPrice: 499 },
+        ],
+      });
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        planKey: "SCALE",
+        basePriceSnapshot: 499,
+        priceOverrideMonthly: null,
+        discount: null,
+        cycle: "MONTHLY",
+        periodStart: new Date("2026-11-01T00:00:00.000Z"),
+        periodEnd,
+      });
+      await service.updatePlan(
+        TENANT_ID,
+        { plan: "STARTER", reason: "Customer asked to downsize" } as any,
+        ADMIN_ID,
+      );
+      expect(planChangedMeta()).toMatchObject({
+        scheduled: true,
+        reason: "Customer asked to downsize",
+      });
+    });
+  });
+
   // #2470 (Opus (5) on #2458): the admin paths an override row can take besides a ranked upgrade.
   describe("#2470 admin updatePlan — same-rank and a free (0) override keep the fee", () => {
     const catalog = () =>

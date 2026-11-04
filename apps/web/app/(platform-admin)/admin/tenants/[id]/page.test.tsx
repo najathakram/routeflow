@@ -1027,3 +1027,56 @@ describe("B1271: the one-time temporary password of a new tenant admin stays on 
     expect(screen.getByText("Temp-Pass-123")).toBeInTheDocument();
   });
 });
+
+// R49 / T49: the tenant page's plan change asks for the reason after Confirm in the preview, and sends it.
+describe("R49: the tenant page plan change needs a reason", () => {
+  const patchCalls = () => (superAdminClient.patch as jest.Mock).mock.calls;
+
+  async function confirmPlanPreview() {
+    tenantOverrides = { plan: "STARTER", planKey: "STARTER" };
+    mockPreview.mockResolvedValue(previewFixture({ planKey: "GROWTH" }));
+    render(<TenantDetailPage />);
+    const select = (await screen.findByRole("combobox", { name: "New plan" })) as HTMLSelectElement;
+    await waitFor(() => expect(optionValues(select)).toContain("GROWTH"));
+    fireEvent.change(select, { target: { value: "GROWTH" } });
+    fireEvent.click(screen.getByRole("button", { name: "Change plan" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+    return (await screen.findByLabelText("Why is this business moving?")) as HTMLTextAreaElement;
+  }
+
+  it("Confirm in the preview opens the reason dialog and sends nothing yet", async () => {
+    await confirmPlanPreview();
+    expect(patchCalls()).toEqual([]);
+  });
+
+  it("an empty reason blocks the call and shows the message under the field", async () => {
+    const reason = await confirmPlanPreview();
+    const dialog = screen.getByRole("dialog", { name: /^Change plan to/ });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Change plan" }));
+    expect(
+      await screen.findByText("Say why this business is moving (3 to 500 characters)."),
+    ).toBeInTheDocument();
+    expect(reason).toHaveFocus();
+    expect(patchCalls()).toEqual([]);
+  });
+
+  it("a valid reason is sent with the plan, once", async () => {
+    const reason = await confirmPlanPreview();
+    fireEvent.change(reason, { target: { value: "Customer asked for more routes" } });
+    const dialog = screen.getByRole("dialog", { name: /^Change plan to/ });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Change plan" }));
+    await waitFor(() => expect(patchCalls()).toHaveLength(1));
+    expect(patchCalls()[0]).toEqual([
+      `/platform-admin/tenants/${TENANT_ID}/plan`,
+      { plan: "GROWTH", reason: "Customer asked for more routes" },
+    ]);
+  });
+
+  it("Cancel in the reason dialog sends nothing", async () => {
+    await confirmPlanPreview();
+    const dialog = screen.getByRole("dialog", { name: /^Change plan to/ });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByLabelText("Why is this business moving?")).toBeNull());
+    expect(patchCalls()).toEqual([]);
+  });
+});

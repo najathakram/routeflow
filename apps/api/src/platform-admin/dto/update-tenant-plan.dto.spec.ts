@@ -9,7 +9,7 @@ import { UpdateTenantPlanDto } from "./update-tenant-plan.dto";
  */
 describe("UpdateTenantPlanDto — plan selectability", () => {
   const run = async (plan: unknown) => {
-    const dto = plainToInstance(UpdateTenantPlanDto, { plan });
+    const dto = plainToInstance(UpdateTenantPlanDto, { plan, reason: "Plan move for the test" });
     return validate(dto);
   };
 
