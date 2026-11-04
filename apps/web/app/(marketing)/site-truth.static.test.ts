@@ -90,6 +90,18 @@ describe("public site sentences the code backs", () => {
     expect(page("product")).toContain("A stop can also be refused, with a reason, or undone.");
     expect(page("product")).toContain("Drivers can’t take payment at the door.");
     expect(page("product")).toContain("There’s no proof photo or signature.");
+    // "What can a driver do?": finishing a stop is under Can do, never under Can’t do; photo, signature and door payment stay under Can’t do.
+    const listAfter = (h4: string) =>
+      page("product").slice(page("product").indexOf(h4)).split("</ul>")[0];
+    const can = listAfter("<h4>Can do</h4>");
+    const cant = listAfter("<h4>Can’t do</h4>");
+    expect(cant).not.toContain("<li>Finish a stop</li>");
+    expect(can).toContain("<li>Finish a stop</li>");
+    expect(can).toContain("<li>Record a refusal</li>");
+    expect(can).toContain("<li>Undo a stop</li>");
+    expect(cant).toContain("<li>Take a photo or a signature</li>");
+    expect(cant).toContain("<li>Take payment at the door</li>");
+    expect(page("product")).toContain("drivers start, finish, or skip each stop.");
     expect(page("product")).toContain("An order on a run is delivered when its stop is completed.");
     expect(page("home")).toContain(
       "Drivers see the stops on the web and can start or skip a stop.",
