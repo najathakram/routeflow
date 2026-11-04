@@ -2181,7 +2181,8 @@ export default function AdminTenantDetailPage() {
 
       <PlanMoveReasonDialog
         open={moveAsk !== null}
-        title={`Change plan to ${planLabel(moveAsk?.plan ?? "")}`}
+        // SA-1100 A-1: one business's money, so the reason dialog is the red confirm and names who.
+        title={`Move ${tenantDisplayName(tenant)} to ${planLabel(moveAsk?.plan ?? "")}?`}
         onSubmit={answerMoveAsk}
         onCancel={() => answerMoveAsk(null)}
       />

@@ -47,7 +47,7 @@ function facts(over: Partial<BillablePilotFacts> = {}): BillablePilotFacts {
       featureKey: "tobacco_dealer",
     },
     now: NOW,
-    tenant: { class: "PRODUCTION", deletedAt: null },
+    tenant: { status: "ACTIVE", class: "PRODUCTION", deletedAt: null },
     planKey: "GROWTH",
     ent: { planKey: "GROWTH", flags: [] },
     otherOverrides: new Map(),
@@ -107,13 +107,28 @@ describe("billablePilotEnding (SA-1100 §1)", () => {
     "BP-4: a %s-class business never mails the owner",
     (cls) => {
       expect(
-        billablePilotEnding(facts({ tenant: { class: cls, deletedAt: null } }), OFF),
+        billablePilotEnding(
+          facts({ tenant: { status: "ACTIVE", class: cls, deletedAt: null } }),
+          OFF,
+        ),
+      ).toBeNull();
+    },
+  );
+
+  it.each(["TRIAL", "READ_ONLY", "SUSPENDED", "CANCELLED"])(
+    "BP-5: a %s business (not ACTIVE) never mails the owner",
+    (status) => {
+      expect(
+        billablePilotEnding(
+          facts({ tenant: { status, class: "PRODUCTION", deletedAt: null } }),
+          OFF,
+        ),
       ).toBeNull();
     },
   );
 
   it("a deleted business never mails the owner", () => {
-    const f = facts({ tenant: { class: "PRODUCTION", deletedAt: new Date() } });
+    const f = facts({ tenant: { status: "ACTIVE", class: "PRODUCTION", deletedAt: new Date() } });
     expect(billablePilotEnding(f, OFF)).toBeNull();
   });
 

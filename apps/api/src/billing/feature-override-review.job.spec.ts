@@ -275,6 +275,7 @@ function pilotRow(over: Record<string, unknown> = {}) {
       planVersionId: "v-1",
       deletedAt: null as Date | null,
       class: "PRODUCTION",
+      status: "ACTIVE",
       subscription: { planKey: "GROWTH" },
     },
     ...over,
@@ -323,6 +324,7 @@ function buildPilot(
               (!keys || keys.includes(r.featureKey)) &&
               (where?.tenant?.deletedAt !== null || r.tenant.deletedAt === null) &&
               (where?.tenant?.class === undefined || r.tenant.class === where.tenant.class) &&
+              (where?.tenant?.status === undefined || r.tenant.status === where.tenant.status) &&
               !not.some((n) => n.id === r.id && n.expiresAt.getTime() === r.expiresAt!.getTime()),
           ),
         );
@@ -538,6 +540,18 @@ describe("FeatureOverrideReviewJob.warnBillablePilotsEnding (R25 / T25)", () => 
       expect(await job.warnBillablePilotsEnding()).toEqual({ warned: 1 });
       expect(ownerAlerts.pilotEnding).toHaveBeenCalledTimes(1);
     });
+
+    it.each(["SUSPENDED", "CANCELLED", "READ_ONLY"])(
+      "BP-5: a %s production business gets no warning, because it cannot buy the add-on",
+      async (status) => {
+        const { job, ownerAlerts, prisma } = buildPilot([
+          pilotRow({ tenant: { ...pilotRow().tenant, status } }),
+        ]);
+        expect(await job.warnBillablePilotsEnding()).toEqual({ warned: 0 });
+        expect(ownerAlerts.pilotEnding).not.toHaveBeenCalled();
+        expect(prisma.auditLog.create).not.toHaveBeenCalled();
+      },
+    );
 
     it("a TRIAL free period warns the same way", async () => {
       const { job, ownerAlerts } = buildPilot([pilotRow({ kind: "TRIAL" })]);

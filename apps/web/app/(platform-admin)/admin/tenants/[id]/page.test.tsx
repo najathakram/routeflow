@@ -1049,9 +1049,19 @@ describe("R49: the tenant page plan change needs a reason", () => {
     expect(patchCalls()).toEqual([]);
   });
 
+  it("SA-1100 §2: the dialog is the red confirm, names the business and keeps focus on the reason", async () => {
+    const reason = await confirmPlanPreview();
+    const dialog = screen.getByRole("dialog", { name: "Move Acme to Growth?" });
+    const submit = within(dialog).getByRole("button", { name: "Change plan" });
+    expect(submit.className).toContain("bg-red-600");
+    expect(submit.className).toContain("hover:bg-red-500");
+    expect(submit.className).not.toContain("bg-indigo-600");
+    expect(reason).toHaveFocus();
+  });
+
   it("an empty reason blocks the call and shows the message under the field", async () => {
     const reason = await confirmPlanPreview();
-    const dialog = screen.getByRole("dialog", { name: /^Change plan to/ });
+    const dialog = screen.getByRole("dialog", { name: /^Move Acme to / });
     fireEvent.click(within(dialog).getByRole("button", { name: "Change plan" }));
     expect(
       await screen.findByText("Say why this business is moving (3 to 500 characters)."),
@@ -1063,7 +1073,7 @@ describe("R49: the tenant page plan change needs a reason", () => {
   it("a valid reason is sent with the plan, once", async () => {
     const reason = await confirmPlanPreview();
     fireEvent.change(reason, { target: { value: "Customer asked for more routes" } });
-    const dialog = screen.getByRole("dialog", { name: /^Change plan to/ });
+    const dialog = screen.getByRole("dialog", { name: /^Move Acme to / });
     fireEvent.click(within(dialog).getByRole("button", { name: "Change plan" }));
     await waitFor(() => expect(patchCalls()).toHaveLength(1));
     expect(patchCalls()[0]).toEqual([
@@ -1074,7 +1084,7 @@ describe("R49: the tenant page plan change needs a reason", () => {
 
   it("Cancel in the reason dialog sends nothing", async () => {
     await confirmPlanPreview();
-    const dialog = screen.getByRole("dialog", { name: /^Change plan to/ });
+    const dialog = screen.getByRole("dialog", { name: /^Move Acme to / });
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByLabelText("Why is this business moving?")).toBeNull());
     expect(patchCalls()).toEqual([]);

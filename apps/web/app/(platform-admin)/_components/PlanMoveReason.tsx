@@ -126,7 +126,7 @@ export function PlanMoveReasonDialog({
               const reason = state.validate();
               if (reason !== null) onSubmit(reason);
             }}
-            className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
+            className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500"
           >
             Change plan
           </button>

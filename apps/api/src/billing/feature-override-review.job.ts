@@ -193,10 +193,7 @@ export class FeatureOverrideReviewJob {
         revokedAt: null,
         expiresAt: { gt: now, lte: horizon },
         featureKey: { in: [...FEATURE_KEYS_WITH_SKU] },
-        tenant: {
-          deletedAt: PAYING_TENANT_CONDITIONS.deletedAt,
-          class: PAYING_TENANT_CONDITIONS.class,
-        },
+        tenant: { ...PAYING_TENANT_CONDITIONS },
         ...(warned.length > 0 ? { NOT: warned } : {}),
       },
       orderBy: [{ expiresAt: "asc" }, { id: "asc" }],
@@ -211,6 +208,7 @@ export class FeatureOverrideReviewJob {
         expiresAt: true,
         tenant: {
           select: {
+            status: true,
             class: true,
             deletedAt: true,
             plan: true,

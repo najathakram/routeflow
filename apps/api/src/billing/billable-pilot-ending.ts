@@ -22,7 +22,7 @@ export const FREE_PERIOD_KINDS: readonly string[] = ["PILOT", "TRIAL"];
  *  3. No active add-on row (paid or comp) holds the SKU, and the plan does not include it.
  *  4. The SKU is in the tenant's pinned catalog, priced above 0, and flat (`meteredKey` null): a capacity
  *     SKU's cost depends on how many are needed, so it is out (LATER: add it when a capacity pilot is granted).
- *  5. The business is a PRODUCTION-class tenant and not deleted, the same rule as
+ *  5. The business is an ACTIVE PRODUCTION-class tenant and not deleted, the same rule as
  *     `PAYING_TENANT_CONDITIONS` (a test or demo pilot never mails the owner).
  *
  * A GRANT override never creates a `TenantAddon` row, so nothing is billed when it ends: the business LOSES the
@@ -40,7 +40,7 @@ export interface BillablePilotFacts {
     expiresAt: Date | null;
   };
   now: Date;
-  tenant: { class: string; deletedAt: Date | null };
+  tenant: { status: string; class: string; deletedAt: Date | null };
   /** The plan key the catalog inclusion is judged at (subscription plan, else the tenant plan). */
   planKey: string;
   /** The plan's entitlements; null when they could not be resolved (never billable: fail closed). */
@@ -80,6 +80,7 @@ export function billablePilotEnding(
   }
 
   // 5. a real, live, production business
+  if (f.tenant.status !== PAYING_TENANT_CONDITIONS.status) return null;
   if (f.tenant.class !== PAYING_TENANT_CONDITIONS.class) return null;
   if (f.tenant.deletedAt != PAYING_TENANT_CONDITIONS.deletedAt) return null;
 
