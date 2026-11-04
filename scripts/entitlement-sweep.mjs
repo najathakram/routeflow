@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-// FG-1 WP1 (R10, R11) — fetch the entitlement sweep from an API and compare two sweep files.
+// FG-1 WP1 (R10, R11) — fetch the entitlement sweep from an API, check one sweep, compare two.
 //
 //   fetch:    ENTITLEMENT_SWEEP_API_URL=http://localhost:3000/api/v1 \
 //             ENTITLEMENT_SWEEP_TOKEN=<super-admin access token> \
 //             node scripts/entitlement-sweep.mjs [--out local-assets/entitlement-sweep-a.json] [--limit 50]
-//   compare:  node scripts/entitlement-sweep.mjs --compare a.json b.json
+//   check:    node scripts/entitlement-sweep.mjs --check a.json
+//   compare:  node scripts/entitlement-sweep.mjs --compare a.json b.json [--new-keys k1,k2]
 //
 // NEVER RUNS AGAINST PRODUCTION BY ITSELF. The fetch refuses (exit 3) any base URL whose host is not
 // localhost / 127.0.0.1 / ::1, before any request is made, unless the owner passes
@@ -15,11 +16,33 @@
 // { mode, planFlagEnforcement } plus every tenant row. Tenant ids are the API's one-way hashes,
 // never a raw id, slug or name. This script only reads JSON; it imports nothing from the API.
 //
-// Compare exit codes: 0 equal, or every difference comes with a changed inputsHash (the tenant's
-// plan, plan version, add-on rows or override rows moved, so a different answer is expected);
-// 2 when any (hashed tenant, key) bit differs while that tenant's inputsHash is unchanged;
-// 3 refused (bad URL, missing env, path outside local-assets); 1 any other failure.
-// The report prints only hashed tenant ids and key names.
+// SA-1100 §3 — two comparisons:
+//
+// --check <file> (inside ONE sweep): each (tenant, key) and each set row gets one class.
+//   agree         old == effective
+//   courtesy gap  old true, effective false, and the row's `courtesy` bit is true. Expected before
+//                 WP2; counted per key. (WP2's `--after-wp2` will make it fail; that flag arrives
+//                 with WP2 and is refused here, not ignored.)
+//   unexplained   anything else (a tenant the resolver could not resolve counts here). Exit 2: the
+//                 stage stops and comes back to the architect.
+//   client drift  clientFlag != old on a flag key, or clientAddon != old on an add-on key. Listed
+//                 per key as WP8's input; it never fails the check.
+//   Prints mode + planFlagEnforcement; a "live" mode or planFlagEnforcement "on" prints a WP2-STOP line.
+//
+// --compare a.json b.json (BETWEEN two sweeps): "no change" means all of
+//   - mode and planFlagEnforcement are equal, else REFUSED (exit 3, "not comparable"): a switch flip
+//     changes answers while the inputs stay the same;
+//   - the key set is equal, else exit 2. A build that really adds a gated key names it with
+//     --new-keys k1,k2 (a set row is named "set:<keys joined by |>"); a key present in only the
+//     first file is never excused;
+//   - for each tenant whose inputsHash is unchanged, old / effective / strict / clientAddon /
+//     clientFlag are identical, else exit 2. (WP2's `--expect wp2` arrives with WP2 and is refused.)
+//   inputsHash covers each override's live bit at sweep time, so a lapse is a changed input.
+//
+// Exit codes: 0 fine; 2 an unexplained difference (check) / a difference with unchanged inputs or a
+// key-set change (compare); 3 refused (bad URL, missing env, path outside local-assets, not
+// comparable, a WP2-only flag); 1 any other failure.
+// Reports print only hashed tenant ids and key names.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,17 +57,30 @@ const refuse = (message) => {
   process.exit(3);
 };
 
-/** Pure: `{ differences: [{ tenant, key, bit, a, b }], onlyInA, onlyInB, inputsChanged }`. */
-export function compareSweeps(a, b) {
+const rowsOf = (t) => ({
+  ...(t.keys ?? {}),
+  ...Object.fromEntries(Object.entries(t.sets ?? {}).map(([k, v]) => [`set:${k}`, v])),
+});
+
+/** Every gated key (and `set:` row) name present in any tenant of a sweep file. */
+export function keySet(file) {
+  const names = new Set();
+  for (const t of file.tenants ?? []) for (const k of Object.keys(rowsOf(t))) names.add(k);
+  return names;
+}
+
+/**
+ * Pure: `{ differences: [{ tenant, key, bit, a, b }], onlyInA, onlyInB, inputsChanged, keysOnlyInA,
+ * keysOnlyInB, newKeys }`. `newKeys` (SA-1100 §3) are key names the second file may add: they are
+ * left out of both the key-set check and the per-tenant bit comparison.
+ */
+export function compareSweeps(a, b, { newKeys = [] } = {}) {
   const byId = (file) => new Map((file.tenants ?? []).map((t) => [t.id, t]));
   const ma = byId(a);
   const mb = byId(b);
+  const excused = new Set(newKeys);
   const differences = [];
   let inputsChanged = 0;
-  const rows = (t) => ({
-    ...(t.keys ?? {}),
-    ...Object.fromEntries(Object.entries(t.sets ?? {}).map(([k, v]) => [`set:${k}`, v])),
-  });
   for (const [id, ta] of ma) {
     const tb = mb.get(id);
     if (!tb) continue;
@@ -52,9 +88,10 @@ export function compareSweeps(a, b) {
       inputsChanged += 1;
       continue;
     }
-    const ra = rows(ta);
-    const rb = rows(tb);
+    const ra = rowsOf(ta);
+    const rb = rowsOf(tb);
     for (const key of new Set([...Object.keys(ra), ...Object.keys(rb)])) {
+      if (excused.has(key) && !(key in ra)) continue;
       for (const bit of BITS) {
         const va = ra[key]?.[bit];
         const vb = rb[key]?.[bit];
@@ -64,28 +101,143 @@ export function compareSweeps(a, b) {
   }
   const onlyInA = [...ma.keys()].filter((id) => !mb.has(id)).length;
   const onlyInB = [...mb.keys()].filter((id) => !ma.has(id)).length;
-  return { differences, onlyInA, onlyInB, inputsChanged };
+  const ka = keySet(a);
+  const kb = keySet(b);
+  const keysOnlyInA = [...ka].filter((k) => !kb.has(k)).sort();
+  const keysOnlyInB = [...kb].filter((k) => !ka.has(k) && !excused.has(k)).sort();
+  return {
+    differences,
+    onlyInA,
+    onlyInB,
+    inputsChanged,
+    keysOnlyInA,
+    keysOnlyInB,
+    newKeys: [...excused],
+  };
 }
 
-function runCompare(fileA, fileB) {
-  if (!fileA || !fileB) refuse("--compare needs two files: --compare a.json b.json");
-  const read = (f) => JSON.parse(readFileSync(path.resolve(f), "utf8"));
-  const a = read(fileA);
-  const b = read(fileB);
-  const r = compareSweeps(a, b);
-  for (const d of r.differences) {
-    console.log(`DIFF ${d.tenant} ${d.key} ${d.bit}: ${String(d.a)} -> ${String(d.b)}`);
-  }
+/** The reason two sweeps cannot be compared, or null. A switch flip changes answers under equal inputs. */
+export function notComparable(a, b) {
   if (a.mode !== b.mode || a.planFlagEnforcement !== b.planFlagEnforcement) {
+    return (
+      `not comparable: mode ${a.mode} -> ${b.mode}, planFlagEnforcement ` +
+      `${a.planFlagEnforcement} -> ${b.planFlagEnforcement}`
+    );
+  }
+  return null;
+}
+
+/**
+ * Pure (SA-1100 §3.A): classify every (tenant, key) and set row of ONE sweep. Returns
+ * `{ agree, gaps: [{ tenant, key }], gapsByKey, unexplained: [{ tenant, key, old, effective, courtesy }], drift }`.
+ */
+export function checkSweep(file) {
+  const out = { agree: 0, gaps: [], gapsByKey: {}, unexplained: [], drift: [] };
+  for (const t of file.tenants ?? []) {
+    if (t.error) {
+      out.unexplained.push({
+        tenant: t.id,
+        key: `(${t.error})`,
+        old: null,
+        effective: null,
+        courtesy: null,
+      });
+      continue;
+    }
+    for (const [key, bits] of Object.entries(rowsOf(t))) {
+      if (bits.old === bits.effective) out.agree += 1;
+      else if (bits.old === true && bits.effective === false && bits.courtesy === true) {
+        out.gaps.push({ tenant: t.id, key });
+        out.gapsByKey[key] = (out.gapsByKey[key] ?? 0) + 1;
+      } else {
+        out.unexplained.push({
+          tenant: t.id,
+          key,
+          old: bits.old,
+          effective: bits.effective,
+          courtesy: bits.courtesy ?? null,
+        });
+      }
+      const which = bits.clientFlag != null ? "clientFlag" : "clientAddon";
+      const client = bits[which];
+      if (client !== null && client !== undefined && client !== bits.old) {
+        out.drift.push({ tenant: t.id, key, which, old: bits.old, client });
+      }
+    }
+  }
+  return out;
+}
+
+const readJson = (f) => JSON.parse(readFileSync(path.resolve(f), "utf8"));
+
+function refuseWp2Flags(args) {
+  for (const name of ["--expect", "--after-wp2"]) {
+    if (args.includes(name)) {
+      refuse(`${name} belongs to WP2 and is not implemented in WP1; it is refused, not ignored`);
+    }
+  }
+}
+
+function runCheck(args) {
+  refuseWp2Flags(args);
+  const file = args[args.indexOf("--check") + 1];
+  if (!file || file.startsWith("--")) refuse("--check needs a file: --check a.json");
+  const f = readJson(file);
+  const r = checkSweep(f);
+  console.log(`mode ${f.mode}, planFlagEnforcement ${f.planFlagEnforcement}`);
+  if (f.mode === "live" || f.planFlagEnforcement === "on") {
     console.log(
-      `note: mode ${a.mode} -> ${b.mode}, planFlagEnforcement ${a.planFlagEnforcement} -> ${b.planFlagEnforcement}`,
+      "WP2-STOP: mode is live or planFlagEnforcement is on; WP2 must not merge, this goes back to the architect",
+    );
+  }
+  for (const u of r.unexplained) {
+    console.log(
+      `UNEXPLAINED ${u.tenant} ${u.key}: old=${String(u.old)} effective=${String(u.effective)} courtesy=${String(u.courtesy)}`,
+    );
+  }
+  for (const [key, n] of Object.entries(r.gapsByKey).sort()) {
+    console.log(`COURTESY-GAP ${key}: ${n}`);
+  }
+  for (const d of r.drift) {
+    console.log(
+      `CLIENT-DRIFT ${d.tenant} ${d.key} ${d.which}=${String(d.client)} old=${String(d.old)}`,
     );
   }
   console.log(
-    `${r.differences.length} difference(s) with unchanged inputs; ${r.inputsChanged} tenant(s) with changed inputs; ` +
-      `${r.onlyInA} only in the first file, ${r.onlyInB} only in the second`,
+    `${r.agree} agree; ${r.gaps.length} courtesy gap(s); ${r.unexplained.length} unexplained; ` +
+      `${r.drift.length} client drift (WP8 input, never fails)`,
   );
-  process.exit(r.differences.length > 0 ? 2 : 0);
+  process.exit(r.unexplained.length > 0 ? 2 : 0);
+}
+
+function runCompare(args) {
+  refuseWp2Flags(args);
+  const at = args.indexOf("--compare");
+  const [fileA, fileB] = [args[at + 1], args[at + 2]];
+  if (!fileA || !fileB || fileA.startsWith("--") || fileB.startsWith("--")) {
+    refuse("--compare needs two files: --compare a.json b.json");
+  }
+  const nk = args.indexOf("--new-keys");
+  const newKeys = nk >= 0 && args[nk + 1] ? args[nk + 1].split(",").filter(Boolean) : [];
+  const a = readJson(fileA);
+  const b = readJson(fileB);
+  const why = notComparable(a, b);
+  if (why) refuse(why);
+  const r = compareSweeps(a, b, { newKeys });
+  for (const d of r.differences) {
+    console.log(`DIFF ${d.tenant} ${d.key} ${d.bit}: ${String(d.a)} -> ${String(d.b)}`);
+  }
+  for (const k of r.keysOnlyInA) console.log(`KEY-ONLY-IN-FIRST ${k}`);
+  for (const k of r.keysOnlyInB) {
+    console.log(`KEY-ONLY-IN-SECOND ${k} (name it with --new-keys if the build adds it)`);
+  }
+  console.log(
+    `${r.differences.length} difference(s) with unchanged inputs; ${r.inputsChanged} tenant(s) with changed inputs; ` +
+      `${r.onlyInA} only in the first file, ${r.onlyInB} only in the second; ` +
+      `${r.keysOnlyInA.length + r.keysOnlyInB.length} key(s) in only one file`,
+  );
+  const bad = r.differences.length > 0 || r.keysOnlyInA.length > 0 || r.keysOnlyInB.length > 0;
+  process.exit(bad ? 2 : 0);
 }
 
 async function runFetch(args) {
@@ -145,10 +297,10 @@ async function runFetch(args) {
   );
 }
 
-// Only act when run directly (compareSweeps is also importable without side effects).
+// Only act when run directly (the pure functions are also importable without side effects).
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
-  const at = args.indexOf("--compare");
-  if (at >= 0) runCompare(args[at + 1], args[at + 2]);
+  if (args.includes("--check")) runCheck(args);
+  else if (args.includes("--compare")) runCompare(args);
   else await runFetch(args);
 }

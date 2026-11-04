@@ -4,6 +4,8 @@
 // checks the exit code: same -> 0; a bit differs while inputsHash is unchanged -> 2; a bit differs
 // but inputsHash changed -> 0. Also: the compare prints only hashed ids and key names; a
 // non-local base URL is refused without the per-command owner flag.
+// SA-1100 §3: --check (agree / courtesy gap / unexplained / client drift), the not-comparable refusal
+// on a mode or env change (exit 3), the key-set rule and --new-keys, and the WP2-only flags refused.
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -81,6 +83,202 @@ try {
     "set row differs, inputsHash unchanged -> exit 2",
     run(["--compare", a, write("set.json", setDiff)]).status,
     2,
+  );
+
+  // ── SA-1100 §3 (B): between two sweeps ─────────────────────────────────────────────────────────
+  const withEnv = (obj, over) => ({ ...obj, ...over });
+  const modeFlip = write("mode-flip.json", withEnv(file("in-1", bits()), { mode: "live" }));
+  const envFlip = write(
+    "env-flip.json",
+    withEnv(file("in-1", bits()), { planFlagEnforcement: "on" }),
+  );
+  const modeRun = run(["--compare", a, modeFlip]);
+  check("mode differs -> refused, exit 3 (never just a note)", modeRun.status, 3);
+  check("env differs -> refused, exit 3", run(["--compare", a, envFlip]).status, 3);
+  check(
+    "the refusal says 'not comparable' and prints no DIFF lines",
+    /not comparable/.test(modeRun.stderr) && !/DIFF/.test(modeRun.stdout),
+    true,
+  );
+
+  const withKey = (obj, name, b) => {
+    const copy = JSON.parse(JSON.stringify(obj));
+    copy.tenants[0].keys[name] = b;
+    return copy;
+  };
+  const added = write("added.json", withKey(file("in-1", bits()), "flag.new_thing", bits()));
+  const addedRun = run(["--compare", a, added]);
+  check("a key present in only the second file -> exit 2", addedRun.status, 2);
+  check(
+    "the report names the key",
+    /KEY-ONLY-IN-SECOND flag\.new_thing/.test(addedRun.stdout),
+    true,
+  );
+  check(
+    "--new-keys names the added key -> exit 0",
+    run(["--compare", a, added, "--new-keys", "flag.new_thing"]).status,
+    0,
+  );
+  check(
+    "--new-keys never excuses a key that disappeared (only in the first file) -> exit 2",
+    run(["--compare", added, a, "--new-keys", "flag.new_thing"]).status,
+    2,
+  );
+  check("a key present in only the first file -> exit 2", run(["--compare", added, a]).status, 2);
+  const strictDiff = write("strict-diff.json", file("in-1", bits({ strict: false })));
+  check(
+    "strict differs with unchanged inputs -> exit 2",
+    run(["--compare", a, strictDiff]).status,
+    2,
+  );
+  const clientDiff = write("client-diff.json", file("in-1", bits({ clientFlag: false })));
+  check(
+    "a client bit differs with unchanged inputs -> exit 2",
+    run(["--compare", a, clientDiff]).status,
+    2,
+  );
+  check(
+    "WP2's --expect is refused in WP1 (exit 3), not ignored",
+    run(["--compare", a, same, "--expect", "wp2"]).status,
+    3,
+  );
+
+  // ── SA-1100 §3 (A): inside ONE sweep ───────────────────────────────────────────────────────────
+  const one = (keys, extra = {}) => ({
+    mode: "shadow",
+    planFlagEnforcement: "off",
+    tenants: [{ id: "h-0001", class: "PRODUCTION", inputsHash: "in-1", keys, sets: {}, ...extra }],
+  });
+  const agree = write("check-agree.json", one({ "flag.reports": bits({ courtesy: false }) }));
+  const checkAgree = run(["--check", agree]);
+  check("--check: old == effective everywhere -> exit 0", checkAgree.status, 0);
+  check(
+    "--check prints mode and planFlagEnforcement",
+    /mode shadow, planFlagEnforcement off/.test(checkAgree.stdout),
+    true,
+  );
+
+  const gap = write(
+    "check-gap.json",
+    one({
+      "flag.reports": bits({ effective: false, strict: false, courtesy: true }),
+      ocr: bits({
+        effective: false,
+        strict: false,
+        courtesy: true,
+        clientFlag: null,
+        clientAddon: true,
+      }),
+    }),
+  );
+  const gapRun = run(["--check", gap]);
+  check(
+    "--check: old true, effective false, courtesy true is a courtesy gap -> exit 0",
+    gapRun.status,
+    0,
+  );
+  check(
+    "the courtesy gaps are counted per key",
+    /COURTESY-GAP flag\.reports: 1/.test(gapRun.stdout) &&
+      /COURTESY-GAP ocr: 1/.test(gapRun.stdout),
+    true,
+  );
+
+  const noCourtesy = write(
+    "check-unexplained-1.json",
+    one({ "flag.reports": bits({ effective: false, strict: false, courtesy: false }) }),
+  );
+  const unexplainedRun = run(["--check", noCourtesy]);
+  check(
+    "--check: old true, effective false, courtesy false is unexplained -> exit 2",
+    unexplainedRun.status,
+    2,
+  );
+  check(
+    "the report names the hashed tenant and the key",
+    /UNEXPLAINED h-0001 flag\.reports/.test(unexplainedRun.stdout),
+    true,
+  );
+  check(
+    "--check: a file with no courtesy bit at all cannot excuse a gap -> exit 2",
+    run(["--check", write("check-nobit.json", one({ k: bits({ effective: false }) }))]).status,
+    2,
+  );
+  check(
+    "--check: old false, effective true is unexplained even with courtesy -> exit 2",
+    run([
+      "--check",
+      write(
+        "check-widen.json",
+        one({ k: bits({ old: false, effective: true, courtesy: true, clientFlag: false }) }),
+      ),
+    ]).status,
+    2,
+  );
+  check(
+    "--check: a tenant the resolver could not resolve is unexplained -> exit 2",
+    run(["--check", write("check-error.json", one({}, { error: "resolve_failed" }))]).status,
+    2,
+  );
+  const setGap = one({});
+  setGap.tenants[0].sets = {
+    "order_delivery|developer_mode": {
+      old: true,
+      effective: false,
+      strict: false,
+      clientAddon: false,
+      courtesy: false,
+    },
+  };
+  check(
+    "--check: a set row is classified too (a gap without courtesy) -> exit 2",
+    run(["--check", write("check-set.json", setGap)]).status,
+    2,
+  );
+
+  const drift = write(
+    "check-drift.json",
+    one({
+      "flag.reports": bits({ courtesy: false, clientFlag: false }),
+      ocr: bits({ courtesy: false, clientFlag: null, clientAddon: false }),
+      "flag.estimates": bits({ courtesy: false, clientFlag: true }),
+    }),
+  );
+  const driftRun = run(["--check", drift]);
+  check("--check: client drift is listed per key but never fails -> exit 0", driftRun.status, 0);
+  check(
+    "drift names flag keys by clientFlag and add-on keys by clientAddon",
+    /CLIENT-DRIFT h-0001 flag\.reports clientFlag=false/.test(driftRun.stdout) &&
+      /CLIENT-DRIFT h-0001 ocr clientAddon=false/.test(driftRun.stdout) &&
+      !/flag\.estimates/.test(driftRun.stdout),
+    true,
+  );
+
+  const live = run([
+    "--check",
+    write("check-live.json", withEnv(one({ k: bits({ courtesy: false }) }), { mode: "live" })),
+  ]);
+  check(
+    "--check: mode live prints the WP2 stop line (exit unchanged)",
+    live.status === 0 && /WP2-STOP/.test(live.stdout),
+    true,
+  );
+  const envOn = run([
+    "--check",
+    write(
+      "check-env-on.json",
+      withEnv(one({ k: bits({ courtesy: false }) }), { planFlagEnforcement: "on" }),
+    ),
+  ]);
+  check(
+    "--check: planFlagEnforcement on prints the WP2 stop line",
+    /WP2-STOP/.test(envOn.stdout),
+    true,
+  );
+  check(
+    "WP2's --after-wp2 is refused in WP1 (exit 3), not ignored",
+    run(["--check", agree, "--after-wp2"]).status,
+    3,
   );
 
   // Never against production by itself: a non-local base URL is refused (exit 3), no network call.
