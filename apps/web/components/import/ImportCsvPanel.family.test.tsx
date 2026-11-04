@@ -66,6 +66,7 @@ function setup() {
   const onImported = jest.fn();
   render(
     <ImportCsvPanel
+      template={{ headers: ["Item Name"], fileName: "t.csv" }}
       endpoint="/import/products"
       title="Products"
       columns={columns}

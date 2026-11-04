@@ -1,4 +1,8 @@
-import { PRODUCT_IMPORT_COLUMNS, CUSTOMER_IMPORT_COLUMNS } from "./import-column-aliases";
+import {
+  PRODUCT_IMPORT_COLUMNS,
+  CUSTOMER_IMPORT_COLUMNS,
+  CUSTOMER_IMPORT_LITERAL_HEADERS,
+} from "./import-column-aliases";
 import { parseImportMoney, parseImportNumber } from "./parse-import-number";
 import { roundUnitCost } from "@routeflow/pricing";
 
@@ -526,6 +530,12 @@ export function resolveColumns(headers: string[], registry: ColumnDef[]): Resolv
   }
 
   return { byField, unknownColumns };
+}
+
+/** The contacts import reads these by exact key (`row["Phone"]`), so only an exact match is not unknown; `phone` or `Billing_City` is still dropped and must still warn. */
+export function withoutCustomerLiteralHeaders(headers: string[]): string[] {
+  const literal = new Set(CUSTOMER_IMPORT_LITERAL_HEADERS);
+  return headers.filter((h) => !literal.has(h));
 }
 
 export interface ParsedRow {
