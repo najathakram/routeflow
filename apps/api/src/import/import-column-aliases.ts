@@ -118,3 +118,21 @@ export const CUSTOMER_IMPORT_COLUMNS: ImportColumnAlias[] = [
   { field: "smsConsent", canonical: "SMS Consent", aliases: ["SMS Consent"] },
   { field: "waConsent", canonical: "WhatsApp Consent", aliases: ["WhatsApp Consent"] },
 ];
+
+/** Customer headers the contacts import reads by name, outside the alias list above. */
+export const CUSTOMER_IMPORT_LITERAL_HEADERS: string[] = [
+  "Phone",
+  "MobilePhone",
+  "Email",
+  "First Name",
+  "Last Name",
+  "Billing Address",
+  "Billing City",
+  "Billing State",
+  "Billing Code",
+  "Shipping Address",
+  "Shipping City",
+  "Shipping State",
+  "Shipping Code",
+  "Notes",
+];
