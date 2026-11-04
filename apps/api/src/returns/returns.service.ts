@@ -370,7 +370,12 @@ export class ReturnsService {
         },
       });
       if (!order) throw new NotFoundException("Order not found");
-      if (order.status !== "DELIVERED")
+      // SA-1101 §2.5: staff may also record a return on a REFUSED order (how the refused goods go back to stock,
+      // SA-1098 A-1). A buyer may not: they get the same message as for any undelivered order.
+      const returnable =
+        order.status === "DELIVERED" ||
+        (order.status === "REFUSED" && userRole != null && userRole !== "CUSTOMER");
+      if (!returnable)
         throw new BadRequestException("Returns can only be submitted for delivered orders");
 
       // Customers can only create returns for their own orders

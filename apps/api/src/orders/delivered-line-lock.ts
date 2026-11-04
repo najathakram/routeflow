@@ -17,8 +17,9 @@ import { orderEditMode } from "./order-edit-restrictions";
  * Order-locked read (the authoritative lines), so a delivery that landed while the edit waited on the lock
  * is judged too.
  *
- * Scope, exactly: ONLY `PARTIALLY_DELIVERED`. DELIVERED, OUT_FOR_DELIVERY and the earlier statuses keep
- * their existing edit rules untouched. Allowed on a delivered line: a note, an override reason with no
+ * Scope, exactly: the full change lock is ONLY `PARTIALLY_DELIVERED`. DELIVERED, OUT_FOR_DELIVERY and the earlier
+ * statuses keep their existing edit rules, with one exception (SA-1101 §2.7, verification F): REMOVING a delivered
+ * line (strike-off, delete, substitution) is refused on every status. Allowed on a delivered line: a note, an override reason with no
  * price change, a rename of an unlisted line (none of them quantity, price or unit). Allowed on the order:
  * every edit of an UNDELIVERED line, and a brand-new line. Pure: no Prisma, no Nest beyond the 409.
  */
@@ -112,14 +113,25 @@ export function assertDeliveredLinesUntouched(
   user: { role?: string } | undefined,
   isDiffPayload: boolean,
 ): void {
-  if (!deliveredLockApplies(order.status)) return;
   const delivered = held.filter(isDeliveredLine);
   if (delivered.length === 0) return;
 
   const mode = orderEditMode(user?.role, dto.replaceAll, isDiffPayload);
+  const deliveredById = new Map(delivered.map((l) => [l.id, l]));
+  if (!deliveredLockApplies(order.status)) {
+    // SA-1101 §2.7 (verification F): off a PARTIALLY_DELIVERED order only the full change lock stays off. Taking a
+    // delivered line away is refused on every status; goods come back through a return. Replace mode keeps
+    // SA-763r's carry (a replace never removes a delivered line, it re-creates it).
+    if (mode.kind === "merge") {
+      for (const entry of dto.items ?? []) {
+        const id = entry.id ?? entry.orderItemId;
+        if (id && deliveredById.has(id) && entryRemovesLine(entry)) throw deliveredLineRemoved();
+      }
+    }
+    return;
+  }
   if (mode.kind === "replace") throw deliveredLineLocked();
 
-  const deliveredById = new Map(delivered.map((l) => [l.id, l]));
   for (const entry of dto.items ?? []) {
     const id = entry.id ?? entry.orderItemId;
     const line = id ? deliveredById.get(id) : undefined;
@@ -165,6 +177,20 @@ export function reduceDeliveredLineEntries<T extends DeliveredLockEntry>(
       if (entry[key] !== undefined) reduced[key] = entry[key];
     }
     return reduced as T;
+  });
+}
+
+/** A per-line entry that takes a line away: a strike-off, a delete or a substitution (SA-1101 §2.7). */
+const entryRemovesLine = (entry: DeliveredLockEntry): boolean =>
+  entry.action === "CANCEL" || entry.action === "DELETE" || entry.substituteProductId != null;
+
+export const DELIVERED_LINE_REMOVED_MESSAGE =
+  "This line was delivered, so it can't be removed. To take goods back, record a return.";
+
+function deliveredLineRemoved(): ConflictException {
+  return new ConflictException({
+    code: API_ERROR_CODES.LINE_ALREADY_DELIVERED,
+    message: DELIVERED_LINE_REMOVED_MESSAGE,
   });
 }
 
