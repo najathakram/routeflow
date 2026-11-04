@@ -69,6 +69,7 @@ import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NotificationsService } from "../notifications/notifications.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { InvoicesService } from "../invoices/invoices.service";
+import { rebuildDraftsAfterUndo } from "../invoices/undo-draft-rebuild";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { CompleteStopDto } from "./dto/complete-stop.dto";
 import { CompleteWithPaymentDto } from "./dto/complete-with-payment.dto";
@@ -3008,6 +3009,8 @@ export class RoutesService {
             });
           }
         }
+
+        await rebuildDraftsAfterUndo(this.invoicesService, tx, deletedRows); // SA-1098: the draft follows the Undo
 
         // 3. B120: the reset below discards the only pointers to the stored POD
         // artifacts (these columns are storage keys since #477). Archive them in
