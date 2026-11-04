@@ -14,6 +14,7 @@ const ALL = Object.values(OrderStatus);
 const LOCKED: OrderStatus[] = [
   OrderStatus.OUT_FOR_DELIVERY,
   OrderStatus.DELIVERED,
+  OrderStatus.REFUSED, // SA-1101: a closed order, like DELIVERED
   OrderStatus.CANCELLED,
 ];
 

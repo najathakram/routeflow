@@ -2,8 +2,9 @@ import { ConflictException } from "@nestjs/common";
 import { FulfillPath, OrderStatus } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { SHIPPING_FULFILMENT_MODES } from "./shipping-fulfilment-modes";
+import { TERMINAL_ORDER_STATUSES } from "../common/terminal-order-statuses";
 
-const CLOSED_ORDER_STATUSES: OrderStatus[] = [OrderStatus.DELIVERED, OrderStatus.CANCELLED];
+const CLOSED_ORDER_STATUSES: OrderStatus[] = [...TERMINAL_ORDER_STATUSES];
 
 type OrderCounter = { order: { count(args: any): Promise<number> } };
 
