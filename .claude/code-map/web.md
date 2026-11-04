@@ -87,3 +87,4 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/landing-2026-11-03-ap.md](web/landing-2026-11-03-ap.md) | Train ao (f9f1a592ed..f10b57ce34): wheel hover label skips a named piece; PackReadingAsk dialog for the first pack |
 | [web/landing-2026-11-03-aq.md](web/landing-2026-11-03-aq.md) | Train ap (f10b57ce34..c8221d4b46): driver StopSheet in my-runs, founder note rewritten on home and company |
 | [web/landing-2026-11-04-ar.md](web/landing-2026-11-04-ar.md) | Train ar (c8221d4b46..758c727d58): driver Settle footer and office settle card (PR-S), Create Order key rule |
+| [web/landing-2026-11-04-t1.md](web/landing-2026-11-04-t1.md) | Train 1 (758c727d58..8cd7c13e69): product page driver wording, import template and key columns, funnel columns |

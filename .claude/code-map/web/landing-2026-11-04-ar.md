@@ -13,5 +13,5 @@ Rule: the web reads the server's expected figure and the shared pricing rule; it
 
 ## #4185 `512e64b2a9` one shared submit-attempt rule for the Create Order key (row 709, SA-824 d)
 
-- New `packages/types/submit-attempt.ts` (`createSubmitAttempt`) holds the idempotency-key rule; `app/(dashboard)/orders/_components/use-create-order-submit-key.ts` only holds the rule across renders, re-keys it on each open and passes `onChange` to the latest callback. Behaviour does not change. `payment-submit-key.ts` and the sale key holder keep their own code; mobile does not use the rule yet.
+- New `packages/types/submit-attempt.ts` (`createSubmitAttempt`) holds the idempotency-key rule; `app/(dashboard)/orders/_components/use-create-order-submit-key.ts` only holds the rule across renders, re-keys it on each open and passes `onChange` to the latest callback. Behaviour does not change. `apps/web/lib/payment-submit-key.ts` and the sale key holder keep their own code; mobile does not use the rule yet.
 - Test: `orders/_components/use-create-order-submit-key.shared-rule.test.ts` drives one script through the hook and the shared machine and fails if the hook grows a second rule; the persist and modal submit-key specs pass unchanged.

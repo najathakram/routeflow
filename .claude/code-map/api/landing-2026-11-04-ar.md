@@ -5,7 +5,7 @@ Paths under `apps/api/` unless they start with `apps/web/`, `apps/mobile/` or `p
 ## #4184 `33d7a30658` a partial invoice books its regulated sale at creation (SA-962 row 721, SA-1098 A-5)
 
 - `invoices/invoices.service.ts` `createPartialFromOrder.runCreation` now calls `resyncInvoiceLedger(created.id, order.id, created.items, tx)` after the item create and `bumpInvoicedQtyCas`, in the same transaction and under the Order row lock it already takes first. Before this a regulated PARTIAL invoice wrote no ledger rows until a later delivered-basis reconcile rewrote it; every other invoice writer already booked. A non-regulated invoice returns early (0 rows).
-- `regulated/regulated-ledger.service.ts`: the "STILL NOT wired (deferred)" sentence in the header is replaced by the coverage line; no invoice writer is left unwired. `regulated/sa839-ledger-pins.spec.ts` lists `createPartialFromOrder` among the `resyncInvoiceLedger` callers (lock `lockOrderRow(`).
+- `regulated/regulated-ledger.service.ts`: the "STILL NOT wired (deferred)" sentence in the `RegulatedLedgerService` class doc (about :386) is replaced by the coverage line; no invoice writer is left unwired. `regulated/sa839-ledger-pins.spec.ts` lists `createPartialFromOrder` among the `resyncInvoiceLedger` callers (lock `lockOrderRow(`).
 - Census, read-only, for old rows: `scripts/census-partial-invoice-unbooked-sa962.mjs` (counts regulated partials with no ledger rows, reported as candidates) and its `--booked-check`; listed in `common/scripts-live-target-guard.spec.ts` as read-only (the one EXEMPT line added after train aq's Verify caught it).
 - Tests: `regulated/partial-invoice-ledger.sa962.db.spec.ts` (RVA-1 to RVA-4: create, void and unvoid, second partial, reconcile), `common/census-partial-invoice-unbooked-sa962.db.spec.ts`, `common/census-partial-invoice-booked-check-sa962.db.spec.ts`, `common/census-partial-invoice-unbooked-sa962-script.spec.ts`.
 
@@ -21,7 +21,7 @@ Paths under `apps/api/` unless they start with `apps/web/`, `apps/mobile/` or `p
 - `reopenStop` re-reads the run through `tx` after its stop update and uses that for the settlement drop and the status; `updateRunStatus` stamps `completedAt` only when the run is not already COMPLETED.
 - The money rule is one function set in `packages/pricing/src/run-settlement.ts` (`expectedPhysicalCash`, `computeVariance`, `isReconciled`, `varianceNeedsReason`, `shouldForceSettlement`, `SETTLE_MAX_COUNT`), imported by api, web and mobile (`apps/mobile/lib/run-settlement.ts` re-exports); `packages/pricing/src/no-mirrors-run-settlement.spec.ts` pins it. The new codes live in `common/api-error-codes.ts`, `packages/types/api/error-codes.ts` and the mobile jest stub (parity spec). The old message text for a missing reason is word for word the old one, because the native screen matches `includes("varianceReason")`.
 - `common/order-lock-callers.guard.spec.ts` lists `run-settlement.ts#settleRunInTx` (stop rows then the run, no Orders). Office cash counted as run cash is a follow-up that needs a migration; not built.
-- Tests: `routes/run-settlement.db.spec.ts` (SE-1 to SE-18, real Postgres), `routes/routes.service.spec.ts`, `routes/routes.service.stop-state-guards.spec.ts`, `packages/pricing/src/run-settlement.spec.ts`.
+- Tests: `routes/run-settlement.db.spec.ts` (rows SE-1 to SE-4, SE-6 to SE-11, SE-14, SE-15 and SE-18 in the file, real Postgres), `routes/routes.service.spec.ts`, `routes/routes.service.stop-state-guards.spec.ts`, `packages/pricing/src/run-settlement.spec.ts`.
 
 ## #4186, #4185, #4183
 
