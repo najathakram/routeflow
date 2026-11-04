@@ -1,6 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "./email.service";
+import { roundMoney } from "@routeflow/pricing";
 import { escapeHtml } from "../common/html-escape";
 import { loadDemoBookingConfig } from "../demo-booking/demo-booking.config";
 import { webBaseUrl } from "../config/web-base-url";
@@ -141,7 +142,8 @@ export class OwnerAlertService {
       const t = await this.tenant(tenantId);
       if (!t) return;
       const ends = shortDayMonth(p.endsAt);
-      const price = p.monthlyPrice % 1 === 0 ? String(p.monthlyPrice) : p.monthlyPrice.toFixed(2);
+      const price =
+        p.monthlyPrice % 1 === 0 ? String(p.monthlyPrice) : roundMoney(p.monthlyPrice).toFixed(2);
       await this.deliver(`${t.name}: ${p.featureName} free period ends ${ends}`, [
         `The free period of ${p.featureName} for ${t.name} ends on ${ends}.`,
         `After that, ${t.name} loses ${p.featureName}. Nothing is charged automatically.`,

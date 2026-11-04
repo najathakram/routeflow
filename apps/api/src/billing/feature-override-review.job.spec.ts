@@ -440,7 +440,7 @@ describe("FeatureOverrideReviewJob.warnBillablePilotsEnding (R25 / T25)", () => 
     ["a comp (not a pilot)", { kind: "COMP" }],
     ["a support grant (not a free period)", { kind: "SUPPORT" }],
     ["a deny", { effect: "DENY" }],
-    ["ending in 8 days", { expiresAt: new Date(Date.now() + 8 * DAY) }],
+    ["ending in 8 days", { expiresAt: new Date(Date.now() + 8 * 86_400_000) }],
     ["already ended", { expiresAt: new Date(Date.now() - DAY) }],
     ["no end date", { expiresAt: null }],
     ["a feature that has no paid add-on", { featureKey: "flag.units_v1" }],
