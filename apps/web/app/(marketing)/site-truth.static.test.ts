@@ -65,7 +65,7 @@ describe("public site sentences the code backs", () => {
 
   // apps/mobile/app/_layout.tsx: a pure DRIVER on a tenant without the staff-only developer_mode add-on lands on the
   // "Desktop Only" screen, so a new account's driver has no phone app. The web StopSheet (routes/my-runs, #4165 #4172 #4173
-  // #4188 #4189) starts, skips, delivers (a short delivery is a changed quantity), refuses with a reason, and undoes a stop.
+  // #4188 #4189) starts, skips, delivers (a short delivery is a changed quantity), and undoes a stop.
   // It sends no payment, and nothing on the web takes a proof photo or a signature. A new account opens driver runs when
   // its setup answer is "delivery" (first-run turns on routes), as the pricing page says.
   it("drivers: the pages say what a new account's driver can do on the web, not the phone app", () => {
@@ -87,7 +87,11 @@ describe("public site sentences the code backs", () => {
     expect(page("product")).not.toMatch(/can’t finish a stop/i);
     expect(page("product")).toContain("Drivers finish a stop as delivered.");
     expect(page("product")).toContain("If a store gets less, the driver changes the amount.");
-    expect(page("product")).toContain("A stop can also be refused, with a reason, or undone.");
+    expect(page("product")).toContain("A stop can also be undone.");
+    expect(page("product")).toContain(
+      "Drivers can’t complete a stop with regulated items. The office does.",
+    );
+    expect(page("product")).not.toMatch(/refus/i);
     expect(page("product")).toContain("Drivers can’t take payment at the door.");
     expect(page("product")).toContain("There’s no proof photo or signature.");
     // "What can a driver do?": finishing a stop is under Can do, never under Can’t do; photo, signature and door payment stay under Can’t do.
@@ -97,7 +101,6 @@ describe("public site sentences the code backs", () => {
     const cant = listAfter("<h4>Can’t do</h4>");
     expect(cant).not.toContain("<li>Finish a stop</li>");
     expect(can).toContain("<li>Finish a stop</li>");
-    expect(can).toContain("<li>Record a refusal</li>");
     expect(can).toContain("<li>Undo a stop</li>");
     expect(cant).toContain("<li>Take a photo or a signature</li>");
     expect(cant).toContain("<li>Take payment at the door</li>");
