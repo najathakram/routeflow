@@ -8,6 +8,7 @@ import {
 import { ConfigService } from "@nestjs/config";
 import { RouteKind, OrderStatus, FulfillPath } from "@prisma/client";
 import { RoutesService, RUN_LINE_ITEMS_SELECT, RUN_STOP_INCLUDE } from "./routes.service";
+import { stopCompletionRequestHash } from "./stop-completion-key";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NotificationsService } from "../notifications/notifications.service";
@@ -2511,7 +2512,7 @@ describe("RoutesService", () => {
 
   // ─── RF-019: Idempotency key deduplication ───────────────────────────────
 
-  describe("completeStop idempotency (RF-019)", () => {
+  describe("completeStop idempotency (SA-953 S1)", () => {
     const IN_PROGRESS_RUN = { ...MOCK_RUN, status: "IN_PROGRESS" as const };
 
     it("should return cached response for duplicate idempotency key", async () => {
@@ -2524,10 +2525,22 @@ describe("RoutesService", () => {
         orders: [],
       });
 
-      // Mock $queryRaw to simulate an existing idempotency key in the DB
-      (prisma.$queryRaw as jest.Mock).mockResolvedValueOnce([
-        { response: JSON.stringify(cachedStop) },
-      ]);
+      // The key lookup's own read-only transaction finds the row.
+      (prisma.tenantTransaction as jest.Mock).mockImplementationOnce((fn: any) =>
+        fn({
+          $executeRaw: jest.fn().mockResolvedValue(0),
+          $queryRaw: jest.fn().mockResolvedValue([
+            {
+              response: JSON.stringify({
+                requestHash: stopCompletionRequestHash({}),
+                response: cachedStop,
+              }),
+            },
+          ]),
+          // A-2: the stop the key completed is still COMPLETED, so the replay is served.
+          routeRunStop: { findUnique: jest.fn().mockResolvedValue({ status: "COMPLETED" }) },
+        }),
+      );
 
       const result = await service.completeStop(
         "run-1",
@@ -2536,9 +2549,9 @@ describe("RoutesService", () => {
         operatorPayload,
       );
 
-      // Should return the cached response, not call tenantTransaction
+      // The cached response, and no second transaction: nothing is written.
       expect(result).toEqual(cachedStop);
-      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+      expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -3015,6 +3028,46 @@ describe("RoutesService", () => {
       await expect(
         (service as any).settleRun("run-1", { countedCash: 50 }, operatorPayload),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    // SE-2 (SA-1098 A-1): master throws an uncoded 400. The code lets the web re-open the reason field when
+    // the expected figure moved under it. The MESSAGE stays word for word: the native screen matches
+    // `includes("varianceReason")` and old builds stay in the field.
+    async function refusal(counted: number): Promise<{ code?: string; message?: string }> {
+      try {
+        await (service as any).settleRun("run-1", { countedCash: counted }, operatorPayload);
+      } catch (e: any) {
+        return e.getResponse();
+      }
+      throw new Error("settleRun did not refuse");
+    }
+
+    it("SE-2: a mismatch without a reason is refused with RUN_VARIANCE_REASON_REQUIRED and the same message", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(SETTLE_RUN);
+      prisma.invoicePayment.findMany.mockResolvedValue([{ amount: 70, method: "CASH" }]);
+
+      const res = await refusal(50);
+
+      expect(res.code).toBe("RUN_VARIANCE_REASON_REQUIRED");
+      expect(res.message).toBe(
+        "Counted cash does not match the expected amount — a varianceReason is required.",
+      );
+      expect(prisma.routeRun.update).not.toHaveBeenCalled();
+    });
+
+    it("SE-3: a count one cent off settles without a reason; two cents off, over or short, is refused (the shared rule)", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(SETTLE_RUN);
+      prisma.invoicePayment.findMany.mockResolvedValue([{ amount: 70, method: "CASH" }]);
+
+      const within: any = await (service as any).settleRun(
+        "run-1",
+        { countedCash: 70.01 },
+        operatorPayload,
+      );
+      expect(within.variance).toBe(0.01);
+
+      expect((await refusal(70.02)).code).toBe("RUN_VARIANCE_REASON_REQUIRED");
+      expect((await refusal(69.98)).code).toBe("RUN_VARIANCE_REASON_REQUIRED");
     });
 
     it("REG-B152: a reasoned mismatch settles with the signed variance and the reason in the note", async () => {

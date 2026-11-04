@@ -19,7 +19,7 @@
  * Signed-out throughout — no storageState, dependencies: [] on the "marketing" project
  * (playwright.config.ts).
  */
-import { test, expect, devices } from "@playwright/test";
+import { test, expect, devices, type BrowserContext, type Page, webkit } from "@playwright/test";
 
 // The pages that wear the site header and footer, with their one h1.
 const H1_BY_ROUTE: Record<string, string> = {
@@ -889,7 +889,7 @@ test.describe("T19 — ready-made pages are served, linked and clean", () => {
   test("T19 — the animation script runs on the home page, and the file behind it stays out of search", async ({
     page,
   }) => {
-    await page.goto("/?motion=on");
+    await page.goto("/");
     await page.waitForFunction(() => Boolean((window as unknown as { gsap?: unknown }).gsap));
     await expect(page.locator("html")).toHaveClass(/\bjs\b/);
     const direct = await page.request.get("/site/home.html");
@@ -940,4 +940,1296 @@ test.describe("T19 — ready-made pages are served, linked and clean", () => {
       await expect(a).toHaveAttribute("href", "mailto:hello@routeflow.info");
     }
   });
+});
+
+// T20 — owner report "when I tap Use cases it goes to the top of the page". Arriving on the home page
+// with a hash used to wait for the deferred scripts (about 220 KB), so on a slow phone the person sat
+// at the top for seconds. The page now moves to the target as soon as it can be laid out, and keeps it
+// there while the layout settles. Measured in the page, under a slow phone's CPU and network.
+test.describe("T20 — a home anchor is reached as soon as the page paints", () => {
+  const SLOW = { cpu: 6, latencyMs: 300, bytesPerSecond: 90_000 };
+  const HEADER = 68;
+
+  const views = [
+    { name: "phone", use: iPhone13, menu: true },
+    {
+      name: "desktop",
+      use: { ...desktopChrome, viewport: { width: 1440, height: 900 } },
+      menu: false,
+    },
+  ] as const;
+
+  for (const view of views) {
+    // Use cases and For stores are in the header; Founder and Questions have no header link, so they
+    // are reached the way a shared link reaches them.
+    for (const hash of ["use-cases", "stores", "founder", "faq"]) {
+      const viaHeader = hash === "use-cases" || hash === "stores";
+      test(`T20 — ${view.name}: ${viaHeader ? "/pricing to " : ""}/#${hash} lands before the scripts finish and stays put`, async ({
+        browser,
+      }) => {
+        test.setTimeout(150_000);
+        const context = await browser.newContext(view.use);
+        const page = await context.newPage();
+        const errors: string[] = [];
+        page.on("pageerror", (e) => errors.push(e.message));
+        await page.addInitScript(() => {
+          const m: Record<string, number> = {};
+          (window as unknown as { __m: typeof m }).__m = m;
+          addEventListener(
+            "scroll",
+            () => {
+              if (scrollY > 100 && !m.firstScroll) m.firstScroll = Math.round(performance.now());
+            },
+            true,
+          );
+          document.addEventListener("DOMContentLoaded", () => {
+            m.dcl = Math.round(performance.now());
+          });
+        });
+        const cdp = await context.newCDPSession(page);
+        await cdp.send("Emulation.setCPUThrottlingRate", { rate: SLOW.cpu });
+        await cdp.send("Network.enable");
+        await cdp.send("Network.emulateNetworkConditions", {
+          offline: false,
+          latency: SLOW.latencyMs,
+          downloadThroughput: SLOW.bytesPerSecond,
+          uploadThroughput: SLOW.bytesPerSecond,
+        });
+
+        const href = `/#${hash}`;
+        if (viaHeader) {
+          await page.goto("/pricing", { waitUntil: "commit" });
+          await page.waitForSelector(".menu-btn, header a", { timeout: 60_000 });
+          if (view.menu) {
+            // The button is in the HTML before the deferred script that opens it, and a tap before
+            // that does nothing: tap again until it opens (only the script sets aria-expanded).
+            await expect
+              .poll(
+                async () => {
+                  const btn = page.locator(".menu-btn");
+                  if ((await btn.getAttribute("aria-expanded")) !== "true") await btn.click();
+                  return btn.getAttribute("aria-expanded");
+                },
+                { timeout: 60_000, intervals: [500] },
+              )
+              .toBe("true");
+            await page.locator(`#mobile-menu a[href="${href}"]`).click();
+          } else {
+            await page.locator(`header a[href="${href}"]`).click();
+          }
+        } else {
+          await page.goto(href, { waitUntil: "commit" });
+        }
+
+        // The page lands on the target before DOMContentLoaded (that is when the scripts have run):
+        // the person is never left looking at the top while the rest loads.
+        // (the init script runs again for every document, so /pricing's own DOMContentLoaded is not
+        // mistaken for the home page's)
+        await page.waitForFunction(
+          () =>
+            location.pathname === "/" && !!(window as unknown as { __m: { dcl?: number } }).__m.dcl,
+          null,
+          { timeout: 90_000 },
+        );
+        const m = await page.evaluate(
+          () => (window as unknown as { __m: { firstScroll?: number; dcl: number } }).__m,
+        );
+        expect(
+          m.firstScroll,
+          `first scroll (ms) before DOMContentLoaded (${m.dcl} ms)`,
+        ).toBeDefined();
+        expect(m.firstScroll!).toBeLessThan(m.dcl);
+
+        // And it stays: once the layout has settled the target sits just under the header.
+        await page.waitForLoadState("load", { timeout: 90_000 });
+        await expect
+          .poll(
+            async () =>
+              page.evaluate(
+                (id) => Math.round(document.getElementById(id)!.getBoundingClientRect().top),
+                hash,
+              ),
+            { timeout: 20_000, intervals: [500] },
+          )
+          .toBeGreaterThanOrEqual(HEADER - 4);
+        const top = await page.evaluate(
+          (id) => Math.round(document.getElementById(id)!.getBoundingClientRect().top),
+          hash,
+        );
+        expect(top).toBeLessThanOrEqual(HEADER + 4);
+
+        // The address keeps the #hash (it is taken off only until load, so the browser's own jump
+        // cannot pull a scrolling person back), and no script threw on the way.
+        await expect.poll(() => page.url(), { timeout: 10_000 }).toContain(`#${hash}`);
+        expect(errors, "page errors while landing").toEqual([]);
+        await context.close();
+      });
+    }
+  }
+
+  // A person who scrolls away before the page has finished loading is left where they went. The scroll
+  // scripts are held back by `hold` ms so DOMContentLoaded and load come well after the wheel, as on a
+  // slow phone: the browser's own jump to the #hash used to pull them back to the target at load.
+  // Run twice each, so a pass is not luck.
+  for (const [hold, run] of [
+    [0, 1],
+    [6000, 1],
+    [0, 2],
+    [6000, 2],
+  ] as const) {
+    test(`T20 — a person who scrolls is left alone (scripts held ${hold} ms, run ${run})`, async ({
+      browser,
+    }) => {
+      test.setTimeout(150_000);
+      const context = await browser.newContext({
+        ...desktopChrome,
+        viewport: { width: 1440, height: 900 },
+      });
+      if (hold)
+        await context.route("**/vendor/ScrollTrigger.min.js", async (route) => {
+          await new Promise((r) => setTimeout(r, hold));
+          await route.continue();
+        });
+      const page = await context.newPage();
+      const cdp = await context.newCDPSession(page);
+      await cdp.send("Emulation.setCPUThrottlingRate", { rate: SLOW.cpu });
+      await cdp.send("Network.enable");
+      await cdp.send("Network.emulateNetworkConditions", {
+        offline: false,
+        latency: SLOW.latencyMs,
+        downloadThroughput: SLOW.bytesPerSecond,
+        uploadThroughput: SLOW.bytesPerSecond,
+      });
+      await page.goto("/pricing", { waitUntil: "commit" });
+      await page.waitForSelector("header a", { timeout: 60_000 });
+      await page.locator('header a[href="/#use-cases"]').click();
+      await page.waitForFunction(() => location.pathname === "/" && scrollY > 100, null, {
+        timeout: 90_000,
+      });
+      await page.mouse.move(700, 400);
+      await page.mouse.wheel(0, -100000);
+      await page.waitForLoadState("load", { timeout: 90_000 });
+      await page.waitForTimeout(4000);
+      expect(await page.evaluate(() => Math.round(scrollY))).toBeLessThan(200);
+      await context.close();
+    });
+  }
+
+  // Phone: landing on #founder, #pricing or #faq used to throw inside ScrollTrigger (a once-trigger built
+  // after its start had passed is removed in its own first refresh, and a later trigger's refresh walks
+  // the same list by index and read a missing entry). Everything built after it stayed hidden for good:
+  // the founder section blank, the pricing table missing. Anyone who scrolls before the scripts run hits
+  // the same trap without an anchor.
+  const hiddenOnScreen = (page: Page) =>
+    page.evaluate(() => {
+      const hidden: string[] = [];
+      for (const el of document.querySelectorAll("#founder *, #pricing *")) {
+        if (el.children.length || !el.textContent?.trim()) continue;
+        const r = el.getBoundingClientRect();
+        if (!r.width || r.bottom <= 0 || r.top >= innerHeight) continue;
+        let o = 1;
+        for (let a: Element | null = el; a; a = a.parentElement) o *= +getComputedStyle(a).opacity;
+        if (o < 0.5) hidden.push((el.textContent ?? "").trim().slice(0, 24));
+      }
+      return hidden;
+    });
+  const slowPhone = async (context: BrowserContext, page: Page) => {
+    const cdp = await context.newCDPSession(page);
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: SLOW.cpu });
+    await cdp.send("Network.enable");
+    await cdp.send("Network.emulateNetworkConditions", {
+      offline: false,
+      latency: SLOW.latencyMs,
+      downloadThroughput: SLOW.bytesPerSecond,
+      uploadThroughput: SLOW.bytesPerSecond,
+    });
+  };
+
+  for (const hash of ["founder", "pricing", "faq"]) {
+    test(`T20 — phone: /#${hash} throws nothing, and the founder section and pricing show`, async ({
+      browser,
+    }) => {
+      test.setTimeout(150_000);
+      const context = await browser.newContext(iPhone13);
+      const page = await context.newPage();
+      const errors: string[] = [];
+      page.on("pageerror", (e) => errors.push(e.message));
+      await slowPhone(context, page);
+      await page.goto(`/#${hash}`, { waitUntil: "load", timeout: 90_000 });
+      await page.waitForTimeout(3000);
+      expect(errors, "page errors").toEqual([]);
+      // whatever is on the screen is shown (it rises on the clock a moment after it arrives) ...
+      await expect.poll(() => hiddenOnScreen(page), { timeout: 15_000 }).toEqual([]);
+      // ... and so is the founder section, and the pricing table, when the person gets to them
+      for (const id of ["founder", "pricing"]) {
+        await page.evaluate((i) => {
+          document.documentElement.style.scrollBehavior = "auto";
+          document.getElementById(i)!.scrollIntoView();
+        }, id);
+        await page.waitForTimeout(500);
+        await expect.poll(() => hiddenOnScreen(page), { timeout: 15_000 }).toEqual([]);
+      }
+      expect(errors, "page errors").toEqual([]);
+      await context.close();
+    });
+  }
+
+  // Opening a question or a card after scrolling down used to send the page toward the top. Every layout
+  // change calls ScrollTrigger.refresh(), which scrolls to the top to measure and back (scrollTo(0,0), then
+  // scrollTo(0,y)); the site's scroll-behavior:smooth animated both. In WebKit the page swooped about 3,700 px up
+  // and back, and on a phone a touch in that window left the person at the top. Chromium keeps its place in a test
+  // (the second call cancels the first before a frame), so the row also pins the cause: no scroll call is ever
+  // made while smooth scrolling is on. Chromium rows run everywhere; the WebKit rows run where it is installed.
+  const TAPS = [
+    { name: "desktop FAQ", width: 1440, height: 900, phone: false, scope: "#faq", nth: 2 },
+    { name: "phone FAQ", width: 390, height: 844, phone: true, scope: "#faq", nth: 2 },
+    { name: "phone use case", width: 390, height: 844, phone: true, scope: "#use-cases", nth: 3 },
+  ];
+  const tapAndWatch = async (
+    page: Page,
+    t: (typeof TAPS)[number],
+  ): Promise<{
+    moved: number;
+    open: boolean;
+    callsWhileSmooth: string[];
+    calls: number;
+    inline: string;
+    drift: number[];
+  }> => {
+    await page.goto("/", { waitUntil: "load" });
+    await page.waitForFunction(
+      () =>
+        !!document.querySelector(".rfw-live") &&
+        !!(window as unknown as { ScrollTrigger?: unknown }).ScrollTrigger,
+      null,
+      { timeout: 30_000 },
+    );
+    await page.waitForTimeout(2500);
+    const sum = page.locator(`${t.scope} details summary:visible`).nth(t.nth);
+    for (let i = 0; i < 80; i++) {
+      const top = await sum.evaluate((e) => e.getBoundingClientRect().top);
+      if (top < t.height * 0.8 && top > t.height * 0.3) break;
+      await page.mouse.move(t.width / 2, t.height / 2);
+      await page.mouse.wheel(0, top > t.height * 0.8 ? 900 : -300);
+      await page.waitForTimeout(250);
+    }
+    await page.waitForTimeout(2500);
+    await page.evaluate(() => {
+      const w = window as unknown as Record<string, unknown>;
+      const calls: string[] = [];
+      w.__calls = calls;
+      const smooth = () => getComputedStyle(document.documentElement).scrollBehavior;
+      for (const [o, n] of [
+        [window, "scrollTo"],
+        [window, "scroll"],
+        [window, "scrollBy"],
+        [Element.prototype, "scrollIntoView"],
+        [Element.prototype, "scrollTo"],
+      ] as unknown as Array<[Record<string, (...a: unknown[]) => unknown>, string]>) {
+        const orig = o[n]!;
+        o[n] = function (this: unknown, ...a: unknown[]) {
+          calls.push(`${n}:${smooth()}`);
+          return orig.apply(this, a);
+        };
+      }
+      const ys: number[] = [];
+      w.__ys = ys;
+      const t0 = performance.now();
+      (function frame() {
+        ys.push(Math.round(scrollY));
+        if (performance.now() - t0 < 3500) requestAnimationFrame(frame);
+      })();
+    });
+    const box = (await sum.boundingBox())!;
+    const open0 = await sum.evaluate((e) => (e.parentElement as HTMLDetailsElement).open);
+    if (t.phone && page.context().browser()?.browserType().name() === "chromium") {
+      await page.touchscreen.tap(box.x + 40, box.y + box.height / 2);
+    } else {
+      await page.mouse.click(box.x + 40, box.y + box.height / 2);
+    }
+    await page.waitForTimeout(3600);
+    const r = await page.evaluate(() => {
+      const w = window as unknown as { __calls: string[]; __ys: number[] };
+      return {
+        calls: w.__calls,
+        ys: w.__ys,
+        inline: document.documentElement.style.scrollBehavior,
+      };
+    });
+    // The pins and triggers below the opened item are where a fresh refresh puts them.
+    const drift = await page.evaluate(async () => {
+      const ST = (
+        window as unknown as {
+          ScrollTrigger: { getAll(): Array<{ start: number }>; refresh(): void };
+        }
+      ).ScrollTrigger;
+      const before = ST.getAll().map((x) => x.start);
+      document.documentElement.style.scrollBehavior = "auto";
+      ST.refresh();
+      document.documentElement.style.scrollBehavior = "";
+      return ST.getAll().map((x, i) => Math.abs(x.start - (before[i] ?? 0)));
+    });
+    expect(open0, "the item was closed before the tap").toBe(false);
+    return {
+      moved: Math.max(...r.ys) - Math.min(...r.ys),
+      open: true,
+      callsWhileSmooth: r.calls.filter((c) => !c.endsWith(":auto")),
+      calls: r.calls.length,
+      inline: r.inline,
+      drift,
+    };
+  };
+  const expectStill = (r: Awaited<ReturnType<typeof tapAndWatch>>) => {
+    expect(r.moved, "px the page moved in the three seconds after the tap").toBeLessThanOrEqual(2);
+    expect(r.callsWhileSmooth, "scroll calls made while smooth scrolling is on").toEqual([]);
+    expect(r.inline, "scroll-behavior left as the page had it").toBe("");
+    expect(
+      Math.max(0, ...r.drift),
+      "trigger positions after the tap vs a fresh refresh",
+    ).toBeLessThanOrEqual(2);
+  };
+  for (const t of TAPS) {
+    test(`T20 — opening a question or card never moves the page (${t.name}, Chromium)`, async ({
+      browser,
+    }) => {
+      test.setTimeout(120_000);
+      const context = await browser.newContext({
+        viewport: { width: t.width, height: t.height },
+        hasTouch: t.phone,
+        isMobile: t.phone,
+      });
+      const page = await context.newPage();
+      expectStill(await tapAndWatch(page, t));
+      await context.close();
+    });
+    test(`T20 — opening a question or card never moves the page (${t.name}, WebKit)`, async () => {
+      test.setTimeout(120_000);
+      let wk: import("@playwright/test").Browser;
+      try {
+        wk = await webkit.launch({ executablePath: process.env.PW_WEBKIT_EXECUTABLE || undefined });
+      } catch {
+        test.skip(true, "WebKit is not installed here");
+        return;
+      }
+      const context = await wk.newContext({ viewport: { width: t.width, height: t.height } });
+      const page = await context.newPage();
+      expectStill(await tapAndWatch(page, t));
+      await wk.close();
+    });
+  }
+
+  // Keyboard: the landing script takes the #hash off the address until load, so the browser makes no
+  // jump of its own and sets no starting point for Tab; the next Tab then went to the skip link at the
+  // top of the page. The script sets that starting point itself, so Tab goes on from the section.
+  for (const hash of ["use-cases", "founder", "faq"]) {
+    test(`T20 — Tab after landing on /#${hash} goes on from the section, not to the top`, async ({
+      browser,
+    }) => {
+      test.setTimeout(150_000);
+      const context = await browser.newContext({
+        ...desktopChrome,
+        viewport: { width: 1440, height: 900 },
+      });
+      const page = await context.newPage();
+      await slowPhone(context, page);
+      await page.goto(`/#${hash}`, { waitUntil: "load", timeout: 90_000 });
+      await page.waitForTimeout(3000);
+      const landed = await page.evaluate(() => Math.round(scrollY));
+      expect(landed).toBeGreaterThan(5000);
+      await page.keyboard.press("Tab");
+      await page.waitForTimeout(700);
+      const after = await page.evaluate(() => ({
+        y: Math.round(scrollY),
+        inHeader: !!document.activeElement?.closest("header, .skip, .site-header"),
+      }));
+      expect(after.inHeader, "focus went to the header or skip link").toBe(false);
+      expect(after.y, "page jumped back up").toBeGreaterThan(landed - 900);
+      await context.close();
+    });
+  }
+
+  test("T20 — phone: scrolling to the founder section before the scripts run throws nothing", async ({
+    browser,
+  }) => {
+    test.setTimeout(150_000);
+    const context = await browser.newContext(iPhone13);
+    await context.route("**/vendor/ScrollTrigger.min.js", async (route) => {
+      await new Promise((r) => setTimeout(r, 4000));
+      await route.continue();
+    });
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.goto("/", { waitUntil: "commit" });
+    await page.waitForSelector("#founder", { state: "attached", timeout: 60_000 });
+    await page.evaluate(() => {
+      document.documentElement.style.scrollBehavior = "auto";
+      document.getElementById("founder")!.scrollIntoView();
+    });
+    await page.waitForLoadState("load", { timeout: 90_000 });
+    await page.waitForTimeout(3000);
+    expect(errors, "page errors").toEqual([]);
+    await expect.poll(() => hiddenOnScreen(page), { timeout: 15_000 }).toEqual([]);
+    await context.close();
+  });
+});
+
+// ─── T21 — the motion does not depend on the visitor's motion setting ───────
+// Owner ruling 2026-11-03: the wheel comes apart on scroll for everyone. The OS "reduce motion" setting, the
+// footer switch and ?motion=on are gone; a computer with animations off used to get a still dial and a page
+// 8,000 px shorter (no ScrollTriggers at all). Only no-JS and a browser that cannot run the wheel keep the still (T22 covers short windows).
+test.describe("T21 — the motion does not depend on the visitor's motion setting", () => {
+  const VIEWS = [
+    { name: "1440", width: 1440, height: 900 },
+    { name: "390", width: 390, height: 844 },
+  ];
+
+  const measure = (page: import("@playwright/test").Page) =>
+    page.evaluate(() => ({
+      height: document.documentElement.scrollHeight,
+      triggers: (
+        window as unknown as { ScrollTrigger?: { getAll(): unknown[] } }
+      ).ScrollTrigger?.getAll().length,
+      live: !!document.querySelector(".rfw-live"),
+      still: !!document.querySelector(".rfw--static"),
+      js: document.documentElement.className,
+      reduce: matchMedia("(prefers-reduced-motion: reduce)").matches,
+    }));
+
+  const load = async (
+    browser: import("@playwright/test").Browser,
+    view: (typeof VIEWS)[number],
+    reducedMotion: "reduce" | "no-preference",
+    seed?: () => void,
+  ) => {
+    const context = await browser.newContext({
+      viewport: { width: view.width, height: view.height },
+      reducedMotion,
+    });
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    if (seed) await page.addInitScript(seed);
+    await page.goto("/", { waitUntil: "load" });
+    await page.waitForFunction(() => !!document.querySelector(".rfw-live, .rfw--static"), null, {
+      timeout: 30_000,
+    });
+    await page.waitForTimeout(2500);
+    return { context, page, errors };
+  };
+
+  for (const view of VIEWS) {
+    test(`T21 — reduce at ${view.name}: the page is built the same as with no preference`, async ({
+      browser,
+    }) => {
+      test.setTimeout(120_000);
+      const normal = await load(browser, view, "no-preference");
+      const a = await measure(normal.page);
+      await normal.context.close();
+      const reduced = await load(browser, view, "reduce");
+      const b = await measure(reduced.page);
+      expect(b.reduce, "the browser really reports reduced motion").toBe(true);
+      expect(b.still, "no still dial").toBe(false);
+      expect(b.live, "the live wheel").toBe(true);
+      expect(b.triggers, "ScrollTriggers").toBe(a.triggers);
+      expect(b.triggers ?? 0).toBeGreaterThan(20);
+      expect(Math.abs(b.height - a.height), "page height").toBeLessThanOrEqual(4);
+      expect(b.js).toContain("js-motion");
+      expect(b.js).not.toMatch(/\brm\b|motion-on/);
+      expect(reduced.errors).toEqual([]);
+      await reduced.context.close();
+    });
+
+    test(`T21 — reduce at ${view.name}: the wheel pieces move apart on scroll`, async ({
+      browser,
+    }) => {
+      test.setTimeout(120_000);
+      const { context, page, errors } = await load(browser, view, "reduce");
+      const box = await page.evaluate(() => {
+        const r = document.querySelector(".rfw")!.getBoundingClientRect();
+        return { top: Math.round(r.top + scrollY), height: Math.round(r.height) };
+      });
+      expect(box.height, "the wheel section is tall (it pins)").toBeGreaterThan(view.height * 1.5);
+      // A coarse picture of the canvas: where it is not white/grey, on a 4-px grid.
+      const snap = () =>
+        page.evaluate(() => {
+          const cv = document.querySelector<HTMLCanvasElement>(".rfw-cv")!;
+          const c = cv.getContext("2d")!;
+          const { width: W, height: H } = cv;
+          const d = c.getImageData(0, 0, W, H).data;
+          const cells: number[] = [];
+          for (let y = 0; y < H; y += 8)
+            for (let x = 0; x < W; x += 8) {
+              const i = (y * W + x) * 4;
+              cells.push(d[i]! + d[i + 1]! + d[i + 2]!);
+            }
+          return cells;
+        });
+      const at = async (f: number) => {
+        await page.evaluate(
+          (y) => {
+            document.documentElement.style.scrollBehavior = "auto";
+            scrollTo(0, y);
+          },
+          box.top + f * (box.height - view.height),
+        );
+        await page.waitForTimeout(1500);
+        return snap();
+      };
+      const rest = await at(0);
+      let moved = 0;
+      for (const f of [0.2, 0.4, 0.6, 0.8]) {
+        const now = await at(f);
+        const changed = now.filter((v, i) => Math.abs(v - rest[i]!) > 60).length / now.length;
+        moved = Math.max(moved, changed);
+      }
+      expect(
+        moved,
+        "share of the canvas that changed while scrolling through the wheel",
+      ).toBeGreaterThan(0.05);
+      expect(errors).toEqual([]);
+      await context.close();
+    });
+  }
+
+  // The hub is found by its own navy (the biggest connected blob of its two navies); the logo is the white in the
+  // middle of it. `maxR` is the brightest red value there: 255 is full strength, a faded mark reads far less.
+  const hubLogo = (page: import("@playwright/test").Page) =>
+    page.evaluate(() => {
+      const cv = document.querySelector<HTMLCanvasElement>(".rfw-cv")!;
+      const { width: W, height: H } = cv;
+      const d = cv.getContext("2d")!.getImageData(0, 0, W, H).data;
+      const near = (i: number, t: number[]) =>
+        Math.abs(d[i]! - t[0]!) < 7 &&
+        Math.abs(d[i + 1]! - t[1]!) < 7 &&
+        Math.abs(d[i + 2]! - t[2]!) < 7;
+      // the biggest connected blob of the hub's two navies
+      const m = new Uint8Array(W * H);
+      for (let i = 0; i < W * H; i++) {
+        const p = i * 4;
+        if (d[p + 3]! > 250 && (near(p, [16, 38, 77]) || near(p, [10, 26, 56]))) m[i] = 1;
+      }
+      const seen = new Uint8Array(W * H);
+      let best: { n: number; x0: number; y0: number; x1: number; y1: number } | null = null;
+      for (let s = 0; s < W * H; s++) {
+        if (!m[s] || seen[s]) continue;
+        const st = [s];
+        seen[s] = 1;
+        const b = { n: 0, x0: W, y0: H, x1: -1, y1: -1 };
+        while (st.length) {
+          const q = st.pop()!;
+          const x = q % W;
+          const y = (q / W) | 0;
+          b.n++;
+          b.x0 = Math.min(b.x0, x);
+          b.x1 = Math.max(b.x1, x);
+          b.y0 = Math.min(b.y0, y);
+          b.y1 = Math.max(b.y1, y);
+          for (const k of [q - 1, q + 1, q - W, q + W])
+            if (k >= 0 && k < W * H && m[k] && !seen[k]) {
+              seen[k] = 1;
+              st.push(k);
+            }
+        }
+        if (!best || b.n > best.n) best = b;
+      }
+      if (!best) return { found: false, white: 0, maxR: 0, w: 0 };
+      const w = best.x1 - best.x0;
+      const h = best.y1 - best.y0;
+      // bright pixels with dark navy (lid or wall) close on all four sides, on the hub or just under its lid: the
+      // logo, never the page around the hub
+      const R = 14;
+      const navyNear = (x: number, y: number, dx: number, dy: number) => {
+        for (let k = 1; k <= R; k++) {
+          const xx = x + dx * k;
+          const yy = y + dy * k;
+          if (xx < 0 || yy < 0 || xx >= W || yy >= H) return false;
+          const q = (yy * W + xx) * 4;
+          if (d[q]! < 70 && d[q + 1]! < 90 && d[q + 2]! < 140 && d[q + 3]! > 250) return true;
+        }
+        return false;
+      };
+      let white = 0;
+      let maxR = 0;
+      for (let y = best.y0; y <= Math.min(H - 1, best.y1 + Math.round(0.5 * h)); y++)
+        for (let x = best.x0; x <= best.x1; x++) {
+          const p = (y * W + x) * 4;
+          if (d[p]! < 100) continue;
+          if (!(navyNear(x, y, -1, 0) && navyNear(x, y, 1, 0))) continue;
+          if (!(navyNear(x, y, 0, -1) && navyNear(x, y, 0, 1))) continue;
+          if (d[p]! > maxR) maxR = d[p]!;
+          if (d[p]! > 200 && d[p + 1]! > 200 && d[p + 2]! > 200) white++;
+        }
+      return { found: true, white, maxR, w };
+    });
+
+  // review-a, #4153: below 900 px the closed wheel, as loaded and never scrolled, drew a plain navy hub. Looking
+  // straight down the puck's base sits inside its lid, so the "stand the mark upright" blend clamped to 1 and drew
+  // it at almost no size. The hub is found by its own navy; the logo is white pixels in the middle of it.
+  for (const view of [
+    { name: "768", width: 768, height: 1024 },
+    { name: "390", width: 390, height: 844 },
+  ]) {
+    test(`T21 — the hub shows the logo at rest at ${view.name}`, async ({ browser }) => {
+      test.setTimeout(120_000);
+      const { context, page, errors } = await load(browser, view, "no-preference");
+      const hub = await hubLogo(page);
+      expect(hub.found, "a navy hub on the canvas").toBe(true);
+      expect(hub.w, "the hub is a real size").toBeGreaterThan(60);
+      expect(hub.white, "white logo pixels in the middle of the hub").toBeGreaterThan(40);
+      expect(errors).toEqual([]);
+      await context.close();
+    });
+  }
+
+  // review-a, #4153 note 1: on 360x740, 393x760 and 412x780 the page rests for hundreds of pixels with the puck's
+  // geometry still, and the mark's opacity followed that geometry, so it stayed at half strength (a grey logo).
+  // The fade now runs on the clock, so wherever the page rests the logo is at full strength.
+  for (const view of [
+    { name: "360x740", width: 360, height: 740 },
+    { name: "393x760", width: 393, height: 760 },
+    { name: "412x780", width: 412, height: 780 },
+  ]) {
+    test(`T21 — the hub logo is at full strength wherever the page rests at ${view.name}`, async ({
+      browser,
+    }) => {
+      test.setTimeout(180_000);
+      const { context, page, errors } = await load(browser, view, "no-preference");
+      const weak: string[] = [];
+      for (let y = 900; y <= 1700; y += 100) {
+        await page.evaluate((to) => {
+          document.documentElement.style.scrollBehavior = "auto";
+          scrollTo(0, to);
+        }, y);
+        await page.waitForTimeout(1200);
+        const hub = await hubLogo(page);
+        if (hub.maxR < 230) weak.push(`y ${y}: brightest ${hub.maxR}`);
+      }
+      expect(weak, "scroll positions where the logo is faded").toEqual([]);
+      expect(errors).toEqual([]);
+      await context.close();
+    });
+  }
+
+  test("T21 — a leftover Reduce motion switch value in the browser changes nothing", async ({
+    browser,
+  }) => {
+    test.setTimeout(120_000);
+    const { context, page } = await load(browser, VIEWS[0]!, "no-preference", () => {
+      try {
+        localStorage.setItem("rf-rm", "1");
+      } catch {
+        /* storage blocked: nothing to leave behind */
+      }
+    });
+    const m = await measure(page);
+    expect(m.live).toBe(true);
+    expect(m.triggers ?? 0).toBeGreaterThan(20);
+    expect(m.js).not.toMatch(/\brm\b/);
+    await context.close();
+  });
+
+  // review-a, #4153: below 900 px the site.js handler never ran (no matching condition), so html.js-motion stayed on and
+  // every .reveal block stayed at opacity 0. Every page that loads site.js shows its words at tablet and phone widths.
+  for (const route of [
+    "/company",
+    "/contact",
+    "/data-in-and-out",
+    "/does-and-doesnt",
+    "/getting-started",
+    "/pricing",
+    "/product",
+    "/security",
+  ]) {
+    for (const width of [768, 390]) {
+      test(`T21 — ${route} at ${width}: motion is off the page and no words stay hidden`, async ({
+        browser,
+      }) => {
+        const context = await browser.newContext({ viewport: { width, height: 844 } });
+        const page = await context.newPage();
+        await page.goto(route, { waitUntil: "load" });
+        await page.waitForTimeout(2500);
+        // blocks rise as they scroll into view: walk down the page, then count what is still invisible
+        const state = await page.evaluate(async () => {
+          const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+          document.documentElement.style.scrollBehavior = "auto";
+          for (const el of document.querySelectorAll(".reveal")) {
+            el.scrollIntoView({ block: "center" });
+            await wait(120);
+          }
+          await wait(1500);
+          return {
+            js: document.documentElement.classList.contains("js-motion"),
+            hidden: [...document.querySelectorAll(".reveal")].filter(
+              (el) => getComputedStyle(el).opacity === "0",
+            ).length,
+          };
+        });
+        await context.close();
+        expect(state.js, "js-motion still on").toBe(false);
+        expect(state.hidden, "hidden .reveal blocks").toBe(0);
+      });
+    }
+  }
+
+  test("T21 — no page offers a Reduce motion switch, and ?motion=on is just a link", async ({
+    request,
+  }) => {
+    for (const route of READY_MADE_ROUTES) {
+      const body = await (await request.get(route)).text();
+      expect(body, `${route} switch`).not.toMatch(/rm-toggle|data-rm|Reduce motion/);
+    }
+    const plain = await (await request.get("/")).text();
+    const forced = await (await request.get("/?motion=on")).text();
+    expect(forced).toBe(plain);
+  });
+});
+
+// ─── T22 — the wheel runs on a short screen, a phone held sideways included ──
+// Owner, iPhone in desktop mode turned to landscape: no wheel graphics. The wheel used to give way to the still under
+// 500 px tall. It now runs on every height; below 900 px, short and wider than tall, it takes the wide layout (the words
+// beside the wheel). A turn of the phone builds it again for the new shape and puts the visitor at the same place.
+test.describe("T22 — the wheel runs on a short screen", () => {
+  const SIZES = [
+    { w: 667, h: 375 },
+    { w: 844, h: 390 },
+    { w: 932, h: 430 },
+    { w: 1024, h: 500 },
+    { w: 1100, h: 450 },
+  ];
+
+  const state = (page: import("@playwright/test").Page) =>
+    page.evaluate(() => {
+      const el = document.querySelector(".rfw") as
+        (HTMLElement & { _rfw?: { trig?: { progress: number } } }) | null;
+      const r = el ? el.getBoundingClientRect() : null;
+      const copy = document.querySelector(".hx-copy") as HTMLElement | null;
+      const cv = document.querySelector(".rfw-cv") as HTMLCanvasElement | null;
+      const c = cv ? cv.getBoundingClientRect() : null;
+      return {
+        live: !!document.querySelector(".rfw-live"),
+        still: !!document.querySelector(".rfw--static"),
+        canvas: !!cv,
+        progress: el?._rfw?.trig?.progress ?? null,
+        top: r ? r.top + window.scrollY : 0,
+        height: r ? r.height : 0,
+        copyRight: copy ? copy.getBoundingClientRect().right : null,
+        canvasLeft: c ? c.left : null,
+        docW: document.documentElement.scrollWidth,
+        winW: window.innerWidth,
+      };
+    });
+
+  const load = async (browser: import("@playwright/test").Browser, w: number, h: number) => {
+    const context = await browser.newContext({ viewport: { width: w, height: h }, hasTouch: true });
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.goto("/", { waitUntil: "load" });
+    await page.waitForSelector(".rfw-live", { state: "attached", timeout: 30_000 });
+    await page.waitForTimeout(2500);
+    return { context, page, errors };
+  };
+
+  for (const s of SIZES) {
+    test(`T22 — ${s.w}x${s.h}: a live wheel with the words beside it, no sideways scroll`, async ({
+      browser,
+    }) => {
+      test.setTimeout(120_000);
+      const { context, page, errors } = await load(browser, s.w, s.h);
+      const a = await state(page);
+      expect(a.live, "live wheel").toBe(true);
+      expect(a.still, "not the still").toBe(false);
+      expect(a.canvas, "a canvas").toBe(true);
+      expect(a.copyRight, "words sit left of the wheel").toBeLessThanOrEqual(
+        (a.canvasLeft ?? 0) + s.w * 0.62,
+      );
+      // real scroll: the story plays and the page never grows sideways
+      const before = a.progress ?? 0;
+      for (let i = 0; i < 6; i++) {
+        await page.mouse.wheel(0, 160);
+        await page.waitForTimeout(250);
+      }
+      await page.waitForTimeout(1500);
+      const b = await state(page);
+      expect(b.progress ?? 0, "scroll plays the story").toBeGreaterThan(before + 0.02);
+      expect(b.docW, "no sideways scroll").toBeLessThanOrEqual(b.winW);
+      expect(errors).toEqual([]);
+      await context.close();
+    });
+  }
+
+  test("T22 — pieces move when scrolled: the canvas changes between two places in the story", async ({
+    browser,
+  }) => {
+    test.setTimeout(120_000);
+    const { context, page } = await load(browser, 844, 390);
+    const grab = async (f: number) => {
+      const { top, height } = await state(page);
+      await page.evaluate(
+        ([t, h, f2]) => {
+          document.documentElement.style.scrollBehavior = "auto";
+          window.scrollTo(0, (t as number) + (f2 as number) * ((h as number) - 390));
+        },
+        [top, height, f],
+      );
+      await page.waitForTimeout(1800);
+      return page.evaluate(() => {
+        const cv = document.querySelector(".rfw-cv") as HTMLCanvasElement;
+        const g = cv.getContext("2d")!;
+        const d = g.getImageData(0, 0, cv.width, cv.height).data;
+        let sum = 0;
+        for (let i = 0; i < d.length; i += 97) sum = (sum * 31 + d[i]) % 1000003;
+        return sum;
+      });
+    };
+    const rest = await grab(0.02);
+    const apart = await grab(0.3);
+    expect(apart, "the pieces have moved").not.toBe(rest);
+    await context.close();
+  });
+
+  test("T22 — turning the phone builds the wheel again and keeps the place", async ({
+    browser,
+  }) => {
+    test.setTimeout(120_000);
+    const { context, page, errors } = await load(browser, 390, 844);
+    const { top, height } = await state(page);
+    await page.evaluate(
+      ([t, h]) => {
+        document.documentElement.style.scrollBehavior = "auto";
+        window.scrollTo(0, (t as number) + 0.5 * ((h as number) - 844));
+      },
+      [top, height],
+    );
+    await page.waitForTimeout(2200);
+    const p1 = (await state(page)).progress ?? 0;
+    expect(p1).toBeGreaterThan(0.2);
+    await page.setViewportSize({ width: 844, height: 390 });
+    await page.waitForTimeout(3000);
+    const land = await state(page);
+    expect(land.live && land.canvas, "live wheel after the turn").toBe(true);
+    expect(Math.abs((land.progress ?? 0) - p1), "same place in the story").toBeLessThan(0.04);
+    expect(land.docW).toBeLessThanOrEqual(land.winW);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(3000);
+    const back = await state(page);
+    expect(back.live && back.canvas).toBe(true);
+    expect(Math.abs((back.progress ?? 0) - p1)).toBeLessThan(0.04);
+    expect(errors).toEqual([]);
+    await context.close();
+  });
+
+  // What the sample screens and the headline do: a laptop window 500 px or taller keeps the page as it was
+  // (screens shown, headline full size); a phone held sideways and a wide window under 500 px give them up.
+  const cardsAndHeadline = (page: import("@playwright/test").Page) =>
+    page.evaluate(() => {
+      const card = document.querySelector(".rfw-card");
+      const h1 = document.querySelector(".hx-up h1");
+      return {
+        cards: card ? getComputedStyle(card).display : "none",
+        h1: h1 ? parseFloat(getComputedStyle(h1).fontSize) : 0,
+      };
+    });
+
+  for (const s of [
+    { w: 1280, h: 577 },
+    { w: 1366, h: 590 },
+    { w: 1024, h: 560 },
+  ]) {
+    test(`T22 — ${s.w}x${s.h}: a laptop window keeps its sample screens and its headline`, async ({
+      browser,
+    }) => {
+      test.setTimeout(120_000);
+      const { context, page, errors } = await load(browser, s.w, s.h);
+      const r = await cardsAndHeadline(page);
+      expect(r.cards, "the sample screens are shown").not.toBe("none");
+      expect(r.h1, "the headline is not shrunk for height").toBeGreaterThanOrEqual(50);
+      expect(errors).toEqual([]);
+      await context.close();
+    });
+  }
+
+  for (const s of [
+    { w: 667, h: 375 },
+    { w: 844, h: 390 },
+    { w: 1100, h: 450 },
+  ]) {
+    test(`T22 — ${s.w}x${s.h}: the sample screens give way and the headline fits the height`, async ({
+      browser,
+    }) => {
+      test.setTimeout(120_000);
+      const { context, page, errors } = await load(browser, s.w, s.h);
+      const r = await cardsAndHeadline(page);
+      expect(r.cards).toBe("none");
+      expect(r.h1).toBeLessThanOrEqual(48);
+      expect(errors).toEqual([]);
+      await context.close();
+    });
+  }
+
+  // A phone held sideways, big or small, uses the phone's rule: no name under 11 px (the piece shows its icon only),
+  // and no name runs past the edge of the stage: a name that will not fit at 11 px is left out.
+  for (const s of [
+    { w: 667, h: 375 },
+    { w: 844, h: 390 },
+    { w: 915, h: 412 },
+    { w: 932, h: 430 },
+    { w: 640, h: 360 },
+    { w: 568, h: 320 },
+  ]) {
+    test(`T22 — ${s.w}x${s.h}: no wheel name under 11 px, none past the stage edge`, async ({
+      browser,
+    }) => {
+      test.setTimeout(150_000);
+      const context = await browser.newContext({
+        viewport: { width: s.w, height: s.h },
+        hasTouch: true,
+      });
+      const page = await context.newPage();
+      await page.addInitScript(() => {
+        type Draw = { px: number; l: number; r: number; cw: number; ts: number };
+        const w = window as unknown as { __draws: Draw[] };
+        w.__draws = [];
+        const f = CanvasRenderingContext2D.prototype.fillText;
+        CanvasRenderingContext2D.prototype.fillText = function (...a: Parameters<typeof f>) {
+          const t = this.getTransform();
+          const wd = this.measureText(String(a[0])).width * t.a;
+          const al = this.textAlign;
+          const l =
+            al === "left" || al === "start"
+              ? t.e
+              : al === "right" || al === "end"
+                ? t.e - wd
+                : t.e - wd / 2;
+          w.__draws.push({
+            px: (t.a * 31) / (window.devicePixelRatio || 1),
+            l,
+            r: l + wd,
+            cw: this.canvas.width,
+            ts: performance.now(),
+          });
+          return f.apply(this, a);
+        };
+      });
+      await page.goto("/", { waitUntil: "load" });
+      await page.waitForSelector(".rfw-live", { state: "attached", timeout: 30_000 });
+      await page.waitForTimeout(2500);
+      const { top, height } = await state(page);
+      type D = { px: number; l: number; r: number; cw: number; ts: number };
+      const settledFrames: D[] = [];
+      let drawn = 0;
+      for (const f of [0.1, 0.2, 0.3, 0.4]) {
+        await page.evaluate(() => ((window as unknown as { __draws: D[] }).__draws = []));
+        await page.evaluate(
+          ([t, h, f2, vh]) => {
+            document.documentElement.style.scrollBehavior = "auto";
+            window.scrollTo(0, (t as number) + (f2 as number) * ((h as number) - (vh as number)));
+          },
+          [top, height, f, s.h],
+        );
+        await page.waitForTimeout(1800);
+        const all = await page.evaluate(() => (window as unknown as { __draws: D[] }).__draws);
+        // every draw counts for the size; only the last frame (the settled one) counts for the edge
+        const last = all.length ? all[all.length - 1].ts : 0;
+        settledFrames.push(...all.filter((d) => d.ts > last - 40));
+        // a hold where nothing moves draws nothing new
+        drawn += all.length;
+        if (all.length)
+          expect(Math.min(...all.map((d) => d.px)), "smallest name").toBeGreaterThanOrEqual(10.95);
+      }
+      expect(drawn, "names were drawn").toBeGreaterThan(0);
+      for (const d of settledFrames) {
+        expect(d.l, "name stays inside the stage (left)").toBeGreaterThanOrEqual(-1);
+        expect(d.r, "name stays inside the stage (right)").toBeLessThanOrEqual(d.cw + 1);
+      }
+      await context.close();
+    });
+  }
+});
+
+// ─── T23 — on a phone, headings rise into place and are never hidden ─────────
+// The rise is movement only (a scroll timeline, behind @supports). With real scroll, every heading on screen (outside the wheel, which
+// has its own beats) is fully opaque and visible once the page has settled at each step.
+test.describe("T23 — the phone's rising headings", () => {
+  for (const route of ["/", "/pricing", "/product"]) {
+    test(`T23 — ${route} at 390: headings on screen are opaque, and settle in place`, async ({
+      browser,
+    }) => {
+      test.setTimeout(180_000);
+      const context = await browser.newContext({
+        viewport: { width: 390, height: 844 },
+        hasTouch: true,
+      });
+      const page = await context.newPage();
+      await page.goto(route, { waitUntil: "load" });
+      await page.waitForTimeout(2000);
+      const bad: string[] = [];
+      for (let i = 0; i < 30; i++) {
+        await page.mouse.wheel(0, 640);
+        await page.waitForTimeout(1300);
+        const seen = await page.evaluate(() =>
+          [...document.querySelectorAll("h2")]
+            .filter((h) => {
+              if (h.closest(".rfw")) return false;
+              const r = h.getBoundingClientRect();
+              return r.top > 70 && r.bottom < innerHeight && r.height > 0;
+            })
+            .map((h) => {
+              const c = getComputedStyle(h);
+              return { t: (h.textContent || "").slice(0, 30), o: c.opacity, v: c.visibility };
+            }),
+        );
+        for (const s of seen)
+          if (s.o !== "1" || s.v !== "visible") bad.push(`${s.t}: ${s.o}/${s.v}`);
+      }
+      await context.close();
+      expect(bad, "headings hidden on screen").toEqual([]);
+    });
+  }
+});
+
+// ─── T24 — the hover label never repeats a name the piece already carries ────
+// Owner (Lead, 1440 x 900): the first screen showed a white "Customers" pill right above the Customers tile, which already says
+// "Customers". The hover/focus label (.rfw-tip) is for a piece with only its icon: it stays away while the piece carries its own
+// name (the first screen on a desktop) and shows whenever the name is not on the piece (an inner piece at rest, any piece on a phone).
+test.describe("T24 — the hover label does not repeat a drawn name", () => {
+  const OUTER = 8; // Customers
+  const INNER = 11; // an inner piece: icon only at rest on a desktop
+
+  const open = async (browser: import("@playwright/test").Browser, w: number, h: number) => {
+    const context = await browser.newContext({ viewport: { width: w, height: h } });
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.goto("/", { waitUntil: "load" });
+    await page.waitForSelector(".rfw-live", { state: "attached", timeout: 30_000 });
+    await page.waitForTimeout(3500);
+    return { context, page, errors };
+  };
+  const tip = (page: import("@playwright/test").Page) =>
+    page.evaluate(() => {
+      const t = document.querySelector(".rfw-tip") as HTMLElement;
+      return { on: t.classList.contains("on"), text: t.textContent || "" };
+    });
+  const focusPiece = async (page: import("@playwright/test").Page, i: number) => {
+    await page.locator(`.rfw-b[data-i="${i}"]`).focus();
+    await page.waitForTimeout(700);
+    return tip(page);
+  };
+
+  test("T24 — 1440x900: no label on a tile that names itself, a label on an icon-only piece", async ({
+    browser,
+  }) => {
+    test.setTimeout(120_000);
+    const { context, page, errors } = await open(browser, 1440, 900);
+    // the pointer resting on the tile (the owner's case): the Customers tile sits at about (811, 428) on this first screen
+    await page.mouse.move(780, 400);
+    await page.mouse.move(811, 428, { steps: 4 });
+    await page.waitForTimeout(700);
+    expect((await tip(page)).on, "hover on the tile at rest shows no repeat").toBe(false);
+    await page.mouse.move(1085, 405);
+    await page.mouse.move(1125, 435, { steps: 4 });
+    await page.waitForTimeout(700);
+    expect((await tip(page)).on, "hover on an icon-only piece shows its label").toBe(true);
+    // keyboard focus
+    expect((await focusPiece(page, OUTER)).on, "Customers tile carries its name").toBe(false);
+    const inner = await focusPiece(page, INNER);
+    expect(inner.on, "an icon-only piece still gets its label").toBe(true);
+    expect(inner.text.length).toBeGreaterThan(0);
+    expect(errors).toEqual([]);
+    await context.close();
+  });
+
+  for (const s of [
+    { w: 768, h: 1024 },
+    { w: 390, h: 844 },
+  ]) {
+    test(`T24 — ${s.w}x${s.h}: a tile with no name drawn still gets its label`, async ({
+      browser,
+    }) => {
+      test.setTimeout(120_000);
+      const { context, page, errors } = await open(browser, s.w, s.h);
+      const t = await focusPiece(page, OUTER);
+      expect(t.on, "label shows when the tile has no name of its own").toBe(true);
+      expect(t.text).toBe("Customers");
+      expect(errors).toEqual([]);
+      await context.close();
+    });
+  }
+});
+
+// ─── T25 — the founder's note: one heading that wraps cleanly, and Read the rest never moves the page ───
+// Owner: the note opens "We built this with the people who use it every day." on the home page (#founder) and the company page (#story).
+// On a phone the home page shows a short version with a Read the rest button; the tap opens the full note in place.
+test.describe("T25 — the founder's note", () => {
+  const HEADING = "We built this with the people who use it every day.";
+  const VIEWS = [
+    { name: "1440", w: 1440, h: 900, touch: false },
+    { name: "768", w: 768, h: 1024, touch: true },
+    { name: "390", w: 390, h: 844, touch: true },
+  ];
+
+  // review-b: at two-column widths the spare height of the tall note used to open a gap between the kicker and the heading
+  for (const w of [1440, 1280, 1100, 1024, 768, 390]) {
+    test(`T25 — ${w}: the heading sits right under the kicker (no gap from spare height)`, async ({
+      browser,
+    }) => {
+      const context = await browser.newContext({ viewport: { width: w, height: 900 } });
+      const page = await context.newPage();
+      await page.goto("/#founder", { waitUntil: "load" });
+      await page.waitForSelector("#founder", { state: "attached", timeout: 60_000 });
+      await page.waitForTimeout(3000);
+      await page.evaluate(() =>
+        document.querySelector("#founder")!.scrollIntoView({ block: "start" }),
+      );
+      await page.waitForTimeout(1500);
+      const gap = await page.evaluate(
+        () =>
+          document.querySelector(".fd-q")!.getBoundingClientRect().top -
+          document.querySelector("#founder .kick")!.getBoundingClientRect().bottom,
+      );
+      expect(gap, "kicker to heading").toBeGreaterThanOrEqual(8);
+      expect(gap, "kicker to heading").toBeLessThanOrEqual(24);
+      await context.close();
+    });
+  }
+
+  // owner: "co-founder’s" never breaks at its hyphen, on either page, at any width
+  for (const w of [1440, 1100, 1024, 768, 390]) {
+    test(`T25 — ${w}: "co-founder’s" stays on one line (home short and full note, company)`, async ({
+      browser,
+    }) => {
+      test.setTimeout(120_000);
+      const context = await browser.newContext({ viewport: { width: w, height: 900 } });
+      const page = await context.newPage();
+      const rects = () =>
+        page.evaluate(() =>
+          [...document.querySelectorAll(".nb")]
+            .filter(
+              (n) => (n.textContent || "") === "co-founder’s" && n.getClientRects().length > 0,
+            )
+            .map((n) => n.getClientRects().length),
+        );
+      await page.goto("/", { waitUntil: "load" });
+      await page.waitForSelector("#founder", { state: "attached", timeout: 60_000 });
+      await page.waitForTimeout(2500);
+      // the short version shows below 900 px, the full note at 900 and up; open the note on a phone to check it too
+      let seen = await rects();
+      expect(seen.length, "a co-founder’s span is on screen").toBeGreaterThan(0);
+      const more = page.locator(".fd-more");
+      if (await more.isVisible()) {
+        await more.click();
+        await page.waitForTimeout(800);
+        seen = seen.concat(await rects());
+      }
+      await page.goto("/company", { waitUntil: "load" });
+      await page.waitForSelector(".co-body", { state: "attached" });
+      await page.waitForTimeout(1500);
+      seen = seen.concat(await rects());
+      expect(
+        seen.every((n) => n === 1),
+        "every span is a single line box: " + seen,
+      ).toBe(true);
+      await context.close();
+    });
+  }
+
+  for (const v of VIEWS) {
+    test(`T25 — ${v.name}: home #founder heading wraps in 3 lines or fewer, Read the rest opens in place`, async ({
+      browser,
+    }) => {
+      test.setTimeout(120_000);
+      const context = await browser.newContext({
+        viewport: { width: v.w, height: v.h },
+        hasTouch: v.touch,
+      });
+      const page = await context.newPage();
+      const errors: string[] = [];
+      page.on("pageerror", (e) => errors.push(e.message));
+      await page.goto("/#founder", { waitUntil: "load" });
+      await page.waitForSelector("#founder", { state: "attached", timeout: 60_000 });
+      await page.waitForTimeout(3500);
+      await page.evaluate(() =>
+        document.querySelector("#founder")!.scrollIntoView({ block: "start" }),
+      );
+      await page.waitForTimeout(2000);
+      const h = await page.evaluate(() => {
+        const q = document.querySelector(".fd-q") as HTMLElement;
+        const r = q.getBoundingClientRect();
+        return {
+          text: (q.textContent || "").replace(/\s+/g, " ").trim(),
+          lines: Math.round(r.height / parseFloat(getComputedStyle(q).lineHeight)),
+          right: r.right,
+          docW: document.documentElement.scrollWidth,
+          winW: window.innerWidth,
+          kick: (document.querySelector("#founder .kick")!.textContent || "").trim(),
+          sig: (document.querySelector(".fd-sig b")!.textContent || "").trim(),
+        };
+      });
+      expect(h.text).toBe(HEADING);
+      expect(h.kick).toBe("Why we built it");
+      expect(h.sig).toBe("Dr. Najath Akram");
+      expect(h.lines, "heading lines").toBeLessThanOrEqual(3);
+      expect(h.right, "heading stays on screen").toBeLessThanOrEqual(h.winW);
+      expect(h.docW, "no sideways scroll").toBeLessThanOrEqual(h.winW);
+      const more = page.locator(".fd-more");
+      if (await more.isVisible()) {
+        const y0 = await page.evaluate(() => window.scrollY);
+        await more.click();
+        await page.waitForTimeout(1200);
+        const after = await page.evaluate(() => ({
+          y: window.scrollY,
+          expanded: document.querySelector(".fd-more")!.getAttribute("aria-expanded"),
+          paras: [...document.querySelectorAll(".fd-note p")].filter(
+            (p) => (p as HTMLElement).offsetHeight > 0,
+          ).length,
+        }));
+        expect(Math.abs(after.y - y0), "the tap does not move the page").toBeLessThanOrEqual(1);
+        expect(after.expanded).toBe("true");
+        expect(after.paras, "the full note shows all nine paragraphs").toBe(9);
+      } else {
+        // desktop shows the whole note with no button
+        const paras = await page.evaluate(
+          () =>
+            [...document.querySelectorAll(".fd-note p")].filter(
+              (p) => (p as HTMLElement).offsetHeight > 0,
+            ).length,
+        );
+        expect(paras).toBe(9);
+      }
+      expect(errors).toEqual([]);
+      await context.close();
+    });
+
+    test(`T25 — ${v.name}: company #story has the same heading and wraps in 3 lines or fewer`, async ({
+      browser,
+    }) => {
+      const context = await browser.newContext({
+        viewport: { width: v.w, height: v.h },
+        hasTouch: v.touch,
+      });
+      const page = await context.newPage();
+      await page.goto("/company", { waitUntil: "load" });
+      await page.waitForSelector(".co-q", { state: "attached" });
+      await page.waitForTimeout(1500);
+      const c = await page.evaluate(() => {
+        const q = document.querySelector(".co-q") as HTMLElement;
+        return {
+          text: (q.textContent || "").replace(/\s+/g, " ").trim(),
+          lines: Math.round(
+            q.getBoundingClientRect().height / parseFloat(getComputedStyle(q).lineHeight),
+          ),
+          docW: document.documentElement.scrollWidth,
+          winW: window.innerWidth,
+          paras: document.querySelectorAll(".co-body p:not(.co-sig)").length,
+        };
+      });
+      expect(c.text).toBe(HEADING);
+      expect(c.lines).toBeLessThanOrEqual(3);
+      expect(c.docW).toBeLessThanOrEqual(c.winW);
+      expect(c.paras).toBe(9);
+      await context.close();
+    });
+  }
 });

@@ -23,12 +23,14 @@
 <meta name="theme-color" content="#ffffff">
 <link rel="icon" href="/site/img/routeflow-mark-64.png" type="image/png">
 <link rel="preload" href="/site/fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
-<script>(function(d){d.className+=" js";try{var r=localStorage.getItem("rf-rm")==="1";if(r)d.className+=" rm";if(!r&&(/[?&]motion=on(&|$)/.test(location.search)&&(d.className+=" motion-on")||matchMedia("(prefers-reduced-motion: no-preference)").matches)){d.className+=" js-motion";setTimeout(function(){if(!window.gsap)d.classList.remove("js-motion")},2500)}}catch(e){}})(document.documentElement)</script>
+<script>(function(d){d.className+=" js";try{localStorage.removeItem("rf-rm")}catch(e){}d.className+=" js-motion";setTimeout(function(){if(!window.gsap)d.classList.remove("js-motion")},2500)})(document.documentElement)</script>
 <link rel="stylesheet" href="/site/graphics/rf-graphics.css">
 <link rel="stylesheet" href="/site/css/site.css">
 <link rel="stylesheet" href="/site/graphics/rf-wheel-up.css">
 <link rel="stylesheet" href="/site/css/product.css">
 <link rel="stylesheet" href="/site/css/start.css">
+<link rel="stylesheet" href="/site/css/color-deep.css">
+<link rel="stylesheet" href="/site/css/mobile.css" media="(max-width:899.98px)">
 </head>
 <body class="pd">
 <svg class="sprite" aria-hidden="true" focusable="false"><defs>
@@ -182,7 +184,7 @@
   </div>
   <ul class="pd-three" role="list">
     <li class="pd-k reveal"><svg class="ico pd-ic" style="--pc:#e56a5d;--pi:#4b1e19" aria-hidden="true"><use href="#i-users"/></svg><h3>Staff</h3><p>Add staff from your account. Only admins can.</p></li>
-    <li class="pd-k reveal"><svg class="ico pd-ic" style="--pc:#44bd92;--pi:#003726" aria-hidden="true"><use href="#i-phone"/></svg><h3>Drivers</h3><p>Add each driver in your account. Drivers sign in on the RouteFlow phone app.</p></li>
+    <li class="pd-k reveal"><svg class="ico pd-ic" style="--pc:#44bd92;--pi:#003726" aria-hidden="true"><use href="#i-phone"/></svg><h3>Drivers</h3><p>Add each driver in your account. Drivers sign in on the web and see their route.</p></li>
     <li class="pd-k reveal"><svg class="ico pd-ic" style="--pc:#244f7c;--pi:#fff" aria-hidden="true"><use href="#i-store"/></svg><h3>Stores</h3><p>Invite a store from its customer page. It gets an email with a link to sign up. It’s free for the store.</p></li>
   </ul>
   <p class="pd-foot">To see what each login can reach, read <a href="/product#who">who uses it</a>.</p>
@@ -236,7 +238,7 @@
     <div><h2>Company</h2><ul><li><a href="/company">About us</a></li><li><a href="/#faq">Questions</a></li><li><a href="/contact">Contact</a></li></ul></div>
     <div><h2>Account</h2><ul><li><a href="/signup" data-track="trial_start_click" data-where="footer">Start free trial</a></li><li><a href="/login" data-signin>Sign in</a></li><li><a href="/buyer/login">Store sign in</a></li></ul></div>
   </div>
-  <div class="foot-bottom"><span>© 2026 RouteFlow</span><button class="rm-toggle" type="button" data-rm aria-pressed="false">Reduce motion</button><span><a href="/privacy">Privacy Policy</a> · <a href="/terms">Terms of Service</a></span></div>
+  <div class="foot-bottom"><span>© 2026 RouteFlow</span><span><a href="/privacy">Privacy Policy</a> · <a href="/terms">Terms of Service</a></span></div>
 </div></footer>
 <script src="/site/js/vendor/gsap.min.js" defer></script><script src="/site/js/vendor/ScrollTrigger.min.js" defer></script><script src="/site/js/vendor/SplitText.min.js" defer></script>
 <script src="/site/js/prices.js"></script><script src="/site/js/site.js" defer></script>

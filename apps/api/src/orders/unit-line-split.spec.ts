@@ -87,17 +87,27 @@ describe("change-request writes run the unit-aware target check first (#2230, SA
   it("finds the method, the check and both split-deriving writes", () => {
     expect(start).toBeGreaterThan(-1);
     expect(body).toContain("unitAware.assertChangeTargetAllowed(");
-    expect(body).toContain("const wasBoxSplit = src.boxes != null;");
+    expect(body).toContain("const wasBoxSplit = src.boxes != null || src.pieces != null;");
     // SA-841: the ADD_ITEM merge derives its split through the one helper now (it was `wasBoxSplit = existing.boxes != null`)
     expect(body).toContain("const merged = mergeIntoStoredLine(");
   });
 
-  it.each([["const wasBoxSplit = src.boxes != null;"], ["const merged = mergeIntoStoredLine("]])(
-    "assertChangeTargetAllowed runs before `%s`",
-    (write) => {
-      const check = body.indexOf("unitAware.assertChangeTargetAllowed(");
-      expect(check).toBeGreaterThan(-1);
-      expect(check).toBeLessThan(body.indexOf(write));
-    },
-  );
+  it.each([
+    ["const wasBoxSplit = src.boxes != null || src.pieces != null;"],
+    ["const merged = mergeIntoStoredLine("],
+  ])("assertChangeTargetAllowed runs before `%s`", (write) => {
+    const check = body.indexOf("unitAware.assertChangeTargetAllowed(");
+    expect(check).toBeGreaterThan(-1);
+    expect(check).toBeLessThan(body.indexOf(write));
+  });
+});
+
+describe("the edit path reads a pieces-only split as a split (SA-1097 A-6, review-a 6598291649)", () => {
+  it("updateOrderItems' wasBoxSplit gate is boxes OR pieces, like the at-door gate and packForLineEdit", () => {
+    const fs = require("fs") as typeof import("fs");
+    const path = require("path") as typeof import("path");
+    const src = fs.readFileSync(path.resolve(__dirname, "orders.service.ts"), "utf8");
+    expect(src).toContain("const wasBoxSplit = li.boxes != null || li.pieces != null;");
+    expect(src).not.toMatch(/const wasBoxSplit = li\.boxes != null;/);
+  });
 });

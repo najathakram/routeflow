@@ -26,7 +26,9 @@ const BASELINE: Record<string, number> = {
   // Round-4 prefactor (SA-124h, absorbing origin/master's unrelated growth under the size
   // ratchet): the per-item price/data builder moved verbatim to replace-all-line-build.ts,
   // taking 5 of these reads with it — 21 -> 16.
-  "orders/orders.service.ts": 15,
+  // SA-1097: updateOrderItems' stored-line pack comes from resolveStoredLinePack, the live pack a candidate read
+  // through live-pack-map.ts (a listed non-writer); the at-door CHANGE_QTY took the same helper — two direct reads fewer.
+  "orders/orders.service.ts": 13,
   // Round-4 prefactor (SA-124h): buildReplaceAllLineData, moved verbatim out of
   // orders.service.ts's replaceAll rebuild (see that file's own comment above) — same 5 reads,
   // same behavior, only relocated.
@@ -163,6 +165,12 @@ const NON_WRITERS = new Set([
   // SA-1027: the catalog-copy script READS a source product's pack columns (unitsPerBox among them) into the pure plan,
   // which hands them whole to ProductsService.create; it builds no order or invoice line and derives no factor/price.
   "catalog-copy/catalog-copy.service.ts",
+  // SA-946: reads a product's stored pack only to judge whether this save is its first pack. It builds no line, derives
+  // no line factor or price, and the stock and cost it scales go through applyStockMovements.
+  "products/pack-intro.ts",
+  // SA-1093 A-3: reads the live pack ONLY to compare it with a line's own snapshot, to say the line is already in
+  // today's unit. The pack it restocks at still comes from the line (SA-158). It builds no line and writes nothing.
+  "returns/returns-restock-pieces.ts",
 ]);
 
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");

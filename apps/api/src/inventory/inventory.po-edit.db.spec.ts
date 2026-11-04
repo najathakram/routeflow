@@ -28,10 +28,15 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { randomUUID } from "crypto";
 import { Prisma } from "@prisma/client";
 import { InventoryService } from "./inventory.service";
+import { applyPackIntroduction } from "../products/pack-intro-apply";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
-import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import {
+  describeDb,
+  requireLocalDatabaseUrl,
+  waitForBlockedSession,
+} from "../common/testing/db-spec";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -184,6 +189,108 @@ describeDb("PO edit + re-apply — real Postgres (LANE-U step 6)", () => {
     const b = await productOf(fresh);
     expect(a.currentStock.toString()).toBe(b.currentStock.toString()); // 40
     expect(a.averageCost!.toString()).toBe(b.averageCost!.toString()); // (20×2+20×6)/40 = 4
+  });
+
+  const answerBoxes = (w: World, whileOpen?: () => Promise<void>) =>
+    inTenant(w, () =>
+      prisma.tenantTransaction(async (tx) => {
+        const data: Record<string, unknown> = { unitsPerBox: 24 };
+        await applyPackIntroduction(tx as any, {
+          tenantId: w.tenantId,
+          productId: w.productId,
+          from: null,
+          to: 24,
+          reading: "box",
+          data,
+          actorId: null,
+        });
+        await tx.product.update({ where: { id: w.productId }, data });
+        await whileOpen?.();
+      }),
+    );
+
+  it("R-3 (SA-1093 G5): a re-apply that arrives while the answer is open waits for it, and is refused 409", async () => {
+    const w = await seedWorld("r3open", 0, 0);
+    const po = await receivedPo(w, 20, 4);
+    const reapply = () =>
+      inTenant(w, () =>
+        service.updatePurchaseOrder(
+          po.id,
+          {
+            reapplyInventory: true,
+            items: [{ id: po.items[0].id, productId: w.productId, qtyOrdered: 20, unitCost: 6 }],
+          },
+          w.userId,
+        ),
+      ).then(
+        () => "re-applied",
+        (e) => e?.response?.code,
+      );
+
+    let reapplying: Promise<unknown> | undefined;
+    await answerBoxes(w, async () => {
+      reapplying = reapply();
+      await waitForBlockedSession(prisma);
+    });
+
+    expect(await reapplying).toBe("RECEIVED_BEFORE_PACK");
+    expect(Number((await productOf(w)).currentStock)).toBe(480);
+  });
+
+  it("R-3 (SA-1093 Rule 3): a receipt taken after a Boxes answer and dated before it re-applies", async () => {
+    const w = await seedWorld("r3after", 20, 4);
+    await answerBoxes(w);
+    const po = await receivedPo(w, 10, 1);
+    // The PO route takes no receipt date today, so the date is set by hand: when it was received decides, not its date.
+    const earlier = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const dated = await prisma.stockMovement.updateMany({
+      where: { productId: w.productId, reference: po.poNumber },
+      data: { effectiveAt: earlier },
+    });
+    expect(dated.count).toBe(1);
+    expect(Number((await productOf(w)).currentStock)).toBe(490);
+
+    const code = await inTenant(w, () =>
+      service.updatePurchaseOrder(
+        po.id,
+        {
+          reapplyInventory: true,
+          items: [{ id: po.items[0].id, productId: w.productId, qtyOrdered: 10, unitCost: 2 }],
+        },
+        w.userId,
+      ),
+    ).then(
+      () => "re-applied",
+      (e) => e?.response?.code,
+    );
+
+    expect(code).toBe("re-applied");
+    expect(Number((await productOf(w)).currentStock)).toBe(490);
+  });
+
+  it("R-3 (SA-1093 Rule 3): a re-apply of a receipt older than a Boxes answer is refused 409, and nothing is written", async () => {
+    const w = await seedWorld("r3", 0, 0);
+    const po = await receivedPo(w, 20, 4);
+    await answerBoxes(w);
+    const rows = await prisma.stockMovement.count({ where: { productId: w.productId } });
+
+    const code = await inTenant(w, () =>
+      service.updatePurchaseOrder(
+        po.id,
+        {
+          reapplyInventory: true,
+          items: [{ id: po.items[0].id, productId: w.productId, qtyOrdered: 20, unitCost: 6 }],
+        },
+        w.userId,
+      ),
+    ).then(
+      () => "re-applied",
+      (e) => e?.response?.code,
+    );
+
+    expect(code).toBe("RECEIVED_BEFORE_PACK");
+    expect(Number((await productOf(w)).currentStock)).toBe(480);
+    expect(await prisma.stockMovement.count({ where: { productId: w.productId } })).toBe(rows);
   });
 
   // ── 2. the ledger is append-only: original + compensation + re-post ─────────────────────

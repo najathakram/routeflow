@@ -81,6 +81,7 @@ describe("GoogleOAuthService — sellerCount excludes removed customers (B141)",
 
   function boot(rows: any[]) {
     const prisma = createMockPrisma();
+    prisma.customerLink.updateMany.mockResolvedValue({ count: 1 } as any);
     prisma.buyerAccount.findFirst.mockResolvedValue({
       id: "buyer-1",
       email: "buyer@example.test",
@@ -142,6 +143,7 @@ describe("GoogleOAuthService — a removed customer's invite is not redeemed (B1
   // where-only fix is observable (L-081).
   function boot(row: ReturnType<typeof inviteLink>) {
     const prisma = createMockPrisma();
+    prisma.customerLink.updateMany.mockResolvedValue({ count: 1 } as any);
     prisma.buyerAccount.findFirst.mockResolvedValue({
       id: "buyer-1",
       email: "buyer@example.test",
@@ -175,7 +177,7 @@ describe("GoogleOAuthService — a removed customer's invite is not redeemed (B1
         where: expect.objectContaining({ customer: { deletedAt: null } }),
       }),
     );
-    expect(prisma.customerLink.update).not.toHaveBeenCalled();
+    expect(prisma.customerLink.updateMany).not.toHaveBeenCalled();
   });
 
   it("B141 P10: a live customer's invite still links on Google sign-in", async () => {
@@ -183,9 +185,9 @@ describe("GoogleOAuthService — a removed customer's invite is not redeemed (B1
 
     await service.findOrCreateUser(invitedProfile as any);
 
-    expect(prisma.customerLink.update).toHaveBeenCalledWith(
+    expect(prisma.customerLink.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "link-1" },
+        where: expect.objectContaining({ id: "link-1" }),
         data: expect.objectContaining({
           buyerAccountId: "buyer-1",
           status: "ACTIVE",

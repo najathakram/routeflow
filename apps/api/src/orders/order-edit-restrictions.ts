@@ -74,6 +74,7 @@ export const HELD_LINE_SELECT = {
   deliveredQty: true,
   invoicedQty: true,
   unitPrice: true,
+  subtotal: true, // SA-1097: the stored money that vouches for a split line's pack when the line can't say
   promoFreeUnits: true,
   overrideReason: true,
   authorChannel: true, // SA ruling #3418: carried onto a re-created line (editedLineAuthors)

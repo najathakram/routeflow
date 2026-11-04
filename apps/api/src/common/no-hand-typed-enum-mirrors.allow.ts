@@ -168,7 +168,6 @@ apps/mobile/lib/regulated-format.ts | TrackedCategoryTaxType | 1 | old-native | 
 apps/mobile/lib/returns-logic.ts | ReturnStatus | 2 | old-native | chain {PENDING,APPROVED,IN_TRANSIT,RECEIVED}
 apps/mobile/lib/run-settlement.ts | PaymentMethod | 1 | old-native | array {CASH,CHECK,ZELLE,CREDIT_CARD,ADVANCE,OTHER}
 apps/mobile/lib/shelf-logic.ts | OrderStatus | 1 | old-native | array {PENDING,CONFIRMED,OUT_FOR_DELIVERY}
-apps/mobile/lib/short-pick.ts | MutationType | 1 | old-native | union {DELIVERED,PARTIAL,REFUSED}
 apps/mobile/lib/stock-count-logic.ts | StockCountStatus | 1 | old-native | union {OPEN,REVIEW,COMMITTED,DISCARDED}
 apps/mobile/lib/user-admin.ts | UserStatus | 1 | old-native | union {ACTIVE,INACTIVE,SUSPENDED}
 apps/mobile/store/routeStore.ts | MutationType | 1 | old-native | union {UNRESOLVED,DELIVERED,PARTIAL,REFUSED}

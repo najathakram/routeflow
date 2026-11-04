@@ -60,6 +60,11 @@ describe("ReturnsService → regulated ledger (W5c)", () => {
       ],
     });
 
+    // The restock locks its product first, so the transaction has to answer with its tenant.
+    prisma.tenantTransaction.mockImplementationOnce((fn: any) =>
+      fn({ ...prisma, $queryRaw: jest.fn().mockResolvedValue([{ tenantId: "t1" }]) }),
+    );
+
     await service.receive("ret-1", "user-1");
 
     expect(ledger.reverseReturnEntries).toHaveBeenCalledTimes(1);
