@@ -267,7 +267,9 @@ describe("T1.4 admin: the same controls are all there", () => {
     expect(await screen.findByText("Import your data")).toBeInTheDocument();
     // Invoices, Payments and Expenses name the columns the importer reads.
     expect(
-      screen.getByText(/Key columns: Invoice Number, Customer Name, Invoice Date/),
+      screen.getByText(
+        /Key columns: Invoice Number, Customer Name, Invoice Date, Item Name, Quantity, Item Price, Total/,
+      ),
     ).toBeInTheDocument();
     expect(screen.getByText(/Key columns: Invoice Number, Amount, Mode, Date/)).toBeInTheDocument();
     expect(

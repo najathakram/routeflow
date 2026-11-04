@@ -58,6 +58,24 @@ describe("import template columns", () => {
     expect(withoutCustomerLiteralHeaders(variants)).toEqual(variants);
   });
 
+  it("every money column the importer reads with a 0 default is named on its card", () => {
+    // A file built from the hint without these imports at $0.00 and no error.
+    const zeroDefault: Record<keyof typeof LEGACY_IMPORT_KEY_COLUMNS, string[]> = {
+      invoices: ["Total", "Item Price"],
+      payments: ["Amount"],
+      expenses: ["Total"],
+    };
+    expect(serviceSource).toContain('read(first, ["Total"], 0)');
+    expect(serviceSource).toContain('read(row, ["Item Price"], 0)');
+    for (const [card, names] of Object.entries(zeroDefault)) {
+      for (const name of names) {
+        expect(LEGACY_IMPORT_KEY_COLUMNS[card as keyof typeof LEGACY_IMPORT_KEY_COLUMNS]).toContain(
+          name,
+        );
+      }
+    }
+  });
+
   it("the key columns named on the invoices, payments and expenses cards are read by the service", () => {
     for (const names of Object.values(LEGACY_IMPORT_KEY_COLUMNS)) {
       for (const name of names) {
