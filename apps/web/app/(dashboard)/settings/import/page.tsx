@@ -41,7 +41,11 @@ import {
   CUSTOMER_IMPORT_COLUMNS,
   PRODUCT_IMPORT_TEMPLATE_HEADERS,
   CUSTOMER_IMPORT_TEMPLATE_HEADERS,
+  LEGACY_IMPORT_KEY_COLUMNS,
 } from "@routeflow/types";
+
+const keyColumns = (k: keyof typeof LEGACY_IMPORT_KEY_COLUMNS) =>
+  ` Key columns: ${LEGACY_IMPORT_KEY_COLUMNS[k].join(", ")}.`;
 import { validateDocumentPrefix } from "@/lib/document-prefix";
 
 interface ImportResult {
@@ -101,7 +105,7 @@ const IMPORT_SECTIONS: ImportSection[] = [
   {
     id: "invoices",
     label: "Invoices",
-    description: "Import invoices and line items from a CSV file",
+    description: `Import invoices and line items from a CSV file.${keyColumns("invoices")}`,
     endpoint: "/import/invoices",
     icon: FileText,
     color: "text-orange-500 bg-orange-50",
@@ -109,7 +113,7 @@ const IMPORT_SECTIONS: ImportSection[] = [
   {
     id: "payments",
     label: "Customer payments",
-    description: "Import payment history from a CSV file",
+    description: `Import payment history from a CSV file.${keyColumns("payments")}`,
     endpoint: "/import/payments",
     icon: DollarSign,
     color: "text-success bg-success-bg",
@@ -117,8 +121,7 @@ const IMPORT_SECTIONS: ImportSection[] = [
   {
     id: "expenses",
     label: "Expenses",
-    description:
-      "Import expense records from a CSV file. Suppliers are auto-created from vendor names — no separate supplier import needed.",
+    description: `Import expense records from a CSV file.${keyColumns("expenses")} Suppliers are auto-created from vendor names — no separate supplier import needed.`,
     endpoint: "/import/expenses",
     icon: Receipt,
     color: "text-danger bg-danger-bg",
