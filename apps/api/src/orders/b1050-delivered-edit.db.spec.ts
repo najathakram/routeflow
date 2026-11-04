@@ -268,18 +268,30 @@ describeDb("B1050 — delivered-qty edits book max(qty, delivered) per line, rea
     expect(await ledgerNet(p)).toBe(-6);
   });
 
-  it("pooled: A{5,d5}+B{5}, strike A, add C{3} decrements 3 (counter 87), not 0", async () => {
+  it("pooled: A{5,d5}+B{5}, add C{3} decrements 3 (counter 87), the delivered line untouched", async () => {
     const p = await product("pooled");
     const o = await order([plain(p, 5, 5), plain(p, 5, 0)]);
-    await edit(o.id, {
-      replaceAll: false,
-      items: [
-        { id: o.lineItems[0].id, action: "DELETE" },
-        { productId: p, qty: 3 },
-      ],
-    });
+    await edit(o.id, { replaceAll: false, items: [{ productId: p, qty: 3 }] });
     expect(await stock(p)).toBe(87);
     expect(await ledgerNet(p)).toBe(-3);
+  });
+
+  it("SA-1101 (supersedes row 307): striking the delivered line A is a 409 LINE_ALREADY_DELIVERED, and nothing moves", async () => {
+    const p = await product("pooled-strike");
+    const o = await order([plain(p, 5, 5), plain(p, 5, 0)]);
+    const before = await stock(p);
+    await expect(
+      edit(o.id, {
+        replaceAll: false,
+        items: [
+          { id: o.lineItems[0].id, action: "DELETE" },
+          { productId: p, qty: 3 },
+        ],
+      }),
+    ).rejects.toMatchObject({ response: { code: "LINE_ALREADY_DELIVERED" } });
+    expect(await stock(p)).toBe(before);
+    expect(await ledgerNet(p)).toBe(0);
+    expect((await rows(o.id)).length).toBe(2);
   });
 
   it("KNOWN B1167: replace-all recreates its lines WITHOUT deliveredQty: {x,10,d10} → [6] writes nothing; → [12] books 6", async () => {

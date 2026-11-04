@@ -253,6 +253,13 @@ interface RefundActorDb {
   };
 }
 
+/** SA-1101 §2.5: DELIVERED is returnable by anyone who may return; REFUSED only by staff (how refused goods go back to stock). */
+export function isReturnable(status: string, userRole: string | undefined | null): boolean {
+  return (
+    status === "DELIVERED" || (status === "REFUSED" && userRole != null && userRole !== "CUSTOMER")
+  );
+}
+
 @Injectable()
 export class ReturnsService {
   constructor(
@@ -372,10 +379,7 @@ export class ReturnsService {
       if (!order) throw new NotFoundException("Order not found");
       // SA-1101 §2.5: staff may also record a return on a REFUSED order (how the refused goods go back to stock,
       // SA-1098 A-1). A buyer may not: they get the same message as for any undelivered order.
-      const returnable =
-        order.status === "DELIVERED" ||
-        (order.status === "REFUSED" && userRole != null && userRole !== "CUSTOMER");
-      if (!returnable)
+      if (!isReturnable(order.status, userRole))
         throw new BadRequestException("Returns can only be submitted for delivered orders");
 
       // Customers can only create returns for their own orders
@@ -407,6 +411,14 @@ export class ReturnsService {
       // serialize here — mirrors the FOR UPDATE idiom in invoices.service.ts
       // recordPayment() and routes.service.ts dispatch.
       await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${dto.orderId} FOR UPDATE`;
+      // SA-1101 A-3 N1: the status read above was taken BEFORE this lock. A Deliver again that committed in between
+      // moved the order out of REFUSED, and a return recorded on it now would be restocked on goods that went out again.
+      const lockedStatus = await tx.order.findUnique({
+        where: { id: dto.orderId },
+        select: { status: true },
+      });
+      if (!lockedStatus || !isReturnable(lockedStatus.status, userRole))
+        throw new BadRequestException("Returns can only be submitted for delivered orders");
 
       // B4/m-6: prior-returned pieces per product, shared with the (PR-1c/1d) INLINE
       // capture flow — sums STANDARD Return rows AND (once they exist) INLINE

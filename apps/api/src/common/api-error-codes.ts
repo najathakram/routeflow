@@ -445,6 +445,7 @@ export const API_ERROR_CODES = {
    * the write (a dispatch attached it), so releasing the old link would have cleared a fresh one. Nothing was written.
    */
   ORDER_RUN_LINK_CHANGED: "ORDER_RUN_LINK_CHANGED",
+  ORDER_HAS_RETURN: "ORDER_HAS_RETURN",
   /**
    * W-769 (SA-862 rule 4): PATCH /invoices/:id/payments/:paymentId, 409: confirming (DRAFT → PAID) or reopening (VOID → PAID) a
    * payment when real money already covers the invoice. Nothing written; void it or move it to the customer's credit.

@@ -1,8 +1,7 @@
 import { InvoiceStatus, OrderStatus } from "@prisma/client";
-import { roundMoney } from "@routeflow/pricing";
+import { roundMoney, STOP_QTY_EPS } from "@routeflow/pricing";
 import { lockOrderRows } from "../credit-notes/credit-note-locks";
 import { BadRequestException } from "@nestjs/common";
-import { STOP_QTY_EPS } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { assertDeliveriesFitStop } from "./delivery-lines.util";
 import { deliveredSoFarForLine, fetchEvidenceByLine, lineRemaining } from "./delivered-so-far";

@@ -188,18 +188,20 @@ describeDb("SA-1101 RO-9: a return on a REFUSED order — real Postgres", () => 
     expect(moved.map((m) => Number(m.quantity))).toEqual([10]);
 
     // OBSERVED (SA-1101 §2.5): the credit this return earns on a $0 refused invoice. $0 expected.
-    let credit = 0;
-    let note = "refund door refused";
+    // Two branches are allowed, and ONLY these two: the refund door answers "nothing was billed" (the observed
+    // one), or it mints no credit above $0. A refund that throws for any OTHER reason is a red test, not a $0.
+    let note = "credit note minted";
     try {
       await tenantCtx.run(s.tenantId, () => returns.processRefund(ret.id));
-      const notes = await prisma.creditNote.findMany({
-        where: { tenantId: s.tenantId, status: { not: "VOID" } },
-      });
-      credit = notes.reduce((sum, n) => sum + Number(n.amount), 0);
-      note = "credit note minted";
     } catch (e) {
-      note = `refund refused: ${(e as Error).message}`;
+      const message = (e as Error).message;
+      expect(message).toContain("None of the returned items were billed on this order");
+      note = "refund door answered: nothing was billed";
     }
+    const notes = await prisma.creditNote.findMany({
+      where: { tenantId: s.tenantId, status: { not: "VOID" } },
+    });
+    const credit = notes.reduce((sum, n) => sum + Number(n.amount), 0);
     console.info(`SA-1101 RO-9 observed credit on a refused-line return: $${credit} (${note})`);
     expect(credit).toBe(0);
   });
