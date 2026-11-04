@@ -13,6 +13,7 @@ export const NOTIFICATION_TRIGGERS: ReadonlySet<NotificationEvent> = new Set<Not
   NotificationEvent.SHIPMENT_TRACKING_ADDED,
   NotificationEvent.READY_FOR_PICKUP, // SA-655: orders.service.ts changeStatus fires it on a PICKUP handover
   NotificationEvent.DELIVERED,
+  NotificationEvent.ORDER_REFUSED, // SA-1101: routes/stop-outcome.ts (notifyStopOutcomes) fires it
   NotificationEvent.CANCELLED,
   NotificationEvent.ORDER_CHANGED_AT_DOOR,
   NotificationEvent.INVOICE_SENT,
@@ -28,6 +29,7 @@ export const NOTIFICATION_AUDIENCE: Record<NotificationEvent, NotificationAudien
   [NotificationEvent.SHIPMENT_TRACKING_ADDED]: "CUSTOMER",
   [NotificationEvent.READY_FOR_PICKUP]: "CUSTOMER",
   [NotificationEvent.DELIVERED]: "CUSTOMER",
+  [NotificationEvent.ORDER_REFUSED]: "CUSTOMER",
   [NotificationEvent.CANCELLED]: "CUSTOMER",
   [NotificationEvent.ORDER_CHANGED_AT_DOOR]: "CUSTOMER",
   [NotificationEvent.INVOICE_SENT]: "CUSTOMER",
