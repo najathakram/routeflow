@@ -1172,15 +1172,117 @@ describeDb("SA-1098 PR-2 driver stop on the web — real Postgres", () => {
       });
     });
 
-    it("D-44 (record): between Undo and the next completion the draft keeps the last numbers", async () => {
+    /**
+     * SA-1098 Undo gap (D-44, UG-1..UG-5): Undo rebuilds the order's open draft(s), so the gap between Undo and the next completion no
+     * longer holds the last visit's numbers. No evidence left anywhere: the order basis (what the order says, before any delivery). Another
+     * stop's evidence left: the delivered basis (what the other visits delivered). Issued invoices are never touched.
+     */
+    it("D-44: between Undo and the next completion the draft is back on the order basis (2 items, $120)", async () => {
       const s = await seedRun("d44", 2);
       const st = s.stops[0];
       await driverComplete(s, st, web(st, 7), "k-d44a");
+      expect((await shapeOf(st.orderId)).totals).toEqual([90]);
       await undo(s, st);
       const shape = await shapeOf(st.orderId);
       // eslint-disable-next-line no-console
-      console.info("D-44 observed:", JSON.stringify(shape));
-      expect(shape.totals).toEqual([90]);
+      console.info("D-44 observed after Undo:", JSON.stringify(shape));
+      expect(shape).toEqual({ totals: [120], items: [2] });
+    });
+
+    it("UG-1: short, Undo, the office issues the draft in the gap, Delivered in full: the issued invoice bills $120, not the short $90", async () => {
+      const s = await seedRun("ug1", 2);
+      const st = s.stops[0];
+      await driverComplete(s, st, web(st, 7), "k-ug1a");
+      await undo(s, st);
+      await prisma.invoice.updateMany({ where: { orderId: st.orderId }, data: { status: "SENT" } });
+      await driverComplete(s, st, full(st), "k-ug1b");
+      const live = await prisma.invoice.findMany({
+        where: { orderId: st.orderId, status: { not: "VOID" } },
+        select: { status: true, total: true },
+      });
+      // eslint-disable-next-line no-console
+      console.info("UG-1 observed:", JSON.stringify(live));
+      expect(live.map((i) => [i.status, Number(i.total)])).toEqual([["SENT", 120]]);
+    });
+
+    it("UG-2: both lines refused (the draft is empty), Undo: both lines are back on the draft, $120", async () => {
+      const s = await seedRun("ug2", 2);
+      const st = s.stops[0];
+      await driverComplete(s, st, refusedAll(st), "k-ug2a");
+      expect(await shapeOf(st.orderId)).toEqual({ totals: [0], items: [0] });
+      await undo(s, st);
+      expect(await shapeOf(st.orderId)).toEqual({ totals: [120], items: [2] });
+      const lines = await prisma.orderItem.findMany({
+        where: { orderId: st.orderId },
+        select: { invoicedQty: true },
+        orderBy: { qty: "desc" },
+      });
+      expect(lines.map((l) => Number(l.invoicedQty))).toEqual([10, 4]);
+    });
+
+    it("UG-3 (guard): an invoice the office already issued before the Undo is left as it was", async () => {
+      const s = await seedRun("ug3", 2);
+      const st = s.stops[0];
+      await driverComplete(s, st, web(st, 7), "k-ug3a");
+      await prisma.invoice.updateMany({ where: { orderId: st.orderId }, data: { status: "SENT" } });
+      const before = await prisma.invoice.findMany({
+        where: { orderId: st.orderId },
+        select: { id: true, status: true, total: true, items: { select: { id: true } } },
+      });
+      await undo(s, st);
+      const after = await prisma.invoice.findMany({
+        where: { orderId: st.orderId },
+        select: { id: true, status: true, total: true, items: { select: { id: true } } },
+      });
+      expect(after).toEqual(before);
+      expect(after.map((i) => [i.status, Number(i.total)])).toEqual([["SENT", 90]]);
+    });
+
+    it("UG-4: another stop's delivery stays on the draft: 3 of 10 at the first visit, 5 more at a second, Undo of the second: back to the first visit's $50", async () => {
+      const s = await seedRun("ug4", 2);
+      const first = s.stops[0];
+      const later = s.stops[1];
+      await driverComplete(s, first, web(first, 3), "k-ug4a");
+      expect((await shapeOf(first.orderId)).totals).toEqual([50]);
+      // the undelivered rest of the order rides the next stop (a re-delivery visit), as in D-6
+      await prisma.order.update({
+        where: { id: first.orderId },
+        data: { routeRunStopId: later.stopId, status: "OUT_FOR_DELIVERY" },
+      });
+      const dto = {
+        deliveries: [{ orderItemId: first.line1.id, type: "PARTIAL", quantityDelivered: 5 }],
+      };
+      await complete(s, later, "completeWithPayment", {
+        ...dto,
+        idempotencyKey: "k-ug4b",
+      } as never);
+      // 3 + 5 of 10 at $10, plus 4 x $5
+      expect((await shapeOf(first.orderId)).totals).toEqual([100]);
+      await undo(s, later);
+      const after = await shapeOf(first.orderId);
+      // eslint-disable-next-line no-console
+      console.info("UG-4 observed after Undo:", JSON.stringify(after));
+      expect(after.totals).toEqual([50]);
+      const line1 = await prisma.orderItem.findUniqueOrThrow({ where: { id: first.line1.id } });
+      expect(Number(line1.deliveredQty)).toBe(3);
+    });
+
+    it("UG-5: a split order, everything refused (both drafts empty), Undo: each line is back on its own draft", async () => {
+      const sp = await seedSplit(
+        "ug5",
+        ["R"],
+        [
+          { cat: null, qty: 1 },
+          { cat: 0, qty: 3 },
+        ],
+        [[0], [1]],
+      );
+      await splitGo(sp, splitDto(sp, [0, 0], [1, 3]), "k-ug5a");
+      await splitUndo(sp);
+      expect(await splitState(sp)).toEqual([
+        { total: 10, lines: [0] },
+        { total: 30, lines: [1] },
+      ]);
     });
   });
 
