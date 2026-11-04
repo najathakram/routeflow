@@ -89,8 +89,9 @@ describe("public site sentences the code backs", () => {
     expect(page("product")).toContain("If a store gets less, the driver changes the amount.");
     expect(page("product")).toContain("A stop can also be undone.");
     expect(page("product")).toContain(
-      "Drivers can’t complete a stop with regulated items. The office does.",
+      "Drivers can’t complete a stop with regulated items. They call the office.",
     );
+    expect(page("product")).not.toContain("The office does");
     expect(page("product")).not.toMatch(/refus/i);
     expect(page("product")).toContain("Drivers can’t take payment at the door.");
     expect(page("product")).toContain("There’s no proof photo or signature.");
