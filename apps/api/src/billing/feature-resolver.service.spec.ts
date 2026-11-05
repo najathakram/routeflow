@@ -29,6 +29,8 @@ describe("REG-B508: flag.msrp / flag.sales_agents resolve through the plan-flag 
       planFeatureFlags: new Set(),
       entFlags: [],
       activeSkuSet: new Set(),
+      courtesy: () => false,
+      billed: new Set<string>(),
     };
 
     expect(resolveOneKey(msrp, ctx)).toMatchObject({ effective: false, source: "NONE" });
@@ -42,6 +44,8 @@ describe("REG-B508: flag.msrp / flag.sales_agents resolve through the plan-flag 
       planFeatureFlags: new Set(["flag.msrp", "flag.sales_agents"]),
       entFlags: ["flag.msrp", "flag.sales_agents"],
       activeSkuSet: new Set(),
+      courtesy: () => false,
+      billed: new Set<string>(),
     };
     expect(resolveOneKey(msrp, grantedByPlan)).toMatchObject({
       effective: true,
@@ -61,6 +65,8 @@ describe("REG-B508: flag.msrp / flag.sales_agents resolve through the plan-flag 
       planFeatureFlags: new Set(),
       entFlags: [],
       activeSkuSet: new Set(),
+      courtesy: () => false,
+      billed: new Set<string>(),
     };
     expect(resolveOneKey(msrp, grantedByOverride)).toMatchObject({
       effective: true,

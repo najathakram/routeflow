@@ -14,7 +14,8 @@ export function deriveBadge(feature: Pick<EffectiveFeature, "source" | "detail">
     case "ADDON_SKU":
       return "purchased";
     case "PRESET":
-      return "inherited";
+      // FG-1 WP2: served by the dark-gate courtesy, which is not the plan including it
+      return feature.detail?.term === "courtesy" ? "courtesy" : "inherited";
     case "NONE":
       return "off";
     default:
@@ -28,6 +29,7 @@ export const BADGE_LABELS: Record<FeatureBadge, string> = {
   removed: "Removed",
   grandfathered: "Grandfathered",
   purchased: "Purchased",
+  courtesy: "Not enforced yet",
   off: "Off",
   unknown: "Unknown",
 };
@@ -38,6 +40,7 @@ export const BADGE_COLORS: Record<FeatureBadge, string> = {
   removed: "bg-red-900/40 text-red-300 ring-red-600/30",
   grandfathered: "bg-purple-900/40 text-purple-300 ring-purple-600/30",
   purchased: "bg-blue-900/40 text-blue-300 ring-blue-600/30",
+  courtesy: "bg-amber-900/40 text-amber-300 ring-amber-600/30",
   off: "bg-slate-800 text-slate-400 ring-slate-700",
   unknown: "bg-amber-900/40 text-amber-300 ring-amber-600/30",
 };
@@ -47,7 +50,8 @@ export const BADGE_COLORS: Record<FeatureBadge, string> = {
 // The first rule that applies wins (the applied-mode case, rule 1, is decided by the console
 // because it needs the row's `config`):
 //   2. no effective data for the row (or the server could not tell)  -> "Not reported" (amber)
-//   3. feature on, gate dark, source none or an override that removes it -> "On, not enforced yet"
+//   3. feature on by the dark-gate courtesy (term "courtesy", FG-1 WP2), or on while the gate is dark with source
+//      none or an override that removes it -> "On, not enforced yet"
 //   4. otherwise "On" / "Off", with the source folded in as ONE chip in the owner's words (SA-963):
 //      In plan / Add-on / Free until <date> / Set for this business / Off for this business, plus
 //      "kept from an earlier plan". The Off badge is dropped. No price: Plan & billing owns it.
@@ -117,8 +121,8 @@ export function deriveReadout(
   }
   if (
     feature.serving &&
-    gate.state === "dark" &&
-    (feature.source === "NONE" || feature.source === "OVERRIDE_DENY")
+    (feature.detail?.term === "courtesy" ||
+      (gate.state === "dark" && (feature.source === "NONE" || feature.source === "OVERRIDE_DENY")))
   ) {
     return { kind: "not-enforced", text: "On, not enforced yet" };
   }

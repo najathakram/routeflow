@@ -200,7 +200,8 @@ export class EntitlementSweepService {
       keys[key] = {
         old,
         effective,
-        strict: effective,
+        // the resolver's own strict answer (FG-1 WP2): the owner's rule with no courtesy
+        strict: resolved.byKey.get(key)?.strict ?? false,
         clientAddon: addonKeyed ? held.has(key) : null,
         clientFlag: addonKeyed ? null : served.has(key),
         courtesy: isCourtesyServed({
@@ -220,7 +221,7 @@ export class EntitlementSweepService {
       sets[setKeys.join("|")] = {
         old: decision.outcome !== "denied",
         effective,
-        strict: effective,
+        strict: setKeys.some((k) => resolved.byKey.get(k)?.strict === true),
         clientAddon: setKeys.some((k) => held.has(k)),
         courtesy: isCourtesyServed({
           keys: setKeys,

@@ -34,6 +34,7 @@ describe("groupPreview", () => {
     expect(groupPreview(null, LABELS)).toEqual({
       gained: [],
       lost: [],
+      laterLost: [],
       limits: [],
       other: [],
       total: 0,

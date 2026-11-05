@@ -9,14 +9,21 @@ import {
 import { PlanCatalogService } from "./plan-catalog.service";
 import { FEATURE_REGISTRY, FeatureDef, isDefaultGrantedAddon } from "./feature-registry";
 import { effectivePlanFlags, findPlanDefinition } from "./plan-catalog.constants";
+import { isCourtesyServed } from "./plan-flag-policy";
 import type { EffectiveFeature, FeatureSource } from "@routeflow/types";
 
 /** One key's fully-resolved verdict — the pieces `EntitlementAuthority`/the explain-trace/preview need. */
 export interface ResolvedKey {
   key: string;
+  /** What the guards SERVE: the strict answer, or the dark-gate courtesy on top of it (FG-1 WP2). */
   effective: boolean;
+  /**
+   * The owner's rule with no courtesy: plan preset + purchased add-ons + grants - denies. Equal to `effective`
+   * except where the courtesy serves a key the plan does not hold (then false), and under a DENY (false).
+   */
+  strict: boolean;
   source: FeatureSource;
-  term?: "flag" | "includedSku" | "default";
+  term?: "flag" | "includedSku" | "default" | "courtesy";
   overrideId?: string;
   reason?: string;
   kind?: string;
@@ -94,10 +101,7 @@ export class FeatureResolverService {
   private async compute(tenantId: string): Promise<ResolvedFeatures> {
     const [ent, activeAddonRows, overrides, overrideDetail] = await Promise.all([
       this.entitlements.resolve(tenantId),
-      this.prisma.tenantAddon.findMany({
-        where: { tenantId, active: true },
-        select: { addonKey: true },
-      }),
+      loadActiveAddonRows(this.prisma, tenantId),
       this.featureOverrides.allActive(tenantId),
       this.featureOverrides.activeDetail(tenantId),
     ]);
@@ -112,6 +116,17 @@ export class FeatureResolverService {
     const planFeatureFlags = new Set(def ? effectivePlanFlags(def, version.id, published) : []);
     const activeAddonSet = new Set(activeAddonKeys);
     const activeSkuSet = new Set(ent.addons);
+    // The courtesy and the billing fact, each from its ONE helper (the preview calls the same two).
+    const courtesy = courtesyFor({
+      planKey: ent.planKey,
+      planFlags: ent.flags,
+      overrides,
+      held: heldAddonKeys(activeAddonSet, ent.flags, overrides),
+    });
+    const billed = billedKeySet(
+      activeAddonRows,
+      skuGrantsFlags([...(published?.addonSkus ?? []), ...version.addonSkus]),
+    );
 
     const byKey = new Map<string, ResolvedKey>();
     for (const feature of FEATURE_REGISTRY) {
@@ -124,6 +139,8 @@ export class FeatureResolverService {
           planFeatureFlags,
           entFlags: ent.flags,
           activeSkuSet,
+          courtesy,
+          billed,
         }),
       );
     }
@@ -152,6 +169,102 @@ export interface ResolveContext {
   planFeatureFlags: Set<string>;
   entFlags: string[];
   activeSkuSet: Set<string>;
+  /**
+   * FG-1 WP2: true when the dark-gate courtesy serves this key. Built by `courtesyFor` (the one predicate,
+   * `isCourtesyServed`); required so a caller that forgets it fails to compile instead of losing the courtesy.
+   */
+  courtesy: (feature: FeatureDef) => boolean;
+  /** Registry keys that have an active, non-comp, billed row (`billedKeySet`). */
+  billed: ReadonlySet<string>;
+}
+
+/** The columns of an active add-on row that the courtesy and the billing fact need. */
+export const ADDON_BILLING_SELECT = {
+  addonKey: true,
+  sku: true,
+  active: true,
+  isComp: true,
+  priceSnapshot: true,
+  stripeItemId: true,
+} as const;
+
+export interface AddonBillingRow {
+  addonKey: string;
+  sku?: string | null;
+  active?: boolean;
+  isComp?: boolean | null;
+  priceSnapshot?: unknown;
+  stripeItemId?: string | null;
+}
+
+/** The ONE read of a tenant's active add-on rows, shared by `compute` and the preview so they cannot differ. */
+export function loadActiveAddonRows(
+  prisma: Pick<PrismaService, "tenantAddon">,
+  tenantId: string,
+): Promise<AddonBillingRow[]> {
+  return prisma.tenantAddon.findMany({
+    where: { tenantId, active: true },
+    select: ADDON_BILLING_SELECT,
+  });
+}
+
+/**
+ * R6 / invariant I3: a row is billed when it is active, not a platform comp, and carries a price above zero
+ * or a Stripe item. Applies under any override: a DENY or GRANT does not stop the charge.
+ */
+export const isBilledAddonRow = (row: AddonBillingRow): boolean =>
+  row.active !== false &&
+  !row.isComp &&
+  (Number(row.priceSnapshot ?? 0) > 0 || Boolean(row.stripeItemId));
+
+/** SKU code -> the flag keys it grants, from catalog SKU rows (the later entries win). */
+export function skuGrantsFlags(
+  skus: ReadonlyArray<{ sku: string; grantsFlags: readonly string[] }>,
+): ReadonlyMap<string, readonly string[]> {
+  return new Map(skus.map((s) => [s.sku, s.grantsFlags]));
+}
+
+/**
+ * The registry keys that have a billed row: the row's own `addonKey`, and the flags its SKU grants (a flag
+ * bridged by a purchased SKU is charged through that row).
+ */
+export function billedKeySet(
+  rows: readonly AddonBillingRow[],
+  grants: ReadonlyMap<string, readonly string[]>,
+): Set<string> {
+  const keys = new Set<string>();
+  for (const row of rows) {
+    if (!isBilledAddonRow(row)) continue;
+    keys.add(row.addonKey);
+    for (const flag of (row.sku ? grants.get(row.sku) : undefined) ?? []) keys.add(flag);
+  }
+  return keys;
+}
+
+/** Add-on keys held through a row or a default grant (the set `AddonService.getActiveAddons` returns). */
+export function heldAddonKeys(
+  activeAddonSet: ReadonlySet<string>,
+  entFlags: readonly string[],
+  overrides: ReadonlyMap<string, FeatureOverrideEffect>,
+): Set<string> {
+  const held = new Set(activeAddonSet);
+  for (const feature of FEATURE_REGISTRY) {
+    if (isDefaultGrantedAddon(feature, activeAddonSet, entFlags, overrides)) held.add(feature.key);
+  }
+  return held;
+}
+
+/**
+ * The context-bound courtesy predicate `ResolveContext.courtesy` takes: `isCourtesyServed` (plan-flag-policy.ts,
+ * the one home of the rule) over one key, for one side of a comparison.
+ */
+export function courtesyFor(facts: {
+  planKey: string;
+  planFlags: readonly string[];
+  overrides: ReadonlyMap<string, FeatureOverrideEffect>;
+  held: ReadonlySet<string>;
+}): (feature: FeatureDef) => boolean {
+  return (feature) => isCourtesyServed({ keys: [feature.key], ...facts });
 }
 
 /**
@@ -161,6 +274,21 @@ export interface ResolveContext {
  * real post-write one, and nothing else differs.
  */
 export function resolveOneKey(feature: FeatureDef, ctx: ResolveContext): ResolvedKey {
+  const strict = resolveStrict(feature, ctx);
+  const charged = ctx.billed.has(feature.key);
+  if (strict.effective) return { ...strict, strict: true, charged };
+  if (!ctx.courtesy(feature)) return { ...strict, strict: false, charged };
+  // Served by courtesy: the guard lets it through, the owner's rule does not hold it. A DENY keeps its source
+  // and detail (the credit check ignores overrides while the switch is off, so the DENY is still the news).
+  return strict.source === "OVERRIDE_DENY"
+    ? { ...strict, effective: true, strict: false, term: "courtesy", charged }
+    : { ...strict, effective: true, strict: false, source: "PRESET", term: "courtesy", charged };
+}
+
+type StrictKey = Omit<ResolvedKey, "strict" | "charged">;
+
+/** The owner's rule with no courtesy: preset + purchased add-ons + grants - denies. */
+function resolveStrict(feature: FeatureDef, ctx: ResolveContext): StrictKey {
   const override = ctx.overrides.get(feature.key);
   const detail = ctx.overrideDetail?.get(feature.key);
   if (override === "GRANT") {
@@ -169,7 +297,6 @@ export function resolveOneKey(feature: FeatureDef, ctx: ResolveContext): Resolve
       effective: true,
       source: "OVERRIDE_GRANT",
       ...detail,
-      charged: false,
     };
   }
   if (override === "DENY") {
@@ -178,7 +305,6 @@ export function resolveOneKey(feature: FeatureDef, ctx: ResolveContext): Resolve
       effective: false,
       source: "OVERRIDE_DENY",
       ...detail,
-      charged: false,
     };
   }
 
@@ -196,10 +322,9 @@ export function resolveOneKey(feature: FeatureDef, ctx: ResolveContext): Resolve
           effective: true,
           source: "PRESET",
           term: "default",
-          charged: false,
         };
       }
-      return { key: feature.key, effective: false, source: "NONE", charged: false };
+      return { key: feature.key, effective: false, source: "NONE" };
     }
     const grantingSku = feature.billing.skus.find((s) => ctx.activeSkuSet.has(s));
     if (grantingSku) {
@@ -208,7 +333,6 @@ export function resolveOneKey(feature: FeatureDef, ctx: ResolveContext): Resolve
         effective: true,
         source: "ADDON_SKU",
         sku: grantingSku,
-        charged: true,
       };
     }
     return {
@@ -216,7 +340,6 @@ export function resolveOneKey(feature: FeatureDef, ctx: ResolveContext): Resolve
       effective: true,
       source: "PRESET",
       term: "includedSku",
-      charged: false,
     };
   }
 
@@ -226,18 +349,18 @@ export function resolveOneKey(feature: FeatureDef, ctx: ResolveContext): Resolve
   // reproduces "preset ∪ purchasedAddons" for the flag-keyed half of the registry.
   if (ctx.entFlags.includes(feature.key)) {
     if (ctx.planFeatureFlags.has(feature.key)) {
-      return { key: feature.key, effective: true, source: "PRESET", term: "flag", charged: false };
+      return { key: feature.key, effective: true, source: "PRESET", term: "flag" };
     }
     // In ent.flags but not the plan's own featureFlags → granted by an active addon's
     // grantsFlags bridge (e.g. addon.buyer_portal via the BUYER_PORTAL SKU).
-    return { key: feature.key, effective: true, source: "ADDON_SKU", charged: true };
+    return { key: feature.key, effective: true, source: "ADDON_SKU" };
   }
 
   if (feature.defaultGranted) {
-    return { key: feature.key, effective: true, source: "PRESET", term: "default", charged: false };
+    return { key: feature.key, effective: true, source: "PRESET", term: "default" };
   }
 
-  return { key: feature.key, effective: false, source: "NONE", charged: false };
+  return { key: feature.key, effective: false, source: "NONE" };
 }
 
 /** Shape a single resolved key into the wire-format `EffectiveFeature` the explain-trace/preview return. */
@@ -253,7 +376,7 @@ export function toEffectiveFeature(
     key: resolved.key,
     area: feature?.area ?? "platform",
     serving,
-    resolver: resolved.effective,
+    resolver: resolved.strict,
     source: resolved.source,
     detail: {
       overrideId: resolved.overrideId,

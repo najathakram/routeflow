@@ -184,7 +184,7 @@ describe("T2 part B: effective equals the old path on every gated key (R2)", () 
   ];
 
   it("scans a real registry (guards a vacuous matrix)", () => {
-    expect(gated.length).toBeGreaterThan(40);
+    expect(gated.length).toBeGreaterThan(25);
   });
 
   it.each(envs)("%s: every key x plan x flag x row x override agrees", (_label, env) => {

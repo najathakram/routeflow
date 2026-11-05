@@ -19,7 +19,11 @@ function make(opts: { effectiveKeys?: string[] | null } = {}) {
   const resolvedValue =
     opts.effectiveKeys === null
       ? null
-      : { byKey: new Map((opts.effectiveKeys ?? []).map((k) => [k, { key: k, effective: true }])) };
+      : {
+          byKey: new Map(
+            (opts.effectiveKeys ?? []).map((k) => [k, { key: k, effective: true, strict: true }]),
+          ),
+        };
   const resolver = {
     resolve: jest.fn().mockResolvedValue(resolvedValue),
     invalidate: jest.fn(),

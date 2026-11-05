@@ -49,6 +49,7 @@ describe("#2700 flags gain forward — FeatureResolverService (F2)", () => {
     expect(resolved!.byKey.get("flag.returns")).toEqual({
       key: "flag.returns",
       effective: true,
+      strict: true,
       source: "PRESET",
       term: "flag",
       charged: false,
