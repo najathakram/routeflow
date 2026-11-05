@@ -287,3 +287,36 @@ describe("courtesy rows (FG-1 WP2)", () => {
     expect(deriveReadout({ state: "dark" }, held)).toMatchObject({ kind: "chip", text: "In plan" });
   });
 });
+
+// SA-1099 A-1 row SV-8: the credit check, served by courtesy, reads like every other courtesy row on the
+// console. The API half (SV-7) is what was wrong: the trace said `serving: false`, which this screen
+// rightly showed as "Off" while the drawer said "Stays on for now". The payload below is SV-7's.
+describe("SV-8: flag.credit_limits served by courtesy (the SV-7 payload)", () => {
+  const credit = (over: Partial<EffectiveFeature> = {}): EffectiveFeature =>
+    ({
+      key: "flag.credit_limits",
+      area: "orders",
+      serving: true,
+      resolver: false,
+      source: "PRESET",
+      detail: { planKey: "STARTER", catalogVersionId: "v", enforced: false, term: "courtesy" },
+      billing: { charged: false },
+      ...over,
+    }) as EffectiveFeature;
+
+  it("reads the courtesy badge and 'On, not enforced yet', not 'Off'", () => {
+    expect(deriveBadge(credit())).toBe("courtesy");
+    expect(deriveReadout({ state: "dark" }, credit())).toEqual({
+      kind: "not-enforced",
+      text: "On, not enforced yet",
+    });
+  });
+
+  it("reads the same as any other courtesy row (no credit-specific wording)", () => {
+    const other = credit({ key: "flag.reports" });
+    expect(deriveReadout({ state: "dark" }, credit())).toEqual(
+      deriveReadout({ state: "dark" }, other),
+    );
+    expect(deriveBadge(credit())).toBe(deriveBadge(other));
+  });
+});
