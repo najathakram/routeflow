@@ -16,4 +16,4 @@
 {"id":"B866","batch":"F51","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B868","batch":"F51","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B869","batch":"F51","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B1281","batch":"F51","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1281","batch":"F51","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"StripeService.getSubscriptionPaymentState expands latest_invoice.payments (4 levels) and reads the PaymentIntent by id; pin stripe-expand-depth.pin.spec.ts; census of every expand list at 4242d2b9c1 finds max depth 4; test-mode probe: the old 5-level path is refused, the new read passes (#4213). Whether live businesses were left with two live subscriptions is the report's job (owner-gated live run). (fixed in 2596cae34748766d70ab7c0ff6780c5f45db0bfd)","sha":"2596cae34748766d70ab7c0ff6780c5f45db0bfd"}

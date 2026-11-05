@@ -152,13 +152,6 @@
 - **Lesson:** **A pin that reads source text must handle every shape the repo writes (template expressions included), and its own spec must feed it the repo's real shapes. When a static pin goes red on a new file inside a train, change the source to a shape the pin reads (string concatenation, same classes); never edit the pin or its spec in the train.**
 - **Guard:** the by-hand train pre-check set runs the web static pins (`apps/web/app/*.static.test.ts`) before the long verify, so a red surfaces early. Cf. [[L-322]], [[L-323]].
 
-### L-363 · 2026-10-31 · testing · a timing-based spec goes red under slot load and passes alone; record it, rerun on the same tree, rule per spec, and never edit it inside a train
-
-- **Symptom:** the heavy-slot self-test (a 120 s cap), the lock-timeout concurrency specs and the bugs self-test's concurrency check went red in a train verify while the slot was loaded, and passed when run alone.
-- **Root cause:** each measures wall-clock time or concurrency; load stretches the run past its bound, so red there says the machine was busy, not that a member broke anything. Loosening the bound inside the train would change the gate under test.
-- **Lesson:** **On a red timing spec, record the evidence (spec, duration, slot load), rerun that spec alone on the SAME tree and sha, and rule per spec: green alone is a load flake, red alone is a defect. Do not edit or loosen a spec inside a train; file it for its own PR.**
-- **Guard:** none automatic; the train PR body lists each rerun and its ruling. Cf. [[L-359]], [[L-353]].
-
 ### L-353 · 2026-10-29 · testing · a spec with literal fixture dates, over code that reads the real clock, turns master red on a calendar date with no commit
 
 - **Symptom:** a train push went red on master's own billing spec (5 of 109 cases) although no commit had touched it; the train's members were suspected first.
@@ -216,6 +209,13 @@
 - **Guard:** none automatic; the install order in [[L-254]] (`npm ci --ignore-scripts`, `prisma generate`, build `packages/*`), `npm run local:drift` against the compose DB, and the executed-query rule. Cf. archived L-176. Extended 2026-10-21: a DB-backed spec that needs reference data (a published plan catalog) passed on a seeded dev database and failed in CI's fresh replay database. A DB spec seeds the reference data it needs through the shipped idempotent publishers, behind the local-DB guard, and is proved once against an empty migrated database.
 
 ## domain
+
+### L-369 · 2026-11-05 · domain · a tenant-scoped accessor never degrades to the unscoped client; with no business in context a secret read and every write throw
+
+- **Symptom:** a business's own API key sat as plaintext in a shared config row (written before the encryption existed), so it was also in every database backup; and the config service, asked for a value with no business in context, handed back the unscoped client, so a read or a write could land on another business's row.
+- **Root cause:** `forTenant()` returned the unscoped client when no tenant id was set instead of refusing, and each AI call site resolved its own key, so there was no single place that asked "which business, whose key, how much spent".
+- **Lesson:** **An accessor that is tenant-scoped by contract throws a coded error when the tenant is missing; it never falls back to the unscoped client. Secret reads and every write refuse; other reads may continue with one warning per key. Put every call that spends on a shared key behind one entry (business, key, budget, model, in that order), call its tenant check as the first statement of each caller, and pin the caller list with a census that fails a new site.**
+- **Guard:** `system-config-callers.census.spec.ts` (NONE = 0), `system-config.tenant-required.db.spec.ts`, `secret-keys.pin.spec.ts`, `ai-call-sites.census.spec.ts`, `ai-sites.tenant-first.spec.ts`; `report-plaintext-secrets.mjs` counts legacy rows. Cf. [[L-349]] (prove every id is in the tenant), [[L-368]] (one shared predicate).
 
 ### L-368 · 2026-11-05 · domain · a guard that asks "does a document stand on this order" counts every link that ties a document to it, through one shared predicate
 
