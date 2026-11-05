@@ -161,7 +161,7 @@ describe("VendorBillsService", () => {
         {
           provide: PlatformConfigService,
           useValue: {
-            resolveAnthropicKey: jest.fn().mockResolvedValue(null),
+            resolveAnthropicKey: jest.fn().mockResolvedValue({ key: null, source: "routeflow" }),
             recordAiUsage: jest.fn(),
           },
         },
@@ -2011,7 +2011,9 @@ describe("VendorBillsService", () => {
           {
             provide: PlatformConfigService,
             useValue: {
-              resolveAnthropicKey: jest.fn().mockResolvedValue("test-key"),
+              resolveAnthropicKey: jest
+                .fn()
+                .mockResolvedValue({ key: "test-key", source: "routeflow" }),
               recordAiUsage,
               resolveModelFor,
             },

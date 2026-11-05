@@ -66,7 +66,7 @@ describeDb("B846 bill revert appends — real Postgres", () => {
         {
           provide: PlatformConfigService,
           useValue: {
-            resolveAnthropicKey: jest.fn().mockResolvedValue(null),
+            resolveAnthropicKey: jest.fn().mockResolvedValue({ key: null, source: "routeflow" }),
             recordAiUsage: jest.fn(),
           },
         },

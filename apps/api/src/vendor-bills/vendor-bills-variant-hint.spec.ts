@@ -30,7 +30,7 @@ describe("VendorBillsService.findOne — variant hint (PR-D WP2)", () => {
         {
           provide: PlatformConfigService,
           useValue: {
-            resolveAnthropicKey: jest.fn().mockResolvedValue(null),
+            resolveAnthropicKey: jest.fn().mockResolvedValue({ key: null, source: "routeflow" }),
             recordAiUsage: jest.fn(),
           },
         },

@@ -1100,6 +1100,8 @@ function AIIntegrationsTab() {
       isReadOnlyRefusal(err) || toast({ title: "Failed to remove key", variant: "error" }),
   });
 
+  // SA-1102: `configured` means the business has its OWN key (used for bill scans only). Without one, scans run on
+  // RouteFlow's key, which is never shown here.
   const isConfigured = anthropicStatus?.configured === true;
   const keyPreview = anthropicStatus?.keyPreview ?? null;
 
@@ -1119,15 +1121,15 @@ function AIIntegrationsTab() {
                   {isLoading
                     ? "Checking status…"
                     : isConfigured
-                      ? `Key configured${keyPreview ? ` · ${keyPreview}` : ""}`
-                      : "No API key configured"}
+                      ? `Bill scans use your Claude key${keyPreview ? `, ending in ${keyPreview.replace("…", "")}` : ""}. Other scans use RouteFlow's.`
+                      : "Scans use RouteFlow's Claude key. You can add your own key for bill scans."}
                 </p>
               </div>
             </div>
             {isConfigured ? (
-              <Badge variant="success" label="Active" />
+              <Badge variant="success" label="Your key" />
             ) : (
-              <Badge variant="warning" label="Not configured" />
+              <Badge variant="info" label="RouteFlow's key" />
             )}
           </div>
 
@@ -1136,10 +1138,6 @@ function AIIntegrationsTab() {
             <p>
               RouteFlow uses Claude to intelligently extract supplier names, invoice numbers, line
               items, and totals from scanned documents — saving manual data entry.
-            </p>
-            <p>
-              Each operator uses their own API key so AI costs are billed directly to your Anthropic
-              account.
             </p>
           </div>
 

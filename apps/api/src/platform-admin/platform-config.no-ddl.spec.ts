@@ -2,6 +2,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { ConfigService } from "@nestjs/config";
 import { PlatformConfigService } from "./platform-config.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { EncryptionService } from "../common/encryption.service";
 
 // T2 (R2) — PlatformConfigService.onModuleInit must issue no runtime DDL.
 //
@@ -35,6 +36,7 @@ describe("PlatformConfigService.onModuleInit — no runtime DDL (T2)", () => {
     const mod: TestingModule = await Test.createTestingModule({
       providers: [
         PlatformConfigService,
+        EncryptionService,
         { provide: PrismaService, useValue: prisma },
         { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(undefined) } },
       ],

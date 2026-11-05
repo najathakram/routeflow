@@ -43,7 +43,7 @@ describe("VendorBillsService — coded refusals the bill page explains (row 648)
         {
           provide: PlatformConfigService,
           useValue: {
-            resolveAnthropicKey: jest.fn().mockResolvedValue(null),
+            resolveAnthropicKey: jest.fn().mockResolvedValue({ key: null, source: "routeflow" }),
             recordAiUsage: jest.fn(),
           },
         },

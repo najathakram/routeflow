@@ -56,7 +56,7 @@ describeDb("Move a bill payment to supplier credit — real Postgres", () => {
         {
           provide: PlatformConfigService,
           useValue: {
-            resolveAnthropicKey: jest.fn().mockResolvedValue(null),
+            resolveAnthropicKey: jest.fn().mockResolvedValue({ key: null, source: "routeflow" }),
             recordAiUsage: jest.fn(),
           },
         },

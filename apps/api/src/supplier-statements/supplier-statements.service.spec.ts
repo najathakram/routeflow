@@ -91,7 +91,12 @@ describe("SupplierStatementsService", () => {
         { provide: PrismaService, useValue: prisma },
         {
           provide: PlatformConfigService,
-          useValue: { resolveAnthropicKey: jest.fn().mockResolvedValue("test-key"), recordAiUsage },
+          useValue: {
+            resolveAnthropicKey: jest
+              .fn()
+              .mockResolvedValue({ key: "test-key", source: "routeflow" }),
+            recordAiUsage,
+          },
         },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: DuplicateMatchService, useValue: duplicateMatch },
@@ -110,7 +115,10 @@ describe("SupplierStatementsService", () => {
         { provide: PrismaService, useValue: prisma },
         {
           provide: PlatformConfigService,
-          useValue: { resolveAnthropicKey: jest.fn().mockResolvedValue(null), recordAiUsage },
+          useValue: {
+            resolveAnthropicKey: jest.fn().mockResolvedValue({ key: null, source: "routeflow" }),
+            recordAiUsage,
+          },
         },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: DuplicateMatchService, useValue: duplicateMatch },

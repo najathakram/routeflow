@@ -52,7 +52,7 @@ describe("AI_TASKS (SA-1035 rule 2)", () => {
   it("names a setting key and a fallback for every task", () => {
     expect(AI_TASKS.general).toEqual({ key: "claude.model", fallback: "claude-sonnet-5-5" });
     expect(AI_TASKS.bill_scan).toEqual({ key: "claude.scanModel", fallback: "claude-haiku-5-5" });
-    expect(AI_TASKS.receipt_scan).toEqual({ key: null, fallback: "claude-opus-5-5" });
+    expect(AI_TASKS.receipt_scan).toEqual({ key: null, fallback: "claude-sonnet-5-5" });
     const tasks: AiTask[] = ["general", "bill_scan", "receipt_scan", "statement_scan"];
     expect(Object.keys(AI_TASKS).sort()).toEqual([...tasks].sort());
   });
@@ -61,6 +61,12 @@ describe("AI_TASKS (SA-1035 rule 2)", () => {
       expect(isAiModelId(AI_TASKS[t].fallback)).toBe(true);
     }
     expect(AI_TASKS.statement_scan).toEqual({ key: null, fallback: "claude-sonnet-5-5" });
+  });
+  it("S-12 (SA-1102 2.6): no task falls back to the opus or fable family without an SA ruling", () => {
+    for (const t of Object.keys(AI_TASKS) as AiTask[]) {
+      expect(["opus", "fable"]).not.toContain(aiModelFamily(AI_TASKS[t].fallback));
+    }
+    expect(aiModelFamily(AI_TASKS.receipt_scan.fallback)).toBe("sonnet");
   });
 });
 

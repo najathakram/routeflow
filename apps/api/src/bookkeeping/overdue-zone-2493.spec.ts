@@ -111,7 +111,12 @@ describe("BookkeepingService — overdue ages in the tenant zone (#2493/SA-488)"
         },
         {
           provide: PlatformConfigService,
-          useValue: { resolveAnthropicKey: jest.fn().mockResolvedValue("test-key"), recordAiUsage },
+          useValue: {
+            resolveAnthropicKey: jest
+              .fn()
+              .mockResolvedValue({ key: "test-key", source: "routeflow" }),
+            recordAiUsage,
+          },
         },
         {
           provide: SystemConfigService,

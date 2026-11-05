@@ -47,7 +47,6 @@ import { BulkMarkPaidDto } from "../vendor-bills/dto/bulk-mark-paid.dto";
 import { InvoiceService } from "./invoice.service";
 import { StorageService } from "../storage/storage.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
-import { SystemConfigService } from "../system-config/system-config.service";
 import { PlatformConfigService } from "../platform-admin/platform-config.service";
 import { AI_SCAN_MAX_TOKENS, firstText } from "../platform-admin/ai-response";
 import Anthropic from "@anthropic-ai/sdk";
@@ -85,7 +84,6 @@ export class BookkeepingService implements OnModuleInit {
     private readonly invoiceService: InvoiceService,
     private readonly storage: StorageService,
     private readonly vendorBillsService: VendorBillsService,
-    private readonly systemConfig: SystemConfigService,
     private readonly platformConfig: PlatformConfigService,
     private readonly commissionEngine: CommissionEngineService,
     // SA-827: the strict plan-flag read the display-unit resolve needs. Optional so a bare unit harness still builds.
@@ -931,13 +929,11 @@ export class BookkeepingService implements OnModuleInit {
     const receiptBuffer = await this.storage.download(expense.receiptKey);
     const mimeType = (expense as any).receiptMimeType ?? "image/jpeg";
 
-    // Key priority: tenant key (SystemConfig) → platform key → env var.
-    const tenantKey = await this.systemConfig.get("anthropic.apiKey");
-    const apiKey = await this.platformConfig.resolveAnthropicKey(tenantKey);
+    // SA-1102: a receipt scan runs on RouteFlow's key; a business key is for bill scans only.
+    const { key: apiKey } = await this.platformConfig.resolveAnthropicKey("receipt_scan");
     if (!apiKey) throw new BadRequestException("Anthropic API key not configured");
 
-    // SA-1035: read once; the call and both usage records use this one value. Receipts are small documents where a
-    // misread line lands directly in the books, so this path runs the most capable model (no picker).
+    // SA-1035: read once; the call and both usage records use this one value. SA-1102 2.6: Sonnet (no picker).
     const model = await this.platformConfig.resolveModelFor("receipt_scan");
     const anthropic = new Anthropic({ apiKey });
     const base64 = receiptBuffer.toString("base64");

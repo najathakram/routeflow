@@ -4,6 +4,8 @@ import { roundMoney } from "@routeflow/pricing";
 import type { AppLinks, AppLinksPatch } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { EncryptionService } from "../common/encryption.service";
+import { decryptIfSecret, encryptIfSecret, secretPreview } from "../common/secret-at-rest";
 import { APP_LINK_FIELDS, APP_LINK_KEYS, isValidAppLinkUrl } from "./app-links";
 import {
   AI_MODELS,
@@ -38,6 +40,13 @@ function modelPrice(model: string): { in: number; out: number } {
   return AI_MODEL_PRICING[family];
 }
 
+/**
+ * Secret-valued PlatformConfig keys (SA-1102 2.1): encrypted at rest through the same helper and cipher as the
+ * SystemConfig secrets. Exported so the boot report and the secret-keys pin read the one list. The other keys
+ * (`claude.maxTokens`, `claude.verifiedAt`, `platform.houseTenantId`, ...) are not secrets.
+ */
+export const PLATFORM_SECRET_KEYS: ReadonlySet<string> = new Set(["claude.apiKey"]);
+
 @Injectable()
 export class PlatformConfigService {
   private readonly logger = new Logger(PlatformConfigService.name);
@@ -45,6 +54,7 @@ export class PlatformConfigService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
+    private readonly encryption: EncryptionService,
   ) {}
 
   // ─── Low-level helpers ──────────────────────────────────────────────────────
@@ -53,10 +63,13 @@ export class PlatformConfigService {
     const rows = await this.prisma.$queryRaw<{ value: string }[]>`
       SELECT value FROM "PlatformConfig" WHERE key = ${key} LIMIT 1
     `;
-    return rows[0]?.value ?? null;
+    return decryptIfSecret(PLATFORM_SECRET_KEYS, this.encryption, key, rows[0]?.value ?? null, () =>
+      this.logger.error(`Failed to decrypt PlatformConfig secret "${key}"`),
+    );
   }
 
-  private async setValue(key: string, value: string): Promise<void> {
+  private async setValue(key: string, plain: string): Promise<void> {
+    const value = encryptIfSecret(PLATFORM_SECRET_KEYS, this.encryption, key, plain);
     await this.prisma.$executeRaw`
       INSERT INTO "PlatformConfig" ("id", "key", "value", "updatedAt")
         VALUES (gen_random_uuid()::text, ${key}, ${value}, now())
@@ -83,14 +96,15 @@ export class PlatformConfigService {
         this.getValue("claude.verifiedAt"),
       ]);
 
+    // SA-1102: the Railway env key (the one with the spend limit) is first; the stored row only when env is unset.
     const envKey = this.configService.get<string>("ANTHROPIC_API_KEY");
-    const effectiveKey = storedKey || envKey || null;
+    const effectiveKey = envKey || storedKey || null;
     const configured = !!effectiveKey;
 
     return {
       configured,
-      source: storedKey ? "database" : envKey ? "environment" : "none",
-      keyPreview: effectiveKey ? `${effectiveKey.slice(0, 14)}...${effectiveKey.slice(-4)}` : null,
+      source: envKey ? "environment" : storedKey ? "database" : "none",
+      keyPreview: secretPreview(effectiveKey),
       // A stored older id is reported as stored (never switched silently); the picker marks it "(older model)".
       model: storedModel ?? AI_TASKS.general.fallback,
       scanModel: storedScanModel ?? AI_TASKS.bill_scan.fallback,
@@ -141,14 +155,19 @@ export class PlatformConfigService {
   }
 
   /**
-   * Resolve the effective Anthropic API key for a given tenant.
-   * Priority: tenant-specific key → platform key → ANTHROPIC_API_KEY env var
+   * The Anthropic key a task runs on (SA-1102 2.3). A business's own key is used for `bill_scan` ONLY, and only when it
+   * is non-empty; every other task, and a bill scan whose business key is unset or removed, runs on RouteFlow's key:
+   * the Railway env `ANTHROPIC_API_KEY` first, then the encrypted `claude.apiKey` row. A business key that Anthropic
+   * refuses is NOT retried on RouteFlow's key (the caller fails as before), so a revoked or stolen key shows.
    */
-  async resolveAnthropicKey(tenantSpecificKey?: string | null): Promise<string | null> {
-    if (tenantSpecificKey) return tenantSpecificKey;
-    const platformKey = await this.getValue("claude.apiKey");
-    if (platformKey) return platformKey;
-    return this.configService.get<string>("ANTHROPIC_API_KEY") ?? null;
+  async resolveAnthropicKey(
+    task: AiTask,
+    businessKey?: string | null,
+  ): Promise<{ key: string | null; source: "business" | "routeflow" }> {
+    if (task === "bill_scan" && businessKey) return { key: businessKey, source: "business" };
+    const envKey = this.configService.get<string>("ANTHROPIC_API_KEY");
+    if (envKey) return { key: envKey, source: "routeflow" };
+    return { key: await this.getValue("claude.apiKey"), source: "routeflow" };
   }
 
   /** The model a task runs on: its stored setting (kept as stored, even an older id), else the task's fallback. */
@@ -259,7 +278,7 @@ export class PlatformConfigService {
 
   /** Ping Anthropic with the effective key; persist verifiedAt on success. */
   async testConnection() {
-    const key = await this.resolveAnthropicKey();
+    const { key } = await this.resolveAnthropicKey("general");
     if (!key) return { ok: false, error: "No API key configured" };
     const model = await this.resolveModel();
     try {

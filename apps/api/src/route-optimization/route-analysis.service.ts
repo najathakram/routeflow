@@ -109,9 +109,8 @@ export class RouteAnalysisService {
       return { configured: false, etas };
     }
 
-    // Resolve Anthropic API key
-    const tenantKey = await this.systemConfig.get("anthropic.apiKey");
-    const apiKey = await this.platformConfig.resolveAnthropicKey(tenantKey);
+    // SA-1102: route insights run on RouteFlow's key; a business key is for bill scans only.
+    const { key: apiKey } = await this.platformConfig.resolveAnthropicKey("general");
 
     if (!apiKey) {
       return { configured: false, etas };
@@ -286,9 +285,8 @@ Status guide:
       serviceTime,
     );
 
-    // Resolve Anthropic API key
-    const tenantKey = await this.systemConfig.get("anthropic.apiKey");
-    const apiKey = await this.platformConfig.resolveAnthropicKey(tenantKey);
+    // SA-1102: route insights run on RouteFlow's key; a business key is for bill scans only.
+    const { key: apiKey } = await this.platformConfig.resolveAnthropicKey("general");
 
     if (!apiKey) {
       return { configured: false, etas };

@@ -33,11 +33,6 @@ const TABLE: Record<string, Row> = {
     "AnalyticsController (tenant JWT): tobacco-exclude flag",
     "REQUEST",
   ),
-  "bookkeeping/bookkeeping.service.ts": R(
-    1,
-    "BookkeepingController expense receipt scan (the key read leaves with SA-1102 item 3)",
-    "REQUEST",
-  ),
   "buyer/buyer.controller.ts": R(
     1,
     "BuyerTenantInterceptor sets the seller's tenant for GET remittance",
@@ -90,18 +85,13 @@ const TABLE: Record<string, Row> = {
     "REQUEST",
   ),
   "route-optimization/route-analysis.service.ts": R(
-    6,
+    4,
     "RouteOptimizationController: route.* settings (the key reads left with SA-1102 item 3)",
     "REQUEST",
   ),
   "route-optimization/route-optimization.service.ts": R(
     7,
     "RouteOptimizationController",
-    "REQUEST",
-  ),
-  "supplier-statements/supplier-statements.service.ts": R(
-    1,
-    "SupplierStatementsController (the key read leaves with SA-1102 item 3)",
     "REQUEST",
   ),
   "system-config/quick-keys-settings.service.ts": R(

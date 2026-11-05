@@ -114,7 +114,12 @@ describe("BookkeepingService.getArAgingInvoices — deposit visibility (#1529 / 
         },
         {
           provide: PlatformConfigService,
-          useValue: { resolveAnthropicKey: jest.fn().mockResolvedValue("test-key"), recordAiUsage },
+          useValue: {
+            resolveAnthropicKey: jest
+              .fn()
+              .mockResolvedValue({ key: "test-key", source: "routeflow" }),
+            recordAiUsage,
+          },
         },
         {
           provide: SystemConfigService,

@@ -85,7 +85,7 @@ describeDb("vendor bill ↔ purchase order — real Postgres (LANE-U step 7)", (
         {
           provide: PlatformConfigService,
           useValue: {
-            resolveAnthropicKey: jest.fn().mockResolvedValue(null),
+            resolveAnthropicKey: jest.fn().mockResolvedValue({ key: null, source: "routeflow" }),
             recordAiUsage: jest.fn(),
           },
         },

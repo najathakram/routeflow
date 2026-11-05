@@ -59,7 +59,7 @@ describe("RouteAnalysisService — AI usage metering", () => {
   beforeEach(async () => {
     prisma = createMockPrisma();
     recordAiUsage = jest.fn();
-    resolveAnthropicKey = jest.fn().mockResolvedValue("test-key");
+    resolveAnthropicKey = jest.fn().mockResolvedValue({ key: "test-key", source: "routeflow" });
     // F12/P1: analyzeRoute is expected to route its start-time precedence
     // through the shared RouteOptimizationService.resolveStartTime helper
     // instead of inlining it — this mock exists so the four pre-existing
@@ -210,7 +210,7 @@ describe("RouteAnalysisService — AI usage metering", () => {
   });
 
   it("records nothing when no API key is configured (no model call happens)", async () => {
-    resolveAnthropicKey.mockResolvedValue(null);
+    resolveAnthropicKey.mockResolvedValue({ key: null, source: "routeflow" });
 
     const result = await service.analyzeRoute("route-1");
 
@@ -233,7 +233,7 @@ describe("RouteAnalysisService — AI usage metering", () => {
   // free to take the run/route/explicit override in any arrangement) — what is
   // pinned is that it is consulted and that its answer is what the ETA pass runs on.
   it("REG-B177: analyzeRoute runs its ETA pass on the clock resolveStartTime returned, and returns configured:false without an API key", async () => {
-    resolveAnthropicKey.mockResolvedValue(null);
+    resolveAnthropicKey.mockResolvedValue({ key: null, source: "routeflow" });
 
     const result = await service.analyzeRoute("route-1");
 
@@ -259,7 +259,7 @@ describe("RouteAnalysisService — AI usage metering", () => {
   // beat the operator's override, and the third `calculateETAs` argument would
   // still be a plausible clock — so both are asserted.
   it("REG-B177: analyzeRouteRun resolves its clock with the explicit override ahead of the run's snapshot", async () => {
-    resolveAnthropicKey.mockResolvedValue(null);
+    resolveAnthropicKey.mockResolvedValue({ key: null, source: "routeflow" });
     prisma.routeRun.findUnique.mockResolvedValue({
       id: "run-1",
       routeId: "route-1",

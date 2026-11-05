@@ -2657,9 +2657,10 @@ export class VendorBillsService {
     const prior = await this.findScanByHash(fileHash);
     if (prior) return this.rematchPriorScan(prior);
 
-    // Key priority: tenant key (SystemConfig) → platform key → env var.
-    const tenantKey = await this.systemConfig.get("anthropic.apiKey");
-    const apiKey = await this.platformConfig.resolveAnthropicKey(tenantKey);
+    // SA-1102: the business's own key is used for a bill scan ONLY (and only when set); every other scan runs on
+    // RouteFlow's key. A business key Anthropic refuses fails the scan; it is not retried on RouteFlow's key.
+    const businessKey = await this.systemConfig.get("anthropic.apiKey");
+    const { key: apiKey } = await this.platformConfig.resolveAnthropicKey("bill_scan", businessKey);
     if (!apiKey || apiKey.length === 0) {
       throw new BadRequestException(
         "AI invoice scanning is not available. Please contact your system administrator to configure the ANTHROPIC_API_KEY.",
