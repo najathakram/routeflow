@@ -84,7 +84,7 @@ describeDb("SA-1099 WP5 T23: report-noop-addons.mjs (real Postgres)", () => {
   beforeAll(async () => {
     url = requireLocalDatabaseUrl();
     pool = new Pool({ connectionString: url });
-    prisma = new PrismaClient({ adapter: new PrismaPg(pool) } as never);
+    prisma = new PrismaClient({ adapter: new PrismaPg(pool) } as never) as unknown as PrismaClient;
     const version =
       ((await prisma.planVersion.aggregate({ _max: { version: true } }))._max.version ?? 0) + 1;
     const created = await prisma.planVersion.create({
