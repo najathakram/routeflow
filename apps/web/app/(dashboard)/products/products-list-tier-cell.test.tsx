@@ -103,7 +103,6 @@ describe("SA-1092: a cleared tier in Quick Edit", () => {
     mockRows = [{ ...SODA, priceTier2: "22" }, COLA];
     const user = userEvent.setup();
     await openList(user);
-    // The bar leaves with the last Undo, so Redo needs an earlier edit under it.
     const cola = screen.getByRole("row", { name: /Acme Cola/ });
     await user.click(within(cola).getByTitle("Click to edit priceTier2"));
     await user.clear(within(cola).getByDisplayValue("11.00"));
@@ -164,5 +163,55 @@ describe("SA-1092: a cleared tier in Quick Edit", () => {
     expect(
       await screen.findByText("Also set Tier 3 to follow the list price."),
     ).toBeInTheDocument();
+  });
+});
+
+describe("Quick Edit's bar after the only edit is undone", () => {
+  const redo = () => screen.queryByTitle("Redo last undone change");
+  const undo = () => screen.queryByTitle("Undo last change");
+
+  async function editThenUndo(user: User) {
+    mockRows = [{ ...SODA, priceTier2: "22" }];
+    await openList(user);
+    await clearTier2(user);
+    await user.click(screen.getByTitle("Undo last change"));
+    await waitFor(() => expect(mockSave).toHaveBeenCalledTimes(2));
+    await screen.findByText(/Undone: Acme Lime Soda/);
+  }
+
+  it("QB-1: the bar stays with Redo and no Undo, and names the edit Redo brings back", async () => {
+    await editThenUndo(userEvent.setup());
+
+    expect(redo()).toBeInTheDocument();
+    expect(undo()).toBeNull();
+    expect(screen.getByText("Acme Lime Soda · priceTier2")).toBeInTheDocument();
+  });
+
+  it("QB-2: Redo saves the edit again and hands the bar back to Undo", async () => {
+    const user = userEvent.setup();
+    await editThenUndo(user);
+
+    await user.click(redo() as HTMLElement);
+
+    await waitFor(() => expect(mockSave).toHaveBeenCalledTimes(3));
+    expect(saves()[2]).toEqual({ id: "p1", priceTier2: "0" });
+    expect(await screen.findByTitle("Undo last change")).toBeInTheDocument();
+    expect(redo()).toBeNull();
+  });
+
+  it("QB-3: Clear history takes the bar away with only Redo left", async () => {
+    const user = userEvent.setup();
+    await editThenUndo(user);
+
+    await user.click(screen.getByTitle("Clear history"));
+
+    expect(redo()).toBeNull();
+    expect(screen.queryByTitle("Clear history")).toBeNull();
+  });
+
+  it("QB-4: there's no bar before any edit", async () => {
+    await openList(userEvent.setup());
+
+    expect(screen.queryByTitle("Clear history")).toBeNull();
   });
 });

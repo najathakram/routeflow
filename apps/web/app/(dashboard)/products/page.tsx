@@ -1041,6 +1041,9 @@ export default function ProductsPage() {
     setUndoStack((prev) => [...prev, record]);
   };
 
+  // Redo needs the bar after the only edit is undone, so the bar names whichever record is next.
+  const barRecord = undoStack[undoStack.length - 1] ?? redoStack[redoStack.length - 1];
+
   const handleEditPrice = (product: ApiProduct) => {
     setEditingPriceId(product.id);
     setEditPriceValue(parseFloat(String(product.pricePerUnit)).toFixed(2));
@@ -1827,17 +1830,19 @@ export default function ProductsPage() {
       )}
 
       {/* Floating undo/redo bar */}
-      {undoStack.length > 0 && (
+      {barRecord && (
         <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 flex items-center gap-3 rounded-full bg-navy px-5 py-2.5 shadow-xl text-sm text-white">
-          <button
-            onClick={handleUndo}
-            className="flex items-center gap-1.5 hover:opacity-80 transition-opacity"
-            title="Undo last change"
-          >
-            <Undo2 className="h-3.5 w-3.5" /> Undo
-          </button>
+          {undoStack.length > 0 && (
+            <button
+              onClick={handleUndo}
+              className="flex items-center gap-1.5 hover:opacity-80 transition-opacity"
+              title="Undo last change"
+            >
+              <Undo2 className="h-3.5 w-3.5" /> Undo
+            </button>
+          )}
           <span className="text-white/40 text-xs max-w-[200px] truncate">
-            {undoStack[undoStack.length - 1].productName} · {undoStack[undoStack.length - 1].field}
+            {barRecord.productName} · {barRecord.field}
           </span>
           {redoStack.length > 0 && (
             <button
