@@ -27,6 +27,7 @@ import {
   type StatementLineKind,
 } from "./dto/statement.dto";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { aiKeyRefusedException, aiNotAvailableException } from "../common/ai-key-failure";
 
 /**
  * Statements are far more variable than invoices — many suppliers, many
@@ -110,12 +111,9 @@ export class SupplierStatementsService {
 
     // SA-1102 A-1: a statement scan runs on RouteFlow's key (a business key is for bill scans only), after the
     // business and monthly-budget checks, through the one entry point.
-    const { key: apiKey } = await this.platformConfig.prepareAiCall("statement_scan");
-    if (!apiKey || apiKey.length === 0) {
-      throw new BadRequestException(
-        "AI statement scanning is not available. Please contact your system administrator to configure the ANTHROPIC_API_KEY.",
-      );
-    }
+    const { key: apiKey, source } = await this.platformConfig.prepareAiCall("statement_scan");
+    // F-1102-T: no key at all is not something the business can set up; it reads as "not available right now".
+    if (!apiKey || apiKey.length === 0) throw aiNotAvailableException();
 
     // ── Phase 0: normalise inputs ───────────────────────────────────────────
     // Multi-page statements arrive as N images or one PDF. HEIC isn't a Claude
@@ -217,13 +215,8 @@ IMPORTANT: "amount" is always a positive magnitude — use "kind" to say whether
         model: STATEMENT_MODEL,
         success: false,
       });
-      if (status === 401 || status === 403) {
-        throw new BadRequestException({
-          message:
-            "The Anthropic API key is invalid or expired. Go to Settings → AI & Integrations to update it.",
-          code: API_ERROR_CODES.AI_KEY_INVALID,
-        });
-      }
+      // F-1102-T: a statement scan runs on RouteFlow's key, so a refusal is never the business's to fix.
+      if (status === 401 || status === 403) throw aiKeyRefusedException(source);
       // Non-transient 4xx (bad/oversized/corrupt image, malformed request) —
       // retrying the SAME file will fail identically, unlike a real outage or
       // rate-limit (429/5xx), so don't tell the user to "try again".

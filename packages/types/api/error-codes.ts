@@ -869,6 +869,11 @@ export const API_ERROR_CODES = {
    */
   ORDER_DELIVERED_ON_ROUTE_STOP: "ORDER_DELIVERED_ON_ROUTE_STOP",
   /**
+   * B1280: PATCH /orders/:id/status out of DELIVERED (Reopen order), 409: the order was delivered on a route run whose stop is
+   * COMPLETED. The stop owns the stock and payment reversal, so reopen it from the run. Nothing written.
+   */
+  ORDER_ROUTE_STOP_COMPLETED: "ORDER_ROUTE_STOP_COMPLETED",
+  /**
    * `paymentErrorCode` of a 200 from POST /orders/:id/pickup-complete: handed over with no payment sent, but
    * the final invoices leave money owing (a remainder or rebuild at DELIVERED). Retry with a payment.
    */

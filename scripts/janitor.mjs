@@ -1806,6 +1806,15 @@ export const EXECUTE_DEPS = {
   headOf: (p) => trySh("git", ["-C", p, "rev-parse", "--verify", "--quiet", "HEAD"]),
   run: (cmd, args) => trySh(cmd, args),
   removeFile: (t) => unlinkSync(t),
+  // A plain file (not a directory, not a link): lstat, so a link is never followed.
+  isPlainFile: (t) => {
+    try {
+      const st = lstatSync(t);
+      return !st.isDirectory() && !st.isSymbolicLink();
+    } catch {
+      return false;
+    }
+  },
   log: (m) => console.log(m),
 };
 
@@ -1862,6 +1871,19 @@ export function execute(a, deps = EXECUTE_DEPS) {
     if (why) {
       deps.log(`   REFUSED, skipped: ${a.target} (${why})`);
       return "refused";
+    }
+    // Jest writes plain FILES into its cache roots too (haste-map-*, jest-transform-cache-*, perf-cache-*), and
+    // `cmd /c rmdir /s /q <file>` fails ("The directory name is invalid"), so a file is unlinked and only a
+    // directory goes through removeTree. The guard above and the age plan are the same for both.
+    if (deps.isPlainFile?.(a.target)) {
+      try {
+        deps.removeFile(a.target);
+      } catch (err) {
+        // A locked/in-use cache file is a reported skip, never a failed run (exit 1), like a stray file.
+        deps.log(`   SKIPPED Jest cache file ${a.target}: ${err.message}`);
+        return "skipped";
+      }
+      return "done";
     }
     deps.removeTree(a.target);
     return "done";
