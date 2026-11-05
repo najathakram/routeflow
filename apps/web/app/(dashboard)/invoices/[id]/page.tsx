@@ -1623,7 +1623,7 @@ export default function InvoiceDetailPage() {
   // CQ-03 / row 398: the levy is its own named charge under Tax (one hook, one pricing helper, every staff screen).
   const taxSplit = useInvoiceTaxSplit(invoice, !!invoice);
   // SA-1029: the Per piece column shows only when a today-layout line has a per-piece price.
-  const showPerPiece = showPerPieceColumn(invoice?.items);
+  const showPerPiece = showPerPieceColumn(invoice?.items, { hide: invoice?.hidePerPiece === true });
   const sectionedRows = React.useMemo(() => {
     const its = invoice?.items ?? [];
     const inline: typeof its = [];

@@ -110,6 +110,28 @@ describe("SA-1029 staff invoice: per-piece price column", () => {
     expect(screen.queryByText("Per piece")).toBeNull();
   });
 
+  // Owner ruling 2026-11-04: the business's "Show price per piece on invoices" setting (`hidePerPiece` on the payload).
+  it("S-1: with hidePerPiece the pack line has no Per piece header or cell, and its price still shows", () => {
+    mockInvoice = {
+      ...invoiceWith({ ...packLine, perBaseUnit: { price: 2, unit: "pc" } }),
+      hidePerPiece: true,
+    };
+    renderWithProviders(<InvoiceDetailPage />);
+    expect(screen.queryByText("Per piece")).toBeNull();
+    expect(screen.queryByText("$2.00/pc")).toBeNull();
+    expect(screen.getAllByText("Acme Pack").length).toBeGreaterThan(0);
+  });
+
+  it("S-2: hidePerPiece false keeps today's column", () => {
+    mockInvoice = {
+      ...invoiceWith({ ...packLine, perBaseUnit: { price: 2, unit: "pc" } }),
+      hidePerPiece: false,
+    };
+    renderWithProviders(<InvoiceDetailPage />);
+    expect(screen.getAllByText("Per piece").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("$2.00/pc").length).toBeGreaterThan(0);
+  });
+
   it("G-3: the pieces layout stays unchanged (no per-piece cell)", () => {
     mockInvoice = invoiceWith({
       ...packLine,
