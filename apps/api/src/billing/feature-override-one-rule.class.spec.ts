@@ -3,6 +3,8 @@ import * as path from "path";
 import { BusinessProfileService } from "./business-profile.service";
 import { BUSINESS_PROFILES, PROFILE_MODULE_KEYS } from "./business-profiles";
 import { FeatureOverrideService } from "./feature-override.service";
+import { OVERRIDE_RULE_ORDER } from "./feature-override-rule";
+import { currentEffects, fleetHeldAfterRestore } from "./tenant-config-snapshot";
 
 /**
  * B1282 (class reach, review B at 91751617a8): "which override row applies to a key" is ONE rule
@@ -117,6 +119,39 @@ describe("B1282 class: the business-profile readers use the one override rule", 
       expect(activeIds.get(MODULE)).toBe("ov-2");
     }
   });
+
+  it("the snapshot restore guard reads a same-key tie the way allActive does (newest GRANT beats the older DENY), whatever the physical order", async () => {
+    const FLEET = "order_delivery";
+    const T1 = new Date(NOW - 2 * DAY);
+    const T2 = new Date(NOW - DAY);
+    const snap = (id: string, effect: "GRANT" | "DENY", createdAt: Date) => ({
+      ...row(id, FLEET, effect),
+      createdAt,
+      createdById: null,
+    });
+    const plan = {
+      configs: { create: [], update: [], unchanged: [], keptNewer: [], skipped: [] },
+      overrides: { create: [], unchanged: [], keptNewer: [], skipped: [] },
+    };
+    for (const physical of [
+      [snap("ov-new", "GRANT", T2), snap("ov-old", "DENY", T1)],
+      [snap("ov-old", "DENY", T1), snap("ov-new", "GRANT", T2)],
+    ]) {
+      const prisma = {
+        tenantFeatureOverride: {
+          findMany: jest.fn(({ orderBy }: any) => Promise.resolve(sortByOrder(physical, orderBy))),
+        },
+      };
+      const served = await new FeatureOverrideService(prisma as any).allActive(T);
+      expect(served.get(FLEET)).toBe("GRANT");
+      // what the snapshot service reads (it passes OVERRIDE_RULE_ORDER; pinned by the read-order table below)
+      const read = sortByOrder(physical, OVERRIDE_RULE_ORDER) as any[];
+      expect(currentEffects(read, new Date(NOW))).toEqual([[FLEET, "GRANT"]]);
+      expect(
+        fleetHeldAfterRestore(plan, { overrides: read, activeAddonKeys: [] }, new Date(NOW)),
+      ).toBe(true);
+    }
+  });
 });
 
 /** What the database does with an `orderBy`; a read with none keeps the physical order it was handed. */
@@ -144,12 +179,12 @@ function sortByOrder(rows: any[], orderBy?: Array<Record<string, "asc" | "desc">
 const FEEDING_READS: Record<string, number> = {
   "billing/feature-override.service.ts": 2, // activeRows (the served answer) and list() (business-profile)
   "billing/feature-override-review.job.ts": 1, // the other-overrides read
+  "billing/tenant-config-snapshot.service.ts": 3, // take, preview and apply read the set that feeds isActive / currentEffects
 };
 const OTHER_READS: Record<string, number> = {
   "billing/entitlement-sweep.service.ts": 1, // hash input only
   "billing/feature-override-review.job.ts": 2, // expired page, ending-soon page
   "billing/feature-override.service.ts": 1, // the expiry chunk
-  "billing/tenant-config-snapshot.service.ts": 3, // whole-set reads, one rule input via isActive
 };
 
 describe("N-3: each read that feeds the one rule carries OVERRIDE_RULE_ORDER", () => {
@@ -206,14 +241,15 @@ const walk = (dir: string): string[] =>
           : [],
     );
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
-const LIVE_CHECK = /expiresAt\??\.getTime\(\)\s*(<=|>=|<|>)|expiresAt\s*(&&|==\s*null|!=\s*null)/g;
-const EFFECT_MAP = /[oO]verrides\.set\(/g;
+const LIVE_CHECK =
+  /expiresAt\??\.getTime\(\)\s*(<=|>=|<|>)|expiresAt\s*(&&|===?\s*null|!==?\s*null)|\b(?:o|r|row|ov|override)\.expiresAt\s*[<>]=?\s*now\b/g;
+const EFFECT_MAP = /[oO]verrides\.set\(|new Map(?:<[^>]*>)?\([^)]*[eE]ffects/g;
 
 /** file (relative to src) -> [expected live-check hits, expected effect-map hits], with the reason it is a different question. */
 const ALLOWED: Record<string, { live: number; set: number; why: string }> = {
   "billing/feature-override-rule.ts": { live: 2, set: 0, why: "the rule itself" },
   "billing/billable-pilot-ending.ts": {
-    live: 2,
+    live: 3,
     set: 0,
     why: "the pilot row's OWN window (is it inside the warning horizon), not which row applies to a key",
   },
@@ -226,6 +262,16 @@ const ALLOWED: Record<string, { live: number; set: number; why: string }> = {
     live: 2,
     set: 0,
     why: "create-time validation of a NEW row's own expiry (not in the past)",
+  },
+  "billing/override-restore-verdict.ts": {
+    live: 0,
+    set: 1,
+    why: "decides over `ctx.effects`, which the caller already resolved through the rule (current part first, the plan's creates last)",
+  },
+  "billing/tenant-config-snapshot.ts": {
+    live: 1,
+    set: 0,
+    why: "a SAVED snapshot entry's own expiry while the restore plans (is the stored entry already past), not which stored row applies",
   },
   "billing/feature-preview.service.ts": {
     live: 0,
@@ -257,5 +303,13 @@ describe("B1282 class: no override reader keeps its own live check or effect map
       "if (r.expiresAt && r.expiresAt.getTime() <= now) continue;".match(LIVE_CHECK)?.length,
     ).toBe(2);
     expect("overrides.set(r.featureKey, r.effect);".match(EFFECT_MAP)?.length).toBe(1);
+    // the shapes review B named: an inline null-or-future check, a bare `> now`, and a Map built over override effects
+    expect(
+      "o.revokedAt === null && (o.expiresAt === null || o.expiresAt > now)".match(LIVE_CHECK)
+        ?.length,
+    ).toBe(2);
+    expect("row.expiresAt < now".match(LIVE_CHECK)?.length).toBe(1);
+    expect("this.cached.expiresAt > now".match(LIVE_CHECK)).toBeNull(); // a cache TTL is a different question
+    expect('new Map<string, "GRANT" | "DENY">(ctx.effects)'.match(EFFECT_MAP)?.length).toBe(1);
   });
 });
