@@ -106,6 +106,8 @@ describe("resolveOneKey: kind, reason and expiresAt on the two override returns 
     planFeatureFlags: new Set(),
     entFlags: [],
     activeSkuSet: new Set(),
+    courtesy: () => false,
+    billed: new Set<string>(),
   });
 
   it("a GRANT carries the detail", () => {
@@ -116,6 +118,7 @@ describe("resolveOneKey: kind, reason and expiresAt on the two override returns 
     expect(resolveOneKey(feature, ctx)).toEqual({
       key,
       effective: true,
+      strict: true,
       source: "OVERRIDE_GRANT",
       ...detail,
       charged: false,

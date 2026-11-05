@@ -99,7 +99,7 @@ export class TenantsController {
     }
     const resolver: Record<string, boolean> = {};
     for (const f of FEATURE_REGISTRY) {
-      resolver[f.key] = resolved.byKey.get(f.key)?.effective ?? false;
+      resolver[f.key] = resolved.byKey.get(f.key)?.strict ?? false;
     }
     // Business profiles 1A: the fulfilment modes and the ONE derived capability answer, read by the shared
     // `readFulfilmentInputs` (also behind the counter-sale gate). A failed mode read falls back to `unset`
