@@ -386,6 +386,13 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
 
 ## testing
 
+### L-324 · 2026-10-20 · testing · a long serial DB spec lane is run in batches, never one Jest process
+
+- **Symptom:** the DB-backed lane (about 325 suites run serially) was killed with an out-of-memory error at roughly 130 suites on the Mac mini.
+- **Root cause:** one Jest process keeps module registries and Prisma clients across suites, so memory grows with the suite count until the machine kills it.
+- **Lesson:** **Run the DB lane in chunks (a fixed number of suites per Jest process, each against the same migrated database), and treat an OOM at a stable suite count as a batching problem, not a flaky test. Re-run only the failed chunk.**
+- **Guard:** none automatic; the chunked invocation in the lane runbook.
+
 ### L-014 · 2026-08-31 · testing · #562
 
 - **Symptom:** two mutation probes survived a green suite.

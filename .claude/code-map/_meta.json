@@ -1,6 +1,6 @@
 {
-  "mappedSha": "b0e0193854",
-  "generatedAt": "2026-11-05T02:44:00.749Z",
+  "mappedSha": "b10bad52a0",
+  "generatedAt": "2026-11-05T07:41:18.123Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1146,
-  "notes": "2026-11-05 window 4 (master b0e0193854): api/web landing notes, TOC rows; see CHANGELOG.md."
+  "notes": "2026-11-05 window 5 (master b10bad52a0): api/web landing notes, TOC rows; see CHANGELOG.md."
 }
