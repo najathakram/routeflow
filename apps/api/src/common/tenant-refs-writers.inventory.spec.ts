@@ -12,6 +12,9 @@ import * as ts from "typescript";
  *   PENDING - a site still to be classified. A ratchet: PENDING_BASELINE may only go DOWN; B1106 PR B took it to 0, so a new
  *             PENDING row is a red.
  *   EXEMPT  - stores no caller-supplied id (re-points rows already in the tenant, copies a loaded row's own id, ...).
+ *   DERIVED - stores a stop id READ off a named parent (an order the writer loaded tenant-scoped, a stop it read
+ *             tenant-scoped). SA-1105 W-7 lists changeRequest and deliveryMutation this way, so a new writer of either
+ *             goes red until it is classified.
  *
  * Detection: a Prisma write (`<x>.<model>.create|createMany|update|updateMany|upsert`) of a listed model whose first
  * argument holds a property named like a guarded field. A writer that builds its data in a variable the scan cannot
@@ -21,7 +24,8 @@ type Kind = "customerIds" | "productIds" | "trackedCategoryIds" | "routeRunIds" 
 type Row =
   | { kind: "GUARDED"; kinds: Kind[]; via?: string | string[]; seen?: boolean }
   | { kind: "PENDING"; step: string }
-  | { kind: "EXEMPT"; why: string };
+  | { kind: "EXEMPT"; why: string }
+  | { kind: "DERIVED"; parent: string; why: string };
 
 const G = (kinds: Kind[], opts: { via?: string | string[]; seen?: boolean } = {}): Row => ({
   kind: "GUARDED",
@@ -29,6 +33,8 @@ const G = (kinds: Kind[], opts: { via?: string | string[]; seen?: boolean } = {}
   ...opts,
 });
 const X = (why: string): Row => ({ kind: "EXEMPT", why });
+/** Stores a stop id it READ off a parent row (SA-1105 W-7), never a caller-supplied one: the parent is named. */
+const D = (parent: string, why: string): Row => ({ kind: "DERIVED", parent, why });
 
 const FIELDS: Record<string, string[]> = {
   customerPrice: ["customerId", "productId"],
@@ -48,6 +54,10 @@ const FIELDS: Record<string, string[]> = {
   message: ["runId"],
   return: ["routeRunStopId"],
   driverLocation: ["runId"],
+  // SA-1105 W-7: the derived models. Each stores a stop id read off a loaded parent, never a caller-supplied one.
+  changeRequest: ["routeRunStopId"],
+  deliveryMutation: ["routeRunStopId"],
+  deliveryBatch: ["routeRunStopId"],
 };
 const WRITE_OPS = new Set(["create", "createMany", "update", "updateMany", "upsert"]);
 
@@ -152,6 +162,29 @@ const TABLE: Record<string, Row> = {
   [f("routes/routes.service.ts", "RoutesService.releaseUndeliveredOrders")]: X(
     "only clears routeRunId and routeRunStopId (null) on the undelivered orders it selects tenant-scoped",
   ),
+  // ── PR B, SA-1105 W-7: derived (the stop id comes off a parent row the writer loaded) ────────
+  [f("orders/change-requests.service.ts", "ChangeRequestsService.create")]: D(
+    "order.routeRunStopId",
+    "copies the routeRunStopId of the order it just loaded tenant-scoped; a change request never takes a stop id from the body",
+  ),
+  [f("orders/orders.service.ts", "OrdersService.approveChangeRequestAtStop")]: D(
+    "order.routeRunStopId",
+    "the at-door provenance row carries the loaded order's stop (or the change request's own, itself copied from that order)",
+  ),
+  [f("routes/routes.service.ts", "RoutesService.completeStop")]: D(
+    "routeRunStop.id",
+    "stopId is the path stop, read tenant-scoped with its run (404) before any write; the delivery mutation stores that stop's own id",
+  ),
+  [f("routes/routes.service.ts", "RoutesService.completeWithPayment")]: D(
+    "routeRunStop.id",
+    "stopId is the path stop, read tenant-scoped with its run (404) before any write; the delivery mutation stores that stop's own id",
+  ),
+  [f("orders/office-evidence-completion.ts", "completeOfficeEvidencedLines")]: X(
+    "writes routeRunStopId: null (an office completion has no stop)",
+  ),
+  [f("orders/order-pd-quantities.ts", "writeOfficeDeliveries")]: X(
+    "writes routeRunStopId: null (an office delivery has no stop)",
+  ),
 };
 
 /** Down-only. B1106 PR B took it to 0: nothing is left pending. */
@@ -243,6 +276,33 @@ export function provenKinds(fn: ts.Node): Set<string> {
 const parse = (rel: string, text: string) =>
   functionsOf(ts.createSourceFile(rel, text, ts.ScriptTarget.Latest, true), rel);
 
+/** Does `fn` contain a real call to any of `names` (`x.name(...)` or `name(...)`)? A comment or a string never counts. */
+export function callsAny(fn: ts.Node, names: string[]): boolean {
+  let hit = false;
+  const walkNode = (n: ts.Node) => {
+    if (ts.isCallExpression(n)) {
+      const callee = n.expression;
+      const name = ts.isIdentifier(callee)
+        ? callee.text
+        : ts.isPropertyAccessExpression(callee)
+          ? callee.name.text
+          : null;
+      if (name !== null && names.includes(name)) hit = true;
+    }
+    if (!hit) ts.forEachChild(n, walkNode);
+  };
+  walkNode(fn);
+  return hit;
+}
+
+const fnOfSrc = (src: string) => parse("x.ts", src)[0].node;
+const fnByKey = (key: string): ts.Node => {
+  const [rel] = key.split("::");
+  const found = parse(rel, fs.readFileSync(path.join(SRC, rel), "utf8")).find((x) => x.key === key);
+  if (!found) throw new Error(`no such method: ${key}`);
+  return found.node;
+};
+
 const ALL: Map<string, ts.Node> = new Map();
 const DETECTED: Map<string, string[]> = new Map();
 beforeAll(() => {
@@ -314,6 +374,75 @@ describe("tenant-ref writers inventory (681, SA-936 MUST 6)", () => {
     for (const row of Object.values(TABLE)) {
       if (row.kind === "EXEMPT") expect(row.why.length).toBeGreaterThan(20);
     }
+  });
+
+  it("every DERIVED row names a parent the writer reads from, and says why", () => {
+    const parents = [...Object.keys(FIELDS), "routeRunStop"].map((m) => `${m}.`);
+    for (const row of Object.values(TABLE)) {
+      if (row.kind !== "DERIVED") continue;
+      expect(parents.some((p) => row.parent.startsWith(p))).toBe(true);
+      expect(row.why.length).toBeGreaterThan(20);
+    }
+  });
+
+  describe("the call graph behind a `via` (L-1): the proof holders are the only way in", () => {
+    // Every function that CALLS one of `names`, keyed like TABLE.
+    const callersOf = (names: string[]): string[] => {
+      const out: string[] = [];
+      for (const file of walk(SRC)) {
+        const rel = path.relative(SRC, file).split(path.sep).join("/");
+        const text = fs.readFileSync(file, "utf8");
+        if (!names.some((n) => text.includes(`${n}(`))) continue;
+        for (const fn of parse(rel, text)) if (callsAny(fn.node, names)) out.push(fn.key);
+      }
+      return out.sort();
+    };
+
+    it("captureInTx / captureAndIssueInTx are called only by the three listed paths", () => {
+      // capture: the standalone entry (proves the stop itself); captureAndIssueInTx: reaches captureInTx for the order
+      // glue; applyInlineReturnInTx: the order create / edit glue, reached only behind the entries pinned next.
+      expect(callersOf(["captureInTx", "captureAndIssueInTx"])).toEqual(
+        [
+          f("orders/order-inline-return.ts", "applyInlineReturnInTx"),
+          f("returns/inline-returns.service.ts", "InlineReturnsService.capture"),
+          f("returns/inline-returns.service.ts", "InlineReturnsService.captureAndIssueInTx"),
+        ].sort(),
+      );
+    });
+
+    it("the order glue is reached only by order create and order edit, each behind its proving entry", () => {
+      expect(callersOf(["applyReturn", "applyInlineReturnInTx"])).toEqual(
+        [
+          f("orders/orders.service.ts", "OrdersService.create"),
+          f("orders/orders.service.ts", "OrdersService.updateOrderItems"),
+        ].sort(),
+      );
+      // create: reserveReturnNo -> preflightNewOrderReturn proves the stop; edit: preflightInlineReturn -> preflightCapture.
+      expect(
+        callsAny(fnByKey(f("orders/orders.service.ts", "OrdersService.create")), [
+          "reserveReturnNo",
+        ]),
+      ).toBe(true);
+      expect(
+        callsAny(fnByKey(f("orders/orders.service.ts", "OrdersService.updateOrderItems")), [
+          "preflightInlineReturn",
+        ]),
+      ).toBe(true);
+    });
+
+    it("a `via` writer with one holder actually calls it", () => {
+      for (const [key, row] of Object.entries(TABLE)) {
+        if (row.kind !== "GUARDED" || typeof row.via !== "string") continue;
+        expect(callsAny(fnByKey(key), [row.via.split("::")[1]])).toBe(true);
+      }
+    });
+
+    it("the call check sees a call and ignores a comment or a string", () => {
+      const yes = fnOfSrc("class A { m() { this.svc.captureInTx(tx); } }");
+      const no = fnOfSrc('class A { m() { /* captureInTx(tx) */ const s = "captureInTx(tx)"; } }');
+      expect(callsAny(yes, ["captureInTx"])).toBe(true);
+      expect(callsAny(no, ["captureInTx"])).toBe(false);
+    });
   });
 
   describe("the detector itself (positive controls on inline source)", () => {

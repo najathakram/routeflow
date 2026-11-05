@@ -35,6 +35,7 @@ import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { InlineReturnsQuoteService } from "../returns/inline-returns-quote.service";
 import { InlineReturnsService } from "../returns/inline-returns.service";
 import { OrdersService } from "../orders/orders.service";
+import { INVOICE_EDIT_STUBS } from "../orders/testing/invoice-edit-stubs";
 import { DriversService } from "../drivers/drivers.service";
 import { MessagesService } from "../messages/messages.service";
 import { assertRefsInTenant } from "./assert-refs-in-tenant";
@@ -65,6 +66,7 @@ describeDb(
     let ctx: TenantContextService;
     let orders: any;
     let inlineSvc: any;
+    let revertLinkedInvoices: jest.Mock;
     let drivers: DriversService;
     let messages: MessagesService;
     let a: World;
@@ -179,15 +181,31 @@ describeDb(
         quoteService: new InlineReturnsQuoteService(prisma, systemConfig),
         idempotency,
       });
+      revertLinkedInvoices = jest.fn(async () => undefined);
       orders = Object.assign(Object.create(OrdersService.prototype), {
         prisma,
-        gateway: { emitOrderCreated: jest.fn(), emitUrgentOrder: jest.fn() },
+        gateway: {
+          emitOrderCreated: jest.fn(),
+          emitUrgentOrder: jest.fn(),
+          emitOrderStatusChanged: jest.fn(),
+        },
         systemConfig,
         entitlements: { hasFlag: async () => true },
-        sellingRestrictions: { assertLinesSellable: async () => undefined },
+        sellingRestrictions: {
+          getPolicy: async () => ({ enabled: false, addressPrecedence: "BILLING_FIRST" }),
+          assertLinesSellable: async () => undefined,
+        },
         authGuard: { assertAuthorizedOrThrow: async () => undefined },
         promotionsService: { activeForCatalog: async () => [] },
-        creditNotes,
+        creditNotes: Object.assign(creditNotes, {
+          settleOrderCreditsInTx: async () => ({ applied: 0, unapplied: 0 }),
+        }),
+        invoicesService: {
+          revertLinkedInvoicesForOrderEdit: revertLinkedInvoices,
+          resyncOrderInvoicesForEdit: async () => [],
+          reconcileOrderDraftInvoice: async () => undefined,
+          ...INVOICE_EDIT_STUBS,
+        },
         ledger,
         tenantCtx: ctx,
         logger: new Logger(OrdersService.name),
@@ -356,6 +374,70 @@ describeDb(
         ).toBe(0);
         expect(await raw.return.count({ where: { routeRunStopId: b.stopId } })).toBe(0);
         expect(await raw.creditNote.count({ where: { tenantId: a.tenantId } })).toBe(0);
+      });
+    });
+
+    describe("writer 7 - OrdersService.updateOrderItems (staff order edit, preflightCapture entry)", () => {
+      it("an edit whose inline return names tenant B's stop is a 404 before anything is written or reverted", async () => {
+        const order = await raw.order.create({
+          data: {
+            tenantId: a.tenantId,
+            customerId: a.customerId,
+            status: "PENDING" as any,
+            subtotal: "20.00",
+            total: "20.00",
+            lineItems: {
+              create: [
+                {
+                  tenantId: a.tenantId,
+                  productId: a.productId,
+                  qty: 2,
+                  unitPrice: "10.00",
+                  subtotal: "20.00",
+                },
+              ],
+            },
+          },
+          include: { lineItems: true },
+        });
+        const stored = async () => ({
+          header: await raw.order.findUniqueOrThrow({
+            where: { id: order.id },
+            select: { subtotal: true, total: true, status: true },
+          }),
+          lines: (
+            await raw.orderItem.findMany({ where: { orderId: order.id }, orderBy: { id: "asc" } })
+          ).map((l) => ({ id: l.id, qty: l.qty, subtotal: l.subtotal })),
+        });
+        const before = await stored();
+        const creditNotesBefore = await raw.creditNote.count({ where: { tenantId: a.tenantId } });
+
+        await expect(
+          asA(() =>
+            orders.updateOrderItems(
+              order.id,
+              {
+                replaceAll: false,
+                items: [{ id: order.lineItems[0].id, qty: 3 }],
+                inlineReturn: {
+                  items: [{ productId: a.productId, qty: 1 }],
+                  returnKey: `k-b1106-edit-${RUN}`,
+                  routeRunStopId: b.stopId,
+                },
+              },
+              staffA(),
+            ),
+          ),
+        ).rejects.toThrow("Stop not found");
+
+        expect(await stored()).toEqual(before); // the qty edit did not land
+        expect(await raw.return.count({ where: { orderId: order.id } })).toBe(0);
+        expect(await raw.return.count({ where: { routeRunStopId: b.stopId } })).toBe(0);
+        expect(await raw.creditNote.count({ where: { tenantId: a.tenantId } })).toBe(
+          creditNotesBefore,
+        );
+        // refused at the preflight: the un-tx'd linked-invoice revert (B215 class) never ran
+        expect(revertLinkedInvoices).not.toHaveBeenCalled();
       });
     });
 
