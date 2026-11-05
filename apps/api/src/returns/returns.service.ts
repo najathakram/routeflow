@@ -126,6 +126,7 @@ import {
 } from "./standard-refund-pricing";
 import { standardRestockResolver, type ProductPackBasis } from "./returns-restock-pieces";
 import { ledgerDocumentTargets, lockLedgerDocumentRows } from "../regulated/ledger-locks";
+import { returnCustomerLockKey } from "./return-customer-lock";
 
 /** M6/§2.3: every standard-path method refuses an INLINE-kind return — it has its own
  * endpoints and state machine (PR-1c/1d). Thrown the moment a `kind` is known to be INLINE. */
@@ -399,7 +400,7 @@ export class ReturnsService {
       // read (source of customerId) above, before the order-row FOR UPDATE below.
       if (this.idempotency) {
         await this.idempotency.acquireLock(
-          this.idempotency.hashFor(order.customerId, tenantId, "returns.customer"),
+          returnCustomerLockKey(order.customerId, tenantId, this.idempotency),
           tx,
         );
       }

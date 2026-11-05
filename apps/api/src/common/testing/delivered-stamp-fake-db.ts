@@ -65,6 +65,8 @@ export function makeStampDb(seed: {
   });
   const delegates = (state: FakeState, inTx: boolean) => ({
     order: {
+      // SA-1101 A-6 Part 2: the guard reads the order's customer to take the returns lock first.
+      findMany: async () => [{ customerId: "c1", tenantId: "t1" }],
       findFirst: async () => ({ ...state.order }),
       findUnique: async () => ({ ...state.order }),
       update: async ({ where, data }: any) => {
