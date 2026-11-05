@@ -182,6 +182,9 @@
 //                    add-on the tenant's plan already bundles, `includedAtPlan`). Both are `body.code` of the refusal and also `refusal.code`
 //                    of GET /billing/proration-preview (billing "REFUSED"), so the confirm sheet and the enable call agree. Clients show
 //                    the body's fixed copy or their own, never a Stripe message.
+//   SA-1099 §6 (WP5) — ADDON_ALREADY_INCLUDED: the 409 of a SELF-SERVE enable of an add-on whose `grantsFlags` the workspace already
+//                    holds without it (courtesy or otherwise), so buying it would add nothing; capacity packs are never refused. Same
+//                    two seats as ADDON_INCLUDED_IN_PLAN (the enable body and `refusal.code` of the proration preview).
 //   B808 — ADVANCE_CUSTOMER_MISMATCH (customers): the 400 of an advance-payment apply whose invoice belongs to a different
 //                    customer than the advance (value == key); nothing is written.
 //   M11 (stackable add-on quantity) — the enable body's `quantity` is the TARGET total, so a stale page could cut a pack.
@@ -535,6 +538,7 @@ export const API_ERROR_CODES = {
   PLAN_CHANGED_DURING_SUBSCRIBE: "PLAN_CHANGED_DURING_SUBSCRIBE",
   ADDON_ANNUAL_NOT_SUPPORTED: "ADDON_ANNUAL_NOT_SUPPORTED",
   ADDON_INCLUDED_IN_PLAN: "ADDON_INCLUDED_IN_PLAN",
+  ADDON_ALREADY_INCLUDED: "ADDON_ALREADY_INCLUDED",
   ADDON_CATALOG_INVALID: "ADDON_CATALOG_INVALID",
   ADDON_BILLING_PENDING_CHECKOUT: "ADDON_BILLING_PENDING_CHECKOUT",
   ADDON_COMP_MANAGED_BY_SUPPORT: "ADDON_COMP_MANAGED_BY_SUPPORT",

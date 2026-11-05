@@ -24,6 +24,7 @@ import { CatchupClaimService } from "./catchup-claim.service";
 import { DunningService } from "./dunning.service";
 import { ScheduledPriceChangeService } from "./scheduled-price-change";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
+import { EntitlementAuthority } from "./entitlement-authority.service";
 
 /**
  * Nit (Opus review): BillingService, SubscriptionMutationService and others take collaborators as `@Optional()`
@@ -69,6 +70,9 @@ describe("BillingModule wiring: the @Optional collaborators are really provided"
       const mutations = moduleRef.get(SubscriptionMutationService, { strict: false }) as any;
       expect(mutations.scheduledPrice).toBeInstanceOf(ScheduledPriceChangeService);
       expect(mutations.dunning).toBeInstanceOf(DunningService);
+      // SA-1099 WP5 / B554: the self-serve enable's already-included and requires checks, and the resolver cache it clears,
+      // read this collaborator - an undefined one would silently sell what the workspace already has.
+      expect(mutations.authority).toBeInstanceOf(EntitlementAuthority);
       // SA-775: every AUTOMATIC lock writer holds the REAL rollout switch - an @Optional that came back
       // undefined would silently leave that writer ungated in production.
       const sw = moduleRef.get(AutoLockSwitchService, { strict: false });

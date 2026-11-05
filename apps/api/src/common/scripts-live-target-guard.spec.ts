@@ -103,6 +103,7 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/report-2533-product-image-keys.mjs": "read-only",
   "apps/api/scripts/report-2542-pod-keys.mjs": "read-only",
   "apps/api/scripts/report-addon-comp-candidates.mjs": "read-only",
+  "apps/api/scripts/report-noop-addons.mjs": "read-only", // SA-1099 WP5 (R23): SELECT only, default_transaction_read_only = on
   "apps/api/scripts/report-addon-default-grant-flip.mjs": "read-only",
   "apps/api/scripts/report-addon-gate-blast-radius.mjs": "read-only",
   "apps/api/scripts/report-billing-pause-blast-radius.mjs": "read-only",
