@@ -270,17 +270,29 @@ describeDb("FG-1 WP1: entitlement sweep endpoint (real Postgres)", () => {
       courtesy: true,
     });
     // GROWTH carrying the flags, tobacco_dealer row active
+    // strict TRUE is asserted where the owner's rule itself holds (a constant false would pass every strict:false row)
     expectBits(t.growth, "tobacco_dealer", {
       old: true,
       effective: true,
+      strict: true,
       clientAddon: true,
       courtesy: false,
     });
-    expectBits(t.growth, "flag.reports", { old: true, effective: true, courtesy: false });
+    expectBits(t.growth, "flag.reports", {
+      old: true,
+      effective: true,
+      strict: true,
+      courtesy: false,
+    });
     // courtesy follows the switch, not the plan: the check runs for everyone while it is not "on"
     expectBits(t.growth, "flag.credit_limits", { old: true, effective: true, courtesy: true });
     // LITE (always enforced) + GRANT on tobacco_dealer
-    expectBits(t.lite, "tobacco_dealer", { old: true, effective: true, clientAddon: true });
+    expectBits(t.lite, "tobacco_dealer", {
+      old: true,
+      effective: true,
+      strict: true,
+      clientAddon: true,
+    });
     expectBits(t.lite, "ocr", {
       old: false,
       effective: false,
