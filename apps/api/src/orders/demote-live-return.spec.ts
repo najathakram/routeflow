@@ -28,9 +28,17 @@ type Event = "lock" | "count" | "write" | "marker";
 
 const makeDb = (returnStatuses: string[]) => {
   const events: Event[] = [];
+  // Every statement in order, the customer's returns lock (SA-1101 A-6 Part 2, B1279) included; `events` keeps the
+  // Order-row lock / count / write sequence RO-28 and RO-29 pin.
+  const trace: string[] = [];
   const tx: any = {
-    $executeRaw: async () => {
+    $executeRaw: async (strings: TemplateStringsArray) => {
+      if (strings.join("").includes("pg_advisory_xact_lock")) {
+        trace.push("customer");
+        return 1;
+      }
       events.push("lock");
+      trace.push("lock");
       return 1;
     },
     return: {
@@ -41,6 +49,7 @@ const makeDb = (returnStatuses: string[]) => {
       },
     },
     order: {
+      findMany: async () => [{ customerId: "c1", tenantId: "t1" }],
       update: async ({ data }: any) => {
         events.push("write");
         return { id: "o1", status: data.status };
@@ -66,7 +75,7 @@ const makeDb = (returnStatuses: string[]) => {
     }),
     tenantTransaction: async (fn: (tx: any) => Promise<unknown>) => fn(tx),
   };
-  return { events, prisma };
+  return { events, trace, prisma };
 };
 
 const order = (over: Record<string, unknown> = {}) => ({
@@ -120,6 +129,20 @@ describe("SA-1101 A-5 RO-28: a dead return does not block the demotion", () => {
     const db = makeDb(["REJECTED", "RECEIVED"]);
     await expect(demote(db, OrderStatus.CONFIRMED, order())).rejects.toMatchObject(HAS_RETURN);
     expect(db.events).toEqual(["lock", "count"]);
+  });
+});
+
+describe("SA-1101 A-6 Part 2 (B1279): the customer's returns lock comes first", () => {
+  it("-> CONFIRMED, -> PARTIALLY_DELIVERED and the SHIP-billing marker transaction: the customer lock, then the Order rows, then the count", async () => {
+    for (const [to, o, cfg] of [
+      [OrderStatus.CONFIRMED, order(), undefined],
+      [OrderStatus.PARTIALLY_DELIVERED, order(), undefined],
+      [OrderStatus.CONFIRMED, order({ fulfillPath: "SHIP" }), SHIP_CFG],
+    ] as const) {
+      const db = makeDb(["RECEIVED"]);
+      await expect(demote(db, to, o, { featureConfig: cfg })).rejects.toMatchObject(HAS_RETURN);
+      expect(db.trace).toEqual(["customer", "lock"]);
+    }
   });
 });
 

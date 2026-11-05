@@ -73,7 +73,7 @@ export const ALLOWLIST: Array<{ file: string; chain: string; reason: string }> =
     file: "components/ScanInvoiceModal.tsx",
     chain: "active.error",
     reason:
-      "per-invoice error state is only ever set to the closed SCAN_FAILED_COPY / RECORDS_FAILED_COPY sentences from lib/reason-copy.ts, never to server text",
+      "per-invoice error state is only ever set to the closed SCAN_FAILED_COPY / RECORDS_FAILED_COPY / scanPausedCopy sentences from lib/reason-copy.ts, never to server text",
   },
 ];
 

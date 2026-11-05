@@ -119,9 +119,14 @@ describe("BookkeepingService", () => {
         {
           provide: PlatformConfigService,
           useValue: {
-            resolveAnthropicKey: jest.fn().mockResolvedValue("test-key"),
+            requireAiTenant: jest.fn(),
+            prepareAiCall: jest.fn(async (task: AiTask) => ({
+              key: "test-key",
+              source: "routeflow",
+              model: AI_TASKS[task].fallback,
+              tenantId: "test-tenant",
+            })),
             recordAiUsage,
-            resolveModelFor: jest.fn(async (task: AiTask) => AI_TASKS[task].fallback),
           },
         },
         {
@@ -2301,7 +2306,7 @@ describe("BookkeepingService", () => {
   });
 
   describe("extractExpenseItems", () => {
-    const RECEIPT_MODEL = "claude-opus-5-5"; // SA-1035 M-R5: the receipt task's fallback (no picker)
+    const RECEIPT_MODEL = "claude-sonnet-5-5"; // SA-1035 M-R5 / SA-1102: the receipt task's fallback (no picker)
 
     /** `createMockPrisma` predates ExpenseLineItem — graft it onto the object forTenant() returns. */
     const graftExpenseLineItem = () => {

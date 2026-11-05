@@ -56,11 +56,12 @@ import { displayProductName } from "@/lib/product-display";
 import { fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { roundMoney } from "@routeflow/pricing";
 import { RAISED_PO_NOTE, poIntentRefusal, raisePoBlocker } from "@/lib/raise-po";
-import { SCAN_LOCK_BODY, SCAN_LOCK_TITLE, isScanPlanLock } from "@/lib/scan-po-lock";
+import { SCAN_LOCK_BODY, isScanPlanLock } from "@/lib/scan-po-lock";
+import { scanFailureCopy } from "@/lib/scan-failure-copy";
 import { buildVendorBillPayload } from "@/lib/scan-bill-payload";
 import { RaisePoToggle } from "./RaisePoToggle";
 import { apiClient } from "@/lib/api-client";
-import { RECORDS_FAILED_COPY, SCAN_FAILED_COPY } from "@/lib/reason-copy";
+import { RECORDS_FAILED_COPY } from "@/lib/reason-copy";
 import { ScanCreateModeSelector } from "@/components/ScanCreateModeSelector";
 import { scanCreateLabel } from "@/lib/scan-create-label";
 import { SELECTABLE_PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from "@/lib/payment-methods";
@@ -726,36 +727,15 @@ export function ScanInvoiceModal({
     } catch (err: any) {
       if (runId !== runIdRef.current || controller.signal.aborted) return;
       console.error(err);
-      const msg: string = err?.response?.data?.message ?? "";
-      const code: string | undefined = err?.response?.data?.code;
-      const isApiKeyError = code === "AI_KEY_INVALID" || /api key|anthropic/i.test(msg);
       // A plan gate that closed after the page loaded answers 403: show the friendly lock copy,
-      // never the server's raw message.
+      // never the server's raw message. Every failure reads as closed copy (lib/scan-failure-copy.ts).
       const planLocked = intent === "purchase-order" && isScanPlanLock(err);
+      const failure = scanFailureCopy(err, planLocked);
       if (singleFlow) {
-        toast({
-          title: planLocked
-            ? SCAN_LOCK_TITLE
-            : isApiKeyError
-              ? "Anthropic API key not configured"
-              : "Failed to scan invoice",
-          description: planLocked
-            ? SCAN_LOCK_BODY
-            : isApiKeyError
-              ? "Go to Settings → AI & Integrations to add your Claude API key."
-              : SCAN_FAILED_COPY,
-          variant: "error",
-        });
+        toast({ title: failure.title, description: failure.description, variant: "error" });
         setStep("upload");
       } else {
-        patchInvoiceById(inv.id, {
-          status: "failed",
-          error: planLocked
-            ? SCAN_LOCK_BODY
-            : isApiKeyError
-              ? "Anthropic API key not configured — see Settings → AI & Integrations."
-              : SCAN_FAILED_COPY,
-        });
+        patchInvoiceById(inv.id, { status: "failed", error: failure.rowError });
       }
     } finally {
       abortersRef.current.delete(inv.id);

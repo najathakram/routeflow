@@ -44,6 +44,8 @@ import { RETURN_REASON_VALUES } from "@routeflow/types";
 import {
   RECORDS_FAILED_COPY,
   SCAN_FAILED_COPY,
+  isAiCapRefusal,
+  scanPausedCopy,
   describeReturnReason,
   describeRunFailure,
   describeSaveError,
@@ -115,6 +117,32 @@ describe("reason-copy: run failures, return reasons, save errors (#1965)", () =>
   it("the scan copy constants are closed sentences", () => {
     expect(SCAN_FAILED_COPY).toMatch(/clearer photo/i);
     expect(RECORDS_FAILED_COPY).toMatch(/try again/i);
+  });
+
+  // SA-1102 A-4 M1-1: a 403 AI_MONTHLY_CAP_REACHED on a scan is the allowance, not a bad photo.
+  it("M1-1: a cap refusal reads as paused-until plus the hand-entry way forward, never 'clearer photo'", () => {
+    const err = {
+      response: {
+        status: 403,
+        data: { code: "AI_MONTHLY_CAP_REACHED", resetsAt: "2026-12-01T00:00:00.000Z" },
+      },
+    };
+    expect(isAiCapRefusal(err)).toBe(true);
+    expect(scanPausedCopy(err.response.data.resetsAt)).toBe(
+      "AI scans are paused until December 1. You can still enter the bill by hand.",
+    );
+    expect(scanPausedCopy("2027-01-01T00:00:00.000Z")).toContain("paused until January 1. ");
+    expect(scanPausedCopy(undefined)).toBe(
+      "AI scans are paused until the 1st of next month. You can still enter the bill by hand.",
+    );
+    expect(scanPausedCopy("2026-12-01T00:00:00.000Z")).not.toMatch(/clearer photo/i);
+  });
+
+  it("M1-1: only the cap code is a cap refusal", () => {
+    expect(isAiCapRefusal({ response: { data: { code: "AI_KEY_INVALID" } } })).toBe(false);
+    expect(isAiCapRefusal({ response: { data: { code: "TENANT_CONTEXT_REQUIRED" } } })).toBe(false);
+    expect(isAiCapRefusal(new Error("boom"))).toBe(false);
+    expect(isAiCapRefusal(null)).toBe(false);
   });
 });
 
