@@ -158,3 +158,39 @@ describe("PreviewDrawer: omissions and stays-on-for-now (FG-1 WP2)", () => {
     expect(screen.queryByText(/Not shown here/)).toBeNull();
   });
 });
+
+// SA-1099 A-2 N1 / SV-10: the drawer's row for a DENY the credit gate serves anyway says "Not enforced yet",
+// never "Removed" next to an On chip.
+describe("PreviewDrawer: a DENY served by courtesy (SV-10)", () => {
+  it("labels the row 'Not enforced yet', not 'Removed'", () => {
+    const row = (over: Partial<EffectiveFeature>) =>
+      feature({ key: "flag.credit_limits", area: "orders", ...over });
+    const response = {
+      before: [row({ serving: true, resolver: true, source: "PRESET" })],
+      after: [
+        row({
+          serving: true,
+          resolver: false,
+          source: "OVERRIDE_DENY",
+          detail: { planKey: "STARTER", catalogVersionId: "v", enforced: false, term: "courtesy" },
+        }),
+      ],
+      changed: ["flag.credit_limits"],
+      laterLost: ["flag.credit_limits"],
+      omitted: [],
+    };
+    render(
+      <PreviewDrawer
+        open
+        title="Preview override"
+        response={response as unknown as FeaturePreviewResponse}
+        registryByKey={{ "flag.credit_limits": { label: "Credit limits" } }}
+        confirming={false}
+        onConfirm={jest.fn()}
+        onClose={jest.fn()}
+      />,
+    );
+    expect(screen.getAllByText("Not enforced yet").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Removed")).toBeNull();
+  });
+});
