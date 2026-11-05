@@ -122,4 +122,4 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 | [api/landing-2026-11-03-aq.md](api/landing-2026-11-03-aq.md) | Train ap (f10b57ce34..c8221d4b46): driver stops on the web, STOP_REOPENED, left-off line review, fold refused (SA-1098 PR-2) |
 | [api/landing-2026-11-04-ar.md](api/landing-2026-11-04-ar.md) | Train ar (c8221d4b46..758c727d58): partial invoice books its ledger (row 721), Undo rebuilds the draft, run settlement writer (PR-S) |
 | [api/landing-2026-11-04-t1.md](api/landing-2026-11-04-t1.md) | Train 1 (758c727d58..8cd7c13e69): import template headers and key columns, funnel first invoice issued and first payment, wall-clock-free specs |
-| [api/landing-2026-11-04-t2.md](api/landing-2026-11-04-t2.md) | Train 2 (8cd7c13e69..3856633ee8): entitlement sweep (WP1), billable-pilot warning and price-impact 409 (WP6), coded credit-note errors, hide-per-piece setting |
+| [api/landing-2026-11-04-t2.md](api/landing-2026-11-04-t2.md) | Train 2 (8cd7c13e69..ec9765092c): entitlement sweep, pilot warning, coded errors, hide-per-piece, old mobile redirect, digest report |
