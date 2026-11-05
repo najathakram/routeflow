@@ -125,6 +125,8 @@ describe("InlineReturnsService", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // SA-1101 A-7: the inline customer lock keys on the customer ROW's tenant, so the customer is read
+    prisma.customer.findUnique.mockResolvedValue({ id: "cust-1", tenantId: "test-tenant" });
     stock = wireStockHelper(prisma, { ample: true });
     quoteService = { priceInlineReturn: jest.fn().mockResolvedValue(priced()) };
     creditNotes = {

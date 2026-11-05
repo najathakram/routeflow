@@ -398,7 +398,11 @@ export class ReturnsService {
       // customer's same product — must not both read the same stale "remaining"
       // snapshot. Placed after the idempotency lock/check and the unlocked order
       // read (source of customerId) above, before the order-row FOR UPDATE below.
-      await lockReturnCustomer(tx, order.customerId, tenantId, this.idempotency);
+      await lockReturnCustomer(
+        tx,
+        { customerId: order.customerId, tenantId: order.tenantId ?? null },
+        this.idempotency,
+      );
 
       // The transaction ALONE does not close the race: tenantTransaction runs at
       // Postgres' default READ COMMITTED, so two concurrent creates would each
