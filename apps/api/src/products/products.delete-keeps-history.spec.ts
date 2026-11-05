@@ -30,11 +30,11 @@ import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { createMockPrisma } from "../testing/prisma-mock";
 
-const OPEN_ORDER = { status: { notIn: ["DELIVERED", "CANCELLED"] } };
+const OPEN_ORDER = { status: { notIn: ["DELIVERED", "REFUSED", "CANCELLED"] } };
 
 describe("activeOrderItemWhere: the guard is keyed on the order, not on the line", () => {
   it("one id: the order's status is not in the terminal set, and the line's own status is never read", () => {
-    expect(TERMINAL_ORDER_STATUSES).toEqual(["DELIVERED", "CANCELLED"]);
+    expect(TERMINAL_ORDER_STATUSES).toEqual(["DELIVERED", "REFUSED", "CANCELLED"]);
     expect(activeOrderItemWhere("p1")).toEqual({ productId: "p1", order: OPEN_ORDER });
     expect(activeOrderItemWhere("p1")).not.toHaveProperty("status");
   });

@@ -416,6 +416,9 @@ describeDb("SA-1098 PR-2 driver stop on the web — real Postgres", () => {
           type: q1 === 7 ? "DELIVERED" : "PARTIAL",
           quantityDelivered: q1,
         },
+        // SA-1101 (B785): the later stop carries its own order too; every line with something left needs an entry.
+        { orderItemId: later.line1.id, type: "DELIVERED", quantityDelivered: 10 },
+        { orderItemId: later.line2.id, type: "DELIVERED", quantityDelivered: 4 },
       ],
     });
 
@@ -1250,7 +1253,12 @@ describeDb("SA-1098 PR-2 driver stop on the web — real Postgres", () => {
         data: { routeRunStopId: later.stopId, status: "OUT_FOR_DELIVERY" },
       });
       const dto = {
-        deliveries: [{ orderItemId: first.line1.id, type: "PARTIAL", quantityDelivered: 5 }],
+        deliveries: [
+          { orderItemId: first.line1.id, type: "PARTIAL", quantityDelivered: 5 },
+          // SA-1101 (B785): the later stop carries its own order too; every line with something left needs an entry.
+          { orderItemId: later.line1.id, type: "DELIVERED", quantityDelivered: 10 },
+          { orderItemId: later.line2.id, type: "DELIVERED", quantityDelivered: 4 },
+        ],
       };
       await complete(s, later, "completeWithPayment", {
         ...dto,

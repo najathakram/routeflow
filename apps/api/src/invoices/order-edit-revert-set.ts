@@ -3,6 +3,7 @@ import { InvoiceStatus } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { lockRowsNoWait } from "../common/db-locks";
 import { carrierEditGuard, resyncsInPlace, type CarrierOrder } from "../orders/order-carrier-guard";
+import { isTerminalOrderStatus } from "../common/terminal-order-statuses";
 
 /**
  * #2178 — the ONE selection of the invoices an UNDELIVERED order edit reverts to DRAFT
@@ -49,8 +50,7 @@ export async function selectEditRevertedInvoices(
   const nonVoidCount = await db.invoice.count({
     where: { orderId, status: { not: InvoiceStatus.VOID } },
   });
-  const depositMirrorExempt =
-    !!order && order.status !== "DELIVERED" && order.status !== "CANCELLED" && nonVoidCount === 1;
+  const depositMirrorExempt = !!order && !isTerminalOrderStatus(order.status) && nonVoidCount === 1;
   return depositMirrorExempt ? linked.filter((inv) => inv.depositPercent == null) : linked;
 }
 

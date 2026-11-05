@@ -287,6 +287,10 @@ import {
 import { revertLinkedInvoicesToDraft } from "./order-edit-revert-set";
 import { assertNoCashRefundOnInvoice } from "./invoice-cash-refund-guard";
 import { assertPartialRequestShape, bumpInvoicedQtyCas } from "./partial-invoice-cas";
+import {
+  isPostDeliveryOrderStatus,
+  isTerminalOrderStatus,
+} from "../common/terminal-order-statuses";
 
 export const TERM_DAYS: Record<string, number> = {
   "Due on Receipt": 0,
@@ -794,7 +798,7 @@ export class InvoicesService {
       !txClient &&
       created.length === 1 &&
       depositFields.depositPercent != null &&
-      order.status !== "DELIVERED" &&
+      !isPostDeliveryOrderStatus(order.status) &&
       (await this.systemConfig.get("invoice.depositCollectAtOrder")) === "true"
     ) {
       const issued: any[] = [];
@@ -1543,7 +1547,7 @@ export class InvoicesService {
         where: { id: orderId },
         select: { status: true },
       });
-      if (orderGate && orderGate.status !== "DELIVERED" && orderGate.status !== "CANCELLED") {
+      if (orderGate && !isTerminalOrderStatus(orderGate.status)) {
         const nonVoid = await db.invoice.findMany({
           where: { orderId, status: { not: InvoiceStatus.VOID } },
           include: { payments: true },
@@ -2585,7 +2589,7 @@ export class InvoicesService {
         where: { tenantId, key: "invoice.depositCollectAtOrder" },
         select: { value: true },
       });
-      if (collectRaw?.value === "true" && (order as any).status !== "DELIVERED") {
+      if (collectRaw?.value === "true" && !isPostDeliveryOrderStatus((order as any).status)) {
         // Update by primary key of the row this method just created for this tenant —
         // safe without a tenant filter (the id came from our own create), and the
         // unscoped client is the same handle the rest of this method uses.

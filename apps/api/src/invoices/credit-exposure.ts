@@ -56,7 +56,7 @@ export const DELIVERED_ORDER_STATUSES: OrderStatus[] = [
 
 /**
  * Orders that BACK a draft invoice (open ∪ delivered). OrderStatus.DRAFT and CANCELLED are
- * deliberately NOT backing: a draft behind them is not a receivable.
+ * (and, SA-1101, REFUSED) are deliberately NOT backing: a draft behind them is not a receivable.
  */
 export const BACKING_ORDER_STATUSES: OrderStatus[] = [
   ...OPEN_ORDER_STATUSES,
@@ -68,7 +68,12 @@ export const BACKING_ORDER_STATUSES: OrderStatus[] = [
  * EVERY `OrderStatus` exactly once — `credit-exposure.spec.ts` pins that (B584), so a NEW order
  * status can never silently fall on the wrong side of the credit block.
  */
-export const NON_BACKING_ORDER_STATUSES: OrderStatus[] = [OrderStatus.DRAFT, OrderStatus.CANCELLED];
+// SA-1101: a REFUSED order delivered nothing, so a draft behind it is not a receivable (it reconciles to $0).
+export const NON_BACKING_ORDER_STATUSES: OrderStatus[] = [
+  OrderStatus.DRAFT,
+  OrderStatus.CANCELLED,
+  OrderStatus.REFUSED,
+];
 
 const BACKING_ORDER_STATUS_SET: ReadonlySet<string> = new Set(BACKING_ORDER_STATUSES);
 

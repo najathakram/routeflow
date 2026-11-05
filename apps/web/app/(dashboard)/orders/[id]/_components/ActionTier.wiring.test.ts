@@ -18,6 +18,7 @@ const FILES = [
   path.resolve(__dirname, "./PosOrderActions.tsx"),
   path.resolve(__dirname, "./DeleteOrderTier.tsx"),
   path.resolve(__dirname, "./ReopenDeliveredTier.tsx"),
+  path.resolve(__dirname, "./DeliverAgainTier.tsx"),
 ];
 const sources = FILES.map((f) =>
   ts.createSourceFile(
@@ -141,6 +142,7 @@ describe("order-detail action bar tiers (page wiring)", () => {
         "Unmark shipped",
         "Return to Confirmed",
         "Reopen order",
+        "Deliver again", // SA-1101: the one action on a REFUSED order (back to Confirmed)
       ]),
     );
   });

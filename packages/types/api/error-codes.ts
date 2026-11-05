@@ -439,6 +439,8 @@ export const API_ERROR_CODES = {
   /** SA-1097: an order edit that would re-price a stored split line whose own pack can't be read (409). */
   STORED_LINE_PACK_UNREADABLE: "STORED_LINE_PACK_UNREADABLE",
   LINE_ALREADY_DELIVERED: "LINE_ALREADY_DELIVERED",
+  /** SA-1101 (B785): a stop close left out a line that still had something to deliver (400, nothing written). */
+  STOP_DELIVERY_LINES_MISSING: "STOP_DELIVERY_LINES_MISSING",
   /**
    * W-871 (SA-948): a replace (staff replace-all, a driver's full-list save) on a post-delivery order is refused
    * before any write; re-created lines would lose the invoice's provenance. Change the lines one at a time. 409.
@@ -695,6 +697,7 @@ export const API_ERROR_CODES = {
    * the write (a dispatch attached it), so releasing the old link would have cleared a fresh one. Nothing was written.
    */
   ORDER_RUN_LINK_CHANGED: "ORDER_RUN_LINK_CHANGED",
+  ORDER_HAS_RETURN: "ORDER_HAS_RETURN",
   /**
    * W-769 (SA-862 rule 4): PATCH /invoices/:id/payments/:paymentId, 409: confirming (DRAFT → PAID) or reopening (VOID → PAID) a
    * payment when real money already covers the invoice. Nothing written; void it or move it to the customer's credit.

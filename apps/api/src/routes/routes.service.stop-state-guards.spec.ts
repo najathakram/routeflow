@@ -697,6 +697,8 @@ describe("RoutesService — F10 stop-state guards (REG-B54/B55/B71/B72/B120/B121
       });
 
       const txMock = {
+        $executeRaw: jest.fn().mockResolvedValue(0), // A-4: the Order row lock
+        return: { count: jest.fn().mockResolvedValue(0) }, // A-4: no live return
         auditLog: { create: jest.fn().mockResolvedValue({}) },
         deliveryMutation: {
           deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
@@ -712,13 +714,11 @@ describe("RoutesService — F10 stop-state guards (REG-B54/B55/B71/B72/B120/B121
         routeRunStop: { update: jest.fn().mockResolvedValue({}) },
         routeRun: {
           update: jest.fn().mockResolvedValue({}),
-          findUnique: jest
-            .fn()
-            .mockResolvedValue({
-              status: "IN_PROGRESS",
-              settlementNote: null,
-              settlementVariance: null,
-            }),
+          findUnique: jest.fn().mockResolvedValue({
+            status: "IN_PROGRESS",
+            settlementNote: null,
+            settlementVariance: null,
+          }),
         },
       };
       (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
@@ -783,6 +783,8 @@ describe("RoutesService — F10 stop-state guards (REG-B54/B55/B71/B72/B120/B121
       });
 
       const txMock = {
+        $executeRaw: jest.fn().mockResolvedValue(0), // A-4: the Order row lock
+        return: { count: jest.fn().mockResolvedValue(0) }, // A-4: no live return
         auditLog: { create: jest.fn().mockResolvedValue({}) },
         deliveryMutation: {
           deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
@@ -798,13 +800,11 @@ describe("RoutesService — F10 stop-state guards (REG-B54/B55/B71/B72/B120/B121
         routeRunStop: { update: jest.fn().mockResolvedValue({}) },
         routeRun: {
           update: jest.fn().mockResolvedValue({}),
-          findUnique: jest
-            .fn()
-            .mockResolvedValue({
-              status: "IN_PROGRESS",
-              settlementNote: null,
-              settlementVariance: null,
-            }),
+          findUnique: jest.fn().mockResolvedValue({
+            status: "IN_PROGRESS",
+            settlementNote: null,
+            settlementVariance: null,
+          }),
         },
       };
       (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));

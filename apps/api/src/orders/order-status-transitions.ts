@@ -26,6 +26,9 @@ export const ORDER_STATUS_TRANSITIONS: Record<string, string[]> = {
   OUT_FOR_DELIVERY: ["DELIVERED", "PARTIALLY_DELIVERED", "CONFIRMED", "CANCELLED"],
   PARTIALLY_DELIVERED: ["OUT_FOR_DELIVERY", "DELIVERED", "CANCELLED"],
   DELIVERED: ["CONFIRMED", "PARTIALLY_DELIVERED"],
+  // SA-1101: "Deliver again". Not a demotion (no reason: the driver's is on the stop). No REFUSED -> CANCELLED: a
+  // cancel credits stock, and a return already recorded for the same goods would credit it twice.
+  REFUSED: ["CONFIRMED"],
 };
 
 /** The statuses an order may be cancelled FROM: the office cancel's compare-and-set set (SA-404f F2). */

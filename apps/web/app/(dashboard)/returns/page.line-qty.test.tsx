@@ -63,7 +63,10 @@ const ORDER = {
   ],
 };
 jest.mock("@/lib/api/orders", () => ({
-  useOrders: () => ({ data: { data: [ORDER] }, isLoading: false }),
+  useOrders: (filters?: { status?: string }) => ({
+    data: { data: filters?.status === "DELIVERED" ? [ORDER] : [] },
+    isLoading: false,
+  }),
   useOrder: () => ({ data: undefined }),
 }));
 jest.mock("@/lib/api/invoices", () => ({ useInvoices: () => ({ data: { data: [] } }) }));

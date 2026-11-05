@@ -575,6 +575,35 @@ export function deliveryTypeForQty(deliveredQty: number, orderedQty: number): De
   return "PARTIAL";
 }
 
+/** The tolerance on a delivered quantity: at or below it nothing was delivered; above it, something was. */
+export const STOP_QTY_EPS = 0.0005;
+
+export type StopOrderOutcome = "DELIVERED" | "REFUSED";
+
+/**
+ * SA-1101: what a stop close makes this order. Reads the lines AFTER this close's `deliveredQty` recompute, so a
+ * line refused this visit but delivered on an earlier one still counts as delivered. First match wins: cancelled
+ * lines are dropped; a non-finite or negative quantity throws (garbage never picks a status); no lines left is
+ * DELIVERED (an empty order closes as it always did); every line at nothing is REFUSED; anything else (short,
+ * partly refused) is DELIVERED.
+ */
+export function orderOutcomeAfterStop(
+  lines: readonly { status?: string | null; deliveredQty: number | string }[],
+): StopOrderOutcome {
+  const qtys = lines
+    .filter((l) => l.status !== "CANCELLED")
+    .map((l) => {
+      const blank = typeof l.deliveredQty === "string" && l.deliveredQty.trim() === "";
+      const q = blank ? Number.NaN : Number(l.deliveredQty);
+      if (!Number.isFinite(q) || q < 0) {
+        throw new Error(`orderOutcomeAfterStop: invalid deliveredQty ${String(l.deliveredQty)}`);
+      }
+      return q;
+    });
+  if (qtys.length === 0) return "DELIVERED";
+  return qtys.every((q) => q <= STOP_QTY_EPS) ? "REFUSED" : "DELIVERED";
+}
+
 export interface PlannedDelivery {
   orderItemId: string;
   /** Null for an unlisted (ad-hoc) line — the server keys on orderItemId and ignores this. */

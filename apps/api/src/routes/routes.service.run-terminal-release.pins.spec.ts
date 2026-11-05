@@ -223,7 +223,14 @@ describe("RoutesService — F11 run cancel/skip pins (no REG- token; excluded fr
     const sweepArgs = (prisma.order.updateMany as jest.Mock).mock.calls[0][0];
     expect(sweepArgs.where).toEqual({
       customerId: "c1",
-      status: { notIn: [OrderStatus.DRAFT, OrderStatus.DELIVERED, OrderStatus.CANCELLED] },
+      status: {
+        notIn: [
+          OrderStatus.DRAFT,
+          OrderStatus.DELIVERED,
+          OrderStatus.REFUSED,
+          OrderStatus.CANCELLED,
+        ],
+      },
       routeRunStopId: null,
       fulfillPath: FulfillPath.ROUTE,
     });
@@ -445,7 +452,7 @@ describe("RoutesService — F11 run cancel/skip pins (no REG- token; excluded fr
     // no second (release) call rides along with it.
     expect(txMock.order.updateMany).toHaveBeenCalledTimes(1);
     expect(txMock.order.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { status: "DELIVERED" } }),
+      expect.objectContaining({ data: { status: "DELIVERED", deliveredAt: expect.any(Date) } }),
     );
   });
 
@@ -498,7 +505,7 @@ describe("RoutesService — F11 run cancel/skip pins (no REG- token; excluded fr
     // Exactly the DELIVERED flip for this stop's own order, nothing else.
     expect(txMock.order.updateMany).toHaveBeenCalledTimes(1);
     expect(txMock.order.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { status: "DELIVERED" } }),
+      expect.objectContaining({ data: { status: "DELIVERED", deliveredAt: expect.any(Date) } }),
     );
   });
 });

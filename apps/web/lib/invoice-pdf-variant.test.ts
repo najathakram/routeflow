@@ -23,6 +23,8 @@ describe("deriveInvoiceVariant honours the server's pdfVariant (F3)", () => {
       "draft",
     );
     expect(deriveInvoiceVariant({ status: "DRAFT", order: { status: "DELIVERED" } })).toBe("final");
+    // SA-1101 P: REFUSED is post-delivery, so the $0 draft is final
+    expect(deriveInvoiceVariant({ status: "DRAFT", order: { status: "REFUSED" } })).toBe("final");
     expect(deriveInvoiceVariant({ status: "SENT" })).toBe("final");
   });
 });

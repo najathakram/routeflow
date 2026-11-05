@@ -85,7 +85,8 @@ apps/api/src/orders/counter-sale/counter-sale-today.ts | PaymentMethod | 1 | pen
 apps/api/src/orders/counter-sale/counter-tender-row.ts | PaymentMethod | 1 | pending:B7 | array {CASH,CREDIT_CARD,CHECK}
 apps/api/src/orders/counter-sale/pickup-complete.service.ts | OrderStatus | 1 | pending:B7 | array {PENDING,CONFIRMED,OUT_FOR_DELIVERY}
 apps/api/src/orders/line-author-channel.ts | OrderSource | 1 | pending:B7 | union {APP,PHONE,ROUTE}
-apps/api/src/orders/order-status-transitions.ts | OrderStatus | 5 | pending:B7 | array+object {DRAFT,PENDING,CONFIRMED,OUT_FOR_DELIVERY,PARTI…
+apps/api/src/orders/order-status-transitions.ts | OrderStatus | 3 | pending:B7 | array+object {DRAFT,PENDING,CONFIRMED,OUT_FOR_DELIVERY,PARTI…
+apps/api/src/orders/order-status-transitions.ts | ItemStatus | 2 | subset | array {CONFIRMED,DELIVERED,CANCELLED}: SA-1101 added REFUSED to OrderStatus, so the transition table's value lists now score against ItemStatus; they are the order transition TABLE, not a line status set
 apps/api/src/orders/orders.controller.ts | FulfillPath | 1 | pending:B7 | chain {SHIP,ROUTE,PICKUP}
 apps/api/src/orders/orders.service.ts | InvoiceStatus | 1 | pending:B7 | array {PAID,PARTIAL,WRITTEN_OFF}
 apps/api/src/orders/orders.service.ts | OrderStatus | 2 | pending:B7 | array {PENDING,CONFIRMED,OUT_FOR_DELIVERY}
@@ -160,7 +161,8 @@ apps/mobile/lib/order-draft-logic.ts | PriceType | 1 | old-native | union {STAND
 apps/mobile/lib/order-line-display.ts | ItemStatus | 1 | old-native | chain {CANCELLED,DELIVERED,PARTIAL}
 apps/mobile/lib/order-line-display.ts | OrderStatus | 2 | old-native | array+object {DRAFT,PENDING,CONFIRMED,OUT_FOR_DELIVERY,PARTI…
 apps/mobile/lib/order-line-display.ts | PriceType | 1 | old-native | chain {DISCOUNTED,MANUAL,PROMO}
-apps/mobile/lib/order-status-flow.ts | OrderStatus | 6 | old-native | array+object {DRAFT,PENDING,CONFIRMED,OUT_FOR_DELIVERY,PARTI…
+apps/mobile/lib/order-status-flow.ts | OrderStatus | 4 | old-native | array+object {DRAFT,PENDING,CONFIRMED,OUT_FOR_DELIVERY,PARTI…
+apps/mobile/lib/order-status-flow.ts | ItemStatus | 2 | old-native | array {CONFIRMED,DELIVERED,CANCELLED}: the mobile mirror of the order transition table (SA-1101 REFUSED row), not a line status set
 apps/mobile/lib/order-tracking-logic.ts | OrderStatus | 1 | old-native | array {PENDING,CONFIRMED,OUT_FOR_DELIVERY,PARTIALLY_D…
 apps/mobile/lib/payment-methods.ts | PaymentMethod | 2 | old-native | array+object {CASH,CHECK,ZELLE,ACH,CREDIT_CARD,OTHER}
 apps/mobile/lib/pos-mode.ts | OrderStatus | 1 | old-native | chain {CONFIRMED,OUT_FOR_DELIVERY,DELIVERED}
@@ -205,7 +207,7 @@ apps/web/app/(dashboard)/orders/[id]/_components/line-status.ts | ItemStatus | 1
 apps/web/app/(dashboard)/orders/[id]/_components/order-line-edit.tsx | OrderStatus | 1 | pending:B5 | union {DRAFT,PENDING,CONFIRMED,OUT_FOR_DELIVERY,DELIV…
 apps/web/app/(dashboard)/orders/[id]/_components/order-line-edit.tsx | PriceType | 1 | pending:B6 | chain {SPECIAL,DISCOUNTED,MANUAL}
 apps/web/app/(dashboard)/orders/[id]/order-action-access.ts | UserRole | 1 | pending:B5 | array {OPERATOR,TENANT_ADMIN,SUPER_ADMIN}
-apps/web/app/(dashboard)/orders/[id]/page.tsx | OrderStatus | 2 | pending:B5 | chain {DRAFT,PENDING,CONFIRMED}
+apps/web/app/(dashboard)/orders/[id]/page.tsx | OrderStatus | 1 | pending:B5 | chain {DRAFT,PENDING,CONFIRMED}
 apps/web/app/(dashboard)/orders/_components/CreateOrderModal.tsx | PriceType | 1 | pending:B6 | union {STANDARD,SPECIAL,DISCOUNTED,MANUAL}
 apps/web/app/(dashboard)/purchase-orders/[id]/po-detail-logic.ts | PurchaseOrderStatus | 1 | pending:B5 | chain {SENT,PARTIAL,RECEIVED}
 apps/web/app/(dashboard)/returns/[id]/page.tsx | ReturnReason | 1 | pending:B5 | object {DAMAGED,WRONG_ITEM,EXCESS_ORDER,CUSTOMER_REFUS…
@@ -286,7 +288,6 @@ apps/web/lib/auth.ts | UserRole | 1 | pending:B5 | union {OPERATOR,DRIVER,CUSTOM
 apps/web/lib/auth.ts | UserStatus | 1 | pending:B5 | union {ACTIVE,INACTIVE,SUSPENDED}
 apps/web/lib/buyer-fulfilment.ts | OrderStatus | 1 | pending:B5 | object {OUT_FOR_DELIVERY,PARTIALLY_DELIVERED,DELIVERED}
 apps/web/lib/buyer-invoice-status.ts | InvoiceStatus | 1 | pending:B5 | case {OVERDUE,VOID,WRITTEN_OFF}
-apps/web/lib/buyer-order-again.ts | OrderStatus | 1 | pending:B5 | array {DELIVERED,PARTIALLY_DELIVERED,CANCELLED}
 apps/web/lib/check-badge.ts | CheckStatus | 1 | pending:B5 | union {RECORDED,DEPOSITED,CLEARED,BOUNCED}
 apps/web/lib/drafts.ts | PriceType | 1 | pending:B6 | union {STANDARD,SPECIAL,DISCOUNTED,MANUAL}
 apps/web/lib/fulfil-path-options.ts | FulfillPath | 2 | pending:B5 | object+union {ROUTE,SHIP,PICKUP}
@@ -307,7 +308,7 @@ packages/types/api/buyer.ts | AuthorizationStatus | 1 | pending:B3 | union {NONE
 packages/types/api/checks.ts | CheckStatus | 1 | pending:B3 | object {RECORDED,DEPOSITED,CLEARED,BOUNCED}
 packages/types/api/counter-sale.ts | PaymentMethod | 1 | pending:B3 | array {ADVANCE,CASH,CARD,CHECK,OTHER,STORE_CREDIT}
 packages/types/api/fulfilment-methods.ts | FulfillPath | 1 | pending:B3 | object {ROUTE,SHIP,PICKUP}
-packages/types/api/fulfilment-methods.ts | OrderStatus | 3 | pending:B3 | array {PENDING,CONFIRMED,OUT_FOR_DELIVERY,DELIVERED}
+packages/types/api/fulfilment-methods.ts | ItemStatus | 3 | pending:B3 | array {PENDING,CONFIRMED,DELIVERED}: order-status lists that SA-1101 REFUSED in OrderStatus re-scored against ItemStatus
 packages/types/api/fulfilment.ts | FulfillPath | 1 | pending:B3 | union {ROUTE,SHIP,PICKUP}
 packages/types/api/inline-returns.ts | ReturnStatus | 1 | pending:B3 | union {RECEIVED,REFUNDED,REJECTED,CANCELLED}
 packages/types/api/messaging-delivery.ts | NotificationEvent | 1 | subset | array {STAFF_NEW_ORDER,BUYER_ORDER_EDITED,BUYER_ORDER_CANCELLED}: the three emails the office gets about a customer order (SA-1063), the one list the rules card and EMAIL_KIND_VALUES share
@@ -321,9 +322,8 @@ packages/types/api/ship-state.ts | OrderStatus | 1 | pending:B3 | array {OUT_FOR
 packages/types/api/staff-capabilities.ts | OperatorPermissionGroup | 1 | pending:B3 | union {PRICING,ORDERS,FINANCE}
 packages/types/api/staff-capabilities.ts | UserRole | 2 | pending:B3 | array+union {OPERATOR,TENANT_ADMIN,SUPER_ADMIN}
 packages/types/api/stock-count.ts | StockCountStatus | 1 | pending:B3 | union {OPEN,REVIEW,COMMITTED,DISCARDED}
-packages/types/index.ts | ItemStatus | 1 | pending:B3 | enum {PENDING,CONFIRMED,PARTIAL,DELIVERED,CANCELLED}
+packages/types/index.ts | ItemStatus | 2 | pending:B3 | enum {PENDING,CONFIRMED,PARTIAL,DELIVERED,CANCELLED}
 packages/types/index.ts | MutationType | 1 | pending:B3 | enum {DELIVERED,PARTIAL,REFUSED,ADD_ON,SUBSTITUTED}
-packages/types/index.ts | OrderStatus | 1 | pending:B3 | enum {PENDING,CONFIRMED,OUT_FOR_DELIVERY,DELIVERED,C…
 packages/types/index.ts | RouteRunStatus | 1 | pending:B3 | enum {SCHEDULED,IN_PROGRESS,COMPLETED,CANCELLED}
 packages/types/index.ts | RouteRunStopStatus | 1 | pending:B3 | enum {PENDING,IN_PROGRESS,COMPLETED,SKIPPED}
 packages/types/index.ts | TxnStatus | 1 | pending:B3 | enum {UNPAID,PARTIAL,PAID}

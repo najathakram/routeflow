@@ -135,3 +135,24 @@ describe("rebuildIssuedDepositMirrorOnDelivery: keyed on the billing moment", ()
     expect(s.rebuildSiblingDrafts).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("resolvePendingMirror: REFUSED is post-delivery (SA-1101 RO-10)", () => {
+  it.each([OrderStatus.DELIVERED, OrderStatus.REFUSED, OrderStatus.PARTIALLY_DELIVERED])(
+    "a draft behind a %s order is not a pending mirror, so an edit never re-mirrors it to the full amount",
+    async (status) => {
+      expect(await resolvePendingMirror(cfg("unset"), "t1", draft, order(status, "ROUTE"))).toBe(
+        false,
+      );
+    },
+  );
+  it("a draft behind an order still out for delivery is a pending mirror", async () => {
+    expect(
+      await resolvePendingMirror(
+        cfg("unset"),
+        "t1",
+        draft,
+        order(OrderStatus.OUT_FOR_DELIVERY, "ROUTE"),
+      ),
+    ).toBe(true);
+  });
+});

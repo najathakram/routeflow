@@ -55,6 +55,8 @@ function stopMapsUrl(stop: RouteRunStop): string | null {
  *  completion, and a skipped stop's orders went back to the office, so neither may read "In progress" beside Undo. */
 function orderStatusBadge(status: string, stopStatus?: string) {
   if (stopStatus === "SKIPPED") return null;
+  // SA-1101 §4.2: a wholly refused order reads "Refused" once its stop is done, never "Completed" or "Delivered".
+  if (status === "REFUSED") return <Badge status="REFUSED" />;
   if (stopStatus === "COMPLETED" && status !== "CANCELLED") return <Badge status="COMPLETED" />;
   if (status === "DELIVERED") return <Badge status="COMPLETED" />;
   if (status === "CANCELLED") return <Badge status="CANCELLED" />;

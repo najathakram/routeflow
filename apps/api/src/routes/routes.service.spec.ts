@@ -1047,7 +1047,14 @@ describe("RoutesService", () => {
       // and is never backfilled, so this is behaviour-identical for existing data.
       const EXPECTED_SCHEDULED_WHERE = {
         customerId: "c1",
-        status: { notIn: [OrderStatus.DRAFT, OrderStatus.DELIVERED, OrderStatus.CANCELLED] },
+        status: {
+          notIn: [
+            OrderStatus.DRAFT,
+            OrderStatus.DELIVERED,
+            OrderStatus.REFUSED,
+            OrderStatus.CANCELLED,
+          ],
+        },
         routeRunStopId: null,
         fulfillPath: FulfillPath.ROUTE,
       };
@@ -1585,7 +1592,11 @@ describe("RoutesService", () => {
           findFirst: jest
             .fn()
             .mockResolvedValue({ orderId: "ord-1", productId: "prod-1", unitPrice: 10 }),
-          findMany: jest.fn().mockResolvedValue([{ id: "oi-1", orderId: "ord-1", qty: 10 }]),
+          findMany: jest
+            .fn()
+            .mockResolvedValue([
+              { id: "oi-1", orderId: "ord-1", qty: 10, status: null, deliveredQty: 3 },
+            ]),
         },
         deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
         $executeRaw: jest.fn().mockResolvedValue(0),
@@ -2062,7 +2073,11 @@ describe("RoutesService", () => {
         orderItem: {
           ...prisma.orderItem,
           findFirst: jest.fn().mockResolvedValue({ orderId: "ord-1" }),
-          findMany: jest.fn().mockResolvedValue([{ id: "oi-1", orderId: "ord-1", qty: 10 }]),
+          findMany: jest
+            .fn()
+            .mockResolvedValue([
+              { id: "oi-1", orderId: "ord-1", qty: 10, status: null, deliveredQty: 3 },
+            ]),
 
           update: jest.fn().mockResolvedValue({}),
         },
@@ -2137,7 +2152,11 @@ describe("RoutesService", () => {
         orderItem: {
           ...prisma.orderItem,
           findFirst: jest.fn().mockResolvedValue({ orderId: "ord-1", productId: "p1" }),
-          findMany: jest.fn().mockResolvedValue([{ id: "oi-1", orderId: "ord-1", qty: 10 }]),
+          findMany: jest
+            .fn()
+            .mockResolvedValue([
+              { id: "oi-1", orderId: "ord-1", qty: 10, status: null, deliveredQty: 3 },
+            ]),
           update: orderItemUpdate,
         },
         deliveryMutation: {
@@ -2195,7 +2214,11 @@ describe("RoutesService", () => {
         orderItem: {
           ...prisma.orderItem,
           findFirst: jest.fn().mockResolvedValue({ orderId: "ord-1", productId: "p1" }),
-          findMany: jest.fn().mockResolvedValue([{ id: "oi-1", orderId: "ord-1", qty: 10 }]),
+          findMany: jest
+            .fn()
+            .mockResolvedValue([
+              { id: "oi-1", orderId: "ord-1", qty: 10, status: null, deliveredQty: 0 },
+            ]),
           update: orderItemUpdate,
         },
         deliveryMutation: {
@@ -2224,6 +2247,14 @@ describe("RoutesService", () => {
         where: { id: "oi-1" },
         data: { deliveredQty: 0 },
       });
+      // SA-1101: every line of the order delivered 0, so the close makes the ORDER REFUSED (not DELIVERED).
+      expect(txMock.order.updateMany).toHaveBeenCalledTimes(1);
+      expect(txMock.order.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ id: { in: ["ord-1"] } }),
+          data: { status: "REFUSED", deliveredAt: null },
+        }),
+      );
     });
 
     // Opus review of #1292: this shape (no `payment` at all — the ordinary case for
@@ -2280,6 +2311,7 @@ describe("RoutesService", () => {
         ],
       });
       prisma.driver.findFirst.mockResolvedValue(null);
+      let bookedQty = 0;
       const txMock = {
         ...prisma,
         routeRunStop: {
@@ -2292,8 +2324,15 @@ describe("RoutesService", () => {
         orderItem: {
           ...prisma.orderItem,
           findFirst: jest.fn().mockResolvedValue({ orderId: "ord-1" }),
-          findMany: jest.fn().mockResolvedValue([{ id: "oi-1", orderId: "ord-1", qty: 10 }]),
-          update: jest.fn().mockResolvedValue({}),
+          // SA-1101: the fit check reads the column BEFORE the recompute (0) and the stop-outcome read
+          // AFTER it (7), so the fake serves whatever the recompute's update last wrote.
+          findMany: jest.fn(async () => [
+            { id: "oi-1", orderId: "ord-1", qty: 10, status: null, deliveredQty: bookedQty },
+          ]),
+          update: jest.fn(async ({ data }: any) => {
+            if (data?.deliveredQty !== undefined) bookedQty = Number(data.deliveredQty);
+            return {};
+          }),
         },
         deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
         $executeRaw: jest.fn().mockResolvedValue(0),
@@ -2475,7 +2514,11 @@ describe("RoutesService", () => {
         orderItem: {
           ...prisma.orderItem,
           findFirst: jest.fn().mockResolvedValue({ orderId: "ord-1", productId: "prod-1" }),
-          findMany: jest.fn().mockResolvedValue([{ id: "oi-1", orderId: "ord-1", qty: 10 }]),
+          findMany: jest
+            .fn()
+            .mockResolvedValue([
+              { id: "oi-1", orderId: "ord-1", qty: 10, status: null, deliveredQty: 3 },
+            ]),
 
           update: jest.fn().mockResolvedValue({}),
         },

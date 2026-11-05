@@ -37,6 +37,7 @@ import {
   leavePartialDeliveryInTx,
   recordPartialDeliveryInTx,
 } from "./order-pd-quantities";
+import { deliverAgainInTx } from "./deliver-again";
 import { SHIP_STATE_REOPENED, SHIP_STATE_SOURCES, SHIP_STATE_UNMARKED } from "./ship-state-markers";
 
 export {
@@ -103,6 +104,10 @@ export async function updateStatusWithShipMarker(
     !source ||
     !(await billsAtShipment(featureConfig, order.tenantId ?? prisma.getTenantId(), order))
   ) {
+    if (order.status === OrderStatus.REFUSED && to === OrderStatus.CONFIRMED) {
+      // SA-1101 A-3: Deliver again = the move + the run-link release + the live-return guard, in one tx.
+      return prisma.tenantTransaction((tx) => deliverAgainInTx(tx, order.id, data));
+    }
     if (to === OrderStatus.PARTIALLY_DELIVERED) {
       // B692: a manual PARTIALLY_DELIVERED books its per-line quantities (or refuses) in the SAME tx as the status.
       return prisma.tenantTransaction(async (tx) => {

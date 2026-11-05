@@ -6,7 +6,25 @@
  * terminal, so a fully-paid invoice stays DRAFT and drops out of AR/aging.
  * See `invoice-actions.test.ts` for the rest of this module's gates.
  */
-import { canRecordPayment, canWriteOff, isOpenInvoiceStatus } from "../lib/invoices-logic";
+import {
+  canRecordPayment,
+  canWriteOff,
+  isOpenInvoiceStatus,
+  isPendingOrderMirror,
+} from "../lib/invoices-logic";
+
+// SA-1101 P: a REFUSED order is post-delivery, so its $0 draft is NOT a pending mirror (it would be re-mirrored at the full amount).
+describe("isPendingOrderMirror: post-delivery statuses", () => {
+  it.each(["DELIVERED", "PARTIALLY_DELIVERED", "REFUSED"])(
+    "%s is not a pending mirror",
+    (orderStatus) => {
+      expect(isPendingOrderMirror({ orderId: "o1", orderStatus })).toBe(false);
+    },
+  );
+  it.each(["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY"])("%s is a pending mirror", (orderStatus) => {
+    expect(isPendingOrderMirror({ orderId: "o1", orderStatus })).toBe(true);
+  });
+});
 
 describe("canRecordPayment", () => {
   it.each(["DRAFT", "WRITTEN_OFF", "VOID", "PAID"])("%s → false", (status) => {

@@ -9,6 +9,7 @@ import type {
   ToCollectState,
 } from "@routeflow/types";
 import type { InvoiceSendLock, InvoiceSendState } from "@/lib/invoice-send-state";
+import { isPostDeliveryOrderStatus } from "@routeflow/types";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import { isRecordPaymentLocalRefusal } from "@/lib/duplicate-payment-ref";
@@ -540,7 +541,8 @@ export function deriveInvoiceVariant(inv: {
 }): InvoicePdfVariant {
   if (inv.pdfVariant === "draft" || inv.pdfVariant === "final") return inv.pdfVariant;
   if (inv.status !== "DRAFT") return "final";
-  if (inv.order?.status === "DELIVERED") return "final";
+  // SA-1101: REFUSED is post-delivery too (the $0 draft is final).
+  if (isPostDeliveryOrderStatus(inv.order?.status)) return "final";
   return "draft";
 }
 

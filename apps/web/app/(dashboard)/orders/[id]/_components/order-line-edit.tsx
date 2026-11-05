@@ -68,6 +68,7 @@ export type ApiOrderStatus =
   // compare against it without a type error; a route can leave an order
   // PARTIALLY_DELIVERED and it must be treated as no-longer-open.
   | "PARTIALLY_DELIVERED"
+  | "REFUSED"
   | "CANCELLED";
 
 export interface EditItemState {

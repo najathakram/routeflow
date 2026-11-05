@@ -566,6 +566,10 @@ enum NotificationEvent {
   // Pickup orders (additive-only, appended at the END): "your order is ready for pickup". The pickup
   // flow (a separate PR) is its firing site; this PR only creates the event, template and seed rows.
   READY_FOR_PICKUP
+  // SA-1101 (additive-only, appended at the END): the buyer notice for a wholly refused order. The schema
+  // bundle never USES this value; only app code after the commit does (ADD VALUE cannot be used in its own
+  // transaction). Rules are seeded lazily by seedDefaultsFor, copying each tenant's DELIVERED choice.
+  ORDER_REFUSED
 }
 
 // One conversation with a customer across all channels (the inbox row).

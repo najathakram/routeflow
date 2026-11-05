@@ -26,6 +26,9 @@ export const STOP_BUSY_COPY = "The office is updating this order. Try again in a
 export const STOP_NOT_ACCEPTED_COPY =
   "That was not accepted. The list is up to date now. Check the stop and try again.";
 export const STOP_UNDO_REFUSED_COPY = "This stop can't be undone here. Ask your office.";
+/** SA-1101 A-4: Undo refused with 409 ORDER_HAS_RETURN. The same sentence the server sends, fixed here (B986: never rendered from the response). */
+export const STOP_UNDO_HAS_RETURN_COPY =
+  "An order on this stop has a return. To undo the stop, cancel the return first.";
 export const RUN_CANNOT_FINISH_COPY =
   "This route can't be finished yet. Check its stops, then try again.";
 
@@ -67,8 +70,12 @@ export function stopErrorCopy(err: unknown): StopErrorCopy {
 
 /** Undo: a 400 means a payment is recorded against the stop or its orders moved off the route; either way the office fixes it. */
 export function stopUndoErrorCopy(err: unknown): StopErrorCopy {
-  if ((err as Shape | null)?.response?.status === 400) {
+  const res = (err as Shape | null)?.response;
+  if (res?.status === 400) {
     return { text: STOP_UNDO_REFUSED_COPY };
+  }
+  if (res?.status === 409 && res.data?.code === API_ERROR_CODES.ORDER_HAS_RETURN) {
+    return { text: STOP_UNDO_HAS_RETURN_COPY };
   }
   return stopErrorCopy(err);
 }

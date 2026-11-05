@@ -7,7 +7,10 @@ import {
   RUN_CANNOT_FINISH_COPY,
   STOP_REGULATED_COPY,
   STOP_REOPENED_COPY,
+  STOP_UNDO_HAS_RETURN_COPY,
+  STOP_UNDO_REFUSED_COPY,
   stopErrorCopy,
+  stopUndoErrorCopy,
   runActionErrorCopy,
   leftToDeliverText,
 } from "./driver-stop-copy";
@@ -59,6 +62,25 @@ describe("stopErrorCopy", () => {
     ["a 500 offers another try", err(500), STOP_GENERIC_COPY],
   ])("%s", (_l, e, text) => {
     expect(stopErrorCopy(e)).toEqual({ text });
+  });
+});
+
+describe("stopUndoErrorCopy (SA-1101 A-4)", () => {
+  it("409 ORDER_HAS_RETURN reads as the return sentence, not 'This stop changed'", () => {
+    const e = err(409, "ORDER_HAS_RETURN", "raw server words");
+    expect(stopUndoErrorCopy(e)).toEqual({
+      text: "An order on this stop has a return. To undo the stop, cancel the return first.",
+    });
+    expect(stopUndoErrorCopy(e).text).toBe(STOP_UNDO_HAS_RETURN_COPY);
+    expect(stopUndoErrorCopy(e)).not.toEqual(stopErrorCopy(e));
+  });
+
+  it("the other answers are unchanged: 400 is the office line, a codeless 409 refreshes", () => {
+    expect(stopUndoErrorCopy(err(400, undefined, "payment"))).toEqual({
+      text: STOP_UNDO_REFUSED_COPY,
+    });
+    expect(stopUndoErrorCopy(err(409, undefined, "raw"))).toEqual({ text: STOP_MOVED_COPY });
+    expect(stopUndoErrorCopy(err(500))).toEqual({ text: STOP_GENERIC_COPY });
   });
 });
 
