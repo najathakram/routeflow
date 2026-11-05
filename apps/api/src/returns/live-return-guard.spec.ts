@@ -1,4 +1,8 @@
-import { assertNoLiveReturn, UNDO_STOP_RETURN_MESSAGE } from "./live-return-guard";
+import {
+  assertNoLiveReturn,
+  lockThenAssertNoLiveReturn,
+  UNDO_STOP_RETURN_MESSAGE,
+} from "./live-return-guard";
 
 const txWith = (count: number) => ({ return: { count: jest.fn().mockResolvedValue(count) } });
 
@@ -25,5 +29,24 @@ describe("assertNoLiveReturn", () => {
     expect(UNDO_STOP_RETURN_MESSAGE).toBe(
       "An order on this stop has a return. To undo the stop, cancel the return first.",
     );
+  });
+});
+
+describe("lockThenAssertNoLiveReturn", () => {
+  it("takes the Order row lock (id order) before it counts, and still throws on a live return", async () => {
+    const order: string[] = [];
+    const tx = {
+      $executeRaw: jest.fn().mockImplementation(async () => void order.push("lock")),
+      return: {
+        count: jest.fn().mockImplementation(async () => {
+          order.push("count");
+          return 1;
+        }),
+      },
+    };
+    await expect(lockThenAssertNoLiveReturn(tx as never, ["b", "a"], "msg")).rejects.toMatchObject({
+      response: { code: "ORDER_HAS_RETURN", message: "msg" },
+    });
+    expect(order).toEqual(["lock", "count"]);
   });
 });

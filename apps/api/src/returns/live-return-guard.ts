@@ -10,12 +10,14 @@
  */
 import { ConflictException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { lockOrderRows } from "../credit-notes/credit-note-locks";
 import { DEAD_RETURN_STATUSES } from "./return-statuses";
 
 export const UNDO_STOP_RETURN_MESSAGE =
   "An order on this stop has a return. To undo the stop, cancel the return first.";
 
 type CountTx = { return: { count: (args: any) => Promise<number> } };
+type LockTx = CountTx & Parameters<typeof lockOrderRows>[0];
 
 export async function assertNoLiveReturn(
   tx: CountTx,
@@ -27,4 +29,17 @@ export async function assertNoLiveReturn(
     where: { orderId: { in: [...orderIds] }, status: { notIn: DEAD_RETURN_STATUSES } },
   });
   if (live > 0) throw new ConflictException({ code: API_ERROR_CODES.ORDER_HAS_RETURN, message });
+}
+
+/**
+ * For a caller that does not hold the Order rows yet: lock them (FOR UPDATE, id order, the lock a return create takes),
+ * then run the check. The lock comes first by construction, so a return created in between cannot slip past the count.
+ */
+export async function lockThenAssertNoLiveReturn(
+  tx: LockTx,
+  orderIds: readonly string[],
+  message: string,
+): Promise<void> {
+  await lockOrderRows(tx, null, orderIds);
+  await assertNoLiveReturn(tx, orderIds, message);
 }

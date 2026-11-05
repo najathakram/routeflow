@@ -130,8 +130,7 @@ import {
 } from "./stop-completion-key";
 import { withRunStopProjections, withRunStopProjectionsForRunsPage } from "./run-projections";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { lockOrderRows } from "../credit-notes/credit-note-locks";
-import { assertNoLiveReturn, UNDO_STOP_RETURN_MESSAGE } from "../returns/live-return-guard";
+import { lockThenAssertNoLiveReturn, UNDO_STOP_RETURN_MESSAGE } from "../returns/live-return-guard";
 export {
   NON_ROUTABLE_ORDER_STATUSES,
   RELEASED_CHANGE_REQUEST_REASON,
@@ -2902,8 +2901,7 @@ export class RoutesService {
     await retryOnTxConflict("routes.reopenStop", () =>
       this.prisma.tenantTransaction(async (tx) => {
         reopened.length = 0; // a retried attempt starts clean
-        await lockOrderRows(tx, null, orderIds); // SA-1101 A-4: Order rows, then the return check
-        await assertNoLiveReturn(tx, orderIds, UNDO_STOP_RETURN_MESSAGE);
+        await lockThenAssertNoLiveReturn(tx, orderIds, UNDO_STOP_RETURN_MESSAGE); // SA-1101 A-4
         // 0. B306: a zero-payable-invoice completion books the WHOLE at-door
         // amount as an AdvancePayment with no InvoicePayment row, so the
         // liveMoney guard above never sees it and voidPayment's own reversal
