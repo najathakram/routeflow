@@ -155,7 +155,7 @@ describe("B1282 class: the business-profile readers use the one override rule", 
 });
 
 /** What the database does with an `orderBy`; a read with none keeps the physical order it was handed. */
-function sortByOrder(rows: any[], orderBy?: Array<Record<string, "asc" | "desc">>): any[] {
+function sortByOrder(rows: any[], orderBy?: ReadonlyArray<Record<string, unknown>>): any[] {
   if (!orderBy) return rows;
   const val = (v: unknown) => (v instanceof Date ? v.getTime() : v);
   return [...rows].sort((a, b) => {
