@@ -13,7 +13,7 @@ import {
   FEATURE_OVERRIDE_EXPIRED_REVIEW_ACTION,
 } from "./feature-override-audit.constants";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { pickLiveRow, resolveLiveEffects } from "./feature-override-rule";
+import { OVERRIDE_READ_ORDER, pickLiveRow, resolveLiveEffects } from "./feature-override-rule";
 
 export type FeatureOverrideEffect = "GRANT" | "DENY";
 export type { FeatureOverrideKind };
@@ -103,6 +103,7 @@ export class FeatureOverrideService {
 
     const rows = await this.prisma.tenantFeatureOverride.findMany({
       where: { tenantId, revokedAt: null },
+      orderBy: OVERRIDE_READ_ORDER,
       select: { featureKey: true, effect: true, kind: true, reason: true, expiresAt: true },
     });
     const value = rows.map((r) => ({
@@ -224,7 +225,7 @@ export class FeatureOverrideService {
   async list(tenantId: string) {
     return this.prisma.tenantFeatureOverride.findMany({
       where: { tenantId },
-      orderBy: { createdAt: "desc" },
+      orderBy: OVERRIDE_READ_ORDER,
     });
   }
 
