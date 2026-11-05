@@ -1,10 +1,11 @@
 /**
  * SA-1101 A-4 census: the live-return guard (`assertNoLiveReturn`, or its lock-first form `lockThenAssertNoLiveReturn`)
- * has exactly two callers, and each takes the Order row lock(s) first.
+ * has exactly three callers, and each takes the Order row lock(s) first.
  *   - orders/deliver-again.ts   deliverAgainInTx   (Deliver again: REFUSED -> CONFIRMED; locks the Order itself)
  *   - routes/routes.service.ts  reopenStop         (Undo the stop; lockThenAssertNoLiveReturn locks the stop's Orders)
- * A third caller (the planned office DELIVERED -> CONFIRMED / PARTIALLY_DELIVERED demotion of an off-route order with a
- * live return) must be added here on purpose, with the proof that it locks the Order first.
+ *   - orders/order-ship-state.ts guardDeliveredDemotion (SA-1101 A-5 / B1272: the office DELIVERED -> CONFIRMED and
+ *     DELIVERED -> PARTIALLY_DELIVERED demotion; first statement of each of its three transaction bodies)
+ * A fourth caller must be added here on purpose, with the proof that it locks the Order first.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -28,14 +29,18 @@ const rel = (f: string) => path.relative(SRC, f).replace(/\\/g, "/");
 const read = (r: string) => strip(fs.readFileSync(path.join(SRC, r), "utf8"));
 
 describe("assertNoLiveReturn census (SA-1101 A-4)", () => {
-  it("is called from exactly orders/deliver-again.ts and routes/routes.service.ts, once each", () => {
+  it("is called from exactly orders/deliver-again.ts, orders/order-ship-state.ts and routes/routes.service.ts, once each", () => {
     const guard = /\b(?:assertNoLiveReturn|lockThenAssertNoLiveReturn)\(/g;
     const callers = walk(SRC)
       .filter((f) => rel(f) !== "returns/live-return-guard.ts")
       .filter((f) => new RegExp(guard.source).test(strip(fs.readFileSync(f, "utf8"))))
       .map(rel)
       .sort();
-    expect(callers).toEqual(["orders/deliver-again.ts", "routes/routes.service.ts"]);
+    expect(callers).toEqual([
+      "orders/deliver-again.ts",
+      "orders/order-ship-state.ts",
+      "routes/routes.service.ts",
+    ]);
     for (const r of callers) expect(read(r).match(guard)).toHaveLength(1);
   });
 
@@ -51,6 +56,17 @@ describe("assertNoLiveReturn census (SA-1101 A-4)", () => {
     expect(guard).toBeGreaterThan(reopen.indexOf("tenantTransaction(async (tx)"));
     expect(guard).toBeLessThan(reopen.indexOf("reverseRunAdvancesInTx("));
     expect(guard).toBeLessThan(reopen.indexOf("deliveryMutation.deleteMany("));
+
+    // SA-1101 A-5: the demotion guard locks first (lockThenAssertNoLiveReturn) and is the FIRST statement of each of the
+    // three transaction bodies that write a DELIVERED demotion, ahead of the status write.
+    const ship = read("orders/order-ship-state.ts");
+    expect(ship.match(/guardDeliveredDemotion\(tx, order, to\)/g)).toHaveLength(3);
+    for (const m of ship.matchAll(/guardDeliveredDemotion\(tx, order, to\)/g)) {
+      expect(ship.slice(0, m.index)).toMatch(/tenantTransaction\(async \(tx\) => \{\s*await $/);
+      expect(ship.indexOf("writeStatusIfUnchanged(tx", m.index)).toBeGreaterThan(m.index!);
+    }
+    const gdd = ship.slice(ship.indexOf("async function guardDeliveredDemotion"));
+    expect(gdd.indexOf("lockThenAssertNoLiveReturn(tx, [order.id],")).toBeGreaterThan(0);
 
     const wrapper = read("returns/live-return-guard.ts");
     const body = wrapper.slice(wrapper.indexOf("export async function lockThenAssertNoLiveReturn"));
