@@ -176,7 +176,6 @@ describeDb("account statement (SA-1078), real Postgres", () => {
       {} as any,
       {} as any,
       {} as any,
-      {} as any,
     );
     const EXPECTED = 1750.1; // 500 + 300 + 400 + 450 + 100 + 0.10
 

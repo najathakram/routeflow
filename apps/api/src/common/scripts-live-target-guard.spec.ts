@@ -121,6 +121,7 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/report-standard-refund-tax-shortfall.mjs": "read-only",
   "apps/api/scripts/report-b2230-unit-lines-without-boxes.mjs": "read-only",
   "apps/api/scripts/report-b2436-stripe-missing-sub.mjs": "read-only",
+  "apps/api/scripts/report-b1281-superseded-checkouts.mjs": "read-only", // SA-1103 (c): SELECT only, default_transaction_read_only = on, Stripe list calls only (spec-pinned)
   "apps/api/scripts/report-cross-tenant-refs.mjs": "read-only", // 681: SELECT COUNT(*) only, default_transaction_read_only = on
   "apps/api/scripts/report-b673-next-delivery-overcharge.mjs": "read-only",
   "apps/api/scripts/report-b861-numbering-config.mjs": "read-only",
@@ -136,6 +137,7 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/report-receiving-unit-drift.mjs": "read-only",
   "apps/api/scripts/report-recurring-boxed-template-qty.mjs": "read-only",
   "apps/api/scripts/report-exempt-orders-taxed.mjs": "read-only",
+  "apps/api/scripts/report-plaintext-secrets.mjs": "read-only",
   "apps/api/scripts/report-order-discounts.mjs": "read-only",
   "apps/api/scripts/report-read-only-sellers-with-buyers.mjs": "read-only",
   "apps/api/scripts/report-rf-invoice-calendar-census.mjs": "read-only",

@@ -46,7 +46,7 @@ describe("lockCustomerInTx is the transaction-scoped xact lock on the caller's o
   it("takes the xact lock through IdempotencyService.acquireLock on the caller's tx", () => {
     expect(start).toBeGreaterThan(-1);
     expect(body).toContain("this.idempotency.acquireLock(");
-    expect(body).toContain('"returns.customer"');
+    expect(body).toContain("returnCustomerLockKey(");
   });
 
   it("never opens a session lock or a transaction of its own", () => {

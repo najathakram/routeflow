@@ -1,6 +1,8 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, InternalServerErrorException, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../common/encryption.service";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { decryptIfSecret, encryptIfSecret } from "../common/secret-at-rest";
 import { assertCostingMethodAllowed } from "../inventory/costing-method-policy";
 
 /**
@@ -24,59 +26,71 @@ export const REMITTANCE_FIELDS = [
 export type RemittanceField = (typeof REMITTANCE_FIELDS)[number];
 export type RemittanceConfig = Partial<Record<RemittanceField, string>>;
 
+/**
+ * Secret-valued keys (security F5-004): encrypted at rest via EncryptionService,
+ * mirroring the TenantConfig SMTP/OAuth path. Everything else stays plaintext.
+ * Exported so the boot report and the secret-keys pin read the one list.
+ */
+export const SECRET_KEYS: ReadonlySet<string> = new Set([
+  "email.smtpPassword",
+  "anthropic.apiKey",
+  "zoho.clientSecret",
+  "zoho.refreshToken",
+]);
+
+/** Keys already warned about for a tenantless read (once per key per process, so a hot path cannot flood the log). */
+const WARNED_TENANTLESS_READS = new Set<string>();
+
 @Injectable()
 export class SystemConfigService {
   private readonly logger = new Logger(SystemConfigService.name);
-
-  /**
-   * Secret-valued keys (security F5-004): encrypted at rest via EncryptionService,
-   * mirroring the TenantConfig SMTP/OAuth path. Everything else stays plaintext.
-   */
-  private static readonly SECRET_KEYS = new Set([
-    "email.smtpPassword",
-    "anthropic.apiKey",
-    "zoho.clientSecret",
-    "zoho.refreshToken",
-  ]);
-  /** AES-256-GCM storage shape from EncryptionService: IV_HEX:TAG_HEX:CIPHERTEXT_B64. */
-  private static readonly ENCRYPTED_FORMAT = /^[0-9a-f]{32}:[0-9a-f]{32}:[A-Za-z0-9+/=]+$/;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly encryption: EncryptionService,
   ) {}
 
-  private isSecretKey(key: string): boolean {
-    return SystemConfigService.SECRET_KEYS.has(key);
+  /**
+   * SA-1102 2.2 + A-1(b): `prisma.forTenant()` is the UNSCOPED client when no tenant is in context, so a tenantless
+   * read returns ANY business's row (for `anthropic.apiKey`: another business's key) and a tenantless write overwrites
+   * one. A SECRET read and EVERY write refuse first with a coded 500 and the key name in the log, and run no query. It
+   * does not return null: a null `settings.taxRate` would silently become tax 0, so a loud failure is the safe one.
+   * Other reads still work (a SUPER_ADMIN with no business reaches about 20 of them) and warn once per key per process.
+   */
+  private refuse(op: string, key: string): never {
+    this.logger.error(`SystemConfigService.${op}("${key}") ran with no business in context`);
+    throw new InternalServerErrorException({
+      code: API_ERROR_CODES.SYSTEM_CONFIG_TENANT_REQUIRED,
+      message: "Settings were read without a business. This is a RouteFlow bug.",
+    });
   }
 
-  private encryptIfSecret(key: string, value: string): string {
-    // Only encrypt non-empty secrets — an empty string is the "cleared" sentinel.
-    return value && this.isSecretKey(key) ? this.encryption.encrypt(value) : value;
-  }
-
-  private decryptIfSecret(key: string, value: string | null): string | null {
-    if (!value || !this.isSecretKey(key)) return value;
-    // Legacy rows written before F5-004 are plaintext (don't match the cipher shape)
-    // — pass them through so existing SMTP/API keys keep working until re-saved.
-    if (!SystemConfigService.ENCRYPTED_FORMAT.test(value)) return value;
-    try {
-      return this.encryption.decrypt(value);
-    } catch {
-      this.logger.error(`Failed to decrypt SystemConfig secret "${key}"`);
-      return null;
+  private guardRead(op: string, key: string, touchesSecret: boolean): void {
+    if (this.prisma.getTenantId()) return;
+    if (touchesSecret) this.refuse(op, key);
+    if (!WARNED_TENANTLESS_READS.has(key)) {
+      WARNED_TENANTLESS_READS.add(key);
+      this.logger.warn(`SystemConfig read without a business: ${key}`);
     }
   }
 
+  private decrypt(key: string, value: string | null): string | null {
+    return decryptIfSecret(SECRET_KEYS, this.encryption, key, value, () =>
+      this.logger.error(`Failed to decrypt SystemConfig secret "${key}"`),
+    );
+  }
+
   async get(key: string): Promise<string | null> {
+    this.guardRead("get", key, SECRET_KEYS.has(key));
     // findFirst instead of findUnique because the unique constraint is now
     // composite (tenantId, key) and forTenant() injects tenantId at runtime.
     const record = await this.prisma.forTenant().systemConfig.findFirst({ where: { key } });
-    return this.decryptIfSecret(key, record?.value ?? null);
+    return this.decrypt(key, record?.value ?? null);
   }
 
   async set(key: string, value: string): Promise<void> {
-    const toStore = this.encryptIfSecret(key, value);
+    if (!this.prisma.getTenantId()) this.refuse("set", key);
+    const toStore = encryptIfSecret(SECRET_KEYS, this.encryption, key, value);
     // Use findFirst + create/update instead of upsert because upsert requires
     // a composite unique key (tenantId_key) that the forTenant() extension
     // cannot auto-inject into the `where` clause.
@@ -92,12 +106,15 @@ export class SystemConfigService {
   }
 
   async getAll(prefix: string): Promise<Record<string, string>> {
+    this.guardRead(
+      "getAll",
+      prefix,
+      [...SECRET_KEYS].some((k) => k.startsWith(prefix)),
+    );
     const records = await this.prisma.forTenant().systemConfig.findMany({
       where: { key: { startsWith: prefix } },
     });
-    return Object.fromEntries(
-      records.map((r) => [r.key, this.decryptIfSecret(r.key, r.value) ?? ""]),
-    );
+    return Object.fromEntries(records.map((r) => [r.key, this.decrypt(r.key, r.value) ?? ""]));
   }
 
   async getZohoConfig(): Promise<{

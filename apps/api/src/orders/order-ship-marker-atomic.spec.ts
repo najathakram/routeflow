@@ -35,6 +35,7 @@ const makeDb = (
     $executeRaw: async () => 1,
     return: { count: async () => 0 },
     order: {
+      findMany: async () => [{ customerId: "c1", tenantId: "t1" }],
       update: async ({ where, data }: any) => {
         if (opts.statusFails && inTx) throw new Error("status update failed");
         // B1095: the status write is a compare-and-set; no row matching is Prisma's P2025

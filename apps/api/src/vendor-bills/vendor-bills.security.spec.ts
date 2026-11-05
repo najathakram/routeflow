@@ -61,7 +61,13 @@ describe("VendorBillsService — F10-004 payment amount guard", () => {
         {
           provide: PlatformConfigService,
           useValue: {
-            resolveAnthropicKey: jest.fn().mockResolvedValue(null),
+            prepareAiCall: jest.fn().mockResolvedValue({
+              key: null,
+              source: "routeflow",
+              model: "",
+              tenantId: "test-tenant",
+            }),
+            requireAiTenant: jest.fn(),
             recordAiUsage: jest.fn(),
           },
         },
@@ -196,7 +202,13 @@ describe("check-duplicate — access control", () => {
         {
           provide: PlatformConfigService,
           useValue: {
-            resolveAnthropicKey: jest.fn().mockResolvedValue(null),
+            prepareAiCall: jest.fn().mockResolvedValue({
+              key: null,
+              source: "routeflow",
+              model: "",
+              tenantId: "test-tenant",
+            }),
+            requireAiTenant: jest.fn(),
             recordAiUsage: jest.fn(),
           },
         },

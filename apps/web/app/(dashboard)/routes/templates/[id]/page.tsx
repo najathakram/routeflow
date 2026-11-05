@@ -67,6 +67,7 @@ import {
   type LateStop,
   type WindowCheckState,
 } from "../../_components/late-stops";
+import { AiRouteNotice } from "../../_components/AiRouteNotice";
 import { TemplateRouteMap } from "./TemplateRouteMap";
 
 const AI_STOP_LABEL: Record<string, string> = {
@@ -1133,13 +1134,7 @@ export default function RouteTemplateDetailPage() {
                       </div>
                     )}
 
-                    {!analysisResult.configured && (
-                      <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
-                        <p className="text-xs text-amber-700">
-                          Configure an Anthropic API key in Settings for AI-powered route insights.
-                        </p>
-                      </div>
-                    )}
+                    <AiRouteNotice result={analysisResult} />
 
                     {/* ETA rows */}
                     <div className="overflow-x-auto rounded-lg border border-surface-border">
