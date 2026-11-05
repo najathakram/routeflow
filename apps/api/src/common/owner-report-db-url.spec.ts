@@ -40,6 +40,7 @@ const B768_REPORTS = [
   "report-order-discounts.mjs", // row 635 PR A (SA-780) - born on the resolver
   "report-cross-tenant-refs.mjs", // row 681 PR A (SA-936) - born on the resolver
   "report-order-taxrate-census.mjs", // T15 / SA-761 Order.taxRate census - born on the resolver
+  "report-plaintext-secrets.mjs", // SA-1102 PR-A - born on the resolver
 ];
 
 /**

@@ -257,6 +257,10 @@ export const API_ERROR_CODES = {
   AI_PARSE_FAILED: "AI_PARSE_FAILED",
   /** SA-1035: PATCH /platform-admin/ai-config, 400: a model id that is not on the AI_MODELS list. */
   AI_MODEL_UNKNOWN: "AI_MODEL_UNKNOWN",
+  /** SA-1102 B1: 403, a business has used this month's AI allowance on RouteFlow's key (or the cap is 0). */
+  AI_MONTHLY_CAP_REACHED: "AI_MONTHLY_CAP_REACHED",
+  /** SA-1102: a SystemConfigService read or write ran with no business in context (a RouteFlow bug, 500). */
+  SYSTEM_CONFIG_TENANT_REQUIRED: "SYSTEM_CONFIG_TENANT_REQUIRED",
   INSUFFICIENT_UNASSIGNED: "INSUFFICIENT_UNASSIGNED",
   PO_LOT_PARTIALLY_CONSUMED: "PO_LOT_PARTIALLY_CONSUMED",
   PO_HAS_LINKED_BILL: "PO_HAS_LINKED_BILL",

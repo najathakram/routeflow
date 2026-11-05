@@ -2,7 +2,11 @@ import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 import Anthropic from "@anthropic-ai/sdk";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
-import { PlatformConfigService } from "../platform-admin/platform-config.service";
+import {
+  PlatformConfigService,
+  capResetsAt,
+  isMonthlyCapRefusal,
+} from "../platform-admin/platform-config.service";
 import { AI_SCAN_MAX_TOKENS, firstText } from "../platform-admin/ai-response";
 import { RouteOptimizationService, StopETA } from "./route-optimization.service";
 
@@ -10,6 +14,10 @@ import { RouteOptimizationService, StopETA } from "./route-optimization.service"
 
 export interface RouteAnalysisResult {
   configured: boolean;
+  /** Why there are no AI notes: "cap" = this business used its monthly allowance (see `aiResetsAt`), "unavailable" = RouteFlow's key is not set. */
+  aiUnavailable?: "cap" | "unavailable";
+  /** ISO date AI notes come back, with `aiUnavailable: "cap"`. */
+  aiResetsAt?: string;
   summary?: string;
   stops?: Array<{
     stopNumber: number;
@@ -42,6 +50,9 @@ export class RouteAnalysisService {
     startTime?: string,
     options?: { windowsOnly?: boolean },
   ): Promise<RouteAnalysisResult> {
+    // SA-1102 A-4 M3: tenant first. A tenantless call is refused before any read, so a request id is never looked up
+    // in another business and a 404 cannot tell the caller whether it exists anywhere.
+    this.platformConfig.requireAiTenant();
     // Load route with stops + customer delivery windows
     const route = await this.prisma.forTenant().route.findUnique({
       where: { id: routeId },
@@ -109,12 +120,24 @@ export class RouteAnalysisService {
       return { configured: false, etas };
     }
 
-    // Resolve Anthropic API key
-    const tenantKey = await this.systemConfig.get("anthropic.apiKey");
-    const apiKey = await this.platformConfig.resolveAnthropicKey(tenantKey);
-
+    // SA-1102 A-1: route insights run on RouteFlow's key (a business key is for bill scans only), through the one
+    // entry point. Over the monthly allowance the deterministic ETAs still come back, without the AI notes.
+    let prepared: Awaited<ReturnType<PlatformConfigService["prepareAiCall"]>>;
+    try {
+      prepared = await this.platformConfig.prepareAiCall("general");
+    } catch (err) {
+      if (isMonthlyCapRefusal(err))
+        return {
+          configured: false,
+          aiUnavailable: "cap",
+          aiResetsAt: capResetsAt(err),
+          etas,
+        };
+      throw err;
+    }
+    const apiKey = prepared.key;
     if (!apiKey) {
-      return { configured: false, etas };
+      return { configured: false, aiUnavailable: "unavailable", etas };
     }
 
     // Call Claude for analysis
@@ -132,7 +155,7 @@ export class RouteAnalysisService {
         )
         .join("\n");
 
-      model = await this.platformConfig.resolveModel();
+      model = prepared.model;
       const anthropic = new Anthropic({ apiKey });
 
       const response = await anthropic.messages.create({
@@ -219,6 +242,9 @@ Status guide:
    * Analyze a route run using its snapshotted depot and start time.
    */
   async analyzeRouteRun(routeRunId: string, startTime?: string): Promise<RouteAnalysisResult> {
+    // SA-1102 A-4 M3: tenant first. A tenantless call is refused before any read, so a request id is never looked up
+    // in another business and a 404 cannot tell the caller whether it exists anywhere.
+    this.platformConfig.requireAiTenant();
     const run = await this.prisma.forTenant().routeRun.findUnique({
       where: { id: routeRunId },
       include: {
@@ -286,12 +312,24 @@ Status guide:
       serviceTime,
     );
 
-    // Resolve Anthropic API key
-    const tenantKey = await this.systemConfig.get("anthropic.apiKey");
-    const apiKey = await this.platformConfig.resolveAnthropicKey(tenantKey);
-
+    // SA-1102 A-1: route insights run on RouteFlow's key (a business key is for bill scans only), through the one
+    // entry point. Over the monthly allowance the deterministic ETAs still come back, without the AI notes.
+    let prepared: Awaited<ReturnType<PlatformConfigService["prepareAiCall"]>>;
+    try {
+      prepared = await this.platformConfig.prepareAiCall("general");
+    } catch (err) {
+      if (isMonthlyCapRefusal(err))
+        return {
+          configured: false,
+          aiUnavailable: "cap",
+          aiResetsAt: capResetsAt(err),
+          etas,
+        };
+      throw err;
+    }
+    const apiKey = prepared.key;
     if (!apiKey) {
-      return { configured: false, etas };
+      return { configured: false, aiUnavailable: "unavailable", etas };
     }
 
     let model: string | null = null;
@@ -308,7 +346,7 @@ Status guide:
         )
         .join("\n");
 
-      model = await this.platformConfig.resolveModel();
+      model = prepared.model;
       const anthropic = new Anthropic({ apiKey });
 
       const response = await anthropic.messages.create({
