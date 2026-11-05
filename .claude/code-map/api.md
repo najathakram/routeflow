@@ -124,3 +124,4 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 | [api/landing-2026-11-04-t1.md](api/landing-2026-11-04-t1.md) | Train 1 (758c727d58..8cd7c13e69): import template headers and key columns, funnel first invoice issued and first payment, wall-clock-free specs |
 | [api/landing-2026-11-04-t2.md](api/landing-2026-11-04-t2.md) | Train 2 (8cd7c13e69..ec9765092c): entitlement sweep, pilot warning, coded errors, hide-per-piece, old mobile redirect, digest report |
 | [api/landing-2026-11-04-w4.md](api/landing-2026-11-04-w4.md) | Window 4 (ec9765092c..b0e0193854): refused order status (migration), deliver again, live-return guard, stop-close checks |
+| [api/landing-2026-11-05-w5.md](api/landing-2026-11-05-w5.md) | Window 5 (b0e0193854..b10bad52a0): delivered-demotion live-return guard, liveReturnWhere, janitor merged-tip fix |

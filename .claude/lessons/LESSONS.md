@@ -180,13 +180,6 @@
 - **Lesson:** **Treat the fast or affected run as a convenience, not a gate. A train or merge gate runs the repo-wide scans in full (`FULL_VERIFY=1`) on the landing tree, whatever the members ran alone.**
 - **Guard:** `FULL_VERIFY=1` in the train gate; none automatic for a single branch. Cf. [[L-290]]. Extended 2026-10-21: a builder's targeted gate (touched specs only) missed three whole-source structural pins in one night (an "only N callers" billing pin, an "every DB-writing script is guarded or exempt" guard, a mobile source-regex pin), because pins live outside the touched files. Before reporting, a builder runs the WHOLE jest of every touched workspace (through the heavy slot, [[L-325]]).
 
-### L-324 · 2026-10-20 · testing · a long serial DB spec lane is run in batches, never one Jest process
-
-- **Symptom:** the DB-backed lane (about 325 suites run serially) was killed with an out-of-memory error at roughly 130 suites on the Mac mini.
-- **Root cause:** one Jest process keeps module registries and Prisma clients across suites, so memory grows with the suite count until the machine kills it.
-- **Lesson:** **Run the DB lane in chunks (a fixed number of suites per Jest process, each against the same migrated database), and treat an OOM at a stable suite count as a batching problem, not a flaky test. Re-run only the failed chunk.**
-- **Guard:** none automatic; the chunked invocation in the lane runbook.
-
 ### L-326 · 2026-10-20 · testing · a migration that retires a known edge updates, in the same train, every spec that pins the edge's old behavior
 
 - **Symptom:** after a column widen retired a rounding edge (B296, a 4-dp rate), a spec that asserted the old 4-dp clamp stayed in the tree; it was green on its own branch and red only on the combined R5 tree.
@@ -223,6 +216,13 @@
 - **Guard:** none automatic; the install order in [[L-254]] (`npm ci --ignore-scripts`, `prisma generate`, build `packages/*`), `npm run local:drift` against the compose DB, and the executed-query rule. Cf. archived L-176. Extended 2026-10-21: a DB-backed spec that needs reference data (a published plan catalog) passed on a seeded dev database and failed in CI's fresh replay database. A DB spec seeds the reference data it needs through the shipped idempotent publishers, behind the local-DB guard, and is proved once against an empty migrated database.
 
 ## domain
+
+### L-368 · 2026-11-05 · domain · a guard that asks "does a document stand on this order" counts every link that ties a document to it, through one shared predicate
+
+- **Symptom:** a guard refused to move an order while a live return stood on it, yet an inline return raised on another order let the sold-from order through; the goods were already restocked and a later cancel credited stock twice.
+- **Root cause:** the guard counted `Return.orderId` only. For an inline return that is the carrying order; the order the goods were sold on is `ReturnItem.sourceOrderId`. The header link and the line link are two answers to one question.
+- **Lesson:** **Write the "is there a live X on these orders" test once, as a predicate that names every link (header key and line source key, dead statuses excluded), and make every guard count through it. Before trusting a guard, list each way a document can be tied to the row and write a red case for the link the author did not think of.**
+- **Guard:** `liveReturnWhere` in `returns/live-return-guard.ts`; `live-return-guard.spec.ts` RO-36, the DB rows RO-31..35 and the three-caller census `live-return-guard.structure.spec.ts`. Cf. [[L-223]] (sweep every emit site, not the named ones).
 
 ### L-351 · 2026-10-29 · domain · a business day (due, overdue, expiry, default date) is the tenant's calendar day, judged by one shared rule; host and browser zones never decide it
 

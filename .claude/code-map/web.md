@@ -90,3 +90,4 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/landing-2026-11-04-t1.md](web/landing-2026-11-04-t1.md) | Train 1 (758c727d58..8cd7c13e69): product page driver wording, import template and key columns, funnel columns |
 | [web/landing-2026-11-04-t2.md](web/landing-2026-11-04-t2.md) | Train 2 (8cd7c13e69..ec9765092c): plan price confirm and move reason, credit-note error copy, per-piece invoice setting |
 | [web/landing-2026-11-04-w4.md](web/landing-2026-11-04-w4.md) | Window 4 (ec9765092c..b0e0193854): Refused in every client, Deliver again, site Delivered card, Quick Edit redo bar |
+| [web/landing-2026-11-05-w5.md](web/landing-2026-11-05-w5.md) | Window 5 (b0e0193854..b10bad52a0): Reopen order names the live-return sentence |
