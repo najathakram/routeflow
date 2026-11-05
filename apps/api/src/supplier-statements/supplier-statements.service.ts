@@ -10,7 +10,6 @@ import { Prisma } from "@prisma/client";
 import Anthropic from "@anthropic-ai/sdk";
 import sharp from "sharp";
 import { PrismaService } from "../prisma/prisma.service";
-import { SystemConfigService } from "../system-config/system-config.service";
 import { PlatformConfigService } from "../platform-admin/platform-config.service";
 import { AI_TASKS } from "../platform-admin/ai-models";
 import { AI_SCAN_MAX_TOKENS, firstText } from "../platform-admin/ai-response";
@@ -85,7 +84,6 @@ export class SupplierStatementsService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly systemConfig: SystemConfigService,
     private readonly platformConfig: PlatformConfigService,
     // Standalone module, imported directly — importing ImportModule or
     // VendorBillsModule here would deadlock the injector (see
@@ -103,13 +101,16 @@ export class SupplierStatementsService {
    * model: instant, free, and the strongest duplicate signal there is.
    */
   async scanStatement(files: ScanStatementFile[], scannedById?: string) {
+    // SA-1102 A-4 M3: tenant first. A tenantless call is refused before any read, so a request id is never looked up
+    // in another business and a 404 cannot tell the caller whether it exists anywhere.
+    this.platformConfig.requireAiTenant();
     const fileHash = hashFile(files.map((f) => f.buffer));
     const prior = await this.findScanByHash(fileHash);
     if (prior) return this.rematchStoredScan(prior);
 
-    // Key priority: tenant key (SystemConfig) → platform key → env var.
-    const tenantKey = await this.systemConfig.get("anthropic.apiKey");
-    const apiKey = await this.platformConfig.resolveAnthropicKey(tenantKey);
+    // SA-1102 A-1: a statement scan runs on RouteFlow's key (a business key is for bill scans only), after the
+    // business and monthly-budget checks, through the one entry point.
+    const { key: apiKey } = await this.platformConfig.prepareAiCall("statement_scan");
     if (!apiKey || apiKey.length === 0) {
       throw new BadRequestException(
         "AI statement scanning is not available. Please contact your system administrator to configure the ANTHROPIC_API_KEY.",
