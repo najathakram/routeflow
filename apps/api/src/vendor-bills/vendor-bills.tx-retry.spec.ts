@@ -88,7 +88,11 @@ describe("vendor-bill stock txs retry on a conflict (SA-767 L-1)", () => {
         { provide: PrismaService, useValue: prisma },
         {
           provide: PlatformConfigService,
-          useValue: { resolveAnthropicKey: jest.fn(), recordAiUsage: jest.fn() },
+          useValue: {
+            prepareAiCall: jest.fn(),
+            requireAiTenant: jest.fn(),
+            recordAiUsage: jest.fn(),
+          },
         },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: DuplicateMatchService, useValue: {} },

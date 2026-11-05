@@ -709,7 +709,10 @@ describe("RoutesService — F10 stop-state guards (REG-B54/B55/B71/B72/B120/B121
           findMany: jest.fn().mockResolvedValue([]),
           update: jest.fn().mockResolvedValue({}),
         },
-        order: { update: jest.fn().mockResolvedValue({}) },
+        order: {
+          findMany: jest.fn().mockResolvedValue([{ customerId: "c1", tenantId: "t1" }]),
+          update: jest.fn().mockResolvedValue({}),
+        },
         transaction: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
         routeRunStop: { update: jest.fn().mockResolvedValue({}) },
         routeRun: {
@@ -795,7 +798,10 @@ describe("RoutesService — F10 stop-state guards (REG-B54/B55/B71/B72/B120/B121
           findMany: jest.fn().mockResolvedValue([]),
           update: jest.fn().mockResolvedValue({}),
         },
-        order: { update: jest.fn().mockResolvedValue({}) },
+        order: {
+          findMany: jest.fn().mockResolvedValue([{ customerId: "c1", tenantId: "t1" }]),
+          update: jest.fn().mockResolvedValue({}),
+        },
         transaction: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
         routeRunStop: { update: jest.fn().mockResolvedValue({}) },
         routeRun: {

@@ -11,6 +11,7 @@
 import { ConflictException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { lockOrderRows } from "../credit-notes/credit-note-locks";
+import { lockReturnCustomersOf } from "./return-customer-lock";
 import { DEAD_RETURN_STATUSES } from "./return-statuses";
 
 export const UNDO_STOP_RETURN_MESSAGE =
@@ -21,7 +22,9 @@ export const DEMOTE_RETURN_MESSAGE =
   "This order has a return. To change its delivery status, cancel the return first.";
 
 type CountTx = { return: { count: (args: any) => Promise<number> } };
-type LockTx = CountTx & Parameters<typeof lockOrderRows>[0];
+type LockTx = CountTx &
+  Parameters<typeof lockOrderRows>[0] &
+  Parameters<typeof lockReturnCustomersOf>[0];
 
 /**
  * SA-1101 A-6: the ONE predicate for "a live return stands on these orders". A return is on an order by either link:
@@ -49,14 +52,18 @@ export async function assertNoLiveReturn(
 }
 
 /**
- * For a caller that does not hold the Order rows yet: lock them (FOR UPDATE, id order, the lock a return create takes),
- * then run the check. The lock comes first by construction, so a return created in between cannot slip past the count.
+ * For a caller that does not hold the Order rows yet: take the customer's returns lock (SA-1101 A-6 Part 2, B1279: the
+ * lock every return create / capture / approve for that customer takes first, so a capture in flight finishes and is
+ * counted, and one that starts later reads the order as already moved), then lock the Order rows (FOR UPDATE, id order,
+ * the lock a return create takes), then run the check. The house order: advisory -> Order (SA-214). The locks come first
+ * by construction, so a return created in between cannot slip past the count.
  */
 export async function lockThenAssertNoLiveReturn(
   tx: LockTx,
   orderIds: readonly string[],
   message: string,
 ): Promise<void> {
+  await lockReturnCustomersOf(tx, orderIds);
   await lockOrderRows(tx, null, orderIds);
   await assertNoLiveReturn(tx, orderIds, message);
 }
