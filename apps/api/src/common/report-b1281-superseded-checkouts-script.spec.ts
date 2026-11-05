@@ -299,6 +299,82 @@ describe("report-b1281-superseded-checkouts.mjs", () => {
       expect(out).toContain("No such customer"); // the words survive
     });
 
+    it("a rethrown Stripe error also cuts invoice-item (ii_), credit-note (cn_) and payout (po_) ids, and any email, to the last 4 (LOW note B)", () => {
+      const msg =
+        "Invoice item ii_1AbCdEfGhIjKl and credit note cn_1MnOpQrStUvWx on payout po_1YzAbCdEfGhIj for buyer.person@example.com were refused";
+      const out = call(
+        `m.scrubStripeError(${JSON.stringify(msg)}, "sk_live_SeCrEtKeY0123")`,
+      ) as string;
+      expect(out).not.toMatch(/1AbCdEfGhIjKl|1MnOpQrStUvWx|1YzAbCdEfGhIj|buyer\.person|example/);
+      expect(out).toContain("ii_…IjKl"); // exactly the last 4 kept, not 5
+      expect(out).toMatch(/cn_…UvWx/);
+      expect(out).toMatch(/po_…GhIj/);
+      expect(out).toContain(".com"); // the last 4 of the email survive, nothing else of it
+      expect(out).toContain("were refused"); // the words survive
+    });
+
+    it("a Stripe id with a prefix nobody listed is cut too: the scrub is a shape, not an allow-list (#4220 review B note 1)", () => {
+      const msg =
+        "Line il_1AbCdEfGhIjKl and payment py_3MnOpQrStUvWx on transfer tr_1YzAbCdEfGhIj and fee sli_9QwErTyUiOpAs and session cs_test_a1B2c3D4e5F6g7 were refused";
+      const out = call(
+        `m.scrubStripeError(${JSON.stringify(msg)}, "sk_live_SeCrEtKeY0123")`,
+      ) as string;
+      expect(out).not.toMatch(
+        /1AbCdEfGhIjKl|3MnOpQrStUvWx|1YzAbCdEfGhIj|9QwErTyUiOpAs|a1B2c3D4e5F6g7/,
+      );
+      expect(out).toContain("il_…IjKl");
+      expect(out).toContain("py_…UvWx");
+      expect(out).toContain("tr_…GhIj");
+      expect(out).toContain("sli_…OpAs");
+      expect(out).toContain("cs_test_…F6g7"); // a test/live mode segment stays, the body is cut
+      expect(out).toContain("were refused"); // the words survive
+    });
+
+    it("a subscription-schedule id (sub_sched_<id>) is cut: two lowercase segments before the body (#4220 review A)", () => {
+      const out = call(
+        `m.scrubStripeError("Schedule sub_sched_1AbCdEfGhIjKlMn was refused", "sk_live_x")`,
+      ) as string;
+      expect(out).not.toMatch(/1AbCdEfGhIjKlMn/);
+      expect(out).toContain("sub_sched_…KlMn");
+      expect(out).toContain("was refused");
+    });
+
+    it("a client secret prints no secret characters beyond the last 4, for pi_ and seti_ alike (#4220 review A)", () => {
+      const msg =
+        "Intent pi_3PqRsTuV456789_secret_ZyXwVuTsRqPoNm and setup seti_1AbCdEfGhIjKl_secret_QwErTyUiOpAsDf were refused";
+      const out = call(`m.scrubStripeError(${JSON.stringify(msg)}, "sk_live_x")`) as string;
+      expect(out).not.toMatch(/3PqRsTuV456789|ZyXwVuTsRq|secret_|1AbCdEfGhIjKl|QwErTyUiOp/);
+      expect(out).toContain("pi_…PoNm");
+      expect(out).toContain("seti_…AsDf");
+      expect(out).toContain("were refused");
+    });
+
+    it("snake_case words are not ids and print whole (#4220 review A)", () => {
+      const msg =
+        "status_transitions rejected the change: api_connection_error, rate_limit_exceeded, invalid_request_error";
+      expect(call(`m.scrubStripeError(${JSON.stringify(msg)}, "sk_live_x")`)).toBe(msg);
+    });
+
+    it("a message with no id and no email is returned as it was (the scrub only cuts what it names)", () => {
+      expect(call(`m.scrubStripeError("Rate limit exceeded", "sk_live_x")`)).toBe(
+        "Rate limit exceeded",
+      );
+    });
+
+    it("the script builds ONE Stripe client, and it is the one wrapped by readOnlyStripe (LOW note A)", () => {
+      const constructs = (src: string) =>
+        src
+          .split(/\r?\n/)
+          .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+          .join("\n")
+          .match(/\bnew\s+Stripe\s*\(/g) ?? [];
+      // the detector sees a second client and ignores a comment
+      expect(constructs("const a = new Stripe(k); const b = new Stripe(k2);")).toHaveLength(2);
+      expect(constructs("// const a = new Stripe(k);\n const b = 1;")).toHaveLength(0);
+      expect(constructs(source)).toHaveLength(1);
+      expect(source).toMatch(/readOnlyStripe\(\s*new Stripe\(/);
+    });
+
     it("prints the deleted column and the two A-1 sections, ids only (D-1, D-2)", () => {
       const lines = (
         call(
