@@ -386,6 +386,13 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
 
 ## testing
 
+### L-363 · 2026-10-31 · testing · a timing-based spec goes red under slot load and passes alone; record it, rerun on the same tree, rule per spec, and never edit it inside a train
+
+- **Symptom:** the heavy-slot self-test (a 120 s cap), the lock-timeout concurrency specs and the bugs self-test's concurrency check went red in a train verify while the slot was loaded, and passed when run alone.
+- **Root cause:** each measures wall-clock time or concurrency; load stretches the run past its bound, so red there says the machine was busy, not that a member broke anything. Loosening the bound inside the train would change the gate under test.
+- **Lesson:** **On a red timing spec, record the evidence (spec, duration, slot load), rerun that spec alone on the SAME tree and sha, and rule per spec: green alone is a load flake, red alone is a defect. Do not edit or loosen a spec inside a train; file it for its own PR.**
+- **Guard:** none automatic; the train PR body lists each rerun and its ruling. Cf. [[L-359]], [[L-353]].
+
 ### L-324 · 2026-10-20 · testing · a long serial DB spec lane is run in batches, never one Jest process
 
 - **Symptom:** the DB-backed lane (about 325 suites run serially) was killed with an out-of-memory error at roughly 130 suites on the Mac mini.
