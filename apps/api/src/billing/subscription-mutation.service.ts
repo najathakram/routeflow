@@ -597,7 +597,7 @@ export class SubscriptionMutationService {
       const judged = await this.judgeAddon(tenantId, skuByCode.get(code)!, version, input.planKey);
       if (judged.refusal) throw refusalException(judged.refusal);
       const held = await this.heldStateRefusal(tenantId, judged.def, {
-        asPlan: { planKey: input.planKey },
+        asPlan: { planKey: input.planKey, versionId: version.id },
       });
       if (held) throw refusalException(held);
     }
@@ -3314,7 +3314,7 @@ export class SubscriptionMutationService {
   private async heldStateRefusal(
     tenantId: string,
     def: CatalogAddonSku,
-    opts?: { asPlan?: { planKey: string } },
+    opts?: { asPlan?: { planKey: string; versionId: string } },
   ): Promise<AddonRefusal | null> {
     if (!this.authority) return null;
     const wantsFlagCheck = (def.grantsFlags?.length ?? 0) > 0 && !isCapacityAddon(def);
@@ -3366,7 +3366,7 @@ export class SubscriptionMutationService {
   private async effectiveForOfferState(
     tenantId: string,
     def: CatalogAddonSku,
-    asPlan?: { planKey: string },
+    asPlan?: { planKey: string; versionId: string },
   ): Promise<EffectiveByKey | null> {
     if (!asPlan) {
       const resolved = await this.authority?.resolveAll(tenantId);
@@ -3378,7 +3378,10 @@ export class SubscriptionMutationService {
     }
     try {
       if (!this.preview) throw new Error("no preview service wired");
-      const { after } = await this.preview.preview(tenantId, { planKey: asPlan.planKey });
+      const { after } = await this.preview.preview(tenantId, {
+        planKey: asPlan.planKey,
+        versionId: asPlan.versionId,
+      });
       return new Map(after.map((f) => [f.key, { effective: f.serving }]));
     } catch (err) {
       this.logger.warn(

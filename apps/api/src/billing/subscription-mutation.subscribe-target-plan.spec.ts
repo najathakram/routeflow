@@ -44,11 +44,11 @@ const ALREADY = {
 const SENTINEL = new Error("REACHED_PREPARE: the add-on check let the sale through");
 
 /** The tenant's catalog: LITE (always enforced, invite-only) and STARTER, neither carrying the Forecasting flags. */
-function fixtureOn(planKey: "LITE" | "STARTER"): FeatureFixture {
+function fixtureOn(planKey: "LITE" | "STARTER", pinnedVersionId = "fixture-v11"): FeatureFixture {
   return {
     name: `target-plan-${planKey}`,
     planKey,
-    planVersionId: "fixture-v11",
+    planVersionId: pinnedVersionId,
     definitions: [
       { planKey: "LITE", featureFlags: [] },
       { planKey: "STARTER", featureFlags: ["flag.msrp"] },
@@ -66,8 +66,10 @@ function make(o: {
   heldRow?: Record<string, unknown> | null;
   previewDown?: boolean;
   noPreview?: boolean;
+  /** The workspace is pinned to an OLDER catalog version than the published one `subscribe` charges from. */
+  pinnedOlder?: boolean;
 }) {
-  const c = mockCollaborators(fixtureOn(o.from));
+  const c = mockCollaborators(fixtureOn(o.from, o.pinnedOlder ? "fixture-v10" : "fixture-v11"));
   const version = {
     id: "fixture-v11",
     definitions: [
@@ -82,7 +84,9 @@ function make(o: {
     ],
     addonSkus: o.skus ?? [FORECASTING, PACK],
   };
-  c.catalog.getVersionForTenant.mockResolvedValue(version);
+  c.catalog.getVersionForTenant.mockResolvedValue(
+    o.pinnedOlder ? { ...version, id: "fixture-v10" } : version,
+  );
   c.catalog.getPublishedCatalog.mockResolvedValue(version);
   c.catalog.getPublishedVersion.mockResolvedValue(version);
 
@@ -147,7 +151,7 @@ function make(o: {
     authority as any,
     o.noPreview ? undefined : (preview as any),
   );
-  return { svc, prisma, planTransition, authority, previewSpy };
+  return { svc, prisma, planTransition, authority, previewSpy, publishedId: version.id };
 }
 
 const subscribe = (svc: SubscriptionMutationService, planKey: string, skus: string[]) =>
@@ -191,7 +195,10 @@ describe("F-WP5-1: subscribe judges a self-serve add-on on the TARGET plan", () 
     expect((r as any).error).toBeInstanceOf(ConflictException);
     expect((r as any).error.getResponse()).toEqual(expect.objectContaining(ALREADY));
     expect(planTransition.prepare).not.toHaveBeenCalled();
-    expect(previewSpy).toHaveBeenCalledWith("t1", { planKey: "STARTER" });
+    expect(previewSpy).toHaveBeenCalledWith("t1", {
+      planKey: "STARTER",
+      versionId: "fixture-v11",
+    });
   });
 
   it("S4: switch ON, Starter lacks both flags: no courtesy, so the sale goes ahead", async () => {
@@ -271,6 +278,18 @@ describe("F-WP5-1: subscribe judges a self-serve add-on on the TARGET plan", () 
       expect(warn).toHaveBeenCalledWith(expect.stringContaining("could not answer"));
     } finally {
       warn.mockRestore();
+    }
+  });
+
+  it("S8 (SA-1099 A-7): the preview's after side judges the SAME PlanVersion id that subscribe charges with", async () => {
+    // Pinned to v10 while v11 is published: subscribe prices from the published version, so the judgement must too,
+    // for a same-plan pick and for a plan swap alike.
+    for (const from of ["STARTER", "LITE"] as const) {
+      const { svc, previewSpy, publishedId } = make({ from, pinnedOlder: true });
+      await outcome(subscribe(svc, "STARTER", ["FORECASTING"]));
+      const judged = await previewSpy.mock.results[0].value;
+      const ids = new Set(judged.after.map((f: any) => f.detail.catalogVersionId));
+      expect([...ids]).toEqual([publishedId]);
     }
   });
 });

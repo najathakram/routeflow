@@ -112,10 +112,12 @@ export class FeaturePreviewService {
     }
     const afterPlanKey = request.planKey ?? ent.planKey;
     const isSwap = afterPlanKey !== ent.planKey;
-    const afterDef = isSwap
+    // SA-1099 A-7: a same-plan call that names the published version (`subscribe` charges from it) reads that version too.
+    const onPublished = isSwap || request.versionId === publishedCatalog.id;
+    const afterDef = onPublished
       ? findPlanDefinition(publishedCatalog.definitions, afterPlanKey)
       : currentDef;
-    const afterCatalogVersionId = isSwap ? publishedCatalog.id : version.id;
+    const afterCatalogVersionId = onPublished ? publishedCatalog.id : version.id;
     // Opus review of 3585e1ec (re-review nit 3): addon-granted flags must be read from the
     // addon SKU's OWN grantsFlags metadata, never inferred by subtracting the current plan's
     // featureFlags from ent.flags — that subtraction silently drops a flag that happens to be
@@ -130,7 +132,7 @@ export class FeaturePreviewService {
       const meta = pinnedSkuByCode.get(code) ?? publishedSkuByCode.get(code);
       if (meta) for (const flag of meta.grantsFlags) addonGrantedFlags.add(flag);
     }
-    const afterPlanFlags = isSwap
+    const afterPlanFlags = onPublished
       ? afterDef
         ? effectivePlanFlags(afterDef, afterCatalogVersionId, publishedCatalog)
         : []
