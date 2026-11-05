@@ -329,7 +329,7 @@ describeDb(
         }),
       );
       let settled = false;
-      let capture: Promise<any> | undefined;
+      let capture!: Promise<any>;
       try {
         await guardDone;
         capture = captureQty(f, staffOf(f.driverId), { qty: 3 }, `ro38-${run}`).then(
@@ -346,7 +346,7 @@ describeDb(
         release();
         await demotion;
       }
-      const ret = await (capture as Promise<any>);
+      const ret = await capture;
       const items = await itemsOf(ret.id);
       expect(items.map((i) => i.sourceOrderId)).toEqual([null]);
       expect((await raw.order.findUniqueOrThrow({ where: { id: sourceX } })).status).toBe(
