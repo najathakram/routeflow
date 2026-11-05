@@ -1,6 +1,6 @@
 {
-  "mappedSha": "8cd7c13e69",
-  "generatedAt": "2026-11-04T21:50:16.781Z",
+  "mappedSha": "3856633ee8",
+  "generatedAt": "2026-11-05T00:43:22.737Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -9,11 +9,11 @@
     "packages"
   ],
   "partCounts": {
-    "api": 31,
-    "web": 26,
+    "api": 32,
+    "web": 27,
     "mobile": 16,
     "packages": 0
   },
   "fileCount": 1146,
-  "notes": "2026-11-04 Train 1 (master 8cd7c13e69): api/web landing notes, TOC rows; see CHANGELOG.md."
+  "notes": "2026-11-04 Train 2 (master 3856633ee8): api/web landing notes, TOC rows; see CHANGELOG.md."
 }
