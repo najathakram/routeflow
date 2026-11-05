@@ -86,4 +86,16 @@ describe("assertNoLiveReturn census (SA-1101 A-4)", () => {
     const guard = src.slice(src.indexOf("export async function assertNoLiveReturn"));
     expect(guard).toContain("tx.return.count({ where: liveReturnWhere(orderIds) })");
   });
+
+  it("SA-1101 A-6 Part 2 (B1279): every seat takes the customer's returns lock before it locks the Order rows", () => {
+    const wrapper = read("returns/live-return-guard.ts");
+    const body = wrapper.slice(wrapper.indexOf("export async function lockThenAssertNoLiveReturn"));
+    expect(body.indexOf("lockReturnCustomersOf(tx, orderIds)")).toBeGreaterThan(0);
+    expect(body.indexOf("lockReturnCustomersOf(")).toBeLessThan(body.indexOf("lockOrderRows("));
+
+    const again = read("orders/deliver-again.ts");
+    expect(again.indexOf("lockReturnCustomersOf(tx, [orderId])")).toBeGreaterThan(0);
+    expect(again.indexOf("lockReturnCustomersOf(")).toBeLessThan(again.indexOf("FOR UPDATE"));
+    expect(again).toContain("lockedCustomers.includes(order.customerId)");
+  });
 });

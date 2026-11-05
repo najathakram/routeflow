@@ -11,12 +11,12 @@
  * Lock order (design.md §5): customer-scoped advisory lock (shared with the STANDARD path's
  * `ReturnsService.create()` — the two must serialize against each other) → carrying `Order FOR
  * UPDATE` → pricing (reads the matching set/prior-returned snapshot under that lock) → `Product`
- * rows (written by the shared `restockReturnItems`). Per-SOURCE-order locking is intentionally
- * NOT taken here: the customer-scoped lock already serializes every return-creating
- * transaction for this customer (the specific race those source-order locks close for
- * STANDARD's single-order case), and a source order's INVOICE lines — the only thing capture
- * reads from it — are immutable once issued on every path capture can reach. Documented rather
- * than silently assumed. The lock also covers approve() (SA-1060 A-3, which then takes the carrying
+ * rows (written by the shared `restockReturnItems`). Per-SOURCE-order locking is not taken here (SA-1101 A-6 Part 2,
+ * B1279): the customer-scoped lock serializes every return-creating transaction for this customer, and the one
+ * thing that can move a source order under a capture, the office change out of DELIVERED (demote, Deliver again,
+ * Undo the stop), now takes that same lock first (`lockThenAssertNoLiveReturn`, `returnCustomerLockKey`), so a
+ * capture either finishes before the change is counted or starts after it and reads the order as moved. A source order's
+ * INVOICE lines — what capture reads from it — are immutable once issued. The lock also covers approve() (SA-1060 A-3, which then takes the carrying
  * and source orders itself); receive() and the parked resolve() are outside it and hold the source
  * order instead.
  *
@@ -113,6 +113,7 @@ import {
 import { selectEditRevertedInvoices } from "../invoices/order-edit-revert-set";
 import { uniqueViolationOn } from "../common/prisma-unique";
 import { ledgerDocumentTargets, lockLedgerDocumentRows } from "../regulated/ledger-locks";
+import { returnCustomerLockKey } from "./return-customer-lock";
 
 /** SA-1090 A-1: the standalone capture transaction's budget; the same 15 s the order paths give the same work (orders.service.ts). */
 export const INLINE_CAPTURE_TX_TIMEOUT_MS = 15_000;
@@ -272,7 +273,7 @@ export class InlineReturnsService {
    */
   async lockCustomerInTx(tx: any, customerId: string): Promise<void> {
     await this.idempotency.acquireLock(
-      this.idempotency.hashFor(customerId, this.prisma.getTenantId(), "returns.customer"),
+      returnCustomerLockKey(customerId, this.prisma.getTenantId(), this.idempotency),
       tx,
     );
   }

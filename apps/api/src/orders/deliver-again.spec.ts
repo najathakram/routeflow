@@ -7,6 +7,7 @@ import { deliverAgainInTx } from "./deliver-again";
  */
 type OrderRow = {
   id: string;
+  customerId: string;
   status: string;
   routeRunId: string | null;
   routeRunStopId: string | null;
@@ -15,6 +16,7 @@ type OrderRow = {
 };
 const base: OrderRow = {
   id: "o1",
+  customerId: "c1",
   status: "REFUSED",
   routeRunId: "run1",
   routeRunStopId: "stop1",
@@ -29,6 +31,7 @@ function fakeTx(
   const tx = {
     $executeRaw: jest.fn().mockResolvedValue(1),
     order: {
+      findMany: jest.fn().mockResolvedValue([{ customerId: "c1", tenantId: "t1" }]),
       findFirst: jest.fn().mockResolvedValue(row),
       updateMany: jest.fn().mockResolvedValue({ count: opts.casCount ?? 1 }),
     },
@@ -55,6 +58,24 @@ describe("deliverAgainInTx (SA-1101 A-3)", () => {
       tx.order.findFirst.mock.invocationCallOrder[0],
     );
     expect(tx.order.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("B1279: the customer's returns lock comes before the Order row lock, and the customer is re-checked under it", async () => {
+    const tx = fakeTx({});
+    await deliverAgainInTx(tx as any, "o1", data);
+    const [advisory, rowLock] = tx.$executeRaw.mock.calls.map((c: any[]) => c[0].join(""));
+    expect(advisory).toContain("pg_advisory_xact_lock");
+    expect(rowLock).toContain('FROM "Order"');
+    expect(tx.order.findMany.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.$executeRaw.mock.invocationCallOrder[1],
+    );
+
+    // the order moved to another customer between the lock and the row lock: the stale-edit refusal, nothing written
+    const moved = fakeTx({ customerId: "c2" });
+    expect((await codeOf(deliverAgainInTx(moved as any, "o1", data))).code).toBe(
+      "ORDER_CHANGED_DURING_EDIT",
+    );
+    expect(moved.order.updateMany).not.toHaveBeenCalled();
   });
 
   it("a COMPLETED stop's link is cleared together, as one CAS on the link as read", async () => {

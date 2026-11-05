@@ -56,10 +56,16 @@ describe("assertNoLiveReturn", () => {
 });
 
 describe("lockThenAssertNoLiveReturn", () => {
-  it("takes the Order row lock (id order) before it counts, and still throws on a live return", async () => {
+  it("takes the customer's returns lock, then the Order row lock (id order), before it counts, and still throws on a live return", async () => {
     const order: string[] = [];
     const tx = {
-      $executeRaw: jest.fn().mockImplementation(async () => void order.push("lock")),
+      $executeRaw: jest
+        .fn()
+        .mockImplementation(
+          async (s: TemplateStringsArray) =>
+            void order.push(s.join("").includes("pg_advisory_xact_lock") ? "customer" : "lock"),
+        ),
+      order: { findMany: jest.fn().mockResolvedValue([{ customerId: "c1", tenantId: "t1" }]) },
       return: {
         count: jest.fn().mockImplementation(async () => {
           order.push("count");
@@ -70,6 +76,6 @@ describe("lockThenAssertNoLiveReturn", () => {
     await expect(lockThenAssertNoLiveReturn(tx as never, ["b", "a"], "msg")).rejects.toMatchObject({
       response: { code: "ORDER_HAS_RETURN", message: "msg" },
     });
-    expect(order).toEqual(["lock", "count"]);
+    expect(order).toEqual(["customer", "lock", "count"]);
   });
 });
