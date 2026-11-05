@@ -272,8 +272,16 @@ export class InlineReturnsService {
    * Invoice -> rows (SA-214). Inline and STANDARD return creation for one customer serialize on it.
    */
   async lockCustomerInTx(tx: any, customerId: string): Promise<void> {
+    // SA-1101 A-7: the key's tenant is the CUSTOMER ROW's, so a tenantless call (a SUPER_ADMIN) takes the same lock as
+    // the live-return guard and every tenant seat. A plain read, not a row lock: SA-214's order is unchanged and
+    // this is still the transaction's first lock.
+    const customer = await tx.customer.findUnique({
+      where: { id: customerId },
+      select: { id: true, tenantId: true },
+    });
+    if (!customer) throw new NotFoundException("Customer not found");
     await this.idempotency.acquireLock(
-      returnCustomerLockKey(customerId, this.prisma.getTenantId(), this.idempotency),
+      returnCustomerLockKey({ customerId, tenantId: customer.tenantId ?? null }, this.idempotency),
       tx,
     );
   }

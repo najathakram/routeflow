@@ -126,7 +126,7 @@ import {
 } from "./standard-refund-pricing";
 import { standardRestockResolver, type ProductPackBasis } from "./returns-restock-pieces";
 import { ledgerDocumentTargets, lockLedgerDocumentRows } from "../regulated/ledger-locks";
-import { returnCustomerLockKey } from "./return-customer-lock";
+import { lockReturnCustomer } from "./return-customer-lock";
 
 /** M6/§2.3: every standard-path method refuses an INLINE-kind return — it has its own
  * endpoints and state machine (PR-1c/1d). Thrown the moment a `kind` is known to be INLINE. */
@@ -398,12 +398,11 @@ export class ReturnsService {
       // customer's same product — must not both read the same stale "remaining"
       // snapshot. Placed after the idempotency lock/check and the unlocked order
       // read (source of customerId) above, before the order-row FOR UPDATE below.
-      if (this.idempotency) {
-        await this.idempotency.acquireLock(
-          returnCustomerLockKey(order.customerId, tenantId, this.idempotency),
-          tx,
-        );
-      }
+      await lockReturnCustomer(
+        tx,
+        { customerId: order.customerId, tenantId: order.tenantId ?? null },
+        this.idempotency,
+      );
 
       // The transaction ALONE does not close the race: tenantTransaction runs at
       // Postgres' default READ COMMITTED, so two concurrent creates would each
