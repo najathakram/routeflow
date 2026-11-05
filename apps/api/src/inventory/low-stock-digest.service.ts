@@ -6,10 +6,17 @@ import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { TENANT_ZONE_SELECT, zoneFromConfig } from "../common/tenant-time-zone";
 import { sellerDisplayName } from "../common/seller-display-name";
+import {
+  LOW_STOCK_DIGEST_PREF_KEY,
+  dedupeMailboxes,
+  digestOptOutWhere,
+  digestRecipientWhere,
+  isBelowReorderPoint,
+  lowStockProductWhere,
+} from "./low-stock-digest-rules";
 
-/** The `UserPreference.key` a tenant admin's opt-out is stored under (N4). Missing row =
- * enabled, same convention as `notifications.service.ts`'s `pushEnabled` (B04). */
-export const LOW_STOCK_DIGEST_PREF_KEY = "lowStockDigestEnabled";
+// The opt-out key lives with the other digest rules; existing importers keep this path.
+export { LOW_STOCK_DIGEST_PREF_KEY };
 
 interface LowStockItem {
   name: string;
@@ -163,17 +170,15 @@ export class LowStockDigestService {
    * opted this product into alerting at all, not "always alert". */
   private async getLowStockItems(tenantId: string): Promise<LowStockItem[]> {
     const products = await this.prisma.product.findMany({
-      where: { tenantId, isActive: true, reorderPoint: { not: null } },
+      where: lowStockProductWhere(tenantId),
       select: { name: true, sku: true, currentStock: true, reorderPoint: true },
     });
-    return products
-      .filter((p) => p.reorderPoint != null && Number(p.currentStock) < p.reorderPoint)
-      .map((p) => ({
-        name: p.name,
-        sku: p.sku,
-        currentStock: Number(p.currentStock),
-        reorderPoint: p.reorderPoint as number,
-      }));
+    return products.filter(isBelowReorderPoint).map((p) => ({
+      name: p.name,
+      sku: p.sku,
+      currentStock: Number(p.currentStock),
+      reorderPoint: p.reorderPoint as number,
+    }));
   }
 
   /** Active TENANT_ADMINs and OPERATORs (owner 10-07 OK-6) with an email on file, minus anyone who has explicitly opted out
@@ -182,39 +187,20 @@ export class LowStockDigestService {
    * `GET/PATCH /users/me/preferences` endpoints (users.controller.ts) — N4 adds no new API. */
   private async getDigestRecipients(tenantId: string): Promise<{ email: string }[]> {
     const admins = await this.prisma.user.findMany({
-      where: {
-        tenantId,
-        role: { in: ["TENANT_ADMIN", "OPERATOR"] },
-        status: "ACTIVE",
-        deletedAt: null,
-      },
+      where: digestRecipientWhere(tenantId),
       select: { id: true, email: true },
     });
     const withEmail = admins.filter((a) => a.email);
     if (!withEmail.length) return [];
 
     const optOuts = await this.prisma.userPreference.findMany({
-      where: {
-        userId: { in: withEmail.map((a) => a.id) },
-        key: LOW_STOCK_DIGEST_PREF_KEY,
-        value: "false",
-      },
+      where: digestOptOutWhere(withEmail.map((a) => a.id)),
       select: { userId: true },
     });
     const optedOut = new Set(optOuts.map((o) => o.userId));
     const active = withEmail.filter((a) => !optedOut.has(a.id));
 
-    // Two admin ROWS can carry the same mailbox in different casing (a duplicate account,
-    // or an email edited to differ only in case) — dedupe on the lowercased address so that
-    // mailbox gets exactly one digest, not one per row.
-    const seen = new Set<string>();
-    const deduped: { email: string }[] = [];
-    for (const a of active) {
-      const key = a.email.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      deduped.push({ email: a.email });
-    }
-    return deduped;
+    // One mailbox, one digest, whatever the casing or the number of rows.
+    return dedupeMailboxes(active).map((a) => ({ email: a.email }));
   }
 }
