@@ -2,7 +2,7 @@
    Look: white and #f5f5f7, near-black type, navy brand. A few solid section colours, each with a job:
    dark = the problem, pale green = the stores, navy = the next step. No gradient washes or glows; shadows are soft and
    neutral; frosted glass only on the header and the journey step pill. Colours, type sizes, corners and shadows: graphics/rf-graphics.css.
-   The default state here is the FINAL state (no JS, reduced motion). .js-motion rules only pre-set what GSAP animates
+   The default state here is the FINAL state (no JS). .js-motion rules only pre-set what GSAP animates
    above the fold, and the pinned layouts at >= 900px. Every app screen is HTML/CSS with sample data. */
 
 .home{
@@ -376,7 +376,6 @@
 .fd{background:#fff}
 .fd-in{max-width:880px;padding:clamp(100px,11vw,160px) 0}
 .fd-q{font-size:clamp(40px,5.6vw,84px);line-height:1.04;letter-spacing:-.04em;font-weight:650;text-wrap:balance}
-.fd-qm{color:var(--rf-link)}
 .fd-note{margin-top:clamp(36px,4vw,56px);font-size:clamp(19px,1.45vw,21px);line-height:1.62;color:var(--ink-2);max-width:37em}
 .fd-note p+p{margin-top:1em}
 .fd-note:focus{outline:none}

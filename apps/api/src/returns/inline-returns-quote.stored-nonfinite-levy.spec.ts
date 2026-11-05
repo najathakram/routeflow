@@ -70,7 +70,7 @@ describe("InlineReturnsQuoteService: a stored non-finite levy is refused, not cr
         orderId: "ord-1",
         subtotal: 20,
         discount: 0,
-        taxAmount: 0,
+        taxAmount: Number(levy) || 0, // an invoice's tax includes its levy
         items: [
           {
             id: "item-1",

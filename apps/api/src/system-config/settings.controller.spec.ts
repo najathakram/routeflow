@@ -443,3 +443,64 @@ describe("SettingsController — PATCH /settings refuses businessName / email (B
     expect(prisma.tenantConfig.upsert).not.toHaveBeenCalled();
   });
 });
+
+// Owner ruling 2026-11-04: invoice.hidePerPiece, the sibling of hideBarcodes (SystemConfig KV, no schema change; absent = the
+// Per piece column shows, so every tenant's invoices look as they do today until an admin turns it off).
+describe("SettingsController — GET/PATCH /settings/invoice hidePerPiece", () => {
+  let controller: SettingsController;
+  let svc: { get: jest.Mock; set: jest.Mock; getAll: jest.Mock };
+
+  beforeEach(async () => {
+    svc = {
+      get: jest.fn().mockResolvedValue(null),
+      set: jest.fn().mockResolvedValue(undefined),
+      getAll: jest.fn().mockResolvedValue({}),
+    };
+    const module: TestingModule = await Test.createTestingModule({
+      controllers: [SettingsController],
+      providers: [
+        { provide: SystemConfigService, useValue: svc },
+        { provide: ConfigService, useValue: { get: jest.fn() } },
+        { provide: PrismaService, useValue: createMockPrisma() },
+        { provide: EmailService, useValue: { send: jest.fn().mockResolvedValue(undefined) } },
+        quickKeysSettingsStubProvider,
+      ],
+    }).compile();
+    controller = module.get<SettingsController>(SettingsController);
+  });
+
+  it("GET returns hidePerPiece: false when the key was never written (the column stays on at deploy)", async () => {
+    expect((await controller.getInvoiceSettings()).hidePerPiece).toBe(false);
+  });
+
+  it.each([
+    ["true", true],
+    ["false", false],
+    ["yes", false],
+  ])("GET reads %p as hidePerPiece %p (only the string 'true' hides)", async (stored, expected) => {
+    svc.get.mockImplementation((k: string) =>
+      Promise.resolve(k === "invoice.hidePerPiece" ? stored : null),
+    );
+    expect((await controller.getInvoiceSettings()).hidePerPiece).toBe(expected);
+  });
+
+  it("PATCH {hidePerPiece:true} writes invoice.hidePerPiece 'true'; false writes 'false'", async () => {
+    await controller.updateInvoiceSettings({ hidePerPiece: true });
+    expect(svc.set).toHaveBeenCalledWith("invoice.hidePerPiece", "true");
+    await controller.updateInvoiceSettings({ hidePerPiece: false });
+    expect(svc.set).toHaveBeenCalledWith("invoice.hidePerPiece", "false");
+  });
+
+  it("PATCH without hidePerPiece does not touch that key", async () => {
+    await controller.updateInvoiceSettings({ defaultTerms: "Net 15" });
+    expect(svc.set).not.toHaveBeenCalledWith("invoice.hidePerPiece", expect.anything());
+  });
+
+  it("the DTO takes a boolean and refuses 'yes'", async () => {
+    expect(
+      await validate(plainToInstance(UpdateInvoiceSettingsDto, { hidePerPiece: true })),
+    ).toEqual([]);
+    const bad = await validate(plainToInstance(UpdateInvoiceSettingsDto, { hidePerPiece: "yes" }));
+    expect(bad.map((e) => e.property)).toEqual(["hidePerPiece"]);
+  });
+});

@@ -74,6 +74,8 @@ const SAVED_VIEWS = [
   { id: "partial", label: "Partly delivered", filters: { status: "PARTIALLY_DELIVERED" } },
   { id: "urgent", label: "Urgent", filters: { urgent: true } },
   { id: "delivered", label: "Delivered", filters: { status: "DELIVERED" } },
+  // SA-1101: a wholly refused order has its own pill (warning chip), never counted as Delivered.
+  { id: "refused", label: "Refused", filters: { status: "REFUSED" } },
   { id: "cancelled", label: "Cancelled", filters: { status: "CANCELLED" } },
 ];
 
@@ -87,6 +89,7 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "OUT_FOR_DELIVERY", label: "Out for delivery" },
   { value: "PARTIALLY_DELIVERED", label: "Partly delivered" },
   { value: "DELIVERED", label: "Delivered" },
+  { value: "REFUSED", label: "Refused" },
   { value: "CANCELLED", label: "Cancelled" },
 ];
 

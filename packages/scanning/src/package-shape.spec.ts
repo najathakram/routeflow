@@ -65,7 +65,8 @@ const PKG_PATH = path.join(__dirname, "..", "package.json");
 const TSCONFIG_BUILD_PATH = path.join(__dirname, "..", "tsconfig.build.json");
 const ROOT_PKG_PATH = path.join(REPO_ROOT, "package.json");
 const TURBO_JSON_PATH = path.join(REPO_ROOT, "turbo.json");
-const DOCKERFILES = ["apps/api/Dockerfile", "apps/web/Dockerfile", "apps/mobile/Dockerfile"];
+// apps/mobile/Dockerfile is a dependency-free redirect server now (no packages, no npm ci).
+const DOCKERFILES = ["apps/api/Dockerfile", "apps/web/Dockerfile"];
 
 describe("M4a-0 — @routeflow/scanning package shape (R1, R4)", () => {
   describe("packages/scanning/package.json", () => {

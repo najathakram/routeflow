@@ -1,3 +1,4 @@
+import { computeCreditNoteSummary } from "./credit-note-summary";
 import {
   BadRequestException,
   ConflictException,
@@ -36,8 +37,9 @@ import {
   loadLineCredits,
   countCreditableInvoices,
   loadOrderPool,
-  loadUnlinkedRefundReturns,
+  loadOrderRefundRoom,
   lockOrderPoolRows,
+  orderRoomRefusal,
   pooledRefundRefusal,
   pinnedTakeRefusal,
   pooledTakeRefusal,
@@ -182,38 +184,23 @@ export class CreditNotesService {
       );
     }
 
-    // SA-1053 (I-192): an order-wide bound. A refund minted before the order was invoiced hangs on no invoice, so the invoice-total
-    // cap above never counts it, and a lump staff note (no line items) has no line check at all. Everything already credited on
-    // the order's creditable invoices, plus those unlinked refunds, plus this note, may not pass what the order was billed.
-    if (invoice.orderId) {
-      const unlinked = await loadUnlinkedRefundReturns(db, invoice.orderId, {
-        excludeCreditNoteId: opts.excludeCreditNoteId,
+    // SA-1091 (row 631): ONE order-wide bound, always (SA-1053's, widened). A lump staff note (no line items) has no line check,
+    // and a recorded refund, an inline return and a refund minted before the order was invoiced hang on no invoice, so the
+    // invoice-total cap above never counts them. Everything the order has already given back, plus this note, may not pass what
+    // its creditable invoices billed (loadOrderRefundRoom, gross). `orderBound`: the refund path maps ONLY this refusal to its 409.
+    const orderRoom = await loadOrderRefundRoom(
+      db,
+      { orderId: invoice.orderId, invoiceId: dto.invoiceId },
+      { excludeCreditNoteId: opts.excludeCreditNoteId },
+    );
+    const orderRefusal = orderRoomRefusal(orderRoom, dto.amount);
+    if (orderRefusal)
+      throw new BadRequestException({
+        code: API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM,
+        orderBound: true,
+        message: orderRefusal.message,
+        remaining: orderRefusal.left,
       });
-      if (unlinked.amount > 0) {
-        const billed: Array<{ id: string; total: unknown }> = await db.invoice.findMany({
-          where: { orderId: invoice.orderId, status: { notIn: CREDIT_SOURCE_EXCLUDED } },
-          select: { id: true, total: true },
-        });
-        const onInvoices = await db.creditNote.aggregate({
-          where: {
-            invoiceId: { in: billed.map((b) => b.id) },
-            status: { not: "VOID" },
-            ...(opts.excludeCreditNoteId ? { id: { not: opts.excludeCreditNoteId } } : {}),
-          },
-          _sum: { amount: true },
-        });
-        const orderBilled = roundMoney(billed.reduce((t, b) => t + Number(b.total), 0));
-        if (
-          Number(onInvoices._sum.amount ?? 0) + unlinked.amount + dto.amount >
-          orderBilled + 0.001
-        ) {
-          throw cnBad(
-            API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM,
-            `This credit note would take the order past what it was billed (${orderBilled}). ${roundMoney(unlinked.amount).toFixed(2)} was already refunded as store credit for its returns before the order was invoiced.`,
-          );
-        }
-      }
-    }
 
     // B947: with 2+ creditable invoices on the order, ONE pool per product across ALL of them (see loadOrderPool): the credit
     // note's own line room is still checked below; this is the second check. Locked in a tx (Order, then the invoices).
@@ -833,6 +820,11 @@ export class CreditNotesService {
     return this.findAll(customerId, status, search, dateFrom, dateTo, page, limit);
   }
 
+  /** B238: the page's counters and tiles over every note (see credit-note-summary.ts). */
+  getSummary(viewerToday: string, user: JwtPayload) {
+    return computeCreditNoteSummary({ prisma: this.prisma }, viewerToday, user);
+  }
+
   async findOne(id: string) {
     const cn = await this.prisma.forTenant().creditNote.findUnique({
       where: { id },
@@ -1063,9 +1055,12 @@ export class CreditNotesService {
           await lockCreditNotes(tx, tenantId, [creditNoteId]);
           const cn = await tx.creditNote.findUnique({ where: { id: creditNoteId } });
           if (!cn || cn.status === "APPLIED" || cn.status === "VOID")
-            throw new BadRequestException("Credit note is not available for application");
+            throw cnBad(
+              API_ERROR_CODES.CREDIT_NOTE_NOT_APPLICABLE,
+              "Credit note is not available for application",
+            );
           if (cn.expiresAt && new Date(cn.expiresAt) <= new Date())
-            throw new BadRequestException("Credit note has expired");
+            throw cnBad(API_ERROR_CODES.CREDIT_NOTE_EXPIRED, "Credit note has expired");
 
           const inv = await tx.invoice.findUnique({
             where: { id: invoiceId },
@@ -1074,17 +1069,22 @@ export class CreditNotesService {
           if (!inv) throw new NotFoundException("Invoice not found");
 
           if (CREDIT_NOT_APPLICABLE.includes(inv.status)) {
-            throw new BadRequestException(
+            throw cnBad(
+              API_ERROR_CODES.CREDIT_NOTE_INVOICE_NOT_APPLICABLE,
               `Cannot apply credit note to invoice with status ${inv.status}`,
             );
           }
           if (cn.customerId !== inv.customerId) {
-            throw new BadRequestException("Credit note and invoice belong to different customers");
+            throw cnBad(
+              API_ERROR_CODES.CREDIT_NOTE_CUSTOMER_MISMATCH,
+              "Credit note and invoice belong to different customers",
+            );
           }
 
           const { applied } = await this.applyCreditInTx(tx, tz, cn, inv, amount);
           if (applied <= 0)
-            throw new BadRequestException(
+            throw cnBad(
+              API_ERROR_CODES.CREDIT_NOTE_NOTHING_TO_APPLY,
               "Credit note has no remaining balance or invoice is fully paid",
             );
           // SA-436: explicit human intent wins, so a manual apply lifts this pair's block.

@@ -16,6 +16,12 @@ jest.mock("@/lib/auth-context", () => ({
 let mockFlag = { enabled: true, resolved: true, failed: false };
 jest.mock("@/lib/api/plan-flags", () => ({ usePlanFlag: () => mockFlag }));
 
+// SA-1087: the export also renders "Full insights" (FullInsightsLink), which asks which groups the
+// signed-in operator may use. This file stubs that answer; the link's own gating is pinned in
+// FullInsightsLink.test.tsx.
+let mockDenied: string[] = [];
+jest.mock("@/lib/api/my-permissions", () => ({ useDeniedGroups: () => mockDenied }));
+
 const get = jest.fn();
 jest.mock("@/lib/api-client", () => ({ apiClient: { get: (...a: unknown[]) => get(...a) } }));
 
@@ -36,15 +42,74 @@ const click = () => fireEvent.click(screen.getByTestId("product-insights-export-
 beforeEach(() => {
   jest.clearAllMocks();
   mockRole = "OPERATOR";
+  mockDenied = [];
   mockFlag = { enabled: true, resolved: true, failed: false };
   mockSales = { data: { summary: { count: 4 } }, isLoading: false };
 });
 
 describe("ProductInsightsExport", () => {
+  it("SA-1087: carries the Full insights link, unless the insights page asks it not to", () => {
+    const { unmount } = render(<ProductInsightsExport productId="p1" sku="SKU-1" />);
+    expect(screen.getByRole("link", { name: "Full insights" })).toHaveAttribute(
+      "href",
+      "/insights/products/p1",
+    );
+    unmount();
+    render(<ProductInsightsExport productId="p1" sku="SKU-1" hideFullLink />);
+    expect(screen.queryByRole("link")).toBeNull();
+    expect(screen.getByTestId("product-insights-export-button")).toBeInTheDocument();
+  });
+
   it.each(["DRIVER", "CUSTOMER"])("is hidden for %s", (role) => {
     mockRole = role;
     render(<ProductInsightsExport productId="p1" sku="SKU-1" />);
     expect(screen.queryByTestId("product-insights-export-button")).toBeNull();
+  });
+
+  it("SA-1087 PR-2: opens on the period it is seeded with, and follows a new period", () => {
+    const { rerender } = render(
+      <ProductInsightsExport
+        productId="p1"
+        sku="SKU-1"
+        seedFrom="2025-10-01"
+        seedTo="2026-09-26"
+      />,
+    );
+    const from = screen.getByTestId("product-insights-export-from") as HTMLInputElement;
+    const to = screen.getByTestId("product-insights-export-to") as HTMLInputElement;
+    expect([from.value, to.value]).toEqual(["2025-10-01", "2026-09-26"]);
+    // The boxes stay editable ...
+    fireEvent.change(from, { target: { value: "2026-01-01" } });
+    expect(from.value).toBe("2026-01-01");
+    // ... and picking another period on the panel reseeds them.
+    rerender(
+      <ProductInsightsExport
+        productId="p1"
+        sku="SKU-1"
+        seedFrom="2026-06-26"
+        seedTo="2026-09-26"
+      />,
+    );
+    expect([from.value, to.value]).toEqual(["2026-06-26", "2026-09-26"]);
+  });
+
+  it("SA-1087 PR-2: a seeded period is what the download asks for", async () => {
+    get.mockResolvedValue({ data: new Blob(["a"]), headers: {} });
+    render(
+      <ProductInsightsExport
+        productId="p1"
+        sku="SKU-1"
+        seedFrom="2025-10-01"
+        seedTo="2026-09-26"
+      />,
+    );
+    click();
+    await waitFor(() =>
+      expect(get).toHaveBeenCalledWith(
+        "/analytics/products/p1/insights.csv",
+        expect.objectContaining({ params: { from: "2025-10-01", to: "2026-09-26" } }),
+      ),
+    );
   });
 
   it("is hidden when the plan lacks flag.analytics", () => {
@@ -57,6 +122,13 @@ describe("ProductInsightsExport", () => {
     mockFlag = { enabled: true, resolved: false, failed: false };
     render(<ProductInsightsExport productId="p1" sku="SKU-1" />);
     expect(screen.queryByTestId("product-insights-export-button")).toBeNull();
+  });
+
+  it("SA-1087: fails open when the plan read failed: the export and the Full insights link both show", () => {
+    mockFlag = { enabled: false, resolved: false, failed: true };
+    render(<ProductInsightsExport productId="p1" sku="SKU-1" />);
+    expect(screen.getByTestId("product-insights-export-button")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Full insights" })).toBeInTheDocument();
   });
 
   it("J10: is hidden when the product has never sold, and while sales are loading", () => {

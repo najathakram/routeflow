@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Re-sync the ready-made marketing pages (home, pricing, product, landing) from the design source
+// Re-sync the ready-made marketing pages (home, pricing, product, landing, the four deep pages:
+// getting-started, does-and-doesnt, data-in-and-out, security, and company and contact) from the design source
 // into apps/web/public/site, applying the port edits: real auth routes, /site/ asset paths,
 // canonical + share tags, no HTML comments, noindex only on /landing.
 //
@@ -38,11 +39,18 @@ for (const rel of [
   "css/site.css",
   "css/home.css",
   "css/home-up.css",
+  "css/home-color.css",
+  "css/color-deep.css",
+  "css/mobile.css",
   "css/product.css",
+  "css/does.css",
+  "css/start.css",
+  "css/company.css",
   "js/prices.js",
   "js/site.js",
   "js/product.js",
   "js/home-up.js",
+  "js/auth-nav.js",
   "js/vendor/gsap.min.js",
   "js/vendor/ScrollTrigger.min.js",
   "js/vendor/SplitText.min.js",
@@ -61,6 +69,22 @@ const pages = [
   ["pricing/index.html", "pricing.html", "/pricing", true],
   ["product/index.html", "product.html", "/product", true],
   ["landing/index.html", "landing.html", "/landing", false],
+  ["getting-started/index.html", "getting-started.html", "/getting-started", true],
+  ["does-and-doesnt/index.html", "does-and-doesnt.html", "/does-and-doesnt", true],
+  ["data-in-and-out/index.html", "data-in-and-out.html", "/data-in-and-out", true],
+  ["security/index.html", "security.html", "/security", true],
+  ["company/index.html", "company.html", "/company", true],
+  ["contact/index.html", "contact.html", "/contact", true],
+];
+
+// The four deep pages (source folder name = served route).
+const DEEP_SLUGS = [
+  "getting-started",
+  "does-and-doesnt",
+  "data-in-and-out",
+  "security",
+  "company",
+  "contact",
 ];
 
 function port(html, route, indexable) {
@@ -87,6 +111,12 @@ function port(html, route, indexable) {
     /href="(?:\.\.\/)?product\/index\.html(#[^"]*)?"/g,
     (_, a) => `href="/product${a ?? ""}"`,
   );
+  for (const slug of DEEP_SLUGS) {
+    h = h.replace(
+      new RegExp(`href="(?:\\.\\./)?${slug}/index\\.html(#[^"]*)?"`, "g"),
+      (_, a) => `href="/${slug}${a ?? ""}"`,
+    );
+  }
   h = h.replace(/href="(?:\.\.\/)?index\.html(#[^"]*)?"/g, (_, a) => `href="/${a ?? ""}"`);
   // assets: every relative reference lands under /site/
   h = h.replace(

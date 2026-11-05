@@ -2,6 +2,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { ConfigService } from "@nestjs/config";
 import { PlatformConfigService } from "./platform-config.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { EncryptionService } from "../common/encryption.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { BadRequestException } from "@nestjs/common";
 
@@ -15,6 +16,7 @@ describe("PlatformConfigService — AI usage + test connection", () => {
     const mod: TestingModule = await Test.createTestingModule({
       providers: [
         PlatformConfigService,
+        EncryptionService,
         { provide: PrismaService, useValue: prisma },
         { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(undefined) } },
       ],
@@ -115,7 +117,7 @@ describe("PlatformConfigService — AI usage + test connection", () => {
       rows({});
       expect(await service.resolveModelFor("general")).toBe("claude-sonnet-5-5");
       expect(await service.resolveModelFor("bill_scan")).toBe("claude-haiku-5-5");
-      expect(await service.resolveModelFor("receipt_scan")).toBe("claude-opus-5-5");
+      expect(await service.resolveModelFor("receipt_scan")).toBe("claude-sonnet-5-5");
       const cfg = await service.getAiConfig();
       expect(cfg.model).toBe("claude-sonnet-5-5");
       expect(cfg.scanModel).toBe("claude-haiku-5-5");
@@ -126,7 +128,7 @@ describe("PlatformConfigService — AI usage + test connection", () => {
       expect(await service.resolveModelFor("bill_scan")).toBe("claude-sonnet-5-5");
       expect(await service.resolveModelFor("general")).toBe("claude-opus-5-5");
       // the receipt task has no picker: a stored row never reaches it
-      expect(await service.resolveModelFor("receipt_scan")).toBe("claude-opus-5-5");
+      expect(await service.resolveModelFor("receipt_scan")).toBe("claude-sonnet-5-5");
     });
 
     it("M-G1: a stored older id resolves as stored and is reported as current", async () => {

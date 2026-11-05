@@ -12,6 +12,7 @@
  */
 import { InvoiceStatus, OrderStatus, type FulfillPath } from "@prisma/client";
 import { invoicesAtShipment } from "../orders/order-status-invoicing";
+import { isPostDeliveryOrderStatus } from "../common/terminal-order-statuses";
 
 export async function resolvePendingMirror(
   featureConfig: Parameters<typeof invoicesAtShipment>[0],
@@ -23,7 +24,9 @@ export async function resolvePendingMirror(
     return false;
   }
   if (!order) return false;
-  if (order.status === OrderStatus.DELIVERED || order.status === OrderStatus.PARTIALLY_DELIVERED) {
+  // SA-1101: REFUSED is post-delivery too. Left out, a refused order's $0 draft would be re-mirrored to the full
+  // amount on its next edit.
+  if (isPostDeliveryOrderStatus(order.status) || order.status === OrderStatus.PARTIALLY_DELIVERED) {
     return false;
   }
   // Out with the carrier, on a shipping business: unlocked at shipment.

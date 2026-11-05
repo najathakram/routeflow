@@ -16,7 +16,6 @@ import {
   Upload,
   ArrowUpDown,
   Merge,
-  AlertCircle,
   UserCheck,
   ChevronDown,
   ChevronUp,
@@ -49,6 +48,7 @@ import {
   useExportCustomers,
   useMergeCustomers,
   useRestoreCustomer,
+  fetchCustomer,
 } from "@/lib/api/customers";
 import { usePendingPortalApprovals, useApprovePortalRequest } from "@/lib/api/portal-approvals";
 import { apiClient } from "@/lib/api-client";
@@ -60,7 +60,7 @@ import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useU
 import { fmt, displayEmail, NO_EMAIL_COPY } from "@/lib/formatting";
 import { ImportCsvPanel } from "@/components/import/ImportCsvPanel";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
-import { CUSTOMER_IMPORT_COLUMNS } from "@routeflow/types";
+import { CUSTOMER_IMPORT_COLUMNS, CUSTOMER_IMPORT_TEMPLATE_HEADERS } from "@routeflow/types";
 import {
   OpenBalanceButton,
   useDropStatementParamNotOnPage,
@@ -150,21 +150,16 @@ function ImportCustomersModal({
         </div>
 
         <div className="space-y-4 px-6 py-5">
-          {/* How-to hint */}
-          <div className="flex items-start gap-2 rounded-lg bg-surface-raised px-3 py-2.5 text-xs text-navy/70">
-            <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-navy/70" />
-            <span>
-              <strong className="text-navy/70">How to export from Zoho:</strong> Zoho Invoices →
-              Contacts → ⋮ → Export Contacts (CSV)
-            </span>
-          </div>
-
           {/* B858/B859 (FIX5): same preview-then-import panel as settings/import — one renderer
            *  for one result shape, so the modal shows the same plan/diff before writing. */}
           <ImportCsvPanel
             endpoint="/import/contacts"
             title="Customers"
             columns={CUSTOMER_IMPORT_COLUMNS}
+            template={{
+              headers: CUSTOMER_IMPORT_TEMPLATE_HEADERS,
+              fileName: "customers-template.csv",
+            }}
             testIdPrefix="import-customers-modal"
             onImported={() => {
               setImported(true);
@@ -235,6 +230,7 @@ export default function CustomersPage() {
   // POST /import/contacts is admin-only on the api.
   const canImport = isAccountAdmin(useAuth().user);
   const [editingCustomer, setEditingCustomer] = React.useState<any>(null);
+  const [openingEditId, setOpeningEditId] = React.useState<string | null>(null);
   const [selectMode, setSelectMode] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [isDeleting, setIsDeleting] = React.useState(false);
@@ -429,6 +425,28 @@ export default function CustomersPage() {
         )}
       />
     </button>
+  );
+
+  // ── Edit door (SA-1084 A-2) ──────────────────────────────────────────────
+  // The list row carries no tax ID, so the form is opened with the customer's detail (the only read that carries
+  // the last 4). It opens once that read has loaded (the form resets when its data changes); a failed read opens
+  // nothing and says so, because a blank box would read as "nothing on file".
+  const openEdit = React.useCallback(
+    async (id: string) => {
+      setOpeningEditId(id);
+      try {
+        setEditingCustomer(await fetchCustomer(id));
+      } catch {
+        toast({
+          title: "Couldn't open this customer",
+          description: "Check your connection and try again.",
+          variant: "error",
+        });
+      } finally {
+        setOpeningEditId(null);
+      }
+    },
+    [toast],
   );
 
   // ── Status toggle ────────────────────────────────────────────────────────
@@ -704,7 +722,8 @@ export default function CustomersPage() {
               <button
                 title="Edit customer"
                 aria-label="Edit customer"
-                onClick={() => setEditingCustomer(row.original)}
+                disabled={openingEditId !== null}
+                onClick={() => void openEdit(row.original.id)}
                 className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
               >
                 <Pencil className="h-4 w-4" />
@@ -745,6 +764,8 @@ export default function CustomersPage() {
     [
       router,
       toggleStatus,
+      openEdit,
+      openingEditId,
       restoreCustomer,
       assignments,
       selectMode,

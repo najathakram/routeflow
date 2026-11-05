@@ -1,7 +1,8 @@
 /**
  * @jest-environment node
  */
-// The home, pricing, product and landing pages are ready-made HTML under public/site, served at
+// The home, pricing, product, landing, company, contact and four deep pages (getting-started, does-and-doesnt,
+// data-in-and-out, security) are ready-made HTML under public/site, served at
 // their own addresses by the rewrites in next.config.mjs. This pins what makes that safe: the
 // rewrites point at real files, every file the pages name is there, every link goes to a route
 // that exists, nothing loads from another host, the head carries what the old pages carried, and
@@ -24,6 +25,12 @@ const PAGES: Array<{ route: string; file: string; indexable: boolean }> = [
   { route: "/pricing", file: "pricing.html", indexable: true },
   { route: "/product", file: "product.html", indexable: true },
   { route: "/landing", file: "landing.html", indexable: false },
+  { route: "/getting-started", file: "getting-started.html", indexable: true },
+  { route: "/does-and-doesnt", file: "does-and-doesnt.html", indexable: true },
+  { route: "/data-in-and-out", file: "data-in-and-out.html", indexable: true },
+  { route: "/security", file: "security.html", indexable: true },
+  { route: "/company", file: "company.html", indexable: true },
+  { route: "/contact", file: "contact.html", indexable: true },
 ];
 
 function loadConfig<T>(call: "redirects" | "rewrites" | "headers"): T {
@@ -72,7 +79,7 @@ describe("ready-made pages: served by rewrites", () => {
     "rewrites",
   ).beforeFiles;
 
-  it("R1: exactly these four addresses are rewritten, each to site-page and its file under public/site", () => {
+  it("R1: exactly these ten addresses are rewritten, each to site-page and its file under public/site", () => {
     expect(rewrites.map((r) => [r.source, r.destination])).toEqual(
       PAGES.map((p) => [p.route, `/site-page/${p.file.replace(/\.html$/, "")}`]),
     );
@@ -85,7 +92,7 @@ describe("ready-made pages: served by rewrites", () => {
     expect(text).toContain("</html>");
   });
 
-  it("R3: none of the four is also a page built in Next (a second source of truth)", () => {
+  it("R3: none of the ten is also a page built in Next (a second source of truth)", () => {
     for (const { route } of PAGES) {
       const dir = route === "/" ? "" : route.slice(1);
       for (const group of ["(marketing)", ""]) {
@@ -100,8 +107,8 @@ describe("ready-made pages: served by rewrites", () => {
       .filter((r) => r.headers.some((h) => h.key === "X-Robots-Tag"))
       .map((r) => r.source);
     expect(sources).toEqual([
-      "/site/:page(home|pricing|product|landing).html",
-      "/site-page/:page(home|pricing|product|landing)",
+      "/site/:page(home|pricing|product|landing|company|contact|getting-started|does-and-doesnt|data-in-and-out|security).html",
+      "/site-page/:page(home|pricing|product|landing|company|contact|getting-started|does-and-doesnt|data-in-and-out|security)",
     ]);
   });
 });
@@ -228,7 +235,11 @@ describe("ready-made pages: files and links", () => {
       const mails = [...text.matchAll(/mailto:([^"?]+)/g)].map((m) => m[1]);
       expect(mails.length).toBeGreaterThan(0);
       for (const mail of mails) expect(mail).toBe(site.email);
-      for (const shown of text.match(/[\w.+-]+@[\w-]+\.[\w.]+/g) ?? []) {
+      // The sample sign-up card on Getting started shows an example address at the acme
+      // placeholder domain (the repo's stand-in for a business that doesn't exist).
+      for (const shown of (text.match(/[\w.+-]+@[\w-]+\.[\w.]+/g) ?? []).filter(
+        (address) => !address.endsWith("@acme.com"),
+      )) {
         expect(shown).toBe(site.email);
       }
     }

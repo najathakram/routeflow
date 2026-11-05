@@ -40,6 +40,7 @@ import { SHIPPING_FULFILMENT_MODES } from "../orders/shipping-fulfilment-modes";
 import { assertNoCarrierInTransit } from "../orders/carrier-in-transit-guard";
 import { canEditFulfilment } from "./fulfilment-edit";
 import { resolveFulfilmentSelfServe } from "./fulfilment-self-serve";
+import { TERMINAL_ORDER_STATUSES } from "../common/terminal-order-statuses";
 
 export const FULFILMENT_SETTINGS_REASON = "Changed in Settings → Fulfillment";
 const MODEL_KEY = "fulfilment_model";
@@ -55,7 +56,7 @@ export const FULFILMENT_OPTION_ORDER: readonly FulfilmentMode[] = [
   "unset",
 ];
 const IN_STORE_MODES: readonly string[] = ["pickup", "pickup_ship"];
-const CLOSED_ORDER_STATUSES: OrderStatus[] = [OrderStatus.DELIVERED, OrderStatus.CANCELLED];
+const CLOSED_ORDER_STATUSES: OrderStatus[] = [...TERMINAL_ORDER_STATUSES];
 
 interface ParsedBody {
   fulfilmentModel?: FulfilmentMode;

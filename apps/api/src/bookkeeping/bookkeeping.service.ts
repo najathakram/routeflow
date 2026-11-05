@@ -7,6 +7,7 @@ import {
 } from "@nestjs/common";
 import { toCollectByCustomer, toCollectState } from "../invoices/to-collect";
 import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
+import { aiKeyRefusedException, aiNotAvailableException } from "../common/ai-key-failure";
 import { flagUnconfirmedOverReserved } from "../invoices/confirmed-basis";
 import { lockBillRows } from "../vendor-bills/bill-locks";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
@@ -47,7 +48,6 @@ import { BulkMarkPaidDto } from "../vendor-bills/dto/bulk-mark-paid.dto";
 import { InvoiceService } from "./invoice.service";
 import { StorageService } from "../storage/storage.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
-import { SystemConfigService } from "../system-config/system-config.service";
 import { PlatformConfigService } from "../platform-admin/platform-config.service";
 import { AI_SCAN_MAX_TOKENS, firstText } from "../platform-admin/ai-response";
 import Anthropic from "@anthropic-ai/sdk";
@@ -85,7 +85,6 @@ export class BookkeepingService implements OnModuleInit {
     private readonly invoiceService: InvoiceService,
     private readonly storage: StorageService,
     private readonly vendorBillsService: VendorBillsService,
-    private readonly systemConfig: SystemConfigService,
     private readonly platformConfig: PlatformConfigService,
     private readonly commissionEngine: CommissionEngineService,
     // SA-827: the strict plan-flag read the display-unit resolve needs. Optional so a bare unit harness still builds.
@@ -923,6 +922,9 @@ export class BookkeepingService implements OnModuleInit {
   }
 
   async extractExpenseItems(id: string) {
+    // SA-1102 A-4 M3: tenant first. A tenantless call is refused before any read, so a request id is never looked up
+    // in another business and a 404 cannot tell the caller whether it exists anywhere.
+    this.platformConfig.requireAiTenant();
     const expense = await this.findExpenseOrThrow(id);
     if (!expense.receiptKey)
       throw new BadRequestException("Upload a receipt first before extracting items");
@@ -931,14 +933,12 @@ export class BookkeepingService implements OnModuleInit {
     const receiptBuffer = await this.storage.download(expense.receiptKey);
     const mimeType = (expense as any).receiptMimeType ?? "image/jpeg";
 
-    // Key priority: tenant key (SystemConfig) → platform key → env var.
-    const tenantKey = await this.systemConfig.get("anthropic.apiKey");
-    const apiKey = await this.platformConfig.resolveAnthropicKey(tenantKey);
-    if (!apiKey) throw new BadRequestException("Anthropic API key not configured");
-
-    // SA-1035: read once; the call and both usage records use this one value. Receipts are small documents where a
-    // misread line lands directly in the books, so this path runs the most capable model (no picker).
-    const model = await this.platformConfig.resolveModelFor("receipt_scan");
+    // SA-1102 A-1: one entry for every AI call: a business is required, a receipt scan runs on RouteFlow's key (a
+    // business key is for bill scans only), the monthly budget is checked, and the model comes back with it.
+    // SA-1035: the model is read once; the call and both usage records use this one value. Sonnet (no picker).
+    const { key: apiKey, model } = await this.platformConfig.prepareAiCall("receipt_scan");
+    // F-1102-T: no key at all is not something the business can set up; it reads as "not available right now".
+    if (!apiKey) throw aiNotAvailableException();
     const anthropic = new Anthropic({ apiKey });
     const base64 = receiptBuffer.toString("base64");
     const isPdf = mimeType === "application/pdf";
@@ -975,6 +975,9 @@ export class BookkeepingService implements OnModuleInit {
         model,
         success: false,
       });
+      // F-1102-T: a receipt scan always runs on RouteFlow's key, so a refusal reads as "not available right now".
+      const status = (err as { status?: number })?.status;
+      if (status === 401 || status === 403) throw aiKeyRefusedException("routeflow");
       throw err;
     }
 

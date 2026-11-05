@@ -138,10 +138,18 @@ function CreateReturnModal({
         ]
       : listedCustomers;
 
-  const { data: ordersData, isLoading: ordersLoading } = useOrders(
+  const { data: ordersData, isLoading: deliveredLoading } = useOrders(
     customerId ? { customerId, status: "DELIVERED" } : undefined,
   );
-  const listedOrders: Order[] = (ordersData as any)?.data ?? [];
+  // SA-1101 §2.5: staff record a return on a REFUSED order too (how the refused goods go back to stock).
+  const { data: refusedData, isLoading: refusedLoading } = useOrders(
+    customerId ? { customerId, status: "REFUSED" } : undefined,
+  );
+  const ordersLoading = deliveredLoading || refusedLoading;
+  const listedOrders: Order[] = [
+    ...((ordersData as any)?.data ?? []),
+    ...((refusedData as any)?.data ?? []),
+  ];
   const orders =
     foundOrder &&
     foundOrder.customerId === customerId &&
@@ -176,8 +184,8 @@ function CreateReturnModal({
         onFoundSale(order);
         return;
       }
-      // no inline return flow: fill the customer + order of this form, but only a DELIVERED sale (the form's own rule)
-      if (order.status !== "DELIVERED") {
+      // no inline return flow: fill the customer + order of this form, but only a DELIVERED or REFUSED sale (the form's own rule)
+      if (order.status !== "DELIVERED" && order.status !== "REFUSED") {
         setFoundNotice(`This sale can't be returned yet (status ${order.status}).`);
         return;
       }

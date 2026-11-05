@@ -21,6 +21,17 @@ import { AI_SCAN_MAX_TOKENS, firstText } from "../platform-admin/ai-response";
 import { Prisma, MovementType, PaymentMethod } from "@prisma/client";
 import { costDecimal, reverseAverageCost } from "../inventory/costing";
 import {
+  boxIntrosOf,
+  convertedLotShape,
+  inTodaysPieces,
+  introsAfter,
+  lotShapeWhere,
+  packFactor,
+  packVoidClosingRows,
+  receivedBeforePackError,
+  type BoxIntro,
+} from "../products/pack-intro-undo";
+import {
   applyStockMovements,
   type LockedStock,
   type StockAverage,
@@ -58,6 +69,7 @@ import { ReceiveVendorBillDto } from "./dto/receive-vendor-bill.dto";
 import { SaveProductMappingDto } from "./dto/save-product-mapping.dto";
 import { RecordSupplierPaymentDto } from "./dto/supplier-payment.dto";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { aiKeyRefusedException, aiNotAvailableException } from "../common/ai-key-failure";
 import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
 import { assertSellableLines } from "../products/sellable-lines";
 import { tenantSafeParentView } from "../products/product-parent";
@@ -148,6 +160,8 @@ interface LiveBillReceipt {
   supplierId: string | null;
   /** Insertion time (the ledger's tiebreak clock); absent on a synthetic shortfall receipt. */
   createdAt?: Date;
+  /** SA-1093: the Boxes answers written after this row: its lot may carry their shape. */
+  intros?: BoxIntro[];
 }
 
 /** What a bill-stock reversal is for: revert refuses a ledger it cannot explain; void degrades. */
@@ -1670,6 +1684,16 @@ export class VendorBillsService {
       plan.map((p) => ({ productId: p.item.productId as string, name: p.name, qty: p.qty })),
       action,
     );
+    // SA-1093: one read of each product's Boxes answers. A revert of a receipt older than one is refused before any write.
+    const introsOf = new Map<string, BoxIntro[]>();
+    for (const productId of new Set(plan.map((p) => p.item.productId as string))) {
+      const intros = await boxIntrosOf(tx, productId);
+      introsOf.set(productId, intros);
+      const older = receiptsByProduct
+        .get(productId)
+        ?.rows.some((r) => packFactor(introsAfter(intros, r.createdAt as Date)) > 1);
+      if (older && action === "reverted to draft") throw receivedBeforePackError("bill");
+    }
     const now = new Date();
     const tenantId = this.prisma.getTenantId();
     const reversedReceipts: (LiveBillReceipt & { productId: string; name: string })[] = [];
@@ -1684,7 +1708,7 @@ export class VendorBillsService {
       lotsLeft?: number;
     }[] = [];
     // SA-808b (void only): products with a shortfall, and their plan lines (the lot shapes).
-    const shortfalls = new Map<string, { name: string; lines: typeof plan }>();
+    const shortfalls = new Map<string, { name: string; lines: typeof plan; intros: BoxIntro[] }>();
     // One filed-period decision per (product, distinct date), not one per row.
     const dateMemo = new Map<string, DocumentStockDate>();
     const stockDateOf = async (productId: string, documentDate: Date) => {
@@ -1721,17 +1745,29 @@ export class VendorBillsService {
       const exists = await tx.product.findFirst({ where: { id: productId }, select: { id: true } });
       if (!exists) continue;
 
+      // SA-1093 Rule 2: a receipt older than a Boxes answer comes out in today's pieces. A line with no receipt row is
+      // legacy, so older than every answer. All factors 1 writes what a void always wrote, and nothing more.
+      const intros = introsOf.get(productId) as BoxIntro[];
+      const shortfallFactor = shortfall.gt(0) ? packFactor(intros) : 1;
+      const factorOf = (r: LiveBillReceipt) => packFactor(introsAfter(intros, r.createdAt as Date));
+      const afterPack = shortfallFactor > 1 || mine.some((r) => factorOf(r) > 1);
+
       // SA-808 §3 (A): each row dated at the receipt's own instant so every period nets, UNLESS that
       // instant is in a filed period for this product — then dated now, and the note says so.
       const dated: { original: (typeof mine)[number]; when: DocumentStockDate }[] = [];
       for (const original of mine) {
         const when = await stockDateOf(productId, original.effectiveAt);
-        reversedReceipts.push({ ...original, productId, name });
+        reversedReceipts.push({
+          ...original,
+          productId,
+          name,
+          intros: introsAfter(intros, original.createdAt as Date),
+        });
         const prior = earliestReversal.get(productId);
         if (!prior || when.effectiveAt < prior) earliestReversal.set(productId, when.effectiveAt);
         dated.push({ original, when });
       }
-      const shortfallWhen = shortfall.gt(0) ? await stockDateOf(productId, now) : null;
+      const shortfallWhen = shortfall.gt(0) || afterPack ? await stockDateOf(productId, now) : null;
       const productLines = linesOfProduct.get(productId) ?? [];
 
       // SA-927: ONE call per product. The plan function replays each LINE's AVCO reversal against the
@@ -1754,7 +1790,7 @@ export class VendorBillsService {
             stock = stock.sub(l.qty);
           }
           const average: StockAverage =
-            avg != null && (lk.averageCost == null || !avg.eq(lk.averageCost))
+            !afterPack && avg != null && (lk.averageCost == null || !avg.eq(lk.averageCost))
               ? { set: avg }
               : "keep";
           const rows: StockMovementRow[] = dated.map(({ original, when }, i) => ({
@@ -1772,6 +1808,9 @@ export class VendorBillsService {
           // SA-808b: a void never strands on a missing receipt. The part with no PURCHASE record gets
           // ONE ADJUSTMENT per product dated now (no purchase was ever counted for it, so purchases
           // stay as filed; now is open or documentStockDate refuses, so no closed ending moves).
+          const parts = dated.map(({ original: r }) =>
+            inTodaysPieces(r.quantity, r.unitCost, factorOf(r)),
+          );
           if (shortfall.gt(0) && shortfallWhen) {
             const totalQty = productLines.reduce((t, l) => t.add(l.qty), new Prisma.Decimal(0));
             const lineCost = costDecimal(
@@ -1782,8 +1821,8 @@ export class VendorBillsService {
             rows.push({
               productId,
               type: MovementType.ADJUSTMENT,
-              quantity: shortfall.negated(),
-              unitCost: lineCost,
+              quantity: shortfall.mul(shortfallFactor).negated(),
+              unitCost: costDecimal(lineCost.div(shortfallFactor)),
               average: rows.length === 0 ? average : "keep",
               supplierId: bill.supplierId ?? null,
               reference: bill.billNumber,
@@ -1791,6 +1830,20 @@ export class VendorBillsService {
               performedById: performedById ?? null,
               effectiveAt: shortfallWhen.effectiveAt,
             });
+            parts.push(inTodaysPieces(shortfall, lineCost, shortfallFactor));
+          }
+          if (afterPack && shortfallWhen) {
+            rows.push(
+              ...packVoidClosingRows(lk, {
+                productId,
+                parts,
+                receipts: dated.map(({ original }) => original),
+                reference: bill.billNumber,
+                notes: `${BILL_VOID_SHORTFALL_NOTE}${bill.billNumber}: in today's pieces`,
+                performedById: performedById ?? null,
+                effectiveAt: shortfallWhen.effectiveAt,
+              }),
+            );
           }
           return rows;
         },
@@ -1801,12 +1854,13 @@ export class VendorBillsService {
         gapsDetected.push({
           productId,
           name,
-          stockDrift: shortfall.toNumber(),
-          noReceiptQty: shortfall.toNumber(),
+          stockDrift: shortfall.mul(shortfallFactor).toNumber(),
+          noReceiptQty: shortfall.mul(shortfallFactor).toNumber(),
         });
         shortfalls.set(productId, {
           name,
           lines: plan.filter((p) => p.item.productId === productId),
+          intros,
         });
       }
     }
@@ -1990,7 +2044,11 @@ export class VendorBillsService {
     /** SA-808b (void only): products with a shortfall, and their plan lines. */
     shortfalls: Map<
       string,
-      { name: string; lines: { qty: Prisma.Decimal; unitCost: Prisma.Decimal }[] }
+      {
+        name: string;
+        lines: { qty: Prisma.Decimal; unitCost: Prisma.Decimal }[];
+        intros?: BoxIntro[];
+      }
     > = new Map(),
   ): Promise<{
     /** Ambiguous lots a void left standing: the ONLY ids the zero-by-id repair may touch. */
@@ -2013,8 +2071,7 @@ export class VendorBillsService {
     const shape = (r: (typeof receipts)[number]) => ({
       productId: r.productId,
       reference: billNumber,
-      qty: r.quantity,
-      ...(r.unitCost != null ? { unitCost: r.unitCost } : {}),
+      ...lotShapeWhere(r.quantity, r.unitCost, r.intros),
     });
     const free = async (r: (typeof receipts)[number], extra: object) =>
       ((await tx.stockLot.findMany({ where: { ...shape(r), ...extra } })) ?? []).filter(
@@ -2040,11 +2097,16 @@ export class VendorBillsService {
     for (const l of lots) bump(shapeKey(l.productId, l.qty, l.unitCost));
     for (const r of unmatched) bump(shapeKey(r.productId, r.quantity, r.unitCost));
     // No bill date ⇒ no exact match is possible: the shortfall's lots stay untouched.
-    for (const [productId, { name, lines }] of shortfalls) {
+    for (const [productId, { name, lines, intros }] of shortfalls) {
       if (!billDate) break;
       for (const line of lines) {
-        const k = shapeKey(productId, line.qty, line.unitCost);
-        if ((answered.get(k) ?? 0) > 0) {
+        // SA-1093: a lot already taken may carry the Boxes answers' shape.
+        const scaled = convertedLotShape(line.qty, line.unitCost, intros ?? []);
+        const k = [
+          shapeKey(productId, line.qty, line.unitCost),
+          shapeKey(productId, scaled.qty, scaled.unitCost),
+        ].find((key) => (answered.get(key) ?? 0) > 0);
+        if (k) {
           answered.set(k, (answered.get(k) ?? 0) - 1); // this line's lot is already accounted for
           continue;
         }
@@ -2056,6 +2118,7 @@ export class VendorBillsService {
           name,
           quantity: line.qty,
           unitCost: line.unitCost,
+          intros,
         });
       }
     }
@@ -2063,7 +2126,7 @@ export class VendorBillsService {
     // their candidates, so accept when there are no more candidates than receipts of that shape.
     const groups = new Map<string, typeof receipts>();
     for (const r of unmatched) {
-      const key = `${r.productId}|${String(r.quantity)}|${String(r.unitCost)}`;
+      const key = `${r.productId}|${String(r.quantity)}|${String(r.unitCost)}|${packFactor(r.intros ?? [])}`;
       groups.set(key, [...(groups.get(key) ?? []), r]);
     }
     for (const group of groups.values()) {
@@ -2591,22 +2654,25 @@ export class VendorBillsService {
    * worth keeping.
    */
   async scanInvoice(files: ScanInvoiceFile[], scannedById?: string) {
+    // SA-1102 A-4 M3: tenant first. A tenantless call is refused before any read, so a request id is never looked up
+    // in another business and a 404 cannot tell the caller whether it exists anywhere.
+    this.platformConfig.requireAiTenant();
     const fileHash = hashFile(files.map((f) => f.buffer));
     const prior = await this.findScanByHash(fileHash);
     if (prior) return this.rematchPriorScan(prior);
 
-    // Key priority: tenant key (SystemConfig) → platform key → env var.
-    const tenantKey = await this.systemConfig.get("anthropic.apiKey");
-    const apiKey = await this.platformConfig.resolveAnthropicKey(tenantKey);
-    if (!apiKey || apiKey.length === 0) {
-      throw new BadRequestException(
-        "AI invoice scanning is not available. Please contact your system administrator to configure the ANTHROPIC_API_KEY.",
-      );
-    }
-
-    // SA-1035: the model is read ONCE per scan and used for the call, both usage records and the stored scan row, so the
-    // row says what was actually called even if the setting changes mid-scan.
-    const model = await this.platformConfig.resolveModelFor("bill_scan");
+    // SA-1102: the business's own key is used for a bill scan ONLY (and only when set); every other scan runs on
+    // RouteFlow's key. A business key Anthropic refuses fails the scan; it is not retried on RouteFlow's key.
+    const businessKey = await this.systemConfig.get("anthropic.apiKey");
+    // SA-1035: the model is read ONCE per scan and used for the call, both usage records and the stored scan row, so
+    // the row says what was actually called even if the setting changes mid-scan.
+    const {
+      key: apiKey,
+      model,
+      source,
+    } = await this.platformConfig.prepareAiCall("bill_scan", businessKey);
+    // F-1102-T: no key at all is not something the business can set up; it reads as "not available right now".
+    if (!apiKey || apiKey.length === 0) throw aiNotAvailableException();
 
     // ── Phase 0: Normalise inputs ─────────────────────────────────────────────
     // Multi-page invoices arrive as N images (HEIC from iPhone, JPEG, PNG, etc.)
@@ -2729,13 +2795,8 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
         model,
         success: false,
       });
-      if (status === 401 || status === 403) {
-        throw new BadRequestException({
-          message:
-            "The Anthropic API key is invalid or expired. Go to Settings → AI & Integrations to update it.",
-          code: API_ERROR_CODES.AI_KEY_INVALID,
-        });
-      }
+      // F-1102-T: only the business's OWN key is the business's to fix; RouteFlow's refused key reads as unavailable.
+      if (status === 401 || status === 403) throw aiKeyRefusedException(source);
       // Non-transient 4xx (bad/oversized/corrupt image, malformed request) —
       // retrying the SAME file will fail identically, unlike a real outage
       // or rate-limit (429/5xx), so don't tell the user to "try again".

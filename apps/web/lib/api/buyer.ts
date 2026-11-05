@@ -505,6 +505,8 @@ export function useBuyerCreateChangeRequest() {
 export interface BuyerInvoiceDetail {
   id: string;
   invoiceNumber: string;
+  /** The business's "Show price per piece on invoices" switch: true = the Per piece column is off (owner ruling 2026-11-04). */
+  hidePerPiece?: boolean;
   /** Row 401: the server's answer to "a counter sale paid at the till" — no due date / terms shown. */
   paidAtSale?: boolean;
   revisedAt?: string | null;

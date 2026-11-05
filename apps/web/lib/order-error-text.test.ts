@@ -1,4 +1,11 @@
-import { bulkDeleteResultTitle, orderErrorText } from "./order-error-text";
+import {
+  DEMOTE_HAS_RETURN_COPY,
+  bulkDeleteResultTitle,
+  demoteErrorText,
+  isDemoteRefusal,
+  orderErrorText,
+} from "./order-error-text";
+import { genericToastCopy } from "./generic-toast-copy";
 
 const axiosErr = (
   status: number,
@@ -82,5 +89,70 @@ describe("row 585: deleting an order that has delivered items", () => {
     expect(title).toContain("2 deleted, 1 kept");
     expect(title).toMatch(/delivered items/);
     expect(title).toMatch(/recorded payments/);
+  });
+});
+
+describe("demoteErrorText (SA-1101 A-5): a blocked Reopen order / demotion reads its own sentence", () => {
+  const live = axiosErr(409, { code: "ORDER_HAS_RETURN", message: "server wording" });
+
+  it("409 ORDER_HAS_RETURN is the A-5 sentence, fixed here (never the server message)", () => {
+    expect(demoteErrorText(live)).toBe(
+      "This order has a return. To change its delivery status, cancel the return first.",
+    );
+    expect(demoteErrorText(live)).toBe(DEMOTE_HAS_RETURN_COPY);
+  });
+
+  it("is not the Deliver-again sentence the generic toast keeps for the same code", () => {
+    expect(genericToastCopy(live)).toMatch(/deliver it again/);
+    expect(demoteErrorText(live)).not.toMatch(/deliver it again/);
+  });
+
+  it("owns only that refusal: another code, another status, or no response is null", () => {
+    expect(isDemoteRefusal(live)).toBe(true);
+    expect(demoteErrorText(axiosErr(409, { code: "ORDER_CHANGED_DURING_EDIT" }))).toBeNull();
+    expect(demoteErrorText(axiosErr(400, { code: "ORDER_HAS_RETURN" }))).toBeNull();
+    expect(demoteErrorText(new Error("Network Error"))).toBeNull();
+    expect(isDemoteRefusal(null)).toBe(false);
+  });
+});
+
+describe("demoteErrorText (B1280): the other two Reopen order refusals read their own sentence", () => {
+  const live = axiosErr(409, { code: "ORDER_HAS_RETURN", message: "server wording" });
+  const paidWalkIn = axiosErr(409, {
+    code: "WALK_IN_SALE_PAID",
+    message:
+      "This sale is paid. Ring up added items as a new sale, or use Return to take items back.",
+  });
+  const onRun = axiosErr(409, {
+    code: "ORDER_ROUTE_STOP_COMPLETED",
+    message: "This order was delivered on a route run. Reopen its stop from the run instead.",
+  });
+
+  it("a paid walk-in sale says it is closed, not 'ring up added items' (that is the edit sentence)", () => {
+    expect(demoteErrorText(paidWalkIn)).toBe(
+      "This counter sale is paid, so it can't be reopened. To take items back, use Return.",
+    );
+  });
+
+  it("an order delivered on a route run points to the stop, and says what that does", () => {
+    expect(demoteErrorText(onRun)).toBe(
+      "This order was delivered on a route run. Undo its stop on the run, which also reverses stock and payments.",
+    );
+  });
+
+  it("every Reopen refusal is local to the page (one toast, not also the global one)", () => {
+    for (const e of [live, paidWalkIn, onRun]) expect(isDemoteRefusal(e)).toBe(true);
+    expect(isDemoteRefusal(axiosErr(409, { code: "ORDER_CHANGED_DURING_EDIT" }))).toBe(false);
+    expect(isDemoteRefusal(axiosErr(400, { code: "WALK_IN_SALE_PAID" }))).toBe(false);
+    expect(isDemoteRefusal(new Error("Network Error"))).toBe(false);
+  });
+
+  it("the sentences are the web's own, whatever the server said", () => {
+    expect(demoteErrorText(axiosErr(409, { code: "WALK_IN_SALE_PAID", message: "x" }))).not.toBe(
+      "x",
+    );
+    expect(
+      demoteErrorText(axiosErr(409, { code: "ORDER_ROUTE_STOP_COMPLETED", message: "x" })),
+    ).not.toBe("x");
   });
 });

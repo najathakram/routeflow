@@ -94,6 +94,13 @@ export const API_ERROR_CODES = {
   CREDIT_NOTE_LINES_REQUIRED: "CREDIT_NOTE_LINES_REQUIRED",
   CREDIT_NOTE_LINE_INVALID: "CREDIT_NOTE_LINE_INVALID",
   CREDIT_NOTE_UNAVAILABLE: "CREDIT_NOTE_UNAVAILABLE",
+  CREDIT_NOTE_NOT_APPLICABLE: "CREDIT_NOTE_NOT_APPLICABLE",
+  CREDIT_NOTE_EXPIRED: "CREDIT_NOTE_EXPIRED",
+  CREDIT_NOTE_CUSTOMER_MISMATCH: "CREDIT_NOTE_CUSTOMER_MISMATCH",
+  CREDIT_NOTE_INVOICE_NOT_APPLICABLE: "CREDIT_NOTE_INVOICE_NOT_APPLICABLE",
+  CREDIT_NOTE_NOTHING_TO_APPLY: "CREDIT_NOTE_NOTHING_TO_APPLY",
+  CUSTOMER_EMAIL_OR_USERNAME_TAKEN: "CUSTOMER_EMAIL_OR_USERNAME_TAKEN",
+  CUSTOMER_SALES_AGENT_UNKNOWN: "CUSTOMER_SALES_AGENT_UNKNOWN",
   CUSTOMER_NOT_LINKED: "CUSTOMER_NOT_LINKED",
   BILL_STATE_CHANGED: "BILL_STATE_CHANGED",
   BILL_VOID: "BILL_VOID",
@@ -190,7 +197,11 @@ export const API_ERROR_CODES = {
   INVALID_LINE_SPLIT: "INVALID_LINE_SPLIT",
   INVALID_RESOLUTION_FOR_TYPE: "INVALID_RESOLUTION_FOR_TYPE",
   LINE_PACK_UNDERIVABLE: "LINE_PACK_UNDERIVABLE",
+  /** SA-1097: an order edit that would re-price a stored split line whose own pack can't be read (409). */
+  STORED_LINE_PACK_UNREADABLE: "STORED_LINE_PACK_UNREADABLE",
   LINE_ALREADY_DELIVERED: "LINE_ALREADY_DELIVERED",
+  /** SA-1101 (B785): a stop close left out a line that still had something to deliver (400, nothing written). */
+  STOP_DELIVERY_LINES_MISSING: "STOP_DELIVERY_LINES_MISSING",
   /**
    * W-871 (SA-948): a replace (staff replace-all, a driver's full-list save) on a post-delivery order is refused
    * before any write; re-created lines would lose the invoice's provenance. Change the lines one at a time. 409.
@@ -212,8 +223,12 @@ export const API_ERROR_CODES = {
   UNIT_NOT_OFFERED: "UNIT_NOT_OFFERED",
   FEATURE_MODE: "FEATURE_MODE",
   RUN_ALREADY_SETTLED: "RUN_ALREADY_SETTLED",
+  RUN_COUNT_TOO_LARGE: "RUN_COUNT_TOO_LARGE",
+  RUN_HAS_STOPS_LEFT: "RUN_HAS_STOPS_LEFT",
+  RUN_VARIANCE_REASON_REQUIRED: "RUN_VARIANCE_REASON_REQUIRED",
   STOP_ALREADY_COMPLETED: "STOP_ALREADY_COMPLETED",
   STOP_SKIPPED: "STOP_SKIPPED",
+  STOP_REOPENED: "STOP_REOPENED",
   SELLING_RESTRICTED: "SELLING_RESTRICTED",
   SELLING_RESTRICTIONS_NOT_READY: "SELLING_RESTRICTIONS_NOT_READY",
   RULE_NOT_EDITABLE: "RULE_NOT_EDITABLE",
@@ -242,6 +257,10 @@ export const API_ERROR_CODES = {
   AI_PARSE_FAILED: "AI_PARSE_FAILED",
   /** SA-1035: PATCH /platform-admin/ai-config, 400: a model id that is not on the AI_MODELS list. */
   AI_MODEL_UNKNOWN: "AI_MODEL_UNKNOWN",
+  /** SA-1102 B1: 403, a business has used this month's AI allowance on RouteFlow's key (or the cap is 0). */
+  AI_MONTHLY_CAP_REACHED: "AI_MONTHLY_CAP_REACHED",
+  /** SA-1102: a SystemConfigService read or write ran with no business in context (a RouteFlow bug, 500). */
+  SYSTEM_CONFIG_TENANT_REQUIRED: "SYSTEM_CONFIG_TENANT_REQUIRED",
   INSUFFICIENT_UNASSIGNED: "INSUFFICIENT_UNASSIGNED",
   PO_LOT_PARTIALLY_CONSUMED: "PO_LOT_PARTIALLY_CONSUMED",
   PO_HAS_LINKED_BILL: "PO_HAS_LINKED_BILL",
@@ -437,6 +456,7 @@ export const API_ERROR_CODES = {
    * the write (a dispatch attached it), so releasing the old link would have cleared a fresh one. Nothing was written.
    */
   ORDER_RUN_LINK_CHANGED: "ORDER_RUN_LINK_CHANGED",
+  ORDER_HAS_RETURN: "ORDER_HAS_RETURN",
   /**
    * W-769 (SA-862 rule 4): PATCH /invoices/:id/payments/:paymentId, 409: confirming (DRAFT → PAID) or reopening (VOID → PAID) a
    * payment when real money already covers the invoice. Nothing written; void it or move it to the customer's credit.
@@ -603,6 +623,11 @@ export const API_ERROR_CODES = {
    */
   ORDER_DELIVERED_ON_ROUTE_STOP: "ORDER_DELIVERED_ON_ROUTE_STOP",
   /**
+   * B1280: PATCH /orders/:id/status out of DELIVERED (Reopen order), 409: the order was delivered on a route run whose stop is
+   * COMPLETED. The stop owns the stock and payment reversal, so reopen it from the run. Nothing written.
+   */
+  ORDER_ROUTE_STOP_COMPLETED: "ORDER_ROUTE_STOP_COMPLETED",
+  /**
    * W-776 (SA-925): POST /orders/:id/pickup-complete, 409: the register's day is closed, refused by the PRE-CHECK before the
    * first write (nothing changed, the order stays as it was). COUNTER_SALE_DAY_CLOSED from this endpoint now means only "the
    * hand-over stands" (raised after the claim).
@@ -747,6 +772,29 @@ export const API_ERROR_CODES = {
   PRICE_EDIT_INVALID: "PRICE_EDIT_INVALID",
   /** 409 from POST /products/:productId/prices/undo: that audit row is not a price save of this product, or it was already undone. */
   PRICE_UNDO_UNAVAILABLE: "PRICE_UNDO_UNAVAILABLE",
+  /**
+   * 409 from PATCH /products/:id (SA-946, SA-961 R1): the save introduces a pack size (blank or 1 to N > 1) on a product
+   * that holds stock or cost, and the request did not say what the stock number meant. Send `packReading`: "box" (240 is
+   * 240 boxes; stock, reorder levels and cost become pieces) or "piece" (nothing converts). Nothing was written.
+   */
+  PACK_READING_REQUIRED: "PACK_READING_REQUIRED",
+  /**
+   * 409 from PATCH /products/:id (SA-946): the "box" answer would take stock or a reorder level past what its column
+   * holds. Never clamped; nothing was written. The "piece" answer, or a smaller pack, still saves.
+   */
+  PACK_CONVERSION_TOO_LARGE: "PACK_CONVERSION_TOO_LARGE",
+  /**
+   * 409 from a vendor bill's revert to draft and a purchase order's re-apply (SA-1093): the document was received before a
+   * Boxes answer, so its lines are in the old unit. `document` says which ("bill", "purchase-order"). A bill's void still works.
+   * Nothing was written.
+   */
+  RECEIVED_BEFORE_PACK: "RECEIVED_BEFORE_PACK",
+  /**
+   * 409 from PATCH /products/:id (SA-1093): the "box" answer while an open order holds a line with its own unit or box split,
+   * which a cancel would credit in the old unit. `orderId` and `orderNumber` name one order. The "piece" answer still saves.
+   * Nothing was written.
+   */
+  PACK_OPEN_LINES: "PACK_OPEN_LINES",
   /**
    * 400 from POST /platform-admin/tenants/:id/business-capabilities (and its /preview) when no capability is ticked
    * (BO-04): at least one of Delivery, Shipping or Counter is needed. Fixed body; nothing was written.

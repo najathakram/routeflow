@@ -35,6 +35,8 @@ ul,ol{padding:0;list-style:none}
 .nav-links{display:flex;gap:6px;margin-right:auto}
 .nav-links a{display:inline-flex;align-items:center;min-height:44px;padding:0 14px;border-radius:999px;text-decoration:none;font-size:16px;color:var(--ink-2);transition:color .2s,background .2s}
 .nav-links a:hover{color:var(--ink);background:var(--tint)}
+/* Six links: just above the menu breakpoint, tighten the pills so none wraps. */
+@media (min-width:1081px) and (max-width:1139.98px){.nav-links{gap:2px}.nav-links a{padding:0 9px;font-size:15px}}
 .nav-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
 .nav-signin{display:inline-flex;align-items:center;min-height:44px;padding:0 14px;font-size:16px;text-decoration:none;color:var(--ink-2)}
 .nav-price{display:none;align-items:center;min-height:44px;padding:0 10px;font-size:16px;font-weight:600;text-decoration:none;color:var(--ink)}
@@ -126,14 +128,9 @@ h3{font-size:var(--rf-h4);line-height:1.15;font-weight:650;letter-spacing:-.02em
 .footer-grid a:hover{color:var(--rf-link)}
 .foot-about{margin:14px 0;max-width:22em}
 .foot-bottom{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px 24px;margin-top:56px;padding-top:24px;box-shadow:0 -1px 0 var(--line);font-size:15px}
-.rm-toggle{min-height:44px;padding:0 14px;border:0;border-radius:999px;background:#fff;font:inherit;font-size:15px;color:var(--ink-2);cursor:pointer}
-.rm-toggle[aria-pressed="true"]{background:var(--b700);color:#fff}
 
 /* ---------- motion defaults: final state shown; hidden only while motion will play ---------- */
 .js-motion .reveal{opacity:0;transform:translateY(16px)}
-/* :not(.motion-on): with ?motion=on this rule would make every style change a transition, so ScrollTrigger measures pin spacers before they apply. */
-@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}html:not(.motion-on) *{transition-duration:.01ms!important}}
-html.rm *{transition-duration:.01ms!important}
 
 /* ---------- responsive ---------- */
 @media (max-width:1080px){
@@ -158,8 +155,9 @@ html.rm *{transition-duration:.01ms!important}
   .cta-row{gap:4px 20px}
   .site-footer{padding:36px 0 22px}
   .footer-grid{grid-template-columns:1fr;gap:10px}
-  .footer-grid>:nth-child(2),.footer-grid>:nth-child(3),.foot-about,.foot-mail,.footer-grid [data-where="footer"]{display:none}
+  .footer-grid>:nth-child(3),.foot-about,.foot-mail,.footer-grid [data-where="footer"]{display:none}
   .footer-grid li:has(>[data-where="footer"]){display:none}
+  .footer-grid>:nth-child(2) li:not(.foot-depth){display:none}
   .footer-grid ul{display:flex;gap:4px 20px;flex-wrap:wrap}
   .footer-grid h2{margin-bottom:6px}
   .foot-bottom{margin-top:20px;padding-top:14px;gap:4px 16px}
@@ -278,8 +276,7 @@ h2+.lede,.section-head h2+.lede{margin-top:18px}
 /* ---------- press: a control answers the moment a finger lands. Things that move scale a little; words dim. ---------- */
 .pd-tile{transition:background .2s,transform .15s var(--ease)}
 .pd-tile:active{transform:scale(.97);transition:transform .1s ease-out}
-.link:active,.hx-more:active,.pd-go:active,.fd-more:active,.brand:active,.nav-links a:active,.nav-signin:active,.nav-price:active,.menu-btn:active,.rm-toggle:active,.site-footer a:active,.mobile-menu a:not(.btn):active,summary:active,main a:not(.btn):not(.pd-tile):active{opacity:.6;transition:opacity .1s ease-out}
-@media (prefers-reduced-motion:reduce){html:not(.motion-on) .btn:active,html:not(.motion-on) .pd-tile:active{transform:none;opacity:.7}}
+.link:active,.hx-more:active,.pd-go:active,.fd-more:active,.brand:active,.nav-links a:active,.nav-signin:active,.nav-price:active,.menu-btn:active,.site-footer a:active,.mobile-menu a:not(.btn):active,summary:active,main a:not(.btn):not(.pd-tile):active{opacity:.6;transition:opacity .1s ease-out}
 
 /* ---------- reduced transparency and higher contrast: solid surfaces, defined edges ---------- */
 @media (prefers-reduced-transparency:reduce){
@@ -291,3 +288,6 @@ h2+.lede,.section-head h2+.lede{margin-top:18px}
   .site-header.on-dark{background:var(--rf-ink);box-shadow:0 1px 0 #fff}
   .pcard,.ccol,.pl-wrap,.pl-all,.tier,.pd-k,.pd-q,.pd-tile{box-shadow:inset 0 0 0 1px var(--rf-ink)}
 }
+
+/* the founder note: "co-founder’s" never breaks at its hyphen, at any width (the phone-only .nb rule in mobile.css does not reach a desktop) */
+.fd-short .nb,.fd-note .nb,.co-body .nb{white-space:nowrap}

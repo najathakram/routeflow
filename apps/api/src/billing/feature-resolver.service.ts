@@ -1,7 +1,11 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "./entitlements.service";
-import { FeatureOverrideService, FeatureOverrideEffect } from "./feature-override.service";
+import {
+  FeatureOverrideService,
+  FeatureOverrideEffect,
+  FeatureOverrideDetail,
+} from "./feature-override.service";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { FEATURE_REGISTRY, FeatureDef, isDefaultGrantedAddon } from "./feature-registry";
 import { effectivePlanFlags, findPlanDefinition } from "./plan-catalog.constants";
@@ -88,13 +92,14 @@ export class FeatureResolverService {
   }
 
   private async compute(tenantId: string): Promise<ResolvedFeatures> {
-    const [ent, activeAddonRows, overrides] = await Promise.all([
+    const [ent, activeAddonRows, overrides, overrideDetail] = await Promise.all([
       this.entitlements.resolve(tenantId),
       this.prisma.tenantAddon.findMany({
         where: { tenantId, active: true },
         select: { addonKey: true },
       }),
       this.featureOverrides.allActive(tenantId),
+      this.featureOverrides.activeDetail(tenantId),
     ]);
     const activeAddonKeys = activeAddonRows.map((a) => a.addonKey);
     const version = await this.catalog.getVersionForTenant(ent.planVersionId);
@@ -114,6 +119,7 @@ export class FeatureResolverService {
         feature.key,
         resolveOneKey(feature, {
           overrides,
+          overrideDetail,
           activeAddonSet,
           planFeatureFlags,
           entFlags: ent.flags,
@@ -140,6 +146,8 @@ export class FeatureResolverService {
 
 export interface ResolveContext {
   overrides: Map<string, FeatureOverrideEffect>;
+  /** SA-963 A-1: display data beside `overrides` (never read for a verdict); spread onto the two override returns only. */
+  overrideDetail?: Map<string, FeatureOverrideDetail>;
   activeAddonSet: Set<string>;
   planFeatureFlags: Set<string>;
   entFlags: string[];
@@ -154,11 +162,24 @@ export interface ResolveContext {
  */
 export function resolveOneKey(feature: FeatureDef, ctx: ResolveContext): ResolvedKey {
   const override = ctx.overrides.get(feature.key);
+  const detail = ctx.overrideDetail?.get(feature.key);
   if (override === "GRANT") {
-    return { key: feature.key, effective: true, source: "OVERRIDE_GRANT", charged: false };
+    return {
+      key: feature.key,
+      effective: true,
+      source: "OVERRIDE_GRANT",
+      ...detail,
+      charged: false,
+    };
   }
   if (override === "DENY") {
-    return { key: feature.key, effective: false, source: "OVERRIDE_DENY", charged: false };
+    return {
+      key: feature.key,
+      effective: false,
+      source: "OVERRIDE_DENY",
+      ...detail,
+      charged: false,
+    };
   }
 
   // Addon-keyed gates (RequireAddon and the one hand-written "guard" row, driver_payments):

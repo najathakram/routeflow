@@ -128,6 +128,8 @@ export const CATALOG_READS: Readonly<Record<string, string>> = {
     "RESOLVER: the version id is resolvePlanVersionId(sub, tenant)",
   "billing/entitlements.service.ts#compute.getPublishedVersion":
     "FLAGS: flags gain forward from the published plan (not an add-on inclusion judgment)",
+  "billing/feature-override-review.job.ts#warnBillablePilotsEnding.getVersionForTenant":
+    "PIN: the business's OWN pinned catalog decides whether the add-on is priced and whether its plan includes it (R25 owner warning; read-only)",
   "billing/feature-preview.service.ts#preview.getPublishedCatalog":
     "TARGET: a hypothetical plan swap lands on the published catalog",
   "billing/feature-preview.service.ts#preview.getVersionForTenant":
@@ -183,8 +185,8 @@ export const CATALOG_READS: Readonly<Record<string, string>> = {
     "TARGET: the recommended plan's price",
   "platform-admin/platform-admin.service.ts#resolvePublishedPlan.getPublishedVersion":
     "TARGET: the published plan an admin move lands on (every pin writer pairs it with pinPlanVersionTx)",
-  "platform-admin/platform-admin.service.ts#updatePlanPrices.getPublishedVersion":
-    "TARGET: the published plan whose catalog price an admin edit changes",
+  "platform-admin/platform-admin.service.ts#resolveCatalogPlan.getPublishedVersion":
+    "TARGET: the published plan whose catalog price an admin edit changes (the PATCH and the R24 price-impact read share it)",
 };
 
 describe("SA-815a P2 - every catalog read is inventoried; none is an unreviewed inclusion judgment", () => {

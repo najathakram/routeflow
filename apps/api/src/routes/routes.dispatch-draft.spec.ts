@@ -122,7 +122,18 @@ describe("RoutesService — DRAFT orders never ride a dispatch or complete as de
     signatureUrl: null,
     orders,
   });
-  const txFor = (over: Record<string, unknown> = {}) => {
+  /**
+   * `orderStatuses` is the status each fake order really has: the line reads (the SA-1101 coverage check and the
+   * stop-outcome read) filter on it the way Postgres would, so a DRAFT order's lines are never served.
+   */
+  const txFor = (
+    over: Record<string, unknown> = {},
+    orderStatuses: Record<string, string> = {},
+  ) => {
+    const fakeLines = [
+      { id: "oi-1", orderId: "ord-1", qty: 5, status: null, deliveredQty: 5 },
+      { id: "oi-2", orderId: "ord-2", qty: 5, status: null, deliveredQty: 5 },
+    ].map((l) => ({ ...l, order: { status: orderStatuses[l.orderId] ?? "OUT_FOR_DELIVERY" } }));
     const txMock = {
       ...prisma,
       routeRunStop: {
@@ -135,7 +146,13 @@ describe("RoutesService — DRAFT orders never ride a dispatch or complete as de
       orderItem: {
         ...prisma.orderItem,
         findFirst: jest.fn().mockResolvedValue({ orderId: "ord-1", productId: "p1", qty: 5 }),
-        findMany: jest.fn().mockResolvedValue([{ id: "oi-1", orderId: "ord-1", qty: 5 }]),
+        findMany: jest.fn(async ({ where }: any = {}) => {
+          const orders: string[] | null = where?.orderId?.in ?? null;
+          const excluded: string[] = where?.order?.status?.notIn ?? [];
+          return fakeLines.filter(
+            (l) => (!orders || orders.includes(l.orderId)) && !excluded.includes(l.order.status),
+          );
+        }),
         update: jest.fn().mockResolvedValue({}),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
@@ -178,10 +195,17 @@ describe("RoutesService — DRAFT orders never ride a dispatch or complete as de
     prisma.routeRunStop.findFirst.mockResolvedValue(
       stopWith([
         { id: "ord-1", status: "DRAFT", customerId: "c1", orderNumber: "SO-1", total: 50 },
+        {
+          id: "ord-2",
+          status: "OUT_FOR_DELIVERY",
+          customerId: "c1",
+          orderNumber: "SO-2",
+          total: 20,
+        },
       ]),
     );
     prisma.driver.findFirst.mockResolvedValue(null);
-    const tx = txFor();
+    const tx = txFor({}, { "ord-1": "DRAFT" });
     prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({ id: "stop-1", status: "COMPLETED" });
 
     await service.completeWithPayment(
@@ -191,8 +215,15 @@ describe("RoutesService — DRAFT orders never ride a dispatch or complete as de
       operatorPayload,
     );
 
-    const where = tx.order.updateMany.mock.calls[0][0].where;
-    expect(where.status.notIn).toContain(OrderStatus.DRAFT);
+    // SA-1101: the status writes are per outcome (DELIVERED / REFUSED), and the stop-outcome step filters the DRAFT
+    // out before it reads lines, so the DRAFT id is in NO write; the guard also stays on every write.
+    const calls = tx.order.updateMany.mock.calls.map((c: any[]) => c[0]);
+    expect(calls.length).toBeGreaterThan(0);
+    for (const { where } of calls) {
+      expect(where.id.in).not.toContain("ord-1");
+      expect(where.status.notIn).toContain(OrderStatus.DRAFT);
+    }
+    expect(calls.some((c: any) => c.where.id.in.includes("ord-2"))).toBe(true);
   });
 
   it("(a3) a DRAFT order on a completed stop gets NO delivered notification (completeStop and completeWithPayment)", async () => {
@@ -203,7 +234,7 @@ describe("RoutesService — DRAFT orders never ride a dispatch or complete as de
       ]),
     );
     prisma.driver.findFirst.mockResolvedValue(null);
-    txFor();
+    txFor({}, { "ord-1": "DRAFT" });
     prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({ id: "stop-1", status: "COMPLETED" });
 
     await service.completeStop("run-1", "stop-1", { deliveries: [] } as any, operatorPayload);
@@ -232,7 +263,7 @@ describe("RoutesService — DRAFT orders never ride a dispatch or complete as de
       ]),
     );
     prisma.driver.findFirst.mockResolvedValue(null);
-    txFor();
+    txFor({}, { "ord-1": "DRAFT" });
     prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({ id: "stop-1", status: "COMPLETED" });
     invoicesService.recordDeliveryPaymentInTx.mockResolvedValue({
       applied: 20,

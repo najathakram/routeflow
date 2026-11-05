@@ -1345,6 +1345,16 @@ describe("cash handed over: ONE change figure (the server's servedChange) on eve
     expect(moneyRows(s.emailModel)).toEqual(moneyRows(s.reprint));
   });
 
+  it("row 638: a card-only sale carrying an old tendered of 50 shows no Tendered on any surface", () => {
+    const s = cash({ payments: [{ method: "CREDIT_CARD", amount: "37.25" }] });
+    expect(s.row.cashTendered).toBeNull();
+    expect(s.response.cashTendered).toBeUndefined();
+    for (const m of [s.reprint, s.emailModel, s.live]) {
+      expect(m.tendered).toBeNull();
+      expect(m.change).toBeNull();
+    }
+  });
+
   it("EXACT cash (tendered 37.25 on 37.25): the server serves change 0 and EVERY surface shows Change $0.00, never a hidden row", () => {
     const s = cash({ tendered: "37.25" });
     expect(s.row.change).toBe(0);

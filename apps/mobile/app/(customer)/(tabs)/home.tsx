@@ -214,6 +214,7 @@ function StatusPill({ status }: { status: string }) {
     CONFIRMED: { variant: "brand", label: "Confirmed" },
     OUT_FOR_DELIVERY: { variant: "brand", label: "Out for delivery" },
     DELIVERED: { variant: "green", label: "Delivered" },
+    REFUSED: { variant: "orange", label: "Refused" },
     CANCELLED: { variant: "gray", label: "Cancelled" },
   };
   const p = map[status] ?? { variant: "gray" as const, label: status };

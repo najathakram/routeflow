@@ -138,6 +138,15 @@ export const ROUTE_PARITY: Readonly<Record<string, ParityRow>> = {
 
   // ─── Operator dashboard: analytics, settings, billing (plan §1.3) ───
   "(dashboard)/analytics": { mobile: ["(operator)/analytics/index"] },
+  // SA-1087: one product's sales insights. Phones get the new web (owner ruling): the hybrid shell's WebView renders it.
+  "(dashboard)/insights": {
+    webOnly:
+      "the product finder (SA-1087 PR-2); the hybrid shell's WebView renders it, and scanning uses the web page's camera button",
+  },
+  "(dashboard)/insights/products/[id]": {
+    webOnly:
+      "one product's sales insights (SA-1087); the hybrid shell's WebView renders it, no native screen",
+  },
   "(dashboard)/settings": { mobile: ["(operator)/settings/index"] },
   "(dashboard)/settings/product-categories": { missing: "W>M, owner triage" },
   "(dashboard)/settings/restrictions": { missing: "W>M, owner triage" },
@@ -160,7 +169,6 @@ export const ROUTE_PARITY: Readonly<Record<string, ParityRow>> = {
   "buyer/invite/[token]": { missing: "W>M, needs a routeflow:// deep link" },
   "buyer/verify-email": { webOnly: "email-link flow stays on web" },
   "buyer/verify-merge": { webOnly: "email-link flow stays on web" },
-  buyer: { mobile: ["(customer)/sellers"] },
   "buyer/portal": { mobile: ["(customer)/sellers", "(customer)/sellers/connect"] },
   "buyer/portal/settings": { mobile: ["(customer)/profile", "(customer)/(tabs)/more"] },
   "buyer/portal/[seller]": { mobile: ["(customer)/(tabs)/home"] },
@@ -185,14 +193,8 @@ export const ROUTE_PARITY: Readonly<Record<string, ParityRow>> = {
   "buyer/portal/[seller]/account": { mobile: ["(customer)/profile"] },
 
   // ─── Marketing site — web-only (plan §1.4) ───
-  "(marketing)/book-a-demo": { webOnly: "marketing site" },
-  "(marketing)/company": { webOnly: "marketing site" },
-  "(marketing)/contact": { webOnly: "marketing site" },
   "(marketing)/privacy": { webOnly: "marketing site" },
-  "(marketing)/retailers": { webOnly: "marketing site" },
-  "(marketing)/sign-in": { webOnly: "marketing site" },
   "(marketing)/terms": { webOnly: "marketing site" },
-  "(marketing)/wholesalers": { webOnly: "marketing site" },
 
   // ─── Platform admin — web-only (plan §1.4) ───
   "(platform-admin)/admin/audit-logs": { webOnly: "platform admin" },

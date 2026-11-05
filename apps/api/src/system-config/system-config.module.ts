@@ -5,12 +5,18 @@ import { SystemConfigService } from "./system-config.service";
 import { SettingsController } from "./settings.controller";
 import { QuickKeysRankCache } from "./quick-keys-rank.cache";
 import { QuickKeysSettingsService } from "./quick-keys-settings.service";
+import { PlaintextSecretsReport } from "./plaintext-secrets-report.service";
 import { EmailModule } from "../email/email.module";
 
 @Module({
   imports: [PrismaModule, ConfigModule, forwardRef(() => EmailModule)],
   controllers: [SettingsController],
-  providers: [SystemConfigService, QuickKeysRankCache, QuickKeysSettingsService],
+  providers: [
+    SystemConfigService,
+    QuickKeysRankCache,
+    QuickKeysSettingsService,
+    PlaintextSecretsReport,
+  ],
   exports: [SystemConfigService, QuickKeysRankCache, QuickKeysSettingsService],
 })
 export class SystemConfigModule {}

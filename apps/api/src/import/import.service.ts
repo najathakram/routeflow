@@ -55,6 +55,7 @@ import {
   resolveColumns,
   parseRow,
   parseStrictMoneyCell,
+  withoutCustomerLiteralHeaders,
 } from "./import-columns";
 import type { CustomerComplianceInput } from "../customers/customer-compliance-input";
 
@@ -122,6 +123,12 @@ import {
   type ImportRestrictedLine,
 } from "./import-restriction-marker";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { costAbovePiecePrice } from "../products/pack-intro-cost-check";
+import {
+  PACK_COST_ABOVE_PIECE_WARNING,
+  packCostAbovePieceCount,
+  withImportPackReading,
+} from "./import-pack-reading";
 import { columnEntitlementDenied } from "./import-column-entitlement";
 import { maskedIdentity } from "../customers/customer-identity-fields";
 
@@ -580,7 +587,7 @@ export class ImportService {
     const rows = this.parseCsv(buffer);
     const headers = rows.length > 0 ? Object.keys(rows[0]) : [];
     const resolvedColumns = resolveColumns(headers, CUSTOMER_COLUMNS);
-    const unknownColumns = resolvedColumns.unknownColumns;
+    const unknownColumns = withoutCustomerLiteralHeaders(resolvedColumns.unknownColumns);
 
     let created = 0,
       updated = 0,
@@ -2574,6 +2581,7 @@ export class ImportService {
     const rowPlans: ImportRowPlan[] = [];
     const skippedRows: { row: number; label: string; reason: string }[] = [];
     const warnings: string[] = [];
+    let packCostAbovePiece = 0;
 
     // Parse every row up front so an in-file name-ambiguity pre-scan can run before matching.
     const parsedRows = rawRows.map((raw) => parseRow(raw, resolved, PRODUCT_COLUMNS));
@@ -2904,6 +2912,11 @@ export class ImportService {
               const existingVal = existing.unitsPerBox;
               if (existingVal === null || existingVal === undefined) {
                 changes.unitsPerBox = newVal;
+                // SA-961 R1 (informational, nothing written): a cost above price / N was entered per box.
+                if (costAbovePiecePrice(existing, Number(newVal))) {
+                  rowWarnings.push(PACK_COST_ABOVE_PIECE_WARNING);
+                  packCostAbovePiece += 1;
+                }
               } else if (Number(existingVal) !== Number(newVal)) {
                 // SA-284 (d): a differing pack size skips the WHOLE row, never a partial update.
                 packSkipReason = "pack changes are made in the product editor";
@@ -3055,16 +3068,20 @@ export class ImportService {
                 via: "import",
                 actorId: userId,
                 suppressEmit: true,
-                extraChanges: changes,
+                extraChanges: withImportPackReading(changes),
               });
               this.familyImport!.markAssigned(famPlan!, fam.target);
               anyWrite = true;
             } else {
-              await this.productsService.update(existing.id, changes as any, {
-                packPrecondition: "internal",
-                reparentVia: "import",
-                suppressEmit: true,
-              });
+              await this.productsService.update(
+                existing.id,
+                withImportPackReading(changes) as any,
+                {
+                  packPrecondition: "internal",
+                  reparentVia: "import",
+                  suppressEmit: true,
+                },
+              );
               anyWrite = true;
             }
             updated++;
@@ -3176,6 +3193,7 @@ export class ImportService {
 
     // One bulk catalog-changed emission per file, never per row (SA-284 / cause-ruling.md §2.B).
     if (!dryRun && anyWrite) this.productsService.emitCatalogBulkChanged();
+    if (packCostAbovePiece > 0) warnings.unshift(packCostAbovePieceCount(packCostAbovePiece));
 
     return {
       imported: created,

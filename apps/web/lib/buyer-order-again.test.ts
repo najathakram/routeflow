@@ -1,4 +1,16 @@
-import { orderAgainCartLines } from "./buyer-order-again";
+import { ORDER_AGAIN_STATUSES, orderAgainCartLines } from "./buyer-order-again";
+
+// SA-1101 T: a refused order is a past order like a delivered or cancelled one, read through the shared terminal list.
+describe("ORDER_AGAIN_STATUSES", () => {
+  it("covers every done order (delivered, refused, cancelled) and a partly delivered one, not an open one", () => {
+    expect([...ORDER_AGAIN_STATUSES].sort()).toEqual(
+      ["CANCELLED", "DELIVERED", "PARTIALLY_DELIVERED", "REFUSED"].sort(),
+    );
+    for (const open of ["DRAFT", "PENDING", "CONFIRMED", "OUT_FOR_DELIVERY"]) {
+      expect(ORDER_AGAIN_STATUSES).not.toContain(open);
+    }
+  });
+});
 
 // Row 604 review M2: order-cancel marks every line CANCELLED, so a cancelled ORDER must still reorder.
 const line = (over: Record<string, unknown> = {}) => ({

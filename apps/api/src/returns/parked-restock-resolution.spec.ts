@@ -327,6 +327,8 @@ describe("cancel() undoes a RESOLVED restock exactly (36 pieces, not the typed 3
       },
       // B562 PR-2: update() returns the written row — the reversing movement reads its counter.
       product: { update: jest.fn().mockResolvedValue({ currentStock: 0, averageCost: null }) },
+      // SA-1093 Rule 4: no Boxes answer on this product, so every factor is 1.
+      auditLog: { findMany: jest.fn().mockResolvedValue([]) },
       stockMovement: {
         findMany: jest.fn(() => {
           order.push("scan-movements");
@@ -352,7 +354,7 @@ describe("cancel() undoes a RESOLVED restock exactly (36 pieces, not the typed 3
     expect(order).toEqual(["void-parked", "scan-movements"]);
     expect(tx.stockMovement.findMany).toHaveBeenCalledWith({
       where: { reference: booked.reference, type: booked.type },
-      select: { productId: true, quantity: true },
+      select: { productId: true, quantity: true, createdAt: true },
     });
     expect(tx.product.update).toHaveBeenCalledTimes(1);
     const undo = tx.product.update.mock.calls[0][0];

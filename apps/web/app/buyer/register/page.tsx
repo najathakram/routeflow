@@ -160,7 +160,7 @@ function BuyerRegisterInner() {
       footer={
         <p className="text-xs text-navy/70">
           Selling on RouteFlow?{" "}
-          <a href="/login" className="text-[#0B6E6B] hover:underline">
+          <a href="/login" className="text-brand-600 hover:underline">
             Sign in to the seller dashboard
           </a>
         </p>
@@ -294,7 +294,7 @@ function BuyerRegisterInner() {
       <div className="mt-4 text-center">
         <p className="text-sm text-navy/70">
           Already have an account?{" "}
-          <a href={loginHref} className="text-[#0B6E6B] hover:underline font-medium">
+          <a href={loginHref} className="text-brand-600 hover:underline font-medium">
             Sign in
           </a>
         </p>

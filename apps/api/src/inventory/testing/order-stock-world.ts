@@ -239,6 +239,7 @@ export async function buildOrderStockWorld(label: string, specFile: string) {
   return {
     slug,
     tenantId,
+    customerId: customer.id,
     prisma,
     pool,
     orders,

@@ -30,6 +30,7 @@ import {
 } from "../billing/addon.service";
 import { FeatureOverrideService } from "../billing/feature-override.service";
 import { UpdateTenantStatusDto } from "./dto/update-tenant-status.dto";
+import { UpdateAiConfigDto } from "./dto/update-ai-config.dto";
 import { UpdateTenantPlanDto } from "./dto/update-tenant-plan.dto";
 import { CreateTenantDto } from "./dto/create-tenant.dto";
 import { CreateTenantAdminDto } from "./dto/create-tenant-admin.dto";
@@ -377,6 +378,15 @@ export class PlatformAdminController {
     @CurrentUser() admin: JwtPayload,
   ) {
     return this.svc.updateTenantPriceOverride(id, dto, admin.sub);
+  }
+
+  @Get("plans/:planKey/price-impact")
+  @ApiOperation({
+    summary:
+      "R24: how many businesses a plan price edit would re-price, how many keep their own price, and the monthly total (read-only)",
+  })
+  getPlanPriceImpact(@Param("planKey") planKey: string, @Query("monthly") monthly?: string) {
+    return this.svc.getPlanPriceImpact(planKey, monthly);
   }
 
   @Patch("plans/:planKey/prices")
@@ -951,10 +961,8 @@ export class PlatformAdminController {
 
   @Patch("ai-config")
   @ApiOperation({ summary: "Update platform-wide Claude AI configuration" })
-  updateAiConfig(
-    @Body() dto: { apiKey?: string; model?: string; scanModel?: string; maxTokens?: number },
-  ) {
-    return this.platformConfig.updateAiConfig(dto);
+  updateAiConfig(@Body() dto: UpdateAiConfigDto, @CurrentUser() admin: JwtPayload) {
+    return this.platformConfig.updateAiConfig(dto, admin.sub);
   }
 
   @Get("ai-config/usage")

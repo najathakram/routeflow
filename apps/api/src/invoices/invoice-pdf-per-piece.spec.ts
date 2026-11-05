@@ -30,6 +30,17 @@ describe("invoice-pdf-template — per-piece column (SA-1029 PDF-R1)", () => {
   });
 });
 
+describe("invoice-pdf-template — the tenant's hidePerPiece switch (owner ruling 2026-11-04)", () => {
+  it("S-PDF: the column's one gate honours invoice.hidePerPiece, and every header/cell/spacer reads that gate", () => {
+    expect(src).toMatch(
+      /const showPerPiece =\s*!invoice\.hidePerPiece && invoice\.items\.some\(\(i\) => !i\.display && !!i\.perBaseUnit\);/,
+    );
+    expect(src).toMatch(/hidePerPiece\?: boolean \| null;/);
+    // no second, ungated read of the figure sits outside the gate
+    expect((src.match(/\{showPerPiece \?/g) ?? []).length).toBeGreaterThanOrEqual(4);
+  });
+});
+
 describe("invoice-pdf-template — MSRP note unit word (SA-1029 G-6)", () => {
   it("MSRP-R1: the note prints the line's base unit word, not a literal /pc", () => {
     expect(src).toMatch(/MSRP \{fmt\(item\.msrp\)\}\/\{baseUnitSuffix\(item\.perBaseUnit\)\}/);

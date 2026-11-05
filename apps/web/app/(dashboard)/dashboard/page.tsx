@@ -48,7 +48,6 @@ import { ORDER_STATUS_VALUES, lowStockThreshold, staffMay } from "@routeflow/typ
 import type { OrderStatusValue } from "@routeflow/types";
 import { useLastKnownRoutesAccess } from "@/lib/last-known-routes-access";
 import { DRIVER_LANDING } from "@/lib/portal-routing";
-import { DriverAppBanner } from "./DriverAppBanner";
 import { GetTheAppStrip } from "./GetTheAppStrip";
 import { FirstRunCard } from "./FirstRunCard";
 import { useFirstRun } from "@/lib/api/first-run";
@@ -321,8 +320,10 @@ function ArAgingWidget({ aging }: { aging: AgingData }) {
 /** An unknown KPI (failed or unanswered request) reads "—", never a zero that looks like data. */
 const UNKNOWN_KPI = "—";
 
-/** A placed order's lifecycle status (DRAFT is not an order yet, so it has no tile and no count). */
-type PipelineStatus = Exclude<OrderStatusValue, "DRAFT">;
+/** A placed order's lifecycle status (DRAFT is not an order yet, so it has no tile and no count). SA-1101: REFUSED has no
+ *  tile yet either (a seventh tile changes the three-by-two phone grid W-1016 pins); the strip excludes it by name here,
+ *  so it is a decision on record and not a missing key. Refused orders are reached from the Orders list "Refused" pill. */
+type PipelineStatus = Exclude<OrderStatusValue, "DRAFT" | "REFUSED">;
 
 // One tile per placed-order status, rendered in ORDER_STATUS_VALUES order. The Record is exhaustive, so a new
 // server status is a compile error here, not a silently missing tile (SA-1049 R1). `tenantLabel` tiles take the
@@ -348,7 +349,9 @@ const PIPELINE_TILES: Record<
   DELIVERED: { label: "Delivered", color: "text-success", bg: "bg-success-bg" },
   CANCELLED: { label: "Cancelled", color: "text-navy/70", bg: "" },
 };
-const PIPELINE_STATUSES = ORDER_STATUS_VALUES.filter((st): st is PipelineStatus => st !== "DRAFT");
+const PIPELINE_STATUSES = ORDER_STATUS_VALUES.filter(
+  (st): st is PipelineStatus => st !== "DRAFT" && st !== "REFUSED",
+);
 
 /**
  * Layout for a KPI tile (CSS only; the shared StatCard is untouched): the label wraps instead of
@@ -735,8 +738,6 @@ export default function DashboardPage() {
     if (driverHasRunsAccess) router.replace(DRIVER_LANDING);
   }, [driverHasRunsAccess, router]);
 
-  const [driverBannerDismissed, setDriverBannerDismissed] = React.useState(false);
-
   // View mode for dual-role users — persisted across visits
   const [viewMode, setViewMode] = React.useState<ViewMode>("operator");
   React.useEffect(() => {
@@ -932,13 +933,7 @@ export default function DashboardPage() {
       {/* ── The first question on a new account (W1) ── */}
       {firstRunEnabled && <FirstRunCard status={firstRun} />}
 
-      {/* ── Driver-app nudge (DRIVER-role account, web) ── */}
-      <DriverAppBanner
-        visible={baseIsDriver && !driverBannerDismissed}
-        onDismiss={() => setDriverBannerDismissed(true)}
-      />
-
-      {/* ── Install-the-app nudge (row 559; never for drivers, who get the banner above) ── */}
+      {/* ── Install-the-app nudge (row 559; never for drivers) ── */}
       {!firstRunOpen && <GetTheAppStrip isDriver={baseIsDriver} />}
 
       {/* ── Install banner (SA-1069 A-2 P-1): staff home only, never the shell — it is fixed

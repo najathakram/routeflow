@@ -40,6 +40,8 @@ function build(primary: Acct, secondary: Acct) {
       }),
     },
     buyerRefreshToken: { deleteMany: jest.fn() },
+    // F03 slice 2 (SA-1096): the removed secondary's live links are burned in the same transaction.
+    $executeRaw: jest.fn().mockResolvedValue(0),
     // Row 424: the decide claim (compare-and-set on the status) wins.
     buyerMergeRequest: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
   };

@@ -293,3 +293,62 @@ describe("refundableProductPoolShare (SA-970)", () => {
 });
 
 const roundCents = (n: number): number => Math.round(n * 100) / 100;
+
+describe("refundableLineShare invoicePrior (SA-1091 A-1)", () => {
+  // $6.50 + $2.50 at 8.25%: the invoice rounds its tax once (0.74), so the lines charge 6.50 + 0.53 and 2.50 + 0.21
+  const nine74 = (): RefundableInvoice => ({
+    taxAmount: 0.74,
+    discount: 0,
+    lines: [line("l1", 6.5, 1, 0.0825), line("l2", 2.5, 1, 0.0825)],
+  });
+
+  it("without invoicePrior the per-line charge is the cap: line 2 is 2.50 + 0.21", () => {
+    const out = refundableLineShare({
+      invoice: nine74(),
+      lineId: "l2",
+      returnedQty: 1,
+      prior: NONE,
+    });
+    expect(out).toMatchObject({ net: 2.5, tax: 0.21, total: 2.71 });
+  });
+
+  it("a credit already stored at 7.04 (tax 0.54) leaves line 2 at 2.50 + 0.20 = 2.70, so the invoice's 9.74 is never passed", () => {
+    const out = refundableLineShare({
+      invoice: nine74(),
+      lineId: "l2",
+      returnedQty: 1,
+      prior: NONE,
+      invoicePrior: { net: 6.5, tax: 0.54, categoryTax: 0 },
+    });
+    expect(out).toMatchObject({ net: 2.5, tax: 0.2, categoryTax: 0, total: 2.7 });
+  });
+
+  it("an invoicePrior at or past a pool leaves 0 for that component (never negative)", () => {
+    const out = refundableLineShare({
+      invoice: nine74(),
+      lineId: "l2",
+      returnedQty: 1,
+      prior: NONE,
+      invoicePrior: { net: 9, tax: 5, categoryTax: 0 },
+    });
+    expect(out).toMatchObject({ net: 0, tax: 0, total: 0 });
+  });
+
+  it("invoicePrior that equals the helper's own prior changes nothing (a clean history is not capped)", () => {
+    const first = refundableLineShare({
+      invoice: nine74(),
+      lineId: "l1",
+      returnedQty: 1,
+      prior: NONE,
+    });
+    expect(first.total).toBe(7.03);
+    const second = refundableLineShare({
+      invoice: nine74(),
+      lineId: "l2",
+      returnedQty: 1,
+      prior: NONE,
+      invoicePrior: { net: first.net, tax: first.tax, categoryTax: first.categoryTax },
+    });
+    expect(second.total).toBe(2.71);
+  });
+});

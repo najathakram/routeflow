@@ -8,6 +8,10 @@ describe("deriveInvoiceVariant (mobile mirror of api/web)", () => {
     expect(deriveInvoiceVariant({ status: "DRAFT", order: { status: "CONFIRMED" } })).toBe("draft");
   });
 
+  it("DRAFT invoice on a REFUSED order → final (SA-1101: post-delivery, the $0 draft is final)", () => {
+    expect(deriveInvoiceVariant({ status: "DRAFT", order: { status: "REFUSED" } })).toBe("final");
+  });
+
   it("DRAFT invoice with no linked order → draft", () => {
     expect(deriveInvoiceVariant({ status: "DRAFT" })).toBe("draft");
     expect(deriveInvoiceVariant({ status: "DRAFT", order: null })).toBe("draft");

@@ -9,6 +9,8 @@ enum OrderStatus {
   PARTIALLY_DELIVERED
   DELIVERED
   CANCELLED
+  // SA-1101 (additive-only, appended at the END): a stop close that delivered nothing on any line.
+  REFUSED
 }
 
 enum ItemStatus {

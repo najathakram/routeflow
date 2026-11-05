@@ -37,6 +37,8 @@ import {
   leavePartialDeliveryInTx,
   recordPartialDeliveryInTx,
 } from "./order-pd-quantities";
+import { deliverAgainInTx } from "./deliver-again";
+import { DEMOTE_RETURN_MESSAGE, lockThenAssertNoLiveReturn } from "../returns/live-return-guard";
 import { SHIP_STATE_REOPENED, SHIP_STATE_SOURCES, SHIP_STATE_UNMARKED } from "./ship-state-markers";
 
 export {
@@ -67,6 +69,20 @@ export function shipStateMarker(
     return SHIP_STATE_REOPENED;
   }
   return null;
+}
+
+/** SA-1101 A-5 (B1272): a live return stands on the order only while it is DELIVERED or REFUSED, so the two edges out of DELIVERED refuse. */
+async function guardDeliveredDemotion(
+  tx: Parameters<typeof lockThenAssertNoLiveReturn>[0],
+  order: { id: string; status: OrderStatus },
+  to: OrderStatus,
+) {
+  if (
+    order.status === OrderStatus.DELIVERED &&
+    (to === OrderStatus.CONFIRMED || to === OrderStatus.PARTIALLY_DELIVERED)
+  ) {
+    await lockThenAssertNoLiveReturn(tx, [order.id], DEMOTE_RETURN_MESSAGE);
+  }
 }
 
 type ShipStateOrder = {
@@ -103,9 +119,14 @@ export async function updateStatusWithShipMarker(
     !source ||
     !(await billsAtShipment(featureConfig, order.tenantId ?? prisma.getTenantId(), order))
   ) {
+    if (order.status === OrderStatus.REFUSED && to === OrderStatus.CONFIRMED) {
+      // SA-1101 A-3: Deliver again = the move + the run-link release + the live-return guard, in one tx.
+      return prisma.tenantTransaction((tx) => deliverAgainInTx(tx, order.id, data));
+    }
     if (to === OrderStatus.PARTIALLY_DELIVERED) {
       // B692: a manual PARTIALLY_DELIVERED books its per-line quantities (or refuses) in the SAME tx as the status.
       return prisma.tenantTransaction(async (tx) => {
+        await guardDeliveredDemotion(tx, order, to);
         const row = await writeStatusIfUnchanged(tx, order.id, order.status, data);
         await recordPartialDeliveryInTx(tx, order.id, deliveries);
         return row;
@@ -121,6 +142,13 @@ export async function updateStatusWithShipMarker(
       });
     }
     if (to !== OrderStatus.DELIVERED) {
+      if (order.status === OrderStatus.DELIVERED) {
+        // SA-1101 A-5: the delivered demotion alone moves into a transaction, for the lock and the live-return count.
+        return prisma.tenantTransaction(async (tx) => {
+          await guardDeliveredDemotion(tx, order, to);
+          return writeStatusIfUnchanged(tx, order.id, order.status, data);
+        });
+      }
       return writeStatusIfUnchanged(prisma.forTenant(), order.id, order.status, data);
     }
     // SA-763r: a manual DELIVERED books what left, in the SAME tx as the status write (no ship marker here).
@@ -145,6 +173,7 @@ export async function updateStatusWithShipMarker(
     });
   }
   return prisma.tenantTransaction(async (tx) => {
+    await guardDeliveredDemotion(tx, order, to);
     const row = await writeStatusIfUnchanged(tx, order.id, order.status, data);
     if (to === OrderStatus.PARTIALLY_DELIVERED)
       await recordPartialDeliveryInTx(tx, order.id, deliveries);

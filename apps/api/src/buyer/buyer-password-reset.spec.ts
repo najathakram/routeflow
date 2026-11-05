@@ -9,6 +9,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { AppleOAuthService } from "../auth/apple-oauth.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { mockClaimTransaction } from "../testing/link-claim-tx";
 
 jest.mock("bcrypt", () => ({ compare: jest.fn(), hash: jest.fn() }));
 
@@ -158,10 +159,20 @@ describe("BuyerAuthService — password reset", () => {
     });
 
     beforeEach(() => {
-      (prisma.$transaction as jest.Mock).mockImplementation((ops: any[]) =>
-        Promise.all(ops.map(() => ({}))),
-      );
+      mockClaimTransaction(prisma);
+      prisma.buyerPasswordResetToken.updateMany.mockResolvedValue({ count: 1 } as any);
       (bcrypt.hash as jest.Mock).mockResolvedValue("$2b$10$newhash");
+    });
+
+    it("a lost claim (count 0) writes no password and revokes no session", async () => {
+      prisma.buyerPasswordResetToken.findUnique.mockResolvedValue(baseRecord as any);
+      prisma.buyerPasswordResetToken.updateMany.mockResolvedValue({ count: 0 } as any);
+
+      await expect(service.resetPassword(rawToken, "NewPass1!")).rejects.toThrow(
+        "Reset link is invalid or has already been used.",
+      );
+      expect(prisma.buyerAccount.update).not.toHaveBeenCalled();
+      expect(prisma.buyerRefreshToken.deleteMany).not.toHaveBeenCalled();
     });
 
     it("updates the password, flips passwordSet, and revokes refresh tokens", async () => {
@@ -171,9 +182,8 @@ describe("BuyerAuthService — password reset", () => {
 
       expect(result.message).toContain("Password reset successfully");
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
-      // The transaction's operations were built from these calls:
-      expect(prisma.buyerPasswordResetToken.update).toHaveBeenCalledWith({
-        where: { tokenHash: fakeHash },
+      expect(prisma.buyerPasswordResetToken.updateMany).toHaveBeenCalledWith({
+        where: { tokenHash: fakeHash, usedAt: null, expiresAt: { gt: expect.any(Date) } },
         data: { usedAt: expect.any(Date) },
       });
       expect(prisma.buyerAccount.update).toHaveBeenCalledWith({

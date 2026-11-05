@@ -22,6 +22,7 @@ const FILTERS = [
   { id: "CONFIRMED", label: "Confirmed" },
   { id: "OUT_FOR_DELIVERY", label: "Out for delivery" },
   { id: "DELIVERED", label: "Delivered" },
+  { id: "REFUSED", label: "Refused" },
   { id: "CANCELLED", label: "Cancelled" },
 ] as const;
 
@@ -41,6 +42,8 @@ function orderPill(status: string) {
       return { variant: "brand" as const, label: "Out for delivery" };
     case "DELIVERED":
       return { variant: "green" as const, label: "Delivered" };
+    case "REFUSED":
+      return { variant: "orange" as const, label: "Refused" };
     case "CANCELLED":
       return { variant: "gray" as const, label: "Cancelled" };
     default:

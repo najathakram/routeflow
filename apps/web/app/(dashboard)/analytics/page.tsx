@@ -30,6 +30,7 @@ import { apiClient } from "@/lib/api-client";
 import { useFleetAccess } from "@/lib/api/addons";
 import { formatMoney } from "@/lib/format";
 import { AnalyticsCsvButton as Csv } from "./_components/AnalyticsCsvButton";
+import { FindInsightsLink } from "@/components/insights/FindInsightsLink";
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
 
@@ -1266,6 +1267,8 @@ export default function AnalyticsPage() {
         }
       />
 
+      <FindInsightsLink className="sm:hidden" />
+
       {/* Date preset shortcuts */}
       <div className="flex items-center gap-2">
         {DATE_PRESETS.map((preset) => {
@@ -1289,8 +1292,8 @@ export default function AnalyticsPage() {
       </div>
 
       {/* Tabs */}
-      <div className="border-b border-surface-border">
-        <nav className="-mb-px flex gap-1 overflow-x-auto">
+      <div className="flex items-center gap-4 border-b border-surface-border">
+        <nav className="-mb-px flex min-w-0 flex-1 gap-1 overflow-x-auto">
           {tabs.map((tab) => (
             <TabButton
               key={tab.id}
@@ -1304,6 +1307,7 @@ export default function AnalyticsPage() {
             </TabButton>
           ))}
         </nav>
+        <FindInsightsLink className="hidden shrink-0 sm:inline-flex" />
       </div>
 
       {/* Tab panels */}

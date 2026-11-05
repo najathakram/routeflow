@@ -224,6 +224,7 @@ import {
   draftBillsLessThanOrder,
   isCleanDraftPartition,
   isSoleBillingDraftIn,
+  placeUnbilledLinesFor,
 } from "./invoice-partition";
 import { loadResyncInputs } from "./resync-plan";
 import { loadReopenableInvoice } from "./invoice-reopen-guard";
@@ -286,6 +287,10 @@ import {
 import { revertLinkedInvoicesToDraft } from "./order-edit-revert-set";
 import { assertNoCashRefundOnInvoice } from "./invoice-cash-refund-guard";
 import { assertPartialRequestShape, bumpInvoicedQtyCas } from "./partial-invoice-cas";
+import {
+  isPostDeliveryOrderStatus,
+  isTerminalOrderStatus,
+} from "../common/terminal-order-statuses";
 
 export const TERM_DAYS: Record<string, number> = {
   "Due on Receipt": 0,
@@ -793,7 +798,7 @@ export class InvoicesService {
       !txClient &&
       created.length === 1 &&
       depositFields.depositPercent != null &&
-      order.status !== "DELIVERED" &&
+      !isPostDeliveryOrderStatus(order.status) &&
       (await this.systemConfig.get("invoice.depositCollectAtOrder")) === "true"
     ) {
       const issued: any[] = [];
@@ -1542,7 +1547,7 @@ export class InvoicesService {
         where: { id: orderId },
         select: { status: true },
       });
-      if (orderGate && orderGate.status !== "DELIVERED" && orderGate.status !== "CANCELLED") {
+      if (orderGate && !isTerminalOrderStatus(orderGate.status)) {
         const nonVoid = await db.invoice.findMany({
           where: { orderId, status: { not: InvoiceStatus.VOID } },
           include: { payments: true },
@@ -1761,20 +1766,19 @@ export class InvoicesService {
    * absorbing the rounding remainder (mirrors createSplitInvoices), so on a CLEAN full
    * delivery Σ(sibling total) == order total to the cent. Each line's invoicedQty is
    * reset to what its one sibling now bills (0 for refused) — a plain SET since a line
-   * belongs to a single sibling. No-op (null) when the order has no open draft.
+   * belongs to a single sibling. No-op (null) when the order has no open draft. `onOrder`: the order basis (Undo, undo-draft-rebuild.ts).
    *
-   * Re-syncs the regulated-sales ledger to the rebuilt qty via `resyncInvoiceLedger`
-   * (in the shared rebuildSiblingDrafts core) — a short/refused regulated line now
-   * reports its delivered qty, not the full-order qty createSplitInvoices first wrote.
+   * Re-syncs the regulated-sales ledger to the rebuilt qty via `resyncInvoiceLedger` (the shared rebuildSiblingDrafts core):
+   * a short/refused regulated line reports its delivered qty, not the full-order qty createSplitInvoices first wrote.
    */
-  async reconcileOrderDeliveredInvoices(orderId: string, tx?: any) {
+  async reconcileOrderDeliveredInvoices(orderId: string, tx?: any, onOrder = false) {
     // SA-760 R-1: always in a tx, Order -> Invoices locked before the open drafts are read.
     return inOrderBillingTx(this.prisma, tx, orderId, (t) =>
-      this.reconcileOrderDeliveredInvoicesLocked(orderId, t),
+      this.reconcileOrderDeliveredInvoicesLocked(orderId, t, onOrder),
     );
   }
 
-  private async reconcileOrderDeliveredInvoicesLocked(orderId: string, db: any) {
+  private async reconcileOrderDeliveredInvoicesLocked(orderId: string, db: any, onOrder = false) {
     // All the order's live invoices — so we can tell the open pending/sibling DRAFTs
     // (status DRAFT, deliveryBatchId null) apart from finalized or delivery-batch
     // invoices that already bill some of the lines.
@@ -1787,7 +1791,7 @@ export class InvoicesService {
         deliveryBatchId: true,
         discount: true,
         shippingFee: true,
-        items: { select: { orderItemId: true, unitsPerBox: true } },
+        items: { select: { orderItemId: true, unitsPerBox: true, trackedCategoryId: true } },
       },
     });
     const drafts = invoices.filter(
@@ -1819,13 +1823,19 @@ export class InvoicesService {
     // proved no line is shared across drafts or with a finalized invoice), then rebuild
     // each draft from its own lines on the delivered basis.
     const lineById = new Map<string, any>(order.lineItems.map((li: any) => [li.id, li]));
-    const pairs = drafts.map((d: any) => {
-      const memberIds = [
-        ...new Set((d.items ?? []).map((it: any) => it.orderItemId).filter(Boolean)),
-      ] as string[];
-      return { draft: d, lines: memberIds.map((id) => lineById.get(id)).filter(Boolean) };
+    // SA-1098 A-3: a live line on NO non-void invoice (delivered at 0, so it left its draft) goes back on one first.
+    const members = await placeUnbilledLinesFor(db, orderId, {
+      invoices,
+      drafts,
+      lines: order.lineItems,
+      quiet: onOrder, // Undo: nothing is delivered, so a line left off is not flagged as a delivered one
+      groupLines: (items) => this.groupOrderLinesForInvoicing(items, db),
     });
-    return this.rebuildSiblingDrafts(order, pairs, "delivered", db);
+    const pairs = drafts.map((d: any) => ({
+      draft: d,
+      lines: (members.get(d.id) ?? []).map((id) => lineById.get(id)).filter(Boolean),
+    }));
+    return this.rebuildSiblingDrafts(order, pairs, onOrder ? "order" : "delivered", db);
   }
 
   /**
@@ -2579,7 +2589,7 @@ export class InvoicesService {
         where: { tenantId, key: "invoice.depositCollectAtOrder" },
         select: { value: true },
       });
-      if (collectRaw?.value === "true" && (order as any).status !== "DELIVERED") {
+      if (collectRaw?.value === "true" && !isPostDeliveryOrderStatus((order as any).status)) {
         // Update by primary key of the row this method just created for this tenant —
         // safe without a tenant filter (the id came from our own create), and the
         // unscoped client is the same handle the rest of this method uses.
@@ -2806,6 +2816,8 @@ export class InvoicesService {
 
       // #2070 / SA-523: each line's bump is a CAS on what was read; any miss rolls back the partial.
       await bumpInvoicedQtyCas(tx, dto.items, itemById);
+      // SA-962 row 721: the partial's regulated lines book in this tx (under the Order lock above).
+      await this.resyncInvoiceLedger(created.id, order.id, created.items ?? [], tx);
 
       await this.creditNotes.settleOrderCreditsInTx(tx, order.id, tenantId);
       return created;
@@ -3038,6 +3050,7 @@ export class InvoicesService {
     // so CUSTOMER viewers of this same document honor the tenant's
     // hide-original-price preference too.
     const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
+    const hidePerPiece = (await this.systemConfig.get("invoice.hidePerPiece")) === "true"; // owner ruling 2026-11-04
     stampHandedOverBy(inv.order, user); // row 342: staff only (`invoiceDetailFor` drops `order` for a buyer)
     await iGate.stampOverrideNames(this.prisma.forTenant(), inv.items, user); // row 510: staff only
     const db = this.prisma.forTenant();
@@ -3054,6 +3067,7 @@ export class InvoicesService {
       ), // SA-1058; #2717 M3 + SA-827; the order reads the stored text, the family name composes after it
       payments: withNoLongerFits(inv).payments, // W-769: each row's derived noLongerFits flag
       hideOriginalPrice,
+      hidePerPiece,
       ...listRowFlags(inv), // row 401 paidAtSale + SA-1026 toCollect
       pendingMirror: await resolvePendingMirror(this.featureConfig, inv.tenantId, inv, inv.order),
       // F3: the server's default PDF stage (a shipment invoice is FINAL); clients read it, never re-derive.
@@ -3652,11 +3666,13 @@ export class InvoicesService {
     // PDF attached to it, so it honours the hide-original-price preference too. The payload (the F03/R8/B421 paid
     // basis, the item table, the deposit schedule) is built in invoice-email-payload.ts (the service is on the ratchet).
     const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
+    const hidePerPiece = (await this.systemConfig.get("invoice.hidePerPiece")) === "true";
     const emailPayload = buildInvoiceEmailPayload(snapshot, {
       recipientEmail,
       pdfUrl,
       attachment,
       hideOriginalPrice,
+      hidePerPiece,
     });
     const parts = [this.prisma, this.pdfService, this.storage, this.logger, opts] as const;
     Object.assign(emailPayload, await completionEmailParts(...parts)); // I-120: COUNTER_COMPLETE only

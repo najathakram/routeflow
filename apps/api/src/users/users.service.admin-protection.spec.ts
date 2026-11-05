@@ -98,6 +98,7 @@ describe("UsersService: admin account protection", () => {
         fn({
           ...prisma.forTenant(),
           $queryRaw: jest.fn().mockResolvedValue([{ id: "t1" }, { id: "t2" }]),
+          $executeRaw: jest.fn().mockResolvedValue(0),
         }),
       );
       await expect(
@@ -256,7 +257,7 @@ describe("UsersService: admin account protection", () => {
       // not a real change: no stored-email rewrite and no email side effects
       const data = (prisma.user.update.mock.calls[0][0] as any).data;
       expect(data).not.toHaveProperty("email");
-      expect(prisma.passwordResetToken.updateMany).not.toHaveBeenCalled();
+      expect(prisma.txExecuteRaw).not.toHaveBeenCalled();
       expect(email.sendEmailChangedNotice).not.toHaveBeenCalled();
       expect(email.sendEmailChangeConfirmation).not.toHaveBeenCalled();
       expect(email.sendSetPasswordEmail).not.toHaveBeenCalled();

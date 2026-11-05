@@ -4,6 +4,7 @@ import { ConfigService } from "@nestjs/config";
 import { APP_LINK_KEYS } from "@routeflow/types";
 import { PlatformConfigService } from "./platform-config.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { EncryptionService } from "../common/encryption.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
 describe("PlatformConfigService — app links", () => {
@@ -28,6 +29,7 @@ describe("PlatformConfigService — app links", () => {
     const mod: TestingModule = await Test.createTestingModule({
       providers: [
         PlatformConfigService,
+        EncryptionService,
         { provide: PrismaService, useValue: prisma },
         { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(undefined) } },
       ],

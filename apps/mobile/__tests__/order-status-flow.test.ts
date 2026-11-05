@@ -131,3 +131,14 @@ describe("POS mode predicate and status pin (SA-763r P-2)", () => {
     }
   });
 });
+
+describe("REFUSED (SA-1101): Deliver again", () => {
+  it("REFUSED -> CONFIRMED is the only move out, and it needs no reason", () => {
+    expect(ORDER_STATUS_TRANSITIONS.REFUSED).toEqual(["CONFIRMED"]);
+    expect(canTransitionOrder("REFUSED", "CONFIRMED")).toBe(true);
+    expect(demotionRequiresReason("REFUSED", "CONFIRMED")).toBe(false);
+  });
+  it("a refused order cannot be cancelled (a cancel credits stock; the goods go back through a return)", () => {
+    expect(canTransitionOrder("REFUSED", "CANCELLED")).toBe(false);
+  });
+});

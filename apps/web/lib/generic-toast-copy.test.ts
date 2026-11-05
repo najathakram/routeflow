@@ -243,6 +243,22 @@ describe("genericToastCopy: codes users rely on", () => {
     expect(copy).not.toMatch(/[–—]/);
   });
 
+  it("STOP_DELIVERY_LINES_MISSING (SA-1101, B785) is fixed copy, never the server message", () => {
+    const copy = genericToastCopy(
+      err(400, { code: API_ERROR_CODES.STOP_DELIVERY_LINES_MISSING, message: "raw server text" }),
+    );
+    expect(copy).toBe("Enter what was delivered for every line before finishing this stop.");
+  });
+
+  it("ORDER_HAS_RETURN (SA-1101 A-3, Deliver again) is A-3's exact sentence, never the server message", () => {
+    const copy = genericToastCopy(
+      err(409, { code: API_ERROR_CODES.ORDER_HAS_RETURN, message: "raw server text" }),
+    );
+    expect(copy).toBe(
+      "This order has a return. To deliver it again, cancel the return first, or create a new order.",
+    );
+  });
+
   it("ORDER_INVOICES_NEED_REVIEW (SA-687) shows the fixed review copy, never the server message", () => {
     expect(
       genericToastCopy(
@@ -529,6 +545,10 @@ describe("genericToastCopy: codes users rely on", () => {
       ["SOURCE_LINE_AMBIGUOUS", /more than one line.*order lines directly/],
       ["SOURCE_LINE_INVALID", /pack size or price isn't valid/],
       ["LINE_PACK_UNDERIVABLE", /no pack size.*next delivery.*Set its pack size/],
+      [
+        "STORED_LINE_PACK_UNREADABLE",
+        /pack size can't be read from the sale.*total wasn't changed.*return or a credit note/,
+      ],
       ["RECIPE_PACK_MISMATCH", /recipe's pack size differs.*match/],
       ["COMPOSITION_CORRUPT", /mixed-pack composition is inconsistent.*pack split/],
       ["ORDER_BELOW_RETURN_CREDIT", /can't drop below the credit already issued.*returns/],
@@ -712,6 +732,7 @@ describe("B986-7 fold: codes #3051 registered are spelled through API_ERROR_CODE
     "SOURCE_LINE_AMBIGUOUS",
     "SOURCE_LINE_INVALID",
     "LINE_PACK_UNDERIVABLE",
+    "STORED_LINE_PACK_UNREADABLE",
     "RECIPE_PACK_MISMATCH",
     "COMPOSITION_CORRUPT",
     "ORDER_BELOW_RETURN_CREDIT",
@@ -721,6 +742,7 @@ describe("B986-7 fold: codes #3051 registered are spelled through API_ERROR_CODE
     "INVOICE_TAX_STATE_STALE",
     "INVOICE_TOTAL_BELOW_PAID",
     "LINE_ALREADY_DELIVERED",
+    "ORDER_HAS_RETURN",
   ];
   it.each(REGISTERED)("%s is a computed [API_ERROR_CODES.X] key", (code) => {
     expect(src).toContain(`[API_ERROR_CODES.${code}]:`);
@@ -910,4 +932,50 @@ describe("SA-814g: 409 INVOICE_TAX_STATE_STALE copy follows the kind of invoice 
       INVOICE_TAX_STATE_STALE_COPY.DRAFT_MANUAL,
     );
   });
+});
+
+describe("SA-1093: a document received before its units per box were set", () => {
+  const refusal = (document: string) => ({
+    response: { status: 409, data: { code: API_ERROR_CODES.RECEIVED_BEFORE_PACK, document } },
+  });
+
+  it("a bill names its void, a purchase order keeps its stock", () => {
+    expect(genericToastCopy(refusal("bill"))).toBe(
+      "This bill was received before its units per box were set. To change it, void it and enter a new bill.",
+    );
+    expect(genericToastCopy(refusal("purchase-order"))).toBe(
+      "This purchase order was received before its units per box were set. Save the edit without changing stock.",
+    );
+  });
+});
+
+describe("SA-1093: an open line in its own unit", () => {
+  const refusal = (orderNumber?: string) => ({
+    response: { status: 409, data: { code: API_ERROR_CODES.PACK_OPEN_LINES, orderNumber } },
+  });
+
+  it("names the order, and has a sentence without one", () => {
+    expect(genericToastCopy(refusal("ORD-7"))).toBe(
+      "Order ORD-7 has a line in its own unit. Finish or cancel the order first, or choose pieces.",
+    );
+    expect(genericToastCopy(refusal())).toBe(
+      "An open order has a line in its own unit. Finish or cancel the order first, or choose pieces.",
+    );
+  });
+});
+
+describe("SA-1091 AC-16: the app-wide toast names the room left on an order-wide over-credit", () => {
+  it.each(["RETURN_REFUND_OVER_LINE_HEADROOM", "CREDIT_NOTE_OVER_HEADROOM"])(
+    "%s with orderBound and remaining shows the amount, never the server text",
+    (code) => {
+      const err = {
+        response: {
+          status: 409,
+          data: { code, orderBound: true, remaining: 6.74, message: "raw" },
+        },
+      };
+      expect(genericToastCopy(err)).toContain("$6.74 is left to give back");
+      expect(genericToastCopy(err)).not.toContain("raw");
+    },
+  );
 });

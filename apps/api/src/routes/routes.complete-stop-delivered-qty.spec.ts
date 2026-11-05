@@ -44,6 +44,8 @@ describe("RoutesService.completeStop books deliveredQty from the rows it writes 
   let prisma: ReturnType<typeof createMockPrisma>;
   let tx: any;
   let rows: Array<Record<string, any>>;
+  /** The deliveredQty column per line: starts at 0 (the schema default), moved only by the recompute's update. */
+  let column: Record<string, number>;
 
   beforeEach(async () => {
     prisma = createMockPrisma();
@@ -94,6 +96,7 @@ describe("RoutesService.completeStop books deliveredQty from the rows it writes 
     service = module.get(RoutesService);
 
     rows = [];
+    column = {};
     prisma.routeRun.findUnique.mockResolvedValue({
       id: "run-1",
       driverId: "drv-1",
@@ -138,9 +141,18 @@ describe("RoutesService.completeStop books deliveredQty from the rows it writes 
             .filter(
               ([id, l]) => (!ids || ids.includes(id)) && (!orders || orders.includes(l.orderId)),
             )
-            .map(([id, l]) => ({ id, orderId: l.orderId, qty: l.qty }));
+            .map(([id, l]) => ({
+              id,
+              orderId: l.orderId,
+              qty: l.qty,
+              status: null,
+              deliveredQty: column[id] ?? 0,
+            }));
         }),
-        update: jest.fn().mockResolvedValue({}),
+        update: jest.fn(async ({ where, data }: any) => {
+          if (data?.deliveredQty !== undefined) column[where.id] = Number(data.deliveredQty);
+          return {};
+        }),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       deliveryMutation: {
@@ -159,6 +171,14 @@ describe("RoutesService.completeStop books deliveredQty from the rows it writes 
     (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(tx));
   });
 
+  /**
+   * SA-1101 §2.3: a close must carry an entry for every line that still has something to deliver. A test that
+   * sends only SOME lines first marks the others already fully delivered (the column at its ordered qty), so the
+   * line under test is the only open one.
+   */
+  const alreadyDelivered = (...ids: string[]) => {
+    for (const id of ids) column[id] = LINES[id].qty;
+  };
   const complete = (deliveries: any[]) =>
     service.completeStop("run-1", "stop-1", { deliveries } as any, operator);
   const booked = () =>
@@ -170,11 +190,13 @@ describe("RoutesService.completeStop books deliveredQty from the rows it writes 
     );
 
   it("RED on the wrong value: a 6-of-10 delivery books 6 (master left the column at 0)", async () => {
+    alreadyDelivered("oi-2", "oi-3");
     await complete([{ orderItemId: "oi-1", type: "DELIVERED", quantityDelivered: 6 }]);
     expect(booked()).toEqual({ "oi-1": 6 });
   });
 
   it("a short line next to a full one: each line books its own sum", async () => {
+    alreadyDelivered("oi-3");
     await complete([
       { orderItemId: "oi-1", type: "PARTIAL", quantityDelivered: 6 },
       { orderItemId: "oi-2", type: "DELIVERED", quantityDelivered: 4 },
@@ -183,11 +205,13 @@ describe("RoutesService.completeStop books deliveredQty from the rows it writes 
   });
 
   it("a refused line books 0, not its ordered qty", async () => {
+    alreadyDelivered("oi-2", "oi-3");
     await complete([{ orderItemId: "oi-1", type: "REFUSED", quantityDelivered: 0 }]);
     expect(booked()).toEqual({ "oi-1": 0 });
   });
 
   it("a stop with two orders recomputes each order's lines", async () => {
+    alreadyDelivered("oi-2");
     await complete([
       { orderItemId: "oi-1", type: "DELIVERED", quantityDelivered: 10 },
       { orderItemId: "oi-3", type: "PARTIAL", quantityDelivered: 5 },
@@ -196,17 +220,20 @@ describe("RoutesService.completeStop books deliveredQty from the rows it writes 
   });
 
   it("a line left out of deliveries[] keeps its column (SA-1089: ruled separately)", async () => {
+    alreadyDelivered("oi-2", "oi-3"); // nothing left on them, so leaving them out is legal (SA-1101 §2.3)
     await complete([{ orderItemId: "oi-1", type: "DELIVERED", quantityDelivered: 6 }]);
     expect(Object.keys(booked())).not.toContain("oi-2");
     expect(Object.keys(booked())).not.toContain("oi-3");
   });
 
   it("a completion with no deliveries[] writes no deliveredQty", async () => {
+    alreadyDelivered("oi-1", "oi-2", "oi-3");
     await service.completeStop("run-1", "stop-1", {} as any, operator);
     expect(tx.orderItem.update).not.toHaveBeenCalled();
   });
 
   it("the same completion through completeWithPayment books the same figures", async () => {
+    alreadyDelivered("oi-2", "oi-3");
     await service.completeWithPayment(
       "run-1",
       "stop-1",

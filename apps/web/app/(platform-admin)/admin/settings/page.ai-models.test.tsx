@@ -36,6 +36,7 @@ function config(over: Record<string, unknown> = {}) {
     model: "claude-sonnet-5-5",
     scanModel: "claude-haiku-5-5",
     maxTokens: 4096,
+    monthlyCapUsd: 25,
     verifiedAt: null,
     availableModels: MODELS,
     ...over,
@@ -128,5 +129,35 @@ describe("admin settings: AI models (SA-1035)", () => {
       scanModel: "claude-sonnet-5-5",
       maxTokens: 4096,
     });
+  });
+
+  it("SA-1102: the monthly allowance is shown, and only a CHANGED value is sent (0 is the kill switch)", async () => {
+    const user = userEvent.setup();
+    serve(config({ monthlyCapUsd: 40 }));
+    mockPatch.mockResolvedValue({ data: config({ monthlyCapUsd: 0 }) });
+    render(<AdminSettingsPage />);
+    const cap = await screen.findByRole("spinbutton", {
+      name: "Monthly AI allowance per business (USD)",
+    });
+    expect(cap).toHaveValue(40);
+    await user.clear(cap);
+    await user.type(cap, "0");
+    await user.click(screen.getByRole("button", { name: /Save AI Settings/ }));
+    await waitFor(() => expect(mockPatch).toHaveBeenCalledTimes(1));
+    expect(mockPatch).toHaveBeenCalledWith("/platform-admin/ai-config", {
+      monthlyCapUsd: 0,
+      maxTokens: 4096,
+    });
+  });
+
+  it("SA-1102: an untouched allowance is not re-sent", async () => {
+    const user = userEvent.setup();
+    serve(config());
+    mockPatch.mockResolvedValue({ data: config() });
+    render(<AdminSettingsPage />);
+    await screen.findByRole("spinbutton", { name: "Monthly AI allowance per business (USD)" });
+    await user.click(screen.getByRole("button", { name: /Save AI Settings/ }));
+    await waitFor(() => expect(mockPatch).toHaveBeenCalledTimes(1));
+    expect(mockPatch.mock.calls[0][1]).not.toHaveProperty("monthlyCapUsd");
   });
 });

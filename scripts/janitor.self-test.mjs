@@ -1369,6 +1369,37 @@ t(
     t("no upstream and no origin branch of that name is unpushed (unknown is unsafe)", () => {
       assert.equal(hasUnpushedCommits(dir, "local-only"), true);
     });
+    // A train merges the branch and deletes its origin ref: the tip is safe on origin/master.
+    g("checkout", "-q", "master");
+    g("checkout", "-q", "-b", "landed");
+    commit("d");
+    g("push", "-q", "origin", "landed:master");
+    t("a tip in origin/master has nothing unpushed, with no origin branch of its own", () => {
+      assert.equal(hasUnpushedCommits(dir, "landed"), false);
+    });
+    t("a branch outside origin/master with no origin branch stays unpushed", () => {
+      assert.equal(hasUnpushedCommits(dir, "local-only"), true);
+    });
+    commit("e");
+    t("one commit past origin/master is unpushed", () => {
+      assert.equal(hasUnpushedCommits(dir, "landed"), true);
+    });
+    // Short ref names would let these look pushed: a tag named like the branch, and a local branch
+    // called "origin/master", both pointing into origin/master's history.
+    g("checkout", "-q", "-b", "tagged");
+    g("tag", "tagged", "origin/master");
+    t("a tag named like the branch does not make an unpushed tip look pushed", () => {
+      assert.equal(hasUnpushedCommits(dir, "tagged"), true);
+    });
+    g("checkout", "-q", "-b", "shadow");
+    g("branch", "origin/master", "shadow");
+    t("a local branch called origin/master does not stand in for the remote one", () => {
+      assert.equal(hasUnpushedCommits(dir, "shadow"), true);
+    });
+    g("checkout", "-q", "--detach");
+    t("a detached tree still has no branch to prove (unknown is unsafe)", () => {
+      assert.equal(hasUnpushedCommits(dir, null), true);
+    });
   } finally {
     rmSync(dir, { recursive: true, force: true });
     rmSync(origin, { recursive: true, force: true });
@@ -1843,6 +1874,125 @@ if (process.platform === "win32" && CMD_UNSAFE.test(winBase)) {
         "jguard /t/jest_dx/haste-1 /t/jest_dx",
         "log    REFUSED, skipped: /t/jest_dx/haste-1 (nope)",
       ]);
+    },
+  );
+}
+
+// Step 7 on a FILE entry (181 failures in one run): Jest writes plain files into its cache roots
+// (`haste-map-*`, `jest-transform-cache-*`, `perf-cache-*`), and `cmd /c rmdir /s /q <file>` fails with "The directory
+// name is invalid". A file is unlinked; a directory still goes through removeTree; the guard runs first for both.
+{
+  const fileDeps = (calls, { isFile, removeFileThrows = false }) => ({
+    refuseDelete: () => (calls.push("WRONG GUARD"), null),
+    refuseJestCacheDelete: (tg, root) => (calls.push(`jguard ${tg} ${root}`), null),
+    isPlainFile: (tg) => (calls.push(`isPlainFile ${tg}`), isFile),
+    isDirty: () => false,
+    removeTree: (tg) => calls.push(`removeTree ${tg}`),
+    removeFile: (tg) => {
+      calls.push(`removeFile ${tg}`);
+      if (removeFileThrows) throw new Error("EBUSY: resource busy or locked");
+    },
+    removeWorktree: () => {},
+    run: () => {},
+    log: (m) => calls.push(`log ${m}`),
+  });
+  const entry = (name) => ({
+    kind: "jest-cache",
+    target: `/w/apps/api/.jest-cache/${name}`,
+    root: "/w/apps/api/.jest-cache",
+  });
+  t("step 7: a FILE entry is unlinked (never rmdir /s), after its guard", () => {
+    const calls = [];
+    const a = entry("jest-transform-cache-x");
+    assert.equal(execute(a, fileDeps(calls, { isFile: true })), "done");
+    assert.deepEqual(calls, [
+      `jguard ${a.target} ${a.root}`,
+      `isPlainFile ${a.target}`,
+      `removeFile ${a.target}`,
+    ]);
+  });
+  t("step 7: a DIRECTORY entry still goes through removeTree, never a bare unlink", () => {
+    const calls = [];
+    const a = entry("haste-map-old");
+    assert.equal(execute(a, fileDeps(calls, { isFile: false })), "done");
+    assert.deepEqual(calls, [
+      `jguard ${a.target} ${a.root}`,
+      `isPlainFile ${a.target}`,
+      `removeTree ${a.target}`,
+    ]);
+  });
+  t("step 7: a refused file entry is never unlinked", () => {
+    const calls = [];
+    const deps = fileDeps(calls, { isFile: true });
+    deps.refuseJestCacheDelete = () => "nope";
+    assert.equal(execute(entry("perf-cache-x"), deps), "refused");
+    assert.equal(
+      calls.some((c) => c.startsWith("removeFile") || c.startsWith("removeTree")),
+      false,
+    );
+  });
+  t("step 7: a locked file entry is a reported skip, never a failed run", () => {
+    const calls = [];
+    const a = entry("jest-transform-cache-locked");
+    assert.equal(execute(a, fileDeps(calls, { isFile: true, removeFileThrows: true })), "skipped");
+    assert.equal(
+      calls.some((c) => c.includes("SKIPPED")),
+      true,
+    );
+  });
+  t(
+    "step 7: the real isPlainFile is true for a file and false for a directory or a missing path",
+    () => {
+      const dir = realpathSync(mkdtempSync(join(tmpdir(), "janitor-file-entry-")));
+      try {
+        writeFileSync(join(dir, "f"), "x");
+        mkdirSync(join(dir, "d"));
+        assert.equal(EXECUTE_DEPS.isPlainFile(join(dir, "f")), true);
+        assert.equal(EXECUTE_DEPS.isPlainFile(join(dir, "d")), false);
+        assert.equal(EXECUTE_DEPS.isPlainFile(join(dir, "gone")), false);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+  t(
+    "step 7 sandbox: a stale FILE and a stale directory entry are both swept on the real filesystem",
+    () => {
+      const sandbox = realpathSync(mkdtempSync(join(tmpdir(), "janitor-file-sweep-")));
+      try {
+        const old = new Date(Date.now() - (JEST_CACHE_AGE_DAYS + 5) * 86_400_000);
+        const root = join(sandbox, "wt", "apps", "api", ".jest-cache");
+        mkdirSync(root, { recursive: true });
+        const file = join(root, "jest-transform-cache-old");
+        writeFileSync(file, "x");
+        utimesSync(file, old, old);
+        const dir = join(root, "haste-map-old");
+        mkdirSync(dir);
+        writeFileSync(join(dir, "data"), "x");
+        utimesSync(join(dir, "data"), old, old);
+        utimesSync(dir, old, old);
+        writeFileSync(join(root, "jest-transform-cache-new"), "fresh");
+        const actions = planJestCacheActions([root], Date.now());
+        assert.deepEqual(actions.map((a) => a.target).sort(), [dir, file].sort());
+        const deps = {
+          refuseDelete: () => "WRONG GUARD",
+          refuseJestCacheDelete: (tg, r) =>
+            jestCacheDeleteRefusal(realpathSync(tg), [realpathSync(r)]),
+          isPlainFile: EXECUTE_DEPS.isPlainFile,
+          isDirty: () => false,
+          removeTree: (tg) => safeRemoveTree(tg),
+          removeFile: EXECUTE_DEPS.removeFile,
+          removeWorktree: () => {},
+          run: () => {},
+          log: () => {},
+        };
+        for (const a of actions) assert.equal(execute(a, deps), "done", a.target);
+        assert.equal(existsSync(file), false, "stale file swept");
+        assert.equal(existsSync(dir), false, "stale directory swept");
+        assert.equal(existsSync(join(root, "jest-transform-cache-new")), true, "fresh file kept");
+      } finally {
+        rmSync(sandbox, { recursive: true, force: true });
+      }
     },
   );
 }

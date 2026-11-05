@@ -113,6 +113,7 @@ import { userStatusRefusalCopy } from "@/lib/user-status-refusal";
 import { newPasswordSchema, passwordErrorMessage } from "@/lib/password-policy";
 import { PasswordChecklist } from "@/components/auth";
 import { isZoneUnset } from "@/lib/tenant-timezone";
+import { saveKeyErrorDescription } from "@/lib/claude-key-copy";
 
 // ─── TAB 1: Business Profile ──────────────────────────────────────────────────
 
@@ -1086,8 +1087,15 @@ function AIIntegrationsTab() {
         variant: "success",
       });
     },
-    onError: (err) =>
-      isReadOnlyRefusal(err) || toast({ title: "Failed to save API key", variant: "error" }),
+    onError: (err: any) => {
+      if (isReadOnlyRefusal(err)) return;
+      // A 400 means the key's shape is wrong: the web's own sentence, not the server's text (B986).
+      toast({
+        title: "Failed to save API key",
+        description: saveKeyErrorDescription(err),
+        variant: "error",
+      });
+    },
   });
 
   const removeKey = useMutation({
@@ -1100,6 +1108,8 @@ function AIIntegrationsTab() {
       isReadOnlyRefusal(err) || toast({ title: "Failed to remove key", variant: "error" }),
   });
 
+  // SA-1102: `configured` means the business has its OWN key (used for bill scans only). Without one, scans run on
+  // RouteFlow's key, which is never shown here.
   const isConfigured = anthropicStatus?.configured === true;
   const keyPreview = anthropicStatus?.keyPreview ?? null;
 
@@ -1119,15 +1129,15 @@ function AIIntegrationsTab() {
                   {isLoading
                     ? "Checking status…"
                     : isConfigured
-                      ? `Key configured${keyPreview ? ` · ${keyPreview}` : ""}`
-                      : "No API key configured"}
+                      ? `Bill scans use your Claude key${keyPreview ? `, ending in ${keyPreview.replace("…", "")}` : ""}. Other scans use RouteFlow's.`
+                      : "Scans use RouteFlow's Claude key. You can add your own key for bill scans."}
                 </p>
               </div>
             </div>
             {isConfigured ? (
-              <Badge variant="success" label="Active" />
+              <Badge variant="success" label="Your key" />
             ) : (
-              <Badge variant="warning" label="Not configured" />
+              <Badge variant="info" label="RouteFlow's key" />
             )}
           </div>
 
@@ -1136,10 +1146,6 @@ function AIIntegrationsTab() {
             <p>
               RouteFlow uses Claude to intelligently extract supplier names, invoice numbers, line
               items, and totals from scanned documents — saving manual data entry.
-            </p>
-            <p>
-              Each operator uses their own API key so AI costs are billed directly to your Anthropic
-              account.
             </p>
           </div>
 
@@ -2705,6 +2711,27 @@ function InvoicingTab() {
     );
   };
 
+  const handleHidePerPieceChange = (checked: boolean) => {
+    updateSettings.mutate(
+      { hidePerPiece: !checked },
+      {
+        onSuccess: () =>
+          toast({
+            title: "Invoice settings saved",
+            description: "Per piece column updated.",
+            variant: "success",
+          }),
+        onError: (err) =>
+          isReadOnlyRefusal(err) ||
+          toast({
+            title: "Failed to save",
+            description: "Could not update invoice settings.",
+            variant: "error",
+          }),
+      },
+    );
+  };
+
   const handleHideOriginalPriceChange = (checked: boolean) => {
     updateSettings.mutate(
       { hideOriginalPrice: !checked },
@@ -2877,6 +2904,26 @@ function InvoicingTab() {
                 aria-label="Show barcodes on invoices"
                 checked={!invoiceSettings?.hideBarcodes}
                 onChange={(e) => handleHideBarcodesChange(e.target.checked)}
+                disabled={isLoading || updateSettings.isPending}
+                className="h-4 w-4 rounded border-surface-border"
+              />
+            </label>
+          </div>
+
+          <div className="flex items-center gap-4 rounded-lg border border-surface-border bg-surface-raised p-4">
+            <div className="flex-1 space-y-1">
+              <p className="text-sm font-semibold text-navy">Show price per piece on invoices</p>
+              <p className="text-xs text-navy/70">
+                Adds a Per piece column beside pack lines, on the invoice page, the PDF and the
+                email. Turn off to print invoices without it.
+              </p>
+            </div>
+            <label className="inline-flex shrink-0 cursor-pointer items-center">
+              <input
+                type="checkbox"
+                aria-label="Show price per piece on invoices"
+                checked={!invoiceSettings?.hidePerPiece}
+                onChange={(e) => handleHidePerPieceChange(e.target.checked)}
                 disabled={isLoading || updateSettings.isPending}
                 className="h-4 w-4 rounded border-surface-border"
               />
