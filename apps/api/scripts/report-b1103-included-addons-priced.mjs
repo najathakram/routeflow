@@ -129,8 +129,7 @@ async function main() {
     // The same population as the daily job: PRODUCTION, not deleted.
     const { rows: trows } = await client.query(
       `SELECT t.id, t.slug, t.plan::text AS plan, t."planVersionId",
-              s."planKey" AS "subPlanKey", s."planVersionId" AS "subPlanVersionId",
-              s."stripeSubId", s."externalPayment", s."couponFull"
+              s."planKey" AS "subPlanKey", s."planVersionId" AS "subPlanVersionId"
          FROM "Tenant" t
          LEFT JOIN "TenantSubscription" s ON s."tenantId" = t.id
         WHERE t.class = 'PRODUCTION' AND t."deletedAt" IS NULL
@@ -143,19 +142,11 @@ async function main() {
       slug: t.slug,
       plan: t.plan,
       planVersionId: t.planVersionId,
+      // I3 reads only the plan key and the pin (no billing mode), so nothing else of the subscription is read.
       sub:
-        t.subPlanKey === null &&
-        t.subPlanVersionId === null &&
-        t.stripeSubId === null &&
-        t.externalPayment === null
+        t.subPlanKey === null && t.subPlanVersionId === null
           ? null
-          : {
-              planKey: t.subPlanKey,
-              planVersionId: t.subPlanVersionId,
-              stripeSubId: t.stripeSubId,
-              externalPayment: t.externalPayment,
-              couponFull: t.couponFull,
-            },
+          : { planKey: t.subPlanKey, planVersionId: t.subPlanVersionId },
     }));
     const ids = tenants.map((t) => t.id);
     const { rows: addonRows } = await client.query(

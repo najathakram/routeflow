@@ -25,7 +25,7 @@ const usd = (n) => `$${round2(n).toFixed(2)}`;
 
 /**
  * Judge every tenant. Pure given the loaded dist code (`d`) and the rows read:
- * `tenants` `{ id, slug, plan, planVersionId, sub: {planKey, planVersionId, stripeSubId, externalPayment, couponFull}|null }`,
+ * `tenants` `{ id, slug, plan, planVersionId, sub: {planKey, planVersionId}|null }`,
  * `rowsByTenant` Map of addon rows, `skusByVersion` Map of versionId to AddonSku rows, `knownVersions` Set of version
  * ids that exist, `publishedId` the published version id (or null), `since` Map rowId to the Date of the row's last
  * price change, `now` a Date. Returns `{ rows: [{ tenantId, slug, kind, ... }], unjudged: [...] }`.
