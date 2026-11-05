@@ -36,9 +36,36 @@ export function isDemoteHasReturnRefusal(err: unknown): boolean {
   return res?.status === 409 && res.data?.code === API_ERROR_CODES.ORDER_HAS_RETURN;
 }
 
-/** The demotion's own sentence for a live-return refusal, or null for any other error (the global toast keeps those). */
-export const demoteErrorText = (err: unknown): string | null =>
-  isDemoteHasReturnRefusal(err) ? DEMOTE_HAS_RETURN_COPY : null;
+/**
+ * B1280: the other two ways "Reopen order" is refused. Each has its own code, and the walk-in code is the one the order
+ * EDIT uses too ("Ring up added items as a new sale"), which reads wrong on a reopen, so this action says its own sentence.
+ */
+export const DEMOTE_WALK_IN_PAID_COPY =
+  "This counter sale is paid, so it can't be reopened. To take items back, use Return.";
+export const DEMOTE_ON_ROUTE_RUN_COPY =
+  "This order was delivered on a route run. Reopen its stop from the run, which also reverses stock and payments.";
+
+const demoteCopyFor = (err: unknown): string | null => {
+  const res = (err as { response?: { status?: number; data?: { code?: unknown } } } | null)
+    ?.response;
+  if (res?.status !== 409) return null;
+  switch (res.data?.code) {
+    case API_ERROR_CODES.ORDER_HAS_RETURN:
+      return DEMOTE_HAS_RETURN_COPY;
+    case API_ERROR_CODES.WALK_IN_SALE_PAID:
+      return DEMOTE_WALK_IN_PAID_COPY;
+    case API_ERROR_CODES.ORDER_ROUTE_STOP_COMPLETED:
+      return DEMOTE_ON_ROUTE_RUN_COPY;
+    default:
+      return null;
+  }
+};
+
+/** True for any Reopen order refusal this page words itself (the global toast stays silent for these). */
+export const isDemoteRefusal = (err: unknown): boolean => demoteCopyFor(err) !== null;
+
+/** The demotion's own sentence for a Reopen order refusal, or null for any other error (the global toast keeps those). */
+export const demoteErrorText = (err: unknown): string | null => demoteCopyFor(err);
 
 /**
  * Orders list, bulk delete: the toast when some of the selected orders were kept. The server refuses an order for more
