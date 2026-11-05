@@ -6,9 +6,10 @@
  * clientFlag. The expected bits below are worked by hand from the plan fixtures (the oracle), not
  * read back from the code under test:
  *   - STARTER, no rows: the plan carries no flag. `ocr` and `flag.reports` are DARK gates, so the
- *     old path allows them as a courtesy while the resolver (no courtesy yet, WP2) says false;
- *     `tobacco_dealer` is enforced, both false. `flag.credit_limits` runs the real credit check for
- *     everyone while the switch is not "on" (SA-1099 §2): old true, effective false.
+ *     old path allows them as a courtesy and so does the resolver (WP2): effective true, strict
+ *     false (the owner's rule with no courtesy), courtesy true; `tobacco_dealer` is enforced, all
+ *     false. `flag.credit_limits` runs the real credit check for everyone while the switch is not
+ *     "on" (SA-1099 §2): old true, effective true, strict false, courtesy true.
  *   - GROWTH carrying flag.reports + flag.credit_limits, plus an active tobacco_dealer row: all true.
  *   - LITE (always enforced) with a GRANT override on tobacco_dealer: that key true everywhere,
  *     `ocr` and `flag.reports` false (no courtesy for an always-enforced plan).
