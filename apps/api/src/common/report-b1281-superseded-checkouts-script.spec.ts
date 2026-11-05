@@ -127,6 +127,17 @@ describe("report-b1281-superseded-checkouts.mjs", () => {
     expect(call("[...m.LIVE_STATUSES].sort()")).toEqual(appStatuses);
   });
 
+  // D-4 (SA-1103 A-1): "which Stripe status means what" has ONE home, stripe-period.ts; the script cannot import it,
+  // so both of its lists are pinned equal to the app's by reading the app's source (the report-noop-addons pattern).
+  it("D-4: the live AND terminal status lists equal stripe-period.ts's (a status added there turns this red)", () => {
+    const live = /LIVE_SUBSCRIPTION_STATUSES[^=]*=\s*new Set\(\[([^\]]*)\]/.exec(periodSource)![1];
+    const terminal = /isTerminalStripeSubscriptionStatus\s*=[^;]*;/.exec(periodSource)![0];
+    const words = (s: string) => [...s.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]).sort();
+    expect(call("[...m.LIVE_STATUSES].sort()")).toEqual(words(live));
+    expect(call("[...m.TERMINAL_STATUSES].sort()")).toEqual(words(terminal));
+    expect(words(terminal)).toEqual(["canceled", "incomplete_expired"]); // not vacuous
+  });
+
   it("--self-test runs when spawned by its real path", () => {
     const r = node([SCRIPT, "--self-test"], process.env);
     expect(r.status).toBe(0);
@@ -189,6 +200,53 @@ describe("report-b1281-superseded-checkouts.mjs", () => {
       expect(out).toMatchObject({ orphanSessions: 0, finding: false });
     });
 
+    it("D-1: a deleted business with ONE live subscription is a finding in its own class", () => {
+      const out = call(
+        `m.classifyTenant({ deleted: true, storedSubId: "sub_AAAA1111", subs: [${JSON.stringify(sub("sub_AAAA1111", "active"))}], sessions: [] })`,
+      );
+      expect(out).toMatchObject({ deleted: true, deletedStillBilling: true, finding: true });
+      // the same subscription on a business that still exists is clean
+      expect(
+        call(
+          `m.classifyTenant({ deleted: false, storedSubId: "sub_AAAA1111", subs: [${JSON.stringify(sub("sub_AAAA1111", "active"))}], sessions: [] })`,
+        ),
+      ).toMatchObject({ deletedStillBilling: false, finding: false });
+      // a deleted business whose subscription is already cancelled is not still billing
+      expect(
+        call(
+          `m.classifyTenant({ deleted: true, storedSubId: "sub_AAAA1111", subs: [${JSON.stringify(sub("sub_AAAA1111", "canceled"))}], sessions: [] })`,
+        ),
+      ).toMatchObject({ deletedStillBilling: false, finding: false });
+    });
+
+    it("D-2: a paused superseded subscription with a completed checkout in the window is Revivable, superseded", () => {
+      const subs = [sub("sub_AAAA1111", "active"), sub("sub_PAUS0009", "paused")];
+      const out = call(
+        `m.classifyTenant({ storedSubId: "sub_AAAA1111", subs: ${JSON.stringify(subs)}, sessions: [${JSON.stringify(sess("sub_PAUS0009"))}] })`,
+      );
+      expect(out).toMatchObject({
+        revivableSuperseded: 1,
+        revivableSub4: ["0009"],
+        multiLive: false,
+        finding: true,
+      });
+      // incomplete is revivable too (the failed handler would have cancelled it)
+      const inc = [sub("sub_AAAA1111", "active"), sub("sub_INCO0007", "incomplete")];
+      expect(
+        call(
+          `m.classifyTenant({ storedSubId: "sub_AAAA1111", subs: ${JSON.stringify(inc)}, sessions: [${JSON.stringify(sess("sub_INCO0007"))}] })`,
+        ),
+      ).toMatchObject({ revivableSuperseded: 1, orphanStillLive: 0 });
+    });
+
+    it("D-3: an incomplete_expired (terminal) superseded subscription is not listed as revivable", () => {
+      const subs = [sub("sub_AAAA1111", "active"), sub("sub_DEAD0005", "incomplete_expired")];
+      const out = call(
+        `m.classifyTenant({ storedSubId: "sub_AAAA1111", subs: ${JSON.stringify(subs)}, sessions: [${JSON.stringify(sess("sub_DEAD0005"))}] })`,
+      );
+      expect(out).toMatchObject({ revivableSuperseded: 0, revivableSub4: [] });
+    });
+
     it("a capped read cannot prove clean: it is a finding", () => {
       const out = call(
         `m.classifyTenant({ storedSubId: "sub_AAAA1111", subs: [], sessions: [], capped: true })`,
@@ -241,7 +299,31 @@ describe("report-b1281-superseded-checkouts.mjs", () => {
       expect(out).toContain("No such customer"); // the words survive
     });
 
-    it("prints a separate LIVE findings line, and a TEST-only finding leaves it at 0 while the exit is 3 (review B note 4)", () => {
+    it("prints the deleted column and the two A-1 sections, ids only (D-1, D-2)", () => {
+      const lines = (
+        call(
+          `m.formatReport(m.buildReport([
+            { tenantId: "t-del", slug: "acme", result: m.classifyTenant({ deleted: true, storedSubId: "sub_AAAA1111", subs: [{ id: "sub_AAAA1111", status: "active" }], sessions: [] }) },
+            { tenantId: "t-rev", slug: "globex", result: m.classifyTenant({ storedSubId: "sub_BBBB2222", subs: [{ id: "sub_BBBB2222", status: "active" }, { id: "sub_PAUS0009", status: "paused" }], sessions: [{ mode: "subscription", subscription: "sub_PAUS0009" }] }) },
+          ]))`,
+        ) as string[]
+      ).join("\n");
+      expect(lines).toMatch(/Deleted business, still billing:[^\n]*t-del/);
+      expect(lines).toMatch(/Revivable, superseded:[^\n]*t-rev[^\n]*0009/);
+      expect(lines).toMatch(/tenant t-del:[^\n]*deleted yes/);
+      expect(lines).toMatch(/tenant t-rev:[^\n]*deleted no/);
+      expect(lines).not.toMatch(/acme|globex|sub_|cus_/);
+    });
+
+    it("the exit code follows LIVE findings only: a TEST-only finding exits 0 and the LIVE line says so (SA-1103, read A M2)", () => {
+      const rep = (slug: string) => `m.buildReport([
+        { tenantId: "t-1", slug: "${slug}", result: m.classifyTenant({ storedSubId: "sub_AAAA1111", subs: [{ id: "sub_AAAA1111", status: "active" }, { id: "sub_BBBB2222", status: "active" }], sessions: [] }) },
+      ])`;
+      expect(call(`m.exitCodeFor(${rep("qa-trial")})`)).toBe(0);
+      expect(call(`m.exitCodeFor(${rep("acme")})`)).toBe(3);
+    });
+
+    it("prints a separate LIVE findings line (review B note 4)", () => {
       const liveSub = `{ storedSubId: "sub_AAAA1111", subs: [{ id: "sub_AAAA1111", status: "active" }], sessions: [] }`;
       const dirty = `{ storedSubId: "sub_AAAA1111", subs: [{ id: "sub_AAAA1111", status: "active" }, { id: "sub_BBBB2222", status: "active" }], sessions: [] }`;
       const testOnly = `m.buildReport([
@@ -250,9 +332,10 @@ describe("report-b1281-superseded-checkouts.mjs", () => {
       ])`;
       const lines = call(`m.formatReport(${testOnly})`) as string[];
       expect(lines.filter((l) => l.startsWith("LIVE FINDINGS:"))).toEqual([
-        "LIVE FINDINGS: 0 (read this line: the exit code is 3 on a TEST-only finding too)",
+        "LIVE FINDINGS: 0 (the exit code is 3 when this is above 0; TEST findings are printed but never change it)",
       ]);
-      expect(call(`m.exitCodeFor(${testOnly})`)).toBe(3);
+      expect(lines[lines.length - 1]).toMatch(/^LIVE FINDINGS: 0 /); // it ends the report
+      expect(call(`m.exitCodeFor(${testOnly})`)).toBe(0);
       const liveDirty = `m.buildReport([{ tenantId: "t-1", slug: "acme", result: m.classifyTenant(${dirty}) }])`;
       expect((call(`m.formatReport(${liveDirty})`) as string[]).join("\n")).toMatch(
         /LIVE FINDINGS: 1 /,
@@ -264,10 +347,10 @@ describe("report-b1281-superseded-checkouts.mjs", () => {
       expect(source).toMatch(/non-live orphan[^.]*finding/i);
     });
 
-    it("exit code: 0 when clean, 3 on any finding", () => {
+    it("exit code: 0 when LIVE is clean (whatever TEST holds), 3 on any LIVE finding", () => {
       expect(call(`m.exitCodeFor({ live: { findings: 0 }, test: { findings: 0 } })`)).toBe(0);
       expect(call(`m.exitCodeFor({ live: { findings: 1 }, test: { findings: 0 } })`)).toBe(3);
-      expect(call(`m.exitCodeFor({ live: { findings: 0 }, test: { findings: 2 } })`)).toBe(3);
+      expect(call(`m.exitCodeFor({ live: { findings: 0 }, test: { findings: 2 } })`)).toBe(0);
     });
   });
 });
