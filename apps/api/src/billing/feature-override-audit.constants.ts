@@ -9,3 +9,10 @@ export const FEATURE_OVERRIDE_EXPIRED_REVIEW_ACTION = "FEATURE_OVERRIDE_EXPIRED_
 
 /** `entityType` of every override-scoped audit row: the override row itself, not "tenant". */
 export const FEATURE_OVERRIDE_AUDIT_ENTITY_TYPE = "tenantFeatureOverride";
+
+/**
+ * R25: written (by the pilot-ending job, BEFORE it sends) when the owner has been told that a billable free
+ * period ends within 7 days. entityId = the override id, meta `{ expiresAt }`: a later extension has a different
+ * end date and earns a fresh warning. Never read by `revokeExpired`.
+ */
+export const FEATURE_OVERRIDE_PILOT_ENDING_NOTIFIED = "FEATURE_OVERRIDE_PILOT_ENDING_NOTIFIED";

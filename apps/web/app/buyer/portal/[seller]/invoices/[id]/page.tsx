@@ -214,7 +214,7 @@ export default function BuyerInvoiceDetailPage() {
       : null;
   const deposit = invoiceDepositFields(invoice);
 
-  const showPerPiece = showPerPieceColumn(invoice?.items);
+  const showPerPiece = showPerPieceColumn(invoice?.items, { hide: invoice?.hidePerPiece === true });
 
   return (
     <div className="p-6 max-w-4xl">

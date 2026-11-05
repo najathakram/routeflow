@@ -2705,6 +2705,27 @@ function InvoicingTab() {
     );
   };
 
+  const handleHidePerPieceChange = (checked: boolean) => {
+    updateSettings.mutate(
+      { hidePerPiece: !checked },
+      {
+        onSuccess: () =>
+          toast({
+            title: "Invoice settings saved",
+            description: "Per piece column updated.",
+            variant: "success",
+          }),
+        onError: (err) =>
+          isReadOnlyRefusal(err) ||
+          toast({
+            title: "Failed to save",
+            description: "Could not update invoice settings.",
+            variant: "error",
+          }),
+      },
+    );
+  };
+
   const handleHideOriginalPriceChange = (checked: boolean) => {
     updateSettings.mutate(
       { hideOriginalPrice: !checked },
@@ -2877,6 +2898,26 @@ function InvoicingTab() {
                 aria-label="Show barcodes on invoices"
                 checked={!invoiceSettings?.hideBarcodes}
                 onChange={(e) => handleHideBarcodesChange(e.target.checked)}
+                disabled={isLoading || updateSettings.isPending}
+                className="h-4 w-4 rounded border-surface-border"
+              />
+            </label>
+          </div>
+
+          <div className="flex items-center gap-4 rounded-lg border border-surface-border bg-surface-raised p-4">
+            <div className="flex-1 space-y-1">
+              <p className="text-sm font-semibold text-navy">Show price per piece on invoices</p>
+              <p className="text-xs text-navy/70">
+                Adds a Per piece column beside pack lines, on the invoice page, the PDF and the
+                email. Turn off to print invoices without it.
+              </p>
+            </div>
+            <label className="inline-flex shrink-0 cursor-pointer items-center">
+              <input
+                type="checkbox"
+                aria-label="Show price per piece on invoices"
+                checked={!invoiceSettings?.hidePerPiece}
+                onChange={(e) => handleHidePerPieceChange(e.target.checked)}
                 disabled={isLoading || updateSettings.isPending}
                 className="h-4 w-4 rounded border-surface-border"
               />

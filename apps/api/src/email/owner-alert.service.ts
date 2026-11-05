@@ -1,6 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "./email.service";
+import { roundMoney } from "@routeflow/pricing";
 import { escapeHtml } from "../common/html-escape";
 import { loadDemoBookingConfig } from "../demo-booking/demo-booking.config";
 import { webBaseUrl } from "../config/web-base-url";
@@ -26,6 +27,13 @@ function dateLabel(d: Date | null | undefined): string | null {
         timeZone: "UTC",
       })
     : null;
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** `12 Jan`: the day and the short month, in UTC (the end of a free period is a UTC date everywhere else). */
+function shortDayMonth(d: Date): string {
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
 }
 
 /**
@@ -116,6 +124,30 @@ export class OwnerAlertService {
       await this.deliver(`Check this new account: ${t.name}`, [
         `${t.name} answered the first question, but its setup had already changed, so we left it alone. It may be half set up.`,
         this.backOfficeLink(t),
+      ]);
+    });
+  }
+
+  /**
+   * R25 / SA-1100 §1: a billable free period ends within a week. A grant never bills: when it ends the business LOSES
+   * the feature and nothing is charged automatically, so the mail says exactly that and never claims a paid add-on
+   * starts by itself. The owner decides: extend the free period, or turn on the paid add-on. Plain words only; the
+   * caller (`billablePilotEnding`) has already decided that the feature is really lost and has a flat paid add-on.
+   */
+  async pilotEnding(
+    tenantId: string,
+    p: { featureName: string; endsAt: Date; monthlyPrice: number },
+  ): Promise<void> {
+    await this.guarded("pilot-ending", tenantId, async () => {
+      const t = await this.tenant(tenantId);
+      if (!t) return;
+      const ends = shortDayMonth(p.endsAt);
+      const price =
+        p.monthlyPrice % 1 === 0 ? String(p.monthlyPrice) : roundMoney(p.monthlyPrice).toFixed(2);
+      await this.deliver(`${t.name}: ${p.featureName} free period ends ${ends}`, [
+        `The free period of ${p.featureName} for ${t.name} ends on ${ends}.`,
+        `After that, ${t.name} loses ${p.featureName}. Nothing is charged automatically.`,
+        `To keep it, extend the free period or turn on the paid add-on ($${price} a month) from the business page: ${this.backOfficeLink(t)}`,
       ]);
     });
   }

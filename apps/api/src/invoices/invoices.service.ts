@@ -3050,6 +3050,7 @@ export class InvoicesService {
     // so CUSTOMER viewers of this same document honor the tenant's
     // hide-original-price preference too.
     const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
+    const hidePerPiece = (await this.systemConfig.get("invoice.hidePerPiece")) === "true"; // owner ruling 2026-11-04
     stampHandedOverBy(inv.order, user); // row 342: staff only (`invoiceDetailFor` drops `order` for a buyer)
     await iGate.stampOverrideNames(this.prisma.forTenant(), inv.items, user); // row 510: staff only
     const db = this.prisma.forTenant();
@@ -3066,6 +3067,7 @@ export class InvoicesService {
       ), // SA-1058; #2717 M3 + SA-827; the order reads the stored text, the family name composes after it
       payments: withNoLongerFits(inv).payments, // W-769: each row's derived noLongerFits flag
       hideOriginalPrice,
+      hidePerPiece,
       ...listRowFlags(inv), // row 401 paidAtSale + SA-1026 toCollect
       pendingMirror: await resolvePendingMirror(this.featureConfig, inv.tenantId, inv, inv.order),
       // F3: the server's default PDF stage (a shipment invoice is FINAL); clients read it, never re-derive.
@@ -3664,11 +3666,13 @@ export class InvoicesService {
     // PDF attached to it, so it honours the hide-original-price preference too. The payload (the F03/R8/B421 paid
     // basis, the item table, the deposit schedule) is built in invoice-email-payload.ts (the service is on the ratchet).
     const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
+    const hidePerPiece = (await this.systemConfig.get("invoice.hidePerPiece")) === "true";
     const emailPayload = buildInvoiceEmailPayload(snapshot, {
       recipientEmail,
       pdfUrl,
       attachment,
       hideOriginalPrice,
+      hidePerPiece,
     });
     const parts = [this.prisma, this.pdfService, this.storage, this.logger, opts] as const;
     Object.assign(emailPayload, await completionEmailParts(...parts)); // I-120: COUNTER_COMPLETE only

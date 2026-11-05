@@ -53,6 +53,7 @@ export function buildInvoiceEmailPayload(
     pdfUrl: string | undefined;
     attachment: InvoiceEmailAttachment | undefined;
     hideOriginalPrice: boolean;
+    hidePerPiece?: boolean;
   },
 ) {
   const { totalPaid, creditApplied, advanceApplied, creditNoteNumbers, balanceDue } =
@@ -89,6 +90,7 @@ export function buildInvoiceEmailPayload(
     isReminder: false,
     hideTerms: isPaidAtSale(inv),
     hideOriginalPrice: ctx.hideOriginalPrice,
+    hidePerPiece: !!ctx.hidePerPiece,
     // Deposit schedule (display-only): derive with the same read-time math the detail endpoint uses; null when the
     // invoice carries no deposit.
     depositAmount: computeDepositFields(inv, 0, new Date().toISOString().slice(0, 10))
@@ -103,11 +105,12 @@ export interface EmailPayloadParts {
   pdfUrl: string | undefined;
   attachment: InvoiceEmailAttachment | undefined;
   hideOriginalPrice: boolean;
+  hidePerPiece?: boolean;
 }
 
 /** `InvoicesService.sendReminder`'s payload (the same item table, without the sendEmail-only terms / deposit fields). */
 export function buildReminderEmailPayload(inv: any, x: EmailPayloadParts) {
-  const { recipientEmail, pdfUrl, attachment, hideOriginalPrice } = x;
+  const { recipientEmail, pdfUrl, attachment, hideOriginalPrice, hidePerPiece } = x;
   const { totalPaid, creditApplied, advanceApplied, creditNoteNumbers, balanceDue } =
     emailPaidBasis(inv);
   return {
@@ -142,5 +145,6 @@ export function buildReminderEmailPayload(inv: any, x: EmailPayloadParts) {
     attachment,
     isReminder: true,
     hideOriginalPrice,
+    hidePerPiece: !!hidePerPiece,
   };
 }

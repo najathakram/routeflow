@@ -130,6 +130,13 @@
 //                    Idempotency-Key), EXPIRY_PAST (the expiry is, or already was, in the past),
 //                    EXPIRY_NOT_EDITABLE (only an ISSUED note's expiry can change), LINES_REQUIRED (a
 //                    line-linked note must restate its lines), LINE_INVALID (a malformed credit line).
+//                    B921: the Apply refusals, all 400: NOT_APPLICABLE (the note is already used up or void),
+//                    EXPIRED (past its expiry date), CUSTOMER_MISMATCH (the note and the invoice belong to
+//                    different customers), INVOICE_NOT_APPLICABLE (the invoice is in a status that takes no
+//                    credit), NOTHING_TO_APPLY (the note has no balance left or the invoice is fully paid).
+//   CUSTOMER_EMAIL_OR_USERNAME_TAKEN, CUSTOMER_SALES_AGENT_UNKNOWN — `body.code` of the two 400s a customer
+//                    create answers (B981): the email or username is already a user of this business, or
+//                    the chosen sales agent no longer exists. Clients map each to FIXED copy.
 //   CUSTOMER_NOT_LINKED — `body.code` of the 403 a CUSTOMER login gets from /orders when no live
 //                    Customer record is linked to that user (B917, REG-B131 refusal, status unchanged).
 //   TEXT_CELL_FORMULA_LEAD — `body.code` of the 400 a customer / tenant NAME write answers when the name
@@ -325,6 +332,13 @@ export const API_ERROR_CODES = {
   CREDIT_NOTE_LINES_REQUIRED: "CREDIT_NOTE_LINES_REQUIRED",
   CREDIT_NOTE_LINE_INVALID: "CREDIT_NOTE_LINE_INVALID",
   CREDIT_NOTE_UNAVAILABLE: "CREDIT_NOTE_UNAVAILABLE",
+  CREDIT_NOTE_NOT_APPLICABLE: "CREDIT_NOTE_NOT_APPLICABLE",
+  CREDIT_NOTE_EXPIRED: "CREDIT_NOTE_EXPIRED",
+  CREDIT_NOTE_CUSTOMER_MISMATCH: "CREDIT_NOTE_CUSTOMER_MISMATCH",
+  CREDIT_NOTE_INVOICE_NOT_APPLICABLE: "CREDIT_NOTE_INVOICE_NOT_APPLICABLE",
+  CREDIT_NOTE_NOTHING_TO_APPLY: "CREDIT_NOTE_NOTHING_TO_APPLY",
+  CUSTOMER_EMAIL_OR_USERNAME_TAKEN: "CUSTOMER_EMAIL_OR_USERNAME_TAKEN",
+  CUSTOMER_SALES_AGENT_UNKNOWN: "CUSTOMER_SALES_AGENT_UNKNOWN",
   CUSTOMER_NOT_LINKED: "CUSTOMER_NOT_LINKED",
   BILL_STATE_CHANGED: "BILL_STATE_CHANGED",
   BILL_VOID: "BILL_VOID",
@@ -1068,6 +1082,11 @@ export const CREDIT_NOTE_ERROR_CODES = [
   API_ERROR_CODES.CREDIT_NOTE_LINES_REQUIRED,
   API_ERROR_CODES.CREDIT_NOTE_LINE_INVALID,
   API_ERROR_CODES.CREDIT_NOTE_UNAVAILABLE,
+  API_ERROR_CODES.CREDIT_NOTE_NOT_APPLICABLE,
+  API_ERROR_CODES.CREDIT_NOTE_EXPIRED,
+  API_ERROR_CODES.CREDIT_NOTE_CUSTOMER_MISMATCH,
+  API_ERROR_CODES.CREDIT_NOTE_INVOICE_NOT_APPLICABLE,
+  API_ERROR_CODES.CREDIT_NOTE_NOTHING_TO_APPLY,
 ] as const;
 
 export type CreditNoteErrorCode = (typeof CREDIT_NOTE_ERROR_CODES)[number];

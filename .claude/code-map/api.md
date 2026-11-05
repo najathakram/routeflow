@@ -120,3 +120,5 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 | [api/landing-2026-11-03-ao.md](api/landing-2026-11-03-ao.md) | Train an (fedb9c4fa7..f9f1a592ed): delivery plan and stop-key rule move to packages/pricing and types (SA-1098 PR-2a); no migration |
 | [api/landing-2026-11-03-ap.md](api/landing-2026-11-03-ap.md) | Train ao (f9f1a592ed..f10b57ce34): one claim per account link (SA-1096); first pack asks boxes or pieces (W-867); no migration |
 | [api/landing-2026-11-03-aq.md](api/landing-2026-11-03-aq.md) | Train ap (f10b57ce34..c8221d4b46): driver stops on the web, STOP_REOPENED, left-off line review, fold refused (SA-1098 PR-2) |
+| [api/landing-2026-11-04-ar.md](api/landing-2026-11-04-ar.md) | Train ar (c8221d4b46..758c727d58): partial invoice books its ledger (row 721), Undo rebuilds the draft, run settlement writer (PR-S) |
+| [api/landing-2026-11-04-t1.md](api/landing-2026-11-04-t1.md) | Train 1 (758c727d58..8cd7c13e69): import template headers and key columns, funnel first invoice issued and first payment, wall-clock-free specs |

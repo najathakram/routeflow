@@ -274,6 +274,7 @@ describe("settings registry — every SystemConfig key the settings writers writ
       defaultTerms: "Net 30",
       hideOriginalPrice: true,
       hideBarcodes: true,
+      hidePerPiece: true,
       depositDefaultPercent: 10,
       depositCollectAtOrder: true,
     } as any);

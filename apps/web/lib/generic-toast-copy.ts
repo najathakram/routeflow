@@ -23,7 +23,7 @@ import { creditLimitSentence } from "./credit-limit-copy";
 import { COUNTER_VOID_ERROR_COPY } from "./counter-void-copy";
 import { IMPORT_REFUSAL_COPY } from "./import-job-copy";
 import { COUNTER_SALE_DAY_CLOSED_COPY, DAY_CLOSED_FOR_PAYMENT_DATE_COPY } from "./day-closed-copy";
-import { KNOWN_SERVER_SENTENCES } from "./customer-form-error-copy";
+import { CUSTOMER_CODE_COPY, KNOWN_SERVER_SENTENCES } from "./customer-form-error-copy";
 import { ORDER_OVERPAY_GENERIC_COPY } from "./order-overpay";
 import { parsePlanGate } from "./plan-gate";
 import { safeTextErrorCopy } from "./safe-text-error-copy";
@@ -503,6 +503,9 @@ export function codedToastCopy(err: unknown): string | null {
   const code = typeof data.code === "string" ? data.code : "";
   if (code === API_ERROR_CODES.ADDON_GATE) return PLAN_COPY;
   if (code === API_ERROR_CODES.READ_ONLY) return READ_ONLY_COPY;
+  // B981: the customer-create refusals, by code.
+  if (Object.prototype.hasOwnProperty.call(CUSTOMER_CODE_COPY, code))
+    return CUSTOMER_CODE_COPY[code];
   if (code === API_ERROR_CODES.INVOICE_TAX_STATE_STALE) return taxStateStaleCopy(data);
   if (code === API_ERROR_CODES.INSUFFICIENT_STOCK) return STOCK_COPY;
   // B986: coded refusals whose server sentence tells the user what to fix; the numbers come from STRUCTURED fields.

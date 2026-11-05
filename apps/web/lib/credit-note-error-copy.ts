@@ -39,6 +39,15 @@ export const CREDIT_NOTE_ERROR_COPY: Record<CreditNoteErrorCode, string> = {
     "One of the credit lines isn't valid. Check each line amount.",
   [API_ERROR_CODES.CREDIT_NOTE_UNAVAILABLE]:
     "A credit note you picked is no longer available. Remove it and try again.",
+  // B921: the Apply refusals.
+  [API_ERROR_CODES.CREDIT_NOTE_NOT_APPLICABLE]: "This credit note can't be applied any more.",
+  [API_ERROR_CODES.CREDIT_NOTE_EXPIRED]: "This credit note has expired, so it can't be applied.",
+  [API_ERROR_CODES.CREDIT_NOTE_CUSTOMER_MISMATCH]:
+    "This credit note belongs to a different customer than the invoice.",
+  [API_ERROR_CODES.CREDIT_NOTE_INVOICE_NOT_APPLICABLE]:
+    "This invoice is already paid, void or written off, so it can't take a credit.",
+  [API_ERROR_CODES.CREDIT_NOTE_NOTHING_TO_APPLY]:
+    "There's nothing to apply: the credit note has no balance left, or the invoice is fully paid.",
 };
 
 /**

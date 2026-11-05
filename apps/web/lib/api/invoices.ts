@@ -215,6 +215,8 @@ export interface Invoice {
   depositOverdue?: boolean;
   /** Tenant display preference (rides the payload so CUSTOMER viewers get it too). */
   hideOriginalPrice?: boolean;
+  /** The business's "Show price per piece on invoices" switch: true = the Per piece column is off (owner ruling 2026-11-04). */
+  hidePerPiece?: boolean;
   pdfUrl?: string;
   writeOffReason?: string;
   writtenOffAt?: string;
@@ -1091,6 +1093,8 @@ export interface InvoiceSettings {
   hideOriginalPrice?: boolean;
   /** SA-1031: true = the invoice PDF prints no product barcode (or the code under it). Absent/false = shown. */
   hideBarcodes?: boolean;
+  /** Owner ruling 2026-11-04: true = no Per piece column on the invoice page, PDF or email. Absent/false = shown. */
+  hidePerPiece?: boolean;
   /** Tenant-wide deposit default (0–100). null/absent = no tenant deposit policy;
    *  a customer's own `defaultDepositPercent` still wins when set. */
   depositDefaultPercent?: number | null; // GET: null when never set; PATCH: a number (0 clears), never null

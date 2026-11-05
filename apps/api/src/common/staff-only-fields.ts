@@ -90,6 +90,7 @@ export const CUSTOMER_INVOICE_FIELDS = [
   "depositAmount",
   "depositOverdue",
   "hideOriginalPrice",
+  "hidePerPiece",
   "balanceDue",
   "paidAmount",
   "creditApplied",
