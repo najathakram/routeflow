@@ -324,11 +324,6 @@
     "count": 1,
     "why": "B991 (codes + structured fields first): reverted to today's behaviour so the surface is not made less actionable; pending"
   },
-  "components/ScanInvoiceModal.tsx": {
-    "count": 1,
-    "permanent": true,
-    "why": "classification: msg only feeds the api-key regex, the toast copy is fixed"
-  },
   "components/StatementReviewGrid.tsx": {
     "count": 3,
     "why": "B991 (codes + structured fields first): reverted to today's behaviour so the surface is not made less actionable; pending"
@@ -405,6 +400,11 @@
     "count": 1,
     "permanent": true,
     "why": "classification: the server text only classifies a duplicate, it is never displayed"
+  },
+  "lib/scan-failure-copy.ts": {
+    "count": 1,
+    "permanent": true,
+    "why": "classification: msg only feeds the api-key regex, the toast copy is fixed"
   },
   "lib/return-error-text.ts": {
     "count": 1,

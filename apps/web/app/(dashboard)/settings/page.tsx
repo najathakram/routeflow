@@ -113,6 +113,7 @@ import { userStatusRefusalCopy } from "@/lib/user-status-refusal";
 import { newPasswordSchema, passwordErrorMessage } from "@/lib/password-policy";
 import { PasswordChecklist } from "@/components/auth";
 import { isZoneUnset } from "@/lib/tenant-timezone";
+import { saveKeyErrorDescription } from "@/lib/claude-key-copy";
 
 // ─── TAB 1: Business Profile ──────────────────────────────────────────────────
 
@@ -1088,15 +1089,10 @@ function AIIntegrationsTab() {
     },
     onError: (err: any) => {
       if (isReadOnlyRefusal(err)) return;
-      // A 400 carries the one sentence ("That doesn't look like a Claude API key."); show it.
-      const message = err?.response?.data?.message;
+      // A 400 means the key's shape is wrong: the web's own sentence, not the server's text (B986).
       toast({
         title: "Failed to save API key",
-        description: Array.isArray(message)
-          ? message[0]
-          : typeof message === "string"
-            ? message
-            : undefined,
+        description: saveKeyErrorDescription(err),
         variant: "error",
       });
     },
