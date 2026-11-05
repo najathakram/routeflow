@@ -246,15 +246,28 @@ describeDb("FG-1 WP1: entitlement sweep endpoint (real Postgres)", () => {
       clientAddon: false,
       courtesy: false,
     });
+    // WP2 courtesy rule (feature-resolver.service.ts resolveOneKey): a dark gate the plan lacks is served by courtesy,
+    // so `effective` is true while the owner's rule (`strict`) is false. The sweep reports both.
     expectBits(t.starter, "ocr", {
       old: true,
-      effective: false,
+      effective: true,
+      strict: false,
       clientAddon: false,
       courtesy: true,
     });
-    expectBits(t.starter, "flag.reports", { old: true, effective: false, courtesy: true });
-    // SA-1099 §2: the credit check runs for a Starter while the switch is not on
-    expectBits(t.starter, "flag.credit_limits", { old: true, effective: false, courtesy: true });
+    expectBits(t.starter, "flag.reports", {
+      old: true,
+      effective: true,
+      strict: false,
+      courtesy: true,
+    });
+    // SA-1099 §2: the credit check runs for a Starter while the switch is not on (courtesy, same WP2 rule)
+    expectBits(t.starter, "flag.credit_limits", {
+      old: true,
+      effective: true,
+      strict: false,
+      courtesy: true,
+    });
     // GROWTH carrying the flags, tobacco_dealer row active
     expectBits(t.growth, "tobacco_dealer", {
       old: true,
