@@ -1284,6 +1284,7 @@ export class OrdersService implements OnApplicationBootstrap {
       if (customer.user.status === "SUSPENDED")
         throw new BadRequestException("Cannot create orders for a suspended customer");
       customerId = customer.id;
+      await inlineReturn.assertStaffRunStopRefs(this.prisma, dto); // B1106: its run/stop ids are tenant-proven
     } else if (user.role === UserRole.DRIVER) {
       // Driver creates on behalf of a customer (e.g. at a stop) — customerId must be supplied
       if (!dto.customerId) throw new BadRequestException("customerId is required");

@@ -13,6 +13,7 @@ import {
   FEATURE_OVERRIDE_EXPIRED_REVIEW_ACTION,
 } from "./feature-override-audit.constants";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { OVERRIDE_RULE_ORDER, pickLiveRow, resolveLiveEffects } from "./feature-override-rule";
 
 export type FeatureOverrideEffect = "GRANT" | "DENY";
 export type { FeatureOverrideKind };
@@ -102,6 +103,7 @@ export class FeatureOverrideService {
 
     const rows = await this.prisma.tenantFeatureOverride.findMany({
       where: { tenantId, revokedAt: null },
+      orderBy: OVERRIDE_RULE_ORDER,
       select: { featureKey: true, effect: true, kind: true, reason: true, expiresAt: true },
     });
     const value = rows.map((r) => ({
@@ -118,11 +120,7 @@ export class FeatureOverrideService {
 
   /** The ONE rule for which row applies: the key's non-expired row. An expired row never supplies an effect or a date. */
   private rowAt(rows: CachedRow[], featureKey: string, now: number): CachedRow | null {
-    return (
-      rows.find(
-        (r) => r.featureKey === featureKey && (r.expiresAt === null || r.expiresAt.getTime() > now),
-      ) ?? null
-    );
+    return pickLiveRow(rows, featureKey, now);
   }
 
   private effectAt(
@@ -190,12 +188,7 @@ export class FeatureOverrideService {
     try {
       const rows = await this.activeRows(tenantId);
       const now = Date.now();
-      const result = new Map<string, FeatureOverrideEffect>();
-      for (const row of rows) {
-        const effect = this.effectAt(rows, row.featureKey, now);
-        if (effect) result.set(row.featureKey, effect);
-      }
-      return result;
+      return resolveLiveEffects(rows, now);
     } catch (err) {
       this.logger.error(`Override lookup failed for tenant ${tenantId}`, err as Error);
       return new Map();
@@ -232,7 +225,7 @@ export class FeatureOverrideService {
   async list(tenantId: string) {
     return this.prisma.tenantFeatureOverride.findMany({
       where: { tenantId },
-      orderBy: { createdAt: "desc" },
+      orderBy: OVERRIDE_RULE_ORDER,
     });
   }
 

@@ -3,6 +3,7 @@ import { MessageChannel } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateMessageDto } from "./dto/create-message.dto";
 import { ListMessagesDto } from "./dto/list-messages.dto";
+import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 
 /** Minimal identity shape the run-chat participant gate needs. */
 interface MessageUser {
@@ -40,6 +41,12 @@ export class MessagesService {
     // F2-006 (write side): a CUSTOMER must not be able to INJECT a message into the
     // operator↔driver INTERNAL run-chat (create always writes an INTERNAL message).
     await this.assertRunChatParticipant(senderRole, userId, dto.runId);
+    // B1106: office staff return from the participant check before any run read, so their runId was stored unread (an FK
+    // is no tenant proof). A DRIVER is already proven there (a foreign run reads as none and is refused 403), so the
+    // proof is the staff path's: a run of another business is a 404 "Run not found" and nothing is written.
+    if (senderRole === "OPERATOR" || senderRole === "TENANT_ADMIN") {
+      await assertRefsInTenant(this.prisma, { routeRunIds: [dto.runId] });
+    }
     return this.prisma.forTenant().message.create({
       data: {
         runId: dto.runId ?? null,
