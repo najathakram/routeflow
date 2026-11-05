@@ -306,10 +306,27 @@ describe("report-b1281-superseded-checkouts.mjs", () => {
         `m.scrubStripeError(${JSON.stringify(msg)}, "sk_live_SeCrEtKeY0123")`,
       ) as string;
       expect(out).not.toMatch(/1AbCdEfGhIjKl|1MnOpQrStUvWx|1YzAbCdEfGhIj|buyer\.person|example/);
-      expect(out).toMatch(/ii_…hIjKl|ii_…IjKl/);
+      expect(out).toContain("ii_…IjKl"); // exactly the last 4 kept, not 5
       expect(out).toMatch(/cn_…UvWx/);
       expect(out).toMatch(/po_…GhIj/);
       expect(out).toContain(".com"); // the last 4 of the email survive, nothing else of it
+      expect(out).toContain("were refused"); // the words survive
+    });
+
+    it("a Stripe id with a prefix nobody listed is cut too: the scrub is a shape, not an allow-list (#4220 review B note 1)", () => {
+      const msg =
+        "Line il_1AbCdEfGhIjKl and payment py_3MnOpQrStUvWx on transfer tr_1YzAbCdEfGhIj and fee sli_9QwErTyUiOpAs and session cs_test_a1B2c3D4e5F6g7 were refused";
+      const out = call(
+        `m.scrubStripeError(${JSON.stringify(msg)}, "sk_live_SeCrEtKeY0123")`,
+      ) as string;
+      expect(out).not.toMatch(
+        /1AbCdEfGhIjKl|3MnOpQrStUvWx|1YzAbCdEfGhIj|9QwErTyUiOpAs|a1B2c3D4e5F6g7/,
+      );
+      expect(out).toContain("il_…IjKl");
+      expect(out).toContain("py_…UvWx");
+      expect(out).toContain("tr_…GhIj");
+      expect(out).toContain("sli_…OpAs");
+      expect(out).toContain("cs_test_…F6g7"); // a test/live mode segment stays, the body is cut
       expect(out).toContain("were refused"); // the words survive
     });
 
