@@ -177,7 +177,8 @@ describe("T2 part A: what today's guards serve (characterization, hand-worked)",
 
 describe("T2 part B: effective equals the old path on every gated key (R2)", () => {
   const gated = FEATURE_REGISTRY.filter((f) => f.gate.via !== "none");
-  const plans = ["LITE", "STARTER", "GROWTH"];
+  // all five plans (SA-1099 A-2 note 4: the oracle matches the test plan)
+  const plans = ["LITE", "STARTER", "GROWTH", "SCALE", "ENTERPRISE"];
   const envs: Array<[string, NodeJS.ProcessEnv]> = [
     ["switch off", {} as NodeJS.ProcessEnv],
     ["switch on", { [SWITCH]: "on" } as NodeJS.ProcessEnv],

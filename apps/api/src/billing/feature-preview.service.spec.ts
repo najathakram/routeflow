@@ -481,3 +481,61 @@ describe("WP2 preview: courtesy per side, laterLost, omissions", () => {
     expect(preview).toBeDefined();
   });
 });
+
+/**
+ * SA-1099 A-2 / SV-12: the preview's promise tied to the SHIPPED catalog, not the synthetic fixture.
+ * Growth to Starter on `V11_DEFINITIONS` loses nothing now (0) and leaves exactly six rows on for now
+ * (6): SA-1099 section 1's acceptance number. The count 6 comes from section 1; the six names come from
+ * the run on 2026-11-05 against v11. A catalog change that legitimately moves this updates this row and
+ * is an SA call. Red values: a seventh key, one of the six moving into `lostNow`, or the pre-WP2
+ * resolver (which has no `laterLost` and shows the courtesy rows as lost).
+ */
+import type { FeatureFixture } from "./feature-fixtures";
+import { V11_DEFINITIONS } from "../../prisma/plan-catalog-v11.definitions";
+
+describe("SV-12: real v11 catalog, Growth to Starter", () => {
+  const SIX = [
+    "flag.analytics",
+    "flag.reports",
+    "flag.ap_bills",
+    "flag.pricing_tiers",
+    "addon.buyer_portal",
+    "flag.credit_limits",
+  ];
+  const savedSwitch = process.env.PLAN_FLAG_ENFORCEMENT;
+  beforeEach(() => {
+    delete process.env.PLAN_FLAG_ENFORCEMENT;
+  });
+  afterEach(() => {
+    if (savedSwitch === undefined) delete process.env.PLAN_FLAG_ENFORCEMENT;
+    else process.env.PLAN_FLAG_ENFORCEMENT = savedSwitch;
+  });
+
+  it("lostNow is [] and laterLost is exactly the six listed keys", async () => {
+    const fixture: FeatureFixture = {
+      name: "v11-real",
+      planKey: "GROWTH",
+      planVersionId: "real-v11",
+      definitions: V11_DEFINITIONS.map((d) => ({
+        planKey: d.planKey,
+        featureFlags: [...d.featureFlags],
+      })),
+      activeAddonKeys: [],
+      activeSkuCodes: [],
+      overrides: [],
+      usageKeys: [],
+    };
+    const c = mockCollaborators(fixture);
+    const preview = new FeaturePreviewService(
+      c.entitlements as any,
+      c.featureOverrides as any,
+      c.catalog as any,
+      c.prisma as any,
+      featureConfigOver().service,
+    );
+    const r = (await preview.preview("t1", { planKey: "STARTER" })) as WideResponse;
+    expect(lostNow(r)).toEqual([]);
+    expect([...(r.laterLost ?? [])].sort()).toEqual([...SIX].sort());
+    expect(r.laterLost).toHaveLength(6);
+  });
+});
