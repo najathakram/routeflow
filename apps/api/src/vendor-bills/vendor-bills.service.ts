@@ -69,6 +69,7 @@ import { ReceiveVendorBillDto } from "./dto/receive-vendor-bill.dto";
 import { SaveProductMappingDto } from "./dto/save-product-mapping.dto";
 import { RecordSupplierPaymentDto } from "./dto/supplier-payment.dto";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { aiKeyRefusedException, aiNotAvailableException } from "../common/ai-key-failure";
 import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
 import { assertSellableLines } from "../products/sellable-lines";
 import { tenantSafeParentView } from "../products/product-parent";
@@ -2665,15 +2666,13 @@ export class VendorBillsService {
     const businessKey = await this.systemConfig.get("anthropic.apiKey");
     // SA-1035: the model is read ONCE per scan and used for the call, both usage records and the stored scan row, so
     // the row says what was actually called even if the setting changes mid-scan.
-    const { key: apiKey, model } = await this.platformConfig.prepareAiCall(
-      "bill_scan",
-      businessKey,
-    );
-    if (!apiKey || apiKey.length === 0) {
-      throw new BadRequestException(
-        "AI invoice scanning is not available. Please contact your system administrator to configure the ANTHROPIC_API_KEY.",
-      );
-    }
+    const {
+      key: apiKey,
+      model,
+      source,
+    } = await this.platformConfig.prepareAiCall("bill_scan", businessKey);
+    // F-1102-T: no key at all is not something the business can set up; it reads as "not available right now".
+    if (!apiKey || apiKey.length === 0) throw aiNotAvailableException();
 
     // ── Phase 0: Normalise inputs ─────────────────────────────────────────────
     // Multi-page invoices arrive as N images (HEIC from iPhone, JPEG, PNG, etc.)
@@ -2796,13 +2795,8 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
         model,
         success: false,
       });
-      if (status === 401 || status === 403) {
-        throw new BadRequestException({
-          message:
-            "The Anthropic API key is invalid or expired. Go to Settings → AI & Integrations to update it.",
-          code: API_ERROR_CODES.AI_KEY_INVALID,
-        });
-      }
+      // F-1102-T: only the business's OWN key is the business's to fix; RouteFlow's refused key reads as unavailable.
+      if (status === 401 || status === 403) throw aiKeyRefusedException(source);
       // Non-transient 4xx (bad/oversized/corrupt image, malformed request) —
       // retrying the SAME file will fail identically, unlike a real outage
       // or rate-limit (429/5xx), so don't tell the user to "try again".

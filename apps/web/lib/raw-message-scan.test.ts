@@ -28,7 +28,6 @@ const PERMANENT_EXPECTED: Record<string, number> = {
   "lib/hooks/useRealtimeUpdates.ts": 1,
   "lib/password-policy.ts": 1,
   "lib/reason-copy.ts": 1,
-  "lib/scan-failure-copy.ts": 1,
 };
 
 describe("no raw server message in apps/web UI (B986 ratchet)", () => {

@@ -1,4 +1,5 @@
 import { ConflictException } from "@nestjs/common";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { assertWalkInSaleNotReopened } from "./counter-sale/walk-in-sale-lock";
 
 type DemotionReader = Parameters<typeof assertWalkInSaleNotReopened>[0] & {
@@ -23,8 +24,11 @@ export async function assertDeliveredDemotionAllowed(
     select: { status: true },
   });
   if (stop?.status === "COMPLETED") {
-    throw new ConflictException(
-      "This order was delivered on a route run. Reopen its stop from the run instead — that reverses stock and payments correctly.",
-    );
+    // B1280: coded, so the web shows its own fixed sentence for it (it never renders this message).
+    throw new ConflictException({
+      code: API_ERROR_CODES.ORDER_ROUTE_STOP_COMPLETED,
+      message:
+        "This order was delivered on a route run. Reopen its stop from the run instead — that reverses stock and payments correctly.",
+    });
   }
 }

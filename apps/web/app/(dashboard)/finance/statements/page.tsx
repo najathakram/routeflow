@@ -295,7 +295,7 @@ function StatementsPageInner() {
             <div>
               <p className="font-semibold text-navy">
                 {isApiKeyError
-                  ? "Anthropic API key not configured"
+                  ? "Your Claude key was refused"
                   : scanError.code === "AI_SCAN_REJECTED"
                     ? "Couldn't read this file as a statement"
                     : isUnavailable

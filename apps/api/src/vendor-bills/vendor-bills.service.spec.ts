@@ -2043,12 +2043,18 @@ describe("VendorBillsService", () => {
       prisma.supplier.findMany.mockResolvedValue([]);
     });
 
-    it("maps an Anthropic auth failure to a typed AI_KEY_INVALID 400 (not an opaque 500)", async () => {
+    // F-1102-T: with no business key the scan runs on RouteFlow's key; its refusal is RouteFlow's to fix, so the
+    // business reads "not available right now" (typed, not an opaque 500) and is never sent to Settings. The business
+    // key's own refusal stays AI_KEY_INVALID (the B note-2 test below).
+    it("maps an Anthropic auth failure on RouteFlow's key to a typed AI_UNAVAILABLE 503 (not an opaque 500)", async () => {
       mockAnthropicCreate.mockRejectedValue({ status: 401 });
 
       await expect(service.scanInvoice([jpegPage])).rejects.toMatchObject({
-        constructor: BadRequestException,
-        response: expect.objectContaining({ code: "AI_KEY_INVALID" }),
+        constructor: ServiceUnavailableException,
+        response: {
+          message: "AI scanning isn't available right now. Please try again later.",
+          code: "AI_UNAVAILABLE",
+        },
       });
     });
 

@@ -134,7 +134,7 @@ import { InvoicePreviewModal, DivergenceNote } from "../../_components/LinkedDoc
 import { CreditNotePicker, type CreditSelection } from "../_components/CreditNotePicker";
 import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
 import { codedToastCopy } from "@/lib/generic-toast-copy";
-import { demoteErrorText, isDemoteHasReturnRefusal, orderErrorText } from "@/lib/order-error-text";
+import { demoteErrorText, isDemoteRefusal, orderErrorText } from "@/lib/order-error-text";
 import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
 import {
   type ApiOrderStatus,
@@ -221,7 +221,7 @@ export default function OrderDetailPage() {
   // The cancel flow renders its own error (every other status change keeps the global toast), so it has its own instance.
   const cancelOrder = useUpdateOrderStatus({ localErrorToast: true });
   // SA-1101 A-5: the demotion owns only the live-return refusal; every other error reaches the global toast.
-  const demoteStatus = useUpdateOrderStatus({ localErrorToast: isDemoteHasReturnRefusal });
+  const demoteStatus = useUpdateOrderStatus({ localErrorToast: isDemoteRefusal });
   const ready = useReadyForPickupAction({
     orderId: order?.id,
     customerName: order?.customer?.businessName,
