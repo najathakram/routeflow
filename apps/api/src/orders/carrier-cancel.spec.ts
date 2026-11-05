@@ -154,6 +154,9 @@ describe("B1: unmark vs reopen (ship-state markers)", () => {
     };
     const orderUpdate = async ({ data }: any) => ({ id: "o1", ...data });
     const tx = {
+      // SA-1101 A-5: the DELIVERED demotion locks the Order row and counts its live returns (none here).
+      $executeRaw: async () => 1,
+      return: { count: async () => 0 },
       order: { update: orderUpdate },
       orderItem,
       orderRevision: {

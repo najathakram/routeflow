@@ -106,6 +106,9 @@ export function makeStampDb(seed: {
       },
     },
     invoice: { findMany: async () => [] },
+    // SA-1101 A-5: the DELIVERED demotion locks the Order row ($executeRaw) and counts its live returns (none here).
+    $executeRaw: async () => 1,
+    return: { count: async () => 0 },
   });
   const prisma: any = {
     getTenantId: () => "t1",

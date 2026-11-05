@@ -2,7 +2,7 @@
  * SA-1101 §2.5 (RO-9, RO-9b): staff may record a return on a REFUSED order (how the refused goods go back to
  * stock, SA-1098 A-1); a CUSTOMER may not and gets the same 400 as for any undelivered order. The status gate is
  * the first thing after the order read, so a stub transaction that returns only the order proves it; the stock
- * and credit figures are proven against real Postgres in stop-outcome-refused.db.spec.ts (RO-9).
+ * and credit figures are proven against real Postgres in returns-refused-order.db.spec.ts (RO-9).
  */
 import { BadRequestException } from "@nestjs/common";
 import { ReturnsService } from "./returns.service";

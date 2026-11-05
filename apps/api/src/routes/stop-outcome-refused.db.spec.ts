@@ -2,8 +2,8 @@
  * SA-1101 (Batch 3): what a stop close makes each order, end to end on real Postgres.
  * RO-1 (refuse every line -> REFUSED, one ORDER_REFUSED, draft invoice $ OBSERVED), RO-2 (mixed stop),
  * RO-3 (short line stays DELIVERED), RO-13 (the bare /complete path), RO-4 (reopen clears deliveredAt),
- * RO-6/6b/6c (B785: every line with something left needs an entry), RO-5/5b (startedAt on complete only),
- * RO-9 (a return on a REFUSED order: stock back, credit OBSERVED).
+ * RO-6/6b/6c (B785: every line with something left needs an entry), RO-5/5b (startedAt on complete only).
+ * (RO-9, a return on a REFUSED order, is in returns/returns-refused-order.db.spec.ts.)
  *
  * The REAL RoutesService and InvoicesService run; every other collaborator is mocked at the module boundary
  * as complete-on-account-short.db.spec.ts does. Collected only by jest.db.config.js (npm run local:test:db).
@@ -28,6 +28,7 @@ import { randomUUID } from "crypto";
 import { RoutesService } from "./routes.service";
 import { updateStatusWithShipMarker } from "../orders/order-ship-state";
 import { buildStatusUpdateData } from "../orders/order-status-claim";
+import { seedInlineReturn } from "../returns/testing/inline-return-seed";
 import { InvoicesService } from "../invoices/invoices.service";
 import { InvoicePdfService } from "../invoices/invoice-pdf.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -689,6 +690,46 @@ describeDb("SA-1101 refused order — stop close outcomes, real Postgres", () =>
       await staffReturn(s, productId, line, 4);
 
       await expect(undoTheStop(s)).rejects.toMatchObject(UNDO_STOP_409);
+      expect((await orderRow(s.orders.A.id)).status).toBe("DELIVERED");
+    }, 120_000);
+
+    it("RO-34 (SA-1101 A-6): an INLINE return sourced from the stop's order but carried by another order = 409; the stop stays COMPLETED", async () => {
+      const s = await seedStop("ro34", [{ key: "A", lines: [{ qty: SOLD, price: 10 }] }]);
+      const [line] = s.orders.A.lineIds;
+      const productId = await bookStock(s, line);
+      await tenantCtx.run(s.tenantId, () =>
+        routesService.completeWithPayment(
+          s.run.id,
+          s.runStop.id,
+          { deliveries: [deliver(line, SOLD)] } as never,
+          OPERATOR,
+        ),
+      );
+      expect((await orderRow(s.orders.A.id)).status).toBe("DELIVERED");
+      const source = await orderRow(s.orders.A.id);
+      const carrier = await prisma.order.create({
+        data: {
+          customerId: source.customerId,
+          status: "CONFIRMED",
+          orderNumber: `SA1101-${RUN_SUFFIX}-ro34-carrier`,
+          subtotal: 0,
+          tax: 0,
+          total: 0,
+          tenantId: s.tenantId,
+        },
+      });
+      await seedInlineReturn(prisma as never, {
+        tenantId: s.tenantId,
+        customerId: source.customerId,
+        carryingOrderId: carrier.id,
+        sourceOrderId: s.orders.A.id,
+        productId,
+      });
+
+      await expect(undoTheStop(s)).rejects.toMatchObject(UNDO_STOP_409);
+      expect(
+        (await prisma.routeRunStop.findUniqueOrThrow({ where: { id: s.runStop.id } })).status,
+      ).toBe("COMPLETED");
       expect((await orderRow(s.orders.A.id)).status).toBe("DELIVERED");
     }, 120_000);
 
