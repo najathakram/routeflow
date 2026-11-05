@@ -346,7 +346,7 @@ describeDb(
         release();
         await demotion;
       }
-      const ret = await capture;
+      const ret = await (capture as Promise<any>);
       const items = await itemsOf(ret.id);
       expect(items.map((i) => i.sourceOrderId)).toEqual([null]);
       expect((await raw.order.findUniqueOrThrow({ where: { id: sourceX } })).status).toBe(
