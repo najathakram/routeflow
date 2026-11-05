@@ -6,7 +6,8 @@ import { FeatureOverrideService } from "./feature-override.service";
 
 /**
  * B1282 (class reach, review B at 91751617a8): "which override row applies to a key" is ONE rule
- * (`feature-override-rule.ts`) and the read order is ONE order (newest first: createdAt desc, id asc). Every reader of
+ * (`feature-override-rule.ts`) and the read order is ONE order, `OVERRIDE_RULE_ORDER` (newest first: createdAt desc, then id
+ * desc, so a higher id is the newer row on a createdAt tie). Every read that feeds the rule carries it. Every reader of
  * stored override rows goes through it, so the business-profile screen, the served answer (`allActive`) and the
  * pilot-ending job cannot disagree on a same-key tie, and no file keeps its own copy of "is this row live".
  */
@@ -73,15 +74,118 @@ describe("B1282 class: the business-profile readers use the one override rule", 
     expect(await (svc as any).heldDoorPayments(T)).toBe(false);
   });
 
-  it("the two reads that feed 'first' have one defined order: createdAt desc, then id asc", async () => {
+  it("the reads that feed 'first' have one defined order: createdAt desc, then id desc", async () => {
     const { featureOverrides, prisma } = build();
     await featureOverrides.allActive(T);
-    expect(prisma.tenantFeatureOverride.findMany.mock.calls[0][0].orderBy).toEqual([
-      { createdAt: "desc" },
-      { id: "asc" },
-    ]);
+    await featureOverrides.list(T);
+    for (const call of prisma.tenantFeatureOverride.findMany.mock.calls) {
+      expect(call[0].orderBy).toEqual([{ createdAt: "desc" }, { id: "desc" }]);
+    }
+    expect(prisma.tenantFeatureOverride.findMany).toHaveBeenCalledTimes(2);
     const job = fs.readFileSync(path.join(__dirname, "feature-override-review.job.ts"), "utf8");
-    expect(job).toMatch(/id: \{ not: row\.id \}[\s\S]{0,120}orderBy: OVERRIDE_READ_ORDER/);
+    expect(job).toMatch(/id: \{ not: row\.id \}[\s\S]{0,120}orderBy: OVERRIDE_RULE_ORDER/);
+  });
+
+  it("N-3: the business-profile reads resolve a same-key tie the same whatever physical order the database holds", async () => {
+    const T0 = new Date(NOW - DAY); // identical createdAt: the id decides; the higher id is the newer row
+    const tie = (id: string, effect: "GRANT" | "DENY") => ({
+      ...row(id, MODULE, effect),
+      createdAt: T0,
+    });
+    const physical = [
+      [tie("ov-1", "GRANT"), tie("ov-2", "DENY")],
+      [tie("ov-2", "DENY"), tie("ov-1", "GRANT")],
+    ];
+    for (const rows of physical) {
+      const prisma = {
+        tenantFeatureOverride: {
+          findMany: jest.fn(({ orderBy }: any) => Promise.resolve(sortByOrder(rows, orderBy))),
+        },
+      };
+      const featureOverrides = new FeatureOverrideService(prisma as any);
+      const svc = new BusinessProfileService(
+        { tenantAddon: { findFirst: jest.fn().mockResolvedValue(null) } } as any,
+        featureOverrides,
+        { getActiveAddons: jest.fn().mockResolvedValue([]) } as any,
+        { getState: jest.fn().mockResolvedValue({ value: "off" }) } as any,
+        {} as any,
+      );
+      const served = await featureOverrides.allActive(T);
+      const { state, activeIds } = await (svc as any).currentState(T, BUSINESS_PROFILES[0]);
+      expect(served.get(MODULE)).toBe("DENY");
+      expect(state.overrides.get(MODULE)).toBe("DENY");
+      expect(activeIds.get(MODULE)).toBe("ov-2");
+    }
+  });
+});
+
+/** What the database does with an `orderBy`; a read with none keeps the physical order it was handed. */
+function sortByOrder(rows: any[], orderBy?: Array<Record<string, "asc" | "desc">>): any[] {
+  if (!orderBy) return rows;
+  const val = (v: unknown) => (v instanceof Date ? v.getTime() : v);
+  return [...rows].sort((a, b) => {
+    for (const o of orderBy) {
+      const [key, dir] = Object.entries(o)[0];
+      const av = val(a[key]);
+      const bv = val(b[key]);
+      if (av === bv || av === undefined || bv === undefined) continue;
+      const c = (av as number) < (bv as number) ? -1 : 1;
+      return dir === "desc" ? -c : c;
+    }
+    return 0;
+  });
+}
+
+/**
+ * Every `tenantFeatureOverride.findMany` that feeds the rule carries `OVERRIDE_RULE_ORDER`. The table is the reads that
+ * feed it; every other read in billing/ is a different question (the pilot candidates page, the sweep's hash input, the
+ * snapshot's whole-set read, the expiry chunk) and says which.
+ */
+const FEEDING_READS: Record<string, number> = {
+  "billing/feature-override.service.ts": 2, // activeRows (the served answer) and list() (business-profile)
+  "billing/feature-override-review.job.ts": 1, // the other-overrides read
+};
+const OTHER_READS: Record<string, number> = {
+  "billing/entitlement-sweep.service.ts": 1, // hash input only
+  "billing/feature-override-review.job.ts": 2, // expired page, ending-soon page
+  "billing/feature-override.service.ts": 1, // the expiry chunk
+  "billing/tenant-config-snapshot.service.ts": 3, // whole-set reads, one rule input via isActive
+};
+
+describe("N-3: each read that feeds the one rule carries OVERRIDE_RULE_ORDER", () => {
+  const SRC_ROOT = path.join(__dirname, "..");
+  const scanFiles = () =>
+    walk(path.join(SRC_ROOT, "billing")).concat(walk(path.join(SRC_ROOT, "platform-admin")));
+  const scanReads = () => {
+    const reads = new Map<string, { ordered: number; total: number }>();
+    for (const f of scanFiles()) {
+      const text = strip(fs.readFileSync(f, "utf8"));
+      const total = (text.match(/tenantFeatureOverride\.findMany\(/g) ?? []).length;
+      if (!total) continue;
+      const ordered = (text.match(/orderBy:\s*OVERRIDE_RULE_ORDER/g) ?? []).length;
+      reads.set(path.relative(SRC_ROOT, f).split(path.sep).join("/"), { ordered, total });
+    }
+    return reads;
+  };
+
+  it("the feeding reads are ordered by the constant, and nothing else orders an override read differently", () => {
+    const reads = scanReads();
+    for (const [file, n] of Object.entries(FEEDING_READS)) {
+      expect(reads.get(file)?.ordered).toBe(n);
+    }
+    for (const [file, v] of reads) {
+      expect(v.ordered).toBe(FEEDING_READS[file] ?? 0);
+      expect(v.total).toBe((FEEDING_READS[file] ?? 0) + (OTHER_READS[file] ?? 0));
+    }
+  });
+
+  it("the rule's constant is the one order, newest first, and no reader spells the order out", () => {
+    const rule = fs.readFileSync(path.join(__dirname, "feature-override-rule.ts"), "utf8");
+    expect(rule).toMatch(/export const OVERRIDE_RULE_ORDER = \[\{ createdAt: "desc"/);
+    for (const f of scanFiles()) {
+      if (f.endsWith("feature-override-rule.ts")) continue;
+      expect(strip(fs.readFileSync(f, "utf8"))).not.toMatch(/createdAt: "desc"\s*\}?,?\s*\{ id:/);
+    }
   });
 });
 

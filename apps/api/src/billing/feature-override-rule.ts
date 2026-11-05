@@ -1,9 +1,11 @@
 /**
  * B1282: the ONE rule for which override row applies to a feature key. A row applies only while it is live (no expiry, or an
  * expiry in the future); an expired row never supplies an effect. When more than one live row names the same key, the FIRST
- * one in the read's order wins, and the read's order is ONE order (`OVERRIDE_READ_ORDER`: newest first, then id), so "first" means "newest" for every reader. The partial unique index keeps that tie out of real data today (one non-revoked row per key);
- * the rule is still defined once, so the served answer (`FeatureOverrideService`) and the pilot-ending job's "what else is
- * served" read cannot disagree if the index is ever relaxed.
+ * one in the read's order wins, and the read's order is ONE order (`OVERRIDE_RULE_ORDER`), so "first" means "newest" for
+ * every reader. The partial unique index keeps that tie out of real data today (one non-revoked row per key); the rule is
+ * still defined once, so the served answer (`FeatureOverrideService`), the business-profile screen and the pilot-ending job's
+ * "what else is served" read cannot disagree if the index is ever relaxed. Every read that feeds the rule passes
+ * `orderBy: OVERRIDE_RULE_ORDER` (pinned in `feature-override-one-rule.class.spec.ts`).
  */
 export type OverrideRuleRow<E extends string = string> = {
   featureKey: string;
@@ -11,8 +13,11 @@ export type OverrideRuleRow<E extends string = string> = {
   expiresAt: Date | null;
 };
 
-/** The one order every read of stored override rows uses, so the rule's "first live row" is the same row everywhere. */
-export const OVERRIDE_READ_ORDER = [{ createdAt: "desc" as const }, { id: "asc" as const }];
+/**
+ * The one order every read that feeds the rule uses, so "the first live row" is the same row everywhere: the newest
+ * (`createdAt` desc), and on a `createdAt` tie the higher id (`id` desc), so the newest row wins in every reader.
+ */
+export const OVERRIDE_RULE_ORDER = [{ createdAt: "desc" as const }, { id: "desc" as const }];
 
 /** True while the row can still supply an effect at `nowMs`. */
 export const isLiveOverride = (row: { expiresAt?: Date | null }, nowMs: number): boolean =>

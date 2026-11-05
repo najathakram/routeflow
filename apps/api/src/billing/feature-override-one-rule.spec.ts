@@ -44,6 +44,23 @@ const OTHER_ROWS = [
   live("solo", "GRANT", new Date(NOW + DAY)),
 ];
 
+/** What the database does with an `orderBy` (a read with none keeps the physical order it was handed). */
+function sortByOrder(rows: any[], orderBy?: Array<Record<string, "asc" | "desc">>): any[] {
+  if (!orderBy) return rows;
+  const val = (v: unknown) => (v instanceof Date ? v.getTime() : v);
+  return [...rows].sort((a, b) => {
+    for (const o of orderBy) {
+      const [key, dir] = Object.entries(o)[0];
+      const av = val(a[key]);
+      const bv = val(b[key]);
+      if (av === bv || av === undefined || bv === undefined) continue;
+      const c = (av as number) < (bv as number) ? -1 : 1;
+      return dir === "desc" ? -c : c;
+    }
+    return 0;
+  });
+}
+
 function buildJob(otherRows: unknown[]) {
   const pilot = {
     id: "ov-pilot",
@@ -66,9 +83,9 @@ function buildJob(otherRows: unknown[]) {
   };
   const prisma = {
     tenantFeatureOverride: {
-      findMany: jest.fn().mockImplementation(({ where }: any) =>
+      findMany: jest.fn().mockImplementation(({ where, orderBy }: any) =>
         // the per-business read of the OTHER overrides has a tenantId; the candidate page does not
-        Promise.resolve(where?.tenantId ? otherRows : [pilot]),
+        Promise.resolve(where?.tenantId ? sortByOrder(otherRows as any[], orderBy) : [pilot]),
       ),
     },
     tenantAddon: { findMany: jest.fn().mockResolvedValue([]) },
@@ -102,6 +119,32 @@ describe("B1282: the pilot-ending job and allActive() resolve a key from the sam
     expect(served.get("tie_key")).toBe("GRANT");
     expect(served.get("expired_then_live")).toBe("DENY");
     expect(served.get("solo")).toBe("GRANT");
+  });
+
+  it("N-3: a same-key tie resolves the same whatever physical order the database holds the rows in (one read order)", async () => {
+    const T0 = new Date(NOW - DAY); // identical createdAt: the id decides, and the rule says the higher id (id desc) is newest
+    const tie = (id: string, effect: "GRANT" | "DENY") => ({
+      ...live("tie_key", effect),
+      id,
+      createdAt: T0,
+    });
+    const physical = [
+      [tie("ov-1", "GRANT"), tie("ov-2", "DENY")],
+      [tie("ov-2", "DENY"), tie("ov-1", "GRANT")],
+    ];
+    for (const rows of physical) {
+      billableSpy.mockClear();
+      await buildJob(rows).warnBillablePilotsEnding();
+      const jobView: Map<string, string> = billableSpy.mock.calls[0][0].otherOverrides;
+      const prisma = {
+        tenantFeatureOverride: {
+          findMany: jest.fn(({ orderBy }: any) => Promise.resolve(sortByOrder(rows, orderBy))),
+        },
+      };
+      const served = await new FeatureOverrideService(prisma as any).allActive("t1");
+      expect(jobView.get("tie_key")).toBe("DENY");
+      expect(served.get("tie_key")).toBe("DENY");
+    }
   });
 
   it("the job derives no effect from override rows on its own (the rule has one home)", () => {
