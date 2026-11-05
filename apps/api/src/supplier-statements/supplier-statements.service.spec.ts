@@ -112,7 +112,9 @@ describe("SupplierStatementsService", () => {
 
   // ─── missing API key ────────────────────────────────────────────────────────
 
-  it("throws a plain BadRequestException with no `code` when no API key is configured", async () => {
+  // F-1102-T: no key at all is not the business's to set up, so it reads as "not available right now", never "contact
+  // your system administrator to configure the ANTHROPIC_API_KEY".
+  it("no API key is a 503 AI_UNAVAILABLE with the closed not-available sentence", async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         SupplierStatementsService,
@@ -139,8 +141,11 @@ describe("SupplierStatementsService", () => {
 
     const err = await noKeyService.scanStatement([jpegPage]).catch((e) => e);
 
-    expect(err).toBeInstanceOf(BadRequestException);
-    expect(err.getResponse().code).toBeUndefined();
+    expect(err).toBeInstanceOf(ServiceUnavailableException);
+    expect(err.getResponse()).toEqual({
+      message: "AI scanning isn't available right now. Please try again later.",
+      code: "AI_UNAVAILABLE",
+    });
     expect(mockAnthropicCreate).not.toHaveBeenCalled();
   });
 
@@ -179,23 +184,22 @@ describe("SupplierStatementsService", () => {
   // ─── the four typed error codes ─────────────────────────────────────────────
 
   describe("typed AI error codes", () => {
-    it("maps an Anthropic auth failure (401) to AI_KEY_INVALID 400", async () => {
-      mockAnthropicCreate.mockRejectedValue({ status: 401 });
+    // F-1102-T: a statement scan runs on RouteFlow's key, so a refusal is RouteFlow's to fix: the business reads "not
+    // available right now" and is never sent to Settings for a key it does not own.
+    it.each([401, 403])(
+      "maps an Anthropic auth failure (%i) on RouteFlow's key to AI_UNAVAILABLE 503, never AI_KEY_INVALID",
+      async (status) => {
+        mockAnthropicCreate.mockRejectedValue({ status });
 
-      await expect(service.scanStatement([jpegPage])).rejects.toMatchObject({
-        constructor: BadRequestException,
-        response: expect.objectContaining({ code: "AI_KEY_INVALID" }),
-      });
-    });
-
-    it("maps an Anthropic auth failure (403) to AI_KEY_INVALID 400", async () => {
-      mockAnthropicCreate.mockRejectedValue({ status: 403 });
-
-      await expect(service.scanStatement([jpegPage])).rejects.toMatchObject({
-        constructor: BadRequestException,
-        response: expect.objectContaining({ code: "AI_KEY_INVALID" }),
-      });
-    });
+        await expect(service.scanStatement([jpegPage])).rejects.toMatchObject({
+          constructor: ServiceUnavailableException,
+          response: {
+            message: "AI scanning isn't available right now. Please try again later.",
+            code: "AI_UNAVAILABLE",
+          },
+        });
+      },
+    );
 
     it("maps a non-transient 4xx (e.g. a rejected/corrupt file) to AI_SCAN_REJECTED 400, not AI_UNAVAILABLE", async () => {
       mockAnthropicCreate.mockRejectedValue({ status: 400 });

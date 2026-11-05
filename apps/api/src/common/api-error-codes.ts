@@ -623,6 +623,11 @@ export const API_ERROR_CODES = {
    */
   ORDER_DELIVERED_ON_ROUTE_STOP: "ORDER_DELIVERED_ON_ROUTE_STOP",
   /**
+   * B1280: PATCH /orders/:id/status out of DELIVERED (Reopen order), 409: the order was delivered on a route run whose stop is
+   * COMPLETED. The stop owns the stock and payment reversal, so reopen it from the run. Nothing written.
+   */
+  ORDER_ROUTE_STOP_COMPLETED: "ORDER_ROUTE_STOP_COMPLETED",
+  /**
    * W-776 (SA-925): POST /orders/:id/pickup-complete, 409: the register's day is closed, refused by the PRE-CHECK before the
    * first write (nothing changed, the order stays as it was). COUNTER_SALE_DAY_CLOSED from this endpoint now means only "the
    * hand-over stands" (raised after the claim).
