@@ -513,6 +513,7 @@ export class AddonService {
             const row = await upsertAddonRowTx(tx, this.events, {
               tenantId,
               addonKey: current?.addonKey ?? addonKey,
+              price: priceSnapshot,
               actor: {
                 kind: opts?.actorKind ?? "PLATFORM_ADMIN",
                 id: opts?.actorId ?? null,
@@ -533,7 +534,6 @@ export class AddonService {
                 // The Stripe item (when one exists) carries `qty` — mirror it here so a stale
                 // quantity from a prior admin-only grant never survives a re-enable.
                 quantity: qty,
-                priceSnapshot,
                 isComp: comp,
               },
               update: {
@@ -556,7 +556,6 @@ export class AddonService {
                 // B865 / SA-277: the Stripe item carries `qty` — a stale quantity from an earlier
                 // grant must not survive a re-enable.
                 quantity: qty,
-                priceSnapshot,
               },
             });
             // B865 / SA-277 FIX-1: the new before/after contract — a fresh grant always moves

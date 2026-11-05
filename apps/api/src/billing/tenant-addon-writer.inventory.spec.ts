@@ -322,7 +322,8 @@ describe("SA-788 (a) contract: one addon.state_changed per change, always, never
     const keep = { tenantId: "t1", addonKey: "MSRP" };
     await upsertAddonRowTx(h.tx, h.events, {
       ...keep,
-      create: { ...keep, sku: "MSRP", active: true, quantity: 1, priceSnapshot: 0 },
+      price: 0,
+      create: { ...keep, sku: "MSRP", active: true, quantity: 1 },
       update: { active: true },
       actor: actor("subscribe.pick", "TENANT_USER"),
     });
@@ -330,13 +331,13 @@ describe("SA-788 (a) contract: one addon.state_changed per change, always, never
     await upsertAddonRowTx(h.tx, h.events, {
       tenantId: "t1",
       addonKey: "NEW",
+      price: 12,
       create: {
         tenantId: "t1",
         addonKey: "NEW",
         sku: "NEW",
         active: true,
         quantity: 1,
-        priceSnapshot: 12,
       },
       update: {},
       actor: actor("subscribe.pick", "TENANT_USER"),
@@ -389,8 +390,9 @@ describe("SA-788 (a) contract: one addon.state_changed per change, always, never
     await upsertAddonRowTx(h.tx, h.events, {
       tenantId: "t1",
       addonKey: "REGULATED_ITEMS",
+      price: 9,
       create: { tenantId: "t1", addonKey: "REGULATED_ITEMS", sku: "REGULATED_ITEMS" },
-      update: { priceSnapshot: 9 },
+      update: {},
       actor: actor("admin.enable"),
     });
     expect(h.records()).toHaveLength(1);

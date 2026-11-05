@@ -84,12 +84,14 @@ import {
   inclusionOf,
   manualPayContext,
   noPushCtx,
+  priceAtPlan,
   readActiveRows,
   readEnteringInclusion,
   repriceAddonsLeavingInclusionTx,
   stopBillingIncludedAddonsTx,
   targetVersionFor,
   usd,
+  verdictOrThrow,
   type AddonSkuDef,
   type LeavingAddon,
   type LeavingBillOpts,
@@ -796,6 +798,7 @@ export class SubscriptionMutationService {
       // BEFORE the plan write, so "paying" is judged from the plan the tenant is leaving (a tenant coming from a
       // non-paying status books nothing here; the crossing below books each kept row at its adjusted price).
       const adjustedPrice = new Map<string, number>();
+      const stoppedRowIds = new Set<string>();
       tenantLabelForNotice = lockedTenant.name ?? lockedTenant.slug ?? tenantId;
       const addonMode = this.addonModeOf(lockedSub);
       // SA-815 / SA-815a: the plan being LEFT is judged by the tenant's own pinned catalog, as read under the lock
@@ -817,6 +820,7 @@ export class SubscriptionMutationService {
         actorKind: "TENANT_USER",
       })) {
         adjustedPrice.set(r.id, 0);
+        stoppedRowIds.add(r.id);
       }
       const leaving = await repriceAddonsLeavingInclusionTx(tx, this.events, {
         tenantId,
@@ -881,28 +885,34 @@ export class SubscriptionMutationService {
         id: actorId ?? null,
         source: "subscribe",
       });
+      // B1103 / SA-1104: the price of every listed add-on under the TARGET plan, from the verdict on the same target
+      // definitions `stopBillingIncludedAddonsTx` judged above (`version.addonSkus`, `input.planKey`): a SKU the plan
+      // includes is 0, never the catalog price over the 0 that step wrote. The ledger below books the same value.
+      const priceOf = new Map<string, number>();
       for (const [code, qty] of desiredNow) {
         const meta = skuByCode.get(code)!;
+        priceOf.set(code, priceAtPlan(meta, verdictOrThrow(meta, input.planKey), qty));
+      }
+      for (const [code, qty] of desiredNow) {
         // #2188 / SA-385: re-activate the tenant's row for this SKU IN PLACE — including one
         // the admin path keyed on a legacy addonKey, active or not — else create it.
         const row = await findAddonRow(tx, tenantId, code);
         await upsertAddonRowTx(tx, this.events, {
           tenantId,
           addonKey: row?.addonKey ?? code,
+          price: priceOf.get(code)!,
           create: {
             tenantId,
             addonKey: code,
             sku: code,
             quantity: qty,
             active: true,
-            priceSnapshot: meta.monthlyPrice,
             isComp: false,
           },
           update: {
             sku: code,
             quantity: qty,
             active: true,
-            priceSnapshot: meta.monthlyPrice,
             // SA-693: self-serve is billable; an INACTIVE comp row re-activated here stops being one.
             isComp: false,
           },
@@ -944,17 +954,21 @@ export class SubscriptionMutationService {
       // tenant's add-on never booked anything to begin with, so the crossing books its FULL
       // current contribution instead of the (unbooked) prior→new delta.
       for (const [code, qty] of desiredNow) {
-        const meta = skuByCode.get(code)!;
         const prior = priorByCode.get(code);
+        // B1103 / SA-1104: a row `stopBillingIncludedAddonsTx` already took to 0 (and booked, -price) starts from 0
+        // here, never from its pre-stop price: the stop is the row's ONE ledger move.
         const before =
           wasPaying && prior
-            ? { priceSnapshot: prior.snapshot, quantity: prior.qty }
+            ? {
+                priceSnapshot: stoppedRowIds.has(prior.id) ? 0 : prior.snapshot,
+                quantity: prior.qty,
+              }
             : { priceSnapshot: 0, quantity: 0 };
         await emitAddonDelta(tx, this.events, {
           tenantId,
           sku: code,
           before,
-          after: { priceSnapshot: meta.monthlyPrice, quantity: qty },
+          after: { priceSnapshot: priceOf.get(code)!, quantity: qty },
           actorId,
           payload: { quantity: qty },
         });
@@ -4093,13 +4107,13 @@ export class SubscriptionMutationService {
         await upsertAddonRowTx(tx, this.events, {
           tenantId,
           addonKey: current?.addonKey ?? sku,
+          price: priceSnapshot,
           create: {
             tenantId,
             addonKey: sku,
             sku,
             quantity: qty,
             active: true,
-            priceSnapshot,
             stripeItemId,
             isComp: false,
           },
@@ -4107,7 +4121,6 @@ export class SubscriptionMutationService {
             sku,
             quantity: qty,
             active: true,
-            priceSnapshot,
             // SA-693: self-serve is billable: it never writes a comp and resets a re-activated one.
             isComp: false,
             ...(stripeItemId ? { stripeItemId } : {}),

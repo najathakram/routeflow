@@ -72,12 +72,31 @@ const resolve = (row: AddonRowLike, skus: readonly AddonSkuDef[]) => {
 };
 
 /** B1102: a held add-on whose includedAtPlan names no plan fails the plan move closed (409), never "not included". */
-function verdictOrThrow(def: AddonSkuDef, planKey: string | null | undefined): IncludedVerdict {
+export function verdictOrThrow(
+  def: AddonSkuDef,
+  planKey: string | null | undefined,
+): Exclude<IncludedVerdict, { kind: "CATALOG_INVALID" }> {
   const verdict = inclusionOf(def, planKey);
   if (verdict.kind === "CATALOG_INVALID") {
     throw addonCatalogInvalidException(verdict.sku, verdict.value);
   }
   return verdict;
+}
+
+/**
+ * B1103 / SA-1104: THE price an add-on row is written at under a plan. 0 when the plan INCLUDES the SKU (SA-786/787:
+ * free once enabled, the row stays on), else the catalog price, cents-rounded. `inclusion` is the verdict the plan move
+ * already computed for the target version ({@link verdictOrThrow}), passed in and never re-read, so a write and the
+ * stop-billing step can never disagree on the version. FLAT rows only, like {@link addonsEnteringInclusion}: a row
+ * holding more than one unit is the units bought on top of the bundle, which the plan does not include.
+ */
+export function priceAtPlan(
+  def: Pick<AddonSkuDef, "monthlyPrice">,
+  inclusion: Exclude<IncludedVerdict, { kind: "CATALOG_INVALID" }>,
+  quantity: number,
+): number {
+  if (inclusion.kind === "INCLUDED" && Number(quantity) <= 1) return 0;
+  return roundMoney(Number(def.monthlyPrice ?? 0));
 }
 
 /**
@@ -150,7 +169,8 @@ export function addonsLeavingInclusion<R extends AddonRowLike>(
       ...row,
       code: to.code,
       name: to.def.name,
-      monthlyPrice: roundMoney(Number(to.def.monthlyPrice ?? 0)),
+      // the target verdict is NOT_INCLUDED here (the loop above proved it), so this is the catalog price, rounded
+      monthlyPrice: priceAtPlan(to.def, verdictOrThrow(to.def, toPlanKey), row.quantity),
     });
   }
   return out;

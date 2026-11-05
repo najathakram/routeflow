@@ -158,8 +158,14 @@ export async function upsertAddonRowTx(
   a: {
     tenantId: string;
     addonKey: string;
-    create: Prisma.TenantAddonUncheckedCreateInput;
-    update: Prisma.TenantAddonUncheckedUpdateInput;
+    /**
+     * B1103 / SA-1104: the row's price, REQUIRED and written to `priceSnapshot` on both branches. A caller that
+     * skips the rule that judged it (`priceAtPlan`, the enable's own price) fails to compile; `create` and
+     * `update` cannot carry a `priceSnapshot` of their own.
+     */
+    price: number;
+    create: Omit<Prisma.TenantAddonUncheckedCreateInput, "priceSnapshot">;
+    update: Omit<Prisma.TenantAddonUncheckedUpdateInput, "priceSnapshot">;
     actor: AddonActor;
   },
 ) {
@@ -170,7 +176,11 @@ export async function upsertAddonRowTx(
     // The `before` the record diffs against is the one read UNDER the lock (the first read may be stale).
     before = (await tx.tenantAddon.findUnique({ where })) as Snapshot | null;
   }
-  const row = await tx.tenantAddon.upsert({ where, create: a.create, update: a.update });
+  const row = await tx.tenantAddon.upsert({
+    where,
+    create: { ...a.create, priceSnapshot: a.price },
+    update: { ...a.update, priceSnapshot: a.price },
+  });
   await record(tx, events, before, row as unknown as Snapshot, a.actor, before == null);
   return row;
 }
