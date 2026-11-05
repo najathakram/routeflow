@@ -1384,6 +1384,18 @@ t(
     t("one commit past origin/master is unpushed", () => {
       assert.equal(hasUnpushedCommits(dir, "landed"), true);
     });
+    // Short ref names would let these look pushed: a tag named like the branch, and a local branch
+    // called "origin/master", both pointing into origin/master's history.
+    g("checkout", "-q", "-b", "tagged");
+    g("tag", "tagged", "origin/master");
+    t("a tag named like the branch does not make an unpushed tip look pushed", () => {
+      assert.equal(hasUnpushedCommits(dir, "tagged"), true);
+    });
+    g("checkout", "-q", "-b", "shadow");
+    g("branch", "origin/master", "shadow");
+    t("a local branch called origin/master does not stand in for the remote one", () => {
+      assert.equal(hasUnpushedCommits(dir, "shadow"), true);
+    });
     g("checkout", "-q", "--detach");
     t("a detached tree still has no branch to prove (unknown is unsafe)", () => {
       assert.equal(hasUnpushedCommits(dir, null), true);
