@@ -7,7 +7,7 @@ import {
 } from "@nestjs/common";
 import { toCollectByCustomer, toCollectState } from "../invoices/to-collect";
 import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
-import { aiNotAvailableException } from "../common/ai-key-failure";
+import { aiKeyRefusedException, aiNotAvailableException } from "../common/ai-key-failure";
 import { flagUnconfirmedOverReserved } from "../invoices/confirmed-basis";
 import { lockBillRows } from "../vendor-bills/bill-locks";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
@@ -975,6 +975,9 @@ export class BookkeepingService implements OnModuleInit {
         model,
         success: false,
       });
+      // F-1102-T: a receipt scan always runs on RouteFlow's key, so a refusal reads as "not available right now".
+      const status = (err as { status?: number })?.status;
+      if (status === 401 || status === 403) throw aiKeyRefusedException("routeflow");
       throw err;
     }
 

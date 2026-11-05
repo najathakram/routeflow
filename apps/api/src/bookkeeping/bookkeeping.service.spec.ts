@@ -2407,6 +2407,21 @@ describe("BookkeepingService", () => {
       );
     });
 
+    it("F-1102-T: RouteFlow's key refused (401/403) on a receipt scan is 503 AI_UNAVAILABLE, never a raw 500", async () => {
+      for (const status of [401, 403]) {
+        mockAnthropicCreate.mockRejectedValueOnce(Object.assign(new Error("refused"), { status }));
+        const err = await service.extractExpenseItems("exp-1").catch((e) => e);
+        expect(err.getStatus?.()).toBe(503);
+        expect(err.getResponse()).toEqual({
+          message: "AI scanning isn't available right now. Please try again later.",
+          code: "AI_UNAVAILABLE",
+        });
+      }
+      expect(recordAiUsage).toHaveBeenCalledWith(
+        expect.objectContaining({ feature: "ocr.expense_receipt", success: false }),
+      );
+    });
+
     it("REG-B801: a single OCR line item's amount is cent-exact, not a float artifact", async () => {
       const lineItemModel = graftExpenseLineItem();
       mockAnthropicCreate.mockResolvedValue({

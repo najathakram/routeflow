@@ -71,6 +71,10 @@ describe("AI key failure text (SA-1102 F-1102-T)", () => {
     expect(bills).toMatch(/aiKeyRefusedException\(source\)/);
     const statements = fs.readFileSync(path.join(SRC, SITES[2]), "utf8");
     expect(statements).toMatch(/aiKeyRefusedException\(source\)/);
+    // Receipts run on RouteFlow's key only: a refusal (401/403) is the helper's 503 too, never a rethrown 500.
+    expect(fs.readFileSync(path.join(SRC, SITES[0]), "utf8")).toMatch(
+      /aiKeyRefusedException\("routeflow"\)/,
+    );
     for (const file of [SITES[0], SITES[2], SITES[3]])
       expect(fs.readFileSync(path.join(SRC, file), "utf8")).toMatch(/aiNotAvailableException\(\)/);
   });
