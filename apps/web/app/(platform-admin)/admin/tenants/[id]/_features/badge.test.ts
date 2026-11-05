@@ -251,3 +251,39 @@ describe("deriveReadout: one readout, first rule wins", () => {
     });
   });
 });
+
+// FG-1 WP2 (SA-1099 section 4): courtesy keeps source PRESET with term "courtesy", and must not be read as
+// "in the plan". Served, but not enforced yet.
+describe("courtesy rows (FG-1 WP2)", () => {
+  const courtesy = (over: Partial<EffectiveFeature> = {}): EffectiveFeature =>
+    ({
+      key: "flag.reports",
+      area: "platform",
+      serving: true,
+      resolver: false,
+      source: "PRESET",
+      detail: { planKey: "STARTER", catalogVersionId: "v", enforced: true, term: "courtesy" },
+      billing: { charged: false },
+      ...over,
+    }) as EffectiveFeature;
+
+  it("is not the 'inherited' badge", () => {
+    expect(deriveBadge(courtesy())).not.toBe("inherited");
+    expect(deriveBadge(courtesy())).toBe("courtesy");
+  });
+
+  it.each(["dark", "enforced"] as const)("reads 'On, not enforced yet' on a %s row", (state) => {
+    expect(deriveReadout({ state }, courtesy())).toEqual({
+      kind: "not-enforced",
+      text: "On, not enforced yet",
+    });
+  });
+
+  it("a PRESET row the plan really holds is still 'In plan'", () => {
+    const held = courtesy({
+      resolver: true,
+      detail: { planKey: "SCALE", catalogVersionId: "v", enforced: true, term: "flag" },
+    });
+    expect(deriveReadout({ state: "dark" }, held)).toMatchObject({ kind: "chip", text: "In plan" });
+  });
+});

@@ -103,3 +103,39 @@ describe("EntitlementAuthority.invalidate", () => {
     expect(resolver.invalidate).toHaveBeenCalledWith("t1");
   });
 });
+
+describe("SA-1099 section 3: the requires check reads the strict answer, not the courtesy", () => {
+  function makeWithStrict(rows: Array<{ key: string; effective: boolean; strict: boolean }>) {
+    const resolver = {
+      resolve: jest.fn().mockResolvedValue({ byKey: new Map(rows.map((r) => [r.key, r])) }),
+      invalidate: jest.fn(),
+    };
+    return new EntitlementAuthority(
+      stub() as any,
+      stub() as any,
+      resolver as any,
+      stub() as any,
+      stub() as any,
+      stub() as any,
+    );
+  }
+
+  it("a prerequisite that is only served by courtesy does not satisfy the grant (the refusal today stays)", async () => {
+    const authority = makeWithStrict([
+      { key: "order_delivery", effective: true, strict: false },
+      { key: "recurring_routes", effective: true, strict: false },
+    ]);
+    await expect(authority.assertFeatureRequiresMet("t1", "driver_payments")).rejects.toMatchObject(
+      {
+        response: expect.objectContaining({ code: "FEATURE_REQUIRES_UNMET" }),
+      },
+    );
+  });
+
+  it("a prerequisite that is strictly held satisfies it", async () => {
+    const authority = makeWithStrict([{ key: "order_delivery", effective: true, strict: true }]);
+    await expect(
+      authority.assertFeatureRequiresMet("t1", "driver_payments"),
+    ).resolves.toBeUndefined();
+  });
+});

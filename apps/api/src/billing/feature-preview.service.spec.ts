@@ -316,3 +316,168 @@ describe("FeaturePreviewService - the stored mode (SA-1028 section 5)", () => {
     expect(result.before.find((f) => f.key === "flag.estimates")?.mode).toBeUndefined();
   });
 });
+
+/**
+ * FG-1 WP2 (R3, R5, SA-1099 sections 1, 4, 5). Courtesy is read PER SIDE: the "before" side takes the tenant's
+ * plan, the "after" side takes the target plan (so Growth to Lite loses what the courtesy was serving, and
+ * Growth to Starter does not). `serving` is what the guards serve; `resolver` is the strict answer;
+ * `laterLost` names the keys that stay on for now but would go when the dark gate is enforced.
+ *
+ * The WP2 response fields are read through `WideResponse` so this block compiles against the old service and
+ * fails there on the wrong VALUE.
+ */
+import type { FeaturePreviewResponse } from "@routeflow/types";
+import { LITE_FIXTURE } from "./feature-fixtures";
+
+type WideResponse = FeaturePreviewResponse & { laterLost?: string[]; omitted?: string[] };
+const lostNow = (r: WideResponse) =>
+  r.before
+    .filter((b, i) => b.serving && !r.after[i].serving)
+    .map((b) => b.key)
+    .sort();
+
+describe("WP2 preview: courtesy per side, laterLost, omissions", () => {
+  const savedSwitch = process.env.PLAN_FLAG_ENFORCEMENT;
+  beforeEach(() => {
+    delete process.env.PLAN_FLAG_ENFORCEMENT;
+  });
+  afterAll(() => {
+    if (savedSwitch === undefined) delete process.env.PLAN_FLAG_ENFORCEMENT;
+    else process.env.PLAN_FLAG_ENFORCEMENT = savedSwitch;
+  });
+
+  // Hand-worked from the v11 fixture (SCALE holds flag.sales_agents, flag.reports, flag.returns; STARTER holds
+  // only flag.msrp) and the registry: flag.sales_agents and orders_inline_returns are enforced, so they are
+  // lost now; flag.reports and flag.returns are dark flags, so the courtesy keeps them on after the move.
+  it("T3: SCALE to STARTER loses the enforced rows now and lists the dark ones as stays-on-for-now", async () => {
+    const { preview } = buildPreview(V11_PIN_FIXTURE);
+    const r = (await preview.preview("t1", { planKey: "STARTER" })) as WideResponse;
+    expect(lostNow(r)).toEqual(["flag.sales_agents", "orders_inline_returns"]);
+    expect([...(r.laterLost ?? [])].sort()).toEqual(["flag.reports", "flag.returns"]);
+    expect([...r.changed].sort()).toEqual(
+      ["flag.reports", "flag.returns", "flag.sales_agents", "orders_inline_returns"].sort(),
+    );
+    const reports = r.after.find((f) => f.key === "flag.reports")!;
+    expect(reports).toMatchObject({ serving: true, resolver: false, source: "PRESET" });
+    expect(reports.detail.term).toBe("courtesy");
+  });
+
+  it("T3: the preview equals the trace after the plan is really changed", async () => {
+    const { preview } = buildPreview(V11_PIN_FIXTURE);
+    const previewed = await preview.preview("t1", { planKey: "STARTER" });
+    // post-apply: the tenant now sits on STARTER, in the same catalog version
+    const { preview: after } = buildPreview({ ...V11_PIN_FIXTURE, planKey: "STARTER" });
+    const trace = await after.preview("t1", {});
+    const shape = (f: (typeof trace.before)[number]) => ({
+      key: f.key,
+      serving: f.serving,
+      resolver: f.resolver,
+      source: f.source,
+      term: f.detail.term,
+    });
+    expect(previewed.after.map(shape)).toEqual(trace.before.map(shape));
+  });
+
+  it("SA-1099 section 1: the credit check stays on across a move to STARTER while the switch is off", async () => {
+    const { preview } = buildPreview(V11_PIN_FIXTURE, [
+      "flag.msrp",
+      "flag.sales_agents",
+      "flag.reports",
+      "flag.returns",
+      "flag.credit_limits",
+    ]);
+    const r = (await preview.preview("t1", { planKey: "STARTER" })) as WideResponse;
+    expect(lostNow(r)).not.toContain("flag.credit_limits");
+    expect(r.laterLost ?? []).toContain("flag.credit_limits");
+  });
+
+  it("with the switch ON the courtesy is gone: the dark rows are lost now and nothing is later", async () => {
+    process.env.PLAN_FLAG_ENFORCEMENT = "on";
+    const { preview } = buildPreview(V11_PIN_FIXTURE);
+    const r = (await preview.preview("t1", { planKey: "STARTER" })) as WideResponse;
+    expect(lostNow(r)).toEqual(
+      ["flag.reports", "flag.returns", "flag.sales_agents", "orders_inline_returns"].sort(),
+    );
+    expect(r.laterLost).toEqual([]);
+  });
+
+  const GROWTH_WITH_LITE = {
+    ...V11_PIN_FIXTURE,
+    planKey: "GROWTH",
+    definitions: [...V11_PIN_FIXTURE.definitions, { planKey: "LITE", featureFlags: [] }],
+  };
+
+  it("SA-1099 section 4: GROWTH to LITE loses what the courtesy was serving, now", async () => {
+    const { preview } = buildPreview(GROWTH_WITH_LITE);
+    const r = (await preview.preview("t1", { planKey: "LITE" })) as WideResponse;
+    // GROWTH is served flag.reports by courtesy; LITE never is
+    expect(lostNow(r)).toContain("flag.reports");
+    expect(r.laterLost ?? []).not.toContain("flag.reports");
+    expect(LITE_FIXTURE.planKey).toBe("LITE");
+  });
+
+  it("SA-1099 section 1: the credit check has no Lite exception, so a move to LITE leaves it unchanged", async () => {
+    const { preview } = buildPreview(GROWTH_WITH_LITE);
+    const r = (await preview.preview("t1", { planKey: "LITE" })) as WideResponse;
+    expect(r.changed).not.toContain("flag.credit_limits");
+    expect(r.after.find((f) => f.key === "flag.credit_limits")).toMatchObject({ serving: true });
+  });
+
+  it("a GRANT over a courtesy row changes the strict answer, so `changed` still names it", async () => {
+    const { preview } = buildPreview(V11_PIN_FIXTURE);
+    const r = await preview.preview("t1", {
+      overrides: [{ featureKey: "flag.estimates", effect: "GRANT", reason: "pilot" }],
+    });
+    expect(r.before.find((f) => f.key === "flag.estimates")).toMatchObject({
+      serving: true,
+      resolver: false,
+    });
+    expect(r.after.find((f) => f.key === "flag.estimates")).toMatchObject({
+      serving: true,
+      resolver: true,
+    });
+    expect(r.changed).toEqual(["flag.estimates"]);
+  });
+
+  it("T5: a plan move says what it leaves out; an override-only preview omits nothing", async () => {
+    const { preview } = buildPreview(V11_PIN_FIXTURE);
+    const move = (await preview.preview("t1", { planKey: "STARTER" })) as WideResponse;
+    expect(move.omitted).toEqual(["limits", "price"]);
+    const same = (await preview.preview("t1", {
+      overrides: [{ featureKey: "flag.estimates", effect: "GRANT", reason: "pilot" }],
+    })) as WideResponse;
+    expect(same.omitted).toEqual([]);
+  });
+
+  it("SA-1099 section 5: preview and compute read add-on rows through one query", async () => {
+    const { FeatureResolverService } = jest.requireActual("./feature-resolver.service");
+    const { mockCollaborators } = jest.requireActual("./feature-fixtures");
+    const c = mockCollaborators(V11_PIN_FIXTURE);
+    const resolver = new FeatureResolverService(
+      c.entitlements,
+      c.featureOverrides,
+      c.catalog,
+      c.prisma,
+    );
+    await resolver.resolve("t1");
+    const { preview } = buildPreview(V11_PIN_FIXTURE);
+    // buildPreview owns its prisma mock, so re-wire a preview over `c`
+    const p = new FeaturePreviewService(
+      c.entitlements as any,
+      c.featureOverrides as any,
+      c.catalog as any,
+      c.prisma as any,
+      featureConfigOver({}).service,
+    );
+    await p.preview("t1", {});
+    const calls = c.prisma.tenantAddon.findMany.mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[1][0]).toEqual(calls[0][0]);
+    expect(calls[0][0].select).toMatchObject({
+      isComp: true,
+      priceSnapshot: true,
+      stripeItemId: true,
+    });
+    expect(preview).toBeDefined();
+  });
+});

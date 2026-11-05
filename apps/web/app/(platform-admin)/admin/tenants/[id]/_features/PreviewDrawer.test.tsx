@@ -90,3 +90,71 @@ describe("PreviewDrawer — Confirm enablement is not solely driven by response.
     ).toBeInTheDocument();
   });
 });
+
+// FG-1 WP2 (R5, SA-1099 section 4): the drawer says what it leaves out, and names what stays on for now.
+describe("PreviewDrawer: omissions and stays-on-for-now (FG-1 WP2)", () => {
+  const f = (key: string, serving: boolean, resolver: boolean) =>
+    feature({
+      key,
+      serving,
+      resolver,
+      source: serving ? "PRESET" : "NONE",
+      detail: {
+        planKey: "STARTER",
+        catalogVersionId: "catalog-v11",
+        enforced: true,
+        term: serving && !resolver ? "courtesy" : "flag",
+      },
+    });
+
+  function show(response: unknown) {
+    render(
+      <PreviewDrawer
+        open
+        title="Preview plan change"
+        response={response as FeaturePreviewResponse}
+        registryByKey={{ "flag.reports": { label: "Reports" } }}
+        confirming={false}
+        onConfirm={jest.fn()}
+        onClose={jest.fn()}
+      />,
+    );
+  }
+
+  it("says what a plan move leaves out", () => {
+    show({
+      before: [f("flag.reports", true, true)],
+      after: [f("flag.reports", true, false)],
+      changed: ["flag.reports"],
+      laterLost: ["flag.reports"],
+      omitted: ["limits", "price"],
+    });
+    expect(
+      screen.getByText("Not shown here: customer limits and monthly price. See Plan & billing."),
+    ).toBeInTheDocument();
+  });
+
+  it("lists a later-lost key under 'Stays on for now', not under Lost", () => {
+    show({
+      before: [f("flag.reports", true, true)],
+      after: [f("flag.reports", true, false)],
+      changed: ["flag.reports"],
+      laterLost: ["flag.reports"],
+      omitted: [],
+    });
+    const panel = screen.getByTestId("preview-panel-laterLost");
+    expect(within(panel).getByText("Reports")).toBeInTheDocument();
+    expect(screen.queryByTestId("preview-panel-lost")).toBeNull();
+  });
+
+  it("says nothing about omissions when there are none", () => {
+    show({
+      before: [f("flag.reports", false, false)],
+      after: [f("flag.reports", true, true)],
+      changed: ["flag.reports"],
+      laterLost: [],
+      omitted: [],
+    });
+    expect(screen.queryByText(/Not shown here/)).toBeNull();
+  });
+});

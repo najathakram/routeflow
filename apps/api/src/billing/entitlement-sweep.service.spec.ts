@@ -21,6 +21,8 @@ interface Setup {
   mode?: "shadow" | "live";
   modeError?: boolean;
   effective?: (key: string) => boolean;
+  /** The resolver's strict answer (FG-1 WP2); defaults to the effective one. */
+  strict?: (key: string) => boolean;
 }
 
 function build(setup: Setup = {}) {
@@ -55,7 +57,10 @@ function build(setup: Setup = {}) {
       planKey,
       catalogVersionId: "v1",
       byKey: new Map(
-        FEATURE_REGISTRY.map((f) => [f.key, { effective: setup.effective?.(f.key) ?? false }]),
+        FEATURE_REGISTRY.map((f) => {
+          const effective = setup.effective?.(f.key) ?? false;
+          return [f.key, { effective, strict: setup.strict?.(f.key) ?? effective }];
+        }),
       ),
     })),
   };
@@ -200,5 +205,26 @@ describe("EntitlementSweepService: the mode on page 1 (SA-1100 §3, S1 reads it)
     const { service } = build();
     const first = await service.sweep({ limit: 1 });
     expect(first.modeReadFailed).toBeUndefined();
+  });
+});
+
+describe("EntitlementSweepService: the strict bit comes from the resolver (FG-1 WP2)", () => {
+  it("a key served by courtesy is effective but not strict; a set is strict when any of its keys is", async () => {
+    const { service } = build({
+      effective: () => true,
+      strict: (key) =>
+        key !== "flag.reports" && key !== "order_delivery" && key !== "developer_mode",
+    });
+    const row = (await service.sweep({})).tenants[0];
+    expect(row.keys["flag.reports"]).toMatchObject({ effective: true, strict: false });
+    expect(row.keys["flag.msrp"]).toMatchObject({ effective: true, strict: true });
+    // recurring_routes is strict, so the three-key set is; the two-key set holds only courtesy keys
+    expect(row.sets["recurring_routes|order_delivery|developer_mode"]).toMatchObject({
+      strict: true,
+    });
+    expect(row.sets["order_delivery|developer_mode"]).toMatchObject({
+      effective: true,
+      strict: false,
+    });
   });
 });

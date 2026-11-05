@@ -100,3 +100,40 @@ describe("groupPreview", () => {
     ]);
   });
 });
+
+// FG-1 WP2: a key that stays on for now but would go when the dark gate is enforced gets its own group.
+describe("groupPreview: stays on for now (laterLost)", () => {
+  const feat = (key: string, serving: boolean, resolver: boolean) =>
+    ({
+      key,
+      area: "platform",
+      serving,
+      resolver,
+      source: serving && !resolver ? "PRESET" : serving ? "PRESET" : "NONE",
+      detail: {
+        planKey: "STARTER",
+        catalogVersionId: "v",
+        enforced: true,
+        term: serving && !resolver ? "courtesy" : "flag",
+      },
+      billing: { charged: false },
+    }) as never;
+
+  it("puts a later-lost key in its own group, not in other, and counts it", () => {
+    const response = {
+      before: [feat("flag.reports", true, true), feat("flag.sales_agents", true, true)],
+      after: [feat("flag.reports", true, false), feat("flag.sales_agents", false, false)],
+      changed: ["flag.reports", "flag.sales_agents"],
+      laterLost: ["flag.reports"],
+      omitted: [],
+    } as never;
+    const groups = groupPreview(response, {
+      "flag.reports": { label: "Reports" },
+      "flag.sales_agents": { label: "Sales agents" },
+    }) as ReturnType<typeof groupPreview> & { laterLost?: Array<{ key: string }> };
+    expect(groups.lost.map((r) => r.key)).toEqual(["flag.sales_agents"]);
+    expect((groups.laterLost ?? []).map((r) => r.key)).toEqual(["flag.reports"]);
+    expect(groups.other).toEqual([]);
+    expect(groups.total).toBe(2);
+  });
+});
