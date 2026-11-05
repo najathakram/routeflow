@@ -39,6 +39,7 @@ function make(
     user: { findMany: jest.fn().mockResolvedValue(data.admins ?? []) },
     userPreference: { findMany: jest.fn().mockResolvedValue(data.optOuts ?? []) },
     tenantConfig: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    forSystem: jest.fn(() => prisma), // SA-1105: the sweep's door; the same client, so no expected value below moves
   } as any;
   const email = {
     sendLowStockDigest: data.sendImpl
