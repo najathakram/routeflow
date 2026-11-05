@@ -28,6 +28,7 @@ import { FeatureOverrideService } from "./feature-override.service";
 import { FeaturePreviewService } from "./feature-preview.service";
 import { fakeStripeSubscription } from "../testing/fake-stripe-subscription";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { BILLING_EVENTS } from "./plan-catalog.constants";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -325,10 +326,153 @@ describeDb(
       // (`Tenant.plan` is the legacy enum, where SCALE is BUSINESS; the subscription row carries the plan key)
       expect(after.tenant).toMatchObject({ status: "ACTIVE" });
       expect(after.subPlanKey).toBe("SCALE");
-      // The row stays active (not refused, not dropped). Its price is deliberately NOT pinned here: a SKU re-listed in
-      // `addons` is re-priced by the existing reconcile (observed: the catalog price, 25, on master and here alike),
-      // which is outside F-WP5-1 and is reported to the SA as a finding.
-      expect(after.rows).toEqual([expect.objectContaining({ sku: "FORECASTING", active: true })]);
+      // The row stays active (not refused, not dropped), and at $0: SCALE bundles it (SA-786/787). B1103 / SA-1104 Q5
+      // (B-7): a SKU re-listed in `addons` used to be re-priced at the catalog price (25) by the reconcile.
+      expect(after.rows).toEqual([{ sku: "FORECASTING", active: true, price: 0 }]);
+    });
+
+    /** The MRR ledger of one tenant: every event that moved the run-rate, and the net. */
+    async function ledger(id: string) {
+      const events = await prisma.billingEvent.findMany({
+        where: { tenantId: id, amountDelta: { not: null } },
+        orderBy: { createdAt: "asc" },
+        select: { type: true, amountDelta: true },
+      });
+      const moves = events
+        .map((e) => ({ type: e.type as string, delta: Number(e.amountDelta) }))
+        .filter((e) => e.delta !== 0 && e.type !== BILLING_EVENTS.PLAN_CHANGED);
+      return { moves, net: moves.reduce((s, e) => s + e.delta, 0) };
+    }
+
+    /** How many row-state records (ADDON_STATE_CHANGED) a tenant has: stopBilling writes one, a no-op write none. */
+    const stateRecords = (id: string) =>
+      prisma.billingEvent.count({
+        where: { tenantId: id, type: BILLING_EVENTS.ADDON_STATE_CHANGED },
+      });
+
+    it("B-1 (B1103 / SA-1104): a held FORECASTING row that SCALE bundles, re-listed in addons: active, priceSnapshot 0, no Stripe item", async () => {
+      delete process.env.PLAN_FLAG_ENFORCEMENT;
+      const id = await activeGrowthTenant("b1", true);
+      await build().subscribe(id, toScale, "u1");
+      const row = await prisma.tenantAddon.findFirstOrThrow({ where: { tenantId: id } });
+      expect({
+        active: row.active,
+        price: Number(row.priceSnapshot ?? 0),
+        item: row.stripeItemId,
+        isComp: row.isComp,
+      }).toEqual({ active: true, price: 0, item: null, isComp: false });
+    });
+
+    it("B-2 (B1103 / SA-1104): the same pick books the run-rate ONCE: the stop (-25), no second event, one row record", async () => {
+      delete process.env.PLAN_FLAG_ENFORCEMENT;
+      const id = await activeGrowthTenant("b2", true);
+      const recordsBefore = await stateRecords(id);
+      await build().subscribe(id, toScale, "u1");
+      const { moves, net } = await ledger(id);
+      // the plan-change event is not an add-on move; exactly one add-on move exists: stopBilling's 25 -> 0
+      expect(moves).toEqual([{ type: BILLING_EVENTS.ADDON_DISABLED, delta: -25 }]);
+      expect(net).toBe(-25);
+      // one record of the row's change (price 25 -> 0, written by stopBilling): the reconcile writes nothing more
+      expect((await stateRecords(id)) - recordsBefore).toBe(1);
+    });
+
+    it("B-3 (guard): a SKU the target does NOT include, re-listed: the catalog price is kept and no add-on move is booked", async () => {
+      delete process.env.PLAN_FLAG_ENFORCEMENT;
+      const id = await activeGrowthTenant("b3", false);
+      await prisma.tenantAddon.create({
+        data: {
+          tenantId: id,
+          addonKey: "CUSTOMER_PACK_100",
+          sku: "CUSTOMER_PACK_100",
+          quantity: 1,
+          priceSnapshot: 12,
+          active: true,
+        },
+      });
+      await build().subscribe(
+        id,
+        {
+          planKey: "SCALE",
+          cycle: "ANNUAL" as any,
+          addons: [{ sku: "CUSTOMER_PACK_100", quantity: 1 }],
+        },
+        "u1",
+      );
+      const row = await prisma.tenantAddon.findFirstOrThrow({ where: { tenantId: id } });
+      expect(Number(row.priceSnapshot)).toBe(12);
+      expect((await ledger(id)).moves).toEqual([]);
+    });
+
+    it("B-4 (guard): a COMP row re-listed is left exactly as it is", async () => {
+      delete process.env.PLAN_FLAG_ENFORCEMENT;
+      const id = await activeGrowthTenant("b4", false);
+      await prisma.tenantAddon.create({
+        data: {
+          tenantId: id,
+          addonKey: "FORECASTING",
+          sku: "FORECASTING",
+          quantity: 1,
+          priceSnapshot: 0,
+          active: true,
+          isComp: true,
+        },
+      });
+      await build().subscribe(id, toScale, "u1");
+      const row = await prisma.tenantAddon.findFirstOrThrow({ where: { tenantId: id } });
+      expect({
+        active: row.active,
+        isComp: row.isComp,
+        price: Number(row.priceSnapshot ?? 0),
+      }).toEqual({
+        active: true,
+        isComp: true,
+        price: 0,
+      });
+      expect((await ledger(id)).moves).toEqual([]);
+    });
+
+    it("B-5 (guard, #4214): an INACTIVE FORECASTING row re-listed on SCALE is a 409 ADDON_INCLUDED_IN_PLAN before any write", async () => {
+      delete process.env.PLAN_FLAG_ENFORCEMENT;
+      const id = await activeGrowthTenant("b5", false);
+      await prisma.tenantAddon.create({
+        data: {
+          tenantId: id,
+          addonKey: "FORECASTING",
+          sku: "FORECASTING",
+          quantity: 1,
+          priceSnapshot: 25,
+          active: false,
+        },
+      });
+      const before = await state(id);
+      await expect(build().subscribe(id, toScale, "u1")).rejects.toMatchObject({
+        status: 409,
+        response: expect.objectContaining({ code: API_ERROR_CODES.ADDON_INCLUDED_IN_PLAN }),
+      });
+      expect(await state(id)).toEqual(before);
+    });
+
+    it("B-8 (B1103, already included at the source): a SCALE workspace switching cycle re-lists the bundled row it holds at $0: it stays 0", async () => {
+      delete process.env.PLAN_FLAG_ENFORCEMENT;
+      const id = await activeGrowthTenant("b8", false);
+      await prisma.tenantSubscription.update({
+        where: { tenantId: id },
+        data: { planKey: "SCALE", basePriceSnapshot: 499 },
+      });
+      await prisma.tenantAddon.create({
+        data: {
+          tenantId: id,
+          addonKey: "FORECASTING",
+          sku: "FORECASTING",
+          quantity: 1,
+          priceSnapshot: 0,
+          active: true,
+        },
+      });
+      await build().subscribe(id, toScale, "u1");
+      const row = await prisma.tenantAddon.findFirstOrThrow({ where: { tenantId: id } });
+      expect(Number(row.priceSnapshot ?? 0)).toBe(0);
+      expect((await ledger(id)).moves).toEqual([]);
     });
 
     it("DB-5 (S7): the same pick with NO row: a 409 ADDON_INCLUDED_IN_PLAN and nothing is written", async () => {
