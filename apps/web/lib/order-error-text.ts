@@ -29,13 +29,6 @@ export function orderErrorText(err: unknown): string {
 export const DEMOTE_HAS_RETURN_COPY =
   "This order has a return. To change its delivery status, cancel the return first.";
 
-/** True for the 409 ORDER_HAS_RETURN a delivered demotion answers with; the caller shows `DEMOTE_HAS_RETURN_COPY` for it. */
-export function isDemoteHasReturnRefusal(err: unknown): boolean {
-  const res = (err as { response?: { status?: number; data?: { code?: unknown } } } | null)
-    ?.response;
-  return res?.status === 409 && res.data?.code === API_ERROR_CODES.ORDER_HAS_RETURN;
-}
-
 /**
  * B1280: the other two ways "Reopen order" is refused. Each has its own code, and the walk-in code is the one the order
  * EDIT uses too ("Ring up added items as a new sale"), which reads wrong on a reopen, so this action says its own sentence.
@@ -43,7 +36,7 @@ export function isDemoteHasReturnRefusal(err: unknown): boolean {
 export const DEMOTE_WALK_IN_PAID_COPY =
   "This counter sale is paid, so it can't be reopened. To take items back, use Return.";
 export const DEMOTE_ON_ROUTE_RUN_COPY =
-  "This order was delivered on a route run. Reopen its stop from the run, which also reverses stock and payments.";
+  "This order was delivered on a route run. Undo its stop on the run, which also reverses stock and payments.";
 
 const demoteCopyFor = (err: unknown): string | null => {
   const res = (err as { response?: { status?: number; data?: { code?: unknown } } } | null)

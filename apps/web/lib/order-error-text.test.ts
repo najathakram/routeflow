@@ -2,7 +2,6 @@ import {
   DEMOTE_HAS_RETURN_COPY,
   bulkDeleteResultTitle,
   demoteErrorText,
-  isDemoteHasReturnRefusal,
   isDemoteRefusal,
   orderErrorText,
 } from "./order-error-text";
@@ -109,11 +108,11 @@ describe("demoteErrorText (SA-1101 A-5): a blocked Reopen order / demotion reads
   });
 
   it("owns only that refusal: another code, another status, or no response is null", () => {
-    expect(isDemoteHasReturnRefusal(live)).toBe(true);
+    expect(isDemoteRefusal(live)).toBe(true);
     expect(demoteErrorText(axiosErr(409, { code: "ORDER_CHANGED_DURING_EDIT" }))).toBeNull();
     expect(demoteErrorText(axiosErr(400, { code: "ORDER_HAS_RETURN" }))).toBeNull();
     expect(demoteErrorText(new Error("Network Error"))).toBeNull();
-    expect(isDemoteHasReturnRefusal(null)).toBe(false);
+    expect(isDemoteRefusal(null)).toBe(false);
   });
 });
 
@@ -137,7 +136,7 @@ describe("demoteErrorText (B1280): the other two Reopen order refusals read thei
 
   it("an order delivered on a route run points to the stop, and says what that does", () => {
     expect(demoteErrorText(onRun)).toBe(
-      "This order was delivered on a route run. Reopen its stop from the run, which also reverses stock and payments.",
+      "This order was delivered on a route run. Undo its stop on the run, which also reverses stock and payments.",
     );
   });
 
