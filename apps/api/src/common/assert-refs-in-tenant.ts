@@ -19,6 +19,13 @@ export interface TenantRefs {
   productIds?: ReadonlyArray<string | null | undefined>;
   /** No null-tenant exemption: `TrackedCategory.tenantId` is NOT NULL. */
   trackedCategoryIds?: ReadonlyArray<string | null | undefined>;
+  /**
+   * B1106 / SA-1105 PR B. No null-tenant exemption: `RouteRun.tenantId` is a nullable column, but a run is a tenant row, so
+   * a legacy run with no tenant is refused like a foreign one. Refused as "Run not found" (the DRIVER paths' wording).
+   */
+  routeRunIds?: ReadonlyArray<string | null | undefined>;
+  /** Same rule for `RouteRunStop` (also a nullable `tenantId`): refused as "Stop not found". */
+  routeRunStopIds?: ReadonlyArray<string | null | undefined>;
 }
 
 const present = (ids: ReadonlyArray<string | null | undefined> | undefined): string[] => [
@@ -63,6 +70,20 @@ export async function assertRefsInTenant(prisma: PrismaService, refs: TenantRefs
         prisma
           .forTenant()
           .trackedCategory.findMany({ where: { id: { in: ids } }, select: { id: true } }),
+    ],
+    [
+      present(refs.routeRunIds),
+      "Run not found",
+      (ids) =>
+        prisma.forTenant().routeRun.findMany({ where: { id: { in: ids } }, select: { id: true } }),
+    ],
+    [
+      present(refs.routeRunStopIds),
+      "Stop not found",
+      (ids) =>
+        prisma
+          .forTenant()
+          .routeRunStop.findMany({ where: { id: { in: ids } }, select: { id: true } }),
     ],
   ];
   for (const [ids, message, find] of checks) {

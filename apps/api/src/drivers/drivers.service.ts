@@ -18,6 +18,7 @@ import { UpdateDriverDto } from "./dto/update-driver.dto";
 import { ChangeDriverStatusDto } from "./dto/change-driver-status.dto";
 import { PostLocationDto } from "./dto/post-location.dto";
 import { geocodeAddress } from "../common/geocode.util";
+import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 
 @Injectable()
 export class DriversService {
@@ -102,6 +103,9 @@ export class DriversService {
     if (Number.isNaN(recordedAt.getTime())) {
       throw new BadRequestException("recordedAt must be an ISO date string");
     }
+
+    // B1106: the runId is caller-supplied and an FK is no tenant proof; a run of another business is a 404, nothing written.
+    await assertRefsInTenant(this.prisma, { routeRunIds: [dto.runId] });
 
     await this.prisma.forTenant().driverLocation.create({
       data: {
