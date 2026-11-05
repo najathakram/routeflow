@@ -330,6 +330,31 @@ describe("report-b1281-superseded-checkouts.mjs", () => {
       expect(out).toContain("were refused"); // the words survive
     });
 
+    it("a subscription-schedule id (sub_sched_<id>) is cut: two lowercase segments before the body (#4220 review A)", () => {
+      const out = call(
+        `m.scrubStripeError("Schedule sub_sched_1AbCdEfGhIjKlMn was refused", "sk_live_x")`,
+      ) as string;
+      expect(out).not.toMatch(/1AbCdEfGhIjKlMn/);
+      expect(out).toContain("sub_sched_…KlMn");
+      expect(out).toContain("was refused");
+    });
+
+    it("a client secret prints no secret characters beyond the last 4, for pi_ and seti_ alike (#4220 review A)", () => {
+      const msg =
+        "Intent pi_3PqRsTuV456789_secret_ZyXwVuTsRqPoNm and setup seti_1AbCdEfGhIjKl_secret_QwErTyUiOpAsDf were refused";
+      const out = call(`m.scrubStripeError(${JSON.stringify(msg)}, "sk_live_x")`) as string;
+      expect(out).not.toMatch(/3PqRsTuV456789|ZyXwVuTsRq|secret_|1AbCdEfGhIjKl|QwErTyUiOp/);
+      expect(out).toContain("pi_…PoNm");
+      expect(out).toContain("seti_…AsDf");
+      expect(out).toContain("were refused");
+    });
+
+    it("snake_case words are not ids and print whole (#4220 review A)", () => {
+      const msg =
+        "status_transitions rejected the change: api_connection_error, rate_limit_exceeded, invalid_request_error";
+      expect(call(`m.scrubStripeError(${JSON.stringify(msg)}, "sk_live_x")`)).toBe(msg);
+    });
+
     it("a message with no id and no email is returned as it was (the scrub only cuts what it names)", () => {
       expect(call(`m.scrubStripeError("Rate limit exceeded", "sk_live_x")`)).toBe(
         "Rate limit exceeded",

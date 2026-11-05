@@ -178,15 +178,17 @@ export function buildReport(rows) {
  * An error message from Stripe with the key replaced and every Stripe id cut to its last 4 (`cus_…3456`): a
  * permission or lookup error names ids (the customer, the subscription, RouteFlow's own account) in full. Any email
  * address is cut to its last 4 characters too (an error can echo a buyer's address). The id cut is a SHAPE, not a
- * list of prefixes: a short lowercase prefix (optionally `test_`/`live_`) then a long alphanumeric body, which covers
- * every Stripe id (`cus_`, `ii_`, `cn_`, `po_`, `il_`, `py_`, `tr_`, `sli_`, `cs_test_`, ...).
+ * list of prefixes: one or two short lowercase segments (`cus_`, `cs_test_`, `sub_sched_`), then a body of 10+ letters
+ * and digits that mixes in a capital or a digit (so a snake_case word such as `status_transitions` or
+ * `api_connection_error` is not an id and prints whole), then any `_secret_...` tail a client secret carries, which is
+ * cut with the id so no secret character shows beyond the last 4.
  */
 export function scrubStripeError(message, key) {
   const text = key ? String(message).split(key).join("***") : String(message);
   return text
     .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, (email) => `…${email.slice(-4)}`)
     .replace(
-      /\b([a-z]{2,6}_(?:(?:test|live)_)?)[A-Za-z0-9]{10,}/g,
+      /\b([a-z]{2,6}_(?:[a-z]{2,6}_)?)(?=[a-z]*[A-Z0-9])[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*/g,
       (id, head) => `${head}…${id.slice(-4)}`,
     );
 }
