@@ -10,8 +10,9 @@
  *   - the customer's subscriptions: more than one LIVE (active, trialing, past_due, unpaid) is a finding;
  *   - the customer's completed subscription checkouts since --since (default 2026-10-08) whose subscription is NOT
  *     the stored one: each distinct such subscription is an "orphan"; one that is still live is "orphanStillLive".
- * An orphan that is not live is usually a replaced subscription and is only counted; the dangerous shape is
- * multiLive / orphanStillLive. A capped read (more than MAX_PER_CUSTOMER rows) cannot prove clean and is a finding.
+ * A non-live orphan is usually a replaced subscription, but it is still a finding (it exits 3 and is listed): the
+ * owner reads it, the dangerous shapes are multiLive / orphanStillLive. A capped read (more than MAX_PER_CUSTOMER
+ * rows) cannot prove clean and is a finding too.
  *
  * OWNER-ONLY for a LIVE run. Never run from an implementation session or by a lead: the owner runs it with a
  * per-call approval, a READ-ONLY (restricted, list-only) Stripe key and `railway run`:
@@ -24,13 +25,15 @@
  * Output: tenant ids, counts, and the LAST FOUR characters of Stripe subscription ids. No slug, no name, no customer
  * id, no amount. LIVE and TEST tenants (scripts/lib/test-tenants.cjs) are reported apart.
  *
- * Exit: 0 clean, 3 at least one finding, 2 usage error (no/invalid Stripe key, no database url, bad flag), 1 any
- * other failure (a Stripe error other than "customer not found" stops the run: a silent partial read would read as
- * "none found").
+ * Exit: 0 clean, 3 at least one finding ON EITHER SIDE, 2 usage error (no/invalid Stripe key, no database url, bad
+ * flag), 1 any other failure (a Stripe error other than "customer not found" stops the run: a silent partial read
+ * would read as "none found"). READ THE `LIVE FINDINGS:` LINE, not the exit code: exit 3 also fires on a TEST-only
+ * finding, so a clean LIVE side can still exit 3. The report ends with that line (and `--json` carries `liveFindings`).
+ * An error rethrown from Stripe is scrubbed of the key and cut to the last 4 of every Stripe id it names.
  *
  * SAFETY: `default_transaction_read_only = on` before any other query; `statement_timeout` and `lock_timeout` cap
- * every query; only SELECT appears below; Stripe is reached through two `list` calls and nothing else (a spec pins
- * that no write verb appears); the connection is closed in `finally`.
+ * every query; only SELECT appears below; Stripe is reached through `list` calls and nothing else (a spec pins that
+ * every `stripe.<resource>.<verb>(` call is a read verb); the connection is closed in `finally`.
  */
 import { createRequire } from "module";
 import { realpathSync } from "node:fs";
@@ -130,6 +133,41 @@ export function buildReport(rows) {
     });
   }
   return report;
+}
+
+/**
+ * An error message from Stripe with the key replaced and every Stripe id cut to its last 4 (`cus_…3456`): a
+ * permission or lookup error names ids (the customer, the subscription, RouteFlow's own account) in full.
+ */
+export function scrubStripeError(message, key) {
+  const text = key ? String(message).split(key).join("***") : String(message);
+  return text.replace(
+    /\b(cus|sub|acct|cs|in|pi|pm|seti|si|prod|price|ch|re|evt|txn|src|card|ba|tok)_[A-Za-z0-9_]{6,}/g,
+    (id, prefix) => `${prefix}_…${id.slice(-4)}`,
+  );
+}
+
+/** The report as printed lines (pure): both blocks, then the line the owner reads. */
+export function formatReport(report) {
+  const lines = [];
+  for (const [name, b] of Object.entries(report)) {
+    lines.push(
+      `${name.toUpperCase()}: ${b.tenants} tenant(s) with a Stripe customer: ${b.clean} clean, ${b.findings} finding(s), ${b.customerNotFound} customer not in this Stripe mode`,
+    );
+    if (!b.findings) continue;
+    const k = b.byKind;
+    lines.push(
+      `  multiLive ${k.multiLive}, orphan checkouts ${k.orphanSessions} (still live ${k.orphanStillLive}), no stored subscription ${k.noStoredSub}, capped ${k.capped}`,
+    );
+    for (const i of b.items)
+      lines.push(
+        `  tenant ${i.tenantId}: live ${i.liveSubs} [${i.liveSub4.join(",")}], orphans ${i.orphanSessions} [${i.orphanSub4.join(",")}] (live ${i.orphanStillLive})${i.noStoredSub ? " NO-STORED-SUB" : ""}${i.capped ? " CAPPED" : ""}`,
+      );
+  }
+  lines.push(
+    `LIVE FINDINGS: ${report.live.findings} (read this line: the exit code is 3 on a TEST-only finding too)`,
+  );
+  return lines;
 }
 
 /** 0 clean, 3 at least one finding on either side. */
@@ -252,6 +290,16 @@ export function selfTest() {
     [1791417600, null, null],
     "parseSince",
   );
+  eq(
+    scrubStripeError("No such customer: 'cus_QwErTy123456' (sk_test_abc12345)", "sk_test_abc12345"),
+    "No such customer: 'cus_…3456' (***)",
+    "scrubStripeError",
+  );
+  const tail = formatReport({
+    live: { ...rep.live, findings: 0, items: [] },
+    test: rep.test,
+  }).pop();
+  eq(tail.startsWith("LIVE FINDINGS: 0 "), true, "live findings line");
   return "self-test ok";
 }
 
@@ -289,7 +337,6 @@ async function main() {
 
   const Stripe = require("stripe");
   const stripe = readOnlyStripe(new Stripe(key, { apiVersion: STRIPE_API_VERSION }));
-  const scrub = (s) => String(s).split(key).join("***");
 
   const client = new Client({ connectionString: databaseUrl });
   try {
@@ -326,28 +373,21 @@ async function main() {
         if (e?.code === "resource_missing") {
           rows.push({ tenantId: t.tenantId, slug: t.slug, result: { customerNotFound: true } });
         } else {
-          throw new Error(scrub(e?.message ?? e));
+          throw new Error(scrubStripeError(e?.message ?? e, key));
         }
       }
     }
     const report = buildReport(rows);
-    if (json) console.log(JSON.stringify({ stripeMode: mode, since, ...report }, null, 2));
-    else {
-      for (const [name, b] of Object.entries(report)) {
-        console.log(
-          `${name.toUpperCase()}: ${b.tenants} tenant(s) with a Stripe customer: ${b.clean} clean, ${b.findings} finding(s), ${b.customerNotFound} customer not in this Stripe mode`,
-        );
-        if (b.findings) {
-          const k = b.byKind;
-          console.log(
-            `  multiLive ${k.multiLive}, orphan checkouts ${k.orphanSessions} (still live ${k.orphanStillLive}), no stored subscription ${k.noStoredSub}, capped ${k.capped}`,
-          );
-          for (const i of b.items)
-            console.log(
-              `  tenant ${i.tenantId}: live ${i.liveSubs} [${i.liveSub4.join(",")}], orphans ${i.orphanSessions} [${i.orphanSub4.join(",")}] (live ${i.orphanStillLive})${i.noStoredSub ? " NO-STORED-SUB" : ""}${i.capped ? " CAPPED" : ""}`,
-            );
-        }
-      }
+    if (json) {
+      console.log(
+        JSON.stringify(
+          { stripeMode: mode, since, liveFindings: report.live.findings, ...report },
+          null,
+          2,
+        ),
+      );
+    } else {
+      for (const line of formatReport(report)) console.log(line);
     }
     process.exitCode = exitCodeFor(report);
   } finally {
