@@ -4,6 +4,8 @@
  * the SHIPPED constants (the newest catalog seeds, the registry, the self-serve list) and goes red at that moment, so
  * the LATER row is done in the PR that turns it red, not forgotten.
  */
+import fs from "node:fs";
+import path from "node:path";
 import { V13_ADDON_SEEDS } from "../../prisma/plan-catalog-v13.definitions";
 import { FEATURE_REGISTRY } from "./feature-registry";
 import { SELF_SERVICE_ADDON_SKUS } from "./plan-catalog.constants";
@@ -11,6 +13,20 @@ import { SELF_SERVICE_ADDON_SKUS } from "./plan-catalog.constants";
 const selfServe = new Set<string>(SELF_SERVICE_ADDON_SKUS);
 
 describe("SA-1099 A-8: the dormant gaps in subscribe's target-plan judgement", () => {
+  it("T-0: v13 is the newest plan-catalog definitions file, so T-1 reads the newest add-on seeds", () => {
+    const versions = fs
+      .readdirSync(path.join(__dirname, "../../prisma"))
+      .map((name) => /^plan-catalog-v(\d+)\.definitions\.ts$/.exec(name)?.[1])
+      .filter((v): v is string => v !== undefined)
+      .map(Number);
+    expect(versions).toContain(13); // not vacuous
+    if (Math.max(...versions) !== 13) {
+      throw new Error(
+        "A newer plan-catalog definitions file exists: point T-1 at its add-on seeds (SA-1099 A-8) before this ships.",
+      );
+    }
+  });
+
   it("T-1: no two self-serve flag-granting SKUs grant the same flag", () => {
     const seen = new Map<string, string>();
     const shared: string[] = [];
@@ -26,7 +42,7 @@ describe("SA-1099 A-8: the dormant gaps in subscribe's target-plan judgement", (
     expect(walked).toBeGreaterThan(0); // not vacuous: FORECASTING is the flag-granting self-serve SKU today
     if (shared.length > 0) {
       throw new Error(
-        `Two self-serve add-ons now grant the same flag (${shared.join("; ")}): subscribe's target preview must use the desired add-on set (SA-1099 A-8, note 1) before this ships. The asPlan preview must use the desired add-on set.`,
+        "Two self-serve add-ons now grant the same flag: subscribe's target preview must use the desired add-on set (SA-1099 A-8, note 1) before this ships.",
       );
     }
   });
@@ -37,7 +53,7 @@ describe("SA-1099 A-8: the dormant gaps in subscribe's target-plan judgement", (
     const withRequires = billed.filter((f) => f.requires !== undefined).map((f) => f.key);
     if (withRequires.length > 0) {
       throw new Error(
-        `A self-serve add-on now has a requires (${withRequires.join(", ")}): heldStateRefusal's requires half must judge asPlan (SA-1099 A-8, note 2) before this ships. The requires half must judge asPlan.`,
+        "A self-serve add-on now has a requires: heldStateRefusal's requires half must judge asPlan (SA-1099 A-8, note 2) before this ships.",
       );
     }
   });
