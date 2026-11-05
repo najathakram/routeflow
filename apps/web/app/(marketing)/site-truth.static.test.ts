@@ -92,7 +92,9 @@ describe("public site sentences the code backs", () => {
       "Drivers can’t complete a stop with regulated items. They call the office.",
     );
     expect(page("product")).not.toContain("The office does");
-    expect(page("product")).not.toMatch(/refus/i);
+    expect(page("product")).toContain(
+      "If a store refuses the order, the driver taps Refused and gives a reason. The order shows Refused, and the store gets a note saying so.",
+    );
     expect(page("product")).toContain("Drivers can’t take payment at the door.");
     expect(page("product")).toContain("There’s no proof photo or signature.");
     // "What can a driver do?": finishing a stop is under Can do, never under Can’t do; photo, signature and door payment stay under Can’t do.
@@ -103,10 +105,19 @@ describe("public site sentences the code backs", () => {
     expect(cant).not.toContain("<li>Finish a stop</li>");
     expect(can).toContain("<li>Finish a stop</li>");
     expect(can).toContain("<li>Undo a stop</li>");
+    expect(can).toContain("<li>Record a refusal</li>");
+    expect(cant).not.toContain("<li>Record a refusal</li>");
     expect(cant).toContain("<li>Take a photo or a signature</li>");
     expect(cant).toContain("<li>Take payment at the door</li>");
     expect(page("product")).toContain("drivers start, finish, or skip each stop.");
-    expect(page("product")).toContain("An order on a run is delivered when its stop is completed.");
+    expect(page("product")).toContain(
+      "An order on a run is delivered when its stop is completed, unless the store refused all of it.",
+    );
+    // The Delivered card says it too: the unqualified sentence is a false claim for a refused order.
+    expect(page("product")).toContain(
+      "<h4>Delivered</h4><p>An order on a run is delivered when its stop is completed, unless the store refused all of it. Its invoice unlocks then.</p>",
+    );
+    expect(page("product")).not.toContain("when its stop is completed. Its invoice unlocks then.");
     expect(page("home")).toContain(
       "Drivers see the stops on the web and can start or skip a stop.",
     );
