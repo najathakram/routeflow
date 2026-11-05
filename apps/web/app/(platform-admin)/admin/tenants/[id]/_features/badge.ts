@@ -5,7 +5,13 @@ import type { EffectiveFeature, FeatureBadge, FeatureRegistryRow } from "./types
 // PRESET(term) → NONE maps to badge removed/added/purchased/grandfathered/inherited/off.
 // "grandfathered" is not a distinct FeatureSource — it's an OVERRIDE_GRANT whose
 // detail.kind is the FeatureOverrideKind "GRANDFATHER" (brief A schema §5).
+//
+// FG-1 WP2 (SA-1099 A-2 N1): a row served by the dark-gate courtesy (term "courtesy") reads "courtesy"
+// whatever its source, FIRST, in the same order as `deriveReadout`. A DENY the credit gate serves anyway
+// keeps source OVERRIDE_DENY (the DENY exists and takes effect once the switch is on); it must not read
+// "Removed" next to an On chip.
 export function deriveBadge(feature: Pick<EffectiveFeature, "source" | "detail">): FeatureBadge {
+  if (feature.detail?.term === "courtesy") return "courtesy";
   switch (feature.source) {
     case "OVERRIDE_DENY":
       return "removed";
@@ -14,8 +20,7 @@ export function deriveBadge(feature: Pick<EffectiveFeature, "source" | "detail">
     case "ADDON_SKU":
       return "purchased";
     case "PRESET":
-      // FG-1 WP2: served by the dark-gate courtesy, which is not the plan including it
-      return feature.detail?.term === "courtesy" ? "courtesy" : "inherited";
+      return "inherited";
     case "NONE":
       return "off";
     default:
