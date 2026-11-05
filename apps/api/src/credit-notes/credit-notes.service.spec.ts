@@ -442,6 +442,79 @@ describe("CreditNotesService — P5-13 apply-math + auto-apply", () => {
     service = mod.get(CreditNotesService);
   });
 
+  // B921 (owner rule: no raw server strings): every Apply refusal carries a closed CREDIT_NOTE_* `body.code`
+  // the web copy keys on. A bare-string BadRequest has no code, so the client had to show the server message.
+  describe("applyToInvoice refusals carry a body.code (B921)", () => {
+    const cn = (over: Record<string, unknown> = {}) => ({
+      id: "cn-r1",
+      creditNoteNumber: "CN-2026-0011",
+      amount: 100,
+      amountUsed: 0,
+      status: "ISSUED",
+      customerId: "c1",
+      expiresAt: null,
+      appliedAt: null,
+      appliedToInvoiceId: null,
+      autoApplied: false,
+      ...over,
+    });
+    const inv = (over: Record<string, unknown> = {}) => ({
+      id: "inv-r1",
+      customerId: "c1",
+      total: 50,
+      dueDate: null,
+      status: "SENT",
+      payments: [],
+      ...over,
+    });
+    const refusal = async () => {
+      try {
+        await service.applyToInvoice("cn-r1", "inv-r1");
+      } catch (e) {
+        return e;
+      }
+      throw new Error("expected applyToInvoice to refuse");
+    };
+
+    it("an APPLIED or VOID note is NOT_APPLICABLE", async () => {
+      prisma.creditNote.findUnique.mockResolvedValue(cn({ status: "APPLIED" }));
+      const e = await refusal();
+      expect(e).toBeInstanceOf(BadRequestException);
+      expect(codeOf(e)).toBe(CODES.CREDIT_NOTE_NOT_APPLICABLE);
+    });
+
+    it("an expired note is EXPIRED", async () => {
+      prisma.creditNote.findUnique.mockResolvedValue(
+        cn({ expiresAt: new Date(Date.now() - 1000) }),
+      );
+      expect(codeOf(await refusal())).toBe(CODES.CREDIT_NOTE_EXPIRED);
+    });
+
+    it("an invoice that takes no credit (PAID) is INVOICE_NOT_APPLICABLE", async () => {
+      prisma.creditNote.findUnique.mockResolvedValue(cn());
+      prisma.invoice.findUnique.mockResolvedValue(inv({ status: "PAID" }));
+      expect(codeOf(await refusal())).toBe(CODES.CREDIT_NOTE_INVOICE_NOT_APPLICABLE);
+    });
+
+    it("a note and an invoice of different customers are CUSTOMER_MISMATCH", async () => {
+      prisma.creditNote.findUnique.mockResolvedValue(cn());
+      prisma.invoice.findUnique.mockResolvedValue(inv({ customerId: "c2" }));
+      expect(codeOf(await refusal())).toBe(CODES.CREDIT_NOTE_CUSTOMER_MISMATCH);
+    });
+
+    it("a note with no balance left is NOTHING_TO_APPLY", async () => {
+      prisma.creditNote.findUnique.mockResolvedValue(cn({ amountUsed: 100 }));
+      prisma.invoice.findUnique.mockResolvedValue(inv());
+      expect(codeOf(await refusal())).toBe(CODES.CREDIT_NOTE_NOTHING_TO_APPLY);
+    });
+
+    it("the staff-facing message stays for logs and API callers", async () => {
+      prisma.creditNote.findUnique.mockResolvedValue(cn({ status: "VOID" }));
+      const e = (await refusal()) as BadRequestException;
+      expect(JSON.stringify(e.getResponse())).toContain("not available for application");
+    });
+  });
+
   it("applyToInvoice: partial apply is roundMoney'd, excludes VOID payments from the paid-sum, stays ISSUED, appliedAt stamped", async () => {
     prisma.creditNote.findUnique.mockResolvedValue({
       id: "cn-p1",

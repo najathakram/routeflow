@@ -1055,9 +1055,12 @@ export class CreditNotesService {
           await lockCreditNotes(tx, tenantId, [creditNoteId]);
           const cn = await tx.creditNote.findUnique({ where: { id: creditNoteId } });
           if (!cn || cn.status === "APPLIED" || cn.status === "VOID")
-            throw new BadRequestException("Credit note is not available for application");
+            throw cnBad(
+              API_ERROR_CODES.CREDIT_NOTE_NOT_APPLICABLE,
+              "Credit note is not available for application",
+            );
           if (cn.expiresAt && new Date(cn.expiresAt) <= new Date())
-            throw new BadRequestException("Credit note has expired");
+            throw cnBad(API_ERROR_CODES.CREDIT_NOTE_EXPIRED, "Credit note has expired");
 
           const inv = await tx.invoice.findUnique({
             where: { id: invoiceId },
@@ -1066,17 +1069,22 @@ export class CreditNotesService {
           if (!inv) throw new NotFoundException("Invoice not found");
 
           if (CREDIT_NOT_APPLICABLE.includes(inv.status)) {
-            throw new BadRequestException(
+            throw cnBad(
+              API_ERROR_CODES.CREDIT_NOTE_INVOICE_NOT_APPLICABLE,
               `Cannot apply credit note to invoice with status ${inv.status}`,
             );
           }
           if (cn.customerId !== inv.customerId) {
-            throw new BadRequestException("Credit note and invoice belong to different customers");
+            throw cnBad(
+              API_ERROR_CODES.CREDIT_NOTE_CUSTOMER_MISMATCH,
+              "Credit note and invoice belong to different customers",
+            );
           }
 
           const { applied } = await this.applyCreditInTx(tx, tz, cn, inv, amount);
           if (applied <= 0)
-            throw new BadRequestException(
+            throw cnBad(
+              API_ERROR_CODES.CREDIT_NOTE_NOTHING_TO_APPLY,
               "Credit note has no remaining balance or invoice is fully paid",
             );
           // SA-436: explicit human intent wins, so a manual apply lifts this pair's block.

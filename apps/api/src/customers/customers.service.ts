@@ -401,7 +401,11 @@ export class CustomersService {
     const existingUser = await this.prisma.forTenant().user.findFirst({
       where: { OR: [...(email ? [{ email }] : []), { username: dto.username }] },
     });
-    if (existingUser) throw new BadRequestException("Email or username already taken");
+    if (existingUser)
+      throw new BadRequestException({
+        code: API_ERROR_CODES.CUSTOMER_EMAIL_OR_USERNAME_TAKEN,
+        message: "Email or username already taken",
+      });
 
     // User.email is required + unique per tenant; mint a non-routable internal
     // placeholder when the customer has no email. Customer.email stays null so
@@ -474,7 +478,11 @@ export class CustomersService {
           where: { id: dto.salesAgentId, deletedAt: null },
           select: { id: true },
         });
-        if (!agent) throw new BadRequestException("Unknown sales agent");
+        if (!agent)
+          throw new BadRequestException({
+            code: API_ERROR_CODES.CUSTOMER_SALES_AGENT_UNKNOWN,
+            message: "Unknown sales agent",
+          });
         await tx.agentAssignment.create({
           data: { customerId: customer.id, agentId: agent.id, effectiveFrom: new Date() },
         });
