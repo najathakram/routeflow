@@ -434,15 +434,15 @@ for (const vp of VIEWPORTS) {
 
       const readout = (key: string) =>
         page.locator(`[data-feature-key="${key}"]`).getByTestId("readout");
-      await expect(readout("tobacco_dealer")).toContainText("Off, removed by override");
+      await expect(readout("tobacco_dealer")).toContainText("Off for this business");
       await expect(readout("msrp")).toContainText("On, kept from an earlier plan");
-      await expect(readout("recurring_routes")).toContainText("On, paid add-on");
-      // a plain inherited row has no source chip: exactly one readout, which is its mode or On/Off
+      await expect(readout("recurring_routes")).toContainText("Add-on");
+      // an in-plan row shows exactly one readout (its mode, else the In plan chip)
       await expect(readout("route_optimization")).toHaveCount(1);
       await expect(readout("boxes_pieces_mode")).toContainText("Off");
 
       await page.getByLabel("Show internal").check();
-      await expect(readout("developer_mode")).toContainText("On, added by override");
+      await expect(readout("developer_mode")).toContainText("Set for this business");
     });
 
     test(`${vp.label}px — blocked mode option is disabled with the missing key named`, async ({
@@ -475,6 +475,12 @@ for (const vp of VIEWPORTS) {
         fulfillJson(route, { ok: true }),
       );
       await page.getByRole("button", { name: "Confirm" }).click();
+      // R49: a plan move asks why before it is sent.
+      await page.getByLabel("Why is this business moving?").fill("Customer asked to downsize");
+      await page
+        .getByRole("dialog", { name: /^Move .+ to .+[?]$/ })
+        .getByRole("button", { name: "Change plan" })
+        .click();
       await expect(page.getByRole("heading", { name: "Preview plan change" })).not.toBeVisible();
     });
 

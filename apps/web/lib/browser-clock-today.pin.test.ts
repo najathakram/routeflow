@@ -11,11 +11,10 @@ import * as path from "path";
  * Many remaining entries are legitimate file-name stamps ("orders-2026-10-25.csv"); the rest are listed follow-ups:
  *   - vendor-bills/page.tsx: waits for #3742 (same file);
  *   - buyer licenses: a buyer token cannot read /settings, so it needs a buyer-readable tenant zone first;
- *   - the prefilled payment/scan dates (finance/payments, the two payment modals, ScanInvoiceModal, CompliancePackPanel,
- *     invoices/new issue and due dates): the same class, not in SA-964 §4's ten.
+ *   - the prefilled payment dates (finance/payments, the two payment modals) and invoices/new issue and due dates: the same
+ *     class, not in SA-964 §4's ten. ScanInvoiceModal and CompliancePackPanel use the tenant's day (F14).
  */
 const BASELINE: Record<string, number> = {
-  "app/(dashboard)/compliance/[categoryId]/_components/CompliancePackPanel.tsx": 1,
   "app/(dashboard)/customers/[id]/page.tsx": 3,
   "app/(dashboard)/finance/payments/page.tsx": 1,
   "app/(dashboard)/finance/reports/page.tsx": 1,
@@ -29,7 +28,6 @@ const BASELINE: Record<string, number> = {
   "app/buyer/portal/[seller]/licenses/page.tsx": 2,
   "components/CustomerRecordPaymentModal.tsx": 1,
   "components/RecordSupplierPaymentModal.tsx": 1,
-  "components/ScanInvoiceModal.tsx": 4,
   "lib/api/invoices.ts": 1,
   "lib/export.ts": 1,
   "lib/formatting.ts": 2,

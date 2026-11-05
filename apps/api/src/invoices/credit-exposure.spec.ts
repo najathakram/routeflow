@@ -1016,11 +1016,11 @@ describe("loadCreditExposure (the ONLY reader)", () => {
       );
     });
 
-    it("the classification is the ruling's: backing = open + delivered; non-backing = DRAFT and CANCELLED only", () => {
+    it("the classification is the ruling's: backing = open + delivered; non-backing = DRAFT, CANCELLED and (SA-1101) REFUSED only", () => {
       expect([...BACKING_ORDER_STATUSES].sort()).toEqual(
         ["CONFIRMED", "DELIVERED", "OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED", "PENDING"].sort(),
       );
-      expect([...NON_BACKING_ORDER_STATUSES].sort()).toEqual(["CANCELLED", "DRAFT"]);
+      expect([...NON_BACKING_ORDER_STATUSES].sort()).toEqual(["CANCELLED", "DRAFT", "REFUSED"]);
     });
   });
 });

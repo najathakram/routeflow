@@ -233,6 +233,8 @@ export class InvoicePdfService {
     // (invoices.service.ts's findOneOrThrow, `invoice.hideOriginalPrice`) — rides
     // the PDF payload so a customer-facing document respects it too.
     const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
+    // Owner ruling 2026-11-04: the Per piece column's switch, read once per render. Absent = shown; only "true" hides.
+    const hidePerPiece = (await this.systemConfig.get("invoice.hidePerPiece")) === "true";
 
     const invWithBarcodes = {
       ...inv,
@@ -246,6 +248,7 @@ export class InvoicePdfService {
       creditApplied,
       advanceApplied,
       hideOriginalPrice,
+      hidePerPiece,
     };
 
     let pdfBuffer: Buffer;

@@ -15,6 +15,7 @@ import {
 } from "./feature-registry";
 import { addonGateState } from "./addon-gate-registry";
 import { isDarkFlag, allowsFlag, computeServedFlags } from "./plan-flag-policy";
+import { servedAnswer } from "./served-answer";
 import type { FeatureSource } from "@routeflow/types";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
@@ -165,31 +166,17 @@ export class EntitlementAuthority {
 
     const result = new Map<string, boolean>();
     for (const feature of FEATURE_REGISTRY) {
-      const override = overrides.get(feature.key);
-      if (override === "GRANT") {
-        result.set(feature.key, true);
-        continue;
-      }
-      if (override === "DENY") {
-        result.set(feature.key, false);
-        continue;
-      }
-
-      const isAddonKeyed = feature.gate.via === "RequireAddon" || feature.gate.via === "guard";
-      if (isAddonKeyed) {
-        // SA-540 / Opus review of fa6186b9 (M1): the SAME default-grant rule as computeOldPath and
-        // AddonService. Fails closed when entitlements could not resolve (ent === null).
-        const active =
-          activeAddonSet.has(feature.key) ||
-          (ent !== null && isDefaultGrantedAddon(feature, activeAddonSet, ent.flags, overrides));
-        result.set(
-          feature.key,
-          active || (addonGateState(feature.key) === "dark" && !isAlwaysEnforced),
-        );
-        continue;
-      }
-
-      result.set(feature.key, ent ? allowsFlag(ent, feature.key) : isDarkFlag(feature.key));
+      // The shared served-answer function (SA-1100 §1): the sweep's `old` column and the pilot-ending
+      // rule ask the same function, the latter with one override left out.
+      result.set(
+        feature.key,
+        servedAnswer(feature, {
+          ent,
+          overrides,
+          activeAddonKeys: activeAddonSet,
+          isAlwaysEnforced,
+        }),
+      );
     }
     return result;
   }

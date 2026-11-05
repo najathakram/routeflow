@@ -20,6 +20,7 @@ import { AdminBadge, planLabel, statusLabel } from "../../../_components/AdminBa
 import { usePlanOptions, withCurrentPlan } from "../../../_components/usePlanOptions";
 import { AdminCard } from "../../../_components/AdminCard";
 import { AdminModal } from "../../../_components/AdminModal";
+import { PlanMoveReasonDialog } from "../../../_components/PlanMoveReason";
 import { ActivationAddonChecklist } from "../../../_components/ActivationAddonChecklist";
 import { DisabledHint } from "../../../_components/DisabledHint";
 import {
@@ -2005,8 +2006,26 @@ export default function AdminTenantDetailPage() {
     fetchTenant();
   }, [fetchTenant]);
 
+  // R49: a plan move needs a reason. The plan change (from the preview's Confirm, in either control) waits here
+  // for the reason dialog; Cancel resolves null and nothing is sent.
+  const [moveAsk, setMoveAsk] = React.useState<{
+    plan: string;
+    resolve: (reason: string | null) => void;
+  } | null>(null);
+  const askMoveReason = (plan: string) =>
+    new Promise<string | null>((resolve) => setMoveAsk({ plan, resolve }));
+  const answerMoveAsk = (reason: string | null) => {
+    moveAsk?.resolve(reason);
+    setMoveAsk(null);
+  };
+
   const handleAction = async (action: string, payload?: unknown) => {
     if (!tenant) return;
+    let moveReason: string | null = null;
+    if (action === "change-plan") {
+      moveReason = await askMoveReason((payload as { plan: string }).plan);
+      if (moveReason === null) return;
+    }
     setActionLoading(action);
     setStatusMsg(null);
     try {
@@ -2021,7 +2040,10 @@ export default function AdminTenantDetailPage() {
         }
         case "change-plan": {
           const { plan } = payload as { plan: string };
-          await superAdminClient.patch(`/platform-admin/tenants/${id}/plan`, { plan });
+          await superAdminClient.patch(`/platform-admin/tenants/${id}/plan`, {
+            plan,
+            reason: moveReason,
+          });
           setStatusMsg(`Plan changed to ${planLabel(plan)}.`);
           break;
         }
@@ -2156,6 +2178,14 @@ export default function AdminTenantDetailPage() {
       {activeTab === "config" && <ConfigTab tenant={tenant} />}
       {activeTab === "snapshots" && <ConfigSnapshotsTab tenantId={tenant.id} />}
       {activeTab === "audit" && <AuditLogTab tenantId={tenant.id} />}
+
+      <PlanMoveReasonDialog
+        open={moveAsk !== null}
+        // SA-1100 A-1: one business's money, so the reason dialog is the red confirm and names who.
+        title={`Move ${tenantDisplayName(tenant)} to ${planLabel(moveAsk?.plan ?? "")}?`}
+        onSubmit={answerMoveAsk}
+        onCancel={() => answerMoveAsk(null)}
+      />
     </div>
   );
 }

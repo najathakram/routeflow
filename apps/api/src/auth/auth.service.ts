@@ -589,7 +589,10 @@ export class AuthService {
     // The base URL is resolved strictly server-side from config — accepting a
     // client-supplied URL here would let an attacker exfiltrate reset tokens.
     const urls = this.configService.get<AppConfig["urls"]>("urls")!;
-    const base = surface === "web" ? urls.web : urls.mobileWeb;
+    // 2026-11-04: the old Expo mobile-web build only redirects now, so every surface (native app
+    // included) links to the current website's /reset-password page.
+    void surface;
+    const base = urls.web;
     const resetUrl = `${base}/reset-password?token=${rawToken}`;
 
     // B212-class fix: this used to be fire-and-forget with the result
@@ -644,18 +647,31 @@ export class AuthService {
 
     const newHash = await bcrypt.hash(newPassword, 10);
 
-    // Mark token used and update password in a transaction
-    await this.prisma.$transaction([
-      this.prisma.passwordResetToken.update({
-        where: { tokenHash },
+    // F03 slice 2 (SA-1096): claim the link atomically. The account row is locked FIRST (the writers' order:
+    // users.service takes user rows, then revokes links), so a reset and a deactivate serialize instead of
+    // deadlocking; then the token is claimed with its own predicate, so two concurrent clicks cannot both win.
+    // A non-active or deleted account is refused AFTER the claim commits (a throw here would roll the claim back):
+    // the link is spent either way, so reactivating the account never revives it.
+    const outcome = await this.prisma.$transaction(async (tx) => {
+      const [account] = await tx.$queryRaw<{ status: string; deletedAt: Date | null }[]>`
+        SELECT "status", "deletedAt" FROM "User" WHERE id = ${record.userId} FOR UPDATE`;
+      const claim = await tx.passwordResetToken.updateMany({
+        where: { tokenHash, usedAt: null, expiresAt: { gt: new Date() } },
         data: { usedAt: new Date() },
-      }),
-      this.prisma.user.update({
+      });
+      if (claim.count !== 1) return "refused" as const;
+      if (!account || account.deletedAt || account.status !== "ACTIVE") return "refused" as const;
+      await tx.user.update({
         where: { id: record.userId },
         data: { password: newHash, forcePasswordChange: false },
-      }),
-      this.prisma.refreshToken.deleteMany({ where: { userId: record.userId } }),
-    ]);
+      });
+      await tx.refreshToken.deleteMany({ where: { userId: record.userId } });
+      return "done" as const;
+    });
+    // One answer for a spent link and a link on an account that cannot sign in: nothing about the account.
+    if (outcome === "refused") {
+      throw new BadRequestException("Reset link is invalid or has already been used.");
+    }
 
     return { message: "Password reset successfully. Please log in with your new password." };
   }

@@ -3,7 +3,7 @@ import { Prisma, UserRole } from "@prisma/client";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { saleMovementRow } from "../inventory/sale-movement";
 import { applyStockMovements, type StockMovementRow } from "../inventory/stock-movements";
-import { linePieceQty } from "./line-piece-qty";
+import { sumPiecesByProduct, toPieces, type StockLineUnits } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { lockProductsForStock } from "../common/product-locks";
 import { saleMarkers } from "./backorder-marker";
@@ -51,18 +51,15 @@ export const CUSTOMER_INSUFFICIENT_STOCK_MESSAGE =
 export type StockArgs<F> = F extends (deps: OrderStockDeps, ...rest: infer R) => any ? R : never;
 
 /**
- * B703 (SA-136b): the unit fields `linePieceQty` reads off a line. `currentStock` is counted in
- * PIECES, but a line's `qty` is in its own stored unit — pieces for a box-split or Units line, BOXES
- * for a box-unaware boxed line (boxes/pieces null, no unitLabel). Every stock path converts each line
- * to pieces ONCE, with the line's own `unitsPerBox` snapshot first and the product's live pack only
- * as the fallback, and feeds that one number to both the counter write and the SALE row.
+ * B703 (SA-136b): `currentStock` is counted in PIECES, but a line's `qty` is in its own stored unit —
+ * pieces for a box-split or Units line, BOXES for a box-unaware boxed line (boxes/pieces null, no
+ * unitLabel). Every stock path converts each line to pieces ONCE, with the line's own `unitsPerBox`
+ * snapshot first and the product's live pack only as the fallback, and feeds that one number to both
+ * the counter write and the SALE row. SA-1086: the conversion (`toPieces`), the per-product sum and the
+ * unit-field shape live in `@routeflow/pricing` so the order screens' live stock note reads the same
+ * code; they are re-exported here for the callers that import them from this file.
  */
-export interface StockLineUnits {
-  boxes?: unknown;
-  pieces?: unknown;
-  unitsPerBox?: unknown;
-  unitLabel?: unknown;
-}
+export { toPieces, type StockLineUnits };
 /**
  * `id` (a row that already exists: promotion, template cron, reopen) and `position` feed the SA-714
  * backorder marker only; they never touch the stock arithmetic.
@@ -105,22 +102,6 @@ export const needsLivePack = (li: StockLineUnits) =>
   li.boxes == null &&
   li.pieces == null &&
   !(typeof li.unitLabel === "string" && li.unitLabel.trim() !== "");
-
-/** `qty` (the line's own unit) in pieces, at the column's 3 decimals. Row 635: the ONE conversion the D2 repair uses too. */
-export const toPieces = (li: StockLineUnits, qty: unknown, livePack: unknown): number => {
-  const pack = livePack != null ? Number(livePack) : undefined;
-  return Math.round(linePieceQty({ ...li, boxes: li.boxes ?? null, qty }, pack) * 1000) / 1000;
-};
-
-/** B920: pieces per product, summed ONCE at the column's 3 decimals (first-seen order). */
-const sumPiecesByProduct = (lines: Array<{ productId: string; pieces: number }>) => {
-  const byProduct = new Map<string, number>();
-  for (const li of lines) {
-    const sum = (byProduct.get(li.productId) ?? 0) + li.pieces;
-    byProduct.set(li.productId, Math.round(sum * 1000) / 1000);
-  }
-  return byProduct;
-};
 
 /**
  * B283: the ONE stock-decrement code path for turning a set of order lines

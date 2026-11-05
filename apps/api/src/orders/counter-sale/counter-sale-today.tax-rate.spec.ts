@@ -26,9 +26,15 @@ const rec = (over: Partial<TodayOrderRecord> = {}, rates: string[] = ["0.0825", 
 
 describe("Today's sales row: cashTendered and taxRatePercent (SA-764)", () => {
   it("(d) all lines at 0.0825 -> 8.25, and the stored tendered is returned as a number", () => {
-    const row = toTodaysSaleRow(rec({ counterCashTendered: "50.00" }), 8.25);
+    const o = rec({ counterCashTendered: "50.00" });
+    o.invoices[0].payments = [{ id: "p1", amount: "41.27", method: "CASH", status: "PAID" }] as any;
+    const row = toTodaysSaleRow(o, 8.25);
     expect(row.taxRatePercent).toBe(8.25);
     expect(row.cashTendered).toBe(50);
+  });
+
+  it("row 638: a stored tendered with no cash tender on the sale is not served", () => {
+    expect(toTodaysSaleRow(rec({ counterCashTendered: "50.00" }), 8.25).cashTendered).toBeNull();
   });
 
   it("(d) a null column reads null", () => {

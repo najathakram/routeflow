@@ -51,6 +51,7 @@ function formatDate(d: string) {
 function getStatusVariant(s: string): "success" | "warning" | "danger" | "neutral" {
   if (s === "DELIVERED" || s === "COMPLETED") return "success";
   if (s === "PENDING" || s === "CONFIRMED" || s === "OUT_FOR_DELIVERY") return "warning";
+  if (s === "REFUSED") return "warning";
   if (s === "CANCELLED") return "danger";
   return "neutral";
 }

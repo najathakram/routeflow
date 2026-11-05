@@ -1,4 +1,8 @@
-import { PRODUCT_IMPORT_COLUMNS, CUSTOMER_IMPORT_COLUMNS } from "./import-column-aliases";
+import {
+  PRODUCT_IMPORT_COLUMNS,
+  CUSTOMER_IMPORT_COLUMNS,
+  CUSTOMER_IMPORT_LITERAL_HEADERS,
+} from "./import-column-aliases";
 import { parseImportMoney, parseImportNumber } from "./parse-import-number";
 import { roundUnitCost } from "@routeflow/pricing";
 
@@ -295,7 +299,8 @@ export const PRODUCT_COLUMNS: ColumnDef[] = [
     case "isTobacco":
       return { field, canonical, aliases, parse: boolParser, gate: "tobacco" };
     case "unitsPerBox":
-      return { field, canonical, aliases, parse: intParser(0, MAX_INT) };
+      // SA-946 MUST 6: floor 1, like the DTO's @Min(1); a 0 would unbox the product silently.
+      return { field, canonical, aliases, parse: intParser(1, MAX_INT) };
     case "reorderPoint":
     case "reorderQty":
       // Reorder settings are a flag.forecasting feature (their HTTP writer is gated on it).
@@ -525,6 +530,12 @@ export function resolveColumns(headers: string[], registry: ColumnDef[]): Resolv
   }
 
   return { byField, unknownColumns };
+}
+
+/** The contacts import reads these by exact key (`row["Phone"]`), so only an exact match is not unknown; `phone` or `Billing_City` is still dropped and must still warn. */
+export function withoutCustomerLiteralHeaders(headers: string[]): string[] {
+  const literal = new Set(CUSTOMER_IMPORT_LITERAL_HEADERS);
+  return headers.filter((h) => !literal.has(h));
 }
 
 export interface ParsedRow {

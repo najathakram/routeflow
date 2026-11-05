@@ -14,7 +14,7 @@ describe("Quick Edit pieces-per-box goes through quickPackEdit on save, undo and
     expect(list).toMatch(
       /if \(field === "unitsPerBox"\) \{\s*const pack = quickPackEdit\(product, newVal\);/,
     );
-    expect(list).toMatch(/updateProduct\.mutateAsync\(\{ id: product\.id, \.\.\.pack\.save \}\)/);
+    expect(list).toMatch(/packSave\.mutateAsync\(\{ id: product\.id, \.\.\.pack\.save \}, stock\)/);
     expect(list).toMatch(/oldValue: pack\.undo,\s*newValue: pack\.redo/);
   });
 
@@ -25,7 +25,22 @@ describe("Quick Edit pieces-per-box goes through quickPackEdit on save, undo and
     expect(block.indexOf("toast({ title: pack.message")).toBeGreaterThan(invalid);
     expect(block.indexOf("return false;")).toBeGreaterThan(invalid);
     // order: guard < toast < return false < the one mutateAsync of this branch
-    expect(block.indexOf("return false;")).toBeLessThan(block.indexOf("updateProduct.mutateAsync"));
+    expect(block.indexOf("return false;")).toBeLessThan(block.indexOf("packSave.mutateAsync"));
     expect(list).toMatch(/field="unitsPerBox"\s*type="number"\s*min=\{1\}\s*step=\{1\}/);
+  });
+
+  it("a click on the pack cell stops at the cell: the row click would open the product, and the first-pack question lives on this page", () => {
+    expect(list).toMatch(
+      /<div onClick=\{\(e\) => e\.stopPropagation\(\)\}>\s*<QuickEditCell\s*productId=\{p\.id\}\s*productName=\{p\.name\}\s*field="unitsPerBox"/,
+    );
+  });
+
+  it("W-1 (SA-1093): no Quick Edit cell sits outside a stop, so a click never opens the product", () => {
+    const cells = list.split("<QuickEditCell").slice(0, -1);
+    expect(cells.length).toBeGreaterThanOrEqual(5);
+    const open = cells.filter(
+      (before) => !/onClick=\{\(e\) => e\.stopPropagation\(\)\}>\s*$/.test(before),
+    );
+    expect(open).toEqual([]);
   });
 });

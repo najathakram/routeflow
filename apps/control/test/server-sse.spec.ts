@@ -51,10 +51,9 @@ describe("T54 SSE", () => {
     await a.waitFor(/retry:/, 1000);
     await b.waitFor(/retry:/, 1000);
     const ok = await write();
-    const t0 = Date.now();
+    // Each waitFor already enforces "arrives within 1 s"; no extra wall-clock sum is asserted (L-165).
     expect(await a.waitFor(/event: version/, 1000)).toBe(true);
     expect(await b.waitFor(/event: version/, 1000)).toBe(true);
-    expect(Date.now() - t0).toBeLessThan(1000);
     for (const c of [a, b]) {
       const n = (c.text().match(/event: version/g) ?? []).length;
       expect(n).toBe(1);

@@ -264,7 +264,17 @@ describe("T1.4 admin: the same controls are all there", () => {
   it("/settings/import and /settings/migration render their pages", async () => {
     mockRole = "TENANT_ADMIN";
     const a = renderWithProviders(<SettingsImportPage />);
-    expect(await screen.findByText("Import from Zoho")).toBeInTheDocument();
+    expect(await screen.findByText("Import your data")).toBeInTheDocument();
+    // Invoices, Payments and Expenses name the columns the importer reads.
+    expect(
+      screen.getByText(
+        /Key columns: Invoice Number, Customer Name, Invoice Date, Item Name, Quantity, Item Price, Total/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Key columns: Invoice Number, Amount, Mode, Date/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Key columns: Expense Category, Total, Expense Date/),
+    ).toBeInTheDocument();
     a.unmount();
     renderWithProviders(<MigrationHubPage />);
     expect(screen.queryByText("Only an admin can import data.")).not.toBeInTheDocument();

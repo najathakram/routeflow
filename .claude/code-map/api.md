@@ -108,3 +108,18 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 | [api/landing-2026-11-01-u.md](api/landing-2026-11-01-u.md) | Train u (1d20b7f38d..7b4cc4b972): invoice line reads Family - Variant (invoice-line-name.ts); no migration |
 | [api/landing-2026-11-01-v.md](api/landing-2026-11-01-v.md) | Train v (7b4cc4b972..d3ab3e7eff): Piece row first price creates the unit (SA-1082 PR-1); no migration |
 | [api/landing-2026-11-02-w.md](api/landing-2026-11-02-w.md) | Train w (d3ab3e7eff..96aedaf2c0): Privacy/Terms version constants, Dependabot group bump; no migration |
+| [api/landing-2026-11-02-y.md](api/landing-2026-11-02-y.md) | Train y (96aedaf2c0..904cbbec87): family-move ask, customer identity omit, deliveredQty, delete guard; no migration |
+| [api/landing-2026-11-02-z.md](api/landing-2026-11-02-z.md) | Train z (904cbbec87..93282c147c): inline STORE_CREDIT capture in one transaction, served cash tendered gate; no migration |
+| [api/landing-2026-11-02-ac.md](api/landing-2026-11-02-ac.md) | Train ac (93282c147c..4b2516c9f2): credit-notes summary, live stock read, run detail fallback; no migration |
+| [api/landing-2026-11-02-ad.md](api/landing-2026-11-02-ad.md) | Train ad (4b2516c9f2..9e782a5dfc): order-wide refund bound, inline return priced as charged, dead-source refusal; no migration |
+| [api/landing-2026-11-03-af.md](api/landing-2026-11-03-af.md) | Train af (6e9dae10eb..d6d5c56cb1): read-only corrected-units sheet script + b681 classifier (SA-1088); no migration, no route |
+| [api/landing-2026-11-03-aj.md](api/landing-2026-11-03-aj.md) | Train aj (d6d5c56cb1..9dfd480c30): Stripe payment-state read within the 4-level expand limit + class pin (B1270); no migration |
+| [api/landing-2026-11-03-ak.md](api/landing-2026-11-03-ak.md) | Train ak (9dfd480c30..d833210811): effective-features answer carries override kind, reason, end date (F13, SA-963 A-1); no migration |
+| [api/landing-2026-11-03-al.md](api/landing-2026-11-03-al.md) | Train al (d833210811..1f6f32a341): stop completion idempotent by key + request hash (SA-1098 PR-1; B1034, B870); no migration |
+| [api/landing-2026-11-03-an.md](api/landing-2026-11-03-an.md) | Train am (1f6f32a341..06813470de): stored box-split line edits read the pack it was sold in (SA-1097); "each" plural; no migration |
+| [api/landing-2026-11-03-ao.md](api/landing-2026-11-03-ao.md) | Train an (fedb9c4fa7..f9f1a592ed): delivery plan and stop-key rule move to packages/pricing and types (SA-1098 PR-2a); no migration |
+| [api/landing-2026-11-03-ap.md](api/landing-2026-11-03-ap.md) | Train ao (f9f1a592ed..f10b57ce34): one claim per account link (SA-1096); first pack asks boxes or pieces (W-867); no migration |
+| [api/landing-2026-11-03-aq.md](api/landing-2026-11-03-aq.md) | Train ap (f10b57ce34..c8221d4b46): driver stops on the web, STOP_REOPENED, left-off line review, fold refused (SA-1098 PR-2) |
+| [api/landing-2026-11-04-ar.md](api/landing-2026-11-04-ar.md) | Train ar (c8221d4b46..758c727d58): partial invoice books its ledger (row 721), Undo rebuilds the draft, run settlement writer (PR-S) |
+| [api/landing-2026-11-04-t1.md](api/landing-2026-11-04-t1.md) | Train 1 (758c727d58..8cd7c13e69): import template headers and key columns, funnel first invoice issued and first payment, wall-clock-free specs |
+| [api/landing-2026-11-04-t2.md](api/landing-2026-11-04-t2.md) | Train 2 (8cd7c13e69..ec9765092c): entitlement sweep, pilot warning, coded errors, hide-per-piece, old mobile redirect, digest report |

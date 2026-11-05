@@ -2443,4 +2443,37 @@ describe("EmailService.sendInvoice — per-piece price (SA-1029 E-R1)", () => {
     } as any);
     expect(sendSpy.mock.calls[0][0].html as string).not.toContain("Per piece");
   });
+
+  // Owner ruling 2026-11-04: the tenant's `invoice.hidePerPiece` (passed in as `hidePerPiece`) turns the column off.
+  it("S-1: with hidePerPiece the HTML has no Per piece header or cell, and the Price cell stays", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+    await svc.sendInvoice({ ...base, hidePerPiece: true, items: [packLine] } as any);
+    const html = sendSpy.mock.calls[0][0].html as string;
+    expect(html).not.toContain("Per piece");
+    expect(html).not.toContain("$2.00/pc");
+    expect(html).toContain("$48.00");
+  });
+
+  it("S-2: with hidePerPiece the text line drops the per-piece figure", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+    await svc.sendInvoice({ ...base, hidePerPiece: true, items: [packLine] } as any);
+    const text = sendSpy.mock.calls[0][0].text as string;
+    expect(text).toContain("qty 2 boxes @ $48.00 = $96.00");
+    expect(text).not.toContain("$2.00/pc");
+  });
+
+  it("S-3: hidePerPiece false (or absent) keeps today's column", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+    await svc.sendInvoice({ ...base, hidePerPiece: false, items: [packLine] } as any);
+    expect(sendSpy.mock.calls[0][0].html as string).toContain("Per piece");
+  });
 });

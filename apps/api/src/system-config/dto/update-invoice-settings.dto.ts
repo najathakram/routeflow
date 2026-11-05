@@ -23,6 +23,12 @@ export class UpdateInvoiceSettingsDto {
   @IsBoolean()
   hideBarcodes?: boolean;
 
+  // Owner ruling 2026-11-04: SystemConfig `invoice.hidePerPiece`. When true the Per piece column (SA-1029) is left off the
+  // invoice page, the PDF and the email. Absent = shown, so every business keeps today's look until an admin turns it off.
+  @IsOptional()
+  @IsBoolean()
+  hidePerPiece?: boolean;
+
   // WP-D1: tenant-wide deposit policy. Absent/0 = no tenant deposit default (a
   // customer's own defaultDepositPercent, or no deposit at all, still applies via
   // InvoicesService.resolveDefaultTerms's effectiveDepositPercent resolution). Send 0 to clear: null is refused (652).

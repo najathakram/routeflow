@@ -105,6 +105,7 @@ const TABLE: Record<string, Row> = {
     "tracked-categories/tracked-categories.service.ts",
     "TrackedCategoriesService.unassignProducts",
   )]: X("only clears the column (null) on tenant-scoped products"),
+  [f("orders/deliver-again.ts", "deliverAgainInTx")]: X("only clears the run link (null)"),
   [f("orders/testing/units-fold-db-harness.ts", "seedFoldTenant")]: X(
     "test-only seeding fixture of the D3 units-fold DB specs (orders/testing, imported only by *.db.spec.ts): every customer, product and category id it stores comes from rows it just created in its own throwaway qa-ufold-* tenant",
   ),

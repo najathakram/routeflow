@@ -22,6 +22,7 @@ import {
 
 const ALL_VIEWS: TrackingView[] = [
   { kind: "cancelled" },
+  { kind: "refused" },
   { kind: "delivered", deliveredAt: "2026-09-24T18:14:00.000Z" },
   { kind: "delivered", deliveredAt: null },
   { kind: "unscheduled" },
@@ -63,6 +64,23 @@ describe("describeTrackingView", () => {
     expect(
       describeTrackingView({ kind: "on-the-way", stopsAhead: 3, driverName: "Sam", window: null }),
     ).toEqual({ headline: "3 stops before you", detail: "Sam is on the way." });
+  });
+
+  it("refused (SA-1101): its own state before DELIVERED, with the spec words and never the word delivered as a status", () => {
+    expect(
+      deriveTrackingView({
+        status: "REFUSED",
+        deliveredAt: "2026-09-24T18:14:00.000Z",
+        tracking: null,
+      }),
+    ).toEqual({
+      kind: "refused",
+    });
+    expect(TRACKING_PILL_LABEL.refused).toBe("Refused");
+    expect(describeTrackingView({ kind: "refused" })).toEqual({
+      headline: "Refused at delivery",
+      detail: "Your order was refused at delivery. Contact us if this is wrong.",
+    });
   });
 
   it("delivered names the delivery time when known, else a plain line", () => {

@@ -27,10 +27,6 @@
     "count": 1,
     "why": "B986-8 the rest: per-surface raw message read, pending"
   },
-  "app/(dashboard)/credit-notes/[id]/page.tsx": {
-    "count": 1,
-    "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending (found by the AST scan: a read split across lines that the text scanner missed)"
-  },
   "app/(dashboard)/customers/[id]/page.tsx": {
     "count": 8,
     "why": "B986-7 orders + customers: per-surface raw message read, pending"
@@ -215,14 +211,6 @@
   "app/(dashboard)/vendor-bills/page.tsx": {
     "count": 2,
     "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
-  },
-  "app/(marketing)/components/demo-scheduler.tsx": {
-    "count": 1,
-    "why": "B986-3 settings + auth: per-surface raw message read, pending"
-  },
-  "app/(marketing)/lib/demo-booking.ts": {
-    "count": 1,
-    "why": "B986-3 settings + auth: per-surface raw message read, pending"
   },
   "app/(platform-admin)/admin/audit-logs/page.tsx": {
     "count": 1,

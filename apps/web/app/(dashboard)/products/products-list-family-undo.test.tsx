@@ -158,7 +158,6 @@ describe("SA-1082 A-5: Undo and Redo on a family ask", () => {
   it("VM-16: Redo, Move: the save takes the family forward with the variant's id", async () => {
     const user = userEvent.setup();
     await openList(user);
-    // The bar leaves with the last Undo, so Redo needs an earlier edit under it.
     mockSave.mockResolvedValue({ id: "p2" });
     await typeTier(user, /Acme Lime Soda/, "11.00", "11.5");
     await screen.findByTitle("Undo last change");

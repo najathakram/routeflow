@@ -53,13 +53,9 @@ export interface PackSizePromptProps {
    */
   unitPrice?: number | null;
   /**
-   * The product's on-hand quantity, when this is an EXISTING product. Setting
-   * `unitsPerBox` RE-DENOMINATES stored numbers rather than converting them:
-   * the codebase reads `currentStock` as base units and `averageCost` as
-   * per-piece once a product is boxed (see `costPerSellingUnit`). So a row
-   * holding 50 CASES becomes 50 pieces, and an $8.00 case cost reads as
-   * $8.00 per piece. Pass this so the prompt can say so out loud; omit it on
-   * a create form, where there is nothing yet to re-denominate.
+   * The product's on-hand quantity, when this is an EXISTING product. Stock reads as pieces and cost as per-piece
+   * once a product is boxed (see `costPerSellingUnit`), so the save asks what this number was counted in (SA-961 R1).
+   * Pass this so the prompt can say so; omit it on a create form, where there is nothing to ask about.
    */
   currentStock?: number | null;
   /** Called with the operator-confirmed pack size; write it into your own draft/mutation. */
@@ -187,15 +183,10 @@ export function PackSizePrompt({
           </p>
         )}
         {(currentStock ?? 0) > 0 && (
-          // Setting a pack size RE-DENOMINATES rather than converts: the stored
-          // on-hand number starts being read as pieces, and the stored cost as
-          // per-piece. If this product's stock was counted in cases, both become
-          // wrong by the pack size. Say it plainly here — the operator is the
-          // only one who knows which unit that 50 was counted in.
+          // The operator is the only one who knows which unit that 50 was counted in.
           <p className="mt-1 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
-            This product already holds <strong>{currentStock}</strong> in stock. Setting a pack size
-            makes that number, and the recorded cost, read as <em>{w.base.lowerOther}</em> — so if
-            it was counted in cases, adjust stock and cost afterwards.
+            This product already holds <strong>{currentStock}</strong> in stock. When you save,
+            we&apos;ll ask whether that number is boxes or pieces.
           </p>
         )}
         <div className="mt-2 flex items-center gap-2">

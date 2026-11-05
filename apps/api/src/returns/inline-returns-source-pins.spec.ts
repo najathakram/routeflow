@@ -55,3 +55,29 @@ describe("lockCustomerInTx is the transaction-scoped xact lock on the caller's o
     }
   });
 });
+
+describe("SA-1090 (1): the standalone capture() composes the mint into its own transaction", () => {
+  const code = read("returns/inline-returns.service.ts");
+  const start = code.indexOf("async capture(");
+  const body = code.slice(start, code.indexOf("private async issueCreditInTx(", start));
+
+  it("a STORE_CREDIT capture goes through captureAndIssueInTx, with the standalone (uncapped) intent", () => {
+    expect(start).toBeGreaterThan(-1);
+    expect(body).toContain(
+      "this.captureAndIssueInTx(tx, dto, user, { capIntentToOrderBalance: false })",
+    );
+  });
+
+  it("the capture transaction carries the 15 s budget and maps the retryable failures to refundBusy()", () => {
+    expect(body).toContain("INLINE_CAPTURE_TX_TIMEOUT_MS");
+    expect(code).toContain("INLINE_CAPTURE_TX_TIMEOUT_MS = 15_000");
+    for (const helper of [
+      "isTransactionExpired(err)",
+      "isLockUnavailableError(err)",
+      "txConflictState(err)",
+      "refundBusy()",
+    ]) {
+      expect(body).toContain(helper);
+    }
+  });
+});

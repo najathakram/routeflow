@@ -28,6 +28,20 @@ export interface CreditLimitCheckDeps {
 }
 
 /**
+ * SA-1099 §2 — the ONE pure rule for "does the credit check run": always, unless the
+ * PLAN_FLAG_ENFORCEMENT switch is exactly "on" (release toggle, review by 2027-01-31); only then
+ * does the tenant's `flag.credit_limits` decide. A pure function of the switch VALUE (no env read
+ * here) so the entitlement sweep's `old` column shares it with `isCreditLimitCheckEnabled`.
+ */
+export function creditLimitCheckApplies(
+  switchValue: string | undefined,
+  tenantHasFlag: boolean,
+): boolean {
+  if ((switchValue ?? "off") !== "on") return true;
+  return tenantHasFlag;
+}
+
+/**
  * WP3: resolves whether the credit-limit check applies to this tenant.
  *
  * MUST be called BEFORE opening an interactive transaction (pool-starvation
@@ -44,13 +58,16 @@ export interface CreditLimitCheckDeps {
  * request cleanly; this call site cannot.)
  */
 export async function isCreditLimitCheckEnabled(deps: CreditLimitCheckDeps): Promise<boolean> {
-  // Release toggle (review by 2027-01-31): plan-flag enforcement ships dark.
-  // "on" = enforce; anything else = legacy behavior (always check).
-  if ((process.env.PLAN_FLAG_ENFORCEMENT ?? "off") !== "on") return true;
+  const switchValue = process.env.PLAN_FLAG_ENFORCEMENT;
+  // Not "on": the rule answers true whatever the flag, so no tenant read is needed.
+  if (creditLimitCheckApplies(switchValue, false)) return true;
   const tenantId = deps.prisma.getTenantId();
   if (!tenantId) return true;
   try {
-    return await deps.entitlements.hasFlag(tenantId, "flag.credit_limits");
+    return creditLimitCheckApplies(
+      switchValue,
+      await deps.entitlements.hasFlag(tenantId, "flag.credit_limits"),
+    );
   } catch (err) {
     deps.logger.error(
       `Entitlement resolution failed for tenant ${tenantId}; running the credit check (legacy)`,

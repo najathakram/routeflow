@@ -74,10 +74,18 @@ export class RouteRealtime {
     runId: string,
     stop: { id: string; customerId: string | null; orders: RouteOrderRef[] },
     autoCompleted: boolean,
+    // SA-1101: what the close made each order (stop-outcome.ts); absent = every flipped order is DELIVERED.
+    outcomes?: ReadonlyMap<string, "DELIVERED" | "REFUSED">,
   ): Promise<void> {
     const orders = stop.orders;
     const flipped = orders.filter((o) => !NON_ROUTABLE_ORDER_STATUSES.includes(o.status));
-    this.announceStatuses(runId, flipped, OrderStatus.DELIVERED);
+    const refused = flipped.filter((o) => outcomes?.get(o.id) === "REFUSED");
+    this.announceStatuses(
+      runId,
+      flipped.filter((o) => !refused.includes(o)),
+      OrderStatus.DELIVERED,
+    );
+    this.announceStatuses(runId, refused, OrderStatus.REFUSED);
 
     try {
       this.gateway.emitStopCompleted(this.prisma.getTenantId(), {

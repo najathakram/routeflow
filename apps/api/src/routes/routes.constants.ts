@@ -1,4 +1,5 @@
 import { InvoiceStatus, OrderStatus } from "@prisma/client";
+import { TERMINAL_ORDER_STATUSES } from "../common/terminal-order-statuses";
 
 // F11 (B129 / B211): the `resolutionReason` stamped on a ChangeRequest that a
 // run-terminal release declined. Exported so a UI/report can recognise a
@@ -131,12 +132,11 @@ export const RUN_STOP_INCLUDE = {
 } as const;
 
 /**
- * Orders the dispatch sweep must never attach and a stop completion must never flip to DELIVERED:
- * a DRAFT is not yet a commitment (TripsService.TRIP_ELIGIBLE_STATUSES already excludes it), and
- * DELIVERED/CANCELLED are terminal.
+ * Orders the dispatch sweep must never attach and a stop completion must never flip to DELIVERED or REFUSED:
+ * a DRAFT is not yet a commitment (TripsService.TRIP_ELIGIBLE_STATUSES already excludes it), and the terminal
+ * statuses (DELIVERED, REFUSED, CANCELLED; SA-1101) are done.
  */
 export const NON_ROUTABLE_ORDER_STATUSES: OrderStatus[] = [
   OrderStatus.DRAFT,
-  OrderStatus.DELIVERED,
-  OrderStatus.CANCELLED,
+  ...TERMINAL_ORDER_STATUSES,
 ];

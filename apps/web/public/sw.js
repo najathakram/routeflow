@@ -1,7 +1,9 @@
 // RouteFlow service worker — enables "Add to Home Screen" on Chrome/Edge/Android.
-// Strategy: network-first for pages and API; cache-first for static assets.
+// Strategy: network-first for pages, API and the marketing site's files under /site/ (fixed names that change on
+// every deploy, so a cached copy would outlive the page that uses it); cache-first for the app's other static assets.
+// Bump CACHE_VERSION to drop everything stored so far: v4 removes the /site/ copies v3 kept across deploys.
 
-const CACHE_VERSION = "routeflow-v3";
+const CACHE_VERSION = "routeflow-v4";
 const STATIC_EXTENSIONS = [".js", ".css", ".woff2", ".woff", ".ttf", ".png", ".svg", ".ico"];
 
 self.addEventListener("install", () => {
@@ -35,8 +37,24 @@ self.addEventListener("fetch", (event) => {
   }
 
   const isStaticAsset = STATIC_EXTENSIONS.some((ext) => url.pathname.endsWith(ext));
+  const isMarketingFile = url.pathname.startsWith("/site/");
 
-  if (isStaticAsset) {
+  if (isStaticAsset && isMarketingFile) {
+    // Network-first: the cache is only an offline fallback, never a way to serve an old deploy
+    event.respondWith(
+      caches.open(CACHE_VERSION).then(async (cache) => {
+        try {
+          const response = await fetch(request);
+          if (response.ok) cache.put(request, response.clone());
+          return response;
+        } catch (err) {
+          const cached = await cache.match(request);
+          if (cached) return cached;
+          throw err;
+        }
+      }),
+    );
+  } else if (isStaticAsset) {
     // Cache-first: static assets change rarely
     event.respondWith(
       caches.open(CACHE_VERSION).then(async (cache) => {

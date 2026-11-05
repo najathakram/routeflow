@@ -46,6 +46,7 @@ const ORDER_STATUS_EMAIL_EVENTS = new Set<NotificationEvent>([
   NotificationEvent.SHIPMENT_TRACKING_ADDED,
   NotificationEvent.READY_FOR_PICKUP,
   NotificationEvent.DELIVERED,
+  NotificationEvent.ORDER_REFUSED, // SA-1101: the buyer's opt-out covers the refused notice like DELIVERED
   NotificationEvent.CANCELLED,
   NotificationEvent.ORDER_CHANGED_AT_DOOR,
 ]);

@@ -97,6 +97,7 @@ import * as compliance from "./customer-compliance-input";
 // gate applies it synchronously rather than waiting for the cron to run.
 import { GRACE_DAYS } from "../billing/plan-catalog.constants";
 import { portalInviteEmailHtml } from "./portal-invite-email";
+import { revokeUserLinkTokens } from "../auth/link-token-revocation";
 import { buildCustomersCsv } from "./customers-csv";
 import { API_ERROR_CODES, PLAN_GATE_FLAG_KEYS } from "../common/api-error-codes";
 import { assertProductIdNotFamily } from "../products/sellable-lines";
@@ -400,7 +401,11 @@ export class CustomersService {
     const existingUser = await this.prisma.forTenant().user.findFirst({
       where: { OR: [...(email ? [{ email }] : []), { username: dto.username }] },
     });
-    if (existingUser) throw new BadRequestException("Email or username already taken");
+    if (existingUser)
+      throw new BadRequestException({
+        code: API_ERROR_CODES.CUSTOMER_EMAIL_OR_USERNAME_TAKEN,
+        message: "Email or username already taken",
+      });
 
     // User.email is required + unique per tenant; mint a non-routable internal
     // placeholder when the customer has no email. Customer.email stays null so
@@ -473,7 +478,11 @@ export class CustomersService {
           where: { id: dto.salesAgentId, deletedAt: null },
           select: { id: true },
         });
-        if (!agent) throw new BadRequestException("Unknown sales agent");
+        if (!agent)
+          throw new BadRequestException({
+            code: API_ERROR_CODES.CUSTOMER_SALES_AGENT_UNKNOWN,
+            message: "Unknown sales agent",
+          });
         await tx.agentAssignment.create({
           data: { customerId: customer.id, agentId: agent.id, effectiveFrom: new Date() },
         });
@@ -687,10 +696,15 @@ export class CustomersService {
       throw new ConflictException("Restore the customer first");
     }
     if (dto.status !== "ACTIVE") assertNotWalkIn(customer);
-    return this.prisma.forTenant().user.update({
-      where: { id: customer.userId },
-      data: { status: dto.status },
-      select: { id: true, status: true },
+    // F03 slice 2 (SA-1096): deactivating a customer's login burns its live reset/verify links, same transaction.
+    return this.prisma.tenantTransaction(async (tx) => {
+      const updated = await tx.user.update({
+        where: { id: customer.userId },
+        data: { status: dto.status },
+        select: { id: true, status: true },
+      });
+      if (dto.status !== "ACTIVE") await revokeUserLinkTokens(tx, customer.userId);
+      return updated;
     });
   }
 
@@ -2066,6 +2080,7 @@ export class CustomersService {
             // it, so nulling it here made restore lossy for no gain.
           },
         });
+        await revokeUserLinkTokens(tx, customer.userId); // F03 slice 2 (SA-1096)
       });
       return { success: true, softDeleted: true };
     }

@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
-import { IsNumber, IsOptional, Min, ValidateIf } from "class-validator";
+import { IsInt, IsNumber, IsOptional, Min, ValidateIf } from "class-validator";
 
 /**
  * Edit the CURRENT (latest published) PlanVersion's catalog price for one plan
@@ -20,4 +20,16 @@ export class UpdatePlanPricesDto {
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   annual?: number | null;
+
+  /**
+   * SA-1100 §2: how many businesses the admin confirmed this edit re-prices (the `affected` of the price-impact
+   * read). The server counts again from the same selection BEFORE any write and answers 409
+   * PLAN_PRICE_IMPACT_CHANGED if the number moved. Required: the only client is the platform-admin plans page.
+   */
+  @ApiProperty({
+    description: "The count of businesses the admin confirmed (price-impact affected).",
+  })
+  @IsInt()
+  @Min(0)
+  expectedAffected: number;
 }

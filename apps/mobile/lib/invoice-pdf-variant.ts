@@ -5,6 +5,8 @@
  * (pricing.ts-style triple mirror). No RN import so it stays pure + Jest-testable.
  */
 
+import { isPostDeliveryOrderStatus } from "@routeflow/types/api/enums";
+
 /** DRAFT = pre-delivery proforma; FINAL = issued invoice. */
 export type InvoicePdfVariant = "draft" | "final";
 
@@ -22,6 +24,7 @@ export function deriveInvoiceVariant(inv: {
 }): InvoicePdfVariant {
   if (inv.pdfVariant === "draft" || inv.pdfVariant === "final") return inv.pdfVariant;
   if (inv.status !== "DRAFT") return "final";
-  if (inv.order?.status === "DELIVERED") return "final";
+  // SA-1101: REFUSED is post-delivery too (the $0 draft is final).
+  if (isPostDeliveryOrderStatus(inv.order?.status)) return "final";
   return "draft";
 }

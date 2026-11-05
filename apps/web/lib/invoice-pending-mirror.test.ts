@@ -13,6 +13,13 @@ describe("isPendingMirrorInvoice", () => {
     expect(isPendingMirrorInvoice({ ...draft, order: { status: "DELIVERED" } })).toBe(false);
   });
 
+  // SA-1101 P: a refused order is post-delivery, so its $0 draft is not a pending mirror (it would be re-mirrored at the full amount).
+  it("a REFUSED order's draft is not a pending mirror, like a delivered or partly delivered one", () => {
+    for (const status of ["REFUSED", "DELIVERED", "PARTIALLY_DELIVERED"]) {
+      expect(isPendingMirrorInvoice({ ...draft, order: { status } })).toBe(false);
+    }
+  });
+
   it("the server's pendingMirror wins: a shipped carrier order's draft is NOT a mirror", () => {
     expect(isPendingMirrorInvoice({ ...draft, pendingMirror: false })).toBe(false);
   });

@@ -283,7 +283,7 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
           id: { in: ["B", "C"] },
           routeRunStopId: { in: ["s2", "s3"] },
           routeRunStop: { status: { not: "COMPLETED" } },
-          status: { notIn: ["DELIVERED", "CANCELLED"] },
+          status: { notIn: ["DELIVERED", "REFUSED", "CANCELLED"] },
         },
         data: { routeRunId: null, routeRunStopId: null },
       });
@@ -293,7 +293,7 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
           id: { in: ["B", "C"] },
           routeRunStopId: { in: ["s2", "s3"] },
           routeRunStop: { status: { not: "COMPLETED" } },
-          status: { notIn: ["DELIVERED", "CANCELLED"] },
+          status: { notIn: ["DELIVERED", "REFUSED", "CANCELLED"] },
         },
         select: { id: true },
       });
@@ -327,7 +327,7 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
           id: { in: ["B", "C"] },
           routeRunStopId: { in: ["s2", "s3"] },
           routeRunStop: { status: { not: "COMPLETED" } },
-          status: { notIn: ["DELIVERED", "CANCELLED"] },
+          status: { notIn: ["DELIVERED", "REFUSED", "CANCELLED"] },
         },
         data: { routeRunId: null, routeRunStopId: null },
       });
@@ -645,6 +645,86 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
         expect.objectContaining({ where: expect.objectContaining({ customerId: { in: ["c2"] } }) }),
       );
     });
+
+    // B756: the fallback must not show a customer's DELIVERED history as if it were on the run.
+    // The fake table answers the `status` filter the service emits, so only the filter decides the rows.
+    it("T7c — REG-B756: the live-run fallback leaves out the customer's DELIVERED and CANCELLED orders, as the packing list does", async () => {
+      const table = [
+        { id: "open-1", customerId: "c2", status: "CONFIRMED", lineItems: [] as any[] },
+        { id: "done-1", customerId: "c2", status: "DELIVERED", lineItems: [] as any[] },
+        { id: "gone-1", customerId: "c2", status: "CANCELLED", lineItems: [] as any[] },
+      ];
+      prisma.order.findMany.mockImplementation(async ({ where }: any) =>
+        table.filter(
+          (o) =>
+            where.customerId.in.includes(o.customerId) &&
+            !(where.status?.notIn ?? []).includes(o.status),
+        ),
+      );
+      prisma.routeRun.findUnique.mockResolvedValue({
+        ...RUN_FIXTURE,
+        status: "IN_PROGRESS",
+        route: { id: "route-1", kind: "SCHEDULED" },
+        stops: [
+          {
+            id: "s2",
+            stopNumber: 1,
+            customerId: "c2",
+            status: "PENDING",
+            orders: [] as any[],
+            customer: { id: "c2" },
+            customerAddress: null as any,
+            routeStop: null as any,
+            deliveryMutations: [] as any[],
+          },
+        ],
+      });
+      prisma.customerAddress.findMany.mockResolvedValue([]);
+
+      const result: any = await service.findOneRun("run-1");
+
+      expect(result.stops[0].orders.map((o: any) => o.id)).toEqual(["open-1"]);
+    });
+
+    // T7d: the same filter must not reach a FINISHED legacy run (COMPLETED, every stop COMPLETED, no order ever linked):
+    // that is the shape the fallback exists for, and the delivered order is what the run delivered.
+    it("T7d — REG-B756: a COMPLETED legacy run keeps the customer's DELIVERED orders; only CANCELLED stays out", async () => {
+      const table = [
+        { id: "open-1", customerId: "c2", status: "CONFIRMED", lineItems: [] as any[] },
+        { id: "done-1", customerId: "c2", status: "DELIVERED", lineItems: [] as any[] },
+        { id: "gone-1", customerId: "c2", status: "CANCELLED", lineItems: [] as any[] },
+      ];
+      prisma.order.findMany.mockImplementation(async ({ where }: any) =>
+        table.filter(
+          (o) =>
+            where.customerId.in.includes(o.customerId) &&
+            !(where.status?.notIn ?? []).includes(o.status),
+        ),
+      );
+      prisma.routeRun.findUnique.mockResolvedValue({
+        ...RUN_FIXTURE,
+        status: "COMPLETED",
+        route: { id: "route-1", kind: "SCHEDULED" },
+        stops: [
+          {
+            id: "s2",
+            stopNumber: 1,
+            customerId: "c2",
+            status: "COMPLETED",
+            orders: [] as any[],
+            customer: { id: "c2" },
+            customerAddress: null as any,
+            routeStop: null as any,
+            deliveryMutations: [] as any[],
+          },
+        ],
+      });
+      prisma.customerAddress.findMany.mockResolvedValue([]);
+
+      const result: any = await service.findOneRun("run-1");
+
+      expect(result.stops[0].orders.map((o: any) => o.id)).toEqual(["open-1", "done-1"]);
+    });
   });
 
   // ─── R6 / REG-B211 — the COMPLETED half, at all three entry points ───────
@@ -674,7 +754,7 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
           id: { in: ["B"] },
           routeRunStopId: { in: ["s3"] },
           routeRunStop: { status: { not: "COMPLETED" } },
-          status: { notIn: ["DELIVERED", "CANCELLED"] },
+          status: { notIn: ["DELIVERED", "REFUSED", "CANCELLED"] },
         },
         data: { routeRunId: null, routeRunStopId: null },
       });
@@ -720,14 +800,14 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
           id: { in: ["C"] },
           routeRunStopId: { in: ["s3"] },
           routeRunStop: { status: { not: "COMPLETED" } },
-          status: { notIn: ["DELIVERED", "CANCELLED"] },
+          status: { notIn: ["DELIVERED", "REFUSED", "CANCELLED"] },
         },
         data: { routeRunId: null, routeRunStopId: null },
       });
       // Control — the pre-existing DELIVERED flip still fires, proving the
       // fixture actually completed the stop.
       expect(tx.order.updateMany).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { status: "DELIVERED" } }),
+        expect.objectContaining({ data: { status: "DELIVERED", deliveredAt: expect.any(Date) } }),
       );
     });
   });
@@ -765,7 +845,7 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
           id: { in: ["C"] },
           routeRunStopId: { in: ["s3"] },
           routeRunStop: { status: { not: "COMPLETED" } },
-          status: { notIn: ["DELIVERED", "CANCELLED"] },
+          status: { notIn: ["DELIVERED", "REFUSED", "CANCELLED"] },
         },
         data: { routeRunId: null, routeRunStopId: null },
       });
@@ -954,7 +1034,7 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
           id: { in: [] },
           routeRunStopId: { in: ["s2"] },
           routeRunStop: { status: { not: "COMPLETED" } },
-          status: { notIn: ["DELIVERED", "CANCELLED"] },
+          status: { notIn: ["DELIVERED", "REFUSED", "CANCELLED"] },
         },
         data: { routeRunId: null, routeRunStopId: null },
       });

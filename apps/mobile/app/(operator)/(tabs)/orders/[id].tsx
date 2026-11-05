@@ -116,6 +116,7 @@ import {
 import { statusActions, type StatusAction } from "../../../../lib/order-actions";
 import { useStaffFulfilment, useTenantFeatures } from "../../../../lib/tenant-features";
 import { COUNTER_COPY } from "@routeflow/types/counter-copy";
+import { isTerminalOrderStatus } from "@routeflow/types/api/enums";
 import { useRecordReturn } from "../../../../hooks/useRecordReturn";
 
 function formatCurrency(n: number | string | undefined): string {
@@ -140,6 +141,8 @@ function statusPill(status: string): {
       return { variant: "orange", label: "Partial delivery" };
     case "DELIVERED":
       return { variant: "green", label: "Delivered" };
+    case "REFUSED":
+      return { variant: "orange", label: "Refused" };
     case "CANCELLED":
       return { variant: "red", label: "Cancelled" };
     default:
@@ -275,7 +278,7 @@ export default function OrderDetailScreen() {
   // (incl. OUT_FOR_DELIVERY / DELIVERED); only CANCELLED closes it. Fall back to a
   // non-cancelled check for older API responses that don't send editWindow.
   const canEdit = order.editWindow?.editable ?? order.status !== "CANCELLED";
-  const isTerminal = order.status === "DELIVERED" || order.status === "CANCELLED";
+  const isTerminal = isTerminalOrderStatus(order.status);
 
   const toastError = (e: unknown, fallback = "Try again.") => {
     // A credit-limit 409 gets the guard modal (real numbers + a way out), not a bare toast.

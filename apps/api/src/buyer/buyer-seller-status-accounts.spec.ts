@@ -58,7 +58,7 @@ describe("buyer account-level link writes follow the seller's workspace status",
         tenant: { name: "Acme Foods", slug: "acme-foods", status: sellerStatus },
       } as any);
       prisma.customerLink.findFirst.mockResolvedValue(null);
-      prisma.customerLink.update.mockResolvedValue({ id: "link-1" } as any);
+      prisma.customerLink.updateMany.mockResolvedValue({ count: 1 } as any);
     };
 
     it.each(["SUSPENDED", "CANCELLED"])(
@@ -68,7 +68,7 @@ describe("buyer account-level link writes follow the seller's workspace status",
         const err: any = await service.acceptInvite("tok", "buyer-1").catch((e) => e);
         expect(err).toBeInstanceOf(ForbiddenException);
         expect(err.getResponse()).toMatchObject({ code: "SELLER_UNAVAILABLE" });
-        expect(prisma.customerLink.update).not.toHaveBeenCalled();
+        expect(prisma.customerLink.updateMany).not.toHaveBeenCalled();
       },
     );
 
@@ -78,7 +78,7 @@ describe("buyer account-level link writes follow the seller's workspace status",
       const err: any = await service.acceptInvite("tok", "buyer-1").catch((e) => e);
       expect(err).toBeInstanceOf(ForbiddenException);
       expect(err.getResponse()).toMatchObject({ code: "SELLER_UNAVAILABLE" });
-      expect(prisma.customerLink.update).not.toHaveBeenCalled();
+      expect(prisma.customerLink.updateMany).not.toHaveBeenCalled();
     });
 
     it("READ_ONLY seller + gate dark (the explicit rollback): accepted, and one would-deny line is logged", async () => {
@@ -87,7 +87,7 @@ describe("buyer account-level link writes follow the seller's workspace status",
       await expect(service.acceptInvite("tok", "buyer-1")).resolves.toMatchObject({
         tenantSlug: "acme-foods",
       });
-      expect(prisma.customerLink.update).toHaveBeenCalledTimes(1);
+      expect(prisma.customerLink.updateMany).toHaveBeenCalledTimes(1);
       expect(wouldDeny()).toHaveLength(1);
       expect(wouldDeny()[0]).toContain("seller=tn-1");
     });
@@ -96,7 +96,7 @@ describe("buyer account-level link writes follow the seller's workspace status",
       process.env.SELLER_READ_ONLY_BUYER_GATE = "enforced";
       setup(status);
       await service.acceptInvite("tok", "buyer-1");
-      expect(prisma.customerLink.update).toHaveBeenCalledTimes(1);
+      expect(prisma.customerLink.updateMany).toHaveBeenCalledTimes(1);
       expect(wouldDeny()).toHaveLength(0);
     });
   });

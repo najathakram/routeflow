@@ -158,8 +158,8 @@ const LEAVES = A(
 
 const TABLE: Record<string, Row> = {
   // GATED: the buyer (or the buyer's sign-in) links itself to a seller.
-  "auth/google-oauth.service.ts::acceptInviteToken::update#0": G,
-  "buyer/buyer.service.ts::acceptInvite::update#0": G,
+  "auth/google-oauth.service.ts::acceptInviteToken::updateMany#0": G,
+  "buyer/buyer.service.ts::acceptInvite::updateMany#0": G,
   "buyer/buyer.service.ts::requestSeller::upsert#0": G,
   "buyer/buyer.service.ts::requestSeller::update#0": G,
   "buyer/buyer.service.ts::requestSeller::upsert#1": G,

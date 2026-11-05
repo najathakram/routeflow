@@ -13,6 +13,20 @@ jest.mock("next/link", () => ({
 const mockPatch = jest.fn();
 const mockDelete = jest.fn();
 let mockStatus = "TRIAL";
+let mockExtraTenant = false;
+
+const mockTenantRow = (id: string, slug: string, name: string) => ({
+  id,
+  slug,
+  name,
+  status: mockStatus,
+  plan: "STARTER",
+  planKey: "STARTER",
+  trialEndsAt: null,
+  businessName: name,
+  counts: { users: 1, customers: 0, orders: 0 },
+  createdAt: "2026-01-01T00:00:00.000Z",
+});
 
 jest.mock("@/lib/admin-api", () => ({
   superAdminClient: {
@@ -20,18 +34,8 @@ jest.mock("@/lib/admin-api", () => ({
       Promise.resolve({
         data: {
           data: [
-            {
-              id: "t-1",
-              slug: "acme",
-              name: "Acme",
-              status: mockStatus,
-              plan: "STARTER",
-              planKey: "STARTER",
-              trialEndsAt: null,
-              businessName: "Acme",
-              counts: { users: 1, customers: 0, orders: 0 },
-              createdAt: "2026-01-01T00:00:00.000Z",
-            },
+            mockTenantRow("t-1", "acme", "Acme"),
+            ...(mockExtraTenant ? [mockTenantRow("t-2", "bravo", "Bravo")] : []),
           ],
           meta: { total: 1, page: 1, limit: 50, pages: 1, deletedCount: 0 },
         },
@@ -63,6 +67,7 @@ beforeEach(() => {
   mockPatch.mockResolvedValue({ data: {} });
   mockDelete.mockResolvedValue({ data: {} });
   mockStatus = "TRIAL";
+  mockExtraTenant = false;
   mockFetchPlanCatalog.mockResolvedValue({
     version: 11,
     effectiveAt: null,
@@ -87,10 +92,14 @@ describe("REG-B857: tenants list bulk Change Plan", () => {
     );
 
     fireEvent.change(select, { target: { value: "GROWTH" } });
+    fireEvent.change(screen.getByLabelText("Why is this business moving?"), {
+      target: { value: "Asked for more routes" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
     await waitFor(() =>
       expect(mockPatch).toHaveBeenCalledWith("/platform-admin/tenants/t-1/plan", {
         plan: "GROWTH",
+        reason: "Asked for more routes",
       }),
     );
   });
@@ -222,5 +231,96 @@ describe("SA-1: the tenants list plan filter offers the same plans as every othe
         ),
       ).toBe(true),
     );
+  });
+});
+
+describe("R49 / T49: a plan move needs a reason", () => {
+  const openBulkPlanMove = async (names: string[] = ["acme"]) => {
+    render(<AdminTenantsPage />);
+    for (const n of names) {
+      fireEvent.click(await screen.findByRole("checkbox", { name: `Select ${n}` }));
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Change plan" }));
+    return screen.findByLabelText("Why is this business moving?") as Promise<HTMLTextAreaElement>;
+  };
+
+  it("an empty reason blocks the call, shows the message under the field and moves focus to it", async () => {
+    const reason = await openBulkPlanMove();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    expect(
+      await screen.findByText("Say why this business is moving (3 to 500 characters)."),
+    ).toBeInTheDocument();
+    expect(mockPatch).not.toHaveBeenCalled();
+    expect(reason).toHaveFocus();
+    expect(reason).toHaveAttribute("aria-invalid", "true");
+  });
+
+  it("typing clears the message", async () => {
+    const reason = await openBulkPlanMove();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await screen.findByText("Say why this business is moving (3 to 500 characters).");
+    fireEvent.change(reason, { target: { value: "ab" } });
+    expect(screen.queryByText("Say why this business is moving (3 to 500 characters).")).toBeNull();
+  });
+
+  it("a 2-character and a 501-character reason are refused; the textarea stops at 500", async () => {
+    const reason = await openBulkPlanMove();
+    expect(reason).toHaveAttribute("maxlength", "500");
+    fireEvent.change(reason, { target: { value: "ab" } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    expect(
+      await screen.findByText("Say why this business is moving (3 to 500 characters)."),
+    ).toBeInTheDocument();
+    fireEvent.change(reason, { target: { value: "x".repeat(501) } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    expect(
+      await screen.findByText("Say why this business is moving (3 to 500 characters)."),
+    ).toBeInTheDocument();
+    expect(mockPatch).not.toHaveBeenCalled();
+  });
+
+  it("a valid reason is sent, trimmed, with the plan", async () => {
+    const reason = await openBulkPlanMove();
+    fireEvent.change(reason, { target: { value: "  Owner agreed on the phone  " } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(mockPatch).toHaveBeenCalledTimes(1));
+    expect(mockPatch).toHaveBeenCalledWith("/platform-admin/tenants/t-1/plan", {
+      plan: "STARTER",
+      reason: "Owner agreed on the phone",
+    });
+  });
+
+  it("a bulk move posts one PATCH per business, each with the same reason", async () => {
+    mockExtraTenant = true;
+    const reason = await openBulkPlanMove(["acme", "bravo"]);
+    fireEvent.change(reason, { target: { value: "Moving the whole group" } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(mockPatch).toHaveBeenCalledTimes(2));
+    expect(mockPatch.mock.calls.map((c) => [c[0], c[1]])).toEqual([
+      ["/platform-admin/tenants/t-1/plan", { plan: "STARTER", reason: "Moving the whole group" }],
+      ["/platform-admin/tenants/t-2/plan", { plan: "STARTER", reason: "Moving the whole group" }],
+    ]);
+  });
+
+  it("SA-1100 §2: the bulk plan move's Confirm is the red danger button (it changes what several businesses pay); the title stays as built", async () => {
+    await openBulkPlanMove(["acme"]);
+    const confirm = screen.getByRole("button", { name: "Confirm" });
+    expect(confirm.className).toContain("bg-red-");
+    expect(confirm.className).not.toContain("bg-indigo-");
+    expect(screen.getByText(/Change plan for 1 tenant/)).toBeInTheDocument();
+  });
+
+  it("suspend and activate keep the ordinary Confirm button", async () => {
+    render(<AdminTenantsPage />);
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Select acme" }));
+    fireEvent.click(screen.getByRole("button", { name: "Suspend All" }));
+    expect(screen.getByRole("button", { name: "Confirm" }).className).toContain("bg-indigo-");
+  });
+
+  it("suspend and activate do not ask for a reason", async () => {
+    render(<AdminTenantsPage />);
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Select acme" }));
+    fireEvent.click(screen.getByRole("button", { name: "Suspend All" }));
+    expect(screen.queryByLabelText("Why is this business moving?")).toBeNull();
   });
 });

@@ -113,6 +113,24 @@ describe("SA-1029 buyer portal invoice: per-piece price", () => {
   });
 });
 
+describe("owner ruling 2026-11-04: the business's hidePerPiece setting rides the buyer invoice (portal)", () => {
+  it("S-1: with hidePerPiece the portal prints no Per piece header or cell", () => {
+    mockUseBuyerInvoice.mockReturnValue({
+      data: {
+        ...makeInvoice([
+          invoiceItem({ ...packLine, perBaseUnit: { price: 2, unit: "pc" } } as never),
+        ]),
+        hidePerPiece: true,
+      },
+      isLoading: false,
+      isError: false,
+    });
+    renderWithProviders(<Page />);
+    expect(screen.queryByText("Per piece")).toBeNull();
+    expect(screen.queryByText("$2.00/pc")).toBeNull();
+  });
+});
+
 describe("SA-1029 A-1: the column follows the layout the line renders in (portal)", () => {
   it("SHOULD: a pieces-kind line whose stored pack disagrees renders today's layout WITH its Per piece cell", () => {
     show(

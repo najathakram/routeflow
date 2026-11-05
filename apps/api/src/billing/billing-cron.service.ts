@@ -49,6 +49,8 @@ import { dunningZone } from "./dunning-zone";
 import { formatInZone } from "./subscription-billing-extras";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { inclusionCatalogFor, pinPlanVersionTx } from "./plan-version-pin";
+import type { Prisma } from "@prisma/client";
+import { revokeUserLinkTokens } from "../auth/link-token-revocation";
 
 /** No mutation service wired (a bare unit build): billing a leaving add-on fails loudly into the notice path. */
 const MISSING_BILLER: LeavingBiller = {
@@ -533,16 +535,22 @@ export class BillingCronService {
               },
             });
             if (activeTeam > seatCap) {
+              const freeWhere: Prisma.UserWhereInput = {
+                tenantId: s.tenantId,
+                role: { in: ["OPERATOR", "DRIVER"] },
+                status: "ACTIVE",
+                deletedAt: null,
+                id: { notIn: cur.retainedUserIds },
+              };
+              const freedIds = (
+                await tx.user.findMany({ where: freeWhere, select: { id: true } })
+              ).map((u: { id: string }) => u.id);
               const freed = await tx.user.updateMany({
-                where: {
-                  tenantId: s.tenantId,
-                  role: { in: ["OPERATOR", "DRIVER"] },
-                  status: "ACTIVE",
-                  deletedAt: null,
-                  id: { notIn: cur.retainedUserIds },
-                },
+                where: freeWhere,
                 data: { status: "INACTIVE" },
               });
+              // F03 slice 2 (SA-1096): a seat-cap deactivation burns the freed accounts' live links, same tx.
+              await revokeUserLinkTokens(tx, freedIds);
               if (freed.count > 0) {
                 await this.events.emit(
                   s.tenantId,

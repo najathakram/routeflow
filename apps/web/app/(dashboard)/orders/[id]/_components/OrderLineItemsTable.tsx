@@ -13,6 +13,7 @@ import type { OrderItem } from "@/lib/api/orders";
 import { orderLineName } from "@/lib/product-display";
 import { RestrictionOverrideNote } from "@/components/RestrictionOverrideNote";
 import { displayLineStatus } from "./line-status";
+import { lineDisplayPack } from "@/lib/line-own-pack";
 import { ComponentSubLines } from "@/components/ComponentSubLines";
 
 /**
@@ -115,7 +116,7 @@ export function OrderLineItemsTable({
                         // The stored facts the line was sold by, never the live product's (L-332).
                         unit={{
                           boxes: li.boxes,
-                          unitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox,
+                          unitsPerBox: lineDisplayPack(li) ?? undefined,
                           unitLabel: li.unitLabel,
                         }}
                       />
@@ -207,7 +208,7 @@ export function OrderLineItemsTable({
                   {(() => {
                     const note = unitPriceNote({
                       unitPrice: li.unitPrice,
-                      unitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox,
+                      unitsPerBox: lineDisplayPack(li) ?? undefined,
                       unitLabel: li.unitLabel,
                       pieces: li.pieces,
                     });
@@ -237,7 +238,7 @@ export function OrderLineItemsTable({
                             boxes: li.boxes ?? null,
                             pieces: li.pieces ?? null,
                             // Snapshot upb, never the live product.
-                            unitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox ?? null,
+                            unitsPerBox: lineDisplayPack(li),
                             // BUY_N_GET_M snapshot, or the fallback bills
                             // a free-units line at full price.
                             freeUnits: Math.max(0, Math.trunc(Number(li.promoFreeUnits ?? 0) || 0)),

@@ -152,6 +152,21 @@ describe("DeliveryTrackingCard (#2095)", () => {
     expect(card()).not.toHaveTextContent(/before you|You're next/);
   });
 
+  // SA-1101 §4.1: a wholly refused order is its own state: the warning pill, the spec words, no live updates, never "Delivered".
+  it("refused: Refused at delivery, in the warning tone, no driver and no live updates", () => {
+    answer("REFUSED", tracking({ stopStatus: "COMPLETED", stopsAhead: 0 }));
+    renderCard({ id: "ord-1", status: "REFUSED", deliveredAt: "2026-09-24T12:00:00.000Z" });
+    expect(status()).toHaveTextContent("Refused");
+    expect(status().className).toContain("bg-warning-bg");
+    expect(headline()).toHaveTextContent("Refused at delivery");
+    expect(screen.getByTestId("tracking-detail")).toHaveTextContent(
+      "Your order was refused at delivery. Contact us if this is wrong.",
+    );
+    expect(card()).not.toHaveTextContent(/Delivered/);
+    expect(fact("Driver")).toBeNull();
+    expect(screen.queryByTestId("tracking-live")).toBeNull();
+  });
+
   it("skipped stop: never 'You're next', and says the seller will reschedule", () => {
     answer("CONFIRMED", tracking({ stopStatus: "SKIPPED", stopsAhead: 0 }));
     renderCard();
@@ -197,6 +212,12 @@ describe("DeliveryTrackingCard (#2095)", () => {
       renderCard();
       expect(screen.getByTestId("tracking-loading")).toBeInTheDocument();
       expect(screen.queryByTestId("tracking-headline")).toBeNull();
+    });
+
+    it("a refused order renders from the order itself while tracking loads", () => {
+      mockQuery = { data: undefined, isLoading: true, isError: false, refetch: jest.fn() };
+      renderCard({ id: "ord-1", status: "REFUSED", deliveredAt: null });
+      expect(headline()).toHaveTextContent("Refused at delivery");
     });
 
     it("a delivered or cancelled order renders from the order itself while tracking loads", () => {

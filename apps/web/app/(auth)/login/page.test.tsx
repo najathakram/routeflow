@@ -286,20 +286,19 @@ describe("LoginPage — tenant logo in the auth card (R9)", () => {
   });
 });
 
-// Owner ruling (mobile-web-proxy-redesign): /login no longer proxies phone UAs
-// to the installed driver app, so it needs its own explicit link there.
-describe("LoginPage — driver app link (mobile-web-proxy-redesign)", () => {
+// SA-1098 PR-2: drivers record their stops on Today's route in the web app, so /login no longer links out to the driver app.
+describe("LoginPage — no driver app link (SA-1098 PR-2)", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     window.localStorage.clear();
     window.history.replaceState(null, "", "/login");
   });
 
-  it("links to the driver app's own login screen", () => {
+  it("has no link to the driver app's login screen", () => {
     renderWithProviders(<LoginPage />);
 
-    const link = screen.getByRole("link", { name: /open the driver app/i });
-    expect(link).toHaveAttribute("href", "https://routeflowmobile-production.up.railway.app/login");
+    expect(screen.queryByRole("link", { name: /open the driver app/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Driver?/)).not.toBeInTheDocument();
   });
 });
 

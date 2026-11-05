@@ -351,7 +351,7 @@ describe("applyCreditOverride (#2695, SA-557: lower-only staff credit price)", (
       unitPrice: 10,
       subtotal: 100,
       taxRate: 0.08,
-      invoiceTaxAmount: 8,
+      invoiceTaxAmount: 11, // 8.00 regular tax + the 3.00 levy: the invoice's tax includes its category tax
       categoryTax: 3,
     }),
     4,

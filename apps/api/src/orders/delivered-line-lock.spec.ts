@@ -152,29 +152,114 @@ describe("assertDeliveredLinesUntouched: replace modes", () => {
   });
 });
 
-describe("assertDeliveredLinesUntouched: every other status is untouched", () => {
-  it.each(["DRAFT", "PENDING", "CONFIRMED", "OUT_FOR_DELIVERY", "DELIVERED", "CANCELLED"])(
-    "%s: no refusal for any payload",
-    (status) => {
-      const payloads: DeliveredLockEntry[][] = [
-        [{ id: "d", action: "DELETE" }],
-        [{ id: "d", action: "UPDATE", qty: 1, unitPrice: 1 }],
-      ];
-      for (const items of payloads)
-        expect(() =>
-          assertDeliveredLinesUntouched({ status }, [DELIVERED], { items }, staff, true),
-        ).not.toThrow();
+const NON_PD = [
+  "DRAFT",
+  "PENDING",
+  "CONFIRMED",
+  "OUT_FOR_DELIVERY",
+  "DELIVERED",
+  "CANCELLED",
+  "REFUSED",
+];
+
+describe("assertDeliveredLinesUntouched: every other status keeps the full change lock off", () => {
+  it.each(NON_PD)("%s: no refusal for a change, or a replace-all (SA-763r carry)", (status) => {
+    const payloads: DeliveredLockEntry[][] = [
+      [{ id: "d", action: "UPDATE", qty: 1, unitPrice: 1 }],
+    ];
+    for (const items of payloads)
       expect(() =>
-        assertDeliveredLinesUntouched(
-          { status },
-          [DELIVERED],
-          { items: [], replaceAll: true },
-          staff,
-          true,
-        ),
+        assertDeliveredLinesUntouched({ status }, [DELIVERED], { items }, staff, true),
       ).not.toThrow();
+    expect(() =>
+      assertDeliveredLinesUntouched(
+        { status },
+        [DELIVERED],
+        { items: [], replaceAll: true },
+        staff,
+        true,
+      ),
+    ).not.toThrow();
+  });
+});
+
+describe("SA-1101 §2.7: a delivered line can't be removed, on any status", () => {
+  const msg =
+    "This line was delivered, so it can't be removed. To take goods back, record a return.";
+  const removals: DeliveredLockEntry[] = [
+    { id: "d", action: "DELETE" },
+    { id: "d", action: "CANCEL" },
+    { id: "d", substituteProductId: "p9" },
+    { orderItemId: "d", action: "DELETE" },
+  ];
+  it.each(NON_PD)(
+    "%s: every removal shape is a 409 LINE_ALREADY_DELIVERED with the return text",
+    (status) => {
+      for (const entry of removals) {
+        try {
+          assertDeliveredLinesUntouched(
+            { status },
+            [DELIVERED, OPEN],
+            { items: [entry] },
+            staff,
+            true,
+          );
+          throw new Error("expected a refusal");
+        } catch (e: any) {
+          expect(e).toBeInstanceOf(ConflictException);
+          expect(e.getResponse()).toMatchObject({ code: "LINE_ALREADY_DELIVERED", message: msg });
+        }
+      }
     },
   );
+  it("a driver or buyer per-line diff is judged the same way", () => {
+    for (const role of [UserRole.DRIVER, UserRole.CUSTOMER])
+      expect(() =>
+        assertDeliveredLinesUntouched(
+          { status: "DELIVERED" },
+          [DELIVERED],
+          { items: [{ id: "d", action: "DELETE" }] },
+          { role },
+          true,
+        ),
+      ).toThrow(ConflictException);
+  });
+  it.each(NON_PD)("%s: removing an UNDELIVERED (refused, 0) line is still allowed", (status) => {
+    expect(() =>
+      assertDeliveredLinesUntouched(
+        { status },
+        [DELIVERED, OPEN],
+        { items: [{ id: "o", action: "DELETE" }] },
+        staff,
+        true,
+      ),
+    ).not.toThrow();
+  });
+  it("a change to a delivered line is not a removal: a quantity edit on a DELIVERED order stays allowed", () => {
+    expect(() =>
+      assertDeliveredLinesUntouched(
+        { status: "DELIVERED" },
+        [DELIVERED],
+        { items: [{ id: "d", action: "UPDATE", qty: 1 }] },
+        staff,
+        true,
+      ),
+    ).not.toThrow();
+  });
+  it("the PARTIALLY_DELIVERED refusal keeps its own text (B1234 KEPT)", () => {
+    try {
+      assertDeliveredLinesUntouched(
+        PD,
+        [DELIVERED],
+        { items: [{ id: "d", action: "DELETE" }] },
+        staff,
+        true,
+      );
+      throw new Error("expected a refusal");
+    } catch (e: any) {
+      expect(e.getResponse().message).toMatch(/can't be changed or removed/);
+    }
+  });
 });
 
 describe("the refusal", () => {

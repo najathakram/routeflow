@@ -339,7 +339,7 @@ describe("BuyerService.requestSeller — identity-gated auto-connect (security)"
       inviteToken: "secret-token",
       inviteExpiresAt: new Date("2099-01-01"),
     } as any);
-    prisma.customerLink.update.mockResolvedValue({ id: "link-7" } as any);
+    prisma.customerLink.updateMany.mockResolvedValue({ count: 1 } as any);
 
     const result = await service.requestSeller("buyer-7", DTO);
     await flush();
@@ -370,7 +370,7 @@ describe("BuyerService.requestSeller — identity-gated auto-connect (security)"
     };
     prisma.customerLink.findUnique.mockResolvedValue(requestedAgainstInvite as any);
     prisma.customerLink.findFirst.mockResolvedValue(null); // invitee has no other link here
-    prisma.customerLink.update.mockResolvedValue({ id: "link-7" } as any);
+    prisma.customerLink.updateMany.mockResolvedValue({ count: 1 } as any);
 
     await expect(service.getInviteDetails("secret-token")).resolves.toMatchObject({
       sellerSlug: "acme-foods",
@@ -380,9 +380,9 @@ describe("BuyerService.requestSeller — identity-gated auto-connect (security)"
 
     expect(accepted.linkId).toBe("link-7");
     // The invitee — not the requester — ends up owning the ACTIVE link, token consumed.
-    expect(prisma.customerLink.update).toHaveBeenCalledWith(
+    expect(prisma.customerLink.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "link-7" },
+        where: expect.objectContaining({ id: "link-7", inviteToken: "secret-token" }),
         data: expect.objectContaining({
           buyerAccountId: "true-invitee",
           status: "ACTIVE",
@@ -722,6 +722,7 @@ describe("BuyerService reconnect paths — removed customer (B141)", () => {
       tenant: { id: "tenant-1", name: "Acme Foods", slug: "acme-foods", status: "ACTIVE" },
       customer: { id: "cust-1", deletedAt },
     };
+    prisma.customerLink.updateMany.mockResolvedValue({ count: 1 } as any);
     prisma.customerLink.findUnique.mockImplementation((async (args: any) => {
       const rel = args?.where?.customer;
       if (rel?.deletedAt === null && row.customer.deletedAt !== null) return null;
@@ -796,7 +797,7 @@ describe("BuyerService reconnect paths — removed customer (B141)", () => {
     await expect(service.acceptInvite("secret-token", "buyer-1")).resolves.toMatchObject({
       tenantSlug: "acme-foods",
     });
-    expect(prisma.customerLink.update).toHaveBeenCalled();
+    expect(prisma.customerLink.updateMany).toHaveBeenCalled();
   });
 });
 

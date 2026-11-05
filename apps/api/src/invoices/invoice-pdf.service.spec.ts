@@ -63,10 +63,19 @@ function makeStorage() {
  * hands it only the constructor params it declares, so this build keeps working
  * instead of passing `undefined` into a newly added third parameter.
  */
-async function makeService(prisma: any, storage: any, hideOriginalPrice: string | null) {
+async function makeService(
+  prisma: any,
+  storage: any,
+  hideOriginalPrice: string | null,
+  hidePerPiece: string | null = null,
+) {
   const systemConfig = {
     get: jest.fn(async (key: string) =>
-      key === "invoice.hideOriginalPrice" ? hideOriginalPrice : null,
+      key === "invoice.hideOriginalPrice"
+        ? hideOriginalPrice
+        : key === "invoice.hidePerPiece"
+          ? hidePerPiece
+          : null,
     ),
     set: jest.fn().mockResolvedValue(undefined),
   };
@@ -284,6 +293,29 @@ describe("InvoicePdfService.generateAndUpload — hide-original-price setting (T
       mockCapturedInvoice.hideOriginalPrice === true ||
       mockCapturedInvoice.tenant?.hideOriginalPrice === true;
     expect(hideOriginalPrice).toBe(true);
+  });
+
+  // Owner ruling 2026-11-04: invoice.hidePerPiece rides the template payload like hideOriginalPrice (read once per render).
+  it("passes the tenant's invoice.hidePerPiece setting through to the template", async () => {
+    const prisma = createMockPrisma();
+    prisma.invoice.findUnique.mockResolvedValue(baseInvoiceFixture() as any);
+    prisma.tenantConfig.findUnique.mockResolvedValue(TENANT_CONFIG as any);
+
+    const service = await makeService(prisma, makeStorage(), null, "true");
+    await service.generateAndUpload("inv-1");
+
+    expect(mockCapturedInvoice.hidePerPiece).toBe(true);
+  });
+
+  it("an unset invoice.hidePerPiece leaves the Per piece column on", async () => {
+    const prisma = createMockPrisma();
+    prisma.invoice.findUnique.mockResolvedValue(baseInvoiceFixture() as any);
+    prisma.tenantConfig.findUnique.mockResolvedValue(TENANT_CONFIG as any);
+
+    const service = await makeService(prisma, makeStorage(), null);
+    await service.generateAndUpload("inv-1");
+
+    expect(mockCapturedInvoice.hidePerPiece).toBe(false);
   });
 });
 
