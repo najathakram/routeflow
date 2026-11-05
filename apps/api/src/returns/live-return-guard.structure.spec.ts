@@ -76,7 +76,14 @@ describe("assertNoLiveReturn census (SA-1101 A-4)", () => {
 
   it("counts every live status: only REJECTED / CANCELLED are dead, over the given order ids", () => {
     const src = read("returns/live-return-guard.ts");
-    expect(src).toContain("orderId: { in: [...orderIds] }");
     expect(src).toContain("status: { notIn: DEAD_RETURN_STATUSES }");
+    expect(src).toContain("orderId: { in: ids }");
+  });
+
+  it("SA-1101 A-6: the predicate counts BOTH links (carrying orderId and ReturnItem.sourceOrderId), and the guard counts through it", () => {
+    const src = read("returns/live-return-guard.ts");
+    expect(src).toContain("items: { some: { sourceOrderId: { in: ids } } }");
+    const guard = src.slice(src.indexOf("export async function assertNoLiveReturn"));
+    expect(guard).toContain("tx.return.count({ where: liveReturnWhere(orderIds) })");
   });
 });

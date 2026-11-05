@@ -27,6 +27,7 @@ import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NumberingService } from "../import/numbering.service";
 import { buildStatusUpdateData } from "./order-status-claim";
 import { SHIP_STATE_REOPENED, updateStatusWithShipMarker } from "./order-ship-state";
+import { seedInlineReturn } from "../returns/testing/inline-return-seed";
 
 const START = 100;
 const SOLD = 10;
@@ -263,4 +264,77 @@ describeDb("SA-1101 A-5 (B1272): a live return blocks the office demotion — re
     expect((await row(s.orderId)).status).toBe("CANCELLED");
     expect(await w.stockOf(s.productId)).toBe(START); // start, not start + 4 or start + 10 on top of a live return
   }, 120_000);
+
+  describe("A-6: an INLINE return sourced from the order counts too (the return rides on ANOTHER order)", () => {
+    /**
+     * A DELIVERED X, and a NEW order Y for the same customer carrying an inline return of 4 sourced from X. Capture
+     * restocks at capture unless the return is held, so a restocked one leaves the counter at 94.
+     */
+    async function inlineFromX(tag: string, o: { held?: boolean; pinned?: boolean } = {}) {
+      const s = await deliveredOrder(tag);
+      const carrierProduct = await w.product(`${tag}-carry`, START);
+      const { order: carrier } = await w.bookOrder({
+        status: "CONFIRMED",
+        lines: [{ productId: carrierProduct, qty: 1 }],
+      });
+      const retId = await seedInlineReturn(w.prisma, {
+        tenantId: w.tenantId,
+        customerId: w.customerId,
+        carryingOrderId: carrier.id,
+        sourceOrderId: s.orderId,
+        productId: s.productId,
+        held: o.held,
+        pinnedLineId: o.pinned ? s.lineId : undefined,
+      });
+      if (!o.held) {
+        await w.prisma.product.update({
+          where: { id: s.productId },
+          data: { currentStock: START - SOLD + 4 },
+        });
+      }
+      return { ...s, carrierId: carrier.id, retId };
+    }
+
+    it("RO-31: an inline return of 4 pinned to source X (restocked, 94): reopening X = 409 ORDER_HAS_RETURN; X stays DELIVERED, stock 94", async () => {
+      const s = await inlineFromX("ro31", { pinned: true });
+      expect(await w.stockOf(s.productId)).toBe(START - SOLD + 4);
+
+      await expect(reopen(s.orderId)).rejects.toMatchObject(refusedWith409);
+
+      expect((await row(s.orderId)).status).toBe("DELIVERED");
+      expect(await w.stockOf(s.productId)).toBe(START - SOLD + 4); // the cancel can no longer read 104
+    }, 120_000);
+
+    it("RO-32: the same UNPINNED (no source line named; the matching set assigned X): reopening X = 409", async () => {
+      const s = await inlineFromX("ro32");
+
+      await expect(reopen(s.orderId)).rejects.toMatchObject(refusedWith409);
+      expect((await row(s.orderId)).status).toBe("DELIVERED");
+      expect(await w.stockOf(s.productId)).toBe(START - SOLD + 4);
+    }, 120_000);
+
+    it("RO-35: a HELD inline return (no restock yet) blocks it too: it restocks on approval", async () => {
+      const s = await inlineFromX("ro35", { held: true });
+      expect(await w.stockOf(s.productId)).toBe(START - SOLD);
+
+      await expect(reopen(s.orderId)).rejects.toMatchObject(refusedWith409);
+      expect((await row(s.orderId)).status).toBe("DELIVERED");
+    }, 120_000);
+
+    it("the carrying link keeps counting (A-6 note 2): the order the inline return RIDES on cannot be reopened either", async () => {
+      const s = await inlineFromX("ro31c");
+      await w.prisma.order.update({ where: { id: s.carrierId }, data: { status: "DELIVERED" } });
+
+      await expect(reopen(s.carrierId)).rejects.toMatchObject(refusedWith409);
+      expect((await row(s.carrierId)).status).toBe("DELIVERED");
+    }, 120_000);
+
+    it("a CANCELLED inline return no longer blocks X (cancel the return first, the way forward the sentence names)", async () => {
+      const s = await inlineFromX("ro31d");
+      await w.prisma.return.update({ where: { id: s.retId }, data: { status: "CANCELLED" } });
+
+      await reopen(s.orderId);
+      expect((await row(s.orderId)).status).toBe("CONFIRMED");
+    }, 120_000);
+  });
 });

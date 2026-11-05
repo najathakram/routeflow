@@ -22,6 +22,7 @@ import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NumberingService } from "../import/numbering.service";
 import { buildStatusUpdateData } from "./order-status-claim";
 import { updateStatusWithShipMarker } from "./order-ship-state";
+import { seedInlineReturn } from "../returns/testing/inline-return-seed";
 
 const START = 100;
 const SOLD = 10;
@@ -159,6 +160,32 @@ describeDb("SA-1101 A-3: Deliver again, returns and cancel — real Postgres", (
       response: { code: "ORDER_HAS_RETURN" },
     });
     expect(await statusOf(s.orderId)).toBe("REFUSED");
+  }, 120_000);
+
+  it("RO-33 (SA-1101 A-6): a refused X with an INLINE return sourced from X (carried by another order) blocks Deliver again", async () => {
+    const s = await refusedOrder("ro33");
+    const carrierProduct = await w.product("ro33-carry", START);
+    const { order: carrier } = await w.bookOrder({
+      status: "CONFIRMED",
+      lines: [{ productId: carrierProduct, qty: 1 }],
+    });
+    await seedInlineReturn(w.prisma, {
+      tenantId: w.tenantId,
+      customerId: w.customerId,
+      carryingOrderId: carrier.id,
+      sourceOrderId: s.orderId,
+      productId: s.productId,
+    });
+    await w.prisma.product.update({
+      where: { id: s.productId },
+      data: { currentStock: START - SOLD + 4 },
+    });
+
+    await expect(deliverAgain(s.orderId)).rejects.toMatchObject({
+      response: { code: "ORDER_HAS_RETURN" },
+    });
+    expect(await statusOf(s.orderId)).toBe("REFUSED");
+    expect(await w.stockOf(s.productId)).toBe(START - SOLD + 4);
   }, 120_000);
 
   it("RO-18: refuse -> Deliver again -> cancel credits the stock back exactly once", async () => {

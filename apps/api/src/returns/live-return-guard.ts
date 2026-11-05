@@ -1,6 +1,6 @@
 /**
  * SA-1101 A-3 (N1) / A-4: the one rule "an order with a live return does not move" — a live return is any that is
- * not REJECTED / CANCELLED. Order stock books once and a return books its own credit, so a REFUSED order that is
+ * not REJECTED / CANCELLED, on the order by either link (`liveReturnWhere`, A-6). Order stock books once and a return books its own credit, so a REFUSED order that is
  * delivered again (or whose refusing stop is undone) while a return stands would leave stock too high, and a pending
  * return received afterwards would restock goods that went out again. The way back is the return's own cancel.
  *
@@ -23,15 +23,28 @@ export const DEMOTE_RETURN_MESSAGE =
 type CountTx = { return: { count: (args: any) => Promise<number> } };
 type LockTx = CountTx & Parameters<typeof lockOrderRows>[0];
 
+/**
+ * SA-1101 A-6: the ONE predicate for "a live return stands on these orders". A return is on an order by either link:
+ * the CARRYING order (`Return.orderId`, where an INLINE return's credit lands) or the order the goods were SOLD on
+ * (`ReturnItem.sourceOrderId`). An inline return restocks at capture unless held, so counting only the carrying link
+ * let an order sold-from pass the guard while its goods were already back on the shelf. The carrying link still counts
+ * (its credit sits on that order's invoice); the `some` rides the `[sourceOrderId, productId]` index.
+ */
+export function liveReturnWhere(orderIds: readonly string[]) {
+  const ids = [...orderIds];
+  return {
+    status: { notIn: DEAD_RETURN_STATUSES },
+    OR: [{ orderId: { in: ids } }, { items: { some: { sourceOrderId: { in: ids } } } }],
+  };
+}
+
 export async function assertNoLiveReturn(
   tx: CountTx,
   orderIds: readonly string[],
   message: string,
 ): Promise<void> {
   if (orderIds.length === 0) return;
-  const live = await tx.return.count({
-    where: { orderId: { in: [...orderIds] }, status: { notIn: DEAD_RETURN_STATUSES } },
-  });
+  const live = await tx.return.count({ where: liveReturnWhere(orderIds) });
   if (live > 0) throw new ConflictException({ code: API_ERROR_CODES.ORDER_HAS_RETURN, message });
 }
 
