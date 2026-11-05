@@ -32,10 +32,32 @@ describe("scanFailureCopy (SA-1102 A-4 M1-1)", () => {
     });
   });
 
-  it("a refused key reads as the key copy", () => {
+  // F-1102-T: only a business's OWN refused key is the business's to fix (AI_KEY_INVALID); it is "refused", not "not
+  // configured", and the words come from the code, never from sniffing the server's message.
+  it("a refused business key reads as 'refused' with the Settings pointer", () => {
     const c = scanFailureCopy(http(400, { code: "AI_KEY_INVALID", message: "x" }), false);
-    expect(c.title).toBe("Anthropic API key not configured");
-    expect(c.rowError).toMatch(/Settings → AI & Integrations/);
+    expect(c).toEqual({
+      title: "Your Claude key was refused",
+      description: "Update or remove it in Settings → AI & Integrations.",
+      rowError: "Your Claude key was refused. Update or remove it in Settings → AI & Integrations.",
+    });
+    expect(JSON.stringify(c)).not.toMatch(/not configured/i);
+  });
+
+  it("no key behind the scan (AI_UNAVAILABLE) reads as not available, never a key to configure", () => {
+    const c = scanFailureCopy(http(503, { code: "AI_UNAVAILABLE", message: "x" }), false);
+    expect(c).toEqual({
+      title: "Scanning isn't available right now",
+      description: "Please try again later. You can still enter the bill by hand.",
+      rowError: "Scanning isn't available right now. You can still enter the bill by hand.",
+    });
+    expect(JSON.stringify(c)).not.toMatch(/key|Settings/i);
+  });
+
+  it("the words 'api key' or 'anthropic' in a server message no longer change the copy", () => {
+    const c = scanFailureCopy(http(500, { message: "Anthropic API key not configured" }), false);
+    expect(c.title).toBe("Failed to scan invoice");
+    expect(JSON.stringify(c)).not.toMatch(/not configured/i);
   });
 
   it("anything else is the closed retry copy, never the server's text", () => {

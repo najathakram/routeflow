@@ -44,8 +44,12 @@ describe("ScanInvoiceModal intent (scan-to-PO wiring)", () => {
     const at = (s: string) => flat.indexOf(s);
     expect(at("if (planLocked)")).toBeGreaterThan(-1);
     expect(at("if (capPaused)")).toBeGreaterThan(at("if (planLocked)"));
-    expect(at("if (isApiKeyError)")).toBeGreaterThan(at("if (capPaused)"));
-    expect(at("description: SCAN_FAILED_COPY")).toBeGreaterThan(at("if (isApiKeyError)"));
+    expect(at("if (code === API_ERROR_CODES.AI_KEY_INVALID)")).toBeGreaterThan(
+      at("if (capPaused)"),
+    );
+    expect(at("description: SCAN_FAILED_COPY")).toBeGreaterThan(
+      at("if (code === API_ERROR_CODES.AI_UNAVAILABLE)"),
+    );
   });
   it("a scan-step failure shows the closed SCAN_FAILED_COPY, never the server text", () => {
     expect(failureSrc).toMatch(/description: SCAN_FAILED_COPY,/);
