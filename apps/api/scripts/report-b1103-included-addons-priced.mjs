@@ -44,15 +44,13 @@ import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveReportDbUrl } from "./lib/report-db-url.mjs";
 const require = createRequire(import.meta.url);
-const {
-  UPPER_BOUND_NOTE,
-  NO_ITEM_NOTE,
-  judge,
-  buildReport,
-  formatReport,
-  exitCodeFor,
-  selfTest,
-} = require("./lib/b1103-included-addons-core.cjs");
+const { makeCore } = require("./lib/b1103-included-addons-core.cjs");
+
+/** The pure core over `@routeflow/pricing`'s `roundMoney` (loaded lazily: the dist check must come first, row D-10). */
+async function loadCore() {
+  const { roundMoney } = await import("@routeflow/pricing");
+  return makeCore(roundMoney);
+}
 
 const SCRIPT = "report-b1103-included-addons-priced";
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -96,7 +94,7 @@ function usage(message) {
 async function main() {
   const argv = process.argv.slice(2);
   if (argv.includes("--self-test")) {
-    console.log(selfTest());
+    console.log((await loadCore()).selfTest());
     return;
   }
   const json = argv.includes("--json");
@@ -117,6 +115,8 @@ async function main() {
     if (e instanceof DistMissingError) usage(e.message.replace(`${SCRIPT}: `, ""));
     throw e;
   }
+  const { UPPER_BOUND_NOTE, NO_ITEM_NOTE, judge, buildReport, formatReport, exitCodeFor } =
+    await loadCore();
   const databaseUrl = resolveReportDbUrl(SCRIPT);
   if (!databaseUrl) process.exit(2);
   const { Client } = require("pg");

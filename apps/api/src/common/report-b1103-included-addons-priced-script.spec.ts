@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { roundMoney } from "@routeflow/pricing";
 import { ADDON_INVARIANTS } from "../billing/addon-invariant.job";
 import { inclusionOf } from "../billing/addon-inclusion";
 import { addonSkuCode, normalizePlanKey, planKeyFromEnum } from "../billing/plan-catalog.constants";
@@ -15,7 +16,8 @@ const API_DIR = path.resolve(__dirname, "../..");
 const SCRIPT = path.resolve(API_DIR, "scripts/report-b1103-included-addons-priced.mjs");
 const CORE = path.resolve(API_DIR, "scripts/lib/b1103-included-addons-core.cjs");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const core = require(CORE) as {
+const { makeCore } = require(CORE) as { makeCore(r: (n: number) => number): Core };
+interface Core {
   UPPER_BOUND_NOTE: string;
   NO_ITEM_NOTE: string;
   wholeMonths(from: unknown, to: unknown): number;
@@ -27,7 +29,8 @@ const core = require(CORE) as {
   formatReport(r: unknown): string[];
   exitCodeFor(r: unknown): number;
   selfTest(): string;
-};
+}
+const core = makeCore(roundMoney);
 const scriptSource = fs.readFileSync(SCRIPT, "utf8");
 const coreSource = fs.readFileSync(CORE, "utf8");
 
