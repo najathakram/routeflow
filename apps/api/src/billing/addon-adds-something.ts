@@ -38,6 +38,27 @@ export function skuAddsSomething(def: AddonGrantShape, effective: EffectiveByKey
   return flags.some((flag) => effective.get(flag)?.effective !== true);
 }
 
+export type AddonOfferState = "buy" | "already-have";
+
+/**
+ * SA-1099 A-4: the ONE state of a self-serve add-on for one workspace, read by the enable's refusal
+ * (`heldStateRefusal`) and by the add-on list (`getSubscription().alreadyHaveAddonSkus`), so the sheet and the list
+ * cannot disagree. "buy" is for sale (and the buy-more / disable path); "already-have" is shown with no price and no
+ * button, and refused at the enable as a backstop.
+ *
+ * `holdsActiveRow`: the workspace already has an active row of this SKU. That is the idempotent repeat / buy-more
+ * path, left exactly as it was, so it is always "buy". Capacity SKUs and an empty `grantsFlags` are "buy" too (see
+ * {@link skuAddsSomething}). Callers that cannot get the resolver's verdict never call this: they sell.
+ */
+export function addonOfferState(
+  def: AddonGrantShape,
+  effective: EffectiveByKey,
+  holdsActiveRow: boolean,
+): AddonOfferState {
+  if (holdsActiveRow) return "buy";
+  return skuAddsSomething(def, effective) ? "buy" : "already-have";
+}
+
 /** The fixed refusal (a 409 body and the preview's `refusal`): fixed copy, never the catalog's or a flag's text. */
 export function addonAlreadyIncludedRefusal(addonName: string) {
   return {

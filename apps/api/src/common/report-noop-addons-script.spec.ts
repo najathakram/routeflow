@@ -106,6 +106,28 @@ describe("report-noop-addons.mjs", () => {
     expect(r.stdout.trim()).toBe(`self-test ok (${table.cases.length} shared cases)`);
   });
 
+  // SA-1099 A-4: the report cannot read plan flags gained forward from a later published plan, so it can miss a
+  // purchase and never list a wrong one. It says so in its header and in what it prints.
+  it("says it is a lower bound, in the header and in the printed footer (and the JSON)", () => {
+    const NOTE =
+      "A lower bound: it can miss a no-op purchase (plan flags gained forward from a later published plan are not read), never list a wrong one. Cross-check with the S2 sweep.";
+    const header = source.slice(0, source.indexOf("import "));
+    expect(header.replace(/\s*\n\s*\*\s*/g, " ")).toContain(NOTE);
+    const r = node(
+      [
+        "--input-type=module",
+        "-e",
+        `import { LOWER_BOUND_NOTE } from ${JSON.stringify(pathToFileURL(SCRIPT).href)};` +
+          `console.log(LOWER_BOUND_NOTE);`,
+      ],
+      process.env,
+    );
+    expect(r.stdout.trim()).toBe(NOTE);
+    // printed after the text report and carried in the JSON report
+    expect(source).toMatch(/console\.log\(LOWER_BOUND_NOTE\)/);
+    expect(source).toMatch(/note: LOWER_BOUND_NOTE/);
+  });
+
   it("mirrors SELF_SERVICE_ADDON_SKUS, LEGACY_ADDON_KEY_TO_SKU, DARK_PLAN_FLAGS and ALWAYS_ENFORCED_PLAN_KEYS exactly", () => {
     expect(mirrorList("SELF_SERVICE_ADDON_SKUS")).toEqual([...SELF_SERVICE_ADDON_SKUS]);
     expect(mirrorList("ALWAYS_ENFORCED_PLAN_KEYS").sort()).toEqual(

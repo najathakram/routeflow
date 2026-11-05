@@ -205,6 +205,7 @@ describeDb("SA-1099 WP5 T23: report-noop-addons.mjs (real Postgres)", () => {
     if (r.status !== 0) throw new Error(`exit ${r.status}: ${r.stderr}`);
     return JSON.parse(r.stdout) as {
       enforcement: string;
+      note: string;
       test: {
         detail: { id: string; tenantId: string; sku: string; why: Record<string, string> }[];
       };
@@ -217,6 +218,7 @@ describeDb("SA-1099 WP5 T23: report-noop-addons.mjs (real Postgres)", () => {
   it("lists exactly the billed no-op purchases, with why, in the TEST block; none of the others", async () => {
     const out = report();
     expect(out.enforcement).toBe("off");
+    expect(out.note).toMatch(/^A lower bound: /);
     const listed = mine(out);
     expect(listed.map((d) => d.id).sort()).toEqual(
       [

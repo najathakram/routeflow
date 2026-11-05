@@ -19,6 +19,10 @@
  * env, and a silent default would list the wrong rows. Without it the script exits 2 before any connection. With `on`,
  * no flag is courtesy and only override- and plan-carried flags count.
  *
+ * A lower bound: it can miss a no-op purchase (plan flags gained forward from a later published plan are not read),
+ * never list a wrong one. Cross-check with the S2 sweep. (SA-1099 A-4; the same sentence is printed after the report
+ * and carried in the JSON as `note`.)
+ *
  * The decision ("would buying this SKU add nothing for this workspace") is table-driven: `--self-test` runs every
  * case of `scripts/fixtures/noop-addon-cases.json` through `classifyRow`, and the API's
  * `noop-addon-cases.parity.spec.ts` runs the same cases through `skuAddsSomething` over the real resolver.
@@ -81,6 +85,10 @@ export const PREPIN_DARK_FLAGS = [
   "flag.messaging",
 ];
 export const ALWAYS_ENFORCED_PLAN_KEYS = ["LITE"];
+
+/** Printed after the report and carried in the JSON: the list is never longer than the truth, and can be shorter. */
+export const LOWER_BOUND_NOTE =
+  "A lower bound: it can miss a no-op purchase (plan flags gained forward from a later published plan are not read), never list a wrong one. Cross-check with the S2 sweep.";
 
 /** planKeyFromEnum / normalizePlanKey in one: the enum names and the catalog names meet on the catalog name. */
 export function normalizePlan(key) {
@@ -278,6 +286,7 @@ async function main() {
 
     const report = {
       enforcement: enfVal,
+      note: LOWER_BOUND_NOTE,
       live: summarize(noops.filter((r) => !isTestTenant(r.slug))),
       test: summarize(noops.filter((r) => isTestTenant(r.slug))),
     };
@@ -296,6 +305,7 @@ async function main() {
               .join(" ")}`,
           );
       }
+      console.log(LOWER_BOUND_NOTE);
     }
   } finally {
     await client.end().catch(() => {});

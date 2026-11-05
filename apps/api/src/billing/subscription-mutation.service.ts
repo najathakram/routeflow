@@ -97,8 +97,8 @@ import {
 import { addonCatalogInvalid } from "./addon-catalog-invalid";
 import {
   addonAlreadyIncludedRefusal,
+  addonOfferState,
   isCapacityAddon,
-  skuAddsSomething,
 } from "./addon-adds-something";
 import { EntitlementAuthority } from "./entitlement-authority.service";
 import { FEATURE_REGISTRY } from "./feature-registry";
@@ -3279,7 +3279,7 @@ export class SubscriptionMutationService {
    *     any credit for past sales is the owner's own action from `report-noop-addons.mjs`. Self-serve only (the back
    *     office enable never comes through here); a workspace that already holds this SKU's row is the idempotent
    *     repeat / buy-more path and is left as it was; an empty `grantsFlags` and a capacity SKU are never refused
-   *     (see {@link skuAddsSomething}); a resolver that cannot answer sells, as before, with a warning.
+   *     (see {@link addonOfferState}, the one state the add-on list reads too); a resolver that cannot answer sells, as before, with a warning.
    *  2. `FEATURE_REQUIRES_UNMET` (B554): a registry row this SKU bills (`billing.skus`) declares a `requires` the
    *     workspace does not meet. The tenant cannot acknowledge it, so it is a plain refusal here (the back office
    *     can, through `acknowledgeUnmetRequires`). No self-serve SKU's row declares one today; the check is what
@@ -3304,7 +3304,7 @@ export class SubscriptionMutationService {
         this.logger.warn(
           `Add-on "${def.sku}" tenant ${tenantId}: the resolver could not answer - the already-included check is skipped`,
         );
-      } else if (!skuAddsSomething(def, resolved.byKey)) {
+      } else if (addonOfferState(def, resolved.byKey, held?.active === true) === "already-have") {
         return addonAlreadyIncludedRefusal(def.name);
       }
     }

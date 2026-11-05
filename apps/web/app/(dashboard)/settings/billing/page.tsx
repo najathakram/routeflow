@@ -556,6 +556,9 @@ export default function BillingSettingsPage() {
   // Row 350 / SA-693: an add-on RouteFlow granted free on purpose. It is never billed, so its row reads
   // "Included" with no price anywhere (the catalog price is what it WOULD cost, which the tenant never pays).
   const compSkus = new Set(s.addons.filter((a) => a.comp === true && a.sku).map((a) => a.sku));
+  // SA-1099 A-4: what the workspace already has the effect of (the server decides). Shown as "You already have this."
+  // with no price and no button, so it is never offered and then refused at the confirm sheet.
+  const alreadyHaveSkus = new Set(s.alreadyHaveAddonSkus ?? []);
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-6">
@@ -810,9 +813,31 @@ export default function BillingSettingsPage() {
             const busy =
               (enable.isPending || disable.isPending) &&
               (enable.variables?.sku === a.sku || disable.variables?.sku === a.sku);
+            // A capacity SKU is more of something, never "already had", even from a bad payload; an active row
+            // keeps its Active state and Disable button.
+            const alreadyHave =
+              !on &&
+              alreadyHaveSkus.has(a.sku) &&
+              a.meteredKey == null &&
+              a.capacityPerUnit == null;
+            if (alreadyHave) {
+              return (
+                <div
+                  key={a.sku}
+                  data-addon-row={a.sku}
+                  className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3"
+                >
+                  <div className="min-w-0 flex-1 basis-40">
+                    <span className="font-medium text-slate-800">{a.name}</span>
+                    <p className="text-sm text-slate-500">You already have this.</p>
+                  </div>
+                </div>
+              );
+            }
             return (
               <div
                 key={a.sku}
+                data-addon-row={a.sku}
                 className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3"
               >
                 <div className="min-w-0 flex-1 basis-40">
