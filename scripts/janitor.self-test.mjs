@@ -1878,6 +1878,125 @@ if (process.platform === "win32" && CMD_UNSAFE.test(winBase)) {
   );
 }
 
+// Step 7 on a FILE entry (181 failures in one run): Jest writes plain files into its cache roots
+// (`haste-map-*`, `jest-transform-cache-*`, `perf-cache-*`), and `cmd /c rmdir /s /q <file>` fails with "The directory
+// name is invalid". A file is unlinked; a directory still goes through removeTree; the guard runs first for both.
+{
+  const fileDeps = (calls, { isFile, removeFileThrows = false }) => ({
+    refuseDelete: () => (calls.push("WRONG GUARD"), null),
+    refuseJestCacheDelete: (tg, root) => (calls.push(`jguard ${tg} ${root}`), null),
+    isPlainFile: (tg) => (calls.push(`isPlainFile ${tg}`), isFile),
+    isDirty: () => false,
+    removeTree: (tg) => calls.push(`removeTree ${tg}`),
+    removeFile: (tg) => {
+      calls.push(`removeFile ${tg}`);
+      if (removeFileThrows) throw new Error("EBUSY: resource busy or locked");
+    },
+    removeWorktree: () => {},
+    run: () => {},
+    log: (m) => calls.push(`log ${m}`),
+  });
+  const entry = (name) => ({
+    kind: "jest-cache",
+    target: `/w/apps/api/.jest-cache/${name}`,
+    root: "/w/apps/api/.jest-cache",
+  });
+  t("step 7: a FILE entry is unlinked (never rmdir /s), after its guard", () => {
+    const calls = [];
+    const a = entry("jest-transform-cache-x");
+    assert.equal(execute(a, fileDeps(calls, { isFile: true })), "done");
+    assert.deepEqual(calls, [
+      `jguard ${a.target} ${a.root}`,
+      `isPlainFile ${a.target}`,
+      `removeFile ${a.target}`,
+    ]);
+  });
+  t("step 7: a DIRECTORY entry still goes through removeTree, never a bare unlink", () => {
+    const calls = [];
+    const a = entry("haste-map-old");
+    assert.equal(execute(a, fileDeps(calls, { isFile: false })), "done");
+    assert.deepEqual(calls, [
+      `jguard ${a.target} ${a.root}`,
+      `isPlainFile ${a.target}`,
+      `removeTree ${a.target}`,
+    ]);
+  });
+  t("step 7: a refused file entry is never unlinked", () => {
+    const calls = [];
+    const deps = fileDeps(calls, { isFile: true });
+    deps.refuseJestCacheDelete = () => "nope";
+    assert.equal(execute(entry("perf-cache-x"), deps), "refused");
+    assert.equal(
+      calls.some((c) => c.startsWith("removeFile") || c.startsWith("removeTree")),
+      false,
+    );
+  });
+  t("step 7: a locked file entry is a reported skip, never a failed run", () => {
+    const calls = [];
+    const a = entry("jest-transform-cache-locked");
+    assert.equal(execute(a, fileDeps(calls, { isFile: true, removeFileThrows: true })), "skipped");
+    assert.equal(
+      calls.some((c) => c.includes("SKIPPED")),
+      true,
+    );
+  });
+  t(
+    "step 7: the real isPlainFile is true for a file and false for a directory or a missing path",
+    () => {
+      const dir = realpathSync(mkdtempSync(join(tmpdir(), "janitor-file-entry-")));
+      try {
+        writeFileSync(join(dir, "f"), "x");
+        mkdirSync(join(dir, "d"));
+        assert.equal(EXECUTE_DEPS.isPlainFile(join(dir, "f")), true);
+        assert.equal(EXECUTE_DEPS.isPlainFile(join(dir, "d")), false);
+        assert.equal(EXECUTE_DEPS.isPlainFile(join(dir, "gone")), false);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+  t(
+    "step 7 sandbox: a stale FILE and a stale directory entry are both swept on the real filesystem",
+    () => {
+      const sandbox = realpathSync(mkdtempSync(join(tmpdir(), "janitor-file-sweep-")));
+      try {
+        const old = new Date(Date.now() - (JEST_CACHE_AGE_DAYS + 5) * 86_400_000);
+        const root = join(sandbox, "wt", "apps", "api", ".jest-cache");
+        mkdirSync(root, { recursive: true });
+        const file = join(root, "jest-transform-cache-old");
+        writeFileSync(file, "x");
+        utimesSync(file, old, old);
+        const dir = join(root, "haste-map-old");
+        mkdirSync(dir);
+        writeFileSync(join(dir, "data"), "x");
+        utimesSync(join(dir, "data"), old, old);
+        utimesSync(dir, old, old);
+        writeFileSync(join(root, "jest-transform-cache-new"), "fresh");
+        const actions = planJestCacheActions([root], Date.now());
+        assert.deepEqual(actions.map((a) => a.target).sort(), [dir, file].sort());
+        const deps = {
+          refuseDelete: () => "WRONG GUARD",
+          refuseJestCacheDelete: (tg, r) =>
+            jestCacheDeleteRefusal(realpathSync(tg), [realpathSync(r)]),
+          isPlainFile: EXECUTE_DEPS.isPlainFile,
+          isDirty: () => false,
+          removeTree: (tg) => safeRemoveTree(tg),
+          removeFile: EXECUTE_DEPS.removeFile,
+          removeWorktree: () => {},
+          run: () => {},
+          log: () => {},
+        };
+        for (const a of actions) assert.equal(execute(a, deps), "done", a.target);
+        assert.equal(existsSync(file), false, "stale file swept");
+        assert.equal(existsSync(dir), false, "stale directory swept");
+        assert.equal(existsSync(join(root, "jest-transform-cache-new")), true, "fresh file kept");
+      } finally {
+        rmSync(sandbox, { recursive: true, force: true });
+      }
+    },
+  );
+}
+
 // A directory link: a "dir" symlink needs a privilege a normal Windows user lacks (EPERM); a junction
 // does not (the same pattern as the win32 junction case above).
 const DIR_LINK_TYPE = process.platform === "win32" ? "junction" : "dir";
