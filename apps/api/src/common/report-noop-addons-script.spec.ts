@@ -47,7 +47,7 @@ describe("report-noop-addons.mjs", () => {
     const env: NodeJS.ProcessEnv = { ...process.env };
     delete env.DATABASE_URL;
     delete env.DATABASE_PUBLIC_URL;
-    expect(node([SCRIPT], env).status).toBe(2);
+    expect(node([SCRIPT, "--enforcement", "off"], env).status).toBe(2);
   });
 
   it("refuses a bad --enforcement value before any connection", () => {
@@ -55,11 +55,32 @@ describe("report-noop-addons.mjs", () => {
     expect(r.status).toBe(2);
   });
 
+  // SA-1099 A-3 note 4 (R-2): the courtesy depends on the production switch, so a run that quietly assumed "off"
+  // could list the wrong rows. The flag is required; the refusal comes before any connection and prints no rows.
+  it("R-2: no --enforcement flag exits 2 with the instruction and prints no rows (before any connection)", () => {
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      // reachable only if the script connected: nothing may listen here
+      DATABASE_URL: "postgresql://nobody:none@127.0.0.1:1/none",
+    };
+    for (const args of [[SCRIPT], [SCRIPT, "--json"], [SCRIPT, "--enforcement"]]) {
+      const r = node(args, env);
+      expect(r.status).toBe(2);
+      expect(r.stdout).toBe("");
+      expect(r.stderr).toContain(
+        "Pass --enforcement on or --enforcement off (the PLAN_FLAG_ENFORCEMENT value in production).",
+      );
+    }
+  });
+
   it("sets the session read-only, caps lock and statement time, and carries no write-capable SQL", () => {
     expect(source).toContain("SET default_transaction_read_only = on");
     expect(source).toContain("SET lock_timeout");
     expect(source).toContain("SET statement_timeout");
-    const sql = codeLines().join("\n");
+    // 'GRANT' as a quoted VALUE (the override effect read since SA-1099 A-3) is not the SQL statement GRANT
+    const sql = codeLines()
+      .join("\n")
+      .replace(/(["'])GRANT\1/g, "");
     expect(sql).not.toMatch(/\b(INSERT|UPDATE|DELETE|TRUNCATE|ALTER|DROP|CREATE|GRANT)\b/);
   });
 
@@ -71,7 +92,18 @@ describe("report-noop-addons.mjs", () => {
   it("--self-test runs when spawned by its real path", () => {
     const r = node([SCRIPT, "--self-test"], process.env);
     expect(r.status).toBe(0);
-    expect(r.stdout.trim()).toBe("self-test ok");
+    expect(r.stdout.trim()).toMatch(/^self-test ok \(\d+ shared cases\)$/);
+  });
+
+  it("--self-test runs EVERY case of the shared table (the same file the API parity spec reads)", () => {
+    const table = JSON.parse(
+      fs.readFileSync(
+        path.resolve(API_DIR, "../../scripts/fixtures/noop-addon-cases.json"),
+        "utf8",
+      ),
+    );
+    const r = node([SCRIPT, "--self-test"], process.env);
+    expect(r.stdout.trim()).toBe(`self-test ok (${table.cases.length} shared cases)`);
   });
 
   it("mirrors SELF_SERVICE_ADDON_SKUS, LEGACY_ADDON_KEY_TO_SKU, DARK_PLAN_FLAGS and ALWAYS_ENFORCED_PLAN_KEYS exactly", () => {

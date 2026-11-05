@@ -7,20 +7,26 @@
  *   - active, not a comp, and billed: it has a Stripe item, or a price above zero;
  *   - a SELF-SERVE SKU whose `grantsFlags` (from the workspace's own pinned catalog version, else the published
  *     one) is non-empty and which is not a capacity SKU (no meter key, no per-unit capacity);
- *   - EVERY flag it grants is held without it: carried by the workspace's plan (`PlanDefinition.featureFlags`),
- *     or a dark flag on a plan that is not always enforced (the courtesy allow), while the enforcement switch is
- *     off; and no active DENY override sits on that flag.
- * Each row says WHY per flag ("plan" or "courtesy"), so the owner can see whether the plan or the rollout switch made
- * the purchase empty.
+ *   - EVERY flag it grants is held without it: served by an active GRANT override on the workspace, carried by the
+ *     workspace's plan (`PlanDefinition.featureFlags`), or a dark flag on a plan that is not always enforced (the
+ *     courtesy allow), while the enforcement switch is off; and no active DENY override sits on that flag (a DENY
+ *     removes every reason). The order is the resolver's: GRANT, then DENY, then plan, then courtesy.
+ * Each row says WHY per flag ("override", "plan" or "courtesy"), so the owner can see whether an override, the plan or
+ * the rollout switch made the purchase empty.
  *
- * `--enforcement on|off` states what PLAN_FLAG_ENFORCEMENT is in production (default off). The sweep's first page
- * (`planFlagEnforcement`) reports it; a script on the postgres service cannot read the API's env. With `on`, no flag
- * is courtesy and only plan-carried flags count.
+ * `--enforcement on|off` is REQUIRED (SA-1099 A-3 note 4): it states what PLAN_FLAG_ENFORCEMENT is in production.
+ * The sweep's first page (`planFlagEnforcement`) reports it; a script on the postgres service cannot read the API's
+ * env, and a silent default would list the wrong rows. Without it the script exits 2 before any connection. With `on`,
+ * no flag is courtesy and only override- and plan-carried flags count.
+ *
+ * The decision ("would buying this SKU add nothing for this workspace") is table-driven: `--self-test` runs every
+ * case of `scripts/fixtures/noop-addon-cases.json` through `classifyRow`, and the API's
+ * `noop-addon-cases.parity.spec.ts` runs the same cases through `skuAddsSomething` over the real resolver.
  *
  * NEVER RUN FROM AN IMPLEMENTATION SESSION. The fleet lead runs it under its `railway run` authorization
  * (warn-then-approve):
  *
- *   railway run --service postgres node apps/api/scripts/report-noop-addons.mjs [--enforcement on|off] [--json]
+ *   railway run --service postgres node apps/api/scripts/report-noop-addons.mjs --enforcement on|off [--json]
  *
  * Output is tenant UUIDs, row ids, SKU codes, flags and COUNTS only: no tenant name, slug, user id or price. Test
  * tenants (scripts/lib/test-tenants.cjs) are tagged TEST; everything else LIVE.
@@ -31,7 +37,7 @@
  * every query; the connection is closed in `finally`; only SELECT appears below. No write script is called.
  */
 import { createRequire } from "module";
-import { realpathSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveReportDbUrl } from "./lib/report-db-url.mjs";
@@ -90,11 +96,14 @@ export function normalizePlan(key) {
 }
 
 /**
- * Why one flag is held WITHOUT the add-on: "plan" (the plan carries it), "courtesy" (a dark flag on a plan that is
- * not always enforced), or null (not held, or an active DENY rules it out).
+ * Why one flag is held WITHOUT the add-on, in the resolver's order: an active GRANT override ("override"), an active
+ * DENY (null: it removes every reason), the plan carrying it ("plan"), a dark flag on a plan that is not always
+ * enforced ("courtesy"), else null. `overrides` is a Map of flag key -> "GRANT" | "DENY".
  */
-export function heldWithoutSku({ flag, planKey, planFlags, denied, enforcementOn }) {
-  if (denied.has(flag)) return null;
+export function heldWithoutSku({ flag, planKey, planFlags, overrides, enforcementOn }) {
+  const effect = overrides.get(flag);
+  if (effect === "GRANT") return "override";
+  if (effect === "DENY") return null;
   if (planFlags.includes(flag)) return "plan";
   const always = ALWAYS_ENFORCED_PLAN_KEYS.includes(planKey);
   const dark =
@@ -103,21 +112,27 @@ export function heldWithoutSku({ flag, planKey, planFlags, denied, enforcementOn
 }
 
 /**
- * The verdict for one billed row: `{ noop: false }` or `{ noop: true, why: { flag: "plan" | "courtesy" } }`.
+ * The verdict for one billed row: `{ noop: false }` or
+ * `{ noop: true, why: { flag: "override" | "plan" | "courtesy" } }`.
  * Capacity SKUs and an empty `grantsFlags` are never a no-op.
  */
-export function classifyRow({ sku, planKey, planFlags, denied, enforcementOn }) {
+export function classifyRow({ sku, planKey, planFlags, overrides, enforcementOn }) {
   const flags = sku.grantsFlags ?? [];
   if (flags.length === 0 || sku.meteredKey != null || sku.capacityPerUnit != null)
     return { noop: false };
   const why = {};
   for (const flag of flags) {
-    const held = heldWithoutSku({ flag, planKey, planFlags, denied, enforcementOn });
+    const held = heldWithoutSku({ flag, planKey, planFlags, overrides, enforcementOn });
     if (!held) return { noop: false };
     why[flag] = held;
   }
   return { noop: true, why };
 }
+
+/** The shared decision table (also read by the API's noop-addon-cases.parity.spec.ts). */
+const CASES_FILE = fileURLToPath(
+  new URL("../../../scripts/fixtures/noop-addon-cases.json", import.meta.url),
+);
 
 /** No-DB checks of the pure parts (`--self-test`). Throws on the first failure. */
 export function selfTest() {
@@ -125,40 +140,24 @@ export function selfTest() {
     if (JSON.stringify(a) !== JSON.stringify(b))
       throw new Error(`${what}: ${JSON.stringify(a)} !== ${JSON.stringify(b)}`);
   };
-  const forecasting = { grantsFlags: ["flag.forecasting", "flag.analytics"] };
-  const base = { planKey: "STARTER", planFlags: [], denied: new Set(), enforcementOn: false };
-  eq(
-    classifyRow({ ...base, sku: forecasting }),
-    { noop: true, why: { "flag.forecasting": "courtesy", "flag.analytics": "courtesy" } },
-    "starter, switch off: courtesy",
-  );
-  eq(
-    classifyRow({ ...base, sku: forecasting, planFlags: ["flag.forecasting", "flag.analytics"] }),
-    { noop: true, why: { "flag.forecasting": "plan", "flag.analytics": "plan" } },
-    "plan carries both",
-  );
-  eq(classifyRow({ ...base, sku: forecasting, enforcementOn: true }), { noop: false }, "switch on");
-  eq(
-    classifyRow({ ...base, sku: forecasting, planKey: "LITE" }),
-    { noop: false },
-    "always enforced",
-  );
-  eq(
-    classifyRow({ ...base, sku: forecasting, denied: new Set(["flag.analytics"]) }),
-    { noop: false },
-    "a DENY rules the flag out",
-  );
-  eq(
-    classifyRow({ ...base, sku: { grantsFlags: ["flag.forecasting", "flag.msrp"] } }),
-    { noop: false },
-    "one flag still missing",
-  );
-  eq(classifyRow({ ...base, sku: { grantsFlags: [] } }), { noop: false }, "empty grantsFlags");
-  eq(
-    classifyRow({ ...base, sku: { grantsFlags: ["flag.forecasting"], capacityPerUnit: 100 } }),
-    { noop: false },
-    "capacity SKU",
-  );
+  const { cases } = JSON.parse(readFileSync(CASES_FILE, "utf8"));
+  if (!Array.isArray(cases) || cases.length === 0) throw new Error("no shared cases to run");
+  for (const c of cases) {
+    const verdict = classifyRow({
+      sku: c.sku,
+      planKey: normalizePlan(c.planKey),
+      planFlags: c.planFlags,
+      overrides: new Map(Object.entries(c.overrides)),
+      enforcementOn: c.enforcementOn,
+    });
+    eq(!verdict.noop, c.expected.addsSomething, `shared case "${c.name}": addsSomething`);
+    if (c.expected.why) {
+      const want = c.expected.why;
+      const got = verdict.why ?? {};
+      for (const flag of new Set([...Object.keys(want), ...Object.keys(got)]))
+        eq(got[flag], want[flag], `shared case "${c.name}": reason for ${flag}`);
+    }
+  }
   eq(normalizePlan("TEAM"), "GROWTH", "TEAM maps to GROWTH");
   const s = summarize([
     { id: "r1", tenantId: "t1", slug: "x", sku: "FORECASTING", quantity: 1, why: { a: "plan" } },
@@ -176,7 +175,7 @@ export function selfTest() {
   eq(s.bySku, { FORECASTING: 2 }, "by sku");
   if (JSON.stringify(s).includes('"x"') || JSON.stringify(s).includes('"y"'))
     throw new Error("summary leaked a slug");
-  return "self-test ok";
+  return `self-test ok (${cases.length} shared cases)`;
 }
 
 async function main() {
@@ -187,7 +186,13 @@ async function main() {
   }
   const json = argv.includes("--json");
   const enfArg = argv.indexOf("--enforcement");
-  const enfVal = enfArg >= 0 ? argv[enfArg + 1] : "off";
+  const enfVal = enfArg >= 0 ? argv[enfArg + 1] : undefined;
+  if (enfVal === undefined) {
+    console.error(
+      "report-noop-addons: Pass --enforcement on or --enforcement off (the PLAN_FLAG_ENFORCEMENT value in production).",
+    );
+    process.exit(2);
+  }
   if (enfVal !== "on" && enfVal !== "off") {
     console.error("report-noop-addons: --enforcement must be on or off");
     process.exit(2);
@@ -238,9 +243,9 @@ async function main() {
          FROM "PlanDefinition" WHERE "planVersionId" = ANY($1::text[])`,
       [versions],
     );
-    const denies = await client.query(
-      `SELECT "tenantId", "featureKey" FROM "TenantFeatureOverride"
-        WHERE "tenantId" = ANY($1::text[]) AND effect = 'DENY' AND "revokedAt" IS NULL
+    const overrideRows = await client.query(
+      `SELECT "tenantId", "featureKey", effect::text AS effect FROM "TenantFeatureOverride"
+        WHERE "tenantId" = ANY($1::text[]) AND effect IN ('GRANT', 'DENY') AND "revokedAt" IS NULL
           AND ("expiresAt" IS NULL OR "expiresAt" > now())`,
       [tenants],
     );
@@ -249,10 +254,11 @@ async function main() {
     const flagsAt = new Map(
       plans.rows.map((r) => [`${r.versionId}|${normalizePlan(r.planKey)}`, r.featureFlags ?? []]),
     );
-    const deniedBy = new Map();
-    for (const d of denies.rows) {
-      if (!deniedBy.has(d.tenantId)) deniedBy.set(d.tenantId, new Set());
-      deniedBy.get(d.tenantId).add(d.featureKey);
+    // tenant -> (flag key -> "GRANT" | "DENY"); the unique active row per key is the resolver's own read
+    const overridesBy = new Map();
+    for (const o of overrideRows.rows) {
+      if (!overridesBy.has(o.tenantId)) overridesBy.set(o.tenantId, new Map());
+      overridesBy.get(o.tenantId).set(o.featureKey, o.effect);
     }
 
     const noops = [];
@@ -264,7 +270,7 @@ async function main() {
         sku,
         planKey,
         planFlags: flagsAt.get(`${r.versionId}|${planKey}`) ?? [],
-        denied: deniedBy.get(r.tenantId) ?? new Set(),
+        overrides: overridesBy.get(r.tenantId) ?? new Map(),
         enforcementOn,
       });
       if (verdict.noop) noops.push({ ...r, why: verdict.why });

@@ -3283,7 +3283,8 @@ export class SubscriptionMutationService {
    *  2. `FEATURE_REQUIRES_UNMET` (B554): a registry row this SKU bills (`billing.skus`) declares a `requires` the
    *     workspace does not meet. The tenant cannot acknowledge it, so it is a plain refusal here (the back office
    *     can, through `acknowledgeUnmetRequires`). No self-serve SKU's row declares one today; the check is what
-   *     stops the first one that does from selling a feature that cannot work.
+   *     stops the first one that does from selling a feature that cannot work. A check that fails any other way
+   *     (a read error, an unknown key) warns and sells, like the resolver outage in 1.
    */
   private async heldStateRefusal(
     tenantId: string,
@@ -3314,7 +3315,14 @@ export class SubscriptionMutationService {
         const body = (
           err as { getResponse?: () => { code?: string; missing?: string } }
         ).getResponse?.();
-        if (body?.code !== API_ERROR_CODES.FEATURE_REQUIRES_UNMET) throw err;
+        if (body?.code !== API_ERROR_CODES.FEATURE_REQUIRES_UNMET) {
+          // SA-1099 A-3 note 5 (R-3): the requires check failing is not a refusal. Same stance as the resolver above:
+          // an outage warns and the sale goes ahead; only a real unmet `requires` stops it.
+          this.logger.warn(
+            `Add-on "${def.sku}" tenant ${tenantId}: the requires check for ${feature.key} could not run (${(err as Error)?.message ?? "unknown error"}) - the sale goes ahead`,
+          );
+          continue;
+        }
         return {
           code: API_ERROR_CODES.FEATURE_REQUIRES_UNMET,
           message: `${def.name} needs ${body.missing ?? "another feature"} first, which your workspace does not have yet.`,

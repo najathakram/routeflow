@@ -1,0 +1,179 @@
+{
+  "_about": "SA-1099 A-3 note 3 (WP5). ONE decision, two runtimes: 'would buying this SKU add nothing for this workspace'. apps/api/src/billing/noop-addon-cases.parity.spec.ts runs every case through skuAddsSomething over the REAL resolver + courtesy functions; apps/api/scripts/report-noop-addons.mjs --self-test runs every case through classifyRow. Both must give `expected`. `why` is the reason per granted flag: plan (the plan carries it), courtesy (a dark flag on a plan that is not always enforced, switch off), override (an active GRANT). A DENY removes any reason. A rule changed on one side only turns the other side's suite red.",
+  "cases": [
+    {
+      "name": "plan carries both flags",
+      "sku": { "grantsFlags": ["flag.forecasting", "flag.analytics"] },
+      "planKey": "GROWTH",
+      "planFlags": ["flag.forecasting", "flag.analytics"],
+      "overrides": {},
+      "enforcementOn": false,
+      "expected": {
+        "addsSomething": false,
+        "why": { "flag.forecasting": "plan", "flag.analytics": "plan" }
+      }
+    },
+    {
+      "name": "plan carries both flags, switch on",
+      "sku": { "grantsFlags": ["flag.forecasting", "flag.analytics"] },
+      "planKey": "GROWTH",
+      "planFlags": ["flag.forecasting", "flag.analytics"],
+      "overrides": {},
+      "enforcementOn": true,
+      "expected": {
+        "addsSomething": false,
+        "why": { "flag.forecasting": "plan", "flag.analytics": "plan" }
+      }
+    },
+    {
+      "name": "courtesy: Starter, switch off",
+      "sku": { "grantsFlags": ["flag.forecasting", "flag.analytics"] },
+      "planKey": "STARTER",
+      "planFlags": [],
+      "overrides": {},
+      "enforcementOn": false,
+      "expected": {
+        "addsSomething": false,
+        "why": { "flag.forecasting": "courtesy", "flag.analytics": "courtesy" }
+      }
+    },
+    {
+      "name": "switch on: no courtesy, Starter lacks the flags",
+      "sku": { "grantsFlags": ["flag.forecasting", "flag.analytics"] },
+      "planKey": "STARTER",
+      "planFlags": [],
+      "overrides": {},
+      "enforcementOn": true,
+      "expected": { "addsSomething": true }
+    },
+    {
+      "name": "Lite is always enforced: no courtesy",
+      "sku": { "grantsFlags": ["flag.forecasting", "flag.analytics"] },
+      "planKey": "LITE",
+      "planFlags": [],
+      "overrides": {},
+      "enforcementOn": false,
+      "expected": { "addsSomething": true }
+    },
+    {
+      "name": "GRANT on both flags, Starter, switch on",
+      "sku": { "grantsFlags": ["flag.forecasting", "flag.analytics"] },
+      "planKey": "STARTER",
+      "planFlags": [],
+      "overrides": { "flag.forecasting": "GRANT", "flag.analytics": "GRANT" },
+      "enforcementOn": true,
+      "expected": {
+        "addsSomething": false,
+        "why": { "flag.forecasting": "override", "flag.analytics": "override" }
+      }
+    },
+    {
+      "name": "GRANT on both flags, Lite",
+      "sku": { "grantsFlags": ["flag.forecasting", "flag.analytics"] },
+      "planKey": "LITE",
+      "planFlags": [],
+      "overrides": { "flag.forecasting": "GRANT", "flag.analytics": "GRANT" },
+      "enforcementOn": false,
+      "expected": {
+        "addsSomething": false,
+        "why": { "flag.forecasting": "override", "flag.analytics": "override" }
+      }
+    },
+    {
+      "name": "GRANT outranks the plan flag it sits on",
+      "sku": { "grantsFlags": ["flag.forecasting", "flag.analytics"] },
+      "planKey": "GROWTH",
+      "planFlags": ["flag.forecasting", "flag.analytics"],
+      "overrides": { "flag.forecasting": "GRANT" },
+      "enforcementOn": true,
+      "expected": {
+        "addsSomething": false,
+        "why": { "flag.forecasting": "override", "flag.analytics": "plan" }
+      }
+    },
+    {
+      "name": "GRANT on one flag, courtesy on the other",
+      "sku": { "grantsFlags": ["flag.forecasting", "flag.analytics"] },
+      "planKey": "STARTER",
+      "planFlags": [],
+      "overrides": { "flag.forecasting": "GRANT" },
+      "enforcementOn": false,
+      "expected": {
+        "addsSomething": false,
+        "why": { "flag.forecasting": "override", "flag.analytics": "courtesy" }
+      }
+    },
+    {
+      "name": "GRANT on one flag, the other not held (switch on)",
+      "sku": { "grantsFlags": ["flag.forecasting", "flag.analytics"] },
+      "planKey": "STARTER",
+      "planFlags": [],
+      "overrides": { "flag.forecasting": "GRANT" },
+      "enforcementOn": true,
+      "expected": { "addsSomething": true }
+    },
+    {
+      "name": "DENY over a plan flag",
+      "sku": { "grantsFlags": ["flag.forecasting", "flag.analytics"] },
+      "planKey": "GROWTH",
+      "planFlags": ["flag.forecasting", "flag.analytics"],
+      "overrides": { "flag.analytics": "DENY" },
+      "enforcementOn": false,
+      "expected": { "addsSomething": true }
+    },
+    {
+      "name": "DENY over a courtesy flag",
+      "sku": { "grantsFlags": ["flag.forecasting", "flag.analytics"] },
+      "planKey": "STARTER",
+      "planFlags": [],
+      "overrides": { "flag.analytics": "DENY" },
+      "enforcementOn": false,
+      "expected": { "addsSomething": true }
+    },
+    {
+      "name": "one granted flag is not held by anything (not dark, not on the plan)",
+      "sku": { "grantsFlags": ["flag.forecasting", "flag.msrp"] },
+      "planKey": "STARTER",
+      "planFlags": [],
+      "overrides": {},
+      "enforcementOn": false,
+      "expected": { "addsSomething": true }
+    },
+    {
+      "name": "capacity SKU (per-unit capacity) is never a no-op",
+      "sku": { "grantsFlags": ["flag.forecasting"], "capacityPerUnit": 100 },
+      "planKey": "GROWTH",
+      "planFlags": ["flag.forecasting"],
+      "overrides": {},
+      "enforcementOn": false,
+      "expected": { "addsSomething": true }
+    },
+    {
+      "name": "metered SKU (meter key) is never a no-op",
+      "sku": { "grantsFlags": ["flag.forecasting"], "meteredKey": "CUSTOMERS" },
+      "planKey": "GROWTH",
+      "planFlags": ["flag.forecasting"],
+      "overrides": {},
+      "enforcementOn": false,
+      "expected": { "addsSomething": true }
+    },
+    {
+      "name": "empty grantsFlags is never a no-op",
+      "sku": { "grantsFlags": [] },
+      "planKey": "GROWTH",
+      "planFlags": ["flag.forecasting"],
+      "overrides": {},
+      "enforcementOn": false,
+      "expected": { "addsSomething": true }
+    },
+    {
+      "name": "a pre-pin dark flag stays courtesy with the switch on",
+      "sku": { "grantsFlags": ["flag.estimates"] },
+      "planKey": "STARTER",
+      "planFlags": [],
+      "overrides": {},
+      "enforcementOn": true,
+      "expected": { "addsSomething": false, "why": { "flag.estimates": "courtesy" } }
+    }
+  ]
+}

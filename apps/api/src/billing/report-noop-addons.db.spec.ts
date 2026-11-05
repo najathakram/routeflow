@@ -146,6 +146,29 @@ describeDb("SA-1099 WP5 T23: report-noop-addons.mjs (real Postgres)", () => {
         reason: "qa fixture",
       } as never,
     });
+    // SA-1099 A-3 note 3 (R-1): a Starter workspace with an active row AND an active GRANT on both flags
+    await buyer("granted", { plan: "STARTER" });
+    for (const featureKey of FLAGS) {
+      await prisma.tenantFeatureOverride.create({
+        data: {
+          tenantId: idOf["granted"],
+          featureKey,
+          effect: "GRANT",
+          reason: "qa fixture",
+        } as never,
+      });
+    }
+    // and one whose GRANT has been revoked: it must not count
+    await buyer("grant-revoked", { plan: "STARTER" });
+    await prisma.tenantFeatureOverride.create({
+      data: {
+        tenantId: idOf["grant-revoked"],
+        featureKey: "flag.analytics",
+        effect: "GRANT",
+        reason: "qa fixture",
+        revokedAt: new Date(),
+      } as never,
+    });
   }, 120_000);
 
   afterAll(async () => {
@@ -172,8 +195,9 @@ describeDb("SA-1099 WP5 T23: report-noop-addons.mjs (real Postgres)", () => {
     tenants: await prisma.tenant.count(),
   });
 
-  function report(args: string[] = []) {
-    const r = spawnSync(process.execPath, [SCRIPT, "--json", ...args], {
+  // `--enforcement` is required (SA-1099 A-3 note 4), so every run names the production switch it models.
+  function report(enforcement: "on" | "off" = "off") {
+    const r = spawnSync(process.execPath, [SCRIPT, "--json", "--enforcement", enforcement], {
       encoding: "utf8",
       env: { ...process.env, DATABASE_URL: url },
       timeout: 90_000,
@@ -195,9 +219,24 @@ describeDb("SA-1099 WP5 T23: report-noop-addons.mjs (real Postgres)", () => {
     expect(out.enforcement).toBe("off");
     const listed = mine(out);
     expect(listed.map((d) => d.id).sort()).toEqual(
-      [rowOf["starter-billed"], rowOf["growth-billed"], rowOf["manual-invoiced"]].sort(),
+      [
+        rowOf["starter-billed"],
+        rowOf["growth-billed"],
+        rowOf["manual-invoiced"],
+        rowOf["granted"],
+        rowOf["grant-revoked"],
+      ].sort(),
     );
     const by = (label: string) => listed.find((d) => d.id === rowOf[label])!;
+    // a GRANT is a reason of its own; a revoked GRANT is no reason at all (the courtesy stays what it was)
+    expect(by("granted").why).toEqual({
+      "flag.forecasting": "override",
+      "flag.analytics": "override",
+    });
+    expect(by("grant-revoked").why).toEqual({
+      "flag.forecasting": "courtesy",
+      "flag.analytics": "courtesy",
+    });
     expect(by("starter-billed")).toMatchObject({
       sku: "FORECASTING",
       why: { "flag.forecasting": "courtesy", "flag.analytics": "courtesy" },
@@ -212,20 +251,36 @@ describeDb("SA-1099 WP5 T23: report-noop-addons.mjs (real Postgres)", () => {
     }
   }, 120_000);
 
-  it("--enforcement on: the courtesy is gone, only the plan-carried purchase is listed", async () => {
-    const listed = mine(report(["--enforcement", "on"]));
-    expect(listed.map((d) => d.id)).toEqual([rowOf["growth-billed"]]);
+  it("--enforcement on: the courtesy is gone, only the plan-carried and the GRANT-served purchases are listed", async () => {
+    const out = report("on");
+    expect(out.enforcement).toBe("on");
+    const listed = mine(out);
+    expect(listed.map((d) => d.id).sort()).toEqual(
+      [rowOf["growth-billed"], rowOf["granted"]].sort(),
+    );
+  }, 120_000);
+
+  // R-1 (SA-1099 A-3 note 3): the report must not list fewer than the sale check refuses. A Starter workspace with
+  // an active FORECASTING row and an active GRANT on both flags is served by the override with the switch on, so the
+  // row added nothing: listed, reason "override". Red before A-3: the script never read a GRANT, so it was not listed.
+  it("R-1: a billed row whose flags are served by active GRANT overrides is listed with reason override (switch on)", async () => {
+    const listed = mine(report("on"));
+    const row = listed.find((d) => d.id === rowOf["granted"]);
+    expect(row).toBeDefined();
+    expect(row!.why).toEqual({ "flag.forecasting": "override", "flag.analytics": "override" });
+    // the revoked GRANT is no reason: with the switch on that workspace added something, so it is not listed
+    expect(listed.map((d) => d.id)).not.toContain(rowOf["grant-revoked"]);
   }, 120_000);
 
   it("writes nothing: the row counts of every table it could touch are the same after both runs", async () => {
     const before = await counts();
-    report();
-    report(["--enforcement", "on"]);
+    report("off");
+    report("on");
     expect(await counts()).toEqual(before);
   }, 120_000);
 
   it("prints no tenant slug and no price", async () => {
-    const r = spawnSync(process.execPath, [SCRIPT, "--json"], {
+    const r = spawnSync(process.execPath, [SCRIPT, "--json", "--enforcement", "off"], {
       encoding: "utf8",
       env: { ...process.env, DATABASE_URL: url },
       timeout: 90_000,

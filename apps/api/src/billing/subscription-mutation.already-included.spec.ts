@@ -45,7 +45,7 @@ jest.mock("./feature-registry", () => {
   };
 });
 
-import { BadRequestException, ConflictException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Logger } from "@nestjs/common";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
@@ -81,6 +81,8 @@ type Opts = {
   resolverDown?: boolean;
   heldRow?: Record<string, unknown> | null;
   requiresMissing?: string | null;
+  /** The authority fails some other way (a plain Error, not FEATURE_REQUIRES_UNMET). */
+  requiresError?: Error;
 };
 
 function make(opts: Opts = {}) {
@@ -103,6 +105,7 @@ function make(opts: Opts = {}) {
           },
     ),
     assertFeatureRequiresMet: jest.fn(async (_t: string, key: string, ack?: boolean) => {
+      if (key === "flag.synthetic_needs_returns" && opts.requiresError) throw opts.requiresError;
       if (key === "flag.synthetic_needs_returns" && opts.requiresMissing && !ack) {
         throw new BadRequestException({
           statusCode: 400,
@@ -291,6 +294,31 @@ describe("B554: the self-serve enable checks the registry `requires` and clears 
     const m = make({ effective: STRICT, requiresMissing: null });
     await expect(m.svc.enableAddon("t1", "FORECASTING", 1, "u1")).resolves.toBeDefined();
     expect(mockWithAdvisoryLock).toHaveBeenCalledTimes(1);
+  });
+
+  // SA-1099 A-3 note 5 (R-3): an outage of the requires check is not a refusal. It matches the already-included
+  // check beside it (a resolver that cannot answer sells, with a warning): the sale goes ahead and the log says why.
+  it("R-3: the requires check fails with a plain Error (not FEATURE_REQUIRES_UNMET): the sale goes ahead and a warning is logged", async () => {
+    const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    try {
+      const m = make({ effective: STRICT, requiresError: new Error("registry read failed") });
+      await expect(m.svc.enableAddon("t1", "FORECASTING", 1, "u1")).resolves.toBeDefined();
+      expect(mockWithAdvisoryLock).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("FORECASTING"));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("requires"));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("R-3: the preview does not refuse on that failure either", async () => {
+    const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    try {
+      const m = make({ effective: STRICT, requiresError: new Error("registry read failed") });
+      expect(await m.svc.addonEnableRefusal("t1", "FORECASTING")).toBeNull();
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("a SKU billing no requires-bearing row (the customer pack) is not asked", async () => {
