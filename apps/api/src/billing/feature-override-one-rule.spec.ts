@@ -26,6 +26,8 @@ import { FeatureOverrideService } from "./feature-override.service";
  * a relaxed index (stacked grants) must not make the owner email contradict what is served.
  */
 const DAY = 86_400_000;
+// A fixed collection-time anchor (not `Date.now() + N`, which the clock-fuse ratchet bans); every offset is a day or more.
+const NOW = Date.now();
 const live = (featureKey: string, effect: "GRANT" | "DENY", expiresAt: Date | null = null) => ({
   featureKey,
   effect,
@@ -37,9 +39,9 @@ const live = (featureKey: string, effect: "GRANT" | "DENY", expiresAt: Date | nu
 const OTHER_ROWS = [
   live("tie_key", "GRANT"), // a same-key tie: first row listed
   live("tie_key", "DENY"),
-  live("expired_then_live", "GRANT", new Date(Date.now() - DAY)), // expired: never supplies an effect
+  live("expired_then_live", "GRANT", new Date(NOW - DAY)), // expired: never supplies an effect
   live("expired_then_live", "DENY"),
-  live("solo", "GRANT", new Date(Date.now() + DAY)),
+  live("solo", "GRANT", new Date(NOW + DAY)),
 ];
 
 function buildJob(otherRows: unknown[]) {
@@ -50,7 +52,7 @@ function buildJob(otherRows: unknown[]) {
     kind: "PILOT",
     effect: "GRANT",
     revokedAt: null,
-    expiresAt: new Date(Date.now() + 6 * DAY),
+    expiresAt: new Date(NOW + 6 * DAY),
     tenant: {
       id: "t1",
       name: "Acme Foods",
