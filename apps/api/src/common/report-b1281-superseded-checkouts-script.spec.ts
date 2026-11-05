@@ -90,14 +90,33 @@ describe("report-b1281-superseded-checkouts.mjs", () => {
     expect(sql).not.toMatch(/\b(INSERT|UPDATE|DELETE|TRUNCATE|ALTER|DROP|CREATE|GRANT)\b/);
   });
 
-  it("reaches Stripe only through list calls (class pin: no write verb on any Stripe resource)", () => {
-    const code = codeLines().join("\n");
-    expect(code).not.toMatch(
-      /\.(create|update|cancel|del|confirm|pay|finalizeInvoice|voidInvoice|capture|refund)\s*\(/,
-    );
-    // the only Stripe resources it names are the two read-only lists
-    const resources = [...code.matchAll(/stripe\.([a-zA-Z.]+?)\.list\(/g)].map((m) => m[1]).sort();
-    expect(resources).toEqual(["checkout.sessions", "subscriptions"]);
+  // Class pin (review B note 1): EVERY `stripe.<resource>.<verb>(` call is a read. A list of write verbs misses the
+  // next one Stripe adds (expire, resume, markUncollectible, attach, detach ...); the allow-list cannot.
+  const READ_VERBS = new Set(["list", "retrieve"]);
+  const stripeCalls = (code: string) =>
+    [...code.matchAll(/\bstripe\.([\w.]+)\.(\w+)\s*\(/g)].map((m) => ({
+      resource: m[1],
+      verb: m[2],
+    }));
+
+  it("the call detector sees expire and resume, which the old write-verb list missed", () => {
+    const probe = `await stripe.checkout.sessions.expire(id); await stripe.subscriptions.resume(id); await stripe.subscriptions.list({});`;
+    expect(
+      stripeCalls(probe)
+        .filter((c) => !READ_VERBS.has(c.verb))
+        .map((c) => c.verb),
+    ).toEqual(["expire", "resume"]);
+  });
+
+  it("reaches Stripe only through read calls (class pin: every stripe call is list or retrieve)", () => {
+    const calls = stripeCalls(codeLines().join("\n"));
+    expect(calls.length).toBeGreaterThan(0); // not vacuous
+    expect(calls.filter((c) => !READ_VERBS.has(c.verb))).toEqual([]);
+    // and the only resources it names are the two it needs
+    expect([...new Set(calls.map((c) => c.resource))].sort()).toEqual([
+      "checkout.sessions",
+      "subscriptions",
+    ]);
   });
 
   it("uses the app's Stripe API version and the app's live-status set (no drift)", () => {
@@ -204,6 +223,45 @@ describe("report-b1281-superseded-checkouts.mjs", () => {
       };
       expect(rep.live).toMatchObject({ tenants: 1, findings: 1 });
       expect(rep.test).toMatchObject({ tenants: 1, findings: 0 });
+    });
+
+    it("a rethrown Stripe error carries the last 4 of any Stripe id, never a full id or the key (review B note 2)", () => {
+      const msg =
+        "No such customer: 'cus_QwErTy123456'; sub_AbCdEf987654 in acct_1AbCdEfGhIjKlMn failed with key sk_live_SeCrEtKeY0123 (pi_3PqRsTuV456789)";
+      const out = call(
+        `m.scrubStripeError(${JSON.stringify(msg)}, "sk_live_SeCrEtKeY0123")`,
+      ) as string;
+      expect(out).not.toMatch(
+        /QwErTy123456|AbCdEf987654|1AbCdEfGhIjKlMn|SeCrEtKeY0123|3PqRsTuV456789/,
+      );
+      expect(out).toMatch(/cus_…3456/);
+      expect(out).toMatch(/sub_…7654/);
+      expect(out).toMatch(/acct_…KlMn/);
+      expect(out).toMatch(/pi_…6789/);
+      expect(out).toContain("No such customer"); // the words survive
+    });
+
+    it("prints a separate LIVE findings line, and a TEST-only finding leaves it at 0 while the exit is 3 (review B note 4)", () => {
+      const liveSub = `{ storedSubId: "sub_AAAA1111", subs: [{ id: "sub_AAAA1111", status: "active" }], sessions: [] }`;
+      const dirty = `{ storedSubId: "sub_AAAA1111", subs: [{ id: "sub_AAAA1111", status: "active" }, { id: "sub_BBBB2222", status: "active" }], sessions: [] }`;
+      const testOnly = `m.buildReport([
+        { tenantId: "t-1", slug: "acme", result: m.classifyTenant(${liveSub}) },
+        { tenantId: "t-2", slug: "qa-trial", result: m.classifyTenant(${dirty}) },
+      ])`;
+      const lines = call(`m.formatReport(${testOnly})`) as string[];
+      expect(lines.filter((l) => l.startsWith("LIVE FINDINGS:"))).toEqual([
+        "LIVE FINDINGS: 0 (read this line: the exit code is 3 on a TEST-only finding too)",
+      ]);
+      expect(call(`m.exitCodeFor(${testOnly})`)).toBe(3);
+      const liveDirty = `m.buildReport([{ tenantId: "t-1", slug: "acme", result: m.classifyTenant(${dirty}) }])`;
+      expect((call(`m.formatReport(${liveDirty})`) as string[]).join("\n")).toMatch(
+        /LIVE FINDINGS: 1 /,
+      );
+    });
+
+    it("the header says a non-live orphan is a finding (review B note 6)", () => {
+      expect(source).not.toMatch(/only counted/);
+      expect(source).toMatch(/non-live orphan[^.]*finding/i);
     });
 
     it("exit code: 0 when clean, 3 on any finding", () => {
