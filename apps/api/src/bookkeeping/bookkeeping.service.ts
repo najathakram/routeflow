@@ -7,6 +7,7 @@ import {
 } from "@nestjs/common";
 import { toCollectByCustomer, toCollectState } from "../invoices/to-collect";
 import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
+import { aiNotAvailableException } from "../common/ai-key-failure";
 import { flagUnconfirmedOverReserved } from "../invoices/confirmed-basis";
 import { lockBillRows } from "../vendor-bills/bill-locks";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
@@ -936,7 +937,8 @@ export class BookkeepingService implements OnModuleInit {
     // business key is for bill scans only), the monthly budget is checked, and the model comes back with it.
     // SA-1035: the model is read once; the call and both usage records use this one value. Sonnet (no picker).
     const { key: apiKey, model } = await this.platformConfig.prepareAiCall("receipt_scan");
-    if (!apiKey) throw new BadRequestException("Anthropic API key not configured");
+    // F-1102-T: no key at all is not something the business can set up; it reads as "not available right now".
+    if (!apiKey) throw aiNotAvailableException();
     const anthropic = new Anthropic({ apiKey });
     const base64 = receiptBuffer.toString("base64");
     const isPdf = mimeType === "application/pdf";
