@@ -9,7 +9,7 @@
  * that are reduced to counts in memory and never returned.
  */
 import { RECORD_KEEPING_EXCLUDED_STATUSES } from "../tenant/tenant-automation";
-import { TENANT_ZONE_SELECT, zoneFromConfig } from "../common/tenant-time-zone";
+import { resolveZone } from "../common/tenant-time-zone";
 import {
   dedupeMailboxes,
   digestOptOutWhere,
@@ -29,7 +29,7 @@ export interface LowStockDigestReport {
     status: string | null;
   };
   timezone: {
-    /** What the tenant's config holds; null when it has no row or no value. */
+    /** The zone the tenant's config holds; null when it has no row, no value, or a value that is not a real zone. */
     stored: string | null;
     /** What the cron uses: the stored zone, or UTC when the stored one is missing or not a real zone. */
     used: string | null;
@@ -67,6 +67,7 @@ export interface LowStockDigestReport {
 /** The slice of the Prisma client this report reads: nothing here can write. */
 export interface LowStockDigestReportDb {
   tenant: { findFirst(args: unknown): Promise<unknown> };
+  tenantConfig: { findUnique(args: any): Promise<{ timezone?: string | null } | null> };
   product: { count(args: unknown): Promise<number>; findMany(args: unknown): Promise<unknown[]> };
   user: { findMany(args: unknown): Promise<unknown[]> };
   userPreference: { findMany(args: unknown): Promise<unknown[]> };
@@ -76,7 +77,7 @@ export interface LowStockDigestReportDb {
 type TenantRow = {
   status: string;
   deletedAt: Date | null;
-  config: { timezone?: string | null; lowStockDigestSentForDay: Date | null } | null;
+  config: { lowStockDigestSentForDay: Date | null } | null;
 } | null;
 
 export async function reportLowStockDigest(
@@ -88,12 +89,13 @@ export async function reportLowStockDigest(
     select: {
       status: true,
       deletedAt: true,
-      config: { select: { ...TENANT_ZONE_SELECT, lowStockDigestSentForDay: true } },
+      config: { select: { lowStockDigestSentForDay: true } },
     },
   })) as TenantRow;
 
-  const stored = tenant?.config?.timezone ?? null;
-  const resolved = tenant ? zoneFromConfig(tenant.config) : null;
+  // SA-738r: the zone is read only through the resolver (one more read-only lookup on the tenant's config).
+  const resolved = tenant ? await resolveZone(db, { tenantId }) : null;
+  const stored = resolved && !resolved.fallback ? resolved.zone : null;
 
   const active = await db.product.count({ where: { tenantId, isActive: true } });
   const withPoint = (await db.product.findMany({

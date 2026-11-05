@@ -16,17 +16,21 @@ function make(
     deliveries?: number;
   } = {},
 ) {
+  const tenant =
+    "tenant" in data
+      ? data.tenant
+      : {
+          status: "ACTIVE",
+          deletedAt: null,
+          config: { timezone: "America/Chicago", lowStockDigestSentForDay: null },
+        };
   const db = {
-    tenant: {
-      findFirst: jest.fn().mockResolvedValue(
-        "tenant" in data
-          ? data.tenant
-          : {
-              status: "ACTIVE",
-              deletedAt: null,
-              config: { timezone: "America/Chicago", lowStockDigestSentForDay: null },
-            },
-      ),
+    tenant: { findFirst: jest.fn().mockResolvedValue(tenant) },
+    // the zone is read through the resolver (common/tenant-time-zone.ts), one lookup on the config row
+    tenantConfig: {
+      findUnique: jest
+        .fn()
+        .mockResolvedValue((tenant as { config?: unknown } | null)?.config ?? null),
     },
     product: {
       count: jest.fn().mockResolvedValue(data.activeProducts ?? 0),
@@ -110,7 +114,7 @@ describe("reportLowStockDigest (ops 545)", () => {
     });
   });
 
-  it("reports the stored zone, and UTC when the stored zone is missing or not a zone", async () => {
+  it("reports the configured zone, and UTC when the stored zone is missing or not a zone (the bad value is not echoed)", async () => {
     const ok = await make().run();
     expect(ok.timezone).toEqual({
       stored: "America/Chicago",
@@ -124,7 +128,7 @@ describe("reportLowStockDigest (ops 545)", () => {
         config: { timezone: "Not/AZone", lowStockDigestSentForDay: null },
       },
     }).run();
-    expect(bad.timezone).toEqual({ stored: "Not/AZone", used: "UTC", fellBackToUtc: true });
+    expect(bad.timezone).toEqual({ stored: null, used: "UTC", fellBackToUtc: true });
     const none = await make({
       tenant: { status: "ACTIVE", deletedAt: null, config: null },
     }).run();

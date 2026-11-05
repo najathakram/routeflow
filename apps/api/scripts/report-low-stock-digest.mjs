@@ -210,6 +210,8 @@ async function main() {
   if (!existsSync(built))
     throw new Error("report: build the api first (npm run build -w apps/api)");
   const { reportLowStockDigest } = require(built);
+  // the zone resolver warns once with the tenant id when it falls back to UTC; this report never echoes the id
+  require("@nestjs/common").Logger.overrideLogger(false);
   const { Pool } = require("pg");
   const { PrismaClient } = require("@prisma/client");
   const { PrismaPg } = require("@prisma/adapter-pg");
