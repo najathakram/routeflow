@@ -2052,6 +2052,54 @@ describe("VendorBillsService", () => {
       });
     });
 
+    // SA-1102 §2.3 / review B note 2: a business key that Anthropic refuses fails THAT scan. It is never retried on
+    // RouteFlow's key (which would bill us for a call the business chose to run on its own account, and hide a dead
+    // key behind a working scan). One resolve, one client built with the business key, one call.
+    it("a business key Anthropic refuses (401) fails the scan once and is never retried on RouteFlow's key", async () => {
+      const BUSINESS_KEY = "sk-ant-api03-BUSINESSKEYBUSINESSKEYBUSINESSKEY1234";
+      const prepareAiCall = jest.fn(async (_task: AiTask, businessKey?: string | null) => ({
+        key: businessKey ?? null,
+        source: "business" as const,
+        model: AI_TASKS.bill_scan.fallback,
+        tenantId: "test-tenant",
+      }));
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          VendorBillsService,
+          { provide: PrismaService, useValue: prisma },
+          {
+            provide: PlatformConfigService,
+            useValue: { requireAiTenant: jest.fn(), prepareAiCall, recordAiUsage },
+          },
+          {
+            provide: SystemConfigService,
+            useValue: { get: jest.fn().mockResolvedValue(BUSINESS_KEY) },
+          },
+          { provide: DuplicateMatchService, useValue: dupMatch },
+          { provide: StorageService, useValue: storage },
+          { provide: InventoryService, useValue: inventory },
+          ProductAliasService,
+        ],
+      }).compile();
+      const businessService = module.get<VendorBillsService>(VendorBillsService);
+      const AnthropicCtor = jest.requireMock("@anthropic-ai/sdk").default as jest.Mock;
+      AnthropicCtor.mockClear();
+      mockAnthropicCreate.mockRejectedValue({ status: 401 });
+
+      await expect(businessService.scanInvoice([jpegPage])).rejects.toMatchObject({
+        constructor: BadRequestException,
+        response: expect.objectContaining({ code: "AI_KEY_INVALID" }),
+      });
+
+      expect(prepareAiCall).toHaveBeenCalledTimes(1);
+      expect(prepareAiCall).toHaveBeenCalledWith("bill_scan", BUSINESS_KEY);
+      expect(AnthropicCtor).toHaveBeenCalledTimes(1);
+      expect(AnthropicCtor).toHaveBeenCalledWith(
+        expect.objectContaining({ apiKey: BUSINESS_KEY, maxRetries: 0 }),
+      );
+      expect(mockAnthropicCreate).toHaveBeenCalledTimes(1);
+    });
+
     it("maps Anthropic overload/rate-limit to AI_UNAVAILABLE 503", async () => {
       mockAnthropicCreate.mockRejectedValue({ status: 529 });
 

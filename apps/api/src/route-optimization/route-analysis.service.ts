@@ -50,6 +50,9 @@ export class RouteAnalysisService {
     startTime?: string,
     options?: { windowsOnly?: boolean },
   ): Promise<RouteAnalysisResult> {
+    // SA-1102 A-4 M3: tenant first. A tenantless call is refused before any read, so a request id is never looked up
+    // in another business and a 404 cannot tell the caller whether it exists anywhere.
+    this.platformConfig.requireAiTenant();
     // Load route with stops + customer delivery windows
     const route = await this.prisma.forTenant().route.findUnique({
       where: { id: routeId },
@@ -239,6 +242,9 @@ Status guide:
    * Analyze a route run using its snapshotted depot and start time.
    */
   async analyzeRouteRun(routeRunId: string, startTime?: string): Promise<RouteAnalysisResult> {
+    // SA-1102 A-4 M3: tenant first. A tenantless call is refused before any read, so a request id is never looked up
+    // in another business and a 404 cannot tell the caller whether it exists anywhere.
+    this.platformConfig.requireAiTenant();
     const run = await this.prisma.forTenant().routeRun.findUnique({
       where: { id: routeRunId },
       include: {

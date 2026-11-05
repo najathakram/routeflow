@@ -921,6 +921,9 @@ export class BookkeepingService implements OnModuleInit {
   }
 
   async extractExpenseItems(id: string) {
+    // SA-1102 A-4 M3: tenant first. A tenantless call is refused before any read, so a request id is never looked up
+    // in another business and a 404 cannot tell the caller whether it exists anywhere.
+    this.platformConfig.requireAiTenant();
     const expense = await this.findExpenseOrThrow(id);
     if (!expense.receiptKey)
       throw new BadRequestException("Upload a receipt first before extracting items");

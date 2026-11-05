@@ -2653,14 +2653,15 @@ export class VendorBillsService {
    * worth keeping.
    */
   async scanInvoice(files: ScanInvoiceFile[], scannedById?: string) {
+    // SA-1102 A-4 M3: tenant first. A tenantless call is refused before any read, so a request id is never looked up
+    // in another business and a 404 cannot tell the caller whether it exists anywhere.
+    this.platformConfig.requireAiTenant();
     const fileHash = hashFile(files.map((f) => f.buffer));
     const prior = await this.findScanByHash(fileHash);
     if (prior) return this.rematchPriorScan(prior);
 
     // SA-1102: the business's own key is used for a bill scan ONLY (and only when set); every other scan runs on
     // RouteFlow's key. A business key Anthropic refuses fails the scan; it is not retried on RouteFlow's key.
-    // A-1: a business is required BEFORE the business key is read (a tenantless secret read throws a 500).
-    this.platformConfig.requireAiTenant();
     const businessKey = await this.systemConfig.get("anthropic.apiKey");
     // SA-1035: the model is read ONCE per scan and used for the call, both usage records and the stored scan row, so
     // the row says what was actually called even if the setting changes mid-scan.

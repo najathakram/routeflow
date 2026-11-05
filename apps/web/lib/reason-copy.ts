@@ -1,3 +1,5 @@
+import { API_ERROR_CODES } from "@routeflow/types";
+import { aiResetDay } from "./ai-paused";
 import { RUN_UNFINALIZED_PREFIX } from "./api/invoices";
 import type { ReturnReason } from "./api/returns";
 import { isReadOnlyRefusal, readOnlyRefusalCopy } from "./read-only-refusal";
@@ -207,3 +209,24 @@ export function describeSaveError(err: unknown): string {
 
 export const SCAN_FAILED_COPY = "We couldn't read this page. Try a clearer photo.";
 export const RECORDS_FAILED_COPY = "We couldn't create the records. Please try again.";
+
+/** A scan the server refused because this business used its monthly AI allowance (403 AI_MONTHLY_CAP_REACHED). */
+export function isAiCapRefusal(err: unknown): boolean {
+  return (
+    (err as { response?: { data?: { code?: unknown } } } | null)?.response?.data?.code ===
+    API_ERROR_CODES.AI_MONTHLY_CAP_REACHED
+  );
+}
+
+/** SA-1102 A-4 M1: the allowance, not a bad photo. Closed copy; `resetsAt` is the server's date (see ai-paused.ts). */
+export function scanPausedCopy(resetsAt?: string | null): string {
+  return `AI scans are paused until ${aiResetDay(resetsAt)}. You can still enter the bill by hand.`;
+}
+
+/** The paused-until copy when `err` is a cap refusal on a scan, else null (the caller keeps its other copy). */
+export function scanCapPausedCopy(err: unknown): string | null {
+  if (!isAiCapRefusal(err)) return null;
+  return scanPausedCopy(
+    (err as { response: { data: { resetsAt?: string } } }).response.data.resetsAt,
+  );
+}

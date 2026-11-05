@@ -92,6 +92,7 @@ describe("SupplierStatementsService", () => {
         {
           provide: PlatformConfigService,
           useValue: {
+            requireAiTenant: jest.fn(),
             prepareAiCall: jest.fn().mockResolvedValue({
               key: "test-key",
               source: "routeflow",

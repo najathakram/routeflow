@@ -119,6 +119,7 @@ describe("BookkeepingService", () => {
         {
           provide: PlatformConfigService,
           useValue: {
+            requireAiTenant: jest.fn(),
             prepareAiCall: jest.fn(async (task: AiTask) => ({
               key: "test-key",
               source: "routeflow",

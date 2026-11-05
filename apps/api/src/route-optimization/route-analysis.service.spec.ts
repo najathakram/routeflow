@@ -84,6 +84,7 @@ describe("RouteAnalysisService — AI usage metering", () => {
         {
           provide: PlatformConfigService,
           useValue: {
+            requireAiTenant: jest.fn(),
             prepareAiCall,
             recordAiUsage,
           },

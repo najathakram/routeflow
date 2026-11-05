@@ -77,14 +77,59 @@ describe("Anthropic call sites all go through prepareAiCall (SA-1102 A-1 census)
     },
   );
 
-  it("the bill scan checks for a business BEFORE it reads the business key", () => {
+  // SA-1102 A-4 M3: tenant first. The AI method of every listed site (testConnection is the exemption) opens with
+  // `this.platformConfig.requireAiTenant()` as its FIRST statement, so nothing (prisma, forTenant, systemConfig, or a
+  // helper that reads through them) runs before a business is known. `prepareAiCall` stays after the method's own
+  // reads so a not-found is still a 404; the tenant step is the one before everything.
+  const AI_METHODS: Record<string, string[]> = {
+    "bookkeeping/bookkeeping.service.ts": ["extractExpenseItems"],
+    "route-optimization/route-analysis.service.ts": ["analyzeRoute", "analyzeRouteRun"],
+    "supplier-statements/supplier-statements.service.ts": ["scanStatement"],
+    "vendor-bills/vendor-bills.service.ts": ["scanInvoice"],
+  };
+
+  /** The text of a method's body: from its opening brace (after balanced params and an optional return type). */
+  function methodBody(text: string, name: string): string {
+    const at = text.search(new RegExp(String.raw`\basync\s+${name}\s*\(`));
+    expect(at).toBeGreaterThan(-1);
+    let i = text.indexOf("(", at);
+    for (let depth = 0; i < text.length; i++) {
+      if (text[i] === "(") depth++;
+      else if (text[i] === ")" && --depth === 0) break;
+    }
+    const open = text.slice(i + 1).search(/\{/);
+    const head = text.slice(i + 1, i + 1 + open);
+    expect(head).toMatch(/^\s*(:\s*[^{]+)?\s*$/); // only an optional return type between ")" and "{"
+    return text.slice(i + 1 + open + 1);
+  }
+
+  it("every AI method opens with requireAiTenant() as its first statement", () => {
+    expect(Object.keys(AI_METHODS).sort()).toEqual(Object.keys(SITES).sort());
+    for (const [file, names] of Object.entries(AI_METHODS)) {
+      const text = strip(fs.readFileSync(path.join(SRC, file), "utf8"));
+      for (const name of names) {
+        const body = methodBody(text, name).trimStart();
+        expect([file, name, body.startsWith("this.platformConfig.requireAiTenant();")]).toEqual([
+          file,
+          name,
+          true,
+        ]);
+      }
+    }
+  });
+
+  it("prepareAiCall and requireAiTenant have one home: prepareAiCall's own first step is requireAiTenant", () => {
     const text = strip(
-      fs.readFileSync(path.join(SRC, "vendor-bills/vendor-bills.service.ts"), "utf8"),
+      fs.readFileSync(path.join(SRC, "platform-admin/platform-config.service.ts"), "utf8"),
     );
-    const tenant = text.search(/\brequireAiTenant\s*\(/);
-    const keyRead = text.search(/systemConfig\.get\(\s*"anthropic\.apiKey"\s*\)/);
-    expect(tenant).toBeGreaterThan(-1);
-    expect(keyRead).toBeGreaterThan(tenant);
+    expect(text.match(/^ {2}requireAiTenant[(][)]: string [{]/gm)).toHaveLength(1); // one definition
+    // prepareAiCall's return type is an object type, so take the body from the `}> {` that closes it.
+    const head = text.indexOf("async prepareAiCall(");
+    expect(head).toBeGreaterThan(-1);
+    const bodyStart = text.indexOf("}> {", head) + "}> {".length;
+    expect(
+      text.slice(bodyStart).trimStart().startsWith("const tenantId = this.requireAiTenant();"),
+    ).toBe(true);
   });
 
   it("no site resolves a key or a model on its own any more (prepareAiCall is the one entry)", () => {

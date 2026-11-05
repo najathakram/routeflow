@@ -101,6 +101,9 @@ export class SupplierStatementsService {
    * model: instant, free, and the strongest duplicate signal there is.
    */
   async scanStatement(files: ScanStatementFile[], scannedById?: string) {
+    // SA-1102 A-4 M3: tenant first. A tenantless call is refused before any read, so a request id is never looked up
+    // in another business and a 404 cannot tell the caller whether it exists anywhere.
+    this.platformConfig.requireAiTenant();
     const fileHash = hashFile(files.map((f) => f.buffer));
     const prior = await this.findScanByHash(fileHash);
     if (prior) return this.rematchStoredScan(prior);
