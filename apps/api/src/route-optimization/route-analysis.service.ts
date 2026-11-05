@@ -4,6 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import {
   PlatformConfigService,
+  capResetsAt,
   isMonthlyCapRefusal,
 } from "../platform-admin/platform-config.service";
 import { AI_SCAN_MAX_TOKENS, firstText } from "../platform-admin/ai-response";
@@ -13,6 +14,10 @@ import { RouteOptimizationService, StopETA } from "./route-optimization.service"
 
 export interface RouteAnalysisResult {
   configured: boolean;
+  /** Why there are no AI notes: "cap" = this business used its monthly allowance (see `aiResetsAt`), "unavailable" = RouteFlow's key is not set. */
+  aiUnavailable?: "cap" | "unavailable";
+  /** ISO date AI notes come back, with `aiUnavailable: "cap"`. */
+  aiResetsAt?: string;
   summary?: string;
   stops?: Array<{
     stopNumber: number;
@@ -118,12 +123,18 @@ export class RouteAnalysisService {
     try {
       prepared = await this.platformConfig.prepareAiCall("general");
     } catch (err) {
-      if (isMonthlyCapRefusal(err)) return { configured: false, etas };
+      if (isMonthlyCapRefusal(err))
+        return {
+          configured: false,
+          aiUnavailable: "cap",
+          aiResetsAt: capResetsAt(err),
+          etas,
+        };
       throw err;
     }
     const apiKey = prepared.key;
     if (!apiKey) {
-      return { configured: false, etas };
+      return { configured: false, aiUnavailable: "unavailable", etas };
     }
 
     // Call Claude for analysis
@@ -301,12 +312,18 @@ Status guide:
     try {
       prepared = await this.platformConfig.prepareAiCall("general");
     } catch (err) {
-      if (isMonthlyCapRefusal(err)) return { configured: false, etas };
+      if (isMonthlyCapRefusal(err))
+        return {
+          configured: false,
+          aiUnavailable: "cap",
+          aiResetsAt: capResetsAt(err),
+          etas,
+        };
       throw err;
     }
     const apiKey = prepared.key;
     if (!apiKey) {
-      return { configured: false, etas };
+      return { configured: false, aiUnavailable: "unavailable", etas };
     }
 
     let model: string | null = null;

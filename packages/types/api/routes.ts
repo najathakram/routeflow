@@ -26,6 +26,10 @@ export interface StopETA {
 
 export interface RouteAnalysisResult {
   configured: boolean;
+  /** Why there are no AI notes: "cap" = this business used its monthly allowance (see `aiResetsAt`), "unavailable" = RouteFlow's key is not set. */
+  aiUnavailable?: "cap" | "unavailable";
+  /** ISO date AI notes come back, with `aiUnavailable: "cap"`. */
+  aiResetsAt?: string;
   summary?: string;
   stops?: Array<{
     stopNumber: number;

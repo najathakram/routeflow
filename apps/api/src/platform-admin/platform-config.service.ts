@@ -61,6 +61,23 @@ export function isMonthlyCapRefusal(err: unknown): boolean {
   );
 }
 
+/** The first instant of the UTC month `now` falls in: the boundary the monthly AI allowance is summed from. */
+export function utcMonthStart(now: Date): Date {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+}
+
+/** The first instant of the next UTC month: when a business's AI allowance starts again. */
+export function nextUtcMonthStart(now: Date): Date {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+}
+
+/** The ISO date a refused business gets AI scans back: the 403 carries it; a refusal without one falls back to the next 1st. */
+export function capResetsAt(err: unknown, now = new Date()): string {
+  const body = (err as { getResponse?: () => unknown })?.getResponse?.() as
+    { resetsAt?: unknown } | undefined;
+  return typeof body?.resetsAt === "string" ? body.resetsAt : nextUtcMonthStart(now).toISOString();
+}
+
 /** SA-1102 B1: one business's monthly allowance on RouteFlow's key, in USD, when `ai.monthlyCapUsd` is unset. */
 export const DEFAULT_MONTHLY_AI_CAP_USD = 25;
 
@@ -270,7 +287,7 @@ export class PlatformConfigService {
   async assertAiBudget(tenantId: string): Promise<void> {
     const cap = await this.monthlyCapUsdFor(tenantId);
     const now = new Date();
-    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const monthStart = utcMonthStart(now);
     const rows = await this.prisma.$queryRaw<
       Array<{ model: string; inTok: number; outTok: number }>
     >`
@@ -284,6 +301,7 @@ export class PlatformConfigService {
     if (estimateSpendUsd(rows) >= cap) {
       throw new ForbiddenException({
         code: API_ERROR_CODES.AI_MONTHLY_CAP_REACHED,
+        resetsAt: nextUtcMonthStart(now).toISOString(),
         message:
           "This business has used this month's AI scans. They start again on the 1st. Contact RouteFlow to raise the limit.",
       });

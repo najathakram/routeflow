@@ -132,6 +132,11 @@ describe("PlatformConfigService.prepareAiCall and the monthly budget (SA-1102 A-
       const err = await refused(service.prepareAiCall("receipt_scan"));
       expect(err?.getStatus?.()).toBe(403);
       expect(err?.getResponse?.()).toMatchObject({ code: "AI_MONTHLY_CAP_REACHED" });
+      // RA-1: the refusal carries when scans start again: the 1st of the next UTC month, the boundary the sum uses.
+      const now = new Date();
+      expect(err?.getResponse?.().resetsAt).toBe(
+        new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString(),
+      );
       expect(err?.getResponse?.().message).toBe(
         "This business has used this month's AI scans. They start again on the 1st. Contact RouteFlow to raise the limit.",
       );
