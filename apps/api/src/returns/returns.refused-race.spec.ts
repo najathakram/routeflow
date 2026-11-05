@@ -34,11 +34,17 @@ function serviceWhereStatusChangesUnderTheLock(afterLock: string) {
   return { tx, service: new ReturnsService(prisma, {} as any, {} as any, {} as any, {} as any) };
 }
 
+/** The order-row `FOR UPDATE` statements (B1279: the customer advisory lock is also an `$executeRaw` now). */
+const orderLockCalls = (tx: { $executeRaw: jest.Mock }) =>
+  tx.$executeRaw.mock.calls.filter((c) =>
+    (c[0] as TemplateStringsArray).join("?").includes("FOR UPDATE"),
+  );
+
 describe("returns.create re-checks the order status after its FOR UPDATE (RO-19)", () => {
   it("RO-19: REFUSED on the first read, CONFIRMED after the lock: 400 and no Return row", async () => {
     const { tx, service } = serviceWhereStatusChangesUnderTheLock("CONFIRMED");
     await expect(service.create(dto, "u1", "OPERATOR")).rejects.toThrow(GATE_MESSAGE);
-    expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(orderLockCalls(tx)).toHaveLength(1);
     expect(tx.return.create).not.toHaveBeenCalled();
   });
 
@@ -46,7 +52,9 @@ describe("returns.create re-checks the order status after its FOR UPDATE (RO-19)
     const { tx, service } = serviceWhereStatusChangesUnderTheLock("CONFIRMED");
     await service.create(dto, "u1", "OPERATOR").catch(() => undefined);
     expect(tx.order.findUnique.mock.invocationCallOrder[1]).toBeGreaterThan(
-      tx.$executeRaw.mock.invocationCallOrder[0],
+      tx.$executeRaw.mock.invocationCallOrder[
+        tx.$executeRaw.mock.calls.indexOf(orderLockCalls(tx)[0])
+      ],
     );
   });
 

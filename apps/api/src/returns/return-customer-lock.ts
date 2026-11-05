@@ -23,6 +23,20 @@ export function returnCustomerLockKey(
 }
 
 /**
+ * Take one customer's returns lock on `tx` (STANDARD create). Always runs: with no injected service it uses the plain
+ * instance (the key is pure), so a build lacking the optional provider cannot skip the lock. A caller that holds the
+ * injected `IdempotencyService` passes it, so its specs' fakes of `hashFor`/`acquireLock` keep seeing the call.
+ */
+export async function lockReturnCustomer(
+  tx: unknown,
+  customerId: string,
+  tenantId: string | null,
+  keys: Pick<IdempotencyService, "hashFor" | "acquireLock"> = PURE_KEYS,
+): Promise<void> {
+  await keys.acquireLock(returnCustomerLockKey(customerId, tenantId, keys), tx);
+}
+
+/**
  * Take the returns lock of every customer who owns one of `orderIds`, on `tx`'s own connection (transaction-scoped, so
  * it ends with the transaction). Distinct customers in key order, so two guards over several customers cannot deadlock.
  * Returns the customer ids it locked, for a caller that must re-check an order's customer after its row lock.
