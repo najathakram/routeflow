@@ -114,9 +114,13 @@ describe("BookkeepingService AR aging: To collect (SA-1026 A-G11)", () => {
         {
           provide: PlatformConfigService,
           useValue: {
-            resolveAnthropicKey: jest
-              .fn()
-              .mockResolvedValue({ key: "test-key", source: "routeflow" }),
+            prepareAiCall: jest.fn().mockResolvedValue({
+              key: "test-key",
+              source: "routeflow",
+              model: "claude-sonnet-5-5",
+              tenantId: "test-tenant",
+            }),
+            requireAiTenant: jest.fn(),
             recordAiUsage,
           },
         },

@@ -105,8 +105,9 @@ export class SupplierStatementsService {
     const prior = await this.findScanByHash(fileHash);
     if (prior) return this.rematchStoredScan(prior);
 
-    // SA-1102: a statement scan runs on RouteFlow's key; a business key is for bill scans only.
-    const { key: apiKey } = await this.platformConfig.resolveAnthropicKey("statement_scan");
+    // SA-1102 A-1: a statement scan runs on RouteFlow's key (a business key is for bill scans only), after the
+    // business and monthly-budget checks, through the one entry point.
+    const { key: apiKey } = await this.platformConfig.prepareAiCall("statement_scan");
     if (!apiKey || apiKey.length === 0) {
       throw new BadRequestException(
         "AI statement scanning is not available. Please contact your system administrator to configure the ANTHROPIC_API_KEY.",

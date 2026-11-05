@@ -19,12 +19,16 @@ describe("PlatformConfigService — secrets at rest and key order (SA-1102)", ()
   let encryption: EncryptionService;
   let store: Record<string, string>;
   let env: Record<string, string | undefined>;
+  let auditCreate: jest.Mock;
 
   beforeEach(async () => {
     store = {};
     env = {};
     // An in-memory PlatformConfig table behind the two raw-SQL tagged templates the service uses.
+    auditCreate = jest.fn().mockResolvedValue({});
     const prisma = {
+      auditLog: { create: auditCreate },
+      getTenantId: () => null,
       $queryRaw: jest.fn(async (_s: TemplateStringsArray, key: string) =>
         key in store ? [{ value: store[key] }] : [],
       ),
@@ -148,6 +152,38 @@ describe("PlatformConfigService — secrets at rest and key order (SA-1102)", ()
       const cfg = await service.getAiConfig();
       expect(cfg.source).toBe("environment");
       expect(cfg.keyPreview).toBe("…cd34");
+    });
+  });
+
+  describe("S-15 and the cap field (platform side)", () => {
+    it("saving the platform key writes one ai_key.set audit row with the last 4 only", async () => {
+      await (service as any).updateAiConfig({ apiKey: PLATFORM_KEY }, "admin-1");
+      expect(auditCreate).toHaveBeenCalledTimes(1);
+      expect(auditCreate.mock.calls[0][0].data).toMatchObject({
+        tenantId: null,
+        userId: "admin-1",
+        action: "ai_key.set",
+        entityType: "PlatformConfig",
+        meta: { last4: "ab12" },
+      });
+      expect(JSON.stringify(auditCreate.mock.calls)).not.toContain("sk-ant");
+    });
+
+    it("clearing writes ai_key.cleared; a model-only save writes no audit row", async () => {
+      await (service as any).updateAiConfig({ apiKey: "" }, "admin-1");
+      expect(auditCreate.mock.calls[0][0].data).toMatchObject({ action: "ai_key.cleared" });
+      auditCreate.mockClear();
+      await (service as any).updateAiConfig({ model: "claude-sonnet-5-5" }, "admin-1");
+      expect(auditCreate).not.toHaveBeenCalled();
+    });
+
+    it("the monthly cap is stored, shown in the AI config, and 0 is kept as the kill switch", async () => {
+      expect(((await service.getAiConfig()) as any).monthlyCapUsd).toBe(25);
+      await (service as any).updateAiConfig({ monthlyCapUsd: 40 });
+      expect(store["ai.monthlyCapUsd"]).toBe("40");
+      expect(((await service.getAiConfig()) as any).monthlyCapUsd).toBe(40);
+      await (service as any).updateAiConfig({ monthlyCapUsd: 0 });
+      expect(((await service.getAiConfig()) as any).monthlyCapUsd).toBe(0);
     });
   });
 });

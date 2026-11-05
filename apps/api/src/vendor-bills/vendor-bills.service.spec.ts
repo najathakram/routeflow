@@ -161,7 +161,13 @@ describe("VendorBillsService", () => {
         {
           provide: PlatformConfigService,
           useValue: {
-            resolveAnthropicKey: jest.fn().mockResolvedValue({ key: null, source: "routeflow" }),
+            prepareAiCall: jest.fn().mockResolvedValue({
+              key: null,
+              source: "routeflow",
+              model: "",
+              tenantId: "test-tenant",
+            }),
+            requireAiTenant: jest.fn(),
             recordAiUsage: jest.fn(),
           },
         },
@@ -2011,11 +2017,14 @@ describe("VendorBillsService", () => {
           {
             provide: PlatformConfigService,
             useValue: {
-              resolveAnthropicKey: jest
-                .fn()
-                .mockResolvedValue({ key: "test-key", source: "routeflow" }),
+              requireAiTenant: jest.fn(),
+              prepareAiCall: jest.fn(async (task: AiTask) => ({
+                key: "test-key",
+                source: "routeflow",
+                model: await resolveModelFor(task),
+                tenantId: "test-tenant",
+              })),
               recordAiUsage,
-              resolveModelFor,
             },
           },
           { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },

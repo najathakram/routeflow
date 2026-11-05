@@ -92,9 +92,12 @@ describe("SupplierStatementsService", () => {
         {
           provide: PlatformConfigService,
           useValue: {
-            resolveAnthropicKey: jest
-              .fn()
-              .mockResolvedValue({ key: "test-key", source: "routeflow" }),
+            prepareAiCall: jest.fn().mockResolvedValue({
+              key: "test-key",
+              source: "routeflow",
+              model: "claude-sonnet-5-5",
+              tenantId: "test-tenant",
+            }),
             recordAiUsage,
           },
         },
@@ -116,7 +119,13 @@ describe("SupplierStatementsService", () => {
         {
           provide: PlatformConfigService,
           useValue: {
-            resolveAnthropicKey: jest.fn().mockResolvedValue({ key: null, source: "routeflow" }),
+            prepareAiCall: jest.fn().mockResolvedValue({
+              key: null,
+              source: "routeflow",
+              model: "",
+              tenantId: "test-tenant",
+            }),
+            requireAiTenant: jest.fn(),
             recordAiUsage,
           },
         },

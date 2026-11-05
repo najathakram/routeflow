@@ -1,10 +1,11 @@
-import { BadRequestException, Injectable, Logger } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { roundMoney } from "@routeflow/pricing";
 import type { AppLinks, AppLinksPatch } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { EncryptionService } from "../common/encryption.service";
+import { auditAiKeyChange } from "../common/claude-api-key";
 import { decryptIfSecret, encryptIfSecret, secretPreview } from "../common/secret-at-rest";
 import { APP_LINK_FIELDS, APP_LINK_KEYS, isValidAppLinkUrl } from "./app-links";
 import {
@@ -39,6 +40,29 @@ function modelPrice(model: string): { in: number; out: number } {
   if (!isAiModelId(model)) return LEGACY_MODEL_PRICING[family] ?? AI_MODEL_PRICING[family];
   return AI_MODEL_PRICING[family];
 }
+
+/** The one estimate of spend from token sums, per model: the 30-day panel and the monthly budget both use it. */
+function estimateSpendUsd(rows: Array<{ model: string; inTok: number; outTok: number }>): number {
+  let usd = 0;
+  for (const r of rows) {
+    const price = modelPrice(r.model);
+    usd += (Number(r.inTok) / 1e6) * price.in + (Number(r.outTok) / 1e6) * price.out;
+  }
+  return usd;
+}
+
+/** True for the 403 `assertAiBudget` throws, so a caller with a useful non-AI answer can degrade instead of failing. */
+export function isMonthlyCapRefusal(err: unknown): boolean {
+  const body = (err as { getResponse?: () => unknown })?.getResponse?.();
+  return (
+    typeof body === "object" &&
+    body !== null &&
+    (body as { code?: string }).code === API_ERROR_CODES.AI_MONTHLY_CAP_REACHED
+  );
+}
+
+/** SA-1102 B1: one business's monthly allowance on RouteFlow's key, in USD, when `ai.monthlyCapUsd` is unset. */
+export const DEFAULT_MONTHLY_AI_CAP_USD = 25;
 
 /**
  * Secret-valued PlatformConfig keys (SA-1102 2.1): encrypted at rest through the same helper and cipher as the
@@ -110,16 +134,21 @@ export class PlatformConfigService {
       scanModel: storedScanModel ?? AI_TASKS.bill_scan.fallback,
       maxTokens: storedMaxTokens ? parseInt(storedMaxTokens) : 4096,
       verifiedAt,
+      monthlyCapUsd: await this.monthlyCapUsdFor(""),
       availableModels: AI_MODELS.map(({ id, label }) => ({ id, label })),
     };
   }
 
-  async updateAiConfig(dto: {
-    apiKey?: string;
-    model?: string;
-    scanModel?: string;
-    maxTokens?: number;
-  }) {
+  async updateAiConfig(
+    dto: {
+      apiKey?: string;
+      model?: string;
+      scanModel?: string;
+      maxTokens?: number;
+      monthlyCapUsd?: number;
+    },
+    actorId?: string | null,
+  ) {
     // Validate every model BEFORE any write, so a bad id never leaves a half-saved config.
     for (const id of [dto.model, dto.scanModel]) {
       if (id !== undefined && !isAiModelId(id)) {
@@ -150,7 +179,20 @@ export class PlatformConfigService {
       tasks.push(this.setValue("claude.maxTokens", String(dto.maxTokens)));
     }
 
+    if (dto.monthlyCapUsd !== undefined) {
+      tasks.push(this.setValue("ai.monthlyCapUsd", String(dto.monthlyCapUsd)));
+    }
+
     await Promise.all(tasks);
+    // SA-1102 A-1(d): one audit row per key change, with the last 4 characters only.
+    if (dto.apiKey !== undefined) {
+      await auditAiKeyChange(this.prisma, {
+        tenantId: null,
+        userId: actorId ?? null,
+        entityType: "PlatformConfig",
+        apiKey: dto.apiKey,
+      });
+    }
     return this.getAiConfig();
   }
 
@@ -168,6 +210,84 @@ export class PlatformConfigService {
     const envKey = this.configService.get<string>("ANTHROPIC_API_KEY");
     if (envKey) return { key: envKey, source: "routeflow" };
     return { key: await this.getValue("claude.apiKey"), source: "routeflow" };
+  }
+
+  /**
+   * SA-1102 A-1(a): a business must be selected before ANY Anthropic call. A SUPER_ADMIN token with no business used to
+   * reach every scan site (`TenantRequiredInterceptor` is dark), and a tenantless config read is unscoped. Runs before
+   * any config read. Returns the tenant id.
+   */
+  requireAiTenant(): string {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) {
+      throw new ForbiddenException({
+        code: API_ERROR_CODES.TENANT_CONTEXT_REQUIRED,
+        message: "Choose a business before scanning.",
+      });
+    }
+    return tenantId;
+  }
+
+  /**
+   * SA-1102 A-1(a): the ONE entry point every Anthropic call site uses, in this order: the business (403
+   * TENANT_CONTEXT_REQUIRED), the key by task (`resolveAnthropicKey`), the monthly budget when the key is RouteFlow's
+   * (403 AI_MONTHLY_CAP_REACHED), then the task's model. `key` is null when none is configured: the caller keeps its
+   * existing "not configured" answer, and no budget runs because no call will happen.
+   */
+  async prepareAiCall(
+    task: AiTask,
+    businessKey?: string | null,
+  ): Promise<{
+    key: string | null;
+    source: "business" | "routeflow";
+    model: string;
+    tenantId: string;
+  }> {
+    const tenantId = this.requireAiTenant();
+    const { key, source } = await this.resolveAnthropicKey(task, businessKey);
+    if (key && source === "routeflow") await this.assertAiBudget(tenantId);
+    const model = await this.resolveModelFor(task);
+    return { key, source, model, tenantId };
+  }
+
+  /**
+   * The monthly allowance for one business, in USD. Today it is the platform-wide `ai.monthlyCapUsd` (unset or
+   * unreadable = $25, `"0"` = AI off on RouteFlow's key for every business). A per-business override plugs in here.
+   */
+  async monthlyCapUsdFor(_tenantId: string): Promise<number> {
+    const raw = await this.getValue("ai.monthlyCapUsd");
+    if (raw === null || raw.trim() === "") return DEFAULT_MONTHLY_AI_CAP_USD;
+    const cap = Number(raw);
+    return Number.isFinite(cap) && cap >= 0 ? cap : DEFAULT_MONTHLY_AI_CAP_USD;
+  }
+
+  /**
+   * Refuse (403 AI_MONTHLY_CAP_REACHED) when this business's estimated spend this UTC month has reached its cap. Until
+   * the B2 migration adds `keySource`, EVERY usage row counts, a business's own-key scans included; that is
+   * conservative and never refuses an own-key call. It is a soft cap: concurrent calls can each pass and overshoot by
+   * about one call each. The Anthropic workspace spend limit is the hard stop behind it.
+   */
+  async assertAiBudget(tenantId: string): Promise<void> {
+    const cap = await this.monthlyCapUsdFor(tenantId);
+    const now = new Date();
+    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const rows = await this.prisma.$queryRaw<
+      Array<{ model: string; inTok: number; outTok: number }>
+    >`
+      SELECT "model",
+             COALESCE(SUM("inputTokens"), 0)::float8 AS "inTok",
+             COALESCE(SUM("outputTokens"), 0)::float8 AS "outTok"
+      FROM "AiUsageEvent"
+      WHERE "tenantId" = ${tenantId} AND "createdAt" >= ${monthStart}
+      GROUP BY "model"
+    `;
+    if (estimateSpendUsd(rows) >= cap) {
+      throw new ForbiddenException({
+        code: API_ERROR_CODES.AI_MONTHLY_CAP_REACHED,
+        message:
+          "This business has used this month's AI scans. They start again on the 1st. Contact RouteFlow to raise the limit.",
+      });
+    }
   }
 
   /** The model a task runs on: its stored setting (kept as stored, even an older id), else the task's fallback. */
@@ -259,8 +379,7 @@ export class PlatformConfigService {
       if (r.feature === "ocr" || r.feature.startsWith("ocr.")) ocrScans += calls;
       if (r.feature === "forecast" || r.feature.startsWith("forecast.")) forecastRuns += calls;
       if (r.feature.startsWith("insights.")) insightRuns += calls;
-      const price = modelPrice(r.model);
-      estSpendUsd += (inTok / 1e6) * price.in + (outTok / 1e6) * price.out;
+      estSpendUsd += estimateSpendUsd([{ model: r.model, inTok, outTok }]);
     }
 
     return {

@@ -38,6 +38,9 @@ export const SECRET_KEYS: ReadonlySet<string> = new Set([
   "zoho.refreshToken",
 ]);
 
+/** Keys already warned about for a tenantless read (once per key per process, so a hot path cannot flood the log). */
+const WARNED_TENANTLESS_READS = new Set<string>();
+
 @Injectable()
 export class SystemConfigService {
   private readonly logger = new Logger(SystemConfigService.name);
@@ -48,18 +51,27 @@ export class SystemConfigService {
   ) {}
 
   /**
-   * SA-1102 2.2: `prisma.forTenant()` is the UNSCOPED client when no tenant is in context, so a tenantless `get` would
-   * read ANY business's row (for `anthropic.apiKey`: another business's key). Every method refuses first, with a coded
-   * 500 and the key name in the log, and runs no query. It does not return null: a null `settings.taxRate` would
-   * silently become tax 0, so a loud failure is the safe one.
+   * SA-1102 2.2 + A-1(b): `prisma.forTenant()` is the UNSCOPED client when no tenant is in context, so a tenantless
+   * read returns ANY business's row (for `anthropic.apiKey`: another business's key) and a tenantless write overwrites
+   * one. A SECRET read and EVERY write refuse first with a coded 500 and the key name in the log, and run no query. It
+   * does not return null: a null `settings.taxRate` would silently become tax 0, so a loud failure is the safe one.
+   * Other reads still work (a SUPER_ADMIN with no business reaches about 20 of them) and warn once per key per process.
    */
-  private requireTenant(op: string, key: string): void {
-    if (this.prisma.getTenantId()) return;
+  private refuse(op: string, key: string): never {
     this.logger.error(`SystemConfigService.${op}("${key}") ran with no business in context`);
     throw new InternalServerErrorException({
       code: API_ERROR_CODES.SYSTEM_CONFIG_TENANT_REQUIRED,
       message: "Settings were read without a business. This is a RouteFlow bug.",
     });
+  }
+
+  private guardRead(op: string, key: string, touchesSecret: boolean): void {
+    if (this.prisma.getTenantId()) return;
+    if (touchesSecret) this.refuse(op, key);
+    if (!WARNED_TENANTLESS_READS.has(key)) {
+      WARNED_TENANTLESS_READS.add(key);
+      this.logger.warn(`SystemConfig read without a business: ${key}`);
+    }
   }
 
   private decrypt(key: string, value: string | null): string | null {
@@ -69,7 +81,7 @@ export class SystemConfigService {
   }
 
   async get(key: string): Promise<string | null> {
-    this.requireTenant("get", key);
+    this.guardRead("get", key, SECRET_KEYS.has(key));
     // findFirst instead of findUnique because the unique constraint is now
     // composite (tenantId, key) and forTenant() injects tenantId at runtime.
     const record = await this.prisma.forTenant().systemConfig.findFirst({ where: { key } });
@@ -77,7 +89,7 @@ export class SystemConfigService {
   }
 
   async set(key: string, value: string): Promise<void> {
-    this.requireTenant("set", key);
+    if (!this.prisma.getTenantId()) this.refuse("set", key);
     const toStore = encryptIfSecret(SECRET_KEYS, this.encryption, key, value);
     // Use findFirst + create/update instead of upsert because upsert requires
     // a composite unique key (tenantId_key) that the forTenant() extension
@@ -94,7 +106,11 @@ export class SystemConfigService {
   }
 
   async getAll(prefix: string): Promise<Record<string, string>> {
-    this.requireTenant("getAll", prefix);
+    this.guardRead(
+      "getAll",
+      prefix,
+      [...SECRET_KEYS].some((k) => k.startsWith(prefix)),
+    );
     const records = await this.prisma.forTenant().systemConfig.findMany({
       where: { key: { startsWith: prefix } },
     });

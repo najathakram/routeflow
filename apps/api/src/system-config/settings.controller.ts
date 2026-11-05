@@ -22,6 +22,8 @@ import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { SystemConfigService } from "./system-config.service";
 import { secretPreview } from "../common/secret-at-rest";
+import { auditAiKeyChange } from "../common/claude-api-key";
+import { UpdateAnthropicKeyDto } from "./dto/update-anthropic-key.dto";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { UpdateRouteSettingsDto } from "./dto/update-route-settings.dto";
@@ -302,14 +304,21 @@ export class SettingsController {
 
   @Patch("anthropic")
   @Roles(UserRole.TENANT_ADMIN)
-  async updateAnthropicSettings(@Body() dto: { apiKey?: string }) {
+  async updateAnthropicSettings(
+    @Body() dto: UpdateAnthropicKeyDto,
+    @CurrentUser() user?: JwtPayload,
+  ) {
     if (dto.apiKey !== undefined) {
-      if (dto.apiKey === "") {
-        // Allow clearing the key
-        await this.svc.set("anthropic.apiKey", "");
-      } else {
-        await this.svc.set("anthropic.apiKey", dto.apiKey);
-      }
+      // "" clears the key (the DTO has already refused anything that is not a Claude key). SA-1102 A-1(d): one audit
+      // row per change, with the last 4 characters only.
+      await this.svc.set("anthropic.apiKey", dto.apiKey);
+      await auditAiKeyChange(this.prisma, {
+        tenantId: this.prisma.getTenantId() ?? null,
+        userId: user?.sub ?? null,
+        impersonatedBy: user?.impersonatedBy ?? null,
+        entityType: "SystemConfig",
+        apiKey: dto.apiKey,
+      });
     }
     return this.getAnthropicSettings();
   }

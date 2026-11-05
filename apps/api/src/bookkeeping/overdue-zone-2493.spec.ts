@@ -112,9 +112,13 @@ describe("BookkeepingService — overdue ages in the tenant zone (#2493/SA-488)"
         {
           provide: PlatformConfigService,
           useValue: {
-            resolveAnthropicKey: jest
-              .fn()
-              .mockResolvedValue({ key: "test-key", source: "routeflow" }),
+            prepareAiCall: jest.fn().mockResolvedValue({
+              key: "test-key",
+              source: "routeflow",
+              model: "claude-sonnet-5-5",
+              tenantId: "test-tenant",
+            }),
+            requireAiTenant: jest.fn(),
             recordAiUsage,
           },
         },

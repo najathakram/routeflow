@@ -1,5 +1,5 @@
 /**
- * SA-1102 PR-A (S-8 and the real half of S-11): against a real database. Two throwaway businesses each hold their own
+ * SA-1102 PR-A (S-8, S-13 and the real half of S-11): against a real database. Two throwaway businesses each hold their own
  * `anthropic.apiKey` row. With NO tenant in context `SystemConfigService.get` used to return one of them (the unscoped
  * `findFirst`); it now throws SYSTEM_CONFIG_TENANT_REQUIRED. The plaintext-secret report then counts a legacy plaintext
  * row and not an encrypted one, naming keys and counts only.
@@ -80,6 +80,28 @@ describeDb("SystemConfigService fails closed without a tenant (SA-1102 S-8)", ()
     await expect(tenantCtx.run(null, () => service.set("anthropic.apiKey", "x"))).rejects.toThrow();
     // Nothing was written by the refused set.
     await expect(tenantCtx.run(a, () => service.get("anthropic.apiKey"))).resolves.toBe(KEY_A);
+  });
+
+  it("S-13: a tenantless write of a non-secret key throws and changes no business's row", async () => {
+    const a = await makeTenant(5);
+    const b = await makeTenant(6);
+    await tenantCtx.run(a, () => service.set("route.defaultDepotLat", "10"));
+    await tenantCtx.run(b, () => service.set("route.defaultDepotLat", "20"));
+
+    // On the base the unscoped findFirst picked one of these rows and overwrote it.
+    await expect(
+      tenantCtx.run(null, () => service.set("route.defaultDepotLat", "99")),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ code: "SYSTEM_CONFIG_TENANT_REQUIRED" }),
+    });
+
+    await expect(tenantCtx.run(a, () => service.get("route.defaultDepotLat"))).resolves.toBe("10");
+    await expect(tenantCtx.run(b, () => service.get("route.defaultDepotLat"))).resolves.toBe("20");
+    expect(
+      await prisma.systemConfig.count({
+        where: { key: "route.defaultDepotLat", value: "99" },
+      }),
+    ).toBe(0);
   });
 
   it("S-11 (real rows): the report counts a legacy plaintext secret, not an encrypted one", async () => {

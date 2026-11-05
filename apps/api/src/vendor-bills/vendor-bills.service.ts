@@ -2659,17 +2659,20 @@ export class VendorBillsService {
 
     // SA-1102: the business's own key is used for a bill scan ONLY (and only when set); every other scan runs on
     // RouteFlow's key. A business key Anthropic refuses fails the scan; it is not retried on RouteFlow's key.
+    // A-1: a business is required BEFORE the business key is read (a tenantless secret read throws a 500).
+    this.platformConfig.requireAiTenant();
     const businessKey = await this.systemConfig.get("anthropic.apiKey");
-    const { key: apiKey } = await this.platformConfig.resolveAnthropicKey("bill_scan", businessKey);
+    // SA-1035: the model is read ONCE per scan and used for the call, both usage records and the stored scan row, so
+    // the row says what was actually called even if the setting changes mid-scan.
+    const { key: apiKey, model } = await this.platformConfig.prepareAiCall(
+      "bill_scan",
+      businessKey,
+    );
     if (!apiKey || apiKey.length === 0) {
       throw new BadRequestException(
         "AI invoice scanning is not available. Please contact your system administrator to configure the ANTHROPIC_API_KEY.",
       );
     }
-
-    // SA-1035: the model is read ONCE per scan and used for the call, both usage records and the stored scan row, so the
-    // row says what was actually called even if the setting changes mid-scan.
-    const model = await this.platformConfig.resolveModelFor("bill_scan");
 
     // ── Phase 0: Normalise inputs ─────────────────────────────────────────────
     // Multi-page invoices arrive as N images (HEIC from iPhone, JPEG, PNG, etc.)

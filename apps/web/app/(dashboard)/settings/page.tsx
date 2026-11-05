@@ -1086,8 +1086,20 @@ function AIIntegrationsTab() {
         variant: "success",
       });
     },
-    onError: (err) =>
-      isReadOnlyRefusal(err) || toast({ title: "Failed to save API key", variant: "error" }),
+    onError: (err: any) => {
+      if (isReadOnlyRefusal(err)) return;
+      // A 400 carries the one sentence ("That doesn't look like a Claude API key."); show it.
+      const message = err?.response?.data?.message;
+      toast({
+        title: "Failed to save API key",
+        description: Array.isArray(message)
+          ? message[0]
+          : typeof message === "string"
+            ? message
+            : undefined,
+        variant: "error",
+      });
+    },
   });
 
   const removeKey = useMutation({

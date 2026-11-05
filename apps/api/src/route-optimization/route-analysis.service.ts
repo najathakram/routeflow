@@ -2,7 +2,10 @@ import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 import Anthropic from "@anthropic-ai/sdk";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
-import { PlatformConfigService } from "../platform-admin/platform-config.service";
+import {
+  PlatformConfigService,
+  isMonthlyCapRefusal,
+} from "../platform-admin/platform-config.service";
 import { AI_SCAN_MAX_TOKENS, firstText } from "../platform-admin/ai-response";
 import { RouteOptimizationService, StopETA } from "./route-optimization.service";
 
@@ -109,9 +112,16 @@ export class RouteAnalysisService {
       return { configured: false, etas };
     }
 
-    // SA-1102: route insights run on RouteFlow's key; a business key is for bill scans only.
-    const { key: apiKey } = await this.platformConfig.resolveAnthropicKey("general");
-
+    // SA-1102 A-1: route insights run on RouteFlow's key (a business key is for bill scans only), through the one
+    // entry point. Over the monthly allowance the deterministic ETAs still come back, without the AI notes.
+    let prepared: Awaited<ReturnType<PlatformConfigService["prepareAiCall"]>>;
+    try {
+      prepared = await this.platformConfig.prepareAiCall("general");
+    } catch (err) {
+      if (isMonthlyCapRefusal(err)) return { configured: false, etas };
+      throw err;
+    }
+    const apiKey = prepared.key;
     if (!apiKey) {
       return { configured: false, etas };
     }
@@ -131,7 +141,7 @@ export class RouteAnalysisService {
         )
         .join("\n");
 
-      model = await this.platformConfig.resolveModel();
+      model = prepared.model;
       const anthropic = new Anthropic({ apiKey });
 
       const response = await anthropic.messages.create({
@@ -285,9 +295,16 @@ Status guide:
       serviceTime,
     );
 
-    // SA-1102: route insights run on RouteFlow's key; a business key is for bill scans only.
-    const { key: apiKey } = await this.platformConfig.resolveAnthropicKey("general");
-
+    // SA-1102 A-1: route insights run on RouteFlow's key (a business key is for bill scans only), through the one
+    // entry point. Over the monthly allowance the deterministic ETAs still come back, without the AI notes.
+    let prepared: Awaited<ReturnType<PlatformConfigService["prepareAiCall"]>>;
+    try {
+      prepared = await this.platformConfig.prepareAiCall("general");
+    } catch (err) {
+      if (isMonthlyCapRefusal(err)) return { configured: false, etas };
+      throw err;
+    }
+    const apiKey = prepared.key;
     if (!apiKey) {
       return { configured: false, etas };
     }
@@ -306,7 +323,7 @@ Status guide:
         )
         .join("\n");
 
-      model = await this.platformConfig.resolveModel();
+      model = prepared.model;
       const anthropic = new Anthropic({ apiKey });
 
       const response = await anthropic.messages.create({

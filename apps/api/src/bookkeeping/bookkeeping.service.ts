@@ -929,12 +929,11 @@ export class BookkeepingService implements OnModuleInit {
     const receiptBuffer = await this.storage.download(expense.receiptKey);
     const mimeType = (expense as any).receiptMimeType ?? "image/jpeg";
 
-    // SA-1102: a receipt scan runs on RouteFlow's key; a business key is for bill scans only.
-    const { key: apiKey } = await this.platformConfig.resolveAnthropicKey("receipt_scan");
+    // SA-1102 A-1: one entry for every AI call: a business is required, a receipt scan runs on RouteFlow's key (a
+    // business key is for bill scans only), the monthly budget is checked, and the model comes back with it.
+    // SA-1035: the model is read once; the call and both usage records use this one value. Sonnet (no picker).
+    const { key: apiKey, model } = await this.platformConfig.prepareAiCall("receipt_scan");
     if (!apiKey) throw new BadRequestException("Anthropic API key not configured");
-
-    // SA-1035: read once; the call and both usage records use this one value. SA-1102 2.6: Sonnet (no picker).
-    const model = await this.platformConfig.resolveModelFor("receipt_scan");
     const anthropic = new Anthropic({ apiKey });
     const base64 = receiptBuffer.toString("base64");
     const isPdf = mimeType === "application/pdf";

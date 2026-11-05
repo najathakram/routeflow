@@ -101,7 +101,13 @@ describeDb("SA-927 parity - bills, returns, import and bulk create write the sam
         {
           provide: PlatformConfigService,
           useValue: {
-            resolveAnthropicKey: jest.fn().mockResolvedValue({ key: null, source: "routeflow" }),
+            prepareAiCall: jest.fn().mockResolvedValue({
+              key: null,
+              source: "routeflow",
+              model: "",
+              tenantId: "test-tenant",
+            }),
+            requireAiTenant: jest.fn(),
             recordAiUsage: jest.fn(),
           },
         },

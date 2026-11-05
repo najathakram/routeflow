@@ -16,7 +16,7 @@ describe("RouteAnalysisService — AI usage metering", () => {
   let service: RouteAnalysisService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let recordAiUsage: jest.Mock;
-  let resolveAnthropicKey: jest.Mock;
+  let prepareAiCall: jest.Mock;
   let resolveStartTime: jest.Mock;
   let calculateETAs: jest.Mock;
 
@@ -59,7 +59,12 @@ describe("RouteAnalysisService — AI usage metering", () => {
   beforeEach(async () => {
     prisma = createMockPrisma();
     recordAiUsage = jest.fn();
-    resolveAnthropicKey = jest.fn().mockResolvedValue({ key: "test-key", source: "routeflow" });
+    prepareAiCall = jest.fn().mockResolvedValue({
+      key: "test-key",
+      source: "routeflow",
+      model: "claude-sonnet-4-5",
+      tenantId: "test-tenant",
+    });
     // F12/P1: analyzeRoute is expected to route its start-time precedence
     // through the shared RouteOptimizationService.resolveStartTime helper
     // instead of inlining it — this mock exists so the four pre-existing
@@ -79,8 +84,7 @@ describe("RouteAnalysisService — AI usage metering", () => {
         {
           provide: PlatformConfigService,
           useValue: {
-            resolveAnthropicKey,
-            resolveModel: jest.fn().mockResolvedValue("claude-sonnet-4-5"),
+            prepareAiCall,
             recordAiUsage,
           },
         },
@@ -204,19 +208,48 @@ describe("RouteAnalysisService — AI usage metering", () => {
 
     expect(result.etas).toEqual(etas);
     expect(result.configured).toBe(false);
-    expect(resolveAnthropicKey).not.toHaveBeenCalled();
+    expect(prepareAiCall).not.toHaveBeenCalled();
     expect(mockAnthropicCreate).not.toHaveBeenCalled();
     expect(recordAiUsage).not.toHaveBeenCalled();
   });
 
   it("records nothing when no API key is configured (no model call happens)", async () => {
-    resolveAnthropicKey.mockResolvedValue({ key: null, source: "routeflow" });
+    prepareAiCall.mockResolvedValue({
+      key: null,
+      source: "routeflow",
+      model: "claude-sonnet-4-5",
+      tenantId: "test-tenant",
+    });
 
     const result = await service.analyzeRoute("route-1");
 
     expect(result.configured).toBe(false);
     expect(mockAnthropicCreate).not.toHaveBeenCalled();
     expect(recordAiUsage).not.toHaveBeenCalled();
+  });
+
+  // SA-1102 B1: over the monthly allowance the ETA pass still answers; only the AI notes are dropped. Any OTHER
+  // refusal (no business selected) is NOT swallowed.
+  it("over the monthly allowance, analyzeRoute and analyzeRouteRun still return the ETAs without calling the model", async () => {
+    const capRefusal = Object.assign(new Error("cap"), {
+      getResponse: () => ({ code: "AI_MONTHLY_CAP_REACHED" }),
+    });
+    prepareAiCall.mockRejectedValue(capRefusal);
+
+    const result = await service.analyzeRoute("route-1");
+
+    expect(result.configured).toBe(false);
+    expect(result.etas).toEqual(etas);
+    expect(mockAnthropicCreate).not.toHaveBeenCalled();
+    expect(recordAiUsage).not.toHaveBeenCalled();
+  });
+
+  it("a refusal that is not the cap (no business selected) is thrown, not swallowed", async () => {
+    const noTenant = Object.assign(new Error("tenant"), {
+      getResponse: () => ({ code: "TENANT_CONTEXT_REQUIRED" }),
+    });
+    prepareAiCall.mockRejectedValue(noTenant);
+    await expect(service.analyzeRoute("route-1")).rejects.toBe(noTenant);
   });
 
   // T6 (F12, tagged REG-B177 so the red gate's -t filter collects it):
@@ -233,7 +266,12 @@ describe("RouteAnalysisService — AI usage metering", () => {
   // free to take the run/route/explicit override in any arrangement) — what is
   // pinned is that it is consulted and that its answer is what the ETA pass runs on.
   it("REG-B177: analyzeRoute runs its ETA pass on the clock resolveStartTime returned, and returns configured:false without an API key", async () => {
-    resolveAnthropicKey.mockResolvedValue({ key: null, source: "routeflow" });
+    prepareAiCall.mockResolvedValue({
+      key: null,
+      source: "routeflow",
+      model: "claude-sonnet-4-5",
+      tenantId: "test-tenant",
+    });
 
     const result = await service.analyzeRoute("route-1");
 
@@ -259,7 +297,12 @@ describe("RouteAnalysisService — AI usage metering", () => {
   // beat the operator's override, and the third `calculateETAs` argument would
   // still be a plausible clock — so both are asserted.
   it("REG-B177: analyzeRouteRun resolves its clock with the explicit override ahead of the run's snapshot", async () => {
-    resolveAnthropicKey.mockResolvedValue({ key: null, source: "routeflow" });
+    prepareAiCall.mockResolvedValue({
+      key: null,
+      source: "routeflow",
+      model: "claude-sonnet-4-5",
+      tenantId: "test-tenant",
+    });
     prisma.routeRun.findUnique.mockResolvedValue({
       id: "run-1",
       routeId: "route-1",
