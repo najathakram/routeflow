@@ -2,8 +2,8 @@
  * SA-1101 (Batch 3): what a stop close makes each order, end to end on real Postgres.
  * RO-1 (refuse every line -> REFUSED, one ORDER_REFUSED, draft invoice $ OBSERVED), RO-2 (mixed stop),
  * RO-3 (short line stays DELIVERED), RO-13 (the bare /complete path), RO-4 (reopen clears deliveredAt),
- * RO-6/6b/6c (B785: every line with something left needs an entry), RO-5/5b (startedAt on complete only),
- * RO-9 (a return on a REFUSED order: stock back, credit OBSERVED).
+ * RO-6/6b/6c (B785: every line with something left needs an entry), RO-5/5b (startedAt on complete only).
+ * (RO-9, a return on a REFUSED order, is in returns/returns-refused-order.db.spec.ts.)
  *
  * The REAL RoutesService and InvoicesService run; every other collaborator is mocked at the module boundary
  * as complete-on-account-short.db.spec.ts does. Collected only by jest.db.config.js (npm run local:test:db).
