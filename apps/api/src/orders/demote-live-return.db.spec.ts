@@ -360,7 +360,7 @@ describeDb("SA-1101 A-5 (B1272): a live return blocks the office demotion — re
       const capture = w.inTenant(() =>
         w.prisma.tenantTransaction(async (tx: any) => {
           await new IdempotencyService().acquireLock(
-            returnCustomerLockKey(w.customerId, w.tenantId),
+            returnCustomerLockKey({ customerId: w.customerId, tenantId: w.tenantId }),
             tx,
           );
           locked();

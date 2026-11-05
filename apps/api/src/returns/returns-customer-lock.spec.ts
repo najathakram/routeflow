@@ -35,6 +35,7 @@ describe("ReturnsService.create — customer lock mutual exclusion (§5 fix-roun
       id,
       status: "DELIVERED",
       customerId: "cust-shared",
+      tenantId: "test-tenant", // SA-1101 A-7: the lock key reads the order row's tenant
       customer: { id: "cust-shared", businessName: "Acme Co" },
       lineItems: [{ productId: "p1", qty: 10, unitPrice: 5, status: "PENDING", subtotal: 50 }],
       invoices: [],
