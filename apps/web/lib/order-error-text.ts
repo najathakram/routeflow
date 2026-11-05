@@ -1,3 +1,4 @@
+import { API_ERROR_CODES } from "@routeflow/types";
 import { codedToastCopy, genericToastCopy } from "./generic-toast-copy";
 
 /**
@@ -19,6 +20,25 @@ export function orderErrorText(err: unknown): string {
     return message;
   return genericToastCopy(err);
 }
+
+/**
+ * SA-1101 A-5 (B1272): the office "Reopen order" / demotion out of DELIVERED refused with 409 ORDER_HAS_RETURN. The same code
+ * means "deliver it again" on a refused order (generic-toast-copy.ts), so this action says its own fixed sentence, the same
+ * pattern as `stopUndoErrorCopy` (B986: never rendered from the response).
+ */
+export const DEMOTE_HAS_RETURN_COPY =
+  "This order has a return. To change its delivery status, cancel the return first.";
+
+/** True for the 409 ORDER_HAS_RETURN a delivered demotion answers with; the caller shows `DEMOTE_HAS_RETURN_COPY` for it. */
+export function isDemoteHasReturnRefusal(err: unknown): boolean {
+  const res = (err as { response?: { status?: number; data?: { code?: unknown } } } | null)
+    ?.response;
+  return res?.status === 409 && res.data?.code === API_ERROR_CODES.ORDER_HAS_RETURN;
+}
+
+/** The demotion's own sentence for a live-return refusal, or null for any other error (the global toast keeps those). */
+export const demoteErrorText = (err: unknown): string | null =>
+  isDemoteHasReturnRefusal(err) ? DEMOTE_HAS_RETURN_COPY : null;
 
 /**
  * Orders list, bulk delete: the toast when some of the selected orders were kept. The server refuses an order for more

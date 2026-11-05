@@ -134,7 +134,7 @@ import { InvoicePreviewModal, DivergenceNote } from "../../_components/LinkedDoc
 import { CreditNotePicker, type CreditSelection } from "../_components/CreditNotePicker";
 import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
 import { codedToastCopy } from "@/lib/generic-toast-copy";
-import { orderErrorText } from "@/lib/order-error-text";
+import { demoteErrorText, isDemoteHasReturnRefusal, orderErrorText } from "@/lib/order-error-text";
 import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
 import {
   type ApiOrderStatus,
@@ -220,6 +220,8 @@ export default function OrderDetailPage() {
   const updateStatus = useUpdateOrderStatus();
   // The cancel flow renders its own error (every other status change keeps the global toast), so it has its own instance.
   const cancelOrder = useUpdateOrderStatus({ localErrorToast: true });
+  // SA-1101 A-5: the demotion owns only the live-return refusal; every other error reaches the global toast.
+  const demoteStatus = useUpdateOrderStatus({ localErrorToast: isDemoteHasReturnRefusal });
   const ready = useReadyForPickupAction({
     orderId: order?.id,
     customerName: order?.customer?.businessName,
@@ -834,12 +836,16 @@ export default function OrderDetailPage() {
 
   const handleDemote = (reason: string) => {
     if (!demoteTarget) return;
-    updateStatus.mutate(
+    demoteStatus.mutate(
       { id: order.id, status: demoteTarget, reason },
       {
         onSuccess: () => {
           setLocalStatus(demoteTarget);
           setDemoteTarget(null);
+        },
+        onError: (err) => {
+          const text = demoteErrorText(err);
+          if (text) toast({ title: text, variant: "error" });
         },
       },
     );
@@ -2171,7 +2177,7 @@ export default function OrderDetailPage() {
         open={!!demoteTarget}
         onClose={() => setDemoteTarget(null)}
         onConfirm={handleDemote}
-        loading={updateStatus.isPending || cancelOrder.isPending}
+        loading={demoteStatus.isPending || updateStatus.isPending || cancelOrder.isPending}
         targetStatus={demoteTarget ?? ""}
         fulfillPath={order?.fulfillPath}
       />
