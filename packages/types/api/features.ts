@@ -195,11 +195,6 @@ export interface FeatureDiffRow {
 
 export interface FeaturePreviewRequest {
   planKey?: string;
-  /**
-   * Judge `planKey` as this PUBLISHED catalog version instead of the tenant's pinned one. A caller that charges from the
-   * published version (`subscribe`) passes its id so the preview and the charge read the same plan. Any other id is ignored.
-   */
-  versionId?: string;
   overrides?: {
     featureKey: string;
     effect: "GRANT" | "DENY";

@@ -27,6 +27,13 @@ import type {
 } from "@routeflow/types";
 
 /** A plan move changes customer limits and the monthly price; this preview shows neither (R5). */
+/**
+ * The HTTP request plus one server-side field (SA-1099 A-7, kept out of the shared type: no client sends it). `versionId`
+ * judges `planKey` as that PUBLISHED catalog version instead of the tenant's pinned one, so a caller that charges from
+ * the published version (`subscribe`) and the preview read the same plan. Any other id is ignored.
+ */
+export type FeaturePreviewInput = FeaturePreviewRequest & { versionId?: string };
+
 const PLAN_MOVE_OMISSIONS: readonly PreviewOmission[] = ["limits", "price"];
 
 /**
@@ -51,7 +58,7 @@ export class FeaturePreviewService {
     private readonly featureConfig: FeatureConfigService,
   ) {}
 
-  async preview(tenantId: string, request: FeaturePreviewRequest): Promise<FeaturePreviewResponse> {
+  async preview(tenantId: string, request: FeaturePreviewInput): Promise<FeaturePreviewResponse> {
     const [ent, activeAddonRows, currentOverrides, currentDetail, publishedCatalog] =
       await Promise.all([
         this.entitlements.resolve(tenantId),
