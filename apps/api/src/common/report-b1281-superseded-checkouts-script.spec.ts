@@ -299,6 +299,40 @@ describe("report-b1281-superseded-checkouts.mjs", () => {
       expect(out).toContain("No such customer"); // the words survive
     });
 
+    it("a rethrown Stripe error also cuts invoice-item (ii_), credit-note (cn_) and payout (po_) ids, and any email, to the last 4 (LOW note B)", () => {
+      const msg =
+        "Invoice item ii_1AbCdEfGhIjKl and credit note cn_1MnOpQrStUvWx on payout po_1YzAbCdEfGhIj for buyer.person@example.com were refused";
+      const out = call(
+        `m.scrubStripeError(${JSON.stringify(msg)}, "sk_live_SeCrEtKeY0123")`,
+      ) as string;
+      expect(out).not.toMatch(/1AbCdEfGhIjKl|1MnOpQrStUvWx|1YzAbCdEfGhIj|buyer\.person|example/);
+      expect(out).toMatch(/ii_…hIjKl|ii_…IjKl/);
+      expect(out).toMatch(/cn_…UvWx/);
+      expect(out).toMatch(/po_…GhIj/);
+      expect(out).toContain(".com"); // the last 4 of the email survive, nothing else of it
+      expect(out).toContain("were refused"); // the words survive
+    });
+
+    it("a message with no id and no email is returned as it was (the scrub only cuts what it names)", () => {
+      expect(call(`m.scrubStripeError("Rate limit exceeded", "sk_live_x")`)).toBe(
+        "Rate limit exceeded",
+      );
+    });
+
+    it("the script builds ONE Stripe client, and it is the one wrapped by readOnlyStripe (LOW note A)", () => {
+      const constructs = (src: string) =>
+        src
+          .split(/\r?\n/)
+          .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+          .join("\n")
+          .match(/\bnew\s+Stripe\s*\(/g) ?? [];
+      // the detector sees a second client and ignores a comment
+      expect(constructs("const a = new Stripe(k); const b = new Stripe(k2);")).toHaveLength(2);
+      expect(constructs("// const a = new Stripe(k);\n const b = 1;")).toHaveLength(0);
+      expect(constructs(source)).toHaveLength(1);
+      expect(source).toMatch(/readOnlyStripe\(\s*new Stripe\(/);
+    });
+
     it("prints the deleted column and the two A-1 sections, ids only (D-1, D-2)", () => {
       const lines = (
         call(

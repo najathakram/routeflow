@@ -176,14 +176,18 @@ export function buildReport(rows) {
 
 /**
  * An error message from Stripe with the key replaced and every Stripe id cut to its last 4 (`cus_…3456`): a
- * permission or lookup error names ids (the customer, the subscription, RouteFlow's own account) in full.
+ * permission or lookup error names ids (the customer, the subscription, RouteFlow's own account) in full. Invoice
+ * items (`ii_`), credit notes (`cn_`) and payouts (`po_`) are cut the same way, and any email address is cut to its
+ * last 4 characters (an error can echo a buyer's address).
  */
 export function scrubStripeError(message, key) {
   const text = key ? String(message).split(key).join("***") : String(message);
-  return text.replace(
-    /\b(cus|sub|acct|cs|in|pi|pm|seti|si|prod|price|ch|re|evt|txn|src|card|ba|tok)_[A-Za-z0-9_]{6,}/g,
-    (id, prefix) => `${prefix}_…${id.slice(-4)}`,
-  );
+  return text
+    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, (email) => `…${email.slice(-4)}`)
+    .replace(
+      /\b(cus|sub|acct|cs|in|pi|pm|seti|si|prod|price|ch|re|evt|txn|src|card|ba|tok|ii|cn|po)_[A-Za-z0-9_]{6,}/g,
+      (id, prefix) => `${prefix}_…${id.slice(-4)}`,
+    );
 }
 
 /** The report as printed lines (pure): both blocks, then the line the owner reads. */
