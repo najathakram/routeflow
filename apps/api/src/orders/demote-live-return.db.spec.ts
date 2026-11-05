@@ -28,6 +28,8 @@ import { NumberingService } from "../import/numbering.service";
 import { buildStatusUpdateData } from "./order-status-claim";
 import { SHIP_STATE_REOPENED, updateStatusWithShipMarker } from "./order-ship-state";
 import { seedInlineReturn } from "../returns/testing/inline-return-seed";
+import { IdempotencyService } from "../common/idempotency.service";
+import { returnCustomerLockKey } from "../returns/return-customer-lock";
 
 const START = 100;
 const SOLD = 10;
@@ -335,6 +337,64 @@ describeDb("SA-1101 A-5 (B1272): a live return blocks the office demotion — re
 
       await reopen(s.orderId);
       expect((await row(s.orderId)).status).toBe("CONFIRMED");
+    }, 120_000);
+  });
+
+  describe("SA-1101 A-6 Part 2 (B1279): the demotion waits for a return in flight for the customer", () => {
+    const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    it("RO-37: a capture holds the customer's returns lock and lands a live return on X; the demotion started meanwhile WAITS, then gets 409 (X stays DELIVERED)", async () => {
+      const s = await deliveredOrder("ro37");
+      const carrierProduct = await w.product("ro37-carry", START);
+      const { order: carrier } = await w.bookOrder({
+        status: "CONFIRMED",
+        lines: [{ productId: carrierProduct, qty: 1 }],
+      });
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      let locked!: () => void;
+      const lockTaken = new Promise<void>((r) => (locked = r));
+
+      // The capture side: the customer lock first (the key every return create/capture/approve takes), then the live
+      // return it books against X (a held transaction, as a capture mid-flight is), committed only when released.
+      const capture = w.inTenant(() =>
+        w.prisma.tenantTransaction(async (tx: any) => {
+          await new IdempotencyService().acquireLock(
+            returnCustomerLockKey(w.customerId, w.tenantId),
+            tx,
+          );
+          locked();
+          await gate;
+          await seedInlineReturn(tx, {
+            tenantId: w.tenantId,
+            customerId: w.customerId,
+            carryingOrderId: carrier.id,
+            sourceOrderId: s.orderId,
+            productId: s.productId,
+          });
+        }),
+      );
+      let settled = false;
+      let demote: Promise<unknown> | undefined;
+      try {
+        await lockTaken;
+        demote = reopen(s.orderId).then(
+          (v) => ((settled = true), v),
+          (e) => {
+            settled = true;
+            throw e;
+          },
+        );
+        demote.catch(() => undefined);
+        await pause(1500);
+        expect(settled).toBe(false); // red today: the demotion commits CONFIRMED while the capture is still open
+        expect((await row(s.orderId)).status).toBe("DELIVERED");
+      } finally {
+        release();
+        await capture;
+      }
+      await expect(demote).rejects.toMatchObject(refusedWith409);
+      expect((await row(s.orderId)).status).toBe("DELIVERED");
     }, 120_000);
   });
 });

@@ -157,7 +157,7 @@ describe("B1: unmark vs reopen (ship-state markers)", () => {
       // SA-1101 A-5: the DELIVERED demotion locks the Order row and counts its live returns (none here).
       $executeRaw: async () => 1,
       return: { count: async () => 0 },
-      order: { update: orderUpdate },
+      order: { findMany: async () => [{ customerId: "c1", tenantId: "t1" }], update: orderUpdate },
       orderItem,
       orderRevision: {
         aggregate: async ({ where }: any) => ({

@@ -19,12 +19,14 @@ import { ConflictException } from "@nestjs/common";
 import { OrderStatus, RouteRunStatus, RouteRunStopStatus } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { assertNoLiveReturn } from "../returns/live-return-guard";
+import { lockReturnCustomersOf } from "../returns/return-customer-lock";
 import type { buildStatusUpdateData } from "./order-status-claim";
 
 type Tx = {
   $executeRaw: (query: TemplateStringsArray, ...values: unknown[]) => Promise<unknown>;
   order: {
     findFirst: (args: any) => Promise<any>;
+    findMany: (args: any) => Promise<any[]>;
     updateMany: (args: any) => Promise<{ count: number }>;
   };
   return: { count: (args: any) => Promise<number> };
@@ -43,11 +45,16 @@ export async function deliverAgainInTx(
   orderId: string,
   data: ReturnType<typeof buildStatusUpdateData>,
 ) {
+  // SA-1101 A-6 Part 2 (B1279): the customer's returns lock FIRST (advisory -> Order, SA-214), so a capture in flight
+  // for this customer is counted below and one that starts later reads the order as delivered again. An order's
+  // customer does not change here; it is re-read after the row lock and a mismatch is the stale-edit refusal.
+  const lockedCustomers = await lockReturnCustomersOf(tx, [orderId]);
   await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
   const order = await tx.order.findFirst({
     where: { id: orderId },
     select: {
       id: true,
+      customerId: true,
       status: true,
       routeRunId: true,
       routeRunStopId: true,
@@ -56,7 +63,11 @@ export async function deliverAgainInTx(
     },
   });
   // Another change won the race for the status: the same answer as the generic status write.
-  if (!order || order.status !== OrderStatus.REFUSED) {
+  if (
+    !order ||
+    order.status !== OrderStatus.REFUSED ||
+    !lockedCustomers.includes(order.customerId)
+  ) {
     throw new ConflictException({
       code: API_ERROR_CODES.ORDER_CHANGED_DURING_EDIT,
       message:
