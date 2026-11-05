@@ -43,9 +43,13 @@ describe("redactAddresses", () => {
 
   it("a 50k-char hostile no-@ string completes quickly", () => {
     for (const filler of ["a".repeat(50_000), "a.".repeat(25_000), '"'.repeat(50_000)]) {
-      const t = Date.now();
+      const c0 = process.cpuUsage();
       redactAddresses(filler);
-      expect(Date.now() - t).toBeLessThan(500);
+      const c = process.cpuUsage(c0);
+      const cpuMs = (c.user + c.system) / 1000;
+      // L-165: CPU time (process.cpuUsage), not wall time: wall stretches 3-10x under host load, a
+      // ReDoS blowup costs seconds of CPU. Quiet-host max ~80 ms (15 ms tick); budget ~10x.
+      expect(cpuMs).toBeLessThan(800);
     }
   });
 });

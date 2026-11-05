@@ -55,6 +55,7 @@ import {
   resolveColumns,
   parseRow,
   parseStrictMoneyCell,
+  withoutCustomerLiteralHeaders,
 } from "./import-columns";
 import type { CustomerComplianceInput } from "../customers/customer-compliance-input";
 
@@ -586,7 +587,7 @@ export class ImportService {
     const rows = this.parseCsv(buffer);
     const headers = rows.length > 0 ? Object.keys(rows[0]) : [];
     const resolvedColumns = resolveColumns(headers, CUSTOMER_COLUMNS);
-    const unknownColumns = resolvedColumns.unknownColumns;
+    const unknownColumns = withoutCustomerLiteralHeaders(resolvedColumns.unknownColumns);
 
     let created = 0,
       updated = 0,
