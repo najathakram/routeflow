@@ -133,7 +133,7 @@ describe("deliverAgainInTx (SA-1101 A-3)", () => {
     expect(tx.order.updateMany).not.toHaveBeenCalled();
     const where = tx.return.count.mock.calls[0][0].where;
     expect(where.status.notIn).toEqual(["REJECTED", "CANCELLED"]);
-    expect(where.orderId).toBe("o1");
+    expect(where.orderId).toEqual({ in: ["o1"] });
   });
 
   it("the return check runs before the link is classified or written", async () => {

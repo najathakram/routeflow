@@ -4,9 +4,8 @@
  * A stop close leaves a REFUSED order linked to the stop that refused it (`routeRunId` / `routeRunStopId`), and
  * every way back onto a route needs that link to be null (createRun's sweep, the trip builder, the run-terminal
  * release). So the move is three things in ONE transaction, under the Order row lock the return create also takes:
- *   1. N1: refuse while the order has a live return (a return that is not REJECTED / CANCELLED). Order stock books
- *      once and a return books its own credit; a re-delivery on top would leave stock too high, and a pending return
- *      received after it would restock goods that went out again. The way back is the return's own cancel.
+ *   1. N1: refuse while the order has a live return (returns/live-return-guard.ts; the way back is the return's own
+ *      cancel). The reason is stated there: order stock books once and a return books its own credit.
  *   2. B1: classify the link and clear it. A COMPLETED stop's link, or a bare link to a COMPLETED / CANCELLED run, is
  *      cleared. Anything else (a stop that is not COMPLETED, an active bare run, a row that cannot be read) is a
  *      409 ORDER_RUN_LINK_CHANGED with nothing written: a refusal cannot produce that state, so it is never guessed.
@@ -19,7 +18,7 @@
 import { ConflictException } from "@nestjs/common";
 import { OrderStatus, RouteRunStatus, RouteRunStopStatus } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { DEAD_RETURN_STATUSES } from "../returns/return-statuses";
+import { assertNoLiveReturn } from "../returns/live-return-guard";
 import type { buildStatusUpdateData } from "./order-status-claim";
 
 type Tx = {
@@ -65,16 +64,11 @@ export async function deliverAgainInTx(
     });
   }
 
-  const liveReturns = await tx.return.count({
-    where: { orderId, status: { notIn: DEAD_RETURN_STATUSES } },
-  });
-  if (liveReturns > 0) {
-    throw new ConflictException({
-      code: API_ERROR_CODES.ORDER_HAS_RETURN,
-      message:
-        "This order has a return. To deliver it again, cancel the return first, or create a new order.",
-    });
-  }
+  await assertNoLiveReturn(
+    tx,
+    [orderId],
+    "This order has a return. To deliver it again, cancel the return first, or create a new order.",
+  );
 
   const hasStop = order.routeRunStopId != null;
   const hasRun = order.routeRunId != null;

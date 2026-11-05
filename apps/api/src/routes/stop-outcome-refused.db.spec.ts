@@ -39,6 +39,8 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { ReturnsService } from "../returns/returns.service";
+import { AuditService } from "../audit/audit.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { StorageService } from "../storage/storage.service";
 import { EntitlementsService } from "../billing/entitlements.service";
@@ -68,6 +70,7 @@ describeDb("SA-1101 refused order — stop close outcomes, real Postgres", () =>
   let tenantCtx: TenantContextService;
   let routesService: RoutesService;
   let invoicesService: InvoicesService;
+  let returnsService: ReturnsService;
   const createdTenantIds: string[] = [];
 
   const mockGateway = {
@@ -171,6 +174,32 @@ describeDb("SA-1101 refused order — stop close outcomes, real Postgres", () =>
 
     routesService = module.get(RoutesService);
     invoicesService = module.get(InvoicesService);
+
+    // A-4: the REAL ReturnsService (real credit notes) over the same connected prisma, for the stock rows.
+    let cnSeq = 0;
+    const anyMethod = new Proxy(
+      {},
+      { get: (_t, prop) => (prop === "then" || typeof prop === "symbol" ? undefined : jest.fn()) },
+    );
+    const returnsModule = await Test.createTestingModule({
+      providers: [
+        CreditNotesService,
+        ReturnsService,
+        RegulatedLedgerService,
+        CommissionEngineService,
+        AuditService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
+        { provide: RouteFlowGateway, useValue: anyMethod },
+        {
+          provide: NumberingService,
+          useValue: {
+            reserveNext: jest.fn().mockImplementation(async () => "CN-SA1101-" + ++cnSeq),
+          },
+        },
+      ],
+    }).compile();
+    returnsService = returnsModule.get(ReturnsService);
   });
 
   afterAll(async () => {
@@ -188,6 +217,11 @@ describeDb("SA-1101 refused order — stop close outcomes, real Postgres", () =>
     await prisma.advancePayment.deleteMany({ where: { tenantId } });
     await prisma.invoicePayment.deleteMany({ where: { invoice: { tenantId } } });
     await prisma.deliveryMutation.deleteMany({ where: { tenantId } });
+    await prisma.returnItem.deleteMany({ where: { tenantId } });
+    await prisma.return.deleteMany({ where: { tenantId } });
+    await prisma.creditNoteItem.deleteMany({ where: { tenantId } });
+    await prisma.creditNote.deleteMany({ where: { tenantId } });
+    await prisma.stockMovement.deleteMany({ where: { tenantId } });
     await prisma.invoiceItem.deleteMany({ where: { tenantId } });
     await prisma.invoice.deleteMany({ where: { tenantId } });
     await prisma.orderItem.deleteMany({ where: { tenantId } });
@@ -289,7 +323,7 @@ describeDb("SA-1101 refused order — stop close outcomes, real Postgres", () =>
       await tenantCtx.run(tenantId, () => invoicesService.createInvoiceFromOrder(order.id));
       orders[spec.key] = { id: order.id, lineIds };
     }
-    return { tenantId, run, runStop, orders };
+    return { tenantId, userId: user.id, run, runStop, orders };
   }
 
   const OPERATOR = { sub: "sa1101-operator", role: "OPERATOR" } as never;
@@ -306,6 +340,156 @@ describeDb("SA-1101 refused order — stop close outcomes, real Postgres", () =>
     quantityDelivered: qty,
   });
   const noticeKinds = () => mockMessaging.notifyEvent.mock.calls.map(([event]) => event as string);
+
+  type Seeded = Awaited<ReturnType<typeof seedStop>>;
+
+  /** RO-8's steps, shared with RO-16: Deliver again -> the old run ends -> createRun sweeps the order -> start -> full close. */
+  async function deliverAgainAndCloseInFull(s: Seeded, line: string) {
+    const refused = await orderRow(s.orders.A.id);
+    // Deliver again = the same call OrdersService.changeStatus ends in (REFUSED -> CONFIRMED), on the real row.
+    await tenantCtx.run(s.tenantId, async () =>
+      updateStatusWithShipMarker(
+        { prisma },
+        refused as never,
+        { status: "CONFIRMED" as never },
+        { sub: "sa1101-operator", role: "OPERATOR" } as never,
+        buildStatusUpdateData(refused, "CONFIRMED" as never, { isDeliveredDemotion: false }),
+      ),
+    );
+    const again = await orderRow(s.orders.A.id);
+    expect({ status: again.status, run: again.routeRunId, stop: again.routeRunStopId }).toEqual({
+      status: "CONFIRMED",
+      run: null,
+      stop: null,
+    });
+
+    // The old run is over; the office dispatches a new one, and the sweep must pick the order up.
+    await prisma.routeRun.update({ where: { id: s.run.id }, data: { status: "COMPLETED" } });
+    const route = await prisma.routeRun.findUniqueOrThrow({ where: { id: s.run.id } });
+    const next: any = await tenantCtx.run(s.tenantId, () =>
+      routesService.createRun(
+        { routeId: route.routeId, scheduledDate: new Date().toISOString() } as never,
+        OPERATOR,
+      ),
+    );
+    const swept = await orderRow(s.orders.A.id);
+    expect(swept.routeRunId).toBe(next.id);
+    expect(swept.routeRunStopId).not.toBeNull();
+    expect(swept.routeRunStopId).not.toBe(s.runStop.id);
+
+    // Start the new run and close the new stop in full.
+    await prisma.routeRun.update({
+      where: { id: next.id },
+      data: { status: "IN_PROGRESS", startedAt: new Date() },
+    });
+    await prisma.routeRunStop.update({
+      where: { id: swept.routeRunStopId! },
+      data: { status: "IN_PROGRESS" },
+    });
+    mockMessaging.notifyEvent.mockClear();
+    const stockRowsBefore = await prisma.stockMovement.count({
+      where: { product: { tenantId: s.tenantId } },
+    });
+    await tenantCtx.run(s.tenantId, () =>
+      routesService.completeWithPayment(
+        next.id,
+        swept.routeRunStopId!,
+        { deliveries: [deliver(line, 10)] } as never,
+        OPERATOR,
+      ),
+    );
+    const done = await orderRow(s.orders.A.id);
+    const item = await prisma.orderItem.findUniqueOrThrow({ where: { id: line } });
+    expect(done.status).toBe("DELIVERED");
+    expect(done.deliveredAt).not.toBeNull();
+    expect(Number(item.deliveredQty)).toBe(10);
+    expect(noticeKinds()).toEqual(["DELIVERED"]);
+    // A close writes no stock row (SA-1098 row 20): the order's one booking stands.
+    expect(await prisma.stockMovement.count({ where: { product: { tenantId: s.tenantId } } })).toBe(
+      stockRowsBefore,
+    );
+  }
+
+  // A-4: stock books the way create() leaves a live order (opened at 100, the order sold 10 -> 90).
+  const START = 100;
+  const SOLD = 10;
+  const stockOf = async (productId: string) =>
+    Number((await prisma.product.findUniqueOrThrow({ where: { id: productId } })).currentStock);
+  async function bookStock(s: Seeded, lineId: string): Promise<string> {
+    const item = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineId } });
+    const productId = item.productId!;
+    await prisma.product.update({ where: { id: productId }, data: { currentStock: START - SOLD } });
+    const at = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000);
+    await prisma.stockMovement.createMany({
+      data: [
+        {
+          tenantId: s.tenantId,
+          productId,
+          type: "ADJUSTMENT",
+          quantity: START,
+          stockAfter: START,
+          notes: "OPENING",
+          effectiveAt: at(60),
+          createdAt: at(60),
+        },
+        {
+          tenantId: s.tenantId,
+          productId,
+          type: "SALE",
+          quantity: -SOLD,
+          stockAfter: START - SOLD,
+          notes: "CREATE",
+          reference: item.orderId,
+          effectiveAt: at(30),
+          createdAt: at(30),
+        },
+      ],
+    });
+    return productId;
+  }
+  const staffJwt = (s: Seeded) =>
+    ({ sub: s.userId, role: "OPERATOR", tenantId: s.tenantId }) as never;
+  const staffReturn = (s: Seeded, productId: string, lineId: string, qty: number) =>
+    tenantCtx.run(s.tenantId, () =>
+      returnsService.create(
+        {
+          orderId: s.orders.A.id,
+          reason: "CUSTOMER_REFUSED",
+          items: [{ productId, orderItemId: lineId, qty }],
+        } as any,
+        s.userId,
+        "OPERATOR",
+      ),
+    ) as Promise<{ id: string }>;
+  /** A staff return of qty, approved and received with restock. */
+  async function receivedReturn(s: Seeded, productId: string, lineId: string, qty: number) {
+    const ret = await staffReturn(s, productId, lineId, qty);
+    await tenantCtx.run(s.tenantId, () => returnsService.approve(ret.id));
+    await tenantCtx.run(s.tenantId, () =>
+      returnsService.receive(ret.id, s.userId, { restock: true }),
+    );
+    return ret.id;
+  }
+  const refuseTheStop = (s: Seeded, line: string) =>
+    tenantCtx.run(s.tenantId, () =>
+      routesService.completeWithPayment(
+        s.run.id,
+        s.runStop.id,
+        { deliveries: [refuse(line)] } as never,
+        OPERATOR,
+      ),
+    );
+  const undoTheStop = (s: Seeded) =>
+    tenantCtx.run(s.tenantId, () => routesService.reopenStop(s.run.id, s.runStop.id, OPERATOR));
+  const mutationRows = (s: Seeded) =>
+    prisma.deliveryMutation.count({ where: { routeRunStopId: s.runStop.id } });
+  const UNDO_STOP_409 = {
+    status: 409,
+    response: {
+      code: "ORDER_HAS_RETURN",
+      message: "An order on this stop has a return. To undo the stop, cancel the return first.",
+    },
+  };
 
   beforeEach(() => mockMessaging.notifyEvent.mockClear());
 
@@ -428,68 +612,7 @@ describeDb("SA-1101 refused order — stop close outcomes, real Postgres", () =>
     // The red value on master's tree: a refusal leaves the order linked to the stop that refused it.
     expect(refused.routeRunStopId).toBe(s.runStop.id);
 
-    // Deliver again = the same call OrdersService.changeStatus ends in (REFUSED -> CONFIRMED), on the real row.
-    await tenantCtx.run(s.tenantId, async () =>
-      updateStatusWithShipMarker(
-        { prisma },
-        refused as never,
-        { status: "CONFIRMED" as never },
-        { sub: "sa1101-operator", role: "OPERATOR" } as never,
-        buildStatusUpdateData(refused, "CONFIRMED" as never, { isDeliveredDemotion: false }),
-      ),
-    );
-    const again = await orderRow(s.orders.A.id);
-    expect({ status: again.status, run: again.routeRunId, stop: again.routeRunStopId }).toEqual({
-      status: "CONFIRMED",
-      run: null,
-      stop: null,
-    });
-
-    // The old run is over; the office dispatches a new one, and the sweep must pick the order up.
-    await prisma.routeRun.update({ where: { id: s.run.id }, data: { status: "COMPLETED" } });
-    const route = await prisma.routeRun.findUniqueOrThrow({ where: { id: s.run.id } });
-    const next: any = await tenantCtx.run(s.tenantId, () =>
-      routesService.createRun(
-        { routeId: route.routeId, scheduledDate: new Date().toISOString() } as never,
-        OPERATOR,
-      ),
-    );
-    const swept = await orderRow(s.orders.A.id);
-    expect(swept.routeRunId).toBe(next.id);
-    expect(swept.routeRunStopId).not.toBeNull();
-    expect(swept.routeRunStopId).not.toBe(s.runStop.id);
-
-    // Start the new run and close the new stop in full.
-    await prisma.routeRun.update({
-      where: { id: next.id },
-      data: { status: "IN_PROGRESS", startedAt: new Date() },
-    });
-    await prisma.routeRunStop.update({
-      where: { id: swept.routeRunStopId! },
-      data: { status: "IN_PROGRESS" },
-    });
-    mockMessaging.notifyEvent.mockClear();
-    const stockRowsBefore = await prisma.stockMovement.count({
-      where: { product: { tenantId: s.tenantId } },
-    });
-    await tenantCtx.run(s.tenantId, () =>
-      routesService.completeWithPayment(
-        next.id,
-        swept.routeRunStopId!,
-        { deliveries: [deliver(line, 10)] } as never,
-        OPERATOR,
-      ),
-    );
-    const done = await orderRow(s.orders.A.id);
-    const item = await prisma.orderItem.findUniqueOrThrow({ where: { id: line } });
-    expect(done.status).toBe("DELIVERED");
-    expect(done.deliveredAt).not.toBeNull();
-    expect(Number(item.deliveredQty)).toBe(10);
-    expect(noticeKinds()).toEqual(["DELIVERED"]);
-    // A close writes no stock row (SA-1098 row 20): the order's one booking stands.
-    expect(await prisma.stockMovement.count({ where: { product: { tenantId: s.tenantId } } })).toBe(
-      stockRowsBefore,
-    );
+    await deliverAgainAndCloseInFull(s, line);
 
     // OBSERVE (A-3): the order's live invoice after the full close. Expected one live invoice at 10 x 10.
     const live = await prisma.invoice.findMany({
@@ -501,6 +624,88 @@ describeDb("SA-1101 refused order — stop close outcomes, real Postgres", () =>
     expect(live.length).toBe(1);
     expect(Number(live[0].total)).toBe(100);
   }, 120_000);
+
+  it("RO-16: RO-15, then cancel the return -> Deliver again -> full close: stock = start - 10 at the end", async () => {
+    const s = await seedStop("ro16", [{ key: "A", lines: [{ qty: SOLD, price: 10 }] }]);
+    const [line] = s.orders.A.lineIds;
+    const productId = await bookStock(s, line);
+    await refuseTheStop(s, line);
+    const returnId = await receivedReturn(s, productId, line, 4);
+    expect(await stockOf(productId)).toBe(START - SOLD + 4);
+    // RO-15's block: the live return stops Deliver again.
+    const refused = await orderRow(s.orders.A.id);
+    await expect(
+      tenantCtx.run(s.tenantId, async () =>
+        updateStatusWithShipMarker(
+          { prisma },
+          refused as never,
+          { status: "CONFIRMED" as never },
+          staffJwt(s),
+          buildStatusUpdateData(refused, "CONFIRMED" as never, { isDeliveredDemotion: false }),
+        ),
+      ),
+    ).rejects.toMatchObject({ response: { code: "ORDER_HAS_RETURN" } });
+
+    await tenantCtx.run(s.tenantId, () => returnsService.cancel(returnId, staffJwt(s)));
+    expect(await stockOf(productId)).toBe(START - SOLD);
+    await deliverAgainAndCloseInFull(s, line);
+    expect((await orderRow(s.orders.A.id)).status).toBe("DELIVERED");
+    expect(await stockOf(productId)).toBe(START - SOLD); // a value of start - 6 means N was high by 4
+  }, 120_000);
+
+  describe("A-4: Undo the stop is refused while an order on it has a live return", () => {
+    it("RO-21: refuse -> staff return of 4 received with restock -> Undo the stop = 409; nothing changes, stock = start - 10 + 4", async () => {
+      const s = await seedStop("ro21", [{ key: "A", lines: [{ qty: SOLD, price: 10 }] }]);
+      const [line] = s.orders.A.lineIds;
+      const productId = await bookStock(s, line);
+      await refuseTheStop(s, line);
+      await receivedReturn(s, productId, line, 4);
+      const rowsBefore = await mutationRows(s);
+      expect(rowsBefore).toBeGreaterThan(0);
+
+      await expect(undoTheStop(s)).rejects.toMatchObject(UNDO_STOP_409);
+
+      expect((await orderRow(s.orders.A.id)).status).toBe("REFUSED");
+      expect(
+        (await prisma.routeRunStop.findUniqueOrThrow({ where: { id: s.runStop.id } })).status,
+      ).toBe("COMPLETED");
+      expect(await mutationRows(s)).toBe(rowsBefore); // the evidence is still there
+      expect(await stockOf(productId)).toBe(START - SOLD + 4);
+    }, 120_000);
+
+    it("RO-22: the same with a DELIVERED order and a return of 4 = 409, status DELIVERED", async () => {
+      const s = await seedStop("ro22", [{ key: "A", lines: [{ qty: SOLD, price: 10 }] }]);
+      const [line] = s.orders.A.lineIds;
+      const productId = await bookStock(s, line);
+      await tenantCtx.run(s.tenantId, () =>
+        routesService.completeWithPayment(
+          s.run.id,
+          s.runStop.id,
+          { deliveries: [deliver(line, SOLD)] } as never,
+          OPERATOR,
+        ),
+      );
+      expect((await orderRow(s.orders.A.id)).status).toBe("DELIVERED");
+      await staffReturn(s, productId, line, 4);
+
+      await expect(undoTheStop(s)).rejects.toMatchObject(UNDO_STOP_409);
+      expect((await orderRow(s.orders.A.id)).status).toBe("DELIVERED");
+    }, 120_000);
+
+    it("RO-23: RO-21, then cancel the return -> Undo the stop = 200; CONFIRMED, stock = start - 10", async () => {
+      const s = await seedStop("ro23", [{ key: "A", lines: [{ qty: SOLD, price: 10 }] }]);
+      const [line] = s.orders.A.lineIds;
+      const productId = await bookStock(s, line);
+      await refuseTheStop(s, line);
+      const returnId = await receivedReturn(s, productId, line, 4);
+      await expect(undoTheStop(s)).rejects.toMatchObject(UNDO_STOP_409);
+
+      await tenantCtx.run(s.tenantId, () => returnsService.cancel(returnId, staffJwt(s)));
+      await undoTheStop(s); // a dead (CANCELLED) return does not count
+      expect((await orderRow(s.orders.A.id)).status).toBe("CONFIRMED");
+      expect(await stockOf(productId)).toBe(START - SOLD);
+    }, 120_000);
+  });
 
   describe("B785: every line with something left needs an entry in deliveries", () => {
     const twoLines = [

@@ -1,7 +1,8 @@
 /**
  * SA-1101 A-3 (N1) on REAL Postgres: what a return and a cancel do to stock around "Deliver again".
- * RO-15 (a received return blocks it; stock = start - 10 + 4), RO-16 (cancel the return, then it goes through;
- * stock = start - 10), RO-18 (refuse -> Deliver again -> cancel: the stock comes back exactly once).
+ * RO-15 (a received return blocks it; stock = start - 10 + 4), RO-18 (refuse -> Deliver again -> cancel: the stock
+ * comes back exactly once). RO-16 (cancel the return, Deliver again, full close; stock = start - 10) lives in
+ * routes/stop-outcome-refused.db.spec.ts next to RO-8, whose close steps it reuses.
  *
  * The REAL updateStatusWithShipMarker (the function OrdersService.changeStatus ends in), the REAL ReturnsService and the
  * REAL OrdersService run over the order-stock world's books: an order that sold 10 leaves the counter at start - 10.
@@ -141,23 +142,6 @@ describeDb("SA-1101 A-3: Deliver again, returns and cancel — real Postgres", (
     });
     expect(await statusOf(s.orderId)).toBe("REFUSED");
     expect(await w.stockOf(s.productId)).toBe(START - SOLD + 4);
-  }, 120_000);
-
-  it("RO-16: cancel the return, then Deliver again goes through; stock = start - 10, no extra row", async () => {
-    const s = await refusedOrder("ro16");
-    const returnId = await receivedReturn(s, 4);
-    await expect(deliverAgain(s.orderId)).rejects.toMatchObject({
-      response: { code: "ORDER_HAS_RETURN" },
-    });
-
-    await w.inTenant(() => returns.cancel(returnId, w.jwt as never));
-    expect(await w.stockOf(s.productId)).toBe(START - SOLD);
-
-    const before = (await w.movements(s.productId)).length;
-    await deliverAgain(s.orderId);
-    expect(await statusOf(s.orderId)).toBe("CONFIRMED");
-    expect(await w.stockOf(s.productId)).toBe(START - SOLD);
-    expect((await w.movements(s.productId)).length).toBe(before); // no compensating stock row (OP-6)
   }, 120_000);
 
   it("a REJECTED or CANCELLED return does not block Deliver again", async () => {
