@@ -1,6 +1,6 @@
 {
-  "mappedSha": "9bafe62758",
-  "generatedAt": "2026-11-05T23:52:10.924Z",
+  "mappedSha": "266095419c",
+  "generatedAt": "2026-11-06T02:41:42.143Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1146,
-  "notes": "2026-11-05 windows 10 and 11 (master 9bafe62758): api landing note, TOC row; see CHANGELOG.md."
+  "notes": "2026-11-05 window 12 (master 266095419c): api landing note, TOC row; see CHANGELOG.md."
 }
