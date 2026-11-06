@@ -17,9 +17,12 @@ export class TenantInterceptor implements NestInterceptor {
     const req = context.switchToHttp().getRequest();
     const user = req.user as JwtPayload | undefined;
     const tenantId = user?.tenantId ?? null;
+    // SA-1105: a tenantless request is a platform admin (SUPER_ADMIN) or nobody in particular (ANONYMOUS).
+    const tenantless = user?.role === "SUPER_ADMIN" ? "SUPER_ADMIN" : "ANONYMOUS";
+    const label = `${context.getClass?.()?.name ?? "?"}.${context.getHandler?.()?.name ?? "?"}`;
     // SA-970 §2.3: the add-on writer reads the impersonating admin from this context.
     return runWithImpersonation(user?.impersonatedBy, () =>
-      this.tenantContext.run(tenantId, () => next.handle()),
+      this.tenantContext.run(tenantId, () => next.handle(), tenantless, label),
     );
   }
 }

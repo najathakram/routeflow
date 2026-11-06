@@ -53,6 +53,7 @@ function makeService() {
     { decrypt: (v: string) => v } as any,
     mailboxSend as any,
     { record: jest.fn() } as any,
+    {} as any,
   );
   const resendSend = jest.fn().mockResolvedValue({ data: { id: "eml_1" }, error: null });
   (svc as any).resend.emails.send = resendSend;

@@ -1,8 +1,20 @@
 import { Injectable } from "@nestjs/common";
 import { AsyncLocalStorage } from "async_hooks";
 
+/**
+ * Whose work this is. TENANT: a business is in scope. SUPER_ADMIN: a platform admin with no business. ANONYMOUS: a
+ * request with no tenant and no admin (public routes, buyer routes before their seller resolves). SYSTEM: reserved
+ * for the body of `prisma.forSystem(reason, fn)`, never set by a request. NONE: no store at all (a cron or queue job that never
+ * entered a context).
+ */
+export type TenantKind = "TENANT" | "SUPER_ADMIN" | "ANONYMOUS" | "SYSTEM";
+export type TenantContextKind = TenantKind | "NONE";
+
 interface TenantStore {
   tenantId: string | null;
+  kind: TenantKind;
+  /** `Controller.handler` of the request, for the dark warn's log line. Never an id. */
+  label?: string;
 }
 
 /**
@@ -14,9 +26,18 @@ interface TenantStore {
 export class TenantContextService {
   private readonly storage = new AsyncLocalStorage<TenantStore>();
 
-  /** Run a callback inside a new tenant context. Called by TenantInterceptor. */
-  run<T>(tenantId: string | null, fn: () => T): T {
-    return this.storage.run({ tenantId }, fn);
+  /**
+   * Run a callback inside a new tenant context. A tenant id means kind TENANT; with none, the caller says which
+   * tenantless kind it is (the interceptor reads it from the JWT), ANONYMOUS by default.
+   */
+  run<T>(
+    tenantId: string | null,
+    fn: () => T,
+    tenantless: Exclude<TenantKind, "TENANT"> = "ANONYMOUS",
+    label?: string,
+  ): T {
+    const kind: TenantKind = tenantId ? "TENANT" : tenantless;
+    return this.storage.run({ tenantId, kind, label }, fn);
   }
 
   /** Returns tenantId or throws if context not initialised */
@@ -33,7 +54,17 @@ export class TenantContextService {
     return this.storage.getStore()?.tenantId ?? null;
   }
 
+  /** The kind of the running context; NONE when there is no store at all. */
+  kind(): TenantContextKind {
+    return this.storage.getStore()?.kind ?? "NONE";
+  }
+
+  /** The request's `Controller.handler`, when the interceptor set one. */
+  label(): string | undefined {
+    return this.storage.getStore()?.label;
+  }
+
   isSuperAdmin(): boolean {
-    return this.getOrNull() === null;
+    return this.kind() === "SUPER_ADMIN";
   }
 }

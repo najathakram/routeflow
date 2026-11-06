@@ -6,6 +6,7 @@ import { OwnerAlertService } from "./owner-alert.service";
 import { MailboxModule } from "./mailbox/mailbox.module";
 import { MailboxAlertService } from "./mailbox/mailbox-alert.service";
 import { NotificationsModule } from "../notifications/notifications.module";
+import { SystemConfigModule } from "../system-config/system-config.module";
 
 // PrismaModule and CommonModule (EncryptionService) are global — no explicit imports needed.
 // `forwardRef` breaks the BillingModule → EmailModule → MailboxModule → BillingModule cycle —
@@ -17,7 +18,12 @@ import { NotificationsModule } from "../notifications/notifications.module";
 // `MailboxSendService.onStateChange` at module init, so the provider graph stays acyclic.
 // `NotificationsModule` supplies `NotificationsService` for the in-app notification.
 @Module({
-  imports: [forwardRef(() => MailboxModule), NotificationsModule],
+  // SystemConfigModule imports EmailModule back (forwardRef both ways): `EmailService` writes through `SystemConfigService`.
+  imports: [
+    forwardRef(() => MailboxModule),
+    NotificationsModule,
+    forwardRef(() => SystemConfigModule),
+  ],
   providers: [
     EmailService,
     MailboxAlertService,
