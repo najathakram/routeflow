@@ -126,3 +126,4 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 | [api/landing-2026-11-04-w4.md](api/landing-2026-11-04-w4.md) | Window 4 (ec9765092c..b0e0193854): refused order status (migration), deliver again, live-return guard, stop-close checks |
 | [api/landing-2026-11-05-w5.md](api/landing-2026-11-05-w5.md) | Window 5 (b0e0193854..b10bad52a0): delivered-demotion live-return guard, liveReturnWhere, janitor merged-tip fix |
 | [api/landing-2026-11-05-w6.md](api/landing-2026-11-05-w6.md) | Windows 6-9 (b10bad52a0..25034e1228): AI keys + cap, key-failure text, live-return lock on the row's tenant, B1280 code, janitor |
+| [api/landing-2026-11-05-w10.md](api/landing-2026-11-05-w10.md) | Windows 10-11 (25034e1228..9bafe62758): one override rule (B1282), run and stop ids tenant-proven on four writers (B1106) |
