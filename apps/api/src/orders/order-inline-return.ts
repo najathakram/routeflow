@@ -10,6 +10,24 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import type { InlineReturnLinesDto } from "../returns/dto/capture-inline-return.dto";
 import { INLINE_RETURN_KEY_TAKEN } from "../returns/inline-returns.service";
 import type { InlineReturnsService } from "../returns/inline-returns.service";
+import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
+import type { PrismaService } from "../prisma/prisma.service";
+
+/**
+ * B1106 / SA-1105 PR B: an OPERATOR / TENANT_ADMIN order create stores the DTO's `routeRunId` / `routeRunStopId` on the order
+ * unread (the DRIVER branch proves its own, B309), and an FK is no tenant proof. Another business's run or stop is the same
+ * 404 as a missing one ("Run not found" / "Stop not found"), before anything is written. Here, not in orders.service.ts,
+ * because that file is under a size ratchet.
+ */
+export async function assertStaffRunStopRefs(
+  prisma: PrismaService,
+  dto: { routeRunId?: string | null; routeRunStopId?: string | null },
+): Promise<void> {
+  await assertRefsInTenant(prisma, {
+    routeRunIds: [dto.routeRunId],
+    routeRunStopIds: [dto.routeRunStopId],
+  });
+}
 
 /**
  * #2094 (SA-194 / SA-221): the order-side glue for a return taken inside an order create/edit. Lives
