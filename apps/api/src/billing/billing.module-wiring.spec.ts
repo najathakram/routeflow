@@ -25,6 +25,7 @@ import { DunningService } from "./dunning.service";
 import { ScheduledPriceChangeService } from "./scheduled-price-change";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { EntitlementAuthority } from "./entitlement-authority.service";
+import { FeaturePreviewService } from "./feature-preview.service";
 
 /**
  * Nit (Opus review): BillingService, SubscriptionMutationService and others take collaborators as `@Optional()`
@@ -73,6 +74,13 @@ describe("BillingModule wiring: the @Optional collaborators are really provided"
       // SA-1099 WP5 / B554: the self-serve enable's already-included and requires checks, and the resolver cache it clears,
       // read this collaborator - an undefined one would silently sell what the workspace already has.
       expect(mutations.authority).toBeInstanceOf(EntitlementAuthority);
+      // SA-1099 A-3 note 2 (F-WP5-1): `subscribe` reads the TARGET plan's answer from this one - an undefined one would
+      // silently skip the check and sell what the target plan already serves.
+      expect(mutations.preview).toBeInstanceOf(FeaturePreviewService);
+      // SA-1099 A-4 (reader A's note): the add-on list's `alreadyHaveAddonSkus` reads the same authority through
+      // SubscriptionService - an undefined one would silently return [] and show every SKU for sale.
+      const subscriptions = moduleRef.get(SubscriptionService, { strict: false }) as any;
+      expect(subscriptions.authority).toBeInstanceOf(EntitlementAuthority);
       // SA-775: every AUTOMATIC lock writer holds the REAL rollout switch - an @Optional that came back
       // undefined would silently leave that writer ungated in production.
       const sw = moduleRef.get(AutoLockSwitchService, { strict: false });

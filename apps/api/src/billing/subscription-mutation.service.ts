@@ -99,8 +99,10 @@ import {
   addonAlreadyIncludedRefusal,
   addonOfferState,
   isCapacityAddon,
+  type EffectiveByKey,
 } from "./addon-adds-something";
 import { EntitlementAuthority } from "./entitlement-authority.service";
+import { FeaturePreviewService } from "./feature-preview.service";
 import { FEATURE_REGISTRY } from "./feature-registry";
 import { updateAddonRowTx, updateAddonRowsTx, upsertAddonRowTx } from "./tenant-addon-writer";
 import {
@@ -381,6 +383,10 @@ export class SubscriptionMutationService {
     // "are the SKU's registry `requires` met", and the resolver cache an enable/disable must clear. Last and optional,
     // like `ownerAlerts`; EntitlementsModule provides it (pinned by a wiring spec).
     @Optional() private readonly authority?: EntitlementAuthority,
+    // SA-1099 A-3 note 2 (F-WP5-1): `subscribe` judges a self-serve add-on on the TARGET plan, whose `effective` answer
+    // is the preview's `after` side. Last and optional, like `authority`; EntitlementsModule provides it. Absent, the
+    // check warns and the sale goes ahead (never refuse on a guess).
+    @Optional() private readonly preview?: FeaturePreviewService,
   ) {}
 
   private readonly logger = new Logger(SubscriptionMutationService.name);
@@ -572,6 +578,29 @@ export class SubscriptionMutationService {
       if (!isSelfServiceAddon(a.sku)) throw new ForbiddenException(ADMIN_ONLY_ADDON_MESSAGE);
       desired.set(a.sku, Math.max(1, Math.trunc(a.quantity ?? 1)));
     }
+    // SA-1099 A-3 note 2 (F-WP5-1): each self-serve add-on is judged on the plan this call lands on, with the same two
+    // refusals, codes and sentences as `enableAddon`, BEFORE any Stripe call, lock or write below. The first refusal is
+    // the one 409. A SKU the target plan bundles is `ADDON_INCLUDED_IN_PLAN`; one it already serves (courtesy, an
+    // override, another SKU) is `ADDON_ALREADY_INCLUDED`.
+    //
+    // SA-1099 A-5: only a NEW line is judged. A SKU the workspace already holds an active row for is a keep, and goes to
+    // the reconcile below exactly as before (an included row stays on at $0; a Stripe-held one is refused by the locked
+    // re-read, PLAN_CHANGE_ADDONS_CHANGED). "Held" is read from this method's own prior-active read, the one the dropped
+    // items use, so there is no second query; the locked re-read still catches a row that vanishes before the lock.
+    const priorActive: any[] =
+      keepsTrialAddons(tenant) && desired.size === 0
+        ? []
+        : await this.prisma.tenantAddon.findMany({ where: { tenantId, active: true } });
+    const heldCodes = new Set(priorActive.map((row: any) => addonSkuCode(row)));
+    for (const code of desired.keys()) {
+      if (heldCodes.has(code)) continue;
+      const judged = await this.judgeAddon(tenantId, skuByCode.get(code)!, version, input.planKey);
+      if (judged.refusal) throw refusalException(judged.refusal);
+      const held = await this.heldStateRefusal(tenantId, judged.def, {
+        asPlan: { planKey: input.planKey, versionId: version.id },
+      });
+      if (held) throw refusalException(held);
+    }
 
     const transition = {
       tenantId,
@@ -590,11 +619,7 @@ export class SubscriptionMutationService {
     // across a network call); the locked re-read below refuses, retryably, if a billed row appeared.
     // SA-690: a TRIAL keeps its add-ons across the plan pick (see `toDisable` below) — and so does a lapsed
     // one (MUST-1, `keepsTrialAddons`) — so nothing is dropped and no item is removed for it.
-    const droppedBilled = (
-      keepsTrialAddons(tenant)
-        ? []
-        : await this.prisma.tenantAddon.findMany({ where: { tenantId, active: true } })
-    )
+    const droppedBilled = (keepsTrialAddons(tenant) ? [] : priorActive)
       .map((row: any) => ({ row, code: addonSkuCode(row) }))
       .filter(
         (x: any) =>
@@ -3289,6 +3314,7 @@ export class SubscriptionMutationService {
   private async heldStateRefusal(
     tenantId: string,
     def: CatalogAddonSku,
+    opts?: { asPlan?: { planKey: string; versionId: string } },
   ): Promise<AddonRefusal | null> {
     if (!this.authority) return null;
     const wantsFlagCheck = (def.grantsFlags?.length ?? 0) > 0 && !isCapacityAddon(def);
@@ -3299,12 +3325,8 @@ export class SubscriptionMutationService {
 
     const held = await findAddonRow(this.prisma, tenantId, def.sku);
     if (wantsFlagCheck && !held?.active) {
-      const resolved = await this.authority.resolveAll(tenantId);
-      if (!resolved) {
-        this.logger.warn(
-          `Add-on "${def.sku}" tenant ${tenantId}: the resolver could not answer - the already-included check is skipped`,
-        );
-      } else if (addonOfferState(def, resolved.byKey, held?.active === true) === "already-have") {
+      const effective = await this.effectiveForOfferState(tenantId, def, opts?.asPlan);
+      if (effective && addonOfferState(def, effective, held?.active === true) === "already-have") {
         return addonAlreadyIncludedRefusal(def.name);
       }
     }
@@ -3333,6 +3355,43 @@ export class SubscriptionMutationService {
   }
 
   /**
+   * What is effective for {@link heldStateRefusal}'s flag half, keyed by feature key, or null when it cannot be read
+   * (never a refusal: the caller sells, with the warning written here).
+   *
+   * Without `asPlan` it is the workspace's CURRENT answer (`resolveAll`), the enable's question. With `asPlan` (SA-1099
+   * A-3 note 2, F-WP5-1: `subscribe` changes the plan, so the question is "does the plan this call lands on already
+   * serve it?") it is the TARGET plan's answer from `FeaturePreviewService.preview(...)`'s `after` side, the one
+   * preview home SV-12 pins, never a second resolver copy. `serving` is the resolver's `effective`, courtesy included.
+   */
+  private async effectiveForOfferState(
+    tenantId: string,
+    def: CatalogAddonSku,
+    asPlan?: { planKey: string; versionId: string },
+  ): Promise<EffectiveByKey | null> {
+    if (!asPlan) {
+      const resolved = await this.authority?.resolveAll(tenantId);
+      if (resolved) return resolved.byKey;
+      this.logger.warn(
+        `Add-on "${def.sku}" tenant ${tenantId}: the resolver could not answer - the already-included check is skipped`,
+      );
+      return null;
+    }
+    try {
+      if (!this.preview) throw new Error("no preview service wired");
+      const { after } = await this.preview.preview(tenantId, {
+        planKey: asPlan.planKey,
+        versionId: asPlan.versionId,
+      });
+      return new Map(after.map((f) => [f.key, { effective: f.serving }]));
+    } catch (err) {
+      this.logger.warn(
+        `Add-on "${def.sku}" tenant ${tenantId}: the preview of plan ${asPlan.planKey} could not answer (${(err as Error)?.message ?? "unknown error"}) - the already-included check is skipped`,
+      );
+      return null;
+    }
+  }
+
+  /**
    * {@link planIncludedRefusal}'s verdict AND the definition it was judged on (SA-815e): the SKU as the tenant's own
    * pinned version lists it ({@link pricedAddonSku}), which is also the version an enable writes, a preview quotes and
    * a checkout bills the row's price at.
@@ -3341,7 +3400,21 @@ export class SubscriptionMutationService {
     tenantId: string,
     skuDef: CatalogAddonSku,
     published?: PlanVersionWithCatalog | null,
+    asPlanKey?: string,
   ): Promise<{ refusal: AddonRefusal | null; def: CatalogAddonSku }> {
+    if (asPlanKey !== undefined) {
+      // SA-1099 A-3 note 2 (F-WP5-1): `subscribe` lands on the PUBLISHED version of the TARGET plan, so that is what is
+      // judged: the caller's published definition, the target's key, never the workspace's current plan or pin.
+      if (skuDef.includedAtPlan == null) return { refusal: null, def: skuDef };
+      const verdict = inclusionOf(skuDef, asPlanKey);
+      if (verdict.kind === "CATALOG_INVALID") {
+        return { refusal: addonCatalogInvalid(verdict.sku, verdict.value), def: skuDef };
+      }
+      return {
+        refusal: verdict.kind === "INCLUDED" ? addonIncludedRefusal(skuDef.name) : null,
+        def: skuDef,
+      };
+    }
     const [sub, tenant] = await Promise.all([
       this.prisma.tenantSubscription.findUnique({
         where: { tenantId },
