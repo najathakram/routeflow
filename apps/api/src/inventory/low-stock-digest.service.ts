@@ -86,14 +86,15 @@ export class LowStockDigestService {
     private readonly email: EmailService,
   ) {}
 
-  /** SA-1105 Q3: the sweep reads ALL tenants on purpose and names each tenant in its own filters, so it uses the deliberate door. */
-  private get systemDb() {
-    return this.prisma.forSystem("low-stock digest: cross-tenant scan");
-  }
-
   @LeaderCron(CronExpression.EVERY_HOUR, "inventory.sendLowStockDigest")
   async sendLowStockDigest(now: Date = new Date()): Promise<void> {
-    const tenants = await this.systemDb.tenant.findMany({
+    // SA-1105 Q3 + A-1: the sweep reads ALL tenants on purpose and names each tenant in its own filters, so the whole sweep runs
+    // inside the deliberate door (kind SYSTEM). The queries are the same, word for word, on the same base client.
+    await this.prisma.forSystem("low-stock digest: cross-tenant scan", (db) => this.sweep(db, now));
+  }
+
+  private async sweep(db: PrismaService, now: Date): Promise<void> {
+    const tenants = await db.tenant.findMany({
       where: { deletedAt: null, status: { notIn: [...RECORD_KEEPING_EXCLUDED_STATUSES] } },
       select: {
         id: true,
@@ -107,7 +108,7 @@ export class LowStockDigestService {
       // Fail closed per tenant: one tenant's bad data/timezone/send must never stop the
       // sweep for every other tenant, and must never throw out of the cron tick.
       try {
-        await this.processTenant(t.id, t.config, now);
+        await this.processTenant(db, t.id, t.config, now);
       } catch (err) {
         this.logger.error(
           `low-stock digest failed for tenant ${t.id}: ${(err as Error)?.message ?? err}`,
@@ -117,6 +118,7 @@ export class LowStockDigestService {
   }
 
   private async processTenant(
+    db: PrismaService,
     tenantId: string,
     config: {
       timezone?: string | null;
@@ -132,9 +134,9 @@ export class LowStockDigestService {
     if (hour !== 7) return;
     if (sentForDayKey(config?.lowStockDigestSentForDay ?? null) === dateKey) return;
 
-    const items = await this.getLowStockItems(tenantId);
+    const items = await this.getLowStockItems(db, tenantId);
     if (items.length > 0) {
-      const recipients = await this.getDigestRecipients(tenantId);
+      const recipients = await this.getDigestRecipients(db, tenantId);
       const businessName = sellerDisplayName(config, null, "RouteFlow");
       for (const r of recipients) {
         // Fail closed per recipient too — EmailService.send() already never throws, but a
@@ -164,7 +166,7 @@ export class LowStockDigestService {
     // row (rare — config is normally created alongside the tenant): it simply matches zero
     // rows instead of throwing, which degrades to "recheck this tenant every hour-7 tick"
     // rather than crashing the sweep.
-    await this.systemDb.tenantConfig.updateMany({
+    await db.tenantConfig.updateMany({
       where: { tenantId },
       data: { lowStockDigestSentForDay: new Date(`${dateKey}T00:00:00.000Z`) },
     });
@@ -173,8 +175,8 @@ export class LowStockDigestService {
   /** Same predicate as `inventory.service.ts#getForecasting`'s `needsReorder` — one rule for
    * "below threshold", never re-derived. `reorderPoint` unset (null) means the tenant never
    * opted this product into alerting at all, not "always alert". */
-  private async getLowStockItems(tenantId: string): Promise<LowStockItem[]> {
-    const products = await this.systemDb.product.findMany({
+  private async getLowStockItems(db: PrismaService, tenantId: string): Promise<LowStockItem[]> {
+    const products = await db.product.findMany({
       where: lowStockProductWhere(tenantId),
       select: { name: true, sku: true, currentStock: true, reorderPoint: true },
     });
@@ -190,15 +192,18 @@ export class LowStockDigestService {
    * via `UserPreference{key: LOW_STOCK_DIGEST_PREF_KEY, value: "false"}` — B04's per-user
    * opt-out convention, not a new mechanism. Exposed via the existing generic
    * `GET/PATCH /users/me/preferences` endpoints (users.controller.ts) — N4 adds no new API. */
-  private async getDigestRecipients(tenantId: string): Promise<{ email: string }[]> {
-    const admins = await this.systemDb.user.findMany({
+  private async getDigestRecipients(
+    db: PrismaService,
+    tenantId: string,
+  ): Promise<{ email: string }[]> {
+    const admins = await db.user.findMany({
       where: digestRecipientWhere(tenantId),
       select: { id: true, email: true },
     });
     const withEmail = admins.filter((a) => a.email);
     if (!withEmail.length) return [];
 
-    const optOuts = await this.systemDb.userPreference.findMany({
+    const optOuts = await db.userPreference.findMany({
       where: digestOptOutWhere(withEmail.map((a) => a.id)),
       select: { userId: true },
     });

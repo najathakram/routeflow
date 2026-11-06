@@ -4,7 +4,7 @@ import { AsyncLocalStorage } from "async_hooks";
 /**
  * Whose work this is. TENANT: a business is in scope. SUPER_ADMIN: a platform admin with no business. ANONYMOUS: a
  * request with no tenant and no admin (public routes, buyer routes before their seller resolves). SYSTEM: reserved
- * for `prisma.forSystem(reason)`, never set by a request. NONE: no store at all (a cron or queue job that never
+ * for the body of `prisma.forSystem(reason, fn)`, never set by a request. NONE: no store at all (a cron or queue job that never
  * entered a context).
  */
 export type TenantKind = "TENANT" | "SUPER_ADMIN" | "ANONYMOUS" | "SYSTEM";
@@ -33,7 +33,7 @@ export class TenantContextService {
   run<T>(
     tenantId: string | null,
     fn: () => T,
-    tenantless: Exclude<TenantKind, "TENANT" | "SYSTEM"> = "ANONYMOUS",
+    tenantless: Exclude<TenantKind, "TENANT"> = "ANONYMOUS",
     label?: string,
   ): T {
     const kind: TenantKind = tenantId ? "TENANT" : tenantless;

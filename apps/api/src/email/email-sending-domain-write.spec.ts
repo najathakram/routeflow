@@ -31,7 +31,7 @@ function world(tenantId: string | null) {
   };
   const prisma = { getTenantId: () => tenantId, forTenant: () => ({ systemConfig }) } as any;
   const encryption = { encrypt: (v: string) => v, decrypt: (v: string) => v } as any;
-  const host = { systemConfig: new SystemConfigService(prisma, encryption) };
+  const host = { prisma, systemConfig: new SystemConfigService(prisma, encryption) };
   const write = (cfg: object | null) =>
     (EmailService.prototype as any).writeSendingDomainConfig.call(host, cfg);
   return { rows, systemConfig, write };

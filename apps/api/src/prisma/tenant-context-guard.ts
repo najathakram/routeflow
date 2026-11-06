@@ -9,6 +9,10 @@ import type { TenantContextKind } from "../tenant/tenant-context.service";
  * Dark: every hit bumps a counter (no sampling, so the 72-hour zero rule counts true zeros), one stack-carrying log
  * line per call site per second, and a summary line every 10 minutes. Nothing throws unless `TENANT_CONTEXT_ENFORCEMENT`
  * is exactly "on", read ONCE at boot; the flag is set nowhere in slice 1. The log never carries args, data or ids.
+ *
+ * Detection depth (SA-1105 A-1): slice 1 detects one level of nested create under `create` and `upsert.create`. A nested
+ * create under `update` or `upsert.update` is reported as a read under NONE and ANONYMOUS and is not seen under SUPER_ADMIN or
+ * TENANT: it belongs to SA-620's DMMF walker, which checks the child's tenant at every depth.
  */
 export const TENANT_CONTEXT_ENFORCEMENT_ENV = "TENANT_CONTEXT_ENFORCEMENT";
 

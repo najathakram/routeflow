@@ -156,13 +156,108 @@ describe("K-6 the same tenantless write through tenantTransaction's raw tx (SA-6
   });
 });
 
-describe("forSystem: the deliberate unscoped door", () => {
-  it("returns the client itself, and refuses a reason that is empty or shorter than 12 characters", () => {
+describe("forSystem(reason, fn): the deliberate unscoped door, callback shape only (SA-1105 A-1)", () => {
+  const REASON = "low-stock digest: cross-tenant scan";
+  const query = jest.fn(async (a: any) => a);
+
+  it("runs fn with the client itself and returns its result, and refuses a reason that is empty or shorter than 12 characters", async () => {
     const h = host(new TenantContextService());
-    expect(h.forSystem("low-stock digest: cross-tenant scan")).toBe(h);
+    const seen: unknown[] = [];
+    await expect(
+      h.forSystem(REASON, async (db: unknown) => {
+        seen.push(db);
+        return 42;
+      }),
+    ).resolves.toBe(42);
+    expect(seen).toEqual([h]);
     for (const bad of ["", "   ", "too short", undefined, 42]) {
-      expect(() => h.forSystem(bad as any)).toThrow(/literal reason/);
+      expect(() => h.forSystem(bad as any, async () => 1)).toThrow(/literal reason/);
     }
+  });
+
+  it("the returned-client form is a compile error (forSystem needs its callback)", () => {
+    const typed = {} as PrismaService;
+    // @ts-expect-error -- A-1: `forSystem(reason)` without `fn` no longer exists
+    const oneArg = () => typed.forSystem(REASON);
+    expect(typeof oneArg).toBe("function");
+  });
+
+  it("S-1 kind() is SYSTEM inside the body, and the outer kind is restored after it returns and after it throws", async () => {
+    const ctx = new TenantContextService();
+    const h = host(ctx);
+    const inside = await h.forSystem(REASON, async () => ctx.kind());
+    expect(inside).toBe("SYSTEM");
+    expect(ctx.kind()).toBe("NONE");
+    await expect(
+      h.forSystem(REASON, async () => {
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+    expect(ctx.kind()).toBe("NONE");
+    await ctx.run(
+      null,
+      async () => {
+        await h.forSystem(REASON, async () => undefined);
+        expect(ctx.kind()).toBe("SUPER_ADMIN");
+      },
+      "SUPER_ADMIN",
+    );
+  });
+
+  it("S-2 a forTenant() read inside the body raises no warn and leaves the counter unchanged (the SYSTEM branch is live)", async () => {
+    const ctx = new TenantContextService();
+    const h = host(ctx);
+    const before = { ...hits() };
+    await h.forSystem(REASON, async () => {
+      // SYSTEM: forTenant() is the unscoped client itself, with no observing layer in front of it ...
+      expect(h.forTenant()).toBe(h);
+      // ... and the guard, asked for a read as the running kind, stays silent.
+      const observe = h._observeExtension(ctx.kind()).query.$allModels.$allOperations;
+      await observe({ model: "Product", operation: "findMany", args: { where: {} }, query });
+    });
+    expect(query).toHaveBeenCalledWith({ where: {} }); // unscoped, unchanged
+    expect(hits()).toEqual(before);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("S-3 a nested tenantCtx.run(tenantId) inside the body is TENANT as usual", async () => {
+    const ctx = new TenantContextService();
+    const h = host(ctx);
+    const kinds = await h.forSystem(REASON, async () => [
+      ctx.kind(),
+      await ctx.run("t1", async () => ctx.kind()),
+      ctx.kind(),
+    ]);
+    expect(kinds).toEqual(["SYSTEM", "TENANT", "SYSTEM"]);
+  });
+});
+
+describe("the TENANT-path checks: a nested create whose child names no tenant is the one signal on a tenant request", () => {
+  const nested = {
+    data: { lineItems: { create: [{ productId: "p1", qty: 1 }] } },
+  };
+
+  it("through forTenant(): reported once as TENANT|Order.lineItems|nested-create, and the args still carry the injected id", async () => {
+    const ctx = new TenantContextService();
+    const q = jest.fn(async (a: any) => a);
+    const before = { ...hits() };
+    const out = await ctx.run("t1", () =>
+      handler(host(ctx))({ model: "Order", operation: "create", args: nested, query: q }),
+    );
+    expect(out.data.tenantId).toBe("t1");
+    expect(delta(before, "TENANT|Order.lineItems|nested-create")).toBe(1);
+  });
+
+  it("through tenantTransaction(): the same key, so the two layers cannot disagree", async () => {
+    const ctx = new TenantContextService();
+    const create = jest.fn(async (a: any) => a);
+    const rawTx = { order: { create }, $executeRaw: jest.fn(async () => 0) };
+    const h = host(ctx);
+    h.$transaction = (fn: (tx: any) => Promise<any>) => fn(rawTx);
+    const before = { ...hits() };
+    await ctx.run("t1", () => h.tenantTransaction((tx: any) => tx.order.create(nested)));
+    expect(create.mock.calls[0][0].data.tenantId).toBe("t1");
+    expect(delta(before, "TENANT|Order.lineItems|nested-create")).toBe(1);
   });
 });
 

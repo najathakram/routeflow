@@ -531,16 +531,19 @@ export class PrismaService
   }
 
   /**
-   * SA-1105 Q3: the one deliberate unscoped door. It returns the base client (unscoped, and never extended, so the
-   * guard never reports on it). `reason` must be a string LITERAL of at least 12 characters: the
-   * `for-system.allow-list.spec` reads every call site and holds the list set-equal to its own.
+   * SA-1105 Q3 + A-1: the one deliberate unscoped door, in the callback shape only. It runs `fn` with this (unscoped, never
+   * extended) client inside a tenantless context of kind SYSTEM, so the guard sees the body as deliberate: a `forTenant()`
+   * read inside it is not reported, and a nested `tenantCtx.run(tenantId, ...)` is TENANT as usual. No form that returns
+   * a client exists, so `forSystem(reason)` without `fn` does not compile. `reason` must be a string LITERAL of at least
+   * 12 characters: the `for-system.allow-list.spec` reads every call site and holds the list set-equal to its own.
    */
-  forSystem(reason: string): this {
+  forSystem<T>(reason: string, fn: (db: this) => Promise<T>): Promise<T> {
     if (typeof reason !== "string" || reason.trim().length < FOR_SYSTEM_MIN_REASON) {
       throw new Error(
         `forSystem(reason): a literal reason of at least ${FOR_SYSTEM_MIN_REASON} characters is required`,
       );
     }
-    return this;
+    if (!this.tenantCtx) return fn(this);
+    return this.tenantCtx.run(null, () => fn(this), "SYSTEM", reason);
   }
 }
