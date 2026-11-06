@@ -79,6 +79,23 @@ describe("rotate-portal-invites.mjs", () => {
     }
   });
 
+  it("refuses two tenants in one run: one tenant, one yes (SA-820 A-2)", () => {
+    const OTHER = "22222222-2222-4222-8222-222222222222";
+    for (const args of [
+      ["--tenant", TENANT, "--tenant", OTHER],
+      ["--apply", "--tenant", TENANT, "--tenant", OTHER],
+    ]) {
+      const r = run(ROTATE, args, noDbEnv());
+      expect(r.code).toBe(1);
+      expect(r.out).toMatch(/one tenant per run/);
+    }
+  });
+
+  it("the same tenant named twice is still one tenant", () => {
+    const r = run(ROTATE, ["--tenant", TENANT, "--tenant", TENANT.toUpperCase()], noDbEnv());
+    expect(r.out).not.toMatch(/one tenant per run/);
+  });
+
   it("refuses a slug where a tenant UUID is needed", () => {
     const r = run(ROTATE, ["--tenant", "acme"], noDbEnv());
     expect(r.code).toBe(1);

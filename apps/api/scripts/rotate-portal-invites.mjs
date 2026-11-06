@@ -6,12 +6,13 @@
  *
  * DRY-RUN IS THE DEFAULT: a READ ONLY transaction, always rolled back; it saves a content-hashed plan.
  *
- *   railway run --service postgres node apps/api/scripts/rotate-portal-invites.mjs --tenant <uuid> [--tenant <uuid> ...]
+ *   railway run --service postgres node apps/api/scripts/rotate-portal-invites.mjs --tenant <uuid>
  *   <local db url in the ambient env> node apps/api/scripts/rotate-portal-invites.mjs --local --tenant <uuid>
  *   node apps/api/scripts/rotate-portal-invites.mjs --self-test
  *
- * ONE YES PER TENANT: `--tenant <uuid>` is REQUIRED and repeatable. There is no "every tenant" mode: the plan holds
- * only the tenants the owner named, and the apply refuses a plan that holds any other.
+ * ONE TENANT PER RUN (SA-820 A-2): `--tenant <uuid>` is REQUIRED and takes exactly one tenant (naming two refuses). There
+ * is no "every tenant" mode: the plan holds only the tenant the owner named, and the apply refuses a plan that holds
+ * any other, or that names more than one. Each tenant is its own run, its own plan, its own yes.
  *
  * APPLY replays a SAVED plan only (never a live re-query):
  *   node apps/api/scripts/rotate-portal-invites.mjs --apply --plan <file> --confirm-plan <hash> \
@@ -80,8 +81,16 @@ export function planRows(rows, tenantIds) {
     }));
 }
 
+export const ONE_TENANT_MSG = (n) =>
+  `one tenant per run: ${n} tenants named -- run once per tenant (one plan, one yes each)`;
+
 /** Pure: throws (refuses the whole apply) if a planned row belongs to a tenant not named on this command line. */
 export function assertPlanTenantsNamed(plan, namedTenantIds) {
+  const planned = new Set([
+    ...(plan.tenantIds ?? []).map((t) => String(t).toLowerCase()),
+    ...plan.rotate.map((r) => String(r.tenantId).toLowerCase()),
+  ]);
+  if (planned.size > 1) throw refuse(ONE_TENANT_MSG(planned.size));
   const named = new Set(namedTenantIds);
   const stray = plan.rotate.filter((r) => !named.has(String(r.tenantId).toLowerCase()));
   if (stray.length > 0) {
@@ -283,8 +292,15 @@ export function selfTest() {
     "a plan of named tenants passes",
     (assertPlanTenantsNamed({ rotate: [{ tenantId: A.toUpperCase() }] }, [A]), true),
   );
+  let twoRefused = false;
+  try {
+    assertPlanTenantsNamed({ tenantIds: [A, B], rotate: [{ tenantId: A }] }, [A]);
+  } catch (e) {
+    twoRefused = e.refuse === true && /one tenant per run/.test(e.message);
+  }
+  ok("a plan that names two tenants is refused", twoRefused);
   ok(
-    "--tenant is repeatable, lowercased and de-duplicated",
+    "--tenant flags are lowercased and de-duplicated",
     JSON.stringify(
       uuidFlagValues(["--tenant", B.toUpperCase(), "--tenant", A, "--tenant", B], "--tenant"),
     ) === JSON.stringify([A, B]),
@@ -322,6 +338,10 @@ async function main() {
     console.error(
       `${TAG}: name at least one tenant with --tenant <uuid> (there is no all-tenants mode)`,
     );
+    return 1;
+  }
+  if (tenantIds.length > 1) {
+    console.error(`${TAG}: ${ONE_TENANT_MSG(tenantIds.length)}`);
     return 1;
   }
   return process.argv.includes("--apply") ? apply(tenantIds) : dryRun(tenantIds);

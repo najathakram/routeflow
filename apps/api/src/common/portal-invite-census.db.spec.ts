@@ -15,7 +15,7 @@
  * deltas that only this file's rows can produce, and teardown deletes exactly those rows in FK order.
  */
 import { execFileSync, spawnSync } from "child_process";
-import { randomBytes, randomUUID } from "crypto";
+import { createHash, randomBytes, randomUUID } from "crypto";
 import { mkdtempSync, readFileSync, writeFileSync } from "fs";
 import os from "os";
 import path from "path";
@@ -327,6 +327,58 @@ describeDb("portal invite census and rotation (real Postgres)", () => {
     expect(a.code).toBe(1); // no TTY: the typed phrase cannot be given
     expect(a.out).toMatch(/is protected: override refused/);
     expect((await linkRow("live1")).inviteToken).toBe(links.live1.token);
+  });
+
+  it("R11: the dry run, the refused apply and the plan output carry ids and counts only (no code, no code hash, no email, no name)", async () => {
+    const r = await dryRun([TEST_TENANT.id]);
+    const refused = run(
+      ROTATE,
+      applyArgs(r.file as string, r.hash as string, [TEST_TENANT.id]).filter(
+        (x) => x !== "--backup-taken",
+      ),
+      { DATABASE_URL: url },
+    );
+    const printed = r.out + refused.out;
+    expect(printed.length).toBeGreaterThan(0);
+    for (const l of Object.values(links)) {
+      expect(printed).not.toContain(l.token as string);
+      expect(printed).not.toContain(
+        createHash("sha256")
+          .update(l.token as string)
+          .digest("hex"),
+      );
+    }
+    expect(printed).not.toMatch(/[\w.+-]+@[\w-]+\.[\w.-]+/); // no email (the redacted URL's ***@host is not one)
+    expect(printed).not.toMatch(/Acme|Pat Example/); // no customer name
+  });
+
+  it("R12: two tenants in one run are refused before any connection, so one yes covers one tenant", async () => {
+    const two = [TEST_TENANT.id, OTHER_TENANT.id];
+    const plan = await dryRun([TEST_TENANT.id]);
+    const dry = run(ROTATE, [...two.flatMap((t) => ["--tenant", t]), "--local"], {
+      DATABASE_URL: url,
+    });
+    expect(dry.code).toBe(1);
+    expect(dry.out).toMatch(/one tenant per run/);
+    const apply = run(ROTATE, applyArgs(plan.file as string, plan.hash as string, two), {
+      DATABASE_URL: url,
+    });
+    expect(apply.code).toBe(1);
+    expect(apply.out).toMatch(/one tenant per run/);
+  });
+
+  it("R13: a hand-made plan that names two tenants is refused even when its hash is right", async () => {
+    const r = await dryRun([TEST_TENANT.id]);
+    const plan = JSON.parse(readFileSync(r.file as string, "utf8"));
+    delete plan.planHash;
+    plan.tenantIds = [TEST_TENANT.id, OTHER_TENANT.id];
+    const hash = createHash("sha256").update(JSON.stringify(plan)).digest("hex");
+    const file = (r.file as string).replace(/\.json$/, "-two.json");
+    writeFileSync(file, JSON.stringify({ ...plan, planHash: hash }, null, 2));
+    const a = run(ROTATE, applyArgs(file, hash, [TEST_TENANT.id]), { DATABASE_URL: url });
+    expect(a.code).toBe(1);
+    expect(a.out).toMatch(/one tenant per run/);
+    expect((await linkRow("recorded1")).inviteToken).toBe(links.recorded1.token);
   });
 
   it("R9: apply on the test tenant clears exactly the planned links and nothing else", async () => {
