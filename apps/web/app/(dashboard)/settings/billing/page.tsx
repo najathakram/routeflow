@@ -117,6 +117,9 @@ const CHECKOUT_REOPENS_SOON_COPY = "Checkout reopens in a few minutes.";
 const CHECKOUT_ADDONS_PENDING_FALLBACK =
   "Turn off your add-ons before adding your card, or contact support to set them up.";
 const addonIncludedCopy = (name: string) => `${name} is already included in your plan.`;
+// SA-1099 WP5: the workspace already has what this add-on grants (a courtesy or an override), so a purchase adds nothing.
+const addonAlreadyHaveCopy = (name: string) =>
+  `You already have ${name}, so there is nothing to buy.`;
 // M11: the quantity moved under this page (409 ADDON_QUANTITY_CHANGED), and a row no Stripe item bills.
 const ADDON_CHANGED_COPY =
   "Your add-on changed since this page loaded. Check the new total and try again.";
@@ -128,7 +131,7 @@ const ADDON_UNBILLED_COPY =
  *  code this page does not know: BLOCKED like an unknown refusal on the preview), or "failed"
  *  (anything else: retryable). */
 export type EnableAddonError =
-  "annual" | "included" | "unbilled" | "changed" | "refused" | "failed" | null;
+  "annual" | "included" | "have" | "unbilled" | "changed" | "refused" | "failed" | null;
 
 /** The copy for a failed "Complete payment" checkout. A trial tenant refused because of add-ons it
  *  switched on (`ADDON_BILLING_PENDING_CHECKOUT`) is shown that error's own message (the API's
@@ -157,9 +160,12 @@ function checkoutErrorCopy(err: unknown): string {
 
 /** Maps a refusal `code` (the preview's `refusal.code` or the enable call's `response.data.code`)
  *  to the fixed block reason; a code this page does not know is the generic "other" block. */
-function blockReasonOf(code: string | undefined): "annual" | "included" | "unbilled" | "other" {
+function blockReasonOf(
+  code: string | undefined,
+): "annual" | "included" | "have" | "unbilled" | "other" {
   if (code === API_ERROR_CODES.ADDON_ANNUAL_NOT_SUPPORTED) return "annual";
   if (code === API_ERROR_CODES.ADDON_INCLUDED_IN_PLAN) return "included";
+  if (code === API_ERROR_CODES.ADDON_ALREADY_INCLUDED) return "have";
   if (code === API_ERROR_CODES.ADDON_RAISE_UNBILLED_ROW) return "unbilled";
   return "other";
 }
@@ -235,8 +241,8 @@ function EnableAddonSheet({
     billing === "REFUSED" || refusal != null ? "BLOCKED" : (billing ?? "STRIPE");
   // The server's latest answer (the enable call's refusal) wins, then the preview's refusal, then
   // the client-side annual check for an API that predates `refusal`.
-  const blockReason: "annual" | "included" | "unbilled" | "other" | null =
-    error === "annual" || error === "included" || error === "unbilled"
+  const blockReason: "annual" | "included" | "have" | "unbilled" | "other" | null =
+    error === "annual" || error === "included" || error === "have" || error === "unbilled"
       ? error
       : error === "refused"
         ? "other"
@@ -341,9 +347,11 @@ function EnableAddonSheet({
                 ? ANNUAL_ADDON_COPY
                 : blockReason === "included"
                   ? addonIncludedCopy(addon.name)
-                  : blockReason === "unbilled"
-                    ? ADDON_UNBILLED_COPY
-                    : ADDON_REFUSED_COPY}
+                  : blockReason === "have"
+                    ? addonAlreadyHaveCopy(addon.name)
+                    : blockReason === "unbilled"
+                      ? ADDON_UNBILLED_COPY
+                      : ADDON_REFUSED_COPY}
             </p>
           )}
           {fresh && !blocked && mode === "STRIPE" && (
@@ -477,13 +485,15 @@ export default function BillingSettingsPage() {
               ? "annual"
               : code === API_ERROR_CODES.ADDON_INCLUDED_IN_PLAN
                 ? "included"
-                : code === API_ERROR_CODES.ADDON_RAISE_UNBILLED_ROW
-                  ? "unbilled"
-                  : code === API_ERROR_CODES.ADDON_QUANTITY_CHANGED
-                    ? "changed"
-                    : res?.status === 409
-                      ? "refused"
-                      : "failed",
+                : code === API_ERROR_CODES.ADDON_ALREADY_INCLUDED
+                  ? "have"
+                  : code === API_ERROR_CODES.ADDON_RAISE_UNBILLED_ROW
+                    ? "unbilled"
+                    : code === API_ERROR_CODES.ADDON_QUANTITY_CHANGED
+                      ? "changed"
+                      : res?.status === 409
+                        ? "refused"
+                        : "failed",
           );
         },
       },
@@ -546,6 +556,9 @@ export default function BillingSettingsPage() {
   // Row 350 / SA-693: an add-on RouteFlow granted free on purpose. It is never billed, so its row reads
   // "Included" with no price anywhere (the catalog price is what it WOULD cost, which the tenant never pays).
   const compSkus = new Set(s.addons.filter((a) => a.comp === true && a.sku).map((a) => a.sku));
+  // SA-1099 A-4: what the workspace already has the effect of (the server decides). Shown as "You already have this."
+  // with no price and no button, so it is never offered and then refused at the confirm sheet.
+  const alreadyHaveSkus = new Set(s.alreadyHaveAddonSkus ?? []);
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-6">
@@ -800,9 +813,31 @@ export default function BillingSettingsPage() {
             const busy =
               (enable.isPending || disable.isPending) &&
               (enable.variables?.sku === a.sku || disable.variables?.sku === a.sku);
+            // A capacity SKU is more of something, never "already had", even from a bad payload; an active row
+            // keeps its Active state and Disable button.
+            const alreadyHave =
+              !on &&
+              alreadyHaveSkus.has(a.sku) &&
+              a.meteredKey == null &&
+              a.capacityPerUnit == null;
+            if (alreadyHave) {
+              return (
+                <div
+                  key={a.sku}
+                  data-addon-row={a.sku}
+                  className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3"
+                >
+                  <div className="min-w-0 flex-1 basis-40">
+                    <span className="font-medium text-slate-800">{a.name}</span>
+                    <p className="text-sm text-slate-500">You already have this.</p>
+                  </div>
+                </div>
+              );
+            }
             return (
               <div
                 key={a.sku}
+                data-addon-row={a.sku}
                 className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3"
               >
                 <div className="min-w-0 flex-1 basis-40">

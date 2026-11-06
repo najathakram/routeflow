@@ -95,6 +95,13 @@ import {
   type LeavingBillOpts,
 } from "./addon-inclusion";
 import { addonCatalogInvalid } from "./addon-catalog-invalid";
+import {
+  addonAlreadyIncludedRefusal,
+  addonOfferState,
+  isCapacityAddon,
+} from "./addon-adds-something";
+import { EntitlementAuthority } from "./entitlement-authority.service";
+import { FEATURE_REGISTRY } from "./feature-registry";
 import { updateAddonRowTx, updateAddonRowsTx, upsertAddonRowTx } from "./tenant-addon-writer";
 import {
   inclusionCatalogFor,
@@ -370,6 +377,10 @@ export class SubscriptionMutationService {
     // W1 (COPY 2q): the owner's "plan change, no card" mail. Last and optional, like `dunning`, because many specs build this
     // service by position; owner-alert-routes.spec.ts pins that the real module graph supplies it.
     @Optional() private readonly ownerAlerts?: OwnerAlertService,
+    // SA-1099 §6 (WP5) + B554: the ONE evaluation point for "does this workspace already hold what the SKU grants" and
+    // "are the SKU's registry `requires` met", and the resolver cache an enable/disable must clear. Last and optional,
+    // like `ownerAlerts`; EntitlementsModule provides it (pinned by a wiring spec).
+    @Optional() private readonly authority?: EntitlementAuthority,
   ) {}
 
   private readonly logger = new Logger(SubscriptionMutationService.name);
@@ -2185,6 +2196,9 @@ export class SubscriptionMutationService {
     // again. Refused before the lock and before ANY Stripe call, row write or ledger event.
     const judged = await this.judgeAddon(tenantId, skuDef, version);
     if (judged.refusal) throw refusalException(judged.refusal);
+    // SA-1099 §6 (WP5) + B554: what the workspace already holds / lacks, also before the lock and before Stripe.
+    const held = await this.heldStateRefusal(tenantId, judged.def);
+    if (held) throw refusalException(held);
 
     // FINDING-3 (round 3 review): same family and the same SKU-keyed shape as the admin path in
     // addon.service.ts, so the two paths serialise against each other and not merely within
@@ -2206,7 +2220,12 @@ export class SubscriptionMutationService {
         );
       }
       const outcome = result.value;
-      if (outcome.changed) this.entitlements.invalidate(tenantId);
+      if (outcome.changed) {
+        this.entitlements.invalidate(tenantId);
+        // B554: the feature resolver keeps its own 30 s cache; a stale one would show the next preview a workspace
+        // that does not hold the add-on it just bought.
+        this.authority?.invalidate(tenantId);
+      }
       return {
         // Billed: what STRIPE prorated (authoritative; null when it could not be read back).
         // Unbilled: 0. The local `prorationPreview` is only an estimate and is never returned here.
@@ -2263,8 +2282,11 @@ export class SubscriptionMutationService {
     const version = await this.catalog.getPublishedCatalog();
     const skuDef = version.addonSkus.find((s) => s.sku === sku);
     if (!skuDef) return null;
-    const included = await this.planIncludedRefusal(tenantId, skuDef, version);
-    if (included) return included;
+    const judged = await this.judgeAddon(tenantId, skuDef, version);
+    if (judged.refusal) return judged.refusal;
+    // SA-1099 §6 (WP5) + B554: the same held-state refusals the enable throws (see heldStateRefusal).
+    const held = await this.heldStateRefusal(tenantId, judged.def);
+    if (held) return held;
     // SA-693: an ACTIVE comp is the platform's to manage, so the preview shows the same refusal the enable
     // call throws (and therefore no charge line), never a price for something that would not be billed.
     const row = await findAddonRow(this.prisma, tenantId, sku);
@@ -2536,7 +2558,10 @@ export class SubscriptionMutationService {
         );
       }
     }
-    if (changed) this.entitlements.invalidate(tenantId);
+    if (changed) {
+      this.entitlements.invalidate(tenantId);
+      this.authority?.invalidate(tenantId); // B554: the resolver's own cache, as in enableAddon
+    }
     // a superseded subscription's items are not this tenant's business any more: no "missing item" alert for them
     if (missing.length > 0 && !state.superseded) {
       await this.alertListedAddonItemsMissing(tenantId, subId, missing, ctx.sessionId ?? null);
@@ -3242,6 +3267,69 @@ export class SubscriptionMutationService {
     published?: PlanVersionWithCatalog | null,
   ): Promise<AddonRefusal | null> {
     return (await this.judgeAddon(tenantId, skuDef, published)).refusal;
+  }
+
+  /**
+   * SA-1099 §6 (WP5, R22) and B554: the two refusals of a SELF-SERVE enable that come from what the workspace holds
+   * today rather than from its plan's catalog. The enable throws them and the proration preview returns the SAME
+   * object, so the confirm sheet can never promise a sale the call refuses. Nothing is written or called first.
+   *
+   *  1. `ADDON_ALREADY_INCLUDED`: every flag the SKU grants is already effective without it (a courtesy flag, an
+   *     override, another SKU). Owner Q4 (2026-11-04): stop selling Forecasting to a workspace that already has it;
+   *     any credit for past sales is the owner's own action from `report-noop-addons.mjs`. Self-serve only (the back
+   *     office enable never comes through here); a workspace that already holds this SKU's row is the idempotent
+   *     repeat / buy-more path and is left as it was; an empty `grantsFlags` and a capacity SKU are never refused
+   *     (see {@link addonOfferState}, the one state the add-on list reads too); a resolver that cannot answer sells, as before, with a warning.
+   *  2. `FEATURE_REQUIRES_UNMET` (B554): a registry row this SKU bills (`billing.skus`) declares a `requires` the
+   *     workspace does not meet. The tenant cannot acknowledge it, so it is a plain refusal here (the back office
+   *     can, through `acknowledgeUnmetRequires`). No self-serve SKU's row declares one today; the check is what
+   *     stops the first one that does from selling a feature that cannot work. A check that fails any other way
+   *     (a read error, an unknown key) warns and sells, like the resolver outage in 1.
+   */
+  private async heldStateRefusal(
+    tenantId: string,
+    def: CatalogAddonSku,
+  ): Promise<AddonRefusal | null> {
+    if (!this.authority) return null;
+    const wantsFlagCheck = (def.grantsFlags?.length ?? 0) > 0 && !isCapacityAddon(def);
+    const billedRows = FEATURE_REGISTRY.filter(
+      (f) => f.requires && f.billing.skus.includes(def.sku),
+    );
+    if (!wantsFlagCheck && billedRows.length === 0) return null;
+
+    const held = await findAddonRow(this.prisma, tenantId, def.sku);
+    if (wantsFlagCheck && !held?.active) {
+      const resolved = await this.authority.resolveAll(tenantId);
+      if (!resolved) {
+        this.logger.warn(
+          `Add-on "${def.sku}" tenant ${tenantId}: the resolver could not answer - the already-included check is skipped`,
+        );
+      } else if (addonOfferState(def, resolved.byKey, held?.active === true) === "already-have") {
+        return addonAlreadyIncludedRefusal(def.name);
+      }
+    }
+    for (const feature of billedRows) {
+      try {
+        await this.authority.assertFeatureRequiresMet(tenantId, feature.key, false);
+      } catch (err) {
+        const body = (
+          err as { getResponse?: () => { code?: string; missing?: string } }
+        ).getResponse?.();
+        if (body?.code !== API_ERROR_CODES.FEATURE_REQUIRES_UNMET) {
+          // SA-1099 A-3 note 5 (R-3): the requires check failing is not a refusal. Same stance as the resolver above:
+          // an outage warns and the sale goes ahead; only a real unmet `requires` stops it.
+          this.logger.warn(
+            `Add-on "${def.sku}" tenant ${tenantId}: the requires check for ${feature.key} could not run (${(err as Error)?.message ?? "unknown error"}) - the sale goes ahead`,
+          );
+          continue;
+        }
+        return {
+          code: API_ERROR_CODES.FEATURE_REQUIRES_UNMET,
+          message: `${def.name} needs ${body.missing ?? "another feature"} first, which your workspace does not have yet.`,
+        };
+      }
+    }
+    return null;
   }
 
   /**

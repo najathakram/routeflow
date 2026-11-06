@@ -785,6 +785,19 @@ describe("BillingSettingsPage — add-on and cancel confirmations", () => {
     expect(screen.queryByText(/server text that must never be shown/)).toBeNull();
   });
 
+  it("REFUSED (ADDON_ALREADY_INCLUDED, SA-1099 WP5): Confirm disabled, the already-have copy, no price or charge line, the server text never shown", async () => {
+    withPreview(refused(API_ERROR_CODES.ADDON_ALREADY_INCLUDED));
+    const { dialog } = await openEnableSheet();
+    expect(dialog.getByRole("button", { name: "Enable add-on" })).toBeDisabled();
+    expect(
+      dialog.getByText("You already have Route Plus, so there is nothing to buy."),
+    ).toBeInTheDocument();
+    expect(dialog.queryByText(INCLUDED_COPY)).toBeNull();
+    expect(dialog.queryByText(/\$[\d.,]+\s*\/mo/)).toBeNull();
+    expect(dialog.queryByText(/About \$|this cycle|next bill|invoice|no charge/i)).toBeNull();
+    expect(screen.queryByText(/server text that must never be shown/)).toBeNull();
+  });
+
   it("REFUSED (ADDON_ANNUAL_NOT_SUPPORTED) on an annual plan: Confirm disabled, annual copy, no price or charge line", async () => {
     mockSubscriptionView = subscriptionView({ status: "ACTIVE", cycle: "ANNUAL" });
     withPreview(refused(API_ERROR_CODES.ADDON_ANNUAL_NOT_SUPPORTED));
