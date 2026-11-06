@@ -40,6 +40,7 @@ function overrideRow(overrides: Partial<Record<string, unknown>> = {}) {
 // silently passing.
 function build(rows: ReturnType<typeof overrideRow>[], auditedIds: string[] = []) {
   const prisma = {
+    forSystem: jest.fn((_reason: string, fn: (db: any) => unknown) => fn(prisma)),
     tenantFeatureOverride: {
       findMany: jest.fn().mockImplementation(({ where }: any) => {
         const lte = where?.expiresAt?.lte as Date | undefined;
@@ -298,6 +299,7 @@ function buildPilot(
   const auditRows: { entityId: string; meta: { expiresAt: string } }[] = [];
   const events: string[] = [];
   const prisma = {
+    forSystem: jest.fn((_reason: string, fn: (db: any) => unknown) => fn(prisma)),
     tenantFeatureOverride: {
       findMany: jest.fn().mockImplementation(({ where }: any) => {
         // the per-business read of the OTHER live overrides (served-answer facts), not the candidate page

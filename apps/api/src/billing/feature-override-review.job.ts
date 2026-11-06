@@ -75,76 +75,81 @@ export class FeatureOverrideReviewJob {
 
   @LeaderCron("0 6 * * *", "billing.reviewExpiredOverrides")
   async reviewExpiredOverrides(): Promise<{ reviewed: number }> {
-    const now = new Date();
+    return this.prisma.forSystem(
+      "feature grants: review expired overrides across businesses",
+      async () => {
+        const now = new Date();
 
-    // Fetched FIRST and excluded INSIDE the selection query below (not a post-fetch filter on
-    // a fixed-size page) -- the audit log has no dedicated "reviewed" column, so this IS the
-    // once-ever contract's source of truth, and it must shape which rows the page below can
-    // even select, not just which of an already-decided page get skipped.
-    const auditedRows = await this.prisma.auditLog.findMany({
-      where: {
-        action: FEATURE_OVERRIDE_EXPIRED_REVIEW_ACTION,
-        entityType: FEATURE_OVERRIDE_AUDIT_ENTITY_TYPE,
+        // Fetched FIRST and excluded INSIDE the selection query below (not a post-fetch filter on
+        // a fixed-size page) -- the audit log has no dedicated "reviewed" column, so this IS the
+        // once-ever contract's source of truth, and it must shape which rows the page below can
+        // even select, not just which of an already-decided page get skipped.
+        const auditedRows = await this.prisma.auditLog.findMany({
+          where: {
+            action: FEATURE_OVERRIDE_EXPIRED_REVIEW_ACTION,
+            entityType: FEATURE_OVERRIDE_AUDIT_ENTITY_TYPE,
+          },
+          orderBy: { createdAt: "desc" },
+          take: AUDIT_LOOKUP_BOUND,
+          select: { entityId: true },
+        });
+        const auditedIds = auditedRows
+          .map((row) => row.entityId)
+          .filter((id): id is string => id != null);
+
+        const expired = await this.prisma.tenantFeatureOverride.findMany({
+          where: {
+            revokedAt: null,
+            expiresAt: { lte: now },
+            ...(auditedIds.length > 0 ? { id: { notIn: auditedIds } } : {}),
+          },
+          // `id` tiebreak: rows sharing an expiresAt (bulk grants) must not reorder between ticks.
+          orderBy: [{ expiresAt: "asc" }, { id: "asc" }],
+          take: REVIEW_BATCH_SIZE,
+          select: {
+            id: true,
+            tenantId: true,
+            featureKey: true,
+            kind: true,
+            effect: true,
+            expiresAt: true,
+          },
+        });
+
+        if (expired.length >= REVIEW_BATCH_SIZE) {
+          // A full page is indistinguishable from an empty backlog from outside — say so.
+          this.logger.warn(
+            `reviewExpiredOverrides hit its batch cap of ${REVIEW_BATCH_SIZE} — more expired ` +
+              `overrides may be waiting for review; the next tick continues from the oldest.`,
+          );
+        }
+
+        for (const row of expired) {
+          this.logger.warn(
+            `Feature override ${row.id} (tenant ${row.tenantId}, key "${row.featureKey}", ` +
+              `kind ${row.kind}) expired at ${row.expiresAt?.toISOString()} and is still not ` +
+              `revoked — flagged for review.`,
+          );
+          // entityType is the override row itself (not "tenant"/ADMIN_AUDIT_ENTITY) -- this is a
+          // system-detected flag, not an admin action on a tenant, so it gets its own entity shape.
+          await this.audit.log({
+            tenantId: row.tenantId,
+            userId: null,
+            action: FEATURE_OVERRIDE_EXPIRED_REVIEW_ACTION,
+            entityType: FEATURE_OVERRIDE_AUDIT_ENTITY_TYPE,
+            entityId: row.id,
+            meta: {
+              featureKey: row.featureKey,
+              kind: row.kind,
+              effect: row.effect,
+              expiresAt: row.expiresAt,
+            },
+          });
+        }
+
+        return { reviewed: expired.length };
       },
-      orderBy: { createdAt: "desc" },
-      take: AUDIT_LOOKUP_BOUND,
-      select: { entityId: true },
-    });
-    const auditedIds = auditedRows
-      .map((row) => row.entityId)
-      .filter((id): id is string => id != null);
-
-    const expired = await this.prisma.tenantFeatureOverride.findMany({
-      where: {
-        revokedAt: null,
-        expiresAt: { lte: now },
-        ...(auditedIds.length > 0 ? { id: { notIn: auditedIds } } : {}),
-      },
-      // `id` tiebreak: rows sharing an expiresAt (bulk grants) must not reorder between ticks.
-      orderBy: [{ expiresAt: "asc" }, { id: "asc" }],
-      take: REVIEW_BATCH_SIZE,
-      select: {
-        id: true,
-        tenantId: true,
-        featureKey: true,
-        kind: true,
-        effect: true,
-        expiresAt: true,
-      },
-    });
-
-    if (expired.length >= REVIEW_BATCH_SIZE) {
-      // A full page is indistinguishable from an empty backlog from outside — say so.
-      this.logger.warn(
-        `reviewExpiredOverrides hit its batch cap of ${REVIEW_BATCH_SIZE} — more expired ` +
-          `overrides may be waiting for review; the next tick continues from the oldest.`,
-      );
-    }
-
-    for (const row of expired) {
-      this.logger.warn(
-        `Feature override ${row.id} (tenant ${row.tenantId}, key "${row.featureKey}", ` +
-          `kind ${row.kind}) expired at ${row.expiresAt?.toISOString()} and is still not ` +
-          `revoked — flagged for review.`,
-      );
-      // entityType is the override row itself (not "tenant"/ADMIN_AUDIT_ENTITY) -- this is a
-      // system-detected flag, not an admin action on a tenant, so it gets its own entity shape.
-      await this.audit.log({
-        tenantId: row.tenantId,
-        userId: null,
-        action: FEATURE_OVERRIDE_EXPIRED_REVIEW_ACTION,
-        entityType: FEATURE_OVERRIDE_AUDIT_ENTITY_TYPE,
-        entityId: row.id,
-        meta: {
-          featureKey: row.featureKey,
-          kind: row.kind,
-          effect: row.effect,
-          expiresAt: row.expiresAt,
-        },
-      });
-    }
-
-    return { reviewed: expired.length };
+    );
   }
 
   /**
@@ -161,136 +166,141 @@ export class FeatureOverrideReviewJob {
    */
   @LeaderCron("30 6 * * *", "billing.warnBillablePilotsEnding")
   async warnBillablePilotsEnding(): Promise<{ warned: number }> {
-    const now = new Date();
-    const horizon = new Date(now.getTime() + PILOT_WARNING_DAYS * 24 * 60 * 60 * 1000);
+    return this.prisma.forSystem("feature grants: warn billable pilots ending", async () => {
+      const now = new Date();
+      const horizon = new Date(now.getTime() + PILOT_WARNING_DAYS * 24 * 60 * 60 * 1000);
 
-    const noticeRows = await this.prisma.auditLog.findMany({
-      where: {
-        action: FEATURE_OVERRIDE_PILOT_ENDING_NOTIFIED,
-        entityType: FEATURE_OVERRIDE_AUDIT_ENTITY_TYPE,
-        // a warning only matters while its end date is still ahead; older rows can never match a candidate
-        createdAt: { gte: new Date(now.getTime() - 2 * PILOT_WARNING_DAYS * 24 * 60 * 60 * 1000) },
-      },
-      orderBy: { createdAt: "desc" },
-      take: AUDIT_LOOKUP_BOUND,
-      select: { entityId: true, meta: true },
-    });
-    const warned: { id: string; expiresAt: Date }[] = [];
-    for (const r of noticeRows) {
-      // `meta.expiresAt` is a Date in memory and an ISO string once read back from the JSON column
-      const stored = (r.meta as { expiresAt?: unknown } | null)?.expiresAt;
-      const at = new Date(
-        typeof stored === "string" || typeof stored === "number" || stored instanceof Date
-          ? stored
-          : "",
-      );
-      if (r.entityId && !Number.isNaN(at.getTime())) warned.push({ id: r.entityId, expiresAt: at });
-    }
-
-    const ending = await this.prisma.tenantFeatureOverride.findMany({
-      where: {
-        kind: { in: [...FREE_PERIOD_KINDS] as ("PILOT" | "TRIAL")[] },
-        effect: "GRANT",
-        revokedAt: null,
-        expiresAt: { gt: now, lte: horizon },
-        featureKey: { in: [...FEATURE_KEYS_WITH_SKU] },
-        tenant: { ...PAYING_TENANT_CONDITIONS },
-        ...(warned.length > 0 ? { NOT: warned } : {}),
-      },
-      orderBy: [{ expiresAt: "asc" }, { id: "asc" }],
-      take: REVIEW_BATCH_SIZE,
-      select: {
-        id: true,
-        tenantId: true,
-        featureKey: true,
-        kind: true,
-        effect: true,
-        revokedAt: true,
-        expiresAt: true,
-        tenant: {
-          select: {
-            status: true,
-            class: true,
-            deletedAt: true,
-            plan: true,
-            planVersionId: true,
-            subscription: { select: { planKey: true, planVersionId: true } },
+      const noticeRows = await this.prisma.auditLog.findMany({
+        where: {
+          action: FEATURE_OVERRIDE_PILOT_ENDING_NOTIFIED,
+          entityType: FEATURE_OVERRIDE_AUDIT_ENTITY_TYPE,
+          // a warning only matters while its end date is still ahead; older rows can never match a candidate
+          createdAt: {
+            gte: new Date(now.getTime() - 2 * PILOT_WARNING_DAYS * 24 * 60 * 60 * 1000),
           },
         },
-      },
-    });
-    if (ending.length >= REVIEW_BATCH_SIZE) {
-      this.logger.warn(
-        `warnBillablePilotsEnding hit its batch cap of ${REVIEW_BATCH_SIZE} — more free periods may be waiting for a warning; the next tick continues.`,
-      );
-    }
-
-    const catalogs = new Map<string | null, PlanVersionWithCatalog | null>();
-    let sent = 0;
-    for (const row of ending) {
-      try {
-        if (!row.expiresAt) continue;
-        const pin = row.tenant.subscription?.planVersionId ?? row.tenant.planVersionId ?? null;
-        if (!catalogs.has(pin)) {
-          catalogs.set(pin, await this.catalog.getVersionForTenant(pin).catch(() => null));
-        }
-        const version = catalogs.get(pin);
-        if (!version) continue;
-        const planKey = row.tenant.subscription?.planKey ?? row.tenant.plan;
-        // The facts the served-answer rule needs (this business only; a candidate is rare, so a few reads each).
-        const [addonRows, otherRows, ent] = await Promise.all([
-          this.prisma.tenantAddon.findMany({
-            where: { tenantId: row.tenantId },
-            select: { addonKey: true, sku: true, active: true },
-          }),
-          this.prisma.tenantFeatureOverride.findMany({
-            where: { tenantId: row.tenantId, revokedAt: null, id: { not: row.id } },
-            orderBy: OVERRIDE_RULE_ORDER,
-            select: { featureKey: true, effect: true, expiresAt: true },
-          }),
-          this.entitlements.resolve(row.tenantId),
-        ]);
-        // B1282: what is served is read by the one override rule (a live row only, the first per key), shared with the
-        // served answer (FeatureOverrideService.allActive).
-        const otherOverrides = resolveLiveEffects(
-          otherRows as { featureKey: string; effect: "GRANT" | "DENY"; expiresAt: Date | null }[],
-          now.getTime(),
+        orderBy: { createdAt: "desc" },
+        take: AUDIT_LOOKUP_BOUND,
+        select: { entityId: true, meta: true },
+      });
+      const warned: { id: string; expiresAt: Date }[] = [];
+      for (const r of noticeRows) {
+        // `meta.expiresAt` is a Date in memory and an ISO string once read back from the JSON column
+        const stored = (r.meta as { expiresAt?: unknown } | null)?.expiresAt;
+        const at = new Date(
+          typeof stored === "string" || typeof stored === "number" || stored instanceof Date
+            ? stored
+            : "",
         );
-        const paid = billablePilotEnding({
-          override: row,
-          now,
-          tenant: row.tenant,
-          planKey,
-          ent: { planKey: ent.planKey, flags: ent.flags },
-          otherOverrides,
-          addonRows,
-          catalogSkus: version.addonSkus,
-        });
-        if (!paid) continue;
+        if (r.entityId && !Number.isNaN(at.getTime()))
+          warned.push({ id: r.entityId, expiresAt: at });
+      }
 
-        // Audit FIRST: a row that cannot be written means no mail (at most once).
-        await this.prisma.auditLog.create({
-          data: {
-            tenantId: row.tenantId,
-            userId: null,
-            action: FEATURE_OVERRIDE_PILOT_ENDING_NOTIFIED,
-            entityType: FEATURE_OVERRIDE_AUDIT_ENTITY_TYPE,
-            entityId: row.id,
-            meta: { expiresAt: row.expiresAt },
+      const ending = await this.prisma.tenantFeatureOverride.findMany({
+        where: {
+          kind: { in: [...FREE_PERIOD_KINDS] as ("PILOT" | "TRIAL")[] },
+          effect: "GRANT",
+          revokedAt: null,
+          expiresAt: { gt: now, lte: horizon },
+          featureKey: { in: [...FEATURE_KEYS_WITH_SKU] },
+          tenant: { ...PAYING_TENANT_CONDITIONS },
+          ...(warned.length > 0 ? { NOT: warned } : {}),
+        },
+        orderBy: [{ expiresAt: "asc" }, { id: "asc" }],
+        take: REVIEW_BATCH_SIZE,
+        select: {
+          id: true,
+          tenantId: true,
+          featureKey: true,
+          kind: true,
+          effect: true,
+          revokedAt: true,
+          expiresAt: true,
+          tenant: {
+            select: {
+              status: true,
+              class: true,
+              deletedAt: true,
+              plan: true,
+              planVersionId: true,
+              subscription: { select: { planKey: true, planVersionId: true } },
+            },
           },
-        });
-        await this.ownerAlerts.pilotEnding(row.tenantId, {
-          featureName: paid.name,
-          endsAt: row.expiresAt,
-          monthlyPrice: Number(paid.monthlyPrice),
-        });
-        sent++;
-      } catch (err) {
+        },
+      });
+      if (ending.length >= REVIEW_BATCH_SIZE) {
         this.logger.warn(
-          `Pilot-ending warning for override ${row.id} not sent: ${(err as Error)?.message ?? err}`,
+          `warnBillablePilotsEnding hit its batch cap of ${REVIEW_BATCH_SIZE} — more free periods may be waiting for a warning; the next tick continues.`,
         );
       }
-    }
-    return { warned: sent };
+
+      const catalogs = new Map<string | null, PlanVersionWithCatalog | null>();
+      let sent = 0;
+      for (const row of ending) {
+        try {
+          if (!row.expiresAt) continue;
+          const pin = row.tenant.subscription?.planVersionId ?? row.tenant.planVersionId ?? null;
+          if (!catalogs.has(pin)) {
+            catalogs.set(pin, await this.catalog.getVersionForTenant(pin).catch(() => null));
+          }
+          const version = catalogs.get(pin);
+          if (!version) continue;
+          const planKey = row.tenant.subscription?.planKey ?? row.tenant.plan;
+          // The facts the served-answer rule needs (this business only; a candidate is rare, so a few reads each).
+          const [addonRows, otherRows, ent] = await Promise.all([
+            this.prisma.tenantAddon.findMany({
+              where: { tenantId: row.tenantId },
+              select: { addonKey: true, sku: true, active: true },
+            }),
+            this.prisma.tenantFeatureOverride.findMany({
+              where: { tenantId: row.tenantId, revokedAt: null, id: { not: row.id } },
+              orderBy: OVERRIDE_RULE_ORDER,
+              select: { featureKey: true, effect: true, expiresAt: true },
+            }),
+            this.entitlements.resolve(row.tenantId),
+          ]);
+          // B1282: what is served is read by the one override rule (a live row only, the first per key), shared with the
+          // served answer (FeatureOverrideService.allActive).
+          const otherOverrides = resolveLiveEffects(
+            otherRows as { featureKey: string; effect: "GRANT" | "DENY"; expiresAt: Date | null }[],
+            now.getTime(),
+          );
+          const paid = billablePilotEnding({
+            override: row,
+            now,
+            tenant: row.tenant,
+            planKey,
+            ent: { planKey: ent.planKey, flags: ent.flags },
+            otherOverrides,
+            addonRows,
+            catalogSkus: version.addonSkus,
+          });
+          if (!paid) continue;
+
+          // Audit FIRST: a row that cannot be written means no mail (at most once).
+          await this.prisma.auditLog.create({
+            data: {
+              tenantId: row.tenantId,
+              userId: null,
+              action: FEATURE_OVERRIDE_PILOT_ENDING_NOTIFIED,
+              entityType: FEATURE_OVERRIDE_AUDIT_ENTITY_TYPE,
+              entityId: row.id,
+              meta: { expiresAt: row.expiresAt },
+            },
+          });
+          await this.ownerAlerts.pilotEnding(row.tenantId, {
+            featureName: paid.name,
+            endsAt: row.expiresAt,
+            monthlyPrice: Number(paid.monthlyPrice),
+          });
+          sent++;
+        } catch (err) {
+          this.logger.warn(
+            `Pilot-ending warning for override ${row.id} not sent: ${(err as Error)?.message ?? err}`,
+          );
+        }
+      }
+      return { warned: sent };
+    });
   }
 }

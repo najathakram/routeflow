@@ -113,6 +113,7 @@ function make(
     auditLog: { create: jest.fn().mockResolvedValue({}) },
   };
   const prisma = {
+    forSystem: jest.fn((_reason: string, fn: (db: any) => unknown) => fn(prisma)),
     tenant: {
       findMany: jest.fn().mockResolvedValue(data.trials ?? []),
       update: jest.fn().mockResolvedValue({}),

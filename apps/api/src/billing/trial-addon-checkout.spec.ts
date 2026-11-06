@@ -440,6 +440,7 @@ function make(opts: Opts = {}) {
     $executeRaw: jest.fn().mockResolvedValue(0),
   };
   const prisma: any = {
+    forSystem: jest.fn((_reason: string, fn: (db: any) => unknown) => fn(prisma)),
     tenant: {
       findUnique: jest.fn(async () => ({
         ...tenant,

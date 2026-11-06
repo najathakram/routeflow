@@ -1,5 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { LeaderCron } from "../common/cron-lock";
+import { PrismaService } from "../prisma/prisma.service";
 import { FEATURE_OVERRIDE_AUDIT_ENTITY_TYPE } from "./feature-override-audit.constants";
 import { FeatureOverrideService } from "./feature-override.service";
 
@@ -40,41 +41,49 @@ export const EXPIRED_REVOKE_REASON = "expired";
 export class FeatureOverrideExpiryJob {
   private readonly logger = new Logger(FeatureOverrideExpiryJob.name);
 
-  constructor(private readonly overrides: FeatureOverrideService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly overrides: FeatureOverrideService,
+  ) {}
 
   @LeaderCron("30 6 * * *", "billing.revokeExpiredOverrides")
   async revokeExpiredOverrides(): Promise<{ revoked: number }> {
-    const revoked = await this.overrides.revokeExpired(new Date(), {
-      graceMs: 0, // the review-flag gate, not elapsed time, decides when a row may be swept
-      // Written with `tx.auditLog.create` (not AuditService.log, which swallows its own errors
-      // and has no transaction handle): a failed audit write must roll the revoke back.
-      inTransaction: async (tx, row) => {
-        await tx.auditLog.create({
-          data: {
-            tenantId: row.tenantId,
-            userId: null,
-            action: FEATURE_OVERRIDE_EXPIRY_REVOKED_ACTION,
-            entityType: FEATURE_OVERRIDE_AUDIT_ENTITY_TYPE,
-            entityId: row.id,
-            meta: {
-              reason: EXPIRED_REVOKE_REASON,
-              featureKey: row.featureKey,
-              kind: row.kind,
-              effect: row.effect,
-              expiresAt: row.expiresAt,
-            },
+    return this.prisma.forSystem(
+      "feature grants: revoke expired overrides across businesses",
+      async () => {
+        const revoked = await this.overrides.revokeExpired(new Date(), {
+          graceMs: 0, // the review-flag gate, not elapsed time, decides when a row may be swept
+          // Written with `tx.auditLog.create` (not AuditService.log, which swallows its own errors
+          // and has no transaction handle): a failed audit write must roll the revoke back.
+          inTransaction: async (tx, row) => {
+            await tx.auditLog.create({
+              data: {
+                tenantId: row.tenantId,
+                userId: null,
+                action: FEATURE_OVERRIDE_EXPIRY_REVOKED_ACTION,
+                entityType: FEATURE_OVERRIDE_AUDIT_ENTITY_TYPE,
+                entityId: row.id,
+                meta: {
+                  reason: EXPIRED_REVOKE_REASON,
+                  featureKey: row.featureKey,
+                  kind: row.kind,
+                  effect: row.effect,
+                  expiresAt: row.expiresAt,
+                },
+              },
+            });
           },
         });
+
+        for (const row of revoked) {
+          this.logger.log(
+            `Feature override ${row.id} (tenant ${row.tenantId}, key "${row.featureKey}", ` +
+              `kind ${row.kind}) expired at ${row.expiresAt?.toISOString()} — revoked.`,
+          );
+        }
+
+        return { revoked: revoked.length };
       },
-    });
-
-    for (const row of revoked) {
-      this.logger.log(
-        `Feature override ${row.id} (tenant ${row.tenantId}, key "${row.featureKey}", ` +
-          `kind ${row.kind}) expired at ${row.expiresAt?.toISOString()} — revoked.`,
-      );
-    }
-
-    return { revoked: revoked.length };
+    );
   }
 }

@@ -82,6 +82,7 @@ function buildJob(otherRows: unknown[]) {
     },
   };
   const prisma = {
+    forSystem: jest.fn((_reason: string, fn: (db: any) => unknown) => fn(prisma)),
     tenantFeatureOverride: {
       findMany: jest.fn().mockImplementation(({ where, orderBy }: any) =>
         // the per-business read of the OTHER overrides has a tenantId; the candidate page does not

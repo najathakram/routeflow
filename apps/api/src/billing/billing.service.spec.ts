@@ -120,6 +120,7 @@ function make(
     $queryRaw: jest.fn().mockResolvedValue([]),
   };
   const prisma = {
+    forSystem: jest.fn((_reason: string, fn: (db: any) => unknown) => fn(prisma)),
     tenant: {
       update: jest.fn().mockResolvedValue({}),
       updateMany: jest.fn().mockResolvedValue({ count: overrides.plainCasCount ?? 0 }),

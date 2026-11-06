@@ -7,6 +7,7 @@
  */
 import * as fs from "fs";
 import * as path from "path";
+import * as ts from "typescript";
 
 const SRC = path.join(__dirname, "..");
 const walk = (dir: string): string[] =>
@@ -23,6 +24,66 @@ const walk = (dir: string): string[] =>
 /** One row per call site: the file (relative to src) and the literal reason. */
 export const ALLOWED: ReadonlyArray<{ file: string; reason: string }> = [
   { file: "inventory/low-stock-digest.service.ts", reason: "low-stock digest: cross-tenant scan" },
+  {
+    file: "billing/billing-cron.service.ts",
+    reason: "billing cron: expire ended trials across businesses",
+  },
+  {
+    file: "billing/billing-cron.service.ts",
+    reason: "billing cron: warn businesses whose trial is ending",
+  },
+  {
+    file: "billing/billing-cron.service.ts",
+    reason: "billing cron: expire payment grace across businesses",
+  },
+  {
+    file: "billing/billing-cron.service.ts",
+    reason: "billing cron: apply scheduled plan downgrades",
+  },
+  {
+    file: "billing/billing-cron.service.ts",
+    reason: "billing cron: push upcoming downgrade prices",
+  },
+  {
+    file: "billing/billing-cron.service.ts",
+    reason: "billing cron: apply scheduled cancellations",
+  },
+  {
+    file: "billing/billing-cron.service.ts",
+    reason: "billing cron: roll billing cycles across businesses",
+  },
+  {
+    file: "billing/billing.service.ts",
+    reason: "billing: reconcile parked checkouts across businesses",
+  },
+  {
+    file: "billing/billing.service.ts",
+    reason: "billing: reconcile canceled subscriptions across businesses",
+  },
+  {
+    file: "billing/feature-override-review.job.ts",
+    reason: "feature grants: review expired overrides across businesses",
+  },
+  {
+    file: "billing/feature-override-review.job.ts",
+    reason: "feature grants: warn billable pilots ending",
+  },
+  {
+    file: "billing/feature-override-expiry.job.ts",
+    reason: "feature grants: revoke expired overrides across businesses",
+  },
+  {
+    file: "platform-admin/tenant-mirror.service.ts",
+    reason: "platform mirror: sync tenants to the control plane",
+  },
+  {
+    file: "onboarding/onboarding-lifecycle.service.ts",
+    reason: "onboarding: send reminders across businesses",
+  },
+  {
+    file: "onboarding/onboarding-lifecycle.service.ts",
+    reason: "onboarding: purge expired intake files across businesses",
+  },
 ];
 
 export interface Found {
@@ -88,5 +149,171 @@ describe("K-4 forSystem allow-list", () => {
       },
     ]);
     expect(found).toEqual([]);
+  });
+});
+
+/**
+ * SA-1105 A-2, PR-2b: the SA-619a cross-tenant cron jobs run inside the deliberate door. Each entry names the job method and
+ * the literal reason of its `forSystem(reason, ...)` call, which must also be an allow-list row. The method body is the
+ * old body word for word, wrapped; this pin fails when a job is moved back onto the bare client or its reason drifts.
+ */
+export const CONVERTED_JOBS: ReadonlyArray<{
+  file: string;
+  cls: string;
+  method: string;
+  reason: string;
+}> = [
+  {
+    file: "billing/billing-cron.service.ts",
+    cls: "BillingCronService",
+    method: "expireTrials",
+    reason: "billing cron: expire ended trials across businesses",
+  },
+  {
+    file: "billing/billing-cron.service.ts",
+    cls: "BillingCronService",
+    method: "warnTrialsEnding",
+    reason: "billing cron: warn businesses whose trial is ending",
+  },
+  {
+    file: "billing/billing-cron.service.ts",
+    cls: "BillingCronService",
+    method: "expireGrace",
+    reason: "billing cron: expire payment grace across businesses",
+  },
+  {
+    file: "billing/billing-cron.service.ts",
+    cls: "BillingCronService",
+    method: "applyScheduledDowngrades",
+    reason: "billing cron: apply scheduled plan downgrades",
+  },
+  {
+    file: "billing/billing-cron.service.ts",
+    cls: "BillingCronService",
+    method: "pushUpcomingDowngradePrices",
+    reason: "billing cron: push upcoming downgrade prices",
+  },
+  {
+    file: "billing/billing-cron.service.ts",
+    cls: "BillingCronService",
+    method: "applyScheduledCancellations",
+    reason: "billing cron: apply scheduled cancellations",
+  },
+  {
+    file: "billing/billing-cron.service.ts",
+    cls: "BillingCronService",
+    method: "rollCycles",
+    reason: "billing cron: roll billing cycles across businesses",
+  },
+  {
+    file: "billing/billing.service.ts",
+    cls: "BillingService",
+    method: "reconcileParkedCheckouts",
+    reason: "billing: reconcile parked checkouts across businesses",
+  },
+  {
+    file: "billing/billing.service.ts",
+    cls: "BillingService",
+    method: "reconcileCanceledSubscriptions",
+    reason: "billing: reconcile canceled subscriptions across businesses",
+  },
+  {
+    file: "billing/feature-override-review.job.ts",
+    cls: "FeatureOverrideReviewJob",
+    method: "reviewExpiredOverrides",
+    reason: "feature grants: review expired overrides across businesses",
+  },
+  {
+    file: "billing/feature-override-review.job.ts",
+    cls: "FeatureOverrideReviewJob",
+    method: "warnBillablePilotsEnding",
+    reason: "feature grants: warn billable pilots ending",
+  },
+  {
+    file: "billing/feature-override-expiry.job.ts",
+    cls: "FeatureOverrideExpiryJob",
+    method: "revokeExpiredOverrides",
+    reason: "feature grants: revoke expired overrides across businesses",
+  },
+  {
+    file: "platform-admin/tenant-mirror.service.ts",
+    cls: "TenantMirrorService",
+    method: "mirrorSync",
+    reason: "platform mirror: sync tenants to the control plane",
+  },
+  {
+    file: "onboarding/onboarding-lifecycle.service.ts",
+    cls: "OnboardingLifecycleService",
+    method: "sendRemindersCron",
+    reason: "onboarding: send reminders across businesses",
+  },
+  {
+    file: "onboarding/onboarding-lifecycle.service.ts",
+    cls: "OnboardingLifecycleService",
+    method: "purgeIntakeFilesCron",
+    reason: "onboarding: purge expired intake files across businesses",
+  },
+];
+
+/** The literal first argument of every `forSystem(` call made directly inside `cls.method`. */
+export function forSystemReasonsInMethod(text: string, cls: string, method: string): string[] {
+  const sf = ts.createSourceFile("x.ts", text, ts.ScriptTarget.Latest, true);
+  const out: string[] = [];
+  const inMethod = (n: ts.Node) => {
+    if (
+      ts.isCallExpression(n) &&
+      ts.isPropertyAccessExpression(n.expression) &&
+      n.expression.name.text === "forSystem" &&
+      n.arguments[0] &&
+      ts.isStringLiteralLike(n.arguments[0])
+    ) {
+      out.push(n.arguments[0].text);
+    }
+    ts.forEachChild(n, inMethod);
+  };
+  const visit = (n: ts.Node) => {
+    if (ts.isClassDeclaration(n) && n.name?.text === cls) {
+      for (const m of n.members) {
+        if (ts.isMethodDeclaration(m) && m.name.getText() === method) inMethod(m);
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+describe("C-2 the SA-619a cron jobs run inside forSystem", () => {
+  it("each converted job method calls forSystem with its allow-list reason, exactly once", () => {
+    for (const j of CONVERTED_JOBS) {
+      const text = fs.readFileSync(path.join(SRC, j.file), "utf8");
+      expect({
+        job: `${j.cls}.${j.method}`,
+        reasons: forSystemReasonsInMethod(text, j.cls, j.method),
+      }).toEqual({
+        job: `${j.cls}.${j.method}`,
+        reasons: [j.reason],
+      });
+      expect(ALLOWED).toContainEqual({ file: j.file, reason: j.reason });
+    }
+  });
+
+  it("every allow-list row beyond the first conversion belongs to a converted job (no orphan rows)", () => {
+    const converted = new Set(CONVERTED_JOBS.map((j) => `${j.file} :: ${j.reason}`));
+    const rest = ALLOWED.map(key).filter((k) => !converted.has(k));
+    expect(rest).toEqual([
+      "inventory/low-stock-digest.service.ts :: low-stock digest: cross-tenant scan",
+    ]);
+  });
+
+  it("self-test: a job method without a forSystem call, or with another reason, is reported", () => {
+    const bare = "class J { async run() { return this.prisma.tenant.findMany(); } }";
+    expect(forSystemReasonsInMethod(bare, "J", "run")).toEqual([]);
+    const wrapped =
+      'class J { async run() { return this.prisma.forSystem("a different reason", async () => 1); } }';
+    expect(forSystemReasonsInMethod(wrapped, "J", "run")).toEqual(["a different reason"]);
+    const elsewhere =
+      'class J { other() { return this.prisma.forSystem("some other job", async () => 1); } async run() {} }';
+    expect(forSystemReasonsInMethod(elsewhere, "J", "run")).toEqual([]);
   });
 });
