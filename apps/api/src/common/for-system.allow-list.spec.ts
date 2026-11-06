@@ -375,9 +375,10 @@ export function forSystemReasonsInMethod(text: string, cls: string, method: stri
 }
 
 /**
- * L-1: the old body runs INSIDE the callback. Reported, for the method outside any `forSystem` callback: a `this.*`
- * call other than the logger (a helper, by dot or by element access), any use of `this.prisma` (a query, an alias, or
- * `this['prisma']`), a `forSystem` whose 2nd argument is not a function, and a first statement that does not hold the
+ * L-1: the old body runs INSIDE the callback. Reported, for the method outside any `forSystem` callback: any `this.<member>`
+ * access other than the logger (a helper or an injected service, called or not, by dot or by element access; `this.prisma`
+ * included), any `this` that is not the receiver of such an access (`const self = this`, `const { prisma } = this`,
+ * `this[key]`), a `forSystem` whose 2nd argument is not a function, and a first statement that does not hold the
  * `forSystem` call. So an empty wrapper with the query or the helper beside it is non-empty.
  */
 export function outsideForSystem(text: string, cls: string, method: string): string[] {
@@ -406,14 +407,9 @@ export function outsideForSystem(text: string, cls: string, method: string): str
     }
     const member = memberOfThis(n);
     if (member === "prisma") out.push("this.prisma");
-    else if (
-      member !== null &&
-      member !== "logger" &&
-      ts.isCallExpression(n.parent) &&
-      n.parent.expression === n
-    ) {
-      out.push(`this.${member}()`);
-    }
+    else if (member !== null && member !== "logger") out.push(`this.${member}`);
+    // `this` that is not the receiver of a member access (an alias, a destructure, `this[key]`) lets any member escape.
+    if (isThis(n) && !(n.parent && memberOfThis(n.parent) !== null)) out.push("this escapes");
     ts.forEachChild(n, walkBody);
   };
   const visit = (n: ts.Node) => {
@@ -465,9 +461,9 @@ describe("C-2 the SA-619a cron jobs run inside forSystem", () => {
     // 2 a helper beside an empty wrapper, before and after it
     expect(red(`await this.sweep(); return ${FS};`)).toEqual([
       "statement before forSystem",
-      "this.sweep()",
+      "this.sweep",
     ]);
-    expect(red(`const r = await ${FS}; return this.sweep(r);`)).toEqual(["this.sweep()"]);
+    expect(red(`const r = await ${FS}; return this.sweep(r);`)).toEqual(["this.sweep"]);
     // 3 an alias of the client
     expect(red(`const p = this.prisma; await p.tenant.findMany(); return ${FS};`)).toEqual([
       "statement before forSystem",
@@ -478,12 +474,36 @@ describe("C-2 the SA-619a cron jobs run inside forSystem", () => {
       "statement before forSystem",
       "this.prisma",
     ]);
-    expect(red(`const r = await ${FS}; return this['sweep'](r);`)).toEqual(["this.sweep()"]);
+    expect(red(`const r = await ${FS}; return this['sweep'](r);`)).toEqual(["this.sweep"]);
     // 5 a callback that is not a function
     expect(red('return this.prisma.forSystem("some reason here", this.sweep());')).toEqual([
       "no callback",
-      "this.sweep()",
+      "this.sweep",
     ]);
+    // 6 an injected service used after the wrapper, with or without a call, and `.call()` on a member
+    expect(red(`const r = await ${FS}; await this.email.sendPlatform(r);`)).toEqual(["this.email"]);
+    expect(red(`const r = await ${FS}; return this.storage.delete(r);`)).toEqual(["this.storage"]);
+    expect(red(`const r = await ${FS}; return this.sweep.call(this, r);`)).toEqual([
+      "this.sweep",
+      "this escapes",
+    ]);
+    // 7 `this` handed on: an alias, a destructure, a computed key
+    expect(red(`const self = this; await self.sweep(); return ${FS};`)).toEqual([
+      "statement before forSystem",
+      "this escapes",
+    ]);
+    expect(red(`const { prisma } = this; await prisma.tenant.findMany(); return ${FS};`)).toEqual([
+      "statement before forSystem",
+      "this escapes",
+    ]);
+    expect(red(`const k = "sweep"; const r = await ${FS}; return this[k](r);`)).toEqual([
+      "statement before forSystem",
+      "this escapes",
+    ]);
+    // 8 the logger is the one exemption, in both spellings
+    expect(red(`const r = await ${FS}; this.logger.log("x"); this["logger"].warn("y");`)).toEqual(
+      [],
+    );
   });
 
   it("each converted job method calls forSystem with its allow-list reason, exactly once", () => {
