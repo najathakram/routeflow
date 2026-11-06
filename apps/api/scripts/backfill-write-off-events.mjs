@@ -30,6 +30,7 @@
 //   node apps/api/scripts/backfill-write-off-events.mjs --apply --tenant-id <test tenant id>
 //   node apps/api/scripts/backfill-write-off-events.mjs --apply --tenant-id <id> --live-tenant-override --confirm-tenant-id=<id>
 
+import { createRequire } from "node:module";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { PrismaClient } from "@prisma/client";
@@ -48,6 +49,8 @@ const {
 } = guard;
 const { loadProtectedSlugs } = protectedSlugsLib;
 const HERE = dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
+const { roundMoney } = require("@routeflow/pricing");
 
 /** `--tenant-id <id>`: value required, given at most once. */
 export function parseTenantId(argv) {
@@ -171,7 +174,7 @@ async function main() {
       console.log(`${labelOf.get(id)}: ${ids.length} write-off event(s) to write`);
     }
     for (const m of plan.months) {
-      const moved = Math.round((m.newExpense - m.oldExpense) * 100) / 100;
+      const moved = roundMoney(m.newExpense - m.oldExpense);
       console.log(
         `  ${labelOf.get(m.tenantId)} ${m.month}: ${m.invoices} invoice(s), old ${money(m.oldExpense)}, new ${money(m.newExpense)}` +
           (moved !== 0 ? ` (moves ${money(moved)})` : ""),

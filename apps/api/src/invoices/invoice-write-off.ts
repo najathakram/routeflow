@@ -135,8 +135,6 @@ export interface LockedInvoiceRef {
   tenantId: string | null;
 }
 
-const toCents = (n: number) => Math.round(n * 100);
-
 /** Σ amount and Σ preTax over the invoice's events, as cents-rounded numbers (0 when it has none). */
 async function openSums(tx: any, invoiceId: string): Promise<{ amount: number; preTax: number }> {
   const agg = await tx.invoiceWriteOffEvent.aggregate({
@@ -207,7 +205,7 @@ export async function appendWriteOffEvent(
 
   const after = await openSums(tx, locked.id);
   if (input.kind === "REINSTATE") {
-    if (toCents(after.amount) !== 0 || toCents(after.preTax) !== 0)
+    if (roundMoney(after.amount) !== 0 || roundMoney(after.preTax) !== 0)
       throw new WriteOffLedgerError(
         `invoice ${locked.id} still carries ${after.amount} / ${after.preTax} after a reinstate`,
       );
@@ -221,7 +219,7 @@ export async function appendWriteOffEvent(
         `invoice ${locked.id} is not WRITTEN_OFF at its write-off event`,
       );
     const due = confirmedBalance(fresh.total, fresh.payments);
-    if (toCents(after.amount) !== toCents(due))
+    if (roundMoney(after.amount) !== roundMoney(due))
       throw new WriteOffLedgerError(
         `invoice ${locked.id}: events sum to ${after.amount}, its confirmed balance is ${due}`,
       );
