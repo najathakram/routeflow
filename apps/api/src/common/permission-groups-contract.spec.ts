@@ -9,6 +9,7 @@ import {
   allPermissionGroups,
   permissionForPath,
 } from "@routeflow/types";
+import { OPERATOR_DEFAULT_DENIED_GROUPS } from "../auth/permissions/operator-default-denied";
 
 /**
  * The shared per-operator feature-group contract (`packages/types/api/permissions.ts`): the switch
@@ -80,6 +81,15 @@ describe("GROUP_INTRODUCED", () => {
         (k) => GROUP_INTRODUCED[k].restrictedDefault === "OFF",
       ),
     ).toEqual(["BAD_DEBT"]);
+  });
+});
+
+describe("OPERATOR_DEFAULT_DENIED_GROUPS (SA-1050 A-5)", () => {
+  it("is exactly the groups GROUP_INTRODUCED ships OFF, so a row entering OPERATOR starts without them", () => {
+    const off = OPERATOR_PERMISSION_GROUP_VALUES.filter(
+      (k) => GROUP_INTRODUCED[k].restrictedDefault === "OFF",
+    );
+    expect([...OPERATOR_DEFAULT_DENIED_GROUPS].sort()).toEqual([...off].sort());
   });
 });
 
