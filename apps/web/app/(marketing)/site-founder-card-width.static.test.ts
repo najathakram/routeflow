@@ -22,3 +22,26 @@ describe("founder card width", () => {
     expect(pad).not.toContain("%");
   });
 });
+
+describe("no-JS hero width", () => {
+  const hero =
+    css.split("\n").find((l) => l.includes("html:not(.js-motion) .hx-up{display:grid")) ?? "";
+
+  it("is capped at the content width, with fixed padding", () => {
+    expect(hero).toContain("width:min(1200px,100% - 48px)");
+    expect(hero).not.toContain("1640px");
+    expect(/padding:([^;]+);/.exec(hero)?.[1] ?? "").not.toContain("%");
+  });
+
+  it("no site stylesheet pads with a percentage half-gap, (100% - Npx)/2", () => {
+    const dir = path.resolve(__dirname, "../../public/site");
+    for (const f of ["css", "graphics"]) {
+      for (const name of fs.readdirSync(path.join(dir, f)).filter((n) => n.endsWith(".css"))) {
+        const text = fs.readFileSync(path.join(dir, f, name), "utf8");
+        expect(`${f}/${name}: ${/padding[^;{}]*\(100%\s*-[^;{}]*\)\s*\/\s*2/.test(text)}`).toBe(
+          `${f}/${name}: false`,
+        );
+      }
+    }
+  });
+});
