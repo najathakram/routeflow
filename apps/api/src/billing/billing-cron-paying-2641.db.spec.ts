@@ -56,6 +56,8 @@ describeDb(
       url = requireLocalDatabaseUrl();
       pool = new Pool({ connectionString: url });
       prisma = new PrismaClient({ adapter: new PrismaPg(pool) } as any);
+      // SA-1105 A-2: a bare client has no forSystem door; the jobs under test call it, so give it the same pass-through.
+      (prisma as any).forSystem = (_reason: string, fn: (db: unknown) => unknown) => fn(prisma);
       createdVersionId = await ensurePublishedCatalog(
         prisma,
         {

@@ -95,6 +95,8 @@ describeDb("SA-775 automatic locks pause (real Postgres)", () => {
   beforeAll(async () => {
     pool = new Pool({ connectionString: requireLocalDatabaseUrl() });
     prisma = new PrismaClient({ adapter: new PrismaPg(pool) } as any);
+    // SA-1105 A-2: a bare client has no forSystem door; the jobs under test call it, so give it the same pass-through.
+    (prisma as any).forSystem = (_reason: string, fn: (db: unknown) => unknown) => fn(prisma);
     originalSwitch = await prisma.platformConfig.findUnique({
       where: { key: AUTO_LOCKS_PAUSED_KEY },
       select: { value: true },
