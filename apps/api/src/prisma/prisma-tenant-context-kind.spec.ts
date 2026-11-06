@@ -279,6 +279,23 @@ describe("forSystem(reason, fn): the deliberate unscoped door, callback shape on
     ]);
     expect(kinds).toEqual(["SYSTEM", "TENANT", "SYSTEM"]);
   });
+
+  it("B4-1 run() cannot name SYSTEM: it is a type error, and runSystem is the only producer (B1284)", () => {
+    const ctx = new TenantContextService();
+    // @ts-expect-error -- B1284: SYSTEM is produced only by runSystem
+    ctx.run(null, () => 1, "SYSTEM");
+    expect(ctx.runSystem("a long enough reason", () => [ctx.kind(), ctx.getOrNull()])).toEqual([
+      "SYSTEM",
+      null,
+    ]);
+    expect(ctx.kind()).toBe("NONE");
+    expect(() =>
+      ctx.runSystem("a long enough reason", () => {
+        throw new Error("boom");
+      }),
+    ).toThrow("boom");
+    expect(ctx.kind()).toBe("NONE");
+  });
 });
 
 describe("the TENANT-path checks: a nested create whose child names no tenant is the one signal on a tenant request", () => {

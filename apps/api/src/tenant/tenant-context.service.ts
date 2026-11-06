@@ -42,7 +42,7 @@ export class TenantContextService {
 
   /**
    * B1284: the ONLY producer of kind SYSTEM (`run()` cannot name it). Its one caller is `PrismaService.forSystem`, which
-   * holds the literal reason and the allow-list row; `tenant-context-system-door.inventory.spec` fails on any other
+   * holds the literal reason and the allow-list row; `common/for-system.allow-list.spec` fails on any other
    * caller. The reason is the context label and is never an id.
    */
   runSystem<T>(reason: string, fn: () => T): T {
