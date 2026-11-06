@@ -85,6 +85,55 @@ describe("K-2 the #2872 scenario: a SUPER_ADMIN create of a tenant-owned model w
   });
 });
 
+describe("K-2 upsert: a tenantless upsert is judged on its `create` payload", () => {
+  const args = {
+    where: { id: "c1" },
+    create: { businessName: "Acme Foods", contactName: "Pat" },
+    update: {},
+  };
+
+  it("through the extension: reported once as SUPER_ADMIN|Customer|upsert, and the args pass through untouched", async () => {
+    const ctx = new TenantContextService();
+    const query = jest.fn(async (a: any) => a);
+    const before = { ...hits() };
+    await asKind(ctx, "SUPER_ADMIN", () =>
+      handler(host(ctx))({ model: "Customer", operation: "upsert", args, query }),
+    );
+    expect(delta(before, "SUPER_ADMIN|Customer|upsert")).toBe(1);
+    expect(query.mock.calls[0][0]).toStrictEqual(args);
+    expect(warn.mock.calls.join("\n")).not.toMatch(/Acme|Pat/);
+  });
+
+  it("through the raw tx proxy: the same key, args untouched", async () => {
+    const ctx = new TenantContextService();
+    const upsert = jest.fn(async (a: any) => a);
+    const rawTx = { customer: { upsert }, $executeRaw: jest.fn(async () => 0) };
+    const h = host(ctx);
+    h.$transaction = (fn: (tx: any) => Promise<any>) => fn(rawTx);
+    const before = { ...hits() };
+    await asKind(ctx, "SUPER_ADMIN", () =>
+      h.tenantTransaction((tx: any) => tx.customer.upsert(args)),
+    );
+    expect(delta(before, "SUPER_ADMIN|Customer|upsert")).toBe(1);
+    expect(upsert.mock.calls[0][0]).toStrictEqual(args);
+  });
+
+  it("an upsert whose create names a tenant is not reported", async () => {
+    const ctx = new TenantContextService();
+    const query = jest.fn(async (a: any) => a);
+    const before = { ...hits() };
+    await asKind(ctx, "SUPER_ADMIN", () =>
+      handler(host(ctx))({
+        model: "Customer",
+        operation: "upsert",
+        args: { ...args, create: { ...args.create, tenantId: "t1" } },
+        query,
+      }),
+    );
+    expect(hits()).toEqual(before);
+  });
+});
+
 describe("K-5 a cron body that calls forTenant() without run (kind NONE)", () => {
   it("reads unscoped, as today, and the report names the access", async () => {
     const ctx = new TenantContextService();
