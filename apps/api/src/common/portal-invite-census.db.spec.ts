@@ -203,6 +203,25 @@ describeDb("portal invite census and rotation (real Postgres)", () => {
     for (const l of Object.values(links)) expect(r.out).not.toContain(l.token as string);
   });
 
+  it("C4: running the census in every mode changes no row anywhere it reads (row versions and counts, real Postgres)", async () => {
+    // xmin moves on any insert, update or row lock, so an unchanged fingerprint is a zero-write proof.
+    const fingerprint = async () =>
+      (
+        await db.query(
+          `SELECT
+             (SELECT md5(coalesce(string_agg(l.id || ':' || l.xmin::text, ',' ORDER BY l.id), '')) FROM "CustomerLink" l) AS links,
+             (SELECT count(*)::int FROM "AuditLog") AS audit_rows,
+             (SELECT md5(coalesce(string_agg(a.id || ':' || a.xmin::text, ',' ORDER BY a.id), '')) FROM "AuditLog" a) AS audit,
+             (SELECT md5(coalesce(string_agg(t.id || ':' || t.xmin::text, ',' ORDER BY t.id), '')) FROM "Tenant" t) AS tenants`,
+        )
+      ).rows[0];
+    const before = await fingerprint();
+    for (const args of [[], ["--json"], ["--by-tenant"], ["--json", "--by-tenant"]]) {
+      expect(run(CENSUS, args, { DATABASE_URL: url }).code).toBe(0);
+    }
+    expect(await fingerprint()).toEqual(before);
+  });
+
   it("R1: the rotation refuses to run with no tenant named", async () => {
     const r = run(ROTATE, ["--local"], { DATABASE_URL: url });
     expect(r.code).toBe(1);
