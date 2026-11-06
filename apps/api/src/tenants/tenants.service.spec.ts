@@ -121,6 +121,15 @@ describe("TenantsService", () => {
 
       beforeEach(() => email.send.mockResolvedValue({ delivered: true, transport: "resend" }));
 
+      // W-1163: the branded layout, a short link text (never the token URL), and a text part.
+      it("is the branded layout with a matching text part and no token URL as visible text", async () => {
+        await service.register(REGISTER_DTO);
+        const sent = email.send.mock.calls[0][0] as { html: string; text: string };
+        expect(sentHtml()).toContain('data-rf-layout="v1"');
+        expect(sentHtml().replace(/<[^>]+>/g, "")).not.toContain("token=");
+        expect(sent.text).toContain("Verify my email: https://app.test/verify-email?token=");
+      });
+
       it("carries the Workspace ID and the sign-in address", async () => {
         await service.register(REGISTER_DTO);
         expect(sentText()).toContain(
@@ -328,6 +337,12 @@ describe("TenantsService", () => {
       const text = html.replace(/<[^>]+>/g, "").replace(/\s+/g, " ");
       expect(text).toContain(
         "Save this for later. To sign in, go to https://app.test/login and enter your Workspace ID: acme-distribution.",
+      );
+      // W-1163: the resend wears the same layout and keeps its token out of the visible text.
+      expect(html).toContain('data-rf-layout="v1"');
+      expect(text).not.toContain("token=");
+      expect((email.send.mock.calls[0][0] as { text: string }).text).toContain(
+        "/verify-email?token=",
       );
     });
 

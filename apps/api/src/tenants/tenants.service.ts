@@ -20,6 +20,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../common/encryption.service";
 import { StorageService } from "../storage/storage.service";
 import { EmailService } from "../email/email.service";
+import { verifyEmailMessage } from "../email/routeflow-mail";
 import { RegisterTenantDto } from "./dto/register-tenant.dto";
 import { IRS_SYSTEM_CATEGORIES } from "../bookkeeping/irs-categories.constant";
 import { UpdateEmailConfigDto } from "./dto/update-email-config.dto";
@@ -27,7 +28,6 @@ import { UpdateGoogleOAuthConfigDto } from "./dto/update-google-oauth-config.dto
 import { UpdateBrandingDto } from "./dto/update-branding.dto";
 import { compressImage } from "../storage/compress.util";
 import { TRIAL_LENGTH_DAYS, planKeyFromEnum } from "../billing/plan-catalog.constants";
-import { escapeHtml } from "../common/html-escape";
 import { OwnerAlertService } from "../email/owner-alert.service";
 import { mayUseVerificationLink } from "../auth/verification-link-eligibility";
 import { assertSafeTextCell } from "../common/safe-text-cell";
@@ -73,15 +73,6 @@ const RESERVED_USERNAMES = new Set([
   "user",
   "manager",
 ]);
-
-/**
- * W2 / COPY.md 2m: sign-in asks for the Workspace ID typed, and no other screen or mail shows it. Both
- * verification mails (first send and resend) carry it with the sign-in address, from this one helper.
- */
-function signInReminderHtml(webUrl: string, workspaceId: string): string {
-  const loginUrl = `${webUrl.replace(/\/$/, "")}/login`;
-  return `<p>Save this for later. To sign in, go to <a href="${escapeHtml(loginUrl)}">${escapeHtml(loginUrl)}</a> and enter your Workspace ID: <strong>${escapeHtml(workspaceId)}</strong>.</p>`;
-}
 
 @Injectable()
 export class TenantsService {
@@ -225,17 +216,17 @@ export class TenantsService {
 
       const verifyUrl = `${webUrl}/verify-email?token=${verifyToken}`;
 
+      const mail = verifyEmailMessage({
+        verifyUrl,
+        webUrl,
+        workspaceId: result.tenant.slug,
+        businessName,
+      });
       const sendResult = await this.email.send({
         to: result.user.email,
-        subject: "Verify your email to activate RouteFlow",
-        html: `<p>Thanks for signing up for <strong>RouteFlow</strong>. Verify your email to open your 14-day free trial for <strong>${escapeHtml(businessName)}</strong>.</p>
-<p style="margin:24px 0;">
-  <a href="${escapeHtml(verifyUrl)}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px;">Verify my email</a>
-</p>
-${signInReminderHtml(webUrl, result.tenant.slug)}
-<p>Or paste this link into your browser:<br/><a href="${escapeHtml(verifyUrl)}">${escapeHtml(verifyUrl)}</a></p>
-<p><em>This link expires in 24 hours. If you didn't sign up, you can safely ignore this email.</em></p>
-<p>The RouteFlow Team</p>`,
+        subject: mail.subject,
+        html: mail.html,
+        text: mail.text,
         // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
         senderClass: "platform",
       });
@@ -325,17 +316,18 @@ ${signInReminderHtml(webUrl, result.tenant.slug)}
 
       const verifyUrl = `${webUrl}/verify-email?token=${verifyToken}`;
 
+      const mail = verifyEmailMessage({
+        verifyUrl,
+        webUrl,
+        workspaceId: user.tenant.slug,
+        businessName: user.tenant.name,
+        resendFor: { username: user.username },
+      });
       const sendResult = await this.email.send({
         to: user.email,
-        subject: "Verify your email to activate RouteFlow",
-        html: `<p>Hi ${escapeHtml(user.username)},</p>
-<p>Here's a new verification link for your RouteFlow account (<strong>${escapeHtml(user.tenant.name)}</strong>):</p>
-<p style="margin:24px 0;">
-  <a href="${escapeHtml(verifyUrl)}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px;">Verify My Email</a>
-</p>
-${signInReminderHtml(webUrl, user.tenant.slug)}
-<p><em>This link expires in 24 hours.</em></p>
-<p>The RouteFlow Team</p>`,
+        subject: mail.subject,
+        html: mail.html,
+        text: mail.text,
         // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
         senderClass: "platform",
       });

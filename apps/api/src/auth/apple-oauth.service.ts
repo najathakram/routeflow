@@ -15,13 +15,13 @@ import * as crypto from "crypto";
 import Redis from "ioredis";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
+import { signInLinkedMessage } from "../email/routeflow-mail";
 import { EncryptionService } from "../common/encryption.service";
 import type { AppConfig } from "../config/configuration";
 import type { JwtPayload } from "./jwt-payload.interface";
 import type { BuyerJwtPayload } from "../buyer/interfaces/buyer-jwt-payload.interface";
 import { EntitlementsService } from "../billing/entitlements.service";
 import type { DeviceInfo } from "./auth.service";
-import { escapeHtml } from "../common/html-escape";
 import { isLoginEligible } from "./login-eligibility";
 import { casLinkProviderId, resolveBySubThenEmail } from "./oauth-account-link";
 // GoogleAuthResult is reused verbatim (SA-418 §1) — Apple sign-in returns the same
@@ -413,8 +413,11 @@ export class AppleOAuthService {
           void this.emailService
             .send({
               to: buyer.email,
-              subject: "Apple Sign-In linked to your RouteFlow account",
-              html: `<p>Sign in with Apple (<strong>${escapeHtml(email ?? buyer.email)}</strong>) has been linked to your RouteFlow portal account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
+              ...signInLinkedMessage({
+                provider: "Apple",
+                address: email ?? buyer.email,
+                portal: true,
+              }),
               senderClass: "platform",
             })
             .catch((e: Error) => this.logger.warn(`Apple link notification failed: ${e.message}`));
@@ -532,8 +535,7 @@ export class AppleOAuthService {
       void this.emailService
         .send({
           to: user.email,
-          subject: "Sign in with Apple linked to your RouteFlow account",
-          html: `<p>Sign in with Apple (<strong>${escapeHtml(email)}</strong>) has been linked to your RouteFlow account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
+          ...signInLinkedMessage({ provider: "Apple", address: email, portal: false }),
           senderClass: "platform",
         })
         .catch((e: Error) => this.logger.warn(`Apple link notification failed: ${e.message}`));
