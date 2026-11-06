@@ -60,7 +60,7 @@ function resolveObject(sf: ts.SourceFile, name: string): ts.ObjectLiteralExpress
 
 function classifyWhere(sf: ts.SourceFile, where: ts.ObjectLiteralExpression): WhereClass {
   for (const p of where.properties) {
-    const name = p.name ? keyName(p.name) : ts.isShorthandPropertyAssignment(p) ? p.name.text : "";
+    const name = ts.isShorthandPropertyAssignment(p) ? p.name.text : p.name ? keyName(p.name) : "";
     if (name === "tenantId") return "tenantId";
     if (name.startsWith("tenantId_")) return "compound-with-tenantId";
     if (
