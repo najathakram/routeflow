@@ -1,5 +1,5 @@
 -- SA-1050 PR-0 (bad-debt write-offs, folder 2 of 2, DATA): BAD_DEBT is denied by default. Folder 1
--- (20261028100000_invoice_write_off_events_and_bad_debt_group) added the enum value; this file is the first USE of it, so it must be
+-- (20261105120000_invoice_write_off_events_and_bad_debt_group) added the enum value; this file is the first USE of it, so it must be
 -- a later transaction.
 --   1. "User"."deniedPermissionGroups" column default: '{}' becomes '{BAD_DEBT}', so every NEW account starts with write-offs off
 --      (only OPERATOR accounts read the column; an admin always may). A constant default: metadata only, no rewrite.
@@ -11,9 +11,9 @@
 -- LOCK PROFILE: ONE transaction. A brief ACCESS EXCLUSIVE on "User" for the default change (metadata only); the UPDATE takes row
 -- locks on the OPERATOR rows it touches (a tenant's operators: tens, not millions). `SET LOCAL lock_timeout = '5s'` bounds the waits; a
 -- timeout rolls the whole file back (recorded FAILED; recover with
--- `prisma migrate resolve --rolled-back 20261028100100_bad_debt_default_denied` from apps/api, then re-run; NEVER `--applied`).
+-- `prisma migrate resolve --rolled-back 20261105120100_bad_debt_default_denied` from apps/api, then re-run; NEVER `--applied`).
 -- DEPLOY ORDER (SA-1050 A-3, which supersedes the order first ruled): this folder goes to prod LAST, after folder 1 is applied
--- (20261028100000_invoice_write_off_events_and_bad_debt_group, #3945, from its own gated head), after #3945 and this PR are
+-- (20261105120000_invoice_write_off_events_and_bad_debt_group, #3945, from its own gated head), after #3945 and this PR are
 -- merged in one train, and only once BOTH deployments have reached SUCCESS. Run it from a tree at the merged master sha
 -- (`prod-migrate.mjs`, fresh backup first if the window has slipped); the closing drift check must exit 0. NEVER run it
 -- before the code that knows BAD_DEBT is serving: it writes the value into every OPERATOR's deny list, and a client generated

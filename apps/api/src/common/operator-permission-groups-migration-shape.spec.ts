@@ -58,7 +58,7 @@ describe("operator permission groups migration shape", () => {
   it("the SQL enum lists the shared mirror's first nine values, in order (later groups arrive by ADD VALUE)", () => {
     const create = statements()[2];
     const listed = [...create.matchAll(/'([A-Z_]+)'/g)].map((m) => m[1]);
-    // SA-1050 added BAD_DEBT in 20261028100000_invoice_write_off_events_and_bad_debt_group; this file is the original nine
+    // SA-1050 added BAD_DEBT in 20261105120000_invoice_write_off_events_and_bad_debt_group; this file is the original nine
     expect(listed).toEqual(OPERATOR_PERMISSION_GROUP_VALUES.slice(0, 9));
   });
 
@@ -74,7 +74,7 @@ describe("operator permission groups migration shape", () => {
 
     const model = schema.slice(schema.indexOf("model User {"));
     const userBody = model.slice(0, model.indexOf("\n}"));
-    // the column default became {BAD_DEBT} in SA-1050 (20261028100100_bad_debt_default_denied)
+    // the column default became {BAD_DEBT} in SA-1050 (20261105120100_bad_debt_default_denied)
     expect(userBody).toMatch(
       /^\s+deniedPermissionGroups\s+OperatorPermissionGroup\[\]\s+@default\(\[BAD_DEBT\]\)/m,
     );

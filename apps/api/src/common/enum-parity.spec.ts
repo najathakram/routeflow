@@ -308,7 +308,7 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // `CUSTOMER_LINK_STATUS_VALUES` + their `ENUM_TABLE` rows above. No enum was added there, so it did not move the count.
 // Triage for CounterDrawerEventKind (W-819, migration 20261024120000_counter_drawer_event): mirrored as
 // `COUNTER_DRAWER_EVENT_KIND_VALUES` + its `ENUM_TABLE` row (the till reads `kind` in the event body) (120 → 121).
-// Triage for InvoiceWriteOffKind (SA-1050 PR-0, migration 20261028100000_invoice_write_off_events_and_bad_debt_group): a
+// Triage for InvoiceWriteOffKind (SA-1050 PR-0, migration 20261105120000_invoice_write_off_events_and_bad_debt_group): a
 // brand-new Prisma enum, mirrored as `INVOICE_WRITE_OFF_KIND_VALUES` + its `ENUM_TABLE` row above (121 → 122). The same
 // folder adds BAD_DEBT to the existing OperatorPermissionGroup (a value, not an enum, so no count change from it).
 const PINNED_PRISMA_ENUM_COUNT = 122;
