@@ -1,5 +1,6 @@
 import { Injectable, CanActivate, ExecutionContext, Logger } from "@nestjs/common";
 import { bearerTokenOf } from "../bearer-token";
+import { redactedRoute } from "../../common/redacted-route";
 
 interface ImpersonationClaims {
   impersonatedBy?: string;
@@ -71,13 +72,14 @@ export class ImpersonationGuard implements CanActivate {
     if (!source?.claims.impersonatedBy) return true;
 
     const method = String(request.method ?? "GET").toUpperCase();
-    const path = forLog(String(request.url ?? "").split("?")[0], MAX_PATH_CHARS);
+    // The route template, never the raw URL: a path segment can carry a single-use link token.
+    const route = forLog(redactedRoute(request), MAX_PATH_CHARS);
 
     // Log write operations made during impersonation for audit trail
     if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
       const { claims, verified } = source;
       this.logger.log(
-        `Impersonation write: ${method} ${path} ` +
+        `Impersonation write: ${route} ` +
           `(admin=${forLog(claims.impersonatedBy)}, acting-as=${forLog(claims.sub)}, ` +
           `tenant=${forLog(claims.tenantId)}, claims=${verified ? "verified" : "unverified-bearer"})`,
       );

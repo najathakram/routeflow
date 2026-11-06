@@ -4,6 +4,7 @@ import * as Sentry from "@sentry/node";
 import type { Request, Response } from "express";
 import { API_ERROR_CODES } from "./api-error-codes";
 import { stockTxRetryState } from "./tx-retry";
+import { redactPath } from "./redacted-route";
 
 /**
  * The coded body of the backstop 503. The copy never names the holder (a sale cannot know who holds
@@ -96,7 +97,7 @@ export class LockConflictFilter implements ExceptionFilter {
   private routeOf(req: Request | undefined): string {
     const pattern = req?.route?.path
       ? `${req.baseUrl ?? ""}${req.route.path}`
-      : String(req?.originalUrl ?? req?.url ?? "?").split("?")[0];
+      : redactPath(String(req?.originalUrl ?? req?.url ?? "?"));
     return `${req?.method ?? "?"} ${pattern}`;
   }
 

@@ -5,6 +5,7 @@ import { ROLES_KEY } from "../decorators/roles.decorator";
 import { PERMISSION_BASE_KEY, PERMISSION_KEY } from "../permissions/permission.decorators";
 import { OperatorPermissionsService } from "../permissions/operator-permissions.service";
 import { permissionDeniedException } from "../permissions/permission-errors";
+import { redactedRoute } from "../../common/redacted-route";
 import type { OperatorPermissionGroup } from "@prisma/client";
 
 /**
@@ -131,13 +132,7 @@ export class RolesGuard implements CanActivate {
 
 /** "METHOD /path" without the query string (ids and search terms stay out of the log), as the add-on gate logs it. */
 function routeOf(context: ExecutionContext): string {
-  const req = context.switchToHttp().getRequest<{
-    method?: string;
-    originalUrl?: string;
-    url?: string;
-  }>();
-  const path = (req.originalUrl ?? req.url ?? "?").split("?")[0];
-  return `${req.method ?? "?"} ${path}`;
+  return redactedRoute(context.switchToHttp().getRequest());
 }
 
 /**

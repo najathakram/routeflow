@@ -13,6 +13,7 @@ import { REQUIRE_ADDON_KEY } from "./require-addon.decorator";
 import { addonGateState } from "./addon-gate-registry";
 import { decideAddonAccess } from "./addon-access";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { redactedRoute } from "../common/redacted-route";
 
 /**
  * Addon keys that are internal platform-admin switches rather than purchasable add-ons.
@@ -71,7 +72,7 @@ export class AddonGuard implements CanActivate {
     // The one shared decision (addon-access.ts, also used by the mailbox send path): an active
     // override is absolute, then a held add-on, then the dark courtesy allow (registry-driven,
     // never for an always-enforced tenant), else deny.
-    const route = `${request.method ?? "?"} ${request.originalUrl ?? request.url ?? "?"}`;
+    const route = redactedRoute(request);
     const { outcome, overrides } = await decideAddonAccess(
       {
         addonService: this.addonService,

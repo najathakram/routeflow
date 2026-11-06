@@ -2,6 +2,7 @@ import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from "@nes
 import type { Request } from "express";
 import { AuditService } from "./audit.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { GLOBAL_PREFIX, matchedTemplateParts, rawPath } from "../common/redacted-route";
 
 /** HTTP methods that constitute a mutation */
 const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
@@ -11,6 +12,55 @@ const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
  * of its own with the key's sha256. The generic row would be a second one AND carry the RAW key in `action`.
  */
 const SELF_AUDITED_PATH = /\/invoices\/payments\/by-key\/[^/]+\/resolve\/?$/i;
+
+/** Stored in place of a path when the request matched no route template. */
+export const AUDIT_UNMATCHED_PATH = "<unmatched>";
+
+/** Marker stored for an id that came from a secret-bearing path parameter. */
+export const AUDIT_REDACTED = "[redacted]";
+
+/** A path parameter whose name contains "token" carries a secret, never an id. */
+const TOKEN_PARAM = /^:[A-Za-z0-9_]*token/i;
+
+/**
+ * The audit target for a mutation, built from the ROUTE TEMPLATE (`req.route.path`, e.g.
+ * `/buyer/invites/:token/accept`), never from the raw URL: a secret carried in a path parameter
+ * never reaches storage, and neither does a query string. The template is known before the handler
+ * runs, so a request that later fails is recorded exactly like one that succeeds.
+ *
+ * - `action`     `METHOD /template` (global prefix removed), or `METHOD <unmatched>` when no route matched
+ *                (the raw path is never stored then).
+ * - `entityType` the first template segment.
+ * - `entityId`   the second segment's value when it is an ordinary path parameter, the template text when it
+ *                is a literal, and `[redacted]` when it is a token-named parameter.
+ */
+export function deriveAuditTarget(req: Request): {
+  action: string;
+  entityType: string;
+  entityId: string | null;
+} {
+  const templateParts = matchedTemplateParts(req);
+  if (templateParts === null) {
+    return {
+      action: `${req.method} ${AUDIT_UNMATCHED_PATH}`,
+      entityType: "unknown",
+      entityId: null,
+    };
+  }
+  const rawParts = rawPath(req).replace(GLOBAL_PREFIX, "").split("/").filter(Boolean);
+  const idSegment = templateParts[1];
+  let entityId: string | null = null;
+  if (idSegment !== undefined) {
+    if (!idSegment.startsWith(":")) entityId = idSegment;
+    else if (TOKEN_PARAM.test(idSegment)) entityId = AUDIT_REDACTED;
+    else entityId = rawParts[1] ?? null;
+  }
+  return {
+    action: `${req.method} /${templateParts.join("/")}`,
+    entityType: templateParts[0] ?? "unknown",
+    entityId,
+  };
+}
 
 /**
  * Global interceptor that logs every mutation request (POST/PUT/PATCH/DELETE)
@@ -25,8 +75,7 @@ export class AuditInterceptor implements NestInterceptor {
   intercept(context: ExecutionContext, next: CallHandler) {
     const req = context.switchToHttp().getRequest<Request>();
 
-    const rawUrl = (req.url ?? req.path ?? "").split("?")[0];
-    if (MUTATION_METHODS.has(req.method) && !SELF_AUDITED_PATH.test(rawUrl)) {
+    if (MUTATION_METHODS.has(req.method) && !SELF_AUDITED_PATH.test(rawPath(req))) {
       const user = (req as any).user as JwtPayload | undefined;
       // F9-006: use Express's trust-proxy-aware req.ip (trust proxy = 2 is set in
       // main.ts) — NOT the raw LEFTMOST X-Forwarded-For entry, which a client can
@@ -34,19 +83,7 @@ export class AuditInterceptor implements NestInterceptor {
       // strips the 2 trusted proxy hops from the RIGHT to get the real client IP).
       const ip = req.ip ?? req.socket?.remoteAddress ?? null;
 
-      // Derive entity type + id from the full URL path.
-      // req.path in NestJS is the raw Express path, which does NOT include
-      // the global prefix. The actual URL including prefix is in req.url.
-      // We strip both /api/v1 and a leading slash to get clean segments.
-      const rawPath = (req.url ?? req.path).split("?")[0]; // drop query string
-      const pathParts = rawPath
-        .replace(/^\/api\/v1\//, "")
-        .replace(/^\//, "")
-        .split("/")
-        .filter(Boolean);
-      const entityType = pathParts[0] ?? "unknown";
-      const entityId = pathParts[1] ?? null;
-      const action = `${req.method} /${pathParts.join("/")}`;
+      const { action, entityType, entityId } = deriveAuditTarget(req);
 
       // Fire-and-forget: log in the next microtask so it doesn't block
       setImmediate(() => {
