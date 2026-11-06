@@ -95,6 +95,15 @@ import {
   type LeavingBillOpts,
 } from "./addon-inclusion";
 import { addonCatalogInvalid } from "./addon-catalog-invalid";
+import {
+  addonAlreadyIncludedRefusal,
+  addonOfferState,
+  isCapacityAddon,
+  type EffectiveByKey,
+} from "./addon-adds-something";
+import { EntitlementAuthority } from "./entitlement-authority.service";
+import { FeaturePreviewService } from "./feature-preview.service";
+import { FEATURE_REGISTRY } from "./feature-registry";
 import { updateAddonRowTx, updateAddonRowsTx, upsertAddonRowTx } from "./tenant-addon-writer";
 import {
   inclusionCatalogFor,
@@ -370,6 +379,14 @@ export class SubscriptionMutationService {
     // W1 (COPY 2q): the owner's "plan change, no card" mail. Last and optional, like `dunning`, because many specs build this
     // service by position; owner-alert-routes.spec.ts pins that the real module graph supplies it.
     @Optional() private readonly ownerAlerts?: OwnerAlertService,
+    // SA-1099 §6 (WP5) + B554: the ONE evaluation point for "does this workspace already hold what the SKU grants" and
+    // "are the SKU's registry `requires` met", and the resolver cache an enable/disable must clear. Last and optional,
+    // like `ownerAlerts`; EntitlementsModule provides it (pinned by a wiring spec).
+    @Optional() private readonly authority?: EntitlementAuthority,
+    // SA-1099 A-3 note 2 (F-WP5-1): `subscribe` judges a self-serve add-on on the TARGET plan, whose `effective` answer
+    // is the preview's `after` side. Last and optional, like `authority`; EntitlementsModule provides it. Absent, the
+    // check warns and the sale goes ahead (never refuse on a guess).
+    @Optional() private readonly preview?: FeaturePreviewService,
   ) {}
 
   private readonly logger = new Logger(SubscriptionMutationService.name);
@@ -561,6 +578,29 @@ export class SubscriptionMutationService {
       if (!isSelfServiceAddon(a.sku)) throw new ForbiddenException(ADMIN_ONLY_ADDON_MESSAGE);
       desired.set(a.sku, Math.max(1, Math.trunc(a.quantity ?? 1)));
     }
+    // SA-1099 A-3 note 2 (F-WP5-1): each self-serve add-on is judged on the plan this call lands on, with the same two
+    // refusals, codes and sentences as `enableAddon`, BEFORE any Stripe call, lock or write below. The first refusal is
+    // the one 409. A SKU the target plan bundles is `ADDON_INCLUDED_IN_PLAN`; one it already serves (courtesy, an
+    // override, another SKU) is `ADDON_ALREADY_INCLUDED`.
+    //
+    // SA-1099 A-5: only a NEW line is judged. A SKU the workspace already holds an active row for is a keep, and goes to
+    // the reconcile below exactly as before (an included row stays on at $0; a Stripe-held one is refused by the locked
+    // re-read, PLAN_CHANGE_ADDONS_CHANGED). "Held" is read from this method's own prior-active read, the one the dropped
+    // items use, so there is no second query; the locked re-read still catches a row that vanishes before the lock.
+    const priorActive: any[] =
+      keepsTrialAddons(tenant) && desired.size === 0
+        ? []
+        : await this.prisma.tenantAddon.findMany({ where: { tenantId, active: true } });
+    const heldCodes = new Set(priorActive.map((row: any) => addonSkuCode(row)));
+    for (const code of desired.keys()) {
+      if (heldCodes.has(code)) continue;
+      const judged = await this.judgeAddon(tenantId, skuByCode.get(code)!, version, input.planKey);
+      if (judged.refusal) throw refusalException(judged.refusal);
+      const held = await this.heldStateRefusal(tenantId, judged.def, {
+        asPlan: { planKey: input.planKey, versionId: version.id },
+      });
+      if (held) throw refusalException(held);
+    }
 
     const transition = {
       tenantId,
@@ -579,11 +619,7 @@ export class SubscriptionMutationService {
     // across a network call); the locked re-read below refuses, retryably, if a billed row appeared.
     // SA-690: a TRIAL keeps its add-ons across the plan pick (see `toDisable` below) — and so does a lapsed
     // one (MUST-1, `keepsTrialAddons`) — so nothing is dropped and no item is removed for it.
-    const droppedBilled = (
-      keepsTrialAddons(tenant)
-        ? []
-        : await this.prisma.tenantAddon.findMany({ where: { tenantId, active: true } })
-    )
+    const droppedBilled = (keepsTrialAddons(tenant) ? [] : priorActive)
       .map((row: any) => ({ row, code: addonSkuCode(row) }))
       .filter(
         (x: any) =>
@@ -2185,6 +2221,9 @@ export class SubscriptionMutationService {
     // again. Refused before the lock and before ANY Stripe call, row write or ledger event.
     const judged = await this.judgeAddon(tenantId, skuDef, version);
     if (judged.refusal) throw refusalException(judged.refusal);
+    // SA-1099 §6 (WP5) + B554: what the workspace already holds / lacks, also before the lock and before Stripe.
+    const held = await this.heldStateRefusal(tenantId, judged.def);
+    if (held) throw refusalException(held);
 
     // FINDING-3 (round 3 review): same family and the same SKU-keyed shape as the admin path in
     // addon.service.ts, so the two paths serialise against each other and not merely within
@@ -2206,7 +2245,12 @@ export class SubscriptionMutationService {
         );
       }
       const outcome = result.value;
-      if (outcome.changed) this.entitlements.invalidate(tenantId);
+      if (outcome.changed) {
+        this.entitlements.invalidate(tenantId);
+        // B554: the feature resolver keeps its own 30 s cache; a stale one would show the next preview a workspace
+        // that does not hold the add-on it just bought.
+        this.authority?.invalidate(tenantId);
+      }
       return {
         // Billed: what STRIPE prorated (authoritative; null when it could not be read back).
         // Unbilled: 0. The local `prorationPreview` is only an estimate and is never returned here.
@@ -2263,8 +2307,11 @@ export class SubscriptionMutationService {
     const version = await this.catalog.getPublishedCatalog();
     const skuDef = version.addonSkus.find((s) => s.sku === sku);
     if (!skuDef) return null;
-    const included = await this.planIncludedRefusal(tenantId, skuDef, version);
-    if (included) return included;
+    const judged = await this.judgeAddon(tenantId, skuDef, version);
+    if (judged.refusal) return judged.refusal;
+    // SA-1099 §6 (WP5) + B554: the same held-state refusals the enable throws (see heldStateRefusal).
+    const held = await this.heldStateRefusal(tenantId, judged.def);
+    if (held) return held;
     // SA-693: an ACTIVE comp is the platform's to manage, so the preview shows the same refusal the enable
     // call throws (and therefore no charge line), never a price for something that would not be billed.
     const row = await findAddonRow(this.prisma, tenantId, sku);
@@ -2536,7 +2583,10 @@ export class SubscriptionMutationService {
         );
       }
     }
-    if (changed) this.entitlements.invalidate(tenantId);
+    if (changed) {
+      this.entitlements.invalidate(tenantId);
+      this.authority?.invalidate(tenantId); // B554: the resolver's own cache, as in enableAddon
+    }
     // a superseded subscription's items are not this tenant's business any more: no "missing item" alert for them
     if (missing.length > 0 && !state.superseded) {
       await this.alertListedAddonItemsMissing(tenantId, subId, missing, ctx.sessionId ?? null);
@@ -3245,6 +3295,103 @@ export class SubscriptionMutationService {
   }
 
   /**
+   * SA-1099 §6 (WP5, R22) and B554: the two refusals of a SELF-SERVE enable that come from what the workspace holds
+   * today rather than from its plan's catalog. The enable throws them and the proration preview returns the SAME
+   * object, so the confirm sheet can never promise a sale the call refuses. Nothing is written or called first.
+   *
+   *  1. `ADDON_ALREADY_INCLUDED`: every flag the SKU grants is already effective without it (a courtesy flag, an
+   *     override, another SKU). Owner Q4 (2026-11-04): stop selling Forecasting to a workspace that already has it;
+   *     any credit for past sales is the owner's own action from `report-noop-addons.mjs`. Self-serve only (the back
+   *     office enable never comes through here); a workspace that already holds this SKU's row is the idempotent
+   *     repeat / buy-more path and is left as it was; an empty `grantsFlags` and a capacity SKU are never refused
+   *     (see {@link addonOfferState}, the one state the add-on list reads too); a resolver that cannot answer sells, as before, with a warning.
+   *  2. `FEATURE_REQUIRES_UNMET` (B554): a registry row this SKU bills (`billing.skus`) declares a `requires` the
+   *     workspace does not meet. The tenant cannot acknowledge it, so it is a plain refusal here (the back office
+   *     can, through `acknowledgeUnmetRequires`). No self-serve SKU's row declares one today; the check is what
+   *     stops the first one that does from selling a feature that cannot work. A check that fails any other way
+   *     (a read error, an unknown key) warns and sells, like the resolver outage in 1.
+   */
+  private async heldStateRefusal(
+    tenantId: string,
+    def: CatalogAddonSku,
+    opts?: { asPlan?: { planKey: string; versionId: string } },
+  ): Promise<AddonRefusal | null> {
+    if (!this.authority) return null;
+    const wantsFlagCheck = (def.grantsFlags?.length ?? 0) > 0 && !isCapacityAddon(def);
+    const billedRows = FEATURE_REGISTRY.filter(
+      (f) => f.requires && f.billing.skus.includes(def.sku),
+    );
+    if (!wantsFlagCheck && billedRows.length === 0) return null;
+
+    const held = await findAddonRow(this.prisma, tenantId, def.sku);
+    if (wantsFlagCheck && !held?.active) {
+      const effective = await this.effectiveForOfferState(tenantId, def, opts?.asPlan);
+      if (effective && addonOfferState(def, effective, held?.active === true) === "already-have") {
+        return addonAlreadyIncludedRefusal(def.name);
+      }
+    }
+    for (const feature of billedRows) {
+      try {
+        await this.authority.assertFeatureRequiresMet(tenantId, feature.key, false);
+      } catch (err) {
+        const body = (
+          err as { getResponse?: () => { code?: string; missing?: string } }
+        ).getResponse?.();
+        if (body?.code !== API_ERROR_CODES.FEATURE_REQUIRES_UNMET) {
+          // SA-1099 A-3 note 5 (R-3): the requires check failing is not a refusal. Same stance as the resolver above:
+          // an outage warns and the sale goes ahead; only a real unmet `requires` stops it.
+          this.logger.warn(
+            `Add-on "${def.sku}" tenant ${tenantId}: the requires check for ${feature.key} could not run (${(err as Error)?.message ?? "unknown error"}) - the sale goes ahead`,
+          );
+          continue;
+        }
+        return {
+          code: API_ERROR_CODES.FEATURE_REQUIRES_UNMET,
+          message: `${def.name} needs ${body.missing ?? "another feature"} first, which your workspace does not have yet.`,
+        };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * What is effective for {@link heldStateRefusal}'s flag half, keyed by feature key, or null when it cannot be read
+   * (never a refusal: the caller sells, with the warning written here).
+   *
+   * Without `asPlan` it is the workspace's CURRENT answer (`resolveAll`), the enable's question. With `asPlan` (SA-1099
+   * A-3 note 2, F-WP5-1: `subscribe` changes the plan, so the question is "does the plan this call lands on already
+   * serve it?") it is the TARGET plan's answer from `FeaturePreviewService.preview(...)`'s `after` side, the one
+   * preview home SV-12 pins, never a second resolver copy. `serving` is the resolver's `effective`, courtesy included.
+   */
+  private async effectiveForOfferState(
+    tenantId: string,
+    def: CatalogAddonSku,
+    asPlan?: { planKey: string; versionId: string },
+  ): Promise<EffectiveByKey | null> {
+    if (!asPlan) {
+      const resolved = await this.authority?.resolveAll(tenantId);
+      if (resolved) return resolved.byKey;
+      this.logger.warn(
+        `Add-on "${def.sku}" tenant ${tenantId}: the resolver could not answer - the already-included check is skipped`,
+      );
+      return null;
+    }
+    try {
+      if (!this.preview) throw new Error("no preview service wired");
+      const { after } = await this.preview.preview(tenantId, {
+        planKey: asPlan.planKey,
+        versionId: asPlan.versionId,
+      });
+      return new Map(after.map((f) => [f.key, { effective: f.serving }]));
+    } catch (err) {
+      this.logger.warn(
+        `Add-on "${def.sku}" tenant ${tenantId}: the preview of plan ${asPlan.planKey} could not answer (${(err as Error)?.message ?? "unknown error"}) - the already-included check is skipped`,
+      );
+      return null;
+    }
+  }
+
+  /**
    * {@link planIncludedRefusal}'s verdict AND the definition it was judged on (SA-815e): the SKU as the tenant's own
    * pinned version lists it ({@link pricedAddonSku}), which is also the version an enable writes, a preview quotes and
    * a checkout bills the row's price at.
@@ -3253,7 +3400,21 @@ export class SubscriptionMutationService {
     tenantId: string,
     skuDef: CatalogAddonSku,
     published?: PlanVersionWithCatalog | null,
+    asPlanKey?: string,
   ): Promise<{ refusal: AddonRefusal | null; def: CatalogAddonSku }> {
+    if (asPlanKey !== undefined) {
+      // SA-1099 A-3 note 2 (F-WP5-1): `subscribe` lands on the PUBLISHED version of the TARGET plan, so that is what is
+      // judged: the caller's published definition, the target's key, never the workspace's current plan or pin.
+      if (skuDef.includedAtPlan == null) return { refusal: null, def: skuDef };
+      const verdict = inclusionOf(skuDef, asPlanKey);
+      if (verdict.kind === "CATALOG_INVALID") {
+        return { refusal: addonCatalogInvalid(verdict.sku, verdict.value), def: skuDef };
+      }
+      return {
+        refusal: verdict.kind === "INCLUDED" ? addonIncludedRefusal(skuDef.name) : null,
+        def: skuDef,
+      };
+    }
     const [sub, tenant] = await Promise.all([
       this.prisma.tenantSubscription.findUnique({
         where: { tenantId },

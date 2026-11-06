@@ -6,16 +6,22 @@ import { BADGE_COLORS, BADGE_LABELS, deriveBadge } from "./badge";
 import { groupPreview, type PreviewRow, type RegistryLabelLookup } from "./preview-groups";
 import type { FeaturePreviewResponse } from "./types";
 
-type PanelTone = "gain" | "loss" | "limit" | "other";
+type PanelTone = "gain" | "loss" | "later" | "limit" | "other";
 
 const PANELS: {
-  id: "gained" | "lost" | "limits" | "other";
+  id: "gained" | "lost" | "laterLost" | "limits" | "other";
   tone: PanelTone;
   title: string;
   hint: string;
 }[] = [
   { id: "gained", tone: "gain", title: "Gained", hint: "Turned on for this tenant" },
   { id: "lost", tone: "loss", title: "Lost", hint: "Turned off for this tenant" },
+  {
+    id: "laterLost",
+    tone: "later",
+    title: "Stays on for now",
+    hint: "Still on today; turns off when this feature is enforced",
+  },
   {
     id: "limits",
     tone: "limit",
@@ -28,6 +34,7 @@ const PANELS: {
 const TONE_CLASSES: Record<PanelTone, { ring: string; dot: string; heading: string }> = {
   gain: { ring: "ring-emerald-500/25", dot: "bg-emerald-400", heading: "text-emerald-300" },
   loss: { ring: "ring-red-500/25", dot: "bg-red-400", heading: "text-red-300" },
+  later: { ring: "ring-amber-500/25", dot: "bg-amber-400", heading: "text-amber-300" },
   limit: { ring: "ring-amber-500/25", dot: "bg-amber-400", heading: "text-amber-300" },
   other: { ring: "ring-white/10", dot: "bg-slate-400", heading: "text-slate-300" },
 };
@@ -136,6 +143,7 @@ export function PreviewDrawer({
             {[
               groups.gained.length > 0 && `${groups.gained.length} gained`,
               groups.lost.length > 0 && `${groups.lost.length} lost`,
+              groups.laterLost.length > 0 && `${groups.laterLost.length} stay on for now`,
               groups.limits.length > 0 && `${groups.limits.length} configuration`,
               groups.other.length > 0 && `${groups.other.length} other`,
             ]
@@ -172,9 +180,23 @@ export function PreviewDrawer({
           })}
         </div>
       )}
+      {response?.omitted && response.omitted.length > 0 && (
+        <p className="mt-3 text-xs text-slate-400" data-testid="preview-omitted">
+          {omissionText(response.omitted)}
+        </p>
+      )}
       {note && <p className="mt-3 text-xs text-slate-400">{note}</p>}
     </AdminModal>
   );
+}
+
+/** The preview's omissions in words (the server sends codes only). */
+function omissionText(omitted: readonly string[]): string {
+  const parts = [
+    omitted.includes("limits") && "customer limits",
+    omitted.includes("price") && "monthly price",
+  ].filter(Boolean);
+  return `Not shown here: ${parts.join(" and ")}. See Plan & billing.`;
 }
 
 /** A mode in the registry's own words ("Not configured"), else the key as the server sent it. */

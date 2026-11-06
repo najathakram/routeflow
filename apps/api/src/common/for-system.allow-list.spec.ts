@@ -74,7 +74,7 @@ export const ALLOWED: ReadonlyArray<{ file: string; reason: string }> = [
   },
   {
     file: "platform-admin/tenant-mirror.service.ts",
-    reason: "platform mirror: sync tenants to the control plane",
+    reason: "platform mirror: sync businesses to the house business",
   },
   {
     file: "onboarding/onboarding-lifecycle.service.ts",
@@ -149,6 +149,97 @@ describe("K-4 forSystem allow-list", () => {
       },
     ]);
     expect(found).toEqual([]);
+  });
+});
+
+/**
+ * B1284 (SA-1105 A-2): `forSystem` is the ONLY door to the tenant-context kind SYSTEM. Construction: `run()` cannot name
+ * SYSTEM (B4-1, a type error in prisma-tenant-context-kind.spec). Pin, for what a type cannot see (a cast, an element
+ * access): every use of the name `runSystem` in non-spec source is `PrismaService.forSystem`, and no `.run(` call passes
+ * the string literal "SYSTEM".
+ */
+export interface SystemDoorScan {
+  /** `file::Class.method` of every use of the name `runSystem` that is not its definition. */
+  runSystemUses: string[];
+  /** `file` of every `.run(` call that passes the string literal "SYSTEM". */
+  runWithSystem: string[];
+}
+
+/** `Class.method` (or `<top>`) enclosing a node. */
+function enclosing(n: ts.Node): string {
+  let cls = "";
+  let fn = "";
+  for (let p: ts.Node | undefined = n.parent; p; p = p.parent) {
+    if (!fn && (ts.isMethodDeclaration(p) || ts.isFunctionDeclaration(p)) && p.name) {
+      fn = p.name.getText();
+    }
+    if (ts.isClassDeclaration(p) && p.name) {
+      cls = p.name.text;
+      break;
+    }
+  }
+  return cls || fn ? `${cls}.${fn}` : "<top>";
+}
+
+export function scanSystemDoor(files: Array<{ file: string; text: string }>): SystemDoorScan {
+  const out: SystemDoorScan = { runSystemUses: [], runWithSystem: [] };
+  for (const { file, text } of files) {
+    const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+    const visit = (n: ts.Node) => {
+      const isName =
+        (ts.isIdentifier(n) || ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) &&
+        n.text === "runSystem";
+      const isDefinition = isName && ts.isMethodDeclaration(n.parent) && n.parent.name === n;
+      if (isName && !isDefinition) out.runSystemUses.push(`${file}::${enclosing(n)}`);
+      if (
+        ts.isCallExpression(n) &&
+        ts.isPropertyAccessExpression(n.expression) &&
+        n.expression.name.text === "run" &&
+        n.arguments.some((a) => ts.isStringLiteralLike(a) && a.text === "SYSTEM")
+      ) {
+        out.runWithSystem.push(file);
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+  }
+  out.runSystemUses.sort();
+  out.runWithSystem.sort();
+  return out;
+}
+
+const DOOR = ["prisma/prisma.service.ts::PrismaService.forSystem"];
+
+describe("B4-2 the SYSTEM kind has one door", () => {
+  it("runSystem is used only by PrismaService.forSystem, and no .run( call names SYSTEM", () => {
+    const files = walk(SRC).map((f) => ({
+      file: path.relative(SRC, f).split(path.sep).join("/"),
+      text: fs.readFileSync(f, "utf8"),
+    }));
+    const found = scanSystemDoor(files);
+    expect(found.runSystemUses).toEqual(DOOR);
+    expect(found.runWithSystem).toEqual([]);
+  });
+
+  it("self-test: a second producer, in any spelling, is reported", () => {
+    const found = scanSystemDoor([
+      {
+        file: "x/second-door.ts",
+        text: [
+          "class Job {",
+          "  a() { return this.ctx.runSystem('sneaky reason here', () => 1); }",
+          "  b() { return (this.ctx as any)['runSystem']('sneaky reason here', () => 1); }",
+          "  c() { return this.ctx.run(null, () => 1, 'SYSTEM'); }",
+          "}",
+        ].join("\n"),
+      },
+      {
+        file: "tenant/tenant-context.service.ts",
+        text: "class TenantContextService { runSystem<T>(reason: string, fn: () => T): T { return fn(); } }",
+      },
+    ]);
+    expect(found.runSystemUses).toEqual(["x/second-door.ts::Job.a", "x/second-door.ts::Job.b"]);
+    expect(found.runWithSystem).toEqual(["x/second-door.ts"]);
   });
 });
 
@@ -239,7 +330,7 @@ export const CONVERTED_JOBS: ReadonlyArray<{
     file: "platform-admin/tenant-mirror.service.ts",
     cls: "TenantMirrorService",
     method: "mirrorSync",
-    reason: "platform mirror: sync tenants to the control plane",
+    reason: "platform mirror: sync businesses to the house business",
   },
   {
     file: "onboarding/onboarding-lifecycle.service.ts",
@@ -283,7 +374,65 @@ export function forSystemReasonsInMethod(text: string, cls: string, method: stri
   return out;
 }
 
+/**
+ * L-1: the old body must run INSIDE the callback. Every `this.prisma.<x>` read in the method other than `forSystem`
+ * itself that sits outside a `forSystem` callback (a function or arrow, the 2nd argument), plus any `forSystem` call
+ * whose 2nd argument is not a function, is returned. An empty wrapper with the query beside it is therefore non-empty.
+ */
+export function prismaOutsideForSystem(text: string, cls: string, method: string): string[] {
+  const sf = ts.createSourceFile("x.ts", text, ts.ScriptTarget.Latest, true);
+  const out: string[] = [];
+  const walkBody = (n: ts.Node) => {
+    if (
+      ts.isCallExpression(n) &&
+      ts.isPropertyAccessExpression(n.expression) &&
+      n.expression.name.text === "forSystem"
+    ) {
+      const cb = n.arguments[1];
+      if (!cb || !(ts.isArrowFunction(cb) || ts.isFunctionExpression(cb))) out.push("no callback");
+      n.arguments.forEach((a, i) => i !== 1 && walkBody(a));
+      return;
+    }
+    if (ts.isPropertyAccessExpression(n) && n.expression.getText() === "this.prisma") {
+      out.push(n.name.text);
+    }
+    ts.forEachChild(n, walkBody);
+  };
+  const visit = (n: ts.Node) => {
+    if (ts.isClassDeclaration(n) && n.name?.text === cls) {
+      for (const m of n.members) {
+        if (ts.isMethodDeclaration(m) && m.name.getText() === method) walkBody(m);
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
+}
+
 describe("C-2 the SA-619a cron jobs run inside forSystem", () => {
+  it("no converted job touches this.prisma outside its forSystem callback", () => {
+    for (const j of CONVERTED_JOBS) {
+      const text = fs.readFileSync(path.join(SRC, j.file), "utf8");
+      expect({
+        job: `${j.cls}.${j.method}`,
+        outside: prismaOutsideForSystem(text, j.cls, j.method),
+      }).toEqual({ job: `${j.cls}.${j.method}`, outside: [] });
+    }
+  });
+
+  it("self-test: an empty wrapper with the query beside it, or a non-function callback, is reported", () => {
+    const inside =
+      'class J { async run() { return this.prisma.forSystem("some reason here", async () => this.prisma.tenant.findMany()); } }';
+    expect(prismaOutsideForSystem(inside, "J", "run")).toEqual([]);
+    const beside =
+      'class J { async run() { const r = await this.prisma.tenant.findMany(); return this.prisma.forSystem("some reason here", async () => r); } }';
+    expect(prismaOutsideForSystem(beside, "J", "run")).toEqual(["tenant"]);
+    const notFn =
+      'class J { async run() { return this.prisma.forSystem("some reason here", this.sweep()); } }';
+    expect(prismaOutsideForSystem(notFn, "J", "run")).toEqual(["no callback"]);
+  });
+
   it("each converted job method calls forSystem with its allow-list reason, exactly once", () => {
     for (const j of CONVERTED_JOBS) {
       const text = fs.readFileSync(path.join(SRC, j.file), "utf8");

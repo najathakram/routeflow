@@ -6,9 +6,10 @@
  * clientFlag. The expected bits below are worked by hand from the plan fixtures (the oracle), not
  * read back from the code under test:
  *   - STARTER, no rows: the plan carries no flag. `ocr` and `flag.reports` are DARK gates, so the
- *     old path allows them as a courtesy while the resolver (no courtesy yet, WP2) says false;
- *     `tobacco_dealer` is enforced, both false. `flag.credit_limits` runs the real credit check for
- *     everyone while the switch is not "on" (SA-1099 §2): old true, effective false.
+ *     old path allows them as a courtesy and so does the resolver (WP2): effective true, strict
+ *     false (the owner's rule with no courtesy), courtesy true; `tobacco_dealer` is enforced, all
+ *     false. `flag.credit_limits` runs the real credit check for everyone while the switch is not
+ *     "on" (SA-1099 §2): old true, effective true, strict false, courtesy true.
  *   - GROWTH carrying flag.reports + flag.credit_limits, plus an active tobacco_dealer row: all true.
  *   - LITE (always enforced) with a GRANT override on tobacco_dealer: that key true everywhere,
  *     `ocr` and `flag.reports` false (no courtesy for an always-enforced plan).
@@ -246,27 +247,52 @@ describeDb("FG-1 WP1: entitlement sweep endpoint (real Postgres)", () => {
       clientAddon: false,
       courtesy: false,
     });
+    // WP2 courtesy rule (feature-resolver.service.ts resolveOneKey): a dark gate the plan lacks is served by courtesy,
+    // so `effective` is true while the owner's rule (`strict`) is false. The sweep reports both.
     expectBits(t.starter, "ocr", {
       old: true,
-      effective: false,
+      effective: true,
+      strict: false,
       clientAddon: false,
       courtesy: true,
     });
-    expectBits(t.starter, "flag.reports", { old: true, effective: false, courtesy: true });
-    // SA-1099 §2: the credit check runs for a Starter while the switch is not on
-    expectBits(t.starter, "flag.credit_limits", { old: true, effective: false, courtesy: true });
+    expectBits(t.starter, "flag.reports", {
+      old: true,
+      effective: true,
+      strict: false,
+      courtesy: true,
+    });
+    // SA-1099 §2: the credit check runs for a Starter while the switch is not on (courtesy, same WP2 rule)
+    expectBits(t.starter, "flag.credit_limits", {
+      old: true,
+      effective: true,
+      strict: false,
+      courtesy: true,
+    });
     // GROWTH carrying the flags, tobacco_dealer row active
+    // strict TRUE is asserted where the owner's rule itself holds (a constant false would pass every strict:false row)
     expectBits(t.growth, "tobacco_dealer", {
       old: true,
       effective: true,
+      strict: true,
       clientAddon: true,
       courtesy: false,
     });
-    expectBits(t.growth, "flag.reports", { old: true, effective: true, courtesy: false });
+    expectBits(t.growth, "flag.reports", {
+      old: true,
+      effective: true,
+      strict: true,
+      courtesy: false,
+    });
     // courtesy follows the switch, not the plan: the check runs for everyone while it is not "on"
     expectBits(t.growth, "flag.credit_limits", { old: true, effective: true, courtesy: true });
     // LITE (always enforced) + GRANT on tobacco_dealer
-    expectBits(t.lite, "tobacco_dealer", { old: true, effective: true, clientAddon: true });
+    expectBits(t.lite, "tobacco_dealer", {
+      old: true,
+      effective: true,
+      strict: true,
+      clientAddon: true,
+    });
     expectBits(t.lite, "ocr", {
       old: false,
       effective: false,

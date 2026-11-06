@@ -143,7 +143,7 @@ export interface ProrationPreview {
   billing?: AddonBillingMode | "REFUSED";
   billed?: boolean;
   /** The SAME `{ code, message }` the enable call throws (ADDON_ANNUAL_NOT_SUPPORTED /
-   *  ADDON_INCLUDED_IN_PLAN); null when the enable is allowed. */
+   *  ADDON_INCLUDED_IN_PLAN / ADDON_ALREADY_INCLUDED); null when the enable is allowed. */
   refusal?: { code: string; message: string } | null;
   /** SA-690: true while the tenant is still on its TRIAL — the add-on is on at no charge now and is
    *  billed when the card is added (the confirm sheet's copy), not charged today. */
@@ -264,13 +264,14 @@ export const isMappedCheckoutError = (error: unknown): boolean => {
   );
 };
 
-/** A refused add-on enable the confirm sheet words itself (annual plan, already in the plan, the quantity moved
+/** A refused add-on enable the confirm sheet words itself (annual plan, already in the plan, already held, the quantity moved
  *  under the page, or an unbilled row that can't be raised). */
 export const isMappedEnableAddonError = (error: unknown): boolean => {
   const code = apiErrorCodeOf(error);
   return (
     code === API_ERROR_CODES.ADDON_ANNUAL_NOT_SUPPORTED ||
     code === API_ERROR_CODES.ADDON_INCLUDED_IN_PLAN ||
+    code === API_ERROR_CODES.ADDON_ALREADY_INCLUDED ||
     code === API_ERROR_CODES.ADDON_QUANTITY_CHANGED ||
     code === API_ERROR_CODES.ADDON_RAISE_UNBILLED_ROW
   );

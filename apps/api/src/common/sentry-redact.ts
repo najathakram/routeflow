@@ -1,3 +1,5 @@
+import { redactPath } from "./redacted-route";
+
 /**
  * Payment Idempotency-Keys are secrets-adjacent identifiers (SA-824): no Sentry surface may carry one. Pure and
  * dependency-free so `instrument.ts` can import it before anything else boots. Routing is case-insensitive in
@@ -19,14 +21,15 @@ type RedactableEvent = {
     query_string?: unknown;
     headers?: Record<string, string>;
     data?: unknown;
+    cookies?: unknown;
   };
 };
 
 /**
- * `beforeSend` / `beforeSendTransaction` hook: redacts the key from `request.url`, `transaction` and the `path` tag, drops
- * `request.query_string` on by-key paths, blanks any `Idempotency-Key` request header, and drops the request body
- * (`request.data`). Mutates and returns the event; an event with no by-key route, no such header and no body is
- * returned unchanged.
+ * `beforeSend` / `beforeSendTransaction` hook: redacts the key from `request.url`, `transaction` and the `path` tag,
+ * blanks any `Idempotency-Key` request header, and drops the request body (`request.data`). A single-use link token in
+ * a path segment is redacted the same way (`redactPath`), and the query string, cookies and credential headers go
+ * whole on every event. Mutates and returns the event.
  */
 export function redactSentryEvent<T extends RedactableEvent>(event: T): T {
   const req = event.request;
@@ -47,9 +50,21 @@ export function redactSentryEvent<T extends RedactableEvent>(event: T): T {
   // SA-1084: the Node SDK keeps an incoming request body (up to 10 KB) on an error event. A body can carry a tax ID,
   // a license number or a password, and a list of keys grows, so the body goes whole; URL, route and stack stay.
   if (req) delete req.data;
+  // A path segment or a query value can carry a single-use link token, and a header or cookie a credential: the URL
+  // keeps its origin and a path with every secret-shaped segment redacted, the query string and cookies go whole.
+  if (req) {
+    if (typeof req.url === "string") req.url = redactEventUrl(req.url);
+    delete req.query_string;
+    delete req.cookies;
+  }
+  if (typeof event.transaction === "string")
+    event.transaction = redactTransactionName(event.transaction);
+  if (typeof pathTag === "string") event.tags!.path = redactPath(event.tags!.path as string);
   if (req?.headers && typeof req.headers === "object") {
     for (const name of Object.keys(req.headers)) {
-      if (name.toLowerCase() === "idempotency-key") req.headers[name] = "[Filtered]";
+      const lower = name.toLowerCase();
+      if (lower === "idempotency-key") req.headers[name] = "[Filtered]";
+      else if (SECRET_HEADERS.has(lower)) delete req.headers[name];
     }
   }
   return event;
@@ -58,4 +73,30 @@ export function redactSentryEvent<T extends RedactableEvent>(event: T): T {
 /** An absolute or relative URL, key and query removed (the origin is kept). */
 function redactUrl(url: string): string {
   return url.split("?")[0].split("#")[0].replace(BY_KEY_SEGMENT, "$1:key");
+}
+
+/** Request headers that carry a credential; compared lower-cased. */
+const SECRET_HEADERS = new Set([
+  "authorization",
+  "proxy-authorization",
+  "cookie",
+  "set-cookie",
+  "x-api-key",
+]);
+
+/** `https://host/api/v1/x/<token>?q=1#f` -> `https://host/api/v1/x/:redacted`; a bare path works too. */
+function redactEventUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.origin}${redactPath(parsed.pathname)}`;
+  } catch {
+    return redactPath(url);
+  }
+}
+
+/** `GET /api/v1/x/<token>?q=1` -> `GET /api/v1/x/:redacted`; text that holds no path is returned as is. */
+function redactTransactionName(name: string): string {
+  const at = name.indexOf("/");
+  if (at < 0) return name;
+  return `${name.slice(0, at)}${redactPath(name.slice(at))}`;
 }

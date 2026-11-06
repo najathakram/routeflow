@@ -24,7 +24,10 @@ import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 const FLAG = "flag.forecasting";
-const resolved = (effective: boolean) => ({ byKey: new Map([[FLAG, { effective }]]) });
+// FG-1 WP2: the dark courtesy serves the key (effective true); the would-deny log reads the STRICT answer
+const resolved = (strict: boolean) => ({
+  byKey: new Map([[FLAG, { effective: true, strict }]]),
+});
 
 describe("SA-322 reorder gate — dark shape (allow + would-deny warn) and enforced 403", () => {
   let service: ProductsService;
@@ -79,7 +82,7 @@ describe("SA-322 reorder gate — dark shape (allow + would-deny warn) and enfor
   const wouldDenyWarns = () =>
     warn.mock.calls.filter((c) => String(c[0]).includes("would deny (dark)"));
 
-  it("DARK, tenant not entitled (resolver effective=false): allows and logs ONE would-deny warn naming flag + tenant", async () => {
+  it("DARK, tenant not entitled (resolver strict=false): allows and logs ONE would-deny warn naming flag + tenant", async () => {
     authority.resolveAll.mockResolvedValue(resolved(false));
     await expect(service.assertReorderAllowed()).resolves.toBeUndefined();
     expect(wouldDenyWarns()).toHaveLength(1);
@@ -87,7 +90,7 @@ describe("SA-322 reorder gate — dark shape (allow + would-deny warn) and enfor
     expect(String(wouldDenyWarns()[0][0])).toContain("tenant=test-tenant");
   });
 
-  it("DARK, tenant entitled (effective=true): allows silently", async () => {
+  it("DARK, tenant entitled (strict=true): allows silently", async () => {
     authority.resolveAll.mockResolvedValue(resolved(true));
     await expect(service.assertReorderAllowed()).resolves.toBeUndefined();
     expect(wouldDenyWarns()).toHaveLength(0);

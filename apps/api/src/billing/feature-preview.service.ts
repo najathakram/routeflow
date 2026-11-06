@@ -10,8 +10,31 @@ import { PlanCatalogService } from "./plan-catalog.service";
 import { FeatureConfigService } from "./feature-config.service";
 import { FEATURE_REGISTRY } from "./feature-registry";
 import { effectivePlanFlags, findPlanDefinition } from "./plan-catalog.constants";
-import { resolveOneKey, toEffectiveFeature, ResolveContext } from "./feature-resolver.service";
-import type { FeaturePreviewRequest, FeaturePreviewResponse } from "@routeflow/types";
+import {
+  billedKeySet,
+  courtesyFor,
+  heldAddonKeys,
+  loadActiveAddonRows,
+  resolveOneKey,
+  skuGrantsFlags,
+  toEffectiveFeature,
+  ResolveContext,
+} from "./feature-resolver.service";
+import type {
+  FeaturePreviewRequest,
+  FeaturePreviewResponse,
+  PreviewOmission,
+} from "@routeflow/types";
+
+/** A plan move changes customer limits and the monthly price; this preview shows neither (R5). */
+/**
+ * The HTTP request plus one server-side field (SA-1099 A-7, kept out of the shared type: no client sends it). `versionId`
+ * judges `planKey` as that PUBLISHED catalog version instead of the tenant's pinned one, so a caller that charges from
+ * the published version (`subscribe`) and the preview read the same plan. Any other id is ignored.
+ */
+export type FeaturePreviewInput = FeaturePreviewRequest & { versionId?: string };
+
+const PLAN_MOVE_OMISSIONS: readonly PreviewOmission[] = ["limits", "price"];
 
 /**
  * Design 2026-09-17 §2 "Preview": before/after per key for a hypothetical plan/override change,
@@ -19,6 +42,9 @@ import type { FeaturePreviewRequest, FeaturePreviewResponse } from "@routeflow/t
  * `resolveOneKey` — the SAME pure function the real resolver calls — against a hypothetical
  * `ResolveContext` built from the tenant's real current state plus the requested changes, so a
  * preview is provably what `apply` would compute, never a separately-maintained approximation.
+ *
+ * Courtesy is read PER SIDE (FG-1 WP2): "before" takes the tenant's plan, "after" the target plan, each with its own
+ * flags and overrides, so a move to an always-enforced plan loses what the courtesy was serving.
  */
 @Injectable()
 export class FeaturePreviewService {
@@ -32,14 +58,11 @@ export class FeaturePreviewService {
     private readonly featureConfig: FeatureConfigService,
   ) {}
 
-  async preview(tenantId: string, request: FeaturePreviewRequest): Promise<FeaturePreviewResponse> {
+  async preview(tenantId: string, request: FeaturePreviewInput): Promise<FeaturePreviewResponse> {
     const [ent, activeAddonRows, currentOverrides, currentDetail, publishedCatalog] =
       await Promise.all([
         this.entitlements.resolve(tenantId),
-        this.prisma.tenantAddon.findMany({
-          where: { tenantId, active: true },
-          select: { addonKey: true },
-        }),
+        loadActiveAddonRows(this.prisma, tenantId),
         this.featureOverrides.allActive(tenantId),
         this.featureOverrides.activeDetail(tenantId),
         // Opus review of 9923b87c, item 6: a hypothetical plan swap targets what an admin would
@@ -58,6 +81,13 @@ export class FeaturePreviewService {
     const activeAddonSet = new Set(activeAddonKeys);
     const activeSkuSet = new Set(ent.addons);
 
+    // The billing fact is the same on both sides (a plan move leaves the rows alone); SKU grants read like
+    // `compute` does: the tenant's pinned version, the published catalog for a code it lacks.
+    const billed = billedKeySet(
+      activeAddonRows,
+      skuGrantsFlags([...publishedCatalog.addonSkus, ...version.addonSkus]),
+    );
+
     const beforeCtx: ResolveContext = {
       overrides: currentOverrides,
       overrideDetail: currentDetail,
@@ -65,6 +95,13 @@ export class FeaturePreviewService {
       planFeatureFlags: new Set(currentPlanFlags),
       entFlags: ent.flags,
       activeSkuSet,
+      courtesy: courtesyFor({
+        planKey: ent.planKey,
+        planFlags: ent.flags,
+        overrides: currentOverrides,
+        held: heldAddonKeys(activeAddonSet, ent.flags, currentOverrides),
+      }),
+      billed,
     };
 
     const afterOverrides = new Map<string, FeatureOverrideEffect>(currentOverrides);
@@ -82,10 +119,12 @@ export class FeaturePreviewService {
     }
     const afterPlanKey = request.planKey ?? ent.planKey;
     const isSwap = afterPlanKey !== ent.planKey;
-    const afterDef = isSwap
+    // SA-1099 A-7: a same-plan call that names the published version (`subscribe` charges from it) reads that version too.
+    const onPublished = isSwap || request.versionId === publishedCatalog.id;
+    const afterDef = onPublished
       ? findPlanDefinition(publishedCatalog.definitions, afterPlanKey)
       : currentDef;
-    const afterCatalogVersionId = isSwap ? publishedCatalog.id : version.id;
+    const afterCatalogVersionId = onPublished ? publishedCatalog.id : version.id;
     // Opus review of 3585e1ec (re-review nit 3): addon-granted flags must be read from the
     // addon SKU's OWN grantsFlags metadata, never inferred by subtracting the current plan's
     // featureFlags from ent.flags — that subtraction silently drops a flag that happens to be
@@ -100,7 +139,7 @@ export class FeaturePreviewService {
       const meta = pinnedSkuByCode.get(code) ?? publishedSkuByCode.get(code);
       if (meta) for (const flag of meta.grantsFlags) addonGrantedFlags.add(flag);
     }
-    const afterPlanFlags = isSwap
+    const afterPlanFlags = onPublished
       ? afterDef
         ? effectivePlanFlags(afterDef, afterCatalogVersionId, publishedCatalog)
         : []
@@ -114,6 +153,13 @@ export class FeaturePreviewService {
       planFeatureFlags: new Set(afterPlanFlags),
       entFlags: afterEntFlags,
       activeSkuSet,
+      courtesy: courtesyFor({
+        planKey: afterPlanKey,
+        planFlags: afterEntFlags,
+        overrides: afterOverrides,
+        held: heldAddonKeys(activeAddonSet, afterEntFlags, afterOverrides),
+      }),
+      billed,
     };
 
     // The mode state of every config-bearing key: before = the tenant's stored mode; after = the
@@ -152,10 +198,15 @@ export class FeaturePreviewService {
       };
     });
 
+    // `changed`: the served answer or the strict answer moves (a GRANT over a courtesy row moves only the second).
     const changed = FEATURE_REGISTRY.filter(
-      (_f, i) => before[i].resolver !== after[i].resolver,
+      (_f, i) => before[i].serving !== after[i].serving || before[i].resolver !== after[i].resolver,
+    ).map((f) => f.key);
+    // `laterLost`: still served after the change, by courtesy, though the strict answer was yes and is now no.
+    const laterLost = FEATURE_REGISTRY.filter(
+      (_f, i) => before[i].resolver && !after[i].resolver && after[i].serving,
     ).map((f) => f.key);
 
-    return { before, after, changed };
+    return { before, after, changed, laterLost, omitted: isSwap ? [...PLAN_MOVE_OMISSIONS] : [] };
   }
 }

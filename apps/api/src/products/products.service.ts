@@ -290,7 +290,7 @@ export class ProductsService {
       if (isDarkFlag("flag.forecasting")) {
         try {
           const resolved = await this.authority.resolveAll(tenantId);
-          if (resolved?.byKey.get("flag.forecasting")?.effective === false) {
+          if (resolved?.byKey.get("flag.forecasting")?.strict === false) {
             this.logger.warn(
               `reorder gate would deny (dark): flag=flag.forecasting tenant=${tenantId}`,
             );

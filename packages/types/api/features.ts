@@ -132,7 +132,9 @@ export interface FeatureModeState {
 export interface EffectiveFeature {
   key: string;
   area: string;
+  /** What the guards serve (the strict answer, plus the dark-gate courtesy). */
   serving: boolean;
+  /** The strict answer: the owner's rule with no courtesy. Differs from `serving` only for a courtesy row or a DENY. */
   resolver: boolean;
   source: FeatureSource;
   detail: {
@@ -143,7 +145,7 @@ export interface EffectiveFeature {
     sku?: string;
     planKey: string;
     catalogVersionId: string;
-    term?: "flag" | "includedSku" | "default";
+    term?: "flag" | "includedSku" | "default" | "courtesy";
     enforced: boolean;
   };
   billing: { charged: boolean; sku?: string };
@@ -203,8 +205,16 @@ export interface FeaturePreviewRequest {
   modes?: Record<string, string>;
 }
 
+/** What a plan-move preview does not show. Clients map the code to words; the server sends no text. */
+export type PreviewOmission = "limits" | "price";
+
 export interface FeaturePreviewResponse {
   before: EffectiveFeature[];
   after: EffectiveFeature[];
+  /** Keys whose `serving` or strict answer moves. A superset of the keys that gain or lose service. */
   changed: string[];
+  /** Keys that stay on after the change (courtesy) but would go when their dark gate is enforced. */
+  laterLost?: string[];
+  /** What this preview leaves out (a plan move leaves out customer limits and monthly price). */
+  omitted?: PreviewOmission[];
 }
