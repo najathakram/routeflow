@@ -261,6 +261,42 @@ describe("planRestore — overrides", () => {
   });
 });
 
+/**
+ * B1282 follow-up: `planRestore` judges "is there a live row for this key" through the ONE rule (`pickLiveRow`: the first
+ * live row in the read's order, newest first). Same-key ties cannot occur in real data (the partial unique index), so a
+ * mutant that picks the OLDEST live row is invisible to every other row: these two values are what turn it red.
+ */
+describe("planRestore — a same-key tie reads the newest live row (the one rule)", () => {
+  const D1 = new Date("2026-09-02T00:00:00.000Z");
+  const tied = (newest: "GRANT" | "DENY") => {
+    const oldest = newest === "GRANT" ? "DENY" : "GRANT";
+    // the read's order: newest first (createdAt desc, then id desc)
+    return [
+      ovr({ id: "o-new", effect: newest, createdAt: D1 }),
+      ovr({ id: "o-old", effect: oldest, createdAt: BEFORE }),
+    ];
+  };
+  const restore = (saved: "GRANT" | "DENY", newest: "GRANT" | "DENY") =>
+    planRestore(
+      buildSnapshotPayload([], [ovr({ effect: saved })], NOW),
+      { configs: [], overrides: tied(newest) },
+      T_SNAPSHOT,
+      NOW,
+    ).overrides;
+
+  it("a saved GRANT is already in force when the NEWEST live row is the GRANT (an oldest-wins read keeps it)", () => {
+    const o = restore("GRANT", "GRANT");
+    expect(o.unchanged).toEqual([PLAIN_KEY]);
+    expect(o.keptNewer).toEqual([]);
+  });
+
+  it("a saved DENY is NOT in force when the newest live row is a GRANT (an oldest-wins read calls it unchanged)", () => {
+    const o = restore("DENY", "GRANT");
+    expect(o.keptNewer).toEqual([PLAIN_KEY]);
+    expect(o.unchanged).toEqual([]);
+  });
+});
+
 describe("planRestore — plan allow-list", () => {
   it("skips and reports an entry the NEW plan does not allow, for configs and overrides alike", () => {
     const payload = buildSnapshotPayload([cfg()], [ovr()], NOW);

@@ -27,7 +27,7 @@
 import type { ConfigSnapshotHeld, ConfigSnapshotSkipReason } from "@routeflow/types";
 import { featureDefByKey } from "./feature-registry";
 import { applyAddonOverrides, fleetHeldIn } from "./fulfilment-capability";
-import { isLiveOverride, resolveLiveEffects } from "./feature-override-rule";
+import { isLiveOverride, pickLiveRow, resolveLiveEffects } from "./feature-override-rule";
 
 export const SNAPSHOT_PAYLOAD_VERSION = 1 as const;
 
@@ -246,7 +246,12 @@ export function planRestore(
       continue;
     }
     const rows = byFeature.get(entry.featureKey) ?? [];
-    const live = rows.find((o) => isActive(o, now));
+    // the ONE rule: the first live row in the read's order (newest first), never a local re-derivation
+    const live = pickLiveRow(
+      rows.filter((o) => o.revokedAt === null),
+      entry.featureKey,
+      now.getTime(),
+    );
     if (live && live.effect === entry.effect && live.createdAt <= takenAt) {
       plan.overrides.unchanged.push(entry.featureKey);
       continue;

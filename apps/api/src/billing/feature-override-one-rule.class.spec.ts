@@ -152,6 +152,16 @@ describe("B1282 class: the business-profile readers use the one override rule", 
       ).toBe(true);
     }
   });
+
+  it("planRestore picks the stored row that applies through the one rule (pickLiveRow), never its own `.find(isActive)`", () => {
+    const text = fs.readFileSync(path.join(__dirname, "tenant-config-snapshot.ts"), "utf8");
+    const code = text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+    expect(code).toMatch(/pickLiveRow\(/);
+    expect(code).not.toMatch(/\.(find|findLast)\(\s*\(?\w+\)?\s*=>\s*isActive\(/);
+    expect("rows.find((o) => isActive(o, now))").toMatch(
+      /\.(find|findLast)\(\s*\(?\w+\)?\s*=>\s*isActive\(/,
+    );
+  });
 });
 
 /** What the database does with an `orderBy`; a read with none keeps the physical order it was handed. */
