@@ -30,6 +30,7 @@ describe("AuditInterceptor: a payment by-key resolve is audited by its handler, 
     const req = {
       method: "POST",
       url: "/api/v1/invoices/payments/record",
+      route: { path: "/api/v1/invoices/payments/record" },
       ip: "203.0.113.9",
       headers: {},
       socket: {},
@@ -44,9 +45,11 @@ describe("AuditInterceptor: a payment by-key resolve is audited by its handler, 
 
   it("a resolve with a query string is still skipped; any OTHER by-key mutation is still audited", async () => {
     const audit = { log: jest.fn().mockResolvedValue(undefined) };
+    // The matched route template, as Express holds it: a {key} segment is the parameter, never its value.
     const mk = (method: string, url: string) => ({
       method,
       url,
+      route: { path: url.split("?")[0].replace(/\/by-key\/[^/]+/, "/by-key/:key") },
       ip: "203.0.113.9",
       headers: {},
       socket: {},
@@ -60,9 +63,9 @@ describe("AuditInterceptor: a payment by-key resolve is audited by its handler, 
     await flush();
     const actions = audit.log.mock.calls.map((c) => c[0].action);
     expect(actions).toEqual([
-      "DELETE /invoices/payments/by-key/K2",
-      "POST /orders/by-key/K3/cancel",
-      "POST /invoices/payments/by-key/K4/other",
+      "DELETE /invoices/payments/by-key/:key",
+      "POST /orders/by-key/:key/cancel",
+      "POST /invoices/payments/by-key/:key/other",
     ]);
   });
 

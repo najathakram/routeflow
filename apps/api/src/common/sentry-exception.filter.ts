@@ -2,6 +2,7 @@ import { ArgumentsHost, Catch, HttpException } from "@nestjs/common";
 import { BaseExceptionFilter } from "@nestjs/core";
 import * as Sentry from "@sentry/node";
 import { redactKeyPath } from "./sentry-redact";
+import { pathForTag } from "./redacted-route";
 
 export { redactKeyPath };
 
@@ -23,7 +24,8 @@ export class SentryExceptionFilter extends BaseExceptionFilter {
           scope.setTag("tenant", user.tenantSlug ?? user.tenantId!);
         }
         if (user?.sub) scope.setUser({ id: user.sub, username: user.username });
-        scope.setTag("path", redactKeyPath(String(req?.originalUrl ?? req?.url ?? "")));
+        // Route template, never the raw URL: a path segment can carry a single-use link token.
+        scope.setTag("path", pathForTag(req ?? {}));
         Sentry.captureException(exception);
       });
     }
