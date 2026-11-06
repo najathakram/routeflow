@@ -177,6 +177,8 @@ function runCampaignCheck(opts: {
   const env = scrubGitEnv();
   delete env.CAMPAIGN_CHECK_TURBO_DRY_RUN;
   delete env.CAMPAIGN_CHECK_FORCE_RUN;
+  // The pre-push hook exports RF_VERIFY_MODE=fast around this spec's own run; a row that wants it passes it via `env`.
+  delete env.RF_VERIFY_MODE;
   env.CAMPAIGN_CHECK_STATUS_DIR = path.join(fixtureDir, ".claude", "campaign", "status");
   env.CI = "1"; // the pre-step's dry run is CI's path; the local rows opt out with CI: ""
   Object.assign(env, extraEnv);
@@ -1261,6 +1263,41 @@ describe("campaign-check freshness guard (spec T1–T17)", () => {
       expect(out).not.toContain("WARNING: CAMPAIGN_CHECK_FORCE_RUN");
       expect(res.status).toBe(0);
     } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // The pre-push hook exports RF_VERIFY_MODE=fast around its jest run (.husky/pre-push), so this spec's own process has
+  // it in its ambient env. runCampaignCheck builds its child env from the ambient one; without a scrub the child read
+  // "fast" and printed the deferred-to-CI line instead of the rows below, so T22b/T22c passed alone and failed in the
+  // hook whenever a push selected this spec. The one case that sets the ambient value is the case that was red.
+  it("T22d: an ambient RF_VERIFY_MODE=fast (the pre-push hook's export) never reaches the child", () => {
+    const hadMode = Object.prototype.hasOwnProperty.call(process.env, "RF_VERIFY_MODE");
+    const priorMode = process.env.RF_VERIFY_MODE;
+    process.env.RF_VERIFY_MODE = "fast";
+    const dir = mkFixtureDir();
+    try {
+      initFixtureRepo(dir);
+      writeApiSpecCommit(dir, T0);
+      writeLedgerCommit(dir, T0 + 600, [B1_DONE_ROW]);
+      const runsDir = path.join(dir, ".campaign", "runs");
+      fs.mkdirSync(runsDir, { recursive: true });
+      const dryRunFile = writeTurboDryRunFile(dir, "HIT");
+
+      const res = runCampaignCheck({
+        fixtureDir: dir,
+        runsDir,
+        args: ["--freshness-only"],
+        env: { CI: "", CAMPAIGN_CHECK_TURBO_DRY_RUN: dryRunFile, JEST_WORKER_ID: "1" },
+      });
+      const out = combined(res);
+
+      expect(out).toContain("api.json is missing; verify settles it inside its heavy slot");
+      expect(out).not.toContain("report coverage deferred to CI (fast verify)");
+      expect(res.status).toBe(0);
+    } finally {
+      if (hadMode) process.env.RF_VERIFY_MODE = priorMode;
+      else delete process.env.RF_VERIFY_MODE;
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
