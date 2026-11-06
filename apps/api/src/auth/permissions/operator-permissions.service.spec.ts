@@ -20,7 +20,7 @@ describe("groupsFromDenied", () => {
     expect(groupsFromDenied([])).toEqual(ALL);
     expect(groupsFromDenied(null)).toEqual(ALL);
     expect(groupsFromDenied(undefined)).toEqual(ALL);
-    expect(ALL).toHaveLength(9);
+    expect(ALL).toHaveLength(10); // SA-1050 added BAD_DEBT
   });
 
   it("removes exactly the denied groups and keeps the display order", () => {
@@ -32,6 +32,7 @@ describe("groupsFromDenied", () => {
       "REGULATED",
       "NOTIFICATIONS",
       "REPORTS",
+      "BAD_DEBT",
     ]);
   });
 
@@ -40,7 +41,7 @@ describe("groupsFromDenied", () => {
   });
 
   it("ignores a duplicate and an unknown value in the deny list", () => {
-    expect(groupsFromDenied(["ORDERS", "ORDERS"]).length).toBe(8);
+    expect(groupsFromDenied(["ORDERS", "ORDERS"]).length).toBe(9);
     expect(groupsFromDenied(["NOT_A_GROUP" as OperatorPermissionGroup])).toEqual(ALL);
   });
 
@@ -49,8 +50,8 @@ describe("groupsFromDenied", () => {
     const out = groupsFromDenied(denied);
     expect(denied).toEqual(["PRICING"]);
     out.pop();
-    expect(groupsFromDenied(denied)).toHaveLength(8);
-    expect(ALL_PERMISSION_GROUPS).toHaveLength(9);
+    expect(groupsFromDenied(denied)).toHaveLength(9);
+    expect(ALL_PERMISSION_GROUPS).toHaveLength(10);
   });
 });
 
@@ -77,7 +78,7 @@ describe("OperatorPermissionsService.effective", () => {
   it("an admin's groups are a copy: mutating them never changes the shared list", async () => {
     const a = await service.effective({ sub: "u1", tenantId: "t1", role: UserRole.TENANT_ADMIN });
     a.groups.length = 0;
-    expect(ALL_PERMISSION_GROUPS).toHaveLength(9);
+    expect(ALL_PERMISSION_GROUPS).toHaveLength(10);
   });
 
   it("an operator with an empty deny list holds every group and reports the stored version", async () => {

@@ -71,6 +71,7 @@ const NUKE_MODELS = [
   // 1. Leaf children of orders / invoices / routes / vendor bills / etc.
   "invoiceItem",
   "invoicePayment",
+  "invoiceWriteOffEvent",
   "orderItem",
   "orderTemplateItem",
   "routeRunStop",
@@ -204,6 +205,7 @@ const CHILD_PATHS = {
   // Leaf children
   invoiceItem: [["invoice"], ["invoice", "customer"]],
   invoicePayment: [["invoice"], ["invoice", "customer"]],
+  invoiceWriteOffEvent: [["invoice"], ["invoice", "customer"]],
   orderItem: [["order"], ["order", "customer"]],
   orderTemplateItem: [["template"], ["template", "customer"]],
   routeRunStop: [["routeRun"], ["routeRun", "route"]],

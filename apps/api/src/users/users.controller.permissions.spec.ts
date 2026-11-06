@@ -50,7 +50,7 @@ describe("GET /users/me/permissions", () => {
 
   afterEach(() => app.close());
 
-  it("an operator with no denied groups gets all 9 groups and is not an account admin", async () => {
+  it("an operator with no denied groups gets all 10 groups and is not an account admin", async () => {
     prisma.user.findFirst.mockResolvedValue({ deniedPermissionGroups: [], permissionsVersion: 0 });
     const res = await request(app.getHttpServer()).get("/users/me/permissions").expect(200);
     expect(res.body).toEqual({
@@ -61,7 +61,7 @@ describe("GET /users/me/permissions", () => {
       mode: "shadow",
       priceEditAllowed: true,
     });
-    expect(res.body.groups).toHaveLength(9);
+    expect(res.body.groups).toHaveLength(10);
   });
 
   it("an operator whose token carries a legacy isAdmin flag is still not an account admin", async () => {
@@ -83,7 +83,7 @@ describe("GET /users/me/permissions", () => {
     expect(res.body.isAccountAdmin).toBe(false);
   });
 
-  it("the account admin gets all 9 groups and isAccountAdmin true, with no user read", async () => {
+  it("the account admin gets all 10 groups and isAccountAdmin true, with no user read", async () => {
     caller = { sub: "ad1", username: "ad", role: "TENANT_ADMIN", tenantId: "t1" };
     const res = await request(app.getHttpServer()).get("/users/me/permissions").expect(200);
     expect(res.body).toEqual({

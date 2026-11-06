@@ -71,6 +71,12 @@ export const PERMISSION_GROUPS: readonly PermissionGroupInfo[] = [
     description: "Analytics, product insights, bookkeeping reports and finance dashboards.",
     order: 9,
   },
+  {
+    key: "BAD_DEBT",
+    label: "Write off bad debts",
+    description: "Write off an invoice nobody will pay, and reinstate it if they pay later.",
+    order: 10,
+  },
 ];
 
 /**
@@ -93,6 +99,8 @@ export const GROUP_INTRODUCED: Record<
   FINANCE: { addedIn: "2026-10", restrictedDefault: "ON" },
   NOTIFICATIONS: { addedIn: "2026-10", restrictedDefault: "ON" },
   REPORTS: { addedIn: "2026-10", restrictedDefault: "ON" },
+  // SA-1050 (owner 2026-10-20, "off by default"): the first group that ships OFF. Every later group keeps default-on.
+  BAD_DEBT: { addedIn: "2026-10", restrictedDefault: "OFF" },
 };
 
 /** Whether the permission check only reports (`shadow`) or applies (`live`) the groups. */

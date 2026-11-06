@@ -63,9 +63,23 @@ describe("GROUP_INTRODUCED", () => {
   });
 
   it("the nine baseline groups are all ON for restricted operators", () => {
-    for (const key of OPERATOR_PERMISSION_GROUP_VALUES) {
+    for (const key of OPERATOR_PERMISSION_GROUP_VALUES.filter((k) => k !== "BAD_DEBT")) {
       expect(GROUP_INTRODUCED[key]).toEqual({ addedIn: "2026-10", restrictedDefault: "ON" });
     }
+  });
+
+  it("BAD_DEBT is the first group that ships OFF by default (SA-1050, owner 2026-10-20)", () => {
+    expect(GROUP_INTRODUCED.BAD_DEBT).toEqual({ addedIn: "2026-10", restrictedDefault: "OFF" });
+    expect(PERMISSION_GROUPS.find((g) => g.key === "BAD_DEBT")).toMatchObject({
+      label: "Write off bad debts",
+      order: 10,
+    });
+    // the only group that is not baseline: every other one stays default-on
+    expect(
+      OPERATOR_PERMISSION_GROUP_VALUES.filter(
+        (k) => GROUP_INTRODUCED[k].restrictedDefault === "OFF",
+      ),
+    ).toEqual(["BAD_DEBT"]);
   });
 });
 
