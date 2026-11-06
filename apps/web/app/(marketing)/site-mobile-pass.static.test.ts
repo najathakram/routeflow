@@ -120,20 +120,13 @@ describe("every colour it adds keeps the text above it AA", () => {
   });
 });
 
-describe("the first screen on a phone is not grey", () => {
+describe("the first screen on a phone", () => {
   const wheel = read("graphics/rf-wheel-up.js");
   const css = read("css/mobile.css");
 
-  it("a tall stage gets its own six glows, painted into the canvas under the pieces", () => {
-    expect(wheel).toContain("const WASH_NARROW = [");
-    expect(wheel).toContain("of phone && H > W * 1.05 ? WASH_NARROW : WASH)");
-    // six glows, every one soft (alpha at most 0.5, so the stage stays light behind the pieces)
-    const body = wheel.slice(wheel.indexOf("const WASH_NARROW = ["), wheel.indexOf("const washCv"));
-    const alphas = [...body.matchAll(/\d+, \d+, \d+, (0\.\d+), 0\.7\d?\]/g)].map((m) =>
-      Number(m[1]),
-    );
-    expect(alphas).toHaveLength(6);
-    for (const a of alphas) expect(a).toBeLessThanOrEqual(0.5);
+  it("the stage has no colour glows, on a phone or anywhere", () => {
+    expect(wheel).not.toContain("WASH_NARROW");
+    expect(wheel).not.toContain("const WASH = [");
   });
 
   it("three thin brand rings sit in the hero's right margin, no repeat, behind the text", () => {
