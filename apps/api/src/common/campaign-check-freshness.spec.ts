@@ -1288,7 +1288,12 @@ describe("campaign-check freshness guard (spec T1–T17)", () => {
         fixtureDir: dir,
         runsDir,
         args: ["--freshness-only"],
-        env: { CI: "", CAMPAIGN_CHECK_TURBO_DRY_RUN: dryRunFile, JEST_WORKER_ID: "1" },
+        env: {
+          CI: "",
+          FULL_VERIFY: "",
+          CAMPAIGN_CHECK_TURBO_DRY_RUN: dryRunFile,
+          JEST_WORKER_ID: "1",
+        },
       });
       const out = combined(res);
 
