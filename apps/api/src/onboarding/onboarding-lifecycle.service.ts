@@ -44,7 +44,9 @@ export class OnboardingLifecycleService {
 
   @LeaderCron("0 15 * * *", "onboarding.sendReminders")
   async sendRemindersCron(): Promise<void> {
-    const r = await this.sendReminders(new Date());
+    const r = await this.prisma.forSystem("onboarding: send reminders across businesses", () =>
+      this.sendReminders(new Date()),
+    );
     if (r.sent > 0) this.logger.log(`onboarding reminders: ${r.sent} sent`);
   }
 
@@ -140,7 +142,10 @@ export class OnboardingLifecycleService {
 
   @LeaderCron("30 3 * * *", "onboarding.purgeIntakeFiles")
   async purgeIntakeFilesCron(): Promise<void> {
-    const r = await this.purgeIntakeFiles(new Date());
+    const r = await this.prisma.forSystem(
+      "onboarding: purge expired intake files across businesses",
+      () => this.purgeIntakeFiles(new Date()),
+    );
     if (r.purged > 0 || r.failed > 0) {
       this.logger.log(`onboarding purge: ${r.purged} purged, ${r.failed} failed`);
     }

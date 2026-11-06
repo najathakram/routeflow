@@ -1455,12 +1455,15 @@ export class BillingService {
    */
   @LeaderCron("0 * * * *", "billing.reconcileParkedCheckouts")
   async reconcileParkedCheckouts(): Promise<void> {
-    if (!this.stripe.isConfigured) return;
-    // Open parks only: NOT EXISTS a resolution row for the same entity, in the query itself (Prisma cannot
-    // express a NOT EXISTS across rows of one table). `escalated` = an ESCALATED row exists for the entity.
-    const parked = await this.prisma.$queryRaw<
-      { entityId: string; tenantId: string | null; createdAt: Date; escalated: boolean }[]
-    >`
+    return this.prisma.forSystem(
+      "billing: reconcile parked checkouts across businesses",
+      async () => {
+        if (!this.stripe.isConfigured) return;
+        // Open parks only: NOT EXISTS a resolution row for the same entity, in the query itself (Prisma cannot
+        // express a NOT EXISTS across rows of one table). `escalated` = an ESCALATED row exists for the entity.
+        const parked = await this.prisma.$queryRaw<
+          { entityId: string; tenantId: string | null; createdAt: Date; escalated: boolean }[]
+        >`
       SELECT a."entityId", a."tenantId", a."createdAt",
         EXISTS (
           SELECT 1 FROM "AuditLog" e
@@ -1477,31 +1480,34 @@ export class BillingService {
             AND r."action" = ${STRIPE_CHECKOUT_PARK_RESOLVED_ACTION}
         )
       ORDER BY a."createdAt" ASC`;
-    // An escalated park already told the platform; re-run it once a day (the UTC-midnight run), not hourly.
-    const dailyRun = new Date(Date.now()).getUTCHours() === 0;
-    for (const row of parked) {
-      if (row.escalated && !dailyRun) continue;
-      try {
-        await this.reconcileParkedCheckout(row.entityId, row.createdAt);
-      } catch (err) {
-        this.logger.error(
-          `billing.reconcileParkedCheckouts: parked checkout ${row.entityId} could not be re-run (${(err as Error)?.message}) — left open, retried next hour`,
-        );
-        // A re-run that keeps failing must not hide an old park: escalate once from the row's own ids.
-        // Passes a partial `{ id }` session: escalateParkedCheckout reads only `session.id`.
-        if (
-          row.tenantId &&
-          Date.now() - row.createdAt.getTime() >
-            PARKED_CHECKOUT_ESCALATE_AFTER_DAYS * 24 * 3600 * 1000
-        ) {
-          await this.escalateParkedCheckout({ id: row.entityId }, row.tenantId, true).catch((e) =>
+        // An escalated park already told the platform; re-run it once a day (the UTC-midnight run), not hourly.
+        const dailyRun = new Date(Date.now()).getUTCHours() === 0;
+        for (const row of parked) {
+          if (row.escalated && !dailyRun) continue;
+          try {
+            await this.reconcileParkedCheckout(row.entityId, row.createdAt);
+          } catch (err) {
             this.logger.error(
-              `billing.reconcileParkedCheckouts: escalation for ${row.entityId} failed (${(e as Error)?.message})`,
-            ),
-          );
+              `billing.reconcileParkedCheckouts: parked checkout ${row.entityId} could not be re-run (${(err as Error)?.message}) — left open, retried next hour`,
+            );
+            // A re-run that keeps failing must not hide an old park: escalate once from the row's own ids.
+            // Passes a partial `{ id }` session: escalateParkedCheckout reads only `session.id`.
+            if (
+              row.tenantId &&
+              Date.now() - row.createdAt.getTime() >
+                PARKED_CHECKOUT_ESCALATE_AFTER_DAYS * 24 * 3600 * 1000
+            ) {
+              await this.escalateParkedCheckout({ id: row.entityId }, row.tenantId, true).catch(
+                (e) =>
+                  this.logger.error(
+                    `billing.reconcileParkedCheckouts: escalation for ${row.entityId} failed (${(e as Error)?.message})`,
+                  ),
+              );
+            }
+          }
         }
-      }
-    }
+      },
+    );
   }
 
   private async reconcileParkedCheckout(sessionId: string, parkedAt: Date): Promise<void> {
@@ -3407,57 +3413,65 @@ ${updateLine}
    */
   @LeaderCron(CronExpression.EVERY_HOUR, "billing.reconcileCanceledSubscriptions")
   async reconcileCanceledSubscriptions(): Promise<void> {
-    if (!this.stripe.isConfigured) return; // No billing = no suspension logic
+    return this.prisma.forSystem(
+      "billing: reconcile canceled subscriptions across businesses",
+      async () => {
+        if (!this.stripe.isConfigured) return; // No billing = no suspension logic
 
-    const now = new Date();
-    const graceDeadline = overdueGraceDeadline(now);
+        const now = new Date();
+        const graceDeadline = overdueGraceDeadline(now);
 
-    // Trial expiry is owned by BillingCronService.expireTrials() → READ_ONLY (not
-    // SUSPENDED), so exports + sign-in keep working. This cron only handles overdue
-    // Stripe payments below.
+        // Trial expiry is owned by BillingCronService.expireTrials() → READ_ONLY (not
+        // SUSPENDED), so exports + sign-in keep working. This cron only handles overdue
+        // Stripe payments below.
 
-    // Overdue subscriptions (periodEnd + grace past, still ACTIVE, no recent payment)
-    const overdueSubs = await this.prisma.tenantSubscription.findMany({
-      where: overdueSubscriptionWhere(graceDeadline),
-      include: { tenant: { select: { id: true, slug: true, class: true } } },
-    });
+        // Overdue subscriptions (periodEnd + grace past, still ACTIVE, no recent payment)
+        const overdueSubs = await this.prisma.tenantSubscription.findMany({
+          where: overdueSubscriptionWhere(graceDeadline),
+          include: { tenant: { select: { id: true, slug: true, class: true } } },
+        });
 
-    for (const sub of overdueSubs) {
-      // Double-check with Stripe that the subscription is actually past-due or unpaid
-      try {
-        const stripeSub = await this.stripe.getSubscription(sub.stripeSubId!);
-        // SA r-note 5 A2: ONLY `canceled` (a subscription the tenant ended). past_due / unpaid are payment-overdue
-        // states and never suspend, in any BILLING_PAUSE_MODE: dunning owns non-payment (the 14-day grace, then
-        // READ_ONLY + pay).
-        if (stripeSub.status === "canceled") {
-          // SA-934 §3: a missed customer.subscription.deleted webhook ends the same way a delivered one does - through
-          // cancelFromStripe, the ONE writer of a Stripe-ended subscription (CANCELLED + stamp, one -MRR delta, the
-          // disarmed downgrade, the coupon reset, one notice). SA-775 (row 381): while the rollout pause holds, a
-          // PRODUCTION tenant is not cancelled; the skip record is claimed here first so a repeat hourly pass is quiet
-          // (the hold path in cancelFromStripe rewrites cancelAtPeriodEnd, the downgrade and the coupon reset each call).
-          if (!(await autoLockAllowed(this.autoLocks, sub.tenant, "stripe_cancelled"))) {
-            const first = await recordAutoLockSkip(
-              this.prisma,
-              {
-                tenantId: sub.tenantId,
-                kind: "stripe_cancelled",
-                key: sub.stripeSubId as string,
-                wouldHaveSet: { status: "CANCELLED", from: "ACTIVE" },
-              },
-              this.logger,
+        for (const sub of overdueSubs) {
+          // Double-check with Stripe that the subscription is actually past-due or unpaid
+          try {
+            const stripeSub = await this.stripe.getSubscription(sub.stripeSubId!);
+            // SA r-note 5 A2: ONLY `canceled` (a subscription the tenant ended). past_due / unpaid are payment-overdue
+            // states and never suspend, in any BILLING_PAUSE_MODE: dunning owns non-payment (the 14-day grace, then
+            // READ_ONLY + pay).
+            if (stripeSub.status === "canceled") {
+              // SA-934 §3: a missed customer.subscription.deleted webhook ends the same way a delivered one does - through
+              // cancelFromStripe, the ONE writer of a Stripe-ended subscription (CANCELLED + stamp, one -MRR delta, the
+              // disarmed downgrade, the coupon reset, one notice). SA-775 (row 381): while the rollout pause holds, a
+              // PRODUCTION tenant is not cancelled; the skip record is claimed here first so a repeat hourly pass is quiet
+              // (the hold path in cancelFromStripe rewrites cancelAtPeriodEnd, the downgrade and the coupon reset each call).
+              if (!(await autoLockAllowed(this.autoLocks, sub.tenant, "stripe_cancelled"))) {
+                const first = await recordAutoLockSkip(
+                  this.prisma,
+                  {
+                    tenantId: sub.tenantId,
+                    kind: "stripe_cancelled",
+                    key: sub.stripeSubId as string,
+                    wouldHaveSet: { status: "CANCELLED", from: "ACTIVE" },
+                  },
+                  this.logger,
+                );
+                if (!first) continue;
+              }
+              await this.cancelFromStripe(sub, "subscription_canceled_backstop");
+            }
+          } catch (err) {
+            this.logger.error(
+              `Failed to check Stripe subscription for tenant ${sub.tenantId}`,
+              err,
             );
-            if (!first) continue;
           }
-          await this.cancelFromStripe(sub, "subscription_canceled_backstop");
         }
-      } catch (err) {
-        this.logger.error(`Failed to check Stripe subscription for tenant ${sub.tenantId}`, err);
-      }
-    }
 
-    if (overdueSubs.length > 0) {
-      this.logger.log(`Suspension cron: ${overdueSubs.length} overdue subscriptions checked`);
-    }
+        if (overdueSubs.length > 0) {
+          this.logger.log(`Suspension cron: ${overdueSubs.length} overdue subscriptions checked`);
+        }
+      },
+    );
   }
 
   // ─── Helpers ──────────────────────────────────────────────────────────────

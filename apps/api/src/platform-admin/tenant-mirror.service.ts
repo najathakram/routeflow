@@ -218,33 +218,38 @@ export class TenantMirrorService {
 
   @LeaderCron("0 6 * * *", "platform-admin.mirrorSync")
   async mirrorSync(): Promise<void> {
-    if (!(await this.platformConfig.getHouseTenantId())) {
-      this.logger.warn("Mirror sync skipped: no house tenant configured yet.");
-      return;
-    }
-    const tenants = await this.prisma.tenant.findMany({
-      where: { class: { in: MIRROR_CLASSES }, deletedAt: null },
-      select: { id: true },
-    });
-    const failures: string[] = [];
-    for (const t of tenants) {
-      try {
-        await this.upsert(t.id);
-      } catch (err) {
-        failures.push(t.id);
-        this.logger.error(`Mirror sync failed for tenant ${t.id}: ${(err as Error).message}`);
-      }
-    }
-    if (failures.length) {
-      this.logger.warn(
-        `Mirror sync completed with ${failures.length} failure(s): ${failures.join(", ")}`,
-      );
-    }
-    // One greppable line EVERY night, including a clean run and a run that found zero eligible
-    // tenants: without it a sweep that silently stopped (lock never won, schedule wrong, class
-    // filter emptied) is indistinguishable in the logs from one that ran and had nothing to do.
-    this.logger.log(
-      `Mirror sync finished: ${tenants.length} tenant(s) considered, ${failures.length} failure(s).`,
+    return this.prisma.forSystem(
+      "platform mirror: sync businesses to the house business",
+      async () => {
+        if (!(await this.platformConfig.getHouseTenantId())) {
+          this.logger.warn("Mirror sync skipped: no house tenant configured yet.");
+          return;
+        }
+        const tenants = await this.prisma.tenant.findMany({
+          where: { class: { in: MIRROR_CLASSES }, deletedAt: null },
+          select: { id: true },
+        });
+        const failures: string[] = [];
+        for (const t of tenants) {
+          try {
+            await this.upsert(t.id);
+          } catch (err) {
+            failures.push(t.id);
+            this.logger.error(`Mirror sync failed for tenant ${t.id}: ${(err as Error).message}`);
+          }
+        }
+        if (failures.length) {
+          this.logger.warn(
+            `Mirror sync completed with ${failures.length} failure(s): ${failures.join(", ")}`,
+          );
+        }
+        // One greppable line EVERY night, including a clean run and a run that found zero eligible
+        // tenants: without it a sweep that silently stopped (lock never won, schedule wrong, class
+        // filter emptied) is indistinguishable in the logs from one that ran and had nothing to do.
+        this.logger.log(
+          `Mirror sync finished: ${tenants.length} tenant(s) considered, ${failures.length} failure(s).`,
+        );
+      },
     );
   }
 }

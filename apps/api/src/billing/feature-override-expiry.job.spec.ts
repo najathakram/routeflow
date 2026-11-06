@@ -95,6 +95,7 @@ function build(rows: Row[], opts: { reviewed?: string[] } = {}) {
   };
 
   const prisma = {
+    forSystem: jest.fn((_reason: string, fn: (db: any) => unknown) => fn(prisma)),
     tenantFeatureOverride: {
       findMany: jest.fn().mockImplementation(({ where, take, orderBy, cursor, skip }: any) => {
         // Applies the query's REAL ordering: a single-key orderBy (no id tiebreak) leaves ties in
@@ -166,7 +167,14 @@ function build(rows: Row[], opts: { reviewed?: string[] } = {}) {
     }),
   } as any;
   const svc = new FeatureOverrideService(prisma);
-  return { job: new FeatureOverrideExpiryJob(svc), svc, prisma, audit, rows, reviewed };
+  return {
+    job: new FeatureOverrideExpiryJob(prisma as any, svc),
+    svc,
+    prisma,
+    audit,
+    rows,
+    reviewed,
+  };
 }
 
 describe("FeatureOverrideExpiryJob.revokeExpiredOverrides (B569)", () => {

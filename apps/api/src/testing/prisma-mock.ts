@@ -370,8 +370,10 @@ export function createMockPrisma(): MockPrisma {
     itemFindMany.mockImplementation(async (a: any) => heldOr(rows, a));
   void stubRows;
 
-  return {
+  const mock: any = {
     ...models,
+    // forSystem(reason, fn) runs fn against the same mock (the real door passes the unscoped client itself)
+    forSystem: jest.fn((_reason: string, fn: (db: any) => unknown) => fn(mock)),
     // forTenant() returns the same model surface — tests can stub individual methods
     // using prisma.customer.findMany.mockResolvedValue(...) and it will work
     // whether the service calls prisma.customer directly or prisma.forTenant().customer
@@ -398,5 +400,6 @@ export function createMockPrisma(): MockPrisma {
     $disconnect: jest.fn(),
     $queryRaw: jest.fn().mockResolvedValue([]),
     $executeRaw: jest.fn().mockResolvedValue(0),
-  } as any;
+  };
+  return mock;
 }

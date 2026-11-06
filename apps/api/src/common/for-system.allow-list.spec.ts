@@ -24,6 +24,66 @@ const walk = (dir: string): string[] =>
 /** One row per call site: the file (relative to src) and the literal reason. */
 export const ALLOWED: ReadonlyArray<{ file: string; reason: string }> = [
   { file: "inventory/low-stock-digest.service.ts", reason: "low-stock digest: cross-tenant scan" },
+  {
+    file: "billing/billing-cron.service.ts",
+    reason: "billing cron: expire ended trials across businesses",
+  },
+  {
+    file: "billing/billing-cron.service.ts",
+    reason: "billing cron: warn businesses whose trial is ending",
+  },
+  {
+    file: "billing/billing-cron.service.ts",
+    reason: "billing cron: expire payment grace across businesses",
+  },
+  {
+    file: "billing/billing-cron.service.ts",
+    reason: "billing cron: apply scheduled plan downgrades",
+  },
+  {
+    file: "billing/billing-cron.service.ts",
+    reason: "billing cron: push upcoming downgrade prices",
+  },
+  {
+    file: "billing/billing-cron.service.ts",
+    reason: "billing cron: apply scheduled cancellations",
+  },
+  {
+    file: "billing/billing-cron.service.ts",
+    reason: "billing cron: roll billing cycles across businesses",
+  },
+  {
+    file: "billing/billing.service.ts",
+    reason: "billing: reconcile parked checkouts across businesses",
+  },
+  {
+    file: "billing/billing.service.ts",
+    reason: "billing: reconcile canceled subscriptions across businesses",
+  },
+  {
+    file: "billing/feature-override-review.job.ts",
+    reason: "feature grants: review expired overrides across businesses",
+  },
+  {
+    file: "billing/feature-override-review.job.ts",
+    reason: "feature grants: warn billable pilots ending",
+  },
+  {
+    file: "billing/feature-override-expiry.job.ts",
+    reason: "feature grants: revoke expired overrides across businesses",
+  },
+  {
+    file: "platform-admin/tenant-mirror.service.ts",
+    reason: "platform mirror: sync businesses to the house business",
+  },
+  {
+    file: "onboarding/onboarding-lifecycle.service.ts",
+    reason: "onboarding: send reminders across businesses",
+  },
+  {
+    file: "onboarding/onboarding-lifecycle.service.ts",
+    reason: "onboarding: purge expired intake files across businesses",
+  },
 ];
 
 export interface Found {
@@ -180,5 +240,302 @@ describe("B4-2 the SYSTEM kind has one door", () => {
     ]);
     expect(found.runSystemUses).toEqual(["x/second-door.ts::Job.a", "x/second-door.ts::Job.b"]);
     expect(found.runWithSystem).toEqual(["x/second-door.ts"]);
+  });
+});
+
+/**
+ * SA-1105 A-2, PR-2b: the SA-619a cross-tenant cron jobs run inside the deliberate door. Each entry names the job method and
+ * the literal reason of its `forSystem(reason, ...)` call, which must also be an allow-list row. The method body is the
+ * old body word for word, wrapped; this pin fails when a job is moved back onto the bare client or its reason drifts.
+ */
+export const CONVERTED_JOBS: ReadonlyArray<{
+  file: string;
+  cls: string;
+  method: string;
+  reason: string;
+}> = [
+  {
+    file: "billing/billing-cron.service.ts",
+    cls: "BillingCronService",
+    method: "expireTrials",
+    reason: "billing cron: expire ended trials across businesses",
+  },
+  {
+    file: "billing/billing-cron.service.ts",
+    cls: "BillingCronService",
+    method: "warnTrialsEnding",
+    reason: "billing cron: warn businesses whose trial is ending",
+  },
+  {
+    file: "billing/billing-cron.service.ts",
+    cls: "BillingCronService",
+    method: "expireGrace",
+    reason: "billing cron: expire payment grace across businesses",
+  },
+  {
+    file: "billing/billing-cron.service.ts",
+    cls: "BillingCronService",
+    method: "applyScheduledDowngrades",
+    reason: "billing cron: apply scheduled plan downgrades",
+  },
+  {
+    file: "billing/billing-cron.service.ts",
+    cls: "BillingCronService",
+    method: "pushUpcomingDowngradePrices",
+    reason: "billing cron: push upcoming downgrade prices",
+  },
+  {
+    file: "billing/billing-cron.service.ts",
+    cls: "BillingCronService",
+    method: "applyScheduledCancellations",
+    reason: "billing cron: apply scheduled cancellations",
+  },
+  {
+    file: "billing/billing-cron.service.ts",
+    cls: "BillingCronService",
+    method: "rollCycles",
+    reason: "billing cron: roll billing cycles across businesses",
+  },
+  {
+    file: "billing/billing.service.ts",
+    cls: "BillingService",
+    method: "reconcileParkedCheckouts",
+    reason: "billing: reconcile parked checkouts across businesses",
+  },
+  {
+    file: "billing/billing.service.ts",
+    cls: "BillingService",
+    method: "reconcileCanceledSubscriptions",
+    reason: "billing: reconcile canceled subscriptions across businesses",
+  },
+  {
+    file: "billing/feature-override-review.job.ts",
+    cls: "FeatureOverrideReviewJob",
+    method: "reviewExpiredOverrides",
+    reason: "feature grants: review expired overrides across businesses",
+  },
+  {
+    file: "billing/feature-override-review.job.ts",
+    cls: "FeatureOverrideReviewJob",
+    method: "warnBillablePilotsEnding",
+    reason: "feature grants: warn billable pilots ending",
+  },
+  {
+    file: "billing/feature-override-expiry.job.ts",
+    cls: "FeatureOverrideExpiryJob",
+    method: "revokeExpiredOverrides",
+    reason: "feature grants: revoke expired overrides across businesses",
+  },
+  {
+    file: "platform-admin/tenant-mirror.service.ts",
+    cls: "TenantMirrorService",
+    method: "mirrorSync",
+    reason: "platform mirror: sync businesses to the house business",
+  },
+  {
+    file: "onboarding/onboarding-lifecycle.service.ts",
+    cls: "OnboardingLifecycleService",
+    method: "sendRemindersCron",
+    reason: "onboarding: send reminders across businesses",
+  },
+  {
+    file: "onboarding/onboarding-lifecycle.service.ts",
+    cls: "OnboardingLifecycleService",
+    method: "purgeIntakeFilesCron",
+    reason: "onboarding: purge expired intake files across businesses",
+  },
+];
+
+/** The literal first argument of every `forSystem(` call made directly inside `cls.method`. */
+export function forSystemReasonsInMethod(text: string, cls: string, method: string): string[] {
+  const sf = ts.createSourceFile("x.ts", text, ts.ScriptTarget.Latest, true);
+  const out: string[] = [];
+  const inMethod = (n: ts.Node) => {
+    if (
+      ts.isCallExpression(n) &&
+      ts.isPropertyAccessExpression(n.expression) &&
+      n.expression.name.text === "forSystem" &&
+      n.arguments[0] &&
+      ts.isStringLiteralLike(n.arguments[0])
+    ) {
+      out.push(n.arguments[0].text);
+    }
+    ts.forEachChild(n, inMethod);
+  };
+  const visit = (n: ts.Node) => {
+    if (ts.isClassDeclaration(n) && n.name?.text === cls) {
+      for (const m of n.members) {
+        if (ts.isMethodDeclaration(m) && m.name.getText() === method) inMethod(m);
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+/**
+ * L-1: the old body runs INSIDE the callback. Reported, for the method outside any `forSystem` callback: any `this.<member>`
+ * access other than the logger (a helper or an injected service, called or not, by dot or by element access; `this.prisma`
+ * included), any `this` that is not the receiver of such an access (`const self = this`, `const { prisma } = this`,
+ * `this[key]`), a `forSystem` whose 2nd argument is not a function, and a first statement that does not hold the
+ * `forSystem` call. So an empty wrapper with the query or the helper beside it is non-empty.
+ */
+export function outsideForSystem(text: string, cls: string, method: string): string[] {
+  const sf = ts.createSourceFile("x.ts", text, ts.ScriptTarget.Latest, true);
+  const out: string[] = [];
+  const isThis = (e: ts.Node) => e.kind === ts.SyntaxKind.ThisKeyword;
+  const memberOfThis = (n: ts.Node): string | null =>
+    ts.isPropertyAccessExpression(n) && isThis(n.expression)
+      ? n.name.text
+      : ts.isElementAccessExpression(n) &&
+          isThis(n.expression) &&
+          ts.isStringLiteralLike(n.argumentExpression)
+        ? n.argumentExpression.text
+        : null;
+  const walkBody = (n: ts.Node) => {
+    if (
+      ts.isCallExpression(n) &&
+      ts.isPropertyAccessExpression(n.expression) &&
+      n.expression.name.text === "forSystem"
+    ) {
+      const cb = n.arguments[1];
+      const isFn = !!cb && (ts.isArrowFunction(cb) || ts.isFunctionExpression(cb));
+      if (!isFn) out.push("no callback");
+      n.arguments.forEach((a, i) => (i !== 1 || !isFn) && walkBody(a));
+      return;
+    }
+    const member = memberOfThis(n);
+    if (member === "prisma") out.push("this.prisma");
+    else if (member !== null && member !== "logger") out.push(`this.${member}`);
+    // `this` that is not the receiver of a member access (an alias, a destructure, `this[key]`) lets any member escape.
+    if (isThis(n) && !(n.parent && memberOfThis(n.parent) !== null)) out.push("this escapes");
+    ts.forEachChild(n, walkBody);
+  };
+  const visit = (n: ts.Node) => {
+    if (ts.isClassDeclaration(n) && n.name?.text === cls) {
+      for (const m of n.members) {
+        if (!ts.isMethodDeclaration(m) || m.name.getText() !== method || !m.body) continue;
+        const first = m.body.statements[0];
+        if (!first || !/\bforSystem\(/.test(first.getText()))
+          out.push("statement before forSystem");
+        walkBody(m.body);
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+describe("C-2 the SA-619a cron jobs run inside forSystem", () => {
+  it("no converted job runs a query or a helper outside its forSystem callback", () => {
+    for (const j of CONVERTED_JOBS) {
+      const text = fs.readFileSync(path.join(SRC, j.file), "utf8");
+      expect({
+        job: `${j.cls}.${j.method}`,
+        outside: outsideForSystem(text, j.cls, j.method),
+      }).toEqual({ job: `${j.cls}.${j.method}`, outside: [] });
+    }
+  });
+
+  it("self-test: the shapes that put the work beside the wrapper are reported, the good shapes are not", () => {
+    const FS = 'this.prisma.forSystem("some reason here", async () => 1)';
+    const red = (body: string) =>
+      outsideForSystem(`class J { async run() { ${body} } }`, "J", "run");
+    // good: query or helper inside, the logger outside, a held result read after
+    expect(
+      red(
+        'return this.prisma.forSystem("some reason here", async () => this.prisma.tenant.findMany());',
+      ),
+    ).toEqual([]);
+    expect(
+      red('return this.prisma.forSystem("some reason here", () => this.sweep(new Date()));'),
+    ).toEqual([]);
+    expect(red(`const r = await ${FS}; this.logger.log("done " + r);`)).toEqual([]);
+    // 1 a query beside an empty wrapper
+    expect(red(`await this.prisma.tenant.findMany(); return ${FS};`)).toEqual([
+      "statement before forSystem",
+      "this.prisma",
+    ]);
+    // 2 a helper beside an empty wrapper, before and after it
+    expect(red(`await this.sweep(); return ${FS};`)).toEqual([
+      "statement before forSystem",
+      "this.sweep",
+    ]);
+    expect(red(`const r = await ${FS}; return this.sweep(r);`)).toEqual(["this.sweep"]);
+    // 3 an alias of the client
+    expect(red(`const p = this.prisma; await p.tenant.findMany(); return ${FS};`)).toEqual([
+      "statement before forSystem",
+      "this.prisma",
+    ]);
+    // 4 element access, for the client and for a helper
+    expect(red(`await this['prisma'].tenant.findMany(); return ${FS};`)).toEqual([
+      "statement before forSystem",
+      "this.prisma",
+    ]);
+    expect(red(`const r = await ${FS}; return this['sweep'](r);`)).toEqual(["this.sweep"]);
+    // 5 a callback that is not a function
+    expect(red('return this.prisma.forSystem("some reason here", this.sweep());')).toEqual([
+      "no callback",
+      "this.sweep",
+    ]);
+    // 6 an injected service used after the wrapper, with or without a call, and `.call()` on a member
+    expect(red(`const r = await ${FS}; await this.email.sendPlatform(r);`)).toEqual(["this.email"]);
+    expect(red(`const r = await ${FS}; return this.storage.delete(r);`)).toEqual(["this.storage"]);
+    expect(red(`const r = await ${FS}; return this.sweep.call(this, r);`)).toEqual([
+      "this.sweep",
+      "this escapes",
+    ]);
+    // 7 `this` handed on: an alias, a destructure, a computed key
+    expect(red(`const self = this; await self.sweep(); return ${FS};`)).toEqual([
+      "statement before forSystem",
+      "this escapes",
+    ]);
+    expect(red(`const { prisma } = this; await prisma.tenant.findMany(); return ${FS};`)).toEqual([
+      "statement before forSystem",
+      "this escapes",
+    ]);
+    expect(red(`const k = "sweep"; const r = await ${FS}; return this[k](r);`)).toEqual([
+      "statement before forSystem",
+      "this escapes",
+    ]);
+    // 8 the logger is the one exemption, in both spellings
+    expect(red(`const r = await ${FS}; this.logger.log("x"); this["logger"].warn("y");`)).toEqual(
+      [],
+    );
+  });
+
+  it("each converted job method calls forSystem with its allow-list reason, exactly once", () => {
+    for (const j of CONVERTED_JOBS) {
+      const text = fs.readFileSync(path.join(SRC, j.file), "utf8");
+      expect({
+        job: `${j.cls}.${j.method}`,
+        reasons: forSystemReasonsInMethod(text, j.cls, j.method),
+      }).toEqual({
+        job: `${j.cls}.${j.method}`,
+        reasons: [j.reason],
+      });
+      expect(ALLOWED).toContainEqual({ file: j.file, reason: j.reason });
+    }
+  });
+
+  it("every allow-list row beyond the first conversion belongs to a converted job (no orphan rows)", () => {
+    const converted = new Set(CONVERTED_JOBS.map((j) => `${j.file} :: ${j.reason}`));
+    const rest = ALLOWED.map(key).filter((k) => !converted.has(k));
+    expect(rest).toEqual([
+      "inventory/low-stock-digest.service.ts :: low-stock digest: cross-tenant scan",
+    ]);
+  });
+
+  it("self-test: a job method without a forSystem call, or with another reason, is reported", () => {
+    const bare = "class J { async run() { return this.prisma.tenant.findMany(); } }";
+    expect(forSystemReasonsInMethod(bare, "J", "run")).toEqual([]);
+    const wrapped =
+      'class J { async run() { return this.prisma.forSystem("a different reason", async () => 1); } }';
+    expect(forSystemReasonsInMethod(wrapped, "J", "run")).toEqual(["a different reason"]);
+    const elsewhere =
+      'class J { other() { return this.prisma.forSystem("some other job", async () => 1); } async run() {} }';
+    expect(forSystemReasonsInMethod(elsewhere, "J", "run")).toEqual([]);
   });
 });

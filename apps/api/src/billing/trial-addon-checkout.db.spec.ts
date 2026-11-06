@@ -68,6 +68,8 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
     const url = requireLocalDatabaseUrl();
     pool = new Pool({ connectionString: url });
     prisma = new PrismaClient({ adapter: new PrismaPg(pool) } as any);
+    // SA-1105 A-2: a bare client has no forSystem door; the jobs under test call it, so give it the same pass-through.
+    (prisma as any).forSystem = (_reason: string, fn: (db: unknown) => unknown) => fn(prisma);
     createdVersionId = await ensurePublishedCatalog(
       prisma,
       {
@@ -1364,6 +1366,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
     /** The billing cron's REAL rollCycles, confined to one tenant (the shared scratch DB holds others). */
     const rollCyclesFor = (tenantId: string) => {
       const scoped = {
+        forSystem: (_reason: string, fn: (db: unknown) => unknown) => fn(scoped),
         tenantSubscription: {
           findMany: (args: any) =>
             prisma.tenantSubscription.findMany({ ...args, where: { ...args.where, tenantId } }),
