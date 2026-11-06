@@ -375,13 +375,23 @@ export function forSystemReasonsInMethod(text: string, cls: string, method: stri
 }
 
 /**
- * L-1: the old body must run INSIDE the callback. Every `this.prisma.<x>` read in the method other than `forSystem`
- * itself that sits outside a `forSystem` callback (a function or arrow, the 2nd argument), plus any `forSystem` call
- * whose 2nd argument is not a function, is returned. An empty wrapper with the query beside it is therefore non-empty.
+ * L-1: the old body runs INSIDE the callback. Reported, for the method outside any `forSystem` callback: a `this.*`
+ * call other than the logger (a helper, by dot or by element access), any use of `this.prisma` (a query, an alias, or
+ * `this['prisma']`), a `forSystem` whose 2nd argument is not a function, and a first statement that does not hold the
+ * `forSystem` call. So an empty wrapper with the query or the helper beside it is non-empty.
  */
-export function prismaOutsideForSystem(text: string, cls: string, method: string): string[] {
+export function outsideForSystem(text: string, cls: string, method: string): string[] {
   const sf = ts.createSourceFile("x.ts", text, ts.ScriptTarget.Latest, true);
   const out: string[] = [];
+  const isThis = (e: ts.Node) => e.kind === ts.SyntaxKind.ThisKeyword;
+  const memberOfThis = (n: ts.Node): string | null =>
+    ts.isPropertyAccessExpression(n) && isThis(n.expression)
+      ? n.name.text
+      : ts.isElementAccessExpression(n) &&
+          isThis(n.expression) &&
+          ts.isStringLiteralLike(n.argumentExpression)
+        ? n.argumentExpression.text
+        : null;
   const walkBody = (n: ts.Node) => {
     if (
       ts.isCallExpression(n) &&
@@ -389,19 +399,31 @@ export function prismaOutsideForSystem(text: string, cls: string, method: string
       n.expression.name.text === "forSystem"
     ) {
       const cb = n.arguments[1];
-      if (!cb || !(ts.isArrowFunction(cb) || ts.isFunctionExpression(cb))) out.push("no callback");
-      n.arguments.forEach((a, i) => i !== 1 && walkBody(a));
+      const isFn = !!cb && (ts.isArrowFunction(cb) || ts.isFunctionExpression(cb));
+      if (!isFn) out.push("no callback");
+      n.arguments.forEach((a, i) => (i !== 1 || !isFn) && walkBody(a));
       return;
     }
-    if (ts.isPropertyAccessExpression(n) && n.expression.getText() === "this.prisma") {
-      out.push(n.name.text);
+    const member = memberOfThis(n);
+    if (member === "prisma") out.push("this.prisma");
+    else if (
+      member !== null &&
+      member !== "logger" &&
+      ts.isCallExpression(n.parent) &&
+      n.parent.expression === n
+    ) {
+      out.push(`this.${member}()`);
     }
     ts.forEachChild(n, walkBody);
   };
   const visit = (n: ts.Node) => {
     if (ts.isClassDeclaration(n) && n.name?.text === cls) {
       for (const m of n.members) {
-        if (ts.isMethodDeclaration(m) && m.name.getText() === method) walkBody(m);
+        if (!ts.isMethodDeclaration(m) || m.name.getText() !== method || !m.body) continue;
+        const first = m.body.statements[0];
+        if (!first || !/\bforSystem\(/.test(first.getText()))
+          out.push("statement before forSystem");
+        walkBody(m.body);
       }
     }
     ts.forEachChild(n, visit);
@@ -411,26 +433,57 @@ export function prismaOutsideForSystem(text: string, cls: string, method: string
 }
 
 describe("C-2 the SA-619a cron jobs run inside forSystem", () => {
-  it("no converted job touches this.prisma outside its forSystem callback", () => {
+  it("no converted job runs a query or a helper outside its forSystem callback", () => {
     for (const j of CONVERTED_JOBS) {
       const text = fs.readFileSync(path.join(SRC, j.file), "utf8");
       expect({
         job: `${j.cls}.${j.method}`,
-        outside: prismaOutsideForSystem(text, j.cls, j.method),
+        outside: outsideForSystem(text, j.cls, j.method),
       }).toEqual({ job: `${j.cls}.${j.method}`, outside: [] });
     }
   });
 
-  it("self-test: an empty wrapper with the query beside it, or a non-function callback, is reported", () => {
-    const inside =
-      'class J { async run() { return this.prisma.forSystem("some reason here", async () => this.prisma.tenant.findMany()); } }';
-    expect(prismaOutsideForSystem(inside, "J", "run")).toEqual([]);
-    const beside =
-      'class J { async run() { const r = await this.prisma.tenant.findMany(); return this.prisma.forSystem("some reason here", async () => r); } }';
-    expect(prismaOutsideForSystem(beside, "J", "run")).toEqual(["tenant"]);
-    const notFn =
-      'class J { async run() { return this.prisma.forSystem("some reason here", this.sweep()); } }';
-    expect(prismaOutsideForSystem(notFn, "J", "run")).toEqual(["no callback"]);
+  it("self-test: the shapes that put the work beside the wrapper are reported, the good shapes are not", () => {
+    const FS = 'this.prisma.forSystem("some reason here", async () => 1)';
+    const red = (body: string) =>
+      outsideForSystem(`class J { async run() { ${body} } }`, "J", "run");
+    // good: query or helper inside, the logger outside, a held result read after
+    expect(
+      red(
+        'return this.prisma.forSystem("some reason here", async () => this.prisma.tenant.findMany());',
+      ),
+    ).toEqual([]);
+    expect(
+      red('return this.prisma.forSystem("some reason here", () => this.sweep(new Date()));'),
+    ).toEqual([]);
+    expect(red(`const r = await ${FS}; this.logger.log("done " + r);`)).toEqual([]);
+    // 1 a query beside an empty wrapper
+    expect(red(`await this.prisma.tenant.findMany(); return ${FS};`)).toEqual([
+      "statement before forSystem",
+      "this.prisma",
+    ]);
+    // 2 a helper beside an empty wrapper, before and after it
+    expect(red(`await this.sweep(); return ${FS};`)).toEqual([
+      "statement before forSystem",
+      "this.sweep()",
+    ]);
+    expect(red(`const r = await ${FS}; return this.sweep(r);`)).toEqual(["this.sweep()"]);
+    // 3 an alias of the client
+    expect(red(`const p = this.prisma; await p.tenant.findMany(); return ${FS};`)).toEqual([
+      "statement before forSystem",
+      "this.prisma",
+    ]);
+    // 4 element access, for the client and for a helper
+    expect(red(`await this['prisma'].tenant.findMany(); return ${FS};`)).toEqual([
+      "statement before forSystem",
+      "this.prisma",
+    ]);
+    expect(red(`const r = await ${FS}; return this['sweep'](r);`)).toEqual(["this.sweep()"]);
+    // 5 a callback that is not a function
+    expect(red('return this.prisma.forSystem("some reason here", this.sweep());')).toEqual([
+      "no callback",
+      "this.sweep()",
+    ]);
   });
 
   it("each converted job method calls forSystem with its allow-list reason, exactly once", () => {
