@@ -27,6 +27,7 @@
 import type { ConfigSnapshotHeld, ConfigSnapshotSkipReason } from "@routeflow/types";
 import { featureDefByKey } from "./feature-registry";
 import { applyAddonOverrides, fleetHeldIn } from "./fulfilment-capability";
+import { isLiveOverride, pickLiveRow, resolveLiveEffects } from "./feature-override-rule";
 
 export const SNAPSHOT_PAYLOAD_VERSION = 1 as const;
 
@@ -78,7 +79,21 @@ export interface OverrideRow {
 }
 
 const isActive = (o: OverrideRow, now: Date): boolean =>
-  o.revokedAt === null && (o.expiresAt === null || o.expiresAt > now);
+  o.revokedAt === null && isLiveOverride(o, now.getTime());
+
+/**
+ * The CURRENT part of a restore's effect list: the one rule's answer per key (first live row in the read's order,
+ * `OVERRIDE_RULE_ORDER`), never a re-derivation. A plan's creates are appended AFTER it, so they win.
+ */
+export const currentEffects = (
+  overrides: readonly OverrideRow[],
+  now: Date,
+): [string, "GRANT" | "DENY"][] => [
+  ...resolveLiveEffects(
+    overrides.filter((o) => o.revokedAt === null),
+    now.getTime(),
+  ),
+];
 
 /** Deterministic order so two snapshots of the same state serialise identically. */
 const byKey = <T extends { featureKey: string }>(a: T, b: T): number =>
@@ -231,7 +246,12 @@ export function planRestore(
       continue;
     }
     const rows = byFeature.get(entry.featureKey) ?? [];
-    const live = rows.find((o) => isActive(o, now));
+    // the ONE rule: the first live row in the read's order (newest first), never a local re-derivation
+    const live = pickLiveRow(
+      rows.filter((o) => o.revokedAt === null),
+      entry.featureKey,
+      now.getTime(),
+    );
     if (live && live.effect === entry.effect && live.createdAt <= takenAt) {
       plan.overrides.unchanged.push(entry.featureKey);
       continue;
@@ -328,9 +348,7 @@ export function fleetHeldAfterRestore(
   now: Date,
 ): boolean {
   const effects: [string, "GRANT" | "DENY"][] = [
-    ...current.overrides
-      .filter((o) => isActive(o, now))
-      .map((o): [string, "GRANT" | "DENY"] => [o.featureKey, o.effect]),
+    ...currentEffects(current.overrides, now),
     ...plan.overrides.create.map((e): [string, "GRANT" | "DENY"] => [e.featureKey, e.effect]),
   ];
   const rows = [...current.activeAddonKeys, ...(current.pendingAddonKeys ?? [])];

@@ -17,6 +17,7 @@ import {
   PILOT_WARNING_DAYS,
 } from "./billable-pilot-ending";
 import { PAYING_TENANT_CONDITIONS } from "./mrr.service";
+import { OVERRIDE_RULE_ORDER, resolveLiveEffects } from "./feature-override-rule";
 
 // Re-exported: the constant's home is `feature-override-audit.constants.ts` (shared with the sweep).
 export { FEATURE_OVERRIDE_EXPIRED_REVIEW_ACTION };
@@ -244,20 +245,17 @@ export class FeatureOverrideReviewJob {
           }),
           this.prisma.tenantFeatureOverride.findMany({
             where: { tenantId: row.tenantId, revokedAt: null, id: { not: row.id } },
+            orderBy: OVERRIDE_RULE_ORDER,
             select: { featureKey: true, effect: true, expiresAt: true },
           }),
           this.entitlements.resolve(row.tenantId),
         ]);
-        const otherOverrides = new Map<string, "GRANT" | "DENY">();
-        for (const o of otherRows as {
-          featureKey: string;
-          effect: "GRANT" | "DENY";
-          expiresAt?: Date | null;
-        }[]) {
-          // only a LIVE override counts toward what is served
-          if (o.expiresAt != null && o.expiresAt.getTime() <= now.getTime()) continue;
-          otherOverrides.set(o.featureKey, o.effect);
-        }
+        // B1282: what is served is read by the one override rule (a live row only, the first per key), shared with the
+        // served answer (FeatureOverrideService.allActive).
+        const otherOverrides = resolveLiveEffects(
+          otherRows as { featureKey: string; effect: "GRANT" | "DENY"; expiresAt: Date | null }[],
+          now.getTime(),
+        );
         const paid = billablePilotEnding({
           override: row,
           now,

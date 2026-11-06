@@ -21,6 +21,14 @@ const KINDS: Kind[] = [
     model: "trackedCategory",
     message: "Tracked category not found",
   },
+  // B1106 / SA-1105 PR B: no null-tenant exemption, the wording the DRIVER paths already use.
+  { name: "routeRun", field: "routeRunIds", model: "routeRun", message: "Run not found" },
+  {
+    name: "routeRunStop",
+    field: "routeRunStopIds",
+    model: "routeRunStop",
+    message: "Stop not found",
+  },
 ];
 
 function makePrisma() {

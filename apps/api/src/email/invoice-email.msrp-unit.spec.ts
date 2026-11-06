@@ -23,9 +23,16 @@ function makeService(): EmailService {
   const mailboxSend = {
     trySend: jest.fn().mockResolvedValue({ delivered: false, transport: "mailbox" }),
   } as any;
-  return new EmailService(config, prisma, { decrypt: (v: string) => v } as any, mailboxSend, {
-    record: jest.fn(),
-  } as any);
+  return new EmailService(
+    config,
+    prisma,
+    { decrypt: (v: string) => v } as any,
+    mailboxSend,
+    {
+      record: jest.fn(),
+    } as any,
+    {} as any,
+  );
 }
 
 const build = (item: Record<string, unknown>) =>

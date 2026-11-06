@@ -51,6 +51,7 @@ function makeService(opts: {
     encryption,
     mailboxSend as any,
     { record: jest.fn() } as any,
+    {} as any,
   );
 
   const nodemailerSendMail = jest.fn().mockResolvedValue({ messageId: "smtp-msg-1" });

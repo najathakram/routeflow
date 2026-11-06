@@ -1,6 +1,6 @@
 /**
  * SA-1101 A-6 Part 2 (B1279), row RO-39: the customer-scoped returns lock key has ONE definition.
- * `returnCustomerLockKey(c, t)` equals the old `idempotency.hashFor(c, t, "returns.customer")` for sample inputs, and the
+ * `returnCustomerLockKey({ customerId: c, tenantId: t })` equals the old `idempotency.hashFor(c, t, "returns.customer")` for sample inputs, and the
  * scope literal appears in `return-customer-lock.ts` only (the three lock sites and the live-return guard derive through
  * it). A second literal is a second key, which silently stops two of them excluding each other.
  */
@@ -31,18 +31,20 @@ describe("RO-39: returnCustomerLockKey is the one key", () => {
 
   it("equals the old hashFor(customerId, tenantId, 'returns.customer') for sample inputs", () => {
     for (const [c, t] of samples) {
-      expect(returnCustomerLockKey(c, t)).toBe(idem.hashFor(c, t, "returns.customer"));
+      expect(returnCustomerLockKey({ customerId: c, tenantId: t })).toBe(
+        idem.hashFor(c, t, "returns.customer"),
+      );
     }
   });
 
   it("separates customers and tenants", () => {
-    const keys = samples.map(([c, t]) => returnCustomerLockKey(c, t));
+    const keys = samples.map(([c, t]) => returnCustomerLockKey({ customerId: c, tenantId: t }));
     expect(new Set(keys).size).toBe(samples.length);
   });
 
   it("derives through an injected keys service when given one (the lock sites keep their fakes)", () => {
     const keys = { hashFor: jest.fn(() => "fake") };
-    expect(returnCustomerLockKey("c", "t", keys)).toBe("fake");
+    expect(returnCustomerLockKey({ customerId: "c", tenantId: "t" }, keys)).toBe("fake");
     expect(keys.hashFor).toHaveBeenCalledWith("c", "t", "returns.customer");
   });
 
@@ -58,6 +60,46 @@ describe("RO-39: returnCustomerLockKey is the one key", () => {
       .map((f) => path.relative(SRC, f).replace(/\\/g, "/"))
       .sort();
     expect(holders).toEqual(["returns/return-customer-lock.ts"]);
+  });
+});
+
+/** The argument text (balanced parentheses) of each `name(` call in `code`. */
+function callArguments(code: string, name: string): string[] {
+  const out: string[] = [];
+  let at = code.indexOf(name + "(");
+  while (at !== -1) {
+    let depth = 0;
+    let i = at + name.length;
+    for (; i < code.length; i++) {
+      if (code[i] === "(") depth++;
+      else if (code[i] === ")" && --depth === 0) break;
+    }
+    out.push(code.slice(at + name.length + 1, i));
+    at = code.indexOf(name + "(", i);
+  }
+  return out;
+}
+
+describe("L-4 (SA-1101 A-7): no lock key is built from the caller's tenant context", () => {
+  it("no argument to returnCustomerLockKey( or lockReturnCustomer( in apps/api/src contains getTenantId", () => {
+    const offenders: string[] = [];
+    let seen = 0;
+    for (const f of walk(SRC)) {
+      const code = fs
+        .readFileSync(f, "utf8")
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/\/\/.*$/gm, "");
+      for (const name of ["returnCustomerLockKey", "lockReturnCustomer"]) {
+        for (const args of callArguments(code, name)) {
+          seen++;
+          if (args.includes("getTenantId")) {
+            offenders.push(path.relative(SRC, f).replace(/\\/g, "/"));
+          }
+        }
+      }
+    }
+    expect(seen).toBeGreaterThan(3); // not vacuous: the helper, create, the inline seat, the guard
+    expect(offenders).toEqual([]);
   });
 });
 
@@ -77,7 +119,9 @@ describe("lockReturnCustomersOf", () => {
       },
     };
     const customers = await lockReturnCustomersOf(tx, ["o1", "o2", "o3"]);
-    const expected = ["c1", "c2"].map((c) => returnCustomerLockKey(c, "t1")).sort();
+    const expected = ["c1", "c2"]
+      .map((c) => returnCustomerLockKey({ customerId: c, tenantId: "t1" }))
+      .sort();
     expect(taken).toEqual(expected);
     expect([...customers].sort()).toEqual(["c1", "c2"]);
   });

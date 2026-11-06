@@ -88,6 +88,7 @@ describe("MessagesService — F2-006 run-chat participant gate", () => {
   it("assigned DRIVER and OPERATOR CAN create a run message", async () => {
     prisma.driver.findFirst.mockResolvedValue({ id: "drv-1" });
     prisma.routeRun.findFirst.mockResolvedValue({ driverId: "drv-1" });
+    prisma.routeRun.findMany.mockResolvedValue([{ id: "run-1" }]); // B1106: the staff path proves the run is the tenant's
     await service.create({ runId: "run-1", text: "on my way" }, "drv-user", "DRIVER");
     await service.create({ runId: "run-1", text: "ok" }, "op-user", "OPERATOR");
     expect(prisma.message.create).toHaveBeenCalledTimes(2);

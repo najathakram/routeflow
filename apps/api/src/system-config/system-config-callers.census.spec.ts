@@ -44,6 +44,11 @@ const TABLE: Record<string, Row> = {
     "REQUEST",
     "CTX",
   ),
+  "email/email.service.ts": R(
+    1,
+    "SettingsController add / refresh / from-address / remove sending domain (tenant JWT), via writeSendingDomainConfig (SA-1105 Q6)",
+    "REQUEST",
+  ),
   "invoices/invoice-pdf.service.ts": R(
     3,
     "InvoicesController / BuyerController (CTX) and the recurring-invoice cron's send (CTX)",

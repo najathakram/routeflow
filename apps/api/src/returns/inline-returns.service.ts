@@ -39,6 +39,7 @@ import {
 } from "@nestjs/common";
 import { MovementType, Prisma, UserRole } from "@prisma/client";
 import { lockProductsForStock } from "../common/product-locks";
+import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 import { applyStockMovements } from "../inventory/stock-movements";
 import { roundMoney, scaleFrozenSplit } from "@routeflow/pricing";
 import { PrismaService } from "../prisma/prisma.service";
@@ -272,8 +273,16 @@ export class InlineReturnsService {
    * Invoice -> rows (SA-214). Inline and STANDARD return creation for one customer serialize on it.
    */
   async lockCustomerInTx(tx: any, customerId: string): Promise<void> {
+    // SA-1101 A-7: the key's tenant is the CUSTOMER ROW's, so a tenantless call (a SUPER_ADMIN) takes the same lock as
+    // the live-return guard and every tenant seat. A plain read, not a row lock: SA-214's order is unchanged and
+    // this is still the transaction's first lock.
+    const customer = await tx.customer.findUnique({
+      where: { id: customerId },
+      select: { id: true, tenantId: true },
+    });
+    if (!customer) throw new NotFoundException("Customer not found");
     await this.idempotency.acquireLock(
-      returnCustomerLockKey(customerId, this.prisma.getTenantId(), this.idempotency),
+      returnCustomerLockKey({ customerId, tenantId: customer.tenantId ?? null }, this.idempotency),
       tx,
     );
   }
@@ -303,6 +312,11 @@ export class InlineReturnsService {
     customerId: string,
     user: JwtPayload,
   ): Promise<number> {
+    // B1106: the stop this return is captured at is stored on the Return below (captureInTx, inside the tx, where the proof
+    // cannot run). A DRIVER's stop is proven by the quote's own-run check; the staff path stored it unread.
+    if (user.role !== UserRole.DRIVER) {
+      await assertRefsInTenant(this.prisma, { routeRunStopIds: [lines.routeRunStopId] });
+    }
     const db = this.prisma.forTenant();
     if (lines.returnKey) {
       const pre = await db.return.findFirst({
@@ -741,6 +755,10 @@ export class InlineReturnsService {
     // whose only pack evidence is this order's own SENT invoice refuses HERE, before the revert.
     opts: { revertOrderId?: string } = {},
   ): Promise<number | null> {
+    // B1106: same staff-path proof as preflightNewOrderReturn, before any read (the order edit's own entry).
+    if (user.role !== UserRole.DRIVER) {
+      await assertRefsInTenant(this.prisma, { routeRunStopIds: [dto.routeRunStopId] });
+    }
     const db = this.prisma.forTenant();
     if (dto.returnKey) {
       const pre = await db.return.findFirst({
@@ -1064,6 +1082,10 @@ export class InlineReturnsService {
 
     const tenantId = this.prisma.getTenantId();
     await this.assertGranted(tenantId);
+    // B1106: same staff-path proof (the standalone entry); captureInTx stores the stop inside its transaction.
+    if (user.role !== UserRole.DRIVER) {
+      await assertRefsInTenant(this.prisma, { routeRunStopIds: [dto.routeRunStopId] });
+    }
 
     // `minted` is set only by a fresh, unheld STORE_CREDIT capture: its credit note was minted in the capture's own transaction
     let result: { replayed: boolean; ret: any; overCap: boolean; minted?: any };
