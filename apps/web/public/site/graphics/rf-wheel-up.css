@@ -7,7 +7,7 @@
 .rfw-pin{position:sticky;top:var(--rfw-top,0px);height:calc(100vh - var(--rfw-top,0px));overflow:hidden;overflow:clip}
 @supports (height:1svh){.rfw-pin{height:calc(100svh - var(--rfw-top,0px))}}
 /* The stage: one rounded light tile on the page grid. White page all round, so it hands off to the sections above and below. */
-.rfw-tile{position:absolute;top:var(--rfw-gy);bottom:var(--rfw-gy);left:0;right:0;width:var(--rfw-grid);margin:0 auto;border-radius:var(--rf-r-stage);background:var(--tint)}
+.rfw-tile{position:absolute;top:var(--rfw-gy);bottom:var(--rfw-gy);left:0;right:0;width:var(--rfw-grid);margin:0 auto;border-radius:var(--rf-r-stage);background:#fff}
 .rfw-cvw{position:absolute;left:0;top:0;overflow:hidden;border-radius:inherit}
 .rfw-cv{position:absolute;left:0;top:0;display:block;touch-action:pan-y;will-change:transform}
 .rfw-wheel{position:absolute;left:50%;top:50%;width:1px;height:1px;pointer-events:none}

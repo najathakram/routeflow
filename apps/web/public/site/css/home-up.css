@@ -19,11 +19,11 @@
 .js-motion .hx-up .rfw--static{display:flow-root;height:calc(100vh - var(--hx-bar) + 100vh*var(--rfw-run))}
 @supports (height:1svh){.js-motion .hx-up .rfw--static{height:calc(100svh - var(--hx-bar) + 100svh*var(--rfw-run))}}
 .js-motion .hx-up .rfw--static .rfw-pin{display:none}
-.js-motion .hx-up .rfw--static::before{content:"";display:block;position:sticky;top:calc(var(--hx-bar) + var(--hx-gy));width:var(--rfw-grid);height:calc(100vh - var(--hx-bar) - 2*var(--hx-gy));margin:var(--hx-gy) auto 0;border-radius:var(--rf-r-stage);background:var(--tint)}
+.js-motion .hx-up .rfw--static::before{content:"";display:block;position:sticky;top:calc(var(--hx-bar) + var(--hx-gy));width:var(--rfw-grid);height:calc(100vh - var(--hx-bar) - 2*var(--hx-gy));margin:var(--hx-gy) auto 0;border-radius:var(--rf-r-stage);background:#fff}
 }
 /* Reduced motion and no JavaScript, wide: the words and the still wheel side by side on one stage, every name below. */
 @media (min-width:900px){
-  html:not(.js-motion) .hx-up{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr);align-items:center;gap:0 clamp(32px,4vw,64px);width:min(1640px,100% - 32px);margin:clamp(8px,2.2vh,24px) auto 0;padding:clamp(28px,4.4vw,64px) max(var(--hx-pad),(100% - 1200px)/2);border-radius:var(--rf-r-stage);background:var(--tint)}
+  html:not(.js-motion) .hx-up{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr);align-items:center;gap:0 clamp(32px,4vw,64px);width:min(1640px,100% - 32px);margin:clamp(8px,2.2vh,24px) auto 0;padding:clamp(28px,4.4vw,64px) max(var(--hx-pad),(100% - 1200px)/2);border-radius:var(--rf-r-stage);background:#fff}
   html:not(.js-motion) .hx-over,html:not(.js-motion) .hx-up .rfw--static,html:not(.js-motion) .hx-up .rfw-pin{display:contents}
   html:not(.js-motion) .hx-lay{width:auto;padding:0}
   html:not(.js-motion) .hx-up .rfw-wheel{grid-column:2;grid-row:1}

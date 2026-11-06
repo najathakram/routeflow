@@ -163,14 +163,16 @@ describe("the colour is decoration, not a new claim", () => {
 });
 
 describe("the wash and the van stay out of the way", () => {
-  it("the wheel's colour wash is painted into the canvas background, never laid over the pieces", () => {
+  it("the wheel stage is plain: no colour wash tile behind the pieces", () => {
     const css = read("css/home-color.css");
     const js = read("graphics/rf-wheel-up.js");
     expect(css).not.toContain(".rfw-cvw::after");
     expect(css).not.toContain("mix-blend-mode");
-    expect(js).toContain("const WASH = [");
-    expect(js).toContain("c.drawImage(washed(W, H), 0, 0);");
-    expect(js).not.toContain("c.fillStyle = stageBg; c.fillRect(0, 0, W, H);");
+    expect(css).not.toContain("--hero-wash");
+    expect(js).not.toContain("WASH");
+    expect(js).not.toContain("washed(");
+    expect(js).toContain("c.fillStyle = stageBg; c.fillRect(0, 0, W, H);");
+    expect(read("graphics/rf-wheel-up.css")).toMatch(/\.rfw-tile\{[^}]*background:#fff\}/);
   });
 
   it("the van's drive-in is clipped by its band, and it only takes the corner where the rows leave room", () => {
