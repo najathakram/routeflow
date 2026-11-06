@@ -544,6 +544,6 @@ export class PrismaService
       );
     }
     if (!this.tenantCtx) return fn(this);
-    return this.tenantCtx.run(null, () => fn(this), "SYSTEM", reason);
+    return this.tenantCtx.runSystem(reason, () => fn(this));
   }
 }
