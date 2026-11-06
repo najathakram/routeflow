@@ -1,3 +1,4 @@
+import { runAtPlace } from "../common/call-place";
 import { Process, Processor } from "@nestjs/bull";
 import { Injectable, Logger } from "@nestjs/common";
 import type { Job } from "bull";
@@ -30,44 +31,48 @@ export class ProductImportProcessor {
 
   @Process("apply")
   async handle(job: Job<ProductImportJobData>): Promise<unknown> {
-    const { tenantId, userId, fileName, fileBase64 } = job.data;
-    const tenant = await this.prisma.tenant.findUnique({
-      where: { id: tenantId },
-      select: { status: true },
+    return runAtPlace("product-import.apply", async () => {
+      const { tenantId, userId, fileName, fileBase64 } = job.data;
+      const tenant = await this.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { status: true },
+      });
+      if (!tenant || !acceptsAutomatedWrites(tenant.status)) {
+        this.logger.warn(
+          `Refusing product-import job ${job.id}: tenant ${tenantId} takes no writes`,
+        );
+        throw new Error(API_ERROR_CODES.READ_ONLY);
+      }
+      // report only when the percent moves (every 1%), with the running counts, so a failed job still shows how far it got
+      let lastPercent = -1;
+      let result: unknown;
+      try {
+        result = await this.tenantCtx.run(tenantId, () =>
+          this.importService.importProducts(Buffer.from(fileBase64, "base64"), userId, {
+            fileName,
+            onProgress: (done, total, counts) => {
+              const percent = total > 0 ? Math.round((done * 100) / total) : 100;
+              if (percent === lastPercent) return;
+              lastPercent = percent;
+              void job.progress({ percent, ...counts });
+            },
+          }),
+        );
+      } catch (e) {
+        // B980: the job fails with a CODE the page can map to fixed copy; the message stays in the log
+        this.logger.warn(`product-import job ${job.id} failed: ${(e as Error).message}`);
+        throw new Error(productImportJobErrorCode(e));
+      }
+      // the file is no longer needed once the job is done; keep the result, drop the bytes. A Redis error here must not
+      // turn an applied job into a failed one.
+      try {
+        await job.update({ ...job.data, fileBase64: "" });
+      } catch (e) {
+        this.logger.warn(
+          `product-import job ${job.id}: could not clear the stored file: ${(e as Error).message}`,
+        );
+      }
+      return result;
     });
-    if (!tenant || !acceptsAutomatedWrites(tenant.status)) {
-      this.logger.warn(`Refusing product-import job ${job.id}: tenant ${tenantId} takes no writes`);
-      throw new Error(API_ERROR_CODES.READ_ONLY);
-    }
-    // report only when the percent moves (every 1%), with the running counts, so a failed job still shows how far it got
-    let lastPercent = -1;
-    let result: unknown;
-    try {
-      result = await this.tenantCtx.run(tenantId, () =>
-        this.importService.importProducts(Buffer.from(fileBase64, "base64"), userId, {
-          fileName,
-          onProgress: (done, total, counts) => {
-            const percent = total > 0 ? Math.round((done * 100) / total) : 100;
-            if (percent === lastPercent) return;
-            lastPercent = percent;
-            void job.progress({ percent, ...counts });
-          },
-        }),
-      );
-    } catch (e) {
-      // B980: the job fails with a CODE the page can map to fixed copy; the message stays in the log
-      this.logger.warn(`product-import job ${job.id} failed: ${(e as Error).message}`);
-      throw new Error(productImportJobErrorCode(e));
-    }
-    // the file is no longer needed once the job is done; keep the result, drop the bytes. A Redis error here must not
-    // turn an applied job into a failed one.
-    try {
-      await job.update({ ...job.data, fileBase64: "" });
-    } catch (e) {
-      this.logger.warn(
-        `product-import job ${job.id}: could not clear the stored file: ${(e as Error).message}`,
-      );
-    }
-    return result;
   }
 }

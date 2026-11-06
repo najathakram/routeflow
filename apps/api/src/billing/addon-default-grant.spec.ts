@@ -183,6 +183,8 @@ describe("fail closed + explain/preview parity", () => {
       activeAddonSet: new Set<string>(),
       planFeatureFlags: new Set<string>(),
       activeSkuSet: new Set<string>(),
+      courtesy: () => false,
+      billed: new Set<string>(),
     };
     expect(resolveOneKey(row, { ...base, entFlags: ["flag.returns"] })).toMatchObject({
       effective: true,

@@ -10,6 +10,14 @@ import type { TenantContextKind } from "../tenant/tenant-context.service";
  * line per call site per second, and a summary line every 10 minutes. Nothing throws unless `TENANT_CONTEXT_ENFORCEMENT`
  * is exactly "on", read ONCE at boot; the flag is set nowhere in slice 1. The log never carries args, data or ids.
  *
+ * Capture gate (B1285): keyed `kind|model|op|where`, where `where` is the call place: a route's `Controller.handler`
+ * (`tenantCtx.label()`), else the name of the scheduled job or queue processor (`common/call-place.ts`, set by
+ * `@LeaderCron` and by the two queue processors). So a hot route or job no longer takes the capture slot of another;
+ * at most 20 captures per second across all keys. The counter stays keyed `kind|model|op`. Residual: two sites inside the
+ * SAME route or the SAME job with the same kind, model and op share one gate; a background entry point that is neither a
+ * route, a `@LeaderCron` job nor one of those two processors (a gateway timer, the route-hits flush) is unlabelled and
+ * shares one gate per kind, model and op.
+ *
  * Detection depth (SA-1105 A-1): slice 1 detects one level of nested create under `create` and `upsert.create`. A nested
  * create under `update` or `upsert.update` is reported as a read under NONE and ANONYMOUS and is not seen under SUPER_ADMIN or
  * TENANT: it belongs to SA-620's DMMF walker, which checks the child's tenant at every depth.
@@ -73,6 +81,19 @@ function nestedCreateGap(parent: string, row: unknown, target: RelationTarget): 
 const CAPTURE_GAP_MS = 1_000;
 const SUMMARY_MS = 10 * 60_000;
 const STACK_FRAMES = 5;
+/** B1285: stack captures across ALL keys per second. Bounds the `new Error().stack` cost now that the gate has more keys. */
+const CAPTURES_PER_SECOND = 20;
+/** The gate map is bounded by labels (controller handlers and job names); this is the backstop, not the design. */
+const GATE_MAP_CAP = 5_000;
+
+/**
+ * B1285: the call place is a `Controller.handler` or a job name, never a raw path (no ids in keys or logs). Anything
+ * that is not that shape (a `/orders/123` URL, a space, a query string) is dropped to undefined, not redacted: there
+ * is one redactor (`redacted-route`), and this guard does not build a second.
+ */
+const PLACE = /^[A-Za-z0-9_.:-]{1,120}$/;
+const safePlace = (where: string | undefined): string | undefined =>
+  where !== undefined && PLACE.test(where) ? where : undefined;
 
 export interface GuardOptions {
   enforce: boolean;
@@ -110,6 +131,8 @@ export function createTenantContextGuard(opts: GuardOptions) {
   const lastCapture = new Map<string, number>();
   const lastLog = new Map<string, number>();
   let timer: NodeJS.Timeout | undefined;
+  let budgetStart = 0;
+  let budgetUsed = 0;
 
   const summary = (): string | null =>
     counts.size === 0
@@ -140,16 +163,26 @@ export function createTenantContextGuard(opts: GuardOptions) {
     }
     startSummary();
     const t = now();
-    const last = lastCapture.get(key);
+    const place = safePlace(where);
+    const gate = `${key}|${place ?? ""}`;
+    const last = lastCapture.get(gate);
     if (last !== undefined && t - last < CAPTURE_GAP_MS) return;
-    lastCapture.set(key, t);
+    if (t - budgetStart >= CAPTURE_GAP_MS) {
+      budgetStart = t;
+      budgetUsed = 0;
+    }
+    // Over budget: the counter above already counted; this key stays un-gated so its next hit captures.
+    if (budgetUsed >= CAPTURES_PER_SECOND) return;
+    budgetUsed += 1;
+    if (lastCapture.size >= GATE_MAP_CAP) lastCapture.clear();
+    lastCapture.set(gate, t);
     const stack = frames();
-    const site = `${kind}|${op}|${stack[0] ?? "unknown"}`;
+    const site = `${kind}|${op}|${place ?? ""}|${stack[0] ?? "unknown"}`;
     const logged = lastLog.get(site);
     if (logged !== undefined && t - logged < CAPTURE_GAP_MS) return;
     lastLog.set(site, t);
     log.warn(
-      `TENANT_CONTEXT_MISSING kind=${kind} model=${model} op=${op}${where ? ` at=${where}` : ""}\n${stack
+      `TENANT_CONTEXT_MISSING kind=${kind} model=${model} op=${op}${place ? ` at=${place}` : ""}\n${stack
         .slice(0, STACK_FRAMES)
         .join("\n")}`,
     );

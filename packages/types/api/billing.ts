@@ -74,6 +74,11 @@ export interface SubscriptionView<TDate = string> {
     monthly: number | null;
   }>;
   flags?: string[];
+  /** SA-1099 A-4: the self-serve add-on SKUs this workspace already has the effect of (the plan or the courtesy serves
+   *  every flag they grant, and it holds no row of its own). The add-on list shows each as "You already have this."
+   *  with no price and no button. The server decides (`addonOfferState`); `[]` when its resolver cannot answer. Absent
+   *  (an older server) reads as `[]`. A capacity SKU is never in it. */
+  alreadyHaveAddonSkus?: string[];
   paymentRequired: boolean;
   /** SA-733r6 (B4) - the dunning clock and the banner's facts. All optional/null: a tenant that never failed a
    *  payment (and any older server) simply omits them, and the banner then shows the autopay card only. */

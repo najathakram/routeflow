@@ -112,6 +112,67 @@ describe("K-7 the log rate: a hot loop cannot flood the log", () => {
   });
 });
 
+describe("B1285 the capture gate is keyed by the call place, with a global budget", () => {
+  const hit = (g: ReturnType<typeof make>["guard"], model: string, where?: string) =>
+    g.checkWrite("SUPER_ADMIN", model, "create", NO_TENANT, undefined, where);
+  const missing = (lines: string[]) =>
+    lines.filter((l) => l.startsWith("TENANT_CONTEXT_MISSING kind="));
+
+  it("B5-1: a hot route does not hide another route with the same kind, model, op and code site", () => {
+    const { guard, lines } = make();
+    for (let i = 0; i < 1000; i++) hit(guard, "Customer", "OrdersController.create");
+    hit(guard, "Customer", "billing-cron.expireTrials");
+    const logged = missing(lines);
+    expect(logged).toHaveLength(2);
+    expect(logged[0]).toContain("at=OrdersController.create");
+    expect(logged[1]).toContain("at=billing-cron.expireTrials");
+    expect(guard.counts()["SUPER_ADMIN|Customer|create"]).toBe(1001);
+  });
+
+  it("B5-2: 50 distinct keys in one second capture at most 20 stacks, every counter is exact, and the next second catches up", () => {
+    const { guard, lines, tick } = make();
+    const keys = Array.from({ length: 50 }, (_, i) => `Model${i}`);
+    for (const m of keys) hit(guard, m, `${m}Ctl.handler`);
+    expect(missing(lines)).toHaveLength(20);
+    for (const m of keys) expect(guard.counts()[`SUPER_ADMIN|${m}|create`]).toBe(1);
+    // An over-budget key is not gated, so its next hit captures: the starved keys (30..49) are caught first here.
+    tick(1_000);
+    for (const m of [...keys].reverse()) hit(guard, m, `${m}Ctl.handler`);
+    expect(missing(lines)).toHaveLength(40);
+    for (const m of keys) expect(guard.counts()[`SUPER_ADMIN|${m}|create`]).toBe(2);
+    expect(new Set(missing(lines).map((l) => l.split("\n")[0])).size).toBe(40);
+  });
+
+  it("B5-8: a key starved by the budget is not gated, so its next hit after the window rolls captures", () => {
+    const { guard, lines, tick } = make();
+    for (let i = 0; i < 20; i++) hit(guard, `Fill${i}`, `Fill${i}Ctl.handler`);
+    expect(missing(lines)).toHaveLength(20);
+    tick(1);
+    hit(guard, "Starved", "StarvedCtl.handler"); // over budget: counted, not captured, not gated
+    expect(missing(lines)).toHaveLength(20);
+    tick(999); // the window opened at t0 rolls at t0 + 1000: 999 ms after the starved hit
+    hit(guard, "Starved", "StarvedCtl.handler");
+    expect(missing(lines)).toHaveLength(21);
+    expect(missing(lines)[20]).toContain("model=Starved");
+    expect(guard.counts()["SUPER_ADMIN|Starved|create"]).toBe(2);
+  });
+
+  it("B5-3: one site at 1000 hits per second still logs one line (K-7 unchanged)", () => {
+    const { guard, lines } = make();
+    for (let i = 0; i < 1000; i++) hit(guard, "Customer", "OrdersController.create");
+    expect(missing(lines)).toHaveLength(1);
+  });
+
+  it("B5-4: a raw path is never a gate key or a log field", () => {
+    const { guard, lines } = make();
+    hit(guard, "Customer", "/orders/123");
+    hit(guard, "Customer", "/orders/456?x=1");
+    const logged = missing(lines);
+    expect(logged).toHaveLength(1);
+    expect(logged.join("\n")).not.toMatch(/at=|123|456|\/orders/);
+  });
+});
+
 describe("K-8 nested-create detection (one level, from the parent's call site)", () => {
   const target = (parent: string, key: string) =>
     parent === "Order" && key === "items" ? "OrderItem" : undefined;

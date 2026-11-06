@@ -5,6 +5,7 @@ import { Pool } from "pg";
 import { TenantContextService, type TenantContextKind } from "../tenant/tenant-context.service";
 import { utcPoolConfig } from "../common/pg-session";
 import { CUSTOMER_IDENTITY_OMIT } from "../customers/customer-identity-fields";
+import { callPlace } from "../common/call-place";
 import { checkTenantRead, checkTenantWrite, type TenantWriteOp } from "./tenant-context-guard";
 
 /**
@@ -97,6 +98,8 @@ function checkTenantOp(
   where?: string,
 ): void {
   if (!isTenantModel(delegateOrModel)) return;
+  // B1285: a route's handler label (passed in) wins; a scheduled job or queue processor is named by its call place.
+  where ??= callPlace();
   // The tx proxy sees a delegate key (`customer`), the extension a model name (`Customer`): one name in the counter.
   const model = delegateOrModel.charAt(0).toUpperCase() + delegateOrModel.slice(1);
   if (!CREATE_OPS.has(operation)) {
@@ -544,6 +547,6 @@ export class PrismaService
       );
     }
     if (!this.tenantCtx) return fn(this);
-    return this.tenantCtx.run(null, () => fn(this), "SYSTEM", reason);
+    return this.tenantCtx.runSystem(reason, () => fn(this));
   }
 }

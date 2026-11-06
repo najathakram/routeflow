@@ -21,8 +21,9 @@
 // --check <file> (inside ONE sweep): each (tenant, key) and each set row gets one class.
 //   agree         old == effective
 //   courtesy gap  old true, effective false, and the row's `courtesy` bit is true. Expected before
-//                 WP2; counted per key. (WP2's `--after-wp2` will make it fail; that flag arrives
-//                 with WP2 and is refused here, not ignored.)
+//                 WP2; counted per key. Under `--after-wp2` (S2, the sweep after WP2 deploys) it fails.
+//                 `--after-wp2` also adds one class: a row served without `strict` and without the
+//                 `courtesy` bit (effective true, strict false, courtesy false) is unexplained.
 //   unexplained   anything else (a tenant the resolver could not resolve counts here). Exit 2: the
 //                 stage stops and comes back to the architect.
 //   client drift  clientFlag != old on a flag key, or clientAddon != old on an add-on key. Listed
@@ -38,7 +39,9 @@
 //     --new-keys k1,k2 (a set row is named "set:<keys joined by |>"); a key present in only the
 //     first file is never excused;
 //   - for each tenant whose inputsHash is unchanged, old / effective / strict / clientAddon /
-//     clientFlag are identical, else exit 2. (WP2's `--expect wp2` arrives with WP2 and is refused.)
+//     clientFlag are identical, else exit 2, except under `--expect wp2` (S1 -> S2): `effective` may go
+//     false -> true only where B's row has `courtesy` true and `old` is unchanged, and B's `strict`
+//     must equal A's `effective`. Any other value after `--expect` is refused (exit 3).
 //   inputsHash covers each override's live bit at sweep time, so a lapse is a changed input.
 //
 // Exit codes: 0 fine; 2 an unexplained difference (check) / a difference with unchanged inputs, a
@@ -79,7 +82,7 @@ export function keySet(file) {
  * keysOnlyInB, newKeys }`. `newKeys` (SA-1100 §3) are key names the second file may add: they are
  * left out of both the key-set check and the per-tenant bit comparison.
  */
-export function compareSweeps(a, b, { newKeys = [] } = {}) {
+export function compareSweeps(a, b, { newKeys = [], expect = null } = {}) {
   const byId = (file) => new Map((file.tenants ?? []).map((t) => [t.id, t]));
   const ma = byId(a);
   const mb = byId(b);
@@ -112,6 +115,20 @@ export function compareSweeps(a, b, { newKeys = [] } = {}) {
       for (const bit of BITS) {
         const va = ra[key]?.[bit];
         const vb = rb[key]?.[bit];
+        if (expect === "wp2" && (bit === "effective" || bit === "strict")) {
+          const row = rb[key];
+          if (bit === "effective") {
+            // served may only be ADDED, and only by the courtesy, with the served-by-guards answer unchanged
+            if (va === vb) continue;
+            if (va === false && vb === true && row?.courtesy === true && ra[key]?.old === row?.old)
+              continue;
+            differences.push({ tenant: id, key, bit, a: va, b: vb });
+          } else if (vb !== ra[key]?.effective) {
+            // S2 strict is the owner's rule: it must be what S1 served (S1 had no courtesy in it)
+            differences.push({ tenant: id, key, bit, a: ra[key]?.effective, b: vb });
+          }
+          continue;
+        }
         if (va !== vb) differences.push({ tenant: id, key, bit, a: va, b: vb });
       }
     }
@@ -153,7 +170,7 @@ export function notComparable(a, b) {
  * Pure (SA-1100 §3.A): classify every (tenant, key) and set row of ONE sweep. Returns
  * `{ agree, gaps: [{ tenant, key }], gapsByKey, unexplained: [{ tenant, key, old, effective, courtesy }], drift }`.
  */
-export function checkSweep(file) {
+export function checkSweep(file, { afterWp2 = false } = {}) {
   const out = { agree: 0, gaps: [], gapsByKey: {}, unexplained: [], drift: [] };
   for (const t of file.tenants ?? []) {
     if (t.error) {
@@ -171,7 +188,33 @@ export function checkSweep(file) {
       else if (bits.old === true && bits.effective === false && bits.courtesy === true) {
         out.gaps.push({ tenant: t.id, key });
         out.gapsByKey[key] = (out.gapsByKey[key] ?? 0) + 1;
+        // after WP2 the evaluator serves the courtesy itself, so a gap is a defect
+        if (afterWp2) {
+          out.unexplained.push({
+            tenant: t.id,
+            key,
+            old: bits.old,
+            effective: bits.effective,
+            courtesy: bits.courtesy,
+          });
+        }
       } else {
+        out.unexplained.push({
+          tenant: t.id,
+          key,
+          old: bits.old,
+          effective: bits.effective,
+          courtesy: bits.courtesy ?? null,
+        });
+      }
+      // after WP2: a row served without strict must carry the courtesy bit, or nothing explains why it is served
+      if (
+        afterWp2 &&
+        bits.old === bits.effective &&
+        bits.effective === true &&
+        bits.strict === false &&
+        bits.courtesy !== true
+      ) {
         out.unexplained.push({
           tenant: t.id,
           key,
@@ -192,16 +235,19 @@ export function checkSweep(file) {
 
 const readJson = (f) => JSON.parse(readFileSync(path.resolve(f), "utf8"));
 
-function refuseWp2Flags(args) {
-  for (const name of ["--expect", "--after-wp2"]) {
-    if (args.includes(name)) {
-      refuse(`${name} belongs to WP2 and is not implemented in WP1; it is refused, not ignored`);
-    }
-  }
+/** `--expect wp2` (compare only): the one accepted value; anything else is refused, never ignored. */
+function expectOf(args) {
+  const at = args.indexOf("--expect");
+  if (at < 0) return null;
+  const value = args[at + 1];
+  if (value !== "wp2")
+    refuse(`--expect takes "wp2" (S1 -> S2), got ${JSON.stringify(value ?? null)}`);
+  return value;
 }
 
 function runCheck(args) {
-  refuseWp2Flags(args);
+  if (args.includes("--expect")) refuse("--expect belongs to --compare; --check takes --after-wp2");
+  const afterWp2 = args.includes("--after-wp2");
   const file = args[args.indexOf("--check") + 1];
   if (!file || file.startsWith("--")) refuse("--check needs a file: --check a.json");
   const f = readJson(file);
@@ -212,7 +258,7 @@ function runCheck(args) {
   if (f.mode === undefined || f.planFlagEnforcement === undefined) {
     refuse("the file has no mode or planFlagEnforcement (it must be page 1 of a sweep)");
   }
-  const r = checkSweep(f);
+  const r = checkSweep(f, { afterWp2 });
   console.log(`mode ${f.mode}, planFlagEnforcement ${f.planFlagEnforcement}`);
   const stop = f.mode === "live" || f.planFlagEnforcement === "on";
   if (stop) {
@@ -241,7 +287,9 @@ function runCheck(args) {
 }
 
 function runCompare(args) {
-  refuseWp2Flags(args);
+  if (args.includes("--after-wp2"))
+    refuse("--after-wp2 belongs to --check; --compare takes --expect wp2");
+  const expect = expectOf(args);
   const at = args.indexOf("--compare");
   const [fileA, fileB] = [args[at + 1], args[at + 2]];
   if (!fileA || !fileB || fileA.startsWith("--") || fileB.startsWith("--")) {
@@ -253,7 +301,7 @@ function runCompare(args) {
   const b = readJson(fileB);
   const why = notComparable(a, b);
   if (why) refuse(why);
-  const r = compareSweeps(a, b, { newKeys });
+  const r = compareSweeps(a, b, { newKeys, expect });
   for (const d of r.differences) {
     console.log(`DIFF ${d.tenant} ${d.key} ${d.bit}: ${String(d.a)} -> ${String(d.b)}`);
   }

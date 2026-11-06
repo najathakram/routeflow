@@ -1,5 +1,6 @@
 import {
   BADGE_COLORS,
+  BADGE_LABELS,
   OVERRIDE_KIND_WORDS,
   deriveBadge,
   deriveReadout,
@@ -249,5 +250,121 @@ describe("deriveReadout: one readout, first rule wins", () => {
       kind: "on",
       text: "On",
     });
+  });
+});
+
+// FG-1 WP2 (SA-1099 section 4): courtesy keeps source PRESET with term "courtesy", and must not be read as
+// "in the plan". Served, but not enforced yet.
+describe("courtesy rows (FG-1 WP2)", () => {
+  const courtesy = (over: Partial<EffectiveFeature> = {}): EffectiveFeature =>
+    ({
+      key: "flag.reports",
+      area: "platform",
+      serving: true,
+      resolver: false,
+      source: "PRESET",
+      detail: { planKey: "STARTER", catalogVersionId: "v", enforced: true, term: "courtesy" },
+      billing: { charged: false },
+      ...over,
+    }) as EffectiveFeature;
+
+  it("is not the 'inherited' badge", () => {
+    expect(deriveBadge(courtesy())).not.toBe("inherited");
+    expect(deriveBadge(courtesy())).toBe("courtesy");
+  });
+
+  it.each(["dark", "enforced"] as const)("reads 'On, not enforced yet' on a %s row", (state) => {
+    expect(deriveReadout({ state }, courtesy())).toEqual({
+      kind: "not-enforced",
+      text: "On, not enforced yet",
+    });
+  });
+
+  it("a PRESET row the plan really holds is still 'In plan'", () => {
+    const held = courtesy({
+      resolver: true,
+      detail: { planKey: "SCALE", catalogVersionId: "v", enforced: true, term: "flag" },
+    });
+    expect(deriveReadout({ state: "dark" }, held)).toMatchObject({ kind: "chip", text: "In plan" });
+  });
+});
+
+// SA-1099 A-1 row SV-8: the credit check, served by courtesy, reads like every other courtesy row on the
+// console. The API half (SV-7) is what was wrong: the trace said `serving: false`, which this screen
+// rightly showed as "Off" while the drawer said "Stays on for now". The payload below is SV-7's.
+describe("SV-8: flag.credit_limits served by courtesy (the SV-7 payload)", () => {
+  const credit = (over: Partial<EffectiveFeature> = {}): EffectiveFeature =>
+    ({
+      key: "flag.credit_limits",
+      area: "orders",
+      serving: true,
+      resolver: false,
+      source: "PRESET",
+      detail: { planKey: "STARTER", catalogVersionId: "v", enforced: false, term: "courtesy" },
+      billing: { charged: false },
+      ...over,
+    }) as EffectiveFeature;
+
+  it("reads the courtesy badge and 'On, not enforced yet', not 'Off'", () => {
+    expect(deriveBadge(credit())).toBe("courtesy");
+    expect(deriveReadout({ state: "dark" }, credit())).toEqual({
+      kind: "not-enforced",
+      text: "On, not enforced yet",
+    });
+  });
+
+  it("reads the same as any other courtesy row (no credit-specific wording)", () => {
+    const other = credit({ key: "flag.reports" });
+    expect(deriveReadout({ state: "dark" }, credit())).toEqual(
+      deriveReadout({ state: "dark" }, other),
+    );
+    expect(deriveBadge(credit())).toBe(deriveBadge(other));
+  });
+});
+
+// SA-1099 A-2 N1 (rows SV-9, SV-11): a DENY that the credit gate serves anyway keeps source OVERRIDE_DENY
+// (the DENY exists and takes effect once the switch is "on") and carries term "courtesy". The badge reads
+// the term FIRST, like `deriveReadout`, so the two cannot disagree on this row.
+describe("SV-9, SV-11: the courtesy term outranks the source in deriveBadge", () => {
+  const detail = (term?: string) =>
+    ({
+      planKey: "STARTER",
+      catalogVersionId: "v",
+      enforced: false,
+      term,
+    }) as EffectiveFeature["detail"];
+
+  it("SV-9: OVERRIDE_DENY with term courtesy -> 'courtesy' (Not enforced yet)", () => {
+    const badge = deriveBadge({ source: "OVERRIDE_DENY", detail: detail("courtesy") });
+    expect(badge).toBe("courtesy");
+    expect(BADGE_LABELS[badge]).toBe("Not enforced yet");
+  });
+
+  it("SV-11 guard: OVERRIDE_DENY without the term is still 'removed'", () => {
+    expect(deriveBadge({ source: "OVERRIDE_DENY", detail: detail("flag") })).toBe("removed");
+    expect(deriveBadge({ source: "OVERRIDE_DENY", detail: detail(undefined) })).toBe("removed");
+  });
+
+  it("SV-11 guard: PRESET without the term is still 'inherited'", () => {
+    expect(deriveBadge({ source: "PRESET", detail: detail("flag") })).toBe("inherited");
+    expect(deriveBadge({ source: "PRESET", detail: detail(undefined) })).toBe("inherited");
+  });
+
+  it("SV-10: the readout and the badge agree on the DENY plus courtesy row", () => {
+    const row = {
+      key: "flag.credit_limits",
+      area: "orders",
+      serving: true,
+      resolver: false,
+      source: "OVERRIDE_DENY",
+      detail: detail("courtesy"),
+      billing: { charged: false },
+    } as EffectiveFeature;
+    expect(deriveReadout({ state: "dark" }, row)).toEqual({
+      kind: "not-enforced",
+      text: "On, not enforced yet",
+    });
+    expect(BADGE_LABELS[deriveBadge(row)]).toBe("Not enforced yet");
+    expect(BADGE_LABELS[deriveBadge(row)]).not.toBe("Removed");
   });
 });

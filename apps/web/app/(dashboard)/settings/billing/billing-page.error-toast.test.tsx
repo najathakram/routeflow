@@ -206,6 +206,17 @@ describe("BillingSettingsPage: the global error toast only yields to codes the p
     expect(globalToast).not.toHaveBeenCalled();
   });
 
+  it("enable refused with ADDON_ALREADY_INCLUDED (SA-1099 WP5): only the sheet's own copy, no generic toast", async () => {
+    mockPost.mockImplementation(() =>
+      reject(409, { code: API_ERROR_CODES.ADDON_ALREADY_INCLUDED, message: "internal" }),
+    );
+    const { globalToast, dialog } = await openEnable();
+    expect(
+      await dialog.findByText("You already have Route Plus, so there is nothing to buy."),
+    ).toBeInTheDocument();
+    expect(globalToast).not.toHaveBeenCalled();
+  });
+
   it("enable refused with ADDON_ANNUAL_NOT_SUPPORTED: only the sheet's own copy, no generic toast", async () => {
     mockPost.mockImplementation(() =>
       reject(409, { code: API_ERROR_CODES.ADDON_ANNUAL_NOT_SUPPORTED, message: "internal" }),

@@ -33,11 +33,20 @@ export class TenantContextService {
   run<T>(
     tenantId: string | null,
     fn: () => T,
-    tenantless: Exclude<TenantKind, "TENANT"> = "ANONYMOUS",
+    tenantless: Exclude<TenantKind, "TENANT" | "SYSTEM"> = "ANONYMOUS",
     label?: string,
   ): T {
     const kind: TenantKind = tenantId ? "TENANT" : tenantless;
     return this.storage.run({ tenantId, kind, label }, fn);
+  }
+
+  /**
+   * B1284: the ONLY producer of kind SYSTEM (`run()` cannot name it). Its one caller is `PrismaService.forSystem`, which
+   * holds the literal reason and the allow-list row; `common/for-system.allow-list.spec` fails on any other
+   * caller. The reason is the context label and is never an id.
+   */
+  runSystem<T>(reason: string, fn: () => T): T {
+    return this.storage.run({ tenantId: null, kind: "SYSTEM", label: reason }, fn);
   }
 
   /** Returns tenantId or throws if context not initialised */

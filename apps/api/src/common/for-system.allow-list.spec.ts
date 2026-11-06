@@ -7,6 +7,7 @@
  */
 import * as fs from "fs";
 import * as path from "path";
+import * as ts from "typescript";
 
 const SRC = path.join(__dirname, "..");
 const walk = (dir: string): string[] =>
@@ -88,5 +89,96 @@ describe("K-4 forSystem allow-list", () => {
       },
     ]);
     expect(found).toEqual([]);
+  });
+});
+
+/**
+ * B1284 (SA-1105 A-2): `forSystem` is the ONLY door to the tenant-context kind SYSTEM. Construction: `run()` cannot name
+ * SYSTEM (B4-1, a type error in prisma-tenant-context-kind.spec). Pin, for what a type cannot see (a cast, an element
+ * access): every use of the name `runSystem` in non-spec source is `PrismaService.forSystem`, and no `.run(` call passes
+ * the string literal "SYSTEM".
+ */
+export interface SystemDoorScan {
+  /** `file::Class.method` of every use of the name `runSystem` that is not its definition. */
+  runSystemUses: string[];
+  /** `file` of every `.run(` call that passes the string literal "SYSTEM". */
+  runWithSystem: string[];
+}
+
+/** `Class.method` (or `<top>`) enclosing a node. */
+function enclosing(n: ts.Node): string {
+  let cls = "";
+  let fn = "";
+  for (let p: ts.Node | undefined = n.parent; p; p = p.parent) {
+    if (!fn && (ts.isMethodDeclaration(p) || ts.isFunctionDeclaration(p)) && p.name) {
+      fn = p.name.getText();
+    }
+    if (ts.isClassDeclaration(p) && p.name) {
+      cls = p.name.text;
+      break;
+    }
+  }
+  return cls || fn ? `${cls}.${fn}` : "<top>";
+}
+
+export function scanSystemDoor(files: Array<{ file: string; text: string }>): SystemDoorScan {
+  const out: SystemDoorScan = { runSystemUses: [], runWithSystem: [] };
+  for (const { file, text } of files) {
+    const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+    const visit = (n: ts.Node) => {
+      const isName =
+        (ts.isIdentifier(n) || ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) &&
+        n.text === "runSystem";
+      const isDefinition = isName && ts.isMethodDeclaration(n.parent) && n.parent.name === n;
+      if (isName && !isDefinition) out.runSystemUses.push(`${file}::${enclosing(n)}`);
+      if (
+        ts.isCallExpression(n) &&
+        ts.isPropertyAccessExpression(n.expression) &&
+        n.expression.name.text === "run" &&
+        n.arguments.some((a) => ts.isStringLiteralLike(a) && a.text === "SYSTEM")
+      ) {
+        out.runWithSystem.push(file);
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+  }
+  out.runSystemUses.sort();
+  out.runWithSystem.sort();
+  return out;
+}
+
+const DOOR = ["prisma/prisma.service.ts::PrismaService.forSystem"];
+
+describe("B4-2 the SYSTEM kind has one door", () => {
+  it("runSystem is used only by PrismaService.forSystem, and no .run( call names SYSTEM", () => {
+    const files = walk(SRC).map((f) => ({
+      file: path.relative(SRC, f).split(path.sep).join("/"),
+      text: fs.readFileSync(f, "utf8"),
+    }));
+    const found = scanSystemDoor(files);
+    expect(found.runSystemUses).toEqual(DOOR);
+    expect(found.runWithSystem).toEqual([]);
+  });
+
+  it("self-test: a second producer, in any spelling, is reported", () => {
+    const found = scanSystemDoor([
+      {
+        file: "x/second-door.ts",
+        text: [
+          "class Job {",
+          "  a() { return this.ctx.runSystem('sneaky reason here', () => 1); }",
+          "  b() { return (this.ctx as any)['runSystem']('sneaky reason here', () => 1); }",
+          "  c() { return this.ctx.run(null, () => 1, 'SYSTEM'); }",
+          "}",
+        ].join("\n"),
+      },
+      {
+        file: "tenant/tenant-context.service.ts",
+        text: "class TenantContextService { runSystem<T>(reason: string, fn: () => T): T { return fn(); } }",
+      },
+    ]);
+    expect(found.runSystemUses).toEqual(["x/second-door.ts::Job.a", "x/second-door.ts::Job.b"]);
+    expect(found.runWithSystem).toEqual(["x/second-door.ts"]);
   });
 });

@@ -1,4 +1,4 @@
-import { Injectable, Optional } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
 import { MeterKey } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { PlanCatalogService } from "./plan-catalog.service";
@@ -8,7 +8,10 @@ import {
   addonSkuCode,
   isInviteOnlyPlanKey,
   INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT,
+  SELF_SERVICE_ADDON_SKUS,
 } from "./plan-catalog.constants";
+import { addonOfferState } from "./addon-adds-something";
+import { EntitlementAuthority } from "./entitlement-authority.service";
 import { computeServedFlags } from "./plan-flag-policy";
 import { resolvePlanPrice } from "./plan-price";
 import { autoLockAllowed } from "./auto-lock-gate";
@@ -58,7 +61,47 @@ export class SubscriptionService {
     private readonly billingExtras?: SubscriptionBillingExtras,
     // SA-775 rollout: the switch behind `autoLockHeld`. Optional like the two above; absent = never held.
     @Optional() private readonly autoLocks?: AutoLockSwitchService,
+    // SA-1099 A-4: the cached resolver the add-on list's "already have" state reads. Optional like the three above;
+    // absent = the list offers everything, as before.
+    @Optional() private readonly authority?: EntitlementAuthority,
   ) {}
+
+  private readonly logger = new Logger(SubscriptionService.name);
+
+  /**
+   * SA-1099 A-4: the self-serve SKUs this workspace already has the effect of (the list shows them as "You already
+   * have this." with no price and no button). One cached `resolveAll`, judged by `addonOfferState`, the same helper the
+   * enable's refusal calls. A resolver that cannot answer gives `[]` and a warning: never hide a row on a guess, and
+   * the enable's own check stays the backstop.
+   */
+  private async alreadyHaveAddonSkus(
+    tenantId: string,
+    catalogSkus: ReadonlyArray<{
+      sku: string;
+      name: string;
+      grantsFlags?: readonly string[] | null;
+      meteredKey?: string | null;
+      capacityPerUnit?: number | null;
+    }>,
+    activeRows: ReadonlyArray<Parameters<typeof addonSkuCode>[0]>,
+  ): Promise<string[]> {
+    if (!this.authority) return [];
+    const held = new Set(activeRows.map((r) => addonSkuCode(r)));
+    const candidates = catalogSkus.filter((s) =>
+      (SELF_SERVICE_ADDON_SKUS as readonly string[]).includes(s.sku),
+    );
+    if (candidates.length === 0) return [];
+    const resolved = await this.authority.resolveAll(tenantId);
+    if (!resolved) {
+      this.logger.warn(
+        `Tenant ${tenantId}: the resolver could not answer - no add-on is shown as already had`,
+      );
+      return [];
+    }
+    return candidates
+      .filter((s) => addonOfferState(s, resolved.byKey, held.has(s.sku)) === "already-have")
+      .map((s) => s.sku);
+  }
 
   /**
    * SA-775 rollout: does the pause hold EVERY automatic lock a banner threatens (the unpaid-invoice pause and the trial
@@ -173,6 +216,8 @@ export class SubscriptionService {
       downgradeEffectiveAt: sub?.downgradeEffectiveAt ?? null,
       trialEndsAt: ent.trialEndsAt,
       addons,
+      // SA-1099 A-4: self-serve add-ons the workspace already has the effect of (no price, no button in the list).
+      alreadyHaveAddonSkus: await this.alreadyHaveAddonSkus(tenantId, version.addonSkus, addonRows),
       // SA-733r6 (B4): dunning facts + the banner extras. The server decides read-only; the client only renders.
       pastDueSince: sub?.pastDueSince ?? null,
       pastDueInvoiceId: sub?.pastDueInvoiceId ?? null,

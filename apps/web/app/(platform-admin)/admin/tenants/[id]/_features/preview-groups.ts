@@ -22,6 +22,8 @@ export interface PreviewGroups {
   gained: PreviewRow[];
   /** Serving ON → OFF: the tenant loses this feature. */
   lost: PreviewRow[];
+  /** Still served after the change (courtesy), though the owner's rule held it before and would not now. */
+  laterLost: PreviewRow[];
   /** Serving unchanged but the configured mode differs (mode previews; a tier preview never
    *  carries modes, so this stays empty for a plan swap). */
   limits: PreviewRow[];
@@ -42,12 +44,21 @@ export function groupPreview(
   response: FeaturePreviewResponse | null,
   registryByKey: RegistryLabelLookup,
 ): PreviewGroups {
-  const groups: PreviewGroups = { gained: [], lost: [], limits: [], other: [], total: 0 };
+  const groups: PreviewGroups = {
+    gained: [],
+    lost: [],
+    laterLost: [],
+    limits: [],
+    other: [],
+    total: 0,
+  };
   if (!response) return groups;
 
   const beforeByKey = new Map(response.before.map((f) => [f.key, f]));
   const afterByKey = new Map(response.after.map((f) => [f.key, f]));
   const changedKeys = new Set(response.changed);
+  const laterLostKeys = new Set(response.laterLost ?? []);
+  for (const key of laterLostKeys) changedKeys.add(key);
   for (const [key, after] of afterByKey) {
     const before = beforeByKey.get(key);
     if (!before) continue;
@@ -69,13 +80,20 @@ export function groupPreview(
     const isOn = after?.serving ?? false;
     if (!wasOn && isOn) groups.gained.push(row);
     else if (wasOn && !isOn) groups.lost.push(row);
+    else if (laterLostKeys.has(key)) groups.laterLost.push(row);
     else if (before?.mode?.effective !== after?.mode?.effective) groups.limits.push(row);
     else groups.other.push(row);
   }
 
   const byLabel = (a: PreviewRow, b: PreviewRow) => a.label.localeCompare(b.label);
-  for (const list of [groups.gained, groups.lost, groups.limits, groups.other]) list.sort(byLabel);
+  for (const list of [groups.gained, groups.lost, groups.laterLost, groups.limits, groups.other]) {
+    list.sort(byLabel);
+  }
   groups.total =
-    groups.gained.length + groups.lost.length + groups.limits.length + groups.other.length;
+    groups.gained.length +
+    groups.lost.length +
+    groups.laterLost.length +
+    groups.limits.length +
+    groups.other.length;
   return groups;
 }

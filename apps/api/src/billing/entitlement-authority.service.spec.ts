@@ -134,32 +134,48 @@ describe("EntitlementAuthority — feature grants v2 brief A oracles", () => {
     }
   });
 
-  // Oracle 2: courtesy-on key absent from preset → diff (true,false); shadow still returns 200-equivalent (true).
-  it("shadow mode: a dark flag the tenant doesn't hold produces a (true,false) diff but still courtesy-allows", async () => {
-    const { authority, diffService, prisma } = buildAuthority(V11_PIN_FIXTURE);
+  // Oracle 2 (FG-1 WP2): the courtesy is IN the resolver now, so a dark flag the tenant does not hold is served by
+  // both paths and produces no standing (true,false) diff row.
+  it("shadow mode: a dark flag the tenant doesn't hold is courtesy-served by both paths and records no diff", async () => {
+    const { authority, prisma } = buildAuthority(V11_PIN_FIXTURE);
     // flag.estimates is dark and NOT in V11_PIN_FIXTURE's SCALE featureFlags.
-    const verdict = await authority.can("t1", "flag.estimates");
-    expect(verdict).toBe(true); // old path still decides in shadow — no behavior change
+    expect(await authority.can("t1", "flag.estimates")).toBe(true);
     await flushMicrotasks(); // the diff write is fire-and-forget (item 3) — let it land
-    const rows = [...prisma.__diffRows.values()];
-    const row = rows.find((r) => r.featureKey === "flag.estimates");
-    expect(row).toBeDefined();
-    expect(row.before).toBe(true);
-    expect(row.after).toBe(false);
+    expect(prisma.__diffRows.size).toBe(0);
   });
 
-  // Oracle 3: live mode → 403 for it (i.e. authority.can() flips to false once live).
-  it("live mode: the same courtesy-on key now resolves false (would 403 through the guard)", async () => {
+  // The diff mechanics still hold for a REAL disagreement: the old path is made to disagree with the resolver.
+  const disagree = (authority: unknown) =>
+    jest
+      .spyOn(
+        authority as { computeOldPath: (t: string, k: string) => Promise<boolean> },
+        "computeOldPath",
+      )
+      .mockResolvedValue(false);
+
+  it("shadow mode: a real disagreement is recorded as (before, after) and the old path still decides", async () => {
+    const { authority, prisma } = buildAuthority(V11_PIN_FIXTURE);
+    disagree(authority); // old path says no; the resolver says yes (courtesy)
+    expect(await authority.can("t1", "flag.estimates")).toBe(false); // old decides in shadow
+    await flushMicrotasks();
+    const row = [...prisma.__diffRows.values()].find((r) => r.featureKey === "flag.estimates");
+    expect(row).toBeDefined();
+    expect(row.before).toBe(false);
+    expect(row.after).toBe(true);
+  });
+
+  // Oracle 3 (FG-1 WP2): live mode no longer takes the courtesy away. The same key is served in both modes.
+  it("live mode: the courtesy-on key is still served (no 403 appears when the mode flips)", async () => {
     const { authority, modeService } = buildAuthority(V11_PIN_FIXTURE);
     await modeService.setMode("live");
-    const verdict = await authority.can("t1", "flag.estimates");
-    expect(verdict).toBe(false);
+    expect(await authority.can("t1", "flag.estimates")).toBe(true);
   });
 
   // Oracle 4 (service-level half — the 409/200 HTTP shape is the controller's job): mode=live is
   // refused while an unexplained diff exists, allowed once explained.
   it("hasUnexplained() reports true after a diff, false once every row is explained", async () => {
     const { authority, diffService } = buildAuthority(V11_PIN_FIXTURE);
+    disagree(authority);
     await authority.can("t1", "flag.estimates"); // produces one diff row
     await flushMicrotasks(); // the diff write is fire-and-forget (item 3) — let it land
     expect(await diffService.hasUnexplained()).toBe(true);
@@ -200,6 +216,7 @@ describe("EntitlementAuthority — feature grants v2 brief A oracles", () => {
   // that's exactly the redundant-write traffic the memo exists to suppress).
   it("suppresses a repeat fire-and-forget diff write for the identical disagreement within the TTL", async () => {
     const { authority, diffService } = buildAuthority(V11_PIN_FIXTURE);
+    disagree(authority);
     const recordSpy = jest.spyOn(diffService, "record");
     await authority.can("t1", "flag.estimates");
     await authority.can("t1", "flag.estimates");

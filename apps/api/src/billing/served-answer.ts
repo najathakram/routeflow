@@ -1,6 +1,7 @@
 import { isDefaultGrantedAddon, type FeatureDef } from "./feature-registry";
 import { addonGateState } from "./addon-gate-registry";
 import { allowsFlag, isDarkFlag } from "./plan-flag-policy";
+import { creditLimitCheckApplies } from "../orders/credit-limit-guard";
 
 /**
  * The ONE "what do today's guards serve for this registry key" function (the sweep's `old` column and the
@@ -8,10 +9,12 @@ import { allowsFlag, isDarkFlag } from "./plan-flag-policy";
  * the same function with the ending override left out). It is a pure function of the facts below, so a caller
  * can ask "and what if this override were gone?" without a second copy of the rules.
  *
- * Override first and absolute (GRANT serves, DENY refuses); then an add-on keyed gate serves a held row, a
- * default grant, or the dark-gate courtesy for a plan that is not always enforced; every other key is a plan
- * flag (`allowsFlag`, which folds in the dark-flag courtesy). The credit check is NOT here: it has its own
- * served rule (`creditLimitCheckApplies`), applied by the sweep itself.
+ * The env-switched service gate (the credit check) goes FIRST, with its own rule (SA-1099 A-1): the guard
+ * runs the check for everyone unless the switch is exactly "on", and ignores overrides while it does
+ * (`creditLimitCheckApplies`). Every other key: override first and absolute (GRANT serves, DENY refuses);
+ * then an add-on keyed gate serves a held row, a default grant, or the dark-gate courtesy for a plan that
+ * is not always enforced; every other key is a plan flag (`allowsFlag`, which folds in the dark-flag
+ * courtesy).
  */
 export interface ServedAnswerFacts {
   /** The plan's entitlements, or null when they could not be resolved (an add-on default grant then fails closed). */
@@ -31,6 +34,18 @@ export function servedAnswer(
 ): boolean {
   const { ent, overrides, activeAddonKeys, isAlwaysEnforced } = facts;
   const override = overrides.get(feature.key);
+
+  if (feature.gate.via === "service" && feature.gate.envSwitched) {
+    // SA-1099 A-1: the guard's own rule over the guard's own read (EntitlementsService.hasFlag:
+    // override first, then the plan flag; a failed resolve runs the check, as the guard's catch does)
+    const tenantHasFlag = override
+      ? override === "GRANT"
+      : ent
+        ? ent.flags.includes(feature.key)
+        : true;
+    return creditLimitCheckApplies(env.PLAN_FLAG_ENFORCEMENT, tenantHasFlag);
+  }
+
   if (override === "GRANT") return true;
   if (override === "DENY") return false;
 

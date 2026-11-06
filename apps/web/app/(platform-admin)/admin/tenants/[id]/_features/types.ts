@@ -22,7 +22,14 @@ export type {
 
 /** Badge shown per feature row, derived from `EffectiveFeature.source` (+ `detail.kind`). */
 export type FeatureBadge =
-  "inherited" | "added" | "removed" | "grandfathered" | "purchased" | "off" | "unknown";
+  | "inherited"
+  | "added"
+  | "removed"
+  | "grandfathered"
+  | "purchased"
+  | "courtesy"
+  | "off"
+  | "unknown";
 
 // Brief C's real request/response shape for `PUT /platform-admin/tenants/:id/feature-config/:key`
 // (#837, landed) — verified against the live endpoint: `reason` is required (400 without it),
