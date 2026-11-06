@@ -1,6 +1,6 @@
 /**
  * SA-963 A-1 F-9 (guard): the resolver now carries an override's kind, reason and end date. The tenant's own `GET me/features`
- * reads only `.effective` off it, so a reason an operator wrote about a tenant must never reach the tenant's response.
+ * reads only `.strict` off it, so a reason an operator wrote about a tenant must never reach the tenant's response.
  */
 import { TenantsController } from "./tenants.controller";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
@@ -18,6 +18,7 @@ describe("TenantsController.getMyFeatures: never leaks the override detail (SA-9
             {
               key: "flag.estimates",
               effective: true,
+              strict: true,
               source: "OVERRIDE_GRANT",
               kind: "SUPPORT",
               reason: "internal-note-do-not-show",

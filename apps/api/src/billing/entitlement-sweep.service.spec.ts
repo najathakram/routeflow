@@ -1,12 +1,15 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { FEATURE_REGISTRY } from "./feature-registry";
+import { servedAnswer } from "./served-answer";
 import { EntitlementSweepService } from "./entitlement-sweep.service";
 
 /**
  * SA-1100 §3 (WP1): what the sweep puts on the wire, with every collaborator faked. The real
  * collaborators are covered by `entitlement-sweep.controller.db.spec.ts` (DB lane).
  *   - `courtesy` is on every key and set row, from the ONE predicate in `plan-flag-policy.ts`;
- *   - the credit row's `old` is the guard's own read, `entitlements.hasFlag`, not a re-implementation
- *     of override-first;
+ *   - the credit row's `old` comes from `servedAnswer` like every other row (SA-1099 A-1): the sweep
+ *     carries no copy of the credit rule, and the fake authority below runs the real function;
  *   - `inputsHash` covers whether each override is still live at sweep time, so an override that
  *     lapses between two sweeps reads as a moved input, not as an unexplained change.
  */
@@ -21,11 +24,14 @@ interface Setup {
   mode?: "shadow" | "live";
   modeError?: boolean;
   effective?: (key: string) => boolean;
+  /** The resolver's strict answer (FG-1 WP2); defaults to the effective one. */
+  strict?: (key: string) => boolean;
 }
 
 function build(setup: Setup = {}) {
   const planKey = setup.planKey ?? "STARTER";
-  const planFlags = setup.planFlags ?? [];
+  // `hasFlag: true` = the plan carries the credit flag (the guard reads override first, then the plan)
+  const planFlags = [...(setup.planFlags ?? []), ...(setup.hasFlag ? ["flag.credit_limits"] : [])];
   const overrides = new Map(Object.entries(setup.overrides ?? {})) as Map<string, Effect>;
   const hasFlag = jest.fn(async () => setup.hasFlag ?? false);
   const prisma = {
@@ -55,13 +61,32 @@ function build(setup: Setup = {}) {
       planKey,
       catalogVersionId: "v1",
       byKey: new Map(
-        FEATURE_REGISTRY.map((f) => [f.key, { effective: setup.effective?.(f.key) ?? false }]),
+        FEATURE_REGISTRY.map((f) => {
+          const effective = setup.effective?.(f.key) ?? false;
+          return [f.key, { effective, strict: setup.strict?.(f.key) ?? effective }];
+        }),
       ),
     })),
   };
   const authority = {
-    // today's guards: everything true, so the sweep's own `old` rules are what a spec observes
-    computeOldPathAll: jest.fn(async () => new Map(FEATURE_REGISTRY.map((f) => [f.key, true]))),
+    // today's guards: everything true, except the env-switched credit gate, which is the REAL
+    // `servedAnswer` over this setup's facts (its answer used to be computed inside the sweep)
+    computeOldPathAll: jest.fn(
+      async () =>
+        new Map(
+          FEATURE_REGISTRY.map((f) => [
+            f.key,
+            f.gate.via === "service" && f.gate.envSwitched
+              ? servedAnswer(f, {
+                  ent: { planKey, flags: planFlags },
+                  overrides,
+                  activeAddonKeys: new Set(setup.addons ?? []),
+                  isAlwaysEnforced: planKey === "LITE",
+                })
+              : true,
+          ]),
+        ),
+    ),
   };
   const modeService = {
     invalidate: jest.fn(),
@@ -138,14 +163,28 @@ describe("EntitlementSweepService: the courtesy bit (SA-1100 §3)", () => {
   });
 });
 
-describe("EntitlementSweepService: the credit row's `old` is the guard's own read", () => {
-  it("switch 'on': old is entitlements.hasFlag(tenantId, 'flag.credit_limits')", async () => {
+describe("EntitlementSweepService: the credit row's `old` is the guard's served answer", () => {
+  it("switch 'on': old follows the tenant's flag (override first, then the plan)", async () => {
     process.env[SWITCH] = "on";
     const yes = build({ hasFlag: true });
     expect((await yes.service.sweep({})).tenants[0].keys["flag.credit_limits"].old).toBe(true);
-    expect(yes.hasFlag).toHaveBeenCalledWith("tenant-1", "flag.credit_limits");
     const no = build({ hasFlag: false });
     expect((await no.service.sweep({})).tenants[0].keys["flag.credit_limits"].old).toBe(false);
+  });
+
+  // SA-1099 A-1 / SV-6: one home for the rule. The sweep reads `old` from `computeOldPathAll` for
+  // EVERY key; it holds no copy of the credit rule and makes no entitlements.hasFlag call of its own.
+  it("SV-6 census: the sweep source has no credit-key literal and no hasFlag call", () => {
+    const source = readFileSync(join(__dirname, "entitlement-sweep.service.ts"), "utf8");
+    expect(source).not.toContain('"flag.credit_limits"');
+    expect(source).not.toMatch(/hasFlag\(/);
+    expect(source).not.toContain("creditLimitCheckApplies");
+  });
+
+  it("makes no hasFlag read per tenant (one fewer query)", async () => {
+    const { service, hasFlag } = build({ hasFlag: false });
+    await service.sweep({});
+    expect(hasFlag).not.toHaveBeenCalled();
   });
 
   it("switch off: old is true whatever the flag says", async () => {
@@ -200,5 +239,26 @@ describe("EntitlementSweepService: the mode on page 1 (SA-1100 §3, S1 reads it)
     const { service } = build();
     const first = await service.sweep({ limit: 1 });
     expect(first.modeReadFailed).toBeUndefined();
+  });
+});
+
+describe("EntitlementSweepService: the strict bit comes from the resolver (FG-1 WP2)", () => {
+  it("a key served by courtesy is effective but not strict; a set is strict when any of its keys is", async () => {
+    const { service } = build({
+      effective: () => true,
+      strict: (key) =>
+        key !== "flag.reports" && key !== "order_delivery" && key !== "developer_mode",
+    });
+    const row = (await service.sweep({})).tenants[0];
+    expect(row.keys["flag.reports"]).toMatchObject({ effective: true, strict: false });
+    expect(row.keys["flag.msrp"]).toMatchObject({ effective: true, strict: true });
+    // recurring_routes is strict, so the three-key set is; the two-key set holds only courtesy keys
+    expect(row.sets["recurring_routes|order_delivery|developer_mode"]).toMatchObject({
+      strict: true,
+    });
+    expect(row.sets["order_delivery|developer_mode"]).toMatchObject({
+      effective: true,
+      strict: false,
+    });
   });
 });

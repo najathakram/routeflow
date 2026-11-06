@@ -232,8 +232,10 @@ export class EntitlementAuthority {
       );
       return;
     }
+    // SA-1099 section 3: the STRICT answer. A prerequisite that is only served by the dark-gate courtesy does
+    // not satisfy a grant, so a grant refused today stays refused.
     const effectiveKeys = new Set(
-      [...resolved.byKey.entries()].filter(([, v]) => v.effective).map(([k]) => k),
+      [...resolved.byKey.entries()].filter(([, v]) => v.strict).map(([k]) => k),
     );
     const status = checkFeatureRequires(def.requires, effectiveKeys);
     if (!status.satisfied) {

@@ -5,7 +5,7 @@
 // but inputsHash changed -> 0. Also: the compare prints only hashed ids and key names; a
 // non-local base URL is refused without the per-command owner flag.
 // SA-1100 §3: --check (agree / courtesy gap / unexplained / client drift), the not-comparable refusal
-// on a mode or env change (exit 3), the key-set rule and --new-keys, and the WP2-only flags refused.
+// on a mode or env change (exit 3), the key-set rule and --new-keys, and (WP2) --expect wp2 / --check --after-wp2.
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -137,9 +137,83 @@ try {
     run(["--compare", a, clientDiff]).status,
     2,
   );
+  // ── FG-1 WP2 (SA-1100 §3 B): --expect wp2 ─────────────────────────────────────────────────────
+  // S1 (before WP2): effective == strict. S2 (after): a courtesy row is served (effective true) but
+  // not strict, and B.strict must equal A.effective.
+  const wp2Row = (over) => ({
+    old: true,
+    effective: false,
+    strict: false,
+    clientAddon: null,
+    clientFlag: false,
+    courtesy: true,
+    ...over,
+  });
+  const wp2File = (row, extraKeys = {}) => ({
+    mode: "shadow",
+    planFlagEnforcement: "off",
+    tenants: [
+      {
+        id: "h-0001",
+        class: "PRODUCTION",
+        inputsHash: "in-1",
+        keys: { "flag.reports": row, ...extraKeys },
+        sets: {},
+      },
+    ],
+  });
+  const s1 = write("wp2-s1.json", wp2File(wp2Row({})));
+  const s2Good = write("wp2-s2-good.json", wp2File(wp2Row({ effective: true, strict: false })));
   check(
-    "WP2's --expect is refused in WP1 (exit 3), not ignored",
-    run(["--compare", a, same, "--expect", "wp2"]).status,
+    "--compare --expect wp2: false -> true on a courtesy row, strict equals A.effective -> exit 0",
+    run(["--compare", s1, s2Good, "--expect", "wp2"]).status,
+    0,
+  );
+  check(
+    "the same pair WITHOUT --expect wp2 is still a difference -> exit 2",
+    run(["--compare", s1, s2Good]).status,
+    2,
+  );
+  const s2NoCourtesy = write(
+    "wp2-s2-nocourtesy.json",
+    wp2File(wp2Row({ effective: true, strict: false, courtesy: false })),
+  );
+  check(
+    "--expect wp2: a row that became served without the courtesy bit -> exit 2",
+    run(["--compare", s1, s2NoCourtesy, "--expect", "wp2"]).status,
+    2,
+  );
+  const s2OldMoved = write(
+    "wp2-s2-oldmoved.json",
+    wp2File(wp2Row({ effective: true, strict: false, old: false })),
+  );
+  check(
+    "--expect wp2: old may not move -> exit 2",
+    run(["--compare", s1, s2OldMoved, "--expect", "wp2"]).status,
+    2,
+  );
+  const s2StrictWrong = write(
+    "wp2-s2-strictwrong.json",
+    wp2File(wp2Row({ effective: true, strict: true })),
+  );
+  check(
+    "--expect wp2: B.strict that differs from A.effective -> exit 2",
+    run(["--compare", s1, s2StrictWrong, "--expect", "wp2"]).status,
+    2,
+  );
+  const s2Lost = write(
+    "wp2-s2-lost.json",
+    wp2File(wp2Row({ effective: false, strict: false }), {}),
+  );
+  const s1Served = write("wp2-s1-served.json", wp2File(wp2Row({ effective: true, strict: true })));
+  check(
+    "--expect wp2: effective may not go true -> false -> exit 2",
+    run(["--compare", s1Served, s2Lost, "--expect", "wp2"]).status,
+    2,
+  );
+  check(
+    "--expect with any other value is refused (exit 3)",
+    run(["--compare", s1, s2Good, "--expect", "wp3"]).status,
     3,
   );
 
@@ -364,10 +438,56 @@ try {
     run(["--compare", errTwo, okTwo]).status,
     2,
   );
+  // ── FG-1 WP2 (SA-1100 §3 A): --check --after-wp2 ───────────────────────────────────────────────
+  const afterRow = (over) => ({
+    old: true,
+    effective: true,
+    strict: false,
+    clientAddon: null,
+    clientFlag: true,
+    courtesy: true,
+    ...over,
+  });
+  const afterFile = (rows) => ({
+    mode: "shadow",
+    planFlagEnforcement: "off",
+    tenants: [{ id: "h-0001", class: "PRODUCTION", inputsHash: "in-1", keys: rows, sets: {} }],
+  });
+  const gapFile = write(
+    "after-gap.json",
+    afterFile({ "flag.reports": afterRow({ effective: false }) }),
+  );
   check(
-    "WP2's --after-wp2 is refused in WP1 (exit 3), not ignored",
-    run(["--check", agree, "--after-wp2"]).status,
-    3,
+    "--check without the flag: a courtesy gap is expected -> exit 0",
+    run(["--check", gapFile]).status,
+    0,
+  );
+  const afterGapRun = run(["--check", gapFile, "--after-wp2"]);
+  check("--check --after-wp2: a courtesy gap now fails -> exit 2", afterGapRun.status, 2);
+  check("the report names the gap", /COURTESY-GAP flag.reports: 1/.test(afterGapRun.stdout), true);
+  const servedFile = write("after-served.json", afterFile({ "flag.reports": afterRow({}) }));
+  check(
+    "--check --after-wp2: served by courtesy, strict false, courtesy bit on -> exit 0",
+    run(["--check", servedFile, "--after-wp2"]).status,
+    0,
+  );
+  const orphanFile = write(
+    "after-orphan.json",
+    afterFile({ "flag.reports": afterRow({ courtesy: false }) }),
+  );
+  check(
+    "--check --after-wp2: served without strict and without the courtesy bit -> exit 2",
+    run(["--check", orphanFile, "--after-wp2"]).status,
+    2,
+  );
+  check(
+    "--check --after-wp2: the stop line for a live mode still wins (exit 4)",
+    run([
+      "--check",
+      write("after-live.json", { ...afterFile({ "flag.reports": afterRow({}) }), mode: "live" }),
+      "--after-wp2",
+    ]).status,
+    4,
   );
 
   // Never against production by itself: a non-local base URL is refused (exit 3), no network call.

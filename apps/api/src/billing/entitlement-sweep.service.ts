@@ -2,7 +2,6 @@ import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { createHash } from "crypto";
 import type { EntitlementsMode } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
-import { creditLimitCheckApplies } from "../orders/credit-limit-guard";
 import { AddonAccessService } from "./addon-access";
 import { AddonService } from "./addon.service";
 import { EntitlementAuthority } from "./entitlement-authority.service";
@@ -53,7 +52,7 @@ const digest = (value: unknown): string =>
 export interface SweepBits {
   old: boolean;
   effective: boolean;
-  /** Equal to `effective` until WP2 separates courtesy from strict inside the resolver. */
+  /** The resolver's strict answer (FG-1 WP2): the owner's rule with no courtesy; `effective` adds it. */
   strict: boolean;
   /** `/tenants/me/addons` verdict; null for a key that is not add-on keyed. */
   clientAddon: boolean | null;
@@ -188,19 +187,12 @@ export class EntitlementSweepService {
       const key = feature.key;
       const effective = resolved.byKey.get(key)?.effective ?? false;
       const addonKeyed = gateVia(key) === "RequireAddon" || gateVia(key) === "guard";
-      // SA-1099 §2: the credit check is not the plan-flag courtesy `computeOldPathAll` models.
-      // It is the guard's own rule over the guard's own read (`entitlements.hasFlag`).
-      const old =
-        key === "flag.credit_limits"
-          ? creditLimitCheckApplies(
-              process.env.PLAN_FLAG_ENFORCEMENT,
-              await this.entitlements.hasFlag(tenantId, key),
-            )
-          : (oldAll.get(key) ?? false);
       keys[key] = {
-        old,
+        // every key's served answer, the credit check included, comes from `servedAnswer` (SA-1099 A-1)
+        old: oldAll.get(key) ?? false,
         effective,
-        strict: effective,
+        // the resolver's own strict answer (FG-1 WP2): the owner's rule with no courtesy
+        strict: resolved.byKey.get(key)?.strict ?? false,
         clientAddon: addonKeyed ? held.has(key) : null,
         clientFlag: addonKeyed ? null : served.has(key),
         courtesy: isCourtesyServed({
@@ -220,7 +212,7 @@ export class EntitlementSweepService {
       sets[setKeys.join("|")] = {
         old: decision.outcome !== "denied",
         effective,
-        strict: effective,
+        strict: setKeys.some((k) => resolved.byKey.get(k)?.strict === true),
         clientAddon: setKeys.some((k) => held.has(k)),
         courtesy: isCourtesyServed({
           keys: setKeys,
