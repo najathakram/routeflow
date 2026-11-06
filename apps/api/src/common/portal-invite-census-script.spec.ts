@@ -79,6 +79,15 @@ describe("rotate-portal-invites.mjs", () => {
     }
   });
 
+  it("the dry run is a READ ONLY transaction that never calls the write", () => {
+    const src = read(ROTATE);
+    const start = src.indexOf("async function dryRun(");
+    const body = src.slice(start, src.indexOf("\nfunction verifyGuardSha", start));
+    expect(body.length).toBeGreaterThan(200); // not vacuous: the function was found
+    expect(body).toMatch(/BEGIN TRANSACTION READ ONLY/);
+    expect(body).not.toMatch(/ROTATE_SQL|UPDATE "|COMMIT/);
+  });
+
   it("refuses two tenants in one run: one tenant, one yes (SA-820 A-2)", () => {
     const OTHER = "22222222-2222-4222-8222-222222222222";
     for (const args of [

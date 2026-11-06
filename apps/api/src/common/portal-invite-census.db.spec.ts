@@ -381,6 +381,51 @@ describeDb("portal invite census and rotation (real Postgres)", () => {
     expect((await linkRow("recorded1")).inviteToken).toBe(links.recorded1.token);
   });
 
+  /** A hand-made plan (hash recomputed) holding exactly these rows: the write's own predicates are all that is left to stop it. */
+  async function handPlan(rows: object[]) {
+    const r = await dryRun([TEST_TENANT.id]);
+    const plan = JSON.parse(readFileSync(r.file as string, "utf8"));
+    delete plan.planHash;
+    plan.rotate = rows;
+    const hash = createHash("sha256").update(JSON.stringify(plan)).digest("hex");
+    const file = (r.file as string).replace(/.json$/, `-hand-${Date.now()}.json`);
+    writeFileSync(file, JSON.stringify({ ...plan, planHash: hash }, null, 2));
+    return { file, hash };
+  }
+  const sha = (t: string) => createHash("sha256").update(t).digest("hex");
+
+  it("R14: the write is bound to the tenant: a plan row naming the test tenant for another tenant's link writes nothing", async () => {
+    const p = await handPlan([
+      {
+        linkId: links.other.id,
+        tenantId: TEST_TENANT.id,
+        status: "INVITED",
+        tokenSha256: sha(links.other.token as string),
+        auditRows: 1,
+      },
+    ]);
+    const a = run(ROTATE, applyArgs(p.file, p.hash, [TEST_TENANT.id]), { DATABASE_URL: url });
+    expect(a.code).toBe(1);
+    expect(a.out).toMatch(/has changed since the dry run/);
+    expect((await linkRow("other")).inviteToken).toBe(links.other.token);
+  });
+
+  it("R15: an invite that has expired since the dry run is not rotated: the write needs a live link", async () => {
+    const p = await handPlan([
+      {
+        linkId: links.expired.id,
+        tenantId: TEST_TENANT.id,
+        status: "INVITED",
+        tokenSha256: sha(links.expired.token as string),
+        auditRows: 1,
+      },
+    ]);
+    const a = run(ROTATE, applyArgs(p.file, p.hash, [TEST_TENANT.id]), { DATABASE_URL: url });
+    expect(a.code).toBe(1);
+    expect(a.out).toMatch(/has changed since the dry run/);
+    expect((await linkRow("expired")).inviteToken).toBe(links.expired.token);
+  });
+
   it("R9: apply on the test tenant clears exactly the planned links and nothing else", async () => {
     const r = await dryRun([TEST_TENANT.id]);
     const a = run(ROTATE, applyArgs(r.file as string, r.hash as string, [TEST_TENANT.id]), {
