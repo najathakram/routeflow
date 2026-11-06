@@ -53,19 +53,49 @@ const nextConfig = {
         destination: "/routes/:id/dispatch",
         permanent: true,
       },
-      // /distributors is the URL the original marketing design used for the
-      // wholesaler-side page; /wholesalers is the canonical URL. This used to
-      // be a prerendered `redirect()` page (app/(marketing)/distributors/
-      // page.tsx), but a prerendered redirect() page served from the ISR
-      // cache lost its Location header on the standalone server (307, no
-      // Location; spec 36 T1 red on 2026-09-08). A next.config redirect is
-      // evaluated before middleware, so it always carries the Location header.
-      {
-        source: "/distributors",
-        destination: "/wholesalers",
-        permanent: false,
-      },
+      // The old marketing site's pages, sent to the closest page of the new site (owner order,
+      // "no old look left anywhere"). Permanent, so search engines move the old
+      // addresses across. A next.config redirect is evaluated before middleware and always carries
+      // its Location header (a prerendered redirect() page served from the ISR cache lost it; spec 36).
+      // /distributors, /demo and /about were guessed addresses that pointed at these pages: they go
+      // straight to the end of the chain.
+      { source: "/wholesalers", destination: "/product", permanent: true },
+      { source: "/distributors", destination: "/product", permanent: true },
+      { source: "/retailers", destination: "/#stores", permanent: true },
+      { source: "/buyer", destination: "/#stores", permanent: true },
+      { source: "/book-a-demo", destination: "/contact", permanent: true },
+      { source: "/demo", destination: "/contact", permanent: true },
+      { source: "/sign-in", destination: "/login", permanent: true },
+      { source: "/about", destination: "/company", permanent: true },
+      // W6: other addresses a visitor might guess. /faq, /integrations and /quickbooks open the FAQ
+      // section on the home page (id="faq").
+      { source: "/features", destination: "/product", permanent: false },
+      { source: "/faq", destination: "/#faq", permanent: false },
+      { source: "/integrations", destination: "/#faq", permanent: false },
+      { source: "/quickbooks", destination: "/#faq", permanent: false },
     ];
+  },
+
+  // The home, pricing, product, landing, company, contact and four deep pages (getting-started,
+  // does-and-doesnt, data-in-and-out, security) are ready-made HTML under public/site (page,
+  // styles, scripts, font and marks together). A beforeFiles rewrite serves each at its own
+  // address after the middleware has run. The
+  // route behind it (app/site-page) is the file plus the Umami tags when the build has a site ID.
+  async rewrites() {
+    return {
+      beforeFiles: [
+        { source: "/", destination: "/site-page/home" },
+        { source: "/pricing", destination: "/site-page/pricing" },
+        { source: "/product", destination: "/site-page/product" },
+        { source: "/landing", destination: "/site-page/landing" },
+        { source: "/getting-started", destination: "/site-page/getting-started" },
+        { source: "/does-and-doesnt", destination: "/site-page/does-and-doesnt" },
+        { source: "/data-in-and-out", destination: "/site-page/data-in-and-out" },
+        { source: "/security", destination: "/site-page/security" },
+        { source: "/company", destination: "/site-page/company" },
+        { source: "/contact", destination: "/site-page/contact" },
+      ],
+    };
   },
 
   // Security headers applied to all routes
@@ -86,6 +116,11 @@ const nextConfig = {
         source: "/(.*)",
         headers: [
           { key: "X-Frame-Options", value: "DENY" },
+          // Site audit 2026-11-02 §7: www answered with no HSTS, so a first visit over http
+          // was never pinned to https. One year, this host only: no includeSubDomains
+          // (the API and other hosts are not ours to pin from here) and no preload
+          // (a list entry outlives any later change of mind).
+          { key: "Strict-Transport-Security", value: "max-age=31536000" },
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           {
@@ -135,13 +170,26 @@ const nextConfig = {
       },
       {
         source:
-          "/:path(product|wholesalers|retailers|pricing|company|contact|privacy|terms|sign-in|book-a-demo)",
+          "/:path(product|pricing|landing|company|contact|privacy|terms|getting-started|does-and-doesnt|data-in-and-out|security)",
         headers: [
           {
             key: "Cache-Control",
             value: "public, max-age=60, s-maxage=3600, stale-while-revalidate=86400",
           },
         ],
+      },
+      // The files and the route behind those pages. Asked for by their own name they would repeat
+      // the page at a second address, so search engines are told to leave them out; the pages
+      // carry their own canonical link.
+      {
+        source:
+          "/site/:page(home|pricing|product|landing|company|contact|getting-started|does-and-doesnt|data-in-and-out|security).html",
+        headers: [{ key: "X-Robots-Tag", value: "noindex" }],
+      },
+      {
+        source:
+          "/site-page/:page(home|pricing|product|landing|company|contact|getting-started|does-and-doesnt|data-in-and-out|security)",
+        headers: [{ key: "X-Robots-Tag", value: "noindex" }],
       },
     ];
   },

@@ -191,8 +191,11 @@ describe("ReturnsService.create → cumulative over-return / double-refund race 
 
   it("locks the order row with SELECT ... FOR UPDATE BEFORE the cumulative read, so concurrent creates serialize under READ COMMITTED", async () => {
     const callOrder: string[] = [];
-    txExecuteRaw.mockImplementation(() => {
-      callOrder.push("lock");
+    txExecuteRaw.mockImplementation((strings: TemplateStringsArray) => {
+      // B1279: the customer returns lock (advisory) now always precedes the order-row lock
+      callOrder.push(
+        strings.join("?").includes("pg_advisory_xact_lock") ? "customer-lock" : "lock",
+      );
       return Promise.resolve(0);
     });
     txReturn.findMany.mockImplementation(() => {
@@ -211,9 +214,9 @@ describe("ReturnsService.create → cumulative over-return / double-refund race 
 
     // The transaction on its own is not a fix: at READ COMMITTED both racers
     // read a snapshot without the other's uncommitted insert and both commit.
-    // The lock must be the FIRST statement, ahead of the read it protects.
-    expect(callOrder).toEqual(["lock", "read", "create"]);
-    const [strings, ...values] = txExecuteRaw.mock.calls[0];
+    // The locks must come ahead of the read they protect: the customer lock, then the order row.
+    expect(callOrder).toEqual(["customer-lock", "lock", "read", "create"]);
+    const [strings, ...values] = txExecuteRaw.mock.calls[1];
     expect(strings.join("?")).toContain('"Order"');
     expect(strings.join("?")).toContain("FOR UPDATE");
     expect(values).toEqual(["ord-1"]);

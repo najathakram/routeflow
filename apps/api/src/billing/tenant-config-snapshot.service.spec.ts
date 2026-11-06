@@ -1193,3 +1193,81 @@ describe("TenantConfigSnapshotService — restored GRANT overrides (row 640)", (
     ]);
   });
 });
+
+/**
+ * B1282 follow-up: `planGuarded` judges a restored GRANT's `requires` over the CURRENT effects, which are the one rule's
+ * answer per key (newest live row first, `OVERRIDE_RULE_ORDER`); the plan's own creates come last. A same-key tie cannot
+ * occur in real data (the partial unique index), so these value rows are what make an oldest-wins read go red: the read
+ * is given the database's ordering, and the rows are fed in BOTH physical orders.
+ */
+describe("TenantConfigSnapshotService — planGuarded reads a same-key tie as the newest live row", () => {
+  const svc = new TenantConfigSnapshotService();
+  const KEY = "driver_payments"; // requires anyOf [recurring_routes, order_delivery]
+  const FLEET = "order_delivery";
+  const DAY = 86_400_000;
+
+  const orderRows = (rows: any[], orderBy: Array<Record<string, "asc" | "desc">> | undefined) =>
+    !orderBy
+      ? rows
+      : [...rows].sort((a, b) => {
+          for (const o of orderBy) {
+            const [k, dir] = Object.entries(o)[0];
+            const av = a[k] instanceof Date ? a[k].getTime() : a[k];
+            const bv = b[k] instanceof Date ? b[k].getTime() : b[k];
+            if (av === bv) continue;
+            return (av < bv ? -1 : 1) * (dir === "desc" ? -1 : 1);
+          }
+          return 0;
+        });
+
+  async function restoreInto(newest: "GRANT" | "DENY", physicalNewestFirst: boolean) {
+    const src = fakeTx({
+      overrides: [ovrRow({ id: "o-src", featureKey: KEY, effect: "GRANT", kind: "COMP" })],
+    });
+    await svc.snapshot(src.tx, TENANT, HIGH, "DOWNGRADE", undefined, T0);
+    src.state.snapshots[0].id = "snap-1";
+    const oldest = newest === "GRANT" ? "DENY" : "GRANT";
+    const newRow = ovrRow({
+      id: "o-new",
+      featureKey: FLEET,
+      effect: newest,
+      createdAt: new Date(T0.getTime() - DAY),
+    });
+    const oldRow = ovrRow({
+      id: "o-old",
+      featureKey: FLEET,
+      effect: oldest,
+      createdAt: new Date(T0.getTime() - 3 * DAY),
+    });
+    const t = fakeTx({ overrides: physicalNewestFirst ? [newRow, oldRow] : [oldRow, newRow] });
+    t.state.snapshots.push(...src.state.snapshots);
+    // what the database does with the read's `orderBy` (the fake ignores it otherwise)
+    const stored = t.state.overrides;
+    (t.tx.tenantFeatureOverride as any).findMany = async ({ orderBy }: any) =>
+      orderRows(stored, orderBy).map((r) => ({ ...r }));
+    const res = await svc.restoreSnapshot(t.tx, TENANT, "snap-1", HIGH, NOW);
+    return { res, t };
+  }
+
+  it.each([true, false])(
+    "newest GRANT beats an older DENY on the fleet key: the restored GRANT's requires are met (physical order newest-first=%s)",
+    async (physicalNewestFirst) => {
+      const { res, t } = await restoreInto("GRANT", physicalNewestFirst);
+      expect(res!.held).toEqual([]);
+      expect(t.state.overrides.some((o) => o.featureKey === KEY && o.revokedAt === null)).toBe(
+        true,
+      );
+    },
+  );
+
+  it.each([true, false])(
+    "newest DENY beats an older GRANT on the fleet key: the restored GRANT is HELD REQUIRES_UNMET (physical order newest-first=%s)",
+    async (physicalNewestFirst) => {
+      const { res, t } = await restoreInto("DENY", physicalNewestFirst);
+      expect(res!.held).toEqual([
+        { kind: "override", featureKey: KEY, overrideKind: "COMP", reason: "REQUIRES_UNMET" },
+      ]);
+      expect(t.state.overrides.some((o) => o.featureKey === KEY)).toBe(false);
+    },
+  );
+});

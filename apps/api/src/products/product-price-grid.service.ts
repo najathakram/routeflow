@@ -4,9 +4,11 @@ import {
   buildLadderView,
   authorityLevelOfRef,
   canonicalUnitRef,
+  familyCellsFor,
   priceAuthority,
   priceGrid,
   unitCodeOf,
+  type FamilyCell,
   type LadderView,
   type LadderViewUnit,
   type PriceAuthorityLevel,
@@ -15,6 +17,7 @@ import {
   type TierRules,
 } from "@routeflow/pricing";
 import type { ProductPriceGridDto } from "@routeflow/types";
+import { EntitlementsService } from "../billing/entitlements.service";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { readFamilyPriceMode, recipeFamilyIdOf } from "./family-price";
@@ -43,8 +46,13 @@ export const PRODUCT_SELECT = {
   unitSku: true,
 } as const;
 
-/** The refusal for the implicit base row: the unit must exist before it can carry a price (K7 adds it). */
-export const addUnitFirst = (label: string): string => `Add the ${label} unit first.`;
+/**
+ * SA-1082: the implicit base row of a business that can't sell by a unit (`flag.units_v1`, `unit-line-build.ts`). A typed
+ * Piece price would change no sale, so the row shows its Auto figures, read-only, and the write refuses alike.
+ */
+export const PIECE_NOT_SOLD =
+  "Follows the pack price. Selling by the piece isn't on for this business.";
+const UNITS_FLAG = "flag.units_v1";
 
 /**
  * SA-809: the ProductUnit that backs the piece level ("base"), or null when none does (the implicit Piece row, or a
@@ -113,6 +121,8 @@ export interface PriceModel {
   revision: number;
   priceState: string;
   grid: ProductPriceGridDto;
+  /** SA-1082 A-1: a variant's five cells against its family, Retail first; null when it doesn't follow one. */
+  familyCells: FamilyCell[] | null;
 }
 
 /**
@@ -129,14 +139,34 @@ export class ProductPriceGridService {
   constructor(
     private readonly prisma: PrismaService,
     @Optional() private readonly featureConfig?: FeatureConfigService,
+    @Optional() private readonly entitlements?: EntitlementsService,
   ) {}
 
-  get(productId: string): Promise<ProductPriceGridDto> {
-    return this.read(this.prisma.forTenant(), productId).then((m) => m.grid);
+  async get(productId: string): Promise<ProductPriceGridDto> {
+    const pieceSellable = await this.pieceSellable();
+    return this.read(this.prisma.forTenant(), productId, { pieceSellable }).then((m) => m.grid);
+  }
+
+  /**
+   * May this business sell by a unit? Read BEFORE a transaction opens. A missing reader, tenant or failed read is
+   * false: the row stays read-only rather than creating a level nobody can sell.
+   */
+  async pieceSellable(): Promise<boolean> {
+    const tenantId = this.prisma.getTenantId();
+    if (!this.entitlements || !tenantId) return false;
+    try {
+      return (await this.entitlements.hasFlag(tenantId, UNITS_FLAG)) === true;
+    } catch {
+      return false;
+    }
   }
 
   /** `db` = the tenant client or a tenant transaction client. */
-  async read(db: Db, productId: string): Promise<PriceModel> {
+  async read(
+    db: Db,
+    productId: string,
+    opts: { pieceSellable?: boolean } = {},
+  ): Promise<PriceModel> {
     const product = await db.product.findFirst({
       where: { id: productId },
       select: PRODUCT_SELECT,
@@ -195,19 +225,30 @@ export class ProductPriceGridService {
         ? await recipeFamilyIdOf(db, tenantId, productId)
         : null;
     const authorityOf = { ...product, recipeFamilyId };
+    const familyCells = await this.familyCellsOf(db, product, tierUnits);
     const grid: ProductPriceGridDto = {
       productId,
       anchor: view.anchor,
       rows: priceGrid(view, rules).map((row) => {
-        // A piece level no ProductUnit backs (the implicit row) cannot be priced: the write never mints a unit.
+        // SA-1082: a piece level no ProductUnit backs takes a first price, and the write creates its row.
+        const unbacked = row.ref === "base" && !baseUnit;
         const reason =
           governedReason(authorityOf, mode, authorityLevelOfRef(units, row.ref)) ??
-          (row.ref === "base" && !baseUnit ? addUnitFirst(row.label) : null);
+          (unbacked && !opts.pieceSellable ? PIECE_NOT_SOLD : null);
         return {
           ...row,
+          ...(row.ref === "pack" && familyCells
+            ? {
+                cells: row.cells.map((c) => ({
+                  ...c,
+                  family: familyCells[c.tier - 1] as FamilyCell,
+                })),
+              }
+            : {}),
           code: unitCodeOf(codes, row.ref),
           editable: reason == null,
           ...(reason ? { notEditableReason: reason } : {}),
+          ...(unbacked ? { unbacked } : {}),
         };
       }),
       revision,
@@ -215,6 +256,32 @@ export class ProductPriceGridService {
       tierAnchors: { ...view.tierAnchors },
       tierRules: { ...rules },
     };
-    return { product, units, view, rules, revision, priceState, grid };
+    return { product, units, view, rules, revision, priceState, grid, familyCells };
+  }
+
+  /** A variant's cells against its family (recipes keep today's authority). One read, only for a row with a parent. */
+  private async familyCellsOf(
+    db: Db,
+    product: any,
+    tierUnits: readonly { orderUnitRef: string | null }[],
+  ): Promise<FamilyCell[] | null> {
+    if (!product.parentProductId || product.kind === "RECIPE") return null;
+    const family = await db.product.findFirst({
+      where: { id: product.parentProductId },
+      select: {
+        pricePerUnit: true,
+        priceTier2: true,
+        priceTier3: true,
+        priceTier4: true,
+        priceTier5: true,
+        unitsPerBox: true,
+      },
+    });
+    if (!family) return null;
+    const own = (ref: string | null | undefined) => !!ref && ref !== "pack";
+    return familyCellsFor(family, {
+      ...product,
+      ownOrderUnit: own(product.orderUnitRef) || tierUnits.some((t) => own(t.orderUnitRef)),
+    });
   }
 }

@@ -25,6 +25,7 @@ export const VALID_RETURN_REASONS = [
 // default; the rest go back into stock unless the caller says otherwise.
 export const NO_RESTOCK_REASONS = new Set(["DAMAGED", "QUALITY_ISSUE"]);
 import { MovementType, Prisma } from "@prisma/client";
+import { lockProductsForStock } from "../common/product-locks";
 import { applyStockMovements } from "../inventory/stock-movements";
 import type { UnbilledReturnItem } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
@@ -39,6 +40,8 @@ import {
   toHeadroomLine,
   loadLineCredits,
   loadOrderPool,
+  loadOrderRefundRoom,
+  orderRoomRefusal,
   pooledRefundRefusal,
   type HeadroomLine,
   type LineCredit,
@@ -108,6 +111,7 @@ import {
   withLines,
 } from "./return-line-items";
 import { restockReturnItems } from "./returns-restock.util";
+import { boxIntrosOf, introsAfter, packFactor, type BoxIntro } from "../products/pack-intro-undo";
 import {
   NO_SPLIT,
   addSplit,
@@ -122,6 +126,7 @@ import {
 } from "./standard-refund-pricing";
 import { standardRestockResolver, type ProductPackBasis } from "./returns-restock-pieces";
 import { ledgerDocumentTargets, lockLedgerDocumentRows } from "../regulated/ledger-locks";
+import { lockReturnCustomer } from "./return-customer-lock";
 
 /** M6/§2.3: every standard-path method refuses an INLINE-kind return — it has its own
  * endpoints and state machine (PR-1c/1d). Thrown the moment a `kind` is known to be INLINE. */
@@ -249,6 +254,13 @@ interface RefundActorDb {
   };
 }
 
+/** SA-1101 §2.5: DELIVERED is returnable by anyone who may return; REFUSED only by staff (how refused goods go back to stock). */
+export function isReturnable(status: string, userRole: string | undefined | null): boolean {
+  return (
+    status === "DELIVERED" || (status === "REFUSED" && userRole != null && userRole !== "CUSTOMER")
+  );
+}
+
 @Injectable()
 export class ReturnsService {
   constructor(
@@ -366,7 +378,9 @@ export class ReturnsService {
         },
       });
       if (!order) throw new NotFoundException("Order not found");
-      if (order.status !== "DELIVERED")
+      // SA-1101 §2.5: staff may also record a return on a REFUSED order (how the refused goods go back to stock,
+      // SA-1098 A-1). A buyer may not: they get the same message as for any undelivered order.
+      if (!isReturnable(order.status, userRole))
         throw new BadRequestException("Returns can only be submitted for delivered orders");
 
       // Customers can only create returns for their own orders
@@ -384,12 +398,11 @@ export class ReturnsService {
       // customer's same product — must not both read the same stale "remaining"
       // snapshot. Placed after the idempotency lock/check and the unlocked order
       // read (source of customerId) above, before the order-row FOR UPDATE below.
-      if (this.idempotency) {
-        await this.idempotency.acquireLock(
-          this.idempotency.hashFor(order.customerId, tenantId, "returns.customer"),
-          tx,
-        );
-      }
+      await lockReturnCustomer(
+        tx,
+        { customerId: order.customerId, tenantId: order.tenantId ?? null },
+        this.idempotency,
+      );
 
       // The transaction ALONE does not close the race: tenantTransaction runs at
       // Postgres' default READ COMMITTED, so two concurrent creates would each
@@ -398,6 +411,14 @@ export class ReturnsService {
       // serialize here — mirrors the FOR UPDATE idiom in invoices.service.ts
       // recordPayment() and routes.service.ts dispatch.
       await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${dto.orderId} FOR UPDATE`;
+      // SA-1101 A-3 N1: the status read above was taken BEFORE this lock. A Deliver again that committed in between
+      // moved the order out of REFUSED, and a return recorded on it now would be restocked on goods that went out again.
+      const lockedStatus = await tx.order.findUnique({
+        where: { id: dto.orderId },
+        select: { status: true },
+      });
+      if (!lockedStatus || !isReturnable(lockedStatus.status, userRole))
+        throw new BadRequestException("Returns can only be submitted for delivered orders");
 
       // B4/m-6: prior-returned pieces per product, shared with the (PR-1c/1d) INLINE
       // capture flow — sums STANDARD Return rows AND (once they exist) INLINE
@@ -798,7 +819,13 @@ export class ReturnsService {
       } else {
         // PR-1c: shared with InlineReturnsService.capture() — see returns-restock.util.ts.
         // B665: a STANDARD return is typed in the line's own unit; stock is in pieces.
-        await restockReturnItems(tx, ret, userId, standardRestockResolver(tx, ret.orderId));
+        // SA-1093 A-1: and a line sold before a Boxes answer restocks in today's pieces.
+        await restockReturnItems(
+          tx,
+          ret,
+          userId,
+          standardRestockResolver(tx, ret.orderId, { inTodaysPieces: true }),
+        );
       }
       // W5c: reverse the regulated sales ledger for the returned goods (pro-rated,
       // idempotent per return). Independent of `restock` — a returned regulated
@@ -1461,7 +1488,10 @@ export class ReturnsService {
         // receive() already reversed the returned regulated goods in the ledger: the refund rows must not reverse them again
         {
           ledgerReversedByReturn: true,
-          ...(pooledRefund ? { pooledRefund, returnId: id } : {}),
+          // SA-1091 piece 2 (row 333a): the link is written INSIDE the mint's transaction, on every refund (not only a pooled one), so a
+          // crash between the commit and a later update can never leave a live note with no link. create() locks this Return first.
+          returnId: id,
+          ...(pooledRefund ? { pooledRefund } : {}),
           // SA-840: the rows carry NET; the regular tax and the per-line levy slices make the note total the gross refund
           ...refundTaxOpts(refundItems, refundSplit),
         },
@@ -1502,6 +1532,21 @@ export class ReturnsService {
       const code = (err as { getResponse?: () => { code?: string } })?.getResponse?.()?.code;
       const pooledRefusal =
         (err as { getResponse?: () => { pooled?: boolean } })?.getResponse?.()?.pooled === true;
+      // SA-1091: the credit note's order-wide bound (a lump note, a recorded refund or an inline return took the room) is the
+      // same refusal, with the room left in its message
+      const bound = (
+        err as {
+          getResponse?: () => { orderBound?: boolean; message?: string; remaining?: number };
+        }
+      )?.getResponse?.();
+      if (bound?.orderBound === true) {
+        throw new ConflictException({
+          code: API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM,
+          message: bound.message,
+          orderBound: true,
+          remaining: bound.remaining,
+        });
+      }
       if (
         (refundItems &&
           (code === API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM ||
@@ -1517,8 +1562,6 @@ export class ReturnsService {
       }
       throw err;
     }
-    await this.prisma.forTenant().return.update({ where: { id }, data: { creditNoteId: cn.id } });
-
     return withUnbilled({ ...updated, creditNoteId: cn.id });
   }
 
@@ -1609,6 +1652,26 @@ export class ReturnsService {
                 perOrder: new Map([[orderId, refundAmount]]),
               });
             }
+            // SA-1091 (row 631): the order-wide bound, under the locks above. The line basis clips per line and cannot see a lump
+            // credit note, so the order may not give back more than its creditable invoices billed (refused, never clipped).
+            const orderRoom = await loadOrderRefundRoom(
+              tx,
+              { orderId, invoiceId: resolved.invoiceIds[0] },
+              { excludeReturnId: id },
+            );
+            const roomRefusal = orderRoomRefusal(orderRoom, refundAmount);
+            if (roomRefusal)
+              throw new ConflictException({
+                code: API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM,
+                message: roomRefusal.message,
+                orderBound: true,
+                requested: refundAmount,
+                remaining: roomRefusal.left,
+              });
+            // A WRITE, not just a lock: a lump credit note's Serializable transaction took its snapshot before it waited on these
+            // invoices, and only a new row version makes it re-read (40001, then its bounded retry) and see this refund.
+            if (resolved.invoiceIds.length > 0)
+              await tx.$executeRaw`UPDATE "Invoice" SET "updatedAt" = now() WHERE id IN (${Prisma.join(resolved.invoiceIds)}) AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId})`;
           }
 
           // SA-758 CR-2: a recorded refund's refundedAt is the DATABASE clock, read after the close lock
@@ -1795,11 +1858,22 @@ export class ReturnsService {
         // or restock:false item has no movement, so there is nothing to undo for it.
         const moved: any[] = await tx.stockMovement.findMany({
           where: { reference: returnRef, type: "RETURN" },
-          select: { productId: true, quantity: true },
+          select: { productId: true, quantity: true, createdAt: true },
         });
+        // SA-1093 Rule 4: each row counted in its own day's units, and stock has been converted since a later Boxes answer.
+        // G5: read inside the stock lock, so an answer still open has committed first. The writer below re-locks (a no-op).
+        const movedIds = [...new Set(moved.map((m) => m.productId as string))];
+        await lockProductsForStock(tx, this.prisma.getTenantId(), movedIds);
+        const introsOf = new Map<string, BoxIntro[]>();
+        for (const productId of movedIds) {
+          introsOf.set(productId, await boxIntrosOf(tx, productId));
+        }
         const undo = new Map<string, number>();
-        for (const m of moved)
-          undo.set(m.productId, (undo.get(m.productId) ?? 0) + Number(m.quantity));
+        for (const m of moved) {
+          const factor = packFactor(introsAfter(introsOf.get(m.productId) ?? [], m.createdAt));
+          const pieces = Number(new Prisma.Decimal(m.quantity).mul(factor));
+          undo.set(m.productId, (undo.get(m.productId) ?? 0) + pieces);
+        }
         // B562 PR-2 (SA-136 §2): nothing deletes a movement. The undo APPENDS one reversing RETURN row
         // per product (negative quantity, same reference, notes RETURN_CANCELLED), so the reference nets
         // to zero and the history stays. SA-927: through the one writer (stockAfter from the locked read).

@@ -18,6 +18,7 @@
  * existing catalog is used as it is.
  * Throwaway `qa-r640-*` tenants. Collected only by `jest.db.config.js`.
  */
+import type { PrismaClient } from "@prisma/client";
 import { randomUUID } from "crypto";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { PrismaService } from "../prisma/prisma.service";
@@ -68,8 +69,8 @@ describeDb(
       );
       // Row 691: a fresh test DB has no catalog; publish the shipped one (the local guard ran above).
       if (!(await catalog.getPublishedVersion())) {
-        await publishV12(prisma);
-        await publishV13(prisma);
+        await publishV12(prisma as unknown as PrismaClient);
+        await publishV13(prisma as unknown as PrismaClient);
       }
       const published = await catalog.getPublishedVersion();
       if (!published) throw new Error("the shipped publishers left no published plan catalog");

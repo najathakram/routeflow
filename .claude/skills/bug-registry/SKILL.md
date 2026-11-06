@@ -412,7 +412,7 @@ system of record for security findings too, not a separate tracker. Convention:
   npm run bugs -- list --tag security --batch F49
   ```
 
-`docs/audit/security-findings-index.md` maps external audit finding ids (e.g. `F1-001`) to their
+`archive/docs-audit/security-findings-index.md` in the private rf-specs repo maps external audit finding ids (e.g. `F1-001`) to their
 registry id; `docs/security/security-testing-program.md` §8 is the standing backlog this feeds.
 
 ## Plane

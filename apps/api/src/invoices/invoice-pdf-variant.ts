@@ -1,3 +1,4 @@
+import { isPostDeliveryOrderStatus } from "../common/terminal-order-statuses";
 /**
  * Draft/final stage for an invoice PDF. Kept in its own file (no `@react-pdf`
  * import) so it stays trivially unit-testable.
@@ -17,6 +18,6 @@ export function deriveInvoiceVariant(inv: {
   order?: { status: string } | null;
 }): InvoicePdfVariant {
   if (inv.status !== "DRAFT") return "final";
-  if (inv.order?.status === "DELIVERED") return "final";
+  if (isPostDeliveryOrderStatus(inv.order?.status)) return "final";
   return "draft";
 }

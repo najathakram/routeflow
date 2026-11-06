@@ -13,6 +13,7 @@ import {
   statusFailureCopy,
 } from "../../_components/TenantActionDialogs";
 import { usePlanOptions, withCurrentPlan } from "../../_components/usePlanOptions";
+import { PlanMoveReasonField, usePlanMoveReason } from "../../_components/PlanMoveReason";
 import { ChevronUp, ChevronDown, X } from "lucide-react";
 
 interface Tenant {
@@ -65,6 +66,8 @@ export default function AdminTenantsPage() {
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [bulkAction, setBulkAction] = React.useState<string | null>(null);
   const [bulkPlan, setBulkPlan] = React.useState("STARTER");
+  // R49: a plan move needs a reason; the bulk move sends the same one for every business.
+  const planMoveReason = usePlanMoveReason();
   // B857: bulk Change Plan offers the published catalog, not a hand-typed legacy list.
   const planOptions = usePlanOptions();
   React.useEffect(() => {
@@ -72,6 +75,11 @@ export default function AdminTenantsPage() {
       setBulkPlan(planOptions.planKeys[0]!);
     }
   }, [planOptions.planKeys, bulkPlan]);
+  // Closing the dialog (Cancel, Escape, done) forgets the reason, so the next move starts empty.
+  React.useEffect(() => {
+    if (!bulkAction) planMoveReason.reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bulkAction]);
   const headerCheckboxRef = React.useRef<HTMLInputElement>(null);
   // Monotonic request id so a slow earlier fetch can't overwrite a newer one.
   const reqSeqRef = React.useRef(0);
@@ -218,6 +226,9 @@ export default function AdminTenantsPage() {
 
   const executeBulk = async () => {
     if (!bulkAction || selected.size === 0) return;
+    // Validated before anything is sent: an empty reason shows its message and moves focus to the field.
+    const moveReason = bulkAction === "change-plan" ? planMoveReason.validate() : null;
+    if (bulkAction === "change-plan" && moveReason === null) return;
     setActionLoading("bulk");
     setBulkError(null);
     const ids = Array.from(selected);
@@ -232,7 +243,10 @@ export default function AdminTenantsPage() {
             status: "ACTIVE",
           });
         } else if (bulkAction === "change-plan") {
-          await superAdminClient.patch(`/platform-admin/tenants/${id}/plan`, { plan: bulkPlan });
+          await superAdminClient.patch(`/platform-admin/tenants/${id}/plan`, {
+            plan: bulkPlan,
+            reason: moveReason,
+          });
         }
       }
       setSelected(new Set());
@@ -401,7 +415,12 @@ export default function AdminTenantsPage() {
             <button
               disabled={actionLoading === "bulk"}
               onClick={executeBulk}
-              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+              // SA-1100 §2: a plan move changes what several businesses pay, so its confirm is the red one.
+              className={`rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 ${
+                bulkAction === "change-plan"
+                  ? "bg-red-600 hover:bg-red-500"
+                  : "bg-indigo-600 hover:bg-indigo-500"
+              }`}
             >
               {actionLoading === "bulk" ? "Processing…" : "Confirm"}
             </button>
@@ -439,6 +458,9 @@ export default function AdminTenantsPage() {
               </p>
             )}
           </div>
+        )}
+        {bulkAction === "change-plan" && (
+          <PlanMoveReasonField state={planMoveReason} disabled={actionLoading === "bulk"} />
         )}
         <p className="text-sm text-slate-300">
           This action will be applied to {selected.size} selected{" "}

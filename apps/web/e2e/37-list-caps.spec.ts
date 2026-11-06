@@ -21,9 +21,9 @@
  *     page's rows: a 25th match on a later page is invisible to a client
  *     filter that only ever sees page 1, and the pager was hidden outright
  *     while a search was active.
- * (d) REG-B110 — the customer detail page's Profile-tab "Open Balance" stat
+ * (d) REG-B110 — the customer detail page's Profile-tab "Open balance" stat
  *     card (the customer's overview/landing tab) and the Invoices-tab
- *     "Outstanding" summary card must agree with EACH OTHER and with the
+ *     "Open balance" summary card must agree with EACH OTHER and with the
  *     statement endpoint's own `outstandingAmount`. Today they read TWO
  *     different sources — the Profile card reads `useCustomerStatement`
  *     (server-side, credit/advance-aware) while the Invoices-tab card
@@ -429,16 +429,16 @@ test.describe("List caps / silent truncation (F16 / T8)", () => {
     await page.goto(`/customers/${customer.id}`);
     await expect(page.getByText(businessName).first()).toBeVisible({ timeout: 15_000 });
 
-    // Profile tab (the default/landing tab) — StatCard "Open Balance", fed by
+    // Profile tab (the default/landing tab) — StatCard "Open balance", fed by
     // useCustomerStatement.
-    const profileTile = statTileValue(page, "Open Balance").first();
+    const profileTile = statTileValue(page, "Open balance").first();
     await expect(profileTile).toBeVisible({ timeout: 15_000 });
-    await expect(profileTile).toHaveText(expected, { timeout: 15_000 });
+    await expect(profileTile).toContainText(expected, { timeout: 15_000 });
 
-    // Invoices tab — the summary card literally labelled "Outstanding".
+    // Invoices tab — the summary card labelled "Open balance" (renamed from Outstanding, SA-1078 U22).
     const invoicesTab = page.getByRole("tab", { name: /Invoices/i });
     await invoicesTab.click();
-    const invoicesTabOutstanding = statTileValue(page, "Outstanding").first();
+    const invoicesTabOutstanding = statTileValue(page, "Open balance").first();
     await expect(invoicesTabOutstanding).toBeVisible({ timeout: 15_000 });
     await expect(invoicesTabOutstanding).toHaveText(expected, { timeout: 15_000 });
   });

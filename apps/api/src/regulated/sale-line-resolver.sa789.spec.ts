@@ -10,6 +10,8 @@ import { resolveSaleLines } from "./sale-line-resolver";
 
 const READERS = [
   "regulated-ledger.service.ts",
+  "credit-reversal-room.ts",
+  "credit-reversal-census.ts",
   "regulated-report.service.ts",
   "regulated-filing.service.ts",
   "regulated.service.ts",
@@ -25,8 +27,9 @@ export function directItemReads(source: string): number {
 }
 
 /** The ONLY allowed direct item read outside the resolver: the credit-note path reads the CREDITED
- *  invoice item (not a ledger row id) to learn its order line. */
-const ALLOWED: Record<string, number> = { "regulated-ledger.service.ts": 1 };
+ *  invoice item (not a ledger row id) to learn its order line. SA-1042 A-4: that read moved with the
+ *  per-line remaining into credit-reversal-room.ts, so the allowance moved with it. */
+const ALLOWED: Record<string, number> = { "credit-reversal-room.ts": 1 };
 
 describe("SA-789 R-P1: ledger readers resolve lines only through resolveSaleLines", () => {
   it("the detector flags a planted bypass and ignores clean source", () => {

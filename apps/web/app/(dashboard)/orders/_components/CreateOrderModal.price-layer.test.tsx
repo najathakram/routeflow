@@ -21,6 +21,8 @@ let history: Record<string, { lastPrice: number; stickyPrice?: number | null }> 
 // One reference across renders, as a settled query gives: a new array would re-run every effect and hide a missing dependency.
 const mockNoCustomerPrices = { data: [] };
 let customerPrices: { data: { productId: string; pricingTier: number }[] } = mockNoCustomerPrices;
+// The Total waits on this read for the tax rate; undefined is still out.
+let customerRecord: Record<string, unknown> | undefined;
 const cust = { id: "c1", businessName: "Acme Foods", pricingTier: 3 };
 const custB = { id: "c2", businessName: "Beta Bakery", pricingTier: 3 };
 const custC = { id: "c3", businessName: "Cedar Cafe", pricingTier: 2 };
@@ -66,7 +68,7 @@ jest.mock("@/lib/tenant-features", () => ({
 jest.mock("@/lib/api/customers", () => ({
   useCustomers: () => ({ data: { data: [cust, custB, custC, custD] } }),
   useCustomerPrices: () => customerPrices,
-  useCustomer: () => ({ data: undefined }),
+  useCustomer: () => ({ data: customerRecord }),
 }));
 jest.mock("@/lib/api/products", () => ({
   ...jest.requireActual("@/lib/api/products"),
@@ -196,6 +198,7 @@ describe("CreateOrderModal - the customer's price layer (S19b slice B)", () => {
     cust.pricingTier = 3;
     mockScanV2 = true;
     activeOrder = undefined;
+    customerRecord = undefined;
   });
 
   it("flag off: no layer, master's tier price ($38) and nothing sent as an override", async () => {
@@ -492,7 +495,7 @@ describe("CreateOrderModal - the customer's price layer (S19b slice B)", () => {
     });
 
     // List $42, tier 2 $38, tier 3 $36. A's memory is $45, B's is $50, C has none, D is on tier 3 for this product.
-    describe("SA-1068 A-7 M27: a linked line follows its customer", () => {
+    describe("SA-1068 A-7 M27, SA-1076: a line follows its customer", () => {
       const stocked = {
         ...widget,
         product: { ...widget.product, priceTier2: "38", priceTier3: "36" },
@@ -637,6 +640,161 @@ describe("CreateOrderModal - the customer's price layer (S19b slice B)", () => {
         await shows("45");
         expect((await saved()).unitPrice).toBe(45);
       });
+
+      // SA-1076 W-1072: one path in both modes. Every walk ends with nothing sent, so the server books what the line shows.
+      describe.each([[false], [true]])("SA-1076: a plain line, scan_v2 %s", (scanV2) => {
+        const pick = async (name: string, read: typeof history) => {
+          history = read;
+          fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
+            target: { value: name.slice(0, 3) },
+          });
+          fireEvent.click(await screen.findByText(name));
+        };
+        const noCustomerYet = async () => {
+          history = undefined;
+          const view = renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+          capturedOnScan!("111");
+          await shows("42");
+          return view;
+        };
+        const lineAt = async (name: string, read: typeof history) => {
+          const view = renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+          await pick(name, read);
+          await new Promise((r) => setTimeout(r, 50)); // the scan handler closes over the customer
+          capturedOnScan!("111");
+          await screen.findByText("Widget");
+          return view;
+        };
+        const chipX = () => {
+          history = undefined;
+          fireEvent.click(screen.getByRole("button", { name: "Change customer" }));
+        };
+        const undoChipX = async (read: typeof history) => {
+          history = read;
+          fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
+        };
+        const sendsNoPrice = async () => expect((await saved()).unitPrice).toBeUndefined();
+
+        beforeEach(() => {
+          mockScanV2 = scanV2;
+        });
+
+        it("T1: added with no customer, pick A: A's memory", async () => {
+          await noCustomerYet();
+          await pick("Acme Foods", A);
+          await shows("45");
+          await sendsNoPrice();
+        });
+
+        it("T2: added with no customer, pick C: C's tier", async () => {
+          await noCustomerYet();
+          await pick("Cedar Cafe", {});
+          await shows("38");
+          await sendsNoPrice();
+        });
+
+        it("T3: added with no customer, pick D, the reads land: the product tier row", async () => {
+          const view = await noCustomerYet();
+          await pick("Dune Deli", undefined);
+          await shows("38");
+          land(view, {});
+          customerPrices = { data: [{ productId: "prod-1", pricingTier: 3 }] };
+          rerenderModal(view);
+          await shows("36");
+          await sendsNoPrice();
+        });
+
+        it("T4: a tier line, A to B cached: B's memory", async () => {
+          await lineAt("Acme Foods", {});
+          await shows("38");
+          await switchTo("Beta Bakery", B);
+          await shows("50");
+          await sendsNoPrice();
+        });
+
+        it("T5: a product tier 3 line, D to C cached: C's tier", async () => {
+          customerPrices = { data: [{ productId: "prod-1", pricingTier: 3 }] };
+          await lineAt("Dune Deli", {});
+          await shows("36");
+          customerPrices = mockNoCustomerPrices;
+          await switchTo("Cedar Cafe", {});
+          await shows("38");
+          await sendsNoPrice();
+        });
+
+        it("T6: added at A before A's reads land: the memory when they do", async () => {
+          const view = await lineAt("Acme Foods", undefined);
+          await shows("38");
+          land(view, A);
+          await shows("45");
+          await sendsNoPrice();
+        });
+
+        it("T7: a tier line, chip x, Undo: list, then A's price", async () => {
+          await lineAt("Acme Foods", {});
+          await shows("38");
+          chipX();
+          await shows("42");
+          await undoChipX(A);
+          await shows("45");
+          await sendsNoPrice();
+        });
+
+        it("T8: a tier line, chip x, pick B cached: list, then B's memory", async () => {
+          await lineAt("Acme Foods", {});
+          await shows("38");
+          chipX();
+          await shows("42");
+          await pick("Beta Bakery", B);
+          await shows("50");
+          await sendsNoPrice();
+        });
+
+        it("T9: the Total follows the line", async () => {
+          customerRecord = custB;
+          await lineAt("Acme Foods", {});
+          await shows("38");
+          await switchTo("Beta Bakery", B);
+          await shows("50");
+          await waitFor(() =>
+            expect(screen.getByTestId("create-order-footer-total")).toHaveTextContent("$50.00"),
+          );
+        });
+
+        it("T13 guard: a typed $30 stands through A to B, and through chip x and Undo", async () => {
+          await lineAt("Acme Foods", {});
+          await shows("38");
+          openEditor("$38.00 / each");
+          fireEvent.change(screen.getByLabelText("Price"), { target: { value: "30" } });
+          fireEvent.change(screen.getByLabelText(/Reason/), { target: { value: "dented cans" } });
+          closeEditor();
+          await shows("30");
+          await switchTo("Beta Bakery", B);
+          await new Promise((r) => setTimeout(r, 50));
+          await shows("30");
+          chipX();
+          await undoChipX(B);
+          await new Promise((r) => setTimeout(r, 50));
+          await shows("30");
+          expect((await saved()).unitPrice).toBe(30);
+        });
+
+        it("T14 guard: an unlisted line stands, A to B", async () => {
+          renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+          await pick("Acme Foods", A);
+          fireEvent.click(screen.getByRole("button", { name: /Add custom item/ }));
+          fireEvent.change(screen.getByPlaceholderText(/Pallet delivery surcharge/), {
+            target: { value: "Fresh pie" },
+          });
+          fireEvent.change(screen.getByPlaceholderText("0.00"), { target: { value: "42" } });
+          fireEvent.click(screen.getByRole("button", { name: /^Add/ }));
+          await screen.findByDisplayValue("Fresh pie");
+          expect(screen.getByTestId("line-total")).toHaveTextContent("$42.00");
+          await switchTo("Beta Bakery", B);
+          await new Promise((r) => setTimeout(r, 50));
+          expect(screen.getByTestId("line-total")).toHaveTextContent("$42.00");
+        });
+      });
     });
   });
 
@@ -746,7 +904,7 @@ describe("CreateOrderModal - the customer's price layer (S19b slice B)", () => {
   });
 
   it("review 7: new layer data re-prices ($33 -> $31); a row that disappears returns to master's $38", async () => {
-    mockScanV2 = false; // the scan_v2 effect would mask the layer effect's own restore
+    mockScanV2 = false;
     layer = layerReady([packRow({})]);
     const view = await addWidgetForCustomer();
     expect(await screen.findByText("$33.00 / each")).toBeInTheDocument();

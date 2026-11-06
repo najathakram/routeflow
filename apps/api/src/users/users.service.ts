@@ -27,6 +27,7 @@ import { UpdateUserDto } from "./dto/update-user.dto";
 import { ChangeUserStatusDto } from "./dto/change-user-status.dto";
 import { issueSetPasswordLink } from "./set-password-token";
 import { hasActiveBuyerLink } from "./also-buyer";
+import { revokeUserLinkTokens } from "../auth/link-token-revocation";
 
 @Injectable()
 export class UsersService {
@@ -39,6 +40,19 @@ export class UsersService {
     // SA-778: records a refused support-session identity edit. Optional so a bare unit module still builds.
     @Optional() private readonly audit?: AuditService,
   ) {}
+
+  /**
+   * SA-1096: the ONE rule for issuing a set-password link to an account: it has an address, is ACTIVE and is not
+   * deleted. A link minted while the account is off survives to its reactivation, which hands a locked-out person
+   * a way back in (the admin reset's N2 rule). Every issuer in this service asks here.
+   */
+  private mayMintInvite(account: {
+    email: string | null;
+    status: string;
+    deletedAt?: Date | null;
+  }): boolean {
+    return !!account.email && account.status === "ACTIVE" && !account.deletedAt;
+  }
 
   /**
    * Creates a single-use, 72h PasswordResetToken (the same model/consuming endpoint as
@@ -252,10 +266,15 @@ export class UsersService {
       user.role === UserRole.TENANT_ADMIN &&
       user.status === UserStatus.ACTIVE
     )) {
-      return this.prisma.forTenant().user.update({
-        where: { id: userId },
-        data: { status: dto.status },
-        select,
+      // F03 slice 2 (SA-1096): a deactivated account's live reset/verify links die in the same transaction.
+      return this.prisma.tenantTransaction(async (tx) => {
+        const updated = await tx.user.update({
+          where: { id: userId },
+          data: { status: dto.status },
+          select,
+        });
+        if (deactivating) await revokeUserLinkTokens(tx, userId);
+        return updated;
       });
     }
     // Deactivating an active admin: read the tenant's active admins FOR UPDATE inside the same transaction as the
@@ -273,7 +292,13 @@ export class UsersService {
             "This is the workspace's only active admin. Make someone else an admin before deactivating this account.",
         });
       }
-      return tx.user.update({ where: { id: userId }, data: { status: dto.status }, select });
+      const updated = await tx.user.update({
+        where: { id: userId },
+        data: { status: dto.status },
+        select,
+      });
+      await revokeUserLinkTokens(tx, userId);
+      return updated;
     });
   }
 
@@ -370,19 +395,25 @@ export class UsersService {
       ...(emailChanged ? { email: normalizedEmail } : {}),
       ...(usernameEdit ? { username: normalizedUsername } : {}),
     };
-    const updated = await this.prisma.forTenant().user.update({
-      where: { id: userId },
-      data,
-      select: {
-        id: true,
-        username: true,
-        email: true,
-        role: true,
-        status: true,
-        isAdmin: true,
-        canActAsDriver: true,
-        forcePasswordChange: true,
-      },
+    // F03 slice 2 (SA-1096): the write and the burn of the account's live links are ONE transaction, so a crash
+    // between them can never leave a link that outlives the identity or role it was minted for.
+    const updated = await this.prisma.tenantTransaction(async (tx) => {
+      const row = await tx.user.update({
+        where: { id: userId },
+        data,
+        select: {
+          id: true,
+          username: true,
+          email: true,
+          role: true,
+          status: true,
+          isAdmin: true,
+          canActAsDriver: true,
+          forcePasswordChange: true,
+        },
+      });
+      if (emailChanged || roleChanged) await revokeUserLinkTokens(tx, userId);
+      return row;
     });
 
     // Best-effort account notices (NOTIFY-SPEC N2) — never let a delivery failure
@@ -390,20 +421,20 @@ export class UsersService {
     if (emailChanged) {
       // N2 review fix (#811 merge-session finding): a set-password invite link sent to
       // a mistyped address must not keep working after the admin corrects the email —
-      // otherwise the wrong recipient can still set a password and log in. Invalidate
-      // any outstanding token unconditionally on an email change, then — only if the
-      // user has never set their own password — mint and send a fresh one to the
-      // corrected address so they aren't left with no way in at all.
-      await this.prisma.passwordResetToken.updateMany({
-        where: { userId, usedAt: null },
-        data: { usedAt: new Date() },
-      });
+      // otherwise the wrong recipient can still set a password and log in. The burn above covers
+      // any outstanding token; then — only if the user has never set their own password — mint and
+      // send a fresh one to the corrected address so they aren't left with no way in at all.
       await this.notifyEmailChanged(userId, previousEmail, updated.email, updated.username);
-      if (updated.forcePasswordChange && updated.email) {
+      if (
+        updated.forcePasswordChange &&
+        updated.email &&
+        this.mayMintInvite({ ...updated, deletedAt: user.deletedAt })
+      ) {
         await this.sendSetPasswordInvite(userId, updated.email, updated.username);
       }
     }
     if (roleChanged) {
+      // A link minted for the old role does not carry over to the new one (burned above).
       await this.notifyRoleChanged(
         userId,
         updated.email,
@@ -412,6 +443,15 @@ export class UsersService {
         updated.role,
         changedByUsername ?? "an administrator",
       );
+      // The same rule as the email branch: a person who has never set a password is not left with a dead first mail.
+      if (
+        !emailChanged &&
+        updated.forcePasswordChange &&
+        updated.email &&
+        this.mayMintInvite({ ...updated, deletedAt: user.deletedAt })
+      ) {
+        await this.sendSetPasswordInvite(userId, updated.email, updated.username);
+      }
     }
 
     return updated;
@@ -518,7 +558,7 @@ export class UsersService {
     // N2 review fix: never email a set-password link for a deactivated/deleted
     // account — an admin resetting a SUSPENDED/INACTIVE user's password (e.g. to
     // lock them out) must not hand them a working way back in.
-    if (user.email && user.status === "ACTIVE" && !user.deletedAt) {
+    if (user.email && this.mayMintInvite(user)) {
       await this.sendSetPasswordInvite(userId, user.email, user.username);
     }
 
@@ -535,19 +575,33 @@ export class UsersService {
     if (user.role !== UserRole.OPERATOR) {
       throw new BadRequestException("Admin rights can only be assigned to operators.");
     }
-    return this.prisma.forTenant().user.update({
-      where: { id: userId },
-      data: { isAdmin: !user.isAdmin },
-      select: {
-        id: true,
-        username: true,
-        email: true,
-        role: true,
-        status: true,
-        isAdmin: true,
-        canActAsDriver: true,
-      },
+    // F03 slice 2 (SA-1096): a privilege change burns the account's live links in the same transaction.
+    const updated = await this.prisma.tenantTransaction(async (tx) => {
+      const row = await tx.user.update({
+        where: { id: userId },
+        data: { isAdmin: !user.isAdmin },
+        select: {
+          id: true,
+          username: true,
+          email: true,
+          role: true,
+          status: true,
+          isAdmin: true,
+          canActAsDriver: true,
+        },
+      });
+      await revokeUserLinkTokens(tx, userId);
+      return row;
     });
+    // Same rule as an email or role change: a person who has never set a password is not left with a dead first mail.
+    if (
+      user.forcePasswordChange &&
+      updated.email &&
+      this.mayMintInvite({ ...updated, deletedAt: user.deletedAt })
+    ) {
+      await this.sendSetPasswordInvite(userId, updated.email, updated.username);
+    }
+    return updated;
   }
 
   async toggleDriverPermit(userId: string, callerRole: UserRole) {

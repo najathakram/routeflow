@@ -32,6 +32,9 @@ describe("tier commits go through applyLadderChange with the old value", () => {
     expect(list).toMatch(
       /applyLadderChange\(\s*field as TierField,\s*\(product as unknown as Record<string, unknown>\)\[field\] as string,\s*newVal,/,
     );
-    expect(list).toMatch(/\.\.\.\(ladderNote \? \{ description: ladderNote \} : \{\}\)/);
+    expect(list).toMatch(
+      /const quickNote = \[ladderNote, movedNote\]\.filter\(Boolean\)\.join\(" "\);/,
+    );
+    expect(list).toMatch(/\.\.\.\(quickNote \? \{ description: quickNote \} : \{\}\)/);
   });
 });

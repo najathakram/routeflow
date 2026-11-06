@@ -94,6 +94,7 @@ beforeEach(() => {
     paid: 20,
     balanceDue: 0,
     change: 17.5,
+    cashTendered: 37.5, // SA-1077: the stored tender the server serves; the till prints it, it works nothing out
     paymentRecorded: true,
   });
   // a deterministic key source: key-1, key-2, ...
@@ -1379,7 +1380,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
             expect(screen.queryByText("Change")).toBeNull();
           });
 
-          it("a live (non-recovered) cash receipt: server change, Tendered = paid + change, no 'as entered'", async () => {
+          it("a live (non-recovered) cash receipt: server change, Tendered = the stored cashTendered, no 'as entered'", async () => {
             renderTill(<CounterSaleScreen />);
             await fillCola();
             fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));

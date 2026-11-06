@@ -37,8 +37,12 @@ describe("updateOrderItems: the overpay judge is wired at the tail of the edit t
   });
 
   it("the DRAFT-partial price follow runs only for a staff edit that no rebuild path restated", () => {
+    // SA-065: the invoice half moved verbatim to order-edit-invoice-sync.ts; the method still hands it `staffEdit`.
     const m = src.indexOf("private async reconcileOrderAfterEdit(");
-    const tail = src.slice(m, src.indexOf("\n  }\n", m));
+    expect(src.slice(m, src.indexOf("\n  }\n", m))).toContain("syncInvoicesAfterEdit(");
+    const tail = fs
+      .readFileSync(path.join(__dirname, "order-edit-invoice-sync.ts"), "utf8")
+      .replace(/(^|[^:])\/\/.*$/gm, "$1");
     expect(tail).toContain("staffEdit && !rebuilt");
     expect(tail).toContain("followPartialPrices(");
     expect(tail.indexOf("followPartialPrices(")).toBeGreaterThan(

@@ -36,7 +36,9 @@ import { assertSellableLines } from "../products/sellable-lines";
 import type { ResolvedLineUnits } from "../products/line-units";
 import { isUnitAware, prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
 import { keepsHeldUnit, norm } from "../orders/unit-label-norm";
+import { assertCustomPricesAllowed } from "../orders/staff-override";
 import { buildInvoiceUnitLine } from "./invoice-unit-line";
+import { LINE_NAME_PRODUCT_SELECT, displayLineDescription } from "./invoice-line-name";
 import { priceLineItem, type LineOverrideCtx } from "./invoice-line-override";
 import {
   categoryTaxSnapshotOf,
@@ -148,6 +150,33 @@ export function matchEditLines(items: EditPayloadLine[], stored: StoredEditRow[]
     out[i] = { row, untouched: true, productChanged: false };
   });
   return out;
+}
+
+/**
+ * SA-1034 rule 4: the payload lines that AUTHOR a custom (no product) price on an edit: a line with no stored row, or a
+ * stored custom line re-sent at another price. A server-priced row (`systemKind`, e.g. NSF) and a custom line whose
+ * price is only echoed back (a qty or note change) are not authoring. Feed it to `assertCustomPricesAllowed`.
+ */
+export function authoredCustomEditLines(
+  items: EditPayloadLine[],
+  matches: LineMatch[],
+): EditPayloadLine[] {
+  return items.filter((item, i) => {
+    if (item.productId) return false;
+    const row = matches[i].row;
+    if (row?.systemKind) return false;
+    return !row || !same(item.unitPrice, row.unitPrice);
+  });
+}
+
+/** SA-1034 rule 4 at an edit: a custom line this edit authors needs price rights, before any write; no `override` = internal. */
+export function assertEditAuthoredPrices(
+  items: EditPayloadLine[],
+  matches: LineMatch[],
+  override: { priceEditAllowed: boolean } | undefined,
+): void {
+  if (!override) return;
+  assertCustomPricesAllowed(authoredCustomEditLines(items, matches), override.priceEditAllowed);
 }
 
 /** The payload with an absent `unitLabel` filled from the matched row's unit (SA-070: absent = unchanged). */
@@ -293,6 +322,16 @@ function isEditOfUnmatchedLegacyRow(ctx: PlanCtx, item: EditPayloadLine): boolea
   );
 }
 
+/** An untouched row's text: the sent one, unless it is only the composed form of the stored text (the editor posts back what `findOne` showed). */
+function keptDescription(
+  sent: string | null | undefined,
+  stored: string | null,
+  product: Parameters<typeof displayLineDescription>[1],
+): string | null {
+  if (sent == null) return stored;
+  return sent === displayLineDescription(stored, product) ? stored : sent;
+}
+
 export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
   return ctx.items.map((sentItem, i): EditedLine => {
     const { row, untouched, productChanged, leftUnit } = ctx.matches[i];
@@ -312,7 +351,12 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
           subtotal: finiteStoredMoney(row.subtotal, `Invoice line ${row.id} subtotal`),
           // SA-816: a stored non-finite levy is refused (400), never carried into the rewrite verbatim.
           categoryTaxAmount: finiteStoredLevy(row, `Invoice line ${row.id} category tax`),
-          description: sentItem.description ?? row.description,
+          // F2: a sent text equal to what findOne composed for this stored line is "no change": keep the stored text
+          description: keptDescription(
+            sentItem.description,
+            row.description,
+            ctx.productMap.get(row.productId ?? ""),
+          ),
           notes: sentItem.notes ?? null,
           orderItemId: sentItem.orderItemId ?? row.orderItemId ?? null,
         },
@@ -443,7 +487,7 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
       untouched: false,
       attestedPack,
       data: {
-        description: item.description,
+        description: displayLineDescription(item.description, product), // a bare variant name is stored composed
         productId: item.productId,
         // An edit that does not name the order line keeps the stored link (the editors never send it).
         orderItemId: item.orderItemId ?? (productChanged ? null : (row?.orderItemId ?? null)),
@@ -605,7 +649,7 @@ export async function loadEditCatalog(
           where: { id: { in: productIds } },
           select: {
             id: true,
-            name: true,
+            ...LINE_NAME_PRODUCT_SELECT, // name + family: a variant line is stored "<Family> - <Variant>"
             kind: true,
             unit: true,
             unitsPerBox: true,

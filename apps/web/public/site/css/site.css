@@ -1,0 +1,293 @@
+/* RouteFlow marketing, design preview 2026-11-01.
+   Baseline: the Grok site's structure and wording. Look: white-first, calm, big type (Apple),
+   friendly shapes and bright colour moments kept for the scenes (Google). Colour: graphics/rf-graphics.css is the one source; the tokens below alias it.
+   One shared file for every page. Motion states live in site.js; the default state here is the FINAL state. */
+@font-face{font-family:"Geist";src:url(../fonts/Geist-Variable.woff2) format("woff2");font-weight:100 900;font-display:swap}
+:root{
+  --ink:var(--rf-ink);--ink-2:var(--rf-ink-2);--ink-3:var(--rf-ink-3);--line:var(--rf-line);--tint:var(--rf-tint);--white:#fff;
+  --b700:var(--rf-brand-700);--b800:var(--rf-brand-900);--b600:var(--rf-brand-500);--b500:var(--rf-brand-500);--b300:var(--rf-brand-300);--b50:var(--rf-brand-100);
+  --sun:var(--rf-sun);--sun-t:var(--rf-sun-soft);--coral:var(--rf-coral);--coral-t:var(--rf-coral-soft);--sky:var(--rf-mint);--sky-t:var(--rf-mint-soft);
+  --r:var(--rf-r-card);--ease:cubic-bezier(.2,.7,.2,1);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{margin:0;font-family:var(--rf-font);color:var(--ink);background:var(--white);font-size:18px;line-height:1.55;-webkit-font-smoothing:antialiased;font-feature-settings:"ss01","cv11"}
+img,svg{display:block;max-width:100%}
+a{color:inherit}
+button{font:inherit}
+a,button,summary{-webkit-tap-highlight-color:transparent}
+h1,h2,h3,p,ul,ol,figure{margin:0}
+ul,ol{padding:0;list-style:none}
+:focus-visible{outline:3px solid var(--b500);outline-offset:3px;border-radius:8px}
+.end :focus-visible,#founder :focus-visible,.cta-band :focus-visible,.risk :focus-visible,.pcard.featured :focus-visible,.site-header.on-dark :focus-visible{outline-color:#fff}
+.skip{position:absolute;left:-999px;top:8px;background:#fff;padding:10px 16px;border-radius:12px;z-index:100}
+.skip:focus{left:8px}
+.wrap{width:min(1200px,100% - 48px);margin-inline:auto}
+.ico{width:26px;height:26px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.sprite{position:absolute;width:0;height:0;overflow:hidden}
+
+/* ---------- header ---------- */
+.site-header{position:sticky;top:0;z-index:50;background:rgba(255,255,255,.9);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);transition:box-shadow .3s,background-color .25s}
+.site-header.scrolled{box-shadow:0 1px 0 rgba(15,27,45,.07)}
+.nav{display:flex;align-items:center;gap:36px;height:68px}
+.brand{display:inline-flex;align-items:center;gap:10px;text-decoration:none;font-weight:650;font-size:20px;letter-spacing:-.02em}
+.brand img{width:30px;height:30px}
+.nav-links{display:flex;gap:6px;margin-right:auto}
+.nav-links a{display:inline-flex;align-items:center;min-height:44px;padding:0 14px;border-radius:999px;text-decoration:none;font-size:16px;color:var(--ink-2);transition:color .2s,background .2s}
+.nav-links a:hover{color:var(--ink);background:var(--tint)}
+/* Six links: just above the menu breakpoint, tighten the pills so none wraps. */
+@media (min-width:1081px) and (max-width:1139.98px){.nav-links{gap:2px}.nav-links a{padding:0 9px;font-size:15px}}
+.nav-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
+.nav-signin{display:inline-flex;align-items:center;min-height:44px;padding:0 14px;font-size:16px;text-decoration:none;color:var(--ink-2)}
+.nav-price{display:none;align-items:center;min-height:44px;padding:0 10px;font-size:16px;font-weight:600;text-decoration:none;color:var(--ink)}
+.menu-btn{display:none;width:44px;height:44px;border:0;background:transparent;border-radius:12px;color:var(--ink);cursor:pointer}
+.mobile-menu{display:none}
+
+/* ---------- buttons and links ---------- */
+.btn{white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;gap:10px;min-height:48px;padding:0 26px;border-radius:999px;border:0;font:inherit;font-size:17px;font-weight:600;letter-spacing:-.01em;text-decoration:none;cursor:pointer;transition:background .2s,transform .15s var(--ease)}
+.btn:active{transform:scale(.97);transition:transform .1s ease-out}
+.btn-primary{background:var(--b700);color:#fff}
+.btn-primary:hover{background:var(--b800)}
+.btn-lg{min-height:56px;padding:0 32px;font-size:19px}
+.btn-sm{min-height:44px;padding:0 18px;font-size:16px;letter-spacing:0}
+.btn-light{background:#fff;color:var(--b700)}
+.btn-light:hover{background:var(--b50)}
+.btn .ico{width:20px;height:20px;stroke-width:2}
+.link{display:inline-flex;align-items:center;gap:8px;min-height:44px;font-weight:600;color:var(--rf-link);text-decoration:none}
+.link .ico{width:18px;height:18px;stroke-width:2;transition:transform .2s var(--ease)}
+.link:hover .ico{transform:translateX(4px)}
+
+/* ---------- type ---------- */
+.eyebrow,.kick{font-size:17px;font-weight:600;color:var(--rf-link);letter-spacing:-.01em;margin-bottom:14px}
+h1{font-size:var(--rf-h1);line-height:1.03;font-weight:650;letter-spacing:var(--rf-h1-tr);text-wrap:balance}
+h2{font-size:var(--rf-h2);line-height:var(--rf-h2-lh);font-weight:650;letter-spacing:var(--rf-h2-tr);text-wrap:balance}
+h3{font-size:var(--rf-h4);line-height:1.15;font-weight:650;letter-spacing:-.02em}
+.h3,.jr-txt h3,.pd-gh h3,.h-md,.sy-try{font-size:var(--rf-h3);line-height:1.08;font-weight:650;letter-spacing:-.028em;text-wrap:balance}
+.pcard h2,.pcard h3,.ccol h3,.pd-k h3{font-size:24px;line-height:1.2;font-weight:650;letter-spacing:-.02em}
+.inc-i h3,.uc-t h3,.pl-all h3,.pd-tile b,.pd-c h4,.addlist b{font-size:19px;line-height:1.25;font-weight:650;letter-spacing:-.012em}
+.lede,.sub,.hx-lede,.pd-lede{font-size:var(--rf-lede);line-height:var(--rf-lede-lh);letter-spacing:-.012em;color:var(--ink-2);text-wrap:pretty}
+.lede{max-width:34em}
+.sub{margin-top:18px;max-width:31em}
+.cap{display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 12px;border-radius:999px;background:var(--rf-brand-100);color:var(--rf-brand-700);font-size:14px;font-weight:600;letter-spacing:0;white-space:nowrap}
+.cap::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+/* Body sizes: 20 to 23px -.012em, 17 to 19px -.01em, 16px and under none. */
+.cta-band p,.faq summary{letter-spacing:-.012em}
+.skip,.link,.hx-more,.pd-go,.fd-more,.fd-sig b,.pprice small,.checks li,.pfor,.pm-n,.cmp-list li,.faq details p,.jr-txt>p,.fd-note,.fd-short,.ans-cap,.ct-note,.st-note,.pl-why,.pl-inc,.risk-s,.pd-k p,.pd-c>p,.pd-gh p,.pd-foot,.pd-list li,.pd-tick li,.pd-cross li,.pd-t,.pd-q>p{letter-spacing:-.01em}
+.small{font-size:16px}.muted{color:var(--ink-2)}.center{text-align:center}
+
+/* ---------- sections ---------- */
+.section{padding:clamp(80px,11vw,152px) 0}
+.section.alt{background:var(--tint)}
+.section-head{max-width:820px;margin-bottom:clamp(40px,6vw,80px)}
+.section-head .lede{margin-top:18px}
+.section-head.center{margin-inline:auto;text-align:center}
+.section-head.center .lede{margin-inline:auto}
+
+/* ---------- hero ---------- */
+
+.cta-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 28px;margin-top:36px}
+
+/* ---------- route and stores ---------- */
+
+.checks{display:grid;gap:14px;margin-top:30px}
+.checks li{display:flex;gap:14px;align-items:flex-start;font-size:19px}
+.checks .ico{color:var(--rf-ok);width:24px;height:24px;margin-top:2px}
+
+/* ---------- pricing ---------- */
+.pgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;align-items:stretch}
+.pcard{background:#fff;border-radius:var(--r);padding:clamp(28px,3vw,40px);display:flex;flex-direction:column;gap:6px;box-shadow:var(--rf-sh-card)}
+.pcard.featured{background:var(--b700);color:#fff;box-shadow:0 30px 60px -28px rgba(16,38,77,.6)}
+.pprice{display:flex;align-items:baseline;gap:4px;margin:14px 0 4px;font-size:64px;font-weight:650;letter-spacing:-.04em;line-height:1}
+.pprice .cur{font-size:32px;letter-spacing:-.02em;margin-right:2px}
+.pprice small{font-size:17px;font-weight:500;letter-spacing:-.01em;margin-left:8px;color:var(--ink-2)}
+.pcard.featured .pprice small,.pcard.featured .pfor,.pcard.featured .pfrom,.pcard.featured .pyear{color:var(--rf-on-navy)}
+.pfor{font-size:17px;color:var(--ink-2);min-height:3.1em}
+.pcard .checks{margin-top:22px;gap:12px}
+.pcard .checks li{font-size:17px}
+.pcard.featured .checks .ico{color:var(--b300)}
+.pcard b{font-weight:650}
+
+/* ---------- faq ---------- */
+.faq{max-width:820px;margin-inline:auto}
+.faq details{box-shadow:0 1px 0 var(--line)}
+.faq summary{display:flex;justify-content:space-between;align-items:center;gap:20px;min-height:64px;padding:18px 0;font-size:21px;font-weight:600;cursor:pointer;list-style:none}
+.faq summary::-webkit-details-marker{display:none}
+.faq summary .ico{transition:transform .3s var(--ease);color:var(--rf-link)}
+.faq details[open] summary .ico{transform:rotate(45deg)}
+.faq details p{padding:0 0 24px;color:var(--ink-2);font-size:19px;max-width:36em}
+
+/* ---------- cta band + footer ---------- */
+.cta-band{background:var(--b700);color:#fff;border-radius:var(--rf-r-stage);padding:clamp(48px,7vw,104px) clamp(24px,5vw,80px);text-align:center;display:grid;justify-items:center;gap:20px}
+.cta-band p{font-size:20px;color:var(--rf-on-navy)}
+.cta-band .cta-row{justify-content:center;margin-top:12px}
+.site-footer{padding:72px 0 40px;background:var(--tint);font-size:16px;color:var(--ink-2)}
+.footer-grid{display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr;gap:40px}
+.footer-grid h2{font-size:16px;letter-spacing:0;color:var(--ink);margin-bottom:14px;font-weight:600}
+.footer-grid li{margin:2px 0}.footer-grid a{display:inline-flex;align-items:center;min-height:36px;text-decoration:none}
+.site-footer .brand{color:var(--ink)}
+.footer-grid a:hover{color:var(--rf-link)}
+.foot-about{margin:14px 0;max-width:22em}
+.foot-bottom{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px 24px;margin-top:56px;padding-top:24px;box-shadow:0 -1px 0 var(--line);font-size:15px}
+
+/* ---------- motion defaults: final state shown; hidden only while motion will play ---------- */
+.js-motion .reveal{opacity:0;transform:translateY(16px)}
+
+/* ---------- responsive ---------- */
+@media (max-width:1080px){
+  .nav-links,.nav-signin,.nav>nav{display:none}
+  .nav{gap:12px}
+  .menu-btn{display:grid;place-items:center}
+  .mobile-menu{position:fixed;inset:68px 0 0;background:#fff;padding:12px 24px 32px;z-index:49;overflow:auto;display:block;visibility:hidden;opacity:0;transform:translateY(-8px);transition:opacity .2s,transform .2s,visibility 0s .2s}
+  .mobile-menu.open{visibility:visible;opacity:1;transform:none;transition:opacity .2s,transform .2s}
+  .mobile-menu a{display:flex;align-items:center;min-height:56px;font-size:24px;font-weight:600;letter-spacing:-.02em;text-decoration:none;box-shadow:0 1px 0 var(--line)}
+  .mobile-menu .btn{margin-top:24px;width:100%;box-shadow:none}
+  body.menu-open{overflow:hidden}
+  .footer-grid{grid-template-columns:1fr 1fr}
+}
+@media (max-width:900px){
+
+  .pgrid{grid-template-columns:1fr}
+}
+@media (max-width:560px){
+  body{font-size:17px}
+  .wrap{width:calc(100% - 40px)}
+  .cta-row .btn-lg{width:100%}
+  .cta-row{gap:4px 20px}
+  .site-footer{padding:36px 0 22px}
+  .footer-grid{grid-template-columns:1fr;gap:10px}
+  .footer-grid>:nth-child(3),.foot-about,.foot-mail,.footer-grid [data-where="footer"]{display:none}
+  .footer-grid li:has(>[data-where="footer"]){display:none}
+  .footer-grid>:nth-child(2) li:not(.foot-depth){display:none}
+  .footer-grid ul{display:flex;gap:4px 20px;flex-wrap:wrap}
+  .footer-grid h2{margin-bottom:6px}
+  .foot-bottom{margin-top:20px;padding-top:14px;gap:4px 16px}
+
+}
+h2+.lede,.section-head h2+.lede{margin-top:18px}
+@media (max-width:560px){
+
+}
+.brand{min-height:44px}
+.site-footer a{display:inline-flex;align-items:center;min-height:44px}
+.foot-bottom{align-items:center}
+
+
+/* ---------- pricing: from-line, 4 cards, customization, compare (2026-11-01) ---------- */
+
+.pg-top{padding-top:clamp(48px,6vw,96px)}
+.pgrid--4{grid-template-columns:repeat(4,1fr);gap:16px}
+.pgrid--4 .pcard{padding:28px 24px}
+.pgrid--4 .pprice{font-size:52px;letter-spacing:-.034em}
+.pfrom{font-size:16px;font-weight:600;margin-top:10px;color:var(--ink-2)}
+.pprice--word{font-size:44px;letter-spacing:-.034em;margin:4px 0 4px}
+.pcard .pprice{margin-top:2px}
+.pyear{font-size:16px;color:var(--ink-2)}
+.pgrid--4 .pfor{min-height:4.6em;margin-top:8px}
+.pbtn{margin-top:auto;width:100%}
+.pcard .checks{margin-bottom:26px}
+.pcard.featured .btn-light{color:var(--b700)}
+.custom{margin-top:clamp(56px,7vw,96px)}
+.custom .section-head{margin-bottom:36px}
+.custom-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.ccol{background:#fff;border-radius:var(--r);padding:clamp(24px,3vw,40px);box-shadow:var(--rf-sh-card)}
+
+.addlist{display:grid;gap:0;margin-top:14px}
+.addlist li{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:16px 0;box-shadow:0 -1px 0 var(--line)}
+.addlist li:first-child{box-shadow:none}
+.addlist b{display:block}
+.addlist small{display:block;font-size:16px;color:var(--ink-2);margin-top:2px}
+.aprice{text-align:right;font-size:28px;font-weight:650;letter-spacing:-.02em;white-space:nowrap}
+.aprice em{display:block;font-style:normal;font-size:15px;font-weight:500;letter-spacing:0;color:var(--ink-2)}
+
+@media (max-width:1080px){.pgrid--4{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:900px){.pgrid--4{grid-template-columns:1fr}.custom-grid{grid-template-columns:1fr}.pgrid--4 .pfor{min-height:0}}
+@media (max-width:560px){
+
+  .addlist li{flex-wrap:wrap}
+  .aprice{text-align:left}
+}
+
+/* ---------- a narrow header never overflows ---------- */
+@media (max-width:640px){
+  .site-header .btn{padding-inline:12px;font-size:15px;min-height:44px}
+  .site-header .nav{gap:12px}
+}
+@media (max-width:420px){
+  .site-header .brand{font-size:18px;gap:8px}
+  .site-header .brand img{width:28px;height:28px}
+  .site-header .nav-actions{gap:4px}
+}
+@media (max-width:359.98px){.site-header .brand span{display:none}}
+@media (max-width:1080px){a[href^="mailto:"]{display:inline-flex;align-items:center;min-height:44px}
+  /* An address inside a sentence keeps the tap area but not the tall line. */
+  p a[href^="mailto:"]{display:inline;min-height:0;padding-block:12px}}
+
+/* ---------- one word set for wide, one for narrow ---------- */
+.only-narrow{display:none}
+@media (max-width:899.98px){.only-wide{display:none}.only-narrow{display:inline}}
+
+/* ---------- phones: a list of plans instead of cards, then the risk; a plain list instead of the four-column table ---------- */
+.pl-wrap,.pl-why,.pl-inc,.pl-go,.risk{display:none}
+/* /pricing/: what every plan includes, a plain list at every width. */
+.cmp-list{grid-template-columns:repeat(3,minmax(0,1fr));gap:16px 32px;max-width:1040px;margin:0 auto}
+.cmp-list li{font-size:18px;line-height:1.35}
+/* /pricing/ notes: one block, even spacing. */
+.pg-notes{display:grid;gap:10px;margin-top:28px}
+
+@media (max-width:899.98px){
+  .pgrid--4{display:none}
+  .pg-notes{text-align:left;margin-top:18px;font-size:17px;line-height:1.4;letter-spacing:-.01em}
+  .faq summary{min-height:56px;padding:12px 0;font-size:18px;letter-spacing:-.01em}
+  .faq summary .ico{width:20px;height:20px}
+  .faq details p{font-size:17px}
+  .pl-wrap{display:block;padding:4px 16px;border-radius:var(--r);background:#fff;box-shadow:var(--rf-sh-card)}
+  table.pl{width:100%;border-collapse:collapse;font-size:17px;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+  .pl th,.pl td{padding:13px 6px;text-align:left;font-weight:500;box-shadow:0 1px 0 var(--line)}
+  .pl tr:last-child th,.pl tr:last-child td{box-shadow:none}
+  .pl th:first-child{padding-left:0}
+  .pl th:last-child,.pl td:last-child{padding-right:0}
+  .pl thead th{padding:10px 6px;font-size:14px;line-height:1.2;font-weight:600;letter-spacing:0;color:var(--ink-2)}
+  .pl tbody th{font-size:18px;font-weight:650;letter-spacing:-.01em}
+  .pl .plp{text-align:right;white-space:nowrap}
+  .pl td.plp{font-size:26px;font-weight:650;letter-spacing:-.02em}
+  .pl td.plp--w{font-size:20px;letter-spacing:-.012em}
+  .pl .ply{text-align:right;white-space:nowrap}
+  .pl td.ply{font-size:15px;letter-spacing:0;color:var(--ink-2)}
+  .pl--y th,.pl--y td{padding-inline:4px}
+  .pl--y thead th,.pl--y thead th.plp,.pl--y thead th.ply{font-size:13px;white-space:normal}
+  .pl--y tbody th{font-size:16px;letter-spacing:0}
+  .pl--y td{font-size:15px;letter-spacing:0}
+  .pl--y td.plp{font-size:22px}
+  .pl--y td.plp--w{font-size:18px;letter-spacing:-.01em}
+  .pl-why{display:block;margin-top:14px;font-size:17px;line-height:1.35;color:var(--ink-2)}
+  .pl-inc{display:block;margin-top:14px;font-size:17px;line-height:1.4;color:var(--ink-2)}
+  .pl-inc a{display:inline-block;padding:11px 0;margin:-11px 0}
+  .pl-go{display:block;margin-top:20px}
+  .pl-go .btn{width:100%}
+  .risk{display:block;margin-top:22px;padding:26px 22px;border-radius:var(--r);background:var(--b700);color:#fff}
+  .risk-h{font-size:28px;line-height:1.12;font-weight:650;letter-spacing:-.02em}
+  .risk-s{margin-top:8px;font-size:18px;line-height:1.35;color:var(--rf-on-navy)}
+  .risk .btn{margin-top:18px;width:100%;color:var(--b700)}
+  .cmp-list{display:grid;grid-template-columns:1fr;gap:12px;margin-top:0}
+  .cmp-list li{font-size:17px;line-height:1.35}
+}
+@media (min-width:560px) and (max-width:899.98px){.cmp-list{grid-template-columns:1fr 1fr}}
+
+/* ---------- press: a control answers the moment a finger lands. Things that move scale a little; words dim. ---------- */
+.pd-tile{transition:background .2s,transform .15s var(--ease)}
+.pd-tile:active{transform:scale(.97);transition:transform .1s ease-out}
+.link:active,.hx-more:active,.pd-go:active,.fd-more:active,.brand:active,.nav-links a:active,.nav-signin:active,.nav-price:active,.menu-btn:active,.site-footer a:active,.mobile-menu a:not(.btn):active,summary:active,main a:not(.btn):not(.pd-tile):active{opacity:.6;transition:opacity .1s ease-out}
+
+/* ---------- reduced transparency and higher contrast: solid surfaces, defined edges ---------- */
+@media (prefers-reduced-transparency:reduce){
+  .site-header{background:#fff;-webkit-backdrop-filter:none;backdrop-filter:none}
+  .site-header.on-dark{background:var(--rf-ink)}
+}
+@media (prefers-contrast:more){
+  .site-header{background:#fff;-webkit-backdrop-filter:none;backdrop-filter:none;box-shadow:0 1px 0 var(--rf-ink)}
+  .site-header.on-dark{background:var(--rf-ink);box-shadow:0 1px 0 #fff}
+  .pcard,.ccol,.pl-wrap,.pl-all,.tier,.pd-k,.pd-q,.pd-tile{box-shadow:inset 0 0 0 1px var(--rf-ink)}
+}
+
+/* the founder note: "co-founder’s" never breaks at its hyphen, at any width (the phone-only .nb rule in mobile.css does not reach a desktop) */
+.fd-short .nb,.fd-note .nb,.co-body .nb{white-space:nowrap}

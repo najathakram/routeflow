@@ -1096,7 +1096,8 @@ export function lastActivityMs(worktreePath) {
 }
 
 // B819: ignored paths that are build output and safe to lose; any OTHER ignored path (a .env, a
-// local-assets folder, a scratch note) is someone's data and makes the worktree "dirty".
+// local-assets folder, a scratch note) is someone's data and makes the worktree "dirty". The one
+// local-assets exception (verify's own reports only) is decided on disk in readIgnoredStatus.
 const REGENERABLE_IGNORED = [
   /(^|\/)node_modules\/?$/,
   // #1326 review: build output only at the top level or a package root — a source folder that
@@ -1112,7 +1113,71 @@ const REGENERABLE_IGNORED = [
   /(^|\/)next-env\.d\.ts$/, // Next regenerates it
   /^\.husky\/_(\/.*)?$/, // husky regenerates it (git lists its files one by one)
   /^\.claude\/settings\.local\.json$/, // per-machine settings copy of a worktree being removed
+  /(^|\/)\.jest-cache\/?$/, // #2671's per-workspace Jest cache; step 7 already deletes its entries
 ];
+
+// apps/api/scripts/data-questions-report.mjs writes one of these into local-assets/ on every verify.
+const VERIFY_REPORT_FILE = /^data-questions-report-\d{4}-\d{2}-\d{2}T[\d-]+Z\.txt$/;
+
+/**
+ * Is a tree's local-assets folder only verify's own reports and empty folders (bugs.mjs creates an
+ * empty local-assets/docs), so losing it loses nothing? listing: { isLink, entries: [{ name, isFile,
+ * isEmptyDir }] } read without following links, or null if unreadable. A linked folder, any link,
+ * any other file, a folder holding anything but empty folders, or unknown is someone's data.
+ */
+export function isRegenerableLocalAssets(listing) {
+  if (!listing || listing.isLink) return false;
+  return listing.entries.every((e) =>
+    e.isFile ? VERIFY_REPORT_FILE.test(e.name) : e.isEmptyDir === true,
+  );
+}
+
+/** A real folder holding nothing but (nested) empty real folders; any file, link or error: false. */
+function isEmptyDirTree(dir) {
+  try {
+    return readdirSync(dir, { withFileTypes: true }).every(
+      (d) => d.isDirectory() && !d.isSymbolicLink() && isEmptyDirTree(join(dir, d.name)),
+    );
+  } catch {
+    return false;
+  }
+}
+
+function localAssetsListing(worktreePath) {
+  const dir = join(worktreePath, "local-assets");
+  try {
+    const st = lstatSync(dir);
+    if (st.isSymbolicLink() || !st.isDirectory()) return { isLink: true, entries: [] };
+    const entries = readdirSync(dir, { withFileTypes: true }).map((d) => ({
+      name: d.name,
+      isFile: d.isFile(),
+      isEmptyDir: d.isDirectory() && !d.isSymbolicLink() && isEmptyDirTree(join(dir, d.name)),
+    }));
+    return { isLink: false, entries };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A tree's `git status --porcelain` and `--ignored=matching` output, the input of both dirty checks
+ * (dirtyFromStatus, classifyIgnoredForAllowList). A local-assets folder that holds only verify
+ * reports is dropped from the ignored list; anything else there stays and keeps the tree dirty.
+ */
+export function readIgnoredStatus(worktreePath) {
+  const status = trySh("git", ["-C", worktreePath, "status", "--porcelain"]);
+  let ignored = trySh("git", ["-C", worktreePath, "status", "--porcelain", "--ignored=matching"]);
+  const inLocalAssets = (l) => /^!! local-assets(\/|$)/.test(l);
+  if (ignored != null && ignored.split("\n").some(inLocalAssets)) {
+    if (isRegenerableLocalAssets(localAssetsListing(worktreePath))) {
+      ignored = ignored
+        .split("\n")
+        .filter((l) => !inLocalAssets(l))
+        .join("\n");
+    }
+  }
+  return { status, ignored };
+}
 
 /** Is this worktree dirty, from its `git status --porcelain` (and `--ignored`) output? */
 export function dirtyFromStatus(statusOut, ignoredOut) {
@@ -1153,15 +1218,28 @@ function orphanFacts(dir) {
 }
 
 function isDirty(worktreePath) {
-  const out = trySh("git", ["-C", worktreePath, "status", "--porcelain"]);
-  const ignored = trySh("git", ["-C", worktreePath, "status", "--porcelain", "--ignored=matching"]);
-  return dirtyFromStatus(out, ignored);
+  const { status, ignored } = readIgnoredStatus(worktreePath);
+  return dirtyFromStatus(status, ignored);
 }
 
-function hasUnpushedCommits(worktreePath, branch) {
+export function hasUnpushedCommits(worktreePath, branch) {
   if (!branch) return true; // detached — treat as unknown/unsafe
-  const upstream = trySh("git", ["-C", worktreePath, "rev-parse", "--abbrev-ref", `${branch}@{u}`]);
-  if (!upstream) return true; // no upstream configured — unknown, treat as unsafe
+  // Every commit is on origin/master, so nothing can be lost, even after a train deleted the branch's
+  // own origin ref. Squash-landed tips are not ancestors and fall through to the checks below.
+  // Full ref names: a short name could resolve to a same-named tag, or to a local branch called
+  // "origin/master", and read an unpushed tip as pushed.
+  if (isAncestorOrSelf(worktreePath, `refs/heads/${branch}`, "refs/remotes/origin/master")) {
+    return false;
+  }
+  // A branch pushed with a bare `git push origin <branch>` records no upstream: compare it with the
+  // same-named origin branch instead. Neither one is unknown, treated as unsafe.
+  const sameName = `refs/remotes/origin/${branch}`;
+  const upstream =
+    trySh("git", ["-C", worktreePath, "rev-parse", "--abbrev-ref", `${branch}@{u}`]) ||
+    (trySh("git", ["-C", worktreePath, "rev-parse", "--verify", "--quiet", sameName])
+      ? sameName
+      : null);
+  if (!upstream) return true; // no upstream and no origin branch of that name — unsafe
   const ahead = trySh("git", ["-C", worktreePath, "rev-list", "--count", `${upstream}..${branch}`]);
   return Number(ahead ?? "1") > 0;
 }
@@ -1728,6 +1806,15 @@ export const EXECUTE_DEPS = {
   headOf: (p) => trySh("git", ["-C", p, "rev-parse", "--verify", "--quiet", "HEAD"]),
   run: (cmd, args) => trySh(cmd, args),
   removeFile: (t) => unlinkSync(t),
+  // A plain file (not a directory, not a link): lstat, so a link is never followed.
+  isPlainFile: (t) => {
+    try {
+      const st = lstatSync(t);
+      return !st.isDirectory() && !st.isSymbolicLink();
+    } catch {
+      return false;
+    }
+  },
   log: (m) => console.log(m),
 };
 
@@ -1784,6 +1871,19 @@ export function execute(a, deps = EXECUTE_DEPS) {
     if (why) {
       deps.log(`   REFUSED, skipped: ${a.target} (${why})`);
       return "refused";
+    }
+    // Jest writes plain FILES into its cache roots too (haste-map-*, jest-transform-cache-*, perf-cache-*), and
+    // `cmd /c rmdir /s /q <file>` fails ("The directory name is invalid"), so a file is unlinked and only a
+    // directory goes through removeTree. The guard above and the age plan are the same for both.
+    if (deps.isPlainFile?.(a.target)) {
+      try {
+        deps.removeFile(a.target);
+      } catch (err) {
+        // A locked/in-use cache file is a reported skip, never a failed run (exit 1), like a stray file.
+        deps.log(`   SKIPPED Jest cache file ${a.target}: ${err.message}`);
+        return "skipped";
+      }
+      return "done";
     }
     deps.removeTree(a.target);
     return "done";
@@ -1926,9 +2026,8 @@ export function classifyIgnoredForAllowList(statusOut, ignoredOut) {
 }
 
 function allowListIgnoredState(worktreePath) {
-  const out = trySh("git", ["-C", worktreePath, "status", "--porcelain"]);
-  const ignored = trySh("git", ["-C", worktreePath, "status", "--porcelain", "--ignored=matching"]);
-  return classifyIgnoredForAllowList(out, ignored);
+  const { status, ignored } = readIgnoredStatus(worktreePath);
+  return classifyIgnoredForAllowList(status, ignored);
 }
 
 /**

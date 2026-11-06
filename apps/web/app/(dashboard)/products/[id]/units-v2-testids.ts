@@ -1,6 +1,7 @@
 /** Stable test ids for the units v2 prices grid and its page-level seams. */
 export const UNITS_V2_TESTIDS = {
   grid: "units-v2-grid",
+  btnUseFamilyPrices: "units-v2-use-family-prices",
   row: (ref: string) => `units-v2-row-${ref}`,
   cell: (ref: string, tier: number) => `units-v2-cell-${ref}-${tier}`,
   code: (ref: string) => `units-v2-code-${ref}`,
@@ -14,7 +15,6 @@ export const UNITS_V2_TESTIDS = {
   inputPrefix: (ref: string, tier: number, layout: string) =>
     `units-v2-prefix-${layout}-${ref}-${tier}`,
   word: (layout: string, ref: string, tier: number) => `units-v2-word-${layout}-${ref}-${tier}`,
-  addUnitPointer: "units-v2-add-unit-pointer",
   notEditable: (ref: string) => `units-v2-not-editable-${ref}`,
   btnEdit: "units-v2-btn-edit",
   btnChange: "units-v2-btn-change-open",

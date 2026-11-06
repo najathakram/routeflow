@@ -67,7 +67,7 @@ describe("POS-5 an admin's counter price edit is stored as ONE net unit price", 
   });
 
   const ring = (items: unknown[]) =>
-    h.service.create({ customerId: "cust-1", items } as never, admin, { priceEditAllowed: true });
+    h.service.create({ customerId: "cust-1", items } as never, admin, {});
 
   it("unitPrice 9 on a 10.00 tier price with a reason: net 9 stored, list as originalPrice, DISCOUNTED, reason and caller recorded, discount 0", async () => {
     await ring([{ productId: "prod-1", qty: 2, unitPrice: 9, overrideReason: "Damaged box" }]);

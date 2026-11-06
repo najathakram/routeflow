@@ -6,7 +6,10 @@ import SignupPage from "./page";
  * B956: a refused formula-led business name (400 `TEXT_CELL_FORMULA_LEAD`) on tenant signup shows
  * FIXED copy with a human label, never the server message ("businessName must not start with …").
  */
-jest.mock("next/navigation", () => ({ useRouter: () => ({ push: jest.fn() }) }));
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn() }),
+  usePathname: () => "/signup",
+}));
 
 const registerBody = (over: object) => ({
   statusCode: 400,
@@ -37,11 +40,7 @@ async function fillAndSubmit() {
   fireEvent.change(screen.getByPlaceholderText("you@acme.com"), {
     target: { value: "owner@acme.example" },
   });
-  fireEvent.change(screen.getByPlaceholderText("acme_admin"), { target: { value: "acme_admin" } });
   fireEvent.change(screen.getByPlaceholderText("At least 8 characters"), {
-    target: { value: "Sup3rSecret!x9" },
-  });
-  fireEvent.change(screen.getByPlaceholderText("Re-enter your password"), {
     target: { value: "Sup3rSecret!x9" },
   });
   fireEvent.submit(document.querySelector("form") as HTMLFormElement);

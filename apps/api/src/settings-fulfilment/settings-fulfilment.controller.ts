@@ -3,6 +3,8 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
 import { UserRole } from "@prisma/client";
 import type {
+  FirstRunResult,
+  FirstRunStatus,
   FulfilmentPreview,
   FulfilmentSettings,
   FulfilmentSettingsUpdated,
@@ -11,8 +13,10 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
+import { NoImpersonation } from "../auth/decorators/no-impersonation.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { FulfilmentEditGuard } from "./fulfilment-edit";
+import { FirstRunService } from "./first-run.service";
 import { SettingsFulfilmentService } from "./settings-fulfilment.service";
 
 import { PermissionBase } from "../auth/permissions/permission.decorators";
@@ -33,13 +37,38 @@ const EDIT_THROTTLE = { default: { ttl: 60_000, limit: 10 } };
 @Controller("settings/fulfilment")
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class SettingsFulfilmentController {
-  constructor(private readonly settings: SettingsFulfilmentService) {}
+  constructor(
+    private readonly settings: SettingsFulfilmentService,
+    private readonly firstRun: FirstRunService,
+  ) {}
 
   @Get()
   @Roles(UserRole.OPERATOR)
   @ApiOperation({ summary: "Fulfillment settings: delivery method and counter sales" })
   get(@CurrentUser() user: JwtPayload): Promise<FulfilmentSettings> {
     return this.settings.get(user);
+  }
+
+  // W1: the new account's first question. The account admin only, and NOT behind FulfilmentEditGuard (that
+  // guard is dark): the gate is the marker, read inside the confirm lock. The POST refuses a platform admin
+  // impersonating, as the billing routes do, because a team setup is the back office's job.
+  @Get("first-run")
+  @Roles(UserRole.TENANT_ADMIN)
+  @ApiOperation({
+    summary: "The first question on a new account's dashboard: state and next steps",
+  })
+  firstRunStatus(@CurrentUser() user: JwtPayload): Promise<FirstRunStatus> {
+    return this.firstRun.status(user);
+  }
+
+  @Post("first-run")
+  @HttpCode(200)
+  @Roles(UserRole.TENANT_ADMIN)
+  @NoImpersonation("billing")
+  @Throttle(EDIT_THROTTLE)
+  @ApiOperation({ summary: "Answer the first question (fills blanks only; audited)" })
+  firstRunAnswer(@Body() body: unknown, @CurrentUser() user: JwtPayload): Promise<FirstRunResult> {
+    return this.firstRun.answer(body, user);
   }
 
   @Post("preview")

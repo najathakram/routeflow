@@ -1,5 +1,6 @@
 import { API_ERROR_CODES, type CreditNoteErrorCode } from "@routeflow/types";
 import { REFUND_DAY_CLOSED_COPY } from "./day-closed-copy";
+import { formatMoney } from "./format";
 
 /**
  * #2418 U1 (owner rule: no raw server strings in the UI): every credit-note edit / reissue / void
@@ -38,7 +39,31 @@ export const CREDIT_NOTE_ERROR_COPY: Record<CreditNoteErrorCode, string> = {
     "One of the credit lines isn't valid. Check each line amount.",
   [API_ERROR_CODES.CREDIT_NOTE_UNAVAILABLE]:
     "A credit note you picked is no longer available. Remove it and try again.",
+  // B921: the Apply refusals.
+  [API_ERROR_CODES.CREDIT_NOTE_NOT_APPLICABLE]: "This credit note can't be applied any more.",
+  [API_ERROR_CODES.CREDIT_NOTE_EXPIRED]: "This credit note has expired, so it can't be applied.",
+  [API_ERROR_CODES.CREDIT_NOTE_CUSTOMER_MISMATCH]:
+    "This credit note belongs to a different customer than the invoice.",
+  [API_ERROR_CODES.CREDIT_NOTE_INVOICE_NOT_APPLICABLE]:
+    "This invoice is already paid, void or written off, so it can't take a credit.",
+  [API_ERROR_CODES.CREDIT_NOTE_NOTHING_TO_APPLY]:
+    "There's nothing to apply: the credit note has no balance left, or the invoice is fully paid.",
 };
+
+/**
+ * SA-1091 (A-1): a credit, refund or inline return that would give back more than the order was billed. The server marks it
+ * `orderBound: true` with the room left in `remaining` (a number, never parsed from the message), so the copy can say how much
+ * is left and what frees room. null when the body is not that refusal; the fixed copy then stands.
+ */
+export function orderBoundCopy(data: unknown): string | null {
+  const d = (data && typeof data === "object" ? data : {}) as Record<string, unknown>;
+  if (d.orderBound !== true || typeof d.remaining !== "number" || !Number.isFinite(d.remaining))
+    return null;
+  const exit = "To free up room, void a credit note or cancel a return.";
+  return d.remaining >= 0.005
+    ? `That is more than this order was billed. ${formatMoney(d.remaining)} is left to give back. ${exit}`
+    : `That is more than this order was billed, and none is left to give back. ${exit}`;
+}
 
 /** Shown when the request got no response at all (a timeout or a dropped connection): it may have committed. */
 export const UNCONFIRMED_COPY =
@@ -61,8 +86,13 @@ export function noResponse(err: unknown): boolean {
  * may have gone through) is the "couldn't confirm" line; anything else is `fallback`. Never the server message.
  */
 export function creditNoteErrorCopy(err: unknown, fallback: string): string {
-  const code = (err as { response?: { data?: { code?: unknown } } } | null | undefined)?.response
-    ?.data?.code;
+  const data = (err as { response?: { data?: { code?: unknown } } } | null | undefined)?.response
+    ?.data;
+  const code = data?.code;
+  if (code === API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM) {
+    const bound = orderBoundCopy(data);
+    if (bound) return bound;
+  }
   if (
     typeof code === "string" &&
     Object.prototype.hasOwnProperty.call(CREDIT_NOTE_ERROR_COPY, code)
@@ -117,8 +147,13 @@ export const REFUND_EXCEEDS_CASH_PAID_COPY =
  * caller's own text. Never the server message for these codes.
  */
 export function refundErrorMessage(err: unknown, otherwise?: string): string | undefined {
-  const code = (err as { response?: { data?: { code?: unknown } } } | null | undefined)?.response
-    ?.data?.code;
+  const data = (err as { response?: { data?: { code?: unknown } } } | null | undefined)?.response
+    ?.data;
+  const code = data?.code;
+  if (code === API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM) {
+    const bound = orderBoundCopy(data);
+    if (bound) return bound;
+  }
   if (code === API_ERROR_CODES.REFUND_NEEDS_PAID_INVOICE) return REFUND_NEEDS_PAID_INVOICE_COPY;
   if (code === API_ERROR_CODES.REFUND_PAID_WITH_STORE_CREDIT)
     return REFUND_PAID_WITH_STORE_CREDIT_COPY;

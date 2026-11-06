@@ -37,6 +37,7 @@ import {
   pickerProductName,
 } from "@/lib/product-search-groups";
 import {
+  isAboveListLine,
   isSpecialTier,
   computeInvoiceLineTotal,
   computeInvoiceTotals,
@@ -794,9 +795,11 @@ function CreateEstimateModal({
                       <span>
                         {fmt(li.unitPrice)}/{li.unit}
                       </span>
-                      {li.priceType === "SPECIAL" && (
-                        <span className="line-through">{fmt(li.listPrice)}</span>
-                      )}
+                      {li.priceType === "SPECIAL" &&
+                        !isAboveListLine({
+                          unitPrice: li.unitPrice,
+                          originalPrice: li.listPrice,
+                        }) && <span className="line-through">{fmt(li.listPrice)}</span>}
                     </div>
                   </div>
 

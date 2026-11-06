@@ -4,7 +4,12 @@
  * When the card keeps refreshing is the query hook's rule (lib/api/buyer.order-tracking.test.tsx).
  * Fixtures are placeholders.
  */
-import type { OrderTracking } from "@routeflow/types";
+import {
+  describeTrackingView,
+  isTrackingLive,
+  TRACKING_PILL_LABEL,
+  type OrderTracking,
+} from "@routeflow/types";
 import {
   deriveTrackingView,
   firstNameOnly,
@@ -80,6 +85,42 @@ describe("deriveTrackingView", () => {
   it("a cancelled order is cancelled, whatever the run says", () => {
     expect(deriveTrackingView({ ...base, status: "CANCELLED", tracking: tracking() }).kind).toBe(
       "cancelled",
+    );
+  });
+
+  // SA-1101 §4.1: a wholly refused order is its own state, checked before DELIVERED, whatever its run says.
+  it("a refused order is refused (never delivered), whatever the run and the stamp say", () => {
+    expect(deriveTrackingView({ ...base, status: "REFUSED", tracking: null })).toEqual({
+      kind: "refused",
+    });
+    expect(
+      deriveTrackingView({
+        status: "REFUSED",
+        deliveredAt: "2026-09-24T17:14:00.000Z",
+        tracking: tracking({ stopStatus: "COMPLETED", runStatus: "IN_PROGRESS" }),
+      }),
+    ).toEqual({ kind: "refused" });
+  });
+
+  it("refused has the pill Refused and the buyer words from the spec", () => {
+    expect(TRACKING_PILL_LABEL.refused).toBe("Refused");
+    expect(describeTrackingView({ kind: "refused" })).toEqual({
+      headline: "Refused at delivery",
+      detail: "Your order was refused at delivery. Contact us if this is wrong.",
+    });
+  });
+
+  it("a refused order is never live, even while its run is", () => {
+    expect(isTrackingLive({ status: "REFUSED", tracking: { runStatus: "IN_PROGRESS" } })).toBe(
+      false,
+    );
+    expect(isTrackingLive({ status: "REFUSED", tracking: null })).toBe(false);
+    // the rule it sits beside is unchanged
+    expect(isTrackingLive({ status: "DELIVERED", tracking: { runStatus: "IN_PROGRESS" } })).toBe(
+      false,
+    );
+    expect(isTrackingLive({ status: "CONFIRMED", tracking: { runStatus: "IN_PROGRESS" } })).toBe(
+      true,
     );
   });
 

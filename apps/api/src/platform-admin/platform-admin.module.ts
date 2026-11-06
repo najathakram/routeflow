@@ -10,6 +10,7 @@ import { PlatformAdminBuyersService } from "./platform-admin-buyers.service";
 import { RfInvoicesController } from "./rf-invoices.controller";
 import { CatchupAdminController } from "./catchup-admin.controller";
 import { AutoLocksAdminController } from "./auto-locks-admin.controller";
+import { EntitlementSweepController } from "./entitlement-sweep.controller";
 import { RfInvoicesAdminService } from "./rf-invoices.service";
 import { AppConfig } from "../config/configuration";
 import { EmailModule } from "../email/email.module";
@@ -37,6 +38,7 @@ import { BillingModule } from "../billing/billing.module";
     RfInvoicesController,
     CatchupAdminController,
     AutoLocksAdminController,
+    EntitlementSweepController,
   ],
   providers: [
     PlatformAdminService,

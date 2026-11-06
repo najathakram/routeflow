@@ -5,6 +5,7 @@ import { lockProductsForStock } from "../common/product-locks";
 import { lockCodesOfProducts, peekProductCodes, releaseProductCodes } from "./product-code-release";
 import { type CatalogTx } from "./product-catalog-sync";
 import { recipeReferenceGroupers } from "./recipe-references";
+import { TERMINAL_ORDER_STATUSES as SHARED_TERMINAL_ORDER_STATUSES } from "../common/terminal-order-statuses";
 
 /**
  * Product delete, one rule set for the single and the bulk path.
@@ -19,8 +20,8 @@ import { recipeReferenceGroupers } from "./recipe-references";
  * whole life, so the line status cannot tell an open order from a delivered one.
  */
 
-/** An order in one of these states is finished; every other state (DRAFT .. PARTIALLY_DELIVERED) is still open. */
-export const TERMINAL_ORDER_STATUSES: OrderStatus[] = ["DELIVERED", "CANCELLED"];
+/** An order in one of these states is finished (SA-1101: DELIVERED, REFUSED, CANCELLED); every other state (DRAFT .. PARTIALLY_DELIVERED) is still open. */
+export const TERMINAL_ORDER_STATUSES: OrderStatus[] = [...SHARED_TERMINAL_ORDER_STATUSES];
 
 /** `OrderItem` where-clause: lines of `productId`(s) that sit on a still-open order. */
 export function activeOrderItemWhere(productIds: string | readonly string[]) {

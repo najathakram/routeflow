@@ -1,3 +1,5 @@
+import { isPostDeliveryOrderStatus } from "@routeflow/types";
+
 /**
  * The order-linked DRAFT that mirrors an un-delivered order: it auto-syncs to the order and the API
  * refuses to edit or send it until the order is delivered (assertOrderInvoiceUnlocked). Shared by the
@@ -17,7 +19,8 @@ export function isPendingMirrorInvoice(inv: {
     inv.status === "DRAFT" &&
     !inv.deliveryBatchId &&
     !!inv.order &&
-    inv.order.status !== "DELIVERED" &&
+    // SA-1101: a REFUSED order is post-delivery too, so its $0 draft is not a pending mirror
+    !isPostDeliveryOrderStatus(inv.order.status) &&
     inv.order.status !== "PARTIALLY_DELIVERED"
   );
 }

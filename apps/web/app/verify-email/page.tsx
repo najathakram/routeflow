@@ -89,13 +89,13 @@ function VerifyEmailInner() {
   // exactly as the old page's own per-state heading did (MED-1).
   const title =
     state === "success"
-      ? "Email verified!"
+      ? "Email verified."
       : state === "error"
         ? "Verification failed"
         : "Verifying your email…";
 
   return (
-    <AuthShell audience="distributor" kicker="Distributor workspace" title={title}>
+    <AuthShell audience="distributor" kicker="Distributor account" title={title}>
       <div className="text-center">
         {/* Verifying */}
         {state === "verifying" && (

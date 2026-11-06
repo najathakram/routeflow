@@ -9,9 +9,10 @@ import { statementMoney } from "@/lib/customer-statement-display";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { fmt } from "@/lib/formatting";
 import { LedgerTruncationNote } from "./ledger-truncation-note";
+import { OpenBalanceButton } from "@/components/account-statement/OpenBalanceButton";
 
 /**
- * B1005 (option A): the customer's "Statement of Accounts" card. It has NO letterhead and NO opening balance of its own: the
+ * B1005 (option A): the customer's "Account history" card. It has NO letterhead and NO opening balance of its own: the
  * tenant's own letterhead and the real opening balance live in the SERVER's monthly statement PDF, which this card downloads.
  * What stays on screen is a plain activity ledger plus the lifetime totals, each of which is a real figure or an em dash (never a
  * made-up $0.00 while loading or after a failure).
@@ -66,7 +67,7 @@ export function CustomerStatementCard({
   return (
     <div className="space-y-4 lg:col-span-2">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h3 className="text-base font-semibold text-navy">Statement of Accounts</h3>
+        <h3 className="text-base font-semibold text-navy">Account history</h3>
         <div className="flex flex-wrap items-center gap-2">
           {months.map((m) => (
             <button
@@ -116,8 +117,15 @@ export function CustomerStatementCard({
               valueClass: "text-success",
             },
             {
-              label: "Balance Due",
-              value: balanceDue,
+              label: "Open balance",
+              value: (
+                <OpenBalanceButton
+                  customerId={customerId}
+                  unavailable={statementFailed || !statement}
+                >
+                  {balanceDue}
+                </OpenBalanceButton>
+              ),
               valueClass:
                 (statement?.outstandingAmount ?? 0) > 0 && !statementFailed
                   ? "text-danger"
@@ -220,7 +228,7 @@ export function CustomerStatementCard({
               <tfoot>
                 <tr className="border-t-2 border-surface-border bg-gray-50">
                   <td colSpan={3} className="px-8 py-3 text-sm font-bold text-navy">
-                    Balance Due
+                    Open balance
                   </td>
                   <td />
                   <td
@@ -229,7 +237,12 @@ export function CustomerStatementCard({
                       (statement?.outstandingAmount ?? 0) > 0 ? "text-danger" : "text-success",
                     )}
                   >
-                    {balanceDue}
+                    <OpenBalanceButton
+                      customerId={customerId}
+                      unavailable={statementFailed || !statement}
+                    >
+                      {balanceDue}
+                    </OpenBalanceButton>
                   </td>
                 </tr>
               </tfoot>

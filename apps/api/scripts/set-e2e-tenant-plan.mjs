@@ -43,6 +43,7 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--slug") args.slug = argv[++i];
     if (argv[i] === "--plan") args.plan = argv[++i];
+    if (argv[i] === "--reason") args.reason = argv[++i];
   }
   return args;
 }
@@ -58,10 +59,12 @@ async function printResolved(base, adminToken, tenantId, label) {
 }
 
 async function main() {
-  const { slug, plan, apply } = parseArgs(process.argv.slice(2));
+  const { slug, plan, apply, reason: reasonArg } = parseArgs(process.argv.slice(2));
+  // R49: a plan move needs a reason (3 to 500 characters); it is written to the audit row.
+  const reason = reasonArg ?? "Reset the test tenant plan (set-e2e-tenant-plan script)";
   if (!slug || !plan) {
     console.error(
-      "Usage: node apps/api/scripts/set-e2e-tenant-plan.mjs --slug <slug> --plan <PLAN> [--apply]",
+      "Usage: node apps/api/scripts/set-e2e-tenant-plan.mjs --slug <slug> --plan <PLAN> [--reason <text>] [--apply]",
     );
     process.exit(1);
   }
@@ -82,14 +85,14 @@ async function main() {
 
   if (!apply) {
     console.log(
-      `\nDRY RUN — would PATCH /platform-admin/tenants/${found.id}/plan { plan: "${plan}" }.`,
+      `\nDRY RUN — would PATCH /platform-admin/tenants/${found.id}/plan { plan: "${plan}", reason }.`,
     );
     console.log("Pass --apply to actually write.\n");
     return;
   }
 
   console.log(`\nApplying: PATCH /platform-admin/tenants/${found.id}/plan { plan: "${plan}" } ...`);
-  await updateTenantPlan(base, adminToken, found.id, plan);
+  await updateTenantPlan(base, adminToken, found.id, plan, reason);
   console.log("Write complete.");
 
   await printResolved(base, adminToken, found.id, "New resolved");

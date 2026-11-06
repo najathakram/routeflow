@@ -34,6 +34,7 @@ import {
   type BillLineDenomination,
 } from "@/lib/scan-line-units";
 import { useSuppliers } from "@/lib/api/inventory";
+import { useFillTenantDates } from "@/lib/scan-invoice-tenant-dates";
 import {
   useCheckVendorBillDuplicate,
   useCreateVendorBill,
@@ -55,11 +56,12 @@ import { displayProductName } from "@/lib/product-display";
 import { fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { roundMoney } from "@routeflow/pricing";
 import { RAISED_PO_NOTE, poIntentRefusal, raisePoBlocker } from "@/lib/raise-po";
-import { SCAN_LOCK_BODY, SCAN_LOCK_TITLE, isScanPlanLock } from "@/lib/scan-po-lock";
+import { SCAN_LOCK_BODY, isScanPlanLock } from "@/lib/scan-po-lock";
+import { scanFailureCopy } from "@/lib/scan-failure-copy";
 import { buildVendorBillPayload } from "@/lib/scan-bill-payload";
 import { RaisePoToggle } from "./RaisePoToggle";
 import { apiClient } from "@/lib/api-client";
-import { RECORDS_FAILED_COPY, SCAN_FAILED_COPY } from "@/lib/reason-copy";
+import { RECORDS_FAILED_COPY } from "@/lib/reason-copy";
 import { ScanCreateModeSelector } from "@/components/ScanCreateModeSelector";
 import { scanCreateLabel } from "@/lib/scan-create-label";
 import { SELECTABLE_PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from "@/lib/payment-methods";
@@ -235,13 +237,13 @@ const makeInvoice = (kind: "pdf" | "images", files: File[], raisePo = false): In
   invoiceNumber: "",
   supplierId: "",
   supplierMatchAmbiguous: false,
-  billDate: new Date().toISOString().slice(0, 10),
+  billDate: "", // filled with the TENANT's day once known (useFillTenantDates)
   dueDate: "",
   createMode: "bill",
   raisePo,
   expenseCategoryId: "",
   expenseDescription: "",
-  expenseDate: new Date().toISOString().slice(0, 10),
+  expenseDate: "", // same
   expensePaymentMethod: "CASH",
   expenseNotes: "",
   createdBillId: null,
@@ -406,11 +408,9 @@ export function ScanInvoiceModal({
   // can never capture a stale activeIndex.
   const [invoices, setInvoicesRaw] = React.useState<InvoiceGroup[]>([]);
   const [activeIndex, setActiveIndex] = React.useState(0);
-  // Bumped on reset / re-upload / scan-again; async scan callbacks compare it
-  // so a stale response can never clobber a fresh session's state.
+  // Bumped on reset / re-upload / scan-again; async scan callbacks compare it (no stale clobber).
   const runIdRef = React.useRef(0);
-  // In-flight scan requests, aborted on reset so cancelled batches stop
-  // burning Claude tokens (not just stop writing state).
+  // In-flight scan requests, aborted on reset so cancelled batches stop burning Claude tokens.
   const abortersRef = React.useRef(new Map<string, AbortController>());
   // Synchronous mirror of `invoices` — read by the async create loop and the
   // unmount cleanup, updated inside the setter so it can't lag a render.
@@ -423,6 +423,7 @@ export function ScanInvoiceModal({
       invoicesRef.current = next;
       return next;
     });
+  useFillTenantDates(invoices, invoicesRef, setInvoices); // SA-964 §4 / F14
   const patchInvoiceById = (id: string, patch: Partial<InvoiceGroup>) =>
     setInvoices((prev) => prev.map((inv) => (inv.id === id ? { ...inv, ...patch } : inv)));
 
@@ -471,7 +472,7 @@ export function ScanInvoiceModal({
     });
     if (active) scheduleDuplicateCheck(active.id);
   };
-  const billDate = active?.billDate ?? new Date().toISOString().slice(0, 10);
+  const billDate = active?.billDate ?? "";
   const setBillDate = (v: string) => updateActive({ billDate: v });
   const dueDate = active?.dueDate ?? "";
   const setDueDate = (v: string) => updateActive({ dueDate: v });
@@ -490,7 +491,7 @@ export function ScanInvoiceModal({
   const setExpenseCategoryId = (v: string) => updateActive({ expenseCategoryId: v });
   const expenseDescription = active?.expenseDescription ?? "";
   const setExpenseDescription = (v: string) => updateActive({ expenseDescription: v });
-  const expenseDate = active?.expenseDate ?? new Date().toISOString().slice(0, 10);
+  const expenseDate = active?.expenseDate ?? "";
   const setExpenseDate = (v: string) => updateActive({ expenseDate: v });
   const expensePaymentMethod = active?.expensePaymentMethod ?? "CASH";
   const setExpensePaymentMethod = (v: string) => updateActive({ expensePaymentMethod: v });
@@ -726,36 +727,15 @@ export function ScanInvoiceModal({
     } catch (err: any) {
       if (runId !== runIdRef.current || controller.signal.aborted) return;
       console.error(err);
-      const msg: string = err?.response?.data?.message ?? "";
-      const code: string | undefined = err?.response?.data?.code;
-      const isApiKeyError = code === "AI_KEY_INVALID" || /api key|anthropic/i.test(msg);
       // A plan gate that closed after the page loaded answers 403: show the friendly lock copy,
-      // never the server's raw message.
+      // never the server's raw message. Every failure reads as closed copy (lib/scan-failure-copy.ts).
       const planLocked = intent === "purchase-order" && isScanPlanLock(err);
+      const failure = scanFailureCopy(err, planLocked);
       if (singleFlow) {
-        toast({
-          title: planLocked
-            ? SCAN_LOCK_TITLE
-            : isApiKeyError
-              ? "Anthropic API key not configured"
-              : "Failed to scan invoice",
-          description: planLocked
-            ? SCAN_LOCK_BODY
-            : isApiKeyError
-              ? "Go to Settings → AI & Integrations to add your Claude API key."
-              : SCAN_FAILED_COPY,
-          variant: "error",
-        });
+        toast({ title: failure.title, description: failure.description, variant: "error" });
         setStep("upload");
       } else {
-        patchInvoiceById(inv.id, {
-          status: "failed",
-          error: planLocked
-            ? SCAN_LOCK_BODY
-            : isApiKeyError
-              ? "Anthropic API key not configured — see Settings → AI & Integrations."
-              : SCAN_FAILED_COPY,
-        });
+        patchInvoiceById(inv.id, { status: "failed", error: failure.rowError });
       }
     } finally {
       abortersRef.current.delete(inv.id);

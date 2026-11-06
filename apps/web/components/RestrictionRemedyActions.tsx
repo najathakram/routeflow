@@ -24,6 +24,10 @@ export const STORE_STATE_HREF = "/settings?tab=profile#business-address";
 /** The full "Customers without a state" fixer (several addresses, no single default). */
 export const NO_STATE_FIXER_HREF = "/settings/restrictions";
 
+/** The same teal ring the buttons and fields wear, so a keyboard user sees the remedy as a control (not the browser's thin default outline). */
+const FOCUS_RING =
+  "rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-accent";
+
 const STATE_OPTIONS = US_STATES.map((s) => ({ value: s.code, label: `${s.code} — ${s.name}` }));
 
 /**
@@ -60,7 +64,7 @@ function RemedyAction({ action, onRecheck }: { action: RemedyAction; onRecheck?:
         href={STORE_STATE_HREF}
         target="_blank"
         rel="noopener"
-        className="inline-flex min-h-11 items-center text-sm font-medium text-brand-600 underline md:min-h-0"
+        className={`inline-flex min-h-11 items-center text-sm font-medium text-brand-600 underline md:min-h-0 ${FOCUS_RING}`}
       >
         {NO_STORE_STATE_LINE}
       </NextLink>
@@ -94,6 +98,21 @@ function AddCustomerState({
   const [saved, setSaved] = React.useState(false);
   const [failed, setFailed] = React.useState(false);
   const panelId = React.useId();
+  const stateRef = React.useRef<HTMLSelectElement>(null);
+  const recheckRef = React.useRef<HTMLButtonElement>(null);
+  // Set by the click that opens the fixer, so only a person's own opening moves focus (never a re-render).
+  const focusStateField = React.useRef(false);
+
+  // Opening the fixer lands on its State field: one Tab less, and a screen reader hears the field it just got.
+  React.useEffect(() => {
+    if (!open || !focusStateField.current) return;
+    focusStateField.current = false;
+    stateRef.current?.focus();
+  }, [open]);
+  // Saving replaces the Save button, so focus would fall to the dialog; hand it to the next step instead.
+  React.useEffect(() => {
+    if (saved) recheckRef.current?.focus();
+  }, [saved]);
 
   const name: string = customer.data?.businessName ?? REMEDY_COPY.thisCustomer;
   const fix = customerStateFix(customer.data?.addresses ?? [], addressId);
@@ -128,7 +147,12 @@ function AddCustomerState({
       >
         <p>{REMEDY_COPY.saved}</p>
         {onRecheck && (
-          <Button variant="secondary" className="mt-2 max-md:min-h-11" onClick={onRecheck}>
+          <Button
+            ref={recheckRef}
+            variant="secondary"
+            className="mt-2 max-md:min-h-11"
+            onClick={onRecheck}
+          >
             {REMEDY_COPY.checkAgain}
           </Button>
         )}
@@ -142,8 +166,11 @@ function AddCustomerState({
         type="button"
         aria-expanded={open}
         aria-controls={panelId}
-        onClick={() => setOpen((o) => !o)}
-        className="inline-flex min-h-11 items-center text-left text-sm font-medium text-brand-600 underline md:min-h-0"
+        onClick={() => {
+          focusStateField.current = !open;
+          setOpen(!open);
+        }}
+        className={`inline-flex min-h-11 items-center text-left text-sm font-medium text-brand-600 underline md:min-h-0 ${FOCUS_RING}`}
       >
         {noStateOnFileLine(name)}
       </button>
@@ -156,7 +183,7 @@ function AddCustomerState({
                 href={NO_STATE_FIXER_HREF}
                 target="_blank"
                 rel="noopener"
-                className="font-medium text-brand-600 underline"
+                className={`font-medium text-brand-600 underline ${FOCUS_RING}`}
               >
                 {REMEDY_COPY.openFixer}
               </NextLink>
@@ -165,6 +192,7 @@ function AddCustomerState({
             <div className="flex flex-wrap items-end gap-2">
               <div className="min-w-[12rem] flex-1">
                 <Select
+                  ref={stateRef}
                   label={REMEDY_COPY.stateLabel}
                   placeholder="State…"
                   options={STATE_OPTIONS}

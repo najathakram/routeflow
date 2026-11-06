@@ -238,6 +238,15 @@ describe("RoutesService — delivery lines must belong to this stop and fit the 
         quantityDelivered: 5,
       },
     ]);
+    // SA-1101: the outcome step reads the column the recompute just left, so the line row serves it back.
+    let column = 0;
+    tx.orderItem.update.mockImplementation(async ({ data }: any) => {
+      if (data?.deliveredQty !== undefined) column = Number(data.deliveredQty);
+      return {};
+    });
+    tx.orderItem.findMany.mockImplementation(async () => [
+      { id: "oi-1", orderId: "ord-1", qty: 5, status: null, deliveredQty: column },
+    ]);
     prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({ id: "stop-1", status: "COMPLETED" });
 
     for (const q of [5, 3]) {

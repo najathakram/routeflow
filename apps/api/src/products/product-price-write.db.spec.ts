@@ -18,6 +18,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { ProductPriceGridService } from "./product-price-grid.service";
 import { ProductPriceWriteService } from "./product-price-write.service";
+import { ProductUnitsService } from "./product-units.service";
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
 
@@ -43,6 +44,7 @@ describeDb("units v2 price write - real Postgres", () => {
       providers: [
         ProductPriceGridService,
         ProductPriceWriteService,
+        ProductUnitsService,
         { provide: PrismaService, useValue: prisma },
       ],
     }).compile();
@@ -420,7 +422,7 @@ describeDb("units v2 price write - real Postgres", () => {
     expect(Number(cup.price)).toBe(15);
   });
 
-  it("a price on the implicit base row is 400 and mints no unit", async () => {
+  it("no units flag: a price on the implicit base row is 400 and creates no unit (SA-1082)", async () => {
     const t = await seed("base");
     await prisma.productUnit.delete({ where: { id: t.unitId } });
     const g = await readGrid(t);

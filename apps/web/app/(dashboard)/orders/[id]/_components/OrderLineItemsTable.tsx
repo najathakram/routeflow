@@ -3,7 +3,7 @@
 import * as React from "react";
 import { Package } from "lucide-react";
 import { Badge, cn } from "@routeflow/ui/web";
-import { computeLineSubtotal } from "@routeflow/pricing";
+import { computeLineSubtotal, isAboveListLine } from "@routeflow/pricing";
 import { lineBackorderPieces } from "@routeflow/types";
 import { BackorderTag } from "@/components/BackorderTag";
 import { invoiceLineQtyText, isUnitLine } from "@/lib/invoice-line-unit";
@@ -13,6 +13,7 @@ import type { OrderItem } from "@/lib/api/orders";
 import { orderLineName } from "@/lib/product-display";
 import { RestrictionOverrideNote } from "@/components/RestrictionOverrideNote";
 import { displayLineStatus } from "./line-status";
+import { lineDisplayPack } from "@/lib/line-own-pack";
 import { ComponentSubLines } from "@/components/ComponentSubLines";
 
 /**
@@ -115,7 +116,7 @@ export function OrderLineItemsTable({
                         // The stored facts the line was sold by, never the live product's (L-332).
                         unit={{
                           boxes: li.boxes,
-                          unitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox,
+                          unitsPerBox: lineDisplayPack(li) ?? undefined,
                           unitLabel: li.unitLabel,
                         }}
                       />
@@ -165,7 +166,10 @@ export function OrderLineItemsTable({
                 <div className="flex flex-col items-end gap-0.5 max-md:items-start">
                   {li.priceType === "SPECIAL" ? (
                     <>
-                      <span className="strike text-xs">{formatMoney(li.originalPrice)}</span>
+                      {/* a tier above Retail is charged over its list: the Special pill stays, the lower list is not struck */}
+                      {!isAboveListLine(li) && (
+                        <span className="strike text-xs">{formatMoney(li.originalPrice)}</span>
+                      )}
                       <span className="money text-emerald-600">{formatMoney(li.unitPrice)}</span>
                       <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
                         Special
@@ -204,7 +208,7 @@ export function OrderLineItemsTable({
                   {(() => {
                     const note = unitPriceNote({
                       unitPrice: li.unitPrice,
-                      unitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox,
+                      unitsPerBox: lineDisplayPack(li) ?? undefined,
                       unitLabel: li.unitLabel,
                       pieces: li.pieces,
                     });
@@ -234,7 +238,7 @@ export function OrderLineItemsTable({
                             boxes: li.boxes ?? null,
                             pieces: li.pieces ?? null,
                             // Snapshot upb, never the live product.
-                            unitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox ?? null,
+                            unitsPerBox: lineDisplayPack(li),
                             // BUY_N_GET_M snapshot, or the fallback bills
                             // a free-units line at full price.
                             freeUnits: Math.max(0, Math.trunc(Number(li.promoFreeUnits ?? 0) || 0)),

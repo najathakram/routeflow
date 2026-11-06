@@ -21,7 +21,9 @@ import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { SystemConfigService } from "./system-config.service";
-import { ConfigService } from "@nestjs/config";
+import { secretPreview } from "../common/secret-at-rest";
+import { auditAiKeyChange } from "../common/claude-api-key";
+import { UpdateAnthropicKeyDto } from "./dto/update-anthropic-key.dto";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { UpdateRouteSettingsDto } from "./dto/update-route-settings.dto";
@@ -45,7 +47,6 @@ import { RequirePermission, PermissionBase } from "../auth/permissions/permissio
 export class SettingsController {
   constructor(
     private readonly svc: SystemConfigService,
-    private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
     private readonly quickKeys: QuickKeysSettingsService,
@@ -286,29 +287,38 @@ export class SettingsController {
 
   @Get("anthropic")
   @Roles(UserRole.TENANT_ADMIN)
-  async getAnthropicSettings() {
+  async getAnthropicSettings(): Promise<{
+    configured: boolean;
+    keyPreview: string | null;
+    source: "business" | "routeflow";
+  }> {
+    // SA-1102 2.4: this describes the BUSINESS's own key only. RouteFlow's env key is never read here, so it is never
+    // previewed to a client; a business with no key of its own runs on RouteFlow's (source "routeflow").
     const stored = await this.svc.get("anthropic.apiKey");
-    const envKey = this.configService.get<string>("ANTHROPIC_API_KEY");
-    const key = stored || envKey || null;
-    const configured = !!key && key.length > 0;
-    const keyPreview = key ? `${key.slice(0, 10)}...${key.slice(-4)}` : null;
     return {
-      configured,
-      keyPreview,
-      source: stored ? "database" : envKey ? "environment" : "none",
+      configured: !!stored,
+      keyPreview: secretPreview(stored),
+      source: stored ? "business" : "routeflow",
     };
   }
 
   @Patch("anthropic")
   @Roles(UserRole.TENANT_ADMIN)
-  async updateAnthropicSettings(@Body() dto: { apiKey?: string }) {
+  async updateAnthropicSettings(
+    @Body() dto: UpdateAnthropicKeyDto,
+    @CurrentUser() user?: JwtPayload,
+  ) {
     if (dto.apiKey !== undefined) {
-      if (dto.apiKey === "") {
-        // Allow clearing the key
-        await this.svc.set("anthropic.apiKey", "");
-      } else {
-        await this.svc.set("anthropic.apiKey", dto.apiKey);
-      }
+      // "" clears the key (the DTO has already refused anything that is not a Claude key). SA-1102 A-1(d): one audit
+      // row per change, with the last 4 characters only.
+      await this.svc.set("anthropic.apiKey", dto.apiKey);
+      await auditAiKeyChange(this.prisma, {
+        tenantId: this.prisma.getTenantId() ?? null,
+        userId: user?.sub ?? null,
+        impersonatedBy: user?.impersonatedBy ?? null,
+        entityType: "SystemConfig",
+        apiKey: dto.apiKey,
+      });
     }
     return this.getAnthropicSettings();
   }
@@ -631,6 +641,7 @@ export class SettingsController {
     const defaultTerms = await this.svc.get("invoice.defaultTerms");
     const hideOriginalPriceRaw = await this.svc.get("invoice.hideOriginalPrice");
     const hideBarcodesRaw = await this.svc.get("invoice.hideBarcodes");
+    const hidePerPieceRaw = await this.svc.get("invoice.hidePerPiece");
     const depositDefaultPercentRaw = await this.svc.get("invoice.depositDefaultPercent");
     const depositCollectAtOrderRaw = await this.svc.get("invoice.depositCollectAtOrder");
     // SA-436 (#2401): lives on TenantConfig (the send tx reads it there); no row reads as OFF.
@@ -646,6 +657,8 @@ export class SettingsController {
       hideOriginalPrice: hideOriginalPriceRaw === "true",
       // SA-1031: only the string "true" hides; a tenant that never wrote the key keeps its barcodes.
       hideBarcodes: hideBarcodesRaw === "true",
+      // Owner ruling 2026-11-04: only the string "true" hides the Per piece column; a business that never wrote the key keeps it.
+      hidePerPiece: hidePerPieceRaw === "true",
       // WP-D1: absent/unset -> null (no tenant deposit default). Row 652: the web clears the field by sending 0, so a
       // stored "0" is also "no tenant default" (every reader treats it as no deposit; the form shows both as blank).
       depositDefaultPercent:
@@ -669,6 +682,9 @@ export class SettingsController {
     }
     if (dto.hideBarcodes !== undefined) {
       await this.svc.set("invoice.hideBarcodes", String(dto.hideBarcodes));
+    }
+    if (dto.hidePerPiece !== undefined) {
+      await this.svc.set("invoice.hidePerPiece", String(dto.hidePerPiece));
     }
     if (dto.depositDefaultPercent !== undefined) {
       await this.svc.set("invoice.depositDefaultPercent", String(dto.depositDefaultPercent));

@@ -4,6 +4,7 @@
  * UNCHANGED; the server (POST /buyer/orders) re-prices and re-runs every
  * guard fresh, same as any other buyer order create.
  */
+import { isTerminalOrderStatus } from "@routeflow/types/api/enums";
 import type { BuyerOrder } from "./api/buyer";
 
 export interface ReorderItem {
@@ -90,7 +91,7 @@ export function trackingHeadline(t: {
 /** F11 (B146). Poll cadence for useBuyerOrderTracking. Today's rule (order is
  *  OUT_FOR_DELIVERY / PARTIALLY_DELIVERED) PLUS "the run is IN_PROGRESS" — a
  *  CONFIRMED order on a live run never refreshed, so it could never observe
- *  its own skip. A terminal order (DELIVERED / CANCELLED) stops polling even
+ *  its own skip. A terminal order (DELIVERED / REFUSED / CANCELLED) stops polling even
  *  while its run is still live: neither the release helper nor completeStop
  *  clears a terminal order's stop pointer, so its tracking payload keeps
  *  reporting the run's status for the rest of the trip — without this arm a
@@ -101,7 +102,7 @@ export function trackingRefetchInterval(
 ): number | false {
   if (!data) return false;
   if (data.status === "OUT_FOR_DELIVERY" || data.status === "PARTIALLY_DELIVERED") return 20_000;
-  if (data.status === "DELIVERED" || data.status === "CANCELLED") return false;
+  if (isTerminalOrderStatus(data.status)) return false;
   if (data.tracking?.runStatus === "IN_PROGRESS") return 20_000;
   return false;
 }

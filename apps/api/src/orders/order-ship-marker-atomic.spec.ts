@@ -31,7 +31,11 @@ const makeDb = (
 ) => {
   const committed: State = { status: opts.start ?? OrderStatus.DELIVERED, revisions: [] };
   const delegates = (state: State, inTx: boolean) => ({
+    // SA-1101 A-5: the DELIVERED demotion locks the Order row and counts its live returns (none here).
+    $executeRaw: async () => 1,
+    return: { count: async () => 0 },
     order: {
+      findMany: async () => [{ customerId: "c1", tenantId: "t1" }],
       update: async ({ where, data }: any) => {
         if (opts.statusFails && inTx) throw new Error("status update failed");
         // B1095: the status write is a compare-and-set; no row matching is Prisma's P2025
@@ -169,16 +173,18 @@ describe("SA-689: the ship-state marker commits with the status change", () => {
     expect(clean.committed.revisions.map((r) => r.source)).toEqual(["UNMARKED_SHIPPED"]);
   });
 
-  it("no marker due (another transition, a ROUTE order, a business that does not bill at shipment): a plain update, no transaction", async () => {
-    const cases: Array<[OrderStatus, OrderStatus, Parameters<typeof run>[3]]> = [
-      [OrderStatus.CONFIRMED, OrderStatus.OUT_FOR_DELIVERY, {}],
-      [OrderStatus.DELIVERED, OrderStatus.CONFIRMED, { over: { fulfillPath: "ROUTE" } }],
-      [OrderStatus.DELIVERED, OrderStatus.CONFIRMED, { mode: "unset" }],
+  it("no marker due (another transition, a ROUTE order, a business that does not bill at shipment): a plain update, no marker", async () => {
+    // SA-1101 A-5: a DELIVERED demotion alone runs in a transaction (the live-return lock and count); every other
+    // plain status write stays outside one. Neither writes a marker.
+    const cases: Array<[OrderStatus, OrderStatus, Parameters<typeof run>[3], number]> = [
+      [OrderStatus.CONFIRMED, OrderStatus.OUT_FOR_DELIVERY, {}, 0],
+      [OrderStatus.DELIVERED, OrderStatus.CONFIRMED, { over: { fulfillPath: "ROUTE" } }, 1],
+      [OrderStatus.DELIVERED, OrderStatus.CONFIRMED, { mode: "unset" }, 1],
     ];
-    for (const [from, to, o] of cases) {
+    for (const [from, to, o, txs] of cases) {
       const db = makeDb({ start: from, markerFails: true }); // a marker write would throw: none is attempted
       await expect(run(db, from, to, o)).resolves.toMatchObject({ status: to });
-      expect(db.txCalls.count).toBe(0);
+      expect(db.txCalls.count).toBe(txs);
       expect(db.committed.status).toBe(to);
       expect(db.committed.revisions).toEqual([]);
     }

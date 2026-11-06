@@ -38,6 +38,18 @@ export class EntitlementsModeService {
     }
   }
 
+  /**
+   * The stored mode with NO fail-open fallback and no cache: a read error throws. For the
+   * entitlement sweep (SA-1100 §3), whose job is to show whether production is "live" - a swallowed
+   * error reading as "shadow" would hide exactly that. Every serving path keeps `getMode()`.
+   */
+  async getModeStrict(): Promise<EntitlementsMode> {
+    const rows = await this.prisma.$queryRaw<{ value: string }[]>`
+      SELECT value FROM "PlatformConfig" WHERE key = ${MODE_KEY} LIMIT 1
+    `;
+    return rows[0]?.value === "live" ? "live" : "shadow";
+  }
+
   async setMode(mode: EntitlementsMode): Promise<void> {
     await this.prisma.$executeRaw`
       INSERT INTO "PlatformConfig" ("id", "key", "value", "updatedAt")

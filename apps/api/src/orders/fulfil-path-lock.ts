@@ -1,4 +1,5 @@
 import { OrderStatus } from "@prisma/client";
+import { isTerminalOrderStatus } from "../common/terminal-order-statuses";
 
 /**
  * Row 673 (SA-831b M6): the ONE status lock on an order's fulfil path. `PATCH /orders/:id/fulfill-path` refuses on it, and
@@ -18,5 +19,5 @@ export function fulfillPathLocked(
 ): boolean {
   if (order.status === OrderStatus.OUT_FOR_DELIVERY)
     return !(opts?.fromOutForDelivery && !opts.linked);
-  return order.status === OrderStatus.DELIVERED || order.status === OrderStatus.CANCELLED;
+  return isTerminalOrderStatus(order.status);
 }

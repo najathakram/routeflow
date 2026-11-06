@@ -1,0 +1,485 @@
+{
+  "v": 1,
+  "sessionId": "10146d73-4454-463e-b775-66288e80c47a",
+  "project": "/Users/maznahamanullah/code/routeflow",
+  "pricesAsOf": "2026-06-24",
+  "session": {
+    "byModel": {
+      "claude-opus-5-5": {
+        "input": 100,
+        "cacheWrite5m": 0,
+        "cacheWrite1h": 131183,
+        "cacheRead": 6491161,
+        "output": 22226,
+        "messages": 47,
+        "tokens": 6644670,
+        "costUsd": 5.1135605
+      },
+      "claude-sonnet-5-5": {
+        "input": 22,
+        "cacheWrite5m": 0,
+        "cacheWrite1h": 130003,
+        "cacheRead": 1421560,
+        "output": 2403,
+        "messages": 9,
+        "tokens": 1553988,
+        "costUsd": 0.828398
+      }
+    },
+    "total": {
+      "input": 122,
+      "cacheWrite5m": 0,
+      "cacheWrite1h": 261186,
+      "cacheRead": 7912721,
+      "output": 24629,
+      "messages": 56,
+      "tokens": 8198658,
+      "costUsd": 5.9419585
+    },
+    "messages": 56,
+    "firstAt": "2026-10-25T16:01:58.716Z",
+    "lastAt": "2026-10-25T16:59:48.367Z",
+    "activeMs": 1587907,
+    "cacheHitRatio": 0.9680319215897081
+  },
+  "workflows": {
+    "d9377855-182": {
+      "byPhase": {
+        "unattributed": {
+          "total": {
+            "input": 154,
+            "cacheWrite5m": 741601,
+            "cacheWrite1h": 0,
+            "cacheRead": 5877762,
+            "output": 35340,
+            "messages": 0,
+            "tokens": 6654857,
+            "costUsd": 3.7362114
+          },
+          "byModel": {
+            "claude-haiku-5-5": {
+              "input": 28,
+              "cacheWrite5m": 259937,
+              "cacheWrite1h": 0,
+              "cacheRead": 865490,
+              "output": 6997,
+              "messages": 0,
+              "tokens": 1132452,
+              "costUsd": null
+            },
+            "claude-sonnet-5-5": {
+              "input": 84,
+              "cacheWrite5m": 303322,
+              "cacheWrite1h": 0,
+              "cacheRead": 3458817,
+              "output": 20945,
+              "messages": 0,
+              "tokens": 3783168,
+              "costUsd": 1.6596864
+            },
+            "claude-opus-5-5": {
+              "input": 42,
+              "cacheWrite5m": 178342,
+              "cacheWrite1h": 0,
+              "cacheRead": 1553455,
+              "output": 7398,
+              "messages": 0,
+              "tokens": 1739237,
+              "costUsd": 2.076525
+            }
+          },
+          "agents": 11,
+          "labels": [
+            "a6cf588a0a22b1a29",
+            "a72f3117052fea84a",
+            "a76e3a46849dde0d0",
+            "a878ef31a28dd4bea",
+            "aa1421df2cd08d88c",
+            "ab2e595a0e7444594",
+            "ace133b874809b74a",
+            "ad6f89c802ca46670",
+            "af4cf1316c02fe7e6",
+            "afbfd05296f28db53",
+            "afe8049016332f0e1"
+          ],
+          "durationMs": 1065758
+        }
+      },
+      "byLabel": {
+        "a6cf588a0a22b1a29": {
+          "total": {
+            "input": 8,
+            "cacheWrite5m": 85228,
+            "cacheWrite1h": 0,
+            "cacheRead": 237179,
+            "output": 1790,
+            "messages": 0,
+            "tokens": 324205,
+            "costUsd": null
+          },
+          "byModel": {
+            "claude-haiku-5-5": {
+              "input": 8,
+              "cacheWrite5m": 85228,
+              "cacheWrite1h": 0,
+              "cacheRead": 237179,
+              "output": 1790,
+              "messages": 0,
+              "tokens": 324205,
+              "costUsd": null
+            }
+          },
+          "agents": 1,
+          "labels": [
+            "a6cf588a0a22b1a29"
+          ],
+          "durationMs": 35789
+        },
+        "a72f3117052fea84a": {
+          "total": {
+            "input": 34,
+            "cacheWrite5m": 105726,
+            "cacheWrite1h": 0,
+            "cacheRead": 1476462,
+            "output": 10070,
+            "messages": 0,
+            "tokens": 1592292,
+            "costUsd": 0.6603754000000001
+          },
+          "byModel": {
+            "claude-sonnet-5-5": {
+              "input": 34,
+              "cacheWrite5m": 105726,
+              "cacheWrite1h": 0,
+              "cacheRead": 1476462,
+              "output": 10070,
+              "messages": 0,
+              "tokens": 1592292,
+              "costUsd": 0.6603754000000001
+            }
+          },
+          "agents": 1,
+          "labels": [
+            "a72f3117052fea84a"
+          ],
+          "durationMs": 133107
+        },
+        "a76e3a46849dde0d0": {
+          "total": {
+            "input": 8,
+            "cacheWrite5m": 46856,
+            "cacheWrite1h": 0,
+            "cacheRead": 275673,
+            "output": 1825,
+            "messages": 0,
+            "tokens": 324362,
+            "costUsd": null
+          },
+          "byModel": {
+            "claude-haiku-5-5": {
+              "input": 8,
+              "cacheWrite5m": 46856,
+              "cacheWrite1h": 0,
+              "cacheRead": 275673,
+              "output": 1825,
+              "messages": 0,
+              "tokens": 324362,
+              "costUsd": null
+            }
+          },
+          "agents": 1,
+          "labels": [
+            "a76e3a46849dde0d0"
+          ],
+          "durationMs": 120915
+        },
+        "a878ef31a28dd4bea": {
+          "total": {
+            "input": 4,
+            "cacheWrite5m": 80830,
+            "cacheWrite1h": 0,
+            "cacheRead": 76966,
+            "output": 1544,
+            "messages": 0,
+            "tokens": 159344,
+            "costUsd": null
+          },
+          "byModel": {
+            "claude-haiku-5-5": {
+              "input": 4,
+              "cacheWrite5m": 80830,
+              "cacheWrite1h": 0,
+              "cacheRead": 76966,
+              "output": 1544,
+              "messages": 0,
+              "tokens": 159344,
+              "costUsd": null
+            }
+          },
+          "agents": 1,
+          "labels": [
+            "a878ef31a28dd4bea"
+          ],
+          "durationMs": 13560
+        },
+        "aa1421df2cd08d88c": {
+          "total": {
+            "input": 12,
+            "cacheWrite5m": 48979,
+            "cacheWrite1h": 0,
+            "cacheRead": 454163,
+            "output": 3091,
+            "messages": 0,
+            "tokens": 506245,
+            "costUsd": 0.24421410000000002
+          },
+          "byModel": {
+            "claude-sonnet-5-5": {
+              "input": 12,
+              "cacheWrite5m": 48979,
+              "cacheWrite1h": 0,
+              "cacheRead": 454163,
+              "output": 3091,
+              "messages": 0,
+              "tokens": 506245,
+              "costUsd": 0.24421410000000002
+            }
+          },
+          "agents": 1,
+          "labels": [
+            "aa1421df2cd08d88c"
+          ],
+          "durationMs": 179160
+        },
+        "ab2e595a0e7444594": {
+          "total": {
+            "input": 14,
+            "cacheWrite5m": 52452,
+            "cacheWrite1h": 0,
+            "cacheRead": 553493,
+            "output": 3022,
+            "messages": 0,
+            "tokens": 608981,
+            "costUsd": 0.2720766
+          },
+          "byModel": {
+            "claude-sonnet-5-5": {
+              "input": 14,
+              "cacheWrite5m": 52452,
+              "cacheWrite1h": 0,
+              "cacheRead": 553493,
+              "output": 3022,
+              "messages": 0,
+              "tokens": 608981,
+              "costUsd": 0.2720766
+            }
+          },
+          "agents": 1,
+          "labels": [
+            "ab2e595a0e7444594"
+          ],
+          "durationMs": 181250
+        },
+        "ace133b874809b74a": {
+          "total": {
+            "input": 8,
+            "cacheWrite5m": 81707,
+            "cacheWrite1h": 0,
+            "cacheRead": 237149,
+            "output": 1569,
+            "messages": 0,
+            "tokens": 320433,
+            "costUsd": 0.66850825
+          },
+          "byModel": {
+            "claude-opus-5-5": {
+              "input": 8,
+              "cacheWrite5m": 81707,
+              "cacheWrite1h": 0,
+              "cacheRead": 237149,
+              "output": 1569,
+              "messages": 0,
+              "tokens": 320433,
+              "costUsd": 0.66850825
+            }
+          },
+          "agents": 1,
+          "labels": [
+            "ace133b874809b74a"
+          ],
+          "durationMs": 16250
+        },
+        "ad6f89c802ca46670": {
+          "total": {
+            "input": 14,
+            "cacheWrite5m": 45936,
+            "cacheWrite1h": 0,
+            "cacheRead": 525551,
+            "output": 2427,
+            "messages": 0,
+            "tokens": 573928,
+            "costUsd": 0.6106205
+          },
+          "byModel": {
+            "claude-opus-5-5": {
+              "input": 14,
+              "cacheWrite5m": 45936,
+              "cacheWrite1h": 0,
+              "cacheRead": 525551,
+              "output": 2427,
+              "messages": 0,
+              "tokens": 573928,
+              "costUsd": 0.6106205
+            }
+          },
+          "agents": 1,
+          "labels": [
+            "ad6f89c802ca46670"
+          ],
+          "durationMs": 32743
+        },
+        "af4cf1316c02fe7e6": {
+          "total": {
+            "input": 20,
+            "cacheWrite5m": 50699,
+            "cacheWrite1h": 0,
+            "cacheRead": 790755,
+            "output": 3402,
+            "messages": 0,
+            "tokens": 844876,
+            "costUsd": 0.79739625
+          },
+          "byModel": {
+            "claude-opus-5-5": {
+              "input": 20,
+              "cacheWrite5m": 50699,
+              "cacheWrite1h": 0,
+              "cacheRead": 790755,
+              "output": 3402,
+              "messages": 0,
+              "tokens": 844876,
+              "costUsd": 0.79739625
+            }
+          },
+          "agents": 1,
+          "labels": [
+            "af4cf1316c02fe7e6"
+          ],
+          "durationMs": 44836
+        },
+        "afbfd05296f28db53": {
+          "total": {
+            "input": 8,
+            "cacheWrite5m": 47023,
+            "cacheWrite1h": 0,
+            "cacheRead": 275672,
+            "output": 1838,
+            "messages": 0,
+            "tokens": 324541,
+            "costUsd": null
+          },
+          "byModel": {
+            "claude-haiku-5-5": {
+              "input": 8,
+              "cacheWrite5m": 47023,
+              "cacheWrite1h": 0,
+              "cacheRead": 275672,
+              "output": 1838,
+              "messages": 0,
+              "tokens": 324541,
+              "costUsd": null
+            }
+          },
+          "agents": 1,
+          "labels": [
+            "afbfd05296f28db53"
+          ],
+          "durationMs": 106218
+        },
+        "afe8049016332f0e1": {
+          "total": {
+            "input": 24,
+            "cacheWrite5m": 96165,
+            "cacheWrite1h": 0,
+            "cacheRead": 974699,
+            "output": 4762,
+            "messages": 0,
+            "tokens": 1075650,
+            "costUsd": 0.48302030000000007
+          },
+          "byModel": {
+            "claude-sonnet-5-5": {
+              "input": 24,
+              "cacheWrite5m": 96165,
+              "cacheWrite1h": 0,
+              "cacheRead": 974699,
+              "output": 4762,
+              "messages": 0,
+              "tokens": 1075650,
+              "costUsd": 0.48302030000000007
+            }
+          },
+          "agents": 1,
+          "labels": [
+            "afe8049016332f0e1"
+          ],
+          "durationMs": 201930
+        }
+      },
+      "byModel": {
+        "claude-haiku-5-5": {
+          "input": 28,
+          "cacheWrite5m": 259937,
+          "cacheWrite1h": 0,
+          "cacheRead": 865490,
+          "output": 6997,
+          "messages": 14,
+          "tokens": 1132452,
+          "costUsd": null
+        },
+        "claude-sonnet-5-5": {
+          "input": 84,
+          "cacheWrite5m": 303322,
+          "cacheWrite1h": 0,
+          "cacheRead": 3458817,
+          "output": 20945,
+          "messages": 42,
+          "tokens": 3783168,
+          "costUsd": 1.6596864
+        },
+        "claude-opus-5-5": {
+          "input": 42,
+          "cacheWrite5m": 178342,
+          "cacheWrite1h": 0,
+          "cacheRead": 1553455,
+          "output": 7398,
+          "messages": 21,
+          "tokens": 1739237,
+          "costUsd": 2.076525
+        }
+      },
+      "total": {
+        "input": 154,
+        "cacheWrite5m": 741601,
+        "cacheWrite1h": 0,
+        "cacheRead": 5877762,
+        "output": 35340,
+        "messages": 77,
+        "tokens": 6654857,
+        "costUsd": 3.7362114
+      },
+      "agents": 11,
+      "cacheHitRatio": 0.8879442412490216,
+      "durationMs": 537358
+    }
+  },
+  "agents": null,
+  "warnings": [
+    "project: resolved via --project -> /Users/maznahamanullah/code/routeflow",
+    "unknown model id 'claude-haiku-5-5' -- cost set to null for its usage",
+    "unknown model id 'claude-haiku-5-5' -- cost set to null for its usage",
+    "unknown model id 'claude-haiku-5-5' -- cost set to null for its usage",
+    "unknown model id 'claude-haiku-5-5' -- cost set to null for its usage",
+    "unknown model id 'claude-haiku-5-5' -- cost set to null for its usage"
+  ]
+}

@@ -119,9 +119,14 @@ describe("BookkeepingService", () => {
         {
           provide: PlatformConfigService,
           useValue: {
-            resolveAnthropicKey: jest.fn().mockResolvedValue("test-key"),
+            requireAiTenant: jest.fn(),
+            prepareAiCall: jest.fn(async (task: AiTask) => ({
+              key: "test-key",
+              source: "routeflow",
+              model: AI_TASKS[task].fallback,
+              tenantId: "test-tenant",
+            })),
             recordAiUsage,
-            resolveModelFor: jest.fn(async (task: AiTask) => AI_TASKS[task].fallback),
           },
         },
         {
@@ -2301,7 +2306,7 @@ describe("BookkeepingService", () => {
   });
 
   describe("extractExpenseItems", () => {
-    const RECEIPT_MODEL = "claude-opus-5-5"; // SA-1035 M-R5: the receipt task's fallback (no picker)
+    const RECEIPT_MODEL = "claude-sonnet-5-5"; // SA-1035 M-R5 / SA-1102: the receipt task's fallback (no picker)
 
     /** `createMockPrisma` predates ExpenseLineItem — graft it onto the object forTenant() returns. */
     const graftExpenseLineItem = () => {
@@ -2397,6 +2402,21 @@ describe("BookkeepingService", () => {
       mockAnthropicCreate.mockRejectedValue(new Error("overloaded"));
 
       await expect(service.extractExpenseItems("exp-1")).rejects.toThrow("overloaded");
+      expect(recordAiUsage).toHaveBeenCalledWith(
+        expect.objectContaining({ feature: "ocr.expense_receipt", success: false }),
+      );
+    });
+
+    it("F-1102-T: RouteFlow's key refused (401/403) on a receipt scan is 503 AI_UNAVAILABLE, never a raw 500", async () => {
+      for (const status of [401, 403]) {
+        mockAnthropicCreate.mockRejectedValueOnce(Object.assign(new Error("refused"), { status }));
+        const err = await service.extractExpenseItems("exp-1").catch((e) => e);
+        expect(err.getStatus?.()).toBe(503);
+        expect(err.getResponse()).toEqual({
+          message: "AI scanning isn't available right now. Please try again later.",
+          code: "AI_UNAVAILABLE",
+        });
+      }
       expect(recordAiUsage).toHaveBeenCalledWith(
         expect.objectContaining({ feature: "ocr.expense_receipt", success: false }),
       );

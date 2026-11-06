@@ -8,6 +8,7 @@ import {
   materializePack,
   planCellEdit,
   priceAuthority,
+  resolveFamilyCellEdits,
   priceSource,
   rowOf,
   roundMoney,
@@ -42,12 +43,14 @@ import {
 import { priceWriteReplay } from "./product-price-replay";
 import { assertOrderUnitSwitchAllowed, pricingRulesNotReady } from "../common/pricing-rules-ready";
 import { PrismaService } from "../prisma/prisma.service";
+import { lockProductPack } from "../units/tenant-units-lock";
 import {
+  PIECE_NOT_SOLD,
   ProductPriceGridService,
-  addUnitFirst,
   baseBackingUnit,
   type PriceModel,
 } from "./product-price-grid.service";
+import { ProductUnitsService } from "./product-units.service";
 
 type Tx = any;
 
@@ -76,6 +79,7 @@ export class ProductPriceWriteService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly grid: ProductPriceGridService,
+    private readonly units: ProductUnitsService,
     @Optional() private readonly featureConfig?: FeatureConfigService,
   ) {}
 
@@ -84,18 +88,28 @@ export class ProductPriceWriteService {
     dto: SavePricesRequest,
     actorId: string | null,
   ): Promise<SavePricesResponse> {
-    return this.locked(productId, async (tx, m, tenantId) => {
-      await this.assertNotGoverned(tx, m, tenantId, [
+    return this.locked(productId, async (tx, read, tenantId, pieceSellable) => {
+      await this.assertNotGoverned(tx, read, tenantId, [
         ...dto.patches.map((p) => p.ref),
         ...(dto.keeps ?? []).map((k) => k.ref),
       ]);
-      if (!this.isFresh(m, dto.expectedRevision, dto.expectedPriceState)) {
+      if (!this.isFresh(read, dto.expectedRevision, dto.expectedPriceState)) {
         // SA-845: a would-be 409 that is this actor's own save, re-sent after a lost reply, is that save.
-        const replayed = await this.replayedSave(tx, m, productId, tenantId, dto, actorId);
+        const replayed = await this.replayedSave(tx, read, productId, tenantId, dto, actorId);
         if (replayed) return replayed;
-        throw this.stale(m);
+        throw this.stale(read);
       }
-      if (dto.orderUnit != null && dto.orderUnit !== m.view.anchor) assertOrderUnitSwitchAllowed();
+      if (dto.orderUnit != null && dto.orderUnit !== read.view.anchor) {
+        assertOrderUnitSwitchAllowed();
+      }
+
+      // SA-1082: the first price on the piece level creates its unit, in this transaction, under this lock. A refusal
+      // anywhere below rolls the unit back with the rest.
+      const createdUnitId =
+        pieceSellable && this.pricesUnbackedBase(read, dto)
+          ? await this.createBaseUnit(tx, read, productId, actorId)
+          : null;
+      const m = createdUnitId ? await this.grid.read(tx, productId, { pieceSellable }) : read;
 
       const cells = this.planCells(m, dto);
       const moves = await this.checkMoves(tx, m, productId, tenantId, dto.customerMoves ?? []);
@@ -103,7 +117,7 @@ export class ProductPriceWriteService {
 
       const request = this.storedRequest(m, dto);
       const undo = { patches: inverse.patches, customerMoves: moves.inverse };
-      const fresh = await this.grid.read(tx, productId);
+      const fresh = await this.grid.read(tx, productId, { pieceSellable });
       const audit = await tx.auditLog.create({
         data: {
           userId: actorId,
@@ -113,12 +127,13 @@ export class ProductPriceWriteService {
           meta: {
             request,
             undo,
-            revisionBefore: m.revision,
-            revisionAfter: m.revision + 1,
+            revisionBefore: read.revision,
+            revisionAfter: read.revision + 1,
             actor: actorId,
             // SA-845: the live states around this write, so a retry can prove nothing was written since.
-            priceStateBefore: m.priceState,
+            priceStateBefore: read.priceState,
             priceStateAfter: fresh.priceState,
+            ...(createdUnitId ? { createdUnitId } : {}),
           },
         },
         select: { id: true },
@@ -132,7 +147,7 @@ export class ProductPriceWriteService {
     dto: UndoPricesRequest,
     actorId: string | null,
   ): Promise<SavePricesResponse> {
-    return this.locked(productId, async (tx, m, tenantId) => {
+    return this.locked(productId, async (tx, m, tenantId, pieceSellable) => {
       const saved = await tx.auditLog.findFirst({
         where: {
           id: dto.auditId,
@@ -143,11 +158,11 @@ export class ProductPriceWriteService {
         },
         select: { id: true, meta: true },
       });
-      const stored = (
-        saved?.meta as {
-          undo?: { patches?: PriceCellPatch[]; customerMoves?: CustomerPriceMove[] };
-        } | null
-      )?.undo;
+      const savedMeta = saved?.meta as {
+        undo?: { patches?: PriceCellPatch[]; customerMoves?: CustomerPriceMove[] };
+        createdUnitId?: string;
+      } | null;
+      const stored = savedMeta?.undo;
       if (!saved || !stored) throw this.undoUnavailable();
       await this.assertNotGoverned(
         tx,
@@ -192,7 +207,14 @@ export class ProductPriceWriteService {
         to: p.to == null ? null : roundMoney(p.to),
       }));
       // A unit deleted since the save: its cells cannot be put back.
-      if (patches.some((p) => !m.view.rows.some((r) => r.ref === p.ref)))
+      const baseGone = !baseBackingUnit(m.units, m.view);
+      if (
+        patches.some(
+          (p) =>
+            !m.view.rows.some((r) => r.ref === p.ref) ||
+            (p.ref === "base" && baseGone && p.to != null),
+        )
+      )
         throw this.undoUnavailable();
       // Strict: if ANY customer cell the inverse would restore changed since the save, the whole undo is refused
       // (409 with `conflicts`), never partly applied.
@@ -206,8 +228,14 @@ export class ProductPriceWriteService {
         dto.skip ?? [],
       );
       await this.apply(tx, m, productId, patches, moves);
+      // SA-1082: the save created this unit, so its undo takes it back unless something else now rests on it.
+      const removedUnitId =
+        savedMeta?.createdUnitId &&
+        (await this.units.removeCreatedUnitIfUnused(tx, productId, savedMeta.createdUnitId))
+          ? savedMeta.createdUnitId
+          : null;
 
-      const fresh = await this.grid.read(tx, productId);
+      const fresh = await this.grid.read(tx, productId, { pieceSellable });
       const audit = await tx.auditLog.create({
         data: {
           userId: actorId,
@@ -223,6 +251,7 @@ export class ProductPriceWriteService {
             // SA-845: what a re-sent undo must match.
             request: { skip: dto.skip ?? [] },
             priceStateAfter: fresh.priceState,
+            ...(removedUnitId ? { removedUnitId } : {}),
           },
         },
         select: { id: true },
@@ -238,12 +267,45 @@ export class ProductPriceWriteService {
 
   // ─── planning ───────────────────────────────────────────────────────────────
 
+  /** Does this save put a price on a piece level no ProductUnit backs? A blank box there asks for nothing. */
+  private pricesUnbackedBase(m: PriceModel, dto: SavePricesRequest): boolean {
+    if (!m.view.rows.some((r) => r.ref === "base") || baseBackingUnit(m.units, m.view)) {
+      return false;
+    }
+    const isBase = (ref: string) => canonicalUnitRef(m.units, ref) === "base";
+    return (
+      dto.patches.some((p) => isBase(p.ref) && p.to != null) ||
+      (dto.keeps ?? []).some((k) => isBase(k.ref)) ||
+      (dto.customerMoves ?? []).some((mv) => isBase(mv.ref) && mv.to != null)
+    );
+  }
+
+  /** Through ProductUnitsService's own create, so the new level passes every level rule. */
+  private async createBaseUnit(
+    tx: Tx,
+    m: PriceModel,
+    productId: string,
+    actorId: string | null,
+  ): Promise<string> {
+    const { label } = rowOf(m.view, "base");
+    const unit = await this.units.createInTransaction(
+      tx,
+      productId,
+      { label, factorToBase: 1 },
+      actorId,
+    );
+    return unit.id;
+  }
+
   /** Patches then keeps, re-planned on the fresh view by the core. Throws 400 PRICE_EDIT_INVALID with every refusal. */
   private planCells(m: PriceModel, dto: SavePricesRequest): CellPatch[] {
     // SA-809: every ref is the level's ref before anything reads it (a client may still send the factor-1 row's id).
     const level = (ref: string) => canonicalUnitRef(m.units, ref);
     const keeps = (dto.keeps ?? []).map((k) => ({ ...k, ref: level(k.ref) }));
-    const patches = dto.patches.map((p) => ({ ...p, ref: level(p.ref) }));
+    const patches = this.withFamilyEdits(
+      m,
+      dto.patches.map((p) => ({ ...p, ref: level(p.ref) })),
+    );
     const customerMoves = dto.customerMoves ?? [];
     if (patches.length === 0 && keeps.length === 0 && customerMoves.length === 0) {
       throw this.invalid(["There is nothing to save."]);
@@ -255,14 +317,14 @@ export class ProductPriceWriteService {
       seen.add(cellKey(c));
     }
 
-    // A piece level that no ProductUnit backs has nothing to write to: the price write never mints one (Add unit does,
-    // through ProductUnitsService), so a price on it is refused before anything is planned. When a factor-1 row backs
-    // the level, "base" is that row's cell and plans like any other.
+    // A price still on an unbacked piece level here means the business can't sell by a unit (`save` created the row
+    // otherwise), so it is refused before anything is planned. A blank box there has nothing to do. When a factor-1 row
+    // backs the level, "base" is that row's cell and plans like any other.
     const unbackedBase = m.view.rows.find(
       (r) => r.ref === "base" && !baseBackingUnit(m.units, m.view),
     );
-    if (unbackedBase && [...patches, ...keeps].some((c) => c.ref === "base")) {
-      problems.push(addUnitFirst(unbackedBase.label));
+    if (unbackedBase && this.pricesUnbackedBase(m, { ...dto, customerMoves: [] })) {
+      problems.push(PIECE_NOT_SOLD);
     }
 
     let view = m.view;
@@ -300,7 +362,33 @@ export class ProductPriceWriteService {
       out.push(...plan.patches);
     }
     if (problems.length > 0) throw this.invalid([...new Set(problems)]);
+    if (unbackedBase && out.length === 0 && customerMoves.length === 0) {
+      throw this.invalid(["There is nothing to save."]);
+    }
     return out;
+  }
+
+  /**
+   * SA-1082 rulings 6 and 7, on a variant's pack row: a blank box takes the family's number while Retail follows it, and
+   * a Retail typed away from the family's takes the tiers still at its value with it. They run through the same plan and
+   * undo as a typed cell. Anything left blank goes on to the ladder's own rules.
+   */
+  private withFamilyEdits(
+    m: PriceModel,
+    patches: readonly SavePricesRequest["patches"][number][],
+  ): SavePricesRequest["patches"][number][] {
+    const pack = patches.filter((p) => p.ref === "pack");
+    if (!m.familyCells || pack.length === 0) return [...patches];
+    const checked = pack.map((p) => ({ tier: p.tier, typed: validateSetPrice(p.to) }));
+    // A price the ladder would refuse keeps its own sentence: nothing here decides over it.
+    if (checked.some((c) => !c.typed.ok)) return [...patches];
+    const edits = checked.map((c) => ({ tier: c.tier, to: c.typed.ok ? c.typed.value : null }));
+    return [
+      ...patches.filter((p) => p.ref !== "pack"),
+      ...resolveFamilyCellEdits(m.familyCells, edits).map(
+        (e) => ({ ...e, ref: "pack" }) as SavePricesRequest["patches"][number],
+      ),
+    ];
   }
 
   /**
@@ -338,7 +426,7 @@ export class ProductPriceWriteService {
         duplicates.push({ customerId: mv.customerId, unit: unitRow?.label ?? "a unit" });
       seen.add(key);
       if (!unitRow) problems.push("That unit is not on this product.");
-      else if (mv.ref === "base" && unbackedBase) problems.push(addUnitFirst(unitRow.label));
+      else if (mv.ref === "base" && unbackedBase && mv.to != null) problems.push(PIECE_NOT_SOLD);
       if (mv.from == null && mv.to == null)
         problems.push("A customer price change needs a new price.");
       if ((mv.from != null && mv.from <= 0) || (mv.to != null && !validateSetPrice(mv.to).ok)) {
@@ -482,12 +570,12 @@ export class ProductPriceWriteService {
         priceTier4: money(row.set[3]),
         priceTier5: money(row.set[4]),
       };
-      // Never a unit mint: a price on a piece level no ProductUnit backs was refused in planning (Add unit creates it).
-      // "base" is a level ref; the row it prices is the factor-1 ProductUnit that backs it.
+      // "base" is a level ref; the row it prices is the factor-1 ProductUnit that backs it. `save` created that row, or
+      // planning refused the price.
       let unitId = row.ref;
       if (row.ref === "base") {
         const backing = baseBackingUnit(m.units, m.view);
-        if (!backing) throw this.invalid([addUnitFirst(row.label)]);
+        if (!backing) throw this.invalid([PIECE_NOT_SOLD]);
         unitId = backing.id;
       }
       await tx.productUnit.update({ where: { id: unitId }, data });
@@ -519,20 +607,22 @@ export class ProductPriceWriteService {
 
   private async locked<T>(
     productId: string,
-    fn: (tx: Tx, m: PriceModel, tenantId: string) => Promise<T>,
+    fn: (tx: Tx, m: PriceModel, tenantId: string, pieceSellable: boolean) => Promise<T>,
   ): Promise<T> {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) throw new BadRequestException("Select a tenant before editing prices.");
+    const pieceSellable = await this.grid.pieceSellable();
     let current: PriceModel | undefined;
     try {
       return await this.prisma.tenantTransaction(async (tx) => {
-        // Same advisory lock as ProductUnitsService.locked, taken FIRST (house order: advisory, then row), so a unit
-        // add / edit / delete is serialised with this write. The lock timeout is set before any lock wait.
+        // The same locks as ProductUnitsService.locked, taken FIRST (SA-1045's house order: tenant units shared, this
+        // product's lock, then the row), so this write can create a unit and a unit add / edit / delete is serialised
+        // with it. `lockProductPack` bounds its own wait and resets the timeout, so the stock timeout is set after it.
+        await lockProductPack(tx, tenantId, productId);
         await setStockLockTimeout(tx);
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('product-units'), hashtext(${productId}))`;
         await lockProductsForStock(tx, tenantId, [productId]);
-        current = await this.grid.read(tx, productId);
-        return fn(tx, current, tenantId);
+        current = await this.grid.read(tx, productId, { pieceSellable });
+        return fn(tx, current, tenantId, pieceSellable);
       }, STOCK_TX_OPTIONS);
     } catch (e) {
       // P2002: a customer cell inserted by someone else between our lock and our insert. P2025: a row we meant to
@@ -544,8 +634,8 @@ export class ProductPriceWriteService {
   }
 
   /**
-   * `priceAuthority` (@routeflow/pricing) decides per written cell: a base-level cell of a variant (or a family-linked
-   * recipe) belongs to the family in mode "on"; a FAMILY is edited on its own page; every other unit level is the
+   * `priceAuthority` (@routeflow/pricing) decides per written cell: a base-level cell of a family-linked recipe
+   * belongs to the family in mode "on"; a FAMILY is edited on its own page; a variant's cell and every other level is the
    * tenant's. The mode is read once per request; the recipe's family link only when the answer can depend on it.
    */
   private async assertNotGoverned(

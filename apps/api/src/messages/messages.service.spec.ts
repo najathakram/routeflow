@@ -1,4 +1,5 @@
 import { Test } from "@nestjs/testing";
+import { NotFoundException } from "@nestjs/common";
 import { MessagesService } from "./messages.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -48,6 +49,26 @@ describe("MessagesService (run-chat)", () => {
   it("coerces a missing runId to null on create (unchanged behavior)", async () => {
     await service.create({ text: "hi" } as { text: string; runId?: string }, "u1", "OPERATOR");
     expect(prisma.message.create.mock.calls[0][0].data.runId).toBeNull();
+  });
+
+  // B1106 / SA-1105 PR B: office staff return before any run read, so the runId they supply is the unread one.
+  it.each(["OPERATOR", "TENANT_ADMIN"])(
+    "%s: a runId outside the tenant is a 404 'Run not found' and no message is written",
+    async (role) => {
+      prisma.routeRun.findMany.mockResolvedValue([]); // the tenant-scoped read finds nothing
+      const err = await service
+        .create({ runId: "run-of-another-tenant", text: "hello" }, "user-op", role)
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(NotFoundException);
+      expect(err.message).toBe("Run not found");
+      expect(prisma.message.create).not.toHaveBeenCalled();
+    },
+  );
+
+  it("a staff runId inside the tenant is stored as before", async () => {
+    prisma.routeRun.findMany.mockResolvedValue([{ id: "run-1" }]);
+    await service.create({ runId: "run-1", text: "hello" }, "user-op", "OPERATOR");
+    expect(prisma.message.create.mock.calls[0][0].data.runId).toBe("run-1");
   });
 
   it("reads a run's messages scoped to the INTERNAL channel", async () => {

@@ -27,6 +27,11 @@ import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { NumberingService } from "../import/numbering.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { UserRole } from "@prisma/client";
+import { NO_PRICE_RIGHTS } from "../common/testing/no-rights-actor";
+
+/** The seeded items are custom lines with a typed price (SA-1034 rule 4): the actor needs price-edit rights, and TENANT_ADMIN holds them with no permissions read. */
+const ADMIN_ACTOR = { ...NO_PRICE_RIGHTS, role: UserRole.TENANT_ADMIN };
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -134,11 +139,14 @@ describeDb("REG-B79 estimates issueDate — real Postgres round-trip (T17)", () 
       const customer = await seedCustomer(tenant.id);
 
       const created = await tenantCtx.run(tenant.id, () =>
-        estimatesService.create({
-          customerId: customer.id,
-          issueDate: "2026-09-01",
-          items: [{ description: "widget", qty: 1, unitPrice: 10 }],
-        } as any),
+        estimatesService.create(
+          {
+            customerId: customer.id,
+            issueDate: "2026-09-01",
+            items: [{ description: "widget", qty: 1, unitPrice: 10 }],
+          } as any,
+          ADMIN_ACTOR,
+        ),
       );
 
       const expected = new Date("2026-09-01T00:00:00.000Z");

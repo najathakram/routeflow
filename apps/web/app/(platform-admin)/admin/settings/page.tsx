@@ -27,6 +27,8 @@ interface AiConfig {
   /** SA-1035: the model supplier-bill scanning runs on. */
   scanModel: string;
   maxTokens: number;
+  /** SA-1102: the most one business can spend a month on RouteFlow's key, in USD. 0 turns AI off on it. */
+  monthlyCapUsd: number;
   verifiedAt: string | null;
   availableModels: { id: string; label: string }[];
 }
@@ -141,6 +143,7 @@ export default function AdminSettingsPage() {
   const [model, setModel] = React.useState("");
   const [scanModel, setScanModel] = React.useState("");
   const [maxTokens, setMaxTokens] = React.useState(4096);
+  const [monthlyCapUsd, setMonthlyCapUsd] = React.useState(25);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -153,6 +156,7 @@ export default function AdminSettingsPage() {
       setModel(cfg.data.model);
       setScanModel(cfg.data.scanModel);
       setMaxTokens(cfg.data.maxTokens);
+      setMonthlyCapUsd(cfg.data.monthlyCapUsd ?? 25);
       if (use) setUsage(use.data);
     } catch {
       // handled by showing error state
@@ -199,6 +203,8 @@ export default function AdminSettingsPage() {
       // would be refused.
       if (config && model !== config.model) body.model = model;
       if (config && scanModel !== config.scanModel) body.scanModel = scanModel;
+      if (config && monthlyCapUsd !== (config.monthlyCapUsd ?? 25))
+        body.monthlyCapUsd = monthlyCapUsd;
       // Only send apiKey if the field has been touched (not empty placeholder)
       if (apiKey !== "") {
         body.apiKey = apiKey;
@@ -207,6 +213,7 @@ export default function AdminSettingsPage() {
       setConfig(data);
       setModel(data.model);
       setScanModel(data.scanModel);
+      setMonthlyCapUsd(data.monthlyCapUsd ?? 25);
       setApiKey(""); // clear after save
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
@@ -399,6 +406,31 @@ export default function AdminSettingsPage() {
                 <p className="mt-2 text-xs text-slate-400">
                   Maximum number of tokens Claude will generate per response. 4,096 is a sensible
                   default.
+                </p>
+              </div>
+
+              {/* SA-1102: the monthly allowance on RouteFlow's key */}
+              <div className="rounded-xl border border-slate-700/50 bg-slate-900 p-5">
+                <h2 className="mb-4 text-sm font-semibold text-slate-200">
+                  Monthly AI allowance per business
+                </h2>
+                <div className="flex items-center gap-4">
+                  <span className="text-sm text-slate-400">$</span>
+                  <input
+                    aria-label="Monthly AI allowance per business (USD)"
+                    type="number"
+                    value={monthlyCapUsd}
+                    onChange={(e) => setMonthlyCapUsd(Number(e.target.value))}
+                    min={0}
+                    step={1}
+                    className="w-32 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  />
+                  <span className="text-sm text-slate-400">a month</span>
+                </div>
+                <p className="mt-2 text-xs text-slate-400">
+                  The most one business can spend each month on RouteFlow&apos;s Claude key. Scans
+                  on a business&apos;s own key are not blocked. Set 0 to turn AI off on
+                  RouteFlow&apos;s key for every business.
                 </p>
               </div>
 

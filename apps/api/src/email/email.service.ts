@@ -13,6 +13,7 @@ import {
   type EmailDeliveryContext,
 } from "./email-delivery.service";
 import { mailboxRevokedCopy } from "./mailbox/mailbox-alert.copy";
+import { SystemConfigService } from "../system-config/system-config.service";
 import { escapeHtml, safeLinkHref } from "../common/html-escape";
 // F03/R9: ONE original-price display decision shared with the PDF, so the two
 // customer-facing documents of the same send can never disagree (a pure helper —
@@ -394,6 +395,7 @@ export class EmailService {
     private readonly mailboxSend: MailboxSendService,
     // WS4: best-effort audit rows for sends that carry a `delivery` context.
     private readonly deliveries: EmailDeliveryService,
+    private readonly systemConfig: SystemConfigService,
   ) {
     const apiKey = this.config.get<string>("RESEND_API_KEY");
 
@@ -813,16 +815,9 @@ export class EmailService {
   }
 
   private async writeSendingDomainConfig(cfg: object | null): Promise<void> {
-    const key = EmailService.SENDING_DOMAIN_KEY;
-    const value = JSON.stringify(cfg);
-    const existing = await this.prisma.forTenant().systemConfig.findFirst({ where: { key } });
-    if (existing) {
-      await this.prisma
-        .forTenant()
-        .systemConfig.update({ where: { id: existing.id }, data: { value } });
-    } else {
-      await (this.prisma.forTenant().systemConfig.create as any)({ data: { key, value } });
-    }
+    // SA-1105 Q6: the one config-write home. `forTenant()` is the UNSCOPED client with no business in context, so the
+    // find-then-update that stood here could rewrite another business's row; `set` refuses without a business.
+    await this.systemConfig.set(EmailService.SENDING_DOMAIN_KEY, JSON.stringify(cfg));
   }
 
   /** Current sending-domain state for the settings UI. */
@@ -1122,6 +1117,8 @@ export class EmailService {
      * price leaks to the buyer.
      */
     hideOriginalPrice?: boolean;
+    /** The tenant's `invoice.hidePerPiece` setting (owner ruling 2026-11-04): true leaves the Per piece column and figure out of the body. */
+    hidePerPiece?: boolean;
     /**
      * Row 401: a counter sale paid at the till is settled when it is rung, so the body prints no Due Date and no
      * Terms (the caller decides with `isPaidAtSale`, the rule the invoice page follows). Absent/false = both show.
@@ -1662,6 +1659,8 @@ export class EmailService {
       completion?: { orderNumber: string };
       /** Tenant's `invoice.hideOriginalPrice` — see sendInvoice's doc. */
       hideOriginalPrice?: boolean;
+      /** Tenant's `invoice.hidePerPiece` — see sendInvoice's doc. */
+      hidePerPiece?: boolean;
       /** Row 401: no Due Date / Terms rows for a paid-at-sale counter invoice — see sendInvoice's doc. */
       hideTerms?: boolean;
       /** Deposit schedule (display-only, derived server-side) — null/absent renders nothing. */
@@ -1673,7 +1672,7 @@ export class EmailService {
     const fmt = (n: number) =>
       new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
 
-    const showPerPiece = params.items.some((i) => !!i.perBaseUnit);
+    const showPerPiece = !params.hidePerPiece && params.items.some((i) => !!i.perBaseUnit);
     const itemRows = params.items
       .map((it) => {
         // F03/R9 — mirrors the web invoice detail renderer and the PDF: name the
@@ -1881,7 +1880,7 @@ export class EmailService {
       params.items
         .map((it) => {
           const freeUnits = it.promoFreeUnits != null ? Number(it.promoFreeUnits) : 0;
-          return `${it.description} — qty ${qtyCellText(it)}${freeUnits > 0 ? ` (${freeUnits} free)` : ""} @ ${fmt(it.unitPrice)}${it.perBaseUnit ? ` (${formatPerBaseUnitPrice(it.perBaseUnit)})` : ""} = ${fmt(it.subtotal)}`;
+          return `${it.description} — qty ${qtyCellText(it)}${freeUnits > 0 ? ` (${freeUnits} free)` : ""} @ ${fmt(it.unitPrice)}${showPerPiece && it.perBaseUnit ? ` (${formatPerBaseUnitPrice(it.perBaseUnit)})` : ""} = ${fmt(it.subtotal)}`;
         })
         .join("\n"),
     );

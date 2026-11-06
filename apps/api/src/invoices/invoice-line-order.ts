@@ -3,7 +3,11 @@ import { isNsfLine, type NsfLineFacts } from "./nsf-line";
 /**
  * SA-1058 (A-1): the ONE order an invoice's lines are shown in, on every copy: the detail screen, the
  * buyer's copy, the PDF and the emails. Display only. The keys are stored text, so nothing is selected
- * for it, a renamed product can't move a line, and an issued invoice reads the same on every reprint.
+ * for it, a renamed product can't move a line, and an issued invoice keeps its line order on every reprint.
+ * Sort FIRST, compose after: the family name (`withFamilyNames`) is added to the sorted copy, never sorted on.
+ * What a reprint PRINTS can still change for a legacy line: one whose stored text is the bare variant name
+ * reads "<Family> - <Variant>" from the product's CURRENT family, so a family rename shows on it. A line
+ * written since the fix stores its composed name and never moves.
  *
  *   1. Group: lines with a product, then lines without, then system lines (the NSF fee, through
  *      nsf-line.ts's dual-read).

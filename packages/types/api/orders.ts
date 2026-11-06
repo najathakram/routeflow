@@ -54,7 +54,7 @@ export type OrderToCollectField = { toCollect?: ToCollectState };
 
 export interface CustomerPriceHistory {
   [productId: string]: {
-    /** The newest remembered line's price, what "Last:" shows. Never prices a line above list. */
+    /** The newest remembered line's price, what "Last:" shows. The api and web never price from it. Old native pre-fills from it, on a Retail-tier line only. */
     lastPrice: number;
     /** SA-1072: that same line's price when staff chose it (MANUAL), else null. The only value that sticks. */
     stickyPrice: number | null;

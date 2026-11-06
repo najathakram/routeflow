@@ -170,5 +170,27 @@ describe("CustomersService address + license guards (B964-1)", () => {
         service.update("cust-1", {}, { compliance: { tobaccoLicenseNo: "TX-123456" } }),
       ).resolves.toBeDefined();
     });
+    // SA-1084: the plain read no longer carries the stored license, so `update` asks for it by name. The mock answers a
+    // plain read WITHOUT it and a read that names it WITH it, as the real client does; without the named read a legacy
+    // value echoed back would look new and be refused.
+    it("reads the stored license by name for the change-only guard, and only for an importer edit", async () => {
+      prisma.customer.findUnique.mockImplementation(async (args: any) =>
+        args?.select?.tobaccoLicenseNo ? { tobaccoLicenseNo: "=OLD" } : customer(),
+      );
+      prisma.customer.update.mockResolvedValue({});
+      await expect(
+        service.update("cust-1", {}, { compliance: { tobaccoLicenseNo: "=OLD" } }),
+      ).resolves.toBeDefined();
+      await expect(
+        service.update("cust-1", {}, { compliance: { tobaccoLicenseNo: "=NEW" } }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      prisma.customer.findUnique.mockClear();
+      await service.update("cust-1", { businessName: "New Name" } as never);
+      const asked = prisma.customer.findUnique.mock.calls.filter(
+        (c: any[]) => c[0]?.select?.tobaccoLicenseNo,
+      );
+      expect(asked).toHaveLength(0);
+    });
   });
 });

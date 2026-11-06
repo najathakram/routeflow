@@ -8,14 +8,14 @@ export interface CustomerCsvRow {
   phone: string | null;
   customerType: string | null;
   status?: string | null;
-  /** Sum of receivableBalance per invoice (computed by the caller). */
-  receivables: number;
+  /** The customer's Open balance, the statement's figure (computed by the caller). */
+  openBalance: number;
   /** Sum of open advance-payment balances (computed by the caller). */
   credits: number;
 }
 
 export const CUSTOMERS_CSV_HEADER =
-  "Business Name,Contact Name,Email,Phone,Customer Type,Status,Receivables,Credits";
+  "Business Name,Contact Name,Email,Phone,Customer Type,Status,Open Balance,Credits";
 
 /**
  * The customers export format (B953). Names, emails and phones are user-typed, so every text cell
@@ -32,7 +32,7 @@ export function buildCustomersCsv(customers: CustomerCsvRow[]): string {
       csvCell(c.phone),
       csvCell(c.customerType),
       csvCell(c.status),
-      roundMoney(c.receivables).toFixed(2),
+      roundMoney(c.openBalance).toFixed(2),
       roundMoney(c.credits).toFixed(2),
     ].join(","),
   );

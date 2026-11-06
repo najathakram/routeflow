@@ -19,6 +19,7 @@ import { SellingRestrictionsService } from "../selling-restrictions/selling-rest
 import { NotificationsService } from "../notifications/notifications.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { EntitlementsService } from "../billing/entitlements.service";
 
 const operator = { sub: "u-op", role: "OPERATOR", tenantId: "test-tenant" } as JwtPayload;
 const ack = {
@@ -74,6 +75,7 @@ describe("RecurringInvoicesService — Run now takes the ack, scheduled runs ski
     const mod = await Test.createTestingModule({
       providers: [
         RecurringInvoicesService,
+        { provide: EntitlementsService, useValue: {} },
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: {} },
         { provide: InvoicesService, useValue: invoices },

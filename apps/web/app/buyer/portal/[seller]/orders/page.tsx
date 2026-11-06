@@ -26,6 +26,8 @@ function getStatusVariant(status: string): "success" | "warning" | "danger" | "n
     case "CANCELLED":
     case "FAILED":
       return "danger";
+    case "REFUSED":
+      return "warning";
     default:
       return "neutral";
   }
@@ -151,6 +153,7 @@ export default function BuyerOrdersPage() {
           { label: "Confirmed", value: "CONFIRMED" },
           { label: "Out for delivery", value: "OUT_FOR_DELIVERY" },
           { label: "Delivered", value: "DELIVERED" },
+          { label: "Refused", value: "REFUSED" },
           { label: "Cancelled", value: "CANCELLED" },
         ]
           .filter((tab) => showsRoute || tab.value !== "OUT_FOR_DELIVERY")

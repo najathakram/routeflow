@@ -76,6 +76,7 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/check-discrepancies.js": "read-only",
   "apps/api/scripts/check-tenant-logo.js": "read-only",
   "apps/api/scripts/census-base-label-row621.mjs": "read-only",
+  "apps/api/scripts/census-partial-invoice-unbooked-sa962.mjs": "read-only", // SA-962 G5 / A-1: counts only, default_transaction_read_only = on, each query READ ONLY then ROLLBACK
   "apps/api/scripts/data-questions-report.mjs": "read-only",
   "apps/api/scripts/demo-bookings.mjs": "global-catalog",
   "apps/api/scripts/demo-seed.js": "test-slug-only",
@@ -108,7 +109,11 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/report-bookkeeping-month-shift-census.mjs": "read-only",
   "apps/api/scripts/report-operator-account-blast-radius.mjs": "read-only",
   "apps/api/scripts/report-b1043-stale-tax-state.mjs": "read-only",
+  "apps/api/scripts/report-a4-credit-reversal-census.mjs": "read-only", // SA-1042 A-4 G5: SELECT only, default_transaction_read_only = on
+  "apps/api/scripts/report-sa1091-order-bound-census.mjs": "read-only", // SA-1091 piece 1: counts only, default_transaction_read_only = on, ROLLBACK
+  "apps/api/scripts/report-low-stock-digest.mjs": "read-only", // ops 545: counts only, default_transaction_read_only = on, ROLLBACK
   "apps/api/scripts/report-b297-netting-census.mjs": "read-only",
+  "apps/api/scripts/report-corrected-units-sheet.mjs": "read-only", // SA-1088: SELECT only, default_transaction_read_only = on + READ ONLY tx, ROLLBACK, source-scan pinned
   "apps/api/scripts/report-b297-trio-sizing.mjs": "read-only",
   "apps/api/scripts/report-b2187-subscription-period-census.mjs": "read-only",
   "apps/api/scripts/report-b2188-duplicate-addon-rows.mjs": "read-only",
@@ -116,6 +121,7 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/report-standard-refund-tax-shortfall.mjs": "read-only",
   "apps/api/scripts/report-b2230-unit-lines-without-boxes.mjs": "read-only",
   "apps/api/scripts/report-b2436-stripe-missing-sub.mjs": "read-only",
+  "apps/api/scripts/report-b1281-superseded-checkouts.mjs": "read-only", // SA-1103 (c): SELECT only, default_transaction_read_only = on, Stripe list calls only (spec-pinned)
   "apps/api/scripts/report-cross-tenant-refs.mjs": "read-only", // 681: SELECT COUNT(*) only, default_transaction_read_only = on
   "apps/api/scripts/report-b673-next-delivery-overcharge.mjs": "read-only",
   "apps/api/scripts/report-b861-numbering-config.mjs": "read-only",
@@ -131,6 +137,7 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/report-receiving-unit-drift.mjs": "read-only",
   "apps/api/scripts/report-recurring-boxed-template-qty.mjs": "read-only",
   "apps/api/scripts/report-exempt-orders-taxed.mjs": "read-only",
+  "apps/api/scripts/report-plaintext-secrets.mjs": "read-only",
   "apps/api/scripts/report-order-discounts.mjs": "read-only",
   "apps/api/scripts/report-read-only-sellers-with-buyers.mjs": "read-only",
   "apps/api/scripts/report-rf-invoice-calendar-census.mjs": "read-only",

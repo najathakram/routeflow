@@ -216,7 +216,6 @@ const CONSUMER_ALLOWLIST: Record<string, string[]> = {
     "EDIT_WINDOW_OPEN",
     "REGULATED_AUTH_REQUIRED",
   ],
-  "apps/web/components/ScanInvoiceModal.tsx": ["AI_KEY_INVALID"],
   "apps/web/lib/api/authorizations.ts": ["REGULATED_AUTH_REQUIRED"],
   "apps/web/lib/api/credit-limit.ts": ["CREDIT_LIMIT_EXCEEDED"],
   "apps/web/lib/api/selling-restricted.ts": ["SELLING_RESTRICTED"],
@@ -241,7 +240,7 @@ const CONSUMER_ALLOWLIST: Record<string, string[]> = {
   "apps/web/lib/po-bill-refusal.ts": ["BILL_EXCEEDS_PO"],
   "apps/web/lib/scan-po-lock.ts": ["PLAN_GATE"],
 };
-const CONSUMER_ALLOWLIST_TOTAL = 72;
+const CONSUMER_ALLOWLIST_TOTAL = 71;
 
 /**
  * B987-D: literals in packages/ that keep a literal because a value import of `@routeflow/types` is ruled out there (a hard runtime constraint for pricing, a build CONVENTION for returns).

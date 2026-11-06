@@ -274,6 +274,7 @@ describe("settings registry — every SystemConfig key the settings writers writ
       defaultTerms: "Net 30",
       hideOriginalPrice: true,
       hideBarcodes: true,
+      hidePerPiece: true,
       depositDefaultPercent: 10,
       depositCollectAtOrder: true,
     } as any);
@@ -447,6 +448,7 @@ describe("settings registry — structural source scan of every SystemConfig wri
 
   it("the writer FILE list is frozen (a new writer must be added here with its registry rows)", () => {
     expect(writers.map((w) => w.rel).sort()).toEqual([
+      "billing/first-run-marker.ts",
       "email/email.service.ts",
       "messaging/staff-email-settings.service.ts",
       "restrictions-settings/restrictions-settings.service.ts",
@@ -475,6 +477,8 @@ describe("settings registry — structural source scan of every SystemConfig wri
    */
   const INDIRECT_KEY_WRITERS: Record<string, Record<string, string[]>> = {
     "tobacco/tobacco.service.ts": { TOBACCO_EXCLUDE_KEY: [TOBACCO_EXCLUDE_KEY] },
+    // SA-1105 Q6: the sending-domain write goes through SystemConfigService.set, keyed by ONE constant
+    "email/email.service.ts": { "EmailService.SENDING_DOMAIN_KEY": ["email.sendingDomain"] },
     // SA-747: the counter quick keys value is ONE JSON string under this constant (quick-keys-settings.ts)
     "system-config/quick-keys-settings.service.ts": {
       QUICK_KEYS_CONFIG_KEY: [QUICK_KEYS_CONFIG_KEY],
@@ -516,16 +520,16 @@ describe("settings registry — structural source scan of every SystemConfig wri
   it("the prisma-direct writer files are frozen, each with a pinned key source", () => {
     const direct = writers.filter((w) => PRISMA_WRITE.test(w.src)).map((w) => w.rel);
     expect(direct.sort()).toEqual([
-      "email/email.service.ts",
+      "billing/first-run-marker.ts",
       "messaging/staff-email-settings.service.ts",
       "restrictions-settings/restrictions-settings.service.ts",
       "system-config/system-config.service.ts",
     ]);
-    // email: the sending-domain write takes its key from ONE constant.
+    // email: no prisma-direct write any more (SA-1105 Q6): the sending-domain write goes through SystemConfigService.set
+    // with ONE constant key (listed in INDIRECT_KEY_WRITERS above).
     const email = writers.find((w) => w.rel === "email/email.service.ts")!;
-    expect([...email.src.matchAll(/const key = ([^;]+);/g)].map((m) => m[1].trim())).toEqual([
-      "EmailService.SENDING_DOMAIN_KEY",
-    ]);
+    expect(PRISMA_WRITE.test(email.src)).toBe(false);
+    expect(email.src).toMatch(/systemConfig\.set\(EmailService\.SENDING_DOMAIN_KEY, /);
     expect(email.src).toMatch(/SENDING_DOMAIN_KEY = "email\.sendingDomain"/);
     // system-config.service: the generic set(key, value) — every caller is scanned above.
     const sc = writers.find((w) => w.rel === "system-config/system-config.service.ts")!;

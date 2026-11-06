@@ -7,6 +7,7 @@ import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { NumberingService } from "../import/numbering.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { NO_PRICE_RIGHTS } from "../common/testing/no-rights-actor";
 
 /**
  * B451 — Strix coverage gap 4 (business-logic financial-total manipulation)
@@ -69,7 +70,7 @@ describe("EstimatesService.create — unvalidated discount/tax (B451 gap 4)", ()
     // below). This models the remaining defense-in-depth case: an internal
     // caller invoking the service directly with a stray `discount`.
     await expect(
-      service.create({ customerId: "cust-1", items: [], discount: 500 } as any),
+      service.create({ customerId: "cust-1", items: [], discount: 500 } as any, NO_PRICE_RIGHTS),
     ).rejects.toMatchObject({ status: 400, response: { code: "MONEY_INVARIANT" } });
 
     expect(prisma.estimate.create).not.toHaveBeenCalled();
@@ -81,7 +82,10 @@ describe("EstimatesService.create — unvalidated discount/tax (B451 gap 4)", ()
       Promise.resolve({ id: "est-1", ...args.data }),
     );
 
-    await service.create({ customerId: "cust-1", items: [], taxAmount: -1000 } as any);
+    await service.create(
+      { customerId: "cust-1", items: [], taxAmount: -1000 } as any,
+      NO_PRICE_RIGHTS,
+    );
 
     const data = prisma.estimate.create.mock.calls[0][0].data;
     expect(data.taxAmount).toBe(0); // computed from the (empty) lines, not the -1000 sent
@@ -94,12 +98,15 @@ describe("EstimatesService.create — unvalidated discount/tax (B451 gap 4)", ()
       Promise.resolve({ id: "est-1", ...args.data }),
     );
 
-    await service.create({
-      customerId: "cust-1",
-      items: [],
-      tenantId: "attacker-tenant",
-      status: "ACCEPTED",
-    } as any);
+    await service.create(
+      {
+        customerId: "cust-1",
+        items: [],
+        tenantId: "attacker-tenant",
+        status: "ACCEPTED",
+      } as any,
+      NO_PRICE_RIGHTS,
+    );
 
     const createCall = prisma.estimate.create.mock.calls[0][0];
     expect(createCall.data.status).toBe("DRAFT");

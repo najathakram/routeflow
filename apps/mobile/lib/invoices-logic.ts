@@ -3,6 +3,7 @@
  * stay unit-testable in the node Jest env). Mirror the server's guards.
  */
 import { OPEN_INVOICE_STATUS_VALUES } from "@routeflow/types";
+import { isPostDeliveryOrderStatus } from "@routeflow/types/api/enums";
 import {
   sendsAfterLabel,
   canEmailAgain,
@@ -122,7 +123,8 @@ export function isPendingOrderMirror(inv: {
   if (typeof inv.pendingMirror === "boolean") return inv.pendingMirror;
   if (!inv.orderId) return false;
   if (inv.deliveryBatchId != null) return false;
-  return inv.orderStatus !== "DELIVERED" && inv.orderStatus !== "PARTIALLY_DELIVERED";
+  // SA-1101: a REFUSED order is post-delivery too, so its $0 draft is not a pending mirror
+  return !isPostDeliveryOrderStatus(inv.orderStatus) && inv.orderStatus !== "PARTIALLY_DELIVERED";
 }
 
 /**

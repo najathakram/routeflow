@@ -7,6 +7,7 @@ import type {
 } from "@routeflow/types";
 import type { OrderStatus, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
+import type { TxOrClient } from "../prisma/prisma.service";
 import { ProductLabelsService } from "../product-labels/product-labels.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import {
@@ -36,6 +37,7 @@ import {
   type RuleRow as Row,
 } from "./selling-restrictions-admin.service";
 import { EMPTY_TARGET_SUMMARY, targetSummaries } from "./rule-target-read";
+import { TERMINAL_ORDER_STATUSES } from "../common/terminal-order-statuses";
 
 /** Interactive-transaction budget: the impact reads open orders and drafts of a whole tenant. */
 const TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 };
@@ -71,7 +73,7 @@ const settingsOf = (r: Row): RuleEditSettings => ({
  * transaction client so the detail read and the history are one consistent snapshot.
  */
 export async function ruleRevisions(
-  tx: Prisma.TransactionClient,
+  tx: TxOrClient,
   tenantId: string,
   ruleId: string,
 ): Promise<RuleRevisionDto[]> {
@@ -342,7 +344,7 @@ export class RuleEditService {
 
     const liveOrder = {
       tenantId,
-      status: { notIn: ["DELIVERED", "CANCELLED"] as OrderStatus[] },
+      status: { notIn: [...TERMINAL_ORDER_STATUSES] },
     };
     const liveLine = { productId: { not: null }, status: { not: "CANCELLED" } } as const;
     // SQL GROUP BY (never `distinct`, which Prisma de-duplicates in memory): the distinct products on live lines,

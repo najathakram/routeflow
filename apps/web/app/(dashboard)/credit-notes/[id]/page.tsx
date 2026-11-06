@@ -18,6 +18,7 @@ import {
 import { Button, Badge, Card, Modal, cn, useToast, badgeStatusLabel } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useCreditNote, useApplyCreditNote } from "@/lib/api/credit-notes";
+import { creditNoteErrorCopy } from "@/lib/credit-note-error-copy";
 import { useInvoices } from "@/lib/api/invoices";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { DocumentLetterhead } from "@/components/DocumentLetterhead";
@@ -213,16 +214,11 @@ export default function CreditNoteDetailPage() {
           });
         },
         onError: (err: unknown) => {
-          // Surface the server's message, as mobile does. The apply endpoint
-          // returns four actionable ones ("Cannot apply credit note to invoice
-          // with status X", "…different customers", "…no remaining balance",
-          // "Credit note has expired") and all of them were being swallowed in
-          // favour of a fixed "Please try again."
-          const message = (err as { response?: { data?: { message?: string } } })?.response?.data
-            ?.message;
+          // B921 (owner rule: no raw server strings): the apply refusals carry a CREDIT_NOTE_* `body.code`;
+          // the toast shows its FIXED copy (the same map mobile uses), never the server message.
           toast({
             title: "Failed to apply credit note",
-            description: message ?? "Please try again.",
+            description: creditNoteErrorCopy(err, "Please try again."),
             variant: "error",
           });
         },

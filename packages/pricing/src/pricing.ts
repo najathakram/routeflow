@@ -125,6 +125,77 @@ export function packFromOwnSplit(input: {
   return Number.isInteger(pack) && pack > 1 ? pack : null;
 }
 
+/** Which rule of {@link resolveStoredLinePack} answered; `UNREADABLE` is the refusal. */
+export type StoredLinePackBasis =
+  "SNAPSHOT" | "OWN_SPLIT" | "NO_PACK_AT_SALE" | "MONEY_LIVE_PACK" | "MONEY_NO_PACK" | "UNREADABLE";
+
+export type StoredLinePack =
+  | { ok: true; pack: number | null; basis: Exclude<StoredLinePackBasis, "UNREADABLE"> }
+  | { ok: false; pack: null; basis: "UNREADABLE" };
+
+/**
+ * SA-1097 (L-332): the pack a STORED line with a split was sold in, read from the line's own evidence, never from
+ * today's product. `livePack` is only a CANDIDATE for step 3, where the stored money has to vouch for it.
+ *  1. Its own snapshot (`unitsPerBox` above 1): that pack.
+ *  2. Its own split (boxes above 0): `(qty - pieces) / boxes`. A whole number above 1 is the pack; exactly 1 is "no pack at
+ *     sale" (`packFromOwnSplit` returns null for both, so it can't say which).
+ *  3. Otherwise only the money can tell (0 boxes, or a quotient that is not whole): price the stored fields through
+ *     {@link computeLineSubtotal}, free units included. The live pack reproducing the stored subtotal within a cent while
+ *     no-pack does not -> the live pack; only no-pack does -> no pack.
+ *  4. Neither, or both: `ok: false` (the caller refuses; nothing is written) - except that when both fit and the stored
+ *     subtotal is 0 (A-6: no money to misread) the live pack answers.
+ * `pack: null` with `ok: true` means no pack at sale: the line prices as qty x unitPrice.
+ */
+export function resolveStoredLinePack(input: {
+  qty: number;
+  boxes?: number | null;
+  pieces?: number | null;
+  unitsPerBox?: number | null;
+  unitPrice: number;
+  subtotal: number;
+  freeUnits?: number;
+  livePack?: number | null;
+}): StoredLinePack {
+  const snapshot = Number(input.unitsPerBox ?? 0);
+  if (snapshot > 1) return { ok: true, pack: snapshot, basis: "SNAPSHOT" };
+
+  const boxes = Number(input.boxes ?? 0);
+  const pieces = Number(input.pieces ?? 0);
+  const qty = Number(input.qty ?? 0);
+  if (boxes > 0) {
+    const quotient = (qty - pieces) / boxes;
+    if (Number.isInteger(quotient) && quotient > 1) {
+      return { ok: true, pack: quotient, basis: "OWN_SPLIT" };
+    }
+    if (quotient === 1) return { ok: true, pack: null, basis: "NO_PACK_AT_SALE" };
+  }
+
+  const stored = Number(input.subtotal ?? 0);
+  const fits = (pack: number | null): boolean =>
+    Math.abs(
+      computeLineSubtotal({
+        unitPrice: Number(input.unitPrice),
+        qty,
+        boxes: input.boxes,
+        pieces: input.pieces,
+        unitsPerBox: pack,
+        freeUnits: input.freeUnits,
+      }) - stored,
+    ) <=
+    0.01 + 1e-9;
+  const live = Number(input.livePack ?? 0);
+  const fitsLive = live > 1 && fits(live);
+  const fitsNone = fits(null);
+  if (fitsLive && !fitsNone) return { ok: true, pack: live, basis: "MONEY_LIVE_PACK" };
+  if (fitsNone && !fitsLive) return { ok: true, pack: null, basis: "MONEY_NO_PACK" };
+  // A-6: both fit only when the stored money is 0 (a zero line, a no-charge line): there is no money to misread, so
+  // refusing protects nothing - the live pack answers. A both-fit line with real money still refuses.
+  if (fitsLive && fitsNone && Math.abs(stored) <= 0.005) {
+    return { ok: true, pack: live, basis: "MONEY_LIVE_PACK" };
+  }
+  return { ok: false, pack: null, basis: "UNREADABLE" };
+}
+
 /**
  * Does a stored box/piece split add up to its qty? True only when the pack is known and greater than 1 and
  * `boxes x pack + pieces === qty` (tolerance 1e-6 on qty). A split with no pack (null, 0 or 1) is never

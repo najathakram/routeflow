@@ -11,7 +11,6 @@ import {
 import type { UnitsCardProduct } from "../../ProductUnitsCard";
 import { UNITS_V2_TESTIDS as T } from "../../units-v2-testids";
 import { AlsoUpdatePanel } from "../change-prices/AlsoUpdatePanel";
-import { AddUnitIntentProvider } from "./add-unit-intent";
 import { OrderUnitDraft } from "./OrderUnitDraft";
 import { revealClearOfBar } from "./reveal-clear-of-bar";
 import { BTN, SkipToSave } from "./PriceEditBar";
@@ -135,7 +134,7 @@ export function EditablePricesGrid({
   }, [savedHere]);
 
   return (
-    <AddUnitIntentProvider>
+    <>
       <div ref={root} data-testid="units-v2-grid-root" className="relative">
         {editing && surface === "inline" && <SkipToSave />}
         <div
@@ -167,6 +166,16 @@ export function EditablePricesGrid({
               onClick={onOpenChangePrices}
             >
               Change prices
+            </button>
+          )}
+          {surface === "inline" && d.canTakeFamilyPrices && (
+            <button
+              type="button"
+              data-testid={T.btnUseFamilyPrices}
+              className={BTN}
+              onClick={d.takeFamilyPrices}
+            >
+              Use family prices
             </button>
           )}
           {surface === "inline" && nobodyEditing && anyEditable && (
@@ -205,7 +214,6 @@ export function EditablePricesGrid({
           idSuffix={sfx}
           hideTitle={surface === "inline"}
           // The window has no Add a unit control of its own; the pointer would click a hidden page control.
-          addUnitPointers={surface !== "window"}
         />
         {afterGrid}
         {editing && <OrderUnitDraft />}
@@ -217,6 +225,6 @@ export function EditablePricesGrid({
           </div>
         )}
       </div>
-    </AddUnitIntentProvider>
+    </>
   );
 }

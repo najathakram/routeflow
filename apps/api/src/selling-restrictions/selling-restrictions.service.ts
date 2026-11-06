@@ -12,7 +12,7 @@ import type {
   SellingRestrictedError,
 } from "@routeflow/types";
 import { UserRole } from "@prisma/client";
-import { operatorDeniedGroups } from "../orders/counter-sale/till-permission.guard";
+import { operatorDeniedGroups } from "../auth/permissions/operator-denied-groups";
 import { ALL_PERMISSION_GROUPS } from "../auth/permissions/operator-permissions.service";
 import { assertAmbientTenant } from "../common/ambient-tenant";
 import { normalizeUsState } from "../common/us-states";

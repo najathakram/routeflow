@@ -30,6 +30,8 @@ export const EVENT_CHANNELS: Record<NotificationEvent, MessageChannel[]> = {
   // " Pick up at <address>. Hours: <hours>." built by the caller from the business's pickup settings.
   [NotificationEvent.READY_FOR_PICKUP]: CUSTOMER_CHANNELS,
   [NotificationEvent.DELIVERED]: CUSTOMER_CHANNELS,
+  // SA-1101: a stop close that delivered nothing on any line (fired by routes/stop-outcome.ts).
+  [NotificationEvent.ORDER_REFUSED]: CUSTOMER_CHANNELS,
   // N1 (2026-09-16): real order-cancelled event, alongside the real EMAIL
   // channel — CONFIRMED/OUT_FOR_DELIVERY/DELIVERED already fired through this
   // engine; CANCELLED only had the separate push-notification path in
@@ -96,6 +98,11 @@ export const DEFAULT_TEMPLATES: Record<NotificationEvent, { label: string; body:
     // (would render as a dangling label on stops with no photo across every
     // channel this shared body serves) — both deliberately deferred, not missed.
     body: "Hi {{customerName}}, order {{orderNumber}} was delivered on {{deliveredAt}}. Total: {{orderTotal}}. Thank you!",
+  },
+  [NotificationEvent.ORDER_REFUSED]: {
+    label: "Order refused",
+    // SA-1101 §4.1: the owner's line. No total, and never the word "delivered".
+    body: "Hi {{customerName}}, your order {{orderNumber}} was refused at delivery. Contact us if this is wrong.",
   },
   [NotificationEvent.CANCELLED]: {
     label: "Order cancelled",
@@ -181,6 +188,8 @@ export const DEFAULT_ON = new Set<string>([
   `${NotificationEvent.READY_FOR_PICKUP}:${PORTAL}`,
   `${NotificationEvent.DELIVERED}:${EMAIL}`,
   `${NotificationEvent.DELIVERED}:${PORTAL}`,
+  `${NotificationEvent.ORDER_REFUSED}:${EMAIL}`,
+  `${NotificationEvent.ORDER_REFUSED}:${PORTAL}`,
   `${NotificationEvent.CANCELLED}:${EMAIL}`,
 ]);
 
@@ -444,9 +453,19 @@ export class MessagingConfigService {
  * "seed only if something's missing, re-read once if so" call shape — and its findMany call
  * count — is unchanged; a caller with no pre-fetched lists (notify()) fetches them first.
  */
+/**
+ * SA-1101 §4.1: a missing rule for these events copies `enabled` from the tenant's rule for the mapped event on the
+ * same channel, so a business that turned "Delivered" off stays off for "Order refused". No source rule (the
+ * tenant has none yet, or none for that channel) falls back to `DEFAULT_ON`. Keeps the schema change to one folder:
+ * no SQL seed for the new event.
+ */
+export const SEED_ENABLED_FROM: Partial<Record<NotificationEvent, NotificationEvent>> = {
+  [NotificationEvent.ORDER_REFUSED]: NotificationEvent.DELIVERED,
+};
+
 export async function seedDefaultsFor(
   db: PrismaService,
-  rules: Array<{ eventKey: NotificationEvent; channel: MessageChannel }>,
+  rules: Array<{ eventKey: NotificationEvent; channel: MessageChannel; enabled?: boolean }>,
   templates: Array<{ eventKey: NotificationEvent; channel: MessageChannel }>,
 ): Promise<boolean> {
   const haveRule = new Set(rules.map((r) => `${r.eventKey}:${r.channel}`));
@@ -466,7 +485,15 @@ export async function seedDefaultsFor(
   for (const eventKey of Object.keys(EVENT_CHANNELS) as NotificationEvent[]) {
     for (const channel of EVENT_CHANNELS[eventKey]) {
       const key = `${eventKey}:${channel}`;
-      if (!haveRule.has(key)) ruleData.push({ eventKey, channel, enabled: DEFAULT_ON.has(key) });
+      if (!haveRule.has(key)) {
+        const from = SEED_ENABLED_FROM[eventKey];
+        const source = from
+          ? rules.find(
+              (r) => r.eventKey === from && r.channel === channel && r.enabled !== undefined,
+            )
+          : undefined;
+        ruleData.push({ eventKey, channel, enabled: source?.enabled ?? DEFAULT_ON.has(key) });
+      }
       if (!haveTpl.has(key))
         tplData.push({
           eventKey,

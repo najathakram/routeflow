@@ -216,6 +216,19 @@ describe("import-columns (FIX1 pins)", () => {
       expect(col.parse("2147483647").ok).toBe(true);
       expect(col.parse("2147483648").ok).toBe(false);
     });
+
+    it("Units Per Box floors at 1 (SA-946 MUST 6): 0 and negatives are refused, 1 and blank pass", () => {
+      const col = PRODUCT_COLUMNS.find((c) => c.field === "unitsPerBox")!;
+      expect(col.parse("0").ok).toBe(false);
+      expect(col.parse("-3").ok).toBe(false);
+      expect(col.parse("1").ok).toBe(true);
+      expect(col.parse("").ok).toBe(true);
+    });
+
+    it("reorder columns still accept 0 (only the pack size floors at 1)", () => {
+      const col = PRODUCT_COLUMNS.find((c) => c.field === "reorderPoint")!;
+      expect(col.parse("0").ok).toBe(true);
+    });
   });
 
   // ── M2: standardCost parses/compares at 4dp, its own (tighter) bound ────────

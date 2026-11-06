@@ -256,7 +256,12 @@ describe("SA-1034 price-edit capability — a unit line (buildUnitLine)", () => 
       priceTier5: null,
     },
   ] as LadderUnit[];
-  const build = (priceEditAllowed: boolean, unitPrice: number, stored?: Record<string, unknown>) =>
+  const build = (
+    priceEditAllowed: boolean,
+    unitPrice: number,
+    stored?: Record<string, unknown>,
+    actor: { by?: string } = { by: "user-1" },
+  ) =>
     buildUnitLine({
       priceEditAllowed,
       product,
@@ -274,12 +279,26 @@ describe("SA-1034 price-edit capability — a unit line (buildUnitLine)", () => 
       }),
       position: 0,
       tenantId: "t1",
-      overriddenBy: "user-1",
+      overriddenBy: actor.by,
       stored: stored as never,
     });
 
   it("capability false: a typed override is refused 403", async () => {
     await refused(() => build(false, 20));
+  });
+
+  // U-R1 (SA-1034 r5.1): the check keys on the override, not on the optional stamp, so a caller that passes no
+  // `overriddenBy` cannot write a typed discount past a false capability.
+  it("U-R1 capability false, no overriddenBy: a typed price below the tier is refused 403", async () => {
+    await refused(() => build(false, 20, undefined, {}));
+  });
+
+  // U-G3: a typed price equal to the tier is not an override (STANDARD), so it stays free for a caller without price rights.
+  it("U-G3 capability false: a typed price equal to the tier is not refused and reads STANDARD", () => {
+    expect(build(false, 24, undefined, {})).toMatchObject({
+      unitPrice: 24,
+      priceType: PriceType.STANDARD,
+    });
   });
 
   it("capability false: a held override re-sent unchanged is kept (no new stamp, no refusal)", () => {

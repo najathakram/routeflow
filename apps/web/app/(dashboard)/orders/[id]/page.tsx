@@ -99,6 +99,7 @@ import { useReadyForPickupAction } from "./_components/use-ready-for-pickup";
 import { ReadyEmailLine } from "./_components/ReadyEmailLine";
 import { DeleteOrderTier } from "./_components/DeleteOrderTier";
 import { ReopenDeliveredTier } from "./_components/ReopenDeliveredTier";
+import { DeliverAgainTier } from "./_components/DeliverAgainTier";
 import { isPosOrder } from "@/lib/api/pos-orders";
 import { FulfillPathMoveConfirm } from "./_components/FulfillPathMoveConfirm";
 import { OrderStaffFlags } from "./_components/OrderStaffFlags";
@@ -114,6 +115,7 @@ import { parseSellingRestricted } from "@/lib/api/selling-restricted";
 import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
 import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
 import { postDeliveryInvoicePrompt, routeHeldNotice, type BlockedLine } from "@routeflow/types";
+import { isPostDeliveryOrderStatus, isTerminalOrderStatus } from "@routeflow/types";
 import { CreditLimitGuardDialog } from "@/components/CreditLimitGuardDialog";
 import { parseCreditLimitError, type CreditLimitInfo } from "@/lib/api/credit-limit";
 import { customerTierFor, roundMoney } from "@routeflow/pricing";
@@ -132,7 +134,7 @@ import { InvoicePreviewModal, DivergenceNote } from "../../_components/LinkedDoc
 import { CreditNotePicker, type CreditSelection } from "../_components/CreditNotePicker";
 import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
 import { codedToastCopy } from "@/lib/generic-toast-copy";
-import { orderErrorText } from "@/lib/order-error-text";
+import { demoteErrorText, isDemoteRefusal, orderErrorText } from "@/lib/order-error-text";
 import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
 import {
   type ApiOrderStatus,
@@ -218,6 +220,8 @@ export default function OrderDetailPage() {
   const updateStatus = useUpdateOrderStatus();
   // The cancel flow renders its own error (every other status change keeps the global toast), so it has its own instance.
   const cancelOrder = useUpdateOrderStatus({ localErrorToast: true });
+  // SA-1101 A-5: the demotion owns only the live-return refusal; every other error reaches the global toast.
+  const demoteStatus = useUpdateOrderStatus({ localErrorToast: isDemoteRefusal });
   const ready = useReadyForPickupAction({
     orderId: order?.id,
     customerName: order?.customer?.businessName,
@@ -453,9 +457,7 @@ export default function OrderDetailPage() {
   // Fulfillment path can only change while the order is open — mirrors the
   // server's PATCH /orders/:id/fulfill-path rejection rule exactly.
   const fulfillPathLocked =
-    localStatus === "OUT_FOR_DELIVERY" ||
-    localStatus === "DELIVERED" ||
-    localStatus === "CANCELLED";
+    localStatus === "OUT_FOR_DELIVERY" || isTerminalOrderStatus(localStatus);
 
   // B1134: what THIS session may do on the action bar (customers reach this page; fails closed). A status the
   // local copy has not yet caught up with (or has moved past) is no status at all, never the stale initial one.
@@ -834,12 +836,16 @@ export default function OrderDetailPage() {
 
   const handleDemote = (reason: string) => {
     if (!demoteTarget) return;
-    updateStatus.mutate(
+    demoteStatus.mutate(
       { id: order.id, status: demoteTarget, reason },
       {
         onSuccess: () => {
           setLocalStatus(demoteTarget);
           setDemoteTarget(null);
+        },
+        onError: (err) => {
+          const text = demoteErrorText(err);
+          if (text) toast({ title: text, variant: "error" });
         },
       },
     );
@@ -863,7 +869,7 @@ export default function OrderDetailPage() {
    */
   const hasPostedInvoice = order.invoices?.some((inv) => inv.status !== "DRAFT") ?? false;
   const orderOperationallyOpen =
-    localStatus !== "DELIVERED" && localStatus !== "PARTIALLY_DELIVERED";
+    !isPostDeliveryOrderStatus(localStatus) && localStatus !== "PARTIALLY_DELIVERED";
   const renderDeleteOrderAction = (confirmMessage: string, successTitle = "Order deleted") =>
     !orderOperationallyOpen || hasPostedInvoice ? null : showDeleteConfirm ? (
       <div className="flex items-center gap-2">
@@ -1337,6 +1343,14 @@ export default function OrderDetailPage() {
             </>
           )}
 
+          {access.staff && (
+            <DeliverAgainTier
+              status={localStatus}
+              onDeliverAgain={handleConfirm} // SA-1101: REFUSED to CONFIRMED, no reason
+              loading={updateStatus.isPending}
+            />
+          )}
+
           {/* CANCELLED */}
           {access.staff && localStatus === "CANCELLED" && (
             <>
@@ -1433,6 +1447,7 @@ export default function OrderDetailPage() {
                   pricingReady={pricingReady}
                   customer={{ id: order.customerId, name: order.customer?.businessName }}
                   orderId={order.id}
+                  orderStatus={order.status}
                   lockedLineIds={deliveredLockedLineIds(order.status, order.lineItems)}
                 />
 
@@ -2162,7 +2177,7 @@ export default function OrderDetailPage() {
         open={!!demoteTarget}
         onClose={() => setDemoteTarget(null)}
         onConfirm={handleDemote}
-        loading={updateStatus.isPending || cancelOrder.isPending}
+        loading={demoteStatus.isPending || updateStatus.isPending || cancelOrder.isPending}
         targetStatus={demoteTarget ?? ""}
         fulfillPath={order?.fulfillPath}
       />

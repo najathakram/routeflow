@@ -189,8 +189,9 @@ touches the real repo or `local-assets/`. `VISIBILITY_DEADMAN_GH_BIN` replaces t
 
 ## The routine
 
-1. **Make the repo public:**
-   `gh repo edit najathakram/routeflow --visibility public --accept-visibility-change-consequences`
+1. **Make the repo public** (the check refuses while a self-hosted runner is registered, see
+   `docs/runbooks/self-hosted-runner.md`):
+   `node tools/ci-runner/check-no-runner.mjs && gh repo edit najathakram/routeflow --visibility public --accept-visibility-change-consequences`
 2. **Push, let CI go green, merge the PR to `master`** (squash). The `master` push triggers
    Railway's own auto-deploy — nothing in this routine drives that.
 3. **Wait until every service status on the merge commit (root, api, web, mobile) is `SUCCESS`**

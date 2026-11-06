@@ -1,0 +1,29 @@
+/* What it does and doesn't do. Sits on product.css; only the one picture at the top is new. */
+.dd-flow{margin:0;display:flex;align-items:center;justify-content:center;gap:clamp(6px,1vw,14px)}
+.dd-box{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:clamp(16px,1.8vw,22px);border-radius:var(--r);background:#fff;box-shadow:0 0 0 1px var(--line)}
+.dd-box .pd-ic{margin-bottom:8px}
+.dd-box b{font-size:clamp(17px,1.5vw,20px);font-weight:600;letter-spacing:-.012em;color:var(--ink);text-wrap:balance}
+.dd-box span{font-size:16px;line-height:1.35;color:var(--ink-2);text-wrap:pretty}
+.dd-arrow{flex:none;width:24px;height:24px;color:var(--ink-3);stroke-width:1.8}
+
+@media (max-width:899.98px){
+  .dd-flow{max-width:560px}
+}
+@media (max-width:560px){
+  .dd-flow{flex-direction:column;align-items:stretch;gap:6px}
+  .dd-arrow{align-self:center;transform:rotate(90deg)}
+  .dd-box{flex-direction:row;flex-wrap:wrap;align-items:center;column-gap:14px}
+  .dd-box .pd-ic{margin:0;grid-row:span 2}
+  .dd-box b{flex:1 1 0;min-width:0}
+  .dd-box span{flex:1 0 100%;padding-left:calc(44px + 14px)}
+}
+
+/* Two-column table: the row head gets a real share of the width, so "A live map of your drivers" doesn't wrap word by word. */
+.pd-t--two tbody th{width:38%}
+.pd-t--two td{width:auto}
+@media (max-width:899.98px){.pd-t--two tbody th{width:42%}}
+@media (max-width:560px){.pd-t--two tbody th{width:auto}}
+@media (min-width:900px){.sc-q #report{grid-column:1/-1}}
+/* A sample card in the top layer (Security page): drop the section grid area the Product page gives it. */
+.pd-top .pd-s{grid-area:auto;align-self:center;margin-top:0;width:100%;max-width:440px;justify-self:end}
+@media (max-width:899.98px){.pd-top .pd-s{justify-self:start}}

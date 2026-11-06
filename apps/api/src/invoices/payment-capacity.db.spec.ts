@@ -292,15 +292,7 @@ describeDb("row 2299 payment capacity — real Postgres", () => {
     const d = await s.row(s.invs[0].id, 100, "DRAFT");
     const unused = {} as never;
     const commissions = { syncInvoiceCommissionSafe: async () => undefined } as never;
-    const ledger = new BookkeepingService(
-      prisma,
-      unused,
-      unused,
-      unused,
-      unused,
-      unused,
-      commissions,
-    );
+    const ledger = new BookkeepingService(prisma, unused, unused, unused, unused, commissions);
     await s.asTenant(() => ledger.recordPayment(s.invs[0].id, cash(100)));
     expect(await shape(s.invs[0].id)).toEqual(["DRAFT 100", "PAID 100"]);
     const rows = await overReserved(s.tenant.id);

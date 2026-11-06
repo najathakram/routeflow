@@ -2,6 +2,7 @@ import {
   computeLineSubtotal,
   formatQtySplit,
   invoiceLineQtyText,
+  isAboveListLine,
   normalizeBoxesPieces,
 } from "@routeflow/pricing";
 import { freeUnitsLabel } from "./buyer-cart-logic";
@@ -97,7 +98,11 @@ export function linePriceTag(input: {
   const original = Number(input.originalPrice);
   const unit = Number(input.unitPrice);
   if (priceType === "SPECIAL")
-    return { label: "Special", tone: "green", strikeOriginal: hasOriginal };
+    return {
+      label: "Special",
+      tone: "green",
+      strikeOriginal: hasOriginal && !isAboveListLine(input),
+    };
   if (priceType === "MANUAL" && hasOriginal && unit > original) {
     return { label: "Upsell", tone: "green", strikeOriginal: false };
   }

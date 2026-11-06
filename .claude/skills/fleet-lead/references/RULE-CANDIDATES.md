@@ -317,3 +317,169 @@ A candidate becomes a SKILL.md rule after it appears in 3 log entries. `promoted
 - candidate: Never run a bare npm ci on a shared checkout
   key: never run a bare npm ci on a shared checkout
   first: 2026-10-23
+- candidate: Never route a lane through a step its guard hook blocks; give the no-rewrite route
+  key: never route a lane through a step its guard hook blocks give the no rewrite route
+  first: 2026-10-25
+- candidate: A safety net that runs on the machine it protects dies with that machine
+  key: a safety net that runs on the machine it protects dies with that machine
+  first: 2026-10-25
+- candidate: A worktree is removable only when nothing else links into it
+  key: a worktree is removable only when nothing else links into it
+  first: 2026-10-25
+- candidate: A machine-wide limit lives in one shared file, not in each process's env
+  key: a machine wide limit lives in one shared file not in each process s env
+  first: 2026-10-25
+- candidate: A fresh worktree builds packages/pricing before any DB lane
+  key: a fresh worktree builds packages pricing before any db lane
+  first: 2026-10-25
+- candidate: A load gate reads a live pressure signal, never a sticky counter
+  key: a load gate reads a live pressure signal never a sticky counter
+  first: 2026-10-25
+- candidate: One full verify at a time per machine
+  key: one full verify at a time per machine
+  first: 2026-10-25
+- candidate: Never git worktree remove --force on the PC
+  key: never git worktree remove force on the pc
+  first: 2026-10-25
+- candidate: Route by service owner, not by idleness
+  key: route by service owner not by idleness
+  first: 2026-10-25
+- candidate: Batch Windows-desktop sends: one message per lane per round
+  key: batch windows desktop sends one message per lane per round
+  first: 2026-10-26
+- candidate: A fold always ships with its holds
+  key: a fold always ships with its holds
+  first: 2026-10-26
+- candidate: Full-workspace gates run on the PC, never the MacBook
+  key: full workspace gates run on the pc never the macbook
+  first: 2026-10-26
+- candidate: Cost is calls x context: batch reads, wait once in background, message only on action
+  key: cost is calls x context batch reads wait once in background message only on action
+  first: 2026-10-26
+- candidate: Route a DB lane only to a machine on the capability line
+  key: route a db lane only to a machine on the capability line
+  first: 2026-10-26
+- candidate: A per-machine knob lives in one shared place every process reads, never in a per-checkout gitignored file
+  key: a per machine knob lives in one shared place every process reads never in a per checkout gitignored file
+  first: 2026-10-26
+- candidate: Run the census spec set on every assembled train before the public flip
+  key: run the census spec set on every assembled train before the public flip
+  first: 2026-10-26
+- candidate: One heavy-slot entry per job
+  key: one heavy slot entry per job
+  first: 2026-10-26
+- candidate: Assign from an assignment record, never from verdict counts
+  key: assign from an assignment record never from verdict counts
+  first: 2026-10-26
+promoted: times from date u only (2026-10-27, 12x)
+- candidate: Bug filing runs only through the coordinator's bugs.mjs role
+  key: bug filing runs only through the coordinator s bugs mjs role
+  first: 2026-10-27
+- candidate: DB sitting pre-flight proves the backup tool runs before the window opens
+  key: db sitting pre flight proves the backup tool runs before the window opens
+  first: 2026-10-27
+- candidate: Never skip hooks is enforced by guard.mjs, not by brief text
+  key: never skip hooks is enforced by guard mjs not by brief text
+  first: 2026-10-27
+- candidate: Delta re-pin needs prior PASS from same slot
+  key: delta re pin needs prior pass from same slot
+  first: 2026-10-27
+- candidate: No code merge in the last 15 min of a watchdog window
+  key: no code merge in the last 15 min of a watchdog window
+  first: 2026-10-27
+- candidate: One card, one named owner session
+  key: one card one named owner session
+  first: 2026-10-27
+- candidate: A merge is not done until a head containing it has a green Verify
+  key: a merge is not done until a head containing it has a green verify
+  first: 2026-10-27
+- candidate: Relay owner decisions verbatim; a superseding decision says so in the same message
+  key: relay owner decisions verbatim a superseding decision says so in the same message
+  first: 2026-10-27
+- candidate: Bug ids are allocated serially: one open filing PR at a time
+  key: bug ids are allocated serially one open filing pr at a time
+  first: 2026-10-28
+- candidate: Merged worktrees are reclaimed every check, not when the disk is already full
+  key: merged worktrees are reclaimed every check not when the disk is already full
+  first: 2026-10-28
+- candidate: Owner questions route only through the lead
+  key: owner questions route only through the lead
+  first: 2026-10-28
+- candidate: A lane's worktree is removed when its PR merges or its lane ends; per-task npm ci is the exception, not the default
+  key: a lane s worktree is removed when its pr merges or its lane ends per task npm ci is the exception not the default
+  first: 2026-10-28
+- candidate: An item marked building with no PR or branch for 6 h is orphaned until its lane proves otherwise
+  key: an item marked building with no pr or branch for 6 h is orphaned until its lane proves otherwise
+  first: 2026-10-28
+- candidate: Gate-complete means PASSes AND a real green CI run id at the same sha
+  key: gate complete means passes and a real green ci run id at the same sha
+  first: 2026-10-28
+- candidate: A sha move from update-branch carries verdicts only with identical patch-id and file-disjoint master delta, posted on the board
+  key: a sha move from update branch carries verdicts only with identical patch id and file disjoint master delta posted on the board
+  first: 2026-10-28
+- candidate: A capability ruling lists each site's reachable roles from the guard hierarchy
+  key: a capability ruling lists each site s reachable roles from the guard hierarchy
+  first: 2026-10-28
+- candidate: Before an owner absence, set lane-to-lane routing so no relay depends on the lead's message budget
+  key: before an owner absence set lane to lane routing so no relay depends on the lead s message budget
+  first: 2026-10-28
+- candidate: Never skip hooks; a hook that rewrites master files on merge is a hook bug to file, not to bypass
+  key: never skip hooks a hook that rewrites master files on merge is a hook bug to file not to bypass
+  first: 2026-10-28
+- candidate: gate-complete = PASSes AND a real green CI run id at the same sha
+  key: gate complete passes and a real green ci run id at the same sha
+  first: 2026-10-28
+- candidate: Owner-only permissions are collected before the owner leaves
+  key: owner only permissions are collected before the owner leaves
+  first: 2026-10-28
+- candidate: One PR one name: bundles cite the PR number of their branch
+  key: one pr one name bundles cite the pr number of their branch
+  first: 2026-10-28
+- candidate: Builder ready-message carries full check-types exit code for every touched workspace
+  key: builder ready message carries full check types exit code for every touched workspace
+  first: 2026-10-28
+- candidate: agent temp cleanup = own subfolder by exact path, never a glob in a shared dir
+  key: agent temp cleanup own subfolder by exact path never a glob in a shared dir
+  first: 2026-10-28
+- candidate: Window open = re-run CI on every review-complete PR first
+  key: window open re run ci on every review complete pr first
+  first: 2026-10-28
+- candidate: api-touching pushes run on a host that can pass the api gate
+  key: api touching pushes run on a host that can pass the api gate
+  first: 2026-10-28
+- candidate: Every tree gets check-git-hooks before its first push, not only new ones
+  key: every tree gets check git hooks before its first push not only new ones
+  first: 2026-10-29
+- candidate: Train heads run the full web+api unit suites before push, not fast mode
+  key: train heads run the full web api unit suites before push not fast mode
+  first: 2026-10-30
+- candidate: One owner per job: never reassign without an ack-stop from the first owner
+  key: one owner per job never reassign without an ack stop from the first owner
+  first: 2026-10-30
+- candidate: A spec with a fixed-date fixture freezes the clock
+  key: a spec with a fixed date fixture freezes the clock
+  first: 2026-10-30
+- candidate: CI runs started public survive the private flip; size windows for merge+deploy only
+  key: ci runs started public survive the private flip size windows for merge deploy only
+  first: 2026-10-30
+- candidate: A deploy gate counts every service on the commit status, not a remembered number
+  key: a deploy gate counts every service on the commit status not a remembered number
+  first: 2026-10-30
+- candidate: One shared queue needs one grant rule: every waiter stamps its code version
+  key: one shared queue needs one grant rule every waiter stamps its code version
+  first: 2026-10-30
+- candidate: A local DB lane pass is not a CI lane pass until the lane's prerequisites match
+  key: a local db lane pass is not a ci lane pass until the lane s prerequisites match
+  first: 2026-10-30
+- candidate: A blocked item names its blocker in a field the board can check
+  key: a blocked item names its blocker in a field the board can check
+  first: 2026-10-30
+- candidate: A UI train member needs a text-type comment and apple-ux score before assembly
+  key: a ui train member needs a text type comment and apple ux score before assembly
+  first: 2026-10-31
+- candidate: A go to push names the verify it expects
+  key: a go to push names the verify it expects
+  first: 2026-10-31
+- candidate: Read a delete path before running it, not only its report
+  key: read a delete path before running it not only its report
+  first: 2026-10-31

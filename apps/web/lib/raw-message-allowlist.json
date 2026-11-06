@@ -27,10 +27,6 @@
     "count": 1,
     "why": "B986-8 the rest: per-surface raw message read, pending"
   },
-  "app/(dashboard)/credit-notes/[id]/page.tsx": {
-    "count": 1,
-    "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending (found by the AST scan: a read split across lines that the text scanner missed)"
-  },
   "app/(dashboard)/customers/[id]/page.tsx": {
     "count": 8,
     "why": "B986-7 orders + customers: per-surface raw message read, pending"
@@ -216,14 +212,6 @@
     "count": 2,
     "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
   },
-  "app/(marketing)/components/demo-scheduler.tsx": {
-    "count": 1,
-    "why": "B986-3 settings + auth: per-surface raw message read, pending"
-  },
-  "app/(marketing)/lib/demo-booking.ts": {
-    "count": 1,
-    "why": "B986-3 settings + auth: per-surface raw message read, pending"
-  },
   "app/(platform-admin)/admin/audit-logs/page.tsx": {
     "count": 1,
     "why": "B986-2 platform-admin: per-surface raw message read, pending"
@@ -335,11 +323,6 @@
   "components/RecordSupplierPaymentModal.tsx": {
     "count": 1,
     "why": "B991 (codes + structured fields first): reverted to today's behaviour so the surface is not made less actionable; pending"
-  },
-  "components/ScanInvoiceModal.tsx": {
-    "count": 1,
-    "permanent": true,
-    "why": "classification: msg only feeds the api-key regex, the toast copy is fixed"
   },
   "components/StatementReviewGrid.tsx": {
     "count": 3,

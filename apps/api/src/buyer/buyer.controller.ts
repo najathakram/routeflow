@@ -48,6 +48,7 @@ import { StatementService } from "./statement.service";
 import { StatementPdfService } from "./statement-pdf.service";
 import { CustomersService } from "../customers/customers.service";
 import { omitStaffOnlyCustomerFields } from "../customers/self-service-fields";
+import { withTaxIdLast4 } from "../customers/customer-identity";
 import { OrderTemplatesService } from "../order-templates/order-templates.service";
 import { UpdateBuyerOrderTemplateDto } from "../order-templates/dto/update-buyer-order-template.dto";
 import { AuthorizationsService } from "../authorizations/authorizations.service";
@@ -204,8 +205,8 @@ export class BuyerController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Get buyer's customer profile at the selected seller" })
-  getProfile(@CurrentBuyerCustomer() ctx: any) {
-    return omitStaffOnlyCustomerFields(ctx.customer);
+  async getProfile(@CurrentBuyerCustomer() ctx: any) {
+    return omitStaffOnlyCustomerFields(await withTaxIdLast4(this.prisma, ctx.customer));
   }
 
   @Get("orders")
@@ -309,6 +310,29 @@ export class BuyerController {
   @ApiOperation({ summary: "Get buyer's account statement at the selected seller" })
   getStatement(@CurrentBuyerCustomer() ctx: any) {
     return this.customersService.getStatementForOperator(ctx.customerId);
+  }
+
+  @Get("account-statement")
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({ summary: "Get buyer's open-balance account statement at the selected seller" })
+  getAccountStatement(@CurrentBuyerCustomer() ctx: any) {
+    // The buyer's view: no emailOnFile and none of the staff-only collection fields (SA-1078 S17).
+    return this.customersService.getAccountStatement(ctx.customerId, { staff: false });
+  }
+
+  @Get("account-statement/pdf")
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({
+    summary: "Render the buyer's open-balance statement PDF + return its signed URL",
+  })
+  async getAccountStatementPdf(@CurrentBuyerCustomer() ctx: any) {
+    // The customer comes from the buyer's seller link, never from the request; the PDF is built customer-shaped.
+    const url = await this.statementPdfService.generateCurrent(ctx.customerId);
+    return { url };
   }
 
   @Get("statements")
@@ -1117,8 +1141,8 @@ export class BuyerController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Get authenticated buyer's own profile" })
-  getMe(@CurrentBuyerCustomer() ctx: any) {
-    return omitStaffOnlyCustomerFields(ctx.customer);
+  async getMe(@CurrentBuyerCustomer() ctx: any) {
+    return omitStaffOnlyCustomerFields(await withTaxIdLast4(this.prisma, ctx.customer));
   }
 
   @Patch("me")

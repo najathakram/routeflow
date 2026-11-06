@@ -271,3 +271,34 @@ export interface BusinessCapabilitiesApplyResponse {
   changed: string[];
   summary: string[];
 }
+
+// ─── W1: the first question on a new account's dashboard ───────────────────────
+
+/** What the account admin ticks. Only these three keys are accepted; door payments and opens-as are not on the card. */
+export interface FirstRunAnswer {
+  delivery?: boolean;
+  shipping?: boolean;
+  counter?: boolean;
+}
+
+/** The marker's life: `pending` until answered; `answered` when the answer was applied; `closed` when a setup was kept. */
+export type FirstRunState = "pending" | "answered" | "closed";
+
+/**
+ * `GET /settings/fulfilment/first-run`. `state: null` means this account has no marker (not a new sign-up): no card.
+ * The three ticks and `hasOrder` feed the next-step links; `workspaceId` is the tenant slug a person types to sign in.
+ */
+export interface FirstRunStatus {
+  state: FirstRunState | null;
+  workspaceId: string;
+  delivery: boolean;
+  shipping: boolean;
+  counter: boolean;
+  hasOrder: boolean;
+}
+
+/** `POST /settings/fulfilment/first-run`: `applied` = the answer was written; `kept` = the setup was already changed, so it was left alone. */
+export interface FirstRunResult {
+  outcome: "applied" | "kept";
+  state: FirstRunState;
+}

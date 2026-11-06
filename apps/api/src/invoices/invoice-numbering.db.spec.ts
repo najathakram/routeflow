@@ -73,6 +73,11 @@ import { EstimatesService } from "../estimates/estimates.service";
 import { NumberingService } from "../import/numbering.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { UserRole } from "@prisma/client";
+import { NO_PRICE_RIGHTS } from "../common/testing/no-rights-actor";
+
+/** The seeded items are custom lines with a typed price (SA-1034 rule 4): the actor needs price-edit rights, and TENANT_ADMIN holds them with no permissions read. */
+const ADMIN_ACTOR = { ...NO_PRICE_RIGHTS, role: UserRole.TENANT_ADMIN };
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -306,10 +311,13 @@ describeDb(
     /** Drives the real, public mint path: EstimatesService.create() under a tenant context. */
     async function mintEstimate(tenantId: string, customerId: string): Promise<any> {
       return tenantCtx.run(tenantId, () =>
-        estimatesService.create({
-          customerId,
-          items: [{ description: "widget", qty: 1, unitPrice: 10 }],
-        } as any),
+        estimatesService.create(
+          {
+            customerId,
+            items: [{ description: "widget", qty: 1, unitPrice: 10 }],
+          } as any,
+          ADMIN_ACTOR,
+        ),
       );
     }
 
@@ -545,7 +553,7 @@ describeDb(
     // AFTER reservation now leaves a gap on purpose (documented, accepted). This pin
     // replaces it with the invariant D1 actually buys: the reservation must never hold
     // the NumberingSequence row lock across the length of a caller's own transaction.
-    it("T1j B100 reservation does not block a concurrent mint: tx A reserves and then holds its own transaction open for 1500ms before committing; a concurrent reserveNext for the SAME tenant-year must resolve in under 500ms (today: the in-tx row lock forces it to wait for tx A's commit, so this FAILS on the current in-tx-lock design; it PASSES once the reservation commits in its own short standalone transaction before caller work starts, cause-ruling.md fix-round-2.md D1)", async () => {
+    it("T1j B100 reservation does not block a concurrent mint: tx A reserves and then holds its own transaction open for 1500ms before committing; a concurrent reserveNext for the SAME tenant-year must resolve before tx A releases its hold (today: the in-tx row lock forces it to wait for tx A's commit, so this FAILS on the current in-tx-lock design; it PASSES once the reservation commits in its own short standalone transaction before caller work starts, cause-ruling.md fix-round-2.md D1)", async () => {
       const tenantA = await seedTenant("lock-a");
       await seedNumberingSequence(tenantA.id, YEAR, 700);
 
@@ -559,10 +567,12 @@ describeDb(
       // that calls reserveNext as part of its own work, then keeps doing OTHER work
       // (the sleep) before committing — exactly the shape createInvoiceFromOrder/
       // convertToInvoice have today.
+      const events: string[] = [];
       const txAPromise = tenantCtx.run(tenantA.id, () =>
         prisma.tenantTransaction(async () => {
           const num = await numberingService.reserveNext("INVOICE", { year: YEAR });
           await new Promise((resolve) => setTimeout(resolve, 1500));
+          events.push("A:released");
           return num;
         }),
       );
@@ -574,6 +584,7 @@ describeDb(
       const secondNumber = await tenantCtx.run(tenantA.id, () =>
         numberingService.reserveNext("INVOICE", { year: YEAR }),
       );
+      events.push("B:resolved");
       const elapsed = performance.now() - start;
 
       const firstNumber = await txAPromise;
@@ -581,13 +592,17 @@ describeDb(
       // Sanity: still exactly two distinct numbers minted, never a double-mint.
       expect(new Set([firstNumber, secondNumber]).size).toBe(2);
 
-      // THE pin. Today's in-tx-lock design holds the NumberingSequence row lock for
-      // the full 1500ms of tx A's simulated caller work — tx B's own increment blocks
-      // on that row lock and only proceeds after tx A commits, so elapsed lands near
-      // ~1500ms+ here, RED against the < 500 budget. After D1, the reservation commits
-      // in its own short standalone transaction before tx A's sleep even begins, so
-      // tx B never contends for the row and resolves in a handful of milliseconds.
-      expect(elapsed).toBeLessThan(500);
+      // THE pin, as an ORDERING assertion (L-165: never assert wall-clock against a tight
+      // budget). Today's in-tx-lock design holds the NumberingSequence row lock for the
+      // full 1500ms of tx A's simulated caller work, so tx B's own increment blocks on that
+      // row lock and can only resolve AFTER tx A's work ends ("A:released" first), RED.
+      // After D1, the reservation commits in its own short standalone transaction before
+      // tx A's sleep even begins, so tx B never contends and resolves BEFORE tx A releases.
+      // Holds under any host load; `elapsed` is information only.
+      // eslint-disable-next-line no-console
+      console.info(`T1j events: ${events.join(",")}; B took ${Math.round(elapsed)}ms (info only)`);
+      expect(events).toContain("B:resolved");
+      expect(events.indexOf("B:resolved")).toBeLessThan(events.indexOf("A:released"));
     }, 30_000);
 
     // B100/F16b fix-round-2 D2 (E1, concurrent with this file): nextEstNumber()

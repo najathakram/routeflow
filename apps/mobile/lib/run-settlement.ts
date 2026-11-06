@@ -6,11 +6,18 @@
  * truth. F05 (spec R6/R8) moved the actual settlement record server-side:
  * `POST /route-runs/:id/settlement` persists it into the run's own
  * `settlementNote`/`settlementVariance` columns — it is no longer appended to
- * `RouteRun.notes` via PATCH. `shouldForceSettlement` below gates on that
- * server truth (OR'd with this device's own signal for query-staleness right
- * after a collection). Pure — no RN import — Jest-testable.
+ * `RouteRun.notes` via PATCH. `shouldForceSettlement` (re-exported from
+ * `@routeflow/pricing` at the foot of this file) gates on that server truth.
+ * Pure — no RN import — Jest-testable.
  */
-import { roundMoney } from "@routeflow/pricing";
+import {
+  computeVariance,
+  expectedPhysicalCash,
+  isReconciled,
+  roundMoney,
+  shouldForceSettlement,
+} from "@routeflow/pricing";
+import type { ForceSettlementRun } from "@routeflow/pricing";
 import type { PaymentMethod } from "@routeflow/types";
 
 // #2722: the methods a driver can collect on a run, in display order — a subset of the shared
@@ -123,16 +130,6 @@ export function settlementTotalsReady(args: {
   return args.serverLoaded && args.fetchedAfterMount;
 }
 
-/** counted - expected, cents-rounded. Positive = over, negative = short. */
-export function computeVariance(expectedCash: number, countedCash: number): number {
-  return roundMoney(countedCash - expectedCash);
-}
-
-/** Matches the acceptance criteria's "±$0.01" tolerance. */
-export function isReconciled(variance: number): boolean {
-  return Math.abs(variance) <= 0.01;
-}
-
 /**
  * Structured line appended to RouteRun.notes — the only persistence
  * primitive available without a new API endpoint (PATCH /route-runs/:id
@@ -164,45 +161,7 @@ export function buildSettlementNote(args: {
   );
 }
 
-export interface ForceSettlementRun {
-  collectedPayments?: { cashTotal: number; checkTotal?: number; count?: number } | null;
-  settlementNote?: string | null;
-}
-
-/**
- * The server's own expected figure for the settlement screen, on the SAME
- * basis as everything else here: physical money = CASH + CHECK. The API keeps
- * the two split (`getRunCashCollections` → `{ cashTotal, checkTotal }`) for
- * reporting, so a consumer that reads `cashTotal` alone silently drops every
- * check the driver is carrying and manufactures a variance. Returns null when
- * the payload has not loaded yet, so callers can fall back to this device's
- * own tally (`summarizeCollections().cashTotal`, same basis) rather than
- * reconciling against a bogus $0.00.
- */
-export function expectedPhysicalCash(
-  collected: { cashTotal: number; checkTotal?: number } | null | undefined,
-): number | null {
-  if (!collected) return null;
-  return roundMoney(collected.cashTotal + (collected.checkTotal ?? 0));
-}
-
-/**
- * REG-B152 (spec R8): server-truth settlement gate. Forces the end-of-run
- * settlement screen when the run payload shows cash/check actually collected
- * (`collectedPayments.cashTotal + checkTotal > 0`) and no `settlementNote` is
- * on record yet — the server, not this device's local tally, is the truth
- * here. OR'd with `storeSignal` (this device's own "did I collect cash/check
- * this run" signal) to cover the query-staleness window right after a
- * collection, before `collectedPayments` has been refetched — an AND here
- * would strand exactly that case (see the test's fourth call: no
- * `collectedPayments` yet + a true store signal must still force settlement).
- * Either basis is suppressed once `settlementNote` is already on record.
- */
-export function shouldForceSettlement(
-  run: ForceSettlementRun | null | undefined,
-  storeSignal = false,
-): boolean {
-  const noteMissing = run?.settlementNote == null;
-  const serverCashCollected = (expectedPhysicalCash(run?.collectedPayments) ?? 0) > 0;
-  return (serverCashCollected && noteMissing) || (storeSignal && noteMissing);
-}
+// SA-1098 A-1 (PR-S): these four moved to @routeflow/pricing so the web run page and the API share
+// them. Re-exported so no native screen or spec changes.
+export { computeVariance, expectedPhysicalCash, isReconciled, shouldForceSettlement };
+export type { ForceSettlementRun };

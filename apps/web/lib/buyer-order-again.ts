@@ -1,3 +1,4 @@
+import { TERMINAL_ORDER_STATUSES } from "@routeflow/types";
 import { normalizeCartLine } from "./buyer-cart-line";
 import type { CartItem } from "./buyer-cart";
 
@@ -9,7 +10,7 @@ interface OrderAgainLine {
 }
 
 /** Order statuses that count as a past order the buyer can order again. */
-export const ORDER_AGAIN_STATUSES = ["DELIVERED", "PARTIALLY_DELIVERED", "CANCELLED"];
+export const ORDER_AGAIN_STATUSES: string[] = [...TERMINAL_ORDER_STATUSES, "PARTIALLY_DELIVERED"];
 
 /**
  * F32: the cart lines for "Order again". Catalog lines only: a cancelled line (unless the whole order is cancelled) and a seller-added

@@ -176,6 +176,7 @@ describe("OperatorPermissionsService.mine (the /me payload)", () => {
       groups: ALL,
       version: 0,
       mode: "shadow",
+      priceEditAllowed: true,
     });
   });
 
@@ -198,6 +199,7 @@ describe("OperatorPermissionsService.mine (the /me payload)", () => {
       groups: [],
       version: 0,
       mode: "shadow",
+      priceEditAllowed: false,
     });
   });
 });

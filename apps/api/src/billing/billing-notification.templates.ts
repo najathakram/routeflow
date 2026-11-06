@@ -112,7 +112,7 @@ export function trialEndingTemplate(params: {
   const bodyLine =
     params.milestone === "TRIAL_ENDING_EXPIRY"
       ? `Your RouteFlow trial for <strong>${escapeHtml(params.businessName)}</strong> ended on ${escapeHtml(params.trialEndsAt)}. Your account is now read-only until you choose a plan.`
-      : `Your RouteFlow trial for <strong>${escapeHtml(params.businessName)}</strong> ends on ${escapeHtml(params.trialEndsAt)}. Choose a plan to keep everything running without interruption.`;
+      : `Your RouteFlow trial for <strong>${escapeHtml(params.businessName)}</strong> ends on ${escapeHtml(params.trialEndsAt)}. Choose a plan by then to keep using RouteFlow.`;
   const html = baseLayout({
     tagline: "Trial",
     bodyHtml: `

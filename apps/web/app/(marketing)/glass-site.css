@@ -929,6 +929,15 @@
   color: var(--g-link);
 }
 
+/* A dated notice at the top of a legal page (changes that take effect later, or a recent update). */
+.glass-page .legal-page .legal-notice {
+  padding: 14px 18px;
+  border: 1px solid var(--g-glass-border);
+  border-left: 4px solid var(--g-link);
+  border-radius: var(--g-r-md);
+  background: #ffffff8c;
+}
+
 /* ── ProblemSection / DifferenceSection / BuyingConfidence
    (components/conversion-sections.tsx) ─────────────────────────────────── */
 
@@ -1401,6 +1410,13 @@
 }
 
 .glass-page .story-top {
+  color: var(--g-eyebrow);
+}
+
+/* W8 / S6: marketing.css's dark-card rule `.story-top > span:last-child` (#abc3e4, written for
+   the old navy card) outranks the plain rule above, so the line "One order. Every team." was
+   light blue on the light glass card, measured 1.5-1.65:1. One more class makes this win. */
+.rf-marketing .glass-page .story-top > span:last-child {
   color: var(--g-eyebrow);
 }
 

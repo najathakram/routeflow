@@ -5,15 +5,25 @@ import { safeTextErrorCopy } from "./safe-text-error-copy";
 
 /**
  * B979 (owner rule: no raw strings in the UI): the customer form's error banner shows FIXED copy,
- * chosen by the server's `body.code`, then a closed allow-list of the two server sentences that are
+ * chosen by the server's `body.code`, then a closed allow-list of the server sentences that are
  * already product text, then the HTTP status class. It never shows axios's "Request failed with
  * status code …", an unlisted server message, or a camelCase key.
  */
+
+/** B981: the customer-create refusals by `body.code` (the exact sentences below stay as a fallback for an older server). */
+export const CUSTOMER_CODE_COPY: Record<string, string> = {
+  [API_ERROR_CODES.CUSTOMER_EMAIL_OR_USERNAME_TAKEN]:
+    "That email is already in use. Use a different email.",
+  [API_ERROR_CODES.CUSTOMER_SALES_AGENT_UNKNOWN]:
+    "That sales agent is no longer available. Pick another.",
+};
 
 /** Exact server sentences (customers.service create/update) that name a fixable cause. */
 export const KNOWN_SERVER_SENTENCES: Record<string, string> = {
   "Email or username already taken": "That email is already in use. Use a different email.",
   "Unknown sales agent": "That sales agent is no longer available. Pick another.",
+  // Thrown at six places (customers, compliance input, routes, the statement send); one sentence for all of them.
+  "Restore the customer first": "This customer has been removed. Restore it first.",
 };
 
 const CUSTOMER_CAP_COPY =
@@ -48,6 +58,11 @@ export function customerFormErrorCopy(err: unknown): string {
   if (data?.code === API_ERROR_CODES.ADDON_GATE) return PLAN_COPY;
   // RO-1: a blocked write against a READ_ONLY tenant, worded like the read-only toast.
   if (data?.code === API_ERROR_CODES.READ_ONLY) return READ_ONLY_COPY;
+  if (
+    typeof data?.code === "string" &&
+    Object.prototype.hasOwnProperty.call(CUSTOMER_CODE_COPY, data.code)
+  )
+    return CUSTOMER_CODE_COPY[data.code];
   const message = data?.message;
   if (
     typeof message === "string" &&

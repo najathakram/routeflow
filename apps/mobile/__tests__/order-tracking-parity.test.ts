@@ -25,6 +25,12 @@ describe("buyer tracking poll: mobile and web refresh in the same states (#2095)
     expect(trackingRefetchInterval(data) !== false).toBe(isTrackingLive(data));
   });
 
+  it("a REFUSED order never polls on either platform, even on a live run (SA-1101)", () => {
+    const data = { status: "REFUSED", tracking: { runStatus: "IN_PROGRESS" } };
+    expect(trackingRefetchInterval(data)).toBe(false);
+    expect(isTrackingLive(data)).toBe(false);
+  });
+
   it("no data: neither polls", () => {
     expect(trackingRefetchInterval(undefined)).toBe(false);
     expect(isTrackingLive(undefined)).toBe(false);

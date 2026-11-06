@@ -4,7 +4,7 @@
  * bakes exactly that. `scripts/assert-shell-env.cjs` refuses a store build / OTA publish without
  * BOTH vars; it is wired into the EAS build hook and the `ota:publish` script. Pinned here:
  * the verdicts, parity with readShellConfig, the real exit code, the wiring, and the Railway
- * web export's explicit decision (stays native: react-native-webview does not run on web).
+ * (the Railway web export is retired: that service only redirects).
  */
 import { spawnSync } from "child_process";
 import { readFileSync } from "fs";
@@ -113,13 +113,5 @@ describe("wiring", () => {
 
   it("exposes the guard as a script the owner can run against any env", () => {
     expect(pkg.scripts["check:shell-env"]).toContain("assert-shell-env.cjs");
-  });
-});
-
-describe("Railway mobile-web export (Dockerfile)", () => {
-  const dockerfile = readFileSync(join(root, "Dockerfile"), "utf8");
-
-  it("states the shell is off explicitly, so 'unset' is never the decision", () => {
-    expect(dockerfile).toMatch(/^ENV EXPO_PUBLIC_WEB_SHELL=off$/m);
   });
 });

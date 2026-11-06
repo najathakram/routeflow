@@ -45,8 +45,9 @@ import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { AssignToSectionModal } from "@/components/AssignToSectionModal";
 import { RegulatedScopeTabs } from "@/components/RegulatedScopeTabs";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { QuickEditCell, type EditRecord } from "./_components/QuickEditCell";
+import { QuickEditCell, type CellEdit, type EditRecord } from "./_components/QuickEditCell";
 import { quickPackEdit } from "@/lib/quick-edit-pack";
+import { usePackReadingSave } from "@/components/PackReadingAsk";
 import { SectionEditCell } from "./_components/SectionEditCell";
 import {
   PortalBulkButtons,
@@ -56,6 +57,12 @@ import {
 } from "./_components/PortalVisibilityControls";
 import { portalBadge, portalVisibleFilterParam } from "@/lib/product-portal-visibility-ui";
 import { NewFamilyButton } from "@/components/family/NewFamilyButton";
+import {
+  familyMoveResult,
+  familyMoveToast,
+  useFamilyMoveAsk,
+  type FamilyMoveAnswer,
+} from "@/components/family/FamilyMoveAsk";
 import { deactivateFailureToast, isReadOnlyRefusal } from "@/lib/product-reactivation-refusal";
 import { BulkDeleteSkipReport, type SkippedProduct } from "@/components/BulkDeleteSkipReport";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
@@ -81,6 +88,7 @@ const UW = unitWords();
 
 interface ApiProduct {
   id: string;
+  kind?: string;
   name: string;
   sku?: string;
   barcode?: string;
@@ -318,7 +326,7 @@ function makeTableColumns(
     product: ApiProduct,
     field: string,
     newVal: string,
-    record: EditRecord,
+    record: CellEdit,
   ) => Promise<void | false>,
   barcodeRefs: React.MutableRefObject<Record<string, React.RefObject<HTMLInputElement | null>>>,
   productIds: string[],
@@ -387,15 +395,17 @@ function makeTableColumns(
       const p = row.original;
       if (quickEditMode) {
         return (
-          <QuickEditCell
-            productId={p.id}
-            productName={p.name}
-            field="msrp"
-            type="number"
-            value={p.msrp != null ? parseFloat(String(p.msrp)).toFixed(2) : ""}
-            quickEditMode={quickEditMode}
-            onSave={(newVal, rec) => onQuickSave(p, "msrp", newVal, rec)}
-          />
+          <div onClick={(e) => e.stopPropagation()}>
+            <QuickEditCell
+              productId={p.id}
+              productName={p.name}
+              field="msrp"
+              type="number"
+              value={p.msrp != null ? parseFloat(String(p.msrp)).toFixed(2) : ""}
+              quickEditMode={quickEditMode}
+              onSave={(newVal, rec) => onQuickSave(p, "msrp", newVal, rec)}
+            />
+          </div>
         );
       }
       return (
@@ -653,18 +663,21 @@ function makeTableColumns(
       cell: ({ row }) => {
         const p = row.original;
         if (quickEditMode) {
+          // The row click opens the product, and that would take the first-pack question away with this page.
           return (
-            <QuickEditCell
-              productId={p.id}
-              productName={p.name}
-              field="unitsPerBox"
-              type="number"
-              min={1}
-              step={1}
-              value={p.unitsPerBox != null ? String(p.unitsPerBox) : ""}
-              quickEditMode={quickEditMode}
-              onSave={(val, rec) => onQuickSave(p, "unitsPerBox", val, rec)}
-            />
+            <div onClick={(e) => e.stopPropagation()}>
+              <QuickEditCell
+                productId={p.id}
+                productName={p.name}
+                field="unitsPerBox"
+                type="number"
+                min={1}
+                step={1}
+                value={p.unitsPerBox != null ? String(p.unitsPerBox) : ""}
+                quickEditMode={quickEditMode}
+                onSave={(val, rec) => onQuickSave(p, "unitsPerBox", val, rec)}
+              />
+            </div>
           );
         }
         return <span className="text-navy/70">{p.unitsPerBox ?? "—"}</span>;
@@ -683,17 +696,24 @@ function makeTableColumns(
         const tierKey = `priceTier${tier}` as keyof ApiProduct;
         const val = p[tierKey] as string | undefined;
         if (quickEditMode) {
+          // The row click opens the product, so a click here must stop at the cell, as the other edit cells do.
           return (
-            <QuickEditCell
-              productId={p.id}
-              productName={p.name}
-              field={`priceTier${tier}`}
-              value={val ? parseFloat(String(val)).toFixed(2) : ""}
-              quickEditMode={quickEditMode}
-              onSave={async (newVal, rec) => {
-                await onQuickSave(p, `priceTier${tier}`, newVal || "0", rec);
-              }}
-            />
+            <div onClick={(e) => e.stopPropagation()}>
+              <QuickEditCell
+                productId={p.id}
+                productName={p.name}
+                field={`priceTier${tier}`}
+                value={parseFloat(String(val)) > 0 ? parseFloat(String(val)).toFixed(2) : ""}
+                quickEditMode={quickEditMode}
+                // SA-1092: "0" is how a clear is saved, and how Undo takes a blank cell back ("" reads as unchanged).
+                onSave={(newVal, rec) =>
+                  onQuickSave(p, `priceTier${tier}`, newVal || "0", {
+                    ...rec,
+                    oldValue: rec.oldValue || "0",
+                  })
+                }
+              />
+            </div>
           );
         }
         // Normal view: read-only display
@@ -786,6 +806,7 @@ export default function ProductsPage() {
   const hasMsrpAddon = useHasAddon(MSRP_ADDON);
   const { data: tierLabels } = useTierLabels();
   const updateProduct = useUpdateProduct();
+  const packSave = usePackReadingSave(updateProduct);
   const bulkDelete = useBulkDeleteProducts();
 
   // Section names must resolve for deactivated sections too (a product can still
@@ -809,8 +830,26 @@ export default function ProductsPage() {
   // Refs map for barcode scanner row-jump: productId → ref of its barcode input
   const barcodeRefs = React.useRef<Record<string, React.RefObject<HTMLInputElement | null>>>({});
 
+  const familyMove = useFamilyMoveAsk();
+  const askFamilyMove = familyMove.ask;
+  /** Only a family's price save asks; anything else carries nothing extra. */
+  const askFamily = React.useCallback(
+    (
+      product: Pick<ApiProduct, "id" | "kind">,
+      updates: Record<string, unknown>,
+    ): Promise<FamilyMoveAnswer> => {
+      const prices = Object.fromEntries(
+        Object.entries(updates).filter(([k]) => k === "pricePerUnit" || k.startsWith("priceTier")),
+      );
+      return product.kind === "FAMILY" && Object.keys(prices).length > 0
+        ? askFamilyMove(product.id, prices)
+        : Promise.resolve({});
+    },
+    [askFamilyMove],
+  );
+
   const handleQuickSave = React.useCallback(
-    async (product: ApiProduct, field: string, newVal: string, record: EditRecord) => {
+    async (product: ApiProduct, field: string, newVal: string, record: CellEdit) => {
       // SA-797a: the size as a number, with the pack the cell read; undo / redo carry their own expected pack.
       if (field === "unitsPerBox") {
         const pack = quickPackEdit(product, newVal);
@@ -819,11 +858,15 @@ export default function ProductsPage() {
           toast({ title: pack.message, variant: "error" });
           return false;
         }
-        await updateProduct.mutateAsync({ id: product.id, ...pack.save });
+        // SA-946: closed: nothing saved, the cell stays open. Answered: Undo can't take a conversion back, so no record.
+        const stock = Number(product.currentStock ?? 0);
+        const saved = await packSave.mutateAsync({ id: product.id, ...pack.save }, stock);
+        if (!saved) return false;
         toast({ title: `${field} updated`, variant: "success" });
+        if (saved.answered) return;
         setUndoStack((prev) => [
           ...prev.slice(-19),
-          { ...record, oldValue: pack.undo, newValue: pack.redo },
+          { ...record, kind: product.kind, oldValue: pack.undo, newValue: pack.redo },
         ]);
         setRedoStack([]);
         return;
@@ -861,11 +904,16 @@ export default function ProductsPage() {
         ladderNote = ladderChangeNote(moved, (n) => productTierLabel(tierLabels, n));
       }
 
-      await updateProduct.mutateAsync(updates);
+      // SA-1082 A-1: a family save that changes a price asks first. Closing the question saves nothing; the cell stays open.
+      const answer = await askFamily(product, updates);
+      if (!answer) return false;
+      const saved = await updateProduct.mutateAsync({ ...updates, ...answer });
       // A save that moved other tiers names them (SA: never silent).
+      const movedNote = familyMoveResult(answer.moveVariantIds?.length ?? 0, saved?.movedVariants);
+      const quickNote = [ladderNote, movedNote].filter(Boolean).join(" ");
       toast({
         title: `${field} updated`,
-        ...(ladderNote ? { description: ladderNote } : {}),
+        ...(quickNote ? { description: quickNote } : {}),
         variant: "success",
       });
 
@@ -880,10 +928,13 @@ export default function ProductsPage() {
         oldValue[k] = k === field ? record.oldValue : (productAsRecord[k] ?? null);
         newValue[k] = updates[k];
       }
-      setUndoStack((prev) => [...prev.slice(-19), { ...record, oldValue, newValue }]);
+      setUndoStack((prev) => [
+        ...prev.slice(-19),
+        { ...record, kind: product.kind, oldValue, newValue },
+      ]);
       setRedoStack([]);
     },
-    [updateProduct, toast, tierLabels],
+    [updateProduct, toast, tierLabels, askFamily],
   );
 
   // Regulated section + subcategory save from the Section Quick-Edit cell — an
@@ -933,6 +984,7 @@ export default function ProductsPage() {
         {
           productId: product.id,
           productName: product.name,
+          kind: product.kind,
           field: "section",
           oldValue: fullPrior,
           newValue: fullPatch,
@@ -952,12 +1004,25 @@ export default function ProductsPage() {
       ? (value as Record<string, unknown>)
       : { [field]: value };
 
+  /** SA-1082 A-5: Undo and Redo save a family's price like any other save, so they ask first. Null: nothing was saved. */
+  const replayEdit = async (record: EditRecord, value: EditRecord["oldValue"]) => {
+    const patch = asPatch(record.field, value);
+    const answer = await askFamily({ id: record.productId, kind: record.kind }, patch);
+    if (!answer) return null;
+    const saved = await updateProduct.mutateAsync({ id: record.productId, ...patch, ...answer });
+    return familyMoveToast(answer, saved);
+  };
+
   const handleUndo = async () => {
     const record = undoStack[undoStack.length - 1];
     if (!record) return;
-    const patch = asPatch(record.field, record.oldValue);
-    await updateProduct.mutateAsync({ id: record.productId, ...patch });
-    toast({ title: `Undone: ${record.productName} · ${record.field}`, variant: "success" });
+    const note = await replayEdit(record, record.oldValue);
+    if (!note) return;
+    toast({
+      title: `Undone: ${record.productName} · ${record.field}`,
+      ...note,
+      variant: "success",
+    });
     setUndoStack((prev) => prev.slice(0, -1));
     setRedoStack((prev) => [...prev, record]);
   };
@@ -965,12 +1030,19 @@ export default function ProductsPage() {
   const handleRedo = async () => {
     const record = redoStack[redoStack.length - 1];
     if (!record) return;
-    const patch = asPatch(record.field, record.newValue);
-    await updateProduct.mutateAsync({ id: record.productId, ...patch });
-    toast({ title: `Redone: ${record.productName} · ${record.field}`, variant: "success" });
+    const note = await replayEdit(record, record.newValue);
+    if (!note) return;
+    toast({
+      title: `Redone: ${record.productName} · ${record.field}`,
+      ...note,
+      variant: "success",
+    });
     setRedoStack((prev) => prev.slice(0, -1));
     setUndoStack((prev) => [...prev, record]);
   };
+
+  // Redo needs the bar after the only edit is undone, so the bar names whichever record is next.
+  const barRecord = undoStack[undoStack.length - 1] ?? redoStack[redoStack.length - 1];
 
   const handleEditPrice = (product: ApiProduct) => {
     setEditingPriceId(product.id);
@@ -991,10 +1063,15 @@ export default function ProductsPage() {
         : {};
       Object.assign(updates, moved);
       const ladderNote = ladderChangeNote(moved, (n) => productTierLabel(tierLabels, n));
-      await updateProduct.mutateAsync(updates);
+      // SA-1082 A-1: closing the question saves nothing, and the box stays open.
+      const answer = product ? await askFamily(product, updates) : {};
+      if (!answer) return;
+      const saved = await updateProduct.mutateAsync({ ...updates, ...answer });
+      const movedNote = familyMoveResult(answer.moveVariantIds?.length ?? 0, saved?.movedVariants);
+      const note = [ladderNote, movedNote].filter(Boolean).join(" ");
       toast({
         title: "Price updated",
-        ...(ladderNote ? { description: ladderNote } : {}),
+        ...(note ? { description: note } : {}),
         variant: "success",
       });
     } catch {
@@ -1573,6 +1650,8 @@ export default function ProductsPage() {
         nameById={skipNames}
       />
 
+      {familyMove.dialog}
+
       {/* Bulk delete confirmation */}
       <ConfirmDialog
         open={showBulkDeleteConfirm}
@@ -1751,17 +1830,19 @@ export default function ProductsPage() {
       )}
 
       {/* Floating undo/redo bar */}
-      {undoStack.length > 0 && (
+      {barRecord && (
         <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 flex items-center gap-3 rounded-full bg-navy px-5 py-2.5 shadow-xl text-sm text-white">
-          <button
-            onClick={handleUndo}
-            className="flex items-center gap-1.5 hover:opacity-80 transition-opacity"
-            title="Undo last change"
-          >
-            <Undo2 className="h-3.5 w-3.5" /> Undo
-          </button>
+          {undoStack.length > 0 && (
+            <button
+              onClick={handleUndo}
+              className="flex items-center gap-1.5 hover:opacity-80 transition-opacity"
+              title="Undo last change"
+            >
+              <Undo2 className="h-3.5 w-3.5" /> Undo
+            </button>
+          )}
           <span className="text-white/40 text-xs max-w-[200px] truncate">
-            {undoStack[undoStack.length - 1].productName} · {undoStack[undoStack.length - 1].field}
+            {barRecord.productName} · {barRecord.field}
           </span>
           {redoStack.length > 0 && (
             <button
@@ -1784,6 +1865,7 @@ export default function ProductsPage() {
           </button>
         </div>
       )}
+      {packSave.dialog}
     </div>
   );
 }

@@ -18,7 +18,7 @@ const BASE = process.env.PLAYWRIGHT_BASE_URL ?? "";
 const SKU = "E2E-FIX-CASEDEFAULT";
 const ID = {
   grid: "units-v2-grid",
-  pointer: "units-v2-add-unit-pointer",
+  addOpen: "units-v2-add-open",
   addPanel: "units-v2-add-panel",
   addName: "units-v2-add-name",
   addN: "units-v2-add-n",
@@ -35,29 +35,20 @@ async function openProduct(page: Page, context: Parameters<typeof setTenantCooki
   return { ...ctx, productId: product.id };
 }
 
-/** The table and the phone cards both render the pointer; only one is visible at a width. */
-const visible = (page: Page, testId: string) => page.locator(`[data-testid="${testId}"]:visible`);
-
 for (const vp of VIEWPORTS) {
-  test.describe(`Units v2 K10e (Piece pointer, default Undo) @ ${vp.name}`, () => {
+  test.describe(`Units v2 K10e (Piece from Add a unit, default Undo) @ ${vp.name}`, () => {
     test.describe.configure({ mode: "serial" });
     test.use({ viewport: { width: vp.width, height: vp.height } });
 
-    test("F07: a missing Piece is added from the grid pointer (Contains 1, name locked to Piece)", async ({
+    test("F07: a missing Piece can be added from Add a unit (Contains 1, name locked to Piece)", async ({
       page,
       context,
     }, info) => {
       const ctx = await openProduct(page, context);
       try {
-        const pointer = visible(page, ID.pointer);
-        await expect(
-          pointer,
-          `${SKU} must have no 1-piece unit - run \`node apps/api/scripts/e2e-seed.js\` on a fresh DB`,
-        ).toHaveCount(1);
-        await pointer.click();
-
+        await page.getByTestId(ID.addOpen).click();
         await expect(page.getByTestId(ID.addPanel)).toBeVisible();
-        await expect(page.getByTestId(ID.addN)).toHaveValue("1");
+        await page.getByTestId(ID.addN).fill("1");
         await expect(page.getByTestId(ID.addName)).toHaveValue("Piece");
         await expect(page.getByTestId(ID.addName)).toHaveAttribute("readonly", "");
         await expect(page.getByTestId("units-v2-add-name-hint")).toContainText(
@@ -75,8 +66,6 @@ for (const vp of VIEWPORTS) {
         expect(res.request().postDataJSON()).toEqual({ label: "Piece", factorToBase: 1 });
 
         await expect(page.getByTestId(ID.addPanel)).toHaveCount(0);
-        // the Piece now exists: the grid has no "Add a Piece unit" pointer left
-        await expect(visible(page, ID.pointer)).toHaveCount(0);
       } finally {
         try {
           const list = await page.request.get(`${ctx.api}/products/${ctx.productId}/units`, {

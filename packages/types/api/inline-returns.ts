@@ -50,6 +50,12 @@ export interface QuoteInlineReturnRequest {
    *  without it); a named customer sends it only to pin the matching to that one order. Must be the customer's own
    *  counter sale or delivered order (400 `SOURCE_SALE_INVALID`). */
   sourceOrderId?: string;
+  /** SA-1060 A-4/A-5: the order the return lands on: one being EDITED (the order edit's Returns section), or the merge target
+   *  (the New order merge prompt asks once more, for its line). The counter's sale screen and the Returns dialog send nothing.
+   *  The quote then prices against the matching set as it will be after the revert of that order's own SENT invoice, the same
+   *  set the edit's dry run uses. Must be this customer's own order (400 `SOURCE_SALE_INVALID`). The client never sends
+   *  invoice ids. */
+  editingOrderId?: string;
 }
 
 // ─── Request: POST /returns/inline/capture ───────────────────────────────────────
@@ -180,6 +186,10 @@ export interface InlineReturnQuoteChunk {
    *  already returned or credited). Shown as "already returned or credited", NOT "not on any invoice"; only staff may credit it,
    *  with a reason; a driver capture holds it for the office. Absent on every other chunk. */
   alreadyReturned?: boolean;
+  /** SA-1060 PR-2: this customer has no live invoice line of the product in their whole history, so the goods did not come from
+   *  us. The server credits such a chunk with no sales tax and does not add it to stock; the screen reads this to say "Not added
+   *  to stock". True or false on every chunk from this API; absent only from an older one. Never sent by the client. */
+  neverSold?: boolean;
 }
 
 export interface InlineReturnQuoteBreakdown {

@@ -315,6 +315,10 @@ describe("R-6 M7: the closed row says where the goods go", () => {
   it("shows the options in words, with 'Back to stock' by default", async () => {
     renderSection({ reasonContext: "counter" });
     await pick();
+    // A-4 (M3): "Back to stock" is the quote's word, so the quote answers first
+    setQty("6");
+    wait(DEBOUNCE);
+    answer(quoteResponse([chunk({ pieces: 6, neverSold: false })]));
     expect(summary("prod-1")).toHaveTextContent("Bought too many");
     expect(summary("prod-1")).toHaveTextContent("Back to stock");
   });
@@ -323,6 +327,15 @@ describe("R-6 M7: the closed row says where the goods go", () => {
     renderSection({ reasonContext: "counter" });
     await pick();
     await pick("Gadget");
+    setQty("6", 0);
+    setQty("4", 1);
+    wait(DEBOUNCE);
+    answer(
+      quoteResponse([
+        chunk({ productId: "prod-1", pieces: 6, neverSold: false }),
+        chunk({ productId: "prod-2", pieces: 4, neverSold: false }),
+      ]),
+    );
     fireEvent.click(optionsToggle("Widget"));
     fireEvent.change(within(row("prod-1")).getByLabelText(/reason \(optional\)/i), {
       target: { value: "DAMAGED" },
@@ -765,7 +778,7 @@ describe("review-c on #4036 (T1, four MUSTs and the mutants they left)", () => {
     expect(qtyInputs()).toHaveLength(1);
   });
 
-  it("MUST 4: a second row of one product shows the first row's reason and stock outcome, and takes none of its own", async () => {
+  it("MUST 4 (SA-1079): a reason set on one row of a product shows on the other row, and both read its stock outcome", async () => {
     mockEntryOrder = {
       id: "order-1",
       lineItems: [
@@ -779,14 +792,12 @@ describe("review-c on #4036 (T1, four MUSTs and the mutants they left)", () => {
     const toggles = screen.getAllByRole("button", { name: /options for widget/i });
     fireEvent.click(toggles[0]);
     fireEvent.click(toggles[1]);
-    // the first row says DAMAGED: buildCaptureRequest keeps the first row's reason for the merged item
-    fireEvent.change(within(rows()[0]).getByLabelText("Reason (optional)"), {
+    fireEvent.change(within(rows()[0]).getByLabelText("Reason (both rows)"), {
       target: { value: "DAMAGED" },
     });
-    const second = within(rows()[1]);
-    const secondReason = second.getByLabelText("Reason (same as the first row)");
-    expect(secondReason).toBeDisabled();
-    expect((secondReason as HTMLSelectElement).value).toBe("DAMAGED");
+    const second = within(rows()[1]).getByLabelText("Reason (both rows)");
+    expect(second).toBeEnabled();
+    expect((second as HTMLSelectElement).value).toBe("DAMAGED");
     for (const r of rows()) {
       expect(within(r).getByTestId("return-line-summary-prod-1")).toHaveTextContent(
         "Not added to stock",
@@ -803,6 +814,10 @@ describe("review-c on #4036 (T1, four MUSTs and the mutants they left)", () => {
       ],
     };
     renderSection({ entryOrderId: "order-1", reasonContext: "counter" });
+    // A-4 (M3): the quote answers (goods sold before) before the rows read "Back to stock"
+    setQty("3", 0);
+    wait(DEBOUNCE);
+    answer(quoteResponse([chunk({ pieces: 3, neverSold: false })]));
     for (const r of screen.getAllByTestId("return-line-prod-1")) {
       expect(within(r).getByTestId("return-line-summary-prod-1")).toHaveTextContent(
         "Back to stock",
@@ -830,37 +845,55 @@ describe("review-c on #4036 at 852bb08fce", () => {
       reason: "EXCESS_ORDER",
     }).items[0]?.reason;
 
-  it("MUST 4, blank first row: the row that counts rules, on screen and in what is sent", async () => {
+  it("BR-3, blank first row: DAMAGED set before any count is not flipped by a count on the other row", async () => {
     twoRows();
     const { last } = renderSection({ entryOrderId: "order-1", reasonContext: "counter" });
     const rows = () => screen.getAllByTestId("return-line-prod-1");
     const toggles = screen.getAllByRole("button", { name: /options for widget/i });
     fireEvent.click(toggles[0]);
     fireEvent.click(toggles[1]);
-    // the clerk sets DAMAGED on row 1 (no counts yet, so it rules), then counts on row 2 and leaves row 1 blank
-    fireEvent.change(within(rows()[0]).getByLabelText("Reason (optional)"), {
+    // the clerk sets DAMAGED on row 1 (no counts yet), then counts on row 2 and leaves row 1 blank
+    fireEvent.change(within(rows()[0]).getByLabelText("Reason (both rows)"), {
       target: { value: "DAMAGED" },
     });
     setQty("3", 1);
-    // row 1 has no quantity, so the capture drops it: it neither rules nor reads DAMAGED
-    const first = within(rows()[0]).getByLabelText(
-      "Reason (same as the first row with a quantity)",
-    );
-    expect(first).toBeDisabled();
-    expect((first as HTMLSelectElement).value).toBe("");
-    const second = within(rows()[1]).getByLabelText("Reason (optional)");
-    expect(second).toBeEnabled();
+    wait(DEBOUNCE);
+    answer(quoteResponse([chunk({ pieces: 3, neverSold: false })]));
+    // the reason belongs to the product: row 2, the row that counts, reads DAMAGED and so does the capture
+    expect(
+      (within(rows()[1]).getByLabelText("Reason (both rows)") as HTMLSelectElement).value,
+    ).toBe("DAMAGED");
+    for (const r of rows()) {
+      expect(within(r).getByTestId("return-line-summary-prod-1")).toHaveTextContent(
+        "Not added to stock",
+      );
+      expect(within(r).getByTestId("return-line-summary-prod-1")).not.toHaveTextContent(
+        "Back to stock",
+      );
+    }
+    expect(sentReason(last().lines)).toBe("DAMAGED");
+    // changing it on the row that counts changes it on the other row as well
+    fireEvent.change(within(rows()[1]).getByLabelText("Reason (both rows)"), {
+      target: { value: "" },
+    });
     for (const r of rows()) {
       expect(within(r).getByTestId("return-line-summary-prod-1")).toHaveTextContent(
         "Back to stock",
       );
-      expect(within(r).getByTestId("return-line-summary-prod-1")).not.toHaveTextContent(
-        "Not added to stock",
-      );
     }
     expect(sentReason(last().lines)).toBeUndefined();
-    // the reason set on the row that counts is the one both rows read and the one that is sent
-    fireEvent.change(second, { target: { value: "DAMAGED" } });
+  });
+
+  it("BR-3: DAMAGED and 5 on row 2, then 1 on row 1 -> both rows still read DAMAGED and not back to stock", async () => {
+    twoRows();
+    const { last } = renderSection({ entryOrderId: "order-1", reasonContext: "counter" });
+    const rows = () => screen.getAllByTestId("return-line-prod-1");
+    fireEvent.click(screen.getAllByRole("button", { name: /options for widget/i })[1]);
+    fireEvent.change(within(rows()[1]).getByLabelText("Reason (both rows)"), {
+      target: { value: "DAMAGED" },
+    });
+    setQty("5", 1);
+    setQty("1", 0);
     for (const r of rows()) {
       expect(within(r).getByTestId("return-line-summary-prod-1")).toHaveTextContent(
         "Not added to stock",
@@ -869,12 +902,104 @@ describe("review-c on #4036 at 852bb08fce", () => {
     expect(sentReason(last().lines)).toBe("DAMAGED");
   });
 
-  it("MUST 4, both rows counted: the first row still rules and says 'the first row'", async () => {
+  it("BR-13: two rows say (both rows) on reason, note and credit price, and every box is live", async () => {
+    authRole = "OPERATOR";
     twoRows();
     renderSection({ entryOrderId: "order-1", reasonContext: "counter" });
     const rows = () => screen.getAllByTestId("return-line-prod-1");
+    for (const t of screen.getAllByRole("button", { name: /options for widget/i })) {
+      fireEvent.click(t);
+    }
+    for (const r of rows()) {
+      for (const label of ["Reason (both rows)", "Note (both rows)", "Credit price (both rows)"]) {
+        expect(within(r).getByLabelText(label)).toBeEnabled();
+      }
+    }
+    expect(screen.queryByLabelText(/same as the first row/i)).toBeNull();
+  });
+
+  it("BR-13: three rows say (all 3 rows)", async () => {
+    mockEntryOrder = {
+      id: "order-1",
+      lineItems: [1, 2, 3].map(() => ({
+        productId: "prod-1",
+        qty: 2,
+        product: { name: "Widget", unit: "each" },
+      })),
+    };
+    renderSection({ entryOrderId: "order-1", reasonContext: "counter" });
+    const rows = () => screen.getAllByTestId("return-line-prod-1");
+    expect(rows()).toHaveLength(3);
+    for (const t of screen.getAllByRole("button", { name: /options for widget/i })) {
+      fireEvent.click(t);
+    }
+    for (const r of rows()) {
+      expect(within(r).getByLabelText("Reason (all 3 rows)")).toBeEnabled();
+      expect(within(r).getByLabelText("Note (all 3 rows)")).toBeEnabled();
+    }
+  });
+
+  it("BR-13: one row keeps the labels it had", async () => {
+    renderSection();
+    await pick();
+    fireEvent.click(optionsToggle("Widget"));
+    expect(within(row("prod-1")).getByLabelText("Reason (optional)")).toBeEnabled();
+    expect(within(row("prod-1")).getByLabelText("Note (optional)")).toBeEnabled();
+    expect(screen.queryByLabelText(/ rows[)]$/i)).toBeNull();
+  });
+
+  it("BR-14: locked, two rows: every product-wide box is disabled on both", async () => {
+    twoRows();
+    const { rerender, states } = renderSection({
+      entryOrderId: "order-1",
+      reasonContext: "counter",
+    });
+    for (const t of screen.getAllByRole("button", { name: /options for widget/i })) {
+      fireEvent.click(t);
+    }
+    rerender(
+      <InlineReturnSection
+        customerId="cust-1"
+        entryOrderId="order-1"
+        reasonContext="counter"
+        locked
+        onStateChange={(s) => states.push(s)}
+      />,
+    );
+    for (const r of screen.getAllByTestId("return-line-prod-1")) {
+      expect(within(r).getByLabelText("Reason (both rows)")).toBeDisabled();
+      expect(within(r).getByLabelText("Note (both rows)")).toBeDisabled();
+    }
+  });
+
+  it("BR-12: Remove then Undo on a row puts it back with the price its product holds now", async () => {
+    authRole = "OPERATOR";
+    twoRows();
+    const { last } = renderSection({ entryOrderId: "order-1", reasonContext: "counter" });
+    const rows = () => screen.getAllByTestId("return-line-prod-1");
+    for (const t of screen.getAllByRole("button", { name: /options for widget/i })) {
+      fireEvent.click(t);
+    }
+    fireEvent.change(within(rows()[0]).getByLabelText("Credit price (both rows)"), {
+      target: { value: "3" },
+    });
+    fireEvent.click(within(rows()[1]).getByRole("button", { name: /^remove$/i }));
+    expect(rows()).toHaveLength(1);
+    // the price changes while row 2 is away
+    fireEvent.change(within(rows()[0]).getByLabelText("Credit price"), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: /^undo$/i }));
+    expect(rows()).toHaveLength(2);
+    expect(last().lines.map((l) => l.creditUnitPrice)).toEqual(["2", "2"]);
+  });
+
+  it("MUST 4, both rows counted: either row can set the reason", async () => {
+    twoRows();
+    renderSection({ entryOrderId: "order-1", reasonContext: "counter" });
+    const rows = () => screen.getAllByTestId("return-line-prod-1");
+    setQty("2", 0);
+    setQty("3", 1);
     fireEvent.click(screen.getAllByRole("button", { name: /options for widget/i })[1]);
-    expect(within(rows()[1]).getByLabelText("Reason (same as the first row)")).toBeDisabled();
+    expect(within(rows()[1]).getByLabelText("Reason (both rows)")).toBeEnabled();
   });
 
   it("an already-returned line with nothing covered does not say the customer hasn't bought it", async () => {
@@ -960,7 +1085,7 @@ describe("review-b on #4036 at d2d62cf335: 'Return only what was bought' keeps t
     const rows = () => screen.getAllByTestId("return-line-prod-1");
     setQty("6", 1);
     fireEvent.click(screen.getAllByRole("button", { name: /options for widget/i })[1]);
-    fireEvent.change(within(rows()[1]).getByLabelText("Reason (optional)"), {
+    fireEvent.change(within(rows()[1]).getByLabelText("Reason (both rows)"), {
       target: { value: "DAMAGED" },
     });
     wait(DEBOUNCE);
@@ -1002,7 +1127,7 @@ describe("sweep of first-row reads (Lead, #4036): scan, focus and credit price f
     const rows = () => screen.getAllByTestId("return-line-prod-1");
     setQty("3", 1);
     fireEvent.click(screen.getAllByRole("button", { name: /options for widget/i })[1]);
-    fireEvent.change(within(rows()[1]).getByLabelText("Reason (optional)"), {
+    fireEvent.change(within(rows()[1]).getByLabelText("Reason (both rows)"), {
       target: { value: "DAMAGED" },
     });
     act(() => {
@@ -1016,5 +1141,251 @@ describe("sweep of first-row reads (Lead, #4036): scan, focus and credit price f
         "Not added to stock",
       );
     }
+  });
+});
+
+describe("SA-1060 PR-2 M9: goods the customer was never sold are not added to stock", () => {
+  async function quoted(chunks: InlineReturnQuoteChunk[], qty = "6") {
+    const view = renderSection({ reasonContext: "counter" });
+    await pick();
+    setQty(qty);
+    wait(DEBOUNCE);
+    answer(quoteResponse(chunks));
+    return view;
+  }
+
+  it("the closed row reads 'Not added to stock' from the quote, though the reason would put it back", async () => {
+    await quoted([noSale({ pieces: 6, subtotal: 15, taxAmount: 0, neverSold: true })]);
+    expect(summary("prod-1")).toHaveTextContent("Bought too many"); // a reason that restocks
+    expect(summary("prod-1")).toHaveTextContent("Not added to stock");
+    expect(summary("prod-1")).not.toHaveTextContent("Back to stock");
+  });
+
+  it("the options say it too, once opened", async () => {
+    await quoted([noSale({ pieces: 6, subtotal: 15, taxAmount: 0, neverSold: true })]);
+    fireEvent.click(optionsToggle("Widget"));
+    expect(screen.getByTestId("return-line-stock-note-prod-1")).toHaveTextContent(
+      "Not added to stock",
+    );
+  });
+
+  it("a line with goods sold to them before still reads 'Back to stock' (guard)", async () => {
+    await quoted([noSale({ pieces: 6, subtotal: 15, taxAmount: 1.2, neverSold: false })]);
+    expect(summary("prod-1")).toHaveTextContent("Back to stock");
+    expect(summary("prod-1")).not.toHaveTextContent("Not added to stock");
+    fireEvent.click(optionsToggle("Widget"));
+    expect(screen.queryByTestId("return-line-stock-note-prod-1")).toBeNull();
+  });
+
+  it("a fully matched line reads 'Back to stock' (guard)", async () => {
+    await quoted([chunk({ pieces: 6, neverSold: false })]);
+    expect(summary("prod-1")).toHaveTextContent("Back to stock");
+  });
+
+  it("an older API that sends no neverSold changes nothing (guard)", async () => {
+    await quoted([noSale({ pieces: 6, subtotal: 15, taxAmount: 0 })]);
+    expect(summary("prod-1")).toHaveTextContent("Back to stock");
+  });
+
+  it("only the never-sold line changes: its neighbour keeps 'Back to stock'", async () => {
+    renderSection({ reasonContext: "counter" });
+    await pick();
+    await pick("Gadget");
+    setQty("6", 0);
+    setQty("4", 1);
+    wait(DEBOUNCE);
+    answer(
+      quoteResponse([
+        noSale({ productId: "prod-1", pieces: 6, subtotal: 15, taxAmount: 0, neverSold: true }),
+        chunk({ productId: "prod-2", pieces: 4, neverSold: false }),
+      ]),
+    );
+    expect(summary("prod-1")).toHaveTextContent("Not added to stock");
+    expect(summary("prod-2")).toHaveTextContent("Back to stock");
+  });
+});
+
+describe("SA-1060 A-4 (M3): the closed row claims no stock outcome the quote has not told it", () => {
+  // Whether the goods were ever sold to this customer is only known from a quote. Until one answers (not yet asked, refused, or
+  // failed) a restocking reason must not read "Back to stock": that would be a claim about a never-sold line the screen cannot make.
+  const refusal = {
+    response: {
+      status: 400,
+      data: { message: "That is more than was sold", code: "RETURN_EXCEEDS_SALE" },
+    },
+  };
+
+  it("before any quote has answered, a restocking reason says nothing about stock", async () => {
+    renderSection({ reasonContext: "counter" });
+    await pick();
+    expect(summary("prod-1")).toHaveTextContent("Bought too many");
+    expect(summary("prod-1")).not.toHaveTextContent("Back to stock");
+    expect(summary("prod-1")).not.toHaveTextContent("Not added to stock");
+  });
+
+  it("a refused quote leaves the row silent about stock", async () => {
+    renderSection({ reasonContext: "counter" });
+    await pick();
+    setQty("99");
+    wait(DEBOUNCE);
+    refuse(refusal);
+    expect(summary("prod-1")).not.toHaveTextContent("Back to stock");
+    expect(summary("prod-1")).not.toHaveTextContent("Not added to stock");
+  });
+
+  it("a quote that failed leaves the row silent about stock", async () => {
+    renderSection({ reasonContext: "counter" });
+    await pick();
+    setQty("6");
+    wait(DEBOUNCE);
+    refuse(Object.assign(new Error("Network Error"), { code: "ERR_NETWORK" }));
+    expect(summary("prod-1")).not.toHaveTextContent("Back to stock");
+    expect(summary("prod-1")).not.toHaveTextContent("Not added to stock");
+  });
+
+  it("a reason that never restocks still says so without a quote (guard: that outcome is known)", async () => {
+    renderSection({ reasonContext: "counter" });
+    await pick();
+    fireEvent.change(screen.getByLabelText(/reason for all items/i), {
+      target: { value: "QUALITY_ISSUE" },
+    });
+    expect(summary("prod-1")).toHaveTextContent("Not added to stock");
+  });
+
+  it("a product the answered quote has no chunk for (added with no quantity, or still pending) claims nothing, while the quoted line keeps its word", async () => {
+    renderSection({ reasonContext: "counter" });
+    await pick();
+    setQty("6");
+    wait(DEBOUNCE);
+    answer(quoteResponse([chunk({ productId: "prod-1", pieces: 6, neverSold: false })]));
+    expect(summary("prod-1")).toHaveTextContent("Back to stock");
+    // Gadget joins after the quote answered: no quantity yet, so the quote has nothing for it
+    await pick("Gadget");
+    expect(summary("prod-2")).not.toHaveTextContent("Back to stock");
+    expect(summary("prod-2")).not.toHaveTextContent("Not added to stock");
+    expect(summary("prod-1")).toHaveTextContent("Back to stock");
+    // a quantity makes the next quote pending: the last quote still has no chunk for Gadget
+    setQty("4", 1);
+    expect(summary("prod-2")).not.toHaveTextContent("Back to stock");
+    expect(summary("prod-2")).not.toHaveTextContent("Not added to stock");
+    expect(summary("prod-1")).toHaveTextContent("Back to stock");
+    // once the quote answers for it, it reads the quote's word
+    wait(DEBOUNCE);
+    answer(
+      quoteResponse([
+        chunk({ productId: "prod-1", pieces: 6, neverSold: false }),
+        noSale({ productId: "prod-2", pieces: 4, subtotal: 10, taxAmount: 0, neverSold: true }),
+      ]),
+    );
+    expect(summary("prod-2")).toHaveTextContent("Not added to stock");
+    expect(summary("prod-1")).toHaveTextContent("Back to stock");
+  });
+
+  it("NS-22 (A-6): both flags on a restocking reason -> 'Not added to stock', and the reason is still asked", async () => {
+    authRole = "OPERATOR";
+    renderSection({ reasonContext: "counter" });
+    await pick();
+    setQty("3");
+    wait(DEBOUNCE);
+    answer(
+      quoteResponse([
+        noSale({ pieces: 3, subtotal: 15, taxAmount: 0, alreadyReturned: true, neverSold: true }),
+      ]),
+    );
+    expect(summary("prod-1")).toHaveTextContent("Bought too many"); // a reason that restocks
+    expect(summary("prod-1")).toHaveTextContent("Not added to stock");
+    expect(summary("prod-1")).not.toHaveTextContent("Back to stock");
+    expect(
+      within(row("prod-1")).getByLabelText(/why credit widget again \(required\)/i),
+    ).toBeVisible();
+  });
+
+  it("an answered quote for goods sold before still reads 'Back to stock' (guard)", async () => {
+    renderSection({ reasonContext: "counter" });
+    await pick();
+    setQty("6");
+    wait(DEBOUNCE);
+    answer(quoteResponse([chunk({ pieces: 6, neverSold: false })]));
+    expect(summary("prod-1")).toHaveTextContent("Back to stock");
+  });
+});
+
+describe("BR-16 (Mac mini proof on #4064): the box being typed in stays in view when row 1 opens above it", () => {
+  const twoRows = () => {
+    mockEntryOrder = {
+      id: "order-1",
+      lineItems: [
+        { productId: "prod-1", qty: 5, product: { name: "Widget", unit: "each" } },
+        { productId: "prod-1", qty: 2, product: { name: "Widget", unit: "each" } },
+      ],
+    };
+  };
+  let scrolled: jest.Mock;
+  beforeEach(() => {
+    scrolled = jest.fn();
+    Element.prototype.scrollIntoView = scrolled;
+  });
+
+  it("typing a price on row 2 opens row 1, and the focused price box is scrolled into view clear of a sticky bar", async () => {
+    authRole = "OPERATOR";
+    twoRows();
+    renderSection({ entryOrderId: "order-1", reasonContext: "counter" });
+    const rows = () => screen.getAllByTestId("return-line-prod-1");
+    setQty("1", 0);
+    fireEvent.click(screen.getAllByRole("button", { name: /options for widget/i })[1]);
+    const price = within(rows()[1]).getByLabelText("Credit price (both rows)");
+    price.focus();
+    expect(scrolled).not.toHaveBeenCalled();
+    fireEvent.change(price, { target: { value: "7" } });
+    // row 1 (the ruling row) opened by itself above the box
+    expect(within(rows()[0]).getByLabelText("Credit price (both rows)")).toBeVisible();
+    expect(scrolled).toHaveBeenCalledTimes(1);
+    expect(scrolled.mock.contexts[0]).toBe(price);
+    expect(scrolled).toHaveBeenCalledWith({ block: "nearest" });
+    // room is kept under the box for a sticky Save / Cancel bar, and not left behind on the field
+    expect((price as HTMLElement).style.scrollMarginBottom).toBe("");
+  });
+
+  it("further keystrokes, with row 1 already open, scroll nothing", async () => {
+    authRole = "OPERATOR";
+    twoRows();
+    renderSection({ entryOrderId: "order-1", reasonContext: "counter" });
+    const rows = () => screen.getAllByTestId("return-line-prod-1");
+    setQty("1", 0);
+    fireEvent.click(screen.getAllByRole("button", { name: /options for widget/i })[1]);
+    const price = within(rows()[1]).getByLabelText("Credit price (both rows)");
+    price.focus();
+    fireEvent.change(price, { target: { value: "7" } });
+    scrolled.mockClear();
+    fireEvent.change(price, { target: { value: "7." } });
+    fireEvent.change(price, { target: { value: "7.5" } });
+    expect(scrolled).not.toHaveBeenCalled();
+  });
+
+  it("opening a row by its own button does not scroll the page", async () => {
+    twoRows();
+    renderSection({ entryOrderId: "order-1", reasonContext: "counter" });
+    const toggle = screen.getAllByRole("button", { name: /options for widget/i })[0];
+    toggle.focus();
+    fireEvent.click(toggle);
+    expect(scrolled).not.toHaveBeenCalled();
+  });
+
+  it("W-785: with two rows Reason and Note stack on a phone so the long label never wraps; one row keeps two columns", async () => {
+    twoRows();
+    renderSection({ entryOrderId: "order-1", reasonContext: "counter" });
+    fireEvent.click(screen.getAllByRole("button", { name: /options for widget/i })[0]);
+    const fields = (i: number) =>
+      within(screen.getAllByTestId("return-line-prod-1")[i]).getByTestId("return-line-text-fields");
+    expect(fields(0).className).toContain("grid-cols-1");
+    expect(fields(0).className).not.toContain("grid-cols-2");
+  });
+
+  it("W-785: one row keeps its two columns", async () => {
+    renderSection();
+    await pick();
+    fireEvent.click(optionsToggle("Widget"));
+    const fields = within(row("prod-1")).getByTestId("return-line-text-fields");
+    expect(fields.className).toContain("grid-cols-2");
   });
 });

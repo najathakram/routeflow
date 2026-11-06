@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { Modal, Button } from "@routeflow/ui/web";
 import { AlertTriangle, ArrowUpRight, Loader2 } from "lucide-react";
+import { isTerminalOrderStatus } from "@routeflow/types";
 import { fmt } from "@/lib/formatting";
 import { useOrder } from "@/lib/api/orders";
 import { orderLineName } from "@/lib/product-display";
@@ -121,8 +122,7 @@ export function OrderPreviewModal({
   // less, so suppress the note unless the whole order has been invoiced.
   const nonVoid = (order?.invoices ?? []).filter((i) => i.status !== "VOID");
   const invoicedTotal = nonVoid.reduce((s, i) => s + Number(i.total), 0);
-  const fullyInvoiced =
-    (order?.status === "DELIVERED" || order?.status === "CANCELLED") && nonVoid.length > 0;
+  const fullyInvoiced = isTerminalOrderStatus(order?.status) && nonVoid.length > 0;
   const rows = (order?.lineItems ?? [])
     .filter((li) => li.status !== "CANCELLED")
     .map((li) => ({

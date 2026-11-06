@@ -75,6 +75,11 @@ export function hasBuyerPresence(): boolean {
   return readCookie(BUYER_PRESENCE_COOKIE) === "1";
 }
 
+/** The portal the visitor used last ("op" | "buyer"), or null. Only the landing rule reads it. */
+export function readLastPortalCookie(): string | null {
+  return readCookie(LAST_PORTAL_COOKIE);
+}
+
 export function setLastPortalCookie(portal: Portal): void {
   if (typeof document === "undefined") return;
   document.cookie = `${LAST_PORTAL_COOKIE}=${portal}; path=/; max-age=${PRESENCE_COOKIE_MAX_AGE}; samesite=lax`;

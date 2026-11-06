@@ -39,7 +39,7 @@ function toRouteOriginKind(type: TripOriginType): RouteOriginKind {
 // Shared load shape for both GET /trips/eligibility and POST /trips — one
 // query, one predicate, so the two endpoints can never disagree on a reason.
 const TRIP_ORDER_INCLUDE = {
-  customer: { include: { addresses: true } },
+  customer: { select: { id: true, businessName: true, addresses: true } },
   routeRunStop: { include: { routeRun: { include: { driver: true } } } },
 } satisfies Prisma.OrderInclude;
 

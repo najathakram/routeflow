@@ -186,6 +186,10 @@ const WRAPPER_CALLERS: Record<string, Record<string, LockRow>> = {
       locks: ["lockInvoiceRow("],
       why: "SA-760 R-1: Order then Invoice, before the B693 check and the B299 re-claim",
     },
+    "invoices/invoices.service.ts#createPartialFromOrder": {
+      locks: ["lockOrderRow("],
+      why: "SA-962 row 721: the Order row is the creation tx's first statement; the settle follows the item create and the invoicedQty bump",
+    },
   },
   cancelStandaloneInTx: {
     "returns/inline-returns.service.ts#cancel": {

@@ -8,6 +8,7 @@ import {
   TRACKING_PILL_LABEL,
   deriveTrackingView,
   describeTrackingView,
+  isTerminalOrderStatus,
   isTrackingLive,
   trackingFacts,
   type TrackingView,
@@ -44,8 +45,8 @@ export function DeliveryTrackingCard({
     deliveredAt: order.deliveredAt,
     tracking: data?.tracking ?? null,
   });
-  // A delivered or cancelled order needs nothing from the tracking read to say so.
-  const decidedByOrder = status === "DELIVERED" || status === "CANCELLED";
+  // A delivered, refused or cancelled order needs nothing from the tracking read to say so.
+  const decidedByOrder = isTerminalOrderStatus(status);
   const waiting = !data && !decidedByOrder;
 
   return (
@@ -139,6 +140,7 @@ function TrackingBody({ view, live }: { view: TrackingView; live: boolean }) {
 
 const STATUS_PILL_VARIANT: Record<TrackingViewKind, BadgeVariant> = {
   cancelled: "danger",
+  refused: "warning",
   delivered: "success",
   unscheduled: "neutral",
   "out-for-delivery": "info",

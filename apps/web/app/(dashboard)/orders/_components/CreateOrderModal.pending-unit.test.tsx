@@ -150,11 +150,13 @@ const mockResolveProductByCode = jest.fn();
 // units_v1: the flag and the product's ladder, mutable per test (default: flag OFF = today's modal).
 let mockUnitsEnabled = false;
 let mockProductUnits: unknown[] = [];
+// The picker's own ladder read; undefined = still out, so only the modal's resolver moves the line.
+let mockPickerLadder: unknown[] | undefined;
 // #2865 case c: the units ladder load is a seam the test controls (resolve / reject / hang).
 const mockFetchProductUnits = jest.fn();
 jest.mock("@/lib/api/product-units", () => ({
   useUnitsEnabled: () => mockUnitsEnabled,
-  useProductUnits: (_id: string, _enabled: boolean) => ({ data: undefined }),
+  useProductUnits: (_id: string, _enabled: boolean) => ({ data: mockPickerLadder }),
   fetchProductUnits: (id: string) => mockFetchProductUnits(id),
   productUnitsKey: (id: string) => ["product-units", id],
   UNITS_FLAG: "flag.units_v1",
@@ -234,6 +236,7 @@ describe("CreateOrderModal pending selling unit (#2865 case c/d)", () => {
     mockCustomers = [cust];
     mockUnitsEnabled = true;
     mockProductUnits = [];
+    mockPickerLadder = undefined;
     mockResolveProductByCode.mockResolvedValue(boxed);
     mockFetchProductUnits.mockReset();
     (apiClient.get as jest.Mock).mockImplementation((url: string) =>
@@ -452,6 +455,52 @@ describe("CreateOrderModal pending selling unit (#2865 case c/d)", () => {
       { productId: "prod-1", qty: 2, unitLabel: "Bottle" },
     ]);
   });
+
+  it("T24, SA-1076: a customer picked while the line is pending: exactly N default units at the customer's price", async () => {
+    mockCustomers = [{ ...cust, pricingTier: 2 }];
+    let release!: (u: unknown[]) => void;
+    mockFetchProductUnits.mockReturnValue(new Promise((r) => (release = r)));
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    for (let i = 0; i < 2; i++) {
+      await act(async () => {
+        capturedOnScan!("111");
+      });
+    }
+    expect(await screen.findByText("2 · loading units")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
+      target: { value: "Acm" },
+    });
+    fireEvent.click(await screen.findByText("Acme Foods"));
+    mockPickerLadder = [{ ...bottleLevel, priceTier2: "1.50" }, caseLevel]; // one query: it lands for both
+    await act(async () => release(mockPickerLadder!));
+
+    await waitFor(() => expect(screen.queryByText(/loading units/)).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("line-total")).toHaveTextContent("$3.00"));
+    save();
+    expect(createOrderMutate.mock.calls[0][0].items).toEqual([
+      { productId: "prod-1", qty: 2, unitLabel: "Bottle" },
+    ]);
+  });
+
+  it.each([[false], [true]])(
+    "T15, SA-1076: a unit line moves by its own picker, A to B (scan_v2 %s)",
+    async (scanV2) => {
+      mockScanV2 = scanV2;
+      mockCustomers = [cust, { id: "c2", businessName: "Beta Bakery", pricingTier: 2 }];
+      mockPickerLadder = [{ ...bottleLevel, priceTier2: "1.50" }, caseLevel];
+      mockFetchProductUnits.mockResolvedValue(mockPickerLadder);
+      await open(1);
+      await waitFor(() => expect(screen.getByTestId("line-total")).toHaveTextContent("$2.00"));
+
+      fireEvent.click(screen.getByRole("button", { name: "Change customer" }));
+      fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
+        target: { value: "Bet" },
+      });
+      fireEvent.click(await screen.findByText("Beta Bakery"));
+      await waitFor(() => expect(screen.getByTestId("line-total")).toHaveTextContent("$1.50"));
+    },
+  );
 
   it("SA-632 M1: while the subscription read is in flight the row says LOADING, never 'Couldn't load' + Retry; a failed read then shows the error", async () => {
     let failSub!: (e: Error) => void;

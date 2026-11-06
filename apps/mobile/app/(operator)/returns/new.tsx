@@ -125,8 +125,11 @@ function OrderStep({
   onBack: () => void;
   onPick: (o: AdminOrder) => void;
 }) {
-  const { data, isLoading } = useAdminOrders({ customerId, status: "DELIVERED", limit: 50 });
-  const orders = data?.data ?? [];
+  const delivered = useAdminOrders({ customerId, status: "DELIVERED", limit: 50 });
+  // SA-1101 §2.5: staff record a return on a REFUSED order too (how the refused goods go back to stock).
+  const refused = useAdminOrders({ customerId, status: "REFUSED", limit: 50 });
+  const isLoading = delivered.isLoading || refused.isLoading;
+  const orders = [...(delivered.data?.data ?? []), ...(refused.data?.data ?? [])];
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar

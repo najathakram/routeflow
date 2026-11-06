@@ -36,8 +36,17 @@ import {
   type IncompleteProduct,
 } from "@/lib/api/import-resolution";
 import { ImportCsvPanel } from "@/components/import/ImportCsvPanel";
-import { PRODUCT_IMPORT_COLUMNS, CUSTOMER_IMPORT_COLUMNS } from "@routeflow/types";
+import {
+  PRODUCT_IMPORT_COLUMNS,
+  CUSTOMER_IMPORT_COLUMNS,
+  PRODUCT_IMPORT_TEMPLATE_HEADERS,
+  CUSTOMER_IMPORT_TEMPLATE_HEADERS,
+  LEGACY_IMPORT_KEY_COLUMNS,
+} from "@routeflow/types";
 import { validateDocumentPrefix } from "@/lib/document-prefix";
+
+const keyColumns = (k: keyof typeof LEGACY_IMPORT_KEY_COLUMNS) =>
+  ` Key columns: ${LEGACY_IMPORT_KEY_COLUMNS[k].join(", ")}.`;
 
 interface ImportResult {
   imported?: number;
@@ -57,71 +66,65 @@ interface ImportSection {
   endpoint: string;
   icon: React.ComponentType<{ className?: string }>;
   color: string;
-  zohoExportPath: string;
   /** B858/B859 (FIX5): products/contacts render the preview-then-import ImportCsvPanel instead
    *  of this file's plain upload UI, so their column-registry-driven plan/diff is visible before
    *  writing. Every other card (inventory/invoices/payments/expenses) keeps ImportCard as-is. */
   csvPanelColumns?: { field: string; canonical: string; aliases: string[] }[];
+  template?: { headers: string[]; fileName: string };
 }
 
 const IMPORT_SECTIONS: ImportSection[] = [
   {
     id: "products",
     label: "Products (Items)",
-    description: "Import products and pricing from Zoho Inventory Items CSV export",
+    description: "Add or update products and pricing from a CSV file",
     endpoint: "/import/products",
     icon: Package,
     color: "text-purple-500 bg-purple-50",
-    zohoExportPath: "Zoho Inventory → Items → ≡ → Export Items → CSV",
     csvPanelColumns: PRODUCT_IMPORT_COLUMNS,
+    template: { headers: PRODUCT_IMPORT_TEMPLATE_HEADERS, fileName: "products-template.csv" },
   },
   {
     id: "contacts",
     label: "Customers (Contacts)",
-    description: "Import customers from Zoho Contacts CSV export",
+    description: "Add or update customers from a CSV file",
     endpoint: "/import/contacts",
     icon: Users,
     color: "text-brand-500 bg-brand-50",
-    zohoExportPath: "Zoho Invoices → Contacts → ⋮ → Export Contacts",
     csvPanelColumns: CUSTOMER_IMPORT_COLUMNS,
+    template: { headers: CUSTOMER_IMPORT_TEMPLATE_HEADERS, fileName: "customers-template.csv" },
   },
   {
     id: "inventory",
     label: "Inventory stock levels",
-    description:
-      "Sync current stock quantities from Zoho Stock Summary Report (Item Name, SKU, Closing Stock)",
+    description: "Update stock quantities from a CSV file (Item Name, SKU, Closing Stock)",
     endpoint: "/import/inventory",
     icon: BarChart3,
     color: "text-teal-500 bg-teal-50",
-    zohoExportPath: "Zoho Inventory → Reports → Stock Summary → Export as CSV",
   },
   {
     id: "invoices",
     label: "Invoices",
-    description: "Import invoices and line items from Zoho Invoice CSV export",
+    description: `Import invoices and line items from a CSV file.${keyColumns("invoices")}`,
     endpoint: "/import/invoices",
     icon: FileText,
     color: "text-orange-500 bg-orange-50",
-    zohoExportPath: "Zoho Invoices → Invoices → ⋮ → Export Invoices",
   },
   {
     id: "payments",
     label: "Customer payments",
-    description: "Import payment history from Zoho Customer Payments CSV",
+    description: `Import payment history from a CSV file.${keyColumns("payments")}`,
     endpoint: "/import/payments",
     icon: DollarSign,
     color: "text-success bg-success-bg",
-    zohoExportPath: "Zoho Invoices → Customer Payments → ⋮ → Export",
   },
   {
     id: "expenses",
     label: "Expenses",
-    description:
-      "Import expense records from Zoho Expense CSV. Suppliers are auto-created from vendor names — no separate supplier import needed.",
+    description: `Import expense records from a CSV file.${keyColumns("expenses")} Suppliers are auto-created from vendor names — no separate supplier import needed.`,
     endpoint: "/import/expenses",
     icon: Receipt,
     color: "text-danger bg-danger-bg",
-    zohoExportPath: "Zoho Expense → My Expenses → Export",
   },
 ];
 
@@ -252,19 +255,12 @@ function ImportCard({ section, step }: { section: ImportSection; step: number })
 
       {/* Body */}
       <div className="flex flex-col flex-1 gap-3 p-4">
-        {/* Export hint */}
-        <div className="flex items-start gap-2 rounded-lg bg-surface-raised px-3 py-2 text-xs text-navy/70">
-          <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-navy/70" />
-          <span>
-            <strong className="text-navy/70">How to export:</strong> {section.zohoExportPath}
-          </span>
-        </div>
-
         {section.csvPanelColumns ? (
           <ImportCsvPanel
             endpoint={section.endpoint}
             title={section.label}
             columns={section.csvPanelColumns}
+            template={section.template!}
             testIdPrefix={`import-${section.id}`}
           />
         ) : (
@@ -382,7 +378,7 @@ function LegacyImportBody({ section }: { section: ImportSection }) {
             <p className="text-sm text-navy/70">
               Drop CSV file here or <span className="text-brand-500">browse</span>
             </p>
-            <p className="text-xs text-navy/70 mt-0.5">Zoho CSV export format</p>
+            <p className="text-xs text-navy/70 mt-0.5">CSV file with a header row</p>
           </div>
         )}
       </div>
@@ -806,9 +802,10 @@ function SettingsImportBody() {
     <div className="space-y-6 p-6">
       {/* Header */}
       <div>
-        <h2 className="text-2xl font-bold text-navy">Import from Zoho</h2>
+        <h2 className="text-2xl font-bold text-navy">Import your data</h2>
         <p className="mt-1 text-sm text-navy/70">
-          Upload CSV exports from Zoho to migrate your data into RouteFlow.
+          Upload CSV files to move your data into RouteFlow. For products and customers, start from
+          the template.
         </p>
       </div>
 
