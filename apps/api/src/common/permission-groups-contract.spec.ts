@@ -9,6 +9,7 @@ import {
   allPermissionGroups,
   permissionForPath,
 } from "@routeflow/types";
+import { OPERATOR_DEFAULT_DENIED_GROUPS } from "../auth/permissions/operator-default-denied";
 
 /**
  * The shared per-operator feature-group contract (`packages/types/api/permissions.ts`): the switch
@@ -63,9 +64,32 @@ describe("GROUP_INTRODUCED", () => {
   });
 
   it("the nine baseline groups are all ON for restricted operators", () => {
-    for (const key of OPERATOR_PERMISSION_GROUP_VALUES) {
+    for (const key of OPERATOR_PERMISSION_GROUP_VALUES.filter((k) => k !== "BAD_DEBT")) {
       expect(GROUP_INTRODUCED[key]).toEqual({ addedIn: "2026-10", restrictedDefault: "ON" });
     }
+  });
+
+  it("BAD_DEBT is the first group that ships OFF by default (SA-1050, owner 2026-10-20)", () => {
+    expect(GROUP_INTRODUCED.BAD_DEBT).toEqual({ addedIn: "2026-10", restrictedDefault: "OFF" });
+    expect(PERMISSION_GROUPS.find((g) => g.key === "BAD_DEBT")).toMatchObject({
+      label: "Write off bad debts",
+      order: 10,
+    });
+    // the only group that is not baseline: every other one stays default-on
+    expect(
+      OPERATOR_PERMISSION_GROUP_VALUES.filter(
+        (k) => GROUP_INTRODUCED[k].restrictedDefault === "OFF",
+      ),
+    ).toEqual(["BAD_DEBT"]);
+  });
+});
+
+describe("OPERATOR_DEFAULT_DENIED_GROUPS (SA-1050 A-5)", () => {
+  it("is exactly the groups GROUP_INTRODUCED ships OFF, so a row entering OPERATOR starts without them", () => {
+    const off = OPERATOR_PERMISSION_GROUP_VALUES.filter(
+      (k) => GROUP_INTRODUCED[k].restrictedDefault === "OFF",
+    );
+    expect([...OPERATOR_DEFAULT_DENIED_GROUPS].sort()).toEqual([...off].sort());
   });
 });
 

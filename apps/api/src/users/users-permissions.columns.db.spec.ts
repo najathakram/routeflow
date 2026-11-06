@@ -55,11 +55,11 @@ describeDb("User feature-group columns — real Postgres", () => {
       data: { tenantId, role, username: name, email: `${name}-${RUN_SUFFIX}@example.test` },
     });
 
-  it("a new User row defaults to no denied groups and version 0", async () => {
+  it("a new User row defaults to BAD_DEBT denied (SA-1050) and version 0", async () => {
     const tenantId = await seedTenant("defaults");
     const created = await seedUser(tenantId, "op-default", UserRole.OPERATOR);
     const row = await prisma.user.findUniqueOrThrow({ where: { id: created.id } });
-    expect(row.deniedPermissionGroups).toEqual([]);
+    expect(row.deniedPermissionGroups).toEqual([OperatorPermissionGroup.BAD_DEBT]);
     expect(row.permissionsVersion).toBe(0);
   });
 
@@ -68,7 +68,7 @@ describeDb("User feature-group columns — real Postgres", () => {
     for (const role of [UserRole.TENANT_ADMIN, UserRole.DRIVER]) {
       // eslint-disable-next-line no-await-in-loop
       const created = await seedUser(tenantId, `u-${role.toLowerCase()}`, role);
-      expect(created.deniedPermissionGroups).toEqual([]);
+      expect(created.deniedPermissionGroups).toEqual([OperatorPermissionGroup.BAD_DEBT]);
       expect(created.permissionsVersion).toBe(0);
     }
   });
@@ -85,7 +85,7 @@ describeDb("User feature-group columns — real Postgres", () => {
     expect(row.permissionsVersion).toBe(1);
   });
 
-  it("the database enum carries exactly the nine groups", async () => {
+  it("the database enum carries exactly the ten groups, BAD_DEBT last", async () => {
     const rows = await prisma.$queryRaw<Array<{ label: string }>>`
       SELECT e.enumlabel AS label
         FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid

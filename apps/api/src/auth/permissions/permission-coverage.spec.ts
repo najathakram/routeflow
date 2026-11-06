@@ -11,6 +11,26 @@ import { PERMISSION_MAP } from "./permission-map.pinned";
  * static (TypeScript AST), so a comment or a string never counts and no Nest bootstrap is needed.
  * Regenerate the pinned file with `UPDATE_PERMISSION_MAP=1 npx jest src/auth/permissions/permission-coverage.spec.ts`.
  */
+/**
+ * Groups that ship before the handler they gate, each with its ruling. An entry must name a real group that gates
+ * nothing yet; the spec below goes red once a handler uses it, so the entry is removed in that PR.
+ */
+const GATE_LANDS_LATER: Readonly<Record<string, string>> = {
+  BAD_DEBT:
+    "SA-1050: PR-0 ships the group, denied by default, with no reader; PR-3's write-off and reinstate handlers gate on it",
+};
+
+/** The groups a pinned map's values open ("A|B" = any-of); BASE, ADMIN and UNGUARDED open none. */
+function usedGroups(map: Readonly<Record<string, string>>): Set<string> {
+  return new Set(
+    Object.values(map)
+      .flatMap((v) =>
+        /^[A-Z_|]+$/.test(v) && !["BASE", "ADMIN", "UNGUARDED"].includes(v) ? v.split("|") : [],
+      )
+      .sort(),
+  );
+}
+
 const SRC = path.resolve(__dirname, "../..");
 const handlers = allHandlers(SRC);
 const discovered: Record<string, string> = {};
@@ -74,13 +94,25 @@ describe("operator permission coverage (spec §4.4)", () => {
   });
 
   it("every permission group gates at least one handler (no dead switch)", () => {
-    const used = new Set(
-      Object.values(PERMISSION_MAP).flatMap((v) =>
-        /^[A-Z|]+$/.test(v) && !["BASE", "ADMIN", "UNGUARDED"].includes(v) ? v.split("|") : [],
-      ),
-    );
-    for (const g of Object.values(OperatorPermissionGroup))
+    const used = usedGroups(PERMISSION_MAP);
+    for (const g of Object.values(OperatorPermissionGroup).filter((x) => !(x in GATE_LANDS_LATER)))
       expect([g, used.has(g)]).toEqual([g, true]);
+  });
+
+  it("a group whose gate lands later is a real group that gates nothing yet (drop the entry when it does)", () => {
+    const used = usedGroups(PERMISSION_MAP);
+    const groups: readonly string[] = Object.values(OperatorPermissionGroup);
+    for (const [g, why] of Object.entries(GATE_LANDS_LATER)) {
+      expect([g, groups.includes(g)]).toEqual([g, true]);
+      expect([g, used.has(g)]).toEqual([g, false]);
+      expect(why.length).toBeGreaterThan(20);
+    }
+  });
+
+  it("the group parser counts an underscore group, alone and in an any-of", () => {
+    expect([
+      ...usedGroups({ "A.a": "BAD_DEBT", "B.b": "FINANCE|BAD_DEBT", "C.c": "BASE" }),
+    ]).toEqual(["BAD_DEBT", "FINANCE"]);
   });
 
   describe("the discovery (positive controls on inline source)", () => {
