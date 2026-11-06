@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { guardCounterLeave } from "./counter-cart-signal";
+import { isSheetPop } from "./use-back-to-close";
 
 const SENTINEL = "__rfCounterSentinel";
 
@@ -27,6 +28,8 @@ export function useCounterBackGuard(active: boolean, onNoPreviousPage: () => voi
     };
     push();
     const onPop = () => {
+      // an open statement sheet's own Back / close step is not the person leaving the sale
+      if (isSheetPop()) return;
       push();
       guardCounterLeave(() => {
         window.removeEventListener("popstate", onPop);

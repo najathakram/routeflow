@@ -113,6 +113,7 @@ describe("displayLineStatus", () => {
 describe("linePriceTag", () => {
   it.each([
     ["SPECIAL", 80, 65, "Special", "green", true],
+    ["SPECIAL", 10, 12, "Special", "green", false], // SA-1077 / W-1093: above its list, the lower list is never struck
     ["MANUAL", 50, 65, "Upsell", "green", false],
     ["MANUAL", 90, 65, "Adjusted", "orange", true],
     ["DISCOUNTED", 80, 65, "Discounted", "orange", true],

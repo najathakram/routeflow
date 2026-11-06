@@ -78,6 +78,8 @@ export interface InvoicePdfData {
   /** Tenant's "hide original/pre-promo price" setting (F03/R9) — same source as
    *  the invoice detail endpoint's `hideOriginalPrice` field. */
   hideOriginalPrice?: boolean | null;
+  /** Tenant's `invoice.hidePerPiece` (owner ruling 2026-11-04): true leaves the Per piece column off. */
+  hidePerPiece?: boolean | null;
   notes?: string | null;
   terms?: string | null;
   shippingCarrier?: string | null;
@@ -482,7 +484,8 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
     ),
   );
   const hideOriginalPrice = !!invoice.hideOriginalPrice;
-  const showPerPiece = invoice.items.some((i) => !i.display && !!i.perBaseUnit);
+  const showPerPiece =
+    !invoice.hidePerPiece && invoice.items.some((i) => !i.display && !!i.perBaseUnit);
   // Deposit schedule (Tier 1): depositAmount arrives pre-computed from the
   // service (roundMoney(total*percent/100)); the remainder is simply what's
   // left of the total after it — independent of payments actually recorded.

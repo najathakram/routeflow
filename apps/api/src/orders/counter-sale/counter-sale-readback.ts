@@ -12,6 +12,7 @@ import type {
 } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import type { CounterSaleDto } from "./counter-sale.dto";
+import type { CounterReturnSplit } from "./counter-sale-today";
 import { duplicateCause } from "./counter-duplicate-ref";
 import { rollupToCollect, toCollectState } from "../../invoices/to-collect";
 
@@ -46,6 +47,8 @@ export type InvoiceRow = {
     status?: string;
     /** the check number / card reference typed at the till (`Payment.reference`) */
     reference?: string | null;
+    /** the credit note this payment applied (SA-1077: `counterReturnSplit` reads it from the same rows) */
+    creditNoteId?: string | null;
   }>;
 };
 
@@ -122,6 +125,21 @@ export function servedChange(
   return storedChange(tendered, payments);
 }
 
+/**
+ * Row 638 (SA-821): the gate on the tendered figure itself. `Order.counterCashTendered` is stored once and a later card retry
+ * (or a sale left on account) never clears it, so it is served only while the sale holds a counter-tender CASH row it could
+ * have been handed over for (`isCounterTenderCashRow`, the rows `storedChange` measures against); else null. A card-first sale
+ * with a cash leg still serves it, as before. Shared by the POST / by-key response, the Today's-sales row and the receipt,
+ * so the three can not drift.
+ */
+export function servedCashTendered(
+  tendered: unknown,
+  payments: Array<{ method?: string; status?: string }>,
+): number | null {
+  if (tendered == null || !payments.some(isCounterTenderCashRow)) return null;
+  return roundMoney(Number(tendered));
+}
+
 /** W-713: the number on the sale's first CHECK tender (trimmed); undefined when there is no check tender or it has no number. */
 export function checkReferenceOf(
   payments: ReadonlyArray<{ method?: string; status?: string; reference?: string | null }>,
@@ -167,6 +185,11 @@ export function buildCounterSaleResponse(input: {
   duplicate?: DuplicatePaymentRefExisting;
   /** the tenant's configured rate in percent: a stored line rate is named only when it equals this */
   configuredTaxPercent?: number | null;
+  /**
+   * SA-1077 / W-1090: the sale's tender split from `counterReturnSplit` (the Today's row and the emailed receipt call the same
+   * one), spread as it is. Nothing is worked out here; absent when the read failed, and the receipt then keeps its earlier words.
+   */
+  split?: CounterReturnSplit;
 }): CounterSaleResponse {
   const { payment, order, invoices, replayed, planError, duplicate } = input;
   const first = invoices[0];
@@ -202,6 +225,7 @@ export function buildCounterSaleResponse(input: {
   // Change is handed back ONLY for a CASH sale whose STORED balance is fully covered (a replay must never read
   // an unpaid sibling's share as change); the same gate the Today's-sales row uses.
   const change = servedChange(order.counterCashTendered, payments, balanceDue);
+  const cashTendered = servedCashTendered(order.counterCashTendered, payments);
   const checkReference = checkReferenceOf(payments);
 
   return {
@@ -229,9 +253,7 @@ export function buildCounterSaleResponse(input: {
           ...duplicateCause(duplicate),
         }
       : {}),
-    ...(order.counterCashTendered != null
-      ? { cashTendered: roundMoney(Number(order.counterCashTendered)) }
-      : {}),
+    ...(cashTendered != null ? { cashTendered } : {}),
     // ONE home for the rate (pricing): the same candidate the Today's row and the emailed receipt use
     ...(order.tax != null
       ? {
@@ -251,6 +273,7 @@ export function buildCounterSaleResponse(input: {
       originalPrice: l.originalPrice == null ? null : roundMoney(Number(l.originalPrice)),
       priceType: l.priceType ?? "STANDARD",
     })),
+    ...(input.split ? input.split : {}),
     ...(replayed ? { replayed: true } : {}),
   };
 }

@@ -132,6 +132,8 @@ describe("PlatformAdminService — audit provenance", () => {
       findMany: jest.fn().mockResolvedValue([]),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     };
+    // getStats()'s weekly funnel reads demo bookings (W3 M1); createMockPrisma has no such model.
+    (prisma as any).demoBooking = { findMany: jest.fn().mockResolvedValue([]) };
     (prisma as any).auditLog = {
       findMany: jest.fn().mockResolvedValue([]),
       count: jest.fn().mockResolvedValue(0),
@@ -1214,6 +1216,87 @@ describe("PlatformAdminService — audit provenance", () => {
       (c: any[]) => c[1] === "plan.changed",
     );
     expect(planChanged?.[3]?.amountDelta).toBe(0);
+  });
+
+  // R49 / T49: the reason an admin gives for a plan move lands in the plan-change audit row.
+  describe("R49 updatePlan - the reason is written to the audit row", () => {
+    const planChangedMeta = () =>
+      auditLog.mock.calls
+        .map((c: any[]) => c[0])
+        .find((a: any) => a.action === AdminAuditAction.TENANT_PLAN_CHANGED)?.meta;
+    const periodEnd = new Date("2026-12-01T00:00:00.000Z");
+
+    it("an instant move records the reason", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "STARTER",
+        status: "ACTIVE",
+        class: "PRODUCTION",
+        deletedAt: null,
+      } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "PROFESSIONAL",
+      } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-9",
+        definitions: [
+          { planKey: "STARTER", monthlyPrice: 99 },
+          { planKey: "SCALE", monthlyPrice: 499 },
+        ],
+      });
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        planKey: "STARTER",
+        basePriceSnapshot: 99,
+        priceOverrideMonthly: null,
+        discount: null,
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+      });
+      await service.updatePlan(
+        TENANT_ID,
+        { plan: "PROFESSIONAL", reason: "Moved up after the sales call" } as any,
+        ADMIN_ID,
+      );
+      expect(planChangedMeta()).toMatchObject({ reason: "Moved up after the sales call" });
+    });
+
+    it("a scheduled downgrade records the reason too", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "PROFESSIONAL",
+        status: "ACTIVE",
+      } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-9",
+        definitions: [
+          { planKey: "STARTER", monthlyPrice: 99 },
+          { planKey: "SCALE", monthlyPrice: 499 },
+        ],
+      });
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        planKey: "SCALE",
+        basePriceSnapshot: 499,
+        priceOverrideMonthly: null,
+        discount: null,
+        cycle: "MONTHLY",
+        periodStart: new Date("2026-11-01T00:00:00.000Z"),
+        periodEnd,
+      });
+      await service.updatePlan(
+        TENANT_ID,
+        { plan: "STARTER", reason: "Customer asked to downsize" } as any,
+        ADMIN_ID,
+      );
+      expect(planChangedMeta()).toMatchObject({
+        scheduled: true,
+        reason: "Customer asked to downsize",
+      });
+    });
   });
 
   // #2470 (Opus (5) on #2458): the admin paths an override row can take besides a ranked upgrade.
@@ -3157,7 +3240,11 @@ describe("PlatformAdminService — audit provenance", () => {
         return { synced: true };
       });
 
-      await service.updatePlanPrices("GROWTH", { monthly: 150 } as any, ADMIN_ID);
+      await service.updatePlanPrices(
+        "GROWTH",
+        { monthly: 150, expectedAffected: 2 } as any,
+        ADMIN_ID,
+      );
 
       expect(withLock.mock.calls.map((c) => c[0].key)).toEqual(["tenant-a", "tenant-b"]);
       expect(seen).toEqual([true, true]);
@@ -3206,7 +3293,11 @@ describe("PlatformAdminService — audit provenance", () => {
         downgradeToPlanKey: where.tenantId === "tenant-b" ? "STARTER" : null,
       }));
 
-      const out = await service.updatePlanPrices("GROWTH", { monthly: 150 } as any, ADMIN_ID);
+      const out = await service.updatePlanPrices(
+        "GROWTH",
+        { monthly: 150, expectedAffected: 1 } as any,
+        ADMIN_ID,
+      );
 
       expect(billingServiceMock.syncStripeSubscriptionPrice.mock.calls.map((c) => c[0])).toEqual([
         "tenant-a",
@@ -3230,7 +3321,11 @@ describe("PlatformAdminService — audit provenance", () => {
         downgradeToPlanKey: "STARTER",
       });
 
-      const out = await service.updatePlanPrices("GROWTH", { monthly: 150 } as any, ADMIN_ID);
+      const out = await service.updatePlanPrices(
+        "GROWTH",
+        { monthly: 150, expectedAffected: 1 } as any,
+        ADMIN_ID,
+      );
 
       expect(billingServiceMock.syncStripeSubscriptionPrice).not.toHaveBeenCalled();
       // A tenant skipped under its lock is not "updated" (review nit 2).
@@ -3320,7 +3415,11 @@ describe("PlatformAdminService — audit provenance", () => {
       it("is synced (Stripe moves to the NEW price), and when the downgrade is then CANCELLED Stripe stays on the new price", async () => {
         const { stripe, row, scheduled } = arrange(24900); // the OLD price: the early push has not happened
 
-        const out = await service.updatePlanPrices("GROWTH", { monthly: 299 } as any, ADMIN_ID);
+        const out = await service.updatePlanPrices(
+          "GROWTH",
+          { monthly: 299, expectedAffected: 1 } as any,
+          ADMIN_ID,
+        );
 
         expect(billingServiceMock.syncStripeSubscriptionPrice).toHaveBeenCalledWith("tenant-b");
         expect(out).toMatchObject({ updated: 1, synced: 1, skippedDowngrade: 0 });
@@ -3335,7 +3434,11 @@ describe("PlatformAdminService — audit provenance", () => {
       it("whose lower price is ALREADY pushed to Stripe is still skipped (the fan-out must not revert it)", async () => {
         const { stripe } = arrange(5900); // the pre-renewal push put the downgrade target's price here
 
-        const out = await service.updatePlanPrices("GROWTH", { monthly: 299 } as any, ADMIN_ID);
+        const out = await service.updatePlanPrices(
+          "GROWTH",
+          { monthly: 299, expectedAffected: 0 } as any,
+          ADMIN_ID,
+        );
 
         expect(billingServiceMock.syncStripeSubscriptionPrice).not.toHaveBeenCalled();
         expect(out).toMatchObject({ updated: 0, synced: 0, skippedDowngrade: 1 });
@@ -3345,7 +3448,11 @@ describe("PlatformAdminService — audit provenance", () => {
       it("an unreadable Stripe leaves it alone (never revert blind)", async () => {
         const { stripe } = arrange(24900);
         stripe.getSubscription.mockRejectedValue(new Error("stripe down"));
-        const out = await service.updatePlanPrices("GROWTH", { monthly: 299 } as any, ADMIN_ID);
+        const out = await service.updatePlanPrices(
+          "GROWTH",
+          { monthly: 299, expectedAffected: 0 } as any,
+          ADMIN_ID,
+        );
         expect(billingServiceMock.syncStripeSubscriptionPrice).not.toHaveBeenCalled();
         expect(out.skippedDowngrade).toBe(1);
       });
@@ -3598,6 +3705,428 @@ describe("PlatformAdminService — audit provenance", () => {
       const stats = await service.getStats();
       expect(stats.trialsExpiringSoon[0].userCount).toBe(4);
       expect(stats.atRiskTenants[0].riskReason).toBe("Suspended");
+    });
+  });
+
+  // W3 / M1: the weekly funnel on the admin dashboard. The prisma mock below APPLIES each query's
+  // `where` to a small data set that holds test, demo and deleted tenants next to real ones, so a
+  // count that forgot to leave them out would show the wrong number, not just a wrong call.
+  describe("getStats weekly funnel (W3 M1)", () => {
+    const iso = (d: string) => new Date(`${d}T10:00:00.000Z`);
+    // Wed 2026-10-28. The current week starts Mon 2026-10-26; eight weeks start Mon 2026-09-07.
+    const NOW = iso("2026-10-28");
+
+    const tenants = [
+      { id: "p1", class: "PRODUCTION", deletedAt: null, createdAt: iso("2026-10-27") },
+      { id: "p2", class: "PRODUCTION", deletedAt: null, createdAt: iso("2026-10-28") },
+      { id: "p3", class: "PRODUCTION", deletedAt: null, createdAt: iso("2026-10-14") },
+      { id: "old", class: "PRODUCTION", deletedAt: null, createdAt: iso("2026-08-01") },
+      // signed up before the window and places its FIRST order inside it: not part of the sign-up cohort
+      { id: "late", class: "PRODUCTION", deletedAt: null, createdAt: iso("2026-08-15") },
+      { id: "qa", class: "TEST", deletedAt: null, createdAt: iso("2026-10-27") },
+      { id: "demo", class: "DEMO", deletedAt: null, createdAt: iso("2026-10-27") },
+      { id: "internal", class: "INTERNAL", deletedAt: null, createdAt: iso("2026-10-27") },
+      {
+        id: "gone",
+        class: "PRODUCTION",
+        deletedAt: iso("2026-10-29"),
+        createdAt: iso("2026-10-27"),
+      },
+    ];
+    const activations = [
+      {
+        action: "user.activate",
+        tenantId: "p1",
+        createdAt: iso("2026-10-27"),
+        meta: { reason: "email_verify" },
+      },
+      {
+        action: "user.activate",
+        tenantId: "p3",
+        createdAt: iso("2026-10-15"),
+        meta: { reason: "email_verify" },
+      },
+      // an admin re-activating a user is not a verified sign-up
+      {
+        action: "user.activate",
+        tenantId: "p2",
+        createdAt: iso("2026-10-27"),
+        meta: { reason: "admin_reactivate" },
+      },
+      {
+        action: "user.activate",
+        tenantId: "qa",
+        createdAt: iso("2026-10-27"),
+        meta: { reason: "email_verify" },
+      },
+      {
+        action: "user.activate",
+        tenantId: "demo",
+        createdAt: iso("2026-10-27"),
+        meta: { reason: "email_verify" },
+      },
+      // some other audit row that happens to carry the same reason is not an activation
+      {
+        action: "user.login",
+        tenantId: "p2",
+        createdAt: iso("2026-10-27"),
+        meta: { reason: "email_verify" },
+      },
+      {
+        action: "user.activate",
+        tenantId: "gone",
+        createdAt: iso("2026-10-27"),
+        meta: { reason: "email_verify" },
+      },
+    ];
+    // Every order and route row; the first per tenant is what counts, and only inside the eight weeks.
+    const orders = [
+      { tenantId: "p1", createdAt: iso("2026-10-28") },
+      { tenantId: "p1", createdAt: iso("2026-10-27") }, // p1's FIRST order is this one
+      { tenantId: "p3", createdAt: iso("2026-10-20") },
+      { tenantId: "p3", createdAt: iso("2026-10-28") }, // a later order is not a first order
+      { tenantId: "old", createdAt: iso("2026-08-02") }, // first order before the window
+      { tenantId: "old", createdAt: iso("2026-10-27") }, // ...so this later one must not count
+      { tenantId: "late", createdAt: iso("2026-10-27") }, // first order in the window, but not a window sign-up
+      { tenantId: "qa", createdAt: iso("2026-10-27") },
+      { tenantId: "demo", createdAt: iso("2026-10-27") },
+      { tenantId: "internal", createdAt: iso("2026-10-27") },
+      { tenantId: "gone", createdAt: iso("2026-10-27") },
+    ];
+    const routes = [
+      { tenantId: "p3", createdAt: iso("2026-10-21") },
+      { tenantId: "late", createdAt: iso("2026-10-22") },
+      { tenantId: "qa", createdAt: iso("2026-10-21") },
+      { tenantId: "gone", createdAt: iso("2026-10-21") },
+    ];
+    const invoices = [
+      { tenantId: "p1", sentAt: iso("2026-10-28") },
+      { tenantId: "p1", sentAt: iso("2026-10-27") }, // p1's FIRST send is this one
+      { tenantId: "p2", sentAt: null }, // a draft is not sent
+      { tenantId: "p3", sentAt: iso("2026-10-21") },
+      { tenantId: "late", sentAt: iso("2026-10-27") }, // not a window sign-up
+      { tenantId: "qa", sentAt: iso("2026-10-27") },
+      { tenantId: "gone", sentAt: iso("2026-10-27") },
+    ];
+    const sent = { sentAt: iso("2026-10-21"), orderId: null };
+    const fromOrder = { sentAt: null, orderId: "o1" };
+    const imported = { sentAt: null, orderId: null };
+    const paid = { status: "PAID", method: "CASH" };
+    const payments = [
+      { tenantId: "p1", ...paid, invoice: sent, createdAt: iso("2026-10-29") },
+      { tenantId: "p1", ...paid, invoice: sent, createdAt: iso("2026-10-28") }, // p1's FIRST
+      { tenantId: "p1", ...paid, invoice: imported, createdAt: iso("2026-10-14") }, // history
+      { tenantId: "p3", ...paid, invoice: fromOrder, createdAt: iso("2026-10-22") }, // at the counter
+      {
+        tenantId: "p3",
+        status: "VOID",
+        method: "CASH",
+        invoice: sent,
+        createdAt: iso("2026-10-14"),
+      },
+      {
+        tenantId: "p3",
+        status: "PENDING",
+        method: "CHECK",
+        invoice: sent,
+        createdAt: iso("2026-10-14"),
+      },
+      {
+        tenantId: "p2",
+        status: "PAID",
+        method: "CREDIT_NOTE",
+        invoice: sent,
+        createdAt: iso("2026-10-27"),
+      },
+      { tenantId: "late", ...paid, invoice: sent, createdAt: iso("2026-10-27") },
+      { tenantId: "qa", ...paid, invoice: sent, createdAt: iso("2026-10-27") },
+    ];
+    const bookings = [
+      { createdAt: iso("2026-10-27") },
+      { createdAt: iso("2026-10-27") },
+      { createdAt: iso("2026-10-14") },
+      { createdAt: iso("2026-08-01") },
+    ];
+
+    const tenantOf = (id: string | null) => tenants.find((t) => t.id === id);
+
+    function matches(row: any, where: any = {}): boolean {
+      return Object.entries(where).every(([key, cond]: [string, any]) => {
+        if (key === "tenant") return matches(tenantOf(row.tenantId) ?? {}, cond);
+        if (key === "invoice") return cond.OR.some((c: any) => matches(row.invoice, c));
+        const value = key === "meta" ? row.meta : row[key];
+        if (cond === null) return value === null;
+        if (cond instanceof Date) return +value === +cond;
+        if (typeof cond === "object" && cond !== null) {
+          if ("path" in cond)
+            return cond.path.reduce((v: any, k: string) => v?.[k], value) === cond.equals;
+          if ("in" in cond) return cond.in.includes(value);
+          if ("not" in cond) return cond.not === null ? value !== null : value !== cond.not;
+          if ("gte" in cond && !(value >= cond.gte)) return false;
+          if ("lt" in cond && !(value < cond.lt)) return false;
+          return true;
+        }
+        return value === cond;
+      });
+    }
+
+    function groupFirst(rows: any[]) {
+      return jest.fn(async (args: any) => {
+        const field = Object.keys(args._min)[0];
+        const firsts = new Map<string, Date>();
+        for (const row of rows.filter((r) => matches(r, args.where))) {
+          const seen = firsts.get(row.tenantId);
+          if (!seen || row[field] < seen) firsts.set(row.tenantId, row[field]);
+        }
+        const gte = args.having?.createdAt?._min?.gte as Date | undefined;
+        return [...firsts]
+          .filter(([, first]) => !gte || first >= gte)
+          .map(([tenantId, first]) => ({ tenantId, _min: { [field]: first } }));
+      });
+    }
+
+    beforeEach(() => {
+      jest.useFakeTimers({
+        now: NOW,
+        doNotFake: [
+          "hrtime",
+          "nextTick",
+          "performance",
+          "queueMicrotask",
+          "requestAnimationFrame",
+          "cancelAnimationFrame",
+          "requestIdleCallback",
+          "cancelIdleCallback",
+          "setImmediate",
+          "clearImmediate",
+          "setInterval",
+          "clearInterval",
+          "setTimeout",
+          "clearTimeout",
+        ],
+      });
+      prisma.tenant.findMany.mockImplementation(async (args: any) =>
+        tenants.filter((t) => matches(t, args?.where)),
+      );
+      (prisma.auditLog.findMany as jest.Mock).mockImplementation(async (args: any) =>
+        activations.filter((a) => matches(a, args?.where)),
+      );
+      (prisma as any).order.groupBy = groupFirst(orders);
+      (prisma as any).route.groupBy = groupFirst(routes);
+      (prisma as any).invoice.groupBy = groupFirst(invoices);
+      (prisma as any).invoicePayment.groupBy = groupFirst(payments);
+      (prisma as any).demoBooking = {
+        findMany: jest.fn(async (args: any) => bookings.filter((b) => matches(b, args?.where))),
+      };
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it("M1: seven numbers by week, test, demo, internal and deleted tenants left out of every one", async () => {
+      const stats: any = await service.getStats();
+
+      expect(stats.weeklyFunnel?.weeks).toEqual([
+        {
+          weekStart: "2026-09-07",
+          signups: 0,
+          verified: 0,
+          firstOrder: 0,
+          firstRoute: 0,
+          firstInvoiceSent: 0,
+          firstPayment: 0,
+          demoBookings: 0,
+        },
+        {
+          weekStart: "2026-09-14",
+          signups: 0,
+          verified: 0,
+          firstOrder: 0,
+          firstRoute: 0,
+          firstInvoiceSent: 0,
+          firstPayment: 0,
+          demoBookings: 0,
+        },
+        {
+          weekStart: "2026-09-21",
+          signups: 0,
+          verified: 0,
+          firstOrder: 0,
+          firstRoute: 0,
+          firstInvoiceSent: 0,
+          firstPayment: 0,
+          demoBookings: 0,
+        },
+        {
+          weekStart: "2026-09-28",
+          signups: 0,
+          verified: 0,
+          firstOrder: 0,
+          firstRoute: 0,
+          firstInvoiceSent: 0,
+          firstPayment: 0,
+          demoBookings: 0,
+        },
+        {
+          weekStart: "2026-10-05",
+          signups: 0,
+          verified: 0,
+          firstOrder: 0,
+          firstRoute: 0,
+          firstInvoiceSent: 0,
+          firstPayment: 0,
+          demoBookings: 0,
+        },
+        {
+          weekStart: "2026-10-12",
+          signups: 1,
+          verified: 1,
+          firstOrder: 0,
+          firstRoute: 0,
+          firstInvoiceSent: 0,
+          firstPayment: 0,
+          demoBookings: 1,
+        },
+        {
+          weekStart: "2026-10-19",
+          signups: 0,
+          verified: 0,
+          firstOrder: 1,
+          firstRoute: 1,
+          firstInvoiceSent: 1,
+          firstPayment: 1,
+          demoBookings: 0,
+        },
+        {
+          weekStart: "2026-10-26",
+          signups: 2,
+          verified: 1,
+          firstOrder: 1,
+          firstRoute: 0,
+          firstInvoiceSent: 1,
+          firstPayment: 1,
+          demoBookings: 2,
+        },
+      ]);
+    });
+
+    it("M1: the first-order, first-route, first-send and first-payment reads are bounded to the sign-up cohort, on every query", async () => {
+      await service.getStats();
+      const windowStart = new Date("2026-09-07T00:00:00.000Z"); // Monday of the first of eight weeks
+      for (const groupBy of [
+        (prisma as any).order.groupBy,
+        (prisma as any).route.groupBy,
+        (prisma as any).invoice.groupBy,
+        (prisma as any).invoicePayment.groupBy,
+      ]) {
+        expect(groupBy).toHaveBeenCalledTimes(1);
+        const args = groupBy.mock.calls[0][0];
+        expect(args.where.tenant).toEqual({
+          class: "PRODUCTION",
+          deletedAt: null,
+          createdAt: { gte: windowStart },
+        });
+      }
+    });
+
+    it("M1: a tenant that signed up before the window and orders for the first time inside it is not a first order", async () => {
+      const stats: any = await service.getStats();
+      const total = (key: string) =>
+        stats.weeklyFunnel.weeks.reduce((n: number, w: any) => n + w[key], 0);
+      // p1 and p3 only: "late" ordered and routed inside the window but signed up before it.
+      expect(total("firstOrder")).toBe(2);
+      expect(total("firstRoute")).toBe(1);
+    });
+
+    it("M1: each business counts once for its first send and first payment; a void, a held check, a credit note and imported history don't count", async () => {
+      const stats: any = await service.getStats();
+      const at = (key: string) =>
+        Object.fromEntries(
+          stats.weeklyFunnel.weeks
+            .filter((w: any) => w[key] > 0)
+            .map((w: any) => [w.weekStart, w[key]]),
+        );
+      expect(at("firstInvoiceSent")).toEqual({ "2026-10-19": 1, "2026-10-26": 1 });
+      expect(at("firstPayment")).toEqual({ "2026-10-19": 1, "2026-10-26": 1 });
+    });
+
+    it("M1: the send and payment reads ask for a business id and one date, and nothing about a customer", async () => {
+      const stats: any = await service.getStats();
+      const reads: Array<[any, string]> = [
+        [(prisma as any).invoice.groupBy, "sentAt"],
+        [(prisma as any).invoicePayment.groupBy, "createdAt"],
+      ];
+      for (const [groupBy, field] of reads) {
+        const args = groupBy.mock.calls[0][0];
+        expect(args.by).toEqual(["tenantId"]);
+        expect(args._min).toEqual({ [field]: true });
+        expect(args).not.toHaveProperty("select");
+        expect(args).not.toHaveProperty("include");
+      }
+      for (const { weekStart, ...numbers } of stats.weeklyFunnel.weeks) {
+        expect(typeof weekStart).toBe("string");
+        for (const n of Object.values(numbers)) expect(typeof n).toBe("number");
+      }
+    });
+
+    it.each(["invoice", "invoicePayment"])("M1: the funnel writes nothing to %s", async (model) => {
+      await service.getStats();
+      for (const write of [
+        "create",
+        "createMany",
+        "update",
+        "updateMany",
+        "upsert",
+        "delete",
+        "deleteMany",
+      ]) {
+        expect((prisma as any)[model][write]).not.toHaveBeenCalled();
+      }
+    });
+
+    it("M1: the sixth number, answered, is not invented before W1 lands", async () => {
+      const stats: any = await service.getStats();
+      expect(stats.weeklyFunnel).toBeDefined();
+      for (const week of stats.weeklyFunnel.weeks) {
+        expect(week).not.toHaveProperty("answered");
+      }
+    });
+
+    describe("when a funnel read fails", () => {
+      const fail = () => jest.fn().mockRejectedValue(new Error("funnel read failed"));
+      const reads: Array<[string, () => void]> = [
+        ["orders", () => ((prisma as any).order.groupBy = fail())],
+        ["routes", () => ((prisma as any).route.groupBy = fail())],
+        ["invoice sends", () => ((prisma as any).invoice.groupBy = fail())],
+        ["payments", () => ((prisma as any).invoicePayment.groupBy = fail())],
+        ["demo bookings", () => ((prisma as any).demoBooking.findMany = fail())],
+        [
+          "activations",
+          () => {
+            (prisma.auditLog.findMany as jest.Mock).mockImplementation(async (args: any) => {
+              if (args?.where?.action === "user.activate") throw new Error("funnel read failed");
+              return [];
+            });
+          },
+        ],
+      ];
+
+      it.each(reads)(
+        "%s: the dashboard still loads and says the funnel is out",
+        async (_n, breakIt) => {
+          breakIt();
+          const logged = jest.spyOn((service as any).logger, "error").mockImplementation(() => {});
+
+          const stats: any = await service.getStats();
+
+          expect(stats.weeklyFunnel).toEqual({ unavailable: true });
+          expect(stats.tenants).toBeDefined();
+          expect(stats.mrr).toBeDefined();
+          expect(logged).toHaveBeenCalledTimes(1);
+          expect(String(logged.mock.calls[0][0])).toContain("funnel read failed");
+        },
+      );
     });
   });
 

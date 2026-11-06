@@ -39,6 +39,7 @@ import { CatchupCheckoutService } from "./catchup-checkout.service";
 import { DunningService } from "./dunning.service";
 import { AutoLockSwitchService } from "./auto-lock-switch.service";
 import { AutoLockAdminService } from "./auto-lock-admin.service";
+import { EntitlementSweepService } from "./entitlement-sweep.service";
 
 @Module({
   // forwardRef: MailboxModule (imported by EmailModule for MailboxSendService) imports this
@@ -103,8 +104,11 @@ import { AutoLockAdminService } from "./auto-lock-admin.service";
     PlanTransitionConfigService,
     // Lane B A2 step c: admin list / preview / "Restore now" for the tenant snapshots tab.
     TenantConfigSnapshotAdminService,
+    // FG-1 WP1: the read-only entitlement sweep (platform-admin EntitlementSweepController).
+    EntitlementSweepService,
   ],
   exports: [
+    EntitlementSweepService,
     StripeService,
     ScheduledPriceChangeService,
     // The platform-admin RfInvoice queue refuses payments while a claim is held.

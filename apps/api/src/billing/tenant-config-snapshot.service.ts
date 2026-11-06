@@ -1,8 +1,10 @@
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import type { TxOrClient } from "../prisma/prisma.service";
 import { carrierInTransitCount } from "../orders/carrier-in-transit-guard";
 import { featureDefByKey } from "./feature-registry";
+import { OVERRIDE_RULE_ORDER } from "./feature-override-rule";
 import { planRank } from "./plan-catalog.constants";
 import {
   overrideRestoreVerdict,
@@ -12,6 +14,7 @@ import {
 import {
   FULFILMENT_MODEL_KEY,
   buildSnapshotPayload,
+  currentEffects,
   fleetHeldAfterRestore,
   holdConfigEntry,
   holdOverrideEntry,
@@ -153,7 +156,7 @@ export class TenantConfigSnapshotService {
   ): Promise<{ id: string; takenAt: Date }> {
     const [configs, overrides] = await Promise.all([
       tx.tenantFeatureConfig.findMany({ where: { tenantId } }),
-      tx.tenantFeatureOverride.findMany({ where: { tenantId } }),
+      tx.tenantFeatureOverride.findMany({ where: { tenantId }, orderBy: OVERRIDE_RULE_ORDER }),
     ]);
     const payload = buildSnapshotPayload(configs, overrides, now);
     return tx.tenantFeatureConfigSnapshot.create({
@@ -234,7 +237,7 @@ export class TenantConfigSnapshotService {
   /**
    * Admin surface (A2 step c): the tenant's snapshots, newest first. Read-only — no side effects.
    */
-  async list(tx: Prisma.TransactionClient, tenantId: string): Promise<SnapshotListItem[]> {
+  async list(tx: TxOrClient, tenantId: string): Promise<SnapshotListItem[]> {
     const rows = await tx.tenantFeatureConfigSnapshot.findMany({
       where: { tenantId },
       orderBy: { takenAt: "desc" },
@@ -263,7 +266,7 @@ export class TenantConfigSnapshotService {
    * snapshot for this tenant.
    */
   async previewRestore(
-    tx: Prisma.TransactionClient,
+    tx: TxOrClient,
     tenantId: string,
     snapshotId: string,
     now: Date = new Date(),
@@ -276,7 +279,7 @@ export class TenantConfigSnapshotService {
     const payload = parseSnapshotPayload(snapshot.payload);
     const [configs, overrides] = await Promise.all([
       tx.tenantFeatureConfig.findMany({ where: { tenantId } }),
-      tx.tenantFeatureOverride.findMany({ where: { tenantId } }),
+      tx.tenantFeatureOverride.findMany({ where: { tenantId }, orderBy: OVERRIDE_RULE_ORDER }),
     ]);
     // The SAME guarded plan `applySnapshot` builds (one helper), so the dialog equals the apply.
     const guarded = payload
@@ -315,7 +318,7 @@ export class TenantConfigSnapshotService {
    * count is a read, like the Settings writer's.
    */
   private async planGuarded(
-    tx: Prisma.TransactionClient,
+    tx: TxOrClient,
     tenantId: string,
     payload: SnapshotPayload,
     current: { configs: readonly ConfigRow[]; overrides: readonly OverrideRow[] },
@@ -338,9 +341,7 @@ export class TenantConfigSnapshotService {
     for (let again = true; again;) {
       again = false;
       const effects = [
-        ...current.overrides
-          .filter((o) => o.revokedAt === null && (o.expiresAt === null || o.expiresAt > now))
-          .map((o): [string, "GRANT" | "DENY"] => [o.featureKey, o.effect]),
+        ...currentEffects(current.overrides, now),
         ...plan.overrides.create.map((e): [string, "GRANT" | "DENY"] => [e.featureKey, e.effect]),
       ];
       for (const entry of plan.overrides.create) {
@@ -443,7 +444,7 @@ export class TenantConfigSnapshotService {
   ): Promise<RestoreResult | null> {
     const [configs, overrides] = await Promise.all([
       tx.tenantFeatureConfig.findMany({ where: { tenantId } }),
-      tx.tenantFeatureOverride.findMany({ where: { tenantId } }),
+      tx.tenantFeatureOverride.findMany({ where: { tenantId }, orderBy: OVERRIDE_RULE_ORDER }),
     ]);
     // A malformed / future-version payload must never throw inside the caller's plan-change
     // transaction (that would block the upgrade). Leave it un-stamped — it stays visible for a

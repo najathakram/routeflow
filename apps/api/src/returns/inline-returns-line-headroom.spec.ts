@@ -99,6 +99,17 @@ describe("InlineReturnsService.assertWithinLineHeadroom (B948)", () => {
     await expect(p).resolves.toBeUndefined();
     expect(tx.$executeRaw).not.toHaveBeenCalled();
   });
+  it("G-9 (SA-1060 PR-2): a no-sale chunk beside a covered one is not counted: only the covered chunk is read, locked and capped", async () => {
+    // $60 already credited on A leaves $40. The covered chunk takes $40 and fits; the never-sold chunk is $50 and, if it were
+    // counted against A, would be refused. It has no source line, so it is not.
+    const never = { ...chunk(null, 5, 50), neverSold: true };
+    const { tx, p } = run([chunk("a", 0.4, 40), never], {
+      cn: [{ invoiceItemId: "a", amount: 60, qty: 0.6 }],
+    });
+    await expect(p).resolves.toBeUndefined();
+    expect(tx.invoiceItem.findMany.mock.calls[0][0].where.id.in).toEqual(["a"]);
+    expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
+  });
   it("WRITES (locks + new row version) the source Invoice row(s), tenant-scoped, BEFORE reading the credits", async () => {
     const { tx, p } = run([chunk("a", 0.4, 40)]);
     await p;

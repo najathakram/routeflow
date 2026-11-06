@@ -86,16 +86,16 @@ describe("buildCounterReceipt", () => {
     expect(m.dateLabel).toMatch(/2026/);
   });
 
-  it("cash with change: tendered = paid + change", () => {
-    const m = build({ paid: 22.5, change: 7.5 });
+  it("cash with change: Tendered is the stored cashTendered (SA-1077), never paid + change", () => {
+    const m = build({ paid: 22.5, change: 7.5, cashTendered: 30 });
     expect(m.methodLabel).toBe("Cash");
     expect(m.tendered).toBe(30);
     expect(m.change).toBe(7.5);
     expect(m.changeAsEntered).toBe(false);
   });
 
-  it("cash with zero change: tendered shown, no change figure", () => {
-    const m = build({ paid: 22.5 });
+  it("cash with zero change: the stored cashTendered shows, no change figure", () => {
+    const m = build({ paid: 22.5, cashTendered: 22.5 });
     expect(m.tendered).toBe(22.5);
     expect(m.change).toBeNull();
   });
@@ -105,6 +105,12 @@ describe("buildCounterReceipt", () => {
     expect(m.methodLabel).toBe("Card");
     expect(m.tendered).toBeNull();
     expect(m.change).toBeNull();
+  });
+
+  it("SA-1077 R8: a cash sale the server stored no tender for prints no Tendered row (paid is not a tender)", () => {
+    const m = build({ paid: 22.5 });
+    expect(m.tendered).toBeNull();
+    expect(m.tenderedAsEntered).toBe(false);
   });
 
   it("recovered cash sale uses the entered tender, labelled as entered", () => {
@@ -142,7 +148,7 @@ describe("buildCounterReceipt", () => {
 
   it("falls back to the rung method when the response has none; carries the cashier", () => {
     const m = build(
-      { method: undefined, paid: 22.5, change: 7.5 },
+      { method: undefined, paid: 22.5, change: 7.5, cashTendered: 30 },
       { fallbackMethod: "CASH", cashier: " pat " },
     );
     expect(m.methodLabel).toBe("Cash");

@@ -67,6 +67,7 @@ const EVENT_DESCRIPTION: Record<string, string> = {
   SHIPMENT_TRACKING_ADDED:
     "Sent once, when a tracking number is first added to an order that has already shipped.",
   DELIVERED: "Sent when the order is delivered.",
+  ORDER_REFUSED: "Sent when a customer refuses a whole order at delivery.",
   CANCELLED: "Sent when an order is cancelled.",
   ORDER_CHANGED_AT_DOOR: "Sent when a driver changes the order at the door.",
   LICENSE_EXPIRING: "Sent before a customer's license expires.",

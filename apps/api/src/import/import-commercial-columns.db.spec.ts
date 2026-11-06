@@ -285,8 +285,10 @@ describeDb(
       );
       expect(run1Contacts.created).toBe(1);
 
+      // SA-1084: the stored identity values are read back on purpose, so the read asks for them by name.
       const customer = await prisma.customer.findFirst({
         where: { tenantId, zohoContactId: `${RUN_MARKER}-ZC` },
+        omit: { taxId: false, tobaccoLicenseNo: false },
       });
       expect(customer).not.toBeNull();
       if (customer) {

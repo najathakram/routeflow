@@ -1,5 +1,6 @@
 import { apiClient } from "./api-client";
 import { setTenantCookie, clearTenantCookie } from "./tenant-cookie";
+import { rememberLastWorkspace } from "./last-workspace";
 import { OP_KEYS } from "./auth-keys";
 import { setOpPresenceCookie, clearOpPresenceCookie } from "./presence-cookies";
 import { getImpersonation, clearImpersonation } from "./impersonation";
@@ -104,6 +105,9 @@ export function adoptTokenPair(data: {
   // session or impersonation, all subsequent API calls use the correct tenant.
   if (data.user?.tenantSlug) {
     setTenantCookie(data.user.tenantSlug);
+    // W2 B3: a separate stored value, so the next visit to /login can fill the Workspace ID in after
+    // sign-out has cleared the cookie above.
+    rememberLastWorkspace(data.user.tenantSlug);
   }
 }
 

@@ -134,6 +134,73 @@ export function receiptCustomerName(
 const receiptFooterOf = (profile: ReceiptBusinessProfile | null | undefined): string | null =>
   clean(profile?.receiptFooter) || null;
 
+type TenderRowTender = { method: TodaysSaleMethod; amount: number };
+
+/**
+ * SA-1077 / W-1090: the Payment method / Paid / Returned rows of a COUNTER receipt, the ONE derivation behind the live receipt
+ * and the reprint, so the two read alike. A server that sends the tender split (`tenderPaid`) has already taken the sale's
+ * own return credit out of what was paid and out of the methods (an unproven store credit stays a tender there), so they are
+ * read as given, the payment method as pricing's ONE method line (the emailed receipt's too), and the return figures each as
+ * their own row. `split` is false for an older server (or a split that could not be read): the caller keeps its earlier words.
+ */
+export function tenderRows(input: {
+  fields: {
+    tenderPaid?: number;
+    tenderMethods?: ReadonlyArray<TenderRowTender>;
+    returnLines?: {
+      applied: number;
+      refunded: number;
+      kept: number;
+      used: number;
+      pending: boolean;
+    };
+  };
+  /** the tenders an older server's reprint falls back to (`methods`); none for the live receipt, which keeps its own words */
+  fallback: ReadonlyArray<TenderRowTender>;
+  paid: number;
+  checkReference: string;
+}): {
+  split: boolean;
+  tenders: ReadonlyArray<TenderRowTender>;
+  hasTender: boolean;
+  paid: number;
+  methodLabel: string | null;
+  returns: Partial<ReceiptModel>;
+} {
+  const { fields, fallback, checkReference } = input;
+  const split = fields.tenderPaid !== undefined;
+  const tenders = split ? (fields.tenderMethods ?? fallback) : fallback;
+  const hasTender = tenders.length > 0;
+  // the server's return figures as given (no client rounding or derivation of a server field); absent: no return line
+  const lines = split ? fields.returnLines : undefined;
+  return {
+    split,
+    tenders,
+    hasTender,
+    paid: split ? fields.tenderPaid! : input.paid,
+    methodLabel: hasTender
+      ? split
+        ? counterMethodLine(tenders, { checkReference })
+        : tenders
+            .map((m) =>
+              m.method === "CHECK" && checkReference
+                ? `${REPRINT_METHOD_LABEL[m.method]} #${checkReference}`
+                : REPRINT_METHOD_LABEL[m.method],
+            )
+            .join(" + ")
+      : null,
+    returns: lines
+      ? {
+          returned: lines.applied > 0 ? lines.applied : null,
+          refunded: lines.refunded > 0 ? lines.refunded : null,
+          creditKept: lines.kept > 0 ? lines.kept : null,
+          creditUsed: lines.used > 0 ? lines.used : null,
+          returnPending: lines.pending,
+        }
+      : {},
+  };
+}
+
 export function buildCounterReceipt(input: {
   receipt: CounterSaleResponse;
   lines: readonly ReceiptLineInput[];
@@ -160,13 +227,16 @@ export function buildCounterReceipt(input: {
   let change: number | null = null;
   let changeAsEntered = false;
   if (hasTender) {
-    if (enteredTender != null) {
+    // SA-1077 / W-1090: Tendered is the figure the server STORED (`cashTendered`), exactly as the reprint prints it. It is never
+    // worked out: `paid` also holds the store credit applied to the sale, so paid + change read $16.00 for $6.00 of cash. The
+    // clerk's typed figure is only the fallback for a sale the server stored none for (a recovered cash sale); with neither,
+    // there is no Tendered row.
+    if (receipt.cashTendered != null) {
+      tendered = receipt.cashTendered;
+    } else if (enteredTender != null) {
       tendered = enteredTender;
       tenderedAsEntered = true;
-    } else if (method === "CASH") {
-      // the server's `paid` is what the invoice absorbed; cash handed over = paid + the change given
-      tendered = roundMoney(receipt.paid + (serverChange ?? 0));
-    } // card / check: exactly what was charged, which the Paid row already says
+    }
     if (serverChange != null) change = serverChange;
     // As-entered fallback ONLY for a paid sale the server stored no tender for (a recovered or legacy cash sale). A stored
     // tender (`cashTendered`) or a balance still owing means the server's null IS the answer: no Change row.
@@ -178,6 +248,18 @@ export function buildCounterReceipt(input: {
       }
     }
   }
+
+  // SA-1077 / W-1090: a response that carries the tender split prints the reprint's rows (the SAME `tenderRows`); a failed tender
+  // prints none, and an older server (no split) keeps the till's earlier words.
+  const rowsOfSplit = paymentNotRecorded
+    ? null
+    : tenderRows({
+        fields: receipt,
+        fallback: [],
+        paid: receipt.paid,
+        checkReference: clean(receipt.checkReference),
+      });
+  const tenderSplit = rowsOfSplit?.split ? rowsOfSplit : null;
 
   // The stored lines the response serves (the invoice lines): the LIST price and type each cart line was sold at. Matched in
   // two passes so a fallback can never take a line a later cart line matches exactly: (1) EVERY cart line takes the first
@@ -262,18 +344,20 @@ export function buildCounterReceipt(input: {
     charges,
     adjustments,
     total: receipt.total,
-    paid: receipt.paid,
+    paid: tenderSplit ? tenderSplit.paid : receipt.paid,
     balanceDue: receipt.balanceDue,
     onAccount,
     paymentNotRecorded,
-    showPaid: hasTender,
+    showPaid: tenderSplit ? tenderSplit.hasTender : hasTender,
     showBalance: paymentNotRecorded || onAccount || receipt.balanceDue > 0,
-    methodLabel:
-      hasTender && method
+    methodLabel: tenderSplit
+      ? tenderSplit.methodLabel
+      : hasTender && method
         ? method === "CHECK" && clean(receipt.checkReference)
           ? `${METHOD_LABEL[method]} #${clean(receipt.checkReference)}`
           : METHOD_LABEL[method]
         : null,
+    ...(tenderSplit ? tenderSplit.returns : {}),
     tendered,
     tenderedAsEntered,
     change,
@@ -463,13 +547,13 @@ export function receiptModelFromOrder(input: {
   // B1262 / SA-838: a server that sends the tender split has already taken the sale's own return credit out of what was paid
   // and out of the methods (an unproven store credit stays a tender there), so they are read as given. An older server sends
   // neither: master's reading of `paid` / `methods`, and no Returned line.
-  const split = sale.tenderPaid !== undefined;
-  const tenders = split ? (sale.tenderMethods ?? sale.methods) : sale.methods;
-  const hasTender = tenders.length > 0;
-  const paid = split ? sale.tenderPaid! : sale.paid;
+  const { hasTender, paid, methodLabel, returns } = tenderRows({
+    fields: sale,
+    fallback: sale.methods,
+    paid: sale.paid,
+    checkReference: clean(sale.checkReference),
+  });
   const { balanceDue } = sale;
-  // the server's return figures as given (no client rounding or derivation of a server field); absent: no return line
-  const lines = split ? sale.returnLines : undefined;
   const onAccount = !hasTender && balanceDue > 0;
   const orderTotal = num(order.total);
   const { tax, charges, adjustments } = receiptFigures({
@@ -485,8 +569,6 @@ export function receiptModelFromOrder(input: {
     ratePercent: sale.taxRatePercent,
   });
   const tendered = sale.cashTendered ?? null;
-  // W-713: the check number the row carries (older servers omit it); it prints only beside a CHECK tender
-  const checkRef = clean(sale.checkReference);
   return {
     header: receiptHeader(profile),
     orderNumber: order.orderNumber,
@@ -508,26 +590,8 @@ export function receiptModelFromOrder(input: {
     showPaid: hasTender,
     showBalance: onAccount || balanceDue > 0,
     // the split path prints pricing's ONE Payment method line (the emailed receipt's too); an older server keeps master's labels
-    methodLabel: hasTender
-      ? split
-        ? counterMethodLine(tenders, { checkReference: checkRef })
-        : tenders
-            .map((m) =>
-              m.method === "CHECK" && checkRef
-                ? `${REPRINT_METHOD_LABEL[m.method]} #${checkRef}`
-                : REPRINT_METHOD_LABEL[m.method],
-            )
-            .join(" + ")
-      : null,
-    ...(lines
-      ? {
-          returned: lines.applied > 0 ? lines.applied : null,
-          refunded: lines.refunded > 0 ? lines.refunded : null,
-          creditKept: lines.kept > 0 ? lines.kept : null,
-          creditUsed: lines.used > 0 ? lines.used : null,
-          returnPending: lines.pending,
-        }
-      : {}),
+    methodLabel,
+    ...returns,
     tendered,
     tenderedAsEntered: false,
     // the server's figure (the row's `change`, servedChange), shown as given: the client recomputes nothing

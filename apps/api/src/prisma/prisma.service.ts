@@ -2,8 +2,10 @@ import { Injectable, OnModuleInit, OnModuleDestroy, Optional } from "@nestjs/com
 import { Prisma, PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
-import { TenantContextService } from "../tenant/tenant-context.service";
+import { TenantContextService, type TenantContextKind } from "../tenant/tenant-context.service";
 import { utcPoolConfig } from "../common/pg-session";
+import { CUSTOMER_IDENTITY_OMIT } from "../customers/customer-identity-fields";
+import { checkTenantRead, checkTenantWrite, type TenantWriteOp } from "./tenant-context-guard";
 
 /**
  * The exact error Prisma's own `*OrThrow` operations raise when no row matches
@@ -67,6 +69,44 @@ export function assertTenantModelSet(names: ReadonlySet<string>): void {
 }
 assertTenantModelSet(getTenantModelNames());
 
+/** `Parent` + relation key -> the child model, when the child is tenant-owned (one level of nested-create detection). */
+let relationTargets: Map<string, string> | undefined;
+export function tenantRelationTarget(parent: string, key: string): string | undefined {
+  if (!relationTargets) {
+    relationTargets = new Map();
+    for (const m of Prisma.dmmf.datamodel.models) {
+      for (const f of m.fields) {
+        if (f.kind === "object" && isTenantModel(f.type))
+          relationTargets.set(`${m.name}.${f.name}`, f.type);
+      }
+    }
+  }
+  return relationTargets.get(`${parent.charAt(0).toUpperCase()}${parent.slice(1)}.${key}`);
+}
+
+export const FOR_SYSTEM_MIN_REASON = 12;
+
+const CREATE_OPS = new Set<string>(["create", "createMany", "createManyAndReturn", "upsert"]);
+
+/** The one dispatch from a Prisma operation to the guard: a create's payload, an upsert's `create`, else an access. */
+function checkTenantOp(
+  kind: TenantContextKind,
+  delegateOrModel: string,
+  operation: string,
+  args: any,
+  where?: string,
+): void {
+  if (!isTenantModel(delegateOrModel)) return;
+  // The tx proxy sees a delegate key (`customer`), the extension a model name (`Customer`): one name in the counter.
+  const model = delegateOrModel.charAt(0).toUpperCase() + delegateOrModel.slice(1);
+  if (!CREATE_OPS.has(operation)) {
+    checkTenantRead(kind, model, where);
+    return;
+  }
+  const data = operation === "upsert" ? args?.create : args?.data;
+  checkTenantWrite(kind, model, operation as TenantWriteOp, data, tenantRelationTarget, where);
+}
+
 /**
  * ONE implementation of the `findUnique` / `findUniqueOrThrow` tenant guard, shared by the
  * `forTenant()` extension and the `tenantTransaction` proxy so the two layers cannot drift.
@@ -129,8 +169,20 @@ export function isTxClient(db: unknown): boolean {
   return db != null && typeof (db as { $connect?: unknown }).$connect !== "function";
 }
 
+/** The client options this service is built with: the stock options plus the SA-1084 global omit, as a literal type. */
+export type RfClientOptions = Omit<Prisma.PrismaClientOptions, "omit"> & {
+  omit: typeof CUSTOMER_IDENTITY_OMIT;
+};
+/** The app's client type: query results leave out the customer identity fields (types follow the runtime omit). */
+export type RfPrismaClient = PrismaClient<RfClientOptions>;
+/** A helper that only needs the tables: it accepts a plain transaction client or the app client (SA-1084). */
+export type TxOrClient = Prisma.TransactionClient | RfPrismaClient;
+
 @Injectable()
-export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
+export class PrismaService
+  extends PrismaClient<RfClientOptions>
+  implements OnModuleInit, OnModuleDestroy
+{
   /** W-720: the pool this service built; PrismaPg never ends a pool its caller supplied. */
   private readonly pgPool: Pool;
   private pgPoolEnded = false;
@@ -139,7 +191,8 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     // Row 361: the session time zone is pinned to UTC on every connection (common/pg-session.ts).
     const pool = new Pool(utcPoolConfig({ connectionString: process.env.DATABASE_URL }));
     const adapter = new PrismaPg(pool);
-    super({ adapter });
+    // SA-1084: customer identity values leave every query unless a reader names them (customer-identity-fields.ts).
+    super({ adapter, omit: CUSTOMER_IDENTITY_OMIT });
     this.pgPool = pool;
   }
 
@@ -196,9 +249,42 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       } else {
         await rawTx.$executeRaw`SELECT set_config('app.current_tenant_id', '', true)`;
       }
-      if (!tenantId) return fn(rawTx);
+      // SA-1105 (dark): a tenantless transaction is still the raw client, but its tenant-owned writes are observed.
+      if (!tenantId) return fn(this._observeTx(rawTx, this.tenantCtx?.kind() ?? "NONE"));
       return fn(this._wrapTxWithTenant(rawTx, tenantId));
     }, options as any);
+  }
+
+  /**
+   * SA-1105 / SA-619a (dark): the raw transaction client of a tenantless context, with every tenant-owned operation
+   * reported to the guard first and then run UNCHANGED (no scoping: a SUPER_ADMIN is unscoped by design).
+   */
+  private _observeTx(rawTx: any, kind: TenantContextKind): any {
+    const label = this.tenantCtx?.label();
+    return new Proxy(rawTx, {
+      get(target, name) {
+        const delegate = target[name];
+        if (
+          !delegate ||
+          typeof delegate !== "object" ||
+          typeof name !== "string" ||
+          name.startsWith("$") ||
+          name.startsWith("_")
+        ) {
+          return typeof delegate === "function" ? delegate.bind(target) : delegate;
+        }
+        return new Proxy(delegate, {
+          get(modelTarget, method) {
+            const fn = modelTarget[method];
+            if (typeof fn !== "function" || typeof method !== "string") return fn;
+            return (args: any = {}) => {
+              checkTenantOp(kind, name, method, args, label);
+              return fn.call(modelTarget, args);
+            };
+          },
+        });
+      },
+    });
   }
 
   /**
@@ -289,6 +375,8 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
                     create: { ...args.create, tenantId },
                   };
                 }
+                // SA-1105 (Q5): the same check as the extension; belt and braces here, the id was just injected.
+                checkTenantOp("TENANT", modelName, method, args);
                 return fn.call(modelTarget, args);
               };
             }
@@ -357,6 +445,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
               case "create":
                 args.data = { ...args.data, tenantId };
+                checkTenantOp("TENANT", model, operation, args);
                 return query(args);
 
               case "createMany":
@@ -364,11 +453,13 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
                 args.data = Array.isArray(args.data)
                   ? args.data.map((d: any) => ({ ...d, tenantId }))
                   : { ...args.data, tenantId };
+                checkTenantOp("TENANT", model, operation, args);
                 return query(args);
 
               case "upsert":
                 args.where = { ...args.where, tenantId };
                 args.create = { ...args.create, tenantId };
+                checkTenantOp("TENANT", model, operation, args);
                 return query(args);
 
               case "findMany":
@@ -414,7 +505,45 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
    */
   forTenant() {
     const tenantId = this.tenantCtx?.getOrNull() ?? null;
-    if (!tenantId) return this;
+    if (!tenantId) {
+      // SA-1105 (dark): still the unscoped client, but a tenant-owned access or write with no tenant is reported.
+      const kind = this.tenantCtx?.kind() ?? "NONE";
+      if (kind === "SYSTEM") return this;
+      return this.$extends(
+        this._observeExtension(kind, this.tenantCtx?.label()),
+      ) as unknown as this;
+    }
     return this.$extends(this._tenantExtension(tenantId)) as unknown as this;
+  }
+
+  /** The tenantless layer of `forTenant()`: report to the guard, then run the query exactly as given. */
+  private _observeExtension(kind: TenantContextKind, label?: string) {
+    return {
+      query: {
+        $allModels: {
+          async $allOperations({ args, query, model, operation }: any) {
+            checkTenantOp(kind, model, operation, args, label);
+            return query(args);
+          },
+        },
+      },
+    };
+  }
+
+  /**
+   * SA-1105 Q3 + A-1: the one deliberate unscoped door, in the callback shape only. It runs `fn` with this (unscoped, never
+   * extended) client inside a tenantless context of kind SYSTEM, so the guard sees the body as deliberate: a `forTenant()`
+   * read inside it is not reported, and a nested `tenantCtx.run(tenantId, ...)` is TENANT as usual. No form that returns
+   * a client exists, so `forSystem(reason)` without `fn` does not compile. `reason` must be a string LITERAL of at least
+   * 12 characters: the `for-system.allow-list.spec` reads every call site and holds the list set-equal to its own.
+   */
+  forSystem<T>(reason: string, fn: (db: this) => Promise<T>): Promise<T> {
+    if (typeof reason !== "string" || reason.trim().length < FOR_SYSTEM_MIN_REASON) {
+      throw new Error(
+        `forSystem(reason): a literal reason of at least ${FOR_SYSTEM_MIN_REASON} characters is required`,
+      );
+    }
+    if (!this.tenantCtx) return fn(this);
+    return this.tenantCtx.run(null, () => fn(this), "SYSTEM", reason);
   }
 }

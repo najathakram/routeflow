@@ -16,8 +16,9 @@
  * from here. (Row 587: the status write's office-evidenced lines are completed by office-evidence-completion.ts.)
  *
  * It runs in the CALLER's transaction: the status and the stamp commit together. The route-stop writers
- * (routes.service.ts completeStop / completeWithPayment) already recompute from rows and are allow-listed:
- * they do not call this.
+ * (routes.service.ts completeStop / completeWithPayment) recompute from rows through the one step
+ * `deliveredQtyRecomputeForRows` (routes/delivered-so-far.ts; SA-978a §3, W-922) and are allow-listed: they do
+ * not call this.
  *
  * Demotion (DELIVERED -> CONFIRMED / PARTIALLY_DELIVERED) clears only `deliveredAt`: the stamp stays, the
  * goods left, so cancel-impact keeps refusing a cancel (use a Return).

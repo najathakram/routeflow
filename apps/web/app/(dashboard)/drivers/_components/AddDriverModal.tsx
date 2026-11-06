@@ -6,6 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { CheckCircle2, Copy, Check } from "lucide-react";
 import { Modal, Input, Button } from "@routeflow/ui/web";
+import { useOptionalAuth } from "@/lib/auth-context";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -81,6 +82,9 @@ export function AddDriverModal({ isOpen, onClose, onCreateDriver }: AddDriverMod
     }
   };
 
+  // W1 (COPY 2s): a driver signs in with the business's Workspace ID, so the admin hands it over with the password.
+  const workspaceId = useOptionalAuth()?.user?.tenantSlug ?? null;
+
   const copyPassword = async () => {
     if (!tempPassword) return;
     try {
@@ -137,6 +141,12 @@ export function AddDriverModal({ isOpen, onClose, onCreateDriver }: AddDriverMod
                 {copied ? <Check className="h-4 w-4 text-success" /> : <Copy className="h-4 w-4" />}
               </button>
             </div>
+            {workspaceId && (
+              <p className="pt-2 text-sm text-navy/70">
+                Drivers sign in with Workspace ID{" "}
+                <span className="font-mono font-medium text-navy">{workspaceId}</span>.
+              </p>
+            )}
           </div>
         </div>
       ) : (

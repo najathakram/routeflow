@@ -66,22 +66,15 @@ describe("components/auth/auth-shell.css — T2c (R5)", () => {
   });
 
   it.each([
-    "--rf-navy: #10264d",
-    "--rf-plum: #623691",
-    "--rf-muted: #637992",
-    ".rf-auth-story small",
-    "@media (max-width: 850px)",
+    // The shell sits inside the site frame and uses the site's own tokens.
+    "var(--rf-r-card)",
+    "var(--b700)",
+    "max-width: 520px",
     "prefers-reduced-motion",
-    "var(--font-geist-sans)",
-    // The hero type belongs to the story panel only — an unscoped `.rf-auth h2`
-    // out-specifies the in-card headings' own `text-xl`.
-    ".rf-auth-story h2 {",
-    // A navy focus ring is invisible on the navy story panel.
-    ".rf-auth-story :focus-visible",
     // Longhands: the `padding`/`border` shorthands out-specify `pr-10`/`border-danger`.
     "padding-block: 12px",
-    "padding-inline-start: 12px",
-    "border-color: #ffffffed",
+    "padding-inline-start: 14px",
+    "border-color: #b9c2d0",
     'input[aria-invalid="true"]',
     // The footer row wraps its page-supplied links instead of colliding with them.
     ".rf-auth-footer-links",
@@ -92,6 +85,13 @@ describe("components/auth/auth-shell.css — T2c (R5)", () => {
       ? fs.readFileSync(AUTH_SHELL_CSS_PATH, "utf8")
       : "";
     expect(css).toContain(needle);
+  });
+
+  it("has no story-panel rules left (T2c)", () => {
+    const css = fs.readFileSync(AUTH_SHELL_CSS_PATH, "utf8");
+    for (const gone of [".rf-auth-story", ".rf-auth-orbit", ".rf-auth-ai", ".rf-auth-track"]) {
+      expect(css).not.toContain(gone);
+    }
   });
 
   it("does not style h2 across the whole shell (T2c)", () => {
@@ -146,45 +146,19 @@ describe("RF monogram removed from forgot/reset/change password pages — T2d (R
 });
 
 // ---------------------------------------------------------------------------
-// T2f — components/auth/auth-copy.ts exports AUTH_STORY with the two
-// audiences' exact copy.
+// T2f — components/auth/auth-copy.ts no longer carries the per-audience story (a sample order, an
+// "AI scanning" chip, taglines). The site frame replaced the story panel; only the type is left.
 // ---------------------------------------------------------------------------
 
 const AUTH_COPY_PATH = path.join(WEB_ROOT, "components", "auth", "auth-copy.ts");
 
-describe("components/auth/auth-copy.ts exports AUTH_STORY — T2f (R4)", () => {
-  it("components/auth/auth-copy.ts exists (T2f)", () => {
-    expect(fs.existsSync(AUTH_COPY_PATH)).toBe(true);
-  });
-
-  // The existence proxy lives in its own test above, so the six regex oracles
-  // below are never shadowed by it: a missing file reads as "" and each one
-  // still fails on the shape it names.
-  it("exports AUTH_STORY with distributor/retailer kicker+heading+paragraph (T2f)", () => {
-    const source = fs.existsSync(AUTH_COPY_PATH) ? fs.readFileSync(AUTH_COPY_PATH, "utf8") : "";
-    expect(source).toContain("AUTH_STORY");
-    expect(source).toMatch(/distributor\s*:/);
-    expect(source).toMatch(/retailer\s*:/);
-    expect(source).toMatch(/kicker\s*:/);
-    expect(source).toMatch(/heading\s*:/);
-    expect(source).toMatch(/paragraph\s*:/);
-  });
-
-  // No existsSync short-circuit: a missing module reads as {} so each case fails on
-  // its own string oracle (`expected "…" received undefined`), which is the substance
-  // of R4, not on a shared file-missing proxy.
-  function authCopy(): {
-    AUTH_STORY?: { distributor?: { heading?: string }; retailer?: { heading?: string } };
-  } {
-    return fs.existsSync(AUTH_COPY_PATH) ? require(AUTH_COPY_PATH) : {};
-  }
-
-  it('AUTH_STORY.distributor.heading === "A clearer picture of your business." (T2f)', () => {
-    expect(authCopy().AUTH_STORY?.distributor?.heading).toBe("A clearer picture of your business.");
-  });
-
-  it('AUTH_STORY.retailer.heading === "Stock your shelves. Stay in control." (T2f)', () => {
-    expect(authCopy().AUTH_STORY?.retailer?.heading).toBe("Stock your shelves. Stay in control.");
+describe("components/auth/auth-copy.ts — T2f", () => {
+  it("exports the audience type and none of the old story copy", () => {
+    const source = fs.readFileSync(AUTH_COPY_PATH, "utf8");
+    expect(source).toContain("export type AuthAudience");
+    for (const gone of ["AUTH_STORY", "AUTH_ORBIT", "AUTH_AI_CHIP", "AUTH_TAGLINE"]) {
+      expect(source).not.toContain(gone);
+    }
   });
 });
 
@@ -301,7 +275,7 @@ const D1_PAGES_WITH_STATES: Array<{ path: string; states: string[] }> = [
   { path: "app/buyer/invite/[token]/page.tsx", states: ["Invalid invite", "Invite accepted"] },
   {
     path: "app/verify-email/page.tsx",
-    states: ["Verifying your email…", "Email verified!", "Verification failed"],
+    states: ["Verifying your email…", "Email verified.", "Verification failed"],
   },
   {
     path: "app/buyer/verify-merge/page.tsx",

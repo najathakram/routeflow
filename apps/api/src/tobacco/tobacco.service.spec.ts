@@ -62,7 +62,38 @@ describe("TobaccoService", () => {
       expect(where.invoice.status).toEqual({ notIn: ["DRAFT", "VOID", "WRITTEN_OFF"] });
 
       expect(result[0].tax).toBe(6.4); // 80 × 0.08
-      expect(result[0].customer.tobaccoLicenseNo).toBe("TL-123");
+      expect(result[0].customer?.tobaccoLicenseLast4).toBe("-123"); // SA-1084: the last 4 only
+    });
+
+    // SA-1084 (SI-12, SI-13): the pack never carries a customer's full license; the badge is a server boolean.
+    it("sales carry the last 4 and hasTobaccoLicense, never the full license, for a licensed, an unlicensed and an expired customer", async () => {
+      const row = (id: string, customer: Record<string, unknown>) => ({
+        id,
+        qty: D(1),
+        unitPrice: D(10),
+        subtotal: D(10),
+        taxRate: D(0),
+        product: { id: "p1", name: "Cigarillos", sku: null, unit: "pack" },
+        invoice: {
+          id: `inv-${id}`,
+          invoiceNumber: `INV-${id}`,
+          issueDate: new Date("2026-06-10"),
+          customer: { id: `c-${id}`, businessName: `Store ${id}`, ...customer },
+        },
+      });
+      prisma.invoiceItem.findMany.mockResolvedValue([
+        row("a", { tobaccoLicenseNo: "TL-5550142", tobaccoLicenseExpiry: null }),
+        row("b", { tobaccoLicenseNo: null, tobaccoLicenseExpiry: null }),
+        row("c", { tobaccoLicenseNo: "TL-9990001", tobaccoLicenseExpiry: new Date("2020-01-01") }),
+      ]);
+
+      const result = await service.getSales({ from: "2026-06-01", to: "2026-06-30" });
+
+      expect(result.map((r) => r.customer?.hasTobaccoLicense)).toEqual([true, false, true]);
+      expect(result.map((r) => r.customer?.tobaccoLicenseLast4)).toEqual(["0142", null, "0001"]);
+      expect(result[2].customer?.tobaccoLicenseExpiry).toEqual(new Date("2020-01-01"));
+      expect(JSON.stringify(result)).not.toMatch(/TL-5550142|TL-9990001/);
+      expect(result[0].customer).not.toHaveProperty("tobaccoLicenseNo");
     });
   });
 

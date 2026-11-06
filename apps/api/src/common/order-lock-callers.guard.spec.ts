@@ -216,8 +216,16 @@ describe("order-lock callers: every settle / invoice-create caller declares its 
 
   it("SA-706f: a run's terminal move locks the run's Orders BEFORE its stop rows (Orders -> RouteRunStop -> RouteRun)", () => {
     const sites = callPrefixes("lockRunStopsForTerminalStatus");
-    expect(sites.map((s) => s.site)).toEqual(["routes/routes.service.ts#updateRunStatus"]);
-    for (const s of sites) expect(s.prefix).toContain("lockRunOrdersForTerminalStatus(");
+    expect(sites.map((s) => s.site).sort()).toEqual([
+      "routes/routes.service.ts#updateRunStatus",
+      "routes/run-settlement.ts#settleRunInTx",
+    ]);
+    for (const s of sites.filter((x) => x.site.endsWith("#updateRunStatus")))
+      expect(s.prefix).toContain("lockRunOrdersForTerminalStatus(");
+    // SA-1098 A-6: the settlement write takes the house order STOP rows -> RouteRun and no Orders (it writes none), so it
+    // can never invert the Orders-first order above.
+    for (const s of sites.filter((x) => x.site.endsWith("#settleRunInTx")))
+      expect(s.prefix).not.toContain("lockRunOrdersForTerminalStatus(");
   });
 
   it("SA-706f: every other transaction that takes a RouteRunStop lock and writes Orders locks those Orders first", () => {

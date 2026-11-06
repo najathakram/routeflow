@@ -494,8 +494,25 @@ export const ORDER_STATUS_VALUES = [
   "PARTIALLY_DELIVERED",
   "DELIVERED",
   "CANCELLED",
+  "REFUSED",
 ] as const;
 export type OrderStatusValue = (typeof ORDER_STATUS_VALUES)[number];
+
+/**
+ * SA-1101: the order is done — not routable, not open, not cancellable, not releasable. ONE list, read by
+ * the API, web and mobile by name; `terminal-order-status-lists.spec.ts` fails any new array that names
+ * both DELIVERED and CANCELLED without REFUSED or this constant.
+ */
+export const TERMINAL_ORDER_STATUSES = ["DELIVERED", "REFUSED", "CANCELLED"] as const;
+/** SA-1101: the delivery visit happened, so billing is on the delivered basis (final draft, no mirror). */
+export const POST_DELIVERY_ORDER_STATUSES = ["DELIVERED", "REFUSED"] as const;
+
+export function isTerminalOrderStatus(status: string | null | undefined): boolean {
+  return (TERMINAL_ORDER_STATUSES as readonly string[]).includes(status ?? "");
+}
+export function isPostDeliveryOrderStatus(status: string | null | undefined): boolean {
+  return (POST_DELIVERY_ORDER_STATUSES as readonly string[]).includes(status ?? "");
+}
 
 /** Prisma `ItemStatus` — an order line's fulfilment status (#2703). */
 export const ITEM_STATUS_VALUES = [

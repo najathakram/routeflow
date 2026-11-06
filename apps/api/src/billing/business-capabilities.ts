@@ -1,6 +1,8 @@
 import { BadRequestException } from "@nestjs/common";
 import type {
   BusinessCapabilities,
+  BusinessProfilePlan,
+  FirstRunAnswer,
   BusinessCapabilitiesRequest,
   BusinessCapabilityTicks,
   BusinessProfileKey,
@@ -240,4 +242,54 @@ export function capabilityAvailability(
   for (const c of CAPABILITY_MODES)
     if (unavailable(c.key, c.mode)) out[c.capability] = "Not available yet";
   return out;
+}
+
+/**
+ * W1: the request the first question sends to the ONE planner. It is not the back office's call as it stands: that call
+ * saves nothing for Shipping alone, and saves `pickup` / `pickup_ship` (still `proposed`, which tenant Settings refuses)
+ * for the counter. Here Delivery and Shipping map to `delivery` / `ship` / `both`, the counter is only `counter_sales`,
+ * and new orders open as an order. The keep rule is off except for Counter alone, where it is what we want (the model
+ * stays `unset`). Door payments are never sent: they read off on a new account, so the planner keeps them off.
+ * Probed against the real planner at e134d6bd5d: rf-specs specs/website-review/probe-first-run.txt, section B.
+ */
+export function firstRunRequest(
+  answer: FirstRunAnswer,
+  now: Pick<BusinessCapabilities, "doorPayments" | "configured" | "counter">,
+): ReturnType<typeof ticksToProfileDef> {
+  const delivery = answer.delivery === true;
+  const shipping = answer.shipping === true;
+  const counter = answer.counter === true;
+  if (counter && !delivery && !shipping) {
+    return ticksToProfileDef(
+      { shipping: true, counter: true, opensAs: "order" },
+      {
+        doorPayments: now.doorPayments,
+        configured: false,
+        ticks: {
+          delivery: false,
+          doorPayments: false,
+          shipping: true,
+          counter: now.counter,
+          opensAs: "order",
+        },
+      },
+    );
+  }
+  return ticksToProfileDef(
+    { delivery, shipping, counter, opensAs: "order" },
+    { doorPayments: now.doorPayments, configured: now.configured },
+  );
+}
+
+/**
+ * W1: the first question only FILLS BLANKS. A plan is applied only if it stops no billing, changes no override (every
+ * `action` is `skip`), and every mode change starts from `unset`. Any other plan means the team (or an earlier partial
+ * apply with a different answer) already set this account up, so it is left alone.
+ */
+export function fillsBlanks(plan: BusinessProfilePlan): boolean {
+  return (
+    plan.billing.length === 0 &&
+    plan.overrides.every((o) => o.action === "skip") &&
+    plan.modes.every((m) => m.from === "unset")
+  );
 }

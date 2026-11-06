@@ -10,7 +10,11 @@
  *    deliberately routes through POST /reopen instead of PATCH /status).
  */
 import { statusActions } from "../lib/order-actions";
-import { canTransitionOrder, ORDER_STATUS_TRANSITIONS } from "../lib/order-status-flow";
+import {
+  canTransitionOrder,
+  demotionRequiresReason,
+  ORDER_STATUS_TRANSITIONS,
+} from "../lib/order-status-flow";
 import type { OrderStatus } from "../lib/api/orders";
 
 const ALL_STATUSES: OrderStatus[] = [
@@ -20,8 +24,27 @@ const ALL_STATUSES: OrderStatus[] = [
   "OUT_FOR_DELIVERY",
   "PARTIALLY_DELIVERED",
   "DELIVERED",
+  "REFUSED",
   "CANCELLED",
 ];
+
+describe("statusActions: REFUSED (SA-1101)", () => {
+  it("the one action is Deliver again, back to CONFIRMED, with no reason and no cancel", () => {
+    expect(statusActions("REFUSED")).toEqual([
+      { label: "Deliver again", toStatus: "CONFIRMED", style: "primary", icon: "refresh-outline" },
+    ]);
+    const a = statusActions("REFUSED")[0];
+    expect(a.reason).toBeUndefined();
+    expect(a.reopenCancelled).toBeUndefined();
+    expect(canTransitionOrder("REFUSED", a.toStatus)).toBe(true);
+    expect(demotionRequiresReason("REFUSED", a.toStatus)).toBe(false);
+  });
+
+  it("a REFUSED order has no status action on a SHIP or pickup path that differs from ROUTE's", () => {
+    expect(statusActions("REFUSED", "SHIP").map((x) => x.toStatus)).toEqual(["CONFIRMED"]);
+    expect(statusActions("REFUSED", "PICKUP").map((x) => x.toStatus)).toEqual(["CONFIRMED"]);
+  });
+});
 
 describe("statusActions — ROUTE (default) is byte-identical to the pre-extraction switch", () => {
   it("DRAFT", () => {

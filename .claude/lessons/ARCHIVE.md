@@ -189,6 +189,13 @@
 
 ## tooling
 
+### L-265 · 2026-10-06 · tooling · a `next dev` proof leaves `apps/web/.next/types`, which breaks the web type-check in pre-push; wipe `apps/web/.next` before committing or pushing
+
+- **Symptom:** three builders (#3233, #3238, #3223, 2026-10-06) ran the app under `next dev` to prove a change, then their pre-push `check-types -w apps/web` failed on errors from generated files, none in the diff.
+- **Root cause:** `next dev` writes route type stubs under `apps/web/.next/types`, and `apps/web/tsconfig.json` includes `.next/types/**/*.ts`, so `tsc --noEmit` compiles them; a stub for a route this branch changed or removed no longer matches the tree.
+- **Lesson:** **After any `next dev` proof, run `rm -rf apps/web/.next` before committing or pushing (and again before the next proof, so the server never serves stale output). The type-check gate must see source only.**
+- **Guard:** none automatic; propose `check-types -w apps/web` clearing `.next/types` first, or a pre-push step that fails on a leftover `apps/web/.next`.
+
 ### L-338 · 2026-10-24 · tooling · jest ignores an unknown config key, so a config pin must read the config jest resolved (#3638, #3643)
 
 - **Symptom:** a DB-lane hook wired as `setupFilesAfterEach` (the real key is `setupFilesAfterEnv`) never ran, yet the pin that guarded it stayed green.
@@ -378,6 +385,20 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
 - **Fold-in 2026-09-27 (CI base must equal master):** a close/reopen or empty commit is not proof either. GitHub recomputes `refs/pull/N/merge` asynchronously, so a run started seconds after can still check out the OLD base (seen three times in one night). Before trusting a green run, read its checkout line (`HEAD is now at <merge> into <base>`) and require `<base>` to equal the current master; if not, wait until `git ls-remote origin refs/pull/N/merge` shows a merge commit whose first parent is master, then trigger again.
 
 ## testing
+
+### L-363 · 2026-10-31 · testing · a timing-based spec goes red under slot load and passes alone; record it, rerun on the same tree, rule per spec, and never edit it inside a train
+
+- **Symptom:** the heavy-slot self-test (a 120 s cap), the lock-timeout concurrency specs and the bugs self-test's concurrency check went red in a train verify while the slot was loaded, and passed when run alone.
+- **Root cause:** each measures wall-clock time or concurrency; load stretches the run past its bound, so red there says the machine was busy, not that a member broke anything. Loosening the bound inside the train would change the gate under test.
+- **Lesson:** **On a red timing spec, record the evidence (spec, duration, slot load), rerun that spec alone on the SAME tree and sha, and rule per spec: green alone is a load flake, red alone is a defect. Do not edit or loosen a spec inside a train; file it for its own PR.**
+- **Guard:** none automatic; the train PR body lists each rerun and its ruling. Cf. [[L-359]], [[L-353]].
+
+### L-324 · 2026-10-20 · testing · a long serial DB spec lane is run in batches, never one Jest process
+
+- **Symptom:** the DB-backed lane (about 325 suites run serially) was killed with an out-of-memory error at roughly 130 suites on the Mac mini.
+- **Root cause:** one Jest process keeps module registries and Prisma clients across suites, so memory grows with the suite count until the machine kills it.
+- **Lesson:** **Run the DB lane in chunks (a fixed number of suites per Jest process, each against the same migrated database), and treat an OOM at a stable suite count as a batching problem, not a flaky test. Re-run only the failed chunk.**
+- **Guard:** none automatic; the chunked invocation in the lane runbook.
 
 ### L-014 · 2026-08-31 · testing · #562
 
@@ -4610,14 +4631,3 @@ citations, closed-out with its own post-init assertion guard).
   guards; a test asserting every consumer calls the _same_ function reference (not just a
   matching result) is flagged, not yet added.
 
-### L-188 · 2026-09-17 · security · demo-booking OAuth/booking tokens in URL query strings
-
-- **Symptom:** an OAuth/booking token traveled as a URL query parameter — the exact shape that
-  ends up in server access logs, browser history, `Referer` headers, and analytics scripts.
-- **Root cause:** a query string is the easiest place to carry a value across a redirect, but
-  also the least private transport HTTP offers.
-- **Lesson:** **Never carry an OAuth token, booking token, or any other bearer-shaped secret in
-  a URL query string — use a fragment (`#`, never sent to the server) for a client-side handoff,
-  or a POST body for a server-side one.**
-- **Guard:** none yet — propose a lint/review checklist item flagging `token`/`code`/`secret`-
-  named query params on any new route.

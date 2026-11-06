@@ -146,7 +146,7 @@ describe("new brand/marketing assets stay small — MKT-PIN T5", () => {
 });
 
 // `recharts` and `react-day-picker` are load-bearing dashboard dependencies
-// (apps/web/components/ReportChart.tsx, DateRangePicker.tsx, and eight
+// (apps/web/components/DateRangePicker.tsx and eight
 // operator/platform-admin/buyer-portal pages) — out of this port's scope and
 // NOT to be removed from apps/web/package.json. R15's actual requirement is
 // that the marketing port doesn't drag either of them (or the redesign's

@@ -5,6 +5,7 @@ import { FeatureConfigService } from "./feature-config.service";
 import { FeatureConfigController } from "./feature-config.controller";
 import { FulfilmentCapabilityService } from "./fulfilment-capability.service";
 import { BusinessProfileService } from "./business-profile.service";
+import { BusinessProfileApplyService } from "./business-profile-apply.service";
 
 /**
  * Feature grants v2 brief C (PR-4). `@Global()` so `FeatureConfigStore` — bound to the optional
@@ -28,6 +29,7 @@ import { BusinessProfileService } from "./business-profile.service";
     // Business profiles 1B: a buyer's SELLER capability (the buyer portal's order rule + read).
     FulfilmentCapabilityService,
     BusinessProfileService,
+    BusinessProfileApplyService,
   ],
   exports: [
     FeatureConfigStore,
@@ -35,6 +37,7 @@ import { BusinessProfileService } from "./business-profile.service";
     FeatureConfigService,
     FulfilmentCapabilityService,
     BusinessProfileService,
+    BusinessProfileApplyService,
   ],
 })
 export class FeatureConfigModule {}

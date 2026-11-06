@@ -75,6 +75,7 @@ describe("MailboxSendService", () => {
   }
 
   beforeEach(() => jest.clearAllMocks());
+  afterEach(() => jest.useRealTimers());
 
   it("CONNECTED + valid cached token: sends via Gmail with From = accountEmail, never calls the token endpoint", async () => {
     const encryption = realEncryption();
@@ -242,6 +243,19 @@ describe("MailboxSendService", () => {
     });
     const { service } = buildService({ prisma });
 
+    // L-165: pin ONLY the Date clock (timers stay real) so the delta is exact, not a wall-clock window.
+    jest.useFakeTimers({
+      now: Date.now(), // pinned at the real "now" so token-expiry fixtures stay valid
+      doNotFake: [
+        "nextTick",
+        "setImmediate",
+        "setTimeout",
+        "setInterval",
+        "clearTimeout",
+        "clearInterval",
+        "queueMicrotask",
+      ],
+    });
     const before = Date.now();
     const res = await service.trySend("tenant-a", {
       to: "x@y.com",
@@ -263,8 +277,7 @@ describe("MailboxSendService", () => {
     const throttledUntil: Date = (prisma.mailboxConnection.updateMany as jest.Mock).mock.calls[0][0]
       .data.throttledUntil;
     const deltaMs = throttledUntil.getTime() - before;
-    expect(deltaMs).toBeGreaterThan(115_000);
-    expect(deltaMs).toBeLessThan(125_000);
+    expect(deltaMs).toBe(120_000);
   });
 
   it("access-token refresh invalid_grant: sets REVOKED and falls through — Gmail send is never called", async () => {

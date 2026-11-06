@@ -16,6 +16,12 @@ jest.mock("@routeflow/ui/web", () => ({
   useToast: () => ({ toast }),
 }));
 
+let mockMay = false;
+jest.mock("@/lib/api/account-statement", () => ({
+  ...jest.requireActual("@/lib/api/account-statement"),
+  useMayOpenStatement: () => mockMay,
+}));
+
 const statement = {
   outstandingAmount: 125.5,
   overdueAmount: 0,
@@ -54,6 +60,7 @@ const clicks: string[] = [];
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockMay = false;
   get.mockImplementation((url: string) => {
     if (url === "/customers/c1/statements")
       return Promise.resolve({ data: { months: ["2026-09", "2026-08", "2026-07"] } });
@@ -71,6 +78,37 @@ beforeEach(() => {
 });
 
 describe("CustomerStatementCard (B1005, option A)", () => {
+  it("U23: the card is named Account history, with the month chips and the download kept", async () => {
+    renderCard();
+    expect(screen.getByRole("heading", { name: "Account history" })).toBeInTheDocument();
+    expect(screen.queryByText("Statement of Accounts")).toBeNull();
+    expect(await screen.findByRole("button", { name: "2026-09" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Download statement (PDF)" })).toBeInTheDocument();
+  });
+
+  it("U22: the figure is called Open balance in the tile and the foot, never Balance Due", () => {
+    renderCard();
+    expect(screen.getByTestId("statement-tiles")).toHaveTextContent("Open balance");
+    expect(screen.getAllByText("Open balance")).toHaveLength(2);
+    expect(screen.queryByText("Balance Due")).toBeNull();
+  });
+
+  it("U2: the tile and the foot are both buttons that open the statement sheet", async () => {
+    mockMay = true;
+    renderCard();
+    const buttons = screen.getAllByTestId("open-balance-button");
+    expect(buttons).toHaveLength(2);
+    buttons.forEach((b) => expect(b).toHaveTextContent("$125.50"));
+    fireEvent.click(buttons[0]);
+    expect(await screen.findByRole("dialog", { name: "Statement" })).toBeInTheDocument();
+  });
+
+  it("U10: when the statement failed the figure is an em dash and not a button", () => {
+    mockMay = true;
+    renderCard({ statement: undefined, statementFailed: true });
+    expect(screen.queryByTestId("open-balance-button")).toBeNull();
+  });
+
   it("shows no hard-coded letterhead, no made-up opening balance and no print button", () => {
     renderCard();
     const text = document.body.textContent ?? "";

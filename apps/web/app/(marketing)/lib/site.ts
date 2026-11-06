@@ -15,6 +15,10 @@ export const site = {
   email: "hello@routeflow.info",
 };
 
+// The one label for the call button, on every page (COPY.md section 0 and 4: "video call", never "demo").
+// Sentence case, 3 words, starts with a verb. W4 adds TRIAL_CTA beside it.
+export const DEMO_CTA = "Book a video call";
+
 export interface MarketingRoute {
   slug: string;
   label: string;
@@ -25,44 +29,29 @@ export interface MarketingRoute {
 export const routes: MarketingRoute[] = [
   {
     slug: "product",
-    label: "Platform",
-    title: "Wholesale operations, connected",
+    label: "Product",
+    title: "Product",
     description:
-      "See how RouteFlow connects ordering, dispatch, proof of delivery, and customer accounts.",
-  },
-  {
-    slug: "wholesalers",
-    label: "Distributors",
-    title: "A clearer day for your distribution team",
-    description:
-      "Manage wholesale orders and delivery routes with shared context for the office, warehouse, and drivers.",
-  },
-  {
-    slug: "retailers",
-    label: "Retailers",
-    title: "Restock with less back and forth",
-    description:
-      "Browse your connected suppliers, place orders, and keep track of purchases in the RouteFlow retailer portal.",
+      "What RouteFlow does for businesses that sell to stores: orders, bills, payments, stock, delivery, and counter sales. 14 days free, no card needed.",
   },
   {
     slug: "pricing",
     label: "Pricing",
-    title: "Find the right RouteFlow plan",
+    title: "Pricing",
     description:
-      "Talk through your order volume, team, and delivery workflow to choose a RouteFlow plan.",
+      "RouteFlow plans from $99 a month. Starter, Growth, Scale, and Enterprise. 14 days free, no card needed. Pay for a year and get 2 months free.",
   },
   {
     slug: "company",
     label: "Company",
-    title: "For the people who keep shelves stocked",
-    description: "Learn about the wholesale workflows and people at the center of RouteFlow.",
+    title: "Company",
+    description: "We make wholesalers’ lives easier. Why we built RouteFlow, and who to write to.",
   },
   {
     slug: "contact",
     label: "Contact",
-    title: "See RouteFlow in action",
-    description:
-      "Request a focused walkthrough of wholesale orders, routes, and customer accounts.",
+    title: "Contact",
+    description: "Write to hello@routeflow.info and we reply within one business day.",
   },
   {
     slug: "privacy",
@@ -78,8 +67,11 @@ export const routes: MarketingRoute[] = [
   },
 ];
 
-/** The five primary-nav routes, in header/footer order. */
-export const NAV_SLUGS = ["product", "wholesalers", "retailers", "pricing", "company"] as const;
+/**
+ * The primary-nav routes, in header order. Contact sits before Company on purpose: the desktop nav
+ * hides its LAST link from 901 to 1100 px (marketing.css), and that must stay Company, not Contact.
+ */
+export const NAV_SLUGS = ["product", "pricing", "company", "contact"] as const;
 
 /** Slugs excluded from the sitemap (legal shells, R9/T9). */
 // privacy/terms were excluded while they were placeholder shells; now that they carry the

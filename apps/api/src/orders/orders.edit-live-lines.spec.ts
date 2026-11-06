@@ -226,34 +226,27 @@ describe("updateOrderItems — operator diff branch reads the locked line, not t
     );
   });
 
-  it("row 307 (SA-961 R10): DELETE of a line with deliveredQty > 0 but NO DeliveryMutation row and NO invoice is struck off, never hard-deleted", async () => {
-    // The shape stampDeliveredInFull writes (manual DELIVERED, counter sale, pickup hand-over): the goods left,
-    // so the line carries deliveredQty but no route evidence and no invoice yet. Red on master: `keep` tested
-    // deliveries by DeliveryMutation rows only, so this line was hard-deleted and its delivered floor
-    // (order-stock books max(qty, delivered)) went with the row.
+  it("row 307 (SA-961 R10) SUPERSEDED by SA-1101 (RO-7): DELETE of a line with deliveredQty > 0 is refused 409 LINE_ALREADY_DELIVERED, nothing written", async () => {
+    // The shape stampDeliveredInFull writes (manual DELIVERED, counter sale, pickup hand-over): the goods left, so
+    // the line carries deliveredQty but no route evidence and no invoice yet. SA-961 R10 struck it off instead of
+    // hard-deleting; the owner ruled (11-04) a delivered line is never removed, staff record a return.
     lockedLines([{ ...SNAPSHOT_LINE, qty: 2, deliveredQty: 2, invoicedQty: 0 }]);
     prisma.deliveryMutation.count.mockResolvedValue(0);
     prisma.orderItem.updateMany.mockResolvedValue({ count: 1 });
-    prisma.orderItem.deleteMany.mockResolvedValue({ count: 1 }); // so master's hard delete reads as a call, not a 404
+    prisma.orderItem.deleteMany.mockResolvedValue({ count: 1 });
 
-    await service.updateOrderItems(
-      "ord-1",
-      { items: [{ id: "li-1", action: "DELETE" }] } as any,
-      operator,
-    );
+    await expect(
+      service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-1", action: "DELETE" }] } as any,
+        operator,
+      ),
+    ).rejects.toMatchObject({ response: { code: "LINE_ALREADY_DELIVERED" } });
 
     expect(prisma.orderItem.deleteMany).not.toHaveBeenCalled();
-    expect(prisma.orderItem.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: "li-1", orderId: "ord-1" },
-        data: expect.objectContaining({ status: "CANCELLED" }),
-      }),
+    expect(prisma.orderItem.updateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "CANCELLED" }) }),
     );
-    // Booked at what left: the strike-off never rewrites deliveredQty (an edit never does, B1050).
-    const struck = prisma.orderItem.updateMany.mock.calls
-      .map(([a]: any[]) => a.data)
-      .find((d: any) => d.status === "CANCELLED");
-    expect(struck).not.toHaveProperty("deliveredQty");
   });
 
   it("row 307 control: a line with nothing delivered, nothing invoiced and no mutation row is still hard-deleted", async () => {

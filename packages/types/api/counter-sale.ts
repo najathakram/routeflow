@@ -82,7 +82,36 @@ export interface CounterSaleLinePrice {
   priceType: string;
 }
 
-export interface CounterSaleResponse {
+/**
+ * SA-1077 / W-1090: the sale's tender split, served on the Today's-sales row AND on the counter-sale response (POST and by-key), so
+ * the till's receipt prints the same Payment method / Paid / Returned rows as the reprint and the email. One derivation
+ * (`counterReturnSplit`), all four optional: an older server serves none and the receipt keeps its earlier words.
+ */
+export interface CounterTenderSplitFields {
+  /**
+   * B1262 / SA-838, the split of `paid` into what the customer TENDERED and the credit the sale's OWN return applied back to
+   * its invoice (`@routeflow/pricing` `counterTenderSplit`, the one home): `tenderPaid + returnCredit === paid`. Own return
+   * credit is the return settling the invoice, not new money, so a reprint prints `tenderPaid` / `tenderMethods` as Paid and
+   * the payment method and the return as its own Returned line. A credit the server cannot prove is the sale's own stays a
+   * tender. All three are omitted by an older server: the reprint then falls back to `paid` / `methods` as before.
+   */
+  tenderPaid?: number;
+  returnCredit?: number;
+  /** `methods` without the own-return credit */
+  tenderMethods?: Array<{ method: TodaysSaleMethod; amount: number }>;
+  /**
+   * SA-838a, what THIS sale's own returns did on the paper (`@routeflow/pricing` `returnSettlement`, summed; the one home).
+   * `applied` = credit applied to this sale's invoices: the only figure the balance subtracts (it is `returnCredit`, and the
+   * receipt's "Returned" line). `refunded` = money handed back outside RouteFlow, `kept` = settled credit still on the customer's
+   * account (worth - applied anywhere - refunded), `used` = the part of the credit spent on OTHER orders: info lines, never
+   * subtracted. `pending` = an own return is not settled (or its credit note could not be seen): "Return in progress", no amount.
+   * A VOID credit note with no refund is dead and prints nothing. The invariant: balanceDue = total - tenderPaid - applied. A
+   * carrier order holding another sale's INLINE return has all zeros. Omitted by an older server: master's wording, no return line.
+   */
+  returnLines?: { applied: number; refunded: number; kept: number; used: number; pending: boolean };
+}
+
+export interface CounterSaleResponse extends CounterTenderSplitFields {
   orderId: string;
   orderNumber: string;
   invoiceId: string;
@@ -283,7 +312,7 @@ export interface CounterItemName {
   qtyText?: string;
 }
 
-export interface TodaysSaleRow {
+export interface TodaysSaleRow extends CounterTenderSplitFields {
   orderId: string;
   /** the number printed on the receipt */
   orderNumber: string;
@@ -306,29 +335,8 @@ export interface TodaysSaleRow {
   paid: number;
   balanceDue: number;
   methods: Array<{ method: TodaysSaleMethod; amount: number }>;
-  /**
-   * B1262 / SA-838, the split of `paid` into what the customer TENDERED and the credit the sale's OWN return applied back to
-   * its invoice (`@routeflow/pricing` `counterTenderSplit`, the one home): `tenderPaid + returnCredit === paid`. Own return
-   * credit is the return settling the invoice, not new money, so a reprint prints `tenderPaid` / `tenderMethods` as Paid and
-   * the payment method and the return as its own Returned line. A credit the server cannot prove is the sale's own stays a
-   * tender. All three are omitted by an older server: the reprint then falls back to `paid` / `methods` as before.
-   */
-  tenderPaid?: number;
-  returnCredit?: number;
-  /** `methods` without the own-return credit */
-  tenderMethods?: Array<{ method: TodaysSaleMethod; amount: number }>;
   /** The check number of the sale's first CHECK tender (`Payment.reference`); omitted when none. Only the first check's number is served when there are several. Older servers omit it. */
   checkReference?: string | null;
-  /**
-   * SA-838a, what THIS sale's own returns did on the paper (`@routeflow/pricing` `returnSettlement`, summed; the one home).
-   * `applied` = credit applied to this sale's invoices: the only figure the balance subtracts (it is `returnCredit`, and the
-   * receipt's "Returned" line). `refunded` = money handed back outside RouteFlow, `kept` = settled credit still on the customer's
-   * account (worth - applied anywhere - refunded), `used` = the part of the credit spent on OTHER orders: info lines, never
-   * subtracted. `pending` = an own return is not settled (or its credit note could not be seen): "Return in progress", no amount.
-   * A VOID credit note with no refund is dead and prints nothing. The invariant: balanceDue = total - tenderPaid - applied. A
-   * carrier order holding another sale's INLINE return has all zeros. Omitted by an older server: master's wording, no return line.
-   */
-  returnLines?: { applied: number; refunded: number; kept: number; used: number; pending: boolean };
   paymentState: TodaysSalePaymentState;
   /**
    * SA-1026: "To collect", derived by the server from the sale's live invoices (a check not received yet): the row's chip reads

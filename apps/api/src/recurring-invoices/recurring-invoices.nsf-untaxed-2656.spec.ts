@@ -22,6 +22,8 @@ import { SellingRestrictionsService } from "../selling-restrictions/selling-rest
 import { NotificationsService } from "../notifications/notifications.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { assertNsfLinesUntaxed } from "../invoices/nsf-line-tax-guard";
+import { NO_PRICE_RIGHTS } from "../common/testing/no-rights-actor";
+import { EntitlementsService } from "../billing/entitlements.service";
 
 describe("RecurringInvoicesService — #2656 an NSF-described template line is never taxed", () => {
   let service: RecurringInvoicesService;
@@ -41,6 +43,7 @@ describe("RecurringInvoicesService — #2656 an NSF-described template line is n
     const mod = await Test.createTestingModule({
       providers: [
         RecurringInvoicesService,
+        { provide: EntitlementsService, useValue: {} },
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: {} },
         { provide: InvoicesService, useValue: invoices },
@@ -68,7 +71,10 @@ describe("RecurringInvoicesService — #2656 an NSF-described template line is n
 
   it("create(): rate > 0 ⇒ 400 NSF_LINE_UNTAXED before the customer is even read", async () => {
     const caught: any = await service
-      .create({ customerId: "c-1", frequency: "MONTHLY", items: [nsfLine(0.08)] } as any)
+      .create(
+        { customerId: "c-1", frequency: "MONTHLY", items: [nsfLine(0.08)] } as any,
+        NO_PRICE_RIGHTS,
+      )
       .catch((e) => e);
     expect(codeOf(caught)).toBe("NSF_LINE_UNTAXED");
     expect(prisma.customer.findUnique).not.toHaveBeenCalled();
@@ -77,7 +83,7 @@ describe("RecurringInvoicesService — #2656 an NSF-described template line is n
 
   it("update(): rate > 0 ⇒ 400 before any read", async () => {
     const caught: any = await service
-      .update("ri-1", { items: [nsfLine(0.05)] } as any)
+      .update("ri-1", { items: [nsfLine(0.05)] } as any, NO_PRICE_RIGHTS)
       .catch((e) => e);
     expect(codeOf(caught)).toBe("NSF_LINE_UNTAXED");
     expect(prisma.recurringInvoice.findFirst).not.toHaveBeenCalled();
@@ -87,7 +93,10 @@ describe("RecurringInvoicesService — #2656 an NSF-described template line is n
   it("create(): the same line at 0 passes the guard (reaches the customer read)", async () => {
     prisma.customer.findUnique.mockResolvedValue(null); // then the normal 404 — past the guard
     const caught: any = await service
-      .create({ customerId: "c-1", frequency: "MONTHLY", items: [nsfLine(0)] } as any)
+      .create(
+        { customerId: "c-1", frequency: "MONTHLY", items: [nsfLine(0)] } as any,
+        NO_PRICE_RIGHTS,
+      )
       .catch((e) => e);
     expect(codeOf(caught)).toBeUndefined();
     expect(prisma.customer.findUnique).toHaveBeenCalled();

@@ -2,6 +2,7 @@ import { assertNotWalkIn, assertWalkInLoginUntouched, excludeWalkIn } from "./wa
 import { sellerDisplayName } from "../common/seller-display-name";
 import { restoredUsernameFor } from "./restore-username";
 import { resumeSchedulesOnRestore } from "../recurring-invoices/recurring-schedule";
+import { buildAccountStatement } from "./account-statement";
 import { buildMyStatement, buildOperatorStatement } from "./customer-statement";
 import {
   BadRequestException,
@@ -56,7 +57,7 @@ import { settledDateFilter } from "../invoices/settled-date-filter";
 import { CREDIT_NOT_APPLICABLE } from "../invoices/invoice-status-sets";
 import { statusFromPayments } from "../invoices/invoice-status";
 import { tenantTimeZone } from "../common/tenant-time-zone";
-import { RECEIVABLE_INVOICE_SELECT, receivableBalance } from "../invoices/credit-exposure";
+import { openBalancesByCustomer } from "./open-balances";
 import {
   geocodeAddress,
   GeocodableAddress,
@@ -71,6 +72,7 @@ import { CreateCustomerDto } from "./dto/create-customer.dto";
 import { UpdateCustomerDto } from "./dto/update-customer.dto";
 import { UpdateBuyerProfileDto } from "../buyer/dto/update-buyer-profile.dto";
 import { omitStaffOnlyCustomerFields } from "./self-service-fields";
+import { withTaxIdLast4 } from "./customer-identity";
 import { type SelfServiceWriteArgs, writeSelfServiceProfile } from "./self-service-audit";
 import { toCustomerOrder } from "../common/staff-only-fields";
 import { customerUpdateData } from "./customer-update-data";
@@ -95,6 +97,7 @@ import * as compliance from "./customer-compliance-input";
 // gate applies it synchronously rather than waiting for the cron to run.
 import { GRACE_DAYS } from "../billing/plan-catalog.constants";
 import { portalInviteEmailHtml } from "./portal-invite-email";
+import { revokeUserLinkTokens } from "../auth/link-token-revocation";
 import { buildCustomersCsv } from "./customers-csv";
 import { API_ERROR_CODES, PLAN_GATE_FLAG_KEYS } from "../common/api-error-codes";
 import { assertProductIdNotFamily } from "../products/sellable-lines";
@@ -253,7 +256,7 @@ export class CustomersService {
     // Build orderBy. F4-002: sortBy reaches Prisma's orderBy, so it MUST be an
     // allowlisted scalar column — a free-form field name lets a caller inject an
     // unknown/relation field (Prisma 500 → DoS) or probe relation ordering.
-    // Non-scalar UI columns (e.g. "receivables", computed post-query) and any
+    // Non-scalar UI columns (e.g. "receivables", a retired computed column) and any
     // unknown value fall back to the safe default instead of hitting Prisma.
     const validSortFields: Record<string, string> = {
       businessName: "businessName",
@@ -299,18 +302,11 @@ export class CustomersService {
       this.prisma.forTenant().customer.count({ where }),
     ]);
 
-    // Compute receivables and unusedCredits for each customer
+    // Open balance (SA-1078 PR-5: the statement's own figure) and unusedCredits for each customer
     const customerIds = data.map((c) => c.id);
 
-    const [invoices, advancePayments] = await Promise.all([
-      this.prisma.forTenant().invoice.findMany({
-        where: {
-          customerId: { in: customerIds },
-          // D6 / B462: drafts included — `receivableBalance` drops only UNBACKED ones.
-          status: { notIn: CREDIT_NOT_APPLICABLE },
-        },
-        select: { customerId: true, ...RECEIVABLE_INVOICE_SELECT },
-      }),
+    const [openBalances, advancePayments] = await Promise.all([
+      openBalancesByCustomer(this.prisma, customerIds, new Date()),
       this.prisma.forTenant().advancePayment.findMany({
         where: {
           customerId: { in: customerIds },
@@ -320,13 +316,6 @@ export class CustomersService {
       }),
     ]);
 
-    const receivablesMap: Record<string, number> = {};
-    for (const inv of invoices) {
-      // Basis + unbacked-draft skip: invoices/credit-exposure.ts (DRAFT-PAYMENT follow-up open).
-      receivablesMap[inv.customerId] =
-        (receivablesMap[inv.customerId] ?? 0) + receivableBalance(inv);
-    }
-
     const creditsMap: Record<string, number> = {};
     for (const ap of advancePayments) {
       creditsMap[ap.customerId] = (creditsMap[ap.customerId] ?? 0) + Number(ap.balance);
@@ -334,7 +323,7 @@ export class CustomersService {
 
     const enriched = data.map((c) => ({
       ...c,
-      receivables: roundMoney(receivablesMap[c.id] ?? 0),
+      openBalance: roundMoney(openBalances.get(c.id) ?? 0),
       unusedCredits: roundMoney(creditsMap[c.id] ?? 0),
       regulatedCount: (c as any)._count?.authorizations ?? 0,
     }));
@@ -351,7 +340,7 @@ export class CustomersService {
       },
     });
     if (!customer) throw new NotFoundException("Customer profile not found");
-    return omitStaffOnlyCustomerFields(customer);
+    return omitStaffOnlyCustomerFields(await withTaxIdLast4(this.prisma, customer));
   }
 
   async updateMyProfile(user: JwtPayload, dto: UpdateBuyerProfileDto) {
@@ -389,9 +378,13 @@ export class CustomersService {
     ) {
       throw new ForbiddenException();
     }
-    // A customer reading its own record gets the customer-facing shape; staff and drivers keep the full row.
-    if (user.role === UserRole.CUSTOMER) return omitStaffOnlyCustomerFields(customer);
-    return customer;
+    // A customer reading its own record gets the customer-facing shape; staff keep the row, and a driver reads the
+    // row without any identity value (SA-1084). The customer and staff get the tax ID as its last 4 only.
+    if (user.role === UserRole.CUSTOMER) {
+      return omitStaffOnlyCustomerFields(await withTaxIdLast4(this.prisma, customer));
+    }
+    if (user.role === UserRole.DRIVER) return customer;
+    return withTaxIdLast4(this.prisma, customer);
   }
 
   async create(dto: CreateCustomerDto) {
@@ -408,7 +401,11 @@ export class CustomersService {
     const existingUser = await this.prisma.forTenant().user.findFirst({
       where: { OR: [...(email ? [{ email }] : []), { username: dto.username }] },
     });
-    if (existingUser) throw new BadRequestException("Email or username already taken");
+    if (existingUser)
+      throw new BadRequestException({
+        code: API_ERROR_CODES.CUSTOMER_EMAIL_OR_USERNAME_TAKEN,
+        message: "Email or username already taken",
+      });
 
     // User.email is required + unique per tenant; mint a non-routable internal
     // placeholder when the customer has no email. Customer.email stays null so
@@ -481,7 +478,11 @@ export class CustomersService {
           where: { id: dto.salesAgentId, deletedAt: null },
           select: { id: true },
         });
-        if (!agent) throw new BadRequestException("Unknown sales agent");
+        if (!agent)
+          throw new BadRequestException({
+            code: API_ERROR_CODES.CUSTOMER_SALES_AGENT_UNKNOWN,
+            message: "Unknown sales agent",
+          });
         await tx.agentAssignment.create({
           data: { customerId: customer.id, agentId: agent.id, effectiveFrom: new Date() },
         });
@@ -667,7 +668,13 @@ export class CustomersService {
       throw new ConflictException("Restore the customer first");
     }
     assertWalkInLoginUntouched(existing, dto); // the walk-in customer's sign-in email stays fixed
-    assertSafeCustomerUpdate(dto, existing, options?.compliance); // B956 / B984 / B964
+    // B964's change-only license guard compares with the stored value, so the importer path reads it (SA-1084).
+    const stored = options?.compliance
+      ? await this.prisma
+          .forTenant()
+          .customer.findUnique({ where: { id }, select: { tobaccoLicenseNo: true } })
+      : null;
+    assertSafeCustomerUpdate(dto, { ...existing, ...stored }, options?.compliance); // B956 / B984 / B964
     const updated = await this.prisma.forTenant().customer.update({
       where: { id },
       data: compliance.withCompliance(options, customerUpdateData(dto)),
@@ -689,10 +696,15 @@ export class CustomersService {
       throw new ConflictException("Restore the customer first");
     }
     if (dto.status !== "ACTIVE") assertNotWalkIn(customer);
-    return this.prisma.forTenant().user.update({
-      where: { id: customer.userId },
-      data: { status: dto.status },
-      select: { id: true, status: true },
+    // F03 slice 2 (SA-1096): deactivating a customer's login burns its live reset/verify links, same transaction.
+    return this.prisma.tenantTransaction(async (tx) => {
+      const updated = await tx.user.update({
+        where: { id: customer.userId },
+        data: { status: dto.status },
+        select: { id: true, status: true },
+      });
+      if (dto.status !== "ACTIVE") await revokeUserLinkTokens(tx, customer.userId);
+      return updated;
     });
   }
 
@@ -933,6 +945,11 @@ export class CustomersService {
   async getStatementForOperator(customerId: string, opts?: { includeExposure?: boolean }) {
     await this.findCustomerOrThrow(customerId);
     return buildOperatorStatement(this.prisma, customerId, opts);
+  }
+
+  /** SA-1078: the account statement read; `staff` adds emailOnFile + toCollect (the buyer's own view omits them). */
+  async getAccountStatement(customerId: string, opts: { staff: boolean }) {
+    return buildAccountStatement(this.prisma, await this.findCustomerOrThrow(customerId), opts);
   }
 
   // ─── Advance payments ──────────────────────────────────────────────────────
@@ -1523,11 +1540,6 @@ export class CustomersService {
       where,
       include: {
         user: { select: { status: true } },
-        invoices: {
-          // D6 / B462: drafts included — `receivableBalance` drops only UNBACKED ones.
-          where: { status: { notIn: CREDIT_NOT_APPLICABLE } },
-          select: RECEIVABLE_INVOICE_SELECT,
-        },
         advancePayments: {
           where: { balance: { gt: 0 } },
           select: { balance: true },
@@ -1536,8 +1548,12 @@ export class CustomersService {
       orderBy: { createdAt: "desc" },
     });
 
-    // The money sums stay HERE (credit-exposure-coverage.spec: exportCustomers must call
-    // receivableBalance itself); the CSV builder only formats.
+    // The same figure as the list and the sheet (open-balances.ts); the CSV builder only formats.
+    const openBalances = await openBalancesByCustomer(
+      this.prisma,
+      customers.map((c) => c.id),
+      new Date(),
+    );
     return buildCustomersCsv(
       customers.map((c) => ({
         businessName: c.businessName,
@@ -1546,7 +1562,7 @@ export class CustomersService {
         phone: c.phone,
         customerType: c.customerType,
         status: c.user?.status,
-        receivables: c.invoices.reduce((sum, inv) => sum + receivableBalance(inv), 0),
+        openBalance: openBalances.get(c.id) ?? 0,
         credits: c.advancePayments.reduce((s, a) => s + Number(a.balance), 0),
       })),
     );
@@ -2064,6 +2080,7 @@ export class CustomersService {
             // it, so nulling it here made restore lossy for no gain.
           },
         });
+        await revokeUserLinkTokens(tx, customer.userId); // F03 slice 2 (SA-1096)
       });
       return { success: true, softDeleted: true };
     }

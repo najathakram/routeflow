@@ -104,4 +104,16 @@ export class QuoteInlineReturnDto {
   @IsString()
   @IsNotEmpty()
   sourceOrderId?: string;
+
+  /**
+   * SA-1060 A-4/A-5: the order the return lands on: one being edited (the order edit's Returns section), or the merge target
+   * (the New order merge prompt asks once more, for the line it shows). The counter's sale screen and the Returns dialog send
+   * nothing. Either way an undelivered order's own SENT invoice is reverted to a DRAFT of an undelivered order before the
+   * return is captured, so the quote prices against the same post-revert set the edit's dry run and capture do. The client
+   * never sends invoice ids. Must be this customer's own order (400 SOURCE_SALE_INVALID).
+   */
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  editingOrderId?: string;
 }

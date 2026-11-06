@@ -31,6 +31,7 @@ import { plainToInstance } from "class-transformer";
 import { validate } from "class-validator";
 import { roundMoney } from "@routeflow/pricing";
 import { CreateInvoiceDto } from "../invoices/dto/create-invoice.dto";
+import { EntitlementsService } from "../billing/entitlements.service";
 
 const LIVE_PRODUCTS = [
   { id: "p-12", unitsPerBox: 12, isActive: true },
@@ -97,6 +98,7 @@ describe("RecurringInvoicesService generation — boxed template lines (B646)", 
     const mod = await Test.createTestingModule({
       providers: [
         RecurringInvoicesService,
+        { provide: EntitlementsService, useValue: {} },
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: {} },
         { provide: InvoicesService, useValue: invoices },

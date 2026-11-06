@@ -77,6 +77,11 @@ const TABLE: Record<string, Row> = {
   // Owner ruling 2026-09-25 (#2093): at-door delivery of an order placed before a ban delivers up to the
   // ordered quantity; any increase, added line or substitution is blocked. That ceiling is
   // `assertDeliveriesFitStop` (pinned in routes/delivery-lines.util.spec.ts), so the path cannot sell more.
+  // completeStop books deliveredQty from the rows it just wrote (SA-978a §3); the same ceiling
+  // (assertDeliveriesFitStop) ran before the rows, so it adds no sellable quantity either.
+  [rt("completeStop")]: X(
+    "owner ruling 2026-09-25 (#2093): delivery evidence only (deliveredQty recompute); the ceiling is assertDeliveriesFitStop (pinned)",
+  ),
   [rt("completeWithPayment")]: X(
     "owner ruling 2026-09-25 (#2093): deliver up to the ordered qty, 0 for a cancelled line/order; the ceiling is assertDeliveriesFitStop (pinned)",
   ),

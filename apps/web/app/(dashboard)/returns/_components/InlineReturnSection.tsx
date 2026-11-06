@@ -13,7 +13,7 @@
 // the quote, and a quote is shown as current only while it is for exactly the lines on screen (useLiveReturnQuote).
 import * as React from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { Button, Input, Select, useToast } from "@routeflow/ui/web";
+import { Button, Input, Select, cn, useToast } from "@routeflow/ui/web";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { useScanCodeHandler } from "../../orders/_components/scan/useScanCodeHandler";
 import { DidYouMeanPicker } from "@/components/scan/DidYouMeanPicker";
@@ -44,6 +44,8 @@ import {
   ALREADY_RETURNED_NOTHING_LEFT_MESSAGE,
   NOTHING_BOUGHT_BEFORE_MESSAGE,
   restocksForReason,
+  patchReturnLine,
+  adoptProductValues,
   rulingLineIndex,
   sumChunkTotals,
   type InlineReturnLineDraft,
@@ -61,6 +63,11 @@ const UW = unitWords();
 // synthetic row identity (never sent on the wire) so two rows of the same product — a Case
 // line and a pack line from a source order, say — can be edited/removed independently.
 type SectionLine = InlineReturnLineDraft & { lineKey: string };
+
+/** A-4 (M3): the quote has priced at least one chunk of this product, so its neverSold flag is an answer rather than an absence. */
+function quotePricedProduct(facts: LineQuoteFacts): boolean {
+  return facts.covered.length + facts.notOnInvoice.length + facts.alreadyReturned.length > 0;
+}
 
 function money(n: number): string {
   return n.toLocaleString("en-US", { style: "currency", currency: "USD" });
@@ -89,6 +96,9 @@ export interface InlineReturnSectionProps {
   /** SA-740: the sale this return is from, sent on the quote (REQUIRED for a walk-in; the host
    *  also sends it on the capture). Omit for a named customer, whose return may spill across orders. */
   sourceOrderId?: string;
+  /** SA-1060 A-4: the order being EDITED, sent on the quote so it prices what the edit's save will see (the order edit's Returns
+   *  section passes it; New order, the counter and the Returns dialog never do). */
+  editingOrderId?: string;
   /** Bumping this value resets every field and re-seeds from `entryOrderId` — mirrors the
    *  original dialog's "fresh attempt every time it opens" effect. */
   resetToken?: string | number;
@@ -138,6 +148,7 @@ export function InlineReturnSection({
   customerId,
   entryOrderId,
   sourceOrderId,
+  editingOrderId,
   resetToken,
   getQuoteEnabled = true,
   waitingFor,
@@ -174,6 +185,7 @@ export function InlineReturnSection({
     lines,
     customerId,
     sourceOrderId,
+    editingOrderId,
     enabled: getQuoteEnabled && !locked,
   });
   const quote = quoteOverride ?? live.quote;
@@ -226,7 +238,14 @@ export function InlineReturnSection({
   }, [lines, quote, quoteStatus, captureReason, problem]);
 
   function updateLine(lineKey: string, patch: Partial<InlineReturnLineDraft>) {
-    setLines((prev) => prev.map((l) => (l.lineKey === lineKey ? { ...l, ...patch } : l)));
+    // SA-1079: reason, note, credit price and the two "why" boxes belong to the product, so they reach every row of it
+    setLines((prev) =>
+      patchReturnLine(
+        prev,
+        prev.findIndex((l) => l.lineKey === lineKey),
+        patch,
+      ),
+    );
   }
 
   // R7b 3.1: Remove keeps the line for LINE_UNDO_MS in ONE slot (a newer removal makes the older one final), shown in
@@ -265,7 +284,8 @@ export function InlineReturnSection({
     const { line, index } = removed;
     setLines((prev) => {
       const at = Math.min(index, prev.length);
-      return [...prev.slice(0, at), line, ...prev.slice(at)];
+      // the row comes back with what its product's rows hold now, so Undo never brings back an older price or reason
+      return [...prev.slice(0, at), adoptProductValues(prev, line), ...prev.slice(at)];
     });
     clearRemoved();
   }
@@ -386,15 +406,15 @@ export function InlineReturnSection({
             <p className="text-sm text-navy/70">No products yet — search below to add one.</p>
           )}
           {lines.map((line, lineIndex) => {
-            const firstIndex = lines.findIndex((l) => l.productId === line.productId);
+            const rowCount = lines.filter((l) => l.productId === line.productId).length;
             // buildCaptureRequest drops rows with no quantity, merges the rest of one product and keeps the first merged row's
             // reason, so that row's reason is what the server applies (and the stock outcome that follows) to the whole product
             const rulingIndex = rulingLineIndex(lines, line.productId);
             const ruling = lines[rulingIndex];
             // the product's quote facts, the credit and the already-returned reason all sit on the ruling row too
             const isRuling = lineIndex === rulingIndex;
-            const facts =
-              isRuling && detailQuote ? lineQuoteFacts(detailQuote, line.productId) : null;
+            const productFacts = detailQuote ? lineQuoteFacts(detailQuote, line.productId) : null;
+            const facts = isRuling ? productFacts : null;
             return (
               <React.Fragment key={line.lineKey}>
                 {removed && removed.index === lineIndex ? undoRow : null}
@@ -408,10 +428,18 @@ export function InlineReturnSection({
                   locked={locked}
                   reasonOptions={REASON_OPTIONS}
                   reasonLabel={reasonLabel(ruling.reason)}
-                  stocks={restocksForReason(ruling.reason || captureReason)}
-                  followsFirst={lineIndex !== rulingIndex}
-                  rulingIsFirst={rulingIndex === firstIndex}
-                  firstReason={ruling.reason}
+                  // SA-1060 PR-2: goods this customer was never sold are not added to stock, whatever the reason (the quote says so).
+                  // A-4 (M3): with no quote to say (not yet asked, refused, failed, or
+                  // no chunk for THIS product: no quantity yet, or its quote still pending) a restocking reason claims nothing: null
+                  stocks={
+                    !restocksForReason(ruling.reason || captureReason)
+                      ? false
+                      : productFacts && quotePricedProduct(productFacts)
+                        ? !productFacts.neverSold
+                        : null
+                  }
+                  isRuling={isRuling}
+                  rowCount={rowCount}
                   canOverrideCredit={canOverrideCredit}
                   needsAlreadyReturnedReason={
                     isRuling &&
@@ -599,6 +627,18 @@ export function InlineReturnSection({
   );
 }
 
+/** Room kept under a field scrolled into view, for the edit page's sticky Save / Cancel bar. */
+const STICKY_BAR_ROOM = "6rem";
+
+function keepFocusedFieldInView() {
+  const el = document.activeElement;
+  if (!(el instanceof HTMLElement) || !el.matches("input, select, textarea")) return;
+  const before = el.style.scrollMarginBottom;
+  el.style.scrollMarginBottom = STICKY_BAR_ROOM;
+  el.scrollIntoView?.({ block: "nearest" });
+  el.style.scrollMarginBottom = before;
+}
+
 /** One return line: name and counts, Qty, and the collapsed options row that shows the line's defaults in words. */
 function ReturnLine({
   line,
@@ -611,9 +651,8 @@ function ReturnLine({
   reasonOptions,
   reasonLabel,
   stocks,
-  followsFirst,
-  rulingIsFirst,
-  firstReason,
+  isRuling,
+  rowCount,
   canOverrideCredit,
   needsAlreadyReturnedReason,
   onlyBoughtActive,
@@ -636,12 +675,12 @@ function ReturnLine({
   locked: boolean;
   reasonOptions: Array<{ value: ReturnReason; label: string }>;
   reasonLabel: string;
-  stocks: boolean;
-  /** A row of a product that is not the one whose reason rules (the first row with a quantity): it cannot take its own. */
-  followsFirst: boolean;
-  /** the ruling row is the product's first row, so the label can say "the first row" */
-  rulingIsFirst: boolean;
-  firstReason: ReturnReason | "";
+  /** true: back to stock; false: not added; null: not known yet (no quote has said whether it was ever sold). */
+  stocks: boolean | null;
+  /** The row whose quantity the capture counts first: only it opens its options by itself. */
+  isRuling: boolean;
+  /** Rows of this product on the screen: with 2 or more, the product-wide boxes say so in their labels. */
+  rowCount: number;
   canOverrideCredit: boolean;
   needsAlreadyReturnedReason: boolean;
   onlyBoughtActive: boolean;
@@ -655,15 +694,29 @@ function ReturnLine({
 }) {
   const [userOpen, setUserOpen] = React.useState(false);
   const panelId = React.useId();
+  // SA-1079: the boxes that hold one value for the whole product say so when the product has more than one row
+  const wide = (single: string, base: string = single) =>
+    rowCount < 2 ? single : `${base} (${rowCount === 2 ? "both rows" : `all ${rowCount} rows`})`;
   const hasValue =
-    (!!line.reason && !followsFirst) ||
-    !!line.note ||
-    !!line.creditUnitPrice ||
-    !!line.overrideReason ||
-    !!(line.alreadyReturnedReason ?? "").trim();
+    isRuling &&
+    (!!line.reason ||
+      !!line.note ||
+      !!line.creditUnitPrice ||
+      !!line.overrideReason ||
+      !!(line.alreadyReturnedReason ?? "").trim());
   // M9: a typed note or price is never out of sight, and a decision that is not optional opens by itself
   const forced = hasValue || needsAlreadyReturnedReason;
   const open = userOpen || forced;
+
+  // BR-16: a row that opens by itself (a price typed on another row of the product opens the ruling row) pushes the box
+  // being typed in down the page. Nothing else keeps that box on screen: the host scrolls an inner element, and on the edit
+  // page a sticky Save / Cancel bar sits over the bottom. So when this row opens, the focused field is brought back into
+  // view, with room left under it for that bar.
+  const wasOpen = React.useRef(open);
+  React.useLayoutEffect(() => {
+    if (open && !wasOpen.current) keepFocusedFieldInView();
+    wasOpen.current = open;
+  }, [open]);
 
   const hasExcess = !!facts && facts.notOnInvoicePieces > 0;
   const hasAlreadyReturned = !!facts && facts.alreadyReturnedPieces > 0;
@@ -674,7 +727,7 @@ function ReturnLine({
   const summaryWords = [
     credit !== null && facts && facts.total > 0 ? `Credit ${money(facts.total)}` : null,
     reasonLabel,
-    stocks ? "Back to stock" : "Not added to stock",
+    stocks === null ? null : stocks ? "Back to stock" : "Not added to stock",
   ].filter(Boolean);
 
   const flagWords = [
@@ -790,24 +843,22 @@ function ReturnLine({
         )}
       </button>
       <div id={panelId} hidden={!open} className="space-y-3">
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div
+          data-testid="return-line-text-fields"
+          // two rows: "Reason (both rows)" does not fit half of a phone-wide column, so the two stack there (W-785)
+          className={cn("grid gap-2 sm:grid-cols-4", rowCount > 1 ? "grid-cols-1" : "grid-cols-2")}
+        >
           <Select
             className="max-lg:h-11"
-            label={
-              followsFirst
-                ? rulingIsFirst
-                  ? "Reason (same as the first row)"
-                  : "Reason (same as the first row with a quantity)"
-                : "Reason (optional)"
-            }
-            value={followsFirst ? firstReason : line.reason}
-            disabled={locked || followsFirst}
+            label={wide("Reason (optional)", "Reason")}
+            value={line.reason}
+            disabled={locked}
             onChange={(e) => onChange({ reason: e.target.value as ReturnReason | "" })}
             options={[{ value: "", label: "Use default" }, ...reasonOptions]}
           />
           <Input
             className="max-lg:h-11"
-            label="Note (optional)"
+            label={wide("Note (optional)", "Note")}
             disabled={locked}
             value={line.note}
             onChange={(e) => onChange({ note: e.target.value })}
@@ -817,7 +868,7 @@ function ReturnLine({
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-[10rem_1fr]">
             <Input
               className="max-lg:h-11"
-              label={boxedForNote ? `Credit price per ${UW.pack.lower}` : "Credit price"}
+              label={wide(boxedForNote ? `Credit price per ${UW.pack.lower}` : "Credit price")}
               type="text"
               inputMode="decimal"
               placeholder="Quoted price"
@@ -871,6 +922,11 @@ function ReturnLine({
               )}{" "}
               priced at the customer&apos;s current price.
             </p>
+            {facts.neverSold && (
+              <p data-testid={`return-line-stock-note-${line.productId}`} className="text-navy">
+                Not added to stock
+              </p>
+            )}
             {excessChunks.map((c, i) => (
               <CreditOverrideNote key={`excess-override-${i}`} chunk={c} boxed={boxedForNote} />
             ))}

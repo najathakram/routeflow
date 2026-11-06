@@ -25,6 +25,7 @@ import { ConflictException, ServiceUnavailableException } from "@nestjs/common";
 import { GUARDS_METADATA } from "@nestjs/common/constants";
 import { UserRole } from "@prisma/client";
 import { PlatformAdminController } from "./platform-admin.controller";
+import { BusinessProfileApplyService } from "../billing/business-profile-apply.service";
 import { SuperAdminGuard } from "../tenant/super-admin.guard";
 import { BusinessProfileService } from "../billing/business-profile.service";
 import { AdminAuditAction } from "./audit-actions.constant";
@@ -242,6 +243,14 @@ function fakeTenant(start: {
     stub() as any, // snapshotAdmin
     businessProfiles,
     featureConfig as any,
+    new BusinessProfileApplyService(
+      addonService as any,
+      authority as any,
+      featureConfig as any,
+      featurePreview as any,
+      businessProfiles,
+      { systemConfig: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) } } as any,
+    ),
   ) as Omit<PlatformAdminController, "applyBusinessProfile"> & {
     // the confirm as these tests call it: `planFingerprint` may be left out, the preview-first
     // wrapper below fills it in exactly as the web does (rawConfirm sends the body unchanged)

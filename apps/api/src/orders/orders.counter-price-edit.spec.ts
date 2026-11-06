@@ -1,5 +1,5 @@
 /**
- * POS-5: the counter sale's price-edit rule inside OrdersService.create (`options.priceEditAllowed`).
+ * POS-5: the counter sale's price-edit rule inside OrdersService.create (the capability `priceEditAllowedFor` reports).
  *
  *  - `false` (a caller `staffMay(role, "EDIT_LINE_PRICE")` refuses): a line that WOULD be a real override (decideStaffOverride says
  *    DISCOUNTED / MANUAL) is refused 403 PRICE_EDIT_NOT_PERMITTED before any write; a typed price within 1/2 cent
@@ -15,6 +15,14 @@ jest.mock("../common/db-locks", () => ({
   })),
 }));
 
+// SA-1034: create() computes the price-edit capability from its principal (`priceEditAllowedFor`); these specs pin what
+// create() DOES with each answer, so the helper is stubbed and the answer set per call. The helper itself is pinned in
+// auth/permissions/price-edit.spec.ts.
+jest.mock("../auth/permissions/price-edit", () => ({
+  priceEditAllowedFor: jest.fn(async () => true),
+}));
+import { priceEditAllowedFor } from "../auth/permissions/price-edit";
+const capability = priceEditAllowedFor as jest.Mock;
 import { computeLineSubtotal } from "@routeflow/pricing";
 import { buildOrdersService, operatorPayload } from "./testing/orders-service-harness";
 
@@ -67,12 +75,10 @@ describe("POS-5 priceEditAllowed in create()", () => {
       }),
     );
   };
-  const create = (items: unknown[], user: never, priceEditAllowed?: boolean) =>
-    h.service.create(
-      { customerId: "cust-1", items } as never,
-      user,
-      priceEditAllowed === undefined ? {} : { priceEditAllowed },
-    );
+  const create = (items: unknown[], user: never, priceEditAllowed?: boolean) => {
+    capability.mockResolvedValue(priceEditAllowed ?? true);
+    return h.service.create({ customerId: "cust-1", items } as never, user, {});
+  };
   const nothingWritten = () => {
     expect(h.prisma.order.create).not.toHaveBeenCalled();
     expect(h.prisma.orderIdempotencyKey.create).not.toHaveBeenCalled();

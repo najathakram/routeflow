@@ -356,23 +356,6 @@ describe("AddUnitPanel: the missing 1-piece unit (F07)", () => {
     expect(name()).not.toHaveAttribute("readonly");
   });
 
-  it("prefillPiece: opens with Contains 1 and the base name, ready to add", async () => {
-    setup({ pieceMissing: true, prefillPiece: true });
-    await userEvent.click(opener());
-    expect(count()).toHaveValue(1);
-    expect(name()).toHaveValue("Piece");
-    expect(submit()).toBeEnabled();
-    await userEvent.click(submit());
-    expect(mutate.mock.calls[0][0]).toEqual({ label: "Piece", factorToBase: 1 });
-  });
-
-  it("prefillPiece alone does nothing when the Piece already exists", async () => {
-    setup({ prefillPiece: true });
-    await userEvent.click(opener());
-    expect(count()).toHaveValue(null);
-    expect(name()).toHaveValue("");
-  });
-
   it("a tenant's own base name is the locked name", async () => {
     setup({ pieceMissing: true, baseLabel: "Each" });
     await userEvent.click(opener());
@@ -401,7 +384,7 @@ describe("AddUnitPanel: the missing 1-piece unit (F07)", () => {
     const count = () => screen.getByTestId("units-v2-add-n") as HTMLInputElement;
     const submit = () => screen.getByTestId("units-v2-add-submit");
     it("refuses a count of 1 (no dead 1-of-base Piece) and says how to fix it", async () => {
-      setup({ pieceMissing: true, prefillPiece: true, noPack: true });
+      setup({ pieceMissing: true, noPack: true });
       await userEvent.click(opener());
       expect(count()).toHaveValue(null);
       expect(count()).toHaveAttribute("min", "2");

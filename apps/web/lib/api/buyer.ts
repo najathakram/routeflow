@@ -6,7 +6,7 @@ import { getStoredActiveSeller, getStoredBuyerId } from "@/lib/buyer-auth";
 import { buyerSubmitKeyFor, clearBuyerSubmitKey } from "./buyer-submit-key";
 import type { ExpiringAuthorization } from "./authorizations";
 import type { PromotionRule } from "@routeflow/pricing";
-import type { BuyerOrderItemEdit } from "@routeflow/types";
+import type { AccountStatement, BuyerOrderItemEdit } from "@routeflow/types";
 import type { ChangeRequest } from "@/lib/change-requests";
 import { buyerOrderConflict } from "@/lib/buyer-order-conflict";
 import { isSellerUnavailableRefusal } from "@/lib/seller-unavailable";
@@ -505,6 +505,8 @@ export function useBuyerCreateChangeRequest() {
 export interface BuyerInvoiceDetail {
   id: string;
   invoiceNumber: string;
+  /** The business's "Show price per piece on invoices" switch: true = the Per piece column is off (owner ruling 2026-11-04). */
+  hidePerPiece?: boolean;
   /** Row 401: the server's answer to "a counter sale paid at the till" — no due date / terms shown. */
   paidAtSale?: boolean;
   revisedAt?: string | null;
@@ -680,6 +682,28 @@ export function useBuyerStatement() {
     queryFn: () => buyerApiClient.get("/buyer/statement").then((r) => r.data),
     staleTime: 30 * 1000,
   });
+}
+
+/**
+ * SA-1078 W-1096 PR-6: the buyer's open-balance statement, the twin of the staff sheet's read. The key extends the
+ * Outstanding card's (`["buyer", "statement"]`), so a payment's existing invalidation refreshes this read by prefix.
+ */
+export const buyerAccountStatementKey = ["buyer", "statement", "account"] as const;
+
+export function useBuyerAccountStatement(enabled = true) {
+  return useQuery<AccountStatement>({
+    queryKey: buyerAccountStatementKey,
+    queryFn: () => buyerApiClient.get("/buyer/account-statement").then((r) => r.data),
+    enabled,
+  });
+}
+
+/** The statement as a PDF: the server renders it fresh and answers with a signed URL. */
+export async function fetchBuyerAccountStatementPdfUrl(): Promise<string> {
+  const { url } = await buyerApiClient
+    .get<{ url: string }>("/buyer/account-statement/pdf")
+    .then((r) => r.data);
+  return url;
 }
 
 // ─── Payments & Remittance (P5-14) ────────────────────────────────────────────

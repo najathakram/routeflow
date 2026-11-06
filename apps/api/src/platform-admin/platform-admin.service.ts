@@ -77,6 +77,13 @@ import {
 } from "../billing/manual-activation-addons";
 import type { ManualActivationAddons } from "@routeflow/types";
 import { roundMoney } from "@routeflow/pricing";
+import {
+  buildPlanPriceImpact,
+  countAffectedTargets,
+  parseImpactMonthly,
+  planPriceImpactChanged,
+  type PlanPriceImpact,
+} from "./plan-price-impact";
 import { StripeService } from "../billing/stripe.service";
 import { stripeGateBeforeTermination, tenantChangedRefusal } from "./stripe-termination-gate";
 import { ScheduledPriceChangeService } from "../billing/scheduled-price-change";
@@ -156,6 +163,25 @@ function notSuspendedRefusal(): BadRequestException {
     "Tenant must be suspended before it can be deleted. Suspend the tenant first.",
   );
 }
+
+/** How many weeks the dashboard's sign-up funnel looks back, the current week included (W3 / M1). */
+const FUNNEL_WEEKS = 8;
+
+/** One week of the dashboard funnel. `answered` joins after W1 adds the first-question marker. */
+export interface WeeklyFunnelWeek {
+  /** Monday of the week, UTC, `YYYY-MM-DD`. */
+  weekStart: string;
+  signups: number;
+  verified: number;
+  firstOrder: number;
+  firstRoute: number;
+  firstInvoiceSent: number;
+  firstPayment: number;
+  demoBookings: number;
+}
+
+/** The dashboard funnel: the weeks, or the mark that its read failed and the card should say so. */
+export type WeeklyFunnel = { weeks: WeeklyFunnelWeek[] } | { unavailable: true };
 
 @Injectable()
 export class PlatformAdminService {
@@ -1081,6 +1107,7 @@ export class PlatformAdminService {
         to: dto.plan,
         scheduled: true,
         effectiveAt: priorSub.periodEnd,
+        reason: dto.reason, // R49
       });
 
       // Nothing about current entitlements changed (only the schedule was armed) — no
@@ -1345,6 +1372,7 @@ export class PlatformAdminService {
     await this.recordAdminAction(id, adminId, AdminAuditAction.TENANT_PLAN_CHANGED, {
       from: before.plan,
       to: tenant.plan,
+      reason: dto.reason, // R49
     });
     return {
       id: tenant.id,
@@ -1931,6 +1959,7 @@ export class PlatformAdminService {
       trialsExpiringSoon,
       atRiskTenants,
       mrrOverview,
+      weeklyFunnel,
     ] = await Promise.all([
       this.prisma.tenant.count({ where: { deletedAt: null, class: "PRODUCTION" } }),
       this.prisma.tenant.count({
@@ -2011,6 +2040,7 @@ export class PlatformAdminService {
         select: { id: true, slug: true, name: true, status: true, plan: true, trialEndsAt: true },
       }),
       this.mrrService.computeOverview(),
+      this._weeklyFunnelOrUnavailable(now),
     ]);
 
     // Plan distribution keyed on the current catalog's planKey (STARTER/GROWTH/
@@ -2031,6 +2061,7 @@ export class PlatformAdminService {
       totalUsers,
       superAdminCount,
       newTenantsThisMonth,
+      weeklyFunnel,
       // One MRR engine: MrrService.computeOverview() prices from the per-tenant snapshot,
       // already scoped to class: "PRODUCTION" (see mrr.service.ts). `mrr` is the live
       // run-rate; `ledgerMrr` reconciles it against the append-only BillingEvent ledger.
@@ -2057,6 +2088,147 @@ export class PlatformAdminService {
         riskReason: this._riskReason(t.status, t.trialEndsAt, now),
       })),
     };
+  }
+
+  /**
+   * W3 / M1: our own sign-up funnel, by week, for the last FUNNEL_WEEKS weeks (UTC, weeks start
+   * Monday, the current week included). Seven numbers per week, each from rows we already keep:
+   *   signups      tenants created
+   *   verified     tenants whose admin opened the email link (the `user.activate` audit row that
+   *                verifyEmailAndLogin writes with reason `email_verify`)
+   *   firstOrder   tenants signed up inside the window whose earliest order was placed that week
+   *   firstRoute   tenants signed up inside the window whose earliest route was made that week
+   *   firstInvoiceSent the same cohort's earliest `Invoice.sentAt`. The key name is historical: `sentAt` means "issued",
+   *                not "emailed". A send stamps it, and so do a counter sale (send with suppressNotify), a deposit
+   *                auto-issued at order placement and a door payment on a draft; the import never does. Shown as "First invoice issued".
+   *   firstPayment the same cohort's earliest money recorded: status PAID, not a credit note, on an
+   *                invoice that was sent or came from an order. Imported history has neither, so it
+   *                can't pass for a first payment; a hand-made invoice paid unsent isn't counted either.
+   *   demoBookings demo bookings made that week (not tenant rows, so no tenant filter applies)
+   * The sixth, `answered`, reads W1's first-question marker, which does not exist yet, so it is
+   * left out here and added with W1. The first-order and first-route reads are bounded to the sign-up
+   * cohort (tenants created inside the window), so they read only that cohort's rows, not every order
+   * and route on the platform; an older tenant that places its first order inside the window is not a
+   * sign-up and is not counted (review-c on #4062, cohort bound approved by the Lead). Every tenant count leaves out non-PRODUCTION tenants
+   * (test, demo, internal: `class` is set from the approved test-tenant list) and soft-deleted ones,
+   * the same two filters as every count in getStats().
+   */
+  private async _weeklyFunnel(now: Date): Promise<{ weeks: WeeklyFunnelWeek[] }> {
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const startOfToday = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    const mondayOffset = (new Date(startOfToday).getUTCDay() + 6) % 7;
+    const thisWeek = startOfToday - mondayOffset * DAY_MS;
+    const weekStarts = Array.from(
+      { length: FUNNEL_WEEKS },
+      (_, i) => thisWeek - (FUNNEL_WEEKS - 1 - i) * 7 * DAY_MS,
+    );
+    const windowStart = new Date(weekStarts[0]);
+    const weekIndex = (d: Date) => {
+      const i = Math.floor((d.getTime() - weekStarts[0]) / (7 * DAY_MS));
+      return i >= 0 && i < FUNNEL_WEEKS ? i : -1;
+    };
+    const live = { class: "PRODUCTION" as const, deletedAt: null };
+    const firstEver = {
+      by: ["tenantId" as const],
+      where: { tenantId: { not: null }, tenant: { ...live, createdAt: { gte: windowStart } } },
+      _min: { createdAt: true as const },
+      // Only tenants whose FIRST row falls inside the window; an older tenant's later row is not a first.
+      having: { createdAt: { _min: { gte: windowStart } } },
+    };
+
+    const [signupRows, activations, firstOrders, firstRoutes, firstSends, firstPayments, bookings] =
+      await Promise.all([
+        this.prisma.tenant.findMany({
+          where: { ...live, createdAt: { gte: windowStart } },
+          select: { createdAt: true },
+        }),
+        // AuditLog has no tenant relation, so the activations are read first and their tenants
+        // are checked against `live` just below.
+        this.prisma.auditLog.findMany({
+          where: {
+            action: "user.activate",
+            meta: { path: ["reason"], equals: "email_verify" },
+            tenantId: { not: null },
+            createdAt: { gte: windowStart },
+          },
+          select: { tenantId: true, createdAt: true },
+        }),
+        this.prisma.order.groupBy(firstEver),
+        this.prisma.route.groupBy(firstEver),
+        this.prisma.invoice.groupBy({
+          by: firstEver.by,
+          where: { ...firstEver.where, sentAt: { not: null } },
+          _min: { sentAt: true as const },
+        }),
+        this.prisma.invoicePayment.groupBy({
+          ...firstEver,
+          where: {
+            ...firstEver.where,
+            status: "PAID" as const,
+            method: { not: "CREDIT_NOTE" as const },
+            invoice: { OR: [{ sentAt: { not: null } }, { orderId: { not: null } }] },
+          },
+        }),
+        this.prisma.demoBooking.findMany({
+          where: { createdAt: { gte: windowStart } },
+          select: { createdAt: true },
+        }),
+      ]);
+
+    const liveVerifiedIds = new Set<string>(
+      activations.length === 0
+        ? []
+        : (
+            await this.prisma.tenant.findMany({
+              where: {
+                ...live,
+                id: { in: [...new Set(activations.map((a) => a.tenantId as string))] },
+              },
+              select: { id: true },
+            })
+          ).map((t) => t.id),
+    );
+
+    const weeks: WeeklyFunnelWeek[] = weekStarts.map((ms) => ({
+      weekStart: new Date(ms).toISOString().slice(0, 10),
+      signups: 0,
+      verified: 0,
+      firstOrder: 0,
+      firstRoute: 0,
+      firstInvoiceSent: 0,
+      firstPayment: 0,
+      demoBookings: 0,
+    }));
+    const bump = (d: Date | null | undefined, key: keyof Omit<WeeklyFunnelWeek, "weekStart">) => {
+      const i = d ? weekIndex(d) : -1;
+      if (i >= 0) weeks[i][key] += 1;
+    };
+    for (const t of signupRows) bump(t.createdAt, "signups");
+    // One verified tenant counts once, in the week of its first verification in the window.
+    const verifiedWeek = new Map<string, Date>();
+    for (const a of activations) {
+      const id = a.tenantId as string;
+      const seen = verifiedWeek.get(id);
+      if (liveVerifiedIds.has(id) && (!seen || a.createdAt < seen))
+        verifiedWeek.set(id, a.createdAt);
+    }
+    for (const d of verifiedWeek.values()) bump(d, "verified");
+    for (const r of firstOrders) bump(r._min?.createdAt, "firstOrder");
+    for (const r of firstRoutes) bump(r._min?.createdAt, "firstRoute");
+    for (const r of firstSends) bump(r._min?.sentAt, "firstInvoiceSent");
+    for (const r of firstPayments) bump(r._min?.createdAt, "firstPayment");
+    for (const b of bookings) bump(b.createdAt, "demoBookings");
+    return { weeks };
+  }
+
+  /** The funnel sits inside getStats()'s Promise.all, so a bad read here must not fail the page. */
+  private async _weeklyFunnelOrUnavailable(now: Date): Promise<WeeklyFunnel> {
+    try {
+      return await this._weeklyFunnel(now);
+    } catch (e) {
+      this.logger.error(`Weekly funnel read failed: ${e instanceof Error ? e.message : String(e)}`);
+      return { unavailable: true };
+    }
   }
 
   /** Human-readable "why at risk" for the dashboard At-Risk table. */
@@ -2451,20 +2623,14 @@ export class PlatformAdminService {
    * tenants keep their own pricing untouched.
    */
   async updatePlanPrices(planKeyParam: string, dto: UpdatePlanPricesDto, adminId: string | null) {
-    const planKey = normalizePlanKey(planKeyParam);
-    if (!planKey) {
-      throw new BadRequestException(`Unknown plan key "${planKeyParam}"`);
-    }
+    const { planKey, version, definition } = await this.resolveCatalogPlan(planKeyParam);
 
-    const version = await this.planCatalogService.getPublishedVersion();
-    if (!version) {
-      throw new NotFoundException(
-        "No published plan catalog exists. Seed the billing catalog first.",
-      );
-    }
-    const definition = version.definitions.find((d) => normalizePlanKey(d.planKey) === planKey);
-    if (!definition) {
-      throw new NotFoundException(`Plan ${planKey} not found in the current catalog version`);
+    // SA-1100 §2: count again from the SAME selection BEFORE any write. A number that is not the one the admin
+    // confirmed (or no number at all) is a 409 and nothing is changed; the dialog then fetches the count again.
+    const onPlan = await this.selectPlanPriceTargets(version.id, planKey);
+    const affected = await countAffectedTargets(onPlan, (id) => this.downgradePricePushed(id));
+    if (dto.expectedAffected !== affected) {
+      throw planPriceImpactChanged(dto.expectedAffected, affected);
     }
 
     const annualPrice =
@@ -2479,34 +2645,7 @@ export class PlatformAdminService {
       data: { monthlyPrice: dto.monthly, annualPrice },
     });
 
-    // Fan-out targets: tenants that actually resolve against THIS (latest) version for
-    // this plan key and have no custom MONTHLY fee of their own.
-    //   • `planVersionId: null` is included on purpose — PlanCatalogService.
-    //     getVersionForTenant(null) resolves to the PUBLISHED version, so an unpinned
-    //     tenant IS priced from this catalog row. Every Stripe-checkout tenant is
-    //     unpinned (only self-service subscribe/upgrade ever writes the pin), so
-    //     matching on `planVersionId: version.id` alone reaches no live subscription
-    //     at all and a catalog price edit would never leave the database.
-    //   • Only `priceOverrideMonthly` disqualifies: a tenant with an annual-only custom
-    //     fee still takes its monthly from the catalog, so it must be re-synced too.
-    const candidates = await this.prisma.tenantSubscription.findMany({
-      where: {
-        priceOverrideMonthly: null,
-        tenant: {
-          deletedAt: null,
-          OR: [{ planVersionId: version.id }, { planVersionId: null }],
-        },
-      },
-      select: {
-        tenantId: true,
-        planKey: true,
-        downgradeToPlanKey: true,
-        tenant: { select: { plan: true } },
-      },
-    });
-    const onPlan = candidates.filter(
-      (c) => normalizePlanKey(c.planKey ?? c.tenant.plan) === planKey,
-    );
+    // Fan-out targets: `onPlan`, the selection counted above (see selectPlanPriceTargets, shared with the R24 read).
     // N3 (R1 Option B): a tenant whose scheduled DOWNGRADE price has ALREADY been pushed onto its Stripe base item
     // (ScheduledPriceChangeService, before the renewal) must not be synced here: that would price Stripe from the
     // plan it is LEAVING and revert the push, so the renewal bills the old plan again. Only THOSE tenants are
@@ -2576,6 +2715,78 @@ export class PlatformAdminService {
       failed,
       skippedDowngrade,
     };
+  }
+
+  /** The plan key, the published catalog version and that plan's definition in it (400 / 404 as the price edit always answered). */
+  private async resolveCatalogPlan(planKeyParam: string) {
+    const planKey = normalizePlanKey(planKeyParam);
+    if (!planKey) {
+      throw new BadRequestException(`Unknown plan key "${planKeyParam}"`);
+    }
+    const version = await this.planCatalogService.getPublishedVersion();
+    if (!version) {
+      throw new NotFoundException(
+        "No published plan catalog exists. Seed the billing catalog first.",
+      );
+    }
+    const definition = version.definitions.find((d) => normalizePlanKey(d.planKey) === planKey);
+    if (!definition) {
+      throw new NotFoundException(`Plan ${planKey} not found in the current catalog version`);
+    }
+    return { planKey, version, definition };
+  }
+
+  /**
+   * THE selection behind a plan price edit, used by the PATCH fan-out and by the R24 price-impact read, so the
+   * count a dialog shows can never disagree with the `updated` the PATCH then reports. `ownPrice` flips it to the
+   * businesses on the plan that keep their own monthly price (not touched by the edit).
+   */
+  private async selectPlanPriceTargets(versionId: string, planKey: string, ownPrice = false) {
+    // Fan-out targets: tenants that actually resolve against THIS (latest) version for
+    // this plan key and have no custom MONTHLY fee of their own.
+    //   • `planVersionId: null` is included on purpose — PlanCatalogService.
+    //     getVersionForTenant(null) resolves to the PUBLISHED version, so an unpinned
+    //     tenant IS priced from this catalog row. Every Stripe-checkout tenant is
+    //     unpinned (only self-service subscribe/upgrade ever writes the pin), so
+    //     matching on `planVersionId: version.id` alone reaches no live subscription
+    //     at all and a catalog price edit would never leave the database.
+    //   • Only `priceOverrideMonthly` disqualifies: a tenant with an annual-only custom
+    //     fee still takes its monthly from the catalog, so it must be re-synced too.
+    const candidates = await this.prisma.tenantSubscription.findMany({
+      where: {
+        priceOverrideMonthly: ownPrice ? { not: null } : null,
+        tenant: {
+          deletedAt: null,
+          OR: [{ planVersionId: versionId }, { planVersionId: null }],
+        },
+      },
+      select: {
+        tenantId: true,
+        planKey: true,
+        downgradeToPlanKey: true,
+        tenant: { select: { plan: true } },
+      },
+    });
+    return candidates.filter((c) => normalizePlanKey(c.planKey ?? c.tenant.plan) === planKey);
+  }
+
+  /** R24: how many businesses a catalog price edit would re-price, and by how much. Read-only. */
+  async getPlanPriceImpact(planKeyParam: string, monthlyRaw: unknown): Promise<PlanPriceImpact> {
+    const newMonthly = parseImpactMonthly(monthlyRaw);
+    const { planKey, version, definition } = await this.resolveCatalogPlan(planKeyParam);
+    return buildPlanPriceImpact({
+      planKey,
+      currentMonthly: Number(definition.monthlyPrice ?? 0),
+      newMonthly,
+      targets: await this.selectPlanPriceTargets(version.id, planKey),
+      ownPrice: (await this.selectPlanPriceTargets(version.id, planKey, true)).length,
+      downgradePushed: (id) => this.downgradePricePushed(id),
+    });
+  }
+
+  /** Has this business's scheduled-downgrade price already been pushed to Stripe? (Without the service: yes, the conservative answer.) */
+  private async downgradePricePushed(tenantId: string): Promise<boolean> {
+    return (await this.scheduledPrice?.isDowngradePricePushed(tenantId)) ?? true;
   }
 
   // ─── Trial extension ─────────────────────────────────────────────────────────

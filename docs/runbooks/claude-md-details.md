@@ -282,7 +282,7 @@ Full rationale, failure modes, and the retirement checklist:
 1. **(schema change only)** apply the prod migration first — fresh backup, then
    `railway run --service postgres node apps/api/scripts/prod-migrate.mjs`.
 2. **Start `scripts/visibility-watchdog.mjs` detached first** (45 min; see the runbook's
-   "Watchdog (mandatory)" section), **then** make it public — `gh repo edit najathakram/routeflow --visibility public --accept-visibility-change-consequences`
+   "Watchdog (mandatory)" section), **then** make it public (the check refuses while a self-hosted runner is registered) — `node tools/ci-runner/check-no-runner.mjs && gh repo edit najathakram/routeflow --visibility public --accept-visibility-change-consequences`
 3. **Push + CI green + merge the PR to master** (squash) — Railway auto-deploys from the push.
    Right after the merge, the coordinator opens the follow-up bookkeeping PR in the same public
    window (docs-only; audited `SKIP_VERIFY` allowed per the owner 2026-09-05).

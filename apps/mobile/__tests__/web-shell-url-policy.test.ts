@@ -106,3 +106,20 @@ describe("httpOrigin", () => {
     expect(httpOrigin("::")).toBeNull();
   });
 });
+
+// SA-1078 (W-1096) PR-3 H1: a statement PDF's signed URL is never on the web origin, so the shell hands it to the system
+// browser (Share and Print live there) instead of loading it in the app.
+describe("a statement PDF's signed URL opens outside the shell", () => {
+  it.each([
+    [
+      "an R2 signed URL",
+      "https://acme.r2.cloudflarestorage.com/statement-pdfs/c1/current.pdf?X-Amz-Signature=abc",
+    ],
+    [
+      "the local signed URL",
+      "https://api.example-routeflow.test/api/v1/uploads/statement-pdfs/c1/current.pdf?sig=abc&exp=1",
+    ],
+  ])("%s is external", (_name, url) => {
+    expect(classifyNavigation(url, ALLOWED)).toBe("external");
+  });
+});

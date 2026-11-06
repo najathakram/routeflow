@@ -65,6 +65,8 @@ export function makeStampDb(seed: {
   });
   const delegates = (state: FakeState, inTx: boolean) => ({
     order: {
+      // SA-1101 A-6 Part 2: the guard reads the order's customer to take the returns lock first.
+      findMany: async () => [{ customerId: "c1", tenantId: "t1" }],
       findFirst: async () => ({ ...state.order }),
       findUnique: async () => ({ ...state.order }),
       update: async ({ where, data }: any) => {
@@ -106,6 +108,9 @@ export function makeStampDb(seed: {
       },
     },
     invoice: { findMany: async () => [] },
+    // SA-1101 A-5: the DELIVERED demotion locks the Order row ($executeRaw) and counts its live returns (none here).
+    $executeRaw: async () => 1,
+    return: { count: async () => 0 },
   });
   const prisma: any = {
     getTenantId: () => "t1",

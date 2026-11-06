@@ -83,6 +83,8 @@ describe("RoutesService — F10 stop-state guards (REG-B54/B55/B71/B72/B120/B121
     recordDeliveryPaymentInTx: jest.Mock;
     reconcileDeliveredOrdersInTx: jest.Mock;
     reverseRunAdvancesInTx: jest.Mock;
+    findOpenOrderDraft: jest.Mock;
+    reconcileOrderDeliveredInvoices: jest.Mock;
   };
   let storage: { upload: jest.Mock; presignedUrl: jest.Mock; delete: jest.Mock };
 
@@ -100,6 +102,9 @@ describe("RoutesService — F10 stop-state guards (REG-B54/B55/B71/B72/B120/B121
         .mockResolvedValue({ applied: 0, invoiceIds: [], paymentIds: [] }),
       reconcileDeliveredOrdersInTx: jest.fn().mockResolvedValue(undefined),
       reverseRunAdvancesInTx: jest.fn().mockResolvedValue(0),
+      // SA-1098 Undo gap: reopenStop asks for each order's open draft (none here: nothing to rebuild)
+      findOpenOrderDraft: jest.fn().mockResolvedValue(null),
+      reconcileOrderDeliveredInvoices: jest.fn().mockResolvedValue(null),
     };
 
     gateway = {
@@ -692,6 +697,8 @@ describe("RoutesService — F10 stop-state guards (REG-B54/B55/B71/B72/B120/B121
       });
 
       const txMock = {
+        $executeRaw: jest.fn().mockResolvedValue(0), // A-4: the Order row lock
+        return: { count: jest.fn().mockResolvedValue(0) }, // A-4: no live return
         auditLog: { create: jest.fn().mockResolvedValue({}) },
         deliveryMutation: {
           deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
@@ -702,10 +709,20 @@ describe("RoutesService — F10 stop-state guards (REG-B54/B55/B71/B72/B120/B121
           findMany: jest.fn().mockResolvedValue([]),
           update: jest.fn().mockResolvedValue({}),
         },
-        order: { update: jest.fn().mockResolvedValue({}) },
+        order: {
+          findMany: jest.fn().mockResolvedValue([{ customerId: "c1", tenantId: "t1" }]),
+          update: jest.fn().mockResolvedValue({}),
+        },
         transaction: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
         routeRunStop: { update: jest.fn().mockResolvedValue({}) },
-        routeRun: { update: jest.fn().mockResolvedValue({}) },
+        routeRun: {
+          update: jest.fn().mockResolvedValue({}),
+          findUnique: jest.fn().mockResolvedValue({
+            status: "IN_PROGRESS",
+            settlementNote: null,
+            settlementVariance: null,
+          }),
+        },
       };
       (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
 
@@ -769,6 +786,8 @@ describe("RoutesService — F10 stop-state guards (REG-B54/B55/B71/B72/B120/B121
       });
 
       const txMock = {
+        $executeRaw: jest.fn().mockResolvedValue(0), // A-4: the Order row lock
+        return: { count: jest.fn().mockResolvedValue(0) }, // A-4: no live return
         auditLog: { create: jest.fn().mockResolvedValue({}) },
         deliveryMutation: {
           deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
@@ -779,10 +798,20 @@ describe("RoutesService — F10 stop-state guards (REG-B54/B55/B71/B72/B120/B121
           findMany: jest.fn().mockResolvedValue([]),
           update: jest.fn().mockResolvedValue({}),
         },
-        order: { update: jest.fn().mockResolvedValue({}) },
+        order: {
+          findMany: jest.fn().mockResolvedValue([{ customerId: "c1", tenantId: "t1" }]),
+          update: jest.fn().mockResolvedValue({}),
+        },
         transaction: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
         routeRunStop: { update: jest.fn().mockResolvedValue({}) },
-        routeRun: { update: jest.fn().mockResolvedValue({}) },
+        routeRun: {
+          update: jest.fn().mockResolvedValue({}),
+          findUnique: jest.fn().mockResolvedValue({
+            status: "IN_PROGRESS",
+            settlementNote: null,
+            settlementVariance: null,
+          }),
+        },
       };
       (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
 

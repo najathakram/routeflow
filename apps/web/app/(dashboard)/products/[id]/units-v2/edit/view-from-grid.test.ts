@@ -1,6 +1,6 @@
-import { priceGrid, type LadderView } from "@routeflow/pricing";
+import { priceGrid, type FamilyCell, type LadderView } from "@routeflow/pricing";
 import type { ProductPriceGridDto } from "@routeflow/types";
-import { previewRows, rulesFromGrid, viewFromGrid } from "./view-from-grid";
+import { familyCellsFromGrid, previewRows, rulesFromGrid, viewFromGrid } from "./view-from-grid";
 
 const view: LadderView = {
   rows: [
@@ -43,5 +43,59 @@ describe("viewFromGrid", () => {
     const g = dto(view);
     g.rows[0].code = "0123";
     expect(previewRows(viewFromGrid(g), rulesFromGrid(g), g)[0].code).toBe("0123");
+  });
+});
+
+describe("SA-1082 ruling 5: the word follows the draft", () => {
+  const ladder: LadderView = {
+    rows: [{ ref: "pack", label: "Case", factor: 12, kind: "pack", set: [24, 22, null, 18, null] }],
+    anchor: "pack",
+    tierAnchors: {},
+  };
+  const withFamily = (cells: FamilyCell[]): ProductPriceGridDto => {
+    const g = dto(ladder);
+    return {
+      ...g,
+      rows: g.rows.map((r) => ({
+        ...r,
+        cells: r.cells.map((c) => ({ ...c, family: cells[c.tier - 1] })),
+      })),
+    };
+  };
+  const served = withFamily([
+    { value: 24, follows: true },
+    { value: 22, follows: true },
+    { value: null, follows: true },
+    { value: 18, follows: false },
+    { value: null, follows: true },
+  ]);
+  const followsIn = (set: (number | null)[]) =>
+    previewRows({ ...ladder, rows: [{ ...ladder.rows[0]!, set }] }, rules, served)[0]?.cells.map(
+      (c) => c.family?.follows,
+    );
+
+  it("reads the five cells the server served, and only when all five are there", () => {
+    expect(familyCellsFromGrid(served)?.map((c) => c.value)).toEqual([24, 22, null, 18, null]);
+    expect(familyCellsFromGrid(dto(ladder))).toBeNull();
+  });
+
+  it("an untouched draft keeps the server's answer, whatever a blank tier's rule shows", () => {
+    expect(followsIn([24, 22, null, 18, null])).toEqual([true, true, true, true, true]);
+  });
+
+  it("a Retail away from the family's takes every word with it", () => {
+    expect(followsIn([30, null, null, null, null])).toEqual([false, false, false, false, false]);
+  });
+
+  it("a Retail back at the family's price reads Family again", () => {
+    expect(followsIn([24, 22, null, 18, null])?.[0]).toBe(true);
+  });
+
+  it("a tier typed away from the family's stops following; its neighbours don't", () => {
+    expect(followsIn([24, 21, null, 18, null])?.slice(0, 2)).toEqual([true, false]);
+  });
+
+  it("a grid with no family gets no family on its cells", () => {
+    expect(previewRows(ladder, rules, dto(ladder))[0]?.cells[0]).not.toHaveProperty("family");
   });
 });

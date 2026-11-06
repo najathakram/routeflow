@@ -14,10 +14,12 @@ import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const request = require("supertest");
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { NoImpersonationGuard } from "../auth/guards/no-impersonation.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { buildThrottlers } from "../common/throttlers";
 import { listenOnLoopback } from "../common/testing/listen-loopback";
 import { FulfilmentEditGuard } from "./fulfilment-edit";
+import { FirstRunService } from "./first-run.service";
 import { SettingsFulfilmentController } from "./settings-fulfilment.controller";
 import { SettingsFulfilmentService } from "./settings-fulfilment.service";
 
@@ -28,6 +30,10 @@ describe("settings/fulfilment throttle (real guard chain)", () => {
     preview: jest.fn(async () => ({ ok: true })),
     update: jest.fn(async () => ({ ok: true })),
   };
+  const firstRun = {
+    status: jest.fn(async () => ({ ok: true })),
+    answer: jest.fn(async () => ({ ok: true })),
+  };
 
   beforeAll(async () => {
     const config = { get: () => undefined } as unknown as ConfigService;
@@ -37,6 +43,7 @@ describe("settings/fulfilment throttle (real guard chain)", () => {
       controllers: [SettingsFulfilmentController],
       providers: [
         { provide: SettingsFulfilmentService, useValue: service },
+        { provide: FirstRunService, useValue: firstRun },
         { provide: APP_GUARD, useClass: ThrottlerGuard },
       ],
     })
@@ -45,6 +52,8 @@ describe("settings/fulfilment throttle (real guard chain)", () => {
       .overrideGuard(RolesGuard)
       .useValue(open)
       .overrideGuard(FulfilmentEditGuard)
+      .useValue(open)
+      .overrideGuard(NoImpersonationGuard)
       .useValue(open)
       .compile();
     app = moduleRef.createNestApplication();
@@ -71,6 +80,14 @@ describe("settings/fulfilment throttle (real guard chain)", () => {
   it("POST preview: the 11th call inside a minute is a 429", async () => {
     const s = await statuses(11, () =>
       request(app.getHttpServer()).post("/settings/fulfilment/preview").send({}),
+    );
+    expect(s.slice(0, 10).every((x) => x === 200)).toBe(true);
+    expect(s[10]).toBe(429);
+  });
+
+  it("POST first-run (W1): the 11th call inside a minute is a 429", async () => {
+    const s = await statuses(11, () =>
+      request(app.getHttpServer()).post("/settings/fulfilment/first-run").send({}),
     );
     expect(s.slice(0, 10).every((x) => x === 200)).toBe(true);
     expect(s[10]).toBe(429);

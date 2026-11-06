@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type {
   CreditNoteStatus,
+  CreditNoteSummary,
   CreditNoteVoidPreview,
   FiledPeriod,
   ReissueCreditNoteInput,
@@ -70,6 +71,20 @@ export function useCreditNotes(
     queryKey: ["credit-notes", params],
     queryFn: () => apiClient.get("/credit-notes", { params }).then((r) => r.data),
     ...options,
+  });
+}
+
+/**
+ * B238: the credit-notes page's status counters and money tiles, computed by the server over EVERY note (never a client
+ * `useCreditNotes({ limit: 999 })` fetch-all, which drops whatever a page cap would have held). `today` is the VIEWER's own
+ * calendar day (`YYYY-MM-DD`). Keyed under `["credit-notes"]`, so every mutation here that invalidates that prefix refreshes it.
+ */
+export function useCreditNoteSummary(today: string) {
+  return useQuery<CreditNoteSummary>({
+    queryKey: ["credit-notes", "summary", today],
+    queryFn: () =>
+      apiClient.get("/credit-notes/summary", { params: { today } }).then((r) => r.data),
+    enabled: !!today,
   });
 }
 

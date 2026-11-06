@@ -629,6 +629,10 @@ describe("REG-G8a PrismaService#tenantTransaction — RLS session hand-off (T-G8
           _wrapTxWithTenant(rawTx: unknown, tenantId: string): unknown;
         }
       )._wrapTxWithTenant,
+      // SA-1105: a tenantless tx is observed by the guard, then runs unchanged
+      _observeTx: (
+        PrismaService.prototype as unknown as { _observeTx(rawTx: unknown, kind: string): unknown }
+      )._observeTx,
       $transaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn(rawTx)),
     };
   }
@@ -681,7 +685,7 @@ describe("REG-G8a PrismaService#tenantTransaction — RLS session hand-off (T-G8
     expect(renderRawCall(rawTx.$executeRaw.mock.calls[0])).toBe(
       "SELECT set_config('app.current_tenant_id', '', true)",
     );
-    // No tenant in context ⇒ the callback receives the RAW client (`if (!tenantId) return
+    // No tenant in context ⇒ the callback receives the RAW client (observed by the SA-1105 guard, `if (!tenantId) return
     // fn(rawTx)`), unscoped — it sees both tenants' rows.
     expect(seenIds.sort()).toEqual(["order-a1", "order-a2", "order-b1"]);
   });

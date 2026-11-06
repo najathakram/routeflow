@@ -2,6 +2,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 
 const src = readFileSync(join(__dirname, "ScanInvoiceModal.tsx"), "utf8");
+const failureSrc = readFileSync(join(__dirname, "..", "lib", "scan-failure-copy.ts"), "utf8");
 
 describe("ScanInvoiceModal intent (scan-to-PO wiring)", () => {
   it("a new invoice defaults to raisePo=false: the vendor-bills entry is unchanged", () => {
@@ -33,8 +34,28 @@ describe("ScanInvoiceModal intent (scan-to-PO wiring)", () => {
     expect(src).toMatch(/<ScanCreateModeSelector\s+intent=\{intent\}/);
     expect(src).toMatch(/scanCreateLabel\(\{\s*intent,/);
   });
+  it("M1-1: the modal gets every scan failure's copy from scanFailureCopy (one call, both flows)", () => {
+    expect(src.split("scanFailureCopy(")).toHaveLength(2);
+    expect(src).toMatch(/title: failure\.title, description: failure\.description/);
+    expect(src).toMatch(/error: failure\.rowError/);
+  });
+  it("M1-1: a cap refusal reads as the paused-until copy, after the plan lock and ahead of 'clearer photo'", () => {
+    const flat = failureSrc.replace(/\s+/g, " ");
+    const at = (s: string) => flat.indexOf(s);
+    expect(at("if (planLocked)")).toBeGreaterThan(-1);
+    expect(at("if (capPaused)")).toBeGreaterThan(at("if (planLocked)"));
+    expect(at("if (code === API_ERROR_CODES.AI_KEY_INVALID)")).toBeGreaterThan(
+      at("if (capPaused)"),
+    );
+    expect(at("description: SCAN_FAILED_COPY")).toBeGreaterThan(
+      at("if (code === API_ERROR_CODES.AI_UNAVAILABLE)"),
+    );
+  });
   it("a scan-step failure shows the closed SCAN_FAILED_COPY, never the server text", () => {
-    expect(src).toMatch(/: SCAN_FAILED_COPY,/);
+    expect(failureSrc).toMatch(/description: SCAN_FAILED_COPY,/);
+    expect(failureSrc).toMatch(/rowError: SCAN_FAILED_COPY,/);
     expect(src).not.toMatch(/shownMsg/);
+    expect(failureSrc).not.toMatch(/shownMsg/);
+    expect(src).not.toMatch(/data\??\.message/); // the modal never reads the server's text for a scan failure
   });
 });

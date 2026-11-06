@@ -17,6 +17,7 @@ import type {
   BusinessProfilePlan,
   BusinessProfilePreviewResponse,
   FeaturePreviewRequest,
+  FirstRunAnswer,
 } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
@@ -30,11 +31,13 @@ import {
   assertCapabilitiesRequested,
   capabilitiesFromInputs,
   capabilityAvailability,
+  firstRunRequest,
   isOpensAsChoosable,
   presetTicks,
   ticksToProfileDef,
 } from "./business-capabilities";
 import { addonCodeOf, findAddonRow } from "./addon-row";
+import { pickLiveRow, resolveLiveRows } from "./feature-override-rule";
 import {
   BUSINESS_PROFILES,
   PROFILE_MODULE_KEYS,
@@ -162,12 +165,11 @@ export class BusinessProfileService {
   private async heldDoorPayments(tenantId: string): Promise<boolean> {
     const now = Date.now();
     const rows = await this.featureOverrides.list(tenantId);
-    const override = rows.find(
-      (r) =>
-        r.tenantId === tenantId &&
-        r.featureKey === "driver_payments" &&
-        !r.revokedAt &&
-        !(r.expiresAt && r.expiresAt.getTime() <= now),
+    // B1282: the one override rule picks the live row (first = newest), the same one `allActive` serves.
+    const override = pickLiveRow(
+      rows.filter((r) => r.tenantId === tenantId && !r.revokedAt),
+      "driver_payments",
+      now,
     );
     const held = await heldAddonKeys(this.addons, this.featureOverrides, tenantId);
     return override ? override.effect === "GRANT" : held.has("driver_payments");
@@ -217,6 +219,16 @@ export class BusinessProfileService {
         opensAs: now.opensAs,
       },
     });
+    return this.planDef(tenantId, def, { capabilities: normalised, preset });
+  }
+
+  /**
+   * W1: the plan for a new account's first question. The current ticks come from the SAME read the capabilities GET
+   * shows; the mapping to a request is `firstRunRequest` (not the back office's call), then the ONE planner.
+   */
+  async planFirstRun(tenantId: string, answer: FirstRunAnswer): Promise<BusinessProfileResolution> {
+    const now = await this.capabilities(tenantId);
+    const { def, normalised, preset } = firstRunRequest(answer, now);
     return this.planDef(tenantId, def, { capabilities: normalised, preset });
   }
 
@@ -406,14 +418,15 @@ export class BusinessProfileService {
   }> {
     const now = Date.now();
     const rows = await this.featureOverrides.list(tenantId);
-    const overrides = new Map<string, "GRANT" | "DENY">();
-    const activeIds = new Map<string, string>();
-    for (const r of rows) {
-      if (r.tenantId !== tenantId || r.revokedAt) continue;
-      if (r.expiresAt && r.expiresAt.getTime() <= now) continue;
-      overrides.set(r.featureKey, r.effect as "GRANT" | "DENY");
-      activeIds.set(r.featureKey, r.id);
-    }
+    // B1282: one rule (first live row per key = newest), shared with `allActive`; the row id is the one acted on.
+    const liveRows = resolveLiveRows(
+      rows.filter((r) => r.tenantId === tenantId && !r.revokedAt),
+      now,
+    );
+    const overrides = new Map(
+      [...liveRows].map(([key, r]) => [key, r.effect as "GRANT" | "DENY"] as const),
+    );
+    const activeIds = new Map([...liveRows].map(([key, r]) => [key, r.id] as const));
     const held = await heldAddonKeys(this.addons, this.featureOverrides, tenantId);
     const holds: Record<string, boolean> = {};
     for (const key of PROFILE_MODULE_KEYS) {

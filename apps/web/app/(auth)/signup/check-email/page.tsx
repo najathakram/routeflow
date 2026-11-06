@@ -4,6 +4,8 @@ import * as React from "react";
 import { useSearchParams } from "next/navigation";
 import { Mail, RefreshCw, XCircle } from "lucide-react";
 import { AuthShell } from "@/components/auth";
+import { isWorkspaceId } from "@/lib/last-workspace";
+import { site } from "@/app/(marketing)/lib/site";
 
 // ─── Inner page ───────────────────────────────────────────────────────────────
 
@@ -14,6 +16,10 @@ function CheckEmailInner() {
   // verification email did NOT go out (mail transport failure) — the account
   // still exists, but there is nothing in the inbox to click yet.
   const initialSendFailed = params.get("emailSent") === "false";
+  // W2 B1: sign-in asks for the Workspace ID typed. The signup page passes it along; text that is not
+  // shaped like one (a crafted link) is dropped, never shown.
+  const rawWorkspace = params.get("workspace") ?? "";
+  const workspaceId = isWorkspaceId(rawWorkspace) ? rawWorkspace : null;
 
   const apiUrl =
     process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ?? "http://localhost:3000/api/v1";
@@ -62,7 +68,7 @@ function CheckEmailInner() {
   return (
     <AuthShell
       audience="distributor"
-      kicker="Distributor workspace"
+      kicker="Distributor account"
       title={title}
       footer={
         <>
@@ -76,7 +82,12 @@ function CheckEmailInner() {
             Wrong email?{" "}
             <a href="/signup" className="text-brand-600 hover:underline">
               Sign up again
+            </a>{" "}
+            with a new Workspace ID, or email{" "}
+            <a href={`mailto:${site.email}`} className="text-brand-600 hover:underline">
+              {site.email}
             </a>
+            .
           </p>
         </>
       }
@@ -114,6 +125,14 @@ function CheckEmailInner() {
             {email ? <strong className="text-navy">{email}</strong> : "your email address"}. Click
             the link to activate your account and get started.
           </p>
+        )}
+
+        {workspaceId && (
+          <div className="mt-5 rounded-lg border border-surface-border bg-white px-4 py-3 text-center">
+            <p className="text-xs text-navy/70">Your Workspace ID</p>
+            <p className="mt-1 font-mono text-base font-semibold text-navy">{workspaceId}</p>
+            <p className="mt-1 text-xs text-navy/70">You&apos;ll need it to sign in.</p>
+          </div>
         )}
 
         <div className="mt-6 rounded-lg bg-surface-raised px-4 py-3 text-left text-xs text-navy/70 space-y-1">

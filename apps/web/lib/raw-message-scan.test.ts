@@ -20,7 +20,6 @@ const allow = ALLOWLIST as Record<string, Entry>;
 const PERMANENT_EXPECTED: Record<string, number> = {
   "lib/api/restriction-warning.ts": 1,
   "app/(dashboard)/orders/_components/scan/useScanCodeHandler.ts": 2,
-  "components/ScanInvoiceModal.tsx": 1,
   "lib/buyer-auth-context.tsx": 2,
   "lib/credit-note-error-copy.ts": 1,
   "lib/customer-form-error-copy.ts": 1,

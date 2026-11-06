@@ -34,6 +34,7 @@ const RECEIPT = {
   paid: 22.5,
   balanceDue: 0,
   change: 7.5,
+  cashTendered: 30,
   method: "CASH" as const,
   paymentRecorded: true,
 };
@@ -114,7 +115,13 @@ describe("CounterReceiptBody", () => {
   });
 
   it("exact cash: the server's served change of 0 prints Tendered and a Change $0.00 row (null would print none)", () => {
-    const { unmount } = show({ ...RECEIPT, total: 22.5, paid: 22.5, change: 0 });
+    const { unmount } = show({
+      ...RECEIPT,
+      total: 22.5,
+      paid: 22.5,
+      change: 0,
+      cashTendered: 22.5,
+    });
     expect(screen.getByTestId("receipt-tendered")).toHaveTextContent("$22.50");
     expect(screen.getByTestId("receipt-change")).toHaveTextContent("Change");
     expect(screen.getByTestId("receipt-change")).toHaveTextContent("$0.00");
@@ -170,14 +177,19 @@ describe("CounterReceiptBody", () => {
   });
 
   it("card has no change or tendered line", () => {
-    show({ ...RECEIPT, method: "CARD" as never, change: undefined as never });
+    show({
+      ...RECEIPT,
+      method: "CARD" as never,
+      change: undefined as never,
+      cashTendered: undefined as never, // a card sale stores no cash tendered
+    });
     expect(screen.getByTestId("receipt-method")).toHaveTextContent("Card");
     expect(screen.queryByTestId("receipt-change")).not.toBeInTheDocument();
     expect(screen.queryByTestId("receipt-tendered")).not.toBeInTheDocument();
   });
 
   it("exact cash shows tendered but no change line", () => {
-    show({ ...RECEIPT, change: undefined as never });
+    show({ ...RECEIPT, change: undefined as never, cashTendered: 22.5 });
     expect(screen.getByTestId("receipt-tendered")).toHaveTextContent("$22.50");
     expect(screen.queryByTestId("receipt-change")).not.toBeInTheDocument();
   });

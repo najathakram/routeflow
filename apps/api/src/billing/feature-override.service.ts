@@ -13,6 +13,7 @@ import {
   FEATURE_OVERRIDE_EXPIRED_REVIEW_ACTION,
 } from "./feature-override-audit.constants";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { OVERRIDE_RULE_ORDER, pickLiveRow, resolveLiveEffects } from "./feature-override-rule";
 
 export type FeatureOverrideEffect = "GRANT" | "DENY";
 export type { FeatureOverrideKind };
@@ -52,7 +53,20 @@ export interface RevokedExpiredRow {
 interface CachedRow {
   featureKey: string;
   effect: FeatureOverrideEffect;
+  kind: string;
+  reason: string;
   expiresAt: Date | null;
+}
+
+/**
+ * SA-963 A-1 (F13): what the platform-admin console shows beside an override's verdict. Display data only: it rides next to
+ * the `overrides` verdict map, never inside it, so no gate decision can read it. `reason` is written by staff and never
+ * leaves platform-admin.
+ */
+export interface FeatureOverrideDetail {
+  kind: string;
+  reason: string;
+  expiresAt: string | null;
 }
 
 interface CacheEntry {
@@ -89,11 +103,14 @@ export class FeatureOverrideService {
 
     const rows = await this.prisma.tenantFeatureOverride.findMany({
       where: { tenantId, revokedAt: null },
-      select: { featureKey: true, effect: true, expiresAt: true },
+      orderBy: OVERRIDE_RULE_ORDER,
+      select: { featureKey: true, effect: true, kind: true, reason: true, expiresAt: true },
     });
     const value = rows.map((r) => ({
       featureKey: r.featureKey,
       effect: r.effect,
+      kind: r.kind,
+      reason: r.reason,
       expiresAt: r.expiresAt,
     }));
     this.cache.set(tenantId, { rows: value, cacheExpiresAt: now + CACHE_TTL_MS });
@@ -101,15 +118,17 @@ export class FeatureOverrideService {
     return value;
   }
 
+  /** The ONE rule for which row applies: the key's non-expired row. An expired row never supplies an effect or a date. */
+  private rowAt(rows: CachedRow[], featureKey: string, now: number): CachedRow | null {
+    return pickLiveRow(rows, featureKey, now);
+  }
+
   private effectAt(
     rows: CachedRow[],
     featureKey: string,
     now: number,
   ): FeatureOverrideEffect | null {
-    const row = rows.find(
-      (r) => r.featureKey === featureKey && (r.expiresAt === null || r.expiresAt.getTime() > now),
-    );
-    return row?.effect ?? null;
+    return this.rowAt(rows, featureKey, now)?.effect ?? null;
   }
 
   /**
@@ -169,14 +188,35 @@ export class FeatureOverrideService {
     try {
       const rows = await this.activeRows(tenantId);
       const now = Date.now();
-      const result = new Map<string, FeatureOverrideEffect>();
+      return resolveLiveEffects(rows, now);
+    } catch (err) {
+      this.logger.error(`Override lookup failed for tenant ${tenantId}`, err as Error);
+      return new Map();
+    }
+  }
+
+  /**
+   * SA-963 A-1: kind, reason and end date of every active override, keyed by featureKey, for the explain trace and the
+   * preview's before/after. Same row rule as allActive() (via rowAt), same fail-open: a lookup error is an empty map.
+   */
+  async activeDetail(tenantId: string): Promise<Map<string, FeatureOverrideDetail>> {
+    try {
+      const rows = await this.activeRows(tenantId);
+      const now = Date.now();
+      const result = new Map<string, FeatureOverrideDetail>();
       for (const row of rows) {
-        const effect = this.effectAt(rows, row.featureKey, now);
-        if (effect) result.set(row.featureKey, effect);
+        const hit = this.rowAt(rows, row.featureKey, now);
+        if (hit) {
+          result.set(row.featureKey, {
+            kind: hit.kind,
+            reason: hit.reason,
+            expiresAt: hit.expiresAt ? hit.expiresAt.toISOString() : null,
+          });
+        }
       }
       return result;
     } catch (err) {
-      this.logger.error(`Override lookup failed for tenant ${tenantId}`, err as Error);
+      this.logger.error(`Override detail lookup failed for tenant ${tenantId}`, err as Error);
       return new Map();
     }
   }
@@ -185,7 +225,7 @@ export class FeatureOverrideService {
   async list(tenantId: string) {
     return this.prisma.tenantFeatureOverride.findMany({
       where: { tenantId },
-      orderBy: { createdAt: "desc" },
+      orderBy: OVERRIDE_RULE_ORDER,
     });
   }
 

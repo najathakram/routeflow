@@ -2,11 +2,22 @@ import { Injectable, Logger } from "@nestjs/common";
 import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
-
+import { OwnerAlertService } from "../email/owner-alert.service";
 import {
   FEATURE_OVERRIDE_AUDIT_ENTITY_TYPE,
   FEATURE_OVERRIDE_EXPIRED_REVIEW_ACTION,
+  FEATURE_OVERRIDE_PILOT_ENDING_NOTIFIED,
 } from "./feature-override-audit.constants";
+import { FEATURE_REGISTRY } from "./feature-registry";
+import { PlanCatalogService, type PlanVersionWithCatalog } from "./plan-catalog.service";
+import { EntitlementsService } from "./entitlements.service";
+import {
+  billablePilotEnding,
+  FREE_PERIOD_KINDS,
+  PILOT_WARNING_DAYS,
+} from "./billable-pilot-ending";
+import { PAYING_TENANT_CONDITIONS } from "./mrr.service";
+import { OVERRIDE_RULE_ORDER, resolveLiveEffects } from "./feature-override-rule";
 
 // Re-exported: the constant's home is `feature-override-audit.constants.ts` (shared with the sweep).
 export { FEATURE_OVERRIDE_EXPIRED_REVIEW_ACTION };
@@ -24,6 +35,11 @@ const REVIEW_BATCH_SIZE = 500;
  * can't grow without limit. A backlog of more than this many already-audited-and-still-unrevoked
  * rows is an operational problem (nobody is revoking) this job cannot fully solve alone. */
 const AUDIT_LOOKUP_BOUND = 5000;
+
+/** Registry features that have a paid add-on at all: only these can ever have a billable free period (the cheap first cut; `billablePilotEnding` decides). */
+const FEATURE_KEYS_WITH_SKU: readonly string[] = FEATURE_REGISTRY.filter(
+  (f) => f.billing.skus.length > 0,
+).map((f) => f.key);
 
 /**
  * Nightly review sweep for feature grants v2 (brief B, research §6.4): flags every
@@ -52,6 +68,9 @@ export class FeatureOverrideReviewJob {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly ownerAlerts: OwnerAlertService,
+    private readonly catalog: PlanCatalogService,
+    private readonly entitlements: EntitlementsService,
   ) {}
 
   @LeaderCron("0 6 * * *", "billing.reviewExpiredOverrides")
@@ -126,5 +145,152 @@ export class FeatureOverrideReviewJob {
     }
 
     return { reviewed: expired.length };
+  }
+
+  /**
+   * R25 / SA-1100 §1: tells the owner by email, ONCE per override and end date, that a BILLABLE free period ends within
+   * 7 days: the five-part rule in `billablePilotEnding` (a PILOT or TRIAL grant; ending it changes what the business is
+   * served; no add-on row holds the SKU; a flat paid SKU in the pinned catalog; a production business). The mail says the
+   * business LOSES the feature and nothing is charged automatically: a grant never bills. Read-only on overrides: it never
+   * revokes anything and never touches a price or a plan. A free period that is extended earns a new warning (new end date).
+   *
+   * "Already warned" is one audit row per (override id, end date). The audit row is written with prisma directly (not
+   * AuditService.log, which swallows its own failure) and BEFORE the mail: if the row cannot be written, nothing is
+   * sent, so a business is warned at most once. The warned pairs are fetched first (bounded) and excluded INSIDE the
+   * selection query, the same starvation guard as reviewExpiredOverrides.
+   */
+  @LeaderCron("30 6 * * *", "billing.warnBillablePilotsEnding")
+  async warnBillablePilotsEnding(): Promise<{ warned: number }> {
+    const now = new Date();
+    const horizon = new Date(now.getTime() + PILOT_WARNING_DAYS * 24 * 60 * 60 * 1000);
+
+    const noticeRows = await this.prisma.auditLog.findMany({
+      where: {
+        action: FEATURE_OVERRIDE_PILOT_ENDING_NOTIFIED,
+        entityType: FEATURE_OVERRIDE_AUDIT_ENTITY_TYPE,
+        // a warning only matters while its end date is still ahead; older rows can never match a candidate
+        createdAt: { gte: new Date(now.getTime() - 2 * PILOT_WARNING_DAYS * 24 * 60 * 60 * 1000) },
+      },
+      orderBy: { createdAt: "desc" },
+      take: AUDIT_LOOKUP_BOUND,
+      select: { entityId: true, meta: true },
+    });
+    const warned: { id: string; expiresAt: Date }[] = [];
+    for (const r of noticeRows) {
+      // `meta.expiresAt` is a Date in memory and an ISO string once read back from the JSON column
+      const stored = (r.meta as { expiresAt?: unknown } | null)?.expiresAt;
+      const at = new Date(
+        typeof stored === "string" || typeof stored === "number" || stored instanceof Date
+          ? stored
+          : "",
+      );
+      if (r.entityId && !Number.isNaN(at.getTime())) warned.push({ id: r.entityId, expiresAt: at });
+    }
+
+    const ending = await this.prisma.tenantFeatureOverride.findMany({
+      where: {
+        kind: { in: [...FREE_PERIOD_KINDS] as ("PILOT" | "TRIAL")[] },
+        effect: "GRANT",
+        revokedAt: null,
+        expiresAt: { gt: now, lte: horizon },
+        featureKey: { in: [...FEATURE_KEYS_WITH_SKU] },
+        tenant: { ...PAYING_TENANT_CONDITIONS },
+        ...(warned.length > 0 ? { NOT: warned } : {}),
+      },
+      orderBy: [{ expiresAt: "asc" }, { id: "asc" }],
+      take: REVIEW_BATCH_SIZE,
+      select: {
+        id: true,
+        tenantId: true,
+        featureKey: true,
+        kind: true,
+        effect: true,
+        revokedAt: true,
+        expiresAt: true,
+        tenant: {
+          select: {
+            status: true,
+            class: true,
+            deletedAt: true,
+            plan: true,
+            planVersionId: true,
+            subscription: { select: { planKey: true, planVersionId: true } },
+          },
+        },
+      },
+    });
+    if (ending.length >= REVIEW_BATCH_SIZE) {
+      this.logger.warn(
+        `warnBillablePilotsEnding hit its batch cap of ${REVIEW_BATCH_SIZE} — more free periods may be waiting for a warning; the next tick continues.`,
+      );
+    }
+
+    const catalogs = new Map<string | null, PlanVersionWithCatalog | null>();
+    let sent = 0;
+    for (const row of ending) {
+      try {
+        if (!row.expiresAt) continue;
+        const pin = row.tenant.subscription?.planVersionId ?? row.tenant.planVersionId ?? null;
+        if (!catalogs.has(pin)) {
+          catalogs.set(pin, await this.catalog.getVersionForTenant(pin).catch(() => null));
+        }
+        const version = catalogs.get(pin);
+        if (!version) continue;
+        const planKey = row.tenant.subscription?.planKey ?? row.tenant.plan;
+        // The facts the served-answer rule needs (this business only; a candidate is rare, so a few reads each).
+        const [addonRows, otherRows, ent] = await Promise.all([
+          this.prisma.tenantAddon.findMany({
+            where: { tenantId: row.tenantId },
+            select: { addonKey: true, sku: true, active: true },
+          }),
+          this.prisma.tenantFeatureOverride.findMany({
+            where: { tenantId: row.tenantId, revokedAt: null, id: { not: row.id } },
+            orderBy: OVERRIDE_RULE_ORDER,
+            select: { featureKey: true, effect: true, expiresAt: true },
+          }),
+          this.entitlements.resolve(row.tenantId),
+        ]);
+        // B1282: what is served is read by the one override rule (a live row only, the first per key), shared with the
+        // served answer (FeatureOverrideService.allActive).
+        const otherOverrides = resolveLiveEffects(
+          otherRows as { featureKey: string; effect: "GRANT" | "DENY"; expiresAt: Date | null }[],
+          now.getTime(),
+        );
+        const paid = billablePilotEnding({
+          override: row,
+          now,
+          tenant: row.tenant,
+          planKey,
+          ent: { planKey: ent.planKey, flags: ent.flags },
+          otherOverrides,
+          addonRows,
+          catalogSkus: version.addonSkus,
+        });
+        if (!paid) continue;
+
+        // Audit FIRST: a row that cannot be written means no mail (at most once).
+        await this.prisma.auditLog.create({
+          data: {
+            tenantId: row.tenantId,
+            userId: null,
+            action: FEATURE_OVERRIDE_PILOT_ENDING_NOTIFIED,
+            entityType: FEATURE_OVERRIDE_AUDIT_ENTITY_TYPE,
+            entityId: row.id,
+            meta: { expiresAt: row.expiresAt },
+          },
+        });
+        await this.ownerAlerts.pilotEnding(row.tenantId, {
+          featureName: paid.name,
+          endsAt: row.expiresAt,
+          monthlyPrice: Number(paid.monthlyPrice),
+        });
+        sent++;
+      } catch (err) {
+        this.logger.warn(
+          `Pilot-ending warning for override ${row.id} not sent: ${(err as Error)?.message ?? err}`,
+        );
+      }
+    }
+    return { warned: sent };
   }
 }

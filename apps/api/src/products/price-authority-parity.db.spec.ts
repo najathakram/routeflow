@@ -189,11 +189,10 @@ describeDb("SA-1041 price authority parity - real Postgres", () => {
     expect(Number((created as any).price)).toBe(7);
   });
 
-  it("R-a3: mode off, every grid row of a variant is editable except the implicit base row", async () => {
+  it("R-a3: mode off, every grid row of a variant is editable", async () => {
     const s = await seed("a3", "variant");
     const g = await readGrid(s);
-    const locked = g.rows.filter((r: any) => !r.editable);
-    expect(locked.every((r: any) => r.ref === "base")).toBe(true);
+    expect(g.rows.filter((r: any) => !r.editable)).toEqual([]);
     expect(unitRowOf(g).editable).toBe(true);
   });
 
@@ -210,10 +209,23 @@ describeDb("SA-1041 price authority parity - real Postgres", () => {
     await expect(saveGrid(s, "base", 13)).resolves.toBeDefined();
   });
 
-  it("G-a1: mode on, a variant's base price is refused", async () => {
+  it("G-a1 (SA-1082 A-1): mode on, a variant's pack price is its own", async () => {
     const s = await seed("g1", "variant");
     mode = "on";
-    await expect(saveGrid(s, "base", 13)).rejects.toBeInstanceOf(ConflictException);
+    const g = await readGrid(s);
+    await inTenant(s.tenantId, () =>
+      writes.save(
+        s.productId,
+        {
+          expectedRevision: g.revision,
+          expectedPriceState: g.priceState,
+          patches: [{ ref: "pack", tier: 1, to: 13 }],
+        },
+        null,
+      ),
+    );
+    const row = await prisma.product.findUniqueOrThrow({ where: { id: s.productId } });
+    expect(Number(row.pricePerUnit)).toBe(13);
   });
 
   it("G-a2: a FAMILY on the grid keeps the family-page text in both modes", async () => {
@@ -245,7 +257,7 @@ describeDb("SA-1041 price authority parity - real Postgres", () => {
     ).resolves.toBeDefined();
   });
 
-  it("G-a5: the implicit base row is never editable", async () => {
+  it("G-a5: without the units flag, the implicit base row is not editable (SA-1082)", async () => {
     const s = await seed("g5", "standard");
     await prisma.productUnit.deleteMany({ where: { productId: s.productId } });
     const g = await readGrid(s);

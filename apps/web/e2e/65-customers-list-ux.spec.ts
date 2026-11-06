@@ -2,7 +2,7 @@
  * Customers list UX (PKG-1: F16/F17/F24/F26). RTL cannot measure layout, so this is the real
  * proof: real bounding boxes at 390px and 1440px on the approved `test` tenant.
  *
- * The seeded `test` tenant has no phone/tags/receivables on its customers, so the list response
+ * The seeded `test` tenant has no phone/tags/open balance on its customers, so the list response
  * is PATCHED in flight (route.fetch + edit) to give the first rows a phone, tags and a balance.
  * Layout, links and clipping are all real; only the field values are decorated. No writes.
  * Window scroll only (never scrollIntoView, which false-greens clipping checks).
@@ -22,14 +22,14 @@ async function decorateList(page: Page) {
     rows.forEach((r, i) => {
       if (i === 0) {
         r.phone = "555-0142";
-        r.receivables = 1234.5;
+        r.openBalance = 1234.5;
         r.unusedCredits = 0;
         r.tagAssignments = [
           { tag: { id: "t1", name: "VIP", color: "#2d5be3" } },
           { tag: { id: "t2", name: "Cash", color: "#1a7f5a" } },
         ];
       } else if (i === 1) {
-        r.receivables = 0;
+        r.openBalance = 0;
         r.unusedCredits = 0;
       }
     });
@@ -44,7 +44,7 @@ async function openList(page: Page) {
     timeout: 15_000,
   });
   await waitForDataLoaded(page);
-  await expect(page.getByTestId("receivables-cell").first()).toBeVisible();
+  await expect(page.getByTestId("open-balance-cell").first()).toBeVisible();
 }
 
 test.describe("customers list — 390px", () => {
@@ -55,19 +55,19 @@ test.describe("customers list — 390px", () => {
     page,
   }) => {
     await openList(page);
-    const header = page.getByRole("columnheader", { name: /receivables/i });
+    const header = page.getByRole("columnheader", { name: /open balance/i });
     const box = (await header.boundingBox())!;
     expect(box.x + box.width).toBeLessThanOrEqual(390);
-    await expect(page.getByTestId("receivables-cell").first()).toBeInViewport();
+    await expect(page.getByTestId("open-balance-cell").first()).toBeInViewport();
     expect(await documentLevelOverflowPx(page)).toBeLessThanOrEqual(0);
     for (const n of [/^email$/i, /^phone$/i, /^credits$/i, /^tags$/i]) {
       await expect(page.getByRole("columnheader", { name: n })).toBeHidden();
     }
   });
 
-  test("F16 zero receivables reads $0.00", async ({ page }) => {
+  test("F16 zero open balance reads $0.00", async ({ page }) => {
     await openList(page);
-    const cells = page.getByTestId("receivables-cell");
+    const cells = page.getByTestId("open-balance-cell");
     await expect(cells.nth(0)).toHaveText("$1,234.50");
     await expect(cells.nth(1)).toHaveText("$0.00");
   });
@@ -93,7 +93,7 @@ test.describe("customers list — 390px", () => {
       const r = (body.data ?? [])[0];
       if (r) {
         r.phone = "555-0142";
-        r.receivables = 99.5;
+        r.openBalance = 99.5;
         r.tagAssignments = [
           {
             tag: {
@@ -114,7 +114,7 @@ test.describe("customers list — 390px", () => {
     await waitForDataLoaded(page);
     await page.getByRole("button", { name: /^select$/i }).click();
     await expect(page.getByRole("checkbox").first()).toBeVisible();
-    const header = page.getByRole("columnheader", { name: /receivables/i });
+    const header = page.getByRole("columnheader", { name: /open balance/i });
     const box = (await header.boundingBox())!;
     expect(box.x + box.width).toBeLessThanOrEqual(390);
     // Truly visible: inside the table's own scroll container too, not just the viewport.
@@ -124,7 +124,7 @@ test.describe("customers list — 390px", () => {
       return n ? n.getBoundingClientRect().right : window.innerWidth;
     });
     expect(box.x + box.width).toBeLessThanOrEqual(scrollerRight + 1);
-    await expect(page.getByTestId("receivables-cell").first()).toBeInViewport();
+    await expect(page.getByTestId("open-balance-cell").first()).toBeInViewport();
     const chip = page.getByTestId("name-secondary-tag").first();
     const cb = (await chip.boundingBox())!;
     expect(cb.x + cb.width).toBeLessThanOrEqual(390);
@@ -141,7 +141,7 @@ test.describe("customers list — 390px", () => {
       if (r) {
         r.contactName = "Christophersonwellingtonsmythe";
         r.businessName = "Superlongbusinessnamewithoutanyspaces";
-        r.receivables = 12.5;
+        r.openBalance = 12.5;
       }
       await route.fulfill({ response: res, json: body });
     });
@@ -159,7 +159,7 @@ test.describe("customers list — 390px", () => {
     expect(nameBox.x + nameBox.width).toBeLessThanOrEqual(bizBox.x + 1);
     const biz = (await cells.nth(1).locator("span").last().boundingBox())!;
     const recvBox = (await row
-      .getByTestId("receivables-cell")
+      .getByTestId("open-balance-cell")
       .locator("xpath=ancestor::td")
       .boundingBox())!;
     expect(biz.x + biz.width).toBeLessThanOrEqual(recvBox.x + 1);
@@ -209,9 +209,9 @@ test.describe("customers list — 1440px", () => {
     await expect(page.getByText(name).first()).toBeVisible({ timeout: 15_000 });
   });
 
-  test("zero receivables and credits read $0.00 at 1440 too", async ({ page }) => {
+  test("zero open balance and credits read $0.00 at 1440 too", async ({ page }) => {
     await openList(page);
-    await expect(page.getByTestId("receivables-cell").nth(1)).toHaveText("$0.00");
+    await expect(page.getByTestId("open-balance-cell").nth(1)).toHaveText("$0.00");
     await expect(page.getByTestId("credits-cell").nth(1)).toHaveText("$0.00");
   });
 });
@@ -228,9 +228,9 @@ test.describe("customers list — 768px", () => {
       await expect(page.getByRole("columnheader", { name: n })).toBeVisible();
     }
     await expect(page.getByTestId("name-secondary-line").first()).toBeHidden();
-    await expect(page.getByTestId("receivables-cell").first()).toBeVisible();
+    await expect(page.getByTestId("open-balance-cell").first()).toBeVisible();
     expect(await documentLevelOverflowPx(page)).toBeLessThanOrEqual(0);
-    await expect(page.getByTestId("receivables-cell").nth(1)).toHaveText("$0.00");
+    await expect(page.getByTestId("open-balance-cell").nth(1)).toHaveText("$0.00");
     await expect(page.getByTestId("credits-cell").nth(1)).toHaveText("$0.00");
   });
 });

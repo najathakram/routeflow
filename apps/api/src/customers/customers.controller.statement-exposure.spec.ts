@@ -11,7 +11,12 @@ describe("CustomersController.getStatement — operator statement asks for expos
     const customersService = {
       getStatementForOperator: jest.fn().mockResolvedValue({ creditExposure: 95 }),
     };
-    const controller = new CustomersController(customersService as any, {} as any, {} as any);
+    const controller = new CustomersController(
+      customersService as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
 
     await expect(controller.getStatement("cust-1")).resolves.toEqual({ creditExposure: 95 });
 

@@ -50,6 +50,24 @@ export function describeDb(name: string, fn: () => void): void {
   describe(name, fn);
 }
 
+/**
+ * Resolves once some session in this database waits on a lock, and throws if none does. A race row calls it while it holds
+ * the lock, so a row whose second session never got there fails instead of proving nothing.
+ */
+export async function waitForBlockedSession(db: {
+  $queryRaw<T>(query: TemplateStringsArray, ...values: unknown[]): PromiseLike<T>;
+}): Promise<void> {
+  for (let tries = 0; tries < 80; tries += 1) {
+    const [{ waiting }] = await db.$queryRaw<{ waiting: number }[]>`
+      SELECT count(*)::int AS waiting FROM pg_stat_activity
+      WHERE datname = current_database() AND wait_event_type = 'Lock'
+    `;
+    if (waiting > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error("no session reached the lock, so this race row proved nothing");
+}
+
 /** Anything with a pg-style `query` (a `pg` Client or Pool). */
 export interface PgQueryable {
   query(sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>;

@@ -39,6 +39,7 @@ const inviteRow = (sellerStatus: string) => ({
 
 function boot(sellerStatus: string) {
   const prisma = createMockPrisma();
+  prisma.customerLink.updateMany.mockResolvedValue({ count: 1 } as any);
   prisma.buyerAccount.findFirst.mockResolvedValue({
     id: "buyer-1",
     email: "buyer@example.test",
@@ -107,7 +108,7 @@ describe("Google callback invite acceptance follows the seller's workspace statu
       expect(result.kind).toBe("buyer");
       expect(result.accessToken).toBeTruthy();
       expect(result.inviteOutcome).toBe("seller_unavailable");
-      expect(prisma.customerLink.update).not.toHaveBeenCalled();
+      expect(prisma.customerLink.updateMany).not.toHaveBeenCalled();
       expect(prisma.buyerRefreshToken.upsert).toHaveBeenCalled(); // the session was minted
     },
   );
@@ -128,7 +129,7 @@ describe("Google callback invite acceptance follows the seller's workspace statu
     } as any);
     expect(result.kind).toBe("buyer");
     expect(result.inviteOutcome).toBe("seller_unavailable");
-    expect(prisma.customerLink.update).not.toHaveBeenCalled();
+    expect(prisma.customerLink.updateMany).not.toHaveBeenCalled();
   });
 
   it("READ_ONLY seller + gate dark (the explicit rollback): accepted as before, and one would-deny line is logged", async () => {
@@ -136,9 +137,9 @@ describe("Google callback invite acceptance follows the seller's workspace statu
     const { prisma, service } = boot("READ_ONLY");
     const result: any = await service.findOrCreateUser(profile as any);
     expect(result.inviteOutcome).toBe("accepted");
-    expect(prisma.customerLink.update).toHaveBeenCalledWith(
+    expect(prisma.customerLink.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "link-1" },
+        where: expect.objectContaining({ id: "link-1" }),
         data: expect.objectContaining({
           buyerAccountId: "buyer-1",
           status: "ACTIVE",
@@ -155,7 +156,7 @@ describe("Google callback invite acceptance follows the seller's workspace statu
     process.env.SELLER_READ_ONLY_BUYER_GATE = "enforced";
     const result: any = await service.findOrCreateUser(profile as any);
     expect(result.inviteOutcome).toBe("accepted");
-    expect(prisma.customerLink.update).toHaveBeenCalledTimes(1);
+    expect(prisma.customerLink.updateMany).toHaveBeenCalledTimes(1);
     expect(wouldDeny()).toHaveLength(0);
   });
 
@@ -193,7 +194,7 @@ describe("Google callback invite acceptance follows the seller's workspace statu
       "tenant callback, %s seller (gate %s): signed in, linked false, invite=seller_unavailable",
       async (status, gate) => {
         const { prisma, res, bundle } = await runTenantCallback(status, gate);
-        expect(prisma.customerLink.update).not.toHaveBeenCalled();
+        expect(prisma.customerLink.updateMany).not.toHaveBeenCalled();
         expect(bundle).toMatchObject({
           type: "BUYER",
           linked: "false",
@@ -233,7 +234,7 @@ describe("Google callback invite acceptance follows the seller's workspace statu
         { redirect: jest.fn() } as any,
       );
       const bundle = exchange.mock.calls[0][0] as Record<string, string>;
-      expect(prisma.customerLink.update).not.toHaveBeenCalled();
+      expect(prisma.customerLink.updateMany).not.toHaveBeenCalled();
       expect(bundle.linked).toBe("false");
       expect(bundle).not.toHaveProperty("invite");
     });
@@ -246,7 +247,7 @@ describe("Google callback invite acceptance follows the seller's workspace statu
         const controller = new PlatformGoogleAuthController(service, webConfig as any);
         const res = { redirect: jest.fn() } as any;
         await controller.handleCallback("code", "state", "", { headers: {} } as any, res);
-        expect(prisma.customerLink.update).not.toHaveBeenCalled();
+        expect(prisma.customerLink.updateMany).not.toHaveBeenCalled();
         expect(String(res.redirect.mock.calls[0][0])).toContain("error=unauthorized");
       },
     );

@@ -208,6 +208,7 @@ describe("MessagingService (P6-2 engine)", () => {
       NotificationEvent.SHIPMENT_TRACKING_ADDED,
       NotificationEvent.READY_FOR_PICKUP,
       NotificationEvent.DELIVERED,
+      NotificationEvent.ORDER_REFUSED, // SA-1101 RO-12
       NotificationEvent.CANCELLED,
       NotificationEvent.ORDER_CHANGED_AT_DOOR,
     ])("skips %s over EMAIL when the buyer opted out", async (eventKey) => {

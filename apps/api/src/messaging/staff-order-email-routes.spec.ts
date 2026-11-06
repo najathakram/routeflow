@@ -35,6 +35,7 @@ describe("SA-1063 OrdersController CUSTOMER routes", () => {
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
       staff as never,
     );
     return { orders, staff, controller };

@@ -38,6 +38,7 @@ import { AuditService } from "../audit/audit.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PRODUCT_COLUMNS, CUSTOMER_COLUMNS } from "./import-columns";
+import { IMPORT_PACK_READING, packCostAbovePieceCount } from "./import-pack-reading";
 
 describe("ImportService — commercial columns (B858/B859)", () => {
   let service: ImportService;
@@ -687,6 +688,26 @@ describe("ImportService — commercial columns (B858/B859)", () => {
       expect(customers.setCustomerConsent).not.toHaveBeenCalled();
     });
 
+    // SA-1084: the planned-change report of a contacts row shows the last 4 of an identity value, from and to, never the whole.
+    it("the change report shows the last 4 of a Tax ID and a license number, never the stored or typed whole", async () => {
+      prisma.customer.findFirst.mockResolvedValue(
+        matchedCustomer({ taxId: "old-1234567", tobaccoLicenseNo: "TL-OLD-5550" }),
+      );
+      const future = new Date(Date.now() + 365 * 86_400_000).toISOString().slice(0, 10);
+      const csv =
+        "Customer Name,Customer ID,Tax ID,Tobacco Licence No,Tobacco Licence Expiry\n" +
+        `Acme Supply,ZC-1,new-7654321,TL-NEW-9910,${future}\n`;
+
+      const result = await service.importContacts(Buffer.from(csv), "user-1");
+
+      const changes = (
+        result.rows[0] as { changes: Record<string, { from: unknown; to: unknown }> }
+      ).changes;
+      expect(changes.taxId).toEqual({ from: "4567", to: "4321" });
+      expect(changes.tobaccoLicenseNo).toEqual({ from: "5550", to: "9910" });
+      expect(JSON.stringify(result)).not.toMatch(/old-1234567|new-7654321|TL-OLD-5550|TL-NEW-9910/);
+    });
+
     it("one write path for contacts: the raw contact-details write never carries a commercial field", async () => {
       prisma.customer.findFirst.mockResolvedValue(matchedCustomer());
       const future = new Date(Date.now() + 365 * 86_400_000).toISOString().slice(0, 10);
@@ -755,16 +776,66 @@ describe("ImportService — commercial columns (B858/B859)", () => {
       expect(productsService.update).toHaveBeenCalledTimes(1);
       expect(productsService.update.mock.calls[0]).toEqual([
         "prod-null",
-        { unitsPerBox: 12 },
+        // SA-946 / W-867: the import names its pack reading on every pack write (IMPORT_PACK_READING, SA-961 R1).
+        { unitsPerBox: 12, packReading: IMPORT_PACK_READING },
         { packPrecondition: "internal", reparentVia: "import", suppressEmit: true },
       ]);
       expect(result.unchanged).toBe(1);
+    });
+
+    it("SA-961 R1: a pack that makes the cost exceed price / N warns (nothing blocked); a sane cost does not", async () => {
+      prisma.product.findFirst.mockImplementation(async (args: any) => ({
+        id: `p-${args?.where?.sku}`,
+        name: args?.where?.sku,
+        sku: args?.where?.sku,
+        unitsPerBox: null,
+        pricePerUnit: 24,
+        averageCost: args?.where?.sku === "BOX-COST" ? 20 : 0.5,
+      }));
+      const csv = "Item Name,SKU,Units Per Box\nA,BOX-COST,24\nB,PIECE-COST,24\n";
+
+      const result = await service.importProducts(Buffer.from(csv), "user-1");
+
+      expect(result.warnings.filter((w) => w.includes("price per piece"))).toHaveLength(2);
+      expect(result.warnings).toContain(packCostAbovePieceCount(1));
+      expect(productsService.update).toHaveBeenCalledTimes(2);
+    });
+
+    it("SA-961 R1: the dry run gives the cost count and writes nothing; no such product, no count", async () => {
+      const row = (sku: string, averageCost: number) => ({
+        id: `p-${sku}`,
+        name: sku,
+        sku,
+        unitsPerBox: null,
+        pricePerUnit: 24,
+        averageCost,
+      });
+      prisma.product.findFirst.mockImplementation(async (args: any) =>
+        row(args?.where?.sku, args?.where?.sku === "BOX-COST" ? 20 : 0.5),
+      );
+
+      const both = await service.importProducts(
+        Buffer.from("Item Name,SKU,Units Per Box\nA,BOX-COST,24\nB,PIECE-COST,24\n"),
+        "user-1",
+        { dryRun: true },
+      );
+      expect(both.warnings).toContain(packCostAbovePieceCount(1));
+      expect(productsService.update).not.toHaveBeenCalled();
+
+      const sane = await service.importProducts(
+        Buffer.from("Item Name,SKU,Units Per Box\nB,PIECE-COST,24\n"),
+        "user-1",
+        { dryRun: true },
+      );
+      expect(sane.warnings.filter((w) => w.includes("price per piece"))).toHaveLength(0);
     });
 
     it.each([
       ["money", "Item Name,SKU,Rate\nWidget,SKU-1,abc\n", "Rate: not a number"],
       ["negative money", "Item Name,SKU,Rate\nWidget,SKU-1,-3\n", "Rate: must not be negative"],
       ["int", "Item Name,SKU,Rate,Units Per Box\nWidget,SKU-1,5,1.5\n", "Units Per Box:"],
+      // SA-946 MUST 6: the DTO's @Min(1) only runs over HTTP; a 0 here used to unbox the product silently.
+      ["pack of 0", "Item Name,SKU,Rate,Units Per Box\nWidget,SKU-1,5,0\n", "Units Per Box:"],
       ["bool", "Item Name,SKU,Rate,Tobacco\nWidget,SKU-1,5,maybe\n", "Tobacco:"],
     ])(
       "a bad %s cell skips the product row with its reason, never a partial write",

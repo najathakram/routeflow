@@ -1,5 +1,6 @@
 import * as React from "react";
-import { screen, within, renderWithProviders, fireEvent } from "@/test-utils/render";
+import { screen, within, renderWithProviders, fireEvent, waitFor } from "@/test-utils/render";
+import userEvent from "@testing-library/user-event";
 import CustomersPage from "./page";
 
 /**
@@ -10,6 +11,9 @@ import CustomersPage from "./page";
  */
 
 let mockRows: any[] = [];
+let mockRole = "TENANT_ADMIN";
+let mockListLoading = false;
+let mockPermsData: any = undefined;
 let lastListParams: any = {};
 const mockApprovals: any[] = [];
 const push = jest.fn();
@@ -24,9 +28,23 @@ let mockFilters: Record<string, unknown> = {
   removed: false,
 };
 
+// the statement sheet's own read (L6): it answers "couldn't load" here, which is all this file needs of it
+jest.mock("@/lib/api-client", () => ({
+  apiClient: {
+    get: jest.fn().mockRejectedValue(new Error("no network in this test")),
+    post: jest.fn(),
+  },
+}));
+
 jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
-  useAuth: () => ({ user: { id: "u1", username: "x", role: "TENANT_ADMIN" } }),
+  useAuth: () => ({ user: { id: "u1", username: "x", role: mockRole } }),
+  useOptionalAuth: () => ({ user: { id: "u1", username: "x", role: mockRole } }),
+}));
+// An operator's permissions are unknown until this answers (N4); an admin never asks.
+jest.mock("@/lib/api/my-permissions", () => ({
+  ...jest.requireActual("@/lib/api/my-permissions"),
+  useMyPermissions: () => ({ data: mockPermsData }),
 }));
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push, replace: jest.fn() }),
@@ -43,8 +61,8 @@ jest.mock("@/lib/api/customers", () => ({
   useCustomers: (params: any) => {
     lastListParams = params;
     return {
-      data: stableData(),
-      isLoading: false,
+      data: mockListLoading ? undefined : stableData(),
+      isLoading: mockListLoading,
       isError: false,
       refetch: jest.fn(),
     };
@@ -89,7 +107,7 @@ const row = (over: Record<string, unknown> = {}) => ({
   contactName: "Ada Buyer",
   phone: "555-0100",
   email: "ada@acme.test",
-  receivables: 1234.5,
+  openBalance: 1234.5,
   unusedCredits: 0,
   tagAssignments: [
     { tag: { id: "t1", name: "VIP", color: "#123456" } },
@@ -107,7 +125,7 @@ const B = () =>
     id: "cB",
     businessName: "Bo Deli",
     contactName: "Bo",
-    receivables: 0,
+    openBalance: 0,
     phone: undefined,
     tagAssignments: [],
   });
@@ -116,12 +134,15 @@ const C = () =>
     id: "cC",
     businessName: "Cy Cafe",
     contactName: "Cy",
-    receivables: undefined,
+    openBalance: undefined,
     unusedCredits: 25,
   });
 
 beforeEach(() => {
   mockRows = [A(), B(), C()];
+  mockRole = "TENANT_ADMIN";
+  mockListLoading = false;
+  mockPermsData = undefined;
   mockFilters = { status: "", regulated: false, unassigned: false, removed: false };
   jest.clearAllMocks();
 });
@@ -141,9 +162,9 @@ describe("PKG-1 customers list — F17 name link", () => {
 });
 
 describe("PKG-1 customers list — F16 money cells", () => {
-  it("C4/C5: zero and missing receivables show $0.00; a balance is danger, zero is not", () => {
+  it("C4/C5: zero and missing open balance show $0.00; a balance is danger, zero is not", () => {
     renderWithProviders(<CustomersPage />);
-    const cells = screen.getAllByTestId("receivables-cell");
+    const cells = screen.getAllByTestId("open-balance-cell");
     expect(cells.map((c) => c.textContent)).toEqual(["$1,234.50", "$0.00", "$0.00"]);
     expect(cells[0]).toHaveClass("text-danger");
     expect(cells[1]).not.toHaveClass("text-danger");
@@ -159,8 +180,132 @@ describe("PKG-1 customers list — F16 money cells", () => {
   });
 });
 
+describe("SA-1078 PR-5 customers list — Open balance", () => {
+  it("L6: the figure is the Open balance button; tapping it opens the statement, not the customer", async () => {
+    renderWithProviders(<CustomersPage />);
+    const cell = screen.getAllByTestId("open-balance-cell")[0];
+    const button = within(cell).getByTestId("open-balance-button");
+    expect(button).toHaveTextContent("$1,234.50");
+    await userEvent.setup().click(button);
+    expect(await screen.findByTestId("account-statement-sheet")).toBeInTheDocument();
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("a customer with nothing owed still gets the button (the statement also lists credit and payments)", () => {
+    renderWithProviders(<CustomersPage />);
+    expect(
+      within(screen.getAllByTestId("open-balance-cell")[1]).getByTestId("open-balance-button"),
+    ).toHaveTextContent("$0.00");
+  });
+
+  it("L7: the header reads 'Open balance' and the old name is gone", () => {
+    renderWithProviders(<CustomersPage />);
+    expect(screen.getByRole("columnheader", { name: /open balance/i })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: /receivables/i })).toBeNull();
+  });
+
+  describe("the sheet survives the list rendering again (the cell must not remount)", () => {
+    afterEach(() => window.history.replaceState({}, "", "/"));
+
+    it("L11: a reload with ?statement=<id> opens the sheet and it stays open through later renders", async () => {
+      window.history.replaceState({}, "", "/customers?page=2&statement=cA");
+      renderWithProviders(<CustomersPage />);
+      expect(await screen.findByTestId("account-statement-sheet")).toBeInTheDocument();
+      // Time for the page's own effects and the sheet's read to land and re-render the list.
+      await new Promise((r) => setTimeout(r, 150));
+      expect(screen.getByTestId("account-statement-sheet")).toBeInTheDocument();
+      expect(new URL(window.location.href).searchParams.get("statement")).toBe("cA");
+    });
+
+    it("L11: a tap made right away stays open when the list renders again", async () => {
+      const view = renderWithProviders(<CustomersPage />);
+      const button = within(screen.getAllByTestId("open-balance-cell")[0]).getByTestId(
+        "open-balance-button",
+      );
+      await userEvent.setup().click(button);
+      await screen.findByTestId("account-statement-sheet");
+      view.rerender(<CustomersPage />); // the page renders again (a mutation hook, a filter): same rows
+      await new Promise((r) => setTimeout(r, 100));
+      expect(screen.getByTestId("account-statement-sheet")).toBeInTheDocument();
+    });
+
+    it("L11: closing keeps the rest of the URL (?page=2) and drops only ?statement", async () => {
+      window.history.replaceState({}, "", "/customers?page=2&statement=cA");
+      renderWithProviders(<CustomersPage />);
+      await screen.findByTestId("account-statement-sheet");
+      await userEvent.setup().click(screen.getByRole("button", { name: "Close" }));
+      await waitFor(() => expect(screen.queryByTestId("account-statement-sheet")).toBeNull());
+      const url = new URL(window.location.href);
+      expect(url.searchParams.has("statement")).toBe(false);
+      expect(url.searchParams.get("page")).toBe("2");
+    });
+  });
+});
+
+/**
+ * W-1117 — `?statement=<id>` for a customer who is not in the rows on screen. The list keeps only `?page=` in the URL
+ * (sort and page size are state), so a reload or a pasted link can land on a page that does not hold the row. No figure
+ * then takes the param; it used to stay, and when the row later arrived (a page change, a sort, a search) the sheet
+ * opened with nobody tapping. The list now drops a param no row took, once the rows and the permission are both known.
+ */
+describe("W-1117 customers list — ?statement for a customer not on the page", () => {
+  const statementParam = () => new URL(window.location.href).searchParams.get("statement");
+  afterEach(() => window.history.replaceState({}, "", "/"));
+
+  it("N1: the param is dropped, the rest of the URL stays, and no sheet opens", async () => {
+    window.history.replaceState({}, "", "/customers?page=2&statement=cZ");
+    renderWithProviders(<CustomersPage />);
+    await waitFor(() => expect(statementParam()).toBeNull());
+    expect(new URL(window.location.href).searchParams.get("page")).toBe("2");
+    expect(screen.queryByTestId("account-statement-sheet")).toBeNull();
+  });
+
+  it("N2: when that customer's row arrives later the sheet does not open by itself", async () => {
+    window.history.replaceState({}, "", "/customers?page=2&statement=cZ");
+    const view = renderWithProviders(<CustomersPage />);
+    await waitFor(() => expect(statementParam()).toBeNull());
+    mockRows = [row({ id: "cZ", businessName: "Zed Foods" }), B()]; // a page change or a sort brings the row in
+    view.rerender(<CustomersPage />);
+    expect(await screen.findByText("Zed Foods")).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 100));
+    expect(screen.queryByTestId("account-statement-sheet")).toBeNull();
+  });
+
+  it("N3: while the list is still loading the param is left alone, and the row then takes it", async () => {
+    window.history.replaceState({}, "", "/customers?statement=cA");
+    mockListLoading = true;
+    const view = renderWithProviders(<CustomersPage />);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(statementParam()).toBe("cA");
+    mockListLoading = false;
+    view.rerender(<CustomersPage />);
+    expect(await screen.findByTestId("account-statement-sheet")).toBeInTheDocument();
+  });
+
+  it("N4: an operator whose permissions are not known yet keeps the param, and the row takes it once they are", async () => {
+    window.history.replaceState({}, "", "/customers?statement=cA");
+    mockRole = "OPERATOR";
+    const view = renderWithProviders(<CustomersPage />);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(statementParam()).toBe("cA");
+    expect(screen.queryByTestId("account-statement-sheet")).toBeNull();
+    mockPermsData = { groups: ["FINANCE", "CUSTOMERS"] }; // the groups held
+    mockRows = [A(), B(), C()]; // a fresh array, so the cells render again and read the answer
+    view.rerender(<CustomersPage />);
+    expect(await screen.findByTestId("account-statement-sheet")).toBeInTheDocument();
+  });
+
+  it("N5: a customer who is on the page still reopens, and its param stays while the sheet is open", async () => {
+    window.history.replaceState({}, "", "/customers?statement=cB");
+    renderWithProviders(<CustomersPage />);
+    expect(await screen.findByTestId("account-statement-sheet")).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 100));
+    expect(statementParam()).toBe("cB");
+  });
+});
+
 describe("PKG-1 customers list — F24 columns below sm (relocation, not removal)", () => {
-  it("C7: Email, Phone, Credits, Tags hide below sm on th and td; Name, Business, Receivables, Status do not", () => {
+  it("C7: Email, Phone, Credits, Tags hide below sm on th and td; Name, Business, Open balance, Status do not", () => {
     renderWithProviders(<CustomersPage />);
     for (const id of ["email-cell", "phone-cell", "credits-cell", "tags-cell"]) {
       const td = screen.getAllByTestId(id)[0].closest("td")!;
@@ -169,10 +314,10 @@ describe("PKG-1 customers list — F24 columns below sm (relocation, not removal
     for (const name of [/^email$/i, /^phone$/i, /^credits$/i, /^tags$/i]) {
       expect(screen.getByRole("columnheader", { name })).toHaveClass("hidden", "sm:table-cell");
     }
-    for (const id of ["receivables-cell"]) {
+    for (const id of ["open-balance-cell"]) {
       expect(screen.getAllByTestId(id)[0].closest("td")).not.toHaveClass("hidden");
     }
-    expect(screen.getByRole("columnheader", { name: /receivables/i })).not.toHaveClass("hidden");
+    expect(screen.getByRole("columnheader", { name: /open balance/i })).not.toHaveClass("hidden");
     expect(screen.getByRole("columnheader", { name: /business name/i })).not.toHaveClass("hidden");
     expect(screen.getByRole("columnheader", { name: /^status$/i })).not.toHaveClass("hidden");
   });
@@ -234,7 +379,10 @@ describe("PKG-1 owner rule — nothing on the customers list is lost", () => {
       "Activate customer",
       "Restore customer",
     ]);
-    const buttons = within(body).getAllByRole("button");
+    // the Open balance figure is a button too (SA-1078 PR-5); it is not a row action
+    const buttons = within(body)
+      .getAllByRole("button")
+      .filter((b) => b.getAttribute("data-testid") !== "open-balance-button");
     expect(buttons.length).toBeGreaterThan(0);
     for (const b of buttons) {
       expect(names.has(b.getAttribute("aria-label") ?? "")).toBe(true);
@@ -261,16 +409,16 @@ describe("PKG-1 owner rule — nothing on the customers list is lost", () => {
     }
     expect(screen.getByPlaceholderText(/name, business or phone/i)).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: /^name$/i })).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: /receivables/i })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: /open balance/i })).toBeInTheDocument();
     expect(screen.getByText(/per page/i)).toBeInTheDocument();
     expect(screen.getByText(/showing 1–3 of 3 customers/i)).toBeInTheDocument();
   });
 
-  it("status chip writes the URL filter; sort by Receivables works", () => {
+  it("status chip writes the URL filter; the Open balance header keeps its sort button (the server still sorts newest first; filed LATER)", () => {
     renderWithProviders(<CustomersPage />);
     fireEvent.click(screen.getByRole("button", { name: /^active$/i }));
     expect(setUrlFilter).toHaveBeenCalledWith("status", "ACTIVE");
-    const th = screen.getByRole("columnheader", { name: /receivables/i });
+    const th = screen.getByRole("columnheader", { name: /open balance/i });
     expect(lastListParams.sortBy).toBeUndefined();
     fireEvent.click(th.querySelector("button")!);
     expect(lastListParams).toMatchObject({ sortBy: "receivables", sortDir: "asc" });
@@ -314,6 +462,7 @@ describe("PKG-1 owner rule — nothing on the customers list is lost", () => {
     const body = screen.getAllByRole("rowgroup")[1];
     const labels = within(body)
       .getAllByRole("button")
+      .filter((b) => b.getAttribute("data-testid") !== "open-balance-button")
       .map((b) => b.getAttribute("aria-label"));
     expect(labels).toEqual(["Restore customer", "View customer"]);
     fireEvent.click(screen.getByRole("button", { name: "Restore customer" }));

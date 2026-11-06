@@ -1,7 +1,11 @@
 import { InvoiceStatus, OrderStatus } from "@prisma/client";
-import { roundMoney } from "@routeflow/pricing";
+import { roundMoney, STOP_QTY_EPS } from "@routeflow/pricing";
 import { lockOrderRows } from "../credit-notes/credit-note-locks";
+import { BadRequestException } from "@nestjs/common";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { assertDeliveriesFitStop } from "./delivery-lines.util";
+import { deliveredSoFarForLine, fetchEvidenceByLine, lineRemaining } from "./delivered-so-far";
+import { NON_ROUTABLE_ORDER_STATUSES } from "./routes.constants";
 
 export interface StopReconcileDeps {
   // Structurally matches InvoicesService itself — callers pass the service instance
@@ -34,6 +38,72 @@ export async function lockStopOrdersAndFit(
     stopOrders.map((o) => o.id),
   );
   await assertDeliveriesFitStop(tx, stopId, stopOrders, deliveries);
+  await assertEveryOpenLineCovered(tx, stopId, stopOrders, deliveries);
+}
+
+/**
+ * SA-1101 §2.3 (B785): every line of a routable order on the stop that still has something to deliver must have an
+ * entry in `deliveries`. Both clients send exactly those lines (an entry per line with something left, built from the
+ * same remaining the server serves), so a close that misses one is a stale or hand-made payload: refused with a 400
+ * before anything is written, because a blind close used to write DELIVERED over lines nobody counted. "Something
+ * left" is `lineRemaining`, the figure the fit check above uses, so the two checks cannot disagree. An order whose
+ * lines are all delivered or cancelled needs no entry.
+ */
+export async function assertEveryOpenLineCovered(
+  tx: any,
+  stopId: string,
+  stopOrders: ReadonlyArray<{ id: string }>,
+  deliveries: ReadonlyArray<{ orderItemId: string }> | undefined,
+): Promise<void> {
+  if (stopOrders.length === 0) return;
+  const orderIds = stopOrders.map((o) => o.id);
+  const lines: {
+    id: string;
+    orderId: string;
+    qty: unknown;
+    deliveredQty: unknown;
+    status: string | null;
+    order: { status: string } | null;
+  }[] = await tx.orderItem.findMany({
+    where: {
+      orderId: { in: orderIds },
+      status: { not: "CANCELLED" },
+      order: { status: { notIn: NON_ROUTABLE_ORDER_STATUSES } },
+    },
+    select: {
+      id: true,
+      orderId: true,
+      qty: true,
+      deliveredQty: true,
+      status: true,
+      order: { select: { status: true } },
+    },
+  });
+  if (lines.length === 0) return;
+  const evidence = await fetchEvidenceByLine(tx, [...new Set(lines.map((l) => l.orderId))]);
+  const entered = new Set((deliveries ?? []).map((d) => d.orderItemId));
+  const missing = lines.filter(
+    (l) =>
+      !entered.has(l.id) &&
+      lineRemaining({
+        qty: l.qty,
+        lineStatus: l.status,
+        orderStatus: l.order?.status,
+        deliveredSoFar: deliveredSoFarForLine(
+          evidence[l.orderId]?.[l.id],
+          stopId,
+          l.deliveredQty,
+          l.qty,
+        ),
+      }) > STOP_QTY_EPS,
+  );
+  if (missing.length === 0) return;
+  throw new BadRequestException({
+    code: API_ERROR_CODES.STOP_DELIVERY_LINES_MISSING,
+    message: `Enter what was delivered for every line before finishing this stop (${missing.length} ${
+      missing.length === 1 ? "line is" : "lines are"
+    } missing).`,
+  });
 }
 
 /**

@@ -26,12 +26,18 @@ export const ORDER_STATUS_TRANSITIONS: Record<string, string[]> = {
   OUT_FOR_DELIVERY: ["DELIVERED", "PARTIALLY_DELIVERED", "CONFIRMED", "CANCELLED"],
   PARTIALLY_DELIVERED: ["OUT_FOR_DELIVERY", "DELIVERED", "CANCELLED"],
   DELIVERED: ["CONFIRMED", "PARTIALLY_DELIVERED"],
+  // SA-1101: "Deliver again". Not a demotion (no reason: the driver's is on the stop). No REFUSED -> CANCELLED: a
+  // cancel credits stock, and a return already recorded for the same goods would credit it twice.
+  REFUSED: ["CONFIRMED"],
 };
 
 /** The statuses an order may be cancelled FROM: the office cancel's compare-and-set set (SA-404f F2). */
 export const CANCELLABLE_FROM = Object.keys(ORDER_STATUS_TRANSITIONS).filter((k) =>
   ORDER_STATUS_TRANSITIONS[k].includes("CANCELLED"),
 ) as OrderStatus[];
+
+/** The statuses a cancel credits stock from. A DRAFT holds none. */
+export const CANCEL_CREDITS_FROM = CANCELLABLE_FROM.filter((s) => s !== "DRAFT");
 
 /**
  * Throws the service's own 400s for an illegal transition, and for a demotion with no reason.

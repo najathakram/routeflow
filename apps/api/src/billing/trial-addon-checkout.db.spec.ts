@@ -26,6 +26,7 @@ import { BillingEventService } from "./billing-event.service";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
 import { dropPublishedCatalog, ensurePublishedCatalog } from "../testing/ensure-published-catalog";
 import { fakeStripeProducts } from "../testing/fake-stripe-products";
+import { pinWallClock } from "../testing/pin-clock";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -1399,9 +1400,15 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       expect(await decisions(r)).toHaveLength(0);
     });
 
+    // L-353: the real rollCycles snaps an externalPayment row to the calendar window start (the 1st at 12:00Z) when the
+    // old period end is within 24 h of it, so on the real clock the rolled periodStart is only past `created` (now - 2 h)
+    // before 14:00Z on the 1st. Both S3 rows that roll a cycle pin the wall clock to mid-month, where no snap applies.
+    afterEach(() => jest.useRealTimers());
+
     it.each([false, true])(
       "S3 (flag on=%s): a cron rollCycles between session creation and completion moves periodStart past the session but is NOT a manual activation — the session APPLIES, no cancel",
       async (flagOn) => {
+        pinWallClock();
         const r = await twoSessions(flagOn);
         const created = Math.floor(Date.now() / 1000) - 2 * 3600; // the session was created two hours ago
         const now = Date.now();
@@ -1447,6 +1454,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
     it.each([false, true])(
       "S3 carry (a, flag on=%s): NO marker, a legacy trail row long BEFORE the session, then a cron rollCycles after it — completes (applied, no cancel)",
       async (flagOn) => {
+        pinWallClock();
         const r = await twoSessions(flagOn);
         const created = Math.floor(Date.now() / 1000) - 2 * 3600;
         const now = Date.now();

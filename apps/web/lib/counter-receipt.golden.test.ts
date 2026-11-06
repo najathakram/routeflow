@@ -30,6 +30,7 @@ const live = (method: "CASH" | "CARD" | "ON_ACCOUNT", over = {}) =>
       paid: method === "ON_ACCOUNT" ? 0 : 24.5,
       balanceDue: method === "ON_ACCOUNT" ? 24.5 : 0,
       change: method === "CASH" ? 5.5 : undefined,
+      cashTendered: method === "CASH" ? 30 : undefined,
       method,
       paymentRecorded: true,
     },

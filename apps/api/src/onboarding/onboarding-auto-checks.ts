@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import type { TxOrClient } from "../prisma/prisma.service";
 import { licenceExpiryCutoff } from "../authorizations/licence-validity";
 import { resolveZone } from "../common/tenant-time-zone";
 import type { AutoCheckKey } from "./onboarding-catalog";
@@ -17,7 +18,7 @@ import type { AutoCheckKey } from "./onboarding-catalog";
 
 /** The minimum client surface a checker needs — the base PrismaService satisfies it. */
 export type CheckDb = Pick<
-  Prisma.TransactionClient,
+  TxOrClient,
   | "tenant"
   | "tenantSubscription"
   | "tenantConfig"

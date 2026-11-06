@@ -8,7 +8,7 @@ import {
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import type { FamilyRowConflict } from "@routeflow/types";
-import { priceAuthority, roundMoney, roundUnitCost } from "@routeflow/pricing";
+import { roundMoney, roundUnitCost, type FamilyLadderRow } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { assertSafeProductNames } from "../common/text-cell-guards";
 import { AuditService } from "../audit/audit.service";
@@ -37,8 +37,9 @@ import {
 } from "./product-code-release";
 import {
   FAMILY_PRICE_COLUMNS,
-  familyPriceAuthorityError,
   familyPricesForNewVariant,
+  loadVariantLadders,
+  ownRetailTierBlanks,
   lockFamilyRow,
   readFamilyPriceMode,
   type FamilyPriceColumn,
@@ -526,19 +527,9 @@ export class ProductFamiliesService {
       bareRowNames(add, family?.name);
       bareRowNames(update, family?.name);
     }
-    // M2 price authority: while mixed_packs is ON the family owns the variants' price, so a price EDIT is a 409 and an
-    // added variant takes the family's five columns (never a price of its own).
+    // M2: while mixed_packs is ON an added variant takes the family's five columns. A price EDIT is the variant's own in
+    // both modes (SA-1082 A-1).
     const authority = (await readFamilyPriceMode(this.featureConfig, tenantId)) === "on";
-    if (
-      priceAuthority(
-        { kind: "VARIANT", parentProductId: familyId },
-        authority ? "on" : "off",
-        "base",
-      ) === "family" &&
-      update.some((u) => u.pricePerUnit !== undefined)
-    ) {
-      throw familyPriceAuthorityError(familyId);
-    }
     // Range-check every price / cost BEFORE the transaction (a rounding overflow is a 400, never after locks + writes).
     for (const u of update) {
       given(u.pricePerUnit, "pricePerUnit");
@@ -582,13 +573,25 @@ export class ProductFamiliesService {
         // House order (Opus #2881 B4): the family row FIRST (an add must not race propagateFamilyPrice), then every code
         // in ONE sorted call, then the name locks (sorted), then the touched rows in id order.
         await lockFamilyRow(tx, tenantId, familyId);
-        const family: {
-          id: string;
-          kind: string;
-          standardCost: Prisma.Decimal | null;
-        } | null = await tx.product.findFirst({
+        const family:
+          | ({
+              id: string;
+              kind: string;
+              standardCost: Prisma.Decimal | null;
+            } & FamilyLadderRow)
+          | null = await tx.product.findFirst({
           where: { id: familyId, tenantId },
-          select: { id: true, kind: true, standardCost: true },
+          select: {
+            id: true,
+            kind: true,
+            standardCost: true,
+            pricePerUnit: true,
+            priceTier2: true,
+            priceTier3: true,
+            priceTier4: true,
+            priceTier5: true,
+            unitsPerBox: true,
+          },
         });
         if (!family) {
           throw new NotFoundException({
@@ -702,11 +705,31 @@ export class ProductFamiliesService {
               ])
             : [],
         );
+        // SA-1082 ruling 7: an own Retail takes the tiers still at the family's value with it.
+        const ladders = new Map(
+          priceEdits.length > 0
+            ? (await loadVariantLadders(tx, { tenantId, familyId, ids: priceEdits })).map((v) => [
+                v.id,
+                v,
+              ])
+            : [],
+        );
         for (const u of update) {
+          const ladder = ladders.get(u.id);
           // eslint-disable-next-line no-await-in-loop
           await tx.product.update({
             where: { id: u.id },
-            data: this.variantPatch(u, oldPrices.get(u.id)),
+            data: {
+              ...this.variantPatch(u, oldPrices.get(u.id)),
+              ...(ladder
+                ? ownRetailTierBlanks({
+                    family,
+                    variant: ladder,
+                    dto: { pricePerUnit: u.pricePerUnit },
+                    flagged: unitsV2,
+                  })
+                : {}),
+            },
           });
           if (u.barcode !== undefined || u.unitsPerBox !== undefined) {
             // eslint-disable-next-line no-await-in-loop
@@ -724,12 +747,17 @@ export class ProductFamiliesService {
             });
           }
         }
-        const familyPrices =
-          authority && add.length > 0
-            ? await familyPricesForNewVariant(tx, { tenantId, familyId, dto: {} })
-            : undefined;
         const added: string[] = [];
         for (const v of add) {
+          // eslint-disable-next-line no-await-in-loop -- under the family's lock; one read per pack would do, this is rare
+          const familyPrices = authority
+            ? await familyPricesForNewVariant(tx, {
+                tenantId,
+                familyId,
+                dto: {},
+                unitsPerBox: v.unitsPerBox,
+              })
+            : undefined;
           // eslint-disable-next-line no-await-in-loop
           const created = await tx.product.create({
             data: this.variantData(
@@ -792,7 +820,7 @@ export class ProductFamiliesService {
     if (u.unitSku !== undefined) data.unitSku = blank(u.unitSku);
     if (u.unitsPerBox !== undefined) data.unitsPerBox = u.unitsPerBox;
     if (u.pricePerUnit !== undefined) {
-      // Authority off: create sets all five columns to the price, so an edit moves every tier that still EQUALS the old
+      // Create sets all five columns to the price, so an edit moves every tier that still EQUALS the old
       // price (Opus #2881 B5) — a tier-2..5 customer must not keep being billed the old price, and a deliberately
       // different tier stays as the operator set it.
       const price = money(u.pricePerUnit);

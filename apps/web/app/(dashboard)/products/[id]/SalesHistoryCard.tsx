@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { Skeleton, cn } from "@routeflow/ui/web";
 import { fmt, fmtCalendarDate } from "@/lib/formatting";
-import { formatQtySplit } from "@routeflow/pricing";
+import { formatQtySplit, isAboveListLine } from "@routeflow/pricing";
 import { SortableTh } from "@/components/SortableTh";
 import { useSortableData } from "@/lib/use-sortable-data";
 import { useProductSales, type ProductSaleLine } from "@/lib/api/product-sales";
@@ -235,7 +235,7 @@ export function SalesHistoryCard({
                           {formatQtySplit({ qty: l.qty, boxes: l.boxes, pieces: l.pieces })}
                         </td>
                         <td className="px-3 py-2 text-right">
-                          {l.overridden && l.originalPrice != null ? (
+                          {l.overridden && l.originalPrice != null && !isAboveListLine(l) ? (
                             <span className="inline-flex items-center gap-1.5">
                               <span className="strike text-xs">{fmt(l.originalPrice)}</span>
                               <span className="money">{fmt(l.unitPrice)}</span>

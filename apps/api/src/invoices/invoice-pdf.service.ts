@@ -1,5 +1,6 @@
 import React from "react";
 import { sortInvoiceLines } from "./invoice-line-order";
+import { withFamilyNames } from "./invoice-line-name";
 import { SEND_SNAPSHOT_INCLUDE, type SendSnapshot } from "./invoice-send-snapshot";
 import { writeInvoicePdfPointer } from "./invoice-pdf-pointer";
 import { Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
@@ -157,7 +158,7 @@ export class InvoicePdfService {
 
     // Generate barcodes for each line item. Row 510: the staff-only override stamp is stripped here, in the one
     // mapper the template model is built from (the findUnique above includes whole item rows).
-    const shownLines = sortInvoiceLines(inv.items); // SA-1058: a copy, `inv` is what the send hashes
+    const shownLines = withFamilyNames(sortInvoiceLines(inv.items)); // SA-1058: a copy, `inv` is what the send hashes; the order reads the stored text, the family name composes after it
     const itemsWithBarcodes = await Promise.all(
       shownLines.map(withoutOverrideStamp).map(async (item) => {
         const barcodeText = invoiceItemCode((item as any).product);
@@ -232,6 +233,8 @@ export class InvoicePdfService {
     // (invoices.service.ts's findOneOrThrow, `invoice.hideOriginalPrice`) — rides
     // the PDF payload so a customer-facing document respects it too.
     const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
+    // Owner ruling 2026-11-04: the Per piece column's switch, read once per render. Absent = shown; only "true" hides.
+    const hidePerPiece = (await this.systemConfig.get("invoice.hidePerPiece")) === "true";
 
     const invWithBarcodes = {
       ...inv,
@@ -245,6 +248,7 @@ export class InvoicePdfService {
       creditApplied,
       advanceApplied,
       hideOriginalPrice,
+      hidePerPiece,
     };
 
     let pdfBuffer: Buffer;

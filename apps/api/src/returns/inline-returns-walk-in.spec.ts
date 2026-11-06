@@ -95,6 +95,8 @@ describe("InlineReturnsService.capture: a walk-in return is never store credit (
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // SA-1101 A-7: the inline customer lock keys on the customer ROW's tenant, so the customer is read
+    prisma.customer.findUnique.mockResolvedValue({ id: "cust-1", tenantId: "test-tenant" });
     // The restock runs the real stock helper: the wired tx answers its locked product read and the
     // `app.current_tenant_id` read the restock takes (a test tenant) instead of the plain mock's no rows.
     wireStockHelper(prisma, { ample: true });

@@ -53,18 +53,21 @@ export function useLiveReturnQuote({
   lines,
   customerId,
   sourceOrderId,
+  editingOrderId,
   enabled = true,
 }: {
   lines: InlineReturnLineDraft[];
   customerId: string;
   sourceOrderId?: string;
+  /** SA-1060 A-4: the order being edited, sent only by the order edit's Returns section. */
+  editingOrderId?: string;
   /** False = the host is not ready (no carrying order yet) or the draft is locked: nothing is asked. */
   enabled?: boolean;
 }): LiveReturnQuote {
   const mutation = useInlineReturnQuote();
   const request = React.useMemo(
-    () => buildQuoteRequest(customerId, lines, undefined, sourceOrderId),
-    [customerId, lines, sourceOrderId],
+    () => buildQuoteRequest(customerId, lines, undefined, sourceOrderId, editingOrderId),
+    [customerId, lines, sourceOrderId, editingOrderId],
   );
   const key = React.useMemo(() => JSON.stringify(request), [request]);
   const invalid = React.useMemo(() => creditOverrideProblem(lines), [lines]);

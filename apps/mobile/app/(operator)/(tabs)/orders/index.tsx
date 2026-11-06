@@ -45,6 +45,7 @@ const STATUS_FILTERS = [
   { id: "CONFIRMED", label: "Confirmed" },
   { id: "OUT_FOR_DELIVERY", label: "Out" },
   { id: "DELIVERED", label: "Delivered" },
+  { id: "REFUSED", label: "Refused" },
   { id: "CANCELLED", label: "Cancelled" },
 ] as const;
 
@@ -71,6 +72,8 @@ function statusPill(status: string): {
       return { variant: "brand", label: "Out" };
     case "DELIVERED":
       return { variant: "green", label: "Delivered" };
+    case "REFUSED":
+      return { variant: "orange", label: "Refused" };
     case "CANCELLED":
       return { variant: "red", label: "Cancelled" };
     default:

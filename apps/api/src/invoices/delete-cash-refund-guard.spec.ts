@@ -105,6 +105,7 @@ describe("deleteOrder: refuses a cash-refunded order before any write", () => {
       orderItem: {
         findMany: jest.fn().mockResolvedValue([{ id: "li-1", productId: "p-1", qty: 3 }]),
       },
+      deliveryMutation: { findMany: jest.fn().mockResolvedValue([]) }, // row 585: lockDeleteLines reads the rows
       invoiceItem: { findMany: jest.fn().mockResolvedValue([{ id: "line-1" }]) },
       return: { findFirst: jest.fn().mockResolvedValue(cashRefund) },
       invoicePayment: { deleteMany: jest.fn() },

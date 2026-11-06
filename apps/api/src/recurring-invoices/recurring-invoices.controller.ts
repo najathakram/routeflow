@@ -35,8 +35,8 @@ export class RecurringInvoicesController {
   constructor(private readonly recurringInvoicesService: RecurringInvoicesService) {}
 
   @Post()
-  create(@Body() dto: CreateRecurringInvoiceDto) {
-    return this.recurringInvoicesService.create(dto);
+  create(@Body() dto: CreateRecurringInvoiceDto, @CurrentUser() user: JwtPayload) {
+    return this.recurringInvoicesService.create(dto, user);
   }
 
   @Get()
@@ -50,8 +50,12 @@ export class RecurringInvoicesController {
   }
 
   @Patch(":id")
-  update(@Param("id") id: string, @Body() dto: UpdateRecurringInvoiceDto) {
-    return this.recurringInvoicesService.update(id, dto);
+  update(
+    @Param("id") id: string,
+    @Body() dto: UpdateRecurringInvoiceDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.recurringInvoicesService.update(id, dto, user);
   }
 
   @Delete(":id")

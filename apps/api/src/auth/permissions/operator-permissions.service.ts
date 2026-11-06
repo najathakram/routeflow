@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { OperatorPermissionGroup, UserRole } from "@prisma/client";
 import type { MyPermissions, PermissionsMode } from "@routeflow/types";
+import { priceEditReported } from "./price-edit-answer";
 import { PrismaService } from "../../prisma/prisma.service";
 
 /** The mode `GET /users/me/permissions` reports. Always "shadow" in this release (nothing is enforced). */
@@ -95,6 +96,12 @@ export class OperatorPermissionsService {
       groups,
       version,
       mode: PERMISSIONS_MODE,
+      priceEditAllowed: priceEditReported(
+        user.role,
+        groups,
+        ALL_PERMISSION_GROUPS,
+        PERMISSIONS_MODE,
+      ),
     };
   }
 }

@@ -11,8 +11,9 @@ export const DEFAULT_PACK_LABEL = "Box";
 export const DEFAULT_BASE_LABEL = "Piece";
 const DEFAULT_BASE_SHORT = { one: "pc", other: "pcs" } as const;
 
-/** Labels that read the same in the singular and plural ("2 Dozen", "3 kg"). */
+/** Labels that read the same in the singular and plural ("2 Dozen", "3 kg", "6 each"). */
 const INVARIANT = new Set([
+  "each",
   "dozen",
   "gross",
   "kg",

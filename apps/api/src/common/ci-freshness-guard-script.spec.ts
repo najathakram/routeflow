@@ -607,7 +607,9 @@ describe("ci-freshness-guard.mjs contract", () => {
       actions: "read",
     });
     expect(doc.jobs.e2e.permissions).toEqual({ contents: "read" });
-    expect(doc.jobs.verify.permissions).toBeUndefined();
+    // The self-hosted runner change holds Verify to contents: read and nothing more; the guard
+    // still never widens it (no deployments/actions read here).
+    expect(doc.jobs.verify.permissions).toEqual({ contents: "read" });
   });
 
   it("T4 · REG-E2EGUARD-403 · the freshness step calls the script; e2e runs only on the gate output", () => {

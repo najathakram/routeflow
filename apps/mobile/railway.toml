@@ -1,10 +1,10 @@
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "apps/mobile/Dockerfile"
-watchPatterns = ["apps/mobile/**", "packages/**"]
+watchPatterns = ["apps/mobile/redirect/**", "apps/mobile/Dockerfile"]
 
 [deploy]
-healthcheckPath = "/"
+healthcheckPath = "/healthz"
 healthcheckTimeout = 180
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3

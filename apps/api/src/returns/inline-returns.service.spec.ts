@@ -125,6 +125,8 @@ describe("InlineReturnsService", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // SA-1101 A-7: the inline customer lock keys on the customer ROW's tenant, so the customer is read
+    prisma.customer.findUnique.mockResolvedValue({ id: "cust-1", tenantId: "test-tenant" });
     stock = wireStockHelper(prisma, { ample: true });
     quoteService = { priceInlineReturn: jest.fn().mockResolvedValue(priced()) };
     creditNotes = {
@@ -414,6 +416,51 @@ describe("InlineReturnsService", () => {
       expect((result as any).parkedReversals).toBeNull();
       expect((result as any).holdReason).toBe("DRIVER_CAP");
     });
+  });
+
+  it("NS-22 (SA-1060 A-6): both flags on a restocking reason -> the note restocks nothing, and the reason is still asked", async () => {
+    const base = priced();
+    quoteService.priceInlineReturn.mockResolvedValue({
+      ...base,
+      chunks: [{ ...base.chunks[0], sourceOrderId: null, neverSold: true, alreadyReturned: true }],
+    });
+    const err: any = await service.capture(CAPTURE_DTO as any, OPERATOR).catch((e) => e);
+    expect(err.getResponse()).toMatchObject({
+      code: "INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED",
+    });
+    expect(prisma.return.create).not.toHaveBeenCalled();
+    await service.capture(
+      {
+        ...CAPTURE_DTO,
+        reason: "EXCESS_ORDER",
+        items: CAPTURE_DTO.items.map((i: object) => ({
+          ...i,
+          alreadyReturnedReason: "second batch",
+        })),
+      } as any,
+      OPERATOR,
+    );
+    const created = prisma.return.create.mock.calls[0][0].data;
+    expect(created.items.create[0].restock).toBe(false);
+    expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+  });
+
+  it("NS-23 (SA-1060 PR-2): a client's restock: true can't put a never-sold chunk back in stock", async () => {
+    const base = priced();
+    quoteService.priceInlineReturn.mockResolvedValue({
+      ...base,
+      chunks: [{ ...base.chunks[0], neverSold: true }],
+    });
+    await service.capture(
+      {
+        ...CAPTURE_DTO,
+        items: CAPTURE_DTO.items.map((i: object) => ({ ...i, restock: true })),
+      } as any,
+      OPERATOR,
+    );
+    const created = prisma.return.create.mock.calls[0][0].data;
+    expect(created.items.create[0].restock).toBe(false);
+    expect(prisma.stockMovement.create).not.toHaveBeenCalled();
   });
 
   it("resolves restock from the reason default (DAMAGED never restocks) when the item omits an explicit flag", async () => {
@@ -1011,10 +1058,24 @@ describe("InlineReturnsService", () => {
   // ─── N-1: cancel racing between the re-read and the link ────────────────────
 
   it("N-1: a return that moved out of RECEIVED between issueCredit's lock and the mint mints NOTHING (revert ⇒ orphaned CN)", async () => {
+    // SA-1090: a fresh capture mints in its own transaction, so this race is only reachable on the re-issue block: a REPLAY of a
+    // stuck row (RECEIVED, no credit, no hold) whose issueCredit loses the Return lock to a cancel().
     // The unlocked pre-read (m-2) still sees RECEIVED — issueCredit proceeds to open its tx.
     prisma.return.findFirst
-      .mockResolvedValueOnce(null) // capture()'s own pre-tx replay check
-      .mockResolvedValueOnce(null) // capture()'s in-tx replay check (kind INLINE) — none found, proceeds to create
+      .mockResolvedValueOnce({
+        id: "ret-1",
+        returnKey: "nonce-1",
+        kind: "INLINE",
+        status: "RECEIVED",
+        creditNoteId: null,
+        holdReason: null,
+        customerId: "cust-1",
+        orderId: "ord-carrying",
+        creditSubtotal: 28,
+        creditTax: 2,
+        creditCategoryTax: 0,
+        items: [],
+      }) // capture()'s own pre-tx replay check: the stuck row
       .mockResolvedValueOnce({
         id: "ret-1",
         status: "RECEIVED",
@@ -1735,6 +1796,174 @@ describe("InlineReturnsService", () => {
       });
       prisma.return.updateMany.mockResolvedValue({ count: 0 });
       await expect(service.cancel("ret-x", OPERATOR)).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  // ─── SA-1090 item 1 + A-1: a STORE_CREDIT capture is ONE transaction (IR-1..IR-9) ─────────────
+  describe("SA-1090 (1): the standalone STORE_CREDIT capture mints inside its own transaction", () => {
+    // A journal per transaction: a write lands in `committed` only if its transaction resolved, so a rolled-back
+    // capture leaves nothing there (the real rollback happens in Postgres; this is the unit-level witness of it).
+    let committed: string[];
+    let current: string[] | null;
+    let txOptions: unknown[];
+    let emittedInsideTx: boolean[];
+
+    beforeEach(() => {
+      committed = [];
+      current = null;
+      txOptions = [];
+      emittedInsideTx = [];
+      const orig = prisma.tenantTransaction.getMockImplementation()!;
+      prisma.tenantTransaction.mockImplementation(async (fn: any, opts?: unknown) => {
+        txOptions.push(opts);
+        const mine: string[] = [];
+        const prev = current;
+        current = mine;
+        try {
+          const out = await orig(fn, opts as any);
+          committed.push(...mine);
+          return out;
+        } finally {
+          current = prev;
+        }
+      });
+      const track = (fn: jest.Mock, label: string) => {
+        const impl = fn.getMockImplementation();
+        fn.mockImplementation(async (...a: any[]) => {
+          current?.push(label);
+          return impl ? impl(...a) : undefined;
+        });
+      };
+      track(prisma.return.create, "return.create");
+      track(prisma.stockMovement.create, "stockMovement.create");
+      track(prisma.orderCreditNote.create, "orderCreditNote.create");
+      const mint = creditNotes.mintStandaloneInTx.getMockImplementation()!;
+      creditNotes.mintStandaloneInTx.mockImplementation(async (...a: any[]) => {
+        const out = await mint(...a);
+        current?.push("creditNote.mint");
+        return out;
+      });
+      gateway.emitCreditNoteCreated.mockImplementation(() =>
+        emittedInsideTx.push(current !== null),
+      );
+    });
+
+    const committedCount = (label: string) => committed.filter((l) => l === label).length;
+
+    it("IR-1: the mint throws -> no return row, no stock movement, no credit (today the return commits and the goods go back with no credit)", async () => {
+      creditNotes.mintStandaloneInTx.mockRejectedValueOnce(new Error("mint exploded"));
+
+      await expect(service.capture(CAPTURE_DTO as any, OPERATOR)).rejects.toThrow("mint exploded");
+
+      expect(committed).toEqual([]);
+    });
+
+    it("IR-2: a same-key retry after IR-1 commits one return and one credit", async () => {
+      creditNotes.mintStandaloneInTx.mockRejectedValueOnce(new Error("mint exploded"));
+      await expect(service.capture(CAPTURE_DTO as any, OPERATOR)).rejects.toThrow();
+
+      await service.capture(CAPTURE_DTO as any, OPERATOR);
+
+      expect(committedCount("return.create")).toBe(1);
+      expect(committedCount("creditNote.mint")).toBe(1);
+      expect(committedCount("stockMovement.create")).toBe(1);
+    });
+
+    it("IR-4: a row already stuck (RECEIVED, no credit, no hold) replayed by its key still mints once, through the re-issue block", async () => {
+      const stuck = {
+        id: "ret-stuck",
+        returnKey: "nonce-1",
+        kind: "INLINE",
+        customerId: "cust-1",
+        orderId: "ord-carrying",
+        status: "RECEIVED",
+        creditNoteId: null,
+        holdReason: null,
+        returnNumber: "RET-STUCK",
+        creditSubtotal: 28,
+        creditTax: 2,
+        creditCategoryTax: 0,
+        items: [],
+      };
+      prisma.return.findFirst.mockImplementation(async ({ where }: any) =>
+        where?.returnKey === "nonce-1" || where?.id === "ret-stuck" ? stuck : null,
+      );
+
+      await service.capture(CAPTURE_DTO as any, OPERATOR);
+
+      expect(committedCount("return.create")).toBe(0);
+      expect(committedCount("creditNote.mint")).toBe(1);
+    });
+
+    it("IR-5: a held (DRIVER_CAP) capture mints no credit (a REFUND capture: inline-returns-refund.service.spec.ts)", async () => {
+      prisma.return.findMany.mockResolvedValue([
+        { creditSubtotal: 1000, creditTax: 0, creditCategoryTax: 0 },
+      ]);
+      await service.capture(DRIVER_CAPTURE_DTO as any, DRIVER);
+      expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+    });
+
+    it("IR-6: the standalone intent is the whole credit, not capped to the order's balance (the order path's cap is not inherited)", async () => {
+      // an order worth $10 against a $30 credit: the order path caps the intent at $10, the standalone capture never did
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-carrying",
+        customerId: "cust-1",
+        total: 10,
+        status: "PENDING",
+        routeRunId: "run-1",
+      });
+      prisma.orderCreditNote.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+
+      await service.capture(CAPTURE_DTO as any, OPERATOR);
+
+      expect(prisma.orderCreditNote.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ amount: 30 }) }),
+      );
+    });
+
+    it("IR-7: a successful capture fires the credit-note event once, after the commit", async () => {
+      await service.capture(CAPTURE_DTO as any, OPERATOR);
+
+      expect(gateway.emitCreditNoteCreated).toHaveBeenCalledTimes(1);
+      expect(emittedInsideTx).toEqual([false]);
+    });
+
+    it("IR-8: the capture transaction runs on a 15 s budget (today Prisma's default)", async () => {
+      await service.capture(CAPTURE_DTO as any, OPERATOR);
+
+      expect(txOptions[0]).toEqual({ timeout: 15_000 });
+    });
+
+    it.each([
+      ["P2028", { code: "P2028" }],
+      ["55P03", { meta: { code: "55P03" } }],
+      ["P2034", { code: "P2034" }],
+      ["40P01", { code: "40P01" }],
+    ])(
+      "IR-9: a capture that throws %s is a retryable 409 CONCURRENT_UPDATE, nothing written, and a same-key retry works",
+      async (_name, raised) => {
+        creditNotes.mintStandaloneInTx.mockRejectedValueOnce(raised);
+
+        const err: any = await service
+          .capture(CAPTURE_DTO as any, OPERATOR)
+          .catch((e: unknown) => e);
+
+        expect(err).toBeInstanceOf(ConflictException);
+        expect(err.getResponse()).toMatchObject({ code: "CONCURRENT_UPDATE", retryable: true });
+        expect(committed).toEqual([]);
+
+        await service.capture(CAPTURE_DTO as any, OPERATOR);
+        expect(committedCount("return.create")).toBe(1);
+        expect(committedCount("creditNote.mint")).toBe(1);
+      },
+    );
+
+    it("IR-9b: a genuine failure (not a budget / lock / conflict) is rethrown as it is", async () => {
+      creditNotes.mintStandaloneInTx.mockRejectedValueOnce(new Error("mint exploded"));
+
+      const err: any = await service.capture(CAPTURE_DTO as any, OPERATOR).catch((e: unknown) => e);
+
+      expect(err).not.toBeInstanceOf(ConflictException);
     });
   });
 });

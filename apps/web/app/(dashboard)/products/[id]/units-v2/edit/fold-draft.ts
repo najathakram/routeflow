@@ -3,10 +3,13 @@ import {
   ladderPrice,
   planCellEdit,
   priceGrid,
+  resolveFamilyCellEdits,
   roundMoney,
+  validateSetPrice,
   type CellChange,
   type CellPatch,
   type CustomerPricingWithId,
+  type FamilyCell,
   type LadderView,
   type Pin,
   type PriceTier,
@@ -136,6 +139,36 @@ export const parseKey = (k: string) => {
   return { ref: k.slice(0, i), tier: Number(k.slice(i + 1)) as PriceTier };
 };
 
+/** The row a variant's family prices sit on. */
+const FAMILY_ROW = "pack";
+
+/**
+ * SA-1082 rulings 6 and 7, by the rule the server runs: what each box left blank on the family's row takes. A box with
+ * nothing to take stays blank and gets the ladder's own answer. While any box on the row holds text that isn't a price,
+ * that box's refusal is all there is to say.
+ */
+function familyBoxTexts(
+  family: readonly FamilyCell[] | null | undefined,
+  entries: readonly DraftEntry[],
+): Map<number, string> {
+  const edits: { tier: number; to: number | null }[] = [];
+  for (const e of entries) {
+    if (e.kind !== "cell") continue;
+    const { ref, tier } = parseKey(e.key);
+    if (ref !== FAMILY_ROW) continue;
+    const checked = validateSetPrice(e.text);
+    if (!checked.ok) return new Map();
+    edits.push({ tier, to: checked.value });
+  }
+  if (!family || edits.length === 0) return new Map();
+  const blanks = new Set(edits.filter((e) => e.to == null).map((e) => e.tier));
+  return new Map(
+    resolveFamilyCellEdits(family, edits).flatMap((e) =>
+      blanks.has(e.tier) && e.to != null ? [[e.tier, String(e.to)] as const] : [],
+    ),
+  );
+}
+
 /** Replays the draft over the served ladder; every price consequence is the pricing package's. */
 export function foldDraft(
   from: LadderView,
@@ -145,8 +178,10 @@ export function foldDraft(
   keeps: readonly Pin[],
   tierName?: (t: PriceTier) => string,
   customers: PriceChangeOptions["customers"] = [],
+  family?: readonly FamilyCell[] | null,
 ): FoldResult {
   let view = from;
+  const familyTexts = familyBoxTexts(family, entries);
   const patchByCell = new Map<string, CellPatch>();
   const problems: CellProblem[] = [];
   const plans = new Map<string, PricePlan>();
@@ -185,11 +220,23 @@ export function foldDraft(
       continue;
     }
     const { ref, tier } = parseKey(e.key);
-    const p = planCellEdit(view, ref, tier, e.text, rules, tierName, { customers });
+    const text = ref === FAMILY_ROW && !e.text.trim() ? (familyTexts.get(tier) ?? e.text) : e.text;
+    const p = planCellEdit(view, ref, tier, text, rules, tierName, { customers });
     plans.set(e.key, p);
     if (p.problems.length > 0)
       problems.push(...p.problems.map((message) => ({ ref, tier, message })));
     else fold(p.patches);
+  }
+  // SA-1082 ruling 7: a Retail away from the family's takes the tiers still at the family's value with it, unless this
+  // draft wrote them. The server does the same on save, whichever way the Retail got there.
+  const retailNow = view.rows.find((r) => r.ref === FAMILY_ROW)?.set[0];
+  if (family && retailNow != null && retailNow !== family[0]?.value) {
+    const written = (t: number) => patchByCell.has(cellKey(FAMILY_ROW, t));
+    fold(
+      ([2, 3, 4, 5] as const)
+        .filter((t) => family[t - 1]?.follows && !written(t))
+        .map((t) => ({ ref: FAMILY_ROW, tier: t, to: null })),
+    );
   }
   const open = openKey ? (plans.get(openKey) ?? null) : null;
   const base = view;

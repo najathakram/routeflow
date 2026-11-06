@@ -26,6 +26,11 @@ import { defaultSaleFulfilmentKind } from "../orders/default-sale-fulfilment";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import * as iGate from "../invoices/invoice-restriction-gate";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import {
+  LINE_NAME_PRODUCT_SELECT,
+  displayLineDescription,
+  withFamilyNames,
+} from "../invoices/invoice-line-name";
 import { buildManualInvoiceLines } from "../invoices/manual-invoice-lines";
 import { loadManualLineContext, zeroExemptCategoryTax } from "../invoices/manual-invoice-context";
 import { packAtSaleByProduct, toSaleLedgerLines } from "../invoices/pack-at-sale";
@@ -40,6 +45,8 @@ import {
 import { assertNoUnitAwareLines } from "../orders/unit-aware-guard";
 import { customerPricing } from "../orders/units-prices-v2";
 import { CreateEstimateDto } from "./dto/create-estimate.dto";
+import { priceEditAllowedFor } from "../auth/permissions/price-edit";
+import { assertCustomPricesAllowed, assertPriceEditAllowed } from "../orders/staff-override";
 import { describeUniqueViolation, uniqueViolationOn } from "../common/prisma-unique";
 
 // B70: terminal status set — CONVERTED is terminal and cannot be re-transitioned; voided
@@ -123,7 +130,7 @@ export class EstimatesService {
     });
   }
 
-  async create(dto: CreateEstimateDto) {
+  async create(dto: CreateEstimateDto, actor: JwtPayload) {
     // B79: issueDate is optional and, unlike expiresAt, has no legacy loose-parse
     // behavior to preserve — validate the shape before touching the DB so a
     // malformed value 400s instead of writing Invalid Date or a misparsed date.
@@ -157,6 +164,13 @@ export class EstimatesService {
 
     const tenantId = this.prisma.getTenantId();
     const items: any[] = dto.items ?? [];
+    // SA-1034 rules 4-5: a custom estimate line, and a typed catalog price under list, are staff-typed prices. The
+    // capability is read once here, before the write, and only when a line types a price. The actor is required: the controller is the only caller.
+    const needsPriceRights = items.some((i) => !i.productId || i.unitPrice != null);
+    const priceEditAllowed =
+      !needsPriceRights ||
+      (await priceEditAllowedFor(this.prisma, actor, "EstimatesService.create"));
+    assertCustomPricesAllowed(items, priceEditAllowed);
     // H5: a quote is taxed the way an invoice is - the tenant rate and the customer's exempt flag, today.
     const taxRate = await configuredTaxRateFraction(this.prisma);
     const isTaxExempt = !!customer.isTaxExempt;
@@ -167,6 +181,7 @@ export class EstimatesService {
       productIds.length > 0
         ? await this.prisma.forTenant().product.findMany({
             where: { id: { in: productIds } },
+            include: { parent: { select: { name: true } } }, // the family's name: a variant line reads "<Family> - <Variant>"
           })
         : [];
     const productMap = new Map(products.map((p) => [p.id, p]));
@@ -215,6 +230,7 @@ export class EstimatesService {
         const overridePrice = i.unitPrice != null ? roundMoney(Number(i.unitPrice)) : null;
 
         if (overridePrice != null && overridePrice < listPrice) {
+          assertPriceEditAllowed(priceEditAllowed); // SA-1034 rule 5: a typed price under list is a staff price override
           unitPrice = overridePrice;
           priceType = PriceType.DISCOUNTED;
           originalPrice = listPrice;
@@ -241,7 +257,7 @@ export class EstimatesService {
       });
       subtotal += sub;
       return {
-        description: i.description ?? product?.name ?? "",
+        description: displayLineDescription(i.description ?? product?.name ?? "", product),
         productId: i.productId ?? null,
         qty,
         unitPrice,
@@ -359,11 +375,11 @@ export class EstimatesService {
       where: { id },
       include: {
         customer: { select: { id: true, businessName: true, contactName: true } },
-        items: { include: { product: { select: { id: true, name: true } } } },
+        items: { include: { product: { select: { id: true, ...LINE_NAME_PRODUCT_SELECT } } } },
       },
     });
     if (!est) throw new NotFoundException("Estimate not found");
-    return est;
+    return { ...est, items: withFamilyNames(est.items) }; // a quote line still holding the bare variant name reads "<Family> - <Variant>"
   }
 
   async send(id: string) {

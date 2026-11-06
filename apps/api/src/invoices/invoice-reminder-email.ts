@@ -9,6 +9,7 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import { isInternalEmail } from "../common/internal-email";
 import { buildInvoiceEmailAttachment, type InvoiceEmailAttachment } from "./invoice-attachment";
 import { buildReminderEmailPayload } from "./invoice-email-payload";
+import { LINE_NAME_PRODUCT_SELECT } from "./invoice-line-name";
 import { assertReminderIssued, assertReminderOwes } from "./invoice-balance-sql";
 import { CONFIRMED_PAYMENT } from "./payment-predicates";
 
@@ -53,7 +54,9 @@ export async function sendReminder(deps: ReminderEmailDeps, id: string, override
     include: {
       customer: { select: { id: true, businessName: true, contactName: true, email: true } },
       // SA-1029 A-1: the product's base word for a legacy line that never froze one (no per-item query)
-      items: { include: { product: { select: { baseUnitLabel: true } } } },
+      items: {
+        include: { product: { select: { baseUnitLabel: true, ...LINE_NAME_PRODUCT_SELECT } } },
+      },
       // F03/R8: CONFIRMED (PAID) payments only — feeds totalPaid/balanceDue below.
       // B421: creditNote relation needed for the customer-facing "Credit
       // issued — CN-…" line's number.
@@ -93,12 +96,14 @@ export async function sendReminder(deps: ReminderEmailDeps, id: string, override
   // F03/R9: see sendEmail's matching comment — the reminder renders the same item
   // table, so it honours the same hide-original-price setting.
   const hideOriginalPrice = (await deps.systemConfig.get("invoice.hideOriginalPrice")) === "true";
+  const hidePerPiece = (await deps.systemConfig.get("invoice.hidePerPiece")) === "true";
 
   const reminderPayload = buildReminderEmailPayload(inv, {
     recipientEmail,
     pdfUrl,
     attachment,
     hideOriginalPrice,
+    hidePerPiece,
   });
   const sendResult = await deps.emailService.sendInvoice(reminderPayload);
 

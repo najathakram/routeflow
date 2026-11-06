@@ -362,6 +362,14 @@ describeDb("W-863 — a counter sale with an inline return, the real chain on Po
     const res = await ring(key, returnOf(snack, `rk-${key}`), { method: "CASH", amount: 6 });
     expect(res.paymentRecorded).toBe(true);
     expect(res.balanceDue).toBeCloseTo(0, 2);
+    // SA-1077 / W-1090 R13: the response carries the split the reprint reads, on the real mint (its credit note has no invoice
+    // link, so the credit stays a tender there: Cash $6.00 + Store credit $4.00, Paid $10.00) and the STORED cash tendered
+    expect(res.cashTendered).toBeCloseTo(6, 2);
+    expect(res.tenderPaid).toBeCloseTo(10, 2);
+    expect(res.tenderMethods).toEqual([
+      { method: "CASH", amount: 6 },
+      { method: "STORE_CREDIT", amount: 4 },
+    ]);
     const f = await footprint(key);
     expect(f.returns).toHaveLength(1);
     expect(f.orders).toHaveLength(1);

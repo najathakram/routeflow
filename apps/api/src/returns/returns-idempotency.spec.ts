@@ -67,6 +67,7 @@ describe("ReturnsService.create — Idempotency-Key replay guard (REG-RET-IDEM)"
     id: "ord-1",
     status: "DELIVERED",
     customerId: "cust-1",
+    tenantId: "test-tenant", // SA-1101 A-7: the lock key reads the order row's tenant
     customer: { id: "cust-1", businessName: "Acme Co" },
     lineItems: [{ productId: "p1", qty: 10, unitPrice: 5 }],
     invoices: [{ id: "inv-1" }],

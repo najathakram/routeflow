@@ -10,6 +10,7 @@ import { formatMoney } from "@/lib/format";
 import { RestrictionOverrideNote } from "@/components/RestrictionOverrideNote";
 import type { OrderItem } from "@/lib/api/orders";
 import { orderLineName } from "@/lib/product-display";
+import { lineDisplayPack } from "@/lib/line-own-pack";
 import { displayLineStatus } from "./line-status";
 
 /** Orders with more lines than this collapse behind "Show N more items" (spec §5.1). */
@@ -35,7 +36,7 @@ export function lineRowProps(
     unitPrice: li.unitPrice,
     qty: li.qty,
     // Snapshot pack size first, never the live product (same rule as the table).
-    unitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox ?? null,
+    unitsPerBox: lineDisplayPack(li),
     boxes: li.boxes ?? null,
     pieces: li.pieces ?? null,
     // A unit-aware line (units_v1) names its own box level: "3 Cases", never "3 boxes".

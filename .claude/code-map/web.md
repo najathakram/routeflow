@@ -51,6 +51,7 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/landing-2026-10-31-x.md](web/landing-2026-10-31-x.md) | Train X (b6fa8f21a..5503f21974): stepper in the selling unit, Drafts button on the till, pickup wording, Invoice step and Create invoice, one Escape per layer, History word |
 | [web/landing-2026-10-31-y.md](web/landing-2026-10-31-y.md) | Train Y (5503f21974..09600c8c59): install banner on home only, one New order menu (`newOrderEntry`), price field names its unit |
 | [web/landing-2026-10-31-z.md](web/landing-2026-10-31-z.md) | Train Z (e134d6bd5..ccf3eb39d): ReadyEmailLine, price curve, HeldReturnActions, PdfPreview, stickyPrice, live return quote |
+| [web/landing-2026-10-31-n.md](web/landing-2026-10-31-n.md) | Train n (ccf3eb39d..74c94e74f): iOS 16px touch rule, ios-zoom e2e, builder rememberedOf, applyTypedPrice memoryMayBook |
 | [web/landing-2026-10-22-w4.md](web/landing-2026-10-22-w4.md) | Landing 2026-10-22 window 4: orders apple-ux r3/r4 train, buyer cart, import Family UI, counter till/returns, payment key dialogs |
 | [web/landing-2026-10-17-units-v2-3.md](web/landing-2026-10-17-units-v2-3.md) | Landing 2026-10-17 units-v2-3: price layer, units settings, K-cards, product image actions |
 | [web/landing-2026-10-12-r52.md](web/landing-2026-10-12-r52.md) | Landing 2026-10-12 Release 5.2: edit rebase on 409, read-only gate and copy, billing card, counter QA polish, paid-at-sale |
@@ -64,3 +65,30 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/landing-2026-10-08-w21a.md](web/landing-2026-10-08-w21a.md) | Landing 2026-10-08 W21a: counter refund or store credit, Today's sales, register look and exit guard, Settings > Fulfillment (dark) |
 | [web/landing-2026-10-06-w4-w10.md](web/landing-2026-10-06-w4-w10.md) | Landing 2026-10-06 (windows 4 to 10): order actions by role, business profile picker, billing confirm sheets, order suggestions |
 | [web/landing-2026-10-01-w12-w27.md](web/landing-2026-10-01-w12-w27.md) | Landing 2026-10-01 w12-w27: settings hub, PO route/detail/scan, scan level/aim/hold, shell handoff, CN edit/void |
+| [web/landing-2026-11-01-o.md](web/landing-2026-11-01-o.md) | Train o (5d3b36a508..f0710f769b): one Radix copy and menu close, till receipt tenderRows, price rights copy, no strike above list, workspace memory and four-field signup, marketing metadata/share image |
+| [web/landing-2026-11-01-p.md](web/landing-2026-11-01-p.md) | Train p (f0710f769b..f840a6f2f2): return reason, note and price one per product (`patchReturnLine`, `adoptProductValues`), focused field kept in view |
+| [web/landing-2026-11-01-q.md](web/landing-2026-11-01-q.md) | Train q (f840a6f2f2..821df84168): default order builder re-prices plain lines to the picked customer (resume reads through customerPricingGate, history-unknown notice, Order again drops Undo), RestrictionRemedyActions keyboard focus, cleanup batch removals (web mocks, InstallAppButton, ReportChart, mobile files, two keeps) |
+| [web/landing-2026-11-01-r.md](web/landing-2026-11-01-r.md) | Train r (821df84168..93cfe75d9a): DEMO_CTA "Book a video call" and Contact in the nav (NAV_SLUGS), straight FAQ answers, calendar auto-advance and heading scroll, guessed-address redirects, UmamiScript visitor counting (marketing pages and /signup only), admin WeeklyFunnelCard, FirstRunCard and `lib/api/first-run.ts`, Workspace ID on Settings and AddDriverModal, e2e spec 82 |
+| [web/landing-2026-11-01-s.md](web/landing-2026-11-01-s.md) | Train s (93cfe75d9a..5f26068001): Open balance statement sheet, Print and Email buttons, never-sold returns, merge-return-change |
+| [web/landing-2026-11-01-t.md](web/landing-2026-11-01-t.md) | Train t (5f26068001..1d20b7f38d): customers list Open balance cell, BuyerOpenBalanceButton, StatementSheetFrame, StatementPrintControl |
+| [web/landing-2026-11-01-v.md](web/landing-2026-11-01-v.md) | Train v (7b4cc4b972..d3ab3e7eff): Piece row price input, order-editor Create new product, ?statement drop |
+| [web/landing-2026-11-02-w.md](web/landing-2026-11-02-w.md) | Train w (d3ab3e7eff..96aedaf2c0): Privacy and Terms pages, legal-dates helpers, Dependabot group bump |
+| [web/landing-2026-11-02-y.md](web/landing-2026-11-02-y.md) | Train y (96aedaf2c0..904cbbec87): FamilyMoveAsk, identity form, static site pages, delete copy |
+| [web/landing-2026-11-02-z.md](web/landing-2026-11-02-z.md) | Train z (904cbbec87..93282c147c): customers list edit door, four static site pages, verify fs-read specs |
+| [web/landing-2026-11-02-ac.md](web/landing-2026-11-02-ac.md) | Train ac (93282c147c..4b2516c9f2): credit-notes tiles from the summary, live stock note under each order line |
+| [web/landing-2026-11-02-ad.md](web/landing-2026-11-02-ad.md) | Train ad (4b2516c9f2..9e782a5dfc): product insights page, cleared tier blank in Quick Edit, site wording, refusal copy |
+| [web/landing-2026-11-03-ae.md](web/landing-2026-11-03-ae.md) | Train ae + #4143 (9e782a5dfc..6e9dae10eb): site audit fixes, `/` always home, Open dashboard header script; web only |
+| [web/landing-2026-11-03-af.md](web/landing-2026-11-03-af.md) | Train af (6e9dae10eb..d6d5c56cb1): no old look left (site frame, auth card, Company, Contact, 308 redirects) |
+| [web/landing-2026-11-03-aj.md](web/landing-2026-11-03-aj.md) | Train aj (d6d5c56cb1..9dfd480c30): home anchor landing, F14 tenant-day dates, product finder at /insights (SA-1087 PR-2) |
+| [web/landing-2026-11-03-ak.md](web/landing-2026-11-03-ak.md) | Train ak (9dfd480c30..d833210811): site motion always on, truth pass + HSTS, feature console source chips (F13) |
+| [web/landing-2026-11-03-al.md](web/landing-2026-11-03-al.md) | Train al (d833210811..1f6f32a341): 20 use-case cards, site colour and life (W-1129), 22-card pin |
+| [web/landing-2026-11-03-an.md](web/landing-2026-11-03-an.md) | Train am (1f6f32a341..06813470de): web editor reads a line's own pack (SA-1097); counter rows show the live stock note (SA-1086 PR-2) |
+| [web/landing-2026-11-03-ao.md](web/landing-2026-11-03-ao.md) | Train an (fedb9c4fa7..f9f1a592ed): public site phone pass, mobile.css, wheel on short screens |
+| [web/landing-2026-11-03-ap.md](web/landing-2026-11-03-ap.md) | Train ao (f9f1a592ed..f10b57ce34): wheel hover label skips a named piece; PackReadingAsk dialog for the first pack |
+| [web/landing-2026-11-03-aq.md](web/landing-2026-11-03-aq.md) | Train ap (f10b57ce34..c8221d4b46): driver StopSheet in my-runs, founder note rewritten on home and company |
+| [web/landing-2026-11-04-ar.md](web/landing-2026-11-04-ar.md) | Train ar (c8221d4b46..758c727d58): driver Settle footer and office settle card (PR-S), Create Order key rule |
+| [web/landing-2026-11-04-t1.md](web/landing-2026-11-04-t1.md) | Train 1 (758c727d58..8cd7c13e69): product page driver wording, import template and key columns, funnel columns |
+| [web/landing-2026-11-04-t2.md](web/landing-2026-11-04-t2.md) | Train 2 (8cd7c13e69..ec9765092c): plan price confirm and move reason, credit-note error copy, per-piece invoice setting |
+| [web/landing-2026-11-04-w4.md](web/landing-2026-11-04-w4.md) | Window 4 (ec9765092c..b0e0193854): Refused in every client, Deliver again, site Delivered card, Quick Edit redo bar |
+| [web/landing-2026-11-05-w5.md](web/landing-2026-11-05-w5.md) | Window 5 (b0e0193854..b10bad52a0): Reopen order names the live-return sentence |
+| [web/landing-2026-11-05-w6.md](web/landing-2026-11-05-w6.md) | Windows 6-9 (b10bad52a0..25034e1228): AI paused and key sentences, Reopen order sentences |

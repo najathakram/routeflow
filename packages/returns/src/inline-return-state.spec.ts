@@ -21,6 +21,10 @@ import {
   keyReusedReturnOf,
   INLINE_RETURN_KEY_REUSED_CODE,
   mintReturnKey,
+  adoptProductValues,
+  patchReturnLine,
+  PRODUCT_WIDE_FIELDS,
+  restocksForReason,
   rulingLineIndex,
   ALREADY_RETURNED_NOTHING_LEFT_MESSAGE,
   NOTHING_BOUGHT_BEFORE_MESSAGE,
@@ -1060,6 +1064,24 @@ describe("R-1 M6/M8: lineQuoteFacts, what the quote says about one product", () 
     expect(facts.spansOrders).toBe(false);
   });
 
+  it("NS-22 (SA-1060 A-6): a chunk both already returned and never sold says never sold, and stays already returned", () => {
+    const quote = quoteResponse([
+      chunk({
+        productId: "prod-1",
+        pieces: 3,
+        sourceOrderId: null,
+        sourceInvoiceItemId: null,
+        sourceOrderItemId: null,
+        alreadyReturned: true,
+        neverSold: true,
+      }),
+    ]);
+    const facts = pkg.lineQuoteFacts(quote, "prod-1");
+    expect(facts.neverSold).toBe(true);
+    expect(facts.alreadyReturnedPieces).toBe(3);
+    expect(facts.notOnInvoicePieces).toBe(0);
+  });
+
   it("prefers the server's own per-product total when the quote carries one", () => {
     const quote = {
       ...quoteResponse([chunk({ productId: "prod-1", subtotal: 20, taxAmount: 2 })]),
@@ -1082,6 +1104,32 @@ describe("R-1 M6/M8: lineQuoteFacts, what the quote says about one product", () 
     const facts = pkg.lineQuoteFacts(quoteResponse([chunk()]), "prod-9");
     expect(facts.covered).toEqual([]);
     expect(facts.total).toBe(0);
+  });
+
+  it("SA-1060 PR-2: neverSold is the server's flag on a no-sale chunk of that product, nothing else", () => {
+    const noSale = (o: object) =>
+      chunk({ sourceOrderId: null, sourceInvoiceItemId: null, sourceOrderItemId: null, ...o });
+    const never = pkg.lineQuoteFacts(
+      quoteResponse([noSale({ productId: "prod-1", neverSold: true })]),
+      "prod-1",
+    );
+    expect(never.neverSold).toBe(true);
+    const before = pkg.lineQuoteFacts(
+      quoteResponse([noSale({ productId: "prod-1", neverSold: false })]),
+      "prod-1",
+    );
+    expect(before.neverSold).toBe(false);
+    expect(pkg.lineQuoteFacts(quoteResponse([chunk()]), "prod-1").neverSold).toBe(false);
+    expect(
+      pkg.lineQuoteFacts(quoteResponse([noSale({ productId: "prod-1" })]), "prod-1").neverSold,
+    ).toBe(false); // an older API sends no flag
+    // another product's flag is not this product's
+    expect(
+      pkg.lineQuoteFacts(
+        quoteResponse([noSale({ productId: "prod-2", neverSold: true }), chunk()]),
+        "prod-1",
+      ).neverSold,
+    ).toBe(false);
   });
 });
 
@@ -1210,5 +1258,184 @@ describe("sweep of first-row reads (Lead, #4036): dropExcessAndRequote reads the
     const lines = [{ productId: "p1", creditUnitPrice: "3.00", overrideReason: "x" }];
     const req = dropExcessAndRequote("cust-1", quoteResponse([covered]), undefined, lines);
     expect(req.items[0]).toMatchObject({ creditUnitPrice: 3 });
+  });
+});
+
+// ─── SA-1079 (W-1073): a return row's reason, note and price belong to the product ────────────────────────────
+//
+// The wire holds ONE item per product (`mergeDuplicateProductItems`), so every row of a product holds the same reason, note and
+// credit price: `patchReturnLine` writes a product-wide field to every row of that product, and nothing typed is lost.
+
+describe("patchReturnLine: one value per product on every row (SA-1079)", () => {
+  type Row = InlineReturnLineDraft;
+  const two = (): Row[] => [line({ productId: "p" }), line({ productId: "p" })];
+  const price = { creditUnitPrice: "3.00", overrideReason: "damaged box" };
+  const send = (lines: Row[]) =>
+    buildCaptureRequest({
+      customerId: "c",
+      orderId: "o",
+      lines,
+      returnKey: "k",
+      reason: "EXCESS_ORDER",
+    }).items;
+  const quoted = (lines: Row[]) => buildQuoteRequest("c", lines).items;
+
+  it("BR-1: a price typed on blank row 1 after a count on row 2 reaches the quote and the capture", () => {
+    let l = patchReturnLine(two(), 1, { pieces: "5" });
+    l = patchReturnLine(l, 0, price);
+    for (const items of [quoted(l), send(l)]) {
+      expect(items).toHaveLength(1);
+      expect(items[0]).toMatchObject({ productId: "p", pieces: 5, creditUnitPrice: 3 });
+    }
+    expect(creditOverrideProblem(l)).toBeNull();
+  });
+
+  it("BR-2: a price typed with no counts yet, then a count on row 2, still reaches both", () => {
+    let l = patchReturnLine(two(), 0, price);
+    l = patchReturnLine(l, 1, { pieces: "5" });
+    expect(quoted(l)[0]).toMatchObject({
+      pieces: 5,
+      creditUnitPrice: 3,
+      overrideReason: "damaged box",
+    });
+    expect(send(l)[0]).toMatchObject({ pieces: 5, creditUnitPrice: 3 });
+  });
+
+  it("BR-3: DAMAGED and 5 on row 2, then 1 on row 1 -> 6 pieces, DAMAGED, not back to stock", () => {
+    let l = patchReturnLine(two(), 1, { reason: "DAMAGED" });
+    l = patchReturnLine(l, 1, { pieces: "5" });
+    l = patchReturnLine(l, 0, { pieces: "1" });
+    const [item] = send(l);
+    expect(item).toMatchObject({ pieces: 6, reason: "DAMAGED" });
+    expect(restocksForReason(item.reason ?? "")).toBe(false);
+  });
+
+  it("BR-4: count, price and DAMAGED on row 1, a count on row 2, then row 1's count cleared", () => {
+    let l = patchReturnLine(two(), 0, { pieces: "2" });
+    l = patchReturnLine(l, 0, price);
+    l = patchReturnLine(l, 0, { reason: "DAMAGED" });
+    l = patchReturnLine(l, 1, { pieces: "3" });
+    l = patchReturnLine(l, 0, { pieces: "" });
+    const [item] = send(l);
+    expect(item).toMatchObject({ pieces: 3, reason: "DAMAGED", creditUnitPrice: 3 });
+    expect(restocksForReason(item.reason ?? "")).toBe(false);
+  });
+
+  it("BR-5: both rows counted, a price on row 1 -> one item of 5 at 3.00, no refusal", () => {
+    let l = patchReturnLine(two(), 0, { pieces: "2" });
+    l = patchReturnLine(l, 1, { pieces: "3" });
+    l = patchReturnLine(l, 0, price);
+    expect(creditOverrideProblem(l)).toBeNull();
+    expect(quoted(l)).toHaveLength(1);
+    expect(quoted(l)[0]).toMatchObject({ pieces: 5, creditUnitPrice: 3 });
+  });
+
+  it("BR-6: both rows counted, a note on row 2 reaches the capture as the condition", () => {
+    let l = patchReturnLine(two(), 0, { pieces: "2" });
+    l = patchReturnLine(l, 1, { pieces: "3" });
+    l = patchReturnLine(l, 1, { note: "torn" });
+    expect(send(l)[0]).toMatchObject({ pieces: 5, condition: "torn" });
+  });
+
+  it("BR-7: a note on blank row 1, then a count on row 2", () => {
+    let l = patchReturnLine(two(), 0, { note: "torn" });
+    l = patchReturnLine(l, 1, { pieces: "5" });
+    expect(send(l)[0]).toMatchObject({ pieces: 5, condition: "torn" });
+  });
+
+  it("BR-8: clearing the price and reason on row 1 clears them on row 2 too: no price, the default reason, no refusal", () => {
+    let l = patchReturnLine(two(), 1, { ...price, reason: "DAMAGED", pieces: "5" });
+    l = patchReturnLine(l, 0, { pieces: "1" });
+    l = patchReturnLine(l, 0, { creditUnitPrice: "", overrideReason: "", reason: "" });
+    expect(creditOverrideProblem(l)).toBeNull();
+    const [item] = send(l);
+    expect(item.creditUnitPrice).toBeUndefined();
+    expect(item.reason).toBeUndefined();
+    expect(restocksForReason(item.reason ?? "")).toBe(true);
+  });
+
+  it("BR-9: both counted, a price on row 1, row 1's count cleared and typed again -> 3.00, no refusal", () => {
+    let l = patchReturnLine(two(), 0, { pieces: "2" });
+    l = patchReturnLine(l, 1, { pieces: "3" });
+    l = patchReturnLine(l, 0, price);
+    l = patchReturnLine(l, 0, { pieces: "" });
+    l = patchReturnLine(l, 0, { pieces: "2" });
+    expect(creditOverrideProblem(l)).toBeNull();
+    expect(send(l)[0]).toMatchObject({ pieces: 5, creditUnitPrice: 3 });
+  });
+
+  it("BR-10: an already-returned reason typed on row 2, then a count on row 1, is not asked for again", () => {
+    const quote = {
+      chunks: [{ productId: "p", alreadyReturned: true }],
+    } as unknown as Parameters<typeof missingAlreadyReturnedReasons>[1];
+    let l = patchReturnLine(two(), 1, { alreadyReturnedReason: "slip lost", pieces: "3" });
+    l = patchReturnLine(l, 0, { pieces: "1" });
+    expect(missingAlreadyReturnedReasons(l, quote)).toEqual([]);
+  });
+
+  it("BR-11: a reason on row 1 reaches the product's other row, never its count, and never another product", () => {
+    const l = patchReturnLine(
+      [line({ productId: "p" }), line({ productId: "p" }), line({ productId: "q" })],
+      0,
+      { pieces: "2", reason: "DAMAGED" },
+    );
+    expect(l[0]).toMatchObject({ pieces: "2", reason: "DAMAGED" });
+    expect(l[1]).toMatchObject({ pieces: "", reason: "DAMAGED" });
+    expect(l[2]).toMatchObject({ pieces: "", reason: "" });
+  });
+
+  it("an index that is not a row changes nothing", () => {
+    const l = two();
+    expect(patchReturnLine(l, 5, { reason: "DAMAGED" })).toEqual(l);
+  });
+
+  it("BR-12: an undone row takes the values its product's rows hold now, or its own when none are left", () => {
+    const removed = line({ productId: "p", ...price, reason: "DAMAGED", note: "old" });
+    const left = [
+      line({ productId: "p", creditUnitPrice: "2.00", overrideReason: "new", note: "n" }),
+    ];
+    expect(adoptProductValues(left, removed)).toMatchObject({
+      creditUnitPrice: "2.00",
+      overrideReason: "new",
+      note: "n",
+      reason: "",
+    });
+    expect(adoptProductValues([line({ productId: "other" })], removed)).toBe(removed);
+  });
+
+  it("BR-15: every per-item key the capture carries is a product-wide field, so a new one fails until it is listed", () => {
+    const everything = line({
+      productId: "p",
+      boxes: "1",
+      pieces: "1",
+      reason: "DAMAGED",
+      note: "n",
+      creditUnitPrice: "1.00",
+      overrideReason: "r",
+      alreadyReturnedReason: "a",
+    });
+    const [item] = buildCaptureRequest({
+      customerId: "c",
+      orderId: "o",
+      lines: [everything],
+      returnKey: "k",
+      reason: "EXCESS_ORDER",
+    }).items;
+    // the capture item's key -> the draft field it comes from
+    const fieldOf: Record<string, keyof InlineReturnLineDraft> = {
+      reason: "reason",
+      condition: "note",
+      creditUnitPrice: "creditUnitPrice",
+      overrideReason: "overrideReason",
+      alreadyReturnedReason: "alreadyReturnedReason",
+    };
+    const perItem = Object.keys(item).filter(
+      (k) => !["productId", "qty", "boxes", "pieces"].includes(k),
+    );
+    for (const k of perItem) {
+      expect(fieldOf[k]).toBeDefined();
+      expect(PRODUCT_WIDE_FIELDS).toContain(fieldOf[k]);
+    }
+    expect([...PRODUCT_WIDE_FIELDS].sort()).toEqual(Object.values(fieldOf).sort());
   });
 });

@@ -10,6 +10,12 @@ import { NumberingService } from "../import/numbering.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { computeLineSubtotal } from "@routeflow/pricing";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { NO_PRICE_RIGHTS } from "../common/testing/no-rights-actor";
+
+// SA-1034: this spec tests estimate / template behaviour, not the price-edit capability (see price-edit-sites.pin.spec.ts).
+jest.mock("../auth/permissions/price-edit", () => ({
+  priceEditAllowedFor: jest.fn().mockResolvedValue(true),
+}));
 
 // B8: accept() had no status guard and convertToInvoice() was a read-then-write
 // with no transaction, so a double-click (re-accept a CONVERTED estimate, or two
@@ -407,10 +413,13 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       });
 
       await expect(
-        service.create({
-          customerId: "cust-1",
-          items: [{ description: "Widget", unitPrice: 10, qty: 1 }],
-        }),
+        service.create(
+          {
+            customerId: "cust-1",
+            items: [{ description: "Widget", unitPrice: 10, qty: 1 }],
+          },
+          NO_PRICE_RIGHTS,
+        ),
       ).rejects.toBeInstanceOf(ConflictException);
     });
 
@@ -423,10 +432,13 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       prisma.estimate.create.mockRejectedValue(err);
 
       await expect(
-        service.create({
-          customerId: "cust-1",
-          items: [{ description: "Widget", unitPrice: 10, qty: 1 }],
-        }),
+        service.create(
+          {
+            customerId: "cust-1",
+            items: [{ description: "Widget", unitPrice: 10, qty: 1 }],
+          },
+          NO_PRICE_RIGHTS,
+        ),
       ).rejects.toBe(err);
     });
   });
@@ -1016,7 +1028,7 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
     });
 
     it("REG-B79 create() persists issueDate", async () => {
-      await service.create({ ...VALID_DTO, issueDate: "2026-09-01" });
+      await service.create({ ...VALID_DTO, issueDate: "2026-09-01" }, NO_PRICE_RIGHTS);
 
       // Red today for the wrong reason expected by bug-test-plan.md (HEAD's
       // write path already sets this key — see the describe-block comment
@@ -1041,10 +1053,10 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
     it.each(["2026-13-45", "09/01/2026", "2026-02-31"])(
       "REG-B79 create() rejects a malformed issueDate (%s)",
       async (issueDate) => {
-        await expect(service.create({ ...VALID_DTO, issueDate })).rejects.toThrow(
+        await expect(service.create({ ...VALID_DTO, issueDate }, NO_PRICE_RIGHTS)).rejects.toThrow(
           BadRequestException,
         );
-        await expect(service.create({ ...VALID_DTO, issueDate })).rejects.toThrow(
+        await expect(service.create({ ...VALID_DTO, issueDate }, NO_PRICE_RIGHTS)).rejects.toThrow(
           "issueDate must be YYYY-MM-DD",
         );
         expect(prisma.estimate.create).not.toHaveBeenCalled();
@@ -1052,14 +1064,14 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
     );
 
     it("PIN-B79 create() without issueDate leaves it unset", async () => {
-      await service.create({ ...VALID_DTO });
+      await service.create({ ...VALID_DTO }, NO_PRICE_RIGHTS);
 
       const data = prisma.estimate.create.mock.calls[0][0].data;
       expect(data.issueDate).toBeUndefined();
     });
 
     it("PIN-B79 expiresAt still parsed as before", async () => {
-      await service.create({ ...VALID_DTO, expiresAt: "2026-04-01" });
+      await service.create({ ...VALID_DTO, expiresAt: "2026-04-01" }, NO_PRICE_RIGHTS);
 
       const data = prisma.estimate.create.mock.calls[0][0].data;
       expect(data.expiresAt.toISOString()).toBe("2026-04-01T00:00:00.000Z");
@@ -1091,10 +1103,13 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       ]);
       prisma.estimate.create.mockResolvedValue({ id: "est-645" });
 
-      await service.create({
-        customerId: "cust-645",
-        items: [{ productId: "prod-645", boxes: 1, unitPrice: 10 }],
-      });
+      await service.create(
+        {
+          customerId: "cust-645",
+          items: [{ productId: "prod-645", boxes: 1, unitPrice: 10 }],
+        },
+        NO_PRICE_RIGHTS,
+      );
 
       const createdItem = prisma.estimate.create.mock.calls[0][0].data.items.create[0];
       expect(createdItem.boxes).toBe(1);

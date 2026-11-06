@@ -61,6 +61,9 @@ import {
   buildPlan,
   parseAllowList,
   classifyIgnoredForAllowList,
+  hasUnpushedCommits,
+  isRegenerableLocalAssets,
+  readIgnoredStatus,
   samePath,
   salvageIgnored,
   allowListVerdict,
@@ -1219,6 +1222,190 @@ t(
   },
 );
 
+// Janitor gaps (fix list 11-01): every jest config writes a per-workspace .jest-cache, and verify's
+// data-questions report lands in local-assets/. Both made 26 of 29 merged factory trees "dirty".
+t("a per-workspace .jest-cache is regenerable (step 7 already deletes its entries)", () => {
+  assert.equal(
+    dirtyFromStatus("", "!! apps/api/.jest-cache/\n!! packages/pricing/.jest-cache/\n"),
+    false,
+  );
+  assert.equal(dirtyFromStatus("", "!! apps/api/src/.jest-cache-notes.md\n"), true);
+});
+
+t(
+  "local-assets holding only verify reports (or nothing) is regenerable; anything else is data",
+  () => {
+    const f = (name) => ({ name, isFile: true });
+    const report = f("data-questions-report-2026-10-28T16-28-31-518Z.txt");
+    assert.equal(isRegenerableLocalAssets({ isLink: false, entries: [report] }), true);
+    assert.equal(isRegenerableLocalAssets({ isLink: false, entries: [] }), true);
+    assert.equal(
+      isRegenerableLocalAssets({ isLink: false, entries: [report, f("notes.md")] }),
+      false,
+    );
+    assert.equal(
+      isRegenerableLocalAssets({ isLink: false, entries: [{ name: "proofs", isFile: false }] }),
+      false,
+    );
+    // bugs.mjs leaves an empty local-assets/docs in every tree that rendered the register.
+    const emptyDocs = { name: "docs", isFile: false, isEmptyDir: true };
+    assert.equal(isRegenerableLocalAssets({ isLink: false, entries: [report, emptyDocs] }), true);
+    assert.equal(
+      isRegenerableLocalAssets({
+        isLink: false,
+        entries: [{ name: "docs", isFile: false, isEmptyDir: false }],
+      }),
+      false,
+    );
+    // A report name that is a folder or link, a linked local-assets, or an unreadable one: data.
+    assert.equal(
+      isRegenerableLocalAssets({ isLink: false, entries: [{ ...report, isFile: false }] }),
+      false,
+    );
+    assert.equal(isRegenerableLocalAssets({ isLink: true, entries: [report] }), false);
+    assert.equal(isRegenerableLocalAssets(null), false);
+    assert.equal(
+      isRegenerableLocalAssets({ isLink: false, entries: [f("data-questions-report-x.txt")] }),
+      false,
+    );
+  },
+);
+
+// The same rule on a real tree, through the one reader both dirty checks use.
+{
+  const dir = mkdtempSync(join(tmpdir(), "janitor-gaps-"));
+  const other = mkdtempSync(join(tmpdir(), "janitor-gaps-link-"));
+  const g = (...args) =>
+    execFileSync("git", ["-C", dir, ...args], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      env: fixtureGitEnv(),
+    }).trim();
+  const report = "data-questions-report-2026-10-29T14-01-52-983Z.txt";
+  const states = () => {
+    const s = readIgnoredStatus(dir);
+    return {
+      dirty: dirtyFromStatus(s.status, s.ignored),
+      allow: classifyIgnoredForAllowList(s.status, s.ignored),
+    };
+  };
+  try {
+    g("init", "-q", "-b", "master");
+    writeFileSync(join(dir, ".gitignore"), "local-assets/\n.jest-cache/\n");
+    g("add", ".gitignore");
+    g("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "c1");
+    mkdirSync(join(dir, "apps", "api", ".jest-cache"), { recursive: true });
+    writeFileSync(join(dir, "apps", "api", ".jest-cache", "perf-cache-x"), "{}");
+    mkdirSync(join(dir, "local-assets", "docs", "nested"), { recursive: true });
+    writeFileSync(join(dir, "local-assets", report), "report");
+    t(
+      "a tree with only a .jest-cache, verify reports and empty folders is clean in both checks",
+      () => {
+        const s = states();
+        assert.equal(s.dirty, false);
+        assert.deepEqual(s.allow, { dirty: false, salvage: [], blockers: [] });
+      },
+    );
+    writeFileSync(join(dir, "local-assets", "docs", "nested", "register.html"), "<p>");
+    t("a file deep inside an otherwise empty local-assets folder keeps the tree dirty", () => {
+      assert.equal(states().dirty, true);
+    });
+    rmSync(join(dir, "local-assets", "docs"), { recursive: true, force: true });
+    writeFileSync(join(dir, "local-assets", "notes.md"), "mine");
+    t("one other file beside the reports keeps local-assets as data (dirty; salvaged)", () => {
+      const s = states();
+      assert.equal(s.dirty, true);
+      assert.deepEqual(s.allow.salvage, ["local-assets/"]);
+    });
+    rmSync(join(dir, "local-assets"), { recursive: true, force: true });
+    writeFileSync(join(other, report), "report");
+    symlinkSync(other, join(dir, "local-assets"), "junction");
+    t("a LINKED local-assets is never regenerable, even when it holds only reports", () => {
+      const s = states();
+      assert.equal(s.dirty, true);
+      // Windows: git sees the junction as an ignored folder (salvaged). Linux: a symlink is a file
+      // to git, so `local-assets/` does not ignore it and it is untracked (dirty). Never removable.
+      assert.equal(s.allow.dirty || s.allow.salvage.length + s.allow.blockers.length > 0, true);
+    });
+    unlinkSync(join(dir, "local-assets"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(other, { recursive: true, force: true });
+  }
+}
+
+// A lane pushed with `git push origin <branch>` (no -u): no upstream recorded, but origin has it.
+{
+  const origin = mkdtempSync(join(tmpdir(), "janitor-up-origin-"));
+  const dir = mkdtempSync(join(tmpdir(), "janitor-up-"));
+  const run = (cwd, ...args) =>
+    execFileSync("git", ["-C", cwd, ...args], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      env: fixtureGitEnv(),
+    }).trim();
+  const g = (...args) => run(dir, ...args);
+  const commit = (file) => {
+    writeFileSync(join(dir, file), file);
+    g("add", file);
+    g("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", file);
+  };
+  try {
+    run(origin, "init", "-q", "--bare");
+    g("init", "-q", "-b", "master");
+    g("remote", "add", "origin", origin);
+    commit("a");
+    g("checkout", "-q", "-b", "work");
+    commit("b");
+    g("push", "-q", "origin", "work");
+    t("a branch with no upstream but an identical origin branch is pushed", () => {
+      assert.equal(hasUnpushedCommits(dir, "work"), false);
+    });
+    commit("c");
+    t("one commit past the same-named origin branch is unpushed", () => {
+      assert.equal(hasUnpushedCommits(dir, "work"), true);
+    });
+    g("checkout", "-q", "-b", "local-only");
+    t("no upstream and no origin branch of that name is unpushed (unknown is unsafe)", () => {
+      assert.equal(hasUnpushedCommits(dir, "local-only"), true);
+    });
+    // A train merges the branch and deletes its origin ref: the tip is safe on origin/master.
+    g("checkout", "-q", "master");
+    g("checkout", "-q", "-b", "landed");
+    commit("d");
+    g("push", "-q", "origin", "landed:master");
+    t("a tip in origin/master has nothing unpushed, with no origin branch of its own", () => {
+      assert.equal(hasUnpushedCommits(dir, "landed"), false);
+    });
+    t("a branch outside origin/master with no origin branch stays unpushed", () => {
+      assert.equal(hasUnpushedCommits(dir, "local-only"), true);
+    });
+    commit("e");
+    t("one commit past origin/master is unpushed", () => {
+      assert.equal(hasUnpushedCommits(dir, "landed"), true);
+    });
+    // Short ref names would let these look pushed: a tag named like the branch, and a local branch
+    // called "origin/master", both pointing into origin/master's history.
+    g("checkout", "-q", "-b", "tagged");
+    g("tag", "tagged", "origin/master");
+    t("a tag named like the branch does not make an unpushed tip look pushed", () => {
+      assert.equal(hasUnpushedCommits(dir, "tagged"), true);
+    });
+    g("checkout", "-q", "-b", "shadow");
+    g("branch", "origin/master", "shadow");
+    t("a local branch called origin/master does not stand in for the remote one", () => {
+      assert.equal(hasUnpushedCommits(dir, "shadow"), true);
+    });
+    g("checkout", "-q", "--detach");
+    t("a detached tree still has no branch to prove (unknown is unsafe)", () => {
+      assert.equal(hasUnpushedCommits(dir, null), true);
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(origin, { recursive: true, force: true });
+  }
+}
+
 // Smoke: the real CLI runs its report-only path end to end inside a throwaway repo (never --apply).
 {
   const dir = mkdtempSync(join(tmpdir(), "janitor-smoke-"));
@@ -1687,6 +1874,125 @@ if (process.platform === "win32" && CMD_UNSAFE.test(winBase)) {
         "jguard /t/jest_dx/haste-1 /t/jest_dx",
         "log    REFUSED, skipped: /t/jest_dx/haste-1 (nope)",
       ]);
+    },
+  );
+}
+
+// Step 7 on a FILE entry (181 failures in one run): Jest writes plain files into its cache roots
+// (`haste-map-*`, `jest-transform-cache-*`, `perf-cache-*`), and `cmd /c rmdir /s /q <file>` fails with "The directory
+// name is invalid". A file is unlinked; a directory still goes through removeTree; the guard runs first for both.
+{
+  const fileDeps = (calls, { isFile, removeFileThrows = false }) => ({
+    refuseDelete: () => (calls.push("WRONG GUARD"), null),
+    refuseJestCacheDelete: (tg, root) => (calls.push(`jguard ${tg} ${root}`), null),
+    isPlainFile: (tg) => (calls.push(`isPlainFile ${tg}`), isFile),
+    isDirty: () => false,
+    removeTree: (tg) => calls.push(`removeTree ${tg}`),
+    removeFile: (tg) => {
+      calls.push(`removeFile ${tg}`);
+      if (removeFileThrows) throw new Error("EBUSY: resource busy or locked");
+    },
+    removeWorktree: () => {},
+    run: () => {},
+    log: (m) => calls.push(`log ${m}`),
+  });
+  const entry = (name) => ({
+    kind: "jest-cache",
+    target: `/w/apps/api/.jest-cache/${name}`,
+    root: "/w/apps/api/.jest-cache",
+  });
+  t("step 7: a FILE entry is unlinked (never rmdir /s), after its guard", () => {
+    const calls = [];
+    const a = entry("jest-transform-cache-x");
+    assert.equal(execute(a, fileDeps(calls, { isFile: true })), "done");
+    assert.deepEqual(calls, [
+      `jguard ${a.target} ${a.root}`,
+      `isPlainFile ${a.target}`,
+      `removeFile ${a.target}`,
+    ]);
+  });
+  t("step 7: a DIRECTORY entry still goes through removeTree, never a bare unlink", () => {
+    const calls = [];
+    const a = entry("haste-map-old");
+    assert.equal(execute(a, fileDeps(calls, { isFile: false })), "done");
+    assert.deepEqual(calls, [
+      `jguard ${a.target} ${a.root}`,
+      `isPlainFile ${a.target}`,
+      `removeTree ${a.target}`,
+    ]);
+  });
+  t("step 7: a refused file entry is never unlinked", () => {
+    const calls = [];
+    const deps = fileDeps(calls, { isFile: true });
+    deps.refuseJestCacheDelete = () => "nope";
+    assert.equal(execute(entry("perf-cache-x"), deps), "refused");
+    assert.equal(
+      calls.some((c) => c.startsWith("removeFile") || c.startsWith("removeTree")),
+      false,
+    );
+  });
+  t("step 7: a locked file entry is a reported skip, never a failed run", () => {
+    const calls = [];
+    const a = entry("jest-transform-cache-locked");
+    assert.equal(execute(a, fileDeps(calls, { isFile: true, removeFileThrows: true })), "skipped");
+    assert.equal(
+      calls.some((c) => c.includes("SKIPPED")),
+      true,
+    );
+  });
+  t(
+    "step 7: the real isPlainFile is true for a file and false for a directory or a missing path",
+    () => {
+      const dir = realpathSync(mkdtempSync(join(tmpdir(), "janitor-file-entry-")));
+      try {
+        writeFileSync(join(dir, "f"), "x");
+        mkdirSync(join(dir, "d"));
+        assert.equal(EXECUTE_DEPS.isPlainFile(join(dir, "f")), true);
+        assert.equal(EXECUTE_DEPS.isPlainFile(join(dir, "d")), false);
+        assert.equal(EXECUTE_DEPS.isPlainFile(join(dir, "gone")), false);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+  t(
+    "step 7 sandbox: a stale FILE and a stale directory entry are both swept on the real filesystem",
+    () => {
+      const sandbox = realpathSync(mkdtempSync(join(tmpdir(), "janitor-file-sweep-")));
+      try {
+        const old = new Date(Date.now() - (JEST_CACHE_AGE_DAYS + 5) * 86_400_000);
+        const root = join(sandbox, "wt", "apps", "api", ".jest-cache");
+        mkdirSync(root, { recursive: true });
+        const file = join(root, "jest-transform-cache-old");
+        writeFileSync(file, "x");
+        utimesSync(file, old, old);
+        const dir = join(root, "haste-map-old");
+        mkdirSync(dir);
+        writeFileSync(join(dir, "data"), "x");
+        utimesSync(join(dir, "data"), old, old);
+        utimesSync(dir, old, old);
+        writeFileSync(join(root, "jest-transform-cache-new"), "fresh");
+        const actions = planJestCacheActions([root], Date.now());
+        assert.deepEqual(actions.map((a) => a.target).sort(), [dir, file].sort());
+        const deps = {
+          refuseDelete: () => "WRONG GUARD",
+          refuseJestCacheDelete: (tg, r) =>
+            jestCacheDeleteRefusal(realpathSync(tg), [realpathSync(r)]),
+          isPlainFile: EXECUTE_DEPS.isPlainFile,
+          isDirty: () => false,
+          removeTree: (tg) => safeRemoveTree(tg),
+          removeFile: EXECUTE_DEPS.removeFile,
+          removeWorktree: () => {},
+          run: () => {},
+          log: () => {},
+        };
+        for (const a of actions) assert.equal(execute(a, deps), "done", a.target);
+        assert.equal(existsSync(file), false, "stale file swept");
+        assert.equal(existsSync(dir), false, "stale directory swept");
+        assert.equal(existsSync(join(root, "jest-transform-cache-new")), true, "fresh file kept");
+      } finally {
+        rmSync(sandbox, { recursive: true, force: true });
+      }
     },
   );
 }

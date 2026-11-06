@@ -24,7 +24,7 @@ const STOP = (over: Partial<RouteRunStop> = {}): RouteRunStop => ({
 /**
  * PHASE 1a — red-first pins for the stop sheet: Start/Skip call the right
  * endpoint with the right status, Skip confirms first, and the 1b slot is a
- * real (disabled) placeholder rather than a working money-collecting flow.
+ * (retired) placeholder; SA-1098 PR-2 replaced it with Delivered / Refused (StopSheet.deliver.test.tsx).
  */
 describe("StopSheet (PHASE 1a)", () => {
   beforeEach(() => {
@@ -133,19 +133,11 @@ describe("StopSheet (PHASE 1a)", () => {
     );
   });
 
-  it("REG-1a: the 1b money-collecting slot is a disabled placeholder, not a working action", () => {
+  it("SA-1098: no placeholder and no link out to the driver app remain", () => {
     renderWithProviders(<StopSheet stop={STOP()} runId="run-1" onClose={jest.fn()} />);
-    expect(
-      screen.getByRole("button", { name: "Delivered / Refused / Collect payment" }),
-    ).toBeDisabled();
-  });
-
-  it("REG-1a: 'Finish in the app' links to the driver app's login screen", () => {
-    renderWithProviders(<StopSheet stop={STOP()} runId="run-1" onClose={jest.fn()} />);
-    expect(screen.getByRole("link", { name: /finish in the app/i })).toHaveAttribute(
-      "href",
-      "https://routeflowmobile-production.up.railway.app/login",
-    );
+    expect(screen.queryByText(/Collect payment/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Coming soon/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /finish in the app/i })).not.toBeInTheDocument();
   });
 
   it("REG-1a: Start stop is disabled once the stop is no longer PENDING", () => {
@@ -153,6 +145,26 @@ describe("StopSheet (PHASE 1a)", () => {
       <StopSheet stop={STOP({ status: "IN_PROGRESS" })} runId="run-1" onClose={jest.fn()} />,
     );
     expect(screen.getByRole("button", { name: "Start stop" })).toBeDisabled();
+  });
+
+  // SA-1101 §4.2: a wholly refused order reads Refused beside its done stop, never Completed or Delivered.
+  it("a REFUSED order on a completed stop shows Refused; a DELIVERED one still shows Completed", () => {
+    renderWithProviders(
+      <StopSheet
+        stop={STOP({
+          status: "COMPLETED",
+          orders: [
+            { id: "o1", orderNumber: "SO-1001", status: "REFUSED" },
+            { id: "o2", orderNumber: "SO-1002", status: "DELIVERED" },
+          ],
+        })}
+        runId="run-1"
+        onClose={jest.fn()}
+      />,
+    );
+    expect(screen.getAllByText("Refused")).toHaveLength(1);
+    expect(screen.getAllByText("Completed")).toHaveLength(1);
+    expect(screen.queryByText("Delivered")).not.toBeInTheDocument();
   });
 
   it("REG-1a: Skip is disabled once the stop is already COMPLETED or SKIPPED", () => {

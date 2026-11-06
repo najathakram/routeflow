@@ -597,4 +597,31 @@ describe("Undo on every add (SA-1071 V3)", () => {
     await waitFor(() => expect(removes().length).toBeGreaterThan(0));
     expect(screen.queryByTestId("last-pick-undo")).toBeNull();
   });
+
+  const pickRecent = async (label: RegExp) => {
+    fireEvent.click(screen.getByRole("button", { name: "Order again" }));
+    const menu = await screen.findByRole("list", { name: "Choose a recent order" });
+    fireEvent.click(within(menu).getByRole("button", { name: label }));
+  };
+
+  it("W-1092: Order again with Add lines takes the last pick's Undo away", async () => {
+    await openWithCustomer();
+    tapCola();
+    expect(await screen.findByTestId("last-pick-undo")).toBeInTheDocument();
+    await pickRecent(/ORD-o2/);
+    fireEvent.click(screen.getByRole("button", { name: "Add lines" }));
+    await waitFor(() => expect(removes().length).toBeGreaterThan(1));
+    expect(screen.queryByTestId("last-pick-undo")).toBeNull();
+  });
+
+  it("W-1092: Order again on an empty order doesn't bring back the Undo of a line removed by hand", async () => {
+    await openWithCustomer();
+    tapCola();
+    expect(await screen.findByTestId("last-pick-undo")).toBeInTheDocument();
+    fireEvent.click(removes()[0]);
+    await waitFor(() => expect(removes()).toHaveLength(0));
+    await pickRecent(/ORD-o1/);
+    await waitFor(() => expect(removes().length).toBeGreaterThan(0));
+    expect(screen.queryByTestId("last-pick-undo")).toBeNull();
+  });
 });

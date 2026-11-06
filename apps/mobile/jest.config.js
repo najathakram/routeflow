@@ -53,6 +53,9 @@ module.exports = {
     // lib/internal-email.ts re-exports the SUBPATH module — resolve that one to
     // SOURCE, same as pricing/scanning/returns.
     "^@routeflow/types/internal-email$": "<rootDir>/../../packages/types/internal-email.ts",
+    // SA-1098 PR-2a: the stop-completion key rule, shared with the web driver screen (package root is stubbed).
+    "^@routeflow/types/stop-completion-key$":
+      "<rootDir>/../../packages/types/stop-completion-key.ts",
     // SA-714: the pure staff "Backorder" tag rule, same subpath trick (the package root is stubbed).
     "^@routeflow/types/order-line-backorder$":
       "<rootDir>/../../packages/types/order-line-backorder.ts",
@@ -89,6 +92,8 @@ module.exports = {
     // SA-817 A: the one persisted-submit-key rule for a draft (pure, no imports), same subpath trick.
     "^@routeflow/types/draft-submit-key$": "<rootDir>/../../packages/types/draft-submit-key.ts",
     // Row 505: the fulfilment capability shape + UNSET fallback (pure, no imports), same subpath trick.
+    // SA-1101: the shared terminal-order-status lists (pure, no imports), same subpath trick.
+    "^@routeflow/types/api/enums$": "<rootDir>/../../packages/types/api/enums.ts",
     "^@routeflow/types/api/restrictions$": "<rootDir>/../../packages/types/api/restrictions.ts",
     "^@routeflow/types/api/fulfilment$": "<rootDir>/../../packages/types/api/fulfilment.ts",
     "^expo-secure-store$": "<rootDir>/__tests__/__mocks__/expo-secure-store.js",

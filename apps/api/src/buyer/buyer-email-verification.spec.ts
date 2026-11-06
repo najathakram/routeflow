@@ -9,6 +9,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { AppleOAuthService } from "../auth/apple-oauth.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { mockClaimTransaction } from "../testing/link-claim-tx";
 
 jest.mock("bcrypt", () => ({ compare: jest.fn(), hash: jest.fn() }));
 
@@ -162,26 +163,33 @@ describe("BuyerAuthService — registration email verification", () => {
     });
 
     beforeEach(() => {
-      (prisma.$transaction as jest.Mock).mockImplementation((ops: any[]) =>
-        Promise.all(ops.map(() => ({}))),
-      );
+      mockClaimTransaction(prisma);
+      prisma.buyerEmailVerificationToken.updateMany.mockResolvedValue({ count: 1 } as any);
     });
 
-    it("marks the token used and flips emailVerified in one transaction", async () => {
+    it("claims the token with its own predicate and flips emailVerified in one transaction", async () => {
       prisma.buyerEmailVerificationToken.findUnique.mockResolvedValue(baseRecord as any);
 
       const result = await service.verifyEmail(rawToken);
 
       expect(result.message).toContain("Email verified");
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
-      expect(prisma.buyerEmailVerificationToken.update).toHaveBeenCalledWith({
-        where: { tokenHash: fakeHash },
+      expect(prisma.buyerEmailVerificationToken.updateMany).toHaveBeenCalledWith({
+        where: { tokenHash: fakeHash, usedAt: null, expiresAt: { gt: expect.any(Date) } },
         data: { usedAt: expect.any(Date) },
       });
       expect(prisma.buyerAccount.update).toHaveBeenCalledWith({
         where: { id: "buyer-1" },
         data: { emailVerified: true },
       });
+    });
+
+    it("a lost claim (count 0) does not verify the email", async () => {
+      prisma.buyerEmailVerificationToken.findUnique.mockResolvedValue(baseRecord as any);
+      prisma.buyerEmailVerificationToken.updateMany.mockResolvedValue({ count: 0 } as any);
+
+      await expect(service.verifyEmail(rawToken)).rejects.toThrow(BadRequestException);
+      expect(prisma.buyerAccount.update).not.toHaveBeenCalled();
     });
 
     it("throws 400 when the token is not found", async () => {

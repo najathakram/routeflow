@@ -1,4 +1,5 @@
 import { InvoiceStatus } from "@prisma/client";
+import { ORDER_LINE_PRODUCT_SELECT } from "./invoice-line-name";
 
 /**
  * Extracted verbatim from InvoicesService (SA-760 R-1 / SA-763r P-3: invoices.service.ts is held under its
@@ -62,14 +63,7 @@ export async function reconcileSplitOrderDrafts(
         where: { status: { not: "CANCELLED" } },
         include: {
           components: { orderBy: { position: "asc" } },
-          product: {
-            select: {
-              name: true,
-              unitsPerBox: true,
-              trackedCategoryId: true,
-              trackedSubcategoryId: true,
-            },
-          },
+          product: { select: ORDER_LINE_PRODUCT_SELECT },
         },
       },
     },

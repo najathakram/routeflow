@@ -12,6 +12,7 @@ import {
   invoiceFingerprint,
 } from "./invoice-send-state";
 import { resolveInvoiceVariant } from "./invoice-stage";
+import { LINE_NAME_PRODUCT_SELECT } from "./invoice-line-name";
 
 /**
  * SA-860 (W-702): the ONE read an issuing/re-sent invoice email is built from. The PDF, the email payload and the send
@@ -40,7 +41,7 @@ export const SEND_SNAPSHOT_INCLUDE = {
       product: {
         select: {
           id: true,
-          name: true,
+          ...LINE_NAME_PRODUCT_SELECT, // name, variantName and the family's name: a variant line prints "<Family> - <Variant>"
           barcode: true,
           sku: true,
           unitSku: true,

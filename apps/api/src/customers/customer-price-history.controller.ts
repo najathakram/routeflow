@@ -7,7 +7,7 @@ import { Roles } from "../auth/decorators/roles.decorator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
-import { operatorDeniedGroups } from "../orders/counter-sale/till-permission.guard";
+import { operatorDeniedGroups } from "../auth/permissions/operator-denied-groups";
 import { PrismaService } from "../prisma/prisma.service";
 import { CustomerPriceHistoryService } from "./customer-price-history.service";
 

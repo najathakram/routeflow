@@ -136,13 +136,6 @@
 - **Lesson:** **Every Expo web export used for a proof or a deploy runs `npx expo export --platform web --clear`, then greps `dist/_expo/static/js/web/*.js` for the exact API base URL and the full build sha before any capture. A substring check like "3310" is not proof: grep the whole value.**
 - **Guard:** none automatic; the sign-in screen's `build <sha7>` (`lib/build-info.ts`) is the on-screen check. Cf. [[L-265]] (stale build output in a proof).
 
-### L-265 · 2026-10-06 · tooling · a `next dev` proof leaves `apps/web/.next/types`, which breaks the web type-check in pre-push; wipe `apps/web/.next` before committing or pushing
-
-- **Symptom:** three builders (#3233, #3238, #3223, 2026-10-06) ran the app under `next dev` to prove a change, then their pre-push `check-types -w apps/web` failed on errors from generated files, none in the diff.
-- **Root cause:** `next dev` writes route type stubs under `apps/web/.next/types`, and `apps/web/tsconfig.json` includes `.next/types/**/*.ts`, so `tsc --noEmit` compiles them; a stub for a route this branch changed or removed no longer matches the tree.
-- **Lesson:** **After any `next dev` proof, run `rm -rf apps/web/.next` before committing or pushing (and again before the next proof, so the server never serves stale output). The type-check gate must see source only.**
-- **Guard:** none automatic; propose `check-types -w apps/web` clearing `.next/types` first, or a pre-push step that fails on a leftover `apps/web/.next`.
-
 ## testing
 
 ### L-366 · 2026-10-31 · testing · a wrapper must accept only values its inner guard accepts; a safety guard is never widened to fit the wrapper
@@ -159,19 +152,12 @@
 - **Lesson:** **A pin that reads source text must handle every shape the repo writes (template expressions included), and its own spec must feed it the repo's real shapes. When a static pin goes red on a new file inside a train, change the source to a shape the pin reads (string concatenation, same classes); never edit the pin or its spec in the train.**
 - **Guard:** the by-hand train pre-check set runs the web static pins (`apps/web/app/*.static.test.ts`) before the long verify, so a red surfaces early. Cf. [[L-322]], [[L-323]].
 
-### L-363 · 2026-10-31 · testing · a timing-based spec goes red under slot load and passes alone; record it, rerun on the same tree, rule per spec, and never edit it inside a train
-
-- **Symptom:** the heavy-slot self-test (a 120 s cap), the lock-timeout concurrency specs and the bugs self-test's concurrency check went red in a train verify while the slot was loaded, and passed when run alone.
-- **Root cause:** each measures wall-clock time or concurrency; load stretches the run past its bound, so red there says the machine was busy, not that a member broke anything. Loosening the bound inside the train would change the gate under test.
-- **Lesson:** **On a red timing spec, record the evidence (spec, duration, slot load), rerun that spec alone on the SAME tree and sha, and rule per spec: green alone is a load flake, red alone is a defect. Do not edit or loosen a spec inside a train; file it for its own PR.**
-- **Guard:** none automatic; the train PR body lists each rerun and its ruling. Cf. [[L-359]], [[L-353]].
-
 ### L-353 · 2026-10-29 · testing · a spec with literal fixture dates, over code that reads the real clock, turns master red on a calendar date with no commit
 
 - **Symptom:** a train push went red on master's own billing spec (5 of 109 cases) although no commit had touched it; the train's members were suspected first.
 - **Root cause:** the code reads `new Date()` for a 72-hour floor while the spec billed a literal future date, so the case flipped once the wall clock passed the floor. Member passes were days old and nobody had run bare master that day.
 - **Lesson:** **When code under test reads the clock, pin it (`jest.useFakeTimers().setSystemTime(NOW)`) or derive every fixture date from that NOW; a literal future date is a failure with a date on it. Before assembling a train, run the gate on bare `origin/master` first, so a red that is master's own is fixed on its own and never charged to a member.**
-- **Guard:** the clock pin on the payment-due specs (5f6b2290b, train W26); the train pre-check of LEAD-LOG 2026-10-29 #3799. Cf. L-290, L-335.
+- **Guard:** the clock pin on the payment-due specs (5f6b2290b, train W26); the train pre-check of LEAD-LOG 2026-10-29 #3799. Cf. L-290, L-335. Extended 2026-11-01 (train q): two billing specs left the clock real, and the checkout anchor refuses a start within 91 minutes of the 1st at 12:00Z, so every api Verify that reached them between 10:29Z and 12:00Z on that day failed (33 tests, 2 suites) while the code was right; a run before 10:29Z had passed. Pin the clock in each spec whose subject reads it (`apps/api/src/testing/pin-clock.ts`, #4084), and when a month-boundary window exists, expect the red on the 1st and 2nd, not only on the day a commit lands.
 
 ### L-322 · 2026-10-20 · testing · a move-only extraction re-runs the static source-pin specs, and the pin reads the moved files too
 
@@ -186,13 +172,6 @@
 - **Root cause:** an affected-only run selects specs by the files a branch touches; a scan that walks the whole repo has no dependency edge to the changed file, so it is never selected.
 - **Lesson:** **Treat the fast or affected run as a convenience, not a gate. A train or merge gate runs the repo-wide scans in full (`FULL_VERIFY=1`) on the landing tree, whatever the members ran alone.**
 - **Guard:** `FULL_VERIFY=1` in the train gate; none automatic for a single branch. Cf. [[L-290]]. Extended 2026-10-21: a builder's targeted gate (touched specs only) missed three whole-source structural pins in one night (an "only N callers" billing pin, an "every DB-writing script is guarded or exempt" guard, a mobile source-regex pin), because pins live outside the touched files. Before reporting, a builder runs the WHOLE jest of every touched workspace (through the heavy slot, [[L-325]]).
-
-### L-324 · 2026-10-20 · testing · a long serial DB spec lane is run in batches, never one Jest process
-
-- **Symptom:** the DB-backed lane (about 325 suites run serially) was killed with an out-of-memory error at roughly 130 suites on the Mac mini.
-- **Root cause:** one Jest process keeps module registries and Prisma clients across suites, so memory grows with the suite count until the machine kills it.
-- **Lesson:** **Run the DB lane in chunks (a fixed number of suites per Jest process, each against the same migrated database), and treat an OOM at a stable suite count as a batching problem, not a flaky test. Re-run only the failed chunk.**
-- **Guard:** none automatic; the chunked invocation in the lane runbook.
 
 ### L-326 · 2026-10-20 · testing · a migration that retires a known edge updates, in the same train, every spec that pins the edge's old behavior
 
@@ -230,6 +209,20 @@
 - **Guard:** none automatic; the install order in [[L-254]] (`npm ci --ignore-scripts`, `prisma generate`, build `packages/*`), `npm run local:drift` against the compose DB, and the executed-query rule. Cf. archived L-176. Extended 2026-10-21: a DB-backed spec that needs reference data (a published plan catalog) passed on a seeded dev database and failed in CI's fresh replay database. A DB spec seeds the reference data it needs through the shipped idempotent publishers, behind the local-DB guard, and is proved once against an empty migrated database.
 
 ## domain
+
+### L-369 · 2026-11-05 · domain · a tenant-scoped accessor never degrades to the unscoped client; with no business in context a secret read and every write throw
+
+- **Symptom:** a business's own API key sat as plaintext in a shared config row (written before the encryption existed), so it was also in every database backup; and the config service, asked for a value with no business in context, handed back the unscoped client, so a read or a write could land on another business's row.
+- **Root cause:** `forTenant()` returned the unscoped client when no tenant id was set instead of refusing, and each AI call site resolved its own key, so there was no single place that asked "which business, whose key, how much spent".
+- **Lesson:** **An accessor that is tenant-scoped by contract throws a coded error when the tenant is missing; it never falls back to the unscoped client. Secret reads and every write refuse; other reads may continue with one warning per key. Put every call that spends on a shared key behind one entry (business, key, budget, model, in that order), call its tenant check as the first statement of each caller, and pin the caller list with a census that fails a new site.**
+- **Guard:** `system-config-callers.census.spec.ts` (NONE = 0), `system-config.tenant-required.db.spec.ts`, `secret-keys.pin.spec.ts`, `ai-call-sites.census.spec.ts`, `ai-sites.tenant-first.spec.ts`; `report-plaintext-secrets.mjs` counts legacy rows. Cf. [[L-349]] (prove every id is in the tenant), [[L-368]] (one shared predicate).
+
+### L-368 · 2026-11-05 · domain · a guard that asks "does a document stand on this order" counts every link that ties a document to it, through one shared predicate
+
+- **Symptom:** a guard refused to move an order while a live return stood on it, yet an inline return raised on another order let the sold-from order through; the goods were already restocked and a later cancel credited stock twice.
+- **Root cause:** the guard counted `Return.orderId` only. For an inline return that is the carrying order; the order the goods were sold on is `ReturnItem.sourceOrderId`. The header link and the line link are two answers to one question.
+- **Lesson:** **Write the "is there a live X on these orders" test once, as a predicate that names every link (header key and line source key, dead statuses excluded), and make every guard count through it. Before trusting a guard, list each way a document can be tied to the row and write a red case for the link the author did not think of.**
+- **Guard:** `liveReturnWhere` in `returns/live-return-guard.ts`; `live-return-guard.spec.ts` RO-36, the DB rows RO-31..35 and the three-caller census `live-return-guard.structure.spec.ts`. Cf. [[L-223]] (sweep every emit site, not the named ones).
 
 ### L-351 · 2026-10-29 · domain · a business day (due, overdue, expiry, default date) is the tenant's calendar day, judged by one shared rule; host and browser zones never decide it
 
@@ -373,6 +366,13 @@
 - **Lesson:** **A strict Referrer-Policy changes what `Origin` a form POST carries. An Origin-equals-Host check must either accept `Origin: null` only when `Sec-Fetch-Site: same-origin` is also present, or the page must not use `no-referrer` for its own forms. Test the real form submit in a browser, never a hand-built request with a correct Origin.**
 - **Guard:** none automatic yet; prove any CSRF or header change with a browser form submit. Fixed in `apps/control` (`Referrer-Policy: same-origin`; `originOk` accepts `Origin: null` only with `Sec-Fetch-Site: same-origin`), pinned by `apps/control/test/login-origin.spec.ts`.
 
+### L-188 · 2026-09-17 · security · demo-booking OAuth/booking tokens in URL query strings
+
+- **Symptom:** an OAuth/booking token traveled as a URL query parameter, the exact shape that ends up in server access logs, browser history, `Referer` headers, and analytics scripts.
+- **Root cause:** a query string is the easiest place to carry a value across a redirect, but also the least private transport HTTP offers.
+- **Lesson:** **Never carry an OAuth token, booking token, or any other bearer-shaped secret in a URL query string; use a fragment (`#`, never sent to the server) for a client-side handoff, or a POST body for a server-side one.**
+- **Guard:** none yet; propose a lint/review checklist item flagging `token`/`code`/`secret`-named query params on any new route. Restored 2026-11-01 (it was archived on 2026-10-31 for room): this is a rule about RouteFlow's own routes, and the agent privacy rules cover what an agent does with URLs, not what the app puts in them.
+
 ## deploy
 
 ### L-367 · 2026-10-31 · deploy · a hosted job's timeout is sized from its measured stages with headroom; a cancelled run is read by its annotation, and a local verify red mid-chain hides every later step
@@ -401,7 +401,7 @@
 - **Symptom:** two windows closed with CI still running and landed one PR between them; waits for CI burned the 45-minute watchdog.
 - **Root cause:** windows were sized to CI wait plus merges. A run that starts while the repo is public keeps running after the flip, but a run that starts on a private repo fails on billing.
 - **Lesson:** **Start every CI run at window open, close on the watchdog, and spend the window on merge, deploy SUCCESS and the private read-back. Never flip on BUILDING.**
-- **Guard:** none automatic; the window sheet lists CI start times next to the merge order. Cf. [[L-003]]. A watchdog left running from a window that never opened blocks a fresh start and costs the wait: read visibility first, and if it reads PRIVATE replace the idle watchdog (no public time is added); if it reads PUBLIC, never replace, stop and ask. Extended 2026-10-31: never flip private while a train's hosted CI run is in progress unless the watchdog forces it. A hosted job was cancelled about 3 minutes after the flip with every real step already passed and only the post-run step cancelled; a cancelled run is not green, so read the run's conclusion (as [[L-337]] refuses CANCELLED), and a second short window may re-run the failed job.
+- **Guard:** none automatic; the window sheet lists CI start times next to the merge order. Cf. [[L-003]]. A watchdog left running from a window that never opened blocks a fresh start and costs the wait: read visibility first, and if it reads PRIVATE replace the idle watchdog (no public time is added); if it reads PUBLIC, never replace, stop and ask. Extended 2026-10-31: never flip private while a train's hosted CI run is in progress unless the watchdog forces it. A hosted job was cancelled about 3 minutes after the flip with every real step already passed and only the post-run step cancelled; a cancelled run is not green, so read the run's conclusion (as [[L-337]] refuses CANCELLED), and a second short window may re-run the failed job. Extended 2026-11-01 (train n): push the train branch while the repo is still private, before the watchdog starts (the pre-push fast verify takes minutes, none of them public), then open the window with the branch already on origin. A docs-only PR (only `.claude/**`, `docs/**` or `**.md`) gets no CI run in any window, because `ci.yml` `paths-ignore` skips it and a close/reopen fires nothing; its gate is the read PASS plus MERGEABLE/CLEAN, so do not promise it CI. Extended 2026-11-01 (train o): a Verify attempt that started in window 1 and was still running at the private flip hit the 45-minute limit (annotation: exceeded the maximum execution time) with nothing red; the failed-job re-run in window 2 passed in 23m44s on the same sha, while Migration replay and Control, which had finished inside window 1, stayed green. Re-run only the failed job in the next window and report the check-run annotation, not just `cancelled`. Extended 2026-11-01 (train q): flip public with `node tools/ci-runner/check-no-runner.mjs && gh repo edit ...`; the check refuses when GitHub cannot be read (a TLS timeout did once), so retry the check rather than bypass it, and open the train PR only after the repo reads PUBLIC, because a run that starts seconds before the flip dies as 2-second billing reds and needs a re-run.
 
 ### L-282 · 2026-10-08 · deploy · a feature PR never adds or changes tenants or rows in the shared e2e seed that runs against production
 

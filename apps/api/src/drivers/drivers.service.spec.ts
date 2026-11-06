@@ -320,6 +320,28 @@ describe("DriversService", () => {
 
       expect(prisma.driverLocation.create).not.toHaveBeenCalled();
     });
+
+    // B1106 / SA-1105 PR B: the runId is caller-supplied and an FK is no tenant proof, so a run of another business
+    // must be the same 404 as a missing one, with nothing written.
+    it("a runId outside the caller's tenant is a 404 'Run not found' and writes no location row", async () => {
+      prisma.routeRun.findMany.mockResolvedValue([]); // the tenant-scoped read finds nothing
+
+      const err = await service
+        .recordLocation("user-drv", { ...baseDto, runId: "run-of-another-tenant" })
+        .catch((e) => e);
+
+      expect(err).toBeInstanceOf(NotFoundException);
+      expect(err.message).toBe("Run not found");
+      expect(prisma.driverLocation.create).not.toHaveBeenCalled();
+    });
+
+    it("a runId inside the caller's tenant is stored as before", async () => {
+      prisma.routeRun.findMany.mockResolvedValue([{ id: "run-1" }]);
+
+      await service.recordLocation("user-drv", { ...baseDto, runId: "run-1" });
+
+      expect(prisma.driverLocation.create.mock.calls[0][0].data.runId).toBe("run-1");
+    });
   });
 
   // ─── admin-target check on edits (B1061, same rule as remove and the users module) ─────

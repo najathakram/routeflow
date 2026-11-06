@@ -1,62 +1,57 @@
 /**
- * TP-E2E — marketing interface port + logo update (spec 36), project "marketing".
+ * TP-E2E — public site (spec 36), project "marketing".
  *
  * Proves (post-deploy only, per test-plan.md "Harness notes" — NEVER run locally):
- *   T1  (R1 R2 R3 R8 R9 R12) — the 9 public routes render the port's copy/chrome.
- *   T2  (R2 R7 R8 R14)       — mobile (375) chrome + interactive pieces.
- *   T3  (R3)                 — every internal link on the 9 pages resolves.
- *   T12 (R11)                — a mobile UA still gets the marketing site on /pricing.
- *   T13 (R7 R14)             — below-the-fold sections reveal on scroll / reduced motion.
+ *   T1  — the pages under the public site header and footer render (Company, Contact, Privacy,
+ *         Terms), the 404 page wears the same header, and Contact is email only.
+ *   T2  — the phone menu on the React pages opens, and no public page scrolls sideways.
+ *   T2c — every old address redirects to its new home, and /faq lands on the home FAQ.
+ *   T3  — every internal link on the public pages resolves.
+ *   T12 — a mobile UA still gets the site on /pricing.
+ *   T13b — visit counts (Umami) reach the counted pages and /signup only.
+ *   T16 — head, share image and sitemap. T17 — heading order. T19 — the ready-made pages.
  *
- * CAPTURE NOTE: editorial-motion.tsx hides every reveal target below the fold
- * (.reveal-pending => opacity 0) until the IntersectionObserver fires, and a
- * full-page screenshot does not scroll. Any screenshot used to JUDGE the
- * below-fold sections must first scroll the page to the bottom, or run with
- * page.emulateMedia({ reducedMotion: "reduce" }) — otherwise those sections
- * capture blank (or mid-fade) and nothing about them can be judged.
+ * Company, Contact, Pricing, Product, Home, Landing and the four deep pages are ready-made HTML
+ * (public/site) served by rewrites in next.config.mjs. /privacy and /terms are React pages that
+ * wear the same header and footer (components/site-frame). The old React pages (/wholesalers,
+ * /retailers, /book-a-demo, /sign-in) are gone and redirect.
  *
- * Signed-out throughout — no storageState, dependencies: [] on the "marketing"
- * project (playwright.config.ts). H1 copy is quoted verbatim from
- * local-assets/handoff/2026-09-06/redesign/marketing-inventory-redesign.md
- * (M1 §1-§3), except /privacy and /terms which use spec.md R9's INTERIM copy
- * ("Privacy information" / "Terms information") — R9 deliberately supersedes
- * M1 §2g's preview-banner placeholder text.
- *
- * Fails TODAY: none of the 9 routes serve the redesign yet (old marketing
- * site is still deployed), so every h1/nav/footer/mobile-sheet/tab/FAQ/link
- * assertion below misses on its own concrete value, and /pricing under a
- * mobile UA is still rewritten to the mobile build (R11 unfixed).
+ * Signed-out throughout — no storageState, dependencies: [] on the "marketing" project
+ * (playwright.config.ts).
  */
-import { test, expect, devices } from "@playwright/test";
+import { test, expect, devices, type BrowserContext, type Page, webkit } from "@playwright/test";
 
-// M1 §1 (home), §2a-§2f (dynamic slugs), §3 (404) — verbatim H1 text, italics
-// flattened (Playwright's toHaveText normalises whitespace, not markup, but
-// there is no markup left once innerText is read). /privacy + /terms per R9.
+// The pages that wear the site header and footer, with their one h1.
 const H1_BY_ROUTE: Record<string, string> = {
-  "/": "Turn scattered orders into organized deliveries.",
-  "/product": "Orders. Deliveries. Accounts. Finally, connected.",
-  "/wholesalers": "Get your team out of the daily delivery scramble.",
-  "/retailers": "Restock your shelves. Skip the back and forth.",
-  "/pricing": "A plan that fits your working day.",
-  "/company": "For the people who keep local shelves stocked.",
-  "/contact": "Let’s talk about your delivery day.",
-  "/privacy": "Privacy information",
-  "/terms": "Terms information",
+  "/company": "We make wholesalers’ lives easier.",
+  "/contact": "Email us.",
+  "/privacy": "Privacy Policy",
+  "/terms": "Terms of Service",
 };
 
 const PUBLIC_ROUTES = Object.keys(H1_BY_ROUTE);
 
-// M1 §4 site-header.tsx nav array — Contact is deliberately absent from the
-// primary nav (R2, spec.md's port-notes call this out explicitly).
-const NAV_ITEMS = ["Platform", "Distributors", "Retailers", "Pricing", "Company"];
+// The home, pricing, product, landing and four deep pages are ready-made HTML (public/site), served by
+// rewrites: their own header and footer. T19 covers them, and so does Company and Contact.
+const READY_MADE_ROUTES = [
+  "/",
+  "/pricing",
+  "/product",
+  "/landing",
+  "/getting-started",
+  "/does-and-doesnt",
+  "/data-in-and-out",
+  "/security",
+];
 
-// ─── T1 — the 9 public routes (R1 R2 R3 R8 R9 R12) ──────────────────────────
+// components/site-frame/site-frame-nav.ts (NAV_LINKS), the same list the ready-made pages carry.
+const NAV_ITEMS = ["Product", "Use cases", "For stores", "Pricing", "Getting started", "Company"];
 
-test.describe("T1 — public routes render the port's chrome + copy (R1 R2 R3 R8 R9 R12)", () => {
+// ─── T1 — the pages under the site header and footer ────────────────────────
+
+test.describe("T1 — public pages share one header and footer", () => {
   for (const route of PUBLIC_ROUTES) {
-    test(`T1 — ${route}: 200, one h1 = M1 headline, header nav + footer chrome`, async ({
-      page,
-    }) => {
+    test(`T1 — ${route}: 200, one h1, header nav + footer chrome`, async ({ page }) => {
       const response = await page.goto(route);
       expect(response?.status(), `${route} status`).toBe(200);
 
@@ -64,7 +59,13 @@ test.describe("T1 — public routes render the port's chrome + copy (R1 R2 R3 R8
       await expect(h1, `${route} renders exactly one h1`).toHaveCount(1);
       await expect(h1).toHaveText(H1_BY_ROUTE[route]!);
 
-      const nav = page.getByRole("navigation", { name: "Primary" });
+      // At 1080px and below the header nav is hidden and the same links live in the phone menu.
+      const menuButton = page.locator("header.site-header .menu-btn");
+      let nav = page.locator("header.site-header ul.nav-links");
+      if (await menuButton.isVisible()) {
+        await menuButton.click();
+        nav = page.locator("#mobile-menu");
+      }
       for (const item of NAV_ITEMS) {
         await expect(
           nav.getByRole("link", { name: item, exact: true }),
@@ -72,50 +73,78 @@ test.describe("T1 — public routes render the port's chrome + copy (R1 R2 R3 R8
         ).toBeVisible();
       }
 
-      const footer = page.locator("footer");
-      await expect(footer.getByRole("link", { name: "Privacy", exact: true })).toBeVisible();
-      await expect(footer.getByRole("link", { name: "Terms", exact: true })).toBeVisible();
+      const header = page.locator("header.site-header");
+      await expect(header.getByRole("link", { name: "Start free trial" }).first()).toHaveAttribute(
+        "href",
+        "/signup",
+      );
+
+      const footer = page.locator("footer.site-footer");
+      await expect(footer.getByRole("link", { name: "Privacy Policy", exact: true })).toBeVisible();
+      await expect(
+        footer.getByRole("link", { name: "Terms of Service", exact: true }),
+      ).toBeVisible();
+      await expect(
+        footer.getByRole("link", { name: "Store sign in", exact: true }),
+      ).toHaveAttribute("href", "/buyer/login");
     });
   }
 
-  test("T1 — /distributors redirects to /wholesalers (307/308)", async ({ request }) => {
-    const response = await request.get("/distributors", { maxRedirects: 0 });
-    expect([307, 308], `/distributors status was ${response.status()}`).toContain(
-      response.status(),
-    );
-    const location = response.headers()["location"] ?? "";
-    expect(location.endsWith("/wholesalers"), `redirect Location was "${location}"`).toBe(true);
-  });
-
-  test("T1 — a bogus marketing path 404s with the port's not-found H1", async ({ page }) => {
+  test("T1 — a bogus path 404s under the site header, with a way back home", async ({ page }) => {
     const response = await page.goto("/this-page-does-not-exist-e2e-36");
     expect(response?.status()).toBe(404);
-    await expect(page.locator("h1")).toHaveText("Let’s get you back on track.");
+    await expect(page.locator("h1")).toHaveText("We can’t find that page.");
+    await expect(page.locator("header.site-header")).toBeVisible();
+    await expect(page.locator('main a[href="/"]').first()).toBeVisible();
   });
 
-  test("T1 — /privacy opts out of indexing (robots noindex, follow)", async ({ page }) => {
-    await page.goto("/privacy");
-    const robots = page.locator('meta[name="robots"]');
-    await expect(robots).toHaveAttribute("content", /noindex/i);
-    await expect(robots).toHaveAttribute("content", /follow/i);
+  for (const route of ["/privacy", "/terms"]) {
+    test(`T1 — ${route} wears the site header and carries the legal text`, async ({ page }) => {
+      await page.goto(route);
+      await expect(page.locator("header.site-header")).toBeVisible();
+      await expect(page.locator(".rf-legal")).toBeVisible();
+      await expect(page.locator(".rf-legal h1")).toHaveText(H1_BY_ROUTE[route]!);
+    });
+  }
+
+  test("T1 — /privacy and /terms are indexable (they carry the real policy text)", async ({
+    page,
+  }) => {
+    for (const route of ["/privacy", "/terms"]) {
+      await page.goto(route);
+      const robots = await page
+        .locator('meta[name="robots"]')
+        .evaluateAll((els) => els.map((el) => el.getAttribute("content") ?? "").join(","));
+      expect(robots, `${route} robots meta`).not.toMatch(/noindex/i);
+    }
   });
 
-  test("T1 — /contact shows the demo request form", async ({ page }) => {
+  test("T1 — /contact is email only: the address, no scheduler, no form, no phone, hours or address", async ({
+    page,
+  }) => {
     await page.goto("/contact");
-    await expect(page.getByRole("textbox", { name: /name/i })).toBeVisible();
-    await expect(page.getByRole("textbox", { name: /email/i })).toBeVisible();
-    await expect(page.getByRole("button", { name: /prepare my demo request/i })).toBeVisible();
+    const main = page.locator("main");
+    await expect(
+      main.locator('a[href="mailto:hello@routeflow.info"]').first(),
+      "the email link",
+    ).toBeVisible();
+    await expect(main.locator("form, input, textarea, select")).toHaveCount(0);
+    await expect(page.locator('a[href="/book-a-demo"]')).toHaveCount(0);
+    const text = (await main.innerText()).replace(/\s+/g, " ");
+    expect(text).not.toMatch(/video call|calendar|scheduler|book a /i);
+    expect(text).not.toMatch(/\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}/);
+    expect(text).not.toMatch(/\b(hours|monday|street|suite)\b/i);
   });
 
-  test("T1 — /company credits the warehouse photo to Pexels", async ({ page }) => {
+  test("T1 — /company has the founder note and no picture or photo credit", async ({ page }) => {
     await page.goto("/company");
-    const credit = page.getByRole("link", { name: /pexels/i });
-    await expect(credit).toBeVisible();
-    await expect(credit).toHaveAttribute("href", /pexels\.com/i);
+    await expect(page.locator("main img")).toHaveCount(0);
+    await expect(page.locator('a[href*="pexels"]')).toHaveCount(0);
+    await expect(page.locator("main")).toContainText("Dr. Najath Akram");
   });
 });
 
-// ─── T2 — mobile (375) chrome + interactions (R2 R7 R8 R14) ─────────────────
+// ─── T2 — phone menu + no sideways scroll ────────────────────────────────────
 
 // `devices["iPhone 13"]` carries `defaultBrowserType`, which Playwright
 // refuses inside a describe-scoped `test.use()` (it would force a new
@@ -123,133 +152,222 @@ test.describe("T1 — public routes render the port's chrome + copy (R1 R2 R3 R8
 const { defaultBrowserType: _defaultBrowserType, ...iPhone13 } = devices["iPhone 13"];
 const { defaultBrowserType: _desktopBrowserType, ...desktopChrome } = devices["Desktop Chrome"];
 
-test.describe("T2 — mobile (375) chrome + interactions (R2 R7 R8 R14)", () => {
-  test.use({ ...iPhone13 });
+test.describe("T2 — the phone menu on the React pages", () => {
+  test.use({ ...desktopChrome, viewport: { width: 375, height: 812 } });
 
-  test("T2 — the mobile sheet lists 9 links incl. Contact + both sign-ins + Book a demo, Escape closes it", async ({
+  test("T2 — /privacy: the menu button opens the phone menu, Escape closes it", async ({
     page,
   }) => {
-    await page.goto("/");
-    await page.getByRole("button", { name: /open menu/i }).click();
+    await page.goto("/privacy");
+    await page.waitForLoadState("networkidle");
 
-    const sheet = page.getByRole("dialog");
-    await expect(sheet).toBeVisible();
+    const button = page.locator("button.menu-btn");
+    await expect(button).toBeVisible();
+    await expect(button).toHaveAttribute("aria-expanded", "false");
+    await button.click();
+    await expect(button).toHaveAttribute("aria-expanded", "true");
 
-    const expectedLinkNames = [
-      "Platform",
-      "Distributors",
-      "Retailers",
-      "Pricing",
-      "Company",
-      "Contact",
-      "Distributor sign in",
-      "Retailer sign in",
-      "Book a demo",
-    ];
-    for (const name of expectedLinkNames) {
-      await expect(
-        sheet.getByRole("link", { name: new RegExp(name, "i") }),
-        `mobile sheet is missing a "${name}" link`,
-      ).toBeVisible();
-    }
-    await expect(sheet.getByRole("link"), "mobile sheet link count").toHaveCount(9);
-    await expect(sheet.getByRole("link", { name: /book a demo/i })).toHaveAttribute(
-      "href",
-      "/book-a-demo",
-    );
-
-    await page.keyboard.press("Escape");
-    await expect(sheet).toBeHidden();
-  });
-
-  test("T2 — the /contact form prepares a mailto draft naming the company", async ({ page }) => {
-    await page.goto("/contact");
-    await page.getByRole("textbox", { name: /name/i }).fill("Ada");
-    await page.getByRole("textbox", { name: /email/i }).fill("ada@example.com");
-    await page.getByRole("textbox", { name: /company/i }).fill("Northwind");
-    await page.getByRole("textbox", { name: /notes/i }).fill("A note about our workflow.");
-    await page.getByRole("button", { name: /prepare my demo request/i }).click();
-
-    await expect(page.getByRole("heading", { name: /your email draft is ready/i })).toBeVisible();
-
-    const mailLink = page.getByRole("link", { name: /open email app/i });
-    const href = await mailLink.getAttribute("href");
-    expect(href, "mailto href present").toBeTruthy();
-    expect(href!.startsWith("mailto:hello@routeflow.info?subject="), `href was "${href}"`).toBe(
-      true,
-    );
-    expect(decodeURIComponent(href!)).toContain("RouteFlow demo request — Northwind");
-
-    await page.getByRole("button", { name: /start a new draft/i }).click();
-    await expect(page.getByRole("textbox", { name: /name/i })).toBeVisible();
-  });
-
-  test('T2 — /wholesalers "Plan the route" tab opens its panel', async ({ page }) => {
-    await page.goto("/wholesalers");
-    const routesTab = page.getByRole("tab", { name: /plan the route/i });
-    await routesTab.click();
-
-    await expect(routesTab).toHaveAttribute("aria-selected", "true");
-    await expect(page.getByRole("tabpanel")).toBeVisible();
-  });
-
-  test("T2 — the home FAQ keeps only one item open at a time", async ({ page }) => {
-    await page.goto("/");
-    const items = page.locator("#main-content details");
-    await expect(items, "general FAQ has 5 items").toHaveCount(5);
-
-    await items.nth(1).locator("summary").click();
-    await items.nth(2).locator("summary").click();
-
-    await expect(items.nth(2), "the third item (index 2) should be open").toHaveJSProperty(
-      "open",
-      true,
-    );
-    await expect(items.nth(1), "the second item (index 1) should have closed").toHaveJSProperty(
-      "open",
-      false,
-    );
-    await expect(page.locator("#main-content details[open]"), "exactly one item open").toHaveCount(
-      1,
-    );
-  });
-});
-
-// The desktop `.nav-login` dropdown (site-header.tsx) is `display: none` at
-// phone widths (marketing.css); the mobile sheet carries both sign-in links
-// instead (covered by the T2 sheet test above), so this assertion needs a
-// desktop viewport to find the trigger at all.
-test.describe("T2 — desktop sign-in menu (R2 R7 R8 R14)", () => {
-  test.use({ ...desktopChrome });
-
-  test('T2 — the "Sign in" control offers Distributor -> /login and Retailer -> /buyer/login', async ({
-    page,
-  }) => {
-    await page.goto("/");
-    await page.getByRole("button", { name: /sign in/i }).click();
-
-    const menu = page.getByRole("menu");
-    await expect(menu).toBeVisible();
-    await expect(menu.getByRole("menuitem", { name: /distributor sign in/i })).toHaveAttribute(
+    const menu = page.locator("#mobile-menu");
+    await expect(menu).toHaveClass(/\bopen\b/);
+    await expect(menu.getByRole("link", { name: "Start free trial" })).toBeVisible();
+    await expect(menu.getByRole("link", { name: "Sign in", exact: true })).toHaveAttribute(
       "href",
       "/login",
     );
-    await expect(menu.getByRole("menuitem", { name: /retailer sign in/i })).toHaveAttribute(
-      "href",
-      "/buyer/login",
-    );
+
+    await page.keyboard.press("Escape");
+    await expect(button).toHaveAttribute("aria-expanded", "false");
   });
 });
 
-// ─── T3 — every internal link on the 9 pages resolves (R3) ──────────────────
+test.describe("T2 — no public page scrolls sideways at 390px", () => {
+  test.use({ ...desktopChrome, viewport: { width: 390, height: 844 } });
 
-test.describe("T3 — every internal link on the 9 public pages resolves (R3)", () => {
-  test('T3 — crawl a[href^="/"] on the 9 pages, expect status < 400 incl. auth routes', async ({
+  for (const route of PUBLIC_ROUTES) {
+    test(`T2 — ${route}: the page is no wider than the screen`, async ({ page }) => {
+      await page.goto(route);
+      await expect(page.locator("h1")).toBeVisible();
+      const widths = await page.evaluate(() => ({
+        doc: document.documentElement.scrollWidth,
+        body: document.body.scrollWidth,
+        inner: window.innerWidth,
+      }));
+      expect(widths.doc, "documentElement.scrollWidth").toBeLessThanOrEqual(widths.inner);
+      expect(widths.body, "body.scrollWidth").toBeLessThanOrEqual(widths.inner);
+    });
+  }
+});
+
+// ─── T2b — the header fits on one line from 901 to 1440 px, on the ready-made and the React pages ─────
+
+// Above 1080 px the header shows the nav links; at 1080 and below it shows the menu button instead.
+const HEADER_FIT_WIDTHS: Array<[number, boolean]> = [
+  [1440, true],
+  [1281, true],
+  [1100, true],
+  [1081, true],
+  [1080, false],
+  [1024, false],
+  [901, false],
+];
+
+test.describe("T2b — the header is one line with no overlap and no sideways scroll", () => {
+  for (const [width, navShown] of HEADER_FIT_WIDTHS) {
+    for (const route of ["/", "/company"]) {
+      test.describe(`at ${width}px`, () => {
+        test.use({ ...desktopChrome, viewport: { width, height: 900 } });
+
+        test(`T2b — ${route} at ${width}px: ${navShown ? "nav links" : "menu button"}, one row, no overlap`, async ({
+          page,
+        }) => {
+          await page.goto(route);
+          const header = page.locator("header.site-header");
+          await expect(header).toBeVisible();
+          await expect(header.locator("ul.nav-links")).toBeVisible({ visible: navShown });
+          await expect(header.locator(".menu-btn")).toBeVisible({ visible: !navShown });
+
+          const measured = await header.evaluate((el) => {
+            const shown = (n: Element) => {
+              const r = n.getBoundingClientRect();
+              const cs = getComputedStyle(n);
+              return (
+                r.width > 0 && r.height > 0 && cs.visibility !== "hidden" && cs.display !== "none"
+              );
+            };
+            const rects = [
+              ...el.querySelectorAll(
+                ".brand, .nav-links a, .nav-signin, .nav-price, .menu-btn, .nav-actions .btn",
+              ),
+            ]
+              .filter(shown)
+              .map((n) => {
+                const r = n.getBoundingClientRect();
+                return {
+                  text: (n.textContent ?? "").replace(/\s+/g, " ").trim(),
+                  left: r.left,
+                  right: r.right,
+                  top: r.top,
+                  bottom: r.bottom,
+                  centre: (r.top + r.bottom) / 2,
+                  height: r.height,
+                };
+              });
+            const sorted = [...rects].sort((a, b) => a.left - b.left);
+            const overlaps = sorted
+              .slice(1)
+              .map((r, i) => ({ a: sorted[i]!, b: r }))
+              .filter(({ a, b }) => b.left < a.right - 0.5)
+              .map(({ a, b }) => `${a.text} / ${b.text}`);
+            const box = el.getBoundingClientRect();
+            return {
+              count: rects.length,
+              overlaps,
+              // one row: every item's centre is on the same line, and nothing wrapped to a second line
+              centreSpread:
+                Math.max(...rects.map((r) => r.centre)) - Math.min(...rects.map((r) => r.centre)),
+              tallest: Math.max(...rects.map((r) => r.height)),
+              inside: rects.every((r) => r.top >= box.top - 0.5 && r.bottom <= box.bottom + 0.5),
+              right: Math.max(...rects.map((r) => r.right)),
+              doc: document.documentElement.scrollWidth,
+              inner: window.innerWidth,
+            };
+          });
+          expect(measured.count, "header items found").toBeGreaterThan(2);
+          expect(measured.overlaps, "overlapping items").toEqual([]);
+          expect(measured.centreSpread, "items on one row").toBeLessThan(8);
+          expect(measured.tallest, "tallest item (a wrapped label is taller)").toBeLessThan(60);
+          expect(measured.inside, "items inside the header").toBe(true);
+          expect(measured.right, "rightmost item").toBeLessThanOrEqual(measured.inner);
+          expect(measured.doc, "sideways scroll").toBeLessThanOrEqual(measured.inner);
+        });
+      });
+    }
+  }
+});
+
+// ─── T2c — old addresses redirect; /faq lands on the home FAQ ───────────────────────────────────
+
+// [old address, where it goes, permanent]. Permanent ones answer 308 in Next (301 from a proxy).
+const REDIRECTS: Array<[string, string, boolean]> = [
+  ["/wholesalers", "/product", true],
+  ["/distributors", "/product", true],
+  ["/retailers", "/#stores", true],
+  ["/buyer", "/#stores", true],
+  ["/book-a-demo", "/contact", true],
+  ["/demo", "/contact", true],
+  ["/sign-in", "/login", true],
+  ["/about", "/company", true],
+  ["/features", "/product", false],
+  ["/faq", "/#faq", false],
+  ["/integrations", "/#faq", false],
+  ["/quickbooks", "/#faq", false],
+];
+
+test.describe("T2c — old addresses redirect to the new site", () => {
+  for (const [from, to, permanent] of REDIRECTS) {
+    test(`T2c — ${from} redirects to ${to} (${permanent ? "permanent" : "temporary"})`, async ({
+      request,
+    }) => {
+      const response = await request.get(from, { maxRedirects: 0 });
+      const expected = permanent ? [301, 308] : [302, 307];
+      expect(expected, `${from} status was ${response.status()}`).toContain(response.status());
+      const location = response.headers()["location"] ?? "";
+      expect(location.endsWith(to), `${from} Location was "${location}"`).toBe(true);
+    });
+  }
+});
+
+for (const [label, device] of [
+  ["desktop", desktopChrome],
+  ["phone", iPhone13],
+] as const) {
+  test.describe(`T2c — on a ${label}: /faq lands on the home FAQ`, () => {
+    test.use({ ...device });
+
+    test("T2c — /faq lands on /#faq with the FAQ heading clear of the sticky header", async ({
+      page,
+    }) => {
+      const response = await page.goto("/faq");
+      expect(response?.status(), "/faq final status").toBe(200);
+      expect(new URL(page.url()).pathname).toBe("/");
+      expect(new URL(page.url()).hash).toBe("#faq");
+      const faq = page.locator("#faq");
+      await expect(faq).toBeVisible();
+      const heading = faq.getByRole("heading", { name: "Questions before you start." });
+      await expect(heading).toBeInViewport();
+      const headerBottom = await page
+        .locator("header.site-header")
+        .evaluate((el) => el.getBoundingClientRect().bottom);
+      const headingTop = await heading.evaluate((el) => el.getBoundingClientRect().top);
+      expect(headingTop, "FAQ heading is below the sticky header").toBeGreaterThanOrEqual(
+        headerBottom - 1,
+      );
+    });
+  });
+}
+
+test.describe("T2c — the home FAQ answers the QuickBooks question straight", () => {
+  test("T2c — Does it connect to my other tools? answers 'Not directly', names QuickBooks and CSV", async ({
+    page,
+  }) => {
+    await page.goto("/#faq");
+    await page.getByText("Does it connect to my other tools?").click();
+    const answer = page.locator("#faq details[open] p");
+    await expect(answer).toContainText("Not directly");
+    await expect(answer).toContainText("QuickBooks");
+    await expect(answer).toContainText("CSV");
+  });
+});
+
+// ─── T3 — every internal link on the public pages resolves ──────────────────
+
+test.describe("T3 — every internal link on the public pages resolves", () => {
+  test('T3 — crawl a[href^="/"] on the public pages, expect status < 400 incl. auth routes', async ({
     page,
     request,
   }) => {
     const found = new Set<string>();
-    for (const route of PUBLIC_ROUTES) {
+    for (const route of [...PUBLIC_ROUTES, ...READY_MADE_ROUTES]) {
       await page.goto(route);
       const hrefs = await page
         .locator('a[href^="/"]')
@@ -261,7 +379,7 @@ test.describe("T3 — every internal link on the 9 public pages resolves (R3)", 
         if (path) found.add(path);
       }
     }
-    expect(found.size, "at least one internal link found across the 9 pages").toBeGreaterThan(0);
+    expect(found.size, "at least one internal link found across the pages").toBeGreaterThan(0);
 
     const results: { href: string; status: number }[] = [];
     for (const href of Array.from(found)) {
@@ -274,14 +392,11 @@ test.describe("T3 — every internal link on the 9 public pages resolves (R3)", 
 
     for (const authPath of ["/login", "/signup"]) {
       const hit = results.find((r) => r.href === authPath);
-      expect(
-        hit?.status,
-        `${authPath} was not linked from any of the 9 pages, or did not 200`,
-      ).toBe(200);
+      expect(hit?.status, `${authPath} was not linked from any page, or did not 200`).toBe(200);
     }
 
     const buyerHits = results.filter((r) => r.href.startsWith("/buyer"));
-    expect(buyerHits.length, "at least one /buyer/* link found across the 9 pages").toBeGreaterThan(
+    expect(buyerHits.length, "at least one /buyer/* link found across the pages").toBeGreaterThan(
       0,
     );
     for (const hit of buyerHits) {
@@ -290,354 +405,1831 @@ test.describe("T3 — every internal link on the 9 public pages resolves (R3)", 
   });
 });
 
-// ─── T12 — mobile UA + /pricing still serves marketing (R11) ────────────────
+// ─── T12 — mobile UA + /pricing still serves the site ───────────────────────
 
-test.describe("T12 — a mobile UA still gets the marketing site on /pricing (R11)", () => {
-  test("T12 — /pricing under a mobile UA returns 200 with the pricing H1", async ({ request }) => {
+test.describe("T12 — a mobile UA still gets the site on /pricing", () => {
+  test("T12 — /pricing under a mobile UA returns 200 with the plans heading", async ({
+    request,
+  }) => {
     const response = await request.get("/pricing", {
       headers: { "User-Agent": devices["iPhone 13"].userAgent },
     });
     expect(response.status()).toBe(200);
 
     const body = await response.text();
-    // The rendered h1 splits across a <br /> + <em>, so the raw HTML never
-    // contains the full joined H1_BY_ROUTE string — match the text run
-    // before the break instead.
     expect(
       body,
-      "response body should contain the /pricing H1 lead-in (proves it is NOT the mobile build)",
-    ).toContain("A plan that fits");
+      "response body should contain the /pricing opening words (proves it is NOT the mobile build)",
+    ).toContain("Plans from $");
   });
 });
 
-// ─── T13 — below-the-fold sections reveal (R7 R14) ──────────────────────────
+// ─── T13b — W3: visitor counts (Umami) reach the counted pages and /signup only ─────────────────
 
-// editorial-motion.tsx marks every reveal target BELOW the fold at mount with
-// `.reveal-pending` (marketing.css: `opacity: 0`) and only clears it when the
-// IntersectionObserver fires. A full-page screenshot does NOT scroll, so an
-// unscrolled capture shows those sections blank — a capture artifact, not a
-// defect. These two tests pin both escape hatches so the blank state can never
-// become real: scrolling clears every pending node, and reduced motion never
-// sets one in the first place.
-test.describe("T13 — below-the-fold sections reveal (R7 R14)", () => {
-  test("T13 — scrolling to the bottom of / clears every .reveal-pending node and reaches opacity 1 (B504)", async ({
-    page,
-  }) => {
-    await page.goto("/");
+// The script is on the page only when the stack was built with NEXT_PUBLIC_UMAMI_WEBSITE_ID. These
+// rows read which case this stack is in from /privacy itself, so the same spec holds on a
+// local stack (no ID: M4, no script anywhere) and on one built with a made-up test ID. No real ID
+// is ever used in a test.
+const UMAMI_TRACKER_URL = "https://cloud.umami.is/script.js";
+const UMAMI_SCRIPT = `script[src="${UMAMI_TRACKER_URL}"]`;
+const COUNTED_ROUTES = [
+  "/",
+  "/pricing",
+  "/product",
+  "/landing",
+  "/company",
+  "/contact",
+  "/privacy",
+  "/terms",
+  "/getting-started",
+  "/does-and-doesnt",
+  "/data-in-and-out",
+  "/security",
+  "/signup",
+];
+// Never counted: sign-in pages, the retailer portal, the dashboard (signed out, these land on a
+// sign-in page, which must carry nothing either). The old redirected addresses are not counted
+// either; they never render a page of their own.
+const NEVER_COUNTED_ROUTES = [
+  "/login",
+  "/admin-login",
+  "/forgot-password",
+  "/buyer/login",
+  "/buyer/portal",
+  "/dashboard",
+];
 
-    const viewport = page.viewportSize()?.height ?? 720;
-    const steps = Math.ceil(
-      (await page.evaluate(() => document.body.scrollHeight)) / Math.max(viewport, 1),
-    );
-    for (let i = 0; i <= steps; i += 1) {
-      await page.evaluate((y) => window.scrollTo(0, y), i * viewport);
-      await page.waitForTimeout(150);
-    }
-    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-    // Give the 0.7s opacity transition (marketing.css) time to settle before
-    // reading computed style, on top of the reveal-pending class removal.
-    await page.waitForTimeout(1000);
-
-    await expect(
-      page.locator(".reveal-pending"),
-      "a section stayed hidden after the page was scrolled end to end",
-    ).toHaveCount(0);
-
-    // B504: removing .reveal-pending used to leave computed opacity at 0
-    // forever (no rule ever declared the revealed state) — the class-count
-    // assertion above could not have caught that. Assert the actual visual
-    // outcome, not just that the marker class is gone.
-    const revealOpacities = await page
-      .locator(".editorial-reveal")
-      .evaluateAll((els) => els.map((el) => window.getComputedStyle(el).opacity));
-    expect(revealOpacities.length, "reveal targets present on /").toBeGreaterThan(0);
-    expect(
-      revealOpacities.filter((o) => o !== "1"),
-      "a .editorial-reveal node stayed transparent after its .reveal-pending class was cleared",
-    ).toEqual([]);
-  });
-
-  test("T13 — capability cards and section headings are visible with JavaScript disabled (B504)", async ({
-    browser,
-  }) => {
-    // editorial-motion.tsx only ever ADDS .reveal-pending via a client effect —
-    // with JS disabled that effect never runs, so nothing should ever be
-    // hidden. This is the progressive-enhancement guarantee itself, not an
-    // inference from the JS source.
-    const context = await browser.newContext({ javaScriptEnabled: false });
-    const page = await context.newPage();
-    await page.goto("/");
-
-    await expect(page.locator(".reveal-pending")).toHaveCount(0);
-    const card = page.locator(".capability-card").first();
-    await expect(card).toBeVisible();
-    await expect(card).toHaveCSS("opacity", "1");
-    const heading = page.locator(".section-heading").first();
-    await expect(heading).toBeVisible();
-    await expect(heading).toHaveCSS("opacity", "1");
-
-    await context.close();
-  });
-
-  test("T13 — under prefers-reduced-motion the CTA block is opaque without scrolling", async ({
-    page,
-  }) => {
-    await page.emulateMedia({ reducedMotion: "reduce" });
-    await page.goto("/");
-
-    // The effect returns before it tags anything when reduced motion is on, so
-    // no node ever carries `.editorial-reveal`/`.reveal-pending`; assert on the
-    // reveal TARGETS themselves (the class list editorial-motion.tsx keys off).
-    await expect(page.locator(".reveal-pending")).toHaveCount(0);
-
-    const cta = page.locator(".cta-block").first();
-    await expect(cta.getByRole("heading", { name: /put your workflow/i })).toBeVisible();
-
-    const opacities = await page
-      .locator(".cta-block, .audience-card, .buying-confidence")
-      .evaluateAll((els) => els.map((el) => window.getComputedStyle(el).opacity));
-    expect(opacities.length, "reveal targets present on /").toBeGreaterThan(0);
-    expect(
-      opacities.filter((o) => o !== "1"),
-      "a reveal target was transparent under prefers-reduced-motion",
-    ).toEqual([]);
-  });
-});
-
-// ─── T14 — WCAG AA contrast for the B504-fixed roles (R7) ───────────────────
-
-// WCAG relative-luminance contrast, computed in-page against the element's
-// own resolved foreground color and its nearest ancestor with a non-transparent
-// background-color (gradients/backdrop images resolve to a transparent
-// background-color, so this walks up to the page's own white canvas — a
-// conservative reference: the real composited background under a light glass
-// panel is at least as light, so passing against white is not a false pass).
-async function minContrast(locator: import("@playwright/test").Locator): Promise<number | null> {
-  const values = await locator.evaluateAll((els) => {
-    function parseColor(str: string): [number, number, number, number] | null {
-      const m = str.match(/rgba?\(([^)]+)\)/);
-      if (!m) return null;
-      const [r, g, b, a = 1] = m[1].split(",").map((s) => parseFloat(s.trim()));
-      return [r!, g!, b!, a!];
-    }
-    function luminance([r, g, b]: [number, number, number, number]): number {
-      const chan = [r, g, b].map((v) => {
-        const c = v / 255;
-        return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
-      });
-      return 0.2126 * chan[0]! + 0.7152 * chan[1]! + 0.0722 * chan[2]!;
-    }
-    return els.map((el) => {
-      const fg = parseColor(getComputedStyle(el).color);
-      if (!fg) return null;
-      let node: Element | null = el;
-      let bg: [number, number, number, number] | null = null;
-      while (node) {
-        const parsed = parseColor(getComputedStyle(node).backgroundColor);
-        if (parsed && parsed[3] > 0) {
-          bg = parsed;
-          break;
-        }
-        node = node.parentElement;
-      }
-      if (!bg) bg = [255, 255, 255, 1];
-      const lf = luminance(fg);
-      const lb = luminance(bg);
-      const lighter = Math.max(lf, lb);
-      const darker = Math.min(lf, lb);
-      return (lighter + 0.05) / (darker + 0.05);
-    });
-  });
-  const real = values.filter((v): v is number => v !== null);
-  return real.length ? Math.min(...real) : null;
+// The preload tag is in the server's HTML, so this needs no wait for hydration.
+async function stackHasSiteId(page: import("@playwright/test").Page) {
+  return (await (await page.request.get("/privacy")).text()).includes(UMAMI_TRACKER_URL);
 }
 
-const AA_NORMAL = 4.5;
+async function umamiScriptCount(page: import("@playwright/test").Page, route: string) {
+  await page.goto(route);
+  await page.waitForLoadState("networkidle");
+  return page.locator(UMAMI_SCRIPT).count();
+}
 
-test.describe("T14 — WCAG AA contrast for the B504-fixed roles (R7)", () => {
-  for (const width of [1440, 390]) {
-    test.describe(`at ${width}px`, () => {
-      test.use({ viewport: { width, height: 900 } });
+// A stand-in for cloud.umami.is/script.js. The real tracker turns itself off on this host
+// (data-domains), so this one leaves that check out and keeps the rest of what it does: it honours
+// data-auto-track and data-exclude-search, wraps pushState and replaceState when auto-track is on,
+// exposes umami.track with the real call shape, and posts to the real address. Read from the
+// tracker as served on 2026-10-31.
+const FAKE_UMAMI_TRACKER = `(() => {
+  const script = document.currentScript;
+  const autoTrack = script.getAttribute("data-auto-track") !== "false";
+  const excludeSearch = script.getAttribute("data-exclude-search") === "true";
+  const filter = (href) => {
+    if (!href) return href;
+    const url = new URL(href, location.href);
+    if (excludeSearch) url.search = "";
+    return url.toString();
+  };
+  let current = filter(location.href);
+  let previous = filter(document.referrer);
+  const payload = () => ({
+    website: script.getAttribute("data-website-id"),
+    screen: "1440x900",
+    language: navigator.language,
+    title: document.title,
+    hostname: location.hostname,
+    url: current,
+    referrer: previous.startsWith(location.origin) ? previous.slice(location.origin.length) : previous,
+  });
+  const track = (build) => {
+    const body = typeof build === "function" ? build(payload()) : payload();
+    fetch("https://gateway.umami.is/api/send", {
+      method: "POST",
+      keepalive: true,
+      body: JSON.stringify({ type: "event", payload: body }),
+      headers: { "Content-Type": "application/json" },
+      credentials: "omit",
+    }).catch(() => {});
+  };
+  window.umami = { track };
+  if (!autoTrack) return;
+  track();
+  for (const name of ["pushState", "replaceState"]) {
+    const original = history[name];
+    history[name] = function (state, title, next) {
+      const result = original.apply(this, arguments);
+      if (next) {
+        previous = current;
+        current = filter(next);
+        if (current !== previous) setTimeout(track, 300);
+      }
+      return result;
+    };
+  }
+})();`;
 
-      test(`T14 — operation-story heading ("Know what is ready to go.") clears AA on /, /product, /wholesalers`, async ({
-        page,
-      }) => {
-        let checked = 0;
-        for (const route of ["/", "/product", "/wholesalers"]) {
-          await page.goto(route);
-          const heading = page.locator(".story-intro h3");
-          const count = await heading.count();
-          if (count === 0) continue;
-          checked += count;
-          const contrast = await minContrast(heading);
-          expect(contrast, `${route} .story-intro h3 contrast`).not.toBeNull();
-          expect(contrast!, `${route} .story-intro h3 contrast`).toBeGreaterThanOrEqual(AA_NORMAL);
-        }
-        expect(checked, "at least one operation-story heading was checked").toBeGreaterThan(0);
-      });
+interface UmamiSend {
+  url?: string;
+  referrer?: string;
+}
 
-      test('T14 — the purple AI-scan card ("Let AI scan the invoice." + its paragraph + its small label) clears AA on /, /product', async ({
-        page,
-      }) => {
-        let checked = 0;
-        for (const route of ["/", "/product"]) {
-          await page.goto(route);
-          const step = page.locator("li.ai-assisted-step");
-          if ((await step.count()) === 0) continue;
-          const heading = step.locator("h3");
-          const paragraph = step.locator("p");
-          // B507: the card's `small` label was left uncovered by B504's fix
-          // for its h3/p siblings — same card, same tie, same fix, just
-          // never extended to it (round-2 measured 1.59-1.60:1).
-          const small = step.locator("small");
-          checked += (await heading.count()) + (await paragraph.count()) + (await small.count());
-          const headingContrast = await minContrast(heading);
-          const paragraphContrast = await minContrast(paragraph);
-          const smallContrast = await minContrast(small);
-          expect(headingContrast, `${route} .ai-assisted-step h3 contrast`).not.toBeNull();
-          expect(headingContrast!, `${route} .ai-assisted-step h3 contrast`).toBeGreaterThanOrEqual(
-            AA_NORMAL,
-          );
-          expect(paragraphContrast, `${route} .ai-assisted-step p contrast`).not.toBeNull();
-          expect(
-            paragraphContrast!,
-            `${route} .ai-assisted-step p contrast`,
-          ).toBeGreaterThanOrEqual(AA_NORMAL);
-          expect(smallContrast, `${route} .ai-assisted-step small contrast`).not.toBeNull();
-          expect(
-            smallContrast!,
-            `${route} .ai-assisted-step small contrast`,
-          ).toBeGreaterThanOrEqual(AA_NORMAL);
-        }
-        expect(checked, "at least one AI-scan card was checked").toBeGreaterThan(0);
-      });
+/** Serves the stand-in and catches every post, so nothing reaches Umami. */
+async function catchUmamiSends(page: import("@playwright/test").Page) {
+  const sent: UmamiSend[] = [];
+  await page.route(UMAMI_TRACKER_URL, (route) =>
+    route.fulfill({ contentType: "text/javascript", body: FAKE_UMAMI_TRACKER }),
+  );
+  await page.route("https://gateway.umami.is/api/send", (route) => {
+    sent.push(route.request().postDataJSON().payload);
+    return route.fulfill({ json: {}, headers: { "access-control-allow-origin": "*" } });
+  });
+  return sent;
+}
 
-      test("T14 — muted caption color (--g-soft) clears AA on /, /pricing, /product, /wholesalers", async ({
-        page,
-      }) => {
-        const CAPTION_SELECTOR =
-          ".story-chapter-count, .story-disclaimer, .pricing-footnote, .sample-note, .capability-scope, .record-note p, .connection-diagram > p, .form-disclosure";
-        let checked = 0;
-        for (const route of ["/", "/pricing", "/product", "/wholesalers"]) {
-          await page.goto(route);
-          const captions = page.locator(CAPTION_SELECTOR);
-          const count = await captions.count();
-          if (count === 0) continue;
-          checked += count;
-          const contrast = await minContrast(captions);
-          expect(contrast, `${route} caption contrast`).not.toBeNull();
-          expect(contrast!, `${route} caption contrast`).toBeGreaterThanOrEqual(AA_NORMAL);
-        }
-        expect(checked, "at least one caption was checked").toBeGreaterThan(0);
-      });
+/** The tracker reports a move 300 ms after it, so "nothing went out" needs longer than that. */
+async function settled(page: import("@playwright/test").Page) {
+  await page.waitForLoadState("networkidle");
+  await page.waitForTimeout(800);
+}
 
-      test("T14 — the difference-section intro paragraphs clear AA on /", async ({ page }) => {
-        await page.goto("/");
-        const paragraphs = page.locator(
-          ".difference-section .split-heading > p, .difference-section .difference-footer > p",
+/**
+ * Opens a counted page and waits for its pageview, so it has hydrated and a link click is a client
+ * move. Then marks the document, so a row can prove the next move was not a full page load.
+ */
+async function openCounted(
+  page: import("@playwright/test").Page,
+  sent: UmamiSend[],
+  route: string,
+) {
+  const before = sent.length;
+  await page.goto(route);
+  await expect.poll(() => sent.length).toBeGreaterThan(before);
+  await settled(page);
+  await page.evaluate(() => {
+    (window as unknown as { sameDocument?: boolean }).sameDocument = true;
+  });
+}
+const stillSameDocument = (page: import("@playwright/test").Page) =>
+  page.evaluate(() => (window as unknown as { sameDocument?: boolean }).sameDocument === true);
+
+test.describe("T13b — W3 M2-M4: visitor counts", () => {
+  test("T13b — sign-in pages, the retailer portal and the dashboard never load the script", async ({
+    page,
+  }) => {
+    for (const route of NEVER_COUNTED_ROUTES) {
+      expect(await umamiScriptCount(page, route), `${route} analytics scripts`).toBe(0);
+    }
+  });
+
+  test("T13b — the platform admin dashboard never loads the script", async ({ page }) => {
+    // A signed-in admin view with the API stubbed: the layout only parses the token's payload.
+    const b64 = (o: object) => Buffer.from(JSON.stringify(o)).toString("base64url");
+    const token = `${b64({ alg: "none" })}.${b64({ role: "SUPER_ADMIN", exp: 4102444800 })}.x`;
+    await page.addInitScript((t) => localStorage.setItem("superAdminToken", t), token);
+    // The dashboard reads `planBreakdown` and the tenant counts on first paint, so its stats call
+    // gets a full empty shape; every other call gets `{}`.
+    const stats = {
+      tenants: { total: 0, active: 0, trial: 0, suspended: 0 },
+      totalUsers: 0,
+      newTenantsThisMonth: 0,
+      mrr: 0,
+      ledgerMrr: 0,
+      planBreakdown: {},
+      recentTenants: [],
+      trialsExpiringSoon: [],
+      atRiskTenants: [],
+    };
+    await page.route("**/api/v1/**", (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (path.endsWith("/platform-admin/stats")) return route.fulfill({ json: stats });
+      if (path.endsWith("/platform-admin/stats/growth")) return route.fulfill({ json: [] });
+      return route.fulfill({ json: {} });
+    });
+    await page.goto("/admin/dashboard");
+    // The sidebar is hidden below 1024px (a drawer there), so only a wide screen shows a navigation.
+    if ((page.viewportSize()?.width ?? 1280) >= 1024) {
+      await expect(page.getByRole("navigation").first()).toBeVisible();
+    }
+    await expect(page.getByRole("heading", { name: "Platform Dashboard" })).toBeVisible();
+    await page.waitForLoadState("networkidle");
+    await expect(page.locator(UMAMI_SCRIPT)).toHaveCount(0);
+  });
+
+  test("T13b — M4: a stack built with no site ID sends no script on any page", async ({ page }) => {
+    test.skip(await stackHasSiteId(page), "this stack was built with a site ID");
+    for (const route of [...COUNTED_ROUTES, ...NEVER_COUNTED_ROUTES]) {
+      expect(await umamiScriptCount(page, route), `${route} analytics scripts`).toBe(0);
+    }
+  });
+
+  test("T13b — with a site ID, every counted page and /signup carries one deferred script for the live host", async ({
+    page,
+  }) => {
+    test.skip(!(await stackHasSiteId(page)), "this stack has no site ID (M4)");
+    for (const route of COUNTED_ROUTES) {
+      expect(await umamiScriptCount(page, route), `${route} analytics scripts`).toBe(1);
+      const script = page.locator(UMAMI_SCRIPT);
+      expect(await script.getAttribute("data-website-id"), `${route} site id`).toBeTruthy();
+      expect(await script.getAttribute("data-domains"), `${route} domains`).toBe(
+        "www.routeflow.info",
+      );
+      expect(await script.evaluate((el) => (el as HTMLScriptElement).defer), `${route} defer`).toBe(
+        true,
+      );
+    }
+  });
+
+  test("T13b — M3: with the script blocked, pages still work and the page raises no error", async ({
+    page,
+  }) => {
+    test.skip(!(await stackHasSiteId(page)), "this stack has no site ID (M4)");
+    await page.route("https://cloud.umami.is/**", (route) => route.abort());
+    const pageErrors: string[] = [];
+    const consoleErrors: string[] = [];
+    page.on("pageerror", (e) => pageErrors.push(e.message));
+    page.on("console", (m) => {
+      // Chrome itself logs "Failed to load resource" for any blocked request (an ad blocker does the
+      // same); that is the browser, not the page. Anything else is the page's own error.
+      if (m.type() === "error" && !/Failed to load resource/.test(m.text())) {
+        consoleErrors.push(m.text());
+      }
+    });
+    for (const route of ["/privacy", "/company", "/signup"]) {
+      const response = await page.goto(route);
+      expect(response?.status(), `${route} status`).toBe(200);
+      await page.waitForLoadState("networkidle");
+      await expect(page.locator("h1, h2").first(), `${route} still renders`).toBeVisible();
+    }
+    expect(pageErrors).toEqual([]);
+    expect(consoleErrors).toEqual([]);
+  });
+
+  test("T13b — client moves from a counted page to a sign-in page report nothing past the counted pages", async ({
+    page,
+  }) => {
+    test.skip(!(await stackHasSiteId(page)), "this stack has no site ID (M4)");
+    const sent = await catchUmamiSends(page);
+
+    await openCounted(page, sent, "/privacy");
+    await page
+      .locator("footer.site-footer")
+      .getByRole("link", { name: "Terms of Service", exact: true })
+      .click();
+    await page.waitForURL("**/terms");
+    await settled(page);
+
+    // This is the router call a client move to /login comes down to (the one /login itself makes
+    // into the dashboard).
+    await page.evaluate(() =>
+      (window as unknown as { next: { router: { push(href: string): void } } }).next.router.push(
+        "/login",
+      ),
+    );
+    await page.waitForURL("**/login");
+    await settled(page);
+    expect(await stillSameDocument(page), "the move to /login was a client one").toBe(true);
+
+    await openCounted(page, sent, "/privacy");
+    await page
+      .locator("footer.site-footer")
+      .getByRole("link", { name: "Store sign in", exact: true })
+      .click();
+    await page.waitForURL("**/buyer/login**");
+    await settled(page);
+    expect(await stillSameDocument(page), "the move to /buyer/login was a client one").toBe(true);
+
+    expect(sent.map((s) => s.url)).toEqual(["/privacy", "/terms", "/privacy"]);
+  });
+
+  test("T13b — submitting /signup sends nothing about the person to Umami", async ({ page }) => {
+    test.skip(!(await stackHasSiteId(page)), "this stack has no site ID (M4)");
+    const sent = await catchUmamiSends(page);
+    const apiHeaders = { "access-control-allow-origin": "*" };
+    await page.route("**/public/tenants/*-available**", (route) =>
+      route.fulfill({ json: { available: true }, headers: apiHeaders }),
+    );
+    await page.route("**/public/tenants/register", (route) =>
+      route.fulfill({ json: { emailSent: true }, headers: apiHeaders }),
+    );
+
+    await openCounted(page, sent, "/signup");
+    await page.getByLabel("Business name").fill("Acme Distribution Co.");
+    await page.getByLabel("Email").fill("owner@acme.com");
+    await page.locator("#signup-password").fill("Sample-pass1");
+    await page.locator('button[type="submit"]').click();
+    await page.waitForURL("**/signup/check-email?email=**");
+    await settled(page);
+    expect(await stillSameDocument(page), "the move to check-email was a client one").toBe(true);
+
+    // "Sign up again" is a full page load, so the browser's referrer is the check-email address,
+    // query string and all. It stops at the browser.
+    await page.locator('a[href="/signup"]').click();
+    await page.waitForURL("**/signup");
+    await settled(page);
+
+    expect(sent.map((s) => s.url)).toEqual(["/signup", "/signup"]);
+    expect(sent.map((s) => s.referrer)).toEqual(["", ""]);
+    expect(JSON.stringify(sent)).not.toMatch(/acme|email|check-email|\?/i);
+  });
+});
+
+// ─── T16 — W8: head, share image and sitemap ──────────────────────────────────
+
+const HEAD_ROUTES = ["/company", "/contact", "/privacy", "/terms"];
+
+// Exactly the public pages the sitemap lists. The old addresses are redirects, so none is here.
+const SITEMAP_PATHS = [
+  "/",
+  "/product",
+  "/pricing",
+  "/company",
+  "/contact",
+  "/privacy",
+  "/terms",
+  "/getting-started",
+  "/does-and-doesnt",
+  "/data-in-and-out",
+  "/security",
+];
+
+test.describe("T16 — W8: head, share image and sitemap", () => {
+  for (const route of HEAD_ROUTES) {
+    test(`T16 — ${route}: title, description, canonical, share image and card are all in the head`, async ({
+      page,
+      request,
+    }) => {
+      await page.goto(route);
+      const attr = (selector: string, name: string) =>
+        page.locator(selector).first().getAttribute(name);
+
+      // "Company | RouteFlow" on the ready-made pages, "Privacy Policy · RouteFlow" on the React ones.
+      const title = await page.title();
+      expect(title, `${route} title`).toMatch(/\S (·|\|) RouteFlow$/);
+
+      expect(
+        await attr('meta[name="description"]', "content"),
+        `${route} description`,
+      ).toBeTruthy();
+      const canonical = await attr('link[rel="canonical"]', "href");
+      expect(canonical, `${route} canonical`).toBe(`https://www.routeflow.info${route}`);
+      expect(await attr('meta[property="og:title"]', "content"), `${route} og:title`).toBeTruthy();
+      expect(await attr('meta[name="twitter:card"]', "content"), `${route} twitter:card`).toBe(
+        "summary_large_image",
+      );
+
+      // The share image: named in the head, and it answers 200 as a PNG. The head holds the
+      // production origin (metadataBase), so fetch the same path from the host under test.
+      const image = await attr('meta[property="og:image"]', "content");
+      expect(image, `${route} og:image`).toBeTruthy();
+      expect(await attr('meta[name="twitter:image"]', "content"), `${route} twitter:image`).toBe(
+        image,
+      );
+      const response = await request.get(new URL(image!).pathname);
+      expect(response.status(), `${route} share image status`).toBe(200);
+      expect(response.headers()["content-type"], `${route} share image type`).toBe("image/png");
+    });
+  }
+
+  test("T16 — the sitemap lists the 11 public pages and none of the old addresses", async ({
+    request,
+  }) => {
+    const response = await request.get("/sitemap.xml");
+    expect(response.status()).toBe(200);
+    const body = await response.text();
+    const urls = [...body.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]!);
+    expect(urls.sort()).toEqual(SITEMAP_PATHS.map((p) => `https://www.routeflow.info${p}`).sort());
+    for (const gone of ["wholesalers", "retailers", "book-a-demo", "sign-in"]) {
+      expect(body, `sitemap still lists /${gone}`).not.toContain(`/${gone}<`);
+    }
+  });
+});
+
+// ─── T17 — W8 / S5: no heading level is skipped on the public pages ───────────
+
+test.describe("T17 — W8 / S5: heading order on the public pages", () => {
+  for (const route of [...READY_MADE_ROUTES, ...PUBLIC_ROUTES]) {
+    test(`T17 — ${route}: one h1 first, no level skipped`, async ({ page }) => {
+      await page.goto(route);
+      // A heading's level is its aria-level when it has one, else its tag (how axe reads it).
+      const levels = await page
+        .locator("h1, h2, h3, h4, h5, h6, [role='heading']")
+        .evaluateAll((els) =>
+          els.map((el) => {
+            const aria = parseInt(el.getAttribute("aria-level") ?? "", 10);
+            return {
+              level: Number.isInteger(aria) ? aria : Number(el.tagName.slice(1)),
+              text: (el.textContent ?? "").trim().replace(/\s+/g, " ").slice(0, 40),
+            };
+          }),
         );
-        const count = await paragraphs.count();
-        expect(count, "difference-section paragraphs present on /").toBeGreaterThan(0);
-        const contrast = await minContrast(paragraphs);
-        expect(contrast).not.toBeNull();
-        expect(contrast!).toBeGreaterThanOrEqual(AA_NORMAL);
+      const skips: string[] = [];
+      levels.forEach((heading, i) => {
+        const previous = levels[i - 1];
+        if (!previous && heading.level !== 1) skips.push(`first heading is h${heading.level}`);
+        if (previous && heading.level > previous.level + 1) {
+          skips.push(
+            `h${previous.level} "${previous.text}" to h${heading.level} "${heading.text}"`,
+          );
+        }
       });
+      expect(levels.filter((h) => h.level === 1)).toHaveLength(1);
+      expect(skips, `${route} heading skips`).toEqual([]);
     });
   }
 });
 
-// ─── T15 — WCAG AA contrast for the B507-fixed roles (round-2 sweep) ────────
+// ─── T19 — the ready-made pages (public/site): home, pricing, product, landing, the four deep pages, Company and Contact ──
 //
-// The B507 round-2 recheck found 8 unique failures (12 total across the
-// pages it hit) that survived B504: some the same specificity-tie mechanism
-// on a sibling element B504 never covered, some plain token/rule-level
-// undertones one shade too light for a particular background. See
-// glass.css/glass-site.css/marketing.css for the per-selector root-cause
-// notes next to each fix.
+// Served by rewrites in next.config.mjs. They bring their own header, footer, styles, scripts and
+// font; these read the pages themselves, signed out.
 
-test.describe("T15 — WCAG AA contrast for the B507-fixed roles", () => {
-  for (const width of [1440, 390]) {
-    test.describe(`at ${width}px`, () => {
-      test.use({ viewport: { width, height: 900 } });
+test.describe("T19 — ready-made pages are served, linked and clean", () => {
+  const PAGES: Array<[string, RegExp, boolean]> = [
+    ["/", /We make wholesalers’ lives easier/, true],
+    ["/pricing", /Pricing \| RouteFlow/, true],
+    ["/product", /Product \| RouteFlow/, true],
+    ["/landing", /Software for wholesalers and distributors/, false],
+    ["/getting-started", /Getting started \| RouteFlow/, true],
+    ["/does-and-doesnt", /What it does and doesn’t do \| RouteFlow/, true],
+    ["/data-in-and-out", /Data in and out \| RouteFlow/, true],
+    ["/security", /Security and your data \| RouteFlow/, true],
+    ["/company", /Company \| RouteFlow/, true],
+    ["/contact", /Contact \| RouteFlow/, true],
+  ];
 
-      test("T15 — the operation-story scrubber's explanation text clears AA on /, /wholesalers", async ({
-        page,
+  for (const [route, title, indexable] of PAGES) {
+    test(`T19 — ${route}: 200 as HTML, titled, indexable=${indexable}, links to the real sign-up`, async ({
+      page,
+    }) => {
+      const response = await page.goto(route);
+      expect(response?.status(), `${route} status`).toBe(200);
+      expect(response?.headers()["content-type"]).toContain("text/html");
+      expect(response?.headers()["content-security-policy"], "same policy as the app").toContain(
+        "default-src 'self'",
+      );
+      await expect(page).toHaveTitle(title);
+      const robots = await page.locator('meta[name="robots"]').count();
+      expect(robots > 0, `${route} noindex`).toBe(!indexable);
+      await expect(page.locator('a[href="/signup"]').first()).toBeAttached();
+    });
+  }
+
+  test("T19 — no script or style is blocked by the policy and no page raises an error", async ({
+    page,
+  }) => {
+    const problems: string[] = [];
+    page.on("console", (m) => {
+      if (m.type() === "error" || /Content Security Policy|Refused to/i.test(m.text())) {
+        problems.push(m.text());
+      }
+    });
+    page.on("pageerror", (e) => problems.push(e.message));
+    for (const [route] of PAGES) {
+      await page.goto(route);
+      await page.waitForLoadState("networkidle");
+    }
+    expect(problems).toEqual([]);
+  });
+
+  test("T19 — the animation script runs on the home page, and the file behind it stays out of search", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await page.waitForFunction(() => Boolean((window as unknown as { gsap?: unknown }).gsap));
+    await expect(page.locator("html")).toHaveClass(/\bjs\b/);
+    const direct = await page.request.get("/site/home.html");
+    expect(direct.headers()["x-robots-tag"]).toBe("noindex");
+  });
+
+  test("T19 — every internal link on the ready-made pages answers", async ({ page, request }) => {
+    const found = new Set<string>();
+    for (const [route] of PAGES) {
+      await page.goto(route);
+      const hrefs = await page
+        .locator('a[href^="/"]')
+        .evaluateAll((as) => as.map((a) => a.getAttribute("href") ?? ""));
+      for (const href of hrefs) found.add(href.split("#")[0] || "/");
+    }
+    for (const real of ["/signup", "/login", "/buyer/login", "/terms", "/privacy"]) {
+      expect(found.has(real), `${real} linked`).toBe(true);
+    }
+    const failures: Array<{ href: string; status: number }> = [];
+    for (const href of found) {
+      const status = (await request.get(href)).status();
+      if (status >= 400) failures.push({ href, status });
+    }
+    expect(failures).toEqual([]);
+  });
+
+  test("T19 — visit counts: the ready-made pages carry Umami exactly when the React pages do, never twice", async ({
+    request,
+  }) => {
+    // The same build variable decides both. With a site ID every page has Umami's script once and
+    // the pageview script after it; without one, neither. (/privacy is a React page.)
+    const reactPage = await (await request.get("/privacy")).text();
+    const counted = reactPage.includes(UMAMI_TRACKER_URL);
+    for (const [route] of PAGES) {
+      const body = await (await request.get(route)).text();
+      const tags = body.split(UMAMI_TRACKER_URL).length - 1;
+      expect(tags, `${route} Umami script tags`).toBe(counted ? 1 : 0);
+      expect(body.includes('src="/site/analytics.js"'), `${route} pageview script`).toBe(counted);
+      expect(body.includes('data-auto-track="false"'), `${route} no auto-track`).toBe(counted);
+    }
+  });
+
+  test("T19 — the contact address reads right on the home page", async ({ page }) => {
+    await page.goto("/");
+    const mails = page.locator('a[href^="mailto:"]');
+    expect(await mails.count()).toBeGreaterThan(0);
+    for (const a of await mails.all()) {
+      await expect(a).toHaveAttribute("href", "mailto:hello@routeflow.info");
+    }
+  });
+});
+
+// T20 — owner report "when I tap Use cases it goes to the top of the page". Arriving on the home page
+// with a hash used to wait for the deferred scripts (about 220 KB), so on a slow phone the person sat
+// at the top for seconds. The page now moves to the target as soon as it can be laid out, and keeps it
+// there while the layout settles. Measured in the page, under a slow phone's CPU and network.
+test.describe("T20 — a home anchor is reached as soon as the page paints", () => {
+  const SLOW = { cpu: 6, latencyMs: 300, bytesPerSecond: 90_000 };
+  const HEADER = 68;
+
+  const views = [
+    { name: "phone", use: iPhone13, menu: true },
+    {
+      name: "desktop",
+      use: { ...desktopChrome, viewport: { width: 1440, height: 900 } },
+      menu: false,
+    },
+  ] as const;
+
+  for (const view of views) {
+    // Use cases and For stores are in the header; Founder and Questions have no header link, so they
+    // are reached the way a shared link reaches them.
+    for (const hash of ["use-cases", "stores", "founder", "faq"]) {
+      const viaHeader = hash === "use-cases" || hash === "stores";
+      test(`T20 — ${view.name}: ${viaHeader ? "/pricing to " : ""}/#${hash} lands before the scripts finish and stays put`, async ({
+        browser,
       }) => {
-        let checked = 0;
-        for (const route of ["/", "/wholesalers"]) {
-          await page.goto(route);
-          const paragraph = page.locator(".story-controls .story-explanation > p");
-          const count = await paragraph.count();
-          if (count === 0) continue;
-          checked += count;
-          const contrast = await minContrast(paragraph);
-          expect(
-            contrast,
-            `${route} .story-controls .story-explanation > p contrast`,
-          ).not.toBeNull();
-          expect(
-            contrast!,
-            `${route} .story-controls .story-explanation > p contrast`,
-          ).toBeGreaterThanOrEqual(AA_NORMAL);
+        test.setTimeout(150_000);
+        const context = await browser.newContext(view.use);
+        const page = await context.newPage();
+        const errors: string[] = [];
+        page.on("pageerror", (e) => errors.push(e.message));
+        await page.addInitScript(() => {
+          const m: Record<string, number> = {};
+          (window as unknown as { __m: typeof m }).__m = m;
+          addEventListener(
+            "scroll",
+            () => {
+              if (scrollY > 100 && !m.firstScroll) m.firstScroll = Math.round(performance.now());
+            },
+            true,
+          );
+          document.addEventListener("DOMContentLoaded", () => {
+            m.dcl = Math.round(performance.now());
+          });
+        });
+        const cdp = await context.newCDPSession(page);
+        await cdp.send("Emulation.setCPUThrottlingRate", { rate: SLOW.cpu });
+        await cdp.send("Network.enable");
+        await cdp.send("Network.emulateNetworkConditions", {
+          offline: false,
+          latency: SLOW.latencyMs,
+          downloadThroughput: SLOW.bytesPerSecond,
+          uploadThroughput: SLOW.bytesPerSecond,
+        });
+
+        const href = `/#${hash}`;
+        if (viaHeader) {
+          await page.goto("/pricing", { waitUntil: "commit" });
+          await page.waitForSelector(".menu-btn, header a", { timeout: 60_000 });
+          if (view.menu) {
+            // The button is in the HTML before the deferred script that opens it, and a tap before
+            // that does nothing: tap again until it opens (only the script sets aria-expanded).
+            await expect
+              .poll(
+                async () => {
+                  const btn = page.locator(".menu-btn");
+                  if ((await btn.getAttribute("aria-expanded")) !== "true") await btn.click();
+                  return btn.getAttribute("aria-expanded");
+                },
+                { timeout: 60_000, intervals: [500] },
+              )
+              .toBe("true");
+            await page.locator(`#mobile-menu a[href="${href}"]`).click();
+          } else {
+            await page.locator(`header a[href="${href}"]`).click();
+          }
+        } else {
+          await page.goto(href, { waitUntil: "commit" });
         }
-        expect(checked, "at least one story-controls explanation was checked").toBeGreaterThan(0);
-      });
 
-      test("T15 — the workflow-tour record-note's label (--g-eyebrow) clears AA on /wholesalers", async ({
-        page,
-      }) => {
-        await page.goto("/wholesalers");
-        const span = page.locator(".record-note > span");
-        const count = await span.count();
-        expect(count, "record-note span present on /wholesalers").toBeGreaterThan(0);
-        const contrast = await minContrast(span);
-        expect(contrast).not.toBeNull();
-        expect(contrast!).toBeGreaterThanOrEqual(AA_NORMAL);
-      });
-
-      test("T15 — the audience-card links (distributors + retailers) clear AA on /", async ({
-        page,
-      }) => {
-        await page.goto("/");
-        const links = page.locator(
-          ".audience-card.distributors .text-link, .audience-card.retailers .text-link",
+        // The page lands on the target before DOMContentLoaded (that is when the scripts have run):
+        // the person is never left looking at the top while the rest loads.
+        // (the init script runs again for every document, so /pricing's own DOMContentLoaded is not
+        // mistaken for the home page's)
+        await page.waitForFunction(
+          () =>
+            location.pathname === "/" && !!(window as unknown as { __m: { dcl?: number } }).__m.dcl,
+          null,
+          { timeout: 90_000 },
         );
-        const count = await links.count();
-        expect(count, "audience-card links present on /").toBeGreaterThan(0);
-        const contrast = await minContrast(links);
-        expect(contrast).not.toBeNull();
-        expect(contrast!).toBeGreaterThanOrEqual(AA_NORMAL);
-      });
+        const m = await page.evaluate(
+          () => (window as unknown as { __m: { firstScroll?: number; dcl: number } }).__m,
+        );
+        expect(
+          m.firstScroll,
+          `first scroll (ms) before DOMContentLoaded (${m.dcl} ms)`,
+        ).toBeDefined();
+        expect(m.firstScroll!).toBeLessThan(m.dcl);
 
-      test("T15 — the product-passport bar's trailing label clears AA on /, /product, /wholesalers", async ({
-        page,
-      }) => {
-        let checked = 0;
-        for (const route of ["/", "/product", "/wholesalers"]) {
-          await page.goto(route);
-          const span = page.locator(".passport-bottom > span:last-child");
-          const count = await span.count();
-          if (count === 0) continue;
-          checked += count;
-          const contrast = await minContrast(span);
-          expect(contrast, `${route} .passport-bottom > span:last-child contrast`).not.toBeNull();
-          expect(
-            contrast!,
-            `${route} .passport-bottom > span:last-child contrast`,
-          ).toBeGreaterThanOrEqual(AA_NORMAL);
+        // And it stays: once the layout has settled the target sits just under the header.
+        await page.waitForLoadState("load", { timeout: 90_000 });
+        await expect
+          .poll(
+            async () =>
+              page.evaluate(
+                (id) => Math.round(document.getElementById(id)!.getBoundingClientRect().top),
+                hash,
+              ),
+            { timeout: 20_000, intervals: [500] },
+          )
+          .toBeGreaterThanOrEqual(HEADER - 4);
+        const top = await page.evaluate(
+          (id) => Math.round(document.getElementById(id)!.getBoundingClientRect().top),
+          hash,
+        );
+        expect(top).toBeLessThanOrEqual(HEADER + 4);
+
+        // The address keeps the #hash (it is taken off only until load, so the browser's own jump
+        // cannot pull a scrolling person back), and no script threw on the way.
+        await expect.poll(() => page.url(), { timeout: 10_000 }).toContain(`#${hash}`);
+        expect(errors, "page errors while landing").toEqual([]);
+        await context.close();
+      });
+    }
+  }
+
+  // A person who scrolls away before the page has finished loading is left where they went. The scroll
+  // scripts are held back by `hold` ms so DOMContentLoaded and load come well after the wheel, as on a
+  // slow phone: the browser's own jump to the #hash used to pull them back to the target at load.
+  // Run twice each, so a pass is not luck.
+  for (const [hold, run] of [
+    [0, 1],
+    [6000, 1],
+    [0, 2],
+    [6000, 2],
+  ] as const) {
+    test(`T20 — a person who scrolls is left alone (scripts held ${hold} ms, run ${run})`, async ({
+      browser,
+    }) => {
+      test.setTimeout(150_000);
+      const context = await browser.newContext({
+        ...desktopChrome,
+        viewport: { width: 1440, height: 900 },
+      });
+      if (hold)
+        await context.route("**/vendor/ScrollTrigger.min.js", async (route) => {
+          await new Promise((r) => setTimeout(r, hold));
+          await route.continue();
+        });
+      const page = await context.newPage();
+      const cdp = await context.newCDPSession(page);
+      await cdp.send("Emulation.setCPUThrottlingRate", { rate: SLOW.cpu });
+      await cdp.send("Network.enable");
+      await cdp.send("Network.emulateNetworkConditions", {
+        offline: false,
+        latency: SLOW.latencyMs,
+        downloadThroughput: SLOW.bytesPerSecond,
+        uploadThroughput: SLOW.bytesPerSecond,
+      });
+      await page.goto("/pricing", { waitUntil: "commit" });
+      await page.waitForSelector("header a", { timeout: 60_000 });
+      await page.locator('header a[href="/#use-cases"]').click();
+      await page.waitForFunction(() => location.pathname === "/" && scrollY > 100, null, {
+        timeout: 90_000,
+      });
+      await page.mouse.move(700, 400);
+      await page.mouse.wheel(0, -100000);
+      await page.waitForLoadState("load", { timeout: 90_000 });
+      await page.waitForTimeout(4000);
+      expect(await page.evaluate(() => Math.round(scrollY))).toBeLessThan(200);
+      await context.close();
+    });
+  }
+
+  // Phone: landing on #founder, #pricing or #faq used to throw inside ScrollTrigger (a once-trigger built
+  // after its start had passed is removed in its own first refresh, and a later trigger's refresh walks
+  // the same list by index and read a missing entry). Everything built after it stayed hidden for good:
+  // the founder section blank, the pricing table missing. Anyone who scrolls before the scripts run hits
+  // the same trap without an anchor.
+  const hiddenOnScreen = (page: Page) =>
+    page.evaluate(() => {
+      const hidden: string[] = [];
+      for (const el of document.querySelectorAll("#founder *, #pricing *")) {
+        if (el.children.length || !el.textContent?.trim()) continue;
+        const r = el.getBoundingClientRect();
+        if (!r.width || r.bottom <= 0 || r.top >= innerHeight) continue;
+        let o = 1;
+        for (let a: Element | null = el; a; a = a.parentElement) o *= +getComputedStyle(a).opacity;
+        if (o < 0.5) hidden.push((el.textContent ?? "").trim().slice(0, 24));
+      }
+      return hidden;
+    });
+  const slowPhone = async (context: BrowserContext, page: Page) => {
+    const cdp = await context.newCDPSession(page);
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: SLOW.cpu });
+    await cdp.send("Network.enable");
+    await cdp.send("Network.emulateNetworkConditions", {
+      offline: false,
+      latency: SLOW.latencyMs,
+      downloadThroughput: SLOW.bytesPerSecond,
+      uploadThroughput: SLOW.bytesPerSecond,
+    });
+  };
+
+  for (const hash of ["founder", "pricing", "faq"]) {
+    test(`T20 — phone: /#${hash} throws nothing, and the founder section and pricing show`, async ({
+      browser,
+    }) => {
+      test.setTimeout(150_000);
+      const context = await browser.newContext(iPhone13);
+      const page = await context.newPage();
+      const errors: string[] = [];
+      page.on("pageerror", (e) => errors.push(e.message));
+      await slowPhone(context, page);
+      await page.goto(`/#${hash}`, { waitUntil: "load", timeout: 90_000 });
+      await page.waitForTimeout(3000);
+      expect(errors, "page errors").toEqual([]);
+      // whatever is on the screen is shown (it rises on the clock a moment after it arrives) ...
+      await expect.poll(() => hiddenOnScreen(page), { timeout: 15_000 }).toEqual([]);
+      // ... and so is the founder section, and the pricing table, when the person gets to them
+      for (const id of ["founder", "pricing"]) {
+        await page.evaluate((i) => {
+          document.documentElement.style.scrollBehavior = "auto";
+          document.getElementById(i)!.scrollIntoView();
+        }, id);
+        await page.waitForTimeout(500);
+        await expect.poll(() => hiddenOnScreen(page), { timeout: 15_000 }).toEqual([]);
+      }
+      expect(errors, "page errors").toEqual([]);
+      await context.close();
+    });
+  }
+
+  // Opening a question or a card after scrolling down used to send the page toward the top. Every layout
+  // change calls ScrollTrigger.refresh(), which scrolls to the top to measure and back (scrollTo(0,0), then
+  // scrollTo(0,y)); the site's scroll-behavior:smooth animated both. In WebKit the page swooped about 3,700 px up
+  // and back, and on a phone a touch in that window left the person at the top. Chromium keeps its place in a test
+  // (the second call cancels the first before a frame), so the row also pins the cause: no scroll call is ever
+  // made while smooth scrolling is on. Chromium rows run everywhere; the WebKit rows run where it is installed.
+  const TAPS = [
+    { name: "desktop FAQ", width: 1440, height: 900, phone: false, scope: "#faq", nth: 2 },
+    { name: "phone FAQ", width: 390, height: 844, phone: true, scope: "#faq", nth: 2 },
+    { name: "phone use case", width: 390, height: 844, phone: true, scope: "#use-cases", nth: 3 },
+  ];
+  const tapAndWatch = async (
+    page: Page,
+    t: (typeof TAPS)[number],
+  ): Promise<{
+    moved: number;
+    open: boolean;
+    callsWhileSmooth: string[];
+    calls: number;
+    inline: string;
+    drift: number[];
+  }> => {
+    await page.goto("/", { waitUntil: "load" });
+    await page.waitForFunction(
+      () =>
+        !!document.querySelector(".rfw-live") &&
+        !!(window as unknown as { ScrollTrigger?: unknown }).ScrollTrigger,
+      null,
+      { timeout: 30_000 },
+    );
+    await page.waitForTimeout(2500);
+    const sum = page.locator(`${t.scope} details summary:visible`).nth(t.nth);
+    for (let i = 0; i < 80; i++) {
+      const top = await sum.evaluate((e) => e.getBoundingClientRect().top);
+      if (top < t.height * 0.8 && top > t.height * 0.3) break;
+      await page.mouse.move(t.width / 2, t.height / 2);
+      await page.mouse.wheel(0, top > t.height * 0.8 ? 900 : -300);
+      await page.waitForTimeout(250);
+    }
+    await page.waitForTimeout(2500);
+    await page.evaluate(() => {
+      const w = window as unknown as Record<string, unknown>;
+      const calls: string[] = [];
+      w.__calls = calls;
+      const smooth = () => getComputedStyle(document.documentElement).scrollBehavior;
+      for (const [o, n] of [
+        [window, "scrollTo"],
+        [window, "scroll"],
+        [window, "scrollBy"],
+        [Element.prototype, "scrollIntoView"],
+        [Element.prototype, "scrollTo"],
+      ] as unknown as Array<[Record<string, (...a: unknown[]) => unknown>, string]>) {
+        const orig = o[n]!;
+        o[n] = function (this: unknown, ...a: unknown[]) {
+          calls.push(`${n}:${smooth()}`);
+          return orig.apply(this, a);
+        };
+      }
+      const ys: number[] = [];
+      w.__ys = ys;
+      const t0 = performance.now();
+      (function frame() {
+        ys.push(Math.round(scrollY));
+        if (performance.now() - t0 < 3500) requestAnimationFrame(frame);
+      })();
+    });
+    const box = (await sum.boundingBox())!;
+    const open0 = await sum.evaluate((e) => (e.parentElement as HTMLDetailsElement).open);
+    if (t.phone && page.context().browser()?.browserType().name() === "chromium") {
+      await page.touchscreen.tap(box.x + 40, box.y + box.height / 2);
+    } else {
+      await page.mouse.click(box.x + 40, box.y + box.height / 2);
+    }
+    await page.waitForTimeout(3600);
+    const r = await page.evaluate(() => {
+      const w = window as unknown as { __calls: string[]; __ys: number[] };
+      return {
+        calls: w.__calls,
+        ys: w.__ys,
+        inline: document.documentElement.style.scrollBehavior,
+      };
+    });
+    // The pins and triggers below the opened item are where a fresh refresh puts them.
+    const drift = await page.evaluate(async () => {
+      const ST = (
+        window as unknown as {
+          ScrollTrigger: { getAll(): Array<{ start: number }>; refresh(): void };
         }
-        expect(checked, "at least one passport-bottom label was checked").toBeGreaterThan(0);
+      ).ScrollTrigger;
+      const before = ST.getAll().map((x) => x.start);
+      document.documentElement.style.scrollBehavior = "auto";
+      ST.refresh();
+      document.documentElement.style.scrollBehavior = "";
+      return ST.getAll().map((x, i) => Math.abs(x.start - (before[i] ?? 0)));
+    });
+    expect(open0, "the item was closed before the tap").toBe(false);
+    return {
+      moved: Math.max(...r.ys) - Math.min(...r.ys),
+      open: true,
+      callsWhileSmooth: r.calls.filter((c) => !c.endsWith(":auto")),
+      calls: r.calls.length,
+      inline: r.inline,
+      drift,
+    };
+  };
+  const expectStill = (r: Awaited<ReturnType<typeof tapAndWatch>>) => {
+    expect(r.moved, "px the page moved in the three seconds after the tap").toBeLessThanOrEqual(2);
+    expect(r.callsWhileSmooth, "scroll calls made while smooth scrolling is on").toEqual([]);
+    expect(r.inline, "scroll-behavior left as the page had it").toBe("");
+    expect(
+      Math.max(0, ...r.drift),
+      "trigger positions after the tap vs a fresh refresh",
+    ).toBeLessThanOrEqual(2);
+  };
+  for (const t of TAPS) {
+    test(`T20 — opening a question or card never moves the page (${t.name}, Chromium)`, async ({
+      browser,
+    }) => {
+      test.setTimeout(120_000);
+      const context = await browser.newContext({
+        viewport: { width: t.width, height: t.height },
+        hasTouch: t.phone,
+        isMobile: t.phone,
       });
+      const page = await context.newPage();
+      expectStill(await tapAndWatch(page, t));
+      await context.close();
+    });
+    test(`T20 — opening a question or card never moves the page (${t.name}, WebKit)`, async () => {
+      test.setTimeout(120_000);
+      let wk: import("@playwright/test").Browser;
+      try {
+        wk = await webkit.launch({ executablePath: process.env.PW_WEBKIT_EXECUTABLE || undefined });
+      } catch {
+        test.skip(true, "WebKit is not installed here");
+        return;
+      }
+      const context = await wk.newContext({ viewport: { width: t.width, height: t.height } });
+      const page = await context.newPage();
+      expectStill(await tapAndWatch(page, t));
+      await wk.close();
+    });
+  }
 
-      test("T15 — the retailer photo's caption clears AA on /retailers", async ({ page }) => {
-        await page.goto("/retailers");
-        const caption = page.locator(".retailer-art figcaption");
-        const count = await caption.count();
-        expect(count, "retailer-art figcaption present on /retailers").toBeGreaterThan(0);
-        const contrast = await minContrast(caption);
-        expect(contrast).not.toBeNull();
-        expect(contrast!).toBeGreaterThanOrEqual(AA_NORMAL);
+  // Keyboard: the landing script takes the #hash off the address until load, so the browser makes no
+  // jump of its own and sets no starting point for Tab; the next Tab then went to the skip link at the
+  // top of the page. The script sets that starting point itself, so Tab goes on from the section.
+  for (const hash of ["use-cases", "founder", "faq"]) {
+    test(`T20 — Tab after landing on /#${hash} goes on from the section, not to the top`, async ({
+      browser,
+    }) => {
+      test.setTimeout(150_000);
+      const context = await browser.newContext({
+        ...desktopChrome,
+        viewport: { width: 1440, height: 900 },
       });
+      const page = await context.newPage();
+      await slowPhone(context, page);
+      await page.goto(`/#${hash}`, { waitUntil: "load", timeout: 90_000 });
+      await page.waitForTimeout(3000);
+      const landed = await page.evaluate(() => Math.round(scrollY));
+      expect(landed).toBeGreaterThan(5000);
+      await page.keyboard.press("Tab");
+      await page.waitForTimeout(700);
+      const after = await page.evaluate(() => ({
+        y: Math.round(scrollY),
+        inHeader: !!document.activeElement?.closest("header, .skip, .site-header"),
+      }));
+      expect(after.inHeader, "focus went to the header or skip link").toBe(false);
+      expect(after.y, "page jumped back up").toBeGreaterThan(landed - 900);
+      await context.close();
+    });
+  }
+
+  test("T20 — phone: scrolling to the founder section before the scripts run throws nothing", async ({
+    browser,
+  }) => {
+    test.setTimeout(150_000);
+    const context = await browser.newContext(iPhone13);
+    await context.route("**/vendor/ScrollTrigger.min.js", async (route) => {
+      await new Promise((r) => setTimeout(r, 4000));
+      await route.continue();
+    });
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.goto("/", { waitUntil: "commit" });
+    await page.waitForSelector("#founder", { state: "attached", timeout: 60_000 });
+    await page.evaluate(() => {
+      document.documentElement.style.scrollBehavior = "auto";
+      document.getElementById("founder")!.scrollIntoView();
+    });
+    await page.waitForLoadState("load", { timeout: 90_000 });
+    await page.waitForTimeout(3000);
+    expect(errors, "page errors").toEqual([]);
+    await expect.poll(() => hiddenOnScreen(page), { timeout: 15_000 }).toEqual([]);
+    await context.close();
+  });
+});
+
+// ─── T21 — the motion does not depend on the visitor's motion setting ───────
+// Owner ruling 2026-11-03: the wheel comes apart on scroll for everyone. The OS "reduce motion" setting, the
+// footer switch and ?motion=on are gone; a computer with animations off used to get a still dial and a page
+// 8,000 px shorter (no ScrollTriggers at all). Only no-JS and a browser that cannot run the wheel keep the still (T22 covers short windows).
+test.describe("T21 — the motion does not depend on the visitor's motion setting", () => {
+  const VIEWS = [
+    { name: "1440", width: 1440, height: 900 },
+    { name: "390", width: 390, height: 844 },
+  ];
+
+  const measure = (page: import("@playwright/test").Page) =>
+    page.evaluate(() => ({
+      height: document.documentElement.scrollHeight,
+      triggers: (
+        window as unknown as { ScrollTrigger?: { getAll(): unknown[] } }
+      ).ScrollTrigger?.getAll().length,
+      live: !!document.querySelector(".rfw-live"),
+      still: !!document.querySelector(".rfw--static"),
+      js: document.documentElement.className,
+      reduce: matchMedia("(prefers-reduced-motion: reduce)").matches,
+    }));
+
+  const load = async (
+    browser: import("@playwright/test").Browser,
+    view: (typeof VIEWS)[number],
+    reducedMotion: "reduce" | "no-preference",
+    seed?: () => void,
+  ) => {
+    const context = await browser.newContext({
+      viewport: { width: view.width, height: view.height },
+      reducedMotion,
+    });
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    if (seed) await page.addInitScript(seed);
+    await page.goto("/", { waitUntil: "load" });
+    await page.waitForFunction(() => !!document.querySelector(".rfw-live, .rfw--static"), null, {
+      timeout: 30_000,
+    });
+    await page.waitForTimeout(2500);
+    return { context, page, errors };
+  };
+
+  for (const view of VIEWS) {
+    test(`T21 — reduce at ${view.name}: the page is built the same as with no preference`, async ({
+      browser,
+    }) => {
+      test.setTimeout(120_000);
+      const normal = await load(browser, view, "no-preference");
+      const a = await measure(normal.page);
+      await normal.context.close();
+      const reduced = await load(browser, view, "reduce");
+      const b = await measure(reduced.page);
+      expect(b.reduce, "the browser really reports reduced motion").toBe(true);
+      expect(b.still, "no still dial").toBe(false);
+      expect(b.live, "the live wheel").toBe(true);
+      expect(b.triggers, "ScrollTriggers").toBe(a.triggers);
+      expect(b.triggers ?? 0).toBeGreaterThan(20);
+      expect(Math.abs(b.height - a.height), "page height").toBeLessThanOrEqual(4);
+      expect(b.js).toContain("js-motion");
+      expect(b.js).not.toMatch(/\brm\b|motion-on/);
+      expect(reduced.errors).toEqual([]);
+      await reduced.context.close();
+    });
+
+    test(`T21 — reduce at ${view.name}: the wheel pieces move apart on scroll`, async ({
+      browser,
+    }) => {
+      test.setTimeout(120_000);
+      const { context, page, errors } = await load(browser, view, "reduce");
+      const box = await page.evaluate(() => {
+        const r = document.querySelector(".rfw")!.getBoundingClientRect();
+        return { top: Math.round(r.top + scrollY), height: Math.round(r.height) };
+      });
+      expect(box.height, "the wheel section is tall (it pins)").toBeGreaterThan(view.height * 1.5);
+      // A coarse picture of the canvas: where it is not white/grey, on a 4-px grid.
+      const snap = () =>
+        page.evaluate(() => {
+          const cv = document.querySelector<HTMLCanvasElement>(".rfw-cv")!;
+          const c = cv.getContext("2d")!;
+          const { width: W, height: H } = cv;
+          const d = c.getImageData(0, 0, W, H).data;
+          const cells: number[] = [];
+          for (let y = 0; y < H; y += 8)
+            for (let x = 0; x < W; x += 8) {
+              const i = (y * W + x) * 4;
+              cells.push(d[i]! + d[i + 1]! + d[i + 2]!);
+            }
+          return cells;
+        });
+      const at = async (f: number) => {
+        await page.evaluate(
+          (y) => {
+            document.documentElement.style.scrollBehavior = "auto";
+            scrollTo(0, y);
+          },
+          box.top + f * (box.height - view.height),
+        );
+        await page.waitForTimeout(1500);
+        return snap();
+      };
+      const rest = await at(0);
+      let moved = 0;
+      for (const f of [0.2, 0.4, 0.6, 0.8]) {
+        const now = await at(f);
+        const changed = now.filter((v, i) => Math.abs(v - rest[i]!) > 60).length / now.length;
+        moved = Math.max(moved, changed);
+      }
+      expect(
+        moved,
+        "share of the canvas that changed while scrolling through the wheel",
+      ).toBeGreaterThan(0.05);
+      expect(errors).toEqual([]);
+      await context.close();
+    });
+  }
+
+  // The hub is found by its own navy (the biggest connected blob of its two navies); the logo is the white in the
+  // middle of it. `maxR` is the brightest red value there: 255 is full strength, a faded mark reads far less.
+  const hubLogo = (page: import("@playwright/test").Page) =>
+    page.evaluate(() => {
+      const cv = document.querySelector<HTMLCanvasElement>(".rfw-cv")!;
+      const { width: W, height: H } = cv;
+      const d = cv.getContext("2d")!.getImageData(0, 0, W, H).data;
+      const near = (i: number, t: number[]) =>
+        Math.abs(d[i]! - t[0]!) < 7 &&
+        Math.abs(d[i + 1]! - t[1]!) < 7 &&
+        Math.abs(d[i + 2]! - t[2]!) < 7;
+      // the biggest connected blob of the hub's two navies
+      const m = new Uint8Array(W * H);
+      for (let i = 0; i < W * H; i++) {
+        const p = i * 4;
+        if (d[p + 3]! > 250 && (near(p, [16, 38, 77]) || near(p, [10, 26, 56]))) m[i] = 1;
+      }
+      const seen = new Uint8Array(W * H);
+      let best: { n: number; x0: number; y0: number; x1: number; y1: number } | null = null;
+      for (let s = 0; s < W * H; s++) {
+        if (!m[s] || seen[s]) continue;
+        const st = [s];
+        seen[s] = 1;
+        const b = { n: 0, x0: W, y0: H, x1: -1, y1: -1 };
+        while (st.length) {
+          const q = st.pop()!;
+          const x = q % W;
+          const y = (q / W) | 0;
+          b.n++;
+          b.x0 = Math.min(b.x0, x);
+          b.x1 = Math.max(b.x1, x);
+          b.y0 = Math.min(b.y0, y);
+          b.y1 = Math.max(b.y1, y);
+          for (const k of [q - 1, q + 1, q - W, q + W])
+            if (k >= 0 && k < W * H && m[k] && !seen[k]) {
+              seen[k] = 1;
+              st.push(k);
+            }
+        }
+        if (!best || b.n > best.n) best = b;
+      }
+      if (!best) return { found: false, white: 0, maxR: 0, w: 0 };
+      const w = best.x1 - best.x0;
+      const h = best.y1 - best.y0;
+      // bright pixels with dark navy (lid or wall) close on all four sides, on the hub or just under its lid: the
+      // logo, never the page around the hub
+      const R = 14;
+      const navyNear = (x: number, y: number, dx: number, dy: number) => {
+        for (let k = 1; k <= R; k++) {
+          const xx = x + dx * k;
+          const yy = y + dy * k;
+          if (xx < 0 || yy < 0 || xx >= W || yy >= H) return false;
+          const q = (yy * W + xx) * 4;
+          if (d[q]! < 70 && d[q + 1]! < 90 && d[q + 2]! < 140 && d[q + 3]! > 250) return true;
+        }
+        return false;
+      };
+      let white = 0;
+      let maxR = 0;
+      for (let y = best.y0; y <= Math.min(H - 1, best.y1 + Math.round(0.5 * h)); y++)
+        for (let x = best.x0; x <= best.x1; x++) {
+          const p = (y * W + x) * 4;
+          if (d[p]! < 100) continue;
+          if (!(navyNear(x, y, -1, 0) && navyNear(x, y, 1, 0))) continue;
+          if (!(navyNear(x, y, 0, -1) && navyNear(x, y, 0, 1))) continue;
+          if (d[p]! > maxR) maxR = d[p]!;
+          if (d[p]! > 200 && d[p + 1]! > 200 && d[p + 2]! > 200) white++;
+        }
+      return { found: true, white, maxR, w };
+    });
+
+  // review-a, #4153: below 900 px the closed wheel, as loaded and never scrolled, drew a plain navy hub. Looking
+  // straight down the puck's base sits inside its lid, so the "stand the mark upright" blend clamped to 1 and drew
+  // it at almost no size. The hub is found by its own navy; the logo is white pixels in the middle of it.
+  for (const view of [
+    { name: "768", width: 768, height: 1024 },
+    { name: "390", width: 390, height: 844 },
+  ]) {
+    test(`T21 — the hub shows the logo at rest at ${view.name}`, async ({ browser }) => {
+      test.setTimeout(120_000);
+      const { context, page, errors } = await load(browser, view, "no-preference");
+      const hub = await hubLogo(page);
+      expect(hub.found, "a navy hub on the canvas").toBe(true);
+      expect(hub.w, "the hub is a real size").toBeGreaterThan(60);
+      expect(hub.white, "white logo pixels in the middle of the hub").toBeGreaterThan(40);
+      expect(errors).toEqual([]);
+      await context.close();
+    });
+  }
+
+  // review-a, #4153 note 1: on 360x740, 393x760 and 412x780 the page rests for hundreds of pixels with the puck's
+  // geometry still, and the mark's opacity followed that geometry, so it stayed at half strength (a grey logo).
+  // The fade now runs on the clock, so wherever the page rests the logo is at full strength.
+  for (const view of [
+    { name: "360x740", width: 360, height: 740 },
+    { name: "393x760", width: 393, height: 760 },
+    { name: "412x780", width: 412, height: 780 },
+  ]) {
+    test(`T21 — the hub logo is at full strength wherever the page rests at ${view.name}`, async ({
+      browser,
+    }) => {
+      test.setTimeout(180_000);
+      const { context, page, errors } = await load(browser, view, "no-preference");
+      const weak: string[] = [];
+      for (let y = 900; y <= 1700; y += 100) {
+        await page.evaluate((to) => {
+          document.documentElement.style.scrollBehavior = "auto";
+          scrollTo(0, to);
+        }, y);
+        await page.waitForTimeout(1200);
+        const hub = await hubLogo(page);
+        if (hub.maxR < 230) weak.push(`y ${y}: brightest ${hub.maxR}`);
+      }
+      expect(weak, "scroll positions where the logo is faded").toEqual([]);
+      expect(errors).toEqual([]);
+      await context.close();
+    });
+  }
+
+  test("T21 — a leftover Reduce motion switch value in the browser changes nothing", async ({
+    browser,
+  }) => {
+    test.setTimeout(120_000);
+    const { context, page } = await load(browser, VIEWS[0]!, "no-preference", () => {
+      try {
+        localStorage.setItem("rf-rm", "1");
+      } catch {
+        /* storage blocked: nothing to leave behind */
+      }
+    });
+    const m = await measure(page);
+    expect(m.live).toBe(true);
+    expect(m.triggers ?? 0).toBeGreaterThan(20);
+    expect(m.js).not.toMatch(/\brm\b/);
+    await context.close();
+  });
+
+  // review-a, #4153: below 900 px the site.js handler never ran (no matching condition), so html.js-motion stayed on and
+  // every .reveal block stayed at opacity 0. Every page that loads site.js shows its words at tablet and phone widths.
+  for (const route of [
+    "/company",
+    "/contact",
+    "/data-in-and-out",
+    "/does-and-doesnt",
+    "/getting-started",
+    "/pricing",
+    "/product",
+    "/security",
+  ]) {
+    for (const width of [768, 390]) {
+      test(`T21 — ${route} at ${width}: motion is off the page and no words stay hidden`, async ({
+        browser,
+      }) => {
+        const context = await browser.newContext({ viewport: { width, height: 844 } });
+        const page = await context.newPage();
+        await page.goto(route, { waitUntil: "load" });
+        await page.waitForTimeout(2500);
+        // blocks rise as they scroll into view: walk down the page, then count what is still invisible
+        const state = await page.evaluate(async () => {
+          const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+          document.documentElement.style.scrollBehavior = "auto";
+          for (const el of document.querySelectorAll(".reveal")) {
+            el.scrollIntoView({ block: "center" });
+            await wait(120);
+          }
+          await wait(1500);
+          return {
+            js: document.documentElement.classList.contains("js-motion"),
+            hidden: [...document.querySelectorAll(".reveal")].filter(
+              (el) => getComputedStyle(el).opacity === "0",
+            ).length,
+          };
+        });
+        await context.close();
+        expect(state.js, "js-motion still on").toBe(false);
+        expect(state.hidden, "hidden .reveal blocks").toBe(0);
+      });
+    }
+  }
+
+  test("T21 — no page offers a Reduce motion switch, and ?motion=on is just a link", async ({
+    request,
+  }) => {
+    for (const route of READY_MADE_ROUTES) {
+      const body = await (await request.get(route)).text();
+      expect(body, `${route} switch`).not.toMatch(/rm-toggle|data-rm|Reduce motion/);
+    }
+    const plain = await (await request.get("/")).text();
+    const forced = await (await request.get("/?motion=on")).text();
+    expect(forced).toBe(plain);
+  });
+});
+
+// ─── T22 — the wheel runs on a short screen, a phone held sideways included ──
+// Owner, iPhone in desktop mode turned to landscape: no wheel graphics. The wheel used to give way to the still under
+// 500 px tall. It now runs on every height; below 900 px, short and wider than tall, it takes the wide layout (the words
+// beside the wheel). A turn of the phone builds it again for the new shape and puts the visitor at the same place.
+test.describe("T22 — the wheel runs on a short screen", () => {
+  const SIZES = [
+    { w: 667, h: 375 },
+    { w: 844, h: 390 },
+    { w: 932, h: 430 },
+    { w: 1024, h: 500 },
+    { w: 1100, h: 450 },
+  ];
+
+  const state = (page: import("@playwright/test").Page) =>
+    page.evaluate(() => {
+      const el = document.querySelector(".rfw") as
+        (HTMLElement & { _rfw?: { trig?: { progress: number } } }) | null;
+      const r = el ? el.getBoundingClientRect() : null;
+      const copy = document.querySelector(".hx-copy") as HTMLElement | null;
+      const cv = document.querySelector(".rfw-cv") as HTMLCanvasElement | null;
+      const c = cv ? cv.getBoundingClientRect() : null;
+      return {
+        live: !!document.querySelector(".rfw-live"),
+        still: !!document.querySelector(".rfw--static"),
+        canvas: !!cv,
+        progress: el?._rfw?.trig?.progress ?? null,
+        top: r ? r.top + window.scrollY : 0,
+        height: r ? r.height : 0,
+        copyRight: copy ? copy.getBoundingClientRect().right : null,
+        canvasLeft: c ? c.left : null,
+        docW: document.documentElement.scrollWidth,
+        winW: window.innerWidth,
+      };
+    });
+
+  const load = async (browser: import("@playwright/test").Browser, w: number, h: number) => {
+    const context = await browser.newContext({ viewport: { width: w, height: h }, hasTouch: true });
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.goto("/", { waitUntil: "load" });
+    await page.waitForSelector(".rfw-live", { state: "attached", timeout: 30_000 });
+    await page.waitForTimeout(2500);
+    return { context, page, errors };
+  };
+
+  for (const s of SIZES) {
+    test(`T22 — ${s.w}x${s.h}: a live wheel with the words beside it, no sideways scroll`, async ({
+      browser,
+    }) => {
+      test.setTimeout(120_000);
+      const { context, page, errors } = await load(browser, s.w, s.h);
+      const a = await state(page);
+      expect(a.live, "live wheel").toBe(true);
+      expect(a.still, "not the still").toBe(false);
+      expect(a.canvas, "a canvas").toBe(true);
+      expect(a.copyRight, "words sit left of the wheel").toBeLessThanOrEqual(
+        (a.canvasLeft ?? 0) + s.w * 0.62,
+      );
+      // real scroll: the story plays and the page never grows sideways
+      const before = a.progress ?? 0;
+      for (let i = 0; i < 6; i++) {
+        await page.mouse.wheel(0, 160);
+        await page.waitForTimeout(250);
+      }
+      await page.waitForTimeout(1500);
+      const b = await state(page);
+      expect(b.progress ?? 0, "scroll plays the story").toBeGreaterThan(before + 0.02);
+      expect(b.docW, "no sideways scroll").toBeLessThanOrEqual(b.winW);
+      expect(errors).toEqual([]);
+      await context.close();
+    });
+  }
+
+  test("T22 — pieces move when scrolled: the canvas changes between two places in the story", async ({
+    browser,
+  }) => {
+    test.setTimeout(120_000);
+    const { context, page } = await load(browser, 844, 390);
+    const grab = async (f: number) => {
+      const { top, height } = await state(page);
+      await page.evaluate(
+        ([t, h, f2]) => {
+          document.documentElement.style.scrollBehavior = "auto";
+          window.scrollTo(0, (t as number) + (f2 as number) * ((h as number) - 390));
+        },
+        [top, height, f],
+      );
+      await page.waitForTimeout(1800);
+      return page.evaluate(() => {
+        const cv = document.querySelector(".rfw-cv") as HTMLCanvasElement;
+        const g = cv.getContext("2d")!;
+        const d = g.getImageData(0, 0, cv.width, cv.height).data;
+        let sum = 0;
+        for (let i = 0; i < d.length; i += 97) sum = (sum * 31 + d[i]) % 1000003;
+        return sum;
+      });
+    };
+    const rest = await grab(0.02);
+    const apart = await grab(0.3);
+    expect(apart, "the pieces have moved").not.toBe(rest);
+    await context.close();
+  });
+
+  test("T22 — turning the phone builds the wheel again and keeps the place", async ({
+    browser,
+  }) => {
+    test.setTimeout(120_000);
+    const { context, page, errors } = await load(browser, 390, 844);
+    const { top, height } = await state(page);
+    await page.evaluate(
+      ([t, h]) => {
+        document.documentElement.style.scrollBehavior = "auto";
+        window.scrollTo(0, (t as number) + 0.5 * ((h as number) - 844));
+      },
+      [top, height],
+    );
+    await page.waitForTimeout(2200);
+    const p1 = (await state(page)).progress ?? 0;
+    expect(p1).toBeGreaterThan(0.2);
+    await page.setViewportSize({ width: 844, height: 390 });
+    await page.waitForTimeout(3000);
+    const land = await state(page);
+    expect(land.live && land.canvas, "live wheel after the turn").toBe(true);
+    expect(Math.abs((land.progress ?? 0) - p1), "same place in the story").toBeLessThan(0.04);
+    expect(land.docW).toBeLessThanOrEqual(land.winW);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(3000);
+    const back = await state(page);
+    expect(back.live && back.canvas).toBe(true);
+    expect(Math.abs((back.progress ?? 0) - p1)).toBeLessThan(0.04);
+    expect(errors).toEqual([]);
+    await context.close();
+  });
+
+  // What the sample screens and the headline do: a laptop window 500 px or taller keeps the page as it was
+  // (screens shown, headline full size); a phone held sideways and a wide window under 500 px give them up.
+  const cardsAndHeadline = (page: import("@playwright/test").Page) =>
+    page.evaluate(() => {
+      const card = document.querySelector(".rfw-card");
+      const h1 = document.querySelector(".hx-up h1");
+      return {
+        cards: card ? getComputedStyle(card).display : "none",
+        h1: h1 ? parseFloat(getComputedStyle(h1).fontSize) : 0,
+      };
+    });
+
+  for (const s of [
+    { w: 1280, h: 577 },
+    { w: 1366, h: 590 },
+    { w: 1024, h: 560 },
+  ]) {
+    test(`T22 — ${s.w}x${s.h}: a laptop window keeps its sample screens and its headline`, async ({
+      browser,
+    }) => {
+      test.setTimeout(120_000);
+      const { context, page, errors } = await load(browser, s.w, s.h);
+      const r = await cardsAndHeadline(page);
+      expect(r.cards, "the sample screens are shown").not.toBe("none");
+      expect(r.h1, "the headline is not shrunk for height").toBeGreaterThanOrEqual(50);
+      expect(errors).toEqual([]);
+      await context.close();
+    });
+  }
+
+  for (const s of [
+    { w: 667, h: 375 },
+    { w: 844, h: 390 },
+    { w: 1100, h: 450 },
+  ]) {
+    test(`T22 — ${s.w}x${s.h}: the sample screens give way and the headline fits the height`, async ({
+      browser,
+    }) => {
+      test.setTimeout(120_000);
+      const { context, page, errors } = await load(browser, s.w, s.h);
+      const r = await cardsAndHeadline(page);
+      expect(r.cards).toBe("none");
+      expect(r.h1).toBeLessThanOrEqual(48);
+      expect(errors).toEqual([]);
+      await context.close();
+    });
+  }
+
+  // A phone held sideways, big or small, uses the phone's rule: no name under 11 px (the piece shows its icon only),
+  // and no name runs past the edge of the stage: a name that will not fit at 11 px is left out.
+  for (const s of [
+    { w: 667, h: 375 },
+    { w: 844, h: 390 },
+    { w: 915, h: 412 },
+    { w: 932, h: 430 },
+    { w: 640, h: 360 },
+    { w: 568, h: 320 },
+  ]) {
+    test(`T22 — ${s.w}x${s.h}: no wheel name under 11 px, none past the stage edge`, async ({
+      browser,
+    }) => {
+      test.setTimeout(150_000);
+      const context = await browser.newContext({
+        viewport: { width: s.w, height: s.h },
+        hasTouch: true,
+      });
+      const page = await context.newPage();
+      await page.addInitScript(() => {
+        type Draw = { px: number; l: number; r: number; cw: number; ts: number };
+        const w = window as unknown as { __draws: Draw[] };
+        w.__draws = [];
+        const f = CanvasRenderingContext2D.prototype.fillText;
+        CanvasRenderingContext2D.prototype.fillText = function (...a: Parameters<typeof f>) {
+          const t = this.getTransform();
+          const wd = this.measureText(String(a[0])).width * t.a;
+          const al = this.textAlign;
+          const l =
+            al === "left" || al === "start"
+              ? t.e
+              : al === "right" || al === "end"
+                ? t.e - wd
+                : t.e - wd / 2;
+          w.__draws.push({
+            px: (t.a * 31) / (window.devicePixelRatio || 1),
+            l,
+            r: l + wd,
+            cw: this.canvas.width,
+            ts: performance.now(),
+          });
+          return f.apply(this, a);
+        };
+      });
+      await page.goto("/", { waitUntil: "load" });
+      await page.waitForSelector(".rfw-live", { state: "attached", timeout: 30_000 });
+      await page.waitForTimeout(2500);
+      const { top, height } = await state(page);
+      type D = { px: number; l: number; r: number; cw: number; ts: number };
+      const settledFrames: D[] = [];
+      let drawn = 0;
+      for (const f of [0.1, 0.2, 0.3, 0.4]) {
+        await page.evaluate(() => ((window as unknown as { __draws: D[] }).__draws = []));
+        await page.evaluate(
+          ([t, h, f2, vh]) => {
+            document.documentElement.style.scrollBehavior = "auto";
+            window.scrollTo(0, (t as number) + (f2 as number) * ((h as number) - (vh as number)));
+          },
+          [top, height, f, s.h],
+        );
+        await page.waitForTimeout(1800);
+        const all = await page.evaluate(() => (window as unknown as { __draws: D[] }).__draws);
+        // every draw counts for the size; only the last frame (the settled one) counts for the edge
+        const last = all.length ? all[all.length - 1].ts : 0;
+        settledFrames.push(...all.filter((d) => d.ts > last - 40));
+        // a hold where nothing moves draws nothing new
+        drawn += all.length;
+        if (all.length)
+          expect(Math.min(...all.map((d) => d.px)), "smallest name").toBeGreaterThanOrEqual(10.95);
+      }
+      expect(drawn, "names were drawn").toBeGreaterThan(0);
+      for (const d of settledFrames) {
+        expect(d.l, "name stays inside the stage (left)").toBeGreaterThanOrEqual(-1);
+        expect(d.r, "name stays inside the stage (right)").toBeLessThanOrEqual(d.cw + 1);
+      }
+      await context.close();
+    });
+  }
+});
+
+// ─── T23 — on a phone, headings rise into place and are never hidden ─────────
+// The rise is movement only (a scroll timeline, behind @supports). With real scroll, every heading on screen (outside the wheel, which
+// has its own beats) is fully opaque and visible once the page has settled at each step.
+test.describe("T23 — the phone's rising headings", () => {
+  for (const route of ["/", "/pricing", "/product"]) {
+    test(`T23 — ${route} at 390: headings on screen are opaque, and settle in place`, async ({
+      browser,
+    }) => {
+      test.setTimeout(180_000);
+      const context = await browser.newContext({
+        viewport: { width: 390, height: 844 },
+        hasTouch: true,
+      });
+      const page = await context.newPage();
+      await page.goto(route, { waitUntil: "load" });
+      await page.waitForTimeout(2000);
+      const bad: string[] = [];
+      for (let i = 0; i < 30; i++) {
+        await page.mouse.wheel(0, 640);
+        await page.waitForTimeout(1300);
+        const seen = await page.evaluate(() =>
+          [...document.querySelectorAll("h2")]
+            .filter((h) => {
+              if (h.closest(".rfw")) return false;
+              const r = h.getBoundingClientRect();
+              return r.top > 70 && r.bottom < innerHeight && r.height > 0;
+            })
+            .map((h) => {
+              const c = getComputedStyle(h);
+              return { t: (h.textContent || "").slice(0, 30), o: c.opacity, v: c.visibility };
+            }),
+        );
+        for (const s of seen)
+          if (s.o !== "1" || s.v !== "visible") bad.push(`${s.t}: ${s.o}/${s.v}`);
+      }
+      await context.close();
+      expect(bad, "headings hidden on screen").toEqual([]);
+    });
+  }
+});
+
+// ─── T24 — the hover label never repeats a name the piece already carries ────
+// Owner (Lead, 1440 x 900): the first screen showed a white "Customers" pill right above the Customers tile, which already says
+// "Customers". The hover/focus label (.rfw-tip) is for a piece with only its icon: it stays away while the piece carries its own
+// name (the first screen on a desktop) and shows whenever the name is not on the piece (an inner piece at rest, any piece on a phone).
+test.describe("T24 — the hover label does not repeat a drawn name", () => {
+  const OUTER = 8; // Customers
+  const INNER = 11; // an inner piece: icon only at rest on a desktop
+
+  const open = async (browser: import("@playwright/test").Browser, w: number, h: number) => {
+    const context = await browser.newContext({ viewport: { width: w, height: h } });
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.goto("/", { waitUntil: "load" });
+    await page.waitForSelector(".rfw-live", { state: "attached", timeout: 30_000 });
+    await page.waitForTimeout(3500);
+    return { context, page, errors };
+  };
+  const tip = (page: import("@playwright/test").Page) =>
+    page.evaluate(() => {
+      const t = document.querySelector(".rfw-tip") as HTMLElement;
+      return { on: t.classList.contains("on"), text: t.textContent || "" };
+    });
+  const focusPiece = async (page: import("@playwright/test").Page, i: number) => {
+    await page.locator(`.rfw-b[data-i="${i}"]`).focus();
+    await page.waitForTimeout(700);
+    return tip(page);
+  };
+
+  test("T24 — 1440x900: no label on a tile that names itself, a label on an icon-only piece", async ({
+    browser,
+  }) => {
+    test.setTimeout(120_000);
+    const { context, page, errors } = await open(browser, 1440, 900);
+    // the pointer resting on the tile (the owner's case): the Customers tile sits at about (811, 428) on this first screen
+    await page.mouse.move(780, 400);
+    await page.mouse.move(811, 428, { steps: 4 });
+    await page.waitForTimeout(700);
+    expect((await tip(page)).on, "hover on the tile at rest shows no repeat").toBe(false);
+    await page.mouse.move(1085, 405);
+    await page.mouse.move(1125, 435, { steps: 4 });
+    await page.waitForTimeout(700);
+    expect((await tip(page)).on, "hover on an icon-only piece shows its label").toBe(true);
+    // keyboard focus
+    expect((await focusPiece(page, OUTER)).on, "Customers tile carries its name").toBe(false);
+    const inner = await focusPiece(page, INNER);
+    expect(inner.on, "an icon-only piece still gets its label").toBe(true);
+    expect(inner.text.length).toBeGreaterThan(0);
+    expect(errors).toEqual([]);
+    await context.close();
+  });
+
+  for (const s of [
+    { w: 768, h: 1024 },
+    { w: 390, h: 844 },
+  ]) {
+    test(`T24 — ${s.w}x${s.h}: a tile with no name drawn still gets its label`, async ({
+      browser,
+    }) => {
+      test.setTimeout(120_000);
+      const { context, page, errors } = await open(browser, s.w, s.h);
+      const t = await focusPiece(page, OUTER);
+      expect(t.on, "label shows when the tile has no name of its own").toBe(true);
+      expect(t.text).toBe("Customers");
+      expect(errors).toEqual([]);
+      await context.close();
+    });
+  }
+});
+
+// ─── T25 — the founder's note: one heading that wraps cleanly, and Read the rest never moves the page ───
+// Owner: the note opens "We built this with the people who use it every day." on the home page (#founder) and the company page (#story).
+// On a phone the home page shows a short version with a Read the rest button; the tap opens the full note in place.
+test.describe("T25 — the founder's note", () => {
+  const HEADING = "We built this with the people who use it every day.";
+  const VIEWS = [
+    { name: "1440", w: 1440, h: 900, touch: false },
+    { name: "768", w: 768, h: 1024, touch: true },
+    { name: "390", w: 390, h: 844, touch: true },
+  ];
+
+  // review-b: at two-column widths the spare height of the tall note used to open a gap between the kicker and the heading
+  for (const w of [1440, 1280, 1100, 1024, 768, 390]) {
+    test(`T25 — ${w}: the heading sits right under the kicker (no gap from spare height)`, async ({
+      browser,
+    }) => {
+      const context = await browser.newContext({ viewport: { width: w, height: 900 } });
+      const page = await context.newPage();
+      await page.goto("/#founder", { waitUntil: "load" });
+      await page.waitForSelector("#founder", { state: "attached", timeout: 60_000 });
+      await page.waitForTimeout(3000);
+      await page.evaluate(() =>
+        document.querySelector("#founder")!.scrollIntoView({ block: "start" }),
+      );
+      await page.waitForTimeout(1500);
+      const gap = await page.evaluate(
+        () =>
+          document.querySelector(".fd-q")!.getBoundingClientRect().top -
+          document.querySelector("#founder .kick")!.getBoundingClientRect().bottom,
+      );
+      expect(gap, "kicker to heading").toBeGreaterThanOrEqual(8);
+      expect(gap, "kicker to heading").toBeLessThanOrEqual(24);
+      await context.close();
+    });
+  }
+
+  // owner: "co-founder’s" never breaks at its hyphen, on either page, at any width
+  for (const w of [1440, 1100, 1024, 768, 390]) {
+    test(`T25 — ${w}: "co-founder’s" stays on one line (home short and full note, company)`, async ({
+      browser,
+    }) => {
+      test.setTimeout(120_000);
+      const context = await browser.newContext({ viewport: { width: w, height: 900 } });
+      const page = await context.newPage();
+      const rects = () =>
+        page.evaluate(() =>
+          [...document.querySelectorAll(".nb")]
+            .filter(
+              (n) => (n.textContent || "") === "co-founder’s" && n.getClientRects().length > 0,
+            )
+            .map((n) => n.getClientRects().length),
+        );
+      await page.goto("/", { waitUntil: "load" });
+      await page.waitForSelector("#founder", { state: "attached", timeout: 60_000 });
+      await page.waitForTimeout(2500);
+      // the short version shows below 900 px, the full note at 900 and up; open the note on a phone to check it too
+      let seen = await rects();
+      expect(seen.length, "a co-founder’s span is on screen").toBeGreaterThan(0);
+      const more = page.locator(".fd-more");
+      if (await more.isVisible()) {
+        await more.click();
+        await page.waitForTimeout(800);
+        seen = seen.concat(await rects());
+      }
+      await page.goto("/company", { waitUntil: "load" });
+      await page.waitForSelector(".co-body", { state: "attached" });
+      await page.waitForTimeout(1500);
+      seen = seen.concat(await rects());
+      expect(
+        seen.every((n) => n === 1),
+        "every span is a single line box: " + seen,
+      ).toBe(true);
+      await context.close();
+    });
+  }
+
+  for (const v of VIEWS) {
+    test(`T25 — ${v.name}: home #founder heading wraps in 3 lines or fewer, Read the rest opens in place`, async ({
+      browser,
+    }) => {
+      test.setTimeout(120_000);
+      const context = await browser.newContext({
+        viewport: { width: v.w, height: v.h },
+        hasTouch: v.touch,
+      });
+      const page = await context.newPage();
+      const errors: string[] = [];
+      page.on("pageerror", (e) => errors.push(e.message));
+      await page.goto("/#founder", { waitUntil: "load" });
+      await page.waitForSelector("#founder", { state: "attached", timeout: 60_000 });
+      await page.waitForTimeout(3500);
+      await page.evaluate(() =>
+        document.querySelector("#founder")!.scrollIntoView({ block: "start" }),
+      );
+      await page.waitForTimeout(2000);
+      const h = await page.evaluate(() => {
+        const q = document.querySelector(".fd-q") as HTMLElement;
+        const r = q.getBoundingClientRect();
+        return {
+          text: (q.textContent || "").replace(/\s+/g, " ").trim(),
+          lines: Math.round(r.height / parseFloat(getComputedStyle(q).lineHeight)),
+          right: r.right,
+          docW: document.documentElement.scrollWidth,
+          winW: window.innerWidth,
+          kick: (document.querySelector("#founder .kick")!.textContent || "").trim(),
+          sig: (document.querySelector(".fd-sig b")!.textContent || "").trim(),
+        };
+      });
+      expect(h.text).toBe(HEADING);
+      expect(h.kick).toBe("Why we built it");
+      expect(h.sig).toBe("Dr. Najath Akram");
+      expect(h.lines, "heading lines").toBeLessThanOrEqual(3);
+      expect(h.right, "heading stays on screen").toBeLessThanOrEqual(h.winW);
+      expect(h.docW, "no sideways scroll").toBeLessThanOrEqual(h.winW);
+      const more = page.locator(".fd-more");
+      if (await more.isVisible()) {
+        const y0 = await page.evaluate(() => window.scrollY);
+        await more.click();
+        await page.waitForTimeout(1200);
+        const after = await page.evaluate(() => ({
+          y: window.scrollY,
+          expanded: document.querySelector(".fd-more")!.getAttribute("aria-expanded"),
+          paras: [...document.querySelectorAll(".fd-note p")].filter(
+            (p) => (p as HTMLElement).offsetHeight > 0,
+          ).length,
+        }));
+        expect(Math.abs(after.y - y0), "the tap does not move the page").toBeLessThanOrEqual(1);
+        expect(after.expanded).toBe("true");
+        expect(after.paras, "the full note shows all nine paragraphs").toBe(9);
+      } else {
+        // desktop shows the whole note with no button
+        const paras = await page.evaluate(
+          () =>
+            [...document.querySelectorAll(".fd-note p")].filter(
+              (p) => (p as HTMLElement).offsetHeight > 0,
+            ).length,
+        );
+        expect(paras).toBe(9);
+      }
+      expect(errors).toEqual([]);
+      await context.close();
+    });
+
+    test(`T25 — ${v.name}: company #story has the same heading and wraps in 3 lines or fewer`, async ({
+      browser,
+    }) => {
+      const context = await browser.newContext({
+        viewport: { width: v.w, height: v.h },
+        hasTouch: v.touch,
+      });
+      const page = await context.newPage();
+      await page.goto("/company", { waitUntil: "load" });
+      await page.waitForSelector(".co-q", { state: "attached" });
+      await page.waitForTimeout(1500);
+      const c = await page.evaluate(() => {
+        const q = document.querySelector(".co-q") as HTMLElement;
+        return {
+          text: (q.textContent || "").replace(/\s+/g, " ").trim(),
+          lines: Math.round(
+            q.getBoundingClientRect().height / parseFloat(getComputedStyle(q).lineHeight),
+          ),
+          docW: document.documentElement.scrollWidth,
+          winW: window.innerWidth,
+          paras: document.querySelectorAll(".co-body p:not(.co-sig)").length,
+        };
+      });
+      expect(c.text).toBe(HEADING);
+      expect(c.lines).toBeLessThanOrEqual(3);
+      expect(c.docW).toBeLessThanOrEqual(c.winW);
+      expect(c.paras).toBe(9);
+      await context.close();
     });
   }
 });

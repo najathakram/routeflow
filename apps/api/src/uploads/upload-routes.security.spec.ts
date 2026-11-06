@@ -51,6 +51,7 @@ import { CustomersController } from "../customers/customers.controller";
 import { CustomersService } from "../customers/customers.service";
 import { StatementService } from "../buyer/statement.service";
 import { StatementPdfService } from "../buyer/statement-pdf.service";
+import { CustomerStatementEmailService } from "../customers/customer-statement-email";
 import { VendorBillsController } from "../vendor-bills/vendor-bills.controller";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { SupplierStatementsController } from "../supplier-statements/supplier-statements.controller";
@@ -239,6 +240,7 @@ describe("POST /customers/:id/tax-documents and /documents", () => {
       },
       { provide: StatementService, useValue: {} },
       { provide: StatementPdfService, useValue: {} },
+      { provide: CustomerStatementEmailService, useValue: {} },
     ]);
   });
 

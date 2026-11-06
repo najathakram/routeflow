@@ -44,7 +44,7 @@ describeDb("#1529 AR aging surfaces overdue deposits (real Postgres)", () => {
     prisma = new PrismaService(tenantCtx);
     await prisma.$connect();
     const unused = {} as any; // AR aging touches only prisma
-    service = new BookkeepingService(prisma, unused, unused, unused, unused, unused, unused);
+    service = new BookkeepingService(prisma, unused, unused, unused, unused, unused);
 
     await prisma.tenant.create({ data: { id: TENANT, slug: SLUG, name: `ACME ${SLUG}` } });
     await prisma.user.create({

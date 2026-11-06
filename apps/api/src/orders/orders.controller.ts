@@ -54,6 +54,9 @@ import { BatchShipDto, PackingSlipsDto } from "./dto/batch-ship.dto";
 import { OrderBatchShipService } from "./order-batch-ship";
 import { PackingSlipService } from "./packing-slip.service";
 import { toCustomerOrder } from "../common/staff-only-fields";
+import { StockAvailabilityService } from "./stock-availability.service";
+import { StockAvailabilityQueryDto } from "./dto/stock-availability-query.dto";
+import { MAX_STOCK_AVAILABILITY_IDS } from "./stock-availability";
 
 import { RequirePermission, PermissionBase } from "../auth/permissions/permission.decorators";
 @RequirePermission("ORDERS")
@@ -67,6 +70,8 @@ export class OrdersController {
     private readonly changeRequestsService: ChangeRequestsService,
     private readonly batchShipService: OrderBatchShipService,
     private readonly packingSlipService: PackingSlipService,
+    // SA-1086: the live stock note's read (pieces on hand + the save's own oversell verdict).
+    private readonly stockAvailability: StockAvailabilityService,
     // SA-1063: tell the office when a CUSTOMER principal places, edits or cancels an order (see the pin spec).
     @Optional() private readonly staffOrderEmail?: StaffOrderEmailService,
   ) {}
@@ -577,6 +582,24 @@ export class OrdersController {
   ) {
     if (!user.tenantId || !customerId) return {};
     return this.ordersService.getCustomerPriceHistory(customerId);
+  }
+
+  /**
+   * SA-1086: what is left on each product of a draft order, in pieces, plus whether the save would let
+   * this actor go below it. A read for the order screens' note, never a gate: the save re-reads under
+   * its lock and stays the authority. Staff only (OPERATOR and up, under ORDERS): no buyer screen calls
+   * it, so SA-714 holds. It must stay above `:id` or "stock-availability" is read as an order id.
+   */
+  @Get("stock-availability")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  getStockAvailability(@Query() q: StockAvailabilityQueryDto, @CurrentUser() user: JwtPayload) {
+    const ids = (q.productIds ?? "")
+      .split(",")
+      .map((id) => id.trim())
+      .filter(Boolean)
+      .slice(0, MAX_STOCK_AVAILABILITY_IDS);
+    return this.stockAvailability.get(ids, user, q.mode ?? "entry", q.customerId);
   }
 
   @Get(":id/tracking")

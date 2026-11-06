@@ -89,7 +89,13 @@ describeDb("vendor bill ↔ invoice scan claim — real Postgres race (B710 / SA
         {
           provide: PlatformConfigService,
           useValue: {
-            resolveAnthropicKey: jest.fn().mockResolvedValue(null),
+            prepareAiCall: jest.fn().mockResolvedValue({
+              key: null,
+              source: "routeflow",
+              model: "",
+              tenantId: "test-tenant",
+            }),
+            requireAiTenant: jest.fn(),
             recordAiUsage: jest.fn(),
           },
         },

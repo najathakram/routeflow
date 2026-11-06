@@ -46,12 +46,38 @@ describe("lockCustomerInTx is the transaction-scoped xact lock on the caller's o
   it("takes the xact lock through IdempotencyService.acquireLock on the caller's tx", () => {
     expect(start).toBeGreaterThan(-1);
     expect(body).toContain("this.idempotency.acquireLock(");
-    expect(body).toContain('"returns.customer"');
+    expect(body).toContain("returnCustomerLockKey(");
   });
 
   it("never opens a session lock or a transaction of its own", () => {
     for (const forbidden of ["withAdvisoryLock", "tenantTransaction", "$transaction"]) {
       expect(body).not.toContain(forbidden);
+    }
+  });
+});
+
+describe("SA-1090 (1): the standalone capture() composes the mint into its own transaction", () => {
+  const code = read("returns/inline-returns.service.ts");
+  const start = code.indexOf("async capture(");
+  const body = code.slice(start, code.indexOf("private async issueCreditInTx(", start));
+
+  it("a STORE_CREDIT capture goes through captureAndIssueInTx, with the standalone (uncapped) intent", () => {
+    expect(start).toBeGreaterThan(-1);
+    expect(body).toContain(
+      "this.captureAndIssueInTx(tx, dto, user, { capIntentToOrderBalance: false })",
+    );
+  });
+
+  it("the capture transaction carries the 15 s budget and maps the retryable failures to refundBusy()", () => {
+    expect(body).toContain("INLINE_CAPTURE_TX_TIMEOUT_MS");
+    expect(code).toContain("INLINE_CAPTURE_TX_TIMEOUT_MS = 15_000");
+    for (const helper of [
+      "isTransactionExpired(err)",
+      "isLockUnavailableError(err)",
+      "txConflictState(err)",
+      "refundBusy()",
+    ]) {
+      expect(body).toContain(helper);
     }
   });
 });

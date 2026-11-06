@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
-import type { ProductKind } from "@routeflow/types";
+import type { ProductKind, FamilyMovePreviewDto } from "@routeflow/types";
 import type { LocalErrorToastOption } from "@/lib/local-error-toast";
 
 export function useProducts(
@@ -89,6 +89,13 @@ export function invalidateProductSetAndWait(
     qc.invalidateQueries({ queryKey: ["inventory"] }),
   ]);
 }
+
+/** SA-1082 A-1: who a family save would ask about, given the prices it would leave. Reads only. */
+export const previewFamilyMove = (
+  familyId: string,
+  prices: Record<string, unknown>,
+): Promise<FamilyMovePreviewDto> =>
+  apiClient.post(`/products/${familyId}/family-moves/preview`, prices).then((r) => r.data);
 
 export function useUpdateProduct() {
   const qc = useQueryClient();

@@ -30,10 +30,19 @@ const PRICE_WRITE_CODES: Record<string, Pick<PriceWriteError, "code" | "copy">> 
     code: "rules",
     copy: "Changing the order unit is not available yet. Your other changes were not saved.",
   },
-  // 409: a variant's price is set on its family. (A family or recipe row is a 400 PRICE_EDIT_INVALID with its own problem text.)
+  // 409: a family-linked recipe's price is set on its family (a variant's is its own, SA-1082 A-1). (A family row is a 400 PRICE_EDIT_INVALID with its own problem text.)
   [API_ERROR_CODES.FAMILY_PRICE_AUTHORITY]: {
     code: "family",
     copy: "This price is set on its family, so it can't be changed here. Change it on the family.",
+  },
+  // SA-1082: a first Piece price creates the unit, so it can meet the unit write's refusals.
+  [API_ERROR_CODES.UNITS_RENAME_IN_PROGRESS]: {
+    code: "other",
+    copy: "Another change is in progress. Your prices are unchanged. Try again in a moment.",
+  },
+  [API_ERROR_CODES.UNIT_SIZE_IN_USE]: {
+    code: "other",
+    copy: "This unit is on an order or invoice at a different size. Your prices are unchanged.",
   },
   [API_ERROR_CODES.PRICE_UNDO_UNAVAILABLE]: {
     code: "unavailable",
