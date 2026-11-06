@@ -58,6 +58,7 @@
 
 import { Logger } from "@nestjs/common";
 import { Cron, type CronOptions } from "@nestjs/schedule";
+import { runAtPlace } from "./call-place";
 import { LockUnavailableError, withAdvisoryLock, type LockResult } from "./db-locks";
 
 /** Advisory-lock family for every scheduled job; see `db-locks.ts` for why families exist. */
@@ -98,7 +99,10 @@ export function LeaderCron(
       // Declared `: Promise<unknown>` so the generic resolves to `unknown` — `Function.apply`
       // returns `any` under this tsconfig (`strictBindCallApply: false`), which would otherwise
       // leak straight out of the tick as an untyped value.
-      const runTick = (): Promise<unknown> => original.apply(this, args) as Promise<unknown>;
+      // The body runs at its own name (B1285): the dark tenant-context guard names the job in its warn. A separate
+      // async context, so the tenant context (`kind()` NONE here) is untouched.
+      const runTick = (): Promise<unknown> =>
+        runAtPlace(name, () => original.apply(this, args) as Promise<unknown>);
       let result: LockResult<unknown>;
       try {
         result = await withAdvisoryLock(

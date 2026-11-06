@@ -143,6 +143,20 @@ describe("B1285 the capture gate is keyed by the call place, with a global budge
     expect(new Set(missing(lines).map((l) => l.split("\n")[0])).size).toBe(40);
   });
 
+  it("B5-8: a key starved by the budget is not gated, so its next hit after the window rolls captures", () => {
+    const { guard, lines, tick } = make();
+    for (let i = 0; i < 20; i++) hit(guard, `Fill${i}`, `Fill${i}Ctl.handler`);
+    expect(missing(lines)).toHaveLength(20);
+    tick(1);
+    hit(guard, "Starved", "StarvedCtl.handler"); // over budget: counted, not captured, not gated
+    expect(missing(lines)).toHaveLength(20);
+    tick(999); // the window opened at t0 rolls at t0 + 1000: 999 ms after the starved hit
+    hit(guard, "Starved", "StarvedCtl.handler");
+    expect(missing(lines)).toHaveLength(21);
+    expect(missing(lines)[20]).toContain("model=Starved");
+    expect(guard.counts()["SUPER_ADMIN|Starved|create"]).toBe(2);
+  });
+
   it("B5-3: one site at 1000 hits per second still logs one line (K-7 unchanged)", () => {
     const { guard, lines } = make();
     for (let i = 0; i < 1000; i++) hit(guard, "Customer", "OrdersController.create");

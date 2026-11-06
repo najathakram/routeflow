@@ -288,6 +288,7 @@ describe("forSystem(reason, fn): the deliberate unscoped door, callback shape on
       "SYSTEM",
       null,
     ]);
+    expect(ctx.runSystem("a long enough reason", () => ctx.label())).toBe("a long enough reason");
     expect(ctx.kind()).toBe("NONE");
     expect(() =>
       ctx.runSystem("a long enough reason", () => {

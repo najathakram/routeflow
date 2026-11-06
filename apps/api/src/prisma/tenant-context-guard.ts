@@ -10,9 +10,13 @@ import type { TenantContextKind } from "../tenant/tenant-context.service";
  * line per call site per second, and a summary line every 10 minutes. Nothing throws unless `TENANT_CONTEXT_ENFORCEMENT`
  * is exactly "on", read ONCE at boot; the flag is set nowhere in slice 1. The log never carries args, data or ids.
  *
- * Capture gate (B1285): keyed `kind|model|op|where`, where `where` is the route handler or job name, so a hot route no
- * longer takes the capture slot of another; at most 20 captures per second across all keys. The counter stays keyed
- * `kind|model|op`. Residual: two sites in the SAME route or job with the same kind, model and op share one gate.
+ * Capture gate (B1285): keyed `kind|model|op|where`, where `where` is the call place: a route's `Controller.handler`
+ * (`tenantCtx.label()`), else the name of the scheduled job or queue processor (`common/call-place.ts`, set by
+ * `@LeaderCron` and by the two queue processors). So a hot route or job no longer takes the capture slot of another;
+ * at most 20 captures per second across all keys. The counter stays keyed `kind|model|op`. Residual: two sites inside the
+ * SAME route or the SAME job with the same kind, model and op share one gate; a background entry point that is neither a
+ * route, a `@LeaderCron` job nor one of those two processors (a gateway timer, the route-hits flush) is unlabelled and
+ * shares one gate per kind, model and op.
  *
  * Detection depth (SA-1105 A-1): slice 1 detects one level of nested create under `create` and `upsert.create`. A nested
  * create under `update` or `upsert.update` is reported as a read under NONE and ANONYMOUS and is not seen under SUPER_ADMIN or
