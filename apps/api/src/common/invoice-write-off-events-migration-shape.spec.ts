@@ -11,7 +11,7 @@ import { INVOICE_WRITE_OFF_KIND_VALUES, OPERATOR_PERMISSION_GROUP_VALUES } from 
  *
  * Nothing in the app reads or writes any of this yet; merges only inside sitting #5.
  */
-const SCHEMA_FOLDER = "20261028100000_invoice_write_off_events_and_bad_debt_group";
+const SCHEMA_FOLDER = "20261105120000_invoice_write_off_events_and_bad_debt_group";
 const MIGRATIONS_DIR = join(__dirname, "..", "..", "prisma", "migrations");
 const SCHEMA_DIR = join(__dirname, "..", "..", "prisma", "schema");
 
@@ -28,7 +28,7 @@ describe("SA-1050 PR-0 migration folders", () => {
   it("sort after the previous newest migration and own their timestamps", () => {
     const all = readdirSync(MIGRATIONS_DIR).filter((n) => n !== "migration_lock.toml");
     expect(SCHEMA_FOLDER > "20261026090000_stock_count_seed_state").toBe(true);
-    expect(all.filter((n) => n.startsWith("20261028100000"))).toEqual([SCHEMA_FOLDER]);
+    expect(all.filter((n) => n.startsWith("20261105120000"))).toEqual([SCHEMA_FOLDER]);
   });
 
   describe("folder 1: schema", () => {
