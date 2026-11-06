@@ -88,6 +88,12 @@ describe("rotate-portal-invites.mjs", () => {
     expect(body).not.toMatch(/ROTATE_SQL|UPDATE "|COMMIT/);
   });
 
+  it("every write of the plan file sets mode 0600 (SA-820 A-3; the POSIX mode check is skipped on Windows)", () => {
+    const writes = read(ROTATE).match(/writeFileSync\([^;]*;/g) ?? [];
+    expect(writes).toHaveLength(2); // the dry run's plan and the spent plan
+    for (const w of writes) expect(w).toMatch(/mode:\s*0o600/);
+  });
+
   it("refuses two tenants in one run: one tenant, one yes (SA-820 A-2)", () => {
     const OTHER = "22222222-2222-4222-8222-222222222222";
     for (const args of [

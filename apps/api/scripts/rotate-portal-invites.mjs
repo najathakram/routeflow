@@ -10,9 +10,8 @@
  *   <local db url in the ambient env> node apps/api/scripts/rotate-portal-invites.mjs --local --tenant <uuid>
  *   node apps/api/scripts/rotate-portal-invites.mjs --self-test
  *
- * ONE TENANT PER RUN (SA-820 A-2): `--tenant <uuid>` is REQUIRED and takes exactly one tenant (naming two refuses). There
- * is no "every tenant" mode: the plan holds only the tenant the owner named, and the apply refuses a plan that holds
- * any other, or that names more than one. Each tenant is its own run, its own plan, its own yes.
+ * ONE TENANT PER RUN (SA-820 A-2): `--tenant <uuid>` is REQUIRED and takes exactly one tenant (naming two refuses).
+ * There is no "every tenant" mode; the apply refuses a plan that holds any other tenant, or names more than one.
  *
  * APPLY replays a SAVED plan only (never a live re-query):
  *   node apps/api/scripts/rotate-portal-invites.mjs --apply --plan <file> --confirm-plan <hash> \
@@ -23,8 +22,8 @@
  * (paying, Stripe-linked or listed) needs its own `--allow-protected <tenantId>` plus the typed phrase at a real
  * terminal (the repo's live-target guard); any other LIVE tenant needs --live-tenant-override plus the type-back
  * phrase; every planned link is RE-READ and must still hold the SAME code (compared by its SHA-256) and be live.
- * One transaction. The code is never printed, logged or stored: the plan holds link ids and a SHA-256 only.
- * Exit: 0 ok · 1 refused (nothing written) · 2 env/connection error.
+ * One transaction. The code is never printed. The plan file (0600, never shared) holds each code's SHA-256 as the
+ * compare-and-swap (SA-820 A-3): refused after 24h, digests rewritten to "applied" on commit. Exit: 0 ok · 1 refused · 2 error.
  */
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -138,7 +137,7 @@ async function dryRun(tenantIds) {
     const dir = resolve(REPO_ROOT, "local-assets/handoff", new Date().toISOString().slice(0, 10));
     mkdirSync(dir, { recursive: true });
     const file = resolve(dir, `portal-invite-rotation-plan-${Date.now()}.json`);
-    writeFileSync(file, JSON.stringify({ ...plan, planHash: hash }, null, 2));
+    writeFileSync(file, JSON.stringify({ ...plan, planHash: hash }, null, 2), { mode: 0o600 });
 
     const perTenant = new Map();
     for (const r of rotate) perTenant.set(r.tenantId, (perTenant.get(r.tenantId) ?? 0) + 1);
@@ -163,6 +162,17 @@ async function dryRun(tenantIds) {
     return e.refuse ? 1 : 2;
   } finally {
     await client.end().catch(() => undefined);
+  }
+}
+
+/** After a committed apply the plan file holds no digest (it cannot be replayed and leaves nothing to read). */
+function spendPlan(file, saved) {
+  const rotate = saved.rotate.map((r) => ({ ...r, tokenSha256: "applied" }));
+  const spent = { ...saved, planHash: "applied", appliedAt: new Date().toISOString(), rotate };
+  try {
+    writeFileSync(file, JSON.stringify(spent, null, 2), { mode: 0o600 });
+  } catch {
+    console.error(`${TAG}: WARNING the plan was not marked spent; delete ${file}`);
   }
 }
 
@@ -198,6 +208,14 @@ async function apply(tenantIds) {
     return 1;
   }
   const saved = JSON.parse(readFileSync(planFile, "utf8"));
+  const ageMs = Date.now() - Date.parse(saved.generatedAt);
+  const stale = saved.appliedAt
+    ? "was already applied"
+    : !(ageMs <= 86_400_000 && ageMs > -300_000) && "is older than 24 hours";
+  if (stale) {
+    console.error(`${TAG}: the plan ${stale} -- run the dry run again`);
+    return 1;
+  }
   const { planHash, ...plan } = saved;
   if (sha256(plan) !== confirmPlan || planHash !== confirmPlan) {
     console.error(`${TAG}: --confirm-plan does not match the plan file's own hash -- refusing`);
@@ -250,6 +268,7 @@ async function apply(tenantIds) {
       written += res.rowCount;
     }
     await client.query("COMMIT");
+    spendPlan(planFile, saved);
     console.log(`${TAG}: committed — ${written} invite(s) retired; the seller sends each again`);
     return 0;
   } catch (e) {

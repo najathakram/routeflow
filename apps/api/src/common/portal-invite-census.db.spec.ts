@@ -16,7 +16,7 @@
  */
 import { execFileSync, spawnSync } from "child_process";
 import { createHash, randomBytes, randomUUID } from "crypto";
-import { mkdtempSync, readFileSync, writeFileSync } from "fs";
+import { copyFileSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "fs";
 import os from "os";
 import path from "path";
 import { Client } from "pg";
@@ -401,11 +401,12 @@ describeDb("portal invite census and rotation (real Postgres)", () => {
   });
 
   /** A hand-made plan (hash recomputed) holding exactly these rows: the write's own predicates are all that is left to stop it. */
-  async function handPlan(rows: object[]) {
+  async function handPlan(rows: object[], over: object = {}) {
     const r = await dryRun([TEST_TENANT.id]);
     const plan = JSON.parse(readFileSync(r.file as string, "utf8"));
     delete plan.planHash;
     plan.rotate = rows;
+    Object.assign(plan, over);
     const hash = createHash("sha256").update(JSON.stringify(plan)).digest("hex");
     const file = (r.file as string).replace(/.json$/, `-hand-${Date.now()}.json`);
     writeFileSync(file, JSON.stringify({ ...plan, planHash: hash }, null, 2));
@@ -445,12 +446,79 @@ describeDb("portal invite census and rotation (real Postgres)", () => {
     expect((await linkRow("expired")).inviteToken).toBe(links.expired.token);
   });
 
-  it("R9: apply on the test tenant clears exactly the planned links and nothing else", async () => {
+  /** Every 64-hex string in a run's output except the allowed ones (the plan's own hash): a code digest would show up here. */
+  const digestsIn = (out: string, allowed: string[] = []) =>
+    (out.match(/\b[0-9a-f]{64}\b/g) ?? []).filter((d) => !allowed.includes(d));
+
+  // Windows has no POSIX mode bits, so the mode check is skipped there; the script-lane source pin covers it everywhere.
+  const itPosix = process.platform === "win32" ? it.skip : it;
+
+  itPosix("P-1 (SA-820 A-3): the plan file is written with mode 0600", async () => {
     const r = await dryRun([TEST_TENANT.id]);
+    expect(statSync(r.file as string).mode & 0o777).toBe(0o600);
+  });
+
+  it("P-2: a plan older than 24 hours (or dated in the future) is refused before any connection; a 23-hour-old one is not", async () => {
+    const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
+    const row = {
+      linkId: links.recorded1.id,
+      tenantId: TEST_TENANT.id,
+      status: "INVITED",
+      tokenSha256: sha(links.recorded1.token as string),
+      auditRows: 1,
+    };
+    for (const generatedAt of [hoursAgo(25), hoursAgo(-1)]) {
+      const p = await handPlan([row], { generatedAt });
+      const a = run(ROTATE, applyArgs(p.file, p.hash, [TEST_TENANT.id]), { DATABASE_URL: url });
+      expect(a.code).toBe(1);
+      expect(a.out).toMatch(/older than 24 hours/);
+      expect((await linkRow("recorded1")).inviteToken).toBe(links.recorded1.token);
+    }
+    const fresh = await handPlan([], { generatedAt: hoursAgo(23) }); // an empty plan: nothing to clear
+    const a = run(ROTATE, applyArgs(fresh.file, fresh.hash, [TEST_TENANT.id]), {
+      DATABASE_URL: url,
+    });
+    expect(a.out).not.toMatch(/older than 24 hours/);
+    expect(a.code).toBe(0);
+  });
+
+  it("P-4: no run prints a code digest (the plan's own hash is the only 64-hex string allowed)", async () => {
+    const r = await dryRun([TEST_TENANT.id]);
+    expect(digestsIn(r.out, [r.hash as string])).toEqual([]);
+    expect(r.out).toContain(r.hash as string); // not vacuous: the plan hash is printed
+    const noBackup = applyArgs(r.file as string, r.hash as string, [TEST_TENANT.id]).filter(
+      (x) => x !== "--backup-taken",
+    );
+    expect(digestsIn(run(ROTATE, noBackup, { DATABASE_URL: url }).out, [r.hash as string])).toEqual(
+      [],
+    );
+    const old = await handPlan(
+      [
+        {
+          linkId: links.recorded1.id,
+          tenantId: TEST_TENANT.id,
+          status: "INVITED",
+          tokenSha256: sha(links.recorded1.token as string),
+          auditRows: 1,
+        },
+      ],
+      { generatedAt: new Date(Date.now() - 25 * 3_600_000).toISOString() },
+    );
+    const refused = run(ROTATE, applyArgs(old.file, old.hash, [TEST_TENANT.id]), {
+      DATABASE_URL: url,
+    });
+    expect(digestsIn(refused.out, [old.hash])).toEqual([]);
+  });
+
+  it("R9 (P-3): apply on the test tenant clears exactly the planned links and nothing else; the spent plan holds no digest", async () => {
+    const r = await dryRun([TEST_TENANT.id]);
+    const unspent = (r.file as string).replace(/.json$/, "-unspent.json"); // the plan as the owner saw it
+    copyFileSync(r.file as string, unspent);
     const a = run(ROTATE, applyArgs(r.file as string, r.hash as string, [TEST_TENANT.id]), {
       DATABASE_URL: url,
     });
     expect(a.code).toBe(0);
+    expect(digestsIn(a.out, [r.hash as string])).toEqual([]); // P-4: the committed run prints no digest
     expect(a.out).toMatch(/committed — 2 invite\(s\) retired/);
     for (const k of ["recorded1", "recorded2"]) {
       const row = await linkRow(k);
@@ -471,15 +539,27 @@ describeDb("portal invite census and rotation (real Postgres)", () => {
     expect(rows).toBe(5);
     // and the census no longer counts them
     expect(censusJson().recordedInvites - base.recordedInvites).toBe(2); // other + live1
-    appliedPlan = { file: r.file as string, hash: r.hash as string };
+    // P-3: the spent plan file holds no digest at all, and cannot be applied again
+    const spent = readFileSync(r.file as string, "utf8");
+    expect(spent).not.toMatch(/\b[0-9a-f]{64}\b/);
+    expect(JSON.parse(spent).rotate.map((x: { tokenSha256: string }) => x.tokenSha256)).toEqual([
+      "applied",
+      "applied",
+    ]);
+    const again = run(ROTATE, applyArgs(r.file as string, r.hash as string, [TEST_TENANT.id]), {
+      DATABASE_URL: url,
+    });
+    expect(again.code).toBe(1);
+    expect(again.out).toMatch(/already applied/);
+    appliedPlan = { file: unspent, hash: r.hash as string };
   });
 
-  it("R10: replaying the applied plan is refused (the links no longer hold that code) and writes nothing", async () => {
+  it("R10 (P-5): replaying the plan as saved is refused: a code that changed since the plan is not cleared, and the link is named", async () => {
     const a = run(ROTATE, applyArgs(appliedPlan.file, appliedPlan.hash, [TEST_TENANT.id]), {
       DATABASE_URL: url,
     });
     expect(a.code).toBe(1);
-    expect(a.out).toMatch(/has changed since the dry run/);
+    expect(a.out).toMatch(/link [0-9a-f-]{36} has changed since the dry run/);
     expect((await linkRow("unrecorded")).inviteToken).toBe(links.unrecorded.token);
   });
 });
