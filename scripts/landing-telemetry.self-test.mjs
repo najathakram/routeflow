@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   costWindow,
+  expectedTrainMembers,
   fromGraphql,
   latestByPr,
   membersFields,
@@ -21,6 +22,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(HERE, "landing-telemetry.mjs");
 const FIX = path.join(HERE, "fixtures", "landing-telemetry", "base");
 const TRAIN_FIX = path.join(HERE, "fixtures", "landing-telemetry", "train");
+const RACE_FIX = path.join(HERE, "fixtures", "landing-telemetry", "train-race");
 const MISSING_FIX = path.join(HERE, "fixtures", "landing-telemetry", "train-missing");
 
 let failures = 0;
@@ -411,13 +413,17 @@ const MEMBER_KEYS = [
 }
 check(
   "T4b trainMembers: candidates whose merge commit is in the set, never the train itself",
-  trainMembers({ number: 1, mergeCommit: { oid: "t" } }, new Set(["t", "a", "b"]), [
+  trainMembers(
     { number: 1, mergeCommit: { oid: "t" } },
-    { number: 9, mergeCommit: { oid: "a" } },
-    { number: 3, mergeCommit: { oid: "b" } },
-    { number: 4, mergeCommit: { oid: "z" } },
-    { number: 5 },
-  ]).map((p) => p.number),
+    ["t", "a", "b"].map((sha) => ({ sha })),
+    [
+      { number: 1, mergeCommit: { oid: "t" } },
+      { number: 9, mergeCommit: { oid: "a" } },
+      { number: 3, mergeCommit: { oid: "b" } },
+      { number: 4, mergeCommit: { oid: "z" } },
+      { number: 5 },
+    ],
+  ).map((p) => p.number),
   [9, 3],
 );
 {
@@ -428,6 +434,40 @@ check(
     [1, true, ""],
   );
 }
+{
+  // T7: GitHub marks a train's members merged a moment after the train; a member the train's own subjects name
+  // but the candidate list lacks must fail the run, never write a train row with a short member list.
+  const r = run(["--pr", "210", "--fixture", RACE_FIX, "--dry-run", "--json"]);
+  check(
+    "T7 a train whose named member is not yet merged exits non-zero, names it and prints no rows",
+    [r.status !== 0, /#212/.test(r.stderr), /--since/.test(r.stderr), r.stdout.trim()],
+    [true, true, true, ""],
+  );
+  const ok = run(["--pr", "210", "--fixture", TRAIN_FIX, "--json"]);
+  check(
+    "T7b the train fixture with subjects on its rev-list lines keeps the same members",
+    JSON.parse(ok.stdout || "[]")[0]?.members,
+    [211, 212],
+  );
+  const un = run(["--pr", "212", "--fixture", RACE_FIX, "--json"]);
+  check(
+    "T7c --pr <an unmerged PR> writes no row",
+    [un.status, JSON.parse(un.stdout || "null")],
+    [0, []],
+  );
+}
+check(
+  "T7d expectedTrainMembers reads only the chore(train): merge #N subjects",
+  expectedTrainMembers([
+    { sha: "a", subject: "chore(train): merge #4228 8f73cf3880 into s1 sweep train" },
+    { sha: "b", subject: "Merge master into PR" },
+    { sha: "c", subject: "Merge branch 'x' (re-merge of #4209)" },
+    { sha: "d", subject: "chore(train): merge #4209 abc into s1 sweep train" },
+    { sha: "e", subject: "" },
+    { sha: "f" },
+  ]),
+  [4209, 4228],
+);
 {
   // T5: the GraphQL shape (commits { nodes { commit } }) reads the same as the gh shape.
   const commit = {

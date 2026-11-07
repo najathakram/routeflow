@@ -69,6 +69,7 @@ const PR_FIELDS =
   "number,title,headRefName,createdAt,mergedAt,mergeCommit,additions,deletions,changedFiles,body,commits";
 const CMD_TIMEOUT_MS = 120_000;
 const PAGE_SIZE = 50;
+const RETRY_MS = 5000;
 const HOUR_MS = 3_600_000;
 // GraphQL node fields that yield the shapes landingRow, costWindow and trailerOf read (see fromGraphql). Commits are
 // capped at the last 100: the HEAD commit (trailers) is always among them, and createdAt still bounds the cost window.
@@ -251,12 +252,25 @@ export function fromGraphql(node) {
 }
 
 /** The member PRs of a train: candidates whose merge commit is one of the merges inside it, never the train itself. */
-export function trainMembers(train, mergeShas, candidates) {
-  const shas = new Set(mergeShas);
+export function trainMembers(train, merges, candidates) {
+  const shas = new Set(merges.map((m) => m.sha));
   return candidates.filter(
     (c) => c.number !== train.number && c.mergeCommit?.oid != null && shas.has(c.mergeCommit.oid),
   );
 }
+
+/**
+ * The PR numbers a train's own member merges name (`chore(train): merge #N ...`, the train convention), from the
+ * merges inside it. Re-merges and "Merge master into PR" commits are never expected members.
+ */
+export function expectedTrainMembers(merges) {
+  const nums = merges
+    .map((m) => TRAIN_MERGE.exec(m.subject ?? "")?.[1])
+    .filter(Boolean)
+    .map(Number);
+  return [...new Set(nums)].sort((a, b) => a - b);
+}
+const TRAIN_MERGE = /^chore\(train\): merge #(\d+)\b/;
 
 /** The train row's members* fields from its member rows (see the header). */
 export function membersFields(memberRows) {
@@ -436,9 +450,11 @@ function transcriptDirFor(root) {
 
 /**
  * The merged PRs to write rows for, and each train's member PRs. `src` is the live (gh + git) or fixture source:
- * { viewPr(n), fetchPage, mergeShasOf(oid) }. --since: every merged PR since the date (members are among them).
+ * { viewPr(n), fetchPage, mergesOf(oid), retries?, wait?(ms) }. --since: every merged PR since the date (members are among them).
  * --pr: that PR; a train also pulls in its members, found among the PRs merged within an hour before it.
- * A source that fails throws, so a train never silently gets no members.
+ * A source that fails throws, so a train never silently gets no members. GitHub marks members merged a few seconds
+ * after the train, and the merge hook runs at once: a member its `chore(train): merge #N` commit names but the list
+ * lacks is re-listed `src.retries` times, `src.wait(ms)` apart, then the run throws (no row; --since back-fills it).
  */
 export function gatherPrs(opts, src) {
   const list = (floorMs) =>
@@ -450,8 +466,26 @@ export function gatherPrs(opts, src) {
   for (const train of prs.filter((p) => routeOf(p).route === "train")) {
     const oid = train.mergeCommit?.oid;
     if (!oid) throw new Error(`train #${train.number} has no merge commit`);
-    candidates ??= list(Date.parse(train.mergedAt) - HOUR_MS);
-    membersOf.set(train.number, trainMembers(train, src.mergeShasOf(oid), candidates));
+    const merges = src.mergesOf(oid);
+    const expected = expectedTrainMembers(merges);
+    const floor = Date.parse(train.mergedAt) - HOUR_MS;
+    candidates ??= list(floor);
+    let members = trainMembers(train, merges, candidates);
+    const missing = () => expected.filter((n) => !members.some((m) => m.number === n));
+    for (let i = 0; missing().length && i < (src.retries ?? 0); i++) {
+      src.wait?.(RETRY_MS);
+      candidates = list(floor);
+      members = trainMembers(train, merges, candidates);
+    }
+    if (missing().length) {
+      throw new Error(
+        `train #${train.number}: member merge(s) ${missing()
+          .map((n) => `#${n}`)
+          .join(", ")} not marked merged on GitHub yet; ` +
+          "no row written (it would undercount). Re-run with --since to back-fill it.",
+      );
+    }
+    membersOf.set(train.number, members);
   }
   const all = new Map(prs.map((p) => [p.number, p]));
   for (const members of membersOf.values()) for (const m of members) all.set(m.number, m);
@@ -461,8 +495,8 @@ export function gatherPrs(opts, src) {
   return { prs: ordered, membersOf };
 }
 
-/** Merge commits inside a train (`git rev-list --merges <oid>^1..<oid>`), fetching the commit once if missing. */
-function liveMergeShas(oid) {
+/** Merge commits inside a train as {sha, subject} (`git log --merges <oid>^1..<oid>`), fetching the commit once if missing. */
+function liveMerges(oid) {
   const have = () => {
     try {
       run("git", ["cat-file", "-e", `${oid}^{commit}`]);
@@ -480,9 +514,20 @@ function liveMergeShas(oid) {
     if (!have())
       throw new Error(`git: commit ${oid} is not available locally and could not be fetched`);
   }
-  return run("git", ["rev-list", "--merges", `${oid}^1..${oid}`])
-    .split(/\s+/)
-    .filter((s) => s && s !== oid);
+  return parseMerges(run("git", ["log", "--merges", "--format=%H %s", `${oid}^1..${oid}`]), oid);
+}
+
+/** "<sha> <subject>" lines (a bare sha is fine) -> [{sha, subject}], without the train's own merge. */
+export function parseMerges(text, oid) {
+  return String(text)
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => {
+      const at = l.indexOf(" ");
+      return at < 0 ? { sha: l, subject: "" } : { sha: l.slice(0, at), subject: l.slice(at + 1) };
+    })
+    .filter((m) => m.sha !== oid);
 }
 
 function liveInputs(opts) {
@@ -492,7 +537,9 @@ function liveInputs(opts) {
         run("gh", ["pr", "view", String(n), "-R", GH_REPO, "--json", `${PR_FIELDS},state`]),
       ),
     fetchPage: ghMergedPrPages((args) => run("gh", args), GH_REPO, GRAPHQL_FIELDS),
-    mergeShasOf: liveMergeShas,
+    mergesOf: liveMerges,
+    retries: 3,
+    wait: (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
   });
   const oldest = prs.map((p) => p.createdAt).sort()[0];
   const comments = oldest
@@ -524,12 +571,10 @@ function fixtureInputs(dir, opts) {
       return pr;
     },
     fetchPage: pagesFromList(all.filter((p) => p.mergedAt)),
-    mergeShasOf: (oid) => {
+    mergesOf: (oid) => {
       const file = path.join(dir, "rev-list", `${oid}.txt`);
       if (!existsSync(file)) throw new Error(`fixture has no rev-list/${oid}.txt`);
-      return readFileSync(file, "utf8")
-        .split(/\s+/)
-        .filter((s) => s && s !== oid);
+      return parseMerges(readFileSync(file, "utf8"), oid);
     },
   });
   return {
