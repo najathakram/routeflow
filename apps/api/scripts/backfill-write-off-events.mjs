@@ -100,9 +100,6 @@ async function main() {
       process.exit(1);
     }
   }
-  const mod = await import(
-    pathToFileURL(resolve(HERE, "../dist/invoices/invoice-write-off-backfill.js")).href
-  );
   console.log(`Resolved database host: ${redactUrl(databaseUrl)}`);
   if (tenantId) console.log(`Scoped to tenant: ${tenantId}`);
   const pool = new Pool({ connectionString: databaseUrl });
@@ -152,6 +149,11 @@ async function main() {
         process.exit(1);
       }
     }
+
+    // Loaded after the refusal gates above, so a refusal never needs a build.
+    const mod = await import(
+      pathToFileURL(resolve(HERE, "../dist/invoices/invoice-write-off-backfill.js")).href
+    );
 
     const plan = await mod.planWriteOffBackfill(prisma, tenantId ? { tenantId } : {});
 
