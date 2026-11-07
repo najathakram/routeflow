@@ -2400,7 +2400,8 @@ describe("redactAddresses — masks IP literals AND email addresses (keeps the d
   ];
 
   it("the ratio still catches a quadratic cost (control: interleaving and the re-measure mask nothing)", () => {
-    // n^2 / 128 steps: ~GROWTH x more CPU per character on the large input, cheap enough for a unit test
+    // ~n^2 / 256 steps: measured 10-13x the small input's CPU per character (bound MAX_LINEAR_RATIO), cheap enough
+    // for a unit test; it always takes the re-measure path, so it is the slowest case here (~5 s)
     const quadratic = (s: string) => {
       let x = 0;
       for (let i = 0; i < s.length; i++) for (let j = 0; j < i >> 7; j++) x++;

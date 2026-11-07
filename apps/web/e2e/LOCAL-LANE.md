@@ -34,6 +34,13 @@ npm run local:e2e         # the allow-list below, ≤ 10 min
 npm run local:e2e:all     # every project, no --project filter (report only — see below)
 ```
 
+**One stack per machine (I-191).** `docker-compose.yml` pins the project name `routeflow`, so every
+checkout and worktree drives the SAME stack: `local:down` or `local:up --build` from one lane stops
+or replaces the containers another lane is validating, and `local:reset` from any folder wipes the
+one shared database. Take the stack only when no other lane holds it. If you ran `local:up` from a
+worktree before this pin, remove those containers once with `docker compose -p <that folder> down`
+(their `<folder>_postgres_data` volume is orphaned; re-seed).
+
 Both scripts run through `node scripts/local-env.mjs --e2e -- "..."` (the `--e2e` flag), which
 sets `PLAYWRIGHT_BASE_URL=http://localhost:3001`, `SMOKE_BASE_URL=http://localhost:3000`,
 `PLAYWRIGHT_TENANT_SLUG=e2e-routeflow`, `E2E_SEED_DATABASE_URL=<the compose Postgres URL>`,
