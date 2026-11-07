@@ -15,6 +15,10 @@
 #   Runbook + rationale: docs/adr/0001-local-hosting-environment.md
 #   Secrets below are throwaway LOCAL-ONLY values — never reuse in any real env.
 
+# Pinned project name (I-191): run from a worktree folder, compose would otherwise name the project after the
+# folder and collide with the fixed routeflow_* container names below.
+name: routeflow
+
 # Shared build context for the two services that run the API image (api + the
 # one-shot migrate job). Same tag ⇒ Docker builds the image once and reuses it.
 x-api-build: &api-build

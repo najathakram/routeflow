@@ -2352,12 +2352,11 @@ describe("redactAddresses — masks IP literals AND email addresses (keeps the d
     const t = process.cpuUsage(t0);
     return (t.user + t.system) / 1000;
   };
-  const minCpuMs = (fn: () => void): number => {
-    let best = Infinity;
-    for (let i = 0; i < REPS; i++) best = Math.min(best, cpuMs(fn));
-    return best;
-  };
-  /** cost(LARGE x M) / cost(SMALL x GROWTH x M): ~1 when linear, ~GROWTH when quadratic. */
+  /**
+   * cost(LARGE x M) / cost(SMALL x GROWTH x M): ~1 when linear, ~GROWTH when quadratic. The small and large
+   * batches are measured in turns (small, large, small, large ...) and the MIN of each is kept, so a load swing
+   * on a busy host lands on both sides instead of biasing one (I-187: all-large-then-all-small flaked at 100% CPU).
+   */
   const scalingRatio = (shape: (n: number) => string, fn: (s: string) => unknown): number => {
     const small = shape(SMALL);
     const large = shape(LARGE);
@@ -2371,7 +2370,21 @@ describe("redactAddresses — masks IP literals AND email addresses (keeps the d
     runLarge(1)();
     let m = 1;
     while (cpuMs(runSmall(m)) < MIN_BATCH_MS && m < 1 << 20) m *= 2;
-    return minCpuMs(runLarge(m)) / Math.max(minCpuMs(runSmall(m)), 1);
+    let bestSmall = Infinity;
+    let bestLarge = Infinity;
+    for (let i = 0; i < REPS; i++) {
+      bestSmall = Math.min(bestSmall, cpuMs(runSmall(m)));
+      bestLarge = Math.min(bestLarge, cpuMs(runLarge(m)));
+    }
+    return bestLarge / Math.max(bestSmall, 1);
+  };
+  /**
+   * A ratio over the bound is measured once more before it fails: a quadratic redactor is ~GROWTH every time,
+   * a load spike is not. The lower of the two is asserted.
+   */
+  const confirmedRatio = (shape: (n: number) => string, fn: (s: string) => unknown): number => {
+    const first = scalingRatio(shape, fn);
+    return first < MAX_LINEAR_RATIO ? first : Math.min(first, scalingRatio(shape, fn));
   };
   // Linear => ~1 (measured 0.6-1.6); a quadratic redactor => ~GROWTH (measured 16-19 with the unbounded
   // `[...]+@` form this function replaced). 6 sits well clear of both.
@@ -2386,17 +2399,27 @@ describe("redactAddresses — masks IP literals AND email addresses (keeps the d
     ["one trailing '@'", (n) => `${"a".repeat(n - 1)}@`],
   ];
 
+  it("the ratio still catches a quadratic cost (control: interleaving and the re-measure mask nothing)", () => {
+    // n^2 / 128 steps: ~GROWTH x more CPU per character on the large input, cheap enough for a unit test
+    const quadratic = (s: string) => {
+      let x = 0;
+      for (let i = 0; i < s.length; i++) for (let j = 0; j < i >> 7; j++) x++;
+      return x;
+    };
+    expect(confirmedRatio((n) => "a".repeat(n), quadratic)).toBeGreaterThan(MAX_LINEAR_RATIO);
+  });
+
   it("a hostile 50k string with no @ is capped and linear (no quadratic backtracking)", () => {
     const out = redactAddresses("a".repeat(50_000));
     expect(out.length).toBeLessThanOrEqual(4096);
-    expect(scalingRatio((n) => "a".repeat(n), redactAddresses)).toBeLessThan(MAX_LINEAR_RATIO);
+    expect(confirmedRatio((n) => "a".repeat(n), redactAddresses)).toBeLessThan(MAX_LINEAR_RATIO);
   });
 
   it.each(HOSTILE_SHAPES)(
     "stays linear on the pathological shape: %s (CPU cost does not grow faster than input)",
     (_name, shape) => {
       expect(redactAddresses(shape(50_000)).length).toBeLessThanOrEqual(4096);
-      expect(scalingRatio(shape, redactAddresses)).toBeLessThan(MAX_LINEAR_RATIO);
+      expect(confirmedRatio(shape, redactAddresses)).toBeLessThan(MAX_LINEAR_RATIO);
     },
   );
 
