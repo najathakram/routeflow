@@ -50,6 +50,11 @@ import { toFeatureRegistryRow } from "../billing/feature-registry-row";
 import { EntitlementsModeService } from "../billing/entitlements-mode.service";
 import { ConfigSnapshotFlagService } from "../billing/config-snapshot-flag.service";
 import { FeatureDiffService } from "../billing/feature-diff.service";
+import {
+  EntitlementSweepService,
+  liveDoorRefusal,
+  type LiveDoorVerdict,
+} from "../billing/entitlement-sweep.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { FeaturePreviewService } from "../billing/feature-preview.service";
 import { TenantConfigSnapshotAdminService } from "../billing/tenant-config-snapshot-admin.service";
@@ -114,6 +119,8 @@ export class PlatformAdminController {
     private readonly businessProfiles: BusinessProfileService,
     private readonly featureConfig: FeatureConfigService,
     private readonly applyService: BusinessProfileApplyService,
+    // FG-1 WP3: the sweep the `live` door reads. Last and optional so a bare stub in a spec compiles; absent = refuse.
+    private readonly entitlementSweep?: EntitlementSweepService,
   ) {}
 
   @Get("stats")
@@ -508,24 +515,25 @@ export class PlatformAdminController {
   @Put("entitlements/mode")
   @ApiOperation({
     summary:
-      "Switch shadow/live. live refuses (409) while any diff row is unexplained, unless force+reason.",
+      "Switch shadow/live. live refuses (409) unless the entitlement sweep finds 0 courtesy gaps and 0 unexplained, and refuses if the sweep does not finish in 30 seconds.",
   })
   async setEntitlementsMode(@Body() dto: SetEntitlementsModeDto, @CurrentUser() admin: JwtPayload) {
     if (dto.mode === "live") {
-      const hasUnexplained = await this.featureDiffs.hasUnexplained();
-      if (hasUnexplained && !(dto.force && dto.reason)) {
+      // FG-1 WP3: one door, fed by the sweep (the same function as the report). No override: a refusal is final.
+      const verdict: LiveDoorVerdict = this.entitlementSweep
+        ? await this.entitlementSweep.liveDoor()
+        : { clear: false, reason: "error", courtesyGaps: 0, unexplained: 0, tenants: 0 };
+      if (!verdict.clear) {
         throw new ConflictException({
           statusCode: 409,
           code: API_ERROR_CODES.UNEXPLAINED_DIFFS,
-          message:
-            "Unexplained FeatureResolverDiff rows exist — explain them, or pass {force:true, reason} to override.",
+          message: liveDoorRefusal(verdict),
         });
       }
     }
     await this.entitlementsMode.setMode(dto.mode);
     await this.svc.recordAdminAction(null, admin.sub, AdminAuditAction.ENTITLEMENTS_MODE_CHANGED, {
       mode: dto.mode,
-      force: dto.force ?? false,
       reason: dto.reason ?? null,
     });
     return { mode: dto.mode };
