@@ -100,7 +100,13 @@ async function build(h: ReturnType<typeof makeHarness>): Promise<StaffOrderEmail
 
 const sent = (h: ReturnType<typeof makeHarness>) =>
   h.email.send.mock.calls.map(
-    (c) => c[0] as { subject: string; html: string; delivery: { kind: string; entityId: string } },
+    (c) =>
+      c[0] as {
+        subject: string;
+        html: string;
+        text: string;
+        delivery: { kind: string; entityId: string };
+      },
   );
 
 const OLD = { id: "old-1", orderNumber: "ORD-00001" };
