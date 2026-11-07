@@ -498,6 +498,7 @@ describe("SA-893: every transaction takes Return -> Order -> Invoice -> CreditNo
     "customers/customers.service.ts#deleteCustomer": "Return > Order",
     "customers/customers.service.ts#mergeCustomers": "Return > Order > Invoice > CreditNote", // SA-893: both customers' Returns locked FIRST
     "customers/customers.service.ts#runImportedCustomersCleanup": "Return > Order > Invoice",
+    "import/import.service.ts#importInvoices": "Order > Invoice",
     "invoices/invoice-send-guard.ts#lockInvoiceRow": "Order > Invoice",
     "invoices/invoice-send-guard.ts#lockInvoicesForPayment": "Order > Invoice",
     "invoices/invoice-send-snapshot.ts#readSendSnapshot": "Order > Invoice > CreditNote",
