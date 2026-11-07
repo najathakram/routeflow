@@ -2715,9 +2715,11 @@ export class CustomersService {
     // to discover the gap.
     const sendResult = await this.email.send({
       to: toEmail,
-      // W-1163 ruling: a business inviting its own buyer is tenant mail, in the tenant's look
-      // through the tenant send path (the platform path drops `layout`).
-      ...portalInviteEmail(sellerName, inviteUrl),
+      // W-1163: the LOOK is the tenant's (finished html, so the platform path needs no `layout`).
+      ...portalInviteEmail(sellerName, inviteUrl, await this.email.tenantLook()),
+      // Security review Phase 2 (#824): the TRANSPORT stays the platform sender. The link is a
+      // bearer account-link token; a copy must never sit in a tenant's mailbox or SMTP provider.
+      senderClass: "platform",
     });
 
     if (!sendResult.delivered) {

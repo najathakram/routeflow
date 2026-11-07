@@ -96,7 +96,7 @@ describe("CustomersService", () => {
   let authority: { can: jest.Mock };
   let configGet: jest.Mock;
   let ledger: { reverseInvoiceEntries: jest.Mock; settleRegulatedLedger: jest.Mock };
-  let email: { send: jest.Mock };
+  let email: { send: jest.Mock; tenantLook: jest.Mock };
   const originalFetch = global.fetch;
 
   beforeEach(async () => {
@@ -136,7 +136,10 @@ describe("CustomersService", () => {
     // has no upgradeTargetForFlag, so a flag-OFF msrp path would crash there and
     // mask the behaviour the test is actually about.
     authority = { can: jest.fn().mockResolvedValue(false) };
-    email = { send: jest.fn().mockResolvedValue({ delivered: true, transport: "resend" }) };
+    email = {
+      send: jest.fn().mockResolvedValue({ delivered: true, transport: "resend" }),
+      tenantLook: jest.fn().mockResolvedValue({ kind: "tenant", name: "Acme Distribution" }),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -3072,14 +3075,15 @@ describe("CustomersService", () => {
     it("actually sends the invite email (not just a logged 'best-effort' claim)", async () => {
       const result = await service.sendPortalInvite("cust-invite", { method: "EMAIL" }, "tenant-1");
 
-      // Tenant mail (W-1163 ruling): the tenant send path with a `layout` spec, no platform sender
-      // (that path drops `layout` and would put RouteFlow's mark on the invite).
+      // Look = the tenant's (finished html), transport = the platform sender (#824: bearer token).
       const sent = email.send.mock.calls[0][0] as any;
-      expect(sent).toMatchObject({
-        to: "buyer@example.com",
-        layout: { heading: "You're invited to the buyer portal" },
-      });
-      expect(sent.senderClass).toBeUndefined();
+      expect(sent).toMatchObject({ to: "buyer@example.com", senderClass: "platform" });
+      expect(sent.layout).toBeUndefined();
+      expect(sent.replyTo).toBeUndefined();
+      const visible = (sent.html as string).replace(/<[^>]+>/g, "");
+      expect(visible).toContain("Acme Distribution");
+      expect(visible).toContain("Sent with RouteFlow");
+      expect(sent.html).not.toContain("routeflow-mark");
       expect(result.emailSent).toBe(true);
       expect(result.message).toMatch(/emailed to buyer@example\.com/i);
     });

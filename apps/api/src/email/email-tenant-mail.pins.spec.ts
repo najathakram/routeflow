@@ -53,36 +53,47 @@ beforeEach(() => {
 });
 afterEach(() => jest.restoreAllMocks());
 
-describe("the buyer-portal invite is tenant mail", () => {
+describe("the buyer-portal invite: tenant look, platform transport (#824)", () => {
   const INVITE_URL = "https://app.test/buyer/invite/" + "a".repeat(64);
 
-  it("composed through the real send path it wears the tenant's look, never RouteFlow's mark", async () => {
+  it("sent as a platform send it wears the tenant's look, never RouteFlow's mark, and logs no drop", async () => {
     const { svc, sendMail } = service();
-    await svc.send({ to: "buyer@acme.example", ...portalInviteEmail("Acme Foods", INVITE_URL) });
+    const look = await svc.tenantLook();
+    expect(look).toMatchObject({ kind: "tenant", name: "Acme Foods" });
+    await svc.send({
+      to: "buyer@acme.example",
+      ...portalInviteEmail("Acme Foods", INVITE_URL, look),
+      senderClass: "platform",
+    });
     const sent = sendMail.mock.calls[0][0];
     expect(isLayoutHtml(sent.html)).toBe(true);
     expect(sent.html).not.toMatch(/alt="RouteFlow"|routeflow-mark/);
     expect(visible(sent.html)).toContain("Acme Foods");
     expect(visible(sent.html)).toContain("Sent with RouteFlow");
     expect(visible(sent.html)).toContain("This link expires in 7 days.");
-    // the token is the button's target and in full in the text part, never visible text
+    // the token is the button's target, never visible text
     expect(sent.html).toContain(`href="${INVITE_URL}"`);
     expect(visible(sent.html)).not.toContain("a".repeat(64));
-    // (the platform-SMTP branch hands sendMail no text part, a known gap: read the composed text)
-    const composed = await (svc as any).composeLayout({
-      to: "buyer@acme.example",
-      ...portalInviteEmail("Acme Foods", INVITE_URL),
-    });
-    expect(composed.text).toContain(INVITE_URL);
-    expect(composed.text).toContain("This link expires in 7 days.");
+    // no Reply-To, and the platform guard has nothing to complain about (finished html, no layout)
+    expect(sent.replyTo).toBeUndefined();
+    const errors = (Logger.prototype.error as jest.Mock).mock.calls.map((c) => String(c[0]));
+    expect(errors.filter((m) => m.includes("platform path drops"))).toEqual([]);
+  });
+
+  it("the text part carries the link and the expiry line", () => {
+    const m = portalInviteEmail("Acme Foods", INVITE_URL, { kind: "tenant", name: "Acme Foods" });
+    expect(m.text).toContain(INVITE_URL);
+    expect(m.text).toContain("This link expires in 7 days.");
   });
 
   it("escapes a hostile business name, and the text part says what the html says", () => {
-    const m = portalInviteEmail("<b>Acme</b> & Co", INVITE_URL);
+    const m = portalInviteEmail("<b>Acme</b> & Co", INVITE_URL, {
+      kind: "tenant",
+      name: "<b>Acme</b> & Co",
+    });
     expect(m.html).not.toContain("<b>Acme</b>");
     expect(m.html).toContain("&lt;b&gt;Acme&lt;/b&gt;");
     expect(paragraphsMissingFromText(m.html, m.text)).toEqual([]);
-    expect(m.layout.cta).toEqual({ label: "Accept invite", url: INVITE_URL });
   });
 });
 
