@@ -10,10 +10,14 @@ import { EmailService } from "../../email/email.service";
  * MessageProvider contract: transports() declares EMAIL only, send() never
  * throws, and a delivered/failed EmailService result maps to sent/failed.
  */
-function makeProvider(sendImpl: jest.Mock, businessName = "RouteFlow") {
+function makeProvider(sendImpl: jest.Mock, businessName: string | null = "Acme Distributors") {
   const emailService = {
     send: sendImpl,
-    getTenantBusinessName: jest.fn().mockResolvedValue(businessName),
+    tenantLook: jest
+      .fn()
+      .mockResolvedValue(
+        businessName ? { kind: "tenant", name: businessName } : { kind: "neutral" },
+      ),
   } as unknown as EmailService;
   return new EmailChannelProvider(emailService);
 }
@@ -67,6 +71,23 @@ describe("EmailChannelProvider", () => {
     const arg = send.mock.calls[0][0];
     expect(arg.layout.footerNote).toContain("Acme Distributors");
     expect(arg.layout.footerNote).not.toContain("RouteFlow");
+  });
+
+  it("W-1163: a tenant with no business name gets a neutral footer, never RouteFlow's name", async () => {
+    const send = jest.fn().mockResolvedValue({ delivered: true, transport: "smtp", id: "eml-1" });
+    const provider = makeProvider(send, null);
+
+    await provider.send({
+      tenantId: "t1",
+      channel: MessageChannel.EMAIL,
+      to: "buyer@acme-test.example",
+      body: "Hello",
+      subject: "Order confirmed",
+    });
+
+    const footer = send.mock.calls[0][0].layout.footerNote as string;
+    expect(footer).toBe("This is an automated message.");
+    expect(footer).not.toContain("RouteFlow");
   });
 
   it("Opus review (N1): escapes HTML-significant characters in the body (e.g. a customer name containing '<')", async () => {
@@ -131,11 +152,11 @@ describe("EmailChannelProvider", () => {
     ).resolves.toMatchObject({ status: "failed" });
   });
 
-  it("never throws even if getTenantBusinessName() itself rejects", async () => {
+  it("never throws even if tenantLook() itself rejects", async () => {
     const send = jest.fn();
     const emailService = {
       send,
-      getTenantBusinessName: jest.fn().mockRejectedValue(new Error("db down")),
+      tenantLook: jest.fn().mockRejectedValue(new Error("db down")),
     } as unknown as EmailService;
     const provider = new EmailChannelProvider(emailService);
 

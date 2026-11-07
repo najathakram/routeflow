@@ -1669,7 +1669,7 @@ export class EmailService {
       depositDueDate?: string | null;
     },
     businessName: string,
-    look: EmailLook,
+    look?: EmailLook,
   ): { html: string; text: string } {
     const fmt = (n: number) =>
       new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -1909,7 +1909,11 @@ export class EmailService {
       heading: "Invoice",
       bodyHtml,
       bodyText,
-      footerNote: endSentence(`This is an automated email from ${businessName}`),
+      footerNote: endSentence(
+        look?.kind !== "neutral"
+          ? `This is an automated email from ${businessName}`
+          : "This is an automated email",
+      ),
     });
   }
 

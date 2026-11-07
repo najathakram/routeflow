@@ -440,6 +440,20 @@ describe("renderOrderReceipt (email)", () => {
     expect(r.text).toContain("This is an automated receipt.");
   });
 
+  it("W-1163: a neutral look from the tenant config still shows the receipt's own business name", () => {
+    const r = renderOrderReceipt(
+      orderFixture(),
+      [INVOICE],
+      paymentsFixture(),
+      BRANDING,
+      ZONE,
+      undefined,
+      { kind: "neutral" },
+    );
+    expect(r.html).toContain("Acme Test Store");
+    expect(r.text).toContain("Sent by Acme Test Store.");
+  });
+
   it("signs the email 'Sent by <business name>.' (row 345), never 'Receipt sent by'", () => {
     for (const body of [out.html, out.text]) {
       expect(body).toContain("Sent by Acme Test Store.");

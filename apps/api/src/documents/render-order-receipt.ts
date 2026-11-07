@@ -177,7 +177,7 @@ export function renderOrderReceipt(
     : `Your receipt for order ${model.orderNumber}`;
   const { html, text } = renderBrandedEmail({
     // A receipt with no business name is neutral: never RouteFlow's name on a tenant's receipt.
-    look: look ?? (name ? { kind: "tenant", name } : { kind: "neutral" }),
+    look: look?.kind === "tenant" ? look : name ? { kind: "tenant", name } : { kind: "neutral" },
     heading: "Receipt",
     bodyHtml: bodyHtmlOf(model),
     bodyText: bodyTextOf(model),

@@ -146,6 +146,30 @@ describe("a body fragment with a `layout` spec (EmailService.composeLayout)", ()
   });
 });
 
+describe("the invoice email's footer", () => {
+  const params = {
+    customerName: "Corner Deli",
+    invoiceNumber: "INV-1",
+    issueDate: "2026-11-06",
+    dueDate: "2026-12-06",
+    total: 10,
+    items: [{ description: "Water", qty: 1, unitPrice: 10, subtotal: 10 }],
+  };
+
+  it("names the tenant, and for a tenant with no name says nothing of RouteFlow", () => {
+    const svc = service({}) as any;
+    const named = svc.buildInvoiceEmail(params, "Acme Foods", {
+      kind: "tenant",
+      name: "Acme Foods",
+    });
+    expect(named.text).toContain("This is an automated email from Acme Foods.");
+    const unnamed = svc.buildInvoiceEmail(params, "RouteFlow", { kind: "neutral" });
+    expect(unnamed.text).toContain("This is an automated email.");
+    expect(unnamed.html).not.toMatch(/Sent by RouteFlow|alt="RouteFlow"|automated email from/);
+    expect(unnamed.text).not.toContain("automated email from RouteFlow");
+  });
+});
+
 describe("renderBrandedEmail with a tenant look (the invoice shell)", () => {
   const tenant = {
     kind: "tenant" as const,

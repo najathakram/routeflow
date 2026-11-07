@@ -184,6 +184,7 @@ export class GoHighLevelPollService {
     if (recipients.length === 0) return;
     await this.emailService.send({
       to: recipients,
+      senderClass: "platform",
       ...routeflowNotice({
         subject: "RouteFlow lost access to GoHighLevel",
         heading: "RouteFlow lost access to GoHighLevel",

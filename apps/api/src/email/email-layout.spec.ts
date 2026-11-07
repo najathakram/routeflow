@@ -218,6 +218,13 @@ describe("helpers", () => {
     expect(t).toBe("Fish & chips\n\nOpen (https://a.test/x?y=1)\n\none\ntwo");
   });
 
+  it("htmlToPlainText keeps a table's label apart from its value, one row per line", () => {
+    const t = htmlToPlainText(
+      "<table><tr><td>When</td><td>Tue, Nov 10</td></tr><tr><td>Name</td><td>Jane</td></tr></table>",
+    );
+    expect(t).toBe("When Tue, Nov 10\nName Jane");
+  });
+
   it("wrapUnbrandedHtml unwraps a full document and keeps the caller's body", () => {
     const html = wrapUnbrandedHtml({
       look: { kind: "neutral" },

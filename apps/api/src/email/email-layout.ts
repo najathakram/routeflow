@@ -345,7 +345,8 @@ export function htmlToPlainText(html: string): string {
     html
       .replace(/<a\s[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, "$2 ($1)")
       .replace(/<\/(p|blockquote|ul|ol|div|h[1-6])>/gi, "\n\n")
-      .replace(/<\/li>|<br\s*\/?>/gi, "\n")
+      .replace(/<\/li>|<\/tr>|<br\s*\/?>/gi, "\n")
+      .replace(/<\/t[dh]>/gi, " ")
       .replace(/<[^>]+>/g, "")
       .replace(/[ \t]+\n/g, "\n")
       .replace(/\n{3,}/g, "\n\n"),

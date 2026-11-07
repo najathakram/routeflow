@@ -452,12 +452,12 @@ export class StaffOrderEmailService {
       emailParagraph(`${escapeHtml(headline)}.`) +
       (replaced ? emailParagraph(combined) : "") +
       emailParagraph(
-        `Customer: ${escapeHtml(customer)}<br>Order: ${escapeHtml(number)}<br>Total: ${escapeHtml(total)}`,
+        `Customer: ${escapeHtml(customer)}<br>Order: ${escapeHtml(number)}<br>Total: $${escapeHtml(total)}`,
       );
     const text = [
       `${headline}.`,
       ...(replaced ? [combined] : []),
-      `Customer: ${customer}\nOrder: ${number}\nTotal: ${total}`,
+      `Customer: ${customer}\nOrder: ${number}\nTotal: $${total}`,
     ].join("\n\n");
     return {
       subject,
