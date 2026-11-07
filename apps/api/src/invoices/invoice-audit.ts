@@ -31,6 +31,14 @@ export function auditInvoiceRevised(
   return write(tx, AUDIT_ACTIONS.INVOICE_REVISED, invoiceId, actor, { invoiceId, actor, ...meta });
 }
 
+/** SA-1050 rule 3: a write-off. `amount` is the confirmed balance written off, `preTax` its pre-tax share (the event's figures). */
+export function auditInvoiceWrittenOff(
+  tx: AuditTx,
+  p: { invoiceId: string; actor: string | null; amount: number; preTax: number; reason: string },
+) {
+  return write(tx, AUDIT_ACTIONS.INVOICE_WRITTEN_OFF, p.invoiceId, p.actor, p);
+}
+
 /** M6: a restatement left the invoice paid beyond its new total (it is held out of PAID, `overpaidBy` shows it). */
 export function auditOverpaidAfterRestatement(
   tx: AuditTx,

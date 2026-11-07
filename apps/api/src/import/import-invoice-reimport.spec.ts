@@ -258,4 +258,68 @@ describe("#2468 invoice re-import never resurrects a VOID / WRITTEN_OFF invoice 
       expect(upd?.tx).not.toBeNull();
     });
   });
+
+  // SA-1050 rule 3 / review-b note 2: a re-import that flips an order-linked invoice to WRITTEN_OFF
+  // takes the SA-214 house order — Order, then Invoice — from the FIRST lock statement, in both
+  // branches. The old bare Invoice FOR UPDATE ran first and ensureWriteOffEvent then locked Order.
+  describe("SA-214 lock order on the flip to WRITTEN_OFF", () => {
+    let locks: string[];
+
+    beforeEach(() => {
+      locks = [];
+      prisma.tenantTransaction.mockImplementation(async (fn: any) =>
+        fn({
+          ...prisma.forTenant(),
+          $executeRaw: jest.fn(async (strings: TemplateStringsArray) => {
+            const m = /FROM "(Order|Invoice)"/.exec(strings.join("?"));
+            if (m) locks.push(m[1]);
+            return 0;
+          }),
+        }),
+      );
+      // ensureWriteOffEvent peeks and re-reads the invoice; a SENT row ends it right after the lock.
+      prisma.invoice.findUnique.mockResolvedValue({
+        ...prior(InvoiceStatus.SENT),
+        orderId: "ord-1",
+        payments: [],
+      });
+      prisma.invoicePayment.findFirst.mockResolvedValue(null);
+    });
+
+    const linked = (status: InvoiceStatus, orderId: string | null) => ({
+      ...prior(status),
+      orderId,
+    });
+
+    it("numbered branch: an order-linked flip locks Order before Invoice", async () => {
+      prisma.invoice.findFirst.mockResolvedValue(linked(InvoiceStatus.SENT, "ord-1"));
+      const r = await service.importInvoices(Buffer.from(numbered("Written Off")), "user-1");
+      expect(r.errors).toEqual([]);
+      expect(r.updated).toBe(1);
+      expect(locks[0]).toBe("Order");
+      expect(locks.indexOf("Order")).toBeLessThan(locks.indexOf("Invoice"));
+    });
+
+    it("numberless branch: an order-linked flip locks Order before Invoice", async () => {
+      externalRefs.findLocalId.mockResolvedValueOnce(null).mockResolvedValueOnce("inv-prior");
+      prisma.invoice.findFirst.mockResolvedValue(linked(InvoiceStatus.SENT, "ord-1"));
+      const r = await service.importInvoices(Buffer.from(numberless("Written Off")), "user-1");
+      expect(r.errors).toEqual([]);
+      expect(r.updated).toBe(1);
+      expect(locks[0]).toBe("Order");
+      expect(locks.indexOf("Order")).toBeLessThan(locks.indexOf("Invoice"));
+    });
+
+    it("control: an invoice with no order locks only Invoice", async () => {
+      prisma.invoice.findFirst.mockResolvedValue(linked(InvoiceStatus.SENT, null));
+      prisma.invoice.findUnique.mockResolvedValue({
+        ...prior(InvoiceStatus.SENT),
+        orderId: null,
+        payments: [],
+      });
+      await service.importInvoices(Buffer.from(numbered("Written Off")), "user-1");
+      expect(locks.length).toBeGreaterThan(0);
+      expect(locks.every((l) => l === "Invoice")).toBe(true);
+    });
+  });
 });

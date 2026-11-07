@@ -605,6 +605,7 @@ describe("structural pin: ONE writer of the coupon columns (L-223)", () => {
     "/scripts/lib/live-target-guard.cjs",
     "/scripts/labels-from-categories.mjs", // the protected-tenant classifier input (subOf)
     "/scripts/backfill-tenant-units.mjs", // U-6: the same live-target classifier input (subOf)
+    "/scripts/backfill-write-off-events.mjs", // SA-1050: the same live-target classifier input (subOf)
   ]);
 
   it("src, scripts and prisma (migrations excluded) hold no coupon-column write outside the writer", () => {

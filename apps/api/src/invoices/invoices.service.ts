@@ -282,8 +282,9 @@ import {
   sendRefusal,
   voidRefusal,
   externalPaidOn,
-  writeOffRefusal,
 } from "./invoice-send-guard";
+import { writeOffInvoice } from "./invoice-write-off";
+import { assertNoWriteOffHistory } from "./invoice-write-off-history";
 import { revertLinkedInvoicesToDraft } from "./order-edit-revert-set";
 import { assertNoCashRefundOnInvoice } from "./invoice-cash-refund-guard";
 import { assertPartialRequestShape, bumpInvoicedQtyCas } from "./partial-invoice-cas";
@@ -4909,36 +4910,10 @@ export class InvoicesService {
 
   // ─── Write-off ────────────────────────────────────────────────────────────
 
-  async writeOff(id: string, dto: WriteOffDto) {
-    const inv = await this.findOneOrThrow(id);
-    const early = writeOffRefusal(inv.status);
-    if (early) throw new BadRequestException(early);
-    // Sales agents & commissions: materially a no-op for money (payable
-    // derives from payments, and WRITTEN_OFF releases nothing beyond cash
-    // already collected) but wrapped atomically to refresh the accrual's
-    // display status alongside the write-off.
-    return this.prisma.tenantTransaction(async (tx) => {
-      // #2472 (3): (Order →) Invoice locked FIRST and re-checked there — a void since the pre-read wins.
-      const locked = await lockInvoiceRow(tx, id, inv.orderId);
-      if (!locked) throw new NotFoundException("Invoice not found");
-      const refused = writeOffRefusal(locked.status);
-      if (refused) throw new BadRequestException(refused);
-      const written = await tx.invoice.update({
-        where: { id },
-        data: {
-          status: InvoiceStatus.WRITTEN_OFF,
-          writeOffReason: dto.reason,
-          writtenOffAt: new Date(),
-        },
-        include: {
-          customer: { select: { id: true, businessName: true } },
-          items: true,
-          payments: { orderBy: { createdAt: "desc" } },
-        },
-      });
-      await this.commissionEngine.syncInvoiceCommissionSafe(id, tx);
-      return written;
-    });
+  async writeOff(id: string, dto: WriteOffDto, actorId: string | null = null) {
+    // SA-1050 PR-1: the write-off lives in invoice-write-off.ts (one home for the bad-debt rules).
+    const deps = { prisma: this.prisma, commissionEngine: this.commissionEngine };
+    return writeOffInvoice(deps, await this.findOneOrThrow(id), dto, actorId);
   }
 
   // ─── Delete ───────────────────────────────────────────────────────────────
@@ -4977,6 +4952,8 @@ export class InvoicesService {
       // B214 (REG-B214): refuse while a credit note this invoice sourced still has spendable balance
       // (deleting would orphan it as provenance-less wallet money). Before any write, via this tx (L-081).
       await assertNoUnspentSourcedCredits(tx, [id]);
+      // SA-1050 A-1 (REFUSE): a bad-debt history is a past period's ledger and its FK is RESTRICT — 409, before any write.
+      await assertNoWriteOffHistory(tx, [id]);
 
       // Free up invoicedQty on the source order BEFORE deleting the invoice
       // items (we read them inside the helper). Otherwise a delete leaves the

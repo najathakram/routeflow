@@ -204,3 +204,72 @@ describeDb("accrual readers on the tenant's own day, real Postgres (SA-906)", ()
     expect(utcNov).toBe(chicagoOct);
   });
 });
+
+// R10's evented twin (review-b note 1, SA-1050): once a write-off has a ledger event the legacy `writtenOffAt` term skips it
+// (`writeOffEvents: { none: {} }`), so R10 above no longer reads the ledger term at all. This is the same 23:30 Chicago instant
+// on an EVENTED invoice — putting the ledger aggregate back on the raw (UTC) window moves every expectation below.
+describeDb("bad-debt ledger term on the tenant's own day, real Postgres (SA-1050)", () => {
+  let prisma: PrismaClient;
+  let pool: Pool;
+  let tenantId = "";
+
+  beforeAll(async () => {
+    pool = new Pool({ connectionString: requireLocalDatabaseUrl() });
+    prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
+    const slug = assertTestTenant(`qa-tdayev-${RUN}`, "analytics-tenant-day.db.spec.ts");
+    tenantId = (await prisma.tenant.create({ data: { slug, name: `tdayev ${slug}` } })).id;
+    const user = await prisma.user.create({
+      data: { email: `${slug}@example.invalid`, username: slug, role: "CUSTOMER", tenantId },
+    });
+    const customerId = (
+      await prisma.customer.create({
+        data: { userId: user.id, businessName: "tdayev", contactName: "tdayev", tenantId } as any,
+      })
+    ).id;
+    const invoice = await prisma.invoice.create({
+      data: {
+        tenantId,
+        customerId,
+        invoiceNumber: `INV-TDAYEV-${RUN}`,
+        status: "WRITTEN_OFF",
+        issueDate: new Date("2026-08-05T00:00:00.000Z"),
+        writtenOffAt: LATE_OCT_31,
+        subtotal: 40,
+        taxAmount: 0,
+        total: 40,
+      } as any,
+    });
+    await prisma.invoiceWriteOffEvent.create({
+      data: {
+        tenantId,
+        invoiceId: invoice.id,
+        kind: "WRITE_OFF",
+        amount: 40,
+        preTax: 40,
+        at: LATE_OCT_31,
+        reason: "R10 evented twin",
+      },
+    });
+  }, 120_000);
+
+  afterAll(async () => {
+    const swallow = () => undefined;
+    await prisma.invoiceWriteOffEvent.deleteMany({ where: { tenantId } }).catch(swallow);
+    await prisma.invoice.deleteMany({ where: { tenantId } }).catch(swallow);
+    await prisma.customer.deleteMany({ where: { tenantId } }).catch(swallow);
+    await prisma.user.deleteMany({ where: { tenantId } }).catch(swallow);
+    await prisma.tenant.delete({ where: { id: tenantId } }).catch(swallow);
+    await prisma.$disconnect();
+    await pool.end().catch(swallow);
+  });
+
+  const bad = (w: typeof OCT, timeZone: string | null) =>
+    fetchBadDebtExpense(prisma as any, tenantId, w, { timeZone });
+
+  it("R10e: an EVENTED write-off at 23:30 local on Oct 31 is OCTOBER's bad debt for Chicago, November's for UTC", async () => {
+    expect(await bad(OCT, CHICAGO)).toBe(40);
+    expect(await bad(NOV, CHICAGO)).toBe(0);
+    expect(await bad(OCT, null)).toBe(0);
+    expect(await bad(NOV, null)).toBe(40);
+  });
+});
