@@ -3075,22 +3075,11 @@ export class PlatformAdminService {
     if (!tenant) throw new NotFoundException(`Tenant ${tenantId} not found`);
     if (cap === undefined || cap === tenant.aiMonthlyCapUsd) return;
     await this.prisma.tenant.update({ where: { id: tenantId }, data: { aiMonthlyCapUsd: cap } });
-    try {
-      await this.prisma.auditLog.create({
-        data: {
-          tenantId: null,
-          userId: actorId,
-          action: "ai_cap.changed",
-          entityType: "Tenant",
-          entityId: tenantId,
-          meta: { from: tenant.aiMonthlyCapUsd, to: cap },
-        },
-      });
-    } catch (err) {
-      this.logger.error(
-        `Failed to write the ai_cap audit row: ${(err as { code?: string })?.code ?? "error"}`,
-      );
-    }
+    // Keyed to the target business, so it shows under the per-business audit filter; AuditService swallows its own errors.
+    await this.recordAdminAction(tenantId, actorId, AdminAuditAction.TENANT_AI_CAP_CHANGED, {
+      from: tenant.aiMonthlyCapUsd,
+      to: cap,
+    });
   }
 
   // ─── Tenant admin management ──────────────────────────────────────────────────

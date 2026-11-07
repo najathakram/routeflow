@@ -70,19 +70,44 @@ function methodBody(text: string, name: string): string {
   return balanced(text, brace, "{", "}");
 }
 
+/** The members (comments already stripped) gated by a `@RequireAddon(...)` that lists `"ocr"`. */
+function ocrGatedMembers(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(
+    /@RequireAddon\(\s*(?:["'][\w.-]+["']\s*,\s*)*["']ocr["'](?:\s*,\s*["'][\w.-]+["'])*\s*,?\s*\)/g,
+  )) {
+    const next = /^ {2}(?:async\s+)?(\w+)\s*\(/m.exec(text.slice((m.index ?? 0) + m[0].length));
+    out.push(next?.[1] ?? "?");
+  }
+  return out;
+}
+
 describe('every @RequireAddon("ocr") scan route reaches the AI cap (SA-1106 A-2 (c))', () => {
   it("the gated routes are exactly the four listed (both ways)", () => {
     const found: string[] = [];
     for (const file of walk(SRC)) {
       const rel = path.relative(SRC, file).split(path.sep).join("/");
       if (rel.endsWith(".spec.ts") || rel.includes("/testing/")) continue;
-      const text = strip(fs.readFileSync(file, "utf8"));
-      for (const m of text.matchAll(/@RequireAddon\(\s*["']ocr["']\s*\)/g)) {
-        const next = /^ {2}(?:async\s+)?(\w+)\s*\(/m.exec(text.slice((m.index ?? 0) + m[0].length));
-        found.push(`${rel}#${next?.[1]}`);
-      }
+      for (const member of ocrGatedMembers(strip(fs.readFileSync(file, "utf8"))))
+        found.push(`${rel}#${member}`);
     }
     expect(found.sort()).toEqual(Object.keys(ROUTES).sort());
+  });
+
+  it("the census sees a gate whichever form lists ocr (single key, any-of list, either position, any quotes)", () => {
+    const route = (decorator: string) => `\n  ${decorator}\n  @Post("x")\n  async scanThing() {}\n`;
+    for (const decorator of [
+      '@RequireAddon("ocr")',
+      "@RequireAddon('ocr')",
+      '@RequireAddon("ocr", "developer_mode")',
+      '@RequireAddon("developer_mode", "ocr")',
+      '@RequireAddon(\n    "developer_mode",\n    "ocr",\n  )',
+    ]) {
+      expect([decorator, ocrGatedMembers(route(decorator))]).toEqual([decorator, ["scanThing"]]);
+    }
+    for (const decorator of ['@RequireAddon("ocr_pro")', '@RequireAddon("developer_mode")']) {
+      expect(ocrGatedMembers(route(decorator))).toEqual([]);
+    }
   });
 
   it.each(Object.entries(ROUTES))(

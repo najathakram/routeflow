@@ -1,6 +1,6 @@
 import { Test } from "@nestjs/testing";
 import { ConfigService } from "@nestjs/config";
-import { PlatformConfigService } from "./platform-config.service";
+import { DEFAULT_MONTHLY_AI_CAP_USD, PlatformConfigService } from "./platform-config.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../common/encryption.service";
 
@@ -11,8 +11,8 @@ import { EncryptionService } from "../common/encryption.service";
  *   3. the monthly budget, but only when the key is RouteFlow's;
  *   4. the task's model.
  * The budget (PR-B1, no migration) sums the business's AiUsageEvent rows for the current UTC month with the one
- * `modelPrice`, and refuses with 403 AI_MONTHLY_CAP_REACHED at or over the cap. `ai.monthlyCapUsd` unset = $25, "0" =
- * AI off on RouteFlow's key for every business.
+ * `modelPrice`, and refuses with 403 AI_MONTHLY_CAP_REACHED at or over the cap. `ai.monthlyCapUsd` unset = $10, "0" =
+ * AI off on RouteFlow's key for every business, and that kill switch beats any per-business override.
  *
  * The service is called through `any` so these compile, and fail on the VALUE, on the code without the methods.
  */
@@ -128,15 +128,15 @@ describe("PlatformConfigService.prepareAiCall and the monthly budget (SA-1102 A-
   });
 
   describe("the monthly budget (C-1, C-2, C-4, C-5)", () => {
-    it("C-1: $24.99 of spend this month: one more call is allowed", async () => {
-      usage = sonnetSpend(24.99);
+    it("C-1: $9.99 of spend this month: one more call is allowed", async () => {
+      usage = sonnetSpend(9.99);
       await expect(service.prepareAiCall("receipt_scan")).resolves.toMatchObject({
         source: "routeflow",
       });
     });
 
-    it("C-2: at or over $25: 403 AI_MONTHLY_CAP_REACHED with the one sentence", async () => {
-      usage = sonnetSpend(25);
+    it("C-2: at or over $10: 403 AI_MONTHLY_CAP_REACHED with the one sentence", async () => {
+      usage = sonnetSpend(10);
       const err = await refused(service.prepareAiCall("receipt_scan"));
       expect(err?.getStatus?.()).toBe(403);
       expect(err?.getResponse?.()).toMatchObject({ code: "AI_MONTHLY_CAP_REACHED" });
@@ -151,9 +151,9 @@ describe("PlatformConfigService.prepareAiCall and the monthly budget (SA-1102 A-
     });
 
     it("C-2b: spend is priced with the one modelPrice (opus costs more than haiku per token)", async () => {
-      usage = [{ model: "claude-haiku-5-5", inTok: 0, outTok: 40e6 }]; // 40M x $0.5 = $20
+      usage = [{ model: "claude-haiku-5-5", inTok: 0, outTok: 18e6 }]; // 18M x $0.5 = $9
       await expect(service.prepareAiCall("general")).resolves.toBeDefined();
-      usage = [{ model: "claude-opus-5-5", inTok: 0, outTok: 1.25e6 }]; // 1.25M x $20 = $25
+      usage = [{ model: "claude-opus-5-5", inTok: 0, outTok: 0.5e6 }]; // 0.5M x $20 = $10
       const err = await refused(service.prepareAiCall("general"));
       expect(err?.getResponse?.()).toMatchObject({ code: "AI_MONTHLY_CAP_REACHED" });
     });
@@ -171,7 +171,7 @@ describe("PlatformConfigService.prepareAiCall and the monthly budget (SA-1102 A-
       });
     });
 
-    it("C-7: a stored cap replaces the $25 default; an unreadable one falls back to $25", async () => {
+    it("C-7: a stored cap replaces the $10 default; an unreadable one falls back to $10", async () => {
       store["ai.monthlyCapUsd"] = "40";
       usage = sonnetSpend(30);
       await expect(service.prepareAiCall("general")).resolves.toBeDefined();
@@ -179,7 +179,7 @@ describe("PlatformConfigService.prepareAiCall and the monthly budget (SA-1102 A-
       const err = await refused(service.prepareAiCall("general"));
       expect(err?.getResponse?.()).toMatchObject({ code: "AI_MONTHLY_CAP_REACHED" });
       store["ai.monthlyCapUsd"] = "-5";
-      expect(await service.monthlyCapUsdFor(TENANT)).toBe(25);
+      expect(await service.monthlyCapUsdFor(TENANT)).toBe(10);
     });
 
     it("C-5: the window is the current UTC calendar month, for this tenant", async () => {
@@ -209,10 +209,10 @@ describe("PlatformConfigService.prepareAiCall and the monthly budget (SA-1102 A-
   });
 
   describe("the per-business override (O-1 to O-5)", () => {
-    it("O-1: no override: the platform value applies, and the $25 fallback when that is unset", async () => {
-      expect(await service.monthlyCapUsdFor(TENANT)).toBe(25);
-      store["ai.monthlyCapUsd"] = "10";
+    it("O-1: no override: the platform value applies, and the $10 fallback when that is unset", async () => {
       expect(await service.monthlyCapUsdFor(TENANT)).toBe(10);
+      store["ai.monthlyCapUsd"] = "30";
+      expect(await service.monthlyCapUsdFor(TENANT)).toBe(30);
     });
 
     it("O-2: an override replaces the platform value, up or down", async () => {
@@ -245,6 +245,25 @@ describe("PlatformConfigService.prepareAiCall and the monthly budget (SA-1102 A-
       tenantRowMissing = false;
       override = -3;
       expect(await service.monthlyCapUsdFor(TENANT)).toBe(10);
+    });
+
+    it("O-6: the platform's 0 is the kill switch: it beats an override, AI is off for every business", async () => {
+      store["ai.monthlyCapUsd"] = "0";
+      override = 50;
+      expect(await service.monthlyCapUsdFor(TENANT)).toBe(0);
+      const err = await refused(service.prepareAiCall("receipt_scan"));
+      expect(err?.getResponse?.()).toMatchObject({ code: "AI_MONTHLY_CAP_REACHED" });
+      // the business's own key is still not touched by it (C-4b)
+      await expect(service.prepareAiCall("bill_scan", BUSINESS_KEY)).resolves.toMatchObject({
+        source: "business",
+      });
+      // any platform value above 0 leaves the override in charge
+      store["ai.monthlyCapUsd"] = "1";
+      expect(await service.monthlyCapUsdFor(TENANT)).toBe(50);
+    });
+
+    it("O-7: the code default is the owner's $10", () => {
+      expect(DEFAULT_MONTHLY_AI_CAP_USD).toBe(10);
     });
 
     it("O-5: the override is read for the business in context only", async () => {
