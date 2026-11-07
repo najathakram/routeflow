@@ -342,9 +342,11 @@ const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** Sum session-usage's own accounting over the transcript lines that belong to the PR. */
 export async function costFor(pr, { transcriptDir }) {
+  // One folder or several: the main checkout's plus each worktree's (transcriptDirsFor).
+  const dirs = [transcriptDir].flat().filter((d) => d && existsSync(d));
   // A literal specifier: scripts-live-target-guard.spec counts a computed import() as a possible DB client.
   const su = await import("../.claude/skills/model-routing/scripts/session-usage.mjs");
-  if (!transcriptDir || !existsSync(transcriptDir)) return null;
+  if (!dirs.length) return null;
   const { table } = su.loadPriceTable({});
   const warnings = [];
   const records = [];
@@ -366,14 +368,15 @@ export async function costFor(pr, { transcriptDir }) {
     (prRe.test(s) || (branchRe?.test(s) ?? false)) &&
     [...prsNamed(s)].every((n) => Number(n) === pr.number);
   const files = [];
-  for (const f of readdirSync(transcriptDir)) {
-    const full = path.join(transcriptDir, f);
-    if (f.endsWith(".jsonl")) files.push({ full, sub: false });
-    const subs = path.join(full, "subagents");
-    if (existsSync(subs))
-      for (const s of readdirSync(subs))
-        if (s.endsWith(".jsonl")) files.push({ full: path.join(subs, s), sub: true });
-  }
+  for (const dir of dirs)
+    for (const f of readdirSync(dir)) {
+      const full = path.join(dir, f);
+      if (f.endsWith(".jsonl")) files.push({ full, sub: false });
+      const subs = path.join(full, "subagents");
+      if (existsSync(subs))
+        for (const s of readdirSync(subs))
+          if (s.endsWith(".jsonl")) files.push({ full: path.join(subs, s), sub: true });
+    }
   for (const { full, sub } of files) {
     // Coarse pre-filter only: a file last written before the window opened holds no line inside it.
     if (statSync(full).mtimeMs < lo) continue;
@@ -441,11 +444,24 @@ function mainCheckoutRoot() {
   }
 }
 
-/** ~/.claude/projects/<encoded main checkout>, as session-usage encodes it. */
-function transcriptDirFor(root) {
-  return root
-    ? path.join(os.homedir(), ".claude", "projects", root.replace(/[^A-Za-z0-9]/g, "-"))
-    : null;
+/**
+ * ~/.claude/projects/<encoded main checkout>, as session-usage encodes it, plus the folder of every worktree under
+ * <root>/.claude/worktrees (encoded `<main>--claude-worktrees-<name>`): lanes run in worktrees, so a PR built in one
+ * has its transcripts there, never in the main checkout's folder. A folder outlives its worktree, so it still counts.
+ */
+export function transcriptDirsFor(root, projects = path.join(os.homedir(), ".claude", "projects")) {
+  if (!root) return [];
+  const main = root.replace(/[^A-Za-z0-9]/g, "-");
+  let names = [];
+  try {
+    names = readdirSync(projects);
+  } catch {
+    return [];
+  }
+  return names
+    .filter((n) => n === main || n.startsWith(`${main}--claude-worktrees-`))
+    .sort()
+    .map((n) => path.join(projects, n));
 }
 
 /**
@@ -556,7 +572,7 @@ function liveInputs(opts) {
     prs,
     membersOf,
     comments,
-    transcriptDir: transcriptDirFor(mainCheckoutRoot()),
+    transcriptDir: transcriptDirsFor(mainCheckoutRoot()),
     nowIso: new Date().toISOString(),
   };
 }

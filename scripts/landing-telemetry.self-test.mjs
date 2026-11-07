@@ -3,9 +3,12 @@
 // Runs the script against scripts/fixtures/landing-telemetry/base (gh PRs, board comments and a fake transcript dir),
 // so no gh, git or network is touched and nothing is written.
 import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  costFor,
   costWindow,
   expectedTrainMembers,
   fromGraphql,
@@ -15,6 +18,7 @@ import {
   reworkOf,
   routeOf,
   trainMembers,
+  transcriptDirsFor,
   verdictOf,
 } from "./landing-telemetry.mjs";
 
@@ -501,6 +505,39 @@ check(
   );
   check("T5c a node with no commits maps to []", fromGraphql({ number: 1 }).commits, []);
   check("T5d an already-flat gh shape passes through", fromGraphql(ghShape).commits, [commit]);
+}
+{
+  // T8: lanes run in worktrees, so their transcripts sit in `<main>--claude-worktrees-<name>` folders.
+  const projects = mkdtempSync(path.join(os.tmpdir(), "lt-projects-"));
+  for (const n of [
+    "C--repo-routeflow",
+    "C--repo-routeflow--claude-worktrees-lane-a",
+    "C--repo-routeflow-other",
+    "C--repo-routeflowx--claude-worktrees-b",
+  ])
+    mkdirSync(path.join(projects, n));
+  check(
+    "T8 transcriptDirsFor: the main checkout's folder and each worktree's, never a look-alike",
+    transcriptDirsFor("C:\\repo\\routeflow", projects).map((d) => path.basename(d)),
+    ["C--repo-routeflow", "C--repo-routeflow--claude-worktrees-lane-a"],
+  );
+  check(
+    "T8a no projects folder is no folders",
+    transcriptDirsFor("C:\\repo\\routeflow", path.join(projects, "nope")),
+    [],
+  );
+  const prs = JSON.parse(readFileSync(path.join(TRAIN_FIX, "gh-prs.json"), "utf8"));
+  const member = prs.find((p) => p.number === 211);
+  const one = await costFor(member, { transcriptDir: path.join(TRAIN_FIX, "transcripts") });
+  const many = await costFor(member, {
+    transcriptDir: [path.join(projects, "C--repo-routeflow"), path.join(TRAIN_FIX, "transcripts")],
+  });
+  check(
+    "T8b costFor reads every folder given: a PR whose transcripts are only in the worktree's folder is costed",
+    [many?.costUsd, many?.costUsd === one?.costUsd],
+    [0.102, true],
+  );
+  rmSync(projects, { recursive: true, force: true });
 }
 
 console.log(`landing-telemetry self-test: ${passed} passed, ${failures} failed`);
