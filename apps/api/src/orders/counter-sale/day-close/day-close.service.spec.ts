@@ -582,6 +582,8 @@ describe("CounterDayCloseService: the Z report", () => {
       entityId: snap.id,
     });
     expect(email.send.mock.calls[0][0].html).toContain("Z report ·");
+    // W-1163: the send carries the layout spec that makes EmailService dress it in the tenant's look.
+    expect(email.send.mock.calls[0][0].layout).toMatchObject({ heading: "Z report" });
   });
 
   it("no admin to send to: the close succeeds and reportSent is null", async () => {

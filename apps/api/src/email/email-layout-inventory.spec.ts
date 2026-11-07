@@ -28,7 +28,6 @@ const FILES: Record<string, Role> = {
   "billing/billing.service.ts": "layout",
   "buyer/buyer-auth.service.ts": "layout",
   "crm/gohighlevel/gohighlevel-poll.service.ts": "layout",
-  "customers/portal-invite-email.ts": "layout",
   "demo-booking/demo-booking.service.ts": "layout",
   "email/owner-alert.service.ts": "layout",
   "onboarding/onboarding-intake.service.ts": "layout",
@@ -40,6 +39,7 @@ const FILES: Record<string, Role> = {
   "authorizations/authorizations.service.ts": "layout",
   "buyer/buyer.service.ts": "layout",
   "customers/customer-statement-email.ts": "layout",
+  "customers/portal-invite-email.ts": "layout",
   "documents/render-order-receipt.ts": "layout",
   "email/email.service.ts": "layout",
   "messaging/providers/email-notification-template.ts": "layout",
@@ -153,5 +153,38 @@ describe("W-1163 — the layout stays the single, honest shell", () => {
       .map((f) => f.file)
       .sort();
     expect(owners).toEqual(["email/email-layout.ts"]);
+  });
+});
+
+describe("W-1163 — owner ruling: the move adds no Reply-To to any mail", () => {
+  /**
+   * Files that may name a reply address, and why: `email.service.ts` reads the tenant's own existing
+   * config (`getReplyTo`) on the tenant path only; the two billing files carry RouteFlow's own
+   * billing reply address from `PLATFORM_BILLING_REPLY_TO` (set before this PR). Any other file that
+   * writes `replyTo` goes red.
+   */
+  const MAY_NAME_REPLY_TO = new Set([
+    "email/email.service.ts",
+    "billing/billing-notification.templates.ts",
+    "billing/billing-notification.service.ts",
+  ]);
+
+  it("no sender or builder sets replyTo or a Reply-To header", () => {
+    const hits = all
+      .filter(({ file }) => FILES[file] !== undefined)
+      .filter(({ file, src }) => !MAY_NAME_REPLY_TO.has(file) && /replyTo|reply-to/i.test(src))
+      .map((f) => f.file);
+    expect(hits).toEqual([]);
+  });
+
+  it("the guard and `composeLayout` never set one", () => {
+    const body = (name: string) =>
+      all
+        .find((f) => f.file === "email/email.service.ts")!
+        .src.split(new RegExp(`private async ${name}\\b`))[1]
+        .split(/\n {2}(?:private |async |public )/)[0];
+    for (const fn of ["composeLayout", "ensureLayout"]) {
+      expect(body(fn)).not.toMatch(/replyTo|reply-to/i);
+    }
   });
 });

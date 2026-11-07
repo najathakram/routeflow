@@ -454,6 +454,28 @@ describe("renderOrderReceipt (email)", () => {
     expect(r.text).toContain("Sent by Acme Test Store.");
   });
 
+  it("W-1163: a tenant look it is GIVEN is the one it wears: the tenant's name, logo and colour, 'Sent with RouteFlow', never RouteFlow's mark", () => {
+    const r = renderOrderReceipt(
+      orderFixture(),
+      [INVOICE],
+      paymentsFixture(),
+      BRANDING,
+      ZONE,
+      undefined,
+      {
+        kind: "tenant",
+        name: "Acme Foods",
+        logoUrl: "https://api.test/api/v1/public/tenants/acme/logo",
+        color: "#1D4E89",
+      },
+    );
+    expect(r.html).toContain('alt="Acme Foods"');
+    expect(r.html).toContain("#1D4E89");
+    expect(r.html.replace(/<[^>]+>/g, "")).toContain("Sent with RouteFlow");
+    expect(r.html).not.toMatch(/alt="RouteFlow"|routeflow-mark/);
+    expect(r.text).toContain("Sent with RouteFlow");
+  });
+
   it("signs the email 'Sent by <business name>.' (row 345), never 'Receipt sent by'", () => {
     for (const body of [out.html, out.text]) {
       expect(body).toContain("Sent by Acme Test Store.");

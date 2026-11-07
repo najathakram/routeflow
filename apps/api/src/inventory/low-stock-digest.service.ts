@@ -137,7 +137,7 @@ export class LowStockDigestService {
     const items = await this.getLowStockItems(db, tenantId);
     if (items.length > 0) {
       const recipients = await this.getDigestRecipients(db, tenantId);
-      const businessName = sellerDisplayName(config, null, "RouteFlow");
+      const businessName = sellerDisplayName(config, null);
       for (const r of recipients) {
         // Fail closed per recipient too — EmailService.send() already never throws, but a
         // template-build error must not stop the remaining recipients or the day-mark below.

@@ -3072,9 +3072,14 @@ describe("CustomersService", () => {
     it("actually sends the invite email (not just a logged 'best-effort' claim)", async () => {
       const result = await service.sendPortalInvite("cust-invite", { method: "EMAIL" }, "tenant-1");
 
-      expect(email.send).toHaveBeenCalledWith(
-        expect.objectContaining({ to: "buyer@example.com", senderClass: "platform" }),
-      );
+      // Tenant mail (W-1163 ruling): the tenant send path with a `layout` spec, no platform sender
+      // (that path drops `layout` and would put RouteFlow's mark on the invite).
+      const sent = email.send.mock.calls[0][0] as any;
+      expect(sent).toMatchObject({
+        to: "buyer@example.com",
+        layout: { heading: "You're invited to the buyer portal" },
+      });
+      expect(sent.senderClass).toBeUndefined();
       expect(result.emailSent).toBe(true);
       expect(result.message).toMatch(/emailed to buyer@example\.com/i);
     });

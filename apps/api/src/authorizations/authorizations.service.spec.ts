@@ -6,6 +6,7 @@ import { AuditService } from "../audit/audit.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { EmailService } from "../email/email.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { paragraphsMissingFromText } from "../testing/email-text-parity";
 
 describe("AuthorizationsService", () => {
   let service: AuthorizationsService;
@@ -202,6 +203,11 @@ describe("AuthorizationsService", () => {
       expect.objectContaining({ title: expect.stringContaining("submitted for review") }),
     );
     expect(email.send).toHaveBeenCalledWith(expect.objectContaining({ to: "op@acme.test" }));
+    // W-1163: a text part that says what the html says, in the tenant look.
+    const mail = email.send.mock.calls[0][0];
+    expect(mail.text.length).toBeGreaterThan(10);
+    expect(mail.layout).toMatchObject({ heading: expect.stringContaining("submitted for review") });
+    expect(paragraphsMissingFromText(mail.html, mail.text)).toEqual([]);
   });
 
   it("submit blocks a non-license category", async () => {

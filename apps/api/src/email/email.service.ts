@@ -1280,6 +1280,13 @@ export class EmailService {
     // in-request platform send (e.g. an admin's own action triggering a security notice)
     // cannot accidentally pick up THEIR tenant's own anything.
     if (params.senderClass === "platform") {
+      // `sendPlatform` has no `layout` or attachments: they would vanish without a sound (a
+      // tenant fragment would go out in the neutral wrap, a PDF would not go at all). Say so.
+      if (params.layout || params.attachments?.length) {
+        this.logger.error(
+          `Email "${params.subject.slice(0, 60)}" asked for a platform send with ${params.layout ? "a layout spec" : "attachments"}, which the platform path drops. Build a platform email with email-layout.ts, or send tenant mail without senderClass "platform".`,
+        );
+      }
       return this.sendPlatform({
         to: params.to,
         subject: params.subject,
@@ -2287,7 +2294,8 @@ export class EmailService {
    */
   async sendLowStockDigest(params: {
     to: string;
-    businessName: string;
+    /** The tenant's configured name, or null: an unnamed tenant gets the neutral look, never RouteFlow's. */
+    businessName: string | null;
     items: { name: string; sku: string | null; currentStock: number; reorderPoint: number }[];
   }): Promise<{
     delivered: boolean;
@@ -2318,7 +2326,7 @@ export class EmailService {
    * server-controlled.
    */
   private buildLowStockDigestEmail(params: {
-    businessName: string;
+    businessName: string | null;
     items: { name: string; sku: string | null; currentStock: number; reorderPoint: number }[];
   }): { html: string; text: string } {
     const shown = params.items.slice(0, EmailService.MAX_DIGEST_ROWS);
@@ -2374,12 +2382,15 @@ export class EmailService {
       "This is a daily summary — you will not receive another alert for these items until tomorrow. You can turn this digest off in your account preferences.",
     ];
 
-    return renderBrandedEmail({
-      headerHtml: tenantHeaderHtml(params.businessName),
+    // The sweep runs without a tenant context (SYSTEM scan), so the look comes from the name it
+    // passes, not from `tenantLook()`: named tenant -> its look, otherwise neutral.
+    const name = params.businessName?.trim();
+    return renderEmailLayout({
+      look: name ? { kind: "tenant", name } : { kind: "neutral" },
       heading: "Low Stock Alert",
       bodyHtml,
       bodyText,
-      footerNote: "RouteFlow Platform — automated notification.",
+      footerNote: "You are getting this because low-stock alerts are on for your business.",
     });
   }
 }

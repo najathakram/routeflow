@@ -2715,10 +2715,9 @@ export class CustomersService {
     // to discover the gap.
     const sendResult = await this.email.send({
       to: toEmail,
+      // W-1163 ruling: a business inviting its own buyer is tenant mail, in the tenant's look
+      // through the tenant send path (the platform path drops `layout`).
       ...portalInviteEmail(sellerName, inviteUrl),
-      // Security review Phase 2: a buyer-portal invite carries an account-linking action
-      // link — platform sender only, never a tenant's connected mailbox/SMTP.
-      senderClass: "platform",
     });
 
     if (!sendResult.delivered) {
