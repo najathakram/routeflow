@@ -36,6 +36,9 @@ import {
   maskText,
 } from "./lib/mask.mjs";
 import { verifyGithubSignature } from "./lib/webhooks.mjs";
+import { withMergedDeploys } from "./lib/collector.mjs";
+
+export { withMergedDeploys };
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_PORT = 4317;
@@ -581,17 +584,6 @@ const SOURCE_NAMES = ["specs", "github", "branches", "bugs", "areas", "railway"]
 
 /** A startup problem to show as one clear message (no stack trace). */
 export class StartupError extends Error {}
-
-/** Collector sources with GitHub + Railway deploy rows merged (Railway wins, GitHub's kept). */
-export function withMergedDeploys(sources, mergeDeploys) {
-  const gh = sources.github?.data?.deploys;
-  if (!gh?.length) return sources;
-  const rw = sources.railway ?? {};
-  return {
-    ...sources,
-    railway: { ...rw, data: { ...(rw.data ?? {}), deploys: mergeDeploys(gh, rw.data?.deploys) } },
-  };
-}
 
 export async function main(argv = process.argv.slice(2), env = process.env) {
   const opts = resolveListenOptions(argv, env);
