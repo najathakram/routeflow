@@ -433,6 +433,11 @@ describe("renderOrderReceipt (email)", () => {
       businessName: "",
     });
     expect(r.subject).toBe("Your receipt for order ORD-1001");
+    // W-1163: a tenant's receipt never carries RouteFlow's name when it has none of its own.
+    for (const body of [r.html, r.text]) {
+      expect(body).not.toMatch(/Sent by RouteFlow|alt="RouteFlow"/);
+    }
+    expect(r.text).toContain("This is an automated receipt.");
   });
 
   it("signs the email 'Sent by <business name>.' (row 345), never 'Receipt sent by'", () => {

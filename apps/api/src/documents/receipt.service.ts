@@ -293,6 +293,7 @@ export class ReceiptService {
       branding,
       zone,
       counter?.returnData,
+      await this.email.tenantLook(),
     );
 
     try {

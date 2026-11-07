@@ -81,7 +81,10 @@ async function emailText(): Promise<string> {
   prisma.systemConfig.findMany.mockResolvedValue([] as never);
   prisma.emailDelivery.count.mockResolvedValue(0);
   fakeDb(prisma);
-  const email = { send: jest.fn().mockResolvedValue({ delivered: true, transport: "smtp" }) };
+  const email = {
+    tenantLook: jest.fn().mockResolvedValue({ kind: "neutral" }),
+    send: jest.fn().mockResolvedValue({ delivered: true, transport: "smtp" }),
+  };
   await new ReceiptService(prisma as never, email as never).send(
     "ord-1",
     { channel: "email", to: "buyer@example.com" },

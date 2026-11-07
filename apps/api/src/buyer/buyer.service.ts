@@ -8,6 +8,7 @@ import {
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
+import { emailParagraph } from "../email/email-layout";
 import { ConfigService } from "@nestjs/config";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import type { RequestSellerDto } from "./dto/request-seller.dto";
@@ -536,13 +537,20 @@ export class BuyerService {
         .send({
           to: op.email,
           subject: `Buyer portal connection request from ${requestEmail}`,
-          html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px;">
-            <h2>New buyer connection request</h2>
-            <p>A buyer with email <strong>${escapeHtml(requestEmail)}</strong> has requested to connect with your customer account <strong>${escapeHtml(customer.businessName)}</strong>.</p>
-            <p>Log in to RouteFlow to approve or decline this request from the customer's portal status page.</p>
-          </div>
-        `,
+          html:
+            emailParagraph(
+              `A buyer with email <strong>${escapeHtml(requestEmail)}</strong> has requested to connect with your customer account <strong>${escapeHtml(customer.businessName)}</strong>.`,
+            ) +
+            emailParagraph(
+              "Log in to RouteFlow to approve or decline this request from the customer's portal status page.",
+            ),
+          text:
+            `A buyer with email ${requestEmail} has requested to connect with your customer account ${customer.businessName}.\n\n` +
+            "Log in to RouteFlow to approve or decline this request from the customer's portal status page.",
+          layout: {
+            heading: "New buyer connection request",
+            footerNote: "You are getting this because you are an operator on this workspace.",
+          },
         })
         .catch(() => {});
     }

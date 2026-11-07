@@ -16,6 +16,7 @@ import * as bcrypt from "bcrypt";
 import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
+import { routeflowNotice } from "../email/routeflow-mail";
 import { BillingService } from "../billing/billing.service";
 import {
   assertActivationWindowNotEnded,
@@ -3134,13 +3135,22 @@ export class PlatformAdminService {
     try {
       const sendResult = await this.emailService.send({
         to: dto.email,
-        subject: `Your RouteFlow admin account for ${tenant?.name ?? tenantId}`,
-        html: `<p>Hello ${escapeHtml(dto.username)},</p>
-<p>A platform administrator has created an admin account for you on <strong>${escapeHtml(tenant?.name ?? tenantId)}</strong>.</p>
-<p><strong>Username:</strong> ${escapeHtml(dto.username)}<br/>
-<strong>Password:</strong> ${escapeHtml(rawPassword)}</p>
-<p><em>Please log in and change your password immediately.</em></p>
-<p>RouteFlow Platform</p>`,
+        ...routeflowNotice({
+          subject: `Your RouteFlow admin account for ${tenant?.name ?? tenantId}`,
+          heading: "Your admin account",
+          lines: [
+            `Hello ${dto.username},`,
+            [
+              "A platform administrator has created an admin account for you on ",
+              { b: tenant?.name ?? tenantId },
+              ".",
+            ],
+            [{ b: "Username: " }, dto.username],
+            [{ b: "Password: " }, rawPassword],
+            "Please log in and change your password immediately.",
+          ],
+          why: "You are getting this because a RouteFlow administrator created an admin account for this address.",
+        }),
         // email-connect-google PR-3: contains a password — platform sender only, never a
         // tenant mailbox/SMTP.
         senderClass: "platform",

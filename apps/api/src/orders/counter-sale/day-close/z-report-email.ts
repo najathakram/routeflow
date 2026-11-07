@@ -8,6 +8,7 @@ import {
 } from "@routeflow/pricing";
 import type { DayCloseSnapshot } from "@routeflow/types";
 import { escapeHtml } from "../../../common/html-escape";
+import type { EmailLayoutSpec } from "../../../email/email-layout";
 
 /**
  * The Z report email: the closed window's summary for the tenant's admins. It is built from the stored SNAPSHOT only (totals,
@@ -20,6 +21,8 @@ export interface ZReportEmail {
   subject: string;
   html: string;
   text: string;
+  /** How the send dresses the body (the tenant's look). */
+  layout: EmailLayoutSpec;
 }
 
 /** `$12.30`, `-$1.50`: whole cents, sign in front. */
@@ -152,5 +155,13 @@ export function buildZReportEmail(input: {
     ...(s.notes ? ["", `Note: ${s.notes}`] : []),
   ].join("\n");
 
-  return { subject, html, text };
+  return {
+    subject,
+    html,
+    text,
+    layout: {
+      heading: "Z report",
+      footerNote: `This is the end-of-day report for ${input.businessName}.`,
+    },
+  };
 }

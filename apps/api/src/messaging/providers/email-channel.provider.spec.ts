@@ -46,8 +46,10 @@ describe("EmailChannelProvider", () => {
     expect(arg.to).toBe("buyer@acme-test.example");
     expect(arg.subject).toBe("Order confirmed");
     expect(arg.html).toContain("Hi Acme Test Buyer, your order ORD-1 is confirmed.");
-    expect(arg.html).toContain("<!DOCTYPE html>");
-    expect(arg.text).toContain("Hi Acme Test Buyer, your order ORD-1 is confirmed.");
+    // The body is a fragment: EmailService.send dresses it in the tenant's look (W-1163).
+    expect(arg.html).not.toContain("<!DOCTYPE html>");
+    expect(arg.layout.heading).toBe("Order confirmed");
+    expect(arg.text).toBe("Hi Acme Test Buyer, your order ORD-1 is confirmed.");
   });
 
   it("Opus review (N1): brands the email with the TENANT's business name, not a hard-coded 'RouteFlow'", async () => {
@@ -63,8 +65,8 @@ describe("EmailChannelProvider", () => {
     });
 
     const arg = send.mock.calls[0][0];
-    expect(arg.html).toContain("Acme Distributors");
-    expect(arg.text).toContain("Acme Distributors");
+    expect(arg.layout.footerNote).toContain("Acme Distributors");
+    expect(arg.layout.footerNote).not.toContain("RouteFlow");
   });
 
   it("Opus review (N1): escapes HTML-significant characters in the body (e.g. a customer name containing '<')", async () => {

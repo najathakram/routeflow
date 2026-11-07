@@ -1,7 +1,7 @@
 import { taxRowLabel } from "@routeflow/pricing";
 import type { ReceiptModel } from "@routeflow/types";
 import { escapeHtml } from "../common/html-escape";
-import { endSentence, renderBrandedEmail, tenantHeaderHtml } from "../email/email-layout";
+import { endSentence, renderBrandedEmail, type EmailLook } from "../email/email-layout";
 import {
   buildReceiptModel,
   formatReceiptMoney as money,
@@ -167,6 +167,8 @@ export function renderOrderReceipt(
   tenantBranding: ReceiptBranding,
   zone: string | null,
   returnData?: ReceiptReturnData,
+  /** The tenant's look (name, logo, colour); without one the receipt wears the business name alone. */
+  look?: EmailLook,
 ): RenderedReceipt {
   const model = buildReceiptModel(order, invoices, payments, tenantBranding, zone, returnData);
   const name = oneLine(model.header.name ?? "");
@@ -174,11 +176,12 @@ export function renderOrderReceipt(
     ? `Your receipt from ${name} for order ${model.orderNumber}`
     : `Your receipt for order ${model.orderNumber}`;
   const { html, text } = renderBrandedEmail({
-    headerHtml: tenantHeaderHtml(name || "Receipt"),
+    // A receipt with no business name is neutral: never RouteFlow's name on a tenant's receipt.
+    look: look ?? (name ? { kind: "tenant", name } : { kind: "neutral" }),
     heading: "Receipt",
     bodyHtml: bodyHtmlOf(model),
     bodyText: bodyTextOf(model),
-    footerNote: name ? endSentence(`Sent by ${name}`) : "Sent by RouteFlow.",
+    footerNote: name ? endSentence(`Sent by ${name}`) : "This is an automated receipt.",
   });
   return { model, subject, html, text };
 }

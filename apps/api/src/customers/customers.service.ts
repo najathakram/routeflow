@@ -96,7 +96,7 @@ import * as compliance from "./customer-compliance-input";
 // Same grace window BillingCronService.expireGrace() clears hourly — the create()
 // gate applies it synchronously rather than waiting for the cron to run.
 import { GRACE_DAYS } from "../billing/plan-catalog.constants";
-import { portalInviteEmailHtml } from "./portal-invite-email";
+import { portalInviteEmail } from "./portal-invite-email";
 import { revokeUserLinkTokens } from "../auth/link-token-revocation";
 import { buildCustomersCsv } from "./customers-csv";
 import { API_ERROR_CODES, PLAN_GATE_FLAG_KEYS } from "../common/api-error-codes";
@@ -2715,8 +2715,7 @@ export class CustomersService {
     // to discover the gap.
     const sendResult = await this.email.send({
       to: toEmail,
-      subject: `${sellerName} invited you to their RouteFlow buyer portal`,
-      html: portalInviteEmailHtml(sellerName, inviteUrl),
+      ...portalInviteEmail(sellerName, inviteUrl),
       // Security review Phase 2: a buyer-portal invite carries an account-linking action
       // link — platform sender only, never a tenant's connected mailbox/SMTP.
       senderClass: "platform",

@@ -67,6 +67,7 @@ function setup(opts: {
     .mockResolvedValueOnce(opts.sentToday ?? 0)
     .mockResolvedValueOnce(opts.sentToAddress ?? 0);
   const email = {
+    tenantLook: jest.fn().mockResolvedValue({ kind: "tenant", name: "Acme Foods" }),
     send: jest
       .fn()
       .mockResolvedValue(

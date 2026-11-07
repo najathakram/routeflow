@@ -2,10 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { MessageChannel } from "@prisma/client";
 import { EmailService } from "../../email/email.service";
 import { MessageProvider, SendInput, SendResult } from "./message-provider.interface";
-import {
-  buildNotificationEmailHtml,
-  buildNotificationEmailText,
-} from "./email-notification-template";
+import { buildNotificationEmailBody } from "./email-notification-template";
 
 /**
  * Real EMAIL transport for the messaging engine (N1, fixes B145/F23's
@@ -49,9 +46,13 @@ export class EmailChannelProvider implements MessageProvider {
       // buyer-facing mail and must carry the SAME tenant brand invoice emails
       // do, not the platform's own name.
       const brandName = await this.emailService.getTenantBusinessName();
-      const html = buildNotificationEmailHtml({ title: subject, bodyText: input.body, brandName });
-      const text = buildNotificationEmailText({ title: subject, bodyText: input.body, brandName });
-      const result = await this.emailService.send({ to: input.to, subject, html, text });
+      const result = await this.emailService.send({
+        to: input.to,
+        subject,
+        html: buildNotificationEmailBody(input.body),
+        text: input.body,
+        layout: { heading: subject, footerNote: `This is an automated message from ${brandName}.` },
+      });
       if (!result.delivered) {
         this.logger.warn(
           `send to ${input.to} not delivered (transport=${result.transport}): ` +

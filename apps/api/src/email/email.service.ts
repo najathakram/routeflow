@@ -26,11 +26,13 @@ import {
   endSentence,
   renderBrandButton,
   emailParagraph,
+  htmlToPlainText,
   renderBrandedEmail,
   renderEmailLayout,
   tenantHeaderHtml,
   isLayoutHtml,
   wrapUnbrandedHtml,
+  type EmailLayoutSpec,
   type EmailLook,
 } from "./email-layout";
 
@@ -230,6 +232,12 @@ export type EmailSendParams = {
    *  EXISTING caller is unaffected — a transport that doesn't get one just sends
    *  HTML-only, same as before this field existed. */
   text?: string;
+  /**
+   * W-1163: `html` is a body fragment (every dynamic value escaped) and this is how it is dressed:
+   * the send composes it in the tenant's look. A tenant's own mail (statements, orders, invites to
+   * its buyers) uses this instead of building a document of its own.
+   */
+  layout?: EmailLayoutSpec;
   /**
    * email-connect-google PR-3 (security review Phase 2): `"platform"` DELEGATES the whole
    * send to `sendPlatform()` — bare platform From, no tenant Reply-To, no tenant domain, no
@@ -585,10 +593,55 @@ export class EmailService {
 
   /** The tenant's configured name, or null (no tenant context, or none configured). */
   private async tenantNameOrNull(): Promise<string | null> {
+    const look = await this.tenantLook();
+    return look.kind === "tenant" ? look.name : null;
+  }
+
+  /**
+   * The look of this tenant's own mail (W-1163): its name, its logo (through the public logo
+   * route, so a mail client can load it without a login) and its brand colour. A tenant with no
+   * configured name, or no tenant context at all, gets the neutral look: never RouteFlow's.
+   * No logo when `API_PUBLIC_URL` is unset.
+   */
+  async tenantLook(): Promise<EmailLook> {
     const tenantId = this.prisma.getTenantId();
-    if (!tenantId) return null;
+    if (!tenantId) return { kind: "neutral" };
     const cfg = await this.prisma.tenantConfig.findFirst({ where: { tenantId } });
-    return sellerDisplayName(cfg, null) || null;
+    const name = sellerDisplayName(cfg, null);
+    if (!name) return { kind: "neutral" };
+    const apiUrl = this.config.get<string>("API_PUBLIC_URL")?.replace(/\/+$/, "");
+    let logoUrl: string | null = null;
+    if (cfg?.logoKey && apiUrl) {
+      const tenant = await this.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { slug: true },
+      });
+      if (tenant?.slug) {
+        logoUrl = `${apiUrl}/api/v1/public/tenants/${encodeURIComponent(tenant.slug)}/logo`;
+      }
+    }
+    return { kind: "tenant", name, logoUrl, color: cfg?.primaryColor ?? null };
+  }
+
+  /**
+   * A sender that hands over a body fragment plus a `layout` spec gets it composed here, in the
+   * tenant's look: the one place a tenant's mail meets the layout.
+   */
+  private async composeLayout<T extends { html: string; text?: string; layout?: EmailLayoutSpec }>(
+    params: T,
+  ): Promise<T> {
+    const { layout } = params;
+    if (!layout) return params;
+    const { html, text } = renderEmailLayout({
+      look: await this.tenantLook(),
+      heading: layout.heading,
+      preheader: layout.preheader,
+      bodyHtml: params.html,
+      bodyText: [params.text ?? htmlToPlainText(params.html)],
+      cta: layout.cta,
+      footerNote: layout.footerNote,
+    });
+    return { ...params, html, text, layout: undefined };
   }
 
   /**
@@ -608,9 +661,11 @@ export class EmailService {
       `Email "${params.subject.slice(0, 60)}" reached the send path outside the shared layout${isDocument ? "" : " — wrapped it"}. Build it with email-layout.ts.`,
     );
     if (isDocument) return params;
-    const name = tenantScoped ? await this.tenantNameOrNull() : null;
-    const look: EmailLook = name ? { kind: "tenant", name } : { kind: "neutral" };
-    const footerNote = name ? endSentence(`Sent by ${name}`) : "This is an automated message.";
+    const look: EmailLook = tenantScoped ? await this.tenantLook() : { kind: "neutral" };
+    const footerNote =
+      look.kind === "tenant"
+        ? endSentence(`Sent by ${look.name}`)
+        : "This is an automated message.";
     return {
       ...params,
       html: wrapUnbrandedHtml({ look, subject: params.subject, html: params.html, footerNote }),
@@ -1091,7 +1146,7 @@ export class EmailService {
         ? `Payment Reminder — Invoice ${params.invoiceNumber}`
         : `Invoice ${params.invoiceNumber}`;
 
-    const { html, text } = this.buildInvoiceEmail(params, businessName);
+    const { html, text } = this.buildInvoiceEmail(params, businessName, await this.tenantLook());
     return this.send({
       to: params.to,
       subject,
@@ -1234,6 +1289,7 @@ export class EmailService {
       });
     }
 
+    params = await this.composeLayout(params);
     params = await this.ensureLayout(params, true);
 
     // Reply-To = the business's own email so customer replies reach the tenant, not the
@@ -1613,6 +1669,7 @@ export class EmailService {
       depositDueDate?: string | null;
     },
     businessName: string,
+    look: EmailLook,
   ): { html: string; text: string } {
     const fmt = (n: number) =>
       new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -1848,7 +1905,7 @@ export class EmailService {
     );
 
     return renderBrandedEmail({
-      headerHtml: tenantHeaderHtml(businessName),
+      look,
       heading: "Invoice",
       bodyHtml,
       bodyText,

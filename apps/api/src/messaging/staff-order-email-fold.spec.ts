@@ -121,7 +121,7 @@ describe("SA-1063 A-1 notifyBuyerOrderPlaced fold table", () => {
     expect(mail).toHaveLength(1);
     expect(mail[0].delivery).toMatchObject({ kind: "BUYER_ORDER_EDITED", entityId: "new-2" });
     expect(mail[0].subject).toBe("Order ORD-00002 replaces ORD-00001 - Acme Deli");
-    expect(mail[0].html).toContain("<p>The customer's orders were combined.</p>");
+    expect(mail[0].html).toContain("The customer's orders were combined.");
   });
 
   it("F2: the folded order's only row was an edit row -> still counts as told", async () => {
