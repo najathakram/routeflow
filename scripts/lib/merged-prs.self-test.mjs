@@ -59,7 +59,11 @@ const counting = (fetchPage) => {
     got.map((p) => p.number),
     [112, 111, 110, 109],
   );
-  check("M2 stops on the page whose last row is below the floor (2 of 5 pages)", c.calls.length, 2);
+  check(
+    "M2 stops on the page whose last row is below the floor (2 of 5 pages), then re-reads only the top page",
+    c.calls.map((a) => a.after),
+    [null, "3", null],
+  );
 }
 
 // 2. a PR merged before the floor but updated after it is skipped; one merged in range but updated later is kept
@@ -91,16 +95,35 @@ const counting = (fetchPage) => {
 
 // 4. a PR that moves between pages while paging is counted once
 {
-  let served = 0;
-  const pages = [
-    { nodes: [pr(301, 12), pr(302, 11)], pageInfo: { hasNextPage: true, endCursor: "a" } },
-    { nodes: [pr(302, 11), pr(303, 10)], pageInfo: { hasNextPage: false, endCursor: "b" } },
-  ];
-  const got = listMergedPrsSince(Date.parse(day(1)), () => pages[served++], {});
+  const pages = {
+    "": { nodes: [pr(301, 12), pr(302, 11)], pageInfo: { hasNextPage: true, endCursor: "a" } },
+    a: { nodes: [pr(302, 11), pr(303, 10)], pageInfo: { hasNextPage: false, endCursor: "b" } },
+  };
+  const got = listMergedPrsSince(Date.parse(day(1)), ({ after }) => pages[after ?? ""], {});
   check(
     "M6 duplicates across pages are folded by number",
     got.map((p) => p.number),
     [301, 302, 303],
+  );
+}
+
+// 4b. a PR updated while the walk runs jumps to the front and shifts the pages: the re-read finds it
+{
+  const l = Array.from({ length: 9 }, (_, i) => pr(401 + i, 9 - i)); // 401 newest ... 409 oldest
+  let live = [...l];
+  const fetchPage = ({ after, first }) => {
+    const page = pagesFromList(live)({ after, first });
+    if (after === "3") {
+      // between page 2 and page 3: #407 (would be on page 3) gets a comment and moves to the top
+      live = live.map((p) => (p.number === 407 ? { ...p, updatedAt: day(20) } : p));
+    }
+    return page;
+  };
+  const got = listMergedPrsSince(Date.parse(day(1)), fetchPage, { pageSize: 3 });
+  check(
+    "M8 a PR updated mid-walk (would have been stepped over) is still counted",
+    got.map((p) => p.number).sort(),
+    [401, 402, 403, 404, 405, 406, 407, 408, 409],
   );
 }
 
@@ -132,7 +155,11 @@ check(
   };
   const fetchPage = ghMergedPrPages(runGh, "acme/repo", "number title mergedAt updatedAt");
   const got = listMergedPrsSince(Date.parse(day(5)), fetchPage, { pageSize: 50 });
-  check("G1 two pages fetched, second with the first page's cursor", seen.length, 2);
+  check(
+    "G1 two pages fetched (second with page 1's cursor), then page 1 re-read",
+    seen.map((a) => a.includes("after=CUR1")),
+    [false, true, false],
+  );
   check(
     "G2 no search query is ever used",
     seen.flat().some((a) => /--search|merged:/.test(a)),
@@ -156,6 +183,12 @@ check(
       seen[0].some((a) => a.startsWith("after=")),
     ],
     [true, true, true, false],
+  );
+  const flag = (args, value) => args[args.indexOf(value) - 1];
+  check(
+    "G4b first goes as -F (a typed Int; -f sends a string GitHub rejects), the cursor as -f",
+    [flag(seen[0], "first=50"), flag(seen[1], "after=CUR1")],
+    ["-F", "-f"],
   );
   check(
     "G5 only the in-range PR is returned",

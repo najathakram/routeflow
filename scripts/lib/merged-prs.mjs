@@ -65,6 +65,10 @@ export function pagesFromList(prs) {
 /**
  * Every PR merged at or after `floorMs`, newest update first, each number once.
  * fetchPage({ after, first }) -> { nodes, pageInfo: { hasNextPage, endCursor } }.
+ *
+ * A PR updated while the walk runs jumps to the front and shifts later pages up, so the cursor can step
+ * over one row. After a walk of more than one page, the top is read again down to the newest update the
+ * first page saw: anything updated since is there.
  */
 export function listMergedPrsSince(
   floorMs,
@@ -72,23 +76,30 @@ export function listMergedPrsSince(
   { pageSize = PAGE_SIZE, maxPages = MAX_PAGES } = {},
 ) {
   const byNumber = new Map();
-  let after = null;
-  for (let page = 1; page <= maxPages; page++) {
-    const { nodes, pageInfo } = fetchPage({ after, first: pageSize });
-    if (!Array.isArray(nodes)) throw new Error(`merged PRs: page ${page} has no nodes`);
-    for (const p of nodes) {
-      const merged = Date.parse(p.mergedAt);
-      if (Number.isFinite(merged) && merged >= floorMs && !byNumber.has(p.number)) {
-        byNumber.set(p.number, p);
+  const at = (p) => Date.parse(p?.updatedAt);
+  // walk from the top until a page's last row satisfies done(row); returns { pages, top }
+  const walk = (done) => {
+    let after = null;
+    let top = -Infinity;
+    for (let page = 1; page <= maxPages; page++) {
+      const { nodes, pageInfo } = fetchPage({ after, first: pageSize });
+      if (!Array.isArray(nodes)) throw new Error(`merged PRs: page ${page} has no nodes`);
+      for (const p of nodes) {
+        if (page === 1) top = Math.max(top, at(p));
+        const merged = Date.parse(p.mergedAt);
+        if (Number.isFinite(merged) && merged >= floorMs && !byNumber.has(p.number)) {
+          byNumber.set(p.number, p);
+        }
       }
+      const last = nodes.at(-1);
+      if (!pageInfo?.hasNextPage || !last || done(last)) return { pages: page, top };
+      after = pageInfo.endCursor;
     }
-    const last = nodes.at(-1);
-    if (!pageInfo?.hasNextPage || !last || Date.parse(last.updatedAt) < floorMs) {
-      return [...byNumber.values()];
-    }
-    after = pageInfo.endCursor;
-  }
-  throw new Error(
-    `merged PRs: ${maxPages} pages of ${pageSize} did not reach ${new Date(floorMs).toISOString()}: truncated`,
-  );
+    throw new Error(
+      `merged PRs: ${maxPages} pages of ${pageSize} did not reach ${new Date(floorMs).toISOString()}: truncated`,
+    );
+  };
+  const first = walk((last) => at(last) < floorMs);
+  if (first.pages > 1) walk((last) => at(last) <= first.top);
+  return [...byNumber.values()];
 }
