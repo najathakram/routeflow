@@ -325,7 +325,6 @@ export function mergeDeploys(githubDeploys, railwayDeploys) {
   return out;
 }
 
-/** `refname<TAB>sha<TAB>iso-date` lines → [{ branch, sha, date }] (origin/ stripped; HEAD/master dropped). */
 /** Collector sources with GitHub + Railway deploy rows merged (Railway wins, GitHub's kept). */
 export function withMergedDeploys(sources, merge = mergeDeploys) {
   const gh = sources.github?.data?.deploys;
@@ -337,6 +336,7 @@ export function withMergedDeploys(sources, merge = mergeDeploys) {
   };
 }
 
+/** `refname<TAB>sha<TAB>iso-date` lines → [{ branch, sha, date }] (origin/ stripped; HEAD/master dropped). */
 export function parseForEachRef(text) {
   const out = [];
   for (const line of String(text ?? "").split(/\r?\n/)) {

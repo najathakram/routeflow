@@ -682,7 +682,8 @@ export async function cmdAutoStatus(flags, env, { poll } = {}) {
       flags,
       res,
       `auto-status (dry): ${res.planned.length} status move(s)${more}` +
-        (lines.length ? `\n${lines.join("\n")}\n(re-run with --apply to write them)` : ""),
+        (lines.length ? `\n${lines.join("\n")}\n(re-run with --apply to write them)` : "") +
+        "\n(read from the local specs clone without pulling; --apply pulls first and skips moves already written)",
     );
     return 0;
   }
@@ -694,7 +695,12 @@ export async function cmdAutoStatus(flags, env, { poll } = {}) {
     );
     return 1;
   }
-  const pushed = res.pushed ? " and pushed" : "";
+  // a failed push keeps the events committed locally; the next pull-then-push sends them, so exit 0
+  const pushed = res.pushed
+    ? " and pushed"
+    : res.appended && !flags["no-push"]
+      ? `, NOT pushed yet (${(res.warnings ?? []).join("; ").slice(0, 160) || "push failed"}); the next pass pushes them`
+      : "";
   const left = res.capped ? `, ${res.capped} left (capped)` : "";
   print(flags, res, `auto-status: appended ${res.appended} status event(s)${pushed}${left}`);
   return 0;

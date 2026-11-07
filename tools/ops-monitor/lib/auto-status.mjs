@@ -2,7 +2,7 @@
 // `rf status` no longer leaves an item stuck. planAutoStatus is pure; runAutoStatus does the IO.
 //
 //   all explicitly linked PRs landed (train landings included) -> shipping
-//   ... and the last of them landed at or before the latest SUCCESS api+web deploy -> live
+//   ... and the last of them landed at or before the latest SUCCESS deploy of BOTH api and web -> live
 //   an open (non-draft) linked PR                                -> review
 //
 // Guards: forward-only (a status is never lowered, and live/verified/parked/dropped never move);
@@ -62,7 +62,8 @@ export function planAutoStatus({
   const openRaw = prs?.open ?? [];
   const mergedBy = new Map(mergedRaw.map((p) => [p.number, p]));
   const openBy = new Map(openRaw.map((p) => [p.number, p]));
-  const cut = deployCut(deploys, mergedRaw, master);
+  // strict: every api/web service needs a SUCCESS deploy covering the merge (live never moves back)
+  const cut = deployCut(deploys, mergedRaw, master, { strict: true });
   const written = writtenKeys(events);
   const due = [];
 

@@ -128,6 +128,45 @@ test("merged at or before the latest SUCCESS api+web deploy -> live; after it ->
   );
 });
 
+test("live needs every service's latest SUCCESS deploy: a failed web build with api redeployed is not live", () => {
+  const ev1 = item("5", { status: "shipping", prs: [11] });
+  const m = [merged(11, NOW - 6 * H)];
+  // api redeployed after the merge, web's last good deploy is older than the merge, web's newer build failed
+  const partial = [
+    deploy("@routeflow/api", NOW - 1 * H),
+    deploy("@routeflow/web", NOW - 1 * H, "FAILED"),
+    deploy("@routeflow/web", NOW - 8 * H),
+  ];
+  assert.deepEqual(statusesOf(plan(ev1, { merged: m, deploys: partial })), []);
+  // web building or failed right now (Railway reports only the latest row): nothing is live
+  const webRed = [
+    deploy("@routeflow/api", NOW - 1 * H),
+    deploy("@routeflow/web", NOW - 1 * H, "FAILED"),
+  ];
+  assert.deepEqual(statusesOf(plan(ev1, { merged: m, deploys: webRed })), []);
+  // control: both services green after the merge -> live
+  const both = [deploy("@routeflow/api", NOW - 1 * H), deploy("@routeflow/web", NOW - 2 * H)];
+  assert.deepEqual(statusesOf(plan(ev1, { merged: m, deploys: both })), ["5:live"]);
+  // a row naming neither service (GitHub's "routeflow / production") is not a deploy of either
+  const other = [deploy("routeflow / production", NOW - 1 * H)];
+  assert.deepEqual(statusesOf(plan(ev1, { merged: m, deploys: other })), []);
+  // no web row at all proves nothing about web
+  const apiOnly = [deploy("@routeflow/api", NOW - 1 * H)];
+  assert.deepEqual(statusesOf(plan(ev1, { merged: m, deploys: apiOnly })), []);
+});
+
+test("the board's deployed cut (not strict) leaves out a service that is building, and takes the earliest of the rest", async () => {
+  const { deployCut } = await import("../lib/snapshot.mjs");
+  const building = [
+    deploy("@routeflow/api", NOW - 3 * H),
+    deploy("@routeflow/web", NOW - 1 * H, "BUILDING"),
+  ];
+  assert.equal(deployCut(building, [], null), NOW - 3 * H);
+  assert.equal(deployCut(building, [], null, { strict: true }), -Infinity);
+  const both = [deploy("@routeflow/api", NOW - 1 * H), deploy("@routeflow/web", NOW - 4 * H)];
+  assert.equal(deployCut(both, [], null), NOW - 4 * H);
+});
+
 test("an open linked PR -> review; a draft is not review", () => {
   const events = item("5", { status: "building", prs: [11] });
   assert.deepEqual(statusesOf(plan(events, { open: [open(11)] })), ["5:review"]);
