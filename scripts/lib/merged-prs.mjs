@@ -16,7 +16,11 @@ const BASE_FIELDS = ["number", "mergedAt", "updatedAt"];
 
 /** The GraphQL query for one page of merged PRs, newest update first. */
 export function mergedPrsQuery(fields) {
-  const want = [...new Set([...BASE_FIELDS, ...fields.split(/\s+/).filter(Boolean)])].join(" ");
+  // `fields` may hold nested selections (`mergeCommit { oid }`), so it is kept whole: only a base field the
+  // caller did not name is added, never a token-wise de-duplication (that would collapse the braces).
+  const asked = fields.trim();
+  const named = (f) => new RegExp(`(^|\\s)${f}(\\s|\\{|$)`).test(asked);
+  const want = [...BASE_FIELDS.filter((f) => !named(f)), asked].filter(Boolean).join(" ");
   return `query($owner: String!, $name: String!, $first: Int!, $after: String) {
   repository(owner: $owner, name: $name) {
     pullRequests(states: MERGED, first: $first, after: $after, orderBy: {field: UPDATED_AT, direction: DESC}) {

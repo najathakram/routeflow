@@ -5,11 +5,23 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { latestByPr, reviewOf, reworkOf, routeOf, verdictOf } from "./landing-telemetry.mjs";
+import {
+  costWindow,
+  fromGraphql,
+  latestByPr,
+  membersFields,
+  reviewOf,
+  reworkOf,
+  routeOf,
+  trainMembers,
+  verdictOf,
+} from "./landing-telemetry.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(HERE, "landing-telemetry.mjs");
 const FIX = path.join(HERE, "fixtures", "landing-telemetry", "base");
+const TRAIN_FIX = path.join(HERE, "fixtures", "landing-telemetry", "train");
+const MISSING_FIX = path.join(HERE, "fixtures", "landing-telemetry", "train-missing");
 
 let failures = 0;
 let passed = 0;
@@ -289,6 +301,166 @@ check(
     latestByPr([{ pr: 8, computedAt: "x", costUsd: null }])[0].costUsd ?? null,
     null,
   );
+}
+
+// Train rows carry their members' review and cost (members found by git, never by title).
+const MEMBER_KEYS = [
+  "members",
+  "membersBasis",
+  "membersReviewRounds",
+  "membersCostUsd",
+  "membersCosted",
+  "membersLines",
+];
+{
+  const t = run(["--since", "2026-10-20", "--fixture", TRAIN_FIX, "--json"]);
+  check("T0 train fixture run exits 0", t.status, 0);
+  const trows = JSON.parse(t.stdout || "[]");
+  const tr = (n) => trows.find((r) => r.pr === n);
+  check("T1 a train row lists exactly its two members and sums them", pick(tr(210), MEMBER_KEYS), {
+    members: [211, 212],
+    membersBasis: "git",
+    membersReviewRounds: 3,
+    membersCostUsd: 0.306,
+    membersCosted: 2,
+    membersLines: 170,
+  });
+  check(
+    "T1b the train's own review and cost keep their own meaning (nothing double counted)",
+    pick(tr(210), ["reviewRounds", "costUsd", "lines"]),
+    { reviewRounds: null, costUsd: null, lines: 450 },
+  );
+  check(
+    "T2 an uncosted member leaves the other member's cost; a member without a verdict adds no rounds",
+    pick(tr(220), MEMBER_KEYS),
+    {
+      members: [221, 222],
+      membersBasis: "git",
+      membersReviewRounds: 1,
+      membersCostUsd: 0.102,
+      membersCosted: 1,
+      membersLines: 90,
+    },
+  );
+  check(
+    "T2b nothing known about the members: null, never 0",
+    membersFields([
+      { pr: 5, reviewRounds: null, costUsd: null, lines: 7 },
+      { pr: 4, reviewRounds: null, costUsd: null, lines: 3 },
+    ]),
+    {
+      members: [4, 5],
+      membersBasis: "git",
+      membersReviewRounds: null,
+      membersCostUsd: null,
+      membersCosted: 0,
+      membersLines: 10,
+    },
+  );
+  check("T2c a train with no members: [] and null sums", membersFields([]), {
+    members: [],
+    membersBasis: "git",
+    membersReviewRounds: null,
+    membersCostUsd: null,
+    membersCosted: 0,
+    membersLines: 0,
+  });
+  check(
+    "T4 a non-train row has members null (and a PR outside the sha set is no member)",
+    [pick(tr(230), MEMBER_KEYS), tr(211)?.members, tr(230)?.route],
+    [
+      {
+        members: null,
+        membersBasis: "none",
+        membersReviewRounds: null,
+        membersCostUsd: null,
+        membersCosted: null,
+        membersLines: null,
+      },
+      null,
+      null,
+    ],
+  );
+  const p = run(["--pr", "210", "--fixture", TRAIN_FIX, "--json"]);
+  check("T3 --pr <train> exits 0", p.status, 0);
+  const prows = JSON.parse(p.stdout || "[]");
+  check(
+    "T3 --pr <train> emits rows for the train and both members, no others",
+    prows.map((r) => r.pr),
+    [210, 211, 212],
+  );
+  check(
+    "T3b the member rows carry their own review and cost",
+    prows.slice(1).map((r) => [r.reviewRounds, r.costUsd]),
+    [
+      [2, 0.102],
+      [1, 0.204],
+    ],
+  );
+  check(
+    "T3c the train row from --pr equals the one from --since",
+    prows[0],
+    trows.find((r) => r.pr === 210),
+  );
+  const none = run(["--pr", "230", "--fixture", TRAIN_FIX, "--json"]);
+  check(
+    "T3d --pr <non-train> emits just that row",
+    JSON.parse(none.stdout || "[]").map((r) => r.pr),
+    [230],
+  );
+}
+check(
+  "T4b trainMembers: candidates whose merge commit is in the set, never the train itself",
+  trainMembers({ number: 1, mergeCommit: { oid: "t" } }, new Set(["t", "a", "b"]), [
+    { number: 1, mergeCommit: { oid: "t" } },
+    { number: 9, mergeCommit: { oid: "a" } },
+    { number: 3, mergeCommit: { oid: "b" } },
+    { number: 4, mergeCommit: { oid: "z" } },
+    { number: 5 },
+  ]).map((p) => p.number),
+  [9, 3],
+);
+{
+  const r = run(["--pr", "310", "--fixture", MISSING_FIX, "--json"]);
+  check(
+    "T6 a train with no merge list exits 1, says a source failed and prints no rows",
+    [r.status, /a source failed, nothing written/.test(r.stderr), r.stdout.trim()],
+    [1, true, ""],
+  );
+}
+{
+  // T5: the GraphQL shape (commits { nodes { commit } }) reads the same as the gh shape.
+  const commit = {
+    oid: "c1",
+    authoredDate: "2026-10-19T20:00:00Z",
+    committedDate: "2026-10-19T20:05:00Z",
+    messageHeadline: "fix: b",
+    messageBody: "Factory-Route: bug-swarm\nRework-Of: #3740",
+  };
+  const ghShape = {
+    number: 101,
+    title: "fix(api): swarm batch 7",
+    headRefName: "swarm/run-7",
+    createdAt: "2026-10-20T00:00:00Z",
+    mergedAt: "2026-10-27T10:00:00Z",
+    mergeCommit: { oid: "aaaa" },
+    additions: 300,
+    deletions: 20,
+    changedFiles: 6,
+    body: "Batch.",
+    commits: [commit],
+  };
+  const { commits, ...rest } = ghShape;
+  const node = { ...rest, updatedAt: "2026-10-27T10:00:00Z", commits: { nodes: [{ commit }] } };
+  const mapped = fromGraphql(node);
+  check("T5 fromGraphql flattens commits to the gh shape", mapped.commits, [commit]);
+  check(
+    "T5b trailerOf (via routeOf, reworkOf) and costWindow read the same values from both shapes",
+    [routeOf(mapped), reworkOf(mapped), costWindow(mapped)],
+    [routeOf(ghShape), reworkOf(ghShape), costWindow(ghShape)],
+  );
+  check("T5c a node with no commits maps to []", fromGraphql({ number: 1 }).commits, []);
+  check("T5d an already-flat gh shape passes through", fromGraphql(ghShape).commits, [commit]);
 }
 
 console.log(`landing-telemetry self-test: ${passed} passed, ${failures} failed`);
