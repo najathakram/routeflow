@@ -33,7 +33,8 @@ const replayRow = (conclusion, completedAt, name = "Replay migrations on a fresh
   name,
   status: completedAt ? "COMPLETED" : "IN_PROGRESS",
   conclusion: completedAt ? conclusion : "",
-  completedAt,
+  // gh writes an unfinished check's completedAt as the zero time, never null
+  completedAt: completedAt ?? "0001-01-01T00:00:00Z",
 });
 const other = {
   workflowName: "CI",
@@ -43,6 +44,7 @@ const other = {
   completedAt: "2026-11-07T10:00:00Z",
 };
 const git = (bases) => (args) => {
+  if (args[0] === "log") return "abc1234 2026-11-07T09:00:00Z\n";
   if (args[0] !== "merge-base" || args[1] !== "--all")
     throw new Error(`unexpected git ${args.join(" ")}`);
   return bases.map((b) => `${b}\n`).join("");
@@ -81,6 +83,16 @@ check(
   "PENDING",
 );
 check(
+  "R6 a run still going (zero-time completedAt, the gh shape) is newest and PENDING, not the oldest",
+  latestReplay([replayRow("", null), replayRow("FAILURE", "2026-11-06T10:00:00Z")]),
+  { conclusion: "PENDING", name: "Replay migrations on a fresh database", completedAt: null },
+);
+check(
+  "R7 a completed SKIPPED run keeps its conclusion",
+  latestReplay([replayRow("SKIPPED", "2026-11-07T10:00:00Z")])?.conclusion,
+  "SKIPPED",
+);
+check(
   "R5 another workflow's red check is never read as the replay",
   latestReplay([other, replayRow("SUCCESS", "2026-11-07T10:00:00Z")])?.conclusion,
   "SUCCESS",
@@ -104,10 +116,10 @@ check(
     members: [1, 2],
   });
   check("T1 one base, a green member and a skipped member: not red", f.red, false);
-  check("T1 every member gets a line", f.lines.length, 3);
+  check("T1 a base line, a merge-base line and one line per member", f.lines.length, 4);
   check(
-    "T1 a skipped replay says it did not run",
-    /#2 Migration replay: did not run/.test(f.lines[2]),
+    "T1 a replay the paths filter skipped says it did not run",
+    /#2 Migration replay: did not run/.test(f.lines[3]),
     true,
   );
 }
@@ -115,7 +127,7 @@ check(
   const f = trainFacts({ runGit: git(["aaa", "bbb"]), runGh: gh({}), repo: "a/b", members: [] });
   check(
     "T2 two merge bases is red and says to merge master up (#3999)",
-    [f.red, /merge origin\/master up/.test(f.lines[0])],
+    [f.red, /merge origin\/master up/.test(f.lines[1])],
     [true, true],
   );
 }
@@ -128,7 +140,7 @@ check(
   });
   check(
     "T3 a member whose latest replay is red is red and names #3977",
-    [f.red, /#7 .*FAILURE.*#3977/.test(f.lines[1])],
+    [f.red, /#7 .*FAILURE.*#3977/.test(f.lines[2])],
     [true, true],
   );
 }
@@ -136,7 +148,7 @@ check(
   const f = trainFacts({ runGit: git(["aaa"]), runGh: gh({}), repo: "a/b", members: [9] });
   check(
     "T4 a member gh cannot read is red (unknown), never a pass",
-    [f.red, /#9 .*unknown/.test(f.lines[1])],
+    [f.red, /#9 .*unknown/.test(f.lines[2])],
     [true, true],
   );
 }
@@ -162,6 +174,27 @@ check(
     members: [3],
   });
   check("T6 a replay still running is red until it finishes", f.red, true);
+}
+{
+  const f = trainFacts({
+    runGit: git(["aaa"]),
+    runGh: gh({ 5: [replayRow("SKIPPED", "2026-11-07T10:00:00Z")] }),
+    repo: "a/b",
+    members: [5],
+  });
+  check(
+    "T7 a SKIPPED replay (PR opened as a draft) is red: it proved nothing",
+    [f.red, /#5 .*SKIPPED.*not proven/.test(f.lines[2])],
+    [true, true],
+  );
+}
+{
+  const f = trainFacts({ runGit: git(["aaa"]), runGh: gh({}), repo: "a/b", members: [] });
+  check(
+    "T8 the first line names the base ref, its sha and date, and says to fetch",
+    /^base: origin\/master at abc1234 \(2026-11-07T09:00:00Z\); run git fetch/.test(f.lines[0]),
+    true,
+  );
 }
 
 // factsEnforced: dark unless TRAIN_FACTS=enforce

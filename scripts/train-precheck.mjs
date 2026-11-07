@@ -138,9 +138,17 @@ export function main(argv = process.argv.slice(2)) {
   const gates = resolveGates(root);
   const dry = argv.includes("--dry-run");
   const arg = (name) => (argv.indexOf(name) >= 0 ? argv[argv.indexOf(name) + 1] : undefined);
+  // --members takes every token up to the next flag, so "--members 4101 4102" and "4101,4102" read the same
+  const membersAt = argv.indexOf("--members");
+  const membersText = [];
+  if (membersAt >= 0)
+    for (const t of argv.slice(membersAt + 1)) {
+      if (t.startsWith("--")) break;
+      membersText.push(t);
+    }
   let members;
   try {
-    members = parseMembers(arg("--members"));
+    members = parseMembers(membersText.join(" "));
   } catch (e) {
     console.error(e.message);
     return Promise.resolve(2);
@@ -172,7 +180,7 @@ export function main(argv = process.argv.slice(2)) {
           ? "== train facts: RED"
           : "== train facts: would hold (dark; TRAIN_FACTS=enforce fails the run)",
       );
-      if (enforce) code = 1;
+      if (enforce && !dry) code = 1; // a dry run only lists; it never changes the exit
     }
     for (const g of gates.arriving) {
       console.log(

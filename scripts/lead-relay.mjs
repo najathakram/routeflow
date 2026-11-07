@@ -10,9 +10,11 @@
 // plan.json is an array of messages:
 //   { "to": "<session>", "text": "...", "kind": "owner-decision", "item": "W-1096",
 //     "question": "...", "answer": "...", "recommended": "..." }     (recommended is optional)
-//   { "to": "<session>", "text": "..." }                                a routing message (any other kind)
+//   { "to": "<session>", "text": "...", "kind": "routing" }             a routing message (kind optional)
+// Any other kind is refused, so a misspelt "owner_decision" never rides as routing.
 // The script never sends: the lead sends the list in the order printed, through its own message tool. It only orders,
-// splits at the per-turn cap (decisions always in this turn) and records the decisions.
+// splits at the per-turn cap (decisions lead each turn; the cap holds for them too, since the app pauses whatever the
+// eleventh send is) and records every decision on its item, including any that wait for the next turn.
 //
 // Exit codes: 0 = ordered (and recorded with --apply); 1 = a decision could not be recorded (nothing to send yet:
 // record first); 2 = a usage or plan error.
@@ -27,6 +29,7 @@ const RF = path.join(ROOT, "tools", "ops-monitor", "bin", "rf.mjs");
 export const TURN_CAP = 9;
 
 const isDecision = (m) => m?.kind === "owner-decision";
+const KINDS = new Set(["owner-decision", "routing"]);
 
 /** Throws on a plan the lead could misread: every message needs `to` and `text`; a decision its item and Q/A. */
 export function validatePlan(plan) {
@@ -36,6 +39,8 @@ export function validatePlan(plan) {
     if (!m || typeof m !== "object") throw new Error(`${at}: not an object`);
     if (!String(m.to ?? "").trim()) throw new Error(`${at}: "to" is required`);
     if (!String(m.text ?? "").trim()) throw new Error(`${at}: "text" is required`);
+    if (m.kind !== undefined && !KINDS.has(m.kind))
+      throw new Error(`${at}: unknown kind "${m.kind}" (owner-decision or routing)`);
     if (isDecision(m))
       for (const k of ["item", "question", "answer"])
         if (!String(m[k] ?? "").trim()) throw new Error(`${at}: an owner-decision needs "${k}"`);
@@ -44,14 +49,13 @@ export function validatePlan(plan) {
 }
 
 /**
- * { now, later }: decisions first (in plan order), then routing messages (in plan order), cut at `cap`. Decisions are
- * never deferred, even past the cap: a late decision is the failure this exists for.
+ * { now, later }: decisions first (in plan order), then routing messages (in plan order), cut at `cap`. The cap holds
+ * for decisions too: past it the app pauses the send whatever it is, so decisions over the cap lead the next turn
+ * (main records them on their items first, so the answer is on the board either way).
  */
 export function orderTurn(plan, cap = TURN_CAP) {
-  const decisions = plan.filter(isDecision);
-  const routing = plan.filter((m) => !isDecision(m));
-  const room = Math.max(cap - decisions.length, 0);
-  return { now: [...decisions, ...routing.slice(0, room)], later: routing.slice(room) };
+  const ordered = [...plan.filter(isDecision), ...plan.filter((m) => !isDecision(m))];
+  return { now: ordered.slice(0, cap), later: ordered.slice(cap) };
 }
 
 /** The rf argv that records one decision on its item. */
@@ -82,11 +86,12 @@ export function main(
   }
   const apply = argv.includes("--apply");
   const { now, later } = orderTurn(plan);
-  const decisions = now.filter(isDecision);
+  const decisions = plan.filter(isDecision); // every one, including any the cap moves to the next turn
   for (const m of decisions) {
     const args = decisionArgs(m);
     if (!apply) {
-      out(`would record: node tools/ops-monitor/bin/rf.mjs ${args.map(shellQuote).join(" ")}`);
+      // the exact argv, as JSON: no shell quoting to get wrong
+      out(`would record on ${m.item}: rf ${JSON.stringify(args)}`);
       continue;
     }
     const r = runRf(args);
@@ -109,7 +114,9 @@ export function main(
   );
   if (later.length) {
     out(`\nnext turn (${later.length}; over the ${TURN_CAP}-send cap):`);
-    later.forEach((m, i) => out(`  ${i + 1}. ${m.to}: ${firstLine(m.text)}`));
+    later.forEach((m, i) =>
+      out(`  ${i + 1}. ${isDecision(m) ? "[decision] " : ""}${m.to}: ${firstLine(m.text)}`),
+    );
   }
   if (!apply && decisions.length)
     out("\ndry run: re-run with --apply to record the decisions before sending");
@@ -118,10 +125,6 @@ export function main(
 
 function defaultRunRf(args) {
   return spawnSync(process.execPath, [RF, ...args], { cwd: ROOT, encoding: "utf8" });
-}
-
-function shellQuote(s) {
-  return /^[\w@%+=:,./-]+$/.test(s) ? s : `"${String(s).replace(/(["\\$`])/g, "\\$1")}"`;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

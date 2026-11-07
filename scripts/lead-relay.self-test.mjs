@@ -63,9 +63,23 @@ const decision = (n) => ({
   const plan = Array.from({ length: TURN_CAP + 2 }, (_, i) => decision(i + 1));
   const { now, later } = orderTurn(plan);
   check(
-    "O3 decisions are never deferred, even past the cap",
+    "O3 the cap holds for decisions too (the app pauses the eleventh send whatever it is)",
     [now.length, later.length],
-    [TURN_CAP + 2, 0],
+    [TURN_CAP, 2],
+  );
+  check(
+    "O3 decisions over the cap lead the next turn",
+    later.map((m) => m.kind),
+    ["owner-decision", "owner-decision"],
+  );
+}
+{
+  const plan = [route(1), ...Array.from({ length: TURN_CAP + 1 }, (_, i) => decision(i + 1))];
+  const { later } = orderTurn(plan);
+  check(
+    "O4 next turn: the decision over the cap goes before the routing message",
+    later.map((m) => m.to),
+    [`lane-d${TURN_CAP + 1}`, "lane-1"],
   );
 }
 
@@ -84,6 +98,18 @@ check(
   "V3 a non-array plan is refused",
   /JSON array/.test(throws(() => validatePlan({})) ?? ""),
   true,
+);
+check(
+  "V4 an unknown kind (a misspelt owner_decision) is refused, never sent as routing",
+  /unknown kind "owner_decision"/.test(
+    throws(() => validatePlan([{ ...decision(1), kind: "owner_decision" }])) ?? "",
+  ),
+  true,
+);
+check(
+  "V5 kind routing, or no kind, is a routing message",
+  validatePlan([{ ...route(1), kind: "routing" }, route(2)]).length,
+  2,
 );
 
 // decisionArgs
@@ -106,8 +132,10 @@ writeFileSync(planFile, JSON.stringify([route(1), decision(4)]));
   });
   check("M1 a dry run records nothing and exits 0", [code, calls.length], [0, 0]);
   check(
-    "M1 it prints the rf command it would run",
-    lines.some((l) => l.startsWith("would record:") && l.includes("W-4")),
+    "M1 it prints the exact rf argv it would run, as JSON",
+    lines.includes(
+      `would record on W-4: rf ${JSON.stringify(["event", "owner-decision", "--question", "q4?", "--answer", "a4", "W-4"])}`,
+    ),
     true,
   );
   check(
@@ -138,6 +166,23 @@ writeFileSync(planFile, JSON.stringify([route(1), decision(4)]));
     "M3 a decision rf cannot record exits 1 and prints no send list",
     [code, lines.some((l) => /send this turn/.test(l))],
     [1, false],
+  );
+}
+{
+  const big = path.join(dir, "big.json");
+  writeFileSync(
+    big,
+    JSON.stringify(Array.from({ length: TURN_CAP + 2 }, (_, i) => decision(i + 1))),
+  );
+  const calls = [];
+  const code = main([big, "--apply"], {
+    runRf: (a) => (calls.push(a), { status: 0 }),
+    out: () => {},
+  });
+  check(
+    "M6 --apply records every decision, including the ones the cap moves to the next turn",
+    [code, calls.length],
+    [0, TURN_CAP + 2],
   );
 }
 {

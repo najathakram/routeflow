@@ -58,6 +58,15 @@ describe("train-precheck.mjs", () => {
     });
     expect(bad.status).not.toBe(0);
     expect(bad.stderr).toContain("not a PR number");
+    // every token up to the next flag is a member, so a bad second token is read too, never dropped
+    const spaced = spawnSync(process.execPath, [SCRIPT, "--members", "4101", "abc", "--dry-run"], {
+      encoding: "utf8",
+      cwd: REPO_ROOT,
+    });
+    expect(spaced.status).toBe(2);
+    expect(spaced.stderr).toContain('"abc" is not a PR number');
+    // the merge-base count is only as fresh as the base ref, so its sha and date print first
+    expect(out).toMatch(/base: origin\/master at \S+ \(\S+\); run git fetch origin first/);
   });
 
   it("every workspace that defines test:repo-truth is reached by `turbo run test:repo-truth` (no --filter)", () => {
