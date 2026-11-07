@@ -146,7 +146,7 @@ export function readableLinkText(url: string): string {
 function fallbackLinkHtml(url: string): string {
   const href = safeLinkHref(url, "fallbackLinkHtml");
   if (!href) return "";
-  return `<p style="margin:16px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:20px;color:${BRAND_STEEL};">If the button does not work, open <a href="${escapeHtml(href)}" style="color:${BRAND_TEAL};">${escapeHtml(readableLinkText(url))}</a> in your browser.</p>`;
+  return `<p style="margin:16px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:20px;color:${BRAND_STEEL};">If the button does not work, use this link: <a href="${escapeHtml(href)}" style="color:${BRAND_TEAL};">${escapeHtml(readableLinkText(url))}</a></p>`;
 }
 
 /** The shell: header bar, heading, body, footer. Every email in the product is built by this. */

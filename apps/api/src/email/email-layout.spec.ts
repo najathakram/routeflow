@@ -62,8 +62,10 @@ describe("renderEmailLayout — the one layout (W-1163)", () => {
     expect(visible(html)).toContain("app.test/verify-email");
     // The fallback link text names the same host as the href it opens.
     const [, href, text] =
-      /<a href="([^"]+)" style="color:#087D76;">([^<]+)<\/a> in your browser/.exec(html)!;
+      /use this link: <a href="([^"]+)" style="color:#087D76;">([^<]+)<\/a><\/p>/.exec(html)!;
     expect(new URL(href.replace(/&amp;/g, "&")).host).toBe(text.split("/")[0]);
+    // It never invites typing the address: that path has no token and would not open the page.
+    expect(visible(html)).not.toMatch(/\bopen\b[^.]*in your browser/);
     expect(text).not.toMatch(/[?=&]/);
   });
 
