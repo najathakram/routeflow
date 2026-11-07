@@ -26,6 +26,8 @@ describe("PlatformConfigService.prepareAiCall and the monthly budget (SA-1102 A-
   let env: Record<string, string | undefined>;
   let usage: Array<{ model: string; inTok: number; outTok: number }>;
   let usageQueries: unknown[][];
+  let override: number | null;
+  let tenantRowMissing: boolean;
   let configReads: string[];
   let tenantId: string | null;
 
@@ -34,6 +36,8 @@ describe("PlatformConfigService.prepareAiCall and the monthly budget (SA-1102 A-
     env = { ANTHROPIC_API_KEY: ENV_KEY };
     usage = [];
     usageQueries = [];
+    override = null;
+    tenantRowMissing = false;
     configReads = [];
     tenantId = TENANT;
     const prisma = {
@@ -47,6 +51,10 @@ describe("PlatformConfigService.prepareAiCall and the monthly budget (SA-1102 A-
         return String(v[0]) in store ? [{ value: store[String(v[0])] }] : [];
       }),
       $executeRaw: jest.fn(),
+      // O: the per-business override lives on Tenant.aiMonthlyCapUsd (null = the platform default).
+      tenant: {
+        findUnique: jest.fn(async () => (tenantRowMissing ? null : { aiMonthlyCapUsd: override })),
+      },
     };
     const mod = await Test.createTestingModule({
       providers: [
@@ -197,6 +205,55 @@ describe("PlatformConfigService.prepareAiCall and the monthly budget (SA-1102 A-
       expect(usageQueries).toHaveLength(1);
       // the SQL is read by the DB spec; here the contract is one sum per call, keyed by tenant and month only.
       expect(usageQueries[0]).toHaveLength(2);
+    });
+  });
+
+  describe("the per-business override (O-1 to O-5)", () => {
+    it("O-1: no override: the platform value applies, and the $25 fallback when that is unset", async () => {
+      expect(await service.monthlyCapUsdFor(TENANT)).toBe(25);
+      store["ai.monthlyCapUsd"] = "10";
+      expect(await service.monthlyCapUsdFor(TENANT)).toBe(10);
+    });
+
+    it("O-2: an override replaces the platform value, up or down", async () => {
+      store["ai.monthlyCapUsd"] = "10";
+      override = 50;
+      expect(await service.monthlyCapUsdFor(TENANT)).toBe(50);
+      usage = sonnetSpend(30); // over the platform $10, under the business's $50
+      await expect(service.prepareAiCall("general")).resolves.toBeDefined();
+      override = 5;
+      store["ai.monthlyCapUsd"] = "100";
+      usage = sonnetSpend(6);
+      const err = await refused(service.prepareAiCall("general"));
+      expect(err?.getResponse?.()).toMatchObject({ code: "AI_MONTHLY_CAP_REACHED" });
+    });
+
+    it("O-3: an override of 0 turns AI off on RouteFlow's key for that business only", async () => {
+      override = 0;
+      store["ai.monthlyCapUsd"] = "100";
+      const err = await refused(service.prepareAiCall("receipt_scan"));
+      expect(err?.getResponse?.()).toMatchObject({ code: "AI_MONTHLY_CAP_REACHED" });
+      await expect(service.prepareAiCall("bill_scan", BUSINESS_KEY)).resolves.toMatchObject({
+        source: "business",
+      });
+    });
+
+    it("O-4: a missing tenant row or an unusable override falls back to the platform value", async () => {
+      store["ai.monthlyCapUsd"] = "10";
+      tenantRowMissing = true;
+      expect(await service.monthlyCapUsdFor(TENANT)).toBe(10);
+      tenantRowMissing = false;
+      override = -3;
+      expect(await service.monthlyCapUsdFor(TENANT)).toBe(10);
+    });
+
+    it("O-5: the override is read for the business in context only", async () => {
+      override = 7;
+      await service.prepareAiCall("general");
+      const find = (service as any).prisma.tenant.findUnique as jest.Mock;
+      expect(find).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: TENANT }, select: { aiMonthlyCapUsd: true } }),
+      );
     });
   });
 });

@@ -37,6 +37,7 @@ const EXPECTED_PLATFORM_WRITES: string[] = [
   "PATCH /api/v1/platform-admin/config/auto-locks AutoLocksAdminController#set",
   "PATCH /api/v1/platform-admin/onboarding/cases/:id OnboardingController#update",
   "PATCH /api/v1/platform-admin/plans/:planKey/prices PlatformAdminController#updatePlanPrices",
+  "PATCH /api/v1/platform-admin/tenants/:id/ai-cap PlatformAdminController#setTenantAiCap",
   "PATCH /api/v1/platform-admin/tenants/:id/billing/price-override PlatformAdminController#updateTenantPriceOverride",
   "PATCH /api/v1/platform-admin/tenants/:id/class PlatformAdminController#updateTenantClass",
   "PATCH /api/v1/platform-admin/tenants/:id/config PlatformAdminController#updateTenantConfig",

@@ -129,6 +129,49 @@ describeDb("AI monthly budget (SA-1102 B1)", () => {
     await expect(prepare(t, "receipt_scan")).resolves.toBeDefined();
   });
 
+  it("O-1: the per-business override (the real Tenant column) replaces the platform cap, up or down", async () => {
+    const lower = await makeTenant(10);
+    const higher = await makeTenant(11);
+    await spend(lower, 6);
+    await spend(higher, 30);
+    await prisma.tenant.update({ where: { id: lower }, data: { aiMonthlyCapUsd: 5 } });
+    await prisma.tenant.update({ where: { id: higher }, data: { aiMonthlyCapUsd: 50 } });
+    await expect(prepare(lower, "receipt_scan")).rejects.toMatchObject({
+      response: expect.objectContaining({ code: "AI_MONTHLY_CAP_REACHED" }),
+    });
+    await expect(prepare(higher, "receipt_scan")).resolves.toBeDefined(); // over the $25 platform default
+  });
+
+  it("O-2: an override of 0 is AI off on RouteFlow's key for that business only", async () => {
+    const off = await makeTenant(12);
+    const on = await makeTenant(13);
+    await prisma.tenant.update({ where: { id: off }, data: { aiMonthlyCapUsd: 0 } });
+    await expect(prepare(off, "receipt_scan")).rejects.toMatchObject({
+      response: expect.objectContaining({ code: "AI_MONTHLY_CAP_REACHED" }),
+    });
+    await expect(prepare(off, "bill_scan", BUSINESS_KEY)).resolves.toBeDefined();
+    await expect(prepare(on, "receipt_scan")).resolves.toBeDefined();
+  });
+
+  it("O-3: clearing the override (null) puts the platform cap back", async () => {
+    const t = await makeTenant(14);
+    await spend(t, 30);
+    await prisma.tenant.update({ where: { id: t }, data: { aiMonthlyCapUsd: 50 } });
+    await expect(prepare(t, "receipt_scan")).resolves.toBeDefined();
+    await prisma.tenant.update({ where: { id: t }, data: { aiMonthlyCapUsd: null } });
+    await expect(prepare(t, "receipt_scan")).rejects.toMatchObject({
+      response: expect.objectContaining({ code: "AI_MONTHLY_CAP_REACHED" }),
+    });
+  });
+
+  it("O-4: the cap sum is served by the (tenantId, createdAt) index", async () => {
+    const rows = await prisma.$queryRaw<{ indexdef: string }[]>`
+      SELECT indexdef FROM pg_indexes
+      WHERE tablename = 'AiUsageEvent' AND indexname = 'AiUsageEvent_tenantId_createdAt_idx'`;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].indexdef).toMatch(/("tenantId", "createdAt")/);
+  });
+
   it("a call with no business is refused 403 before anything is read", async () => {
     await expect(
       tenantCtx.run(null, () => service.prepareAiCall("receipt_scan")),

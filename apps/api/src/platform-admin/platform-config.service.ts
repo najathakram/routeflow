@@ -1,4 +1,10 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger } from "@nestjs/common";
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { roundMoney } from "@routeflow/pricing";
 import type { AppLinks, AppLinksPatch } from "@routeflow/types";
@@ -81,6 +87,15 @@ export function capResetsAt(err: unknown, now = new Date()): string {
 /** SA-1102 B1: one business's monthly allowance on RouteFlow's key, in USD, when `ai.monthlyCapUsd` is unset. */
 export const DEFAULT_MONTHLY_AI_CAP_USD = 25;
 
+/** What the super admin business page shows and edits. */
+export interface TenantAiCap {
+  tenantId: string;
+  /** The business's own override in whole USD, or null for the platform value. */
+  aiMonthlyCapUsd: number | null;
+  platformCapUsd: number;
+  effectiveCapUsd: number;
+}
+
 /**
  * Secret-valued PlatformConfig keys (SA-1102 2.1): encrypted at rest through the same helper and cipher as the
  * SystemConfig secrets. Exported so the boot report and the secret-keys pin read the one list. The other keys
@@ -151,7 +166,7 @@ export class PlatformConfigService {
       scanModel: storedScanModel ?? AI_TASKS.bill_scan.fallback,
       maxTokens: storedMaxTokens ? parseInt(storedMaxTokens) : 4096,
       verifiedAt,
-      monthlyCapUsd: await this.monthlyCapUsdFor(""),
+      monthlyCapUsd: await this.platformMonthlyCapUsd(),
       availableModels: AI_MODELS.map(({ id, label }) => ({ id, label })),
     };
   }
@@ -268,14 +283,42 @@ export class PlatformConfigService {
   }
 
   /**
-   * The monthly allowance for one business, in USD. Today it is the platform-wide `ai.monthlyCapUsd` (unset or
-   * unreadable = $25, `"0"` = AI off on RouteFlow's key for every business). A per-business override plugs in here.
+   * The monthly allowance for one business, in USD: its own override (`Tenant.aiMonthlyCapUsd`, set by super admin; 0 =
+   * AI off on RouteFlow's key for that business) when it has a usable one, else the platform-wide `ai.monthlyCapUsd`
+   * (unset or unreadable = $25, `"0"` = AI off on RouteFlow's key for every business).
    */
-  async monthlyCapUsdFor(_tenantId: string): Promise<number> {
+  async monthlyCapUsdFor(tenantId: string): Promise<number> {
+    const own = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { aiMonthlyCapUsd: true },
+    });
+    const override = own?.aiMonthlyCapUsd;
+    if (typeof override === "number" && Number.isInteger(override) && override >= 0)
+      return override;
+    return this.platformMonthlyCapUsd();
+  }
+
+  /** The platform-wide `ai.monthlyCapUsd`: unset or unreadable = $25, `"0"` = AI off on RouteFlow's key for every business. */
+  async platformMonthlyCapUsd(): Promise<number> {
     const raw = await this.getValue("ai.monthlyCapUsd");
     if (raw === null || raw.trim() === "") return DEFAULT_MONTHLY_AI_CAP_USD;
     const cap = Number(raw);
     return Number.isFinite(cap) && cap >= 0 ? cap : DEFAULT_MONTHLY_AI_CAP_USD;
+  }
+
+  /** One business's AI allowance for the super admin screen: its override, the platform value, and the one that applies. */
+  async getTenantAiCap(tenantId: string): Promise<TenantAiCap> {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { aiMonthlyCapUsd: true },
+    });
+    if (!tenant) throw new NotFoundException(`Tenant ${tenantId} not found`);
+    return {
+      tenantId,
+      aiMonthlyCapUsd: tenant.aiMonthlyCapUsd,
+      platformCapUsd: await this.platformMonthlyCapUsd(),
+      effectiveCapUsd: await this.monthlyCapUsdFor(tenantId),
+    };
   }
 
   /**
