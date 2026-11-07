@@ -130,6 +130,7 @@ import {
   withImportPackReading,
 } from "./import-pack-reading";
 import { ensureWriteOffEvent } from "../invoices/invoice-write-off";
+import { lockInvoiceRow } from "../invoices/invoice-send-guard";
 import { columnEntitlementDenied } from "./import-column-entitlement";
 import { maskedIdentity } from "../customers/customer-identity-fields";
 
@@ -1571,7 +1572,8 @@ export class ImportService {
             // invoice the app VOIDed or WROTE OFF is never resurrected by the external file (a
             // row error, no write), even when the void lands while this import waits.
             const wrote = await this.prisma.tenantTransaction(async (tx) => {
-              await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${existing.id} FOR UPDATE`;
+              // SA-214 house order (Order → Invoice): the flip to WRITTEN_OFF below also locks the Order.
+              await lockInvoiceRow(tx, existing.id, existing.orderId);
               const locked = await tx.invoice.findFirst({ where: { id: existing.id } });
               const cur = locked ?? existing;
               const needsUpdate =
@@ -1656,7 +1658,8 @@ export class ImportService {
             // the row first and re-reads it — a VOID / WRITTEN_OFF prior is skipped with a row error,
             // never resurrected to PAID/PARTIAL with a synthetic payment.
             const wrote = await this.prisma.tenantTransaction(async (tx) => {
-              await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${prior.id} FOR UPDATE`;
+              // SA-214 house order (Order → Invoice): the flip to WRITTEN_OFF below also locks the Order.
+              await lockInvoiceRow(tx, prior.id, prior.orderId);
               const locked = await tx.invoice.findFirst({ where: { id: prior.id } });
               const cur = locked ?? prior;
               const needsUpdate =
