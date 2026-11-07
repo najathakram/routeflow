@@ -14,6 +14,7 @@
 // from the method argument (or from the connection row loaded by it) — never inferred.
 import { ConflictException, Logger, NotFoundException } from "@nestjs/common";
 import { acceptsAutomatedWrites } from "../../tenant/tenant-automation";
+import { routeflowNotice } from "../../email/routeflow-mail";
 
 export interface GoHighLevelPollOptions {
   ignoreCutoff?: boolean;
@@ -183,10 +184,14 @@ export class GoHighLevelPollService {
     if (recipients.length === 0) return;
     await this.emailService.send({
       to: recipients,
-      subject: "RouteFlow lost access to GoHighLevel",
-      html:
-        "RouteFlow lost access to GoHighLevel — re-enter the token in Settings → GoHighLevel " +
-        "to resume syncing leads.",
+      ...routeflowNotice({
+        subject: "RouteFlow lost access to GoHighLevel",
+        heading: "RouteFlow lost access to GoHighLevel",
+        lines: [
+          "RouteFlow lost access to GoHighLevel. Re-enter the token in Settings → GoHighLevel to resume syncing leads.",
+        ],
+        why: "You are getting this because you manage this RouteFlow account’s GoHighLevel connection.",
+      }),
     });
   }
 

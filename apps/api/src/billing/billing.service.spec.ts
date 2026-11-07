@@ -3299,8 +3299,9 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
           // Lead ruling (Opus delta S1): after A2 nothing interrupts service at 3 days, so master's "within 3 days" is
           // dropped; the rest of master's copy is unchanged.
           expect(mail.html).toContain(
-            "<p>Please update your payment method to avoid service interruption.</p>",
+            "Please update your payment method to avoid service interruption.",
           );
+          expect(mail.text).toContain("https://billing.stripe.test/p/session_1");
           expect(mail.html).not.toMatch(/within|3 days/);
         },
       );

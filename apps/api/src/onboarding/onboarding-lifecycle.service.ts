@@ -8,6 +8,7 @@ import { LeaderCron } from "../common/cron-lock";
 import { escapeHtml } from "../common/html-escape";
 import { STAGE_ORDER, stageIndex } from "./onboarding-catalog";
 import { SECTION_LABEL } from "./onboarding-intake.service";
+import { routeflowFragmentMail } from "../email/routeflow-mail";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -108,13 +109,17 @@ export class OnboardingLifecycleService {
       try {
         const r = await this.email.sendPlatform({
           to: c.contactEmail,
-          subject: "Your RouteFlow setup is waiting for you",
-          html: reminderEmailHtml({
-            contactName: c.contactName,
-            companyName: c.companyName,
-            owed: owed.map((k) => SECTION_LABEL[k]),
-            linkSentOn: token.createdAt,
-            linkExpiresOn: token.expiresAt,
+          ...routeflowFragmentMail({
+            subject: "Your RouteFlow setup is waiting for you",
+            heading: "Your setup is waiting for you",
+            bodyHtml: reminderEmailHtml({
+              contactName: c.contactName,
+              companyName: c.companyName,
+              owed: owed.map((k) => SECTION_LABEL[k]),
+              linkSentOn: token.createdAt,
+              linkExpiresOn: token.expiresAt,
+            }),
+            why: "You are getting this because RouteFlow sent you a setup page that still has questions to answer.",
           }),
         });
         delivered = r.delivered;
@@ -277,6 +282,5 @@ export function reminderEmailHtml(p: {
   return `<p>Hi ${escapeHtml(first)},</p>
 <p>Your RouteFlow setup for ${escapeHtml(p.companyName)} is waiting on a few answers:</p>
 <ul>${items}</ul>
-<p>Use the secure link from our email of ${sent}; it works until ${expires}. Can't find it? Ask your onboarding lead for a fresh one — we never send it in a reminder.</p>
-<p>— The RouteFlow team</p>`;
+<p>Use the secure link from our email of ${sent}; it works until ${expires}. Can't find it? Ask your onboarding lead for a fresh one — we never send it in a reminder.</p>`;
 }

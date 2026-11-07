@@ -20,6 +20,13 @@ type Role = "layout" | "transport" | "pending";
 const FILES: Record<string, Role> = {
   // Built on the layout (RouteFlow's own mail)
   "auth/apple-oauth.service.ts": "layout",
+  "onboarding/onboarding-lifecycle.service.ts": "layout",
+  "onboarding/onboarding-intake.service.ts": "layout",
+  "email/owner-alert.service.ts": "layout",
+  "demo-booking/demo-booking.service.ts": "layout",
+  "crm/gohighlevel/gohighlevel-poll.service.ts": "layout",
+  "billing/billing.service.ts": "layout",
+  "billing/addon-invariant.job.ts": "layout",
   "auth/auth.service.ts": "layout",
   "auth/google-oauth.service.ts": "layout",
   "billing/billing-notification.templates.ts": "layout",
@@ -33,13 +40,6 @@ const FILES: Record<string, Role> = {
   "orders/counter-sale/day-close/day-close.service.ts": "transport",
   "messaging/providers/email-channel.provider.ts": "transport",
   // PR-2: still builds its own html (RouteFlow's own alerts and tenant-to-store mail)
-  "billing/addon-invariant.job.ts": "pending",
-  "billing/billing.service.ts": "pending",
-  "crm/gohighlevel/gohighlevel-poll.service.ts": "pending",
-  "demo-booking/demo-booking.service.ts": "pending",
-  "email/owner-alert.service.ts": "pending",
-  "onboarding/onboarding-intake.service.ts": "pending",
-  "onboarding/onboarding-lifecycle.service.ts": "pending",
   "authorizations/authorization-expiry.service.ts": "pending",
   "authorizations/authorizations.service.ts": "pending",
   "buyer/buyer.service.ts": "pending",

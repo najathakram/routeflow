@@ -63,7 +63,15 @@ const ALLOWED: Record<string, Record<string, Allowed>> = {
     "emailParagraph :: innerHtml":
       "scanned at every call: LAYOUT_WRAPPING_CALLS follows the argument",
   },
+  "billing/addon-invariant.job.ts": {
+    "sendEmail :: mail.html": "built by routeflowNotice, which escapes every line",
+  },
+  "email/owner-alert.service.ts": {
+    "deliver :: mail.html": "built by routeflowNotice, which escapes every line",
+  },
   "email/routeflow-mail.ts": {
+    "routeflowFragmentMail :: p.bodyHtml":
+      "escaped by every caller (the `bodyHtml` property is a sink there)",
     "signIn :: href escapeHtml(loginUrl)": ENV_LINK,
   },
   "email/email.service.ts": {
@@ -98,10 +106,10 @@ const ALLOWED: Record<string, Record<string, Allowed>> = {
     "portalInviteEmailHtml :: href url": { reason: ENV_LINK, count: 2 },
   },
   "demo-booking/demo-booking.service.ts": {
+    "sendBookingEmail :: mail.html":
+      "built by routeflowFragmentMail in the two builders above (every value escapeHtml'd)",
     "buildBookingEmail :: href escapeHtml(booking.meetUrl)":
       "the Meet link Google Calendar returned for the booking, never user input",
-    "buildBookingEmail :: href escapeHtml(baseUrl)": ENV_LINK,
-    "buildBookingEmail :: href escapeHtml(manageUrl)": ENV_LINK,
   },
   "documents/receipt.service.ts": {
     "send :: html":

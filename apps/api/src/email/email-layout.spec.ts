@@ -15,6 +15,7 @@ import {
   newLoginMessage,
   passwordResetMessage,
   passwordSetMessage,
+  routeflowFragmentMail,
   routeflowNotice,
   signInLinkedMessage,
   verifyEmailMessage,
@@ -252,6 +253,7 @@ describe("RouteFlow's own mail", () => {
     signInLinkedMessage({ provider: "Google", address: "jamie@acme.example", portal: false }),
     signInLinkedMessage({ provider: "Apple", address: "jamie@acme.example", portal: true }),
     routeflowNotice({ subject: "s", heading: "h", lines: ["a", ["b ", { b: "c" }]], why: "w" }),
+    routeflowFragmentMail({ subject: "s", heading: "h", bodyHtml: "<p>a</p>", why: "w" }),
   ];
 
   it.each(all().map((m, i) => [i, m.subject, m] as const))(
