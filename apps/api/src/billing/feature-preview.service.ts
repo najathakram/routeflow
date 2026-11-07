@@ -108,8 +108,11 @@ export class FeaturePreviewService {
     // SA-963 A-1: each requested key REPLACES the stored detail with the request's own, so a preview of a DENY over a
     // stored dated GRANT never shows the old grant's date.
     const afterDetail = new Map<string, FeatureOverrideDetail>(currentDetail);
+    // FG-1 WP4: a DENY never stops the charge, so a requested DENY over a billed key is named in the response.
+    const stillBilled: string[] = [];
     for (const o of request.overrides ?? []) {
       afterOverrides.set(o.featureKey, o.effect);
+      if (o.effect === "DENY" && billed.has(o.featureKey)) stillBilled.push(o.featureKey);
       const ends = o.expiresAt ? new Date(o.expiresAt) : null;
       afterDetail.set(o.featureKey, {
         kind: o.kind ?? "COMP",
@@ -207,6 +210,13 @@ export class FeaturePreviewService {
       (_f, i) => before[i].resolver && !after[i].resolver && after[i].serving,
     ).map((f) => f.key);
 
-    return { before, after, changed, laterLost, omitted: isSwap ? [...PLAN_MOVE_OMISSIONS] : [] };
+    return {
+      before,
+      after,
+      changed,
+      laterLost,
+      omitted: isSwap ? [...PLAN_MOVE_OMISSIONS] : [],
+      ...(stillBilled.length > 0 ? { stillBilled } : {}),
+    };
   }
 }

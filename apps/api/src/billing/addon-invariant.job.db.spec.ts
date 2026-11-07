@@ -169,6 +169,34 @@ describeDb("SA-788 (b) the daily add-on invariant (real Postgres)", () => {
     expect(found.filter((f) => f.tenantId === t3).map((f) => f.invariant)).toEqual(["I3"]);
   });
 
+  it("T7 (WP4): a billed row under a live DENY is one I5 finding; a revoked or lapsed DENY is not", async () => {
+    const deny = (tenantId: string, over: Record<string, unknown> = {}) =>
+      prisma.tenantFeatureOverride.create({
+        data: {
+          tenantId,
+          featureKey: "REGULATED_ITEMS",
+          effect: "DENY",
+          reason: "qa fixture",
+          ...over,
+        } as any,
+      });
+    const live = await tenant("i5-live");
+    await addon(live, { priceSnapshot: 39, stripeItemId: `si_${run}_a` });
+    await deny(live);
+    const revoked = await tenant("i5-revoked");
+    await addon(revoked, { priceSnapshot: 39, stripeItemId: `si_${run}_b` });
+    await deny(revoked, { revokedAt: new Date() });
+    const lapsed = await tenant("i5-lapsed");
+    await addon(lapsed, { priceSnapshot: 39, stripeItemId: `si_${run}_c` });
+    await deny(lapsed, { expiresAt: new Date(Date.now() - 3_600_000) });
+
+    const found = await mine();
+    expect(found.filter((f) => f.tenantId === live).map((f) => f.invariant)).toEqual(["I5"]);
+    expect(found.filter((f) => f.tenantId === revoked)).toHaveLength(0);
+    expect(found.filter((f) => f.tenantId === lapsed)).toHaveLength(0);
+    expect((await mine()).filter((f) => f.tenantId === live)).toHaveLength(0); // the claim dedupes
+  });
+
   it("B-R4: a TEST-class tenant and a deleted tenant are never read", async () => {
     const test = await tenant("test", { cls: TenantClass.TEST });
     const gone = await tenant("gone", { deleted: true });

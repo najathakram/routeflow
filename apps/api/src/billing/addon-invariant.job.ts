@@ -16,6 +16,7 @@ import {
   normalizePlanKey,
   planKeyFromEnum,
 } from "./plan-catalog.constants";
+import { OVERRIDE_RULE_ORDER, resolveLiveEffects } from "./feature-override-rule";
 import { StripeService } from "./stripe.service";
 import { TRACKED_ADDON_FIELDS } from "./tenant-addon-writer";
 
@@ -34,6 +35,9 @@ import { TRACKED_ADDON_FIELDS } from "./tenant-addon-writer";
  *   I4  (SA-970 §2.2) an active / price / comp / quantity change in the window whose last actor is the SYSTEM (or has
  *       no kind) and whose source is not `expected_system` in {@link ADDON_SOURCE_CLASS}; a SYSTEM actor on an
  *       `owner` source is flagged too. An impersonated tenant change reads as a platform admin's (owned).
+ *   I5  (FG-1 WP4) an active, non-comp row that is billed (priced or holding a Stripe item) while a live DENY override
+ *       hides its key (the row's add-on key, or a flag its SKU grants). A DENY never stops the charge, so the business
+ *       pays for something it cannot use. Report only: nothing is switched off or refunded without the client's request.
  * Every NEW finding (one `BillingNotificationLog` claim per finding, released on a failed send) is logged at ERROR,
  * becomes an in-app notice (`ADDON_INVARIANT_BROKEN`), and - only when `ADDON_INVARIANT_EMAIL=email` and
  * `PLATFORM_ALERT_EMAILS` is set - is listed in ONE email per run. The email is DARK by default (`log`): the owner reads
@@ -47,7 +51,7 @@ export const ADDON_INVARIANT_WINDOW_HOURS = 26;
 /** Tenants read per page (one rows query and one events query per page). */
 export const ADDON_INVARIANT_PAGE_SIZE = 200;
 
-export type InvariantId = "I1" | "I2" | "I3" | "I4";
+export type InvariantId = "I1" | "I2" | "I3" | "I4" | "I5";
 
 export interface InvariantTenant {
   id: string;
@@ -92,6 +96,8 @@ export interface InvariantContext {
   skusOf(tenant: InvariantTenant): readonly AddonSkuDef[] | null;
   planKeyOf(tenant: InvariantTenant): string | null;
   modeOf(tenant: InvariantTenant): "STRIPE" | "MANUAL" | "UNBILLED";
+  /** The feature keys a live (not revoked, not expired) DENY override hides for the tenant. */
+  deniedKeysOf(tenantId: string): ReadonlySet<string>;
 }
 
 export interface BusinessChange {
@@ -247,6 +253,34 @@ export const ADDON_INVARIANTS: readonly InvariantCheck[] = [
       return out;
     },
   },
+  {
+    id: "I5",
+    run(ctx) {
+      const out: InvariantFinding[] = [];
+      for (const t of ctx.tenants) {
+        const denied = ctx.deniedKeysOf(t.id);
+        if (denied.size === 0) continue;
+        const skus = ctx.skusOf(t);
+        for (const r of ctx.rowsOf(t.id)) {
+          if (!r.active || r.isComp) continue;
+          if (!(Number(r.priceSnapshot ?? 0) > 0 || r.stripeItemId)) continue;
+          const def = skus?.find((s) => s.sku === codeOf(r));
+          const keys = [r.addonKey, ...(def?.grantsFlags ?? [])];
+          if (!keys.some((k) => denied.has(k))) continue;
+          out.push(
+            finding(
+              "I5",
+              t,
+              r,
+              def?.name ?? codeOf(r),
+              "is billed while an override hides it: turning it off does not stop the charge",
+            ),
+          );
+        }
+      }
+      return out;
+    },
+  },
 ];
 
 const isUnique = (e: unknown) =>
@@ -311,7 +345,7 @@ export class AddonInvariantJob {
       cursor = tenants[tenants.length - 1].id;
       const ids = tenants.map((t) => t.id);
 
-      const [rows, events] = await Promise.all([
+      const [rows, events, denies] = await Promise.all([
         this.prisma.tenantAddon.findMany({ where: { tenantId: { in: ids } } }),
         this.prisma.billingEvent.findMany({
           where: {
@@ -322,7 +356,24 @@ export class AddonInvariantJob {
           orderBy: { createdAt: "asc" },
           select: { payload: true },
         }),
+        this.prisma.tenantFeatureOverride.findMany({
+          where: { tenantId: { in: ids }, revokedAt: null },
+          orderBy: OVERRIDE_RULE_ORDER,
+          select: { tenantId: true, featureKey: true, effect: true, expiresAt: true },
+        }),
       ]);
+      // The ONE override rule (feature-override-rule.ts): the newest live row per key applies; keep the DENY ones.
+      const deniedBy = new Map<string, Set<string>>();
+      const byOverrideTenant = new Map<string, typeof denies>();
+      for (const d of denies)
+        byOverrideTenant.set(d.tenantId, [...(byOverrideTenant.get(d.tenantId) ?? []), d]);
+      for (const [tenantId, list] of byOverrideTenant) {
+        const effects = resolveLiveEffects(list, now.getTime());
+        deniedBy.set(
+          tenantId,
+          new Set([...effects].filter(([, effect]) => effect === "DENY").map(([key]) => key)),
+        );
+      }
       const byTenant = new Map<string, InvariantRow[]>();
       for (const r of rows as unknown as InvariantRow[]) {
         const list = byTenant.get(r.tenantId) ?? [];
@@ -365,6 +416,7 @@ export class AddonInvariantJob {
         planKeyOf: (t) =>
           normalizePlanKey(t.subscription?.planKey) ?? (t.plan ? planKeyFromEnum(t.plan) : null),
         modeOf: (t) => addonBillingModeOf(this.stripe.isConfigured, t.subscription),
+        deniedKeysOf: (id) => deniedBy.get(id) ?? new Set<string>(),
       };
       for (const check of ADDON_INVARIANTS) {
         for (const f of check.run(ctx)) {

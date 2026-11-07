@@ -42,6 +42,8 @@ export interface AddonSkuDef {
   name: string;
   includedAtPlan?: string | null;
   monthlyPrice?: unknown;
+  /** The registry flag keys the SKU grants (read by invariant I5). */
+  grantsFlags?: readonly string[];
 }
 
 /** The slice of a TenantAddon row the inclusion helpers read. */
