@@ -53,19 +53,22 @@ const CATALOG = {
 };
 const REGISTRY = [
   {
-    key: "ocr",
-    label: "Receipt scanning",
-    description: "Reads receipts into bills.",
+    key: "recurring_routes",
+    grant: { override: true, addonKey: "recurring_routes", plan: false, mode: false },
+    label: "Recurring routes",
+    description: "Repeat routes on a schedule.",
     lifecycle: "ga",
   },
   {
     key: "tobacco_dealer",
+    grant: { override: true, addonKey: "tobacco_dealer", plan: false, mode: false },
     label: "Tobacco dealer",
     description: "Tobacco compliance.",
     lifecycle: "ga",
   },
   {
     key: "driver_payments",
+    grant: { override: true, addonKey: "driver_payments", plan: false, mode: false },
     label: "At-door payment collection",
     description: "Collect at the door.",
     lifecycle: "ga",
@@ -266,7 +269,7 @@ describe("SA-2 Free add-ons", () => {
     )!;
     expect(details).not.toHaveAttribute("open");
     expect(screen.getByTestId("addons-count")).toHaveTextContent("0");
-    expect(within(details).getByRole("checkbox", { name: /Receipt scanning/ })).toBeInTheDocument();
+    expect(within(details).getByRole("checkbox", { name: /Recurring routes/ })).toBeInTheDocument();
     expect(within(details).getByRole("checkbox", { name: /Tobacco dealer/ })).toBeInTheDocument();
     expect(within(details).queryByRole("checkbox", { name: /Some limit/ })).toBeNull();
     expect(
@@ -278,15 +281,15 @@ describe("SA-2 Free add-ons", () => {
 
   it("(7) a ticked free add-on is enabled after the create as a comp", async () => {
     await renderPage();
-    fireEvent.click(await screen.findByRole("checkbox", { name: /Receipt scanning/ }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: /Recurring routes/ }));
     expect(screen.getByTestId("addons-count")).toHaveTextContent("1");
     fillForm();
     const dialog = await openSheet();
-    expect(within(dialog).getByTestId("sheet-addons")).toHaveTextContent("Receipt scanning");
+    expect(within(dialog).getByTestId("sheet-addons")).toHaveTextContent("Recurring routes");
     fireEvent.click(within(dialog).getByRole("button", { name: "Create tenant" }));
     await waitFor(() => expect(urls()).toContain("/platform-admin/tenants/t1/addons/enable"));
     expect(bodyOf("/platform-admin/tenants/t1/addons/enable")).toEqual({
-      addonKey: "ocr",
+      addonKey: "recurring_routes",
       comp: true,
     });
   });
@@ -404,12 +407,12 @@ describe("SA-2 chain and partial failure", () => {
   it("an add-on that fails does not hide the tenant that was created", async () => {
     setPost({ "/platform-admin/tenants/t1/addons/enable": () => httpError(500, {}) });
     await renderPage();
-    fireEvent.click(await screen.findByRole("checkbox", { name: /Receipt scanning/ }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: /Recurring routes/ }));
     fillForm();
     await createThroughSheet();
     const banner = await screen.findByTestId("partial-banner");
     expect(banner).toHaveTextContent("Created Acme, but a free add-on didn't turn on");
-    expect(banner).toHaveTextContent("Receipt scanning");
+    expect(banner).toHaveTextContent("Recurring routes");
   });
 
   it("SA-769: an add-on the capabilities already comped is not enabled again, and is not reported as failed", async () => {
@@ -420,14 +423,14 @@ describe("SA-2 chain and partial failure", () => {
     await renderPage();
     tick(DELIVERY);
     fireEvent.click(await screen.findByRole("checkbox", { name: /At-door payment collection/ }));
-    fireEvent.click(await screen.findByRole("checkbox", { name: /Receipt scanning/ }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: /Recurring routes/ }));
     fillForm();
     await createThroughSheet();
     await waitFor(() => expect(urls()).toContain("/platform-admin/tenants/t1/addons/enable"));
     const enabled = post.mock.calls
       .filter((c) => c[0] === "/platform-admin/tenants/t1/addons/enable")
       .map((c) => (c[1] as { addonKey: string }).addonKey);
-    expect(enabled).toEqual(["ocr"]); // driver_payments is on already: the apply comped it
+    expect(enabled).toEqual(["recurring_routes"]); // driver_payments is on already: the apply comped it
     expect(screen.queryByTestId("partial-banner")).not.toBeInTheDocument();
   });
 
@@ -440,11 +443,11 @@ describe("SA-2 chain and partial failure", () => {
     });
     await renderPage();
     fireEvent.click(await screen.findByRole("checkbox", { name: /At-door payment collection/ }));
-    fireEvent.click(await screen.findByRole("checkbox", { name: /Receipt scanning/ }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: /Recurring routes/ }));
     fillForm();
     await createThroughSheet();
     const banner = await screen.findByTestId("partial-banner");
-    expect(banner).toHaveTextContent("Receipt scanning");
+    expect(banner).toHaveTextContent("Recurring routes");
     expect(banner).not.toHaveTextContent("At-door payment collection");
   });
 
@@ -505,7 +508,7 @@ describe("SA-2 chain and partial failure", () => {
     });
     await renderPage();
     tick(SHIPPING);
-    fireEvent.click(await screen.findByRole("checkbox", { name: /Receipt scanning/ }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: /Recurring routes/ }));
     fillForm();
     await createThroughSheet();
     const review = await screen.findByText("Turn off At-door payment collection. Billing stops.");

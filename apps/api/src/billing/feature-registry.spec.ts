@@ -27,11 +27,9 @@ const EXPECTED_LEGACY_REGISTRY = {
       "POST /supplier-statements/scan",
     ],
     grantPath:
-      'Platform Admin → Tenants → [tenant] → add-ons (AddonService.enableAddon writes addonKey "ocr")',
+      "Included on every plan: no grant is needed or offered (override and add-on paths are closed; see OCR_DECISION)",
     backfill:
-      "Owner decision 2026-09-05: OCR available to all tenants; gate stays dark until OCR is " +
-      "monetized; no grants required",
-    reviewBy: "2027-03-31",
+      "Owner ruling 2026-11-07 (SA-1106 A-2 Q3): included on every plan; the cost guard is the AI cap; never enforced.",
   },
   tobacco_dealer: {
     state: "enforced",
@@ -120,7 +118,7 @@ const EXPECTED_LEGACY_REGISTRY = {
       "DELETE /settings/email/mailbox",
     ],
     grantPath:
-      'Platform Admin → Tenants → [tenant] → add-ons (AddonService.enableAddon writes addonKey "email.connected_mailbox")',
+      "Platform Admin → Tenants → [tenant] → Features → Set override (the add-on path does not accept this key)",
     backfill:
       "New feature 2026-09-17: no tenant has a connection; gate stays dark through the pilot " +
       "(owner review window for Google gmail.send verification — see local-assets/handoff/" +
@@ -298,7 +296,8 @@ describe("FEATURE_REGISTRY (feature grants PR-1)", () => {
   it("every dark row's reviewBy is not expired (UTC)", () => {
     const now = new Date();
     const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-    const expired = FEATURE_REGISTRY.filter((f) => f.gate.state === "dark")
+    // ocr never flips (SA-1106 A-2 Q3, OCR_DECISION), so it carries no review date.
+    const expired = FEATURE_REGISTRY.filter((f) => f.gate.state === "dark" && f.key !== "ocr")
       .filter((f) => reviewByExpired(f.gate.reviewBy, todayUtc))
       .map((f) => `${f.key}:${f.gate.reviewBy ?? "missing"}`);
     expect(expired).toEqual([]);

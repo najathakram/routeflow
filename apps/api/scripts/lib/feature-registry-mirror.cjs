@@ -116,6 +116,29 @@ const FEATURE_REGISTRY_MIRROR = [
   billingSkus,
 }));
 
+/**
+ * Mirrors the registry rows whose `grant.override` is false (SA-1106 WP7): an override on one of these
+ * changes nothing, so no script may write one. feature-registry-mirror.parity.spec.ts pins this set
+ * equal to the registry's.
+ */
+const OVERRIDE_REFUSED_KEYS = new Set([
+  "ocr",
+  "flag.dispatch_live",
+  "flag.settlement",
+  "flag.api_sso",
+  "limit_seats",
+  "limit_routes",
+  "limit_customers",
+  "metered_scans",
+  "metered_msgs",
+  "catalog_varieties",
+  "mixed_packs",
+  "routes_dispatch",
+  "fulfilment_model",
+  "counter_sales",
+  "promotions",
+]);
+
 // ─── plan-flag-policy.ts mirror ────────────────────────────────────────────────────────────────
 
 /** Mirrors DARK_PLAN_FLAGS in plan-flag-policy.ts verbatim. */
@@ -386,6 +409,7 @@ function computeNewPathEffective(feature, ctx) {
 
 module.exports = {
   FEATURE_REGISTRY_MIRROR,
+  OVERRIDE_REFUSED_KEYS,
   DEFAULT_GRANT_REQUIRES,
   isDefaultGrantedAddonMirror,
   DARK_PLAN_FLAGS,

@@ -139,6 +139,7 @@ const require = createRequire(import.meta.url);
 const { Client } = require("pg");
 const {
   FEATURE_REGISTRY_MIRROR,
+  OVERRIDE_REFUSED_KEYS,
   computeOldPathEffective,
   computeNewPathEffective,
   lossMechanism,
@@ -279,7 +280,11 @@ function parseArgs(argv) {
     }
     for (const key of keys) {
       const feature = FEATURE_REGISTRY_MIRROR.find((f) => f.key === key);
-      if (!feature || feature.via !== "RequireAddon") {
+      if (OVERRIDE_REFUSED_KEYS.has(key)) {
+        opts.errors.push(
+          `--include-addon-keys: "${key}" does not accept an override (registry grant.override is false), so no grant is written`,
+        );
+      } else if (!feature || feature.via !== "RequireAddon") {
         opts.errors.push(
           `--include-addon-keys: "${key}" is not a FEATURE_REGISTRY addon-gate key (gate.via "RequireAddon")`,
         );
@@ -879,8 +884,11 @@ async function runApply() {
   // only specific ones (e.g. once a key's own rollout is done and its blast-radius report is
   // clean — apps/api/scripts/report-addon-gate-blast-radius.mjs) — same code path either way, just
   // a narrower membership test.
+  // SA-1106 WP7: a key whose registry row declares grant.override false is never included, whatever the
+  // flags say (an override on it would be stored and change nothing); it stays in the excluded list.
   const isIncludedAddonGate = (row) =>
-    opts.includeAddonGates || (opts.includeAddonKeys?.has(row.key) ?? false);
+    !OVERRIDE_REFUSED_KEYS.has(row.key) &&
+    (opts.includeAddonGates || (opts.includeAddonKeys?.has(row.key) ?? false));
   const excludedLosses = diff.losses.filter(
     (r) => r.mechanism === "addon-gate-courtesy" && !isIncludedAddonGate(r),
   );

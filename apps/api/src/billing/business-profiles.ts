@@ -5,7 +5,7 @@ import type {
 } from "@routeflow/types";
 import {
   FEATURE_REGISTRY,
-  ADDON_KEY_TO_REGISTRY_KEY,
+  registryKeyForAddonKey,
   checkFeatureRequires,
   describeUnmetFeatureRequirement,
   featureDefByKey,
@@ -274,7 +274,7 @@ export function planCompRefusal(
       else effective.delete(o.featureKey);
     }
     if (!comped.has(o.featureKey)) continue;
-    const registryKey = ADDON_KEY_TO_REGISTRY_KEY[o.featureKey] ?? o.featureKey;
+    const registryKey = registryKeyForAddonKey(o.featureKey);
     const status = checkFeatureRequires(featureDefByKey(registryKey)?.requires, effective);
     if (!status.satisfied) {
       return {

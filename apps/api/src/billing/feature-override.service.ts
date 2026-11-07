@@ -7,7 +7,7 @@ import {
 } from "@nestjs/common";
 import { Prisma, FeatureOverrideKind } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
-import { isRegisteredFeatureKey } from "./feature-registry";
+import { featureDefByKey, isRegisteredFeatureKey } from "./feature-registry";
 import {
   FEATURE_OVERRIDE_AUDIT_ENTITY_TYPE,
   FEATURE_OVERRIDE_EXPIRED_REVIEW_ACTION,
@@ -235,6 +235,16 @@ export class FeatureOverrideService {
         statusCode: 400,
         code: API_ERROR_CODES.FEATURE_KEY_UNKNOWN,
         message: `"${params.featureKey}" is not a registered feature key.`,
+      });
+    }
+    // SA-1106 WP7: the row declares which path can grant it. An override on a row that declares none
+    // would be stored and shown, and change nothing; refuse it (existing rows are never revoked).
+    // The snapshot restore writes through createMany, not here, and re-applies rows as they were.
+    if (featureDefByKey(params.featureKey)?.grant.override === false) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: API_ERROR_CODES.FEATURE_NOT_OVERRIDABLE,
+        message: "An override can't change this feature, so none was saved.",
       });
     }
     // Opus review of 8130b204, item 7a: an already-past expiresAt would create a row that is

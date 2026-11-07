@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import { ADDON_ROW_KEY_BY_REGISTRY_KEY } from "../../[id]/_features/FeatureConsole";
 
 /** One free add-on the form can offer: the registry's own plain label and one-line description. */
 export interface FreeAddon {
@@ -11,15 +10,21 @@ export interface FreeAddon {
   description: string;
 }
 
-/** Only registry rows that can be provisioned as an add-on row (the Feature Console's own list), nothing else. */
+/** Only registry rows that declare an add-on key (`grant.addonKey`, the Feature Console's own source), nothing else. */
 export function freeAddonsFromRegistry(
-  rows: ReadonlyArray<{ key: string; label: string; description: string }>,
+  rows: ReadonlyArray<{
+    key: string;
+    label: string;
+    description: string;
+    grant?: { addonKey?: string };
+  }>,
 ): FreeAddon[] {
   const out: FreeAddon[] = [];
   for (const row of rows) {
-    if (!Object.prototype.hasOwnProperty.call(ADDON_ROW_KEY_BY_REGISTRY_KEY, row.key)) continue;
+    const addonKey = row.grant?.addonKey;
+    if (!addonKey) continue;
     out.push({
-      addonKey: ADDON_ROW_KEY_BY_REGISTRY_KEY[row.key]!,
+      addonKey,
       label: row.label,
       description: row.description,
     });

@@ -1,4 +1,8 @@
-import { ADDON_KEY_TO_REGISTRY_KEY, featureDefByKey } from "./feature-registry";
+import {
+  ADDON_KEY_TO_REGISTRY_KEY,
+  featureDefByKey,
+  registryKeyForAddonKey,
+} from "./feature-registry";
 import { LEGACY_ADDON_KEY_TO_SKU } from "./plan-catalog.constants";
 
 /**
@@ -8,13 +12,13 @@ import { LEGACY_ADDON_KEY_TO_SKU } from "./plan-catalog.constants";
  * missing, mistyped or stale entry a red test instead.
  */
 describe("ADDON_KEY_TO_REGISTRY_KEY completeness (B552)", () => {
-  it("is exactly today's eight keys: six identity entries and the two flag-bridged ones", () => {
+  it("is derived from each row's grant.addonKey: seven of today's eight keys plus crm_gohighlevel (ocr offers no add-on key, see registryKeyForAddonKey)", () => {
     expect(ADDON_KEY_TO_REGISTRY_KEY).toEqual({
       tobacco_dealer: "tobacco_dealer",
       driver_payments: "driver_payments",
       recurring_routes: "recurring_routes",
       order_delivery: "order_delivery",
-      ocr: "ocr",
+      crm_gohighlevel: "crm_gohighlevel",
       developer_mode: "developer_mode",
       msrp: "flag.msrp",
       sales_agents: "flag.sales_agents",
@@ -32,7 +36,7 @@ describe("ADDON_KEY_TO_REGISTRY_KEY completeness (B552)", () => {
     // AddonService looks up `ADDON_KEY_TO_REGISTRY_KEY[key] ?? key`: a bridged key with no entry and
     // no row of its own would skip checkFeatureRequires silently (B524).
     const unresolved = Object.keys(LEGACY_ADDON_KEY_TO_SKU).filter(
-      (addonKey) => !featureDefByKey(ADDON_KEY_TO_REGISTRY_KEY[addonKey] ?? addonKey),
+      (addonKey) => !featureDefByKey(registryKeyForAddonKey(addonKey)),
     );
     expect(unresolved).toEqual([]);
   });

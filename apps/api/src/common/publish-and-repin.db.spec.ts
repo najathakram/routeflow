@@ -144,6 +144,8 @@ const EXPECTED_LOSS_KEYS = [
   "flag.credit_limits",
 ].sort();
 // 7 — what --apply actually WRITES by default (excludes the 3 addon-gate-courtesy keys).
+// ocr's registry row declares grant.override false, so the script never writes an override for it.
+const GRANTABLE_COURTESY_KEYS = ADDON_GATE_COURTESY_KEYS.filter((k) => k !== "ocr");
 const EXPECTED_APPLICABLE_LOSS_KEYS = EXPECTED_LOSS_KEYS.filter(
   (k) => !ADDON_GATE_COURTESY_KEYS.includes(k),
 ).sort();
@@ -596,7 +598,7 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
     expect(after).toEqual(before);
   }, 60_000); // applyLiveWithRetry may spawn up to 8 CLI round-trips under real drift
 
-  it("D9 --apply --live --include-addon-gates: the 3 previously-excluded addon-gate-courtesy keys are now granted too (ocr gets a 90-day expiry too — it carries a real billing SKU independent of the exclusion mechanism)", async () => {
+  it("D9 --apply --live --include-addon-gates: the previously-excluded addon-gate-courtesy keys are granted too, except ocr (its registry row takes no override, SA-1106 WP7)", async () => {
     // A dedicated preview first for the tenant-scoped assertions (independent of the one
     // applyLiveWithRetry issues internally — this one is never retried, since these assertions
     // are about OUR tenant's own rows, which no sibling worker can touch).
@@ -609,25 +611,27 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
     // remaining addon-gate keys (the other 7 already have active overrides from D6, so no
     // diff remains for them regardless of the flag).
     expect(ourLosses).toEqual([...ADDON_GATE_COURTESY_KEYS].sort());
-    expect(preview.excludedAddonGateLosses ?? 0).toBe(0);
+    // ocr stays excluded whatever the flags say: one row per tenant (loss + scale) is held back.
+    expect(preview.excludedAddonGateLosses ?? 0).toBeGreaterThanOrEqual(2);
 
     // See applyLiveWithRetry's own doc comment: n is a WHOLE-DATABASE count and this file runs
     // as one of many parallel jest workers against the same shared Postgres, so it retries on a
     // count drift from a concurrent sibling worker's own fixture tenants rather than assuming
     // the count read here would still match a few hundred milliseconds later.
     const { res, n } = await applyLiveWithRetry(["--include-addon-gates"]);
-    // Exactly the 3 addon-gate keys for each of the loss and scale tenants — nothing more.
-    expect(n).toBe(2 * ADDON_GATE_COURTESY_KEYS.length);
+    // Exactly the 2 grantable addon-gate keys for each of the loss and scale tenants — nothing more.
+    expect(n).toBe(2 * GRANTABLE_COURTESY_KEYS.length);
     expect(res.status).toBe(0);
     const result = JSON.parse(res.stdout) as Diff;
     expect(result.applied?.inserted).toBe(n);
     expect((await activeOverrides(TENANT_SCALE_ID)).map((r) => r.featureKey).sort()).toEqual(
-      [...ADDON_GATE_COURTESY_KEYS].sort(),
+      [...GRANTABLE_COURTESY_KEYS].sort(),
     );
 
     const rows = await activeOverrides(TENANT_LOSS_ID);
-    expect(rows).toHaveLength(EXPECTED_LOSS_KEYS.length); // the original 7 (D6) + these 3
-    for (const key of ADDON_GATE_COURTESY_KEYS) {
+    expect(rows).toHaveLength(EXPECTED_LOSS_KEYS.length - 1); // the original 7 (D6) + these 2, never ocr
+    expect(rows.find((r) => r.featureKey === "ocr")).toBeUndefined();
+    for (const key of GRANTABLE_COURTESY_KEYS) {
       const row = rows.find((r) => r.featureKey === key);
       expect(row).toBeDefined();
       expect(row!.effect).toBe("GRANT");
@@ -641,10 +645,11 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
       }
     }
 
-    // and --report now shows zero losses for our tenant — every key is explained
+    // --report still shows ocr as the one open loss for our tenant: it takes no override (included for
+    // every plan, SA-1106 A-2), so nothing writes one.
     const report = runReportJson();
     const ourFinalLosses = report.losses.filter((l) => l.tenant.includes(HASH_LOSS));
-    expect(ourFinalLosses).toEqual([]);
+    expect(ourFinalLosses.map((l) => l.key)).toEqual(["ocr"]);
   }, 60_000); // applyLiveWithRetry may spawn up to 8 CLI round-trips under real drift
 
   describe("--include-addon-keys", () => {
@@ -680,18 +685,24 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
       expect(res.stderr).toContain('"not_a_real_key" is not a FEATURE_REGISTRY addon-gate key');
     });
 
-    it("K3 --apply --include-addon-keys ocr,email.connected_mailbox: preview names included vs. still-excluded addon keys; --live grants only those two (ocr gets a 90-day expiry, email.connected_mailbox does not), crm_gohighlevel stays excluded", async () => {
-      const prose = runCli(["--apply", "--include-addon-keys", "ocr,email.connected_mailbox"]);
+    it("K4 --include-addon-keys ocr is refused: the ocr row takes no override (SA-1106 WP7)", () => {
+      const res = runCli(["--apply", "--include-addon-keys", "ocr"]);
+      expect(res.status).toBe(2);
+      expect(res.stderr).toContain("does not accept an override");
+    });
+
+    it("K3 --apply --include-addon-keys email.connected_mailbox: preview names included vs. still-excluded addon keys; --live grants only that one (no expiry), crm_gohighlevel and ocr stay excluded", async () => {
+      const prose = runCli(["--apply", "--include-addon-keys", "email.connected_mailbox"]);
       expect(prose.status).toBe(0);
-      expect(prose.stdout).toContain("included: email.connected_mailbox, ocr");
-      expect(prose.stdout).toContain("still excluded: crm_gohighlevel");
+      expect(prose.stdout).toContain("included: email.connected_mailbox");
+      expect(prose.stdout).toContain("still excluded: crm_gohighlevel, ocr");
 
       const { res, n } = await applyLiveWithRetry([
         "--include-addon-keys",
-        "ocr,email.connected_mailbox",
+        "email.connected_mailbox",
       ]);
-      // The keys tenant's 7 applicable losses + the 2 listed addon-gate keys, nothing more.
-      expect(n).toBe(EXPECTED_APPLICABLE_LOSS_KEYS.length + 2);
+      // The keys tenant's 7 applicable losses + the 1 listed addon-gate key, nothing more.
+      expect(n).toBe(EXPECTED_APPLICABLE_LOSS_KEYS.length + 1);
       expect(res.status).toBe(0);
       const result = JSON.parse(res.stdout) as Diff;
       expect(result.applied?.inserted).toBe(n);
@@ -702,18 +713,16 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
       // crm_gohighlevel is the only one held back.
       const rows = await activeOverrides(TENANT_KEYS_ID);
       expect(rows.map((r) => r.featureKey).sort()).toEqual(
-        [...EXPECTED_APPLICABLE_LOSS_KEYS, "email.connected_mailbox", "ocr"].sort(),
+        [...EXPECTED_APPLICABLE_LOSS_KEYS, "email.connected_mailbox"].sort(),
       );
-      const ocrRow = rows.find((r) => r.featureKey === "ocr")!;
       const mailboxRow = rows.find((r) => r.featureKey === "email.connected_mailbox")!;
-      expect(ocrRow.expiresAt).not.toBeNull(); // billable (OCR_PACK_250), same 90-day rule as N1
       expect(mailboxRow.expiresAt).toBeNull(); // not billable
 
       const report = runReportJson();
       const keysLosses = report.losses
         .filter((l) => l.tenant.includes(HASH_KEYS))
         .map((l) => l.key);
-      expect(keysLosses).toEqual(["crm_gohighlevel"]);
+      expect([...keysLosses].sort()).toEqual(["crm_gohighlevel", "ocr"]);
     }, 60_000); // applyLiveWithRetry may spawn up to 8 CLI round-trips under real drift
   });
 });
