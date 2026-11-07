@@ -1,4 +1,5 @@
 import { Logger } from "@nestjs/common";
+import * as nodemailer from "nodemailer";
 import {
   BRAND_NAVY,
   EMAIL_LAYOUT_MARKER,
@@ -20,6 +21,7 @@ import {
   signInLinkedMessage,
   verifyEmailMessage,
 } from "./routeflow-mail";
+import { paragraphsMissingFromText } from "../testing/email-text-parity";
 import { EmailService } from "./email.service";
 
 jest.mock("nodemailer", () => ({ createTransport: jest.fn() }));
@@ -296,6 +298,19 @@ describe("RouteFlow's own mail", () => {
       expect(visible(m.html)).not.toMatch(/unsubscribe|reply to this email|never share/i);
     }
   });
+
+  it("every message's text part says what its html says, paragraph for paragraph (W-1163 L-2)", () => {
+    for (const m of all()) {
+      expect(paragraphsMissingFromText(m.html, m.text)).toEqual([]);
+    }
+  });
+
+  it("the parity check sees a drift: html says 48 hours, the text still says 24", () => {
+    const m = all()[0];
+    expect(paragraphsMissingFromText(m.html.replace("24 hours", "48 hours"), m.text)).toEqual([
+      "The link works for 48 hours.",
+    ]);
+  });
 });
 
 describe("the layout guard in EmailService (never RouteFlow's name on a tenant's mail)", () => {
@@ -361,6 +376,64 @@ describe("the layout guard in EmailService (never RouteFlow's name on a tenant's
     expect(out.html).not.toMatch(/alt="RouteFlow"|Sent by RouteFlow|routeflow-mark/);
     expect(visible(out.html)).not.toContain("Sent with");
     jest.restoreAllMocks();
+  });
+
+  describe("send() and sendPlatform() actually run the guard (W-1163 L-1)", () => {
+    // A real platform-SMTP transport double: what reaches `sendMail` is what a person receives.
+    function transportService(tenantId: string | null) {
+      const env: Record<string, string> = {
+        SMTP_HOST: "smtp.test",
+        SMTP_USER: "u@t.test",
+        SMTP_PASS: "pw",
+      };
+      const prisma = {
+        getTenantId: () => tenantId,
+        tenantConfig: { findFirst: jest.fn().mockResolvedValue({ businessName: "Acme Foods" }) },
+        forTenant: () => ({
+          systemConfig: {
+            findMany: jest.fn().mockResolvedValue([]),
+            findFirst: jest.fn().mockResolvedValue(null),
+          },
+        }),
+        user: { findFirst: jest.fn().mockResolvedValue(null) },
+      } as any;
+      const sendMail = jest.fn().mockResolvedValue({ messageId: "m1" });
+      (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+      const svc = new EmailService(
+        { get: (k: string) => env[k] } as any,
+        prisma,
+        { decrypt: (v: string) => v } as any,
+        { trySend: jest.fn().mockResolvedValue({ delivered: false }) } as any,
+        { record: jest.fn() } as any,
+        {} as any,
+      );
+      return { svc, sendMail };
+    }
+
+    beforeEach(() => {
+      jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+    });
+    afterEach(() => jest.restoreAllMocks());
+
+    it("send() with bare html hands the transport marked html in the tenant's look", async () => {
+      const { svc, sendMail } = transportService("t1");
+      await svc.send({ to: "buyer@acme.example", subject: "Hi", html: "<p>bare body</p>" });
+      const sent = sendMail.mock.calls[0][0];
+      expect(isLayoutHtml(sent.html)).toBe(true);
+      expect(sent.html).toContain("<p>bare body</p>");
+      expect(visible(sent.html)).toContain("Sent by Acme Foods");
+      expect(visible(sent.html)).toContain("Sent with RouteFlow");
+    });
+
+    it("sendPlatform() with bare html inside a tenant context hands the transport neutral marked html", async () => {
+      const { svc, sendMail } = transportService("t1");
+      await svc.sendPlatform({ to: "admin@acme.example", subject: "Hi", html: "<p>bare body</p>" });
+      const sent = sendMail.mock.calls[0][0];
+      expect(isLayoutHtml(sent.html)).toBe(true);
+      expect(sent.html).toContain("<p>bare body</p>");
+      expect(visible(sent.html)).not.toContain("Acme Foods");
+      expect(visible(sent.html)).not.toContain("Sent with");
+    });
   });
 
   it("a full document is logged but sent as built: re-wrapping would nest two headers", async () => {

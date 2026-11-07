@@ -11,6 +11,7 @@ import {
   billingSettingsUrl,
   dunningTemplate,
 } from "./billing-notification.templates";
+import { paragraphsMissingFromText } from "../testing/email-text-parity";
 
 describe("billing-notification.templates", () => {
   describe("escapeHtml", () => {
@@ -221,6 +222,48 @@ describe("billing-notification.templates", () => {
       expect(t.html).toContain("No prorated charge applies now");
       expect(t.text).toContain("No prorated charge applies now");
       expect(t.html).not.toContain("estimate");
+    });
+  });
+
+  describe("every template's text part says what its html says (W-1163 L-2)", () => {
+    const person = { businessName: "Acme Retail", adminName: "Jamie" };
+    const plans = { fromPlanName: "Growth", toPlanName: "Starter" };
+    const all = [
+      trialEndingTemplate({ ...person, milestone: "TRIAL_ENDING_7D", trialEndsAt: "Nov 14, 2026" }),
+      trialEndingTemplate({
+        ...person,
+        milestone: "TRIAL_ENDING_EXPIRY",
+        trialEndsAt: "Nov 7, 2026",
+      }),
+      downgradeScheduledTemplate({ ...person, ...plans, effectiveAt: "2026-12-01" }),
+      downgradeAppliedTemplate({ ...person, ...plans }),
+      upgradeConfirmedTemplate({
+        ...person,
+        fromPlanName: "Starter",
+        toPlanName: "Growth",
+        proratedAmount: 42.5,
+      }),
+      upgradeConfirmedTemplate({
+        ...person,
+        fromPlanName: "Starter",
+        toPlanName: "Growth",
+        proratedAmount: 0,
+      }),
+      cancelledTemplate(person),
+      suspendedTemplate({ ...person, reason: "overdue payment" }),
+      suspendedTemplate({ ...person, reason: "subscription canceled" }),
+      checkoutPlanNotAppliedTemplate({ ...person, requestedPlanKey: "SCALE" }),
+      dunningTemplate({
+        kind: "d0",
+        ...person,
+        payUrl: "https://pay.example.test/i/in_1",
+        attempted: true,
+      }),
+      dunningTemplate({ kind: "final", ...person, payUrl: null, readOnlyOn: "Nov 9, 2026" }),
+    ];
+
+    it.each(all.map((t, i) => [i, t.subject, t] as const))("#%i %s", (_i, _s, t) => {
+      expect(paragraphsMissingFromText(t.html, t.text, { footer: false })).toEqual([]);
     });
   });
 
