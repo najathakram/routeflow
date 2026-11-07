@@ -45,6 +45,21 @@ describe("train-precheck.mjs", () => {
     expect(out).not.toContain("api-error-codes-parity");
   });
 
+  it("prints the train facts first, dark: the merge-base count, and a red fact never changes the exit (#3999, #3977)", () => {
+    const out = dryRun(); // dryRun() asserts exit 0
+    const facts = out.indexOf("== train facts (dark) ==");
+    expect(facts).toBeGreaterThan(-1);
+    expect(out).toMatch(/merge bases: (\d+|unknown)/);
+    expect(facts).toBeLessThan(out.indexOf("== train pre-check: tsc"));
+    // a member list that is not PR numbers is refused before anything runs
+    const bad = spawnSync(process.execPath, [SCRIPT, "--dry-run", "--members", "abc"], {
+      encoding: "utf8",
+      cwd: REPO_ROOT,
+    });
+    expect(bad.status).not.toBe(0);
+    expect(bad.stderr).toContain("not a PR number");
+  });
+
   it("every workspace that defines test:repo-truth is reached by `turbo run test:repo-truth` (no --filter)", () => {
     const out = dryRun();
     const line = out.split("\n").find((l) => l.includes("turbo run test:repo-truth")) ?? "";

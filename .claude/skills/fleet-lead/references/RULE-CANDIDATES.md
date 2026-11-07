@@ -483,3 +483,5 @@ promoted: times from date u only (2026-10-27, 12x)
 - candidate: Read a delete path before running it, not only its report
   key: read a delete path before running it not only its report
   first: 2026-10-31
+promoted: tier 1 money reviews run the module s full db lane not just the pr s spec (2026-11-07, 7x)
+promoted: verify before instructing (2026-11-07, 74x)
