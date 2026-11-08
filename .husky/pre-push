@@ -51,6 +51,41 @@
 # scripts/skip-verify-audit.mjs — a push that touches code (apps/, packages/, scripts/,
 # .github/) is refused without SKIP_VERIFY_REASON; a docs-only push needs no reason.
 
+# Git's pre-push stdin (`<local ref> <local sha> <remote ref> <remote sha>` per ref) is captured ONCE,
+# here at the top; nothing else in this hook reads stdin (a second read yields "").
+refs="$(cat)"
+
+# B1298: judge the refs being PUSHED, not only the checked-out branch. (a) Any remote ref that is
+# master/main is refused, from any branch (covers `HEAD:master` and `--delete master`). (b) A push
+# whose every line is a delete (local sha all zeros) has nothing to verify, so a feature-branch
+# delete works from a master checkout. (c) Otherwise the HEAD-branch rule below stays as it was; it
+# guards verify, which checks HEAD's tree. The loop is fed by a heredoc, not a pipe: a pipe would run
+# it in a subshell and lose the variables.
+any_ref=""
+all_delete=1
+trunk_ref=""
+while read -r lref lsha rref rsha; do
+  [ -n "$lref$lsha$rref$rsha" ] || continue
+  any_ref=1
+  case "$rref" in
+    refs/heads/master) trunk_ref="master" ;;
+    refs/heads/main) [ -n "$trunk_ref" ] || trunk_ref="main" ;;
+  esac
+  case "$lsha" in
+    *[!0]*) all_delete="" ;;
+  esac
+done <<EOF
+$refs
+EOF
+if [ -n "$trunk_ref" ]; then
+  echo "Direct push to $trunk_ref is blocked — open a PR from a feat/* or fix/* branch."
+  exit 1
+fi
+if [ -n "$any_ref" ] && [ -n "$all_delete" ]; then
+  echo "pre-push: branch delete only, nothing to verify."
+  exit 0
+fi
+
 # Cheapest check first: refuse a trunk push before spending any time verifying.
 branch="$(git rev-parse --abbrev-ref HEAD)"
 if [ "$branch" = "main" ] || [ "$branch" = "master" ]; then
@@ -61,9 +96,8 @@ fi
 # B897: refuse a push that adds build/cache output (.jest-cache, .turbo, dist, coverage, .next,
 # node_modules) or more than 5 MiB of new files outside the heavy-files policy's asset dirs. It runs
 # BEFORE the SKIP_VERIFY hatch and before verify, so it holds even when verify is skipped. It reads
-# git's pre-push stdin (`<local ref> <local sha> <remote ref> <remote sha>` per ref), so capture it
-# once here; nothing else in this hook reads stdin. Override (audited): PUSH_GUARD_OVERRIDE_REASON.
-refs="$(cat)"
+# git's pre-push stdin, captured once at the top of this hook into $refs (nothing else reads stdin).
+# Override (audited): PUSH_GUARD_OVERRIDE_REASON.
 printf '%s\n' "$refs" | node scripts/push-guard.mjs || exit 1
 
 # #2865: the size ratchet (apps/api size-ratchet.spec.ts, CI's test:repo-truth lane) runs on EVERY
