@@ -35,7 +35,7 @@ export function buildPlanGateBody(flag: string, upgrade: PlanGateUpgrade): PlanG
   // FG-1 WP9a: the one denial builder; the wire fields below are unchanged.
   const message = denialText({
     keys: [flag],
-    addonOffered: Boolean(upgrade.addonSku),
+    addonSku: upgrade.addonSku,
     planKey: upgrade.planKey,
   });
   return { code: API_ERROR_CODES.PLAN_GATE, state, flag, message, upgrade };

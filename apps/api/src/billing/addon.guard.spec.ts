@@ -135,7 +135,7 @@ describe("AddonGuard", () => {
     addonService.getActiveAddons.mockResolvedValue([]);
 
     await expect(guard.canActivate(contextFor({ tenantId: "t1" }))).rejects.toThrow(
-      "You need one of these add-ons: Recurring routes or Ad hoc order delivery. Add one in Billing.",
+      "One of these needs to be turned on for your account: Recurring routes or Ad hoc order delivery. Ask RouteFlow to turn it on.",
     );
   });
 
@@ -144,7 +144,7 @@ describe("AddonGuard", () => {
     addonService.getActiveAddons.mockResolvedValue([]);
 
     await expect(guard.canActivate(contextFor({ tenantId: "t1" }))).rejects.toThrow(
-      "Ad hoc order delivery is an add-on. Add it in Billing.",
+      "Ad hoc order delivery isn't turned on for your account. Ask RouteFlow to turn it on.",
     );
   });
 
@@ -201,7 +201,8 @@ describe("AddonGuard", () => {
       expect(err.getResponse()).toMatchObject({
         code: "ADDON_GATE",
         addonKeys: ["tobacco_dealer"],
-        message: "Regulated tobacco dealer program is an add-on. Add it in Billing.",
+        message:
+          "Regulated tobacco dealer program isn't turned on for your account. Ask RouteFlow to turn it on.",
       });
     });
 
@@ -216,7 +217,7 @@ describe("AddonGuard", () => {
       expect(err.getResponse()).toMatchObject({
         code: "ADDON_GATE",
         addonKeys: ["not_in_registry"],
-        message: "This feature isn't turned on for your account. Ask RouteFlow.",
+        message: "This feature isn't turned on for your account. Ask RouteFlow to turn it on.",
       });
       expect(warnSpy.mock.calls.map((c) => c[0])).not.toContainEqual(
         expect.stringContaining("would deny (dark)"),

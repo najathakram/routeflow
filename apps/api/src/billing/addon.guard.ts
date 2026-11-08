@@ -110,7 +110,7 @@ export class AddonGuard implements CanActivate {
     // FG-1 WP9a: the sentence comes from the one denial builder (a business name and the next step, never a key).
     const message =
       named.length === 0
-        ? "This feature is not enabled for your account."
+        ? "This feature isn't turned on for your account. Ask RouteFlow to turn it on."
         : denialText({ keys: named });
     // An enforced denial must leave a server-side trace: nothing downstream logs a handled 403
     // (SentryExceptionFilter captures >= 500 only, and there is no access-log middleware), so a
