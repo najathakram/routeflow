@@ -4,6 +4,7 @@
 //
 //   npm run train:precheck            run every step, exit with the first non-zero status
 //   npm run train:precheck -- --dry-run   print the commands only
+//   npm run train:precheck -- --members 4101,4102 [--base origin/master]   also print the train facts
 //
 // Steps (all run, none short-circuits, so one push reports every red):
 //   1. tsc          turbo check-types, every workspace
@@ -16,6 +17,9 @@
 //   4. named gates  enum parity and permission-coverage (and the two cheap registries), api's own Jest, by name.
 //                   A gate whose name matches NO spec FAILS the run (a rename used to drop it silently under
 //                   --passWithNoTests); only a gate listed in GATES_ARRIVING is skipped, loudly, until its PR lands.
+// Before the steps it prints the train facts (scripts/lib/train-facts.mjs): the merge-base --all count against the
+// base (#3999) and, with --members, each member's latest Migration replay conclusion (#3977). The facts are DARK: a
+// red one prints "would hold" and changes the exit only under TRAIN_FACTS=enforce (lane rule: gates ship dark).
 // Takes the machine-wide heavy slot like verify does. Contract pinned by train-precheck-script.spec.ts.
 import { spawnSync } from "node:child_process";
 import path from "node:path";
@@ -24,9 +28,11 @@ import { readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { withHeavySlot } from "./lib/heavy-slot.mjs";
 import { REPO_WIDE_PINS } from "./lib/verify-scope.mjs";
+import { factsEnforced, parseMembers, trainFacts } from "./lib/train-facts.mjs";
 
 const { workspaceDirs } = createRequire(import.meta.url)("./lib/cross-workspace-specs.cjs");
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const REPO = "najathakram/routeflow";
 
 /** Specs run by name in apps/api (main config). Pure data; the spec pins that the lead's four are all here. */
 export const NAMED_GATES = [
@@ -131,8 +137,51 @@ export function main(argv = process.argv.slice(2)) {
   const steps = planPrecheck(root);
   const gates = resolveGates(root);
   const dry = argv.includes("--dry-run");
+  const arg = (name) => (argv.indexOf(name) >= 0 ? argv[argv.indexOf(name) + 1] : undefined);
+  // --members takes every token up to the next flag, so "--members 4101 4102" and "4101,4102" read the same
+  const membersAt = argv.indexOf("--members");
+  const membersText = [];
+  if (membersAt >= 0)
+    for (const t of argv.slice(membersAt + 1)) {
+      if (t.startsWith("--")) break;
+      membersText.push(t);
+    }
+  let members;
+  try {
+    members = parseMembers(membersText.join(" "));
+  } catch (e) {
+    console.error(e.message);
+    return Promise.resolve(2);
+  }
+  const base = arg("--base") ?? "origin/master";
   const run = () => {
     let code = 0;
+    const capture = (cmd) => (args) => {
+      const r = spawnSync(cmd, args, { cwd: root, encoding: "utf8" });
+      if (r.status !== 0)
+        throw new Error((r.stderr || r.error?.message || `${cmd} exit ${r.status}`).trim());
+      return r.stdout;
+    };
+    const facts = trainFacts({
+      runGit: capture("git"),
+      runGh: capture("gh"),
+      repo: REPO,
+      members,
+      base,
+    });
+    const enforce = factsEnforced();
+    console.log(`== train facts${enforce ? "" : " (dark)"} ==`);
+    for (const l of facts.lines) console.log(`  ${l}`);
+    if (!members.length)
+      console.log("  members: none given (--members 4101,4102 reads each Migration replay)");
+    if (facts.red) {
+      console.log(
+        enforce
+          ? "== train facts: RED"
+          : "== train facts: would hold (dark; TRAIN_FACTS=enforce fails the run)",
+      );
+      if (enforce && !dry) code = 1; // a dry run only lists; it never changes the exit
+    }
     for (const g of gates.arriving) {
       console.log(
         `named gate ${g}: no spec on this tree yet, skipped until ${GATES_ARRIVING[g]} lands`,

@@ -37,7 +37,10 @@ itself.** When you catch one, write the guard, not the apology.
   you ran now (`gh`, `git ls-remote`, `date -u`), never from memory, a relay, or an earlier read.
   A claim about a specific sha is tested at that sha, in a pinned detached worktree if needed
   (owner rebuke 2026-09-15; the `--limit 6` "six open PRs" and the "three lanes pushed" errors of
-  2026-09-22).
+  2026-09-22; promoted 2026-11-07 after 74 entries, latest #3999, #4043).
+- **Tier-1 money reviews run the module's FULL DB lane at the gated sha, not just the PR's spec**
+  (#2185, #2707, #3908, #3936, #3939, #3736; promoted 2026-11-07). A constructor or shared-writer
+  change breaks sibling DB specs the PR's own spec never builds; the PASS names the lane it ran.
 - **Times from `date -u` only.** Arm background `until date` checkpoint timers; never estimate
   when a window opens or closes (a window stalled 22 minutes on an estimate, 2026-09-22).
 - **The lead (Opus) never implements.** If you catch yourself editing source, stop and assign it (owner
@@ -120,11 +123,6 @@ frontmatter blocked every push fleet-wide).
   restored set the standard.
 - A red case names the entry condition it passes through (SA-E17): a "price-only edit" case
   that cannot enter the branch proves nothing.
-- Hold a ruling until the definitive trace returns. Two reversals on partial evidence (B661)
-  cost more than one late answer. When a hunter and a fix disagree about a unit, the answer is
-  usually "both are right about different populations" — ask which.
-- Live money outranks the guard (SA-026); a fix-forward on a bounded path beats a revert that
-  reintroduces a known defect; "settle everything at zero time" is refused.
 - Size ratchets are real: a file at its ceiling gets a behaviour-neutral extraction as commit 1
   with the baseline lowered in the same commit; PRs into that file serialise behind it (SA-065).
 
