@@ -115,6 +115,7 @@ import { selectEditRevertedInvoices } from "../invoices/order-edit-revert-set";
 import { uniqueViolationOn } from "../common/prisma-unique";
 import { ledgerDocumentTargets, lockLedgerDocumentRows } from "../regulated/ledger-locks";
 import { returnCustomerLockKey } from "./return-customer-lock";
+import { denialText } from "../billing/denial-text";
 
 /** SA-1090 A-1: the standalone capture transaction's budget; the same 15 s the order paths give the same work (orders.service.ts). */
 export const INLINE_CAPTURE_TX_TIMEOUT_MS = 15_000;
@@ -183,9 +184,7 @@ export class InlineReturnsService {
   private async assertGranted(tenantId: string | null): Promise<void> {
     if (!tenantId) return;
     if (!(await this.addonService.hasAddon(tenantId, INLINE_RETURNS_ADDON_KEY))) {
-      throw new ForbiddenException(
-        `This feature requires the "${INLINE_RETURNS_ADDON_KEY}" add-on.`,
-      );
+      throw new ForbiddenException(denialText({ keys: [INLINE_RETURNS_ADDON_KEY] }));
     }
   }
 

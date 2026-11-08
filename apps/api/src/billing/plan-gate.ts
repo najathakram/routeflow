@@ -1,4 +1,5 @@
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { denialText } from "./denial-text";
 /**
  * The PLAN_GATE error contract. When a plan gate denies a request, the server
  * returns HTTP 403 with this body; the web renders one of three gate states
@@ -31,10 +32,11 @@ export interface PlanGateErrorBody {
 /** Build the structured 403 body. INLINE_RESOLVE when an add-on can grant the flag, else LOCKED_PAGE. */
 export function buildPlanGateBody(flag: string, upgrade: PlanGateUpgrade): PlanGateErrorBody {
   const state: PlanGateState = upgrade.addonSku ? "INLINE_RESOLVE" : "LOCKED_PAGE";
-  const message = upgrade.addonSku
-    ? `This feature requires the ${upgrade.addonSku} add-on.`
-    : upgrade.planKey
-      ? `This feature requires the ${upgrade.planKey} plan or higher.`
-      : "This feature is not available on your current plan.";
+  // FG-1 WP9a: the one denial builder; the wire fields below are unchanged.
+  const message = denialText({
+    keys: [flag],
+    addonSku: upgrade.addonSku,
+    planKey: upgrade.planKey,
+  });
   return { code: API_ERROR_CODES.PLAN_GATE, state, flag, message, upgrade };
 }
