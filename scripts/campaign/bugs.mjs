@@ -8101,6 +8101,7 @@ cmds["self-test"] = () => {
   // master already holds (B1291, B1292). Real git fixtures: a bare origin plus clones.
   {
     const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-fresh-"));
+    const PFX = registrySource().prefix; // the tracked register dir, from registry-root.mjs only
     const sh = (cwd, ...a) => {
       const r = spawnSync("git", ["-C", cwd, ...a], { encoding: "utf8", env: scrubbedGitEnv() });
       if (r.status !== 0) throw new Error(`git ${a.join(" ")}: ${r.stderr}`);
@@ -8113,12 +8114,9 @@ cmds["self-test"] = () => {
       sh(d, "config", "commit.gpgsign", "false");
     };
     const addRows = (d, ...ns) => {
-      mkdirSync(join(d, ".claude", "campaign"), { recursive: true });
-      writeFileSync(
-        join(d, ".claude", "campaign", "bugs.jsonl"),
-        ns.map((n) => row(n)).join("\n") + "\n",
-      );
-      sh(d, "add", ".claude/campaign/bugs.jsonl");
+      mkdirSync(join(d, PFX), { recursive: true });
+      writeFileSync(join(d, PFX, "bugs.jsonl"), ns.map((n) => row(n)).join("\n") + "\n");
+      sh(d, "add", `${PFX}/bugs.jsonl`);
       sh(d, "commit", "-q", "-m", `rows ${ns.join(",")}`);
     };
     const build = (name) => {
@@ -8140,14 +8138,13 @@ cmds["self-test"] = () => {
     const fileIn = (tree, extra = []) =>
       runCli(
         ["file", "freshness fixture", "--location", "x.ts", "--severity", "low", ...extra],
-        join(tree, ".claude", "campaign"),
+        join(tree, PFX),
         undefined,
         { BUGS_FRESHNESS_REPO: tree },
       );
-    const catalogueOf = (tree) =>
-      readFileSync(join(tree, ".claude", "campaign", "bugs.jsonl"), "utf8");
+    const catalogueOf = (tree) => readFileSync(join(tree, PFX, "bugs.jsonl"), "utf8");
     const recordsIn = (tree) =>
-      readdirSync(join(tree, ".claude", "campaign"), { recursive: true }).filter(
+      readdirSync(join(tree, PFX), { recursive: true }).filter(
         (n) => !/bugs\.jsonl$/.test(String(n)),
       );
     try {
@@ -8254,8 +8251,8 @@ cmds["self-test"] = () => {
       // 7. which repo is checked: a fixture BUGS_ROOT skips, but a BUGS_ROOT that is this repo's own
       // register (plane-intake --apply always sets it so) is checked like no BUGS_ROOT at all.
       {
-        const p = ".claude/campaign";
-        const own = join(REPO_ROOT, ".claude", "campaign");
+        const p = PFX;
+        const own = join(REPO_ROOT, PFX);
         const seam = { BUGS_ROOT: tmp, BUGS_FRESHNESS_REPO: "seam" };
         check(
           "freshness: freshnessRepoFor checks the real register however it is reached",
