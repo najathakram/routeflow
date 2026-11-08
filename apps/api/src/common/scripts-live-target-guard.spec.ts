@@ -142,6 +142,7 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/report-plaintext-secrets.mjs": "read-only",
   "apps/api/scripts/report-order-discounts.mjs": "read-only",
   "apps/api/scripts/report-read-only-sellers-with-buyers.mjs": "read-only",
+  "apps/api/scripts/units-legacy-parent-census.mjs": "read-only",
   "apps/api/scripts/report-rf-invoice-calendar-census.mjs": "read-only",
   "apps/api/scripts/report-rf-invoice-zero-rows.mjs": "read-only",
   "apps/api/scripts/report-suspended-stamp-census.mjs": "read-only", // counts only, default_transaction_read_only = on + READ ONLY tx
