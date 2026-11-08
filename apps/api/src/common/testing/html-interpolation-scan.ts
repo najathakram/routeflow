@@ -29,6 +29,28 @@ export interface HtmlHit {
 const TAG =
   /<\/?(p|div|a|strong|b|i|em|s|u|small|span|br|hr|img|table|thead|tbody|tfoot|tr|td|th|ul|ol|li|h[1-6]|html|head|body|meta|style|!doctype)[\s>/]/i;
 const ESCAPING_CALLS = new Set(["escapeHtml", "encodeURIComponent"]);
+/**
+ * Helpers of `email/email-layout.ts` that escape every value they are given and return markup:
+ * a call is safe whatever its arguments are. (`renderEmailLayout`'s `bodyHtml` is a sink at the
+ * call site, so what is handed to it is still held to the rule.)
+ */
+const LAYOUT_ESCAPING_CALLS = new Set([
+  "brandHeaderHtml",
+  "tenantHeaderHtml",
+  "renderBrandButton",
+  "hexOr", // returns its argument only when it is a #rrggbb colour
+]);
+/** `emailParagraph(inner)` wraps `inner` without escaping it: safe exactly when `inner` is. */
+const LAYOUT_WRAPPING_CALLS = new Set(["emailParagraph"]);
+/** Builders in `email/routeflow-mail.ts` / `email/email-layout.ts` (both scanned) that return finished mail. */
+const FINISHED_MAIL_BUILDERS = new Set([
+  "verifyEmailMessage",
+  "passwordResetMessage",
+  // The shell: its `bodyHtml` / `headerHtml` inputs are sinks at every call site, so its output is
+  // exactly as safe as what was handed to it.
+  "renderBrandedEmail",
+  "renderEmailLayout",
+]);
 const HTML_PROP = /^(html|\w+Html)$/;
 
 type FnLike =
@@ -364,6 +386,10 @@ export function scanHtmlInterpolations(code: string): HtmlHit[] {
         return false;
       });
     }
+    // `renderBrandedEmail(…).html`: the property of what a call returns.
+    if (ts.isPropertyAccessExpression(e) && ts.isCallExpression(e.expression)) {
+      return safeProp(e.expression, e.name.text);
+    }
     if (ts.isPropertyAccessExpression(e) && ts.isIdentifier(e.expression)) {
       const decl = declOf(e.expression);
       // `params.x` on a parameter: follow `x` into every call's object argument.
@@ -398,6 +424,7 @@ export function scanHtmlInterpolations(code: string): HtmlHit[] {
           ? e.expression.name.text
           : undefined
       : undefined;
+    if (callee && FINISHED_MAIL_BUILDERS.has(callee)) return true;
     if (callee) {
       const fns = fnsByName.get(callee);
       if (fns && fns.length > 0) {
@@ -442,7 +469,8 @@ export function scanHtmlInterpolations(code: string): HtmlHit[] {
       : ts.isPropertyAccessExpression(callee)
         ? callee.name.text
         : "";
-    if (ESCAPING_CALLS.has(name)) return true;
+    if (ESCAPING_CALLS.has(name) || LAYOUT_ESCAPING_CALLS.has(name)) return true;
+    if (LAYOUT_WRAPPING_CALLS.has(name)) return c.arguments.every(safe);
     // safe.replace(re, "<br/>"): a literal replacement adds only markup the code chose.
     if (
       (name === "replace" || name === "replaceAll") &&

@@ -42,7 +42,35 @@ function underAllowed(keys: readonly string[], entries: Record<string, Allowed> 
     .map(([key, n, allowed]) => `${key} | x${n}, allowed x${allowed}`);
 }
 const ALLOWED: Record<string, Record<string, Allowed>> = {
+  // The layout's contract: callers hand it escaped fragments (each caller is scanned, because
+  // `bodyHtml` / `headerHtml` are sinks), and the colours are validated hex or BRAND_ constants.
+  "email/email-layout.ts": {
+    "shell :: p.barBg": {
+      reason: "a BRAND_ colour or resolveBarColors output (validated #rrggbb)",
+      count: 2,
+    },
+    "shell :: p.headerHtml": "built by the header helpers above, which escape their inputs",
+    "shell :: p.bodyHtml": "escaped by every caller (the `bodyHtml` property is a sink there)",
+    "renderBrandedEmail :: params.headerHtml":
+      "escaped by every caller (the `headerHtml` property is a sink there)",
+    "renderBrandedEmail :: params.bodyHtml":
+      "escaped by every caller (the `bodyHtml` property is a sink there)",
+    "renderEmailLayout :: href BRAND_SITE_URL": "a constant URL",
+    "renderEmailLayout :: params.bodyHtml":
+      "escaped by every caller (the `bodyHtml` property is a sink there)",
+    "wrapUnbrandedHtml :: inner":
+      "the safety net: html a sender built outside the layout, unchanged (the inventory spec lists each)",
+    "emailParagraph :: innerHtml":
+      "scanned at every call: LAYOUT_WRAPPING_CALLS follows the argument",
+  },
+  "email/routeflow-mail.ts": {
+    "signIn :: href escapeHtml(loginUrl)": ENV_LINK,
+  },
   "email/email.service.ts": {
+    "ensureLayout :: wrapUnbrandedHtml({ look, subject: params.subject, html: params.html, footerNote })":
+      "the safety net around a sender's own html (see wrapUnbrandedHtml)",
+    "ensureLayout :: params.html":
+      "the safety net around a sender's own html (see wrapUnbrandedHtml)",
     "sendUnrecorded :: params.html": { reason: TRANSPORT, count: 5 },
     "sendPlatform :: params.html": { reason: TRANSPORT, count: 2 },
     "buildInvoiceEmail :: freeUnits": NUMBER,
@@ -66,13 +94,6 @@ const ALLOWED: Record<string, Record<string, Allowed>> = {
   "messaging/providers/email-channel.provider.ts": {
     "send :: html": "built by buildNotificationEmailHtml, which this guard scans (0 hits)",
   },
-  "auth/auth.service.ts": {
-    "requestPasswordReset :: href escapeHtml(resetUrl)": ENV_LINK,
-  },
-  "buyer/buyer-auth.service.ts": {
-    "issueVerificationEmail :: href escapeHtml(verifyUrl)": ENV_LINK,
-    "requestPasswordReset :: href escapeHtml(resetUrl)": ENV_LINK,
-  },
   "customers/portal-invite-email.ts": {
     "portalInviteEmailHtml :: href url": { reason: ENV_LINK, count: 2 },
   },
@@ -82,20 +103,9 @@ const ALLOWED: Record<string, Record<string, Allowed>> = {
     "buildBookingEmail :: href escapeHtml(baseUrl)": ENV_LINK,
     "buildBookingEmail :: href escapeHtml(manageUrl)": ENV_LINK,
   },
-  "tenants/tenants.service.ts": {
-    "register :: href escapeHtml(verifyUrl)": { reason: ENV_LINK, count: 2 },
-    "resendVerification :: href escapeHtml(verifyUrl)": ENV_LINK,
-    "signInReminderHtml :: href escapeHtml(loginUrl)": ENV_LINK,
-  },
   "documents/receipt.service.ts": {
     "send :: html":
       "built in documents/render-order-receipt.ts (every dynamic value escapeHtml'd), which this guard scans (0 hits)",
-  },
-  "documents/render-order-receipt.ts": {
-    'renderOrderReceipt :: tenantHeaderHtml(name || "Receipt")':
-      "tenantHeaderHtml escapes the name (email/email.service.ts, which this guard scans)",
-    "renderOrderReceipt :: html":
-      "the shell renderBrandedEmail returns (email/email.service.ts): its heading and footer note are escaped there, the body is built and scanned here",
   },
   "customers/customers.service.ts": {
     "sendPortalInvite :: portalInviteEmailHtml(sellerName, inviteUrl)":

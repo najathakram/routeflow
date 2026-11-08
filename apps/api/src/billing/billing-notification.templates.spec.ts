@@ -36,8 +36,9 @@ describe("billing-notification.templates", () => {
       });
       // The header/footer brand text is "RouteFlow" exactly, appearing before any
       // tenant-supplied text — the tenant's own business name still appears in the body.
-      expect(t.html).toMatch(/font-weight:700;color:#ffffff;letter-spacing:-0\.5px;">RouteFlow</);
-      expect(t.html).toContain("This is an automated email from RouteFlow.");
+      expect(t.html).toMatch(/letter-spacing:-0\.3px;">routeflow\.</);
+      expect(t.html).toContain('alt="RouteFlow"');
+      expect(t.html).toContain("This is an automated email from RouteFlow about your account.");
       expect(t.html).toContain("NOT RouteFlow Inc"); // still present, in the body copy
     });
   });
@@ -79,7 +80,7 @@ describe("billing-notification.templates", () => {
       });
       expect(t.html).not.toContain('href="javascript:');
       expect(t.html).toMatch(/<span [^>]*>Choose a plan<\/span>/);
-      expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/^ctaButtonHtml: refused/));
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/^renderBrandButton: refused/));
       errorSpy.mockRestore();
     });
   });

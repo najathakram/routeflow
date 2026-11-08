@@ -1,7 +1,7 @@
 import { taxRowLabel } from "@routeflow/pricing";
 import type { ReceiptModel } from "@routeflow/types";
 import { escapeHtml } from "../common/html-escape";
-import { endSentence, renderBrandedEmail, tenantHeaderHtml } from "../email/email.service";
+import { endSentence, renderBrandedEmail, tenantHeaderHtml } from "../email/email-layout";
 import {
   buildReceiptModel,
   formatReceiptMoney as money,

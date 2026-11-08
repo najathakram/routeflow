@@ -15,6 +15,26 @@ import {
 import { mailboxRevokedCopy } from "./mailbox/mailbox-alert.copy";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { escapeHtml, safeLinkHref } from "../common/html-escape";
+import {
+  BRAND_NAVY,
+  BRAND_TEAL,
+  BRAND_CLOUD,
+  BRAND_STEEL,
+  BRAND_WHITE,
+  brandHeaderHtml,
+  EMAIL_LAYOUT_MARKER,
+  endSentence,
+  renderBrandButton,
+  emailParagraph,
+  renderBrandedEmail,
+  renderEmailLayout,
+  tenantHeaderHtml,
+  isLayoutHtml,
+  wrapUnbrandedHtml,
+  type EmailLook,
+} from "./email-layout";
+
+export { endSentence, renderBrandedEmail, tenantHeaderHtml };
 // F03/R9: ONE original-price display decision shared with the PDF, so the two
 // customer-facing documents of the same send can never disagree (a pure helper —
 // no Nest/module coupling, and unlike ./invoice-pdf-template it is not mocked
@@ -196,129 +216,6 @@ interface PlatformSmtpConfig {
   secure: boolean;
   user: string;
   pass: string;
-}
-
-/**
- * RouteFlow brand tokens for transactional email — extracted from
- * `marketing/RouteFlow_Brand_Guide.pdf`; full extraction at
- * `local-assets/handoff/2026-09-17/email-brand/notes.md`. Route Navy for the header/heading,
- * Route Teal for the one CTA per email, Cloud for the footer band, Steel for footer text —
- * Signal Mint is deliberately UNUSED here (the guide reserves it for dark surfaces/icons; it
- * fails contrast as body/link text on white).
- */
-const BRAND_NAVY = "#1D2A3D";
-const BRAND_TEAL = "#087D76";
-const BRAND_CLOUD = "#F3F7F8";
-const BRAND_STEEL = "#536579";
-const BRAND_WHITE = "#FFFFFF";
-
-/**
- * Absolute https URL — an email client can neither load a `data:` URI reliably nor a
- * relative path, so the logo must be hosted on the live marketing site. Points at the mark
- * checked into `apps/web/public/brand/routeflow-mark-192.png` (192px source for a
- * retina-safe ~28px display size in the header).
- */
-const BRAND_LOGO_URL = "https://www.routeflow.info/brand/routeflow-mark-192.png";
-
-/** RouteFlow's own logo + wordmark header row — for platform-sent mail (password reset,
- *  verification, security notices) that represents RouteFlow itself, not a tenant. */
-function brandHeaderHtml(): string {
-  // The only mark asset in the repo is the DARK-navy "R" (apps/web/public/brand/
-  // routeflow-mark-*.png) — the guide's own reversed/light mark for dark surfaces was never
-  // supplied. Wrapped in a small white chip so the dark mark stays visible on the Route Navy
-  // header rather than rendering nearly invisible (dark-on-dark) — this changes nothing about
-  // the mark itself (no redraw/rotate/proportion change, per the guide's own rule), only what
-  // sits behind it.
-  return `<table cellpadding="0" cellspacing="0" role="presentation"><tr>
-    <td style="vertical-align:middle;padding-right:10px;">
-      <table cellpadding="0" cellspacing="0" role="presentation"><tr><td style="background:${BRAND_WHITE};border-radius:6px;padding:4px;" bgcolor="${BRAND_WHITE}">
-        <img src="${BRAND_LOGO_URL}" width="24" height="24" alt="RouteFlow" style="display:block;border:0;outline:none;">
-      </td></tr></table>
-    </td>
-    <td style="vertical-align:middle;">
-      <span style="font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;color:${BRAND_WHITE};letter-spacing:-0.3px;">routeflow.</span>
-    </td>
-  </tr></table>`;
-}
-
-/** A tenant-branded header row — for mail sent AS the tenant to their own customers/admins
- *  (invoices, the low-stock digest). Shows the tenant's business name, not the RouteFlow
- *  mark: this is the tenant's own correspondence: RouteFlow is the platform underneath it,
- *  not the sender the recipient should see. */
-export function tenantHeaderHtml(businessName: string): string {
-  return `<span style="font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;color:${BRAND_WHITE};letter-spacing:-0.3px;">${escapeHtml(businessName)}</span>`;
-}
-
-/**
- * A closing sentence that ends in a tenant-typed name ("Sent by Acme Co."): the period is added only when the text does not
- * already end a sentence, so a business named "Acme Co." is not signed "Acme Co.." (CQ-20).
- */
-export function endSentence(text: string): string {
-  const t = text.trimEnd();
-  return /[.!?\u2026]$/.test(t) ? t : `${t}.`; // . ! ? and the ellipsis character
-}
-
-/**
- * The ONE shared branded shell every transactional email in this file renders through —
- * Route Navy header, a heading, the caller's body, a Cloud-gray footer. Table-based, inline
- * CSS only, Arial/Helvetica stack (email-safe and deliberate — never "fix" this to a
- * design-system font; see notes.md), explicit hex `bgcolor`+CSS on every surface
- * (dark-mode-safe: a client's auto-dark-mode only re-colors what it can't already see is an
- * intentional choice). Returns the HTML AND a plain-text alternative built from the SAME
- * structured pieces the caller supplies — never derived by stripping tags, which could
- * silently drop a dollar figure or a link — so the two can never drift apart.
- */
-export function renderBrandedEmail(params: {
-  headerHtml: string;
-  heading: string;
-  bodyHtml: string;
-  /** Plain-text paragraphs — parallel content to `bodyHtml`, `\n\n`-joined in the output. */
-  bodyText: string[];
-  footerNote: string;
-}): { html: string; text: string } {
-  const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="color-scheme" content="light dark">
-<meta name="supported-color-schemes" content="light dark">
-</head>
-<body style="margin:0;padding:0;background:${BRAND_CLOUD};font-family:Arial,Helvetica,sans-serif;">
-<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background:${BRAND_CLOUD};" bgcolor="${BRAND_CLOUD}">
-  <tr><td align="center" style="padding:32px 16px;">
-    <table width="600" cellpadding="0" cellspacing="0" role="presentation" style="max-width:600px;width:100%;background:${BRAND_WHITE};border-radius:8px;overflow:hidden;" bgcolor="${BRAND_WHITE}">
-      <tr><td style="background:${BRAND_NAVY};padding:24px 32px;" bgcolor="${BRAND_NAVY}">${params.headerHtml}</td></tr>
-      <tr><td style="padding:32px;" bgcolor="${BRAND_WHITE}">
-        <h1 style="margin:0 0 20px;font-family:Arial,Helvetica,sans-serif;font-size:21px;font-weight:700;color:${BRAND_NAVY};">${escapeHtml(params.heading)}</h1>
-        ${params.bodyHtml}
-      </td></tr>
-      <tr><td style="background:${BRAND_CLOUD};padding:20px 32px;border-top:1px solid #e2e8ef;" bgcolor="${BRAND_CLOUD}">
-        <p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:${BRAND_STEEL};text-align:center;">${escapeHtml(params.footerNote)}</p>
-      </td></tr>
-    </table>
-  </td></tr>
-</table>
-</body>
-</html>`;
-
-  const text = `${params.heading}\n\n${params.bodyText.join("\n\n")}\n\n--\n${params.footerNote}`;
-  return { html, text };
-}
-
-/** A branded CTA button — Route Teal, ≥44px tap target (14px vertical padding either side of
- *  a 16px line-height = 44px total, meeting the email tap-target guideline). */
-function renderBrandButton(label: string, url: string): string {
-  // B809: a non-http(s) URL renders the button WITHOUT an href (logged and counted), so the
-  // email still goes out but can never carry a javascript: or data: link.
-  const href = safeLinkHref(url, "renderBrandButton");
-  const style = `display:inline-block;padding:14px 28px;line-height:16px;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;color:${BRAND_WHITE};text-decoration:none;`;
-  const button = href
-    ? `<a href="${escapeHtml(href)}" style="${style}">${escapeHtml(label)}</a>`
-    : `<span style="${style}">${escapeHtml(label)}</span>`;
-  return `<table cellpadding="0" cellspacing="0" role="presentation"><tr><td style="background:${BRAND_TEAL};border-radius:6px;" bgcolor="${BRAND_TEAL}">
-    ${button}
-  </td></tr></table>`;
 }
 
 /** The argument of the transport chain (and of the public `send`, which adds `delivery`). */
@@ -683,10 +580,41 @@ export class EmailService {
    * hard-coding "RouteFlow" for every tenant.
    */
   async getTenantBusinessName(): Promise<string> {
+    return (await this.tenantNameOrNull()) ?? "RouteFlow";
+  }
+
+  /** The tenant's configured name, or null (no tenant context, or none configured). */
+  private async tenantNameOrNull(): Promise<string | null> {
     const tenantId = this.prisma.getTenantId();
-    if (!tenantId) return "RouteFlow";
+    if (!tenantId) return null;
     const cfg = await this.prisma.tenantConfig.findFirst({ where: { tenantId } });
-    return sellerDisplayName(cfg, null, "RouteFlow");
+    return sellerDisplayName(cfg, null) || null;
+  }
+
+  /**
+   * The layout guard (W-1163): html that reaches a transport outside the shared layout is logged
+   * as an ERROR (the inventory spec keeps a sender from relying on this) and a bare fragment is
+   * wrapped. A full document is left as built: re-wrapping would nest two headers and footers.
+   * A tenant-scoped send gets that tenant's look, any other a neutral one. Never RouteFlow's
+   * name on a tenant's mail, not even when the tenant has no configured name.
+   */
+  private async ensureLayout<T extends { html: string; subject: string }>(
+    params: T,
+    tenantScoped: boolean,
+  ): Promise<T> {
+    if (isLayoutHtml(params.html)) return params;
+    const isDocument = /<!doctype|<html[\s>]|<body[\s>]/i.test(params.html);
+    this.logger.error(
+      `Email "${params.subject.slice(0, 60)}" reached the send path outside the shared layout${isDocument ? "" : " — wrapped it"}. Build it with email-layout.ts.`,
+    );
+    if (isDocument) return params;
+    const name = tenantScoped ? await this.tenantNameOrNull() : null;
+    const look: EmailLook = name ? { kind: "tenant", name } : { kind: "neutral" };
+    const footerNote = name ? endSentence(`Sent by ${name}`) : "This is an automated message.";
+    return {
+      ...params,
+      html: wrapUnbrandedHtml({ look, subject: params.subject, html: params.html, footerNote }),
+    };
   }
 
   // ─── Transactional From-identity (Resend) ──────────────────────────────────
@@ -1010,9 +938,22 @@ export class EmailService {
 
   async sendTestEmail(toEmail: string): Promise<{ success: boolean; message: string }> {
     const businessName = await this.getTenantBusinessName();
-    const html = `<p>This is a test email from ${escapeHtml(businessName)}. Your SMTP configuration is working correctly.</p>`;
+    const line = `This is a test email from ${businessName}. Your SMTP configuration is working correctly.`;
+    const { html, text } = renderEmailLayout({
+      look: { kind: "tenant", name: businessName },
+      heading: "Test email",
+      bodyHtml: emailParagraph(escapeHtml(line)),
+      bodyText: [line],
+      footerNote:
+        "You are getting this because someone on your team sent a test from email settings.",
+    });
     // send() is honest-by-result and never throws for a delivery/config problem.
-    const result = await this.send({ to: toEmail, subject: `${businessName} — Test Email`, html });
+    const result = await this.send({
+      to: toEmail,
+      subject: `${businessName} — Test Email`,
+      html,
+      text,
+    });
 
     if (result.delivered) {
       // Resend rescued a failing tenant SMTP attempt: the test mail DID arrive (say so
@@ -1293,6 +1234,8 @@ export class EmailService {
       });
     }
 
+    params = await this.ensureLayout(params, true);
+
     // Reply-To = the business's own email so customer replies reach the tenant, not the
     // (platform) sending address. Applies to every transport, including the mailbox.
     const replyTo = params.replyTo ?? (await this.getReplyTo());
@@ -1539,6 +1482,8 @@ export class EmailService {
     // onboarding) — it needs its own refusal, not just send()'s.
     const refusedTo = this.refuseSentinel(params.to);
     if (refusedTo) return refusedTo;
+    // Never reads the request's tenant (see sendUnrecorded): the look is neutral.
+    params = await this.ensureLayout(params, false);
 
     // 1. Platform SMTP (Google Workspace mailbox) — same transport as send()'s own
     // platform-SMTP step, but the From identity is always the bare platform address.
