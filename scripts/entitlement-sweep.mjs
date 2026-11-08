@@ -26,7 +26,9 @@
 //                 `courtesy` bit (effective true, strict false, courtesy false) is unexplained.
 //   unexplained   anything else (a tenant the resolver could not resolve counts here). Exit 2: the
 //                 stage stops and comes back to the architect.
-//   client drift  clientFlag != old on a flag key, or clientAddon != old on an add-on key. Listed
+//   client drift  clientFlag != strict on a flag key, or clientAddon != strict on an add-on key (M-8: the
+//                 answer clients are meant to show, so a courtesy key the client hides is "agree, hidden
+//                 by design"; a file with no strict bit compares with old). Listed
 //                 per key as WP8's input; it never fails the check.
 //   Prints mode + planFlagEnforcement. A "live" mode or planFlagEnforcement "on" prints a WP2-STOP
 //   line and exits 4: WP2 must not merge. A file that cannot be trusted at all (no tenants, mode or
@@ -225,8 +227,11 @@ export function checkSweep(file, { afterWp2 = false } = {}) {
       }
       const which = bits.clientFlag != null ? "clientFlag" : "clientAddon";
       const client = bits[which];
-      if (client !== null && client !== undefined && client !== bits.old) {
-        out.drift.push({ tenant: t.id, key, which, old: bits.old, client });
+      // M-8: the client is compared with STRICT, the answer clients are meant to show. A courtesy key the client
+      // hides agrees ("hidden by design"). A file with no strict bit falls back to `old`.
+      const want = typeof bits.strict === "boolean" ? bits.strict : bits.old;
+      if (client !== null && client !== undefined && client !== want) {
+        out.drift.push({ tenant: t.id, key, which, old: bits.old, strict: bits.strict, client });
       }
     }
   }
@@ -276,7 +281,7 @@ function runCheck(args) {
   }
   for (const d of r.drift) {
     console.log(
-      `CLIENT-DRIFT ${d.tenant} ${d.key} ${d.which}=${String(d.client)} old=${String(d.old)}`,
+      `CLIENT-DRIFT ${d.tenant} ${d.key} ${d.which}=${String(d.client)} strict=${String(d.strict)} old=${String(d.old)}`,
     );
   }
   console.log(

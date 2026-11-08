@@ -102,9 +102,9 @@ export class TenantsController {
       resolver[f.key] = resolved.byKey.get(f.key)?.strict ?? false;
     }
     // Business profiles 1A: the fulfilment modes and the ONE derived capability answer, read by the shared
-    // `readFulfilmentInputs` (also behind the counter-sale gate). A failed mode read falls back to `unset`
-    // (today's behavior): never a 5xx for a field old clients ignore. A failed fleet read must not 500 (and
-    // must not guess fleet=false): the existing 503.
+    // `readFulfilmentInputs` (also behind the counter-sale gate). A failed mode read (B1062, SA-1108) and a
+    // failed fleet read are both the 503: a client must be able to tell "this business never chose a mode"
+    // (`unset`) from "the server could not read it", and the fleet must not be guessed false.
     const fulfilment = await readFulfilmentInputs(
       {
         featureConfig: this.featureConfig,
@@ -113,7 +113,7 @@ export class TenantsController {
       },
       user.tenantId,
     );
-    if (fulfilment.fleet === null) {
+    if (fulfilment.fleet === null || fulfilment.modesFailed) {
       throw new ServiceUnavailableException({
         code: API_ERROR_CODES.FEATURES_UNAVAILABLE,
         message: "Feature resolution is temporarily unavailable. Please retry.",

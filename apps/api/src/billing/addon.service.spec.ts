@@ -59,6 +59,7 @@ import {
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { AddonService } from "./addon.service";
+import { registryKeyForAddonKey } from "./feature-registry";
 import { fakeTenantAddonStore } from "../testing/fake-tenant-addon-store";
 import { mrrEmits } from "../testing/mrr-emits";
 
@@ -160,6 +161,8 @@ function make(opts: Opts = {}) {
   // B865 / SA-277: 7th ctor arg, the ledger's BillingEventService — cast the class to bypass
   // the (not-yet-updated) 6-arg constructor type until FIX-865B lands.
   const events = { emit: jest.fn().mockResolvedValue({}) } as any;
+  // WP8: hasAddon reads the override first for every key; no override unless a test sets one.
+  const featureOverrides = { get: jest.fn().mockResolvedValue(undefined) } as any;
   const svc = new (AddonService as any)(
     prisma,
     stripe,
@@ -168,8 +171,19 @@ function make(opts: Opts = {}) {
     featureResolver,
     authority,
     events,
+    featureOverrides,
   );
-  return { svc, prisma, entitlements, catalog, stripe, featureResolver, authority, events };
+  return {
+    svc,
+    prisma,
+    entitlements,
+    catalog,
+    stripe,
+    featureResolver,
+    authority,
+    events,
+    featureOverrides,
+  };
 }
 
 const deltasOf = (events: any, type: string) =>
@@ -979,5 +993,39 @@ describe("#2188 one add-on row whichever way it is keyed (SA-385)", () => {
       await expect(svc.hasAddon("t1", "msrp")).resolves.toBe(true);
       await expect(svc.hasAddon("t1", "MSRP")).resolves.toBe(true);
     }
+  });
+});
+
+// SA-1106 WP8 (R18/T18): hasAddon reads the override FIRST for every key, not only the default-granted ones.
+// An override is stored under the registry key (flag.msrp), the add-on key is what callers ask for (msrp).
+describe("AddonService.hasAddon: an override is absolute for every key (WP8)", () => {
+  const ask = async (
+    key: string,
+    opts: { row?: boolean; override?: "GRANT" | "DENY"; rowKey?: string },
+  ) => {
+    const made = make({
+      existingAddon: opts.row ? { addonKey: opts.rowKey ?? key, active: true } : null,
+    });
+    made.featureOverrides.get.mockImplementation(async (_t: string, k: string) =>
+      opts.override && k === registryKeyForAddonKey(key) ? opts.override : undefined,
+    );
+    return made.svc.hasAddon("t1", key);
+  };
+
+  it.each(["tobacco_dealer", "msrp", "sales_agents", "recurring_routes", "developer_mode"])(
+    "%s: GRANT with no row is true; DENY with an active row is false; no override follows the row",
+    async (key) => {
+      expect(await ask(key, { override: "GRANT" })).toBe(true);
+      expect(await ask(key, { row: true, override: "DENY" })).toBe(false);
+      expect(await ask(key, { row: true })).toBe(true);
+      expect(await ask(key, {})).toBe(false);
+    },
+  );
+
+  // Kept callers (OP-17 sweep): their answers must not move.
+  it("orders_inline_returns (inline-returns.service.ts:185) keeps its default-grant answers", async () => {
+    expect(await ask("orders_inline_returns", { row: true, override: "DENY" })).toBe(false);
+    expect(await ask("orders_inline_returns", { override: "GRANT" })).toBe(true);
+    expect(await ask("orders_inline_returns", { row: true })).toBe(true);
   });
 });

@@ -85,8 +85,8 @@ export async function heldAddonKeys(
 }
 
 /**
- * The pure core of {@link heldAddonKeys}: add-on rows with overrides absolute (GRANT adds, DENY removes; only
- * RequireAddon-gated keys). Shared with the snapshot restore's end-state fleet check
+ * The pure core of {@link heldAddonKeys}: add-on rows with overrides absolute (GRANT adds, DENY removes; a
+ * RequireAddon key under its own name, any other row under its declared `grant.addonKey`). Shared with the snapshot restore's end-state fleet check
  * (`fleetHeldAfterRestore`) so they apply overrides the same way. Not covered: `heldAddonKeys` reads rows
  * through `getActiveAddons` (which adds defaultGranted keys) while the restore reads raw rows, so a fleet
  * key that became `defaultGranted: true` would need the restore to add it too.
@@ -97,9 +97,13 @@ export function applyAddonOverrides(
 ): Set<string> {
   const addons = new Set(active);
   for (const [key, effect] of overrides) {
-    if (gateVia(key) !== "RequireAddon") continue;
-    if (effect === "GRANT") addons.add(key);
-    else addons.delete(key);
+    // A RequireAddon row is held under its own key. Any other row that declares `grant.addonKey`
+    // (flag.msrp -> msrp, flag.sales_agents -> sales_agents, driver_payments) speaks for THAT add-on key, so
+    // an override reaches the installed apps, which read `/tenants/me/addons` (SA-1106 WP8, R15/R16).
+    const addonKey = gateVia(key) === "RequireAddon" ? key : featureDefByKey(key)?.grant.addonKey;
+    if (!addonKey) continue;
+    if (effect === "GRANT") addons.add(addonKey);
+    else addons.delete(addonKey);
   }
   return addons;
 }
