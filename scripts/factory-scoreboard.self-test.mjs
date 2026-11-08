@@ -126,17 +126,43 @@ check(
   w.failedNumbers.includes(102),
   false,
 );
-for (const [limit, status] of [
-  ["15", 1],
-  ["16", 0],
+// merged PRs are paged (no search index); 15 rows reach the floor in 3 pages of 6
+for (const [maxPages, status] of [
+  ["2", 1],
+  ["3", 0],
 ]) {
   const ldir = copyFixture("base");
-  writeFileSync(path.join(ldir, "limit.txt"), `${limit}\n`);
-  const res = run(["--fixture", ldir]);
+  writeFileSync(path.join(ldir, "page-size.txt"), "6\n");
+  writeFileSync(path.join(ldir, "max-pages.txt"), `${maxPages}\n`);
+  const res = run(["--fixture", ldir, "--json"]);
   check(
-    `H3 a query returning exactly the limit (${limit} of 15 rows) ${status ? "fails loudly" : "does not fail when under it"}`,
-    [res.status, status ? /truncated/.test(res.stderr) : /Factory scoreboard/.test(res.stdout)],
-    [status, true],
+    `H3 paging 15 rows by 6 with a cap of ${maxPages} pages ${status ? "fails loudly (truncated)" : "counts the same as one page"}`,
+    status
+      ? [res.status, /truncated/.test(res.stderr)]
+      : [res.status, JSON.parse(res.stdout).verifiedMerges.window.total],
+    status ? [1, true] : [0, 9],
+  );
+}
+
+// 0 merged PRs while origin/master shows PR merges in the window is an input failure, not a count
+{
+  const zdir = copyFixture("base");
+  writeFileSync(path.join(zdir, "gh-prs.json"), "[]\n");
+  const res = run(["--fixture", zdir]);
+  check(
+    "Z1 GitHub lists 0 merged PRs but origin/master has PR merges in the window: exit 1, says why",
+    [res.status, /refusing to report 0/.test(res.stderr), /#108/.test(res.stderr)],
+    [1, true, true],
+  );
+  writeFileSync(
+    path.join(zdir, "git-log.txt"),
+    'aaaa004\t2026-10-12T10:00:00Z\tRevert "fix: bad thing"\naaaa009\t2026-10-20T10:00:00Z\tchore: direct commit\n',
+  );
+  const quiet = run(["--fixture", zdir, "--json"]);
+  check(
+    "Z2 0 merged PRs and no PR merge commits in the window is a real 0",
+    [quiet.status, quiet.status === 0 && JSON.parse(quiet.stdout).verifiedMerges.window.total],
+    [0, 0],
   );
 }
 
