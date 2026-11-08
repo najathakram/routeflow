@@ -67,12 +67,19 @@ describe("TenantsController.getMyAddons — override merge", () => {
     expect(result.addons).toEqual(["recurring_routes"]);
   });
 
-  // Opus review of 8130b204, item 6: only a RequireAddon-gated key belongs in this array — a
-  // flag-namespace override has no addon-consumer to reach here.
-  it("a GRANT override on a non-RequireAddon key (a flag) is never merged in (gateVia filter)", async () => {
-    const { controller } = build([], new Map([["flag.msrp", "GRANT"]]));
+  // Opus review of 8130b204, item 6, narrowed by SA-1106 WP8: a flag-namespace override belongs in this array
+  // only through the add-on key its registry row declares (flag.msrp -> msrp, the name the apps read); a row
+  // that declares none (flag.reports) never does.
+  it("a GRANT on flag.msrp reaches the installed apps as msrp; a flag with no add-on key never does", async () => {
+    const { controller } = build(
+      [],
+      new Map([
+        ["flag.msrp", "GRANT"],
+        ["flag.reports", "GRANT"],
+      ]),
+    );
     const result = await controller.getMyAddons({ tenantId: "t1" } as unknown as JwtPayload);
-    expect(result.addons).toEqual([]);
+    expect(result.addons).toEqual(["msrp"]);
   });
 });
 
@@ -243,12 +250,15 @@ describe("TenantsController.getMyFeatures: fulfilment modes + capabilities.fulfi
     expect(addonService.getActiveAddons).toHaveBeenCalledWith("t9");
   });
 
-  it("a mode-read failure falls back to unset (today), never a 5xx", async () => {
+  // W8-B1062 (SA-1108, supersedes "never a 5xx"): a failed mode read used to answer "unset", which a client
+  // cannot tell from a business that never chose a mode. It is the same 503 as a failed fleet read.
+  it("W8-B1062: a mode-read failure is the 503 FEATURES_UNAVAILABLE, not a silent 'unset'", async () => {
     const { controller, featureConfig } = build({});
     featureConfig.getEffectiveMode.mockRejectedValue(new Error("db blip"));
-    const r = await controller.getMyFeatures(caller);
-    expect(r.modes.fulfilment_model).toBe("unset");
-    expect(r.capabilities.fulfilment.staffDefault).toBe("ROUTE");
+    await expect(controller.getMyFeatures(caller)).rejects.toMatchObject({
+      status: 503,
+      response: expect.objectContaining({ code: "FEATURES_UNAVAILABLE" }),
+    });
   });
 
   it("a failed held-addons read is the existing 503 FEATURES_UNAVAILABLE, never a bare 500", async () => {

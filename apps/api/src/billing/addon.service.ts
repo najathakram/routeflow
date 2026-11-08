@@ -144,17 +144,19 @@ export class AddonService {
   async hasAddon(tenantId: string, addonKey: string): Promise<boolean> {
     // #2188 / SA-385: resolves the add-on whichever way it was keyed (legacy key or SKU).
     const addon = await findAddonRow(this.prisma, tenantId, addonCodeOf(addonKey));
-    // Any key that is not default-granted is decided by its row alone, exactly as before.
+    // SA-1106 WP8 (R18): an override is absolute for EVERY key, in AddonGuard's own order, so a service-level
+    // check never disagrees with the guard in front of it. It is stored under the registry key
+    // (flag.msrp), while callers ask by add-on key (msrp).
+    const override = await this.featureOverrides.get(tenantId, registryKeyForAddonKey(addonKey));
+    if (override === "DENY") return false;
+    if (override === "GRANT") return true;
+    // Any key that is not default-granted is then decided by its row alone, exactly as before.
     if (!DEFAULT_GRANTED_ADDON_FEATURES.some((f) => f.key === addonKey)) {
       return addon?.active === true;
     }
-    // Owner ruling 2026-09-28 / SA-540: effective = (preset ∪ default ∪ grants) − denies, in
-    // AddonGuard's own order, so a service-level check (InlineReturnsService.assertGranted) never
-    // disagrees with the guard in front of it: an override is absolute, then a held row, then
-    // the default rule (isDefaultGrantedAddon).
-    const override = await this.featureOverrides.get(tenantId, addonKey);
-    if (override === "DENY") return false;
-    if (override === "GRANT" || addon?.active === true) return true;
+    // Owner ruling 2026-09-28 / SA-540: effective = (preset ∪ default ∪ grants) − denies: an override,
+    // then a held row, then the default rule (isDefaultGrantedAddon).
+    if (addon?.active === true) return true;
     const rowKeys = await this.activeRowKeys(tenantId);
     return (await this.defaultGrantedKeys(tenantId, rowKeys, [addonKey])).includes(addonKey);
   }

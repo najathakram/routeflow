@@ -328,6 +328,39 @@ try {
     true,
   );
 
+  // M-8 (SA-1106 section 5): the client is compared with STRICT (what clients are meant to show), not with
+  // `old`. A courtesy-served key the client rightly hides is "agree, hidden by design"; drift is a real defect.
+  const hidden = write(
+    "check-drift-hidden.json",
+    one({
+      "flag.reports": bits({
+        old: true,
+        effective: true,
+        strict: false,
+        courtesy: true,
+        clientFlag: false,
+      }),
+      ocr: bits({
+        old: true,
+        effective: true,
+        strict: false,
+        courtesy: true,
+        clientFlag: null,
+        clientAddon: false,
+      }),
+      "flag.estimates": bits({ strict: true, clientFlag: false }),
+    }),
+  );
+  const hiddenRun = run(["--check", hidden]);
+  check("M-8: a courtesy key the client hides is not drift; a real miss is", hiddenRun.status, 0);
+  check(
+    "M-8: only the key where client != strict is listed",
+    /CLIENT-DRIFT h-0001 flag.estimates clientFlag=false/.test(hiddenRun.stdout) &&
+      !/CLIENT-DRIFT h-0001 flag.reports/.test(hiddenRun.stdout) &&
+      !/CLIENT-DRIFT h-0001 ocr/.test(hiddenRun.stdout),
+    true,
+  );
+
   const live = run([
     "--check",
     write("check-live.json", withEnv(one({ k: bits({ courtesy: false }) }), { mode: "live" })),

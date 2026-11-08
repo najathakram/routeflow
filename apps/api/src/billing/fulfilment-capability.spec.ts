@@ -1,4 +1,5 @@
-import { deriveFulfilmentCapability } from "./fulfilment-capability";
+import { applyAddonOverrides, deriveFulfilmentCapability } from "./fulfilment-capability";
+import { FEATURE_REGISTRY } from "./feature-registry";
 import { FULFILMENT_MODE_VALUES, COUNTER_SALES_MODE_VALUES } from "@routeflow/types";
 
 const derive = (mode: string, counterSales: string, fleet: boolean) =>
@@ -83,5 +84,46 @@ describe("deriveFulfilmentCapability — the one capability answer", () => {
       expect(derive("delivery", "unset", fleet).methods).not.toContain("SHIP");
       expect(derive("unset", "unset", fleet).staffDefault).toBe("ROUTE");
     }
+  });
+});
+
+// SA-1106 WP8 (T15/T16): `/me/addons` is the held rows with overrides absolute, and an override on a row that
+// declares `grant.addonKey` (flag.msrp -> msrp, flag.sales_agents -> sales_agents, driver_payments) speaks for
+// that add-on key too, so the installed apps (which read /me/addons) see what the console set.
+describe("applyAddonOverrides: an override reaches the add-on key its row declares (WP8)", () => {
+  const withKey = FEATURE_REGISTRY.filter((f) => f.grant.override && f.grant.addonKey);
+
+  it("a GRANT on a plan-flag or guard row adds its legacy add-on key; a DENY removes it", () => {
+    expect([...applyAddonOverrides([], [["flag.msrp", "GRANT"]])]).toEqual(["msrp"]);
+    expect([...applyAddonOverrides([], [["flag.sales_agents", "GRANT"]])]).toEqual([
+      "sales_agents",
+    ]);
+    expect([...applyAddonOverrides([], [["driver_payments", "GRANT"]])]).toEqual([
+      "driver_payments",
+    ]);
+    expect([...applyAddonOverrides(["msrp", "recurring_routes"], [["flag.msrp", "DENY"]])]).toEqual(
+      ["recurring_routes"],
+    );
+  });
+
+  it.each(withKey.map((f) => [f.key, f.grant.addonKey as string]))(
+    "%s: GRANT adds %s, DENY removes it (every override row that declares an add-on key)",
+    (key, addonKey) => {
+      expect(applyAddonOverrides([], [[key, "GRANT"]]).has(addonKey)).toBe(true);
+      expect(applyAddonOverrides([addonKey], [[key, "DENY"]]).has(addonKey)).toBe(false);
+    },
+  );
+
+  it("a row with no add-on key adds nothing, an ocr GRANT still enters (RequireAddon), an unknown key is ignored", () => {
+    expect([...applyAddonOverrides([], [["flag.reports", "GRANT"]])]).toEqual([]);
+    expect([...applyAddonOverrides([], [["ocr", "GRANT"]])]).toEqual(["ocr"]);
+    expect([...applyAddonOverrides(["x"], [["no.such.key", "DENY"]])]).toEqual(["x"]);
+  });
+
+  it("no override leaves the held rows untouched (a business with no override never moves)", () => {
+    expect([...applyAddonOverrides(["msrp", "tobacco_dealer"], [])]).toEqual([
+      "msrp",
+      "tobacco_dealer",
+    ]);
   });
 });
