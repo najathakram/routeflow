@@ -419,7 +419,7 @@ function OverviewTab({
         ))}
       </div>
 
-      <AdminCard title="Tenant info" className="min-w-0 lg:col-span-2">
+      <AdminCard title="Business info" className="min-w-0 lg:col-span-2">
         <dl className="grid grid-cols-1 gap-x-8 gap-y-2.5 text-sm sm:grid-cols-2">
           {[
             [

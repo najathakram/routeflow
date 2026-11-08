@@ -871,10 +871,10 @@ describe("SA-3: the Readiness card on Overview", () => {
     capabilitiesValue = capabilitiesFixture({ counter: true, counterCapability: "always" });
   });
 
-  it("is the first card, above Tenant info, and the fix anchors exist", async () => {
+  it("is the first card, above Business info, and the fix anchors exist", async () => {
     const { container } = render(<TenantDetailPage />);
     const heading = await screen.findByRole("heading", { name: "Ready to take a sale?" });
-    const info = await screen.findByRole("heading", { name: "Tenant info" });
+    const info = await screen.findByRole("heading", { name: "Business info" });
     expect(heading.compareDocumentPosition(info) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(container.querySelector("#admin-account")).toBeNull(); // the admin card lives on Business details
   });
@@ -952,11 +952,11 @@ describe("BO-08: the Overview and Billing grids fit a narrow screen", () => {
       },
     ];
     render(<TenantDetailPage />);
-    const grid = (await screen.findByRole("heading", { name: "Tenant info" })).closest(
+    const grid = (await screen.findByRole("heading", { name: "Business info" })).closest(
       "div.grid",
     ) as HTMLElement;
     expect(grid).toHaveClass("grid-cols-1", "lg:grid-cols-2");
-    for (const title of ["Tenant info", "Recent audit logs"]) {
+    for (const title of ["Business info", "Recent audit logs"]) {
       const card = cardOf(title);
       expect(card.parentElement).toBe(grid);
       expect(card).toHaveClass("min-w-0");
@@ -1183,7 +1183,7 @@ describe("R33: every row of the owner's list has a home", () => {
     ]) {
       expect(within(numbers).getAllByText(label)).toHaveLength(1);
     }
-    const info = screen.getByRole("heading", { name: "Tenant info" }).closest("div.rounded-xl")!;
+    const info = screen.getByRole("heading", { name: "Business info" }).closest("div.rounded-xl")!;
     for (const label of ["Slug", "Business Name", "Plan", "Status", "Created", "Trial Ends"]) {
       expect(within(info as HTMLElement).getByText(label)).toBeInTheDocument();
     }
