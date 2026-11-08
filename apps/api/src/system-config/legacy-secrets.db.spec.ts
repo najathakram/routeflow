@@ -17,6 +17,7 @@ const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs")
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const core = require("../../scripts/lib/legacy-secrets-core.cjs");
 
+type Ref = { table: string; id: string; tenantId: string | null; key: string };
 const RUN = randomUUID().slice(0, 8);
 const PLAIN_SMTP = "smtp-pass-PLAINTEXT-1111";
 const PLAIN_ANTHROPIC = "sk-ant-api03-PLAINPLAINPLAINPLAINPLAINPLAIN2222";
@@ -78,8 +79,7 @@ describeDb("encrypt-legacy-secrets core (AI limits PR-2)", () => {
         key,
       ])
     ).rows[0]?.value as string;
-  const mine = <T extends { tenantId: string | null }>(refs: T[]) =>
-    refs.filter((r) => r.tenantId && tenantIds.includes(r.tenantId));
+  const mine = (refs: Ref[]) => refs.filter((r) => r.tenantId && tenantIds.includes(r.tenantId));
 
   it("L-1: it finds exactly the plaintext secret rows, by reference, never reading a value", async () => {
     const t = await makeTenant(1);
