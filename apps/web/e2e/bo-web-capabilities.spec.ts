@@ -244,7 +244,7 @@ async function gotoSetup(page: Page): Promise<{ writes: string[] }> {
     fulfillJson(route, PREVIEW),
   );
 
-  await page.goto(`/admin/tenants/${TENANT_ID}?tab=setup`);
+  await page.goto(`/admin/tenants/${TENANT_ID}?tab=features`);
   await expect(page.getByRole("group", { name: "What this business does" })).toBeVisible({
     timeout: 15_000,
   });

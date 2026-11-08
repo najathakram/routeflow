@@ -1,6 +1,6 @@
 /**
  * Feature grants v2 (PR-2) — the data-driven Feature Console inside the platform-admin tenant
- * detail page's "Setup" tab (/admin/tenants/[id]). Every endpoint is MOCKED (same
+ * detail page's "Features" tab (/admin/tenants/[id]). Every endpoint is MOCKED (same
  * pattern as apps/web/e2e/48-feature-overrides.spec.ts's mockTenantShell/fulfillJson) — brief
  * A's real endpoints exist now (schema + contract landed), but this suite still mocks them so it
  * runs standalone against `npm run dev -w apps/web` without a live DB; it becomes a real-backend
@@ -394,7 +394,7 @@ async function gotoFeatureConsole(page: Page) {
     window.localStorage.setItem("superAdminToken", token);
   }, fakeSuperAdminToken());
   await page.goto(`/admin/tenants/${TENANT_ID}`);
-  await page.getByRole("button", { name: "Setup", exact: true }).click();
+  await page.getByRole("button", { name: "Features", exact: true }).click();
   // NOT getByText("compliance") — the legacy AVAILABLE_ADDONS card "Regulated compliance pack"
   // (name + description) also contains that substring, a strict-mode collision. The console's
   // own area heading is an exact-text <h3>, unique from that card's copy.
@@ -424,7 +424,7 @@ for (const vp of VIEWPORTS) {
         window.localStorage.setItem("superAdminToken", token);
       }, fakeSuperAdminToken());
       await page.goto(`/admin/tenants/${TENANT_ID}`);
-      await page.getByRole("button", { name: "Setup", exact: true }).click();
+      await page.getByRole("button", { name: "Features", exact: true }).click();
       await expect(page.getByText("No features are registered yet.")).toBeVisible();
     });
 
@@ -492,7 +492,7 @@ for (const vp of VIEWPORTS) {
         window.localStorage.setItem("superAdminToken", token);
       }, fakeSuperAdminToken());
       await page.goto(`/admin/tenants/${TENANT_ID}`);
-      await page.getByRole("button", { name: "Setup", exact: true }).click();
+      await page.getByRole("button", { name: "Features", exact: true }).click();
       await expect(page.getByText("Could not load the feature console. Try again.")).toBeVisible();
     });
   });

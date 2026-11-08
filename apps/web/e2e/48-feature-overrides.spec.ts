@@ -198,7 +198,7 @@ async function gotoOverridesSection(page: Page) {
     window.localStorage.setItem("superAdminToken", token);
   }, fakeSuperAdminToken());
   await page.goto(`/admin/tenants/${TENANT_ID}`);
-  await page.getByRole("button", { name: "Setup", exact: true }).click();
+  await page.getByRole("button", { name: "Features", exact: true }).click();
   // NOT `getByRole("heading", {name: "Overrides"})` — the tenant fixture's own name ("E2E
   // Feature Overrides Tenant") contains that substring too, via the page's <h1>, so an
   // unqualified substring match on "Overrides" is satisfied by that H1 alone and never

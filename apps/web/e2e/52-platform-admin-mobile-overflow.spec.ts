@@ -195,10 +195,10 @@ for (const vp of VIEWPORTS) {
       // never clicks into these. Click each and re-assert, proving the fix
       // holds under the exact interaction that exposed the bug.
       const tabs = [
-        { name: "Billing & subscription", shot: "tenant-detail-billing" },
-        { name: "Setup", shot: "tenant-detail-addons" },
-        { name: "Configuration", shot: "tenant-detail-config" },
-        { name: "Audit Log", shot: "tenant-detail-audit" },
+        { name: "Features", shot: "tenant-detail-addons" },
+        { name: "Plan & billing", shot: "tenant-detail-billing" },
+        { name: "Business details", shot: "tenant-detail-config" },
+        { name: "History", shot: "tenant-detail-audit" },
       ];
       for (const tab of tabs) {
         await page.getByRole("button", { name: tab.name }).click();

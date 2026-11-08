@@ -117,7 +117,7 @@ test.describe("Feature Console source chips on the real API (SA-963 A-1)", () =>
       });
 
       await page.goto(`/admin/tenants/${tenantId}`);
-      await page.getByRole("button", { name: "Setup", exact: true }).click();
+      await page.getByRole("button", { name: "Features", exact: true }).click();
       const row = (key: string) => page.locator(`[data-feature-key="${key}"]`);
       const open = async (key: string) => {
         await row(key)

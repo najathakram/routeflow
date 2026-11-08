@@ -400,7 +400,7 @@ describe("SA-2 chain and partial failure", () => {
     );
     expect(screen.getByRole("link", { name: "Open Acme" })).toHaveAttribute(
       "href",
-      "/admin/tenants/t1?tab=setup",
+      "/admin/tenants/t1?tab=features",
     );
   });
 
