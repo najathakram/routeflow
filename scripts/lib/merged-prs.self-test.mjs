@@ -174,6 +174,24 @@ check(
     ],
     [true, true, true],
   );
+  {
+    const nested = mergedPrsQuery(
+      "number mergeCommit { oid } commits(last: 100) { nodes { commit { oid committedDate } } }",
+    );
+    const nodes = nested.match(/nodes \{(.*)\}\s*\}\s*\}\s*\}$/s)?.[1] ?? "";
+    check(
+      "G3b nested selections survive whole; base fields are added once",
+      [
+        nodes.includes(
+          "mergeCommit { oid } commits(last: 100) { nodes { commit { oid committedDate } } }",
+        ),
+        (nested.match(/\bnumber\b/g) ?? []).length,
+        /mergedAt/.test(nested) && /updatedAt/.test(nested),
+        (nested.match(/\{/g) ?? []).length === (nested.match(/\}/g) ?? []).length,
+      ],
+      [true, 1, true, true],
+    );
+  }
   check(
     "G4 owner/name/first passed as variables; page 1 has no cursor",
     [

@@ -3,13 +3,31 @@
 // Runs the script against scripts/fixtures/landing-telemetry/base (gh PRs, board comments and a fake transcript dir),
 // so no gh, git or network is touched and nothing is written.
 import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { latestByPr, reviewOf, reworkOf, routeOf, verdictOf } from "./landing-telemetry.mjs";
+import {
+  costFor,
+  costWindow,
+  expectedTrainMembers,
+  fromGraphql,
+  latestByPr,
+  membersFields,
+  reviewOf,
+  reworkOf,
+  routeOf,
+  trainMembers,
+  transcriptDirsFor,
+  verdictOf,
+} from "./landing-telemetry.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(HERE, "landing-telemetry.mjs");
 const FIX = path.join(HERE, "fixtures", "landing-telemetry", "base");
+const TRAIN_FIX = path.join(HERE, "fixtures", "landing-telemetry", "train");
+const RACE_FIX = path.join(HERE, "fixtures", "landing-telemetry", "train-race");
+const MISSING_FIX = path.join(HERE, "fixtures", "landing-telemetry", "train-missing");
 
 let failures = 0;
 let passed = 0;
@@ -289,6 +307,237 @@ check(
     latestByPr([{ pr: 8, computedAt: "x", costUsd: null }])[0].costUsd ?? null,
     null,
   );
+}
+
+// Train rows carry their members' review and cost (members found by git, never by title).
+const MEMBER_KEYS = [
+  "members",
+  "membersBasis",
+  "membersReviewRounds",
+  "membersCostUsd",
+  "membersCosted",
+  "membersLines",
+];
+{
+  const t = run(["--since", "2026-10-20", "--fixture", TRAIN_FIX, "--json"]);
+  check("T0 train fixture run exits 0", t.status, 0);
+  const trows = JSON.parse(t.stdout || "[]");
+  const tr = (n) => trows.find((r) => r.pr === n);
+  check("T1 a train row lists exactly its two members and sums them", pick(tr(210), MEMBER_KEYS), {
+    members: [211, 212],
+    membersBasis: "git",
+    membersReviewRounds: 3,
+    membersCostUsd: 0.306,
+    membersCosted: 2,
+    membersLines: 170,
+  });
+  check(
+    "T1b the train's own review and cost keep their own meaning (nothing double counted)",
+    pick(tr(210), ["reviewRounds", "costUsd", "lines"]),
+    { reviewRounds: null, costUsd: null, lines: 450 },
+  );
+  check(
+    "T2 an uncosted member leaves the other member's cost; a member without a verdict adds no rounds",
+    pick(tr(220), MEMBER_KEYS),
+    {
+      members: [221, 222],
+      membersBasis: "git",
+      membersReviewRounds: 1,
+      membersCostUsd: 0.102,
+      membersCosted: 1,
+      membersLines: 90,
+    },
+  );
+  check(
+    "T2b nothing known about the members: null, never 0",
+    membersFields([
+      { pr: 5, reviewRounds: null, costUsd: null, lines: 7 },
+      { pr: 4, reviewRounds: null, costUsd: null, lines: 3 },
+    ]),
+    {
+      members: [4, 5],
+      membersBasis: "git",
+      membersReviewRounds: null,
+      membersCostUsd: null,
+      membersCosted: 0,
+      membersLines: 10,
+    },
+  );
+  check("T2c a train with no members: [] and null sums", membersFields([]), {
+    members: [],
+    membersBasis: "git",
+    membersReviewRounds: null,
+    membersCostUsd: null,
+    membersCosted: 0,
+    membersLines: 0,
+  });
+  check(
+    "T4 a non-train row has members null (and a PR outside the sha set is no member)",
+    [pick(tr(230), MEMBER_KEYS), tr(211)?.members, tr(230)?.route],
+    [
+      {
+        members: null,
+        membersBasis: "none",
+        membersReviewRounds: null,
+        membersCostUsd: null,
+        membersCosted: null,
+        membersLines: null,
+      },
+      null,
+      null,
+    ],
+  );
+  const p = run(["--pr", "210", "--fixture", TRAIN_FIX, "--json"]);
+  check("T3 --pr <train> exits 0", p.status, 0);
+  const prows = JSON.parse(p.stdout || "[]");
+  check(
+    "T3 --pr <train> emits rows for the train and both members, no others",
+    prows.map((r) => r.pr),
+    [210, 211, 212],
+  );
+  check(
+    "T3b the member rows carry their own review and cost",
+    prows.slice(1).map((r) => [r.reviewRounds, r.costUsd]),
+    [
+      [2, 0.102],
+      [1, 0.204],
+    ],
+  );
+  check(
+    "T3c the train row from --pr equals the one from --since",
+    prows[0],
+    trows.find((r) => r.pr === 210),
+  );
+  const none = run(["--pr", "230", "--fixture", TRAIN_FIX, "--json"]);
+  check(
+    "T3d --pr <non-train> emits just that row",
+    JSON.parse(none.stdout || "[]").map((r) => r.pr),
+    [230],
+  );
+}
+check(
+  "T4b trainMembers: candidates whose merge commit is in the set, never the train itself",
+  trainMembers(
+    { number: 1, mergeCommit: { oid: "t" } },
+    ["t", "a", "b"].map((sha) => ({ sha })),
+    [
+      { number: 1, mergeCommit: { oid: "t" } },
+      { number: 9, mergeCommit: { oid: "a" } },
+      { number: 3, mergeCommit: { oid: "b" } },
+      { number: 4, mergeCommit: { oid: "z" } },
+      { number: 5 },
+    ],
+  ).map((p) => p.number),
+  [9, 3],
+);
+{
+  const r = run(["--pr", "310", "--fixture", MISSING_FIX, "--json"]);
+  check(
+    "T6 a train with no merge list exits 1, says a source failed and prints no rows",
+    [r.status, /a source failed, nothing written/.test(r.stderr), r.stdout.trim()],
+    [1, true, ""],
+  );
+}
+{
+  // T7: GitHub marks a train's members merged a moment after the train; a member the train's own subjects name
+  // but the candidate list lacks must fail the run, never write a train row with a short member list.
+  const r = run(["--pr", "210", "--fixture", RACE_FIX, "--dry-run", "--json"]);
+  check(
+    "T7 a train whose named member is not yet merged exits non-zero, names it and prints no rows",
+    [r.status !== 0, /#212/.test(r.stderr), /--since/.test(r.stderr), r.stdout.trim()],
+    [true, true, true, ""],
+  );
+  const ok = run(["--pr", "210", "--fixture", TRAIN_FIX, "--json"]);
+  check(
+    "T7b the train fixture with subjects on its rev-list lines keeps the same members",
+    JSON.parse(ok.stdout || "[]")[0]?.members,
+    [211, 212],
+  );
+  const un = run(["--pr", "212", "--fixture", RACE_FIX, "--json"]);
+  check(
+    "T7c --pr <an unmerged PR> writes no row",
+    [un.status, JSON.parse(un.stdout || "null")],
+    [0, []],
+  );
+}
+check(
+  "T7d expectedTrainMembers reads only the chore(train): merge #N subjects",
+  expectedTrainMembers([
+    { sha: "a", subject: "chore(train): merge #4228 8f73cf3880 into s1 sweep train" },
+    { sha: "b", subject: "Merge master into PR" },
+    { sha: "c", subject: "Merge branch 'x' (re-merge of #4209)" },
+    { sha: "d", subject: "chore(train): merge #4209 abc into s1 sweep train" },
+    { sha: "e", subject: "" },
+    { sha: "f" },
+  ]),
+  [4209, 4228],
+);
+{
+  // T5: the GraphQL shape (commits { nodes { commit } }) reads the same as the gh shape.
+  const commit = {
+    oid: "c1",
+    authoredDate: "2026-10-19T20:00:00Z",
+    committedDate: "2026-10-19T20:05:00Z",
+    messageHeadline: "fix: b",
+    messageBody: "Factory-Route: bug-swarm\nRework-Of: #3740",
+  };
+  const ghShape = {
+    number: 101,
+    title: "fix(api): swarm batch 7",
+    headRefName: "swarm/run-7",
+    createdAt: "2026-10-20T00:00:00Z",
+    mergedAt: "2026-10-27T10:00:00Z",
+    mergeCommit: { oid: "aaaa" },
+    additions: 300,
+    deletions: 20,
+    changedFiles: 6,
+    body: "Batch.",
+    commits: [commit],
+  };
+  const { commits, ...rest } = ghShape;
+  const node = { ...rest, updatedAt: "2026-10-27T10:00:00Z", commits: { nodes: [{ commit }] } };
+  const mapped = fromGraphql(node);
+  check("T5 fromGraphql flattens commits to the gh shape", mapped.commits, [commit]);
+  check(
+    "T5b trailerOf (via routeOf, reworkOf) and costWindow read the same values from both shapes",
+    [routeOf(mapped), reworkOf(mapped), costWindow(mapped)],
+    [routeOf(ghShape), reworkOf(ghShape), costWindow(ghShape)],
+  );
+  check("T5c a node with no commits maps to []", fromGraphql({ number: 1 }).commits, []);
+  check("T5d an already-flat gh shape passes through", fromGraphql(ghShape).commits, [commit]);
+}
+{
+  // T8: lanes run in worktrees, so their transcripts sit in `<main>--claude-worktrees-<name>` folders.
+  const projects = mkdtempSync(path.join(os.tmpdir(), "lt-projects-"));
+  for (const n of [
+    "C--repo-routeflow",
+    "C--repo-routeflow--claude-worktrees-lane-a",
+    "C--repo-routeflow-other",
+    "C--repo-routeflowx--claude-worktrees-b",
+  ])
+    mkdirSync(path.join(projects, n));
+  check(
+    "T8 transcriptDirsFor: the main checkout's folder and each worktree's, never a look-alike",
+    transcriptDirsFor("C:\\repo\\routeflow", projects).map((d) => path.basename(d)),
+    ["C--repo-routeflow", "C--repo-routeflow--claude-worktrees-lane-a"],
+  );
+  check(
+    "T8a no projects folder is no folders",
+    transcriptDirsFor("C:\\repo\\routeflow", path.join(projects, "nope")),
+    [],
+  );
+  const prs = JSON.parse(readFileSync(path.join(TRAIN_FIX, "gh-prs.json"), "utf8"));
+  const member = prs.find((p) => p.number === 211);
+  const one = await costFor(member, { transcriptDir: path.join(TRAIN_FIX, "transcripts") });
+  const many = await costFor(member, {
+    transcriptDir: [path.join(projects, "C--repo-routeflow"), path.join(TRAIN_FIX, "transcripts")],
+  });
+  check(
+    "T8b costFor reads every folder given: a PR whose transcripts are only in the worktree's folder is costed",
+    [many?.costUsd, many?.costUsd === one?.costUsd],
+    [0.102, true],
+  );
+  rmSync(projects, { recursive: true, force: true });
 }
 
 console.log(`landing-telemetry self-test: ${passed} passed, ${failures} failed`);

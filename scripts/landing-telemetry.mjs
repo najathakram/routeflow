@@ -4,6 +4,7 @@
 // only local-assets/telemetry/landings.jsonl in the MAIN checkout (append-only; readers merge rows per PR with
 // latestByPr: gh facts from the newest row, cost from the newest costed row of each host).
 // Spec: local-assets/handoff/2026-10-28/R1-landing-telemetry-SPEC.md.
+// --since walks GraphQL merged PRs (scripts/lib/merged-prs.mjs), never GitHub search, whose index can answer 0.
 //
 // USAGE
 //   node scripts/landing-telemetry.mjs --pr <n> [--json] [--dry-run]
@@ -24,6 +25,16 @@
 //   costUsd      this host's transcript lines inside [first commit - 2 h, merge + 15 min]: lines on the PR branch ->
 //                "branch", plus subagents whose description (else first prompt) names exactly this PR or branch and
 //                no other PR -> "mention"; none -> null, never 0. A row says which host it saw.
+//   members*     train rows only (route "train"); the review and cost live on the member PRs, so the train row keeps its
+//                own reviewRounds/costUsd and adds the members' beside them, nothing double counted. Members are the
+//                PRs whose mergeCommit is a --no-ff merge inside the train (`git rev-list --merges <oid>^1..<oid>`):
+//                  members              sorted member PR numbers ([] when none); null on a non-train row
+//                  membersBasis         "git"; "none" on a non-train row
+//                  membersReviewRounds  sum of the members' non-null reviewRounds; null when none has one
+//                  membersCostUsd       sum of the members' finite costUsd; null when none is costed, never 0 for unknown
+//                  membersCosted        how many members were costed
+//                  membersLines         sum of the members' lines
+//                Every other member* field is null on a non-train row. `--pr <train>` also emits the member rows.
 import { execFileSync } from "node:child_process";
 import {
   appendFileSync,
@@ -37,6 +48,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { ghMergedPrPages, listMergedPrsSince, pagesFromList } from "./lib/merged-prs.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, "..");
@@ -56,8 +68,14 @@ export const ROUTES = [
 const PR_FIELDS =
   "number,title,headRefName,createdAt,mergedAt,mergeCommit,additions,deletions,changedFiles,body,commits";
 const CMD_TIMEOUT_MS = 120_000;
-const DAY_MS = 86_400_000;
-const PR_LIMIT = 500;
+const PAGE_SIZE = 50;
+const RETRY_MS = 5000;
+const HOUR_MS = 3_600_000;
+// GraphQL node fields that yield the shapes landingRow, costWindow and trailerOf read (see fromGraphql). Commits are
+// capped at the last 100: the HEAD commit (trailers) is always among them, and createdAt still bounds the cost window.
+const GRAPHQL_FIELDS =
+  "number title headRefName createdAt mergedAt additions deletions changedFiles body mergeCommit { oid } " +
+  "commits(last: 100) { nodes { commit { oid authoredDate committedDate messageHeadline messageBody } } }";
 
 class UsageError extends Error {}
 
@@ -212,8 +230,59 @@ export function landingRow(pr, { comments, cost, host, nowIso }) {
     ...reworkOf(pr),
     costUsd: cost?.costUsd ?? null,
     costBasis: cost?.costUsd != null ? cost.basis : "none",
+    // A train row gets these from membersFields once the member rows exist.
+    members: null,
+    membersBasis: "none",
+    membersReviewRounds: null,
+    membersCostUsd: null,
+    membersCosted: null,
+    membersLines: null,
     host,
     computedAt: nowIso,
+  };
+}
+
+/** GraphQL node -> the gh `pr view` shape: commits { nodes { commit } } becomes the flat commit list. */
+export function fromGraphql(node) {
+  const { commits, ...rest } = node;
+  return {
+    ...rest,
+    commits: Array.isArray(commits) ? commits : (commits?.nodes ?? []).map((n) => n.commit),
+  };
+}
+
+/** The member PRs of a train: candidates whose merge commit is one of the merges inside it, never the train itself. */
+export function trainMembers(train, merges, candidates) {
+  const shas = new Set(merges.map((m) => m.sha));
+  return candidates.filter(
+    (c) => c.number !== train.number && c.mergeCommit?.oid != null && shas.has(c.mergeCommit.oid),
+  );
+}
+
+/**
+ * The PR numbers a train's own member merges name (`chore(train): merge #N ...`, the train convention), from the
+ * merges inside it. Re-merges and "Merge master into PR" commits are never expected members.
+ */
+export function expectedTrainMembers(merges) {
+  const nums = merges
+    .map((m) => TRAIN_MERGE.exec(m.subject ?? "")?.[1])
+    .filter(Boolean)
+    .map(Number);
+  return [...new Set(nums)].sort((a, b) => a - b);
+}
+const TRAIN_MERGE = /^chore\(train\): merge #(\d+)\b/;
+
+/** The train row's members* fields from its member rows (see the header). */
+export function membersFields(memberRows) {
+  const sum = (xs) => (xs.length ? Math.round(xs.reduce((s, x) => s + x, 0) * 1e6) / 1e6 : null);
+  const costs = memberRows.map((r) => r.costUsd).filter((c) => Number.isFinite(c));
+  return {
+    members: memberRows.map((r) => r.pr).sort((a, b) => a - b),
+    membersBasis: "git",
+    membersReviewRounds: sum(memberRows.map((r) => r.reviewRounds).filter(Number.isFinite)),
+    membersCostUsd: sum(costs),
+    membersCosted: costs.length,
+    membersLines: memberRows.reduce((s, r) => s + (r.lines ?? 0), 0),
   };
 }
 
@@ -273,9 +342,11 @@ const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** Sum session-usage's own accounting over the transcript lines that belong to the PR. */
 export async function costFor(pr, { transcriptDir }) {
+  // One folder or several: the main checkout's plus each worktree's (transcriptDirsFor).
+  const dirs = [transcriptDir].flat().filter((d) => d && existsSync(d));
   // A literal specifier: scripts-live-target-guard.spec counts a computed import() as a possible DB client.
   const su = await import("../.claude/skills/model-routing/scripts/session-usage.mjs");
-  if (!transcriptDir || !existsSync(transcriptDir)) return null;
+  if (!dirs.length) return null;
   const { table } = su.loadPriceTable({});
   const warnings = [];
   const records = [];
@@ -297,14 +368,15 @@ export async function costFor(pr, { transcriptDir }) {
     (prRe.test(s) || (branchRe?.test(s) ?? false)) &&
     [...prsNamed(s)].every((n) => Number(n) === pr.number);
   const files = [];
-  for (const f of readdirSync(transcriptDir)) {
-    const full = path.join(transcriptDir, f);
-    if (f.endsWith(".jsonl")) files.push({ full, sub: false });
-    const subs = path.join(full, "subagents");
-    if (existsSync(subs))
-      for (const s of readdirSync(subs))
-        if (s.endsWith(".jsonl")) files.push({ full: path.join(subs, s), sub: true });
-  }
+  for (const dir of dirs)
+    for (const f of readdirSync(dir)) {
+      const full = path.join(dir, f);
+      if (f.endsWith(".jsonl")) files.push({ full, sub: false });
+      const subs = path.join(full, "subagents");
+      if (existsSync(subs))
+        for (const s of readdirSync(subs))
+          if (s.endsWith(".jsonl")) files.push({ full: path.join(subs, s), sub: true });
+    }
   for (const { full, sub } of files) {
     // Coarse pre-filter only: a file last written before the window opened holds no line inside it.
     if (statSync(full).mtimeMs < lo) continue;
@@ -372,51 +444,120 @@ function mainCheckoutRoot() {
   }
 }
 
-/** ~/.claude/projects/<encoded main checkout>, as session-usage encodes it. */
-function transcriptDirFor(root) {
-  return root
-    ? path.join(os.homedir(), ".claude", "projects", root.replace(/[^A-Za-z0-9]/g, "-"))
-    : null;
+/**
+ * ~/.claude/projects/<encoded main checkout>, as session-usage encodes it, plus the folder of every worktree under
+ * <root>/.claude/worktrees (encoded `<main>--claude-worktrees-<name>`): lanes run in worktrees, so a PR built in one
+ * has its transcripts there, never in the main checkout's folder. A folder outlives its worktree, so it still counts.
+ */
+export function transcriptDirsFor(root, projects = path.join(os.homedir(), ".claude", "projects")) {
+  if (!root) return [];
+  const main = root.replace(/[^A-Za-z0-9]/g, "-");
+  let names = [];
+  try {
+    names = readdirSync(projects);
+  } catch {
+    return [];
+  }
+  return names
+    .filter((n) => n === main || n.startsWith(`${main}--claude-worktrees-`))
+    .sort()
+    .map((n) => path.join(projects, n));
+}
+
+/**
+ * The merged PRs to write rows for, and each train's member PRs. `src` is the live (gh + git) or fixture source:
+ * { viewPr(n), fetchPage, mergesOf(oid), retries?, wait?(ms) }. --since: every merged PR since the date (members are among them).
+ * --pr: that PR; a train also pulls in its members, found among the PRs merged within an hour before it.
+ * A source that fails throws, so a train never silently gets no members. GitHub marks members merged a few seconds
+ * after the train, and the merge hook runs at once: a member its `chore(train): merge #N` commit names but the list
+ * lacks is re-listed `src.retries` times, `src.wait(ms)` apart, then the run throws (no row; --since back-fills it).
+ */
+export function gatherPrs(opts, src) {
+  const list = (floorMs) =>
+    listMergedPrsSince(floorMs, src.fetchPage, { pageSize: PAGE_SIZE }).map(fromGraphql);
+  const found = opts.pr ? [src.viewPr(opts.pr)] : list(Date.parse(opts.since));
+  const prs = found.filter((p) => p.mergedAt);
+  const membersOf = new Map();
+  let candidates = opts.pr ? null : prs;
+  for (const train of prs.filter((p) => routeOf(p).route === "train")) {
+    const oid = train.mergeCommit?.oid;
+    if (!oid) throw new Error(`train #${train.number} has no merge commit`);
+    const merges = src.mergesOf(oid);
+    const expected = expectedTrainMembers(merges);
+    const floor = Date.parse(train.mergedAt) - HOUR_MS;
+    candidates ??= list(floor);
+    let members = trainMembers(train, merges, candidates);
+    const missing = () => expected.filter((n) => !members.some((m) => m.number === n));
+    for (let i = 0; missing().length && i < (src.retries ?? 0); i++) {
+      src.wait?.(RETRY_MS);
+      candidates = list(floor);
+      members = trainMembers(train, merges, candidates);
+    }
+    if (missing().length) {
+      throw new Error(
+        `train #${train.number}: member merge(s) ${missing()
+          .map((n) => `#${n}`)
+          .join(", ")} not marked merged on GitHub yet; ` +
+          "no row written (it would undercount). Re-run with --since to back-fill it.",
+      );
+    }
+    membersOf.set(train.number, members);
+  }
+  const all = new Map(prs.map((p) => [p.number, p]));
+  for (const members of membersOf.values()) for (const m of members) all.set(m.number, m);
+  // The named PR first (--pr), then by number: a stable order whatever order the walk returned.
+  const rank = (p) => (p.number === opts.pr ? 0 : 1);
+  const ordered = [...all.values()].sort((a, b) => rank(a) - rank(b) || a.number - b.number);
+  return { prs: ordered, membersOf };
+}
+
+/** Merge commits inside a train as {sha, subject} (`git log --merges <oid>^1..<oid>`), fetching the commit once if missing. */
+function liveMerges(oid) {
+  const have = () => {
+    try {
+      run("git", ["cat-file", "-e", `${oid}^{commit}`]);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (!have()) {
+    try {
+      run("git", ["fetch", "-q", "origin", oid]);
+    } catch {
+      /* named below */
+    }
+    if (!have())
+      throw new Error(`git: commit ${oid} is not available locally and could not be fetched`);
+  }
+  return parseMerges(run("git", ["log", "--merges", "--format=%H %s", `${oid}^1..${oid}`]), oid);
+}
+
+/** "<sha> <subject>" lines (a bare sha is fine) -> [{sha, subject}], without the train's own merge. */
+export function parseMerges(text, oid) {
+  return String(text)
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => {
+      const at = l.indexOf(" ");
+      return at < 0 ? { sha: l, subject: "" } : { sha: l.slice(0, at), subject: l.slice(at + 1) };
+    })
+    .filter((m) => m.sha !== oid);
 }
 
 function liveInputs(opts) {
-  const prs = [];
-  if (opts.pr)
-    prs.push(
+  const { prs, membersOf } = gatherPrs(opts, {
+    viewPr: (n) =>
       JSON.parse(
-        run("gh", ["pr", "view", String(opts.pr), "-R", GH_REPO, "--json", `${PR_FIELDS},state`]),
+        run("gh", ["pr", "view", String(n), "-R", GH_REPO, "--json", `${PR_FIELDS},state`]),
       ),
-    );
-  else {
-    for (let start = Date.parse(opts.since); start < Date.now(); start += 7 * DAY_MS) {
-      const a = new Date(start).toISOString().slice(0, 10);
-      const b = new Date(Math.min(start + 7 * DAY_MS, Date.now() + DAY_MS))
-        .toISOString()
-        .slice(0, 10);
-      const slice = JSON.parse(
-        run("gh", [
-          "pr",
-          "list",
-          "-R",
-          GH_REPO,
-          "--state",
-          "merged",
-          "--search",
-          `merged:${a}..${b}`,
-          "--limit",
-          String(PR_LIMIT),
-          "--json",
-          PR_FIELDS,
-        ]),
-      );
-      if (slice.length >= PR_LIMIT)
-        throw new Error(`gh: slice ${a}..${b} hit the ${PR_LIMIT} limit`);
-      prs.push(...slice);
-    }
-  }
-  // `merged:a..b` is inclusive, so a PR merged on a slice boundary comes back twice.
-  const merged = [...new Map(prs.filter((p) => p.mergedAt).map((p) => [p.number, p])).values()];
-  const oldest = merged.map((p) => p.createdAt).sort()[0];
+    fetchPage: ghMergedPrPages((args) => run("gh", args), GH_REPO, GRAPHQL_FIELDS),
+    mergesOf: liveMerges,
+    retries: 3,
+    wait: (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
+  });
+  const oldest = prs.map((p) => p.createdAt).sort()[0];
   const comments = oldest
     ? JSON.parse(
         run("gh", [
@@ -428,17 +569,33 @@ function liveInputs(opts) {
       ).flat()
     : [];
   return {
-    prs: merged,
+    prs,
+    membersOf,
     comments,
-    transcriptDir: transcriptDirFor(mainCheckoutRoot()),
+    transcriptDir: transcriptDirsFor(mainCheckoutRoot()),
     nowIso: new Date().toISOString(),
   };
 }
 
-function fixtureInputs(dir) {
+function fixtureInputs(dir, opts) {
   const read = (f) => JSON.parse(readFileSync(path.join(dir, f), "utf8"));
+  const all = read("gh-prs.json");
+  const { prs, membersOf } = gatherPrs(opts, {
+    viewPr: (n) => {
+      const pr = all.find((p) => p.number === n);
+      if (!pr) throw new Error(`fixture has no PR #${n}`);
+      return pr;
+    },
+    fetchPage: pagesFromList(all.filter((p) => p.mergedAt)),
+    mergesOf: (oid) => {
+      const file = path.join(dir, "rev-list", `${oid}.txt`);
+      if (!existsSync(file)) throw new Error(`fixture has no rev-list/${oid}.txt`);
+      return parseMerges(readFileSync(file, "utf8"), oid);
+    },
+  });
   return {
-    prs: read("gh-prs.json").filter((p) => p.mergedAt),
+    prs,
+    membersOf,
     comments: read("board-comments.json"),
     transcriptDir: path.join(dir, "transcripts"),
     nowIso: readFileSync(path.join(dir, "now.txt"), "utf8").trim(),
@@ -472,7 +629,7 @@ export async function main(argv) {
   }
   let inputs;
   try {
-    inputs = opts.fixture ? fixtureInputs(opts.fixture) : liveInputs(opts);
+    inputs = opts.fixture ? fixtureInputs(opts.fixture, opts) : liveInputs(opts);
   } catch (e) {
     console.error(
       `landing-telemetry: a source failed, nothing written: ${e.message.split("\n")[0]}`,
@@ -486,6 +643,10 @@ export async function main(argv) {
       const cost = await costFor(pr, { transcriptDir: inputs.transcriptDir });
       rows.push(landingRow(pr, { comments: inputs.comments, cost, host, nowIso: inputs.nowIso }));
     }
+    // A train row adds its members' review and cost (computed above) beside its own.
+    const rowOf = new Map(rows.map((r) => [r.pr, r]));
+    for (const [train, members] of inputs.membersOf)
+      Object.assign(rowOf.get(train), membersFields(members.map((m) => rowOf.get(m.number))));
   } catch (e) {
     console.error(
       `landing-telemetry: cost source (session-usage / transcripts) failed, nothing written: ${String(e?.message ?? e).split("\n")[0]}`,
