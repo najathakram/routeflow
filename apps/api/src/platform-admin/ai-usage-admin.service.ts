@@ -8,6 +8,8 @@ import {
   utcMonthStart,
 } from "./platform-config.service";
 
+const WHOLE_PERCENT = 100;
+
 export interface AiUsageByBusinessRow {
   tenantId: string;
   name: string;
@@ -88,7 +90,7 @@ export class AiUsageAdminService {
           calls: used.calls,
           spendUsd: roundMoney(used.spend),
           capUsd,
-          percentUsed: capUsd > 0 ? Math.round((used.spend / capUsd) * 100) : null,
+          percentUsed: capUsd > 0 ? Math.round((used.spend * WHOLE_PERCENT) / capUsd) : null,
           aiOff: capUsd === 0,
         };
       })
