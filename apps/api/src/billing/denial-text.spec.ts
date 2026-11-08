@@ -3,6 +3,7 @@
  * and no plan key (plans appear by display name), at ALL FOUR refusal seats. The wire fields are not touched.
  */
 import { buildPlanGateBody } from "./plan-gate";
+import { buildPlanFlagDenial } from "./plan-flag-denial";
 import { denialText, planDisplayName } from "./denial-text";
 import { FEATURE_REGISTRY } from "./feature-registry";
 import {
@@ -37,19 +38,19 @@ function expectNoRawKey(message: string): void {
 describe("denialText: the one builder", () => {
   it("override-only key: Ask RouteFlow", () => {
     expect(denialText({ keys: ["email.connected_mailbox"] })).toMatch(
-      /Ask RouteFlow to turn it on\.$/,
+      /ask RouteFlow to turn this on\.$/,
     );
   });
 
   it("a key only RouteFlow can turn on (an admin-only add-on): Ask RouteFlow, never Billing (F1)", () => {
     expect(denialText({ keys: ["tobacco_dealer"] })).toBe(
-      "Regulated tobacco dealer program isn't turned on for your account. Ask RouteFlow to turn it on.",
+      "To use Regulated tobacco dealer program, ask RouteFlow to turn this on.",
     );
   });
 
   it("a self-serve add-on a business can buy itself: Add it in Billing (F1)", () => {
     expect(denialText({ keys: ["flag.forecasting"] })).toBe(
-      "Inventory forecasting is an add-on. Add it in Billing.",
+      "To use Inventory forecasting, add it in Billing.",
     );
   });
 
@@ -71,7 +72,7 @@ describe("denialText: the one builder", () => {
 
   it("a plan that includes it: the plan's display name", () => {
     expect(denialText({ keys: ["flag.reports"], planKey: "SCALE" })).toContain(
-      "comes with the Scale plan and higher.",
+      "Included with the Scale plan and higher: Bookkeeping reports.",
     );
     expect(planDisplayName("LITE")).toBe("Lite");
     expect(planDisplayName("custom_acme")).toBeUndefined();
@@ -79,9 +80,7 @@ describe("denialText: the one builder", () => {
 
   it("W9a-ocr (SA-1107): a refused LITE business is told Ask RouteFlow, never Included, never Billing", () => {
     const text = denialText({ keys: ["ocr"] });
-    expect(text).toBe(
-      "Bill scanning isn't turned on for your account. Ask RouteFlow to turn it on.",
-    );
+    expect(text).toBe("To use Bill scanning, ask RouteFlow to turn this on.");
     expect(text).not.toMatch(/Included|included|comes with|Billing/);
   });
 
@@ -122,15 +121,15 @@ describe("T19 (amended): no refusal message names a key, a SKU code or a plan ke
     });
     // F1: MSRP is admin-only, so the offered SKU is not a Billing step; the wire state is unchanged.
     expect(body.message).not.toContain("Billing");
-    expect(body.message).toBe("MSRP pricing comes with the Scale plan and higher.");
+    expect(body.message).toBe("Included with the Scale plan and higher: MSRP pricing.");
     expect(buildPlanGateBody("flag.msrp", { ...upgrade, planKey: null }).message).toContain(
-      "Ask RouteFlow",
+      "ask RouteFlow",
     );
     const buyable = buildPlanGateBody("flag.forecasting", {
       ...upgrade,
       addonSku: "FORECASTING",
     });
-    expect(buyable.message).toBe("Inventory forecasting is an add-on. Add it in Billing.");
+    expect(buyable.message).toBe("To use Inventory forecasting, add it in Billing.");
     expect(buyable.state).toBe("INLINE_RESOLVE");
     const locked = buildPlanGateBody("flag.reports", { ...upgrade, addonSku: null });
     expectNoRawKey(locked.message);
@@ -144,7 +143,7 @@ describe("T19 (amended): no refusal message names a key, a SKU code or a plan ke
     svc.addonService = { hasAddon: jest.fn().mockResolvedValue(false) };
     const err = await svc.assertCanFlagTobacco(true).catch((e: Error) => e);
     expectNoRawKey(err.message);
-    expect(err.message).toContain("Ask RouteFlow");
+    expect(err.message).toContain("ask RouteFlow");
     expect(err.message).not.toContain("Billing");
   });
 
@@ -164,5 +163,89 @@ describe("T19 (amended): no refusal message names a key, a SKU code or a plan ke
     );
     expect(src).toContain("denialText(");
     expect(src).not.toMatch(/requires the \$\{|requires one of these/);
+  });
+});
+
+describe("an explicit 'no add-on offered' from the plan gate is authoritative (reader B MUST-1)", () => {
+  const none = { planKey: null, planMonthlyPrice: null, addonSku: null, addonMonthlyPrice: null };
+  const deps = (override: string | null, catalog: jest.Mock) => ({
+    featureOverrides: { get: jest.fn().mockResolvedValue(override) },
+    entitlements: { resolve: jest.fn().mockResolvedValue({}) },
+    catalog: { upgradeTargetForFlag: catalog },
+    logger: { warn: jest.fn(), error: jest.fn() },
+  });
+
+  it.each(["flag.forecasting", "flag.analytics"])(
+    "the builder: %s with addonSku null never points to Billing",
+    (flag) => {
+      const text = denialText({ keys: [flag], addonSku: null, planKey: null });
+      expect(text).toContain("ask RouteFlow");
+      expect(text).not.toContain("Billing");
+    },
+  );
+
+  it("the plan gate body with no upgrade target never says Billing for a buyable flag", () => {
+    const body = buildPlanGateBody("flag.forecasting", none);
+    expect(body.message).toContain("ask RouteFlow");
+    expect(body.message).not.toContain("Billing");
+  });
+
+  it("a DENY override on flag.forecasting: Ask RouteFlow, not Billing", async () => {
+    const catalog = jest.fn();
+    const err: any = await buildPlanFlagDenial(
+      deps("DENY", catalog) as any,
+      "t1",
+      "flag.forecasting",
+    );
+    expect(err.getResponse().message).not.toContain("Billing");
+    expect(err.getResponse().message).toContain("ask RouteFlow");
+  });
+
+  it("a failed catalog read on flag.analytics: Ask RouteFlow, not Billing", async () => {
+    const catalog = jest.fn().mockRejectedValue(new Error("no catalog"));
+    const err: any = await buildPlanFlagDenial(deps(null, catalog) as any, "t1", "flag.analytics");
+    expect(err.getResponse().message).not.toContain("Billing");
+  });
+
+  it("a caller that says nothing about the add-on (the guards) still reads the row", () => {
+    expect(denialText({ keys: ["flag.forecasting"] })).toContain("Billing");
+  });
+});
+
+describe("the sentence reads right for a plural and a singular name (reader B MUST-2)", () => {
+  it("a plural name: no verb that must agree with it", () => {
+    expect(denialText({ keys: ["flag.estimates"], planKey: "SCALE" })).toBe(
+      "Included with the Scale plan and higher: Estimates.",
+    );
+    expect(denialText({ keys: ["sales_agents"] })).toBe(
+      "To use Sales agents & commissions, ask RouteFlow to turn this on.",
+    );
+  });
+
+  it("a singular name reads the same way", () => {
+    expect(denialText({ keys: ["flag.msrp"], planKey: "SCALE" })).toBe(
+      "Included with the Scale plan and higher: MSRP pricing.",
+    );
+  });
+
+  it("class pin: no registry label is ever followed by is / isn't / comes, whatever the path", () => {
+    const bad = /^ (?:is|isn't|comes|are|aren't)\b/; // the word right after the name
+    for (const row of FEATURE_REGISTRY) {
+      const texts = [
+        denialText({ keys: [row.key] }),
+        denialText({ keys: [row.key], planKey: "SCALE" }),
+        denialText({ keys: [row.key], addonSku: "FORECASTING" }),
+        denialText({ keys: [row.key], addonSku: null }),
+      ];
+      for (const text of texts) {
+        const at = text.indexOf(row.label);
+        if (at === -1) continue; // PLAIN_NAME rows (ocr) read their own plain name
+        expect({ key: row.key, text, after: bad.test(text.slice(at + row.label.length)) }).toEqual({
+          key: row.key,
+          text,
+          after: false,
+        });
+      }
+    }
   });
 });

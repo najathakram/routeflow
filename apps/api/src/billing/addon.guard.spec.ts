@@ -135,7 +135,7 @@ describe("AddonGuard", () => {
     addonService.getActiveAddons.mockResolvedValue([]);
 
     await expect(guard.canActivate(contextFor({ tenantId: "t1" }))).rejects.toThrow(
-      "One of these needs to be turned on for your account: Recurring routes or Ad hoc order delivery. Ask RouteFlow to turn it on.",
+      "To use one of these, ask RouteFlow to turn one on: Recurring routes or Ad hoc order delivery.",
     );
   });
 
@@ -144,7 +144,7 @@ describe("AddonGuard", () => {
     addonService.getActiveAddons.mockResolvedValue([]);
 
     await expect(guard.canActivate(contextFor({ tenantId: "t1" }))).rejects.toThrow(
-      "Ad hoc order delivery isn't turned on for your account. Ask RouteFlow to turn it on.",
+      "To use Ad hoc order delivery, ask RouteFlow to turn this on.",
     );
   });
 
@@ -201,8 +201,7 @@ describe("AddonGuard", () => {
       expect(err.getResponse()).toMatchObject({
         code: "ADDON_GATE",
         addonKeys: ["tobacco_dealer"],
-        message:
-          "Regulated tobacco dealer program isn't turned on for your account. Ask RouteFlow to turn it on.",
+        message: "To use Regulated tobacco dealer program, ask RouteFlow to turn this on.",
       });
     });
 
