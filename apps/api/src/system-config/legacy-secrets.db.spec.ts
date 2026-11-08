@@ -83,6 +83,19 @@ describeDb("encrypt-legacy-secrets core (AI limits PR-2)", () => {
     ).rows[0]?.value as string;
   const mine = (refs: Ref[]) => refs.filter((r) => r.tenantId && tenantIds.includes(r.tenantId));
 
+  // this spec's own rows (its tenants plus the platform row it seeded), never another tenant's
+  const scoped = async (): Promise<Ref[]> => {
+    const all: Ref[] = await core.plaintextRefs(pool);
+    return [...mine(all), ...all.filter((r) => r.table === "PlatformConfig")];
+  };
+  const audits = async (tenantId: string | null) =>
+    (
+      await pool.query(
+        `SELECT meta FROM "AuditLog" WHERE "tenantId" IS NOT DISTINCT FROM $1 AND action = $2`,
+        [tenantId, core.AUDIT_ACTION],
+      )
+    ).rows;
+
   it("L-1: it finds exactly the plaintext secret rows, by reference, never reading a value", async () => {
     const t = await makeTenant(1);
     await put(t, "email.smtpPassword", PLAIN_SMTP);
@@ -111,20 +124,20 @@ describeDb("encrypt-legacy-secrets core (AI limits PR-2)", () => {
     const res = await core.encryptAll({
       client: pool,
       cipher,
-      refs: await core.plaintextRefs(pool),
+      refs: await scoped(),
       apply: false,
       log,
     });
     expect(res).toMatchObject({ encrypted: 0 });
     expect(res.wouldEncrypt).toBeGreaterThanOrEqual(2);
     expect(await read(tenantIds[0], "email.smtpPassword")).toBe(before);
+    expect(await audits(tenantIds[0])).toEqual([]);
   });
 
   it("L-3: apply rewrites each plaintext row to the cipher shape that decrypts to the original; others are untouched", async () => {
     const t = tenantIds[0];
     const encryptedBefore = await read(t, "anthropic.apiKey");
-    const all: Ref[] = await core.plaintextRefs(pool);
-    const refs = [...mine(all), ...all.filter((r) => r.table === "PlatformConfig")];
+    const refs = await scoped();
     const res = await core.encryptAll({ client: pool, cipher, refs, apply: true, log });
     expect(res).toMatchObject({ failed: 0, skippedProtected: 0, encrypted: 2 });
     const smtp = await read(t, "email.smtpPassword");
@@ -138,6 +151,13 @@ describeDb("encrypt-legacy-secrets core (AI limits PR-2)", () => {
     expect(decryptIfSecret(PLATFORM_SECRET_KEYS, cipher, "claude.apiKey", claude)).toBe(
       PLAIN_CLAUDE,
     );
+    // one audit row per encrypted row, in the same transaction: the key name only, never a value
+    expect((await audits(t)).map((a) => a.meta)).toEqual([
+      { key: "email.smtpPassword", actor: "script" },
+    ]);
+    expect((await audits(null)).map((a) => a.meta)).toEqual([
+      { key: "claude.apiKey", actor: "script" },
+    ]);
     expect(await read(t, "anthropic.apiKey")).toBe(encryptedBefore); // byte-identical
     expect(await read(t, "zoho.clientSecret")).toBe("");
     expect(await read(t, "brand.primaryColor")).toBe("#123456");
@@ -195,5 +215,6 @@ describeDb("encrypt-legacy-secrets core (AI limits PR-2)", () => {
     const res = await core.encryptAll({ client: pool, cipher: broken, refs, apply: true, log });
     expect(res).toMatchObject({ encrypted: 0, failed: 1 });
     expect(await read(t, "email.smtpPassword")).toBe("third-PLAINTEXT-6666");
+    expect(await audits(t)).toEqual([]);
   });
 });

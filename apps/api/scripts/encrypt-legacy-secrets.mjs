@@ -13,7 +13,7 @@
 // ONE WRITER: lib/legacy-secrets-core.cjs. Needs `npm run build -w apps/api` and the API's 64-hex ENCRYPTION_KEY,
 // proven against one stored ciphertext before any write or prompt. Nobody runs `--apply` on production without the
 // owner's yes for that command and a backup. Rows of a protected tenant are skipped and counted (row 195); output is
-// keys, counts and protected tenant ids only (never a value, slug or name): do not paste it into a PR or handoff.
+// keys and counts only: never a value, slug, name or tenant id. `--allow-protected` takes an id the operator already has.
 
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
@@ -76,11 +76,15 @@ async function main() {
   console.error(`${SCRIPT}: target ${redactUrl(url)} (${apply ? "APPLY" : "dry run"})`);
   const { classifyDbTarget } = requireCjs("./lib/production-guard.js");
   const { loadProtectedSlugs } = requireCjs("./lib/protected-slugs.cjs");
-  const { protectedTenantIds, confirmProtectedOverride } = requireCjs(
+  const { assertNoLiveProtectedTenants, protectedTenantIds, confirmProtectedOverride } = requireCjs(
     "./lib/live-target-guard.cjs",
   );
   const hostLocal = classifyDbTarget(url, process.env).ok;
-  const pool = new pg.Pool({ connectionString: url });
+  // A dry run is read-only by construction: the session refuses any write.
+  const pool = new pg.Pool({
+    connectionString: url,
+    ...(apply ? {} : { options: "-c default_transaction_read_only=on" }),
+  });
   try {
     const slugs = loadProtectedSlugs(process.env, url);
     const refs = await plaintextRefs(pool);
@@ -102,6 +106,8 @@ async function main() {
     ).length;
     let cipher = null;
     if (apply) {
+      // A host that looks local may be a tunnel to production: protected live tenants there end the run, override or not.
+      if (hostLocal) await assertNoLiveProtectedTenants(pool, slugs);
       const liveTenants = hostLocal ? await liveTenantCount(pool) : 0;
       const local = hostLocal && liveTenants === 0;
       if (hostLocal && !local)
@@ -165,7 +171,7 @@ async function main() {
         : `${SCRIPT}: would encrypt ${res.wouldEncrypt} · skipped protected ${res.skippedProtected}`,
     );
     if (heldBack.length > 0)
-      console.log(`${SCRIPT}: protected tenant id(s) with plaintext rows: ${heldBack.join(", ")}`);
+      console.log(`${SCRIPT}: protected tenant(s) with plaintext rows: ${heldBack.length}`);
     if (res.failed > 0) process.exitCode = 1;
   } catch (err) {
     console.error(scrubSecrets(`${SCRIPT}: ${err?.message ?? err}`, url));

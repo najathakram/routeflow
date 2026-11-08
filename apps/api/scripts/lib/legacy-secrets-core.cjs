@@ -14,6 +14,7 @@ const {
 const { isTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
 
 const SHAPE = new RegExp(CIPHER_SHAPE);
+const AUDIT_ACTION = "secrets.legacy_encrypted";
 
 /** The rows still plaintext: non-empty, a secret key, not the cipher shape. Selected WITHOUT their value. */
 async function plaintextRefs(client) {
@@ -62,7 +63,7 @@ async function keyCanary(client, cipher) {
   return "failed";
 }
 
-// One row, one transaction: 'encrypted' | 'already' (not plaintext when we got the lock) | 'failed' (no round-trip, or CAS lost).
+// One row, one transaction (the AuditLog row, key name only, is in the same transaction): 'encrypted' | 'already' (not plaintext when we got the lock) | 'failed' (no round-trip, or CAS lost).
 async function encryptRow(client, cipher, ref) {
   const tx = await client.connect();
   try {
@@ -88,6 +89,17 @@ async function encryptRow(client, cipher, ref) {
       await tx.query("ROLLBACK");
       return "failed";
     }
+    await tx.query(
+      `INSERT INTO "AuditLog" (id, "tenantId", action, "entityType", "entityId", meta, "createdAt")
+       VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5::jsonb, now())`,
+      [
+        ref.tenantId,
+        AUDIT_ACTION,
+        ref.table,
+        ref.id,
+        JSON.stringify({ key: ref.key, actor: "script" }),
+      ],
+    );
     await tx.query("COMMIT");
     return "encrypted";
   } catch (err) {
@@ -181,6 +193,7 @@ function parseAllowProtected(argv) {
 }
 
 module.exports = {
+  AUDIT_ACTION,
   plaintextRefs,
   liveTenantCount,
   keyCanary,

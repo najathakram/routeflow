@@ -72,6 +72,14 @@ describe("encrypt-legacy-secrets.mjs", () => {
     expect(g({ canary: "none", local: true })).toEqual({ ok: true });
   });
 
+  it("structural: a dry run is a read-only session; the protected ids reach the writer; no tenant id is printed", () => {
+    expect(cli).toContain("default_transaction_read_only=on");
+    expect(cli).toMatch(/encryptAll\(\{[^}]*\bprotectedIds,/);
+    expect(cli).toContain("assertNoLiveProtectedTenants(");
+    expect(cli).not.toMatch(/heldBack\.join|tenant id\(s\)/);
+    expect(coreSrc.match(/INSERT INTO "AuditLog"/g)).toHaveLength(1); // one audit row per change, same transaction
+  });
+
   it("structural: the live-tenant check and the key proof run BEFORE the typed confirmation", () => {
     expect(cli).toContain("liveTenantCount(");
     expect(cli.indexOf("keyGate(")).toBeGreaterThan(cli.indexOf("applyGate("));
