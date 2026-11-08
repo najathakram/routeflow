@@ -164,7 +164,7 @@ describe("Back office P1: Delete on the tenants list uses the shared dialog", ()
     render(<AdminTenantsPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
     const dialog = await screen.findByRole("dialog", { name: "Delete Acme (acme)?" });
-    const del = within(dialog).getByRole("button", { name: "Delete tenant" });
+    const del = within(dialog).getByRole("button", { name: "Delete business" });
     expect(del).toBeDisabled();
     expect(mockDelete).not.toHaveBeenCalled();
 
@@ -188,10 +188,10 @@ describe("Back office P1: Delete on the tenants list uses the shared dialog", ()
     fireEvent.change(within(dialog).getByLabelText("Type the tenant slug to confirm deletion"), {
       target: { value: "acme" },
     });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Delete tenant" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete business" }));
     expect(
       await within(dialog).findByText(
-        "Only a suspended tenant can be deleted. Suspend it first, then delete.",
+        "Only a suspended business can be deleted. Suspend it first, then delete.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/internal: tenant has live subscription rows/)).toBeNull();

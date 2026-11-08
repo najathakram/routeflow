@@ -1750,7 +1750,7 @@ function BusinessDetailsTab({
             onClick={onAskDelete}
             className="rounded-lg bg-red-900/40 px-4 py-2 text-sm font-semibold text-red-400 ring-1 ring-red-700 transition-colors hover:bg-red-900/70 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-red-900/40"
           >
-            Delete tenant
+            Delete business
           </button>
           <DisabledHint id="delete-tenant-hint" show={!canDelete}>
             {TENANT_ACTION_COPY.deleteRefused}

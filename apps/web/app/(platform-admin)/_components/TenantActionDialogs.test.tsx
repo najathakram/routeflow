@@ -279,9 +279,9 @@ describe("DeleteTenantDialog", () => {
     expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
   });
 
-  it("Delete tenant stays disabled until the slug is typed EXACTLY", () => {
+  it("Delete business stays disabled until the slug is typed EXACTLY", () => {
     const { onConfirm } = setup();
-    const del = screen.getByRole("button", { name: "Delete tenant" });
+    const del = screen.getByRole("button", { name: "Delete business" });
     expect(del).toBeDisabled();
     for (const wrong of ["acm", "ACME", "acme ", " acme", "acme-2", ""]) {
       fireEvent.change(slugBox(), { target: { value: wrong } });

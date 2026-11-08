@@ -646,16 +646,16 @@ describe("Tenant detail page — Suspend and Delete ask first (back office P1)",
   });
 
   it.each(["ACTIVE", "TRIAL", "READ_ONLY"])(
-    "Delete tenant is visible but DIM for a %s tenant, with the reason on screen (P2 flips the P1 enabled pin)",
+    "Delete business is visible but DIM for a %s tenant, with the reason on screen (P2 flips the P1 enabled pin)",
     async (status) => {
       tenantOverrides = { status };
       render(<TenantDetailPage />);
       await gotoTab("Business details");
-      const del = screen.getByRole("button", { name: "Delete tenant" });
+      const del = screen.getByRole("button", { name: "Delete business" });
       expect(del).toBeDisabled();
       expect(del).toHaveAttribute("aria-describedby", "delete-tenant-hint");
       expect(document.getElementById("delete-tenant-hint")).toHaveTextContent(
-        "Only a suspended tenant can be deleted. Suspend it first, then delete.",
+        "Only a suspended business can be deleted. Suspend it first, then delete.",
       );
       fireEvent.click(del);
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -663,11 +663,11 @@ describe("Tenant detail page — Suspend and Delete ask first (back office P1)",
     },
   );
 
-  it("Delete tenant is enabled once the tenant is SUSPENDED, and the suspend-first line is gone", async () => {
+  it("Delete business is enabled once the tenant is SUSPENDED, and the suspend-first line is gone", async () => {
     tenantOverrides = { status: "SUSPENDED" };
     render(<TenantDetailPage />);
     await gotoTab("Business details");
-    expect(screen.getByRole("button", { name: "Delete tenant" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Delete business" })).toBeEnabled();
     expect(document.getElementById("delete-tenant-hint")).toBeNull();
   });
 
@@ -689,9 +689,9 @@ describe("Tenant detail page — Suspend and Delete ask first (back office P1)",
     tenantOverrides = { status: "SUSPENDED" };
     render(<TenantDetailPage />);
     await gotoTab("Business details");
-    fireEvent.click(screen.getByRole("button", { name: "Delete tenant" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete business" }));
     const dialog = await screen.findByRole("dialog", { name: "Delete Acme (acme)?" });
-    const del = within(dialog).getByRole("button", { name: "Delete tenant" });
+    const del = within(dialog).getByRole("button", { name: "Delete business" });
     expect(del).toBeDisabled();
     expect(client().delete).not.toHaveBeenCalled();
 
@@ -711,21 +711,23 @@ describe("Tenant detail page — Suspend and Delete ask first (back office P1)",
     });
     render(<TenantDetailPage />);
     await gotoTab("Business details");
-    fireEvent.click(screen.getByRole("button", { name: "Delete tenant" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete business" }));
     const dialog = await screen.findByRole("dialog", { name: "Delete Acme (acme)?" });
     fireEvent.change(within(dialog).getByLabelText("Type the tenant slug to confirm deletion"), {
       target: { value: "acme" },
     });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Delete tenant" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete business" }));
     expect(
       await within(dialog).findByText(
-        "Only a suspended tenant can be deleted. Suspend it first, then delete.",
+        "Only a suspended business can be deleted. Suspend it first, then delete.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/internal state 7/)).toBeNull();
     // N4: ONE message (inside the dialog), not a second banner on the page behind it.
     expect(
-      screen.getAllByText("Only a suspended tenant can be deleted. Suspend it first, then delete."),
+      screen.getAllByText(
+        "Only a suspended business can be deleted. Suspend it first, then delete.",
+      ),
     ).toHaveLength(1);
     expect(screen.getByRole("dialog", { name: "Delete Acme (acme)?" })).toBeInTheDocument();
     expect(mockRouterPush).not.toHaveBeenCalled();
@@ -735,7 +737,7 @@ describe("Tenant detail page — Suspend and Delete ask first (back office P1)",
     tenantOverrides = { status: "SUSPENDED" };
     render(<TenantDetailPage />);
     await gotoTab("Business details");
-    fireEvent.click(screen.getByRole("button", { name: "Delete tenant" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete business" }));
     await screen.findByRole("dialog", { name: "Delete Acme (acme)?" });
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -1250,7 +1252,7 @@ describe("R33: every row of the owner's list has a home", () => {
     FULL();
     render(<TenantDetailPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Business details" }));
-    const del = await screen.findByRole("button", { name: "Delete tenant" });
+    const del = await screen.findByRole("button", { name: "Delete business" });
     const zone = screen.getByTestId("delete-zone");
     expect(within(zone).getAllByRole("button")).toEqual([del]); // alone
     expect(del.className).toContain("text-red-400");
@@ -1258,7 +1260,7 @@ describe("R33: every row of the owner's list has a home", () => {
     // And nowhere else.
     for (const n of ["Overview", "Features", "Plan & billing", "History"]) {
       fireEvent.click(screen.getByRole("button", { name: n }));
-      expect(screen.queryByRole("button", { name: "Delete tenant" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Delete business" })).toBeNull();
     }
   });
 

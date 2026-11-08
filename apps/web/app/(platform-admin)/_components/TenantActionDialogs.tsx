@@ -38,8 +38,8 @@ export const TENANT_ACTION_COPY = {
   trialNotAllowed:
     "This tenant is Active, so it can't be put on a trial. Suspend it or change its plan instead.",
   planFailed: "Couldn't change the plan. Try again.",
-  deleteRefused: "Only a suspended tenant can be deleted. Suspend it first, then delete.",
-  deleteFailed: "Couldn't delete the tenant. Try again.",
+  deleteRefused: "Only a suspended business can be deleted. Suspend it first, then delete.",
+  deleteFailed: "Couldn't delete the business. Try again.",
   cancelSubscriptionFirst:
     "This tenant still has a Stripe subscription that hasn't ended (active, paused or incomplete). End it in Stripe first, then try again.",
   stripeNotConfigured:
@@ -355,7 +355,7 @@ export function DeleteTenantDialog({
             }}
             className={DELETE_CLASS}
           >
-            {busy ? "Deleting…" : "Delete tenant"}
+            {busy ? "Deleting…" : "Delete business"}
           </button>
         </>
       }
