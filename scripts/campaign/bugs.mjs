@@ -116,7 +116,7 @@ import {
   syncRepoOverride,
   syncStatePath,
 } from "../lib/registry-root.mjs";
-import { checkRegisterFresh } from "../lib/register-freshness.mjs";
+import { checkRegisterFresh, freshnessRepoFor } from "../lib/register-freshness.mjs";
 import { commitRecord, discardRegistry } from "../lib/registry-records.mjs";
 import { RegistryError, withRegistryWrite } from "../lib/registry-write.mjs";
 import { normalizeEvidence } from "./normalize-evidence.mjs";
@@ -455,22 +455,23 @@ cmds.file = (args) => {
 
   // Tracked mode mints max+1 over THIS tree, so a tree behind origin/master can reuse an id master
   // already holds (B1291, B1292); refuse before any lock or write. Also applies to --id (a stale tree
-  // can accept a reservation master already used). BUGS_ROOT (every fixture) skips it unless
-  // BUGS_SELF_TEST=1 and BUGS_FRESHNESS_REPO are set: BUGS_FRESHNESS_REPO is a test-only seam, like
-  // BUGS_SYNC_REPO.
+  // can accept a reservation master already used). A fixture BUGS_ROOT skips it; a BUGS_ROOT that is
+  // this repo's own register (plane-intake --apply) does not (freshnessRepoFor).
   if (registryMode() !== "clone") {
-    const seam = process.env.BUGS_SELF_TEST === "1" && process.env.BUGS_FRESHNESS_REPO;
-    if (!process.env.BUGS_ROOT || seam) {
-      const repoDir = seam ? process.env.BUGS_FRESHNESS_REPO : REPO_ROOT;
+    const prefix = registrySource().prefix;
+    const repoDir = freshnessRepoFor(process.env, REPO_ROOT, prefix);
+    if (repoDir) {
       const fresh = checkRegisterFresh({
         repoDir,
-        prefix: registrySource().prefix,
+        prefix,
         localIds: [...readCatalogue().map((r) => r.id), ...readState().keys()],
       });
       if (!fresh.ok)
         fail(
-          `refusing to mint a bug id: the register in ${repoDir} is behind origin/master (${fresh.reason}). ` +
-            `File from an up-to-date tree: git -C ${repoDir} pull --ff-only, or a fresh worktree off origin/master.`,
+          `refusing to mint a bug id: the register in ${repoDir} ` +
+            `${fresh.stale ? "is behind" : "could not be checked against"} origin/master (${fresh.reason}). ` +
+            `Bring origin/master into that tree first (on master: git pull --ff-only; on a branch: ` +
+            `git merge origin/master), or file from a fresh worktree off origin/master.`,
         );
     }
   }
@@ -8170,9 +8171,13 @@ cmds["self-test"] = () => {
         const r = fileIn(a);
         check("freshness: a stale tree is refused (exit 1)", r.code, 1);
         check(
-          "freshness: the refusal names the id master already holds",
-          [/refusing to mint a bug id/.test(r.out), /behind origin[/]master/.test(r.out)],
-          [true, true],
+          "freshness: the refusal says the tree is behind origin/master and how to catch up",
+          [
+            /refusing to mint a bug id/.test(r.out),
+            /is behind origin[/]master/.test(r.out),
+            /git merge origin[/]master/.test(r.out),
+          ],
+          [true, true, true],
         );
         check(
           "freshness: a refused file leaves the catalogue byte-identical",
@@ -8211,8 +8216,13 @@ cmds["self-test"] = () => {
         const r = fileIn(a);
         check(
           "freshness: an unreachable origin is refused, naming the fetch",
-          [r.code, /git fetch origin master failed/.test(r.out)],
-          [1, true],
+          [
+            r.code,
+            /git fetch origin master failed/.test(r.out),
+            /could not be checked against origin[/]master/.test(r.out),
+            /is behind/.test(r.out),
+          ],
+          [1, true, true, false],
         );
       }
       // 5. feature branch containing origin/master plus its own commit mints
@@ -8239,6 +8249,24 @@ cmds["self-test"] = () => {
           "freshness: --id on a stale tree is refused",
           [r.code, /behind origin\/master/.test(r.out)],
           [1, true],
+        );
+      }
+      // 7. which repo is checked: a fixture BUGS_ROOT skips, but a BUGS_ROOT that is this repo's own
+      // register (plane-intake --apply always sets it so) is checked like no BUGS_ROOT at all.
+      {
+        const p = ".claude/campaign";
+        const own = join(REPO_ROOT, ".claude", "campaign");
+        const seam = { BUGS_ROOT: tmp, BUGS_FRESHNESS_REPO: "seam" };
+        check(
+          "freshness: freshnessRepoFor checks the real register however it is reached",
+          [
+            freshnessRepoFor({}, REPO_ROOT, p),
+            freshnessRepoFor({ BUGS_ROOT: own }, REPO_ROOT, p),
+            freshnessRepoFor({ BUGS_ROOT: tmp }, REPO_ROOT, p),
+            freshnessRepoFor({ ...seam, BUGS_SELF_TEST: "1" }, REPO_ROOT, p),
+            freshnessRepoFor(seam, REPO_ROOT, p),
+          ],
+          [REPO_ROOT, REPO_ROOT, null, "seam", null],
         );
       }
     } finally {
