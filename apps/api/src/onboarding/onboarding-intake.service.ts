@@ -21,6 +21,7 @@ import type {
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { EmailService } from "../email/email.service";
+import { routeflowFragmentMail } from "../email/routeflow-mail";
 import { StorageService } from "../storage/storage.service";
 import { ProrationService } from "../billing/proration.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
@@ -159,8 +160,13 @@ export class OnboardingIntakeService {
     if (send) {
       const r = await this.email.sendPlatform({
         to: c.contactEmail,
-        subject: "Your RouteFlow order and setup questionnaire",
-        html: linkEmailHtml(c.contactName, c.companyName, url, expiresAt),
+        ...routeflowFragmentMail({
+          subject: "Your RouteFlow order and setup questionnaire",
+          heading: "Your setup page",
+          bodyHtml: linkEmailHtml(c.contactName, c.companyName, expiresAt),
+          cta: { label: "Open your setup page", url },
+          why: "You are getting this because RouteFlow set up an order for your company and sent you its setup page.",
+        }),
       });
       emailed = r.delivered;
       if (!r.delivered) this.logger.warn(`intake link email not delivered for case ${caseId}`);
@@ -481,8 +487,12 @@ export class OnboardingIntakeService {
     if (action === "request_changes") {
       const r = await this.email.sendPlatform({
         to: c.contactEmail,
-        subject: `A few questions about your ${SECTION_LABEL[key]} answers`,
-        html: sentBackEmailHtml(c.contactName, SECTION_LABEL[key], note!),
+        ...routeflowFragmentMail({
+          subject: `A few questions about your ${SECTION_LABEL[key]} answers`,
+          heading: "A few questions about your answers",
+          bodyHtml: sentBackEmailHtml(c.contactName, SECTION_LABEL[key], note!),
+          why: "You are getting this because you sent in your RouteFlow setup answers.",
+        }),
       });
       if (!r.delivered)
         this.logger.warn(`section sent-back email not delivered for case ${caseId}`);
@@ -770,28 +780,15 @@ function firstName(name: string): string {
   return name.trim().split(/\s+/)[0] || "there";
 }
 
-function linkEmailHtml(
-  contactName: string,
-  companyName: string,
-  url: string,
-  expiresAt: Date,
-): string {
+function linkEmailHtml(contactName: string, companyName: string, expiresAt: Date): string {
   const expires = escapeHtml(expiresAt.toISOString().slice(0, 10));
-  // SA-127: a link is only ever an absolute http(s) URL; otherwise the button renders as text.
-  const href = safeLinkHref(url, "onboardingIntakeLinkEmail");
-  const button = href
-    ? `<a href="${escapeHtml(href)}">Open your setup page</a>`
-    : "Open your setup page from the link we send you separately";
   return `<p>Hi ${escapeHtml(firstName(contactName))},</p>
-<p>Here's your secure link to review your RouteFlow order for ${escapeHtml(companyName)} and fill in the setup questionnaire:</p>
-<p>${button}</p>
-<p>The link works until ${expires}. Please don't forward it, and never put passwords or bank details into the form — we'll ask for those separately.</p>
-<p>— The RouteFlow team</p>`;
+<p>Here’s your secure link to review your RouteFlow order for ${escapeHtml(companyName)} and fill in the setup questionnaire.</p>
+<p>The link works until ${expires}. Please don’t forward it, and never put passwords or bank details into the form. We’ll ask for those separately.</p>`;
 }
 
 function sentBackEmailHtml(contactName: string, sectionLabel: string, note: string): string {
   return `<p>Hi ${escapeHtml(firstName(contactName))}, thanks for sending ${escapeHtml(sectionLabel)}. Before we load it, could you confirm:</p>
 <blockquote>${escapeHtml(note).replace(/\n/g, "<br>")}</blockquote>
-<p>You can update your answers on the same setup page we sent you.</p>
-<p>— The RouteFlow team</p>`;
+<p>You can update your answers on the same setup page we sent you.</p>`;
 }

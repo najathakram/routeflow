@@ -1,0 +1,112 @@
+[
+  {
+    "number": 210,
+    "title": "chore: train 1",
+    "headRefName": "train/t1",
+    "createdAt": "2026-10-27T08:00:00Z",
+    "mergedAt": "2026-10-27T15:00:00Z",
+    "mergeCommit": {
+      "oid": "1010101010101010101010101010101010101010"
+    },
+    "additions": 400,
+    "deletions": 50,
+    "changedFiles": 7,
+    "body": "",
+    "commits": [
+      {
+        "messageHeadline": "Merge #211",
+        "messageBody": ""
+      }
+    ]
+  },
+  {
+    "number": 211,
+    "title": "fix(api): member one",
+    "headRefName": "fix/m-211",
+    "createdAt": "2026-10-27T08:00:00Z",
+    "mergedAt": "2026-10-27T15:00:00Z",
+    "mergeCommit": {
+      "oid": "1111111111111111111111111111111111111111"
+    },
+    "additions": 100,
+    "deletions": 20,
+    "changedFiles": 2,
+    "body": "",
+    "commits": []
+  },
+  {
+    "number": 212,
+    "title": "fix(api): member two",
+    "headRefName": "fix/m-212",
+    "createdAt": "2026-10-27T08:00:00Z",
+    "mergedAt": null,
+    "mergeCommit": {
+      "oid": "1212121212121212121212121212121212121212"
+    },
+    "additions": 40,
+    "deletions": 10,
+    "changedFiles": 1,
+    "body": "",
+    "commits": []
+  },
+  {
+    "number": 220,
+    "title": "chore: train 2",
+    "headRefName": "train/t2",
+    "createdAt": "2026-10-27T08:00:00Z",
+    "mergedAt": "2026-10-27T16:00:00Z",
+    "mergeCommit": {
+      "oid": "2020202020202020202020202020202020202020"
+    },
+    "additions": 90,
+    "deletions": 0,
+    "changedFiles": 2,
+    "body": "",
+    "commits": []
+  },
+  {
+    "number": 221,
+    "title": "fix(api): costed member",
+    "headRefName": "fix/m-221",
+    "createdAt": "2026-10-27T08:00:00Z",
+    "mergedAt": "2026-10-27T16:00:00Z",
+    "mergeCommit": {
+      "oid": "2121212121212121212121212121212121212121"
+    },
+    "additions": 30,
+    "deletions": 0,
+    "changedFiles": 1,
+    "body": "",
+    "commits": []
+  },
+  {
+    "number": 222,
+    "title": "fix(api): uncosted member",
+    "headRefName": "fix/m-222",
+    "createdAt": "2026-10-27T08:00:00Z",
+    "mergedAt": "2026-10-27T16:00:00Z",
+    "mergeCommit": {
+      "oid": "2222222222222222222222222222222222222222"
+    },
+    "additions": 60,
+    "deletions": 0,
+    "changedFiles": 1,
+    "body": "",
+    "commits": []
+  },
+  {
+    "number": 230,
+    "title": "fix(api): unrelated, merged the same day",
+    "headRefName": "fix/unrelated-230",
+    "createdAt": "2026-10-27T08:00:00Z",
+    "mergedAt": "2026-10-27T15:30:00Z",
+    "mergeCommit": {
+      "oid": "3030303030303030303030303030303030303030"
+    },
+    "additions": 5,
+    "deletions": 5,
+    "changedFiles": 1,
+    "body": "",
+    "commits": []
+  }
+]

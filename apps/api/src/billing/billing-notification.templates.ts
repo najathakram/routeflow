@@ -1,13 +1,12 @@
 import { fromCents, roundMoney } from "@routeflow/pricing";
 import { escapeHtml, safeLinkHref } from "../common/html-escape";
 import { webBaseUrl } from "../config/web-base-url";
+import { brandHeaderHtml, renderBrandButton, renderBrandedEmail } from "../email/email-layout";
 export { escapeHtml };
 // N3 (2026-09-16): billing-lifecycle email templates to the tenant admin — trial ending,
 // downgrade scheduled/applied, upgrade confirmed, cancelled, suspended.
 //
-// Base layout markup/style is copied verbatim from EmailService.buildInvoiceEmail's outer
-// wrapper (email.service.ts ~1037-1116) per the notification spec's ground rule "one base
-// HTML layout — no new look, reuse buildInvoiceEmail's markup/style". Every interpolated
+// The outer wrapper is the shared layout (email/email-layout.ts). Every interpolated
 // value goes through escapeHtml() — this repo has no prior escaping convention for email
 // templates (buildInvoiceEmail and the merge-email builders interpolate unescaped), so this
 // file is the first to add it; it applies only to the templates below, not to existing ones.
@@ -23,50 +22,17 @@ const fmtMoney = (n: number): string =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
 
 function baseLayout(params: { tagline: string; bodyHtml: string }): string {
-  const brand = escapeHtml(PLATFORM_BRAND);
-  const tagline = escapeHtml(params.tagline);
-  return `<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;padding:40px 0;">
-    <tr><td align="center">
-      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
-
-        <!-- Header -->
-        <tr><td style="background:#1a2033;padding:28px 32px;">
-          <p style="margin:0;font-size:22px;font-weight:700;color:#ffffff;letter-spacing:-0.5px;">${brand}</p>
-          <p style="margin:4px 0 0;font-size:13px;color:rgba(255,255,255,0.6);">${tagline}</p>
-        </td></tr>
-
-        <!-- Body -->
-        <tr><td style="padding:32px;">
-          ${params.bodyHtml}
-        </td></tr>
-
-        <!-- Footer -->
-        <tr><td style="background:#f9fafb;padding:20px 32px;border-top:1px solid #f0f0f0;">
-          <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center;">This is an automated email from ${brand}.</p>
-        </td></tr>
-
-      </table>
-    </td></tr>
-  </table>
-</body>
-</html>`;
+  return renderBrandedEmail({
+    headerHtml: brandHeaderHtml(),
+    heading: params.tagline,
+    bodyHtml: params.bodyHtml,
+    bodyText: [],
+    footerNote: `This is an automated email from ${PLATFORM_BRAND} about your account.`,
+  }).html;
 }
 
 function ctaButtonHtml(url: string, label: string): string {
-  // B809: a non-http(s) URL renders the button WITHOUT an href (logged and counted).
-  const href = safeLinkHref(url, "ctaButtonHtml");
-  const style =
-    "display:inline-block;padding:12px 24px;font-size:14px;font-weight:600;color:#ffffff;text-decoration:none;";
-  const button = href
-    ? `<a href="${escapeHtml(href)}" style="${style}">${escapeHtml(label)}</a>`
-    : `<span style="${style}">${escapeHtml(label)}</span>`;
-  return `<table cellpadding="0" cellspacing="0" style="margin:24px 0;"><tr><td style="border-radius:6px;background:#1a2033;">
-    ${button}
-  </td></tr></table>`;
+  return `<div style="margin:24px 0;">${renderBrandButton(label, url)}</div>`;
 }
 
 // The base comes from the shared helper (config/web-base-url.ts: WEB_URL, then FRONTEND_URL). An email must never carry
@@ -149,7 +115,7 @@ export function downgradeScheduledTemplate(params: {
       ${ctaButtonHtml(manageUrl, "Manage your plan")}
     `,
   });
-  const text = `Hi ${params.adminName},\n\nWe've scheduled a downgrade for ${params.businessName} from ${params.fromPlanName} to ${params.toPlanName}, effective ${params.effectiveAt}. Nothing changes until then.\n\nManage your plan: ${manageUrl}`;
+  const text = `Hi ${params.adminName},\n\nWe've scheduled a downgrade for ${params.businessName} from ${params.fromPlanName} to ${params.toPlanName}, effective ${params.effectiveAt}. Nothing changes until then.\n\nChanged your mind? You can cancel this scheduled downgrade any time before it takes effect.\n\nManage your plan: ${manageUrl}`;
   return {
     subject: `Downgrade scheduled — ${params.businessName}`,
     html,
@@ -239,7 +205,7 @@ export function cancelledTemplate(params: {
       ${ctaButtonHtml(manageUrl, "Resubscribe")}
     `,
   });
-  const text = `Hi ${params.adminName},\n\nYour RouteFlow subscription for ${params.businessName} has been cancelled. Your account will move to read-only access at the end of your current billing period.\n\nResubscribe: ${manageUrl}`;
+  const text = `Hi ${params.adminName},\n\nYour RouteFlow subscription for ${params.businessName} has been cancelled. Your account will move to read-only access at the end of your current billing period.\n\nChanged your mind? You can resubscribe any time.\n\nResubscribe: ${manageUrl}`;
   return {
     subject: `Subscription cancelled — ${params.businessName}`,
     html,
@@ -317,7 +283,7 @@ export function checkoutPlanNotAppliedTemplate(params: {
       ${ctaButtonHtml(manageUrl, "Review your plan")}
     `,
   });
-  const text = `Hi ${params.adminName},\n\nWe received your payment for ${params.requestedPlanKey} on ${params.businessName}, but your plan was NOT changed: it was downgraded after you started that checkout, and we never override a newer plan choice. Please review your plan or contact support.\n\nReview your plan: ${manageUrl}`;
+  const text = `Hi ${params.adminName},\n\nWe received your payment for ${params.requestedPlanKey} on ${params.businessName}, but your plan was NOT changed: it was downgraded after you started that checkout, and we never override a newer plan choice. Please review your plan below or contact support and we will sort it out.\n\nReview your plan: ${manageUrl}`;
   return {
     subject: `Payment received, plan not changed — ${params.businessName}`,
     html,

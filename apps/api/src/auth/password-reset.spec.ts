@@ -148,6 +148,23 @@ describe("AuthService — password reset (RF-018)", () => {
       expect(html).not.toContain("routeflowmobile-production");
     });
 
+    // W-1163: the reset mail wears the RouteFlow layout, shows a short link text instead of the
+    // token URL, and ships a text part that carries the full link.
+    it("is the branded layout: a button, no token URL as visible text, and a matching text part", async () => {
+      (prisma.user.findFirst as jest.Mock).mockResolvedValue(ACTIVE_USER);
+
+      await service.requestPasswordReset("alice@example.com");
+      await Promise.resolve();
+
+      const sent = emailService.send.mock.calls[0]![0] as { html: string; text: string };
+      const shown = sent.html.replace(/<[^>]+>/g, "");
+      expect(sent.html).toContain('data-rf-layout="v1"');
+      expect(sent.html).toContain(">Choose a new password</a>");
+      expect(shown).not.toContain("token=");
+      expect(shown).toContain("web.test/reset-password");
+      expect(sent.text).toContain("Choose a new password: https://web.test/reset-password?token=");
+    });
+
     it('links to the web base URL when surface="web"', async () => {
       (prisma.user.findFirst as jest.Mock).mockResolvedValue(ACTIVE_USER);
 

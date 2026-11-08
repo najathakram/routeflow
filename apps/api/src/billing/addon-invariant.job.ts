@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
 import { LeaderCron } from "../common/cron-lock";
 import { EmailService } from "../email/email.service";
+import { routeflowNotice } from "../email/routeflow-mail";
 import { AdminAuditAction, ADMIN_AUDIT_ENTITY } from "../platform-admin/audit-actions.constant";
 import { PrismaService } from "../prisma/prisma.service";
 import { classOfSource } from "./addon-change-source-class";
@@ -500,10 +501,15 @@ export class AddonInvariantJob {
         : [];
       const subject = `RouteFlow alert: ${fresh.length} add-on issue(s) need a look`;
       const text = [...lines, ...more].join("\n");
-      const html = `<ul>${[...lines, ...more].map((l) => `<li>${escapeHtml(l)}</li>`).join("")}</ul>`;
+      const mail = routeflowNotice({
+        subject,
+        heading: subject,
+        lines: [...lines, ...more],
+        why: "You are getting this because this address is on the list for RouteFlow platform alerts.",
+      });
       let delivered = false;
       for (const to of recipients) {
-        const r = await this.email.sendPlatform({ to, subject, html, text });
+        const r = await this.email.sendPlatform({ to, subject, html: mail.html, text });
         delivered = delivered || r.delivered;
       }
       if (!delivered) {
@@ -515,8 +521,4 @@ export class AddonInvariantJob {
       this.logger.error("addon invariant: the alert email threw; claims released", e as Error);
     }
   }
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }

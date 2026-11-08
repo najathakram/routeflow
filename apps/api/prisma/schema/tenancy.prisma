@@ -91,6 +91,8 @@ model Tenant {
   // (the source of truth for entitlements; the `plan` enum stays a legacy shadow).
   planVersionId  String?
   readOnlyReason String?
+  // Super admin's monthly AI allowance for this business on RouteFlow's key, in whole USD. null = the platform ai.monthlyCapUsd; 0 = AI off.
+  aiMonthlyCapUsd Int?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   deletedAt      DateTime?

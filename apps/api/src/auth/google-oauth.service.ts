@@ -16,13 +16,13 @@ import * as crypto from "crypto";
 import Redis from "ioredis";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
+import { signInLinkedMessage } from "../email/routeflow-mail";
 import type { AppConfig } from "../config/configuration";
 import type { JwtPayload } from "./jwt-payload.interface";
 import type { BuyerJwtPayload } from "../buyer/interfaces/buyer-jwt-payload.interface";
 import { sellerAcceptsBuyerWrite } from "../buyer/seller-status-gate";
 import { EntitlementsService } from "../billing/entitlements.service";
 import type { DeviceInfo } from "./auth.service";
-import { escapeHtml } from "../common/html-escape";
 import { DERIVED_JWT_LABELS, derivedJwtKey } from "../common/derived-jwt-key";
 import { casLinkProviderId, resolveBySubThenEmail } from "./oauth-account-link";
 import {
@@ -368,8 +368,7 @@ export class GoogleOAuthService {
       void this.emailService
         .send({
           to: user.email,
-          subject: "Google Sign-In linked to your RouteFlow account",
-          html: `<p>Your Google account (<strong>${escapeHtml(email)}</strong>) has been linked to your RouteFlow account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
+          ...signInLinkedMessage({ provider: "Google", address: email, portal: false }),
           // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
           senderClass: "platform",
         })
@@ -786,8 +785,7 @@ export class GoogleOAuthService {
           void this.emailService
             .send({
               to: buyer.email,
-              subject: "Google Sign-In linked to your RouteFlow account",
-              html: `<p>Your Google account (<strong>${escapeHtml(profile.email)}</strong>) has been linked to your RouteFlow portal account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
+              ...signInLinkedMessage({ provider: "Google", address: profile.email, portal: true }),
               // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
               senderClass: "platform",
             })

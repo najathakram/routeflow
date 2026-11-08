@@ -67,6 +67,7 @@ function setup(opts: {
     .mockResolvedValueOnce(opts.sentToday ?? 0)
     .mockResolvedValueOnce(opts.sentToAddress ?? 0);
   const email = {
+    tenantLook: jest.fn().mockResolvedValue({ kind: "tenant", name: "Acme Foods" }),
     send: jest
       .fn()
       .mockResolvedValue(
@@ -106,6 +107,10 @@ describe("ReceiptService.send (POST /orders/:id/receipt)", () => {
     expect(arg.subject).toBe("Your receipt from Acme Test Store for order ORD-1001");
     expect(arg.html).toContain("$28.62");
     expect(arg.text).toContain("$28.62");
+    // W-1163: the receipt is dressed in the look EmailService.tenantLook() returned (the mock's
+    // "Acme Foods"), not rebuilt from the branding row alone.
+    expect(arg.html).toContain("Acme Foods");
+    expect(arg.html.replace(/<[^>]+>/g, "")).toContain("Sent with RouteFlow");
     expect(arg.delivery).toEqual({
       tenantId: T,
       kind: "RECEIPT",

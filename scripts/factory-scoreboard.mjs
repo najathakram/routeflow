@@ -33,6 +33,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { LANDINGS_FILE, latestByPr } from "./landing-telemetry.mjs";
+import { ghMergedPrPages, listMergedPrsSince, pagesFromList } from "./lib/merged-prs.mjs";
 import { registryRoot } from "./lib/registry-root.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -47,7 +48,6 @@ const SCOREBOARD_DIR = path.join("local-assets", "scoreboard");
 const DAY_MS = 86_400_000;
 const VERIFY_AFTER_DAYS = 14;
 const DEFAULT_WINDOW_DAYS = 7;
-const PR_LIMIT = 500;
 const CMD_TIMEOUT_MS = 120_000;
 
 const USAGE = `usage: node scripts/factory-scoreboard.mjs [--since <date>] [--usage-pct <n>] [--json] [--write]
@@ -219,47 +219,37 @@ function parseCommits(text) {
 }
 
 /**
- * Every PR merged from `floor` to now, fetched in 7-day date slices. A slice that returns exactly the
- * limit may have been cut off, so it fails the run instead of silently under-counting.
- * (A fixture may carry `limit.txt` to exercise that failure without 500 rows.)
+ * Every PR merged from `floor` to now, paged through GraphQL by update time (scripts/lib/merged-prs.mjs):
+ * no search index, so a dropped index cannot read as 0. Hitting the page cap fails the run.
+ * (A fixture may carry `page-size.txt` / `max-pages.txt` to exercise paging and the cap with 15 rows.)
  */
-function fetchMergedPrs(fixture, floorMs, nowMs) {
-  const limitText = fixture ? readOptional(fixture, "limit.txt", "") : null;
-  const limit = limitText && Number(limitText.trim()) > 0 ? Number(limitText.trim()) : PR_LIMIT;
-  const day = (ms) => new Date(ms).toISOString().slice(0, 10);
-  const lastDay = Math.floor(nowMs / DAY_MS) * DAY_MS;
-  const byNumber = new Map();
-  for (let from = Math.floor(floorMs / DAY_MS) * DAY_MS; from <= lastDay; from += 7 * DAY_MS) {
-    const range = `${day(from)}..${day(Math.min(from + 6 * DAY_MS, lastDay))}`;
-    const rows = JSON.parse(
-      run(fixture, "gh-prs.json", "gh", [
-        "pr",
-        "list",
-        "--repo",
-        GH_REPO,
-        "--state",
-        "merged",
-        "--search",
-        `merged:${range}`,
-        "--json",
-        "number,title,mergedAt,headRefName",
-        "--limit",
-        String(limit),
-      ]),
-    );
-    if (rows.length >= limit) {
-      throw new Error(`gh returned ${rows.length} PRs for merged:${range} (the limit): truncated`);
-    }
-    for (const p of rows) {
-      if (p.mergedAt && Number.isFinite(Date.parse(p.mergedAt))) byNumber.set(p.number, p);
-    }
+function fetchMergedPrs(fixture, floorMs) {
+  const knob = (name) => {
+    const t = fixture ? readOptional(fixture, name, "") : null;
+    return t && Number(t.trim()) > 0 ? Number(t.trim()) : undefined;
+  };
+  const fetchPage = fixture
+    ? pagesFromList(JSON.parse(run(fixture, "gh-prs.json")))
+    : ghMergedPrPages((args) => run(null, null, "gh", args), GH_REPO, "title headRefName");
+  return listMergedPrsSince(floorMs, fetchPage, {
+    pageSize: knob("page-size.txt"),
+    maxPages: knob("max-pages.txt"),
+  });
+}
+
+/** PR numbers named by origin/master merge subjects: "Merge pull request #N ..." or a squash "... (#N)". */
+function prNumbersInCommits(commits) {
+  const out = new Set();
+  for (const c of commits) {
+    const m = /^Merge pull request #(\d+)\b/.exec(c.subject) ?? /\(#(\d+)\)\s*$/.exec(c.subject);
+    if (m) out.add(Number(m[1]));
   }
-  return [...byNumber.values()];
+  return out;
 }
 
 function verifiedMerges({ fixture, sinceMs, nowMs }) {
   const floor = new Date(sinceMs - VERIFY_AFTER_DAYS * DAY_MS);
-  const all = fetchMergedPrs(fixture, floor.getTime(), nowMs);
+  const all = fetchMergedPrs(fixture, floor.getTime());
   const commits = parseCommits(
     run(fixture, "git-log.txt", "git", [
       "log",
@@ -271,6 +261,16 @@ function verifiedMerges({ fixture, sinceMs, nowMs }) {
   const failed = findFailures(all, commits);
   const inRange = (from, to) =>
     all.filter((p) => Date.parse(p.mergedAt) >= from && Date.parse(p.mergedAt) <= to);
+  const shown = prNumbersInCommits(commits.filter((c) => c.at >= sinceMs && c.at <= nowMs));
+  if (inRange(sinceMs, nowMs).length === 0 && shown.size > 0) {
+    const some = [...shown]
+      .slice(0, 5)
+      .map((n) => `#${n}`)
+      .join(", ");
+    throw new Error(
+      `GitHub listed 0 merged PRs in the window but origin/master has ${shown.size} PR merge commit(s) in it (${some}): refusing to report 0`,
+    );
+  }
   const priorFrom = sinceMs - VERIFY_AFTER_DAYS * DAY_MS;
   const priorTo = nowMs - VERIFY_AFTER_DAYS * DAY_MS;
   return {

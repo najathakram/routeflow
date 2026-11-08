@@ -67,7 +67,9 @@ describe("MAIL-1 rfInvoiceEmail", () => {
       evil,
     );
     expect(t.html).not.toContain("<script>");
-    expect(t.html).not.toContain("<img");
+    // The layout's own logo is the only image; the injected one is escaped text.
+    expect(t.html.match(/<img/g)).toHaveLength(1);
+    expect(t.html).toContain("&lt;img src=x onerror=1&gt;");
     expect(t.html).toContain("&lt;script&gt;");
     expect(t.html).toContain("&lt;img");
     expect(t.html).toContain("&amp; Co");

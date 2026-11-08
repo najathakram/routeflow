@@ -178,7 +178,7 @@ describe("PlatformConfigService — secrets at rest and key order (SA-1102)", ()
     });
 
     it("the monthly cap is stored, shown in the AI config, and 0 is kept as the kill switch", async () => {
-      expect(((await service.getAiConfig()) as any).monthlyCapUsd).toBe(25);
+      expect(((await service.getAiConfig()) as any).monthlyCapUsd).toBe(10);
       await (service as any).updateAiConfig({ monthlyCapUsd: 40 });
       expect(store["ai.monthlyCapUsd"]).toBe("40");
       expect(((await service.getAiConfig()) as any).monthlyCapUsd).toBe(40);

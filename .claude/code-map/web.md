@@ -92,3 +92,4 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/landing-2026-11-04-w4.md](web/landing-2026-11-04-w4.md) | Window 4 (ec9765092c..b0e0193854): Refused in every client, Deliver again, site Delivered card, Quick Edit redo bar |
 | [web/landing-2026-11-05-w5.md](web/landing-2026-11-05-w5.md) | Window 5 (b0e0193854..b10bad52a0): Reopen order names the live-return sentence |
 | [web/landing-2026-11-05-w6.md](web/landing-2026-11-05-w6.md) | Windows 6-9 (b10bad52a0..25034e1228): AI paused and key sentences, Reopen order sentences |
+| [web/landing-2026-11-07-slipped.md](web/landing-2026-11-07-slipped.md) | 266095419c..ce0ed80a11: courtesy badge, already-have sentence, home founder-card width, wheel tile removed |

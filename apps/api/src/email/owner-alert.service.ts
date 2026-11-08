@@ -2,7 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "./email.service";
 import { roundMoney } from "@routeflow/pricing";
-import { escapeHtml } from "../common/html-escape";
+import { routeflowNotice } from "./routeflow-mail";
 import { loadDemoBookingConfig } from "../demo-booking/demo-booking.config";
 import { webBaseUrl } from "../config/web-base-url";
 
@@ -187,15 +187,20 @@ export class OwnerAlertService {
   /** One send per address, so one bad address never costs the others theirs. */
   private async deliver(subject: string, lines: string[]): Promise<void> {
     const to = loadDemoBookingConfig().demoBookingAdminEmails;
-    const html = lines.map((l) => `<p>${escapeHtml(l)}</p>`).join("\n");
+    const mail = routeflowNotice({
+      subject,
+      heading: subject,
+      lines,
+      why: "You are getting this because this address is on the list for RouteFlow platform alerts.",
+    });
     await Promise.allSettled(
       to.map(async (address) => {
         try {
           const res = await this.email.send({
             to: address,
-            subject,
-            html,
-            text: lines.join("\n\n"),
+            subject: mail.subject,
+            html: mail.html,
+            text: lines.join("\n\n"), // the text part is unchanged: the lines, nothing added
             senderClass: "platform",
           });
           if (!res.delivered) {

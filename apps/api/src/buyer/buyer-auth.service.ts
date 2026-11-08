@@ -14,12 +14,12 @@ import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { revokeBuyerLinkTokens } from "../auth/link-token-revocation";
 import { EmailService } from "../email/email.service";
+import { passwordSetMessage, routeflowNotice } from "../email/routeflow-mail";
 import { AppleOAuthService } from "../auth/apple-oauth.service";
 import { AppConfig } from "../config/configuration";
 import { BuyerJwtPayload } from "./interfaces/buyer-jwt-payload.interface";
 import { BuyerRegisterDto } from "./dto/buyer-register.dto";
 import { BuyerLoginDto } from "./dto/buyer-login.dto";
-import { escapeHtml } from "../common/html-escape";
 import { isLoginEligible, isSignInBlocked } from "../auth/login-eligibility";
 import {
   BUYER_ACCESS_AUDIENCE,
@@ -121,12 +121,17 @@ export class BuyerAuthService {
 
     return this.emailService.send({
       to: account.email,
-      subject: "Verify your email for RouteFlow",
-      html: `<p>Hi,</p>
-<p>A RouteFlow buyer portal account was created with this email address. Confirm it's yours to unlock instant connections to sellers who already know this email.</p>
-<p><a href="${escapeHtml(verifyUrl)}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;">Verify my email</a></p>
-<p>This link expires in <strong>24 hours</strong>.</p>
-<p><strong>Didn't create this account?</strong> Ignore this email and do not click the button — the account will simply stay unverified.</p>`,
+      ...routeflowNotice({
+        subject: "Verify your email for RouteFlow",
+        heading: "Verify your email",
+        lines: [
+          "A RouteFlow buyer portal account was created with this email address. Confirm it’s yours to unlock instant connections to sellers who already know this email.",
+          "The link works for 24 hours.",
+          "Did not create this account? Ignore this email and do not click the button. The account will simply stay unverified.",
+        ],
+        cta: { label: "Verify my email", url: verifyUrl },
+        why: "You are getting this because a RouteFlow buyer portal account was created with this address.",
+      }),
       // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
       senderClass: "platform",
     });
@@ -537,11 +542,11 @@ export class BuyerAuthService {
     this.emailService
       .send({
         to: account.email,
-        subject: "A password was set on your RouteFlow account",
-        html: `<p>A password was just set on your RouteFlow portal account, which previously signed in with Google only.</p>
-               <p><strong>Time:</strong> ${escapeHtml(new Date().toUTCString())}</p>
-               <p><strong>IP address:</strong> ${escapeHtml(deviceInfo?.ipAddress ?? "unknown")}</p>
-               <p>You can now sign in with your email and this password as well as with Google. If this wasn't you, reset your password immediately and contact support.</p>`,
+        ...passwordSetMessage({
+          portal: true,
+          ip: deviceInfo?.ipAddress ?? "unknown",
+          time: new Date().toUTCString(),
+        }),
         // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
         senderClass: "platform",
       })
@@ -598,11 +603,16 @@ export class BuyerAuthService {
     this.emailService
       .send({
         to: account.email,
-        subject: "Reset your RouteFlow password",
-        html: `<p>Hi,</p>
-<p>We received a request to reset the password for your RouteFlow portal account.</p>
-<p><a href="${escapeHtml(resetUrl)}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;">Reset password</a></p>
-<p>This link expires in <strong>15 minutes</strong>. If you didn't request this, you can safely ignore this email — your password will not change.</p>`,
+        ...routeflowNotice({
+          subject: "Reset your RouteFlow password",
+          heading: "Reset your password",
+          lines: [
+            "We received a request to reset the password for your RouteFlow portal account.",
+            "The link works for 15 minutes. If you did not request this, ignore this email and your password will not change.",
+          ],
+          cta: { label: "Reset password", url: resetUrl },
+          why: "You are getting this because a password reset was requested for this address.",
+        }),
         // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
         senderClass: "platform",
       })

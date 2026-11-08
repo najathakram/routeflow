@@ -128,6 +128,8 @@ export const AdminAuditAction = {
   FEATURE_CONFIG_CLEARED: "FEATURE_CONFIG_CLEARED",
   // Mobile app install links (row 559): a super admin changed the global "Get the app" URLs; meta = { previous, next }.
   APP_LINKS_UPDATED: "APP_LINKS_UPDATED",
+  // AI limits PR-1: a super admin set, changed or cleared one business's monthly AI allowance; meta = { from, to } (whole USD or null).
+  TENANT_AI_CAP_CHANGED: "TENANT_AI_CAP_CHANGED",
   // SA-789 F1: a regulated return or credit note could not be booked on the ledger (its sold line resolves
   // nowhere); meta = ids only. The return / credit note itself went through.
   REGULATED_REVERSAL_UNBOOKED: "REGULATED_REVERSAL_UNBOOKED",
@@ -207,6 +209,7 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   FEATURE_CONFIG_SET: "Feature setting changed",
   FEATURE_CONFIG_CLEARED: "Feature setting cleared",
   APP_LINKS_UPDATED: "Mobile app links updated",
+  TENANT_AI_CAP_CHANGED: "AI allowance changed",
   REGULATED_REVERSAL_UNBOOKED: "Regulated reversal not booked (support to resolve)",
 };
 

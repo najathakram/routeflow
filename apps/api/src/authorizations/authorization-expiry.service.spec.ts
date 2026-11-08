@@ -21,6 +21,7 @@ import { EmailService } from "../email/email.service";
 import { AuditService } from "../audit/audit.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { paragraphsMissingFromText } from "../testing/email-text-parity";
 
 describe("AuthorizationExpiryService", () => {
   let service: AuthorizationExpiryService;
@@ -103,6 +104,11 @@ describe("AuthorizationExpiryService", () => {
       expect(notifications.sendToCustomer).toHaveBeenCalled();
       expect(notifications.sendToUser).toHaveBeenCalledWith("op1", expect.anything());
       expect(email.send).toHaveBeenCalled();
+      // W-1163: a text part that says what the html says, in the tenant look.
+      const mail = email.send.mock.calls[0][0];
+      expect(mail.text.length).toBeGreaterThan(10);
+      expect(mail.layout).toBeDefined();
+      expect(paragraphsMissingFromText(mail.html, mail.text)).toEqual([]);
     });
 
     it("SKIPS a non-gated (tobacco, requiresLicense=false) row — no flip, no notify", async () => {

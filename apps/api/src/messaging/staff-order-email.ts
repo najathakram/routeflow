@@ -6,6 +6,7 @@ import { EmailService } from "../email/email.service";
 import { EmailDeliveryService } from "../email/email-delivery.service";
 import type { EmailKind } from "../email/email-kinds";
 import { escapeHtml } from "../common/html-escape";
+import { emailParagraph, type EmailLayoutSpec } from "../email/email-layout";
 import { isInternalEmail } from "../common/internal-email";
 import { PolicyService } from "../policy/policy.service";
 import type { StaffOrderEmailPolicyMode } from "../policy/policy-registry";
@@ -429,7 +430,7 @@ export class StaffOrderEmailService {
     kind: StaffEvent,
     order: Record<string, any>,
     replaces?: string[],
-  ): { subject: string; html: string } {
+  ): { subject: string; html: string; text: string; layout: EmailLayoutSpec } {
     const number = String(order.orderNumber ?? order.id);
     const customer = String(order.customer?.businessName ?? order.customer?.name ?? "A customer");
     // The STORED total, never recomputed from line items (money discipline).
@@ -446,11 +447,27 @@ export class StaffOrderEmailService {
           ? `Order ${number} was edited by the customer`
           : `Order ${number} was cancelled by the customer`;
     const subject = `${urgent ? "[URGENT] " : ""}${headline} - ${customer}`;
+    const combined = "The customer's orders were combined.";
     const html =
-      `<p>${escapeHtml(headline)}.</p>` +
-      (replaced ? "<p>The customer's orders were combined.</p>" : "") +
-      `<p>Customer: ${escapeHtml(customer)}<br>Order: ${escapeHtml(number)}<br>` +
-      `Total: $${escapeHtml(total)}</p>`;
-    return { subject, html };
+      emailParagraph(`${escapeHtml(headline)}.`) +
+      (replaced ? emailParagraph(combined) : "") +
+      emailParagraph(
+        `Customer: ${escapeHtml(customer)}<br>Order: ${escapeHtml(number)}<br>Total: $${escapeHtml(total)}`,
+      );
+    const text = [
+      `${headline}.`,
+      ...(replaced ? [combined] : []),
+      `Customer: ${customer}\nOrder: ${number}\nTotal: $${total}`,
+    ].join("\n\n");
+    return {
+      subject,
+      html,
+      text,
+      layout: {
+        heading: headline,
+        footerNote:
+          "You are getting this because order emails are turned on for you in this workspace.",
+      },
+    };
   }
 }

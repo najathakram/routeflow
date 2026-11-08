@@ -1059,6 +1059,8 @@ async function clearTransactions() {
     await prisma.commissionAccrual.deleteMany({ where: orVia("invoice") })
   ).count;
 
+  // SA-1050 A-1 (WIPE): the invoices' write-off events (FK RESTRICT) go first.
+  await prisma.invoiceWriteOffEvent.deleteMany({ where: { invoice: orVia("customer") } });
   counts.invoices = (await prisma.invoice.deleteMany({ where: orVia("customer") })).count;
   // Delivery rows FK the run stop AND reference order items; clear them before
   // orders/stops so neither delete trips a constraint.

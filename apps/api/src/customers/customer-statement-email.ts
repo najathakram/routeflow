@@ -7,6 +7,7 @@ import {
 import type { AccountStatement } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
+import { emailParagraph, type EmailLayoutSpec } from "../email/email-layout";
 import { StatementPdfService } from "../buyer/statement-pdf.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { escapeHtml } from "../common/html-escape";
@@ -32,6 +33,8 @@ export interface StatementEmail {
   subject: string;
   html: string;
   text: string;
+  /** How the send dresses the body (the tenant's look). */
+  layout: EmailLayoutSpec;
   pdfFilename: string;
 }
 
@@ -50,7 +53,13 @@ export function buildStatementEmail(
   return {
     subject: name ? `Your statement from ${name}` : "Your account statement",
     text,
-    html: `<p style="margin:0 0 16px;font-size:15px;color:#374151;">${escapeHtml(text)}</p>`,
+    html: emailParagraph(escapeHtml(text)),
+    layout: {
+      heading: "Your statement",
+      footerNote: name
+        ? `You are getting this because ${name} sent you your account statement.`
+        : "You are getting this because your supplier sent you your account statement.",
+    },
     pdfFilename: `statement-${statement.asOf}.pdf`,
   };
 }
@@ -94,6 +103,7 @@ export async function sendCustomerStatementEmail(
     subject: mail.subject,
     html: mail.html,
     text: mail.text,
+    layout: mail.layout,
     attachments: [{ filename: mail.pdfFilename, content: pdf, contentType: "application/pdf" }],
     ...(tenantId
       ? {
