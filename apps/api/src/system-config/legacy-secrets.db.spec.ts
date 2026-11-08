@@ -7,10 +7,12 @@ import { ConfigService } from "@nestjs/config";
 import { randomUUID } from "crypto";
 import { Pool } from "pg";
 import { EncryptionService } from "../common/encryption.service";
-import { ENCRYPTED_FORMAT } from "../common/secret-at-rest";
+import { ENCRYPTED_FORMAT, decryptIfSecret } from "../common/secret-at-rest";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { PLATFORM_SECRET_KEYS } from "../platform-admin/platform-config.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
+import { SECRET_KEYS } from "./system-config.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -121,18 +123,21 @@ describeDb("encrypt-legacy-secrets core (AI limits PR-2)", () => {
   it("L-3: apply rewrites each plaintext row to the cipher shape that decrypts to the original; others are untouched", async () => {
     const t = tenantIds[0];
     const encryptedBefore = await read(t, "anthropic.apiKey");
-    const refs = await core.plaintextRefs(pool);
+    const all: Ref[] = await core.plaintextRefs(pool);
+    const refs = [...mine(all), ...all.filter((r) => r.table === "PlatformConfig")];
     const res = await core.encryptAll({ client: pool, cipher, refs, apply: true, log });
-    expect(res).toMatchObject({ failed: 0, skippedProtected: 0 });
-    expect(res.encrypted).toBeGreaterThanOrEqual(2);
+    expect(res).toMatchObject({ failed: 0, skippedProtected: 0, encrypted: 2 });
     const smtp = await read(t, "email.smtpPassword");
     expect(smtp).toMatch(ENCRYPTED_FORMAT);
-    expect(cipher.decrypt(smtp)).toBe(PLAIN_SMTP);
+    // the production read path (the helper SystemConfigService.get / PlatformConfigService.getValue call)
+    expect(decryptIfSecret(SECRET_KEYS, cipher, "email.smtpPassword", smtp)).toBe(PLAIN_SMTP);
     const claude = (
       await pool.query(`SELECT value FROM "PlatformConfig" WHERE key = 'claude.apiKey'`)
     ).rows[0].value;
     expect(claude).toMatch(ENCRYPTED_FORMAT);
-    expect(cipher.decrypt(claude)).toBe(PLAIN_CLAUDE);
+    expect(decryptIfSecret(PLATFORM_SECRET_KEYS, cipher, "claude.apiKey", claude)).toBe(
+      PLAIN_CLAUDE,
+    );
     expect(await read(t, "anthropic.apiKey")).toBe(encryptedBefore); // byte-identical
     expect(await read(t, "zoho.clientSecret")).toBe("");
     expect(await read(t, "brand.primaryColor")).toBe("#123456");

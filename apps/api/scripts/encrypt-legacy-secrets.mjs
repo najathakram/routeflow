@@ -5,13 +5,15 @@
 // are plaintext (the read path passes them through); this rewrites each through the compiled EncryptionService.
 //
 //   node apps/api/scripts/encrypt-legacy-secrets.mjs            # DRY RUN (default): counts per key, no value read
-//   node apps/api/scripts/encrypt-legacy-secrets.mjs --apply    # local database only
+//   node apps/api/scripts/encrypt-legacy-secrets.mjs --apply    # a local database holding test tenants only
 //       [--live-tenant-override --backup-taken]                 # any other: typed `ENCRYPT <n> LIVE`
 //       [--allow-protected <tenantId> ...]                      # a protected tenant's rows, typed per tenant
+//       [--first-run-key]                                       # live, and no ciphertext exists to prove the key
 //
-// ONE WRITER: lib/legacy-secrets-core.cjs. Needs `npm run build -w apps/api` and the API's ENCRYPTION_KEY. Nobody runs
-// `--apply` on production without the owner's yes for that command and a backup. Rows of a protected tenant are
-// skipped and counted (row 195); output is keys, counts and tenant ids only, never a value, slug or name.
+// ONE WRITER: lib/legacy-secrets-core.cjs. Needs `npm run build -w apps/api` and the API's 64-hex ENCRYPTION_KEY,
+// proven against one stored ciphertext before any write or prompt. Nobody runs `--apply` on production without the
+// owner's yes for that command and a backup. Rows of a protected tenant are skipped and counted (row 195); output is
+// keys, counts and protected tenant ids only (never a value, slug or name): do not paste it into a PR or handoff.
 
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
@@ -22,6 +24,9 @@ import { redactUrl, resolveDatabaseUrl, scrubSecrets } from "./lib/railway-db-ur
 import {
   applyGate,
   encryptAll,
+  keyCanary,
+  keyGate,
+  liveTenantCount,
   parseAllowProtected,
   plaintextRefs,
 } from "./lib/legacy-secrets-core.cjs";
@@ -74,7 +79,7 @@ async function main() {
   const { protectedTenantIds, confirmProtectedOverride } = requireCjs(
     "./lib/live-target-guard.cjs",
   );
-  const local = classifyDbTarget(url, process.env).ok;
+  const hostLocal = classifyDbTarget(url, process.env).ok;
   const pool = new pg.Pool({ connectionString: url });
   try {
     const slugs = loadProtectedSlugs(process.env, url);
@@ -95,7 +100,14 @@ async function main() {
     const writable = refs.filter(
       (r) => !protectedIds.has(r.tenantId) || allowIds.includes(r.tenantId),
     ).length;
+    let cipher = null;
     if (apply) {
+      const liveTenants = hostLocal ? await liveTenantCount(pool) : 0;
+      const local = hostLocal && liveTenants === 0;
+      if (hostLocal && !local)
+        console.error(
+          `${SCRIPT}: local host, but ${liveTenants} non-test tenant(s): treated as live`,
+        );
       const gate = applyGate({
         apply,
         local,
@@ -108,6 +120,20 @@ async function main() {
         console.error(`${SCRIPT}: ${gate.reason}`);
         process.exitCode = 1;
         return;
+      }
+      if (writable > 0) {
+        cipher = loadCipher();
+        const key = keyGate({
+          keyHex: process.env.ENCRYPTION_KEY,
+          canary: await keyCanary(pool, cipher),
+          firstRun: argv.includes("--first-run-key"),
+          local,
+        });
+        if (!key.ok) {
+          console.error(`${SCRIPT}: ${key.reason}: nothing written`);
+          process.exitCode = 1;
+          return;
+        }
       }
       if (
         gate.phrase &&
@@ -125,14 +151,6 @@ async function main() {
     console.log(
       `${SCRIPT}: ${refs.length} plaintext secret row(s) found${apply ? "" : " (DRY RUN, nothing written)"}`,
     );
-    const cipher = apply && writable > 0 ? loadCipher() : null;
-    if (cipher && !local && !/^[0-9a-f]{64}$/i.test(process.env.ENCRYPTION_KEY ?? "")) {
-      console.error(
-        `${SCRIPT}: ENCRYPTION_KEY must be the API's 64-hex key for a live run: nothing written`,
-      );
-      process.exitCode = 1;
-      return;
-    }
     const res = await encryptAll({
       client: pool,
       cipher,
@@ -151,6 +169,7 @@ async function main() {
     if (res.failed > 0) process.exitCode = 1;
   } catch (err) {
     console.error(scrubSecrets(`${SCRIPT}: ${err?.message ?? err}`, url));
+    if (err?.partial) console.error(`${SCRIPT}: stopped part-way: ${JSON.stringify(err.partial)}`);
     process.exitCode = 1;
   } finally {
     await pool.end().catch(() => undefined);

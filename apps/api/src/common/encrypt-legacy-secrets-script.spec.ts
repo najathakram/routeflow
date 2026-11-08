@@ -61,6 +61,23 @@ describe("encrypt-legacy-secrets.mjs", () => {
     expect(g(all)).toEqual({ ok: true, phrase: "ENCRYPT 7 LIVE" });
   });
 
+  it("keyGate: the API's 64-hex key, proven by a stored ciphertext; with none stored a live run needs --first-run-key", () => {
+    const g = (o: object) => core.keyGate({ keyHex: "ab".repeat(32), canary: "ok", ...o });
+    expect(g({})).toEqual({ ok: true });
+    for (const keyHex of [undefined, "", "short", "zz".repeat(32)])
+      expect(g({ keyHex })).toMatchObject({ ok: false });
+    expect(g({ canary: "failed", local: true })).toMatchObject({ ok: false });
+    expect(g({ canary: "none", local: false })).toMatchObject({ ok: false });
+    expect(g({ canary: "none", local: false, firstRun: true })).toEqual({ ok: true });
+    expect(g({ canary: "none", local: true })).toEqual({ ok: true });
+  });
+
+  it("structural: the live-tenant check and the key proof run BEFORE the typed confirmation", () => {
+    expect(cli).toContain("liveTenantCount(");
+    expect(cli.indexOf("keyGate(")).toBeGreaterThan(cli.indexOf("applyGate("));
+    expect(cli.indexOf("askOnTty(`")).toBeGreaterThan(cli.indexOf("keyGate("));
+  });
+
   it("parseAllowProtected: every --allow-protected <id>, ids only", () => {
     const argv = ["--apply", "--allow-protected", "t-1", "--allow-protected", "t-2"];
     expect(core.parseAllowProtected(argv)).toEqual(["t-1", "t-2"]);
