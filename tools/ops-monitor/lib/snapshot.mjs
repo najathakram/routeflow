@@ -132,21 +132,47 @@ const sameSha = (a, b) =>
   b.length >= 7 &&
   (a.startsWith(b) || b.startsWith(a));
 
+/** "api" or "web" for a deploy row's service name ("@routeflow/api" -> "api"), else null. */
+const deployService = (d) =>
+  /(?:^|[^a-z0-9])api(?:[^a-z0-9]|$)/i.test(d.service ?? "")
+    ? "api"
+    : /(?:^|[^a-z0-9])web(?:[^a-z0-9]|$)/i.test(d.service ?? "")
+      ? "web"
+      : null;
+
 /**
- * Cut-off time for "deployed": a PR merged at or before it is in the latest SUCCESS deploy of the
- * api or web service. The deploy's sha is mapped to a merged PR's merge commit (that PR's merge
- * time is the cut); a deploy of master's head covers everything; otherwise the deploy's own
- * creation time. No successful deploy -> -Infinity (nothing is deployed).
+ * Cut-off time for "deployed": a PR merged at or before it is in the latest SUCCESS deploy of
+ * every api/web service, so the cut is the earliest of the per-service cuts. One service's cut: its
+ * newest SUCCESS deploy's sha mapped to a merged PR's merge commit (that PR's merge time); a deploy
+ * of master's head covers everything; otherwise the deploy's own creation time. No SUCCESS deploy
+ * of any service -> -Infinity (nothing is deployed).
+ * Railway reports only each service's latest deploy, so a service building or failed right now
+ * has no SUCCESS row and its live version is unknown. The board (default) leaves that service
+ * out; `strict` (auto-status, whose `live` never moves back) needs both api and web and reads a
+ * service with no SUCCESS row (or no row) as nothing deployed, so a web
+ * build that fails while api redeploys master never marks web-only merges live (F8 review).
  */
-export function deployCut(deploys, mergedRaw, master) {
-  const ok = (deploys ?? []).filter(
-    (d) =>
-      String(d.status ?? "").toUpperCase() === "SUCCESS" &&
-      /(?:^|[^a-z0-9])(?:api|web)(?:[^a-z0-9]|$)/i.test(d.service ?? "") &&
-      toMs(d.createdAt) !== null,
-  );
-  if (!ok.length) return -Infinity;
-  const latest = ok.reduce((a, b) => (toMs(b.createdAt) > toMs(a.createdAt) ? b : a));
+export function deployCut(deploys, mergedRaw, master, { strict = false } = {}) {
+  const rows = (deploys ?? []).filter((d) => deployService(d) && toMs(d.createdAt) !== null);
+  let cut = Infinity;
+  let counted = 0;
+  // strict asks for both services even when one has no row at all (a missing web row proves nothing)
+  for (const svc of strict ? ["api", "web"] : new Set(rows.map(deployService))) {
+    const ok = rows.filter(
+      (d) => deployService(d) === svc && String(d.status ?? "").toUpperCase() === "SUCCESS",
+    );
+    if (!ok.length) {
+      if (strict) return -Infinity;
+      continue;
+    }
+    const latest = ok.reduce((a, b) => (toMs(b.createdAt) > toMs(a.createdAt) ? b : a));
+    cut = Math.min(cut, serviceCut(latest, mergedRaw, master));
+    counted++;
+  }
+  return counted ? cut : -Infinity;
+}
+
+function serviceCut(latest, mergedRaw, master) {
   if (latest.sha) {
     if (master?.sha && sameSha(latest.sha, master.sha)) return Infinity;
     const pr = mergedRaw.find((p) => p.mergeSha && sameSha(p.mergeSha, latest.sha));

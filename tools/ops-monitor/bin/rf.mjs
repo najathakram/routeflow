@@ -56,6 +56,7 @@ const BOOLEAN_FLAGS = new Set([
   "json",
   "no-push",
   "dry",
+  "apply",
   "open",
   "help",
   "no-sync",
@@ -109,6 +110,7 @@ const USAGE = `usage: rf <command> [args]
   audit [--json] [--snapshot FILE]                 the accuracy counts (items, alarms, problems, queue, PRs, bugs)
   bug file <args...>                               files a bug via scripts/campaign/bugs.mjs (lead, coordinator only)
   status-sync [--no-push]                                          lane status files -> heartbeat events
+  auto-status [--apply] [--no-push]   linked PRs merged/live/open -> item statuses, one pass (dry run by default)
   brief [--lane L] [--since <eventId|iso>] [--refresh] [--json]   what the monitor says, in plain words
   whoami [--machine M] [--lane L]   backfill [--dry]   views [--dry] [--no-push]   doctor   hash-password
 global: --json  --no-push  --no-sync  --quiet (no stdout on success)`;
@@ -657,6 +659,66 @@ async function cmdViews(flags, env) {
   return 0;
 }
 
+/** One auto-status pass (F8): poll GitHub + Railway once, then plan (dry) or append (--apply). */
+export async function cmdAutoStatus(flags, env, { poll } = {}) {
+  const ctx = ctxFor(env);
+  const { autoStatusOnce } = await import("../lib/auto-status.mjs");
+  const res = await autoStatusOnce({
+    dir: ctx.dir,
+    home: ctx.home,
+    env,
+    apply: Boolean(flags.apply),
+    push: !flags["no-push"],
+    poll: poll ?? (() => pollOnce(env, ctx.dir)),
+  });
+  if (!res.ran) {
+    print(flags, res, `auto-status skipped: ${res.reason}`);
+    return res.reason === "busy" ? 0 : 1;
+  }
+  if (res.dry) {
+    const lines = res.planned.map((e) => `  ${e.item} -> ${e.data.status} (${e.data.note})`);
+    const more = res.capped ? `, ${res.capped} more past the cap` : "";
+    print(
+      flags,
+      res,
+      `auto-status (dry): ${res.planned.length} status move(s)${more}` +
+        (lines.length ? `\n${lines.join("\n")}\n(re-run with --apply to write them)` : "") +
+        "\n(read from the local specs clone without pulling; --apply pulls first and skips moves already written)",
+    );
+    return 0;
+  }
+  if (res.pullError) {
+    print(
+      flags,
+      res,
+      `auto-status: pull failed, nothing written (${String(res.pullError).slice(0, 120)})`,
+    );
+    return 1;
+  }
+  // a failed push keeps the events committed locally; the next pull-then-push sends them, so exit 0
+  const pushed = res.pushed
+    ? " and pushed"
+    : res.appended && !flags["no-push"]
+      ? `, NOT pushed yet (${(res.warnings ?? []).join("; ").slice(0, 160) || "push failed"}); the next pass pushes them`
+      : "";
+  const left = res.capped ? `, ${res.capped} left (capped)` : "";
+  print(flags, res, `auto-status: appended ${res.appended} status event(s)${pushed}${left}`);
+  return 0;
+}
+
+/** The collector's github + railway sources, polled once (no timers), with deploy rows merged as the server does. */
+async function pollOnce(env, dir) {
+  const { createCollector, withMergedDeploys } = await import("../lib/collector.mjs");
+  const collector = createCollector({
+    repoRoot: env.RF_REPO_ROOT || REPO_ROOT,
+    specsDir: dir,
+    env,
+  });
+  await collector.runOnce("github");
+  await collector.runOnce("railway");
+  return withMergedDeploys(collector.sources);
+}
+
 async function cmdSync(flags, env) {
   const c = await prepare(ctxFor(env), flags, { sync: false });
   const bugIds = await loadBugIds(env.RF_REPO_ROOT || REPO_ROOT);
@@ -1053,6 +1115,9 @@ export async function main(argv, env = process.env) {
         break;
       case "sync":
         code = await cmdSync(flags, env);
+        break;
+      case "auto-status":
+        code = await cmdAutoStatus(flags, env);
         break;
       case "status-sync": {
         const r = await runStatusSync({ env, push: !flags["no-push"], lockWaitMs: 5000 });

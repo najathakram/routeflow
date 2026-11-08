@@ -9,6 +9,7 @@ import {
   AUTO_STATUS_ACTOR,
   GRACE_MS,
   MAX_EVENTS_PER_RUN,
+  autoStatusOnce,
   planAutoStatus,
   runAutoStatus,
 } from "../lib/auto-status.mjs";
@@ -125,6 +126,45 @@ test("merged at or before the latest SUCCESS api+web deploy -> live; after it ->
     statusesOf(plan(ev1, { merged: [merged(11, NOW - 6 * H)], deploys: failed })),
     [],
   );
+});
+
+test("live needs every service's latest SUCCESS deploy: a failed web build with api redeployed is not live", () => {
+  const ev1 = item("5", { status: "shipping", prs: [11] });
+  const m = [merged(11, NOW - 6 * H)];
+  // api redeployed after the merge, web's last good deploy is older than the merge, web's newer build failed
+  const partial = [
+    deploy("@routeflow/api", NOW - 1 * H),
+    deploy("@routeflow/web", NOW - 1 * H, "FAILED"),
+    deploy("@routeflow/web", NOW - 8 * H),
+  ];
+  assert.deepEqual(statusesOf(plan(ev1, { merged: m, deploys: partial })), []);
+  // web building or failed right now (Railway reports only the latest row): nothing is live
+  const webRed = [
+    deploy("@routeflow/api", NOW - 1 * H),
+    deploy("@routeflow/web", NOW - 1 * H, "FAILED"),
+  ];
+  assert.deepEqual(statusesOf(plan(ev1, { merged: m, deploys: webRed })), []);
+  // control: both services green after the merge -> live
+  const both = [deploy("@routeflow/api", NOW - 1 * H), deploy("@routeflow/web", NOW - 2 * H)];
+  assert.deepEqual(statusesOf(plan(ev1, { merged: m, deploys: both })), ["5:live"]);
+  // a row naming neither service (GitHub's "routeflow / production") is not a deploy of either
+  const other = [deploy("routeflow / production", NOW - 1 * H)];
+  assert.deepEqual(statusesOf(plan(ev1, { merged: m, deploys: other })), []);
+  // no web row at all proves nothing about web
+  const apiOnly = [deploy("@routeflow/api", NOW - 1 * H)];
+  assert.deepEqual(statusesOf(plan(ev1, { merged: m, deploys: apiOnly })), []);
+});
+
+test("the board's deployed cut (not strict) leaves out a service that is building, and takes the earliest of the rest", async () => {
+  const { deployCut } = await import("../lib/snapshot.mjs");
+  const building = [
+    deploy("@routeflow/api", NOW - 3 * H),
+    deploy("@routeflow/web", NOW - 1 * H, "BUILDING"),
+  ];
+  assert.equal(deployCut(building, [], null), NOW - 3 * H);
+  assert.equal(deployCut(building, [], null, { strict: true }), -Infinity);
+  const both = [deploy("@routeflow/api", NOW - 1 * H), deploy("@routeflow/web", NOW - 4 * H)];
+  assert.equal(deployCut(both, [], null), NOW - 4 * H);
 });
 
 test("an open linked PR -> review; a draft is not review", () => {
@@ -280,6 +320,91 @@ test("runAutoStatus appends the planned events once, under the held lock, and no
   });
   assert.equal(none.appended, 0);
   assert.equal(appended.length, 1);
+});
+
+/** A fake store that records pulls, lock holds and appends. */
+function onceStore(events, { pull = { ok: true }, busy = false } = {}) {
+  const log = [];
+  return {
+    log,
+    readAllEvents: () => events,
+    syncSpecs: async () => (log.push("pull"), pull),
+    appendEvents: async (evs, o) => {
+      log.push(`append:${evs.length}:${o.lockHeld}`);
+      return { events: evs, pushed: false, warnings: [] };
+    },
+    withSpecsLock: async (fn) => {
+      if (busy) throw new Error("could not acquire specs lock /h/x within 5000 ms");
+      log.push("lock");
+      const r = await fn();
+      log.push("unlock");
+      return r;
+    },
+  };
+}
+const onceSources = () => ({
+  github: { ok: true, data: { open: [], merged: [merged(11, NOW - 10 * H)], master: null } },
+  railway: { data: { deploys: [] } },
+});
+const once = (store, o = {}) =>
+  autoStatusOnce({
+    dir: "/d",
+    home: "/h",
+    machine: "box",
+    now: NOW,
+    store,
+    poll: async () => onceSources(),
+    ...o,
+  });
+
+test("rf auto-status (F8): a dry pass plans the moves and never pulls, locks or appends", async () => {
+  const store = onceStore(item("5", { status: "building", prs: [11] }));
+  const res = await once(store);
+  assert.equal(res.dry, true);
+  assert.deepEqual(
+    res.planned.map((e) => [e.item, e.data.status]),
+    [["5", "shipping"]],
+  );
+  assert.deepEqual(store.log, []);
+});
+
+test("rf auto-status --apply: takes the specs lock, pulls, then appends under it; a failed pull appends nothing", async () => {
+  const store = onceStore(item("5", { status: "building", prs: [11] }));
+  const res = await once(store, { apply: true });
+  assert.equal(res.appended, 1);
+  assert.deepEqual(store.log, ["lock", "pull", "append:1:true", "unlock"]);
+  const failed = onceStore(item("5", { status: "building", prs: [11] }), {
+    pull: { ok: false, error: "conflict" },
+  });
+  const r2 = await once(failed, { apply: true });
+  assert.equal(r2.appended, 0);
+  assert.equal(r2.pullError, "conflict");
+  assert.ok(!failed.log.some((l) => l.startsWith("append")));
+});
+
+test("rf auto-status: a GitHub poll that failed is reported, never read as nothing to move", async () => {
+  const store = onceStore(item("5", { status: "building", prs: [11] }));
+  const res = await once(store, {
+    apply: true,
+    poll: async () => ({ github: { ok: false, error: "gh failed (1): auth" } }),
+  });
+  assert.equal(res.ran, false);
+  assert.match(res.reason, /github could not be read: gh failed/);
+  assert.deepEqual(store.log, []);
+});
+
+test("rf auto-status --apply: a busy specs lock skips the pass (busy), and other lock errors still throw", async () => {
+  const res = await once(onceStore(item("5", { status: "building", prs: [11] }), { busy: true }), {
+    apply: true,
+  });
+  assert.deepEqual(res, { ran: false, reason: "busy" });
+});
+
+test("rf wires auto-status: the command, its usage line and the collector's one-shot poll", () => {
+  const src = readFileSync(fileURLToPath(new URL("../bin/rf.mjs", import.meta.url)), "utf8");
+  assert.match(src, /case "auto-status":/);
+  assert.match(src, /auto-status \[--apply\]/);
+  assert.match(src, /runOnce\("github"\)/);
 });
 
 test("the monitor server runs the step inside the specs pass", () => {

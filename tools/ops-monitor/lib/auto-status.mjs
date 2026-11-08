@@ -2,7 +2,7 @@
 // `rf status` no longer leaves an item stuck. planAutoStatus is pure; runAutoStatus does the IO.
 //
 //   all explicitly linked PRs landed (train landings included) -> shipping
-//   ... and the last of them landed at or before the latest SUCCESS api+web deploy -> live
+//   ... and the last of them landed at or before the latest SUCCESS deploy of BOTH api and web -> live
 //   an open (non-draft) linked PR                                -> review
 //
 // Guards: forward-only (a status is never lowered, and live/verified/parked/dropped never move);
@@ -62,7 +62,8 @@ export function planAutoStatus({
   const openRaw = prs?.open ?? [];
   const mergedBy = new Map(mergedRaw.map((p) => [p.number, p]));
   const openBy = new Map(openRaw.map((p) => [p.number, p]));
-  const cut = deployCut(deploys, mergedRaw, master);
+  // strict: every api/web service needs a SUCCESS deploy covering the merge (live never moves back)
+  const cut = deployCut(deploys, mergedRaw, master, { strict: true });
   const written = writtenKeys(events);
   const due = [];
 
@@ -176,4 +177,70 @@ export async function runAutoStatus({
     warnings: res.warnings,
     capped,
   };
+}
+
+/**
+ * One pass outside the monitor server: `rf auto-status [--apply]`. The step above runs only inside a local, long-running
+ * monitor (server.mjs `shouldRunRegisterSync`), and the Railway monitor is cloud mode with read-only tokens, so on most
+ * days nothing ran it and every status-behind-merge needed a hand sweep (F8). The lead's hourly cycle runs this instead.
+ *   poll()   collector-shaped sources ({ github, railway }), polled once
+ *   apply    false: plan against the local clone and write nothing; true: take the specs lock, pull, then append
+ * Returns { ran, dry, planned, capped } (dry) or runAutoStatus's result (apply); { ran: false, reason } when GitHub
+ * could not be read or the lock stayed busy, so a failed poll never reads as "nothing to move".
+ */
+export async function autoStatusOnce({
+  dir = defaultSpecsDir(),
+  home,
+  env = process.env,
+  machine,
+  now = Date.now(),
+  apply = false,
+  push = true,
+  poll,
+  store,
+  lockWaitMs = 5000,
+} = {}) {
+  store = store ?? (await import("./store.mjs"));
+  home = home ?? opsHome(env);
+  const sources = await poll();
+  const gh = sources?.github;
+  if (!gh?.data || gh.ok === false) {
+    return { ran: false, reason: `github could not be read: ${gh?.error ?? "no data"}` };
+  }
+  const me = machine ?? machineId(loadConfig(dir), env);
+  if (!apply) {
+    const events = store.readAllEvents(dir);
+    const { events: planned, capped } = planAutoStatus({
+      state: fold(events),
+      events,
+      prs: { open: gh.data.open ?? [], merged: gh.data.merged ?? [] },
+      deploys: sources.railway?.data?.deploys ?? [],
+      master: gh.data.master ?? null,
+      now,
+      machine: me,
+    });
+    return { ran: true, dry: true, planned, capped };
+  }
+  const work = async () => {
+    const pulled = await store.syncSpecs(dir);
+    if (pulled?.ok === false)
+      return { ran: true, appended: 0, pushed: false, pullError: pulled.error };
+    return runAutoStatus({
+      dir,
+      home,
+      env,
+      machine: me,
+      now,
+      push,
+      lockHeld: true,
+      sources,
+      store,
+    });
+  };
+  try {
+    return await store.withSpecsLock(work, { home, waitMs: lockWaitMs });
+  } catch (err) {
+    if (!/could not acquire specs lock/.test(String(err?.message ?? err))) throw err;
+    return { ran: false, reason: "busy" };
+  }
 }

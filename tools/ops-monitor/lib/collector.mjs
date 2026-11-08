@@ -325,6 +325,17 @@ export function mergeDeploys(githubDeploys, railwayDeploys) {
   return out;
 }
 
+/** Collector sources with GitHub + Railway deploy rows merged (Railway wins, GitHub's kept). */
+export function withMergedDeploys(sources, merge = mergeDeploys) {
+  const gh = sources.github?.data?.deploys;
+  if (!gh?.length) return sources;
+  const rw = sources.railway ?? {};
+  return {
+    ...sources,
+    railway: { ...rw, data: { ...(rw.data ?? {}), deploys: merge(gh, rw.data?.deploys) } },
+  };
+}
+
 /** `refname<TAB>sha<TAB>iso-date` lines → [{ branch, sha, date }] (origin/ stripped; HEAD/master dropped). */
 export function parseForEachRef(text) {
   const out = [];
