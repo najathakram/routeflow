@@ -14,6 +14,7 @@ import {
   ConflictException,
   NotFoundException,
   ParseUUIDPipe,
+  Optional,
 } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from "@nestjs/swagger";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -120,7 +121,7 @@ export class PlatformAdminController {
     private readonly featureConfig: FeatureConfigService,
     private readonly applyService: BusinessProfileApplyService,
     // FG-1 WP3: the sweep the `live` door reads. Last and optional so a bare stub in a spec compiles; absent = refuse.
-    private readonly entitlementSweep?: EntitlementSweepService,
+    @Optional() private readonly entitlementSweep?: EntitlementSweepService,
   ) {}
 
   @Get("stats")

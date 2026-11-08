@@ -327,6 +327,26 @@ describe("EntitlementSweepService.liveDoor (FG-1 WP3: the one reading the live d
     await expect(service.liveDoor(20)).resolves.toMatchObject({ clear: false, reason: "timeout" });
   });
 
+  it("T8: one door sweep in flight per replica: a second request shares it, a later one runs fresh", async () => {
+    const { service } = build();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const spy = jest.spyOn(service, "sweep").mockImplementation(async () => {
+      await gate;
+      return { tenants: [tenant({ a: bits(true, true) })], nextCursor: null } as never;
+    });
+    const first = service.liveDoor();
+    const second = service.liveDoor();
+    release();
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      { clear: true, tenants: 1 },
+      { clear: true, tenants: 1 },
+    ]);
+    expect(spy).toHaveBeenCalledTimes(1);
+    await service.liveDoor();
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+
   it("T8: fails closed when the sweep throws", async () => {
     const { service } = build();
     jest.spyOn(service, "sweep").mockRejectedValue(new Error("db down"));

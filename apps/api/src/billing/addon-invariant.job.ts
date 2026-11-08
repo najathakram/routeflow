@@ -16,7 +16,8 @@ import {
   normalizePlanKey,
   planKeyFromEnum,
 } from "./plan-catalog.constants";
-import { OVERRIDE_RULE_ORDER, resolveLiveEffects } from "./feature-override-rule";
+import { OVERRIDE_RULE_ORDER, resolveLiveRows } from "./feature-override-rule";
+import { billedKeysOfRow, skuGrantsFlags } from "./feature-resolver.service";
 import { StripeService } from "./stripe.service";
 import { TRACKED_ADDON_FIELDS } from "./tenant-addon-writer";
 
@@ -96,8 +97,10 @@ export interface InvariantContext {
   skusOf(tenant: InvariantTenant): readonly AddonSkuDef[] | null;
   planKeyOf(tenant: InvariantTenant): string | null;
   modeOf(tenant: InvariantTenant): "STRIPE" | "MANUAL" | "UNBILLED";
-  /** The feature keys a live (not revoked, not expired) DENY override hides for the tenant. */
-  deniedKeysOf(tenantId: string): ReadonlySet<string>;
+  /** The feature keys a live DENY override hides for the tenant, each with the id of the applying override row. */
+  deniedKeysOf(tenantId: string): ReadonlyMap<string, string>;
+  /** SKU code -> the flags it grants: the tenant's pinned catalog plus the published one (as the preview reads them). */
+  grantsOf(tenant: InvariantTenant): ReadonlyMap<string, readonly string[]>;
 }
 
 export interface BusinessChange {
@@ -118,6 +121,8 @@ export interface InvariantFinding {
   /** `updatedAt` of the row: part of the dedupe key, so a row that changes again is a NEW finding. */
   updatedAt: Date;
   sentence: string;
+  /** Extra dedupe part (I5: the id of the DENY override), so a new episode on an unchanged row reports again. */
+  episode?: string;
 }
 
 export interface InvariantCheck {
@@ -261,21 +266,22 @@ export const ADDON_INVARIANTS: readonly InvariantCheck[] = [
         const denied = ctx.deniedKeysOf(t.id);
         if (denied.size === 0) continue;
         const skus = ctx.skusOf(t);
+        const grants = ctx.grantsOf(t);
         for (const r of ctx.rowsOf(t.id)) {
-          if (!r.active || r.isComp) continue;
-          if (!(Number(r.priceSnapshot ?? 0) > 0 || r.stripeItemId)) continue;
-          const def = skus?.find((s) => s.sku === codeOf(r));
-          const keys = [r.addonKey, ...(def?.grantsFlags ?? [])];
-          if (!keys.some((k) => denied.has(k))) continue;
-          out.push(
-            finding(
-              "I5",
-              t,
-              r,
-              def?.name ?? codeOf(r),
-              "is billed while an override hides it: turning it off does not stop the charge",
-            ),
+          // The ONE billed helper, shared with the preview warning (feature-resolver.service.ts).
+          const hit = billedKeysOfRow(r, grants).find((k) => denied.has(k));
+          if (!hit) continue;
+          const f = finding(
+            "I5",
+            t,
+            r,
+            skus?.find((s) => s.sku === codeOf(r))?.name ?? codeOf(r),
+            // No live paid subscription (trial, full coupon): nothing is charged yet, so the sentence says when it will be.
+            ctx.modeOf(t) === "UNBILLED"
+              ? "will be billed once paid billing starts, and an override hides it: turning it off will not stop that"
+              : "is billed while an override hides it: turning it off does not stop the charge",
           );
+          out.push({ ...f, episode: denied.get(hit) });
         }
       }
       return out;
@@ -313,6 +319,9 @@ export class AddonInvariantJob {
     const skuCache = new Map<string, readonly AddonSkuDef[] | null>();
     let truncated = false;
     let cursor: string | undefined;
+    // Read once per run, only when some tenant has a DENY to judge (the preview reads pinned plus published too).
+    let published:
+      Awaited<ReturnType<PlanCatalogService["getPublishedCatalog"]>> | null | undefined;
 
     for (;;) {
       const tenants = (await this.prisma.tenant.findMany({
@@ -359,19 +368,28 @@ export class AddonInvariantJob {
         this.prisma.tenantFeatureOverride.findMany({
           where: { tenantId: { in: ids }, revokedAt: null },
           orderBy: OVERRIDE_RULE_ORDER,
-          select: { tenantId: true, featureKey: true, effect: true, expiresAt: true },
+          select: { id: true, tenantId: true, featureKey: true, effect: true, expiresAt: true },
         }),
       ]);
+      if (denies.length > 0 && published === undefined) {
+        published = await this.catalog.getPublishedCatalog().catch((err: Error) => {
+          this.logger.error(`addon invariant: published catalog unresolved (${err.message})`);
+          return null;
+        });
+      }
       // The ONE override rule (feature-override-rule.ts): the newest live row per key applies; keep the DENY ones.
-      const deniedBy = new Map<string, Set<string>>();
+      const deniedBy = new Map<string, Map<string, string>>();
       const byOverrideTenant = new Map<string, typeof denies>();
-      for (const d of denies)
+      for (const d of denies) {
         byOverrideTenant.set(d.tenantId, [...(byOverrideTenant.get(d.tenantId) ?? []), d]);
+      }
       for (const [tenantId, list] of byOverrideTenant) {
-        const effects = resolveLiveEffects(list, now.getTime());
+        const applying = resolveLiveRows(list, now.getTime());
         deniedBy.set(
           tenantId,
-          new Set([...effects].filter(([, effect]) => effect === "DENY").map(([key]) => key)),
+          new Map(
+            [...applying].filter(([, row]) => row.effect === "DENY").map(([k, row]) => [k, row.id]),
+          ),
         );
       }
       const byTenant = new Map<string, InvariantRow[]>();
@@ -416,7 +434,12 @@ export class AddonInvariantJob {
         planKeyOf: (t) =>
           normalizePlanKey(t.subscription?.planKey) ?? (t.plan ? planKeyFromEnum(t.plan) : null),
         modeOf: (t) => addonBillingModeOf(this.stripe.isConfigured, t.subscription),
-        deniedKeysOf: (id) => deniedBy.get(id) ?? new Set<string>(),
+        deniedKeysOf: (id) => deniedBy.get(id) ?? new Map<string, string>(),
+        grantsOf: (t) =>
+          skuGrantsFlags([
+            ...(published?.addonSkus ?? []),
+            ...(skuCache.get(resolvePlanVersionId(t.subscription, t) ?? "") ?? []),
+          ] as never),
       };
       for (const check of ADDON_INVARIANTS) {
         for (const f of check.run(ctx)) {
@@ -452,7 +475,7 @@ export class AddonInvariantJob {
     return `ADDON_INVARIANT:${f.invariant}`;
   }
   private key(f: InvariantFinding): string {
-    return `${f.rowId}:${f.updatedAt.toISOString()}`;
+    return `${f.rowId}:${f.updatedAt.toISOString()}${f.episode ? `:${f.episode}` : ""}`;
   }
 
   /** The house claim: `create` + a P2002 catch. True only for the run that WON the claim. */

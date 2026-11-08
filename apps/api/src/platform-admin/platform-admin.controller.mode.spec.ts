@@ -119,20 +119,47 @@ describe("T8: `force` is deleted", () => {
     expect(door).not.toMatch(/\bforce\b/);
   });
 
-  it("the controller is the ONE non-spec caller of EntitlementsModeService.setMode", () => {
-    const callers: string[] = [];
+  it("the sweep parameter is @Optional(), so a module without it builds and the door refuses", () => {
+    const optional: number[] =
+      Reflect.getMetadata("optional:paramtypes", PlatformAdminController) ?? [];
+    const sweepIndex =
+      (Reflect.getMetadata("design:paramtypes", PlatformAdminController) as unknown[]).length - 1;
+    expect(optional).toContain(sweepIndex);
+  });
+
+  it("the controller is the ONE non-spec caller of any .setMode( , and no script writes entitlements.mode", () => {
+    const repo = join(__dirname, "..", "..", "..", "..");
+    const roots = [
+      join(repo, "apps", "api", "src"),
+      join(repo, "apps", "api", "scripts"),
+      join(repo, "scripts"),
+    ];
+    const setModeCallers: string[] = [];
+    const scriptsNamingTheKey: string[] = [];
     const walk = (dir: string) => {
       for (const name of readdirSync(dir)) {
-        const p = join(dir, name);
-        if (statSync(p).isDirectory()) walk(p);
-        else if (/\.ts$/.test(name) && !/\.spec\.ts$/.test(name)) {
-          if (/(entitlementsMode|modeService)\??\.setMode\(/.test(readFileSync(p, "utf8"))) {
-            callers.push(name);
+        if (name === "node_modules") continue;
+        const path = join(dir, name);
+        if (statSync(path).isDirectory()) walk(path);
+        else if (/\.(ts|mjs|js|cjs)$/.test(name) && !/\.(spec|test|self-test)\./.test(name)) {
+          const text = readFileSync(path, "utf8");
+          if (/\.setMode\(/.test(text)) setModeCallers.push(name);
+          if (/\.(mjs|js|cjs)$/.test(name) && text.includes("entitlements.mode")) {
+            // read-only mentions are fine; any write to PlatformConfig from a script is not
+            expect({
+              name,
+              writes: /INSERT INTO "PlatformConfig"|UPDATE "PlatformConfig"/.test(text),
+            }).toEqual({
+              name,
+              writes: false,
+            });
+            scriptsNamingTheKey.push(name);
           }
         }
       }
     };
-    walk(join(__dirname, ".."));
-    expect(callers).toEqual(["platform-admin.controller.ts"]);
+    roots.forEach(walk);
+    expect(setModeCallers).toEqual(["platform-admin.controller.ts"]);
+    expect(scriptsNamingTheKey.length).toBeGreaterThan(0); // the scan really reached the scripts
   });
 });

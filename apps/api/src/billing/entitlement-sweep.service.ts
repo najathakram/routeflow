@@ -168,6 +168,18 @@ export class EntitlementSweepService {
    * same function the report reads). Read-only. Fails closed: past `timeoutMs`, or on any error, the verdict is not clear.
    */
   async liveDoor(timeoutMs: number = LIVE_DOOR_TIMEOUT_MS): Promise<LiveDoorVerdict> {
+    // One door sweep in flight per replica: a second request while one runs shares its answer, so retries cannot stack.
+    if (!this.doorInFlight) {
+      this.doorInFlight = this.runLiveDoor(timeoutMs).finally(() => {
+        this.doorInFlight = undefined;
+      });
+    }
+    return this.doorInFlight;
+  }
+
+  private doorInFlight?: Promise<LiveDoorVerdict>;
+
+  private async runLiveDoor(timeoutMs: number): Promise<LiveDoorVerdict> {
     let courtesyGaps = 0;
     let unexplained = 0;
     let tenants = 0;

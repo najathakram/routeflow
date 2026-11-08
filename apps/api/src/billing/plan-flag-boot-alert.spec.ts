@@ -3,6 +3,7 @@
  * the same process sends nothing more; a failed send never throws into the boot.
  */
 import { OwnerAlertService } from "../email/owner-alert.service";
+import * as demoConfig from "../demo-booking/demo-booking.config";
 import { PlanFlagBootAlert } from "./plan-flag-boot-alert";
 
 const SWITCH = "PLAN_FLAG_ENFORCEMENT";
@@ -63,5 +64,21 @@ describe("PlanFlagBootAlert", () => {
     const { boot } = build(jest.fn(async () => Promise.reject(new Error("smtp down"))) as never);
     expect(() => boot.onApplicationBootstrap()).not.toThrow();
     await flush();
+  });
+
+  it("a config read that throws is caught by the guard: no unhandled rejection, no mail", async () => {
+    process.env[SWITCH] = "on";
+    jest.spyOn(demoConfig, "loadDemoBookingConfig").mockImplementation(() => {
+      throw new Error("bad config");
+    });
+    const unhandled = jest.fn();
+    process.on("unhandledRejection", unhandled);
+    const { boot, send } = build();
+    boot.onApplicationBootstrap();
+    await flush();
+    await flush();
+    process.off("unhandledRejection", unhandled);
+    expect(unhandled).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
   });
 });

@@ -8,7 +8,7 @@ import {
 } from "./feature-override.service";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { FEATURE_REGISTRY, FeatureDef, isDefaultGrantedAddon } from "./feature-registry";
-import { effectivePlanFlags, findPlanDefinition } from "./plan-catalog.constants";
+import { addonSkuCode, effectivePlanFlags, findPlanDefinition } from "./plan-catalog.constants";
 import { isCourtesyServed } from "./plan-flag-policy";
 import type { EffectiveFeature, FeatureSource } from "@routeflow/types";
 
@@ -239,6 +239,21 @@ export function billedKeySet(
     for (const flag of (row.sku ? grants.get(row.sku) : undefined) ?? []) keys.add(flag);
   }
   return keys;
+}
+
+/**
+ * FG-1 WP4: the ONE answer to "which registry keys does this row bill?" for the "still billed" reports (invariant I5 and
+ * the preview warning). Same predicate as `billedKeySet` ({@link isBilledAddonRow}), but the SKU is read through
+ * `addonSkuCode` so a legacy sku-null row (mapped by its add-on key) grants the same flags it is billed for.
+ * `billedKeySet` itself is unchanged for its other callers.
+ */
+export function billedKeysOfRow(
+  row: AddonBillingRow,
+  grants: ReadonlyMap<string, readonly string[]>,
+): string[] {
+  if (!isBilledAddonRow(row)) return [];
+  const code = addonSkuCode({ sku: row.sku, addonKey: row.addonKey });
+  return [row.addonKey, ...((code ? grants.get(code) : undefined) ?? [])];
 }
 
 /** Add-on keys held through a row or a default grant (the set `AddonService.getActiveAddons` returns). */

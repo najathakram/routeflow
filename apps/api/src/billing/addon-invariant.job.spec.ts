@@ -6,6 +6,8 @@
  * claim (a second run writes nothing new); the dark e-mail (`log` by default, nothing is sent; `email` sends ONE
  * message per recipient for the run); a failed send releases the claims; the findings cap; the registry shape.
  */
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import {
@@ -375,69 +377,116 @@ describe("I4: an unowned business change (row 556 / SA-970 §2.2)", () => {
 });
 
 describe("I5: billed while a DENY override hides the key (FG-1 WP4, T7)", () => {
-  const denies = [
-    { tenantId: "t1", featureKey: "REGULATED_ITEMS", effect: "DENY", expiresAt: null },
-  ];
+  const deny = (featureKey = "REGULATED_ITEMS", over: Record<string, unknown> = {}) => ({
+    id: "ov-1",
+    tenantId: "t1",
+    featureKey,
+    effect: "DENY",
+    expiresAt: null,
+    ...over,
+  });
+  const denies = [deny()];
   const billed = (over: Record<string, unknown> = {}) =>
     row({ priceSnapshot: 39, stripeItemId: "si_1", ...over });
+  const i5 = async (m: ReturnType<typeof make>) =>
+    (await m.job.run(NOW)).filter((f) => f.invariant === "I5");
+  const withGrants = (
+    m: ReturnType<typeof make>,
+    pinned: string[] | null, // null: the tenant's pinned catalog does not list the SKU at all
+    published: string[],
+  ) => {
+    const cat = (flags: string[]) => ({
+      ...CATALOG,
+      addonSkus: [{ ...CATALOG.addonSkus[0], grantsFlags: flags }],
+    });
+    (m.job as any).catalog.getVersionForTenant.mockResolvedValue(
+      pinned ? cat(pinned) : { ...CATALOG, addonSkus: [] },
+    );
+    (m.job as any).catalog.getPublishedCatalog.mockResolvedValue(cat(published));
+  };
 
   it("T7: an active, priced row under a DENY for its key is one I5 finding, with the sentence", async () => {
-    const { job } = make({ rows: [billed()], denies });
-    const found = (await job.run(NOW)).filter((f) => f.invariant === "I5");
+    const found = await i5(make({ rows: [billed()], denies }));
     expect(found.map((f) => [f.rowId, f.sku])).toEqual([["ta1", "REGULATED_ITEMS"]]);
     expect(findingMessage(found[0])).toBe(
       "Add-on Regulated items for Acme: is billed while an override hides it: turning it off does not stop the charge. Check the tenant's add-ons.",
     );
   });
 
-  it("T7: a Stripe item with a /usr/bin/bash snapshot is billed too", async () => {
-    const { job } = make({ rows: [billed({ priceSnapshot: 0 })], denies });
-    expect((await job.run(NOW)).some((f) => f.invariant === "I5")).toBe(true);
+  it("T7: a tenant with no live paid subscription is told when the charge will start, not that one exists", async () => {
+    const trial = tenant({ subscription: { ...tenant().subscription, stripeSubId: null } });
+    const found = await i5(
+      make({ pages: [[trial]], rows: [billed({ stripeItemId: null })], denies }),
+    );
+    expect(findingMessage(found[0])).toBe(
+      "Add-on Regulated items for Acme: will be billed once paid billing starts, and an override hides it: turning it off will not stop that. Check the tenant's add-ons.",
+    );
+    const coupon = tenant({ subscription: { ...tenant().subscription, couponFull: true } });
+    const f2 = await i5(make({ pages: [[coupon]], rows: [billed()], denies }));
+    expect(f2[0].sentence).toMatch(/^will be billed once paid billing starts/);
   });
 
-  it("T7: no I5 for a comp row, an inactive row, a /usr/bin/bash row with no Stripe item, or a DENY on another key", async () => {
+  it("T7: a Stripe item with a zero-dollar snapshot is billed too", async () => {
+    expect(await i5(make({ rows: [billed({ priceSnapshot: 0 })], denies }))).toHaveLength(1);
+  });
+
+  it("T7: no I5 for a comp row, an inactive row, an unpriced row with no Stripe item, or a DENY on another key", async () => {
     for (const r of [billed({ isComp: true }), billed({ active: false }), row()]) {
-      const { job } = make({ rows: [r], denies });
-      expect((await job.run(NOW)).some((f) => f.invariant === "I5")).toBe(false);
+      expect(await i5(make({ rows: [r], denies }))).toHaveLength(0);
     }
-    const other = make({
-      rows: [billed()],
-      denies: [{ tenantId: "t1", featureKey: "FORECASTING", effect: "DENY", expiresAt: null }],
-    });
-    expect((await other.job.run(NOW)).some((f) => f.invariant === "I5")).toBe(false);
+    expect(await i5(make({ rows: [billed()], denies: [deny("FORECASTING")] }))).toHaveLength(0);
   });
 
   it("T7: a DENY on a flag the row SKU grants counts", async () => {
-    const granted = {
-      ...CATALOG,
-      addonSkus: [{ ...CATALOG.addonSkus[0], grantsFlags: ["flag.regulated"] }],
-    };
-    const m = make({
-      rows: [billed()],
-      denies: [{ tenantId: "t1", featureKey: "flag.regulated", effect: "DENY", expiresAt: null }],
-    });
-    (m.job as any).catalog.getVersionForTenant.mockResolvedValue(granted);
-    (m.job as any).catalog.getPublishedCatalog.mockResolvedValue(granted);
-    expect((await m.job.run(NOW)).some((f) => f.invariant === "I5")).toBe(true);
+    const m = make({ rows: [billed()], denies: [deny("flag.regulated")] });
+    withGrants(m, ["flag.regulated"], ["flag.regulated"]);
+    expect(await i5(m)).toHaveLength(1);
+  });
+
+  it("T7 (one helper): a flag only the PUBLISHED catalog grants counts, as it does in the preview", async () => {
+    const m = make({ rows: [billed()], denies: [deny("flag.regulated")] });
+    withGrants(m, null, ["flag.regulated"]);
+    expect(await i5(m)).toHaveLength(1);
+  });
+
+  it("T7 (one helper): a legacy sku-null row is read through its add-on key's SKU, as it is in the preview", async () => {
+    const legacy = billed({ sku: null, addonKey: "tobacco_dealer" }); // legacy map: tobacco_dealer -> REGULATED_ITEMS
+    const m = make({ rows: [legacy], denies: [deny("flag.regulated")] });
+    withGrants(m, ["flag.regulated"], ["flag.regulated"]);
+    expect(await i5(m)).toHaveLength(1);
+  });
+
+  it("T7 (one helper): I5 and the preview both ask billedKeysOfRow, and neither copies the billed predicate", () => {
+    const read = (f: string) => fs.readFileSync(path.join(__dirname, f), "utf8");
+    for (const f of ["addon-invariant.job.ts", "feature-preview.service.ts"]) {
+      expect(read(f)).toContain("billedKeysOfRow(");
+    }
+    const job = read("addon-invariant.job.ts");
+    const i5Block = job.slice(job.indexOf('id: "I5"'), job.indexOf("const isUnique"));
+    expect(i5Block).not.toContain("priceSnapshot");
+    expect(i5Block).not.toContain("stripeItemId");
   });
 
   it("T7: the override rule decides: a newer GRANT, or a lapsed DENY, is not a DENY", async () => {
-    const newerGrant = [
-      { tenantId: "t1", featureKey: "REGULATED_ITEMS", effect: "GRANT", expiresAt: null }, // newest first
-      { tenantId: "t1", featureKey: "REGULATED_ITEMS", effect: "DENY", expiresAt: null },
-    ];
-    const lapsed = [
-      {
-        tenantId: "t1",
-        featureKey: "REGULATED_ITEMS",
-        effect: "DENY",
-        expiresAt: new Date(NOW.getTime() - HOUR),
-      },
-    ];
+    const newerGrant = [deny("REGULATED_ITEMS", { id: "ov-2", effect: "GRANT" }), deny()]; // newest first
+    const lapsed = [deny("REGULATED_ITEMS", { expiresAt: new Date(NOW.getTime() - HOUR) })];
     for (const rows of [newerGrant, lapsed]) {
-      const { job } = make({ rows: [billed()], denies: rows });
-      expect((await job.run(NOW)).some((f) => f.invariant === "I5")).toBe(false);
+      expect(await i5(make({ rows: [billed()], denies: rows }))).toHaveLength(0);
     }
+  });
+
+  it("T7: a NEW DENY on an unchanged row reports again; the same DENY does not", async () => {
+    const m = make({
+      pages: [[tenant()], [tenant()], [tenant()]],
+      rows: [billed()],
+      denies: [deny("REGULATED_ITEMS", { id: "ov-1" })],
+    });
+    expect(await i5(m)).toHaveLength(1);
+    expect(await i5(m)).toHaveLength(0); // same row, same override: deduped
+    m.prisma.tenantFeatureOverride.findMany.mockResolvedValueOnce([
+      deny("REGULATED_ITEMS", { id: "ov-2" }),
+    ]);
+    expect(await i5(m)).toHaveLength(1); // a new override episode on the same untouched row
   });
 
   it("T7: the read takes the non-revoked rows in the rule's order, and I5 writes no fix (report only)", async () => {

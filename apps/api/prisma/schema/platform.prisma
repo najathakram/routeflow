@@ -189,8 +189,8 @@ enum FeatureSource {
 
 /// Feature grants v2 §2 "Effective"/PR-0a: shadow-mode disagreement between the old
 /// enforcement path and FeatureResolverService, one row per (tenantId, featureKey, before,
-/// after) pair — a recurrence upserts count/lastSeenAt rather than inserting again. Explained
-/// rows unblock `PUT entitlements.mode=live`; an unexplained row keeps it refused.
+/// after) pair — a recurrence upserts count/lastSeenAt rather than inserting again. Explaining a row
+/// is a note for the reader only: `PUT entitlements.mode=live` is gated by the entitlement sweep (FG-1 WP3), not by these rows.
 model FeatureResolverDiff {
   id          String        @id @default(uuid())
   tenantId    String

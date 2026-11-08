@@ -171,18 +171,16 @@ describe("EntitlementAuthority — feature grants v2 brief A oracles", () => {
     expect(await authority.can("t1", "flag.estimates")).toBe(true);
   });
 
-  // Oracle 4 (service-level half — the 409/200 HTTP shape is the controller's job): mode=live is
-  // refused while an unexplained diff exists, allowed once explained.
-  it("hasUnexplained() reports true after a diff, false once every row is explained", async () => {
+  // Diff rows are a reader's log (the live door is gated by the sweep, FG-1 WP3): listed while unexplained, then explained.
+  it("a diff row lists as unexplained, then drops off that list once explained", async () => {
     const { authority, diffService } = buildAuthority(V11_PIN_FIXTURE);
     disagree(authority);
     await authority.can("t1", "flag.estimates"); // produces one diff row
     await flushMicrotasks(); // the diff write is fire-and-forget (item 3) — let it land
-    expect(await diffService.hasUnexplained()).toBe(true);
-
     const [row] = await diffService.list({ unexplainedOnly: true });
+    expect(row).toBeDefined();
     await diffService.explain(row.id, "expected — catalog not yet re-pinned to v12");
-    expect(await diffService.hasUnexplained()).toBe(false);
+    expect(await diffService.list({ unexplainedOnly: true })).toHaveLength(0);
   });
 
   // Oracle 5: resolver DB error → verdict unchanged, no diff attempted.
