@@ -28,6 +28,24 @@ async function liveTenantCount(client) {
   return rows.filter((t) => !isTestTenant(t.slug)).length;
 }
 
+/** A dry run is a read-only database session (the server refuses any write); only `--apply` may write. */
+function poolConfig(url, apply) {
+  return apply
+    ? { connectionString: url }
+    : { connectionString: url, options: "-c default_transaction_read_only=on" };
+}
+
+// Pure: the API still reads and writes the business key until PR-3 is deployed, so `--apply` needs the operator's
+// `--after-pr3` attestation (no database fact marks PR-3, so the flag is the check). A dry run always passes.
+function runOrderGate({ apply, afterPr3 }) {
+  if (!apply || afterPr3) return { ok: true };
+  return {
+    ok: false,
+    reason:
+      "the API reads the business key until PR-3 is deployed: --apply needs --after-pr3 (run it only after that deploy)",
+  };
+}
+
 /** Which rows may be deleted: a protected tenant's only if named; a non-test tenant's only with `liveOverride`. */
 function planDeletes({ refs, protectedIds = new Set(), allowProtected = new Set(), liveOverride }) {
   const write = [];
@@ -83,7 +101,7 @@ async function deleteAll({ client, write }) {
       await tx.query(
         `INSERT INTO "AuditLog" (id, "tenantId", action, "entityType", "entityId", meta, "createdAt")
          VALUES (gen_random_uuid()::text, $1, $2, 'SystemConfig', $3, $4::jsonb, now())`,
-        [ref.tenantId, AUDIT_ACTION, ref.id, JSON.stringify({ key: KEY })],
+        [ref.tenantId, AUDIT_ACTION, ref.id, JSON.stringify({ key: KEY, actor: "script" })],
       );
     }
     await tx.query("COMMIT");
@@ -101,6 +119,8 @@ module.exports = {
   AUDIT_ACTION,
   keyRefs,
   liveTenantCount,
+  poolConfig,
+  runOrderGate,
   planDeletes,
   applyGate,
   parseAllowProtected,

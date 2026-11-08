@@ -22,10 +22,11 @@ const SECRET = "sk-ant-api03-DELETEDELETEDELETEDELETEDELETE1111";
 describeDb("delete-tenant-anthropic-keys core (AI limits PR-2)", () => {
   let prisma: PrismaService;
   let pool: Pool;
+  let url: string;
   const tenantIds: string[] = [];
 
   beforeAll(async () => {
-    const url = requireLocalDatabaseUrl();
+    url = requireLocalDatabaseUrl();
     prisma = new PrismaService(new TenantContextService());
     await prisma.$connect();
     pool = new Pool({ connectionString: url });
@@ -92,7 +93,7 @@ describeDb("delete-tenant-anthropic-keys core (AI limits PR-2)", () => {
     expect(await has(a, "email.smtpPassword")).toBe(true);
     const rows = await audits(a);
     expect(rows).toHaveLength(1);
-    expect(rows[0].meta).toEqual({ key: "anthropic.apiKey" });
+    expect(rows[0].meta).toEqual({ key: "anthropic.apiKey", actor: "script" });
     expect(JSON.stringify(rows)).not.toContain(SECRET);
   });
 
@@ -101,13 +102,37 @@ describeDb("delete-tenant-anthropic-keys core (AI limits PR-2)", () => {
     expect(await core.deleteAll({ client: pool, write: [] })).toBe(0);
   });
 
-  it("D-5: liveTenantCount counts only tenants that are not approved test tenants", async () => {
+  it("D-5: liveTenantCount counts only tenants that are not approved test tenants; keyRefs marks a non-test tenant's row isTest: false", async () => {
     const before = await core.liveTenantCount(pool);
     const live = await prisma.tenant.create({
       data: { slug: `acme-delkeys-${RUN}`, name: "acme" },
     });
     tenantIds.push(live.id);
     expect(await core.liveTenantCount(pool)).toBe(before + 1);
+    await put(live.id, "anthropic.apiKey", SECRET);
+    const refs = (await mine()).filter((r: { tenantId: string }) => r.tenantId === live.id);
+    expect(refs).toHaveLength(1);
+    expect(refs[0].isTest).toBe(false);
+    await pool.query(`DELETE FROM "SystemConfig" WHERE "tenantId" = $1`, [live.id]);
+  });
+
+  it("D-6: a dry run's session refuses any write; an --apply session may write", async () => {
+    const t = tenantIds[0];
+    const attempt = (apply: boolean) => {
+      const p = new Pool(core.poolConfig(url, apply));
+      return p
+        .query(
+          `INSERT INTO "AuditLog" (id, "tenantId", action, "entityType", "entityId", "createdAt")
+           VALUES (gen_random_uuid()::text, $1, 'probe.delkeys.dryrun', 'SystemConfig', 'probe', now())`,
+          [t],
+        )
+        .finally(() => p.end());
+    };
+    await expect(attempt(false)).rejects.toThrow(/read-only transaction/);
+    await attempt(true);
+    expect(
+      (await pool.query(`SELECT 1 FROM "AuditLog" WHERE action = 'probe.delkeys.dryrun'`)).rowCount,
+    ).toBe(1); // only the --apply session's insert landed
   });
 
   it("D-4: one stale row rolls the whole run back: nothing deleted, no audit row", async () => {
