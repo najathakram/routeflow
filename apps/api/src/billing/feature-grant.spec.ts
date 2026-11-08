@@ -135,11 +135,11 @@ describe("ocr is included on every plan and never denied (SA-1106 A-2, M2-1)", (
   });
 
   describe("the scan guard still honours an ocr override (a GRANT is how a LITE business scans)", () => {
-    const decide = (override: "GRANT" | "DENY" | undefined) =>
+    const decide = (override: "GRANT" | "DENY" | undefined, alwaysEnforced = true) =>
       decideAddonAccess(
         {
           addonService: { getActiveAddons: jest.fn().mockResolvedValue([]) },
-          entitlements: { isAlwaysEnforcedTenant: jest.fn().mockResolvedValue(true) },
+          entitlements: { isAlwaysEnforcedTenant: jest.fn().mockResolvedValue(alwaysEnforced) },
           featureOverrides: {
             getMany: jest.fn().mockResolvedValue(new Map(override ? [["ocr", override]] : [])),
           },
@@ -153,6 +153,11 @@ describe("ocr is included on every plan and never denied (SA-1106 A-2, M2-1)", (
     });
     it("DENY still blocks", async () => {
       expect((await decide("DENY")).outcome).toBe("denied");
+    });
+    // On a non-LITE tenant the dark courtesy would let ocr through; only the DENY blocks it.
+    it("DENY blocks a non-LITE tenant the dark courtesy would otherwise let through", async () => {
+      expect((await decide(undefined, false)).outcome).toBe("dark");
+      expect((await decide("DENY", false)).outcome).toBe("denied");
     });
     it("no override on LITE stays denied (the baseline the GRANT changes)", async () => {
       expect((await decide(undefined)).outcome).toBe("denied");

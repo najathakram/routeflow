@@ -563,6 +563,67 @@ describe("FeatureConsole — 'Turn on as add-on' action (B2b)", () => {
     // useHasAddon(), NOT the registry row's own "flag.msrp" key.
     await waitFor(() => expect(mockEnableAddon).toHaveBeenCalledWith(TENANT_ID, "msrp", undefined));
   });
+
+  // Old-API fallback (rows with no `grant`): the shim must answer what master's hand map answered.
+  it("an older API row (no grant) for flag.msrp still enables the legacy key 'msrp'", async () => {
+    mockFetchRegistry.mockResolvedValueOnce([
+      ...REGISTRY_FIXTURE,
+      {
+        key: "flag.msrp",
+        kind: "boolean",
+        area: "catalog",
+        label: "MSRP pricing",
+        description: "Manufacturer-suggested retail price fields on products and bulk edit.",
+        lifecycle: "ga",
+        internal: false,
+        gate: { via: "RequirePlanFlag", state: "enforced" },
+        billing: { skus: ["MSRP"] },
+      } as unknown as FeatureRegistryRow,
+    ]);
+    render(
+      <FeatureConsole
+        tenant={{ id: TENANT_ID, plan: "GROWTH" }}
+        onChangePlan={jest.fn()}
+        onCustomise={jest.fn()}
+      />,
+    );
+    await screen.findByText("compliance");
+    const row = document.querySelector('[data-feature-key="flag.msrp"]') as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: "Turn on MSRP pricing as an add-on" }));
+    await screen.findByText(/this will be a free grant, not billed/);
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByText(/No Stripe subscription item will be created/);
+    mockEnableAddon.mockResolvedValueOnce({});
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(mockEnableAddon).toHaveBeenCalledWith(TENANT_ID, "msrp", undefined));
+  });
+
+  it("an older API row (no grant) for crm_gohighlevel gets no add-on button, as on master", async () => {
+    mockFetchRegistry.mockResolvedValueOnce([
+      ...REGISTRY_FIXTURE,
+      {
+        key: "crm_gohighlevel",
+        kind: "boolean",
+        area: "integrations",
+        label: "GoHighLevel CRM",
+        description: "d",
+        lifecycle: "ga",
+        internal: false,
+        gate: { via: "RequireAddon", state: "dark" },
+        billing: { skus: [] },
+      } as unknown as FeatureRegistryRow,
+    ]);
+    render(
+      <FeatureConsole
+        tenant={{ id: TENANT_ID, plan: "GROWTH" }}
+        onChangePlan={jest.fn()}
+        onCustomise={jest.fn()}
+      />,
+    );
+    await screen.findByText("compliance");
+    const row = document.querySelector('[data-feature-key="crm_gohighlevel"]') as HTMLElement;
+    expect(within(row).queryByRole("button", { name: /as an add-on/ })).toBeNull();
+  });
 });
 
 // B1132 (demo D14): after a business profile is applied the "Current setup" card says "Ship by carrier",

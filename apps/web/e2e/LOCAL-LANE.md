@@ -284,3 +284,7 @@ origins are all loopback. It needs the stack's mail catcher (`MAILPIT_URL`, defa
 list (`E2E_OWNER_ALERT_EMAIL`, default `admin@routeflow.info`). Register allows 5 a minute, so retries are off; it uses 3.
 On a lane-owned stack: `PLAYWRIGHT_BASE_URL=<web> SMOKE_BASE_URL=<api> MAILPIT_URL=<mail> SKIP_E2E_SEED=true` and
 `--project=trial-first-run`.
+
+Mocked-API runs (the `bo-web-console*` specs, which stub every API call) must also set `SKIP_E2E_SEED=true`:
+global setup otherwise runs `apps/api/scripts/e2e-seed.js` against the default `localhost:5432` database. Use
+`localhost`, not `127.0.0.1`, in `PLAYWRIGHT_BASE_URL` (the admin client's CSP blocks `127.0.0.1:3000`), and `--no-deps`.
