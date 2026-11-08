@@ -34,6 +34,7 @@ import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import { buildPlanGateBody } from "../billing/plan-gate";
+import { denialText } from "../billing/denial-text";
 import { CreateProductDto } from "./dto/create-product.dto";
 import {
   assertImageKeysReorder,
@@ -338,9 +339,7 @@ export class ProductsService {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) return; // SUPER_ADMIN context
     if (!(await this.addonService.hasAddon(tenantId, "tobacco_dealer"))) {
-      throw new ForbiddenException(
-        'Marking products as tobacco requires the "tobacco_dealer" add-on.',
-      );
+      throw new ForbiddenException(denialText({ keys: ["tobacco_dealer"] }));
     }
   }
 

@@ -14,6 +14,7 @@ import { addonGateState } from "./addon-gate-registry";
 import { decideAddonAccess } from "./addon-access";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { redactedRoute } from "../common/redacted-route";
+import { denialText } from "./denial-text";
 
 /**
  * Addon keys that are internal platform-admin switches rather than purchasable add-ons.
@@ -106,13 +107,11 @@ export class AddonGuard implements CanActivate {
 
     // Name only the purchasable keys; internal flags stay out of tenant-facing text.
     const named = keys.filter((k) => !INTERNAL_ADDON_KEYS.has(k));
-    const quoted = named.map((k) => `"${k}"`).join(", ");
+    // FG-1 WP9a: the sentence comes from the one denial builder (a business name and the next step, never a key).
     const message =
       named.length === 0
         ? "This feature is not enabled for your account."
-        : named.length === 1
-          ? `This feature requires the ${quoted} add-on.`
-          : `This feature requires one of these add-ons: ${quoted}.`;
+        : denialText({ keys: named });
     // An enforced denial must leave a server-side trace: nothing downstream logs a handled 403
     // (SentryExceptionFilter captures >= 500 only, and there is no access-log middleware), so a
     // gate flip that starts denying live tenants would otherwise be invisible until a client calls.
