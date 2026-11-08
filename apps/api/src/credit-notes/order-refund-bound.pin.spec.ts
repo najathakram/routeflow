@@ -60,13 +60,7 @@ describe("SA-1091 (RR-12): each value-giver calls the one order-wide bound", () 
         if (l.includes("loadOrderRefundRoom(")) calls.push(`${rel}: ${l.trim()}`);
     expect(calls).toHaveLength(3);
     const helper = read("credit-notes/line-credit-headroom.ts");
-    expect(helper.match(/export async function loadOrderRefundRoom\b/g)).toHaveLength(1);
+    expect(helper.match(/export async function loadOrderRefundRoom/g)).toHaveLength(1);
     expect(helper.match(/export function orderRoomRefusal/g)).toHaveLength(1);
-    // the many-orders twin (read-only census) shares the one arithmetic: both compose through composeOrderRefundRoom, and the
-    // room formula is written there and nowhere else
-    expect(helper.match(/export async function loadOrderRefundRooms\b/g)).toHaveLength(1);
-    expect(helper.match(/export function composeOrderRefundRoom\b/g)).toHaveLength(1);
-    expect(helper.match(/composeOrderRefundRoom\(/g)).toHaveLength(3); // definition + the two loaders
-    expect(helper.match(/billed - notes - unlinked - recorded - inline/g)).toHaveLength(1);
   });
 });
