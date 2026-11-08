@@ -1,15 +1,7 @@
-// AI limits PR-2 (SA-1102 §4): the core of `encrypt-legacy-secrets.mjs`. Secret config rows written before encryption
-// are plaintext (the read path passes them through); this rewrites each one through the REAL EncryptionService, so
-// "keys are never stored unencrypted" (owner 2026-11-05) holds for old rows too.
-//
-//   plaintextRefs(client)        rows to fix, BY REFERENCE (table, id, tenantId, key): no value is read to find them
-//   encryptAll({ ... })          the ONE writer: one row per transaction, row-locked, decrypt-verified before the
-//                                UPDATE, compare-and-swap on the old value; idempotent (a second run finds nothing)
-//   applyGate({ ... })           the one decision whether `--apply` may run, and the phrase to type
-//   parseAllowProtected(argv)    every `--allow-protected <tenantId>`
-//
-// Never logs a secret value, a slug or a tenant name; counts and (for protected tenants) ids only. `client` is a pg
-// Pool; `cipher` is an EncryptionService (or a stub with encrypt/decrypt).
+// AI limits PR-2: the core of `encrypt-legacy-secrets.mjs`. Plaintext secret config rows are rewritten through the REAL
+// EncryptionService (owner 2026-11-05: keys never stored unencrypted). plaintextRefs finds rows BY REFERENCE (no value
+// read); encryptAll is the ONE writer (row per transaction, row-locked, decrypt-verified, compare-and-swap on the old
+// value, idempotent); applyGate decides whether `--apply` may run. Never logs a value, slug or name.
 
 "use strict";
 
@@ -39,10 +31,7 @@ async function plaintextRefs(client) {
   ];
 }
 
-/**
- * One row, one transaction. 'encrypted' | 'already' (no longer plaintext when we got the lock) | 'failed' (the
- * cipher would not round-trip, or the compare-and-swap lost: the row is left as it was).
- */
+// One row, one transaction: 'encrypted' | 'already' (not plaintext when we got the lock) | 'failed' (no round-trip, or CAS lost).
 async function encryptRow(client, cipher, ref) {
   const tx = await client.connect();
   try {
@@ -78,10 +67,7 @@ async function encryptRow(client, cipher, ref) {
   }
 }
 
-/**
- * @param {{ client, cipher, refs: Array, apply: boolean, protectedIds?: Set<string>, allowProtected?: Set<string>, log?: (s: string) => void }} o
- * A row of a protected tenant is skipped (counted) unless that tenant's id is in `allowProtected`.
- */
+// A protected tenant's row is skipped (counted) unless its id is in `allowProtected`.
 async function encryptAll({
   client,
   cipher,
@@ -110,11 +96,8 @@ async function encryptAll({
   return res;
 }
 
-/**
- * Pure: may `--apply` run, and what must be typed. A dry run, or nothing to encrypt, always passes. A provably local
- * database needs nothing more. Any other database needs `--live-target-override`, `--backup-taken` and a real terminal
- * for the typed phrase `ENCRYPT <rows> LIVE`.
- */
+// Pure: a dry run, nothing to encrypt, or a provably local database passes; any other needs --live-target-override,
+// --backup-taken, a real terminal and the typed phrase `ENCRYPT <rows> LIVE`.
 function applyGate({ apply, local, liveOverride, backupTaken, isTTY, rows }) {
   if (!apply || rows === 0 || local) return { ok: true, phrase: null };
   if (!liveOverride)

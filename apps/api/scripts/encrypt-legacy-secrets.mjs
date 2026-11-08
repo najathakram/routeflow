@@ -1,23 +1,17 @@
 #!/usr/bin/env node
 // apps/api/scripts/encrypt-legacy-secrets.mjs
 //
-// AI limits PR-2 (SA-1102 §4; owner 2026-11-05: "keys are never stored unencrypted"). Secret config rows written
-// before encryption (SystemConfig email.smtpPassword / anthropic.apiKey / zoho.*, PlatformConfig claude.apiKey) are
-// still plaintext: the read path passes them through. This rewrites each one through the compiled EncryptionService.
+// AI limits PR-2 (owner 2026-11-05: keys are never stored unencrypted). Secret config rows written before encryption
+// are plaintext (the read path passes them through); this rewrites each through the compiled EncryptionService.
 //
-//   node apps/api/scripts/encrypt-legacy-secrets.mjs                  # DRY RUN (default): counts per key, no value read
-//   node apps/api/scripts/encrypt-legacy-secrets.mjs --apply          # local database: encrypts
-//       [--live-target-override --backup-taken]                       # any other database, typed `ENCRYPT <n> LIVE`
-//       [--allow-protected <tenantId> ...]                            # a protected tenant's rows (typed per tenant)
+//   node apps/api/scripts/encrypt-legacy-secrets.mjs            # DRY RUN (default): counts per key, no value read
+//   node apps/api/scripts/encrypt-legacy-secrets.mjs --apply    # local database only
+//       [--live-target-override --backup-taken]                 # any other: typed `ENCRYPT <n> LIVE`
+//       [--allow-protected <tenantId> ...]                      # a protected tenant's rows, typed per tenant
 //
-// ONE WRITER: lib/legacy-secrets-core.cjs (one row per transaction, row-locked, decrypt-verified, compare-and-swap on
-// the old value; a second run finds nothing). The crypto is `dist/common/encryption.service.js`: run
-// `npm run build -w apps/api` first, with the same ENCRYPTION_KEY the API uses. Nobody runs `--apply` against
-// production without the owner's yes for that command, after a backup (railway run --service postgres ...).
-//
-// GUARD (row 195): rows of a protected tenant (paying, Stripe-linked, PROTECTED_TENANT_SLUGS) are skipped and counted,
-// and the dry run lists their tenant ids so the operator can name them. Output is keys, counts and those ids only:
-// never a value, a slug or a name.
+// ONE WRITER: lib/legacy-secrets-core.cjs. Needs `npm run build -w apps/api` and the API's ENCRYPTION_KEY. Nobody runs
+// `--apply` on production without the owner's yes for that command and a backup. Rows of a protected tenant are
+// skipped and counted (row 195); output is keys, counts and tenant ids only, never a value, slug or name.
 
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";

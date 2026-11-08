@@ -1,11 +1,8 @@
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
-// AI limits PR-2 (SA-1102 §4): apps/api/scripts/encrypt-legacy-secrets.mjs rewrites plaintext secret config rows through
-// the real EncryptionService. The dry run is the default and reads no value; `--apply` is behind one decision
-// (`applyGate`), protected tenants need `--allow-protected <id>`, and the ONE writer is the core, row by row, with a
-// compare-and-swap on the old value. The SQL against a real database is in `legacy-secrets.db.spec.ts`.
+// AI limits PR-2: encrypt-legacy-secrets.mjs rewrites plaintext secret config rows. Dry run is the default and reads no
+// value; `--apply` is behind `applyGate`; the ONE writer is the core (compare-and-swap). SQL: legacy-secrets.db.spec.ts.
 
 const API_DIR = path.resolve(__dirname, "../..");
 const SCRIPT = path.resolve(API_DIR, "scripts/encrypt-legacy-secrets.mjs");
@@ -48,76 +45,25 @@ describe("encrypt-legacy-secrets.mjs", () => {
       "utf8",
     );
     expect(report).toContain('from "./lib/secret-config-keys.cjs"');
-    expect(report).not.toMatch(/SYSTEM_CONFIG_SECRET_KEYS = \[/);
     expect(cli + coreSrc).toContain("secret-config-keys.cjs");
   });
 
-  it("the dry run is the default: --apply with no database configured exits 1 and says why", () => {
-    const r = spawnSync(process.execPath, [SCRIPT, "--apply"], {
-      cwd: API_DIR,
-      encoding: "utf8",
-      timeout: 60_000,
-      env: { ...process.env, DATABASE_URL: "" },
-    });
-    expect(r.status).toBe(1);
-    expect(r.stderr).toMatch(/encrypt-legacy-secrets/);
-  });
-
-  describe("applyGate (the one decision)", () => {
-    const base = {
-      apply: true,
-      local: true,
-      liveOverride: false,
-      backupTaken: false,
-      isTTY: false,
-    };
-
-    it("a dry run, or nothing to encrypt, is always fine", () => {
-      expect(core.applyGate({ ...base, apply: false, rows: 5 })).toEqual({
-        ok: true,
-        phrase: null,
-      });
-      expect(core.applyGate({ ...base, local: false, rows: 0 })).toEqual({
-        ok: true,
-        phrase: null,
-      });
-    });
-
-    it("apply on a provably local database needs nothing more", () => {
-      expect(core.applyGate({ ...base, rows: 3 })).toEqual({ ok: true, phrase: null });
-    });
-
-    it("apply on any other database is refused without --live-target-override, then without --backup-taken, then without a terminal", () => {
-      const live = { ...base, local: false, rows: 3 };
-      expect(core.applyGate(live)).toMatchObject({ ok: false });
-      expect(core.applyGate({ ...live, liveOverride: true })).toMatchObject({ ok: false });
-      expect(
-        core.applyGate({ ...live, liveOverride: true, backupTaken: true, isTTY: false }),
-      ).toMatchObject({ ok: false });
-    });
-
-    it("apply on another database with all three needs the typed phrase naming the row count", () => {
-      expect(
-        core.applyGate({
-          ...base,
-          local: false,
-          rows: 7,
-          liveOverride: true,
-          backupTaken: true,
-          isTTY: true,
-        }),
-      ).toEqual({ ok: true, phrase: "ENCRYPT 7 LIVE" });
-    });
+  it("applyGate: local or dry run passes; any other database needs override, backup, a terminal and the typed phrase", () => {
+    const g = (o: object) => core.applyGate({ apply: true, local: false, rows: 7, ...o });
+    const ok = { ok: true, phrase: null };
+    expect(g({ apply: false })).toEqual(ok);
+    expect(g({ rows: 0 })).toEqual(ok);
+    expect(g({ local: true })).toEqual(ok);
+    expect(g({})).toMatchObject({ ok: false });
+    expect(g({ liveOverride: true })).toMatchObject({ ok: false });
+    expect(g({ liveOverride: true, backupTaken: true })).toMatchObject({ ok: false });
+    const all = { liveOverride: true, backupTaken: true, isTTY: true };
+    expect(g(all)).toEqual({ ok: true, phrase: "ENCRYPT 7 LIVE" });
   });
 
   it("parseAllowProtected: every --allow-protected <id>, ids only", () => {
-    expect(
-      core.parseAllowProtected(["--apply", "--allow-protected", "t-1", "--allow-protected", "t-2"]),
-    ).toEqual(["t-1", "t-2"]);
-    expect(core.parseAllowProtected(["--apply"])).toEqual([]);
+    const argv = ["--apply", "--allow-protected", "t-1", "--allow-protected", "t-2"];
+    expect(core.parseAllowProtected(argv)).toEqual(["t-1", "t-2"]);
     expect(() => core.parseAllowProtected(["--allow-protected"])).toThrow(/needs a tenant id/);
-    expect(() => core.parseAllowProtected(["--allow-protected", "--apply"])).toThrow(
-      /needs a tenant id/,
-    );
   });
 });

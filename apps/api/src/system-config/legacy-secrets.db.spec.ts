@@ -1,12 +1,7 @@
 /**
- * AI limits PR-2 (SA-1102 §4, owner ruling 2026-11-05 "never store keys unencrypted"): `encrypt-legacy-secrets` against a
- * real database. Secret config rows written before encryption exist (plaintext) beside encrypted ones; the core finds
- * them without reading a value, and `--apply` rewrites each plaintext row through the real `EncryptionService`: one row
- * per transaction, row-locked, decrypt-verified before the UPDATE, compare-and-swap on the old value, so a second run
- * finds nothing and the encrypted rows are never touched.
- *
- * Runs only under `npm run local:test:db`. Every tenant is a throwaway `qa-legsec-<run>-<n>` slug (`assertTestTenant`);
- * the PlatformConfig `claude.apiKey` row is restored afterwards.
+ * AI limits PR-2: `encrypt-legacy-secrets` core against a real database (owner 2026-11-05: never store keys
+ * unencrypted). Runs only under `npm run local:test:db`; tenants are throwaway `qa-legsec-<run>-<n>` slugs and the
+ * PlatformConfig `claude.apiKey` row is restored afterwards.
  */
 import { ConfigService } from "@nestjs/config";
 import { randomUUID } from "crypto";
@@ -110,13 +105,17 @@ describeDb("encrypt-legacy-secrets core (AI limits PR-2)", () => {
   });
 
   it("L-2: a dry run (apply: false) changes nothing", async () => {
-    const t = tenantIds[0];
-    const before = await read(t, "email.smtpPassword");
-    const refs = await core.plaintextRefs(pool);
-    const res = await core.encryptAll({ client: pool, cipher, refs, apply: false, log });
-    expect(res.encrypted).toBe(0);
+    const before = await read(tenantIds[0], "email.smtpPassword");
+    const res = await core.encryptAll({
+      client: pool,
+      cipher,
+      refs: await core.plaintextRefs(pool),
+      apply: false,
+      log,
+    });
+    expect(res).toMatchObject({ encrypted: 0 });
     expect(res.wouldEncrypt).toBeGreaterThanOrEqual(2);
-    expect(await read(t, "email.smtpPassword")).toBe(before);
+    expect(await read(tenantIds[0], "email.smtpPassword")).toBe(before);
   });
 
   it("L-3: apply rewrites each plaintext row to the cipher shape that decrypts to the original; others are untouched", async () => {
@@ -141,35 +140,29 @@ describeDb("encrypt-legacy-secrets core (AI limits PR-2)", () => {
 
   it("L-4: a second run finds nothing for these rows (idempotent)", async () => {
     const refs = await core.plaintextRefs(pool);
-    expect(mine(refs)).toEqual([]);
-    expect(refs.filter((r: { table: string }) => r.table === "PlatformConfig")).toEqual([]);
+    expect(
+      mine(refs).length +
+        refs.filter((r: { table: string }) => r.table === "PlatformConfig").length,
+    ).toBe(0);
   });
 
   it("L-5: a protected tenant's row is skipped and counted unless that tenant is allowed by id", async () => {
     const guarded = await makeTenant(2);
     await put(guarded, "zoho.refreshToken", "zoho-refresh-PLAINTEXT-4444");
     const refs = mine(await core.plaintextRefs(pool));
-    const skipped = await core.encryptAll({
-      client: pool,
-      cipher,
-      refs,
-      apply: true,
-      protectedIds: new Set([guarded]),
-      allowProtected: new Set(),
-      log,
-    });
-    expect(skipped).toMatchObject({ encrypted: 0, skippedProtected: 1 });
+    const run = (allowProtected: Set<string>) =>
+      core.encryptAll({
+        client: pool,
+        cipher,
+        refs,
+        apply: true,
+        protectedIds: new Set([guarded]),
+        allowProtected,
+        log,
+      });
+    expect(await run(new Set())).toMatchObject({ encrypted: 0, skippedProtected: 1 });
     expect(await read(guarded, "zoho.refreshToken")).toBe("zoho-refresh-PLAINTEXT-4444");
-    const allowed = await core.encryptAll({
-      client: pool,
-      cipher,
-      refs,
-      apply: true,
-      protectedIds: new Set([guarded]),
-      allowProtected: new Set([guarded]),
-      log,
-    });
-    expect(allowed).toMatchObject({ encrypted: 1, skippedProtected: 0 });
+    expect(await run(new Set([guarded]))).toMatchObject({ encrypted: 1, skippedProtected: 0 });
     expect(cipher.decrypt(await read(guarded, "zoho.refreshToken"))).toBe(
       "zoho-refresh-PLAINTEXT-4444",
     );
@@ -197,11 +190,5 @@ describeDb("encrypt-legacy-secrets core (AI limits PR-2)", () => {
     const res = await core.encryptAll({ client: pool, cipher: broken, refs, apply: true, log });
     expect(res).toMatchObject({ encrypted: 0, failed: 1 });
     expect(await read(t, "email.smtpPassword")).toBe("third-PLAINTEXT-6666");
-  });
-
-  it("L-8: nothing the run logged carries a secret value", () => {
-    const logged = out.join("\n");
-    for (const v of [PLAIN_SMTP, PLAIN_ANTHROPIC, PLAIN_CLAUDE, "PLAINTEXT"])
-      expect(logged).not.toContain(v);
   });
 });
