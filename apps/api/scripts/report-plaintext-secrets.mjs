@@ -10,24 +10,20 @@
  * Exit code: always 0 when it ran (it is a warning in `local:validate`, not a gate); 1 only if the arguments are bad.
  * A database it cannot reach is reported as a WARNING line, exit 0.
  *
- * The two key lists below mirror SECRET_KEYS (system-config.service.ts) and PLATFORM_SECRET_KEYS
- * (platform-config.service.ts); secret-keys.pin.spec.ts fails if they drift apart.
+ * The key lists (lib/secret-config-keys.cjs, shared with encrypt-legacy-secrets) mirror SECRET_KEYS
+ * (system-config.service.ts) and PLATFORM_SECRET_KEYS (platform-config.service.ts); secret-keys.pin.spec.ts fails if
+ * they drift apart.
  *
  * Local compose DB:   npm run local:plaintext-secrets
  * Prod (per-call owner yes only):   railway run --service postgres node apps/api/scripts/report-plaintext-secrets.mjs
  */
 import pg from "pg";
 import { resolveReportDbUrl } from "./lib/report-db-url.mjs";
-
-const SYSTEM_CONFIG_SECRET_KEYS = [
-  "email.smtpPassword",
-  "anthropic.apiKey",
-  "zoho.clientSecret",
-  "zoho.refreshToken",
-];
-const PLATFORM_CONFIG_SECRET_KEYS = ["claude.apiKey"];
-// Same pattern as ENCRYPTED_FORMAT in apps/api/src/common/secret-at-rest.ts (POSIX-compatible).
-const CIPHER_SHAPE = "^[0-9a-f]{32}:[0-9a-f]{32}:[A-Za-z0-9+/=]+$";
+import {
+  CIPHER_SHAPE,
+  PLATFORM_CONFIG_SECRET_KEYS,
+  SYSTEM_CONFIG_SECRET_KEYS,
+} from "./lib/secret-config-keys.cjs";
 
 export async function countPlaintext(client) {
   const q = (table, keys) =>
