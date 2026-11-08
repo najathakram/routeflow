@@ -1,5 +1,12 @@
 import "reflect-metadata";
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, type INestApplication } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { JwtModule, JwtService } from "@nestjs/jwt";
+import { PassportModule } from "@nestjs/passport";
+import { Test } from "@nestjs/testing";
+import { roundMoney } from "@routeflow/pricing";
+import { JwtStrategy } from "../auth/strategies/jwt.strategy";
+import { listenOnLoopback } from "../common/testing/listen-loopback";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { SuperAdminGuard } from "../tenant/super-admin.guard";
 import { AiUsageAdminController } from "./ai-usage-admin.controller";
@@ -9,9 +16,13 @@ import { effectiveCapUsd, estimateSpendUsd } from "./platform-config.service";
 // AI limits PR-2: the super-admin usage view. Money is estimated by the same helper the cap check uses, and the cap shown
 // is the one enforced (`effectiveCapUsd`, shared with `monthlyCapUsdFor`).
 
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const request = require("supertest");
+
 const MODEL = "claude-sonnet-5-5";
-const usd = (inTok: number, outTok: number) =>
-  Math.round(estimateSpendUsd([{ model: MODEL, inTok, outTok }]) * 100) / 100;
+const rawUsd = (inTok: number, outTok: number) =>
+  estimateSpendUsd([{ model: MODEL, inTok, outTok }]);
+const usd = (inTok: number, outTok: number) => roundMoney(rawUsd(inTok, outTok));
 
 function make(platformCap: number, spendRows: object[], tenants: object[]) {
   const prisma = {
@@ -106,8 +117,94 @@ describe("AiUsageAdminService.byBusiness", () => {
   });
 });
 
+describe("AiUsageAdminService.byBusiness: every figure and filter is pinned", () => {
+  // 123_457 Sonnet output tokens = $1.23457: more than two decimals, so rounding and the percent are both observable
+  const RESIDUE = { inTok: 0, outTok: 123_457 };
+
+  it("spendUsd is rounded to cents once (roundMoney); the percent is a whole number from the unrounded spend", async () => {
+    expect(rawUsd(0, RESIDUE.outTok)).not.toBe(usd(0, RESIDUE.outTok)); // the fixture really has residue
+    expect(usd(0, RESIDUE.outTok)).toBe(1.23);
+    const { svc } = make(
+      10,
+      [{ tenantId: "t-a", model: MODEL, calls: 1, ...RESIDUE }],
+      [{ id: "t-a", name: "A", aiMonthlyCapUsd: null }],
+    );
+    const [a] = (await svc.byBusiness("2026-11")).businesses;
+    expect(a.spendUsd).toBe(1.23);
+    expect(a.percentUsed).toBe(12); // 12.3457 %
+  });
+
+  it("the percent rounds to the nearest whole number, not down: 8.9 of 50 is 18", async () => {
+    const { svc } = make(
+      10,
+      [{ tenantId: "t-a", model: MODEL, calls: 1, inTok: 0, outTok: 890_000 }],
+      [{ id: "t-a", name: "A", aiMonthlyCapUsd: 50 }],
+    );
+    expect((await svc.byBusiness("2026-11")).businesses[0].percentUsed).toBe(18); // 17.8 %
+  });
+
+  it("a business over its limit shows its real percent, not a cap at 100", async () => {
+    const { svc } = make(
+      10,
+      [{ tenantId: "t-a", model: MODEL, calls: 1, inTok: 0, outTok: 2_000_000 }],
+      [{ id: "t-a", name: "A", aiMonthlyCapUsd: null }],
+    );
+    expect((await svc.byBusiness("2026-11")).businesses[0].percentUsed).toBe(200);
+  });
+
+  it("spend and calls add up across the models one business used", async () => {
+    const { svc } = make(
+      100,
+      [
+        { tenantId: "t-a", model: MODEL, calls: 2, inTok: 0, outTok: 1_000_000 },
+        { tenantId: "t-a", model: "claude-haiku-5-5", calls: 5, inTok: 1_000_000, outTok: 0 },
+      ],
+      [{ id: "t-a", name: "A", aiMonthlyCapUsd: null }],
+    );
+    const expected = roundMoney(
+      estimateSpendUsd([{ model: MODEL, inTok: 0, outTok: 1_000_000 }]) +
+        estimateSpendUsd([{ model: "claude-haiku-5-5", inTok: 1_000_000, outTok: 0 }]),
+    );
+    const [a] = (await svc.byBusiness("2026-11")).businesses;
+    expect(a.calls).toBe(7);
+    expect(a.spendUsd).toBe(expected);
+    expect(expected).toBeGreaterThan(usd(0, 1_000_000)); // the second model really adds
+  });
+
+  it("only live businesses are asked for (deletedAt: null); a usage row of any other business is dropped", async () => {
+    const { svc, prisma } = make(
+      10,
+      [{ tenantId: "t-gone", model: MODEL, calls: 9, inTok: 9_000_000, outTok: 0 }],
+      [{ id: "t-live", name: "Live", aiMonthlyCapUsd: null }],
+    );
+    const out = await svc.byBusiness("2026-11");
+    expect(prisma.tenant.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { deletedAt: null } }),
+    );
+    expect(out.businesses.map((b) => b.tenantId)).toEqual(["t-live"]);
+    expect(out.businesses[0]).toMatchObject({ calls: 0, spendUsd: 0 });
+  });
+
+  it("the larger spend comes first whatever the tenant order, and equal spend sorts by name", async () => {
+    const { svc } = make(
+      10,
+      [{ tenantId: "t-m", model: MODEL, calls: 1, inTok: 0, outTok: 500_000 }],
+      [
+        { id: "t-z", name: "Zed", aiMonthlyCapUsd: null },
+        { id: "t-a", name: "Alpha", aiMonthlyCapUsd: null },
+        { id: "t-m", name: "Mid", aiMonthlyCapUsd: null },
+      ],
+    );
+    expect((await svc.byBusiness("2026-11")).businesses.map((b) => b.name)).toEqual([
+      "Mid",
+      "Alpha",
+      "Zed",
+    ]);
+  });
+});
+
 describe("AiUsageAdminController", () => {
-  it("is super admin only (class-level guards) and is one read-only GET at ai-usage/by-business", () => {
+  it("is one read-only GET at platform-admin/ai-usage/by-business with the platform-admin guards", () => {
     expect(Reflect.getMetadata("__guards__", AiUsageAdminController)).toEqual([
       JwtAuthGuard,
       SuperAdminGuard,
@@ -115,8 +212,73 @@ describe("AiUsageAdminController", () => {
     const p = AiUsageAdminController.prototype;
     expect(Reflect.getMetadata("path", p.byBusiness)).toBe("ai-usage/by-business");
     expect(Reflect.getMetadata("method", p.byBusiness)).toBe(0); // RequestMethod.GET
-    const svc = { byBusiness: jest.fn().mockResolvedValue({ month: "2026-11" }) };
-    void new AiUsageAdminController(svc as any).byBusiness("2026-11");
-    expect(svc.byBusiness).toHaveBeenCalledWith("2026-11");
+  });
+
+  describe("over HTTP, with the real JwtStrategy, JwtAuthGuard and SuperAdminGuard", () => {
+    const SECRET = "ai-usage-admin-spec-secret";
+    let app: INestApplication;
+    const svc = { byBusiness: jest.fn() };
+    const token = (role: string, secret = SECRET) =>
+      new JwtService({ secret }).sign({
+        sub: "u-1",
+        username: "u",
+        role,
+        status: "ACTIVE",
+        tenantId: role === "SUPER_ADMIN" ? null : "t-1",
+      });
+
+    beforeAll(async () => {
+      const moduleRef = await Test.createTestingModule({
+        imports: [PassportModule, JwtModule.register({ secret: SECRET })],
+        controllers: [AiUsageAdminController],
+        providers: [
+          JwtStrategy,
+          { provide: AiUsageAdminService, useValue: svc },
+          {
+            provide: ConfigService,
+            useValue: { get: (k: string) => (k === "jwt" ? { secret: SECRET } : undefined) },
+          },
+        ],
+      }).compile();
+      moduleRef.get(JwtStrategy); // registers the strategy with passport
+      app = moduleRef.createNestApplication({ logger: false });
+      await listenOnLoopback(app);
+    });
+    afterAll(async () => {
+      await app.close();
+    });
+    beforeEach(() => {
+      svc.byBusiness.mockReset();
+      svc.byBusiness.mockResolvedValue({ month: "2026-11", platformCapUsd: 10, businesses: [] });
+    });
+
+    const get = (auth?: string) => {
+      const req = request(app.getHttpServer()).get(
+        "/platform-admin/ai-usage/by-business?month=2026-11",
+      );
+      return auth ? req.set("Authorization", `Bearer ${auth}`) : req;
+    };
+
+    it("no token is 401 and the service is never called", async () => {
+      expect((await get()).status).toBe(401);
+      expect(svc.byBusiness).not.toHaveBeenCalled();
+    });
+
+    it("a token signed with another secret is 401", async () => {
+      expect((await get(token("SUPER_ADMIN", "some-other-secret"))).status).toBe(401);
+      expect(svc.byBusiness).not.toHaveBeenCalled();
+    });
+
+    it.each(["TENANT_ADMIN", "OPERATOR", "DRIVER"])("a signed %s token is 403", async (role) => {
+      expect((await get(token(role))).status).toBe(403);
+      expect(svc.byBusiness).not.toHaveBeenCalled();
+    });
+
+    it("a signed SUPER_ADMIN token reads the view and the month is passed through", async () => {
+      const res = await get(token("SUPER_ADMIN"));
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ month: "2026-11", platformCapUsd: 10 });
+      expect(svc.byBusiness).toHaveBeenCalledWith("2026-11");
+    });
   });
 });

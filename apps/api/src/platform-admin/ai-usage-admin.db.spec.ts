@@ -102,6 +102,17 @@ describeDb("AI usage by business (AI limits PR-2)", () => {
     expect((await svc.byBusiness(thisMonth)).month).toBe(thisMonth);
   });
 
+  it("U-3: a soft-deleted business with usage this month is not listed", async () => {
+    const live = await makeTenant(4, null);
+    const gone = await makeTenant(5, null);
+    await spend(live, 3);
+    await spend(gone, 8);
+    await prisma.tenant.update({ where: { id: gone }, data: { deletedAt: new Date() } });
+    const out = await svc.byBusiness();
+    expect(out.businesses.some((b) => b.tenantId === gone)).toBe(false);
+    expect(out.businesses.find((b) => b.tenantId === live)).toMatchObject({ spendUsd: 3 });
+  });
+
   it("U-2: the platform kill switch shows every business as AI off, whatever its override", async () => {
     await prisma.$executeRaw`INSERT INTO "PlatformConfig" ("id","key","value","updatedAt")
         VALUES (gen_random_uuid()::text, 'ai.monthlyCapUsd', '0', now())`;
