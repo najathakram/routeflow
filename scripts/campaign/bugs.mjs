@@ -116,6 +116,7 @@ import {
   syncRepoOverride,
   syncStatePath,
 } from "../lib/registry-root.mjs";
+import { checkRegisterFresh } from "../lib/register-freshness.mjs";
 import { commitRecord, discardRegistry } from "../lib/registry-records.mjs";
 import { RegistryError, withRegistryWrite } from "../lib/registry-write.mjs";
 import { normalizeEvidence } from "./normalize-evidence.mjs";
@@ -451,6 +452,28 @@ cmds.file = (args) => {
   if (!location) fail("--location is required: an agent cannot route a bug it cannot place");
   if (!(severity in SEVERITY_RANK))
     fail(`--severity must be one of ${Object.keys(SEVERITY_RANK).join("|")}`);
+
+  // Tracked mode mints max+1 over THIS tree, so a tree behind origin/master can reuse an id master
+  // already holds (B1291, B1292); refuse before any lock or write. Also applies to --id (a stale tree
+  // can accept a reservation master already used). BUGS_ROOT (every fixture) skips it unless
+  // BUGS_SELF_TEST=1 and BUGS_FRESHNESS_REPO are set: BUGS_FRESHNESS_REPO is a test-only seam, like
+  // BUGS_SYNC_REPO.
+  if (registryMode() !== "clone") {
+    const seam = process.env.BUGS_SELF_TEST === "1" && process.env.BUGS_FRESHNESS_REPO;
+    if (!process.env.BUGS_ROOT || seam) {
+      const repoDir = seam ? process.env.BUGS_FRESHNESS_REPO : REPO_ROOT;
+      const fresh = checkRegisterFresh({
+        repoDir,
+        prefix: registrySource().prefix,
+        localIds: [...readCatalogue().map((r) => r.id), ...readState().keys()],
+      });
+      if (!fresh.ok)
+        fail(
+          `refusing to mint a bug id: the register in ${repoDir} is behind origin/master (${fresh.reason}). ` +
+            `File from an up-to-date tree: git -C ${repoDir} pull --ff-only, or a fresh worktree off origin/master.`,
+        );
+    }
+  }
 
   // The id allocation below and the catalogue write at the bottom are ONE
   // critical section. Split, two sessions filing at the same moment read the
@@ -8069,6 +8092,156 @@ cmds["self-test"] = () => {
     } finally {
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
       else process.env.BUGS_ROOT = prevRoot;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // Freshness guard: `file` in a tracked tree behind origin/master must refuse, not mint an id
+  // master already holds (B1291, B1292). Real git fixtures: a bare origin plus clones.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-fresh-"));
+    const sh = (cwd, ...a) => {
+      const r = spawnSync("git", ["-C", cwd, ...a], { encoding: "utf8", env: scrubbedGitEnv() });
+      if (r.status !== 0) throw new Error(`git ${a.join(" ")}: ${r.stderr}`);
+      return r.stdout;
+    };
+    const row = (n) => JSON.stringify({ id: `B${n}`, title: `t${n}`, severity: "low" });
+    const cfg = (d) => {
+      sh(d, "config", "user.email", "t@example.test");
+      sh(d, "config", "user.name", "t");
+      sh(d, "config", "commit.gpgsign", "false");
+    };
+    const addRows = (d, ...ns) => {
+      mkdirSync(join(d, ".claude", "campaign"), { recursive: true });
+      writeFileSync(
+        join(d, ".claude", "campaign", "bugs.jsonl"),
+        ns.map((n) => row(n)).join("\n") + "\n",
+      );
+      sh(d, "add", ".claude/campaign/bugs.jsonl");
+      sh(d, "commit", "-q", "-m", `rows ${ns.join(",")}`);
+    };
+    const build = (name) => {
+      const base = join(tmp, name);
+      const origin = join(base, "origin.git");
+      mkdirSync(base, { recursive: true });
+      sh(base, "init", "-q", "--bare", "-b", "master", origin);
+      const a = join(base, "a");
+      sh(base, "clone", "-q", origin, a);
+      cfg(a);
+      sh(a, "checkout", "-q", "-B", "master");
+      addRows(a, 1, 2);
+      sh(a, "push", "-q", "origin", "master");
+      const b = join(base, "b");
+      sh(base, "clone", "-q", origin, b);
+      cfg(b);
+      return { origin, a, b };
+    };
+    const fileIn = (tree, extra = []) =>
+      runCli(
+        ["file", "freshness fixture", "--location", "x.ts", "--severity", "low", ...extra],
+        join(tree, ".claude", "campaign"),
+        undefined,
+        { BUGS_FRESHNESS_REPO: tree },
+      );
+    const catalogueOf = (tree) =>
+      readFileSync(join(tree, ".claude", "campaign", "bugs.jsonl"), "utf8");
+    const recordsIn = (tree) =>
+      readdirSync(join(tree, ".claude", "campaign"), { recursive: true }).filter(
+        (n) => !/bugs\.jsonl$/.test(String(n)),
+      );
+    try {
+      // 1. fresh tree mints B3
+      {
+        const { a } = build("fresh");
+        const r = fileIn(a);
+        check(
+          "freshness: a tree level with origin/master mints B3",
+          [r.code, /B3/.test(r.out)],
+          [0, true],
+        );
+      }
+      // 2. master gained B3 elsewhere; this tree has not pulled
+      {
+        const { a, b } = build("stale-rows");
+        addRows(b, 1, 2, 3);
+        sh(b, "push", "-q", "origin", "master");
+        const before = catalogueOf(a);
+        const filesBefore = recordsIn(a).sort();
+        const r = fileIn(a);
+        check("freshness: a stale tree is refused (exit 1)", r.code, 1);
+        check(
+          "freshness: the refusal names the id master already holds",
+          [/refusing to mint a bug id/.test(r.out), /behind origin[/]master/.test(r.out)],
+          [true, true],
+        );
+        check(
+          "freshness: a refused file leaves the catalogue byte-identical",
+          catalogueOf(a),
+          before,
+        );
+        check("freshness: a refused file creates no record", recordsIn(a).sort(), filesBefore);
+        // HEAD contains master but this tree register lacks a row master holds: the id is named.
+        sh(a, "pull", "-q", "--ff-only");
+        addRows(a, 1, 2);
+        const r2 = fileIn(a);
+        check(
+          "freshness: a row master holds that this tree lacks is refused and named",
+          [r2.code, /B3/.test(r2.out), /refusing to mint a bug id/.test(r2.out)],
+          [1, true, true],
+        );
+      }
+      // 3. master moved on without touching the register
+      {
+        const { a, b } = build("stale-head");
+        writeFileSync(join(b, "other.txt"), "x\n");
+        sh(b, "add", "other.txt");
+        sh(b, "commit", "-q", "-m", "other");
+        sh(b, "push", "-q", "origin", "master");
+        const r = fileIn(a);
+        check(
+          "freshness: HEAD behind origin/master is refused even when the register matches",
+          [r.code, /does not contain origin\/master/.test(r.out)],
+          [1, true],
+        );
+      }
+      // 4. origin unreachable: fail closed
+      {
+        const { a } = build("no-origin");
+        sh(a, "remote", "set-url", "origin", join(tmp, "no-origin", "missing.git"));
+        const r = fileIn(a);
+        check(
+          "freshness: an unreachable origin is refused, naming the fetch",
+          [r.code, /git fetch origin master failed/.test(r.out)],
+          [1, true],
+        );
+      }
+      // 5. feature branch containing origin/master plus its own commit mints
+      {
+        const { a } = build("feature");
+        sh(a, "checkout", "-q", "-b", "feat/x");
+        writeFileSync(join(a, "own.txt"), "x\n");
+        sh(a, "add", "own.txt");
+        sh(a, "commit", "-q", "-m", "own");
+        const r = fileIn(a);
+        check(
+          "freshness: a feature branch ahead of origin/master mints",
+          [r.code, /B3/.test(r.out)],
+          [0, true],
+        );
+      }
+      // 6. --id on a stale tree
+      {
+        const { a, b } = build("stale-id");
+        addRows(b, 1, 2, 3);
+        sh(b, "push", "-q", "origin", "master");
+        const r = fileIn(a, ["--id", "B9"]);
+        check(
+          "freshness: --id on a stale tree is refused",
+          [r.code, /behind origin\/master/.test(r.out)],
+          [1, true],
+        );
+      }
+    } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
   }
