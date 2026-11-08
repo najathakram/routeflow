@@ -154,7 +154,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   // proof in feature-registry.spec.ts). Copied verbatim from addon-gate-registry.ts.
   {
     key: "ocr",
-    grant: { override: false, plan: true, mode: false },
+    grant: { override: true, plan: true, mode: false },
     nature: { purpose: "commercial", category: "allowance" },
     keywords: ["ocr", "scan", "scanning", "receipt", "document"],
     kind: "metered",
@@ -172,7 +172,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
         "POST /supplier-statements/scan",
       ],
       grantPath:
-        "Included on every plan: no grant is needed or offered (override and add-on paths are closed; see OCR_DECISION)",
+        "Included on every plan (see OCR_DECISION). A Platform Admin override still works and is the only way a LITE business scans until scanning is plan-included for every plan",
       backfill:
         "Owner ruling 2026-11-07 (SA-1106 A-2 Q3): included on every plan; the cost guard is the AI cap; never enforced.",
     },

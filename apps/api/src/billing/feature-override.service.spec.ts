@@ -240,7 +240,7 @@ describe("FeatureOverrideService.create", () => {
 
   // SA-1106 WP7 (T13): the row's `grant.override` decides. A row that declares none is refused with 409
   // and nothing is written; a row that declares it (a per-tenant release row included) still creates.
-  it.each(["limit_seats", "flag.settlement", "metered_scans", "fulfilment_model", "ocr"])(
+  it.each(["limit_seats", "flag.settlement", "metered_scans", "fulfilment_model"])(
     "refuses an override on %s with 409 FEATURE_NOT_OVERRIDABLE and writes nothing",
     async (key) => {
       const { svc, prisma } = build();
@@ -258,6 +258,23 @@ describe("FeatureOverrideService.create", () => {
       expect(err.getResponse()).toMatchObject({ code: "FEATURE_NOT_OVERRIDABLE" });
       expect(prisma.tenantFeatureOverride.create).not.toHaveBeenCalled();
       expect(prisma.tenantFeatureOverride.updateMany).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["GRANT", "DENY"] as const)(
+    "still creates an ocr %s override (the scan guard honours it)",
+    async (effect) => {
+      const { svc, prisma } = build();
+      prisma.tenantFeatureOverride.create.mockResolvedValue(row());
+      await svc.create({
+        tenantId: "t1",
+        featureKey: "ocr",
+        effect,
+        reason: "pilot",
+        expiresAt: null,
+        createdById: "admin1",
+      });
+      expect(prisma.tenantFeatureOverride.create).toHaveBeenCalledTimes(1);
     },
   );
 

@@ -5,6 +5,7 @@ import {
   featureDefByKey,
   registryKeyForAddonKey,
 } from "./feature-registry";
+import { decideAddonAccess } from "./addon-access";
 import { toFeatureRegistryRow } from "./feature-registry-row";
 import { ADDON_SKUS, RETIRED_ADDON_SKUS } from "./plan-catalog.constants";
 
@@ -42,7 +43,6 @@ describe("registry `grant` declaration (WP7 T12)", () => {
       .sort();
     expect(refused).toEqual(
       [
-        "ocr",
         "flag.dispatch_live",
         "flag.settlement",
         "flag.api_sso",
@@ -127,8 +127,36 @@ describe("ocr is included on every plan and never denied (SA-1106 A-2, M2-1)", (
     expect(ocr.gate.state).toBe("dark");
   });
 
-  it("the grant offers no add-on key and no override; every plan carries it", () => {
-    expect(ocr.grant).toEqual({ override: false, plan: true, mode: false });
+  // Lead ruling 2026-11-07 (A-2 review): the scan guard honours an ocr override, and a GRANT is today the
+  // only way a LITE business scans. ocr override stays allowed until WP9a makes scanning plan-included for
+  // every plan; SA to confirm the A-2 change then.
+  it("the grant offers no add-on key; the override stays allowed; every plan carries it", () => {
+    expect(ocr.grant).toEqual({ override: true, plan: true, mode: false });
+  });
+
+  describe("the scan guard still honours an ocr override (a GRANT is how a LITE business scans)", () => {
+    const decide = (override: "GRANT" | "DENY" | undefined) =>
+      decideAddonAccess(
+        {
+          addonService: { getActiveAddons: jest.fn().mockResolvedValue([]) },
+          entitlements: { isAlwaysEnforcedTenant: jest.fn().mockResolvedValue(true) },
+          featureOverrides: {
+            getMany: jest.fn().mockResolvedValue(new Map(override ? [["ocr", override]] : [])),
+          },
+        } as never,
+        "t1",
+        ["ocr"],
+      );
+
+    it("GRANT lets a LITE tenant through", async () => {
+      expect((await decide("GRANT")).outcome).toBe("granted");
+    });
+    it("DENY still blocks", async () => {
+      expect((await decide("DENY")).outcome).toBe("denied");
+    });
+    it("no override on LITE stays denied (the baseline the GRANT changes)", async () => {
+      expect((await decide(undefined)).outcome).toBe("denied");
+    });
   });
 
   it("its backfill text is the owner ruling, verbatim, and carries no flip date", () => {

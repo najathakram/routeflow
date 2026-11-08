@@ -389,8 +389,8 @@ describe("FeatureConsole — 'Turn on as add-on' action (B2b)", () => {
       ...REGISTRY_FIXTURE,
       {
         ...REGISTRY_FIXTURE[0],
-        key: "ocr",
-        label: "OCR document scanning",
+        key: "limit_seats",
+        label: "Seat limit",
         grant: { override: false, plan: true, mode: false },
       },
     ]);
@@ -403,12 +403,61 @@ describe("FeatureConsole — 'Turn on as add-on' action (B2b)", () => {
       />,
     );
     await screen.findByText("compliance");
-    const row = document.querySelector('[data-feature-key="ocr"]') as HTMLElement;
+    const row = document.querySelector('[data-feature-key="limit_seats"]') as HTMLElement;
     expect(within(row).getByTestId("no-override")).toHaveTextContent(
       "An override has no effect on this feature.",
     );
     expect(within(row).queryByRole("button", { name: /Set override/ })).toBeNull();
     expect(within(row).queryByRole("button", { name: /as an add-on/ })).toBeNull();
+  });
+
+  it("an ocr row keeps Set override (the scan guard honours it) and offers no add-on button", async () => {
+    mockFetchRegistry.mockResolvedValueOnce([
+      ...REGISTRY_FIXTURE,
+      {
+        ...REGISTRY_FIXTURE[0],
+        key: "ocr",
+        label: "OCR document scanning",
+        grant: { override: true, plan: true, mode: false },
+      },
+    ]);
+    render(
+      <FeatureConsole
+        tenant={{ id: TENANT_ID, plan: "GROWTH" }}
+        onChangePlan={jest.fn()}
+        onCustomise={jest.fn()}
+      />,
+    );
+    await screen.findByText("compliance");
+    const row = document.querySelector('[data-feature-key="ocr"]') as HTMLElement;
+    expect(within(row).getByRole("button", { name: /Set override/ })).toBeInTheDocument();
+    expect(within(row).queryByTestId("no-override")).toBeNull();
+    expect(within(row).queryByRole("button", { name: /as an add-on/ })).toBeNull();
+  });
+
+  it("a row from an older API (no grant) renders as before: Set override, and the add-on button on the eight keyed rows", async () => {
+    const stripGrant = (r: FeatureRegistryRow) => {
+      const { grant: _grant, ...rest } = r;
+      return rest as unknown as FeatureRegistryRow;
+    };
+    mockFetchRegistry.mockResolvedValueOnce([
+      ...REGISTRY_FIXTURE.map(stripGrant),
+      stripGrant({ ...REGISTRY_FIXTURE[0], key: "ocr", label: "OCR document scanning" }),
+    ]);
+    render(
+      <FeatureConsole
+        tenant={{ id: TENANT_ID, plan: "GROWTH" }}
+        onChangePlan={jest.fn()}
+        onCustomise={jest.fn()}
+      />,
+    );
+    await screen.findByText("compliance");
+    const tobacco = document.querySelector('[data-feature-key="tobacco_dealer"]') as HTMLElement;
+    expect(within(tobacco).getByRole("button", { name: /Set override/ })).toBeInTheDocument();
+    expect(within(tobacco).getByRole("button", { name: /as an add-on/ })).toBeInTheDocument();
+    const ocr = document.querySelector('[data-feature-key="ocr"]') as HTMLElement;
+    expect(within(ocr).getByRole("button", { name: /as an add-on/ })).toBeInTheDocument();
+    expect(document.querySelectorAll("[data-testid=no-override]")).toHaveLength(0);
   });
 
   it("shows the button only on addon-keyed rows, never on a plan-flag/service/guard row that isn't addon-provisioned", async () => {

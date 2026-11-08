@@ -51,6 +51,7 @@
  *       all production tenants — `--include-addon-keys ocr,email.connected_mailbox` grants only
  *       those, leaving `crm_gohighlevel` and any other addon-gate key excluded, same as today).
  *       Mutually exclusive with `--include-addon-gates` (exit 2, before connecting — pick one).
+ *       A key whose registry row takes no override (grant.override false) is refused (exit 2).
  *       Every listed key must be a FEATURE_REGISTRY key with gate.via "RequireAddon" (an
  *       addon-gate key), checked against the static registry mirror before any connection is
  *       opened; an unknown or non-addon-gate key is refused the same way (exit 2). The preview

@@ -43,6 +43,34 @@ type PendingPreview =
   | { kind: "tier"; planKey: string; response: FeaturePreviewResponse }
   | { kind: "mode"; featureKey: string; newMode: string; response: FeaturePreviewResponse };
 
+/**
+ * An older API (web deployed first, or the API rolled back alone) sends rows without `grant`. Until it
+ * catches up the console shows what it showed before the grant declaration: an override on every gated
+ * row and the add-on button on the eight rows that had one. Delete this with the next API-first deploy.
+ */
+const PRE_GRANT_ADDON_KEYS: Readonly<Record<string, string>> = {
+  tobacco_dealer: "tobacco_dealer",
+  driver_payments: "driver_payments",
+  recurring_routes: "recurring_routes",
+  order_delivery: "order_delivery",
+  ocr: "ocr",
+  developer_mode: "developer_mode",
+  "flag.msrp": "msrp",
+  "flag.sales_agents": "sales_agents",
+};
+
+/** The add-on key a row turns on with: its `grant.addonKey`, or the pre-grant answer on an older API. */
+export function addonKeyOf(row: {
+  key: string;
+  grant?: { addonKey?: string };
+}): string | undefined {
+  return row.grant ? row.grant.addonKey : PRE_GRANT_ADDON_KEYS[row.key];
+}
+
+function grantOf(row: FeatureRegistryRow): { override: boolean; addonKey?: string } {
+  return { override: row.grant?.override ?? true, addonKey: addonKeyOf(row) };
+}
+
 interface RequirementStatus {
   satisfied: boolean;
   missingAllOf: string[];
@@ -442,12 +470,12 @@ export function FeatureConsole({
                       >
                         Details
                       </button>
-                      {row.gate.via !== "none" && !row.grant.override && (
+                      {row.gate.via !== "none" && !grantOf(row).override && (
                         <span className="text-xs text-slate-400" data-testid="no-override">
                           An override has no effect on this feature.
                         </span>
                       )}
-                      {row.gate.via !== "none" && row.grant.override && (
+                      {row.gate.via !== "none" && grantOf(row).override && (
                         <button
                           onClick={() => onCustomise(row.key)}
                           className={QUIET_ACTION}
@@ -456,11 +484,11 @@ export function FeatureConsole({
                           Set override
                         </button>
                       )}
-                      {row.grant.addonKey && (
+                      {grantOf(row).addonKey && (
                         <button
                           onClick={() =>
                             setEnabling({
-                              addonKey: row.grant.addonKey!,
+                              addonKey: grantOf(row).addonKey!,
                               label: row.label,
                               unmetRequirement,
                             })

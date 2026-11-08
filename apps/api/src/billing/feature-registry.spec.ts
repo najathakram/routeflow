@@ -27,7 +27,7 @@ const EXPECTED_LEGACY_REGISTRY = {
       "POST /supplier-statements/scan",
     ],
     grantPath:
-      "Included on every plan: no grant is needed or offered (override and add-on paths are closed; see OCR_DECISION)",
+      "Included on every plan (see OCR_DECISION). A Platform Admin override still works and is the only way a LITE business scans until scanning is plan-included for every plan",
     backfill:
       "Owner ruling 2026-11-07 (SA-1106 A-2 Q3): included on every plan; the cost guard is the AI cap; never enforced.",
   },

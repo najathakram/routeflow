@@ -118,11 +118,10 @@ const FEATURE_REGISTRY_MIRROR = [
 
 /**
  * Mirrors the registry rows whose `grant.override` is false (SA-1106 WP7): an override on one of these
- * changes nothing, so no script may write one. feature-registry-mirror.parity.spec.ts pins this set
- * equal to the registry's.
+ * changes nothing, so no script may write one. feature-grant.spec.ts ('the script mirror refuses exactly the registry's override:false rows') pins
+ * this set equal to the registry's.
  */
 const OVERRIDE_REFUSED_KEYS = new Set([
-  "ocr",
   "flag.dispatch_live",
   "flag.settlement",
   "flag.api_sso",

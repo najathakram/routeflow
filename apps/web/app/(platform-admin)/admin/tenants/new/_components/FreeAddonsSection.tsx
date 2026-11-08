@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { addonKeyOf } from "../../[id]/_features/FeatureConsole";
 
 /** One free add-on the form can offer: the registry's own plain label and one-line description. */
 export interface FreeAddon {
@@ -21,7 +22,7 @@ export function freeAddonsFromRegistry(
 ): FreeAddon[] {
   const out: FreeAddon[] = [];
   for (const row of rows) {
-    const addonKey = row.grant?.addonKey;
+    const addonKey = addonKeyOf(row);
     if (!addonKey) continue;
     out.push({
       addonKey,

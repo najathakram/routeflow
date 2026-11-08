@@ -146,6 +146,18 @@ describe("report-640-restored-grants.mjs", () => {
     expect(source).toContain('"AddonSku"');
   });
 
+  // The pre-WP7 hand map, verbatim: the answers registryKeyForAddonKey must keep giving.
+  const MASTER_REGISTRY_KEY_BY_ADDON_KEY: Record<string, string> = {
+    tobacco_dealer: "tobacco_dealer",
+    driver_payments: "driver_payments",
+    recurring_routes: "recurring_routes",
+    order_delivery: "order_delivery",
+    ocr: "ocr",
+    developer_mode: "developer_mode",
+    msrp: "flag.msrp",
+    sales_agents: "flag.sales_agents",
+  };
+
   it("its billable keys are registry add-on keys carrying exactly those catalog SKUs (parity pin)", () => {
     const block = source.match(/export const BILLABLE_KEYS = \{([\s\S]*?)\};/);
     expect(block).not.toBeNull();
@@ -154,7 +166,7 @@ describe("report-640-restored-grants.mjs", () => {
     );
     expect(Object.keys(mirror).length).toBeGreaterThan(0);
     for (const [key, sku] of Object.entries(mirror)) {
-      expect(registryKeyForAddonKey(key)).toBe(key);
+      expect(registryKeyForAddonKey(key)).toBe(MASTER_REGISTRY_KEY_BY_ADDON_KEY[key] ?? key);
       expect(featureDefByKey(key)?.billing.skus).toContain(sku);
     }
   });

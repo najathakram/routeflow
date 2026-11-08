@@ -80,6 +80,7 @@ const row = (key: string, over: Record<string, unknown> = {}) => ({
   gate: { via: "RequirePlanFlag", state: "enforced" },
   via: "RequirePlanFlag",
   billing: { skus: [] },
+  grant: { override: true, plan: false, mode: false },
   ...over,
 });
 
@@ -89,6 +90,7 @@ const REGISTRY = [
     gate: { via: "RequireAddon", state: "enforced" },
     via: "RequireAddon",
     billing: { skus: ["tobacco_dealer"] },
+    grant: { override: true, addonKey: "tobacco_dealer", plan: false, mode: false },
   }),
   // The T1-style row: dark gate, no source, but served. Used to read "Off", "dark" and "On".
   row("t1_style", { gate: { via: "RequirePlanFlag", state: "dark" }, lifecycle: "beta" }),
@@ -97,6 +99,7 @@ const REGISTRY = [
     label: "Where orders go",
     gate: { via: "none", state: "none" },
     via: "none",
+    grant: { override: false, plan: false, mode: true },
     config: {
       fallbackMode: "unset",
       modes: [
