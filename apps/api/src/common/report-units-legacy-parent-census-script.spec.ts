@@ -257,3 +257,27 @@ describe("units-legacy-parent-census.mjs", () => {
     });
   });
 });
+
+describe("units-legacy-parent-census target-host guard", () => {
+  const remote = (): NodeJS.ProcessEnv => ({
+    ...noDbEnv(),
+    DATABASE_URL: "postgresql://u:p@db.example.test:5432/app",
+  });
+  it("refuses a non-loopback host before connecting: 64 without the flag, 65 on a mismatch", () => {
+    const missing = node([SCRIPT, "--all"], remote());
+    expect(missing.status).toBe(64);
+    expect(missing.stderr).toContain("--target-host=<host> is required");
+    const wrong = node([SCRIPT, "--all", "--target-host=other.example.test"], remote());
+    expect(wrong.status).toBe(65);
+    expect(wrong.stderr).not.toContain("u:p");
+  });
+  it("accepts the flag in parseArgs, once only, and the source confirms read-only with SHOW", () => {
+    expect(evalExports(`m.parseArgs(["--all","--target-host=h"]).targetHost`)).toBe("h");
+    expect(
+      evalExports(
+        `(() => { try { m.parseArgs(["--all","--target-host=a","--target-host=b"]); return "no throw"; } catch (e) { return e.message; } })()`,
+      ),
+    ).toContain("more than once");
+    expect(source).toContain("SHOW default_transaction_read_only");
+  });
+});

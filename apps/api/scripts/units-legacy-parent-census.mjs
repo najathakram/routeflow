@@ -3,7 +3,7 @@
  * products point at through `parentProductId` and that may still be sold themselves. Q3: "old parents that still sell
  * become families, business by business, after a count". This is the count; it changes nothing.
  *
- *   railway run --service postgres node apps/api/scripts/units-legacy-parent-census.mjs --tenant acme [--json]
+ *   railway run --service postgres node apps/api/scripts/units-legacy-parent-census.mjs --tenant acme [--json] [--target-host=<host>]
  *   railway run --service postgres node apps/api/scripts/units-legacy-parent-census.mjs --all [--json]
  *   node apps/api/scripts/units-legacy-parent-census.mjs --self-test                      (no database)
  *
@@ -22,12 +22,14 @@
  * an input only. Convention mirrored from report-read-only-sellers-with-buyers: the one report-db-url resolution
  * (redacted target on stderr, none usable = exit 2 without connecting), `default_transaction_read_only = on` first,
  * statement and lock timeouts, SELECT only, connection closed in `finally`. Like that report it is a read, not a
- * test action, so it is not restricted to the approved test tenants. Exit: 0 report printed, 2 usage or env error.
+ * test action, so it is not restricted to the approved test tenants. A non-loopback target is refused before connecting
+ * unless `--target-host=<host>` names the resolved host (64 missing, 65 mismatch). Exit: 0 report printed, 2 usage or env error.
  */
 import { createRequire } from "module";
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolveReportDbUrl } from "./lib/report-db-url.mjs";
+import { guardTargetHost, hostOf, takeTargetHost } from "./lib/report-target-host-guard.mjs";
 const require = createRequire(import.meta.url);
 
 const NAME = "units-legacy-parent-census";
@@ -149,7 +151,10 @@ export function formatTable(report) {
 }
 
 /** Pure: `--tenant <slug>` xor `--all`, plus `--json` and `--self-test`. Throws a usage message otherwise. */
-export function parseArgs(argv) {
+export function parseArgs(rawArgv) {
+  const taken = takeTargetHost(rawArgv);
+  if (taken.error) throw new Error(taken.error);
+  const argv = taken.rest;
   const i = argv.indexOf("--tenant");
   const tenant = i >= 0 ? argv[i + 1] : null;
   if (i >= 0 && (!tenant || tenant.startsWith("--")))
@@ -158,7 +163,13 @@ export function parseArgs(argv) {
   const selfTest = argv.includes("--self-test");
   if (!selfTest && !all && !tenant) throw new Error("pass --tenant <slug> (e.g. acme) or --all");
   if (all && tenant) throw new Error("pass either --tenant <slug> or --all, not both");
-  return { tenant: tenant ?? null, all, json: argv.includes("--json"), selfTest };
+  return {
+    tenant: tenant ?? null,
+    all,
+    json: argv.includes("--json"),
+    selfTest,
+    targetHost: taken.targetHost,
+  };
 }
 
 /** No-DB checks of the pure parts (`--self-test`). Throws on the first failure. */
@@ -213,11 +224,23 @@ async function main() {
   }
   const url = resolveReportDbUrl(NAME);
   if (!url) return 2;
+  const guard = guardTargetHost(args.targetHost, hostOf(url));
+  if (!guard.ok) {
+    console.error(`${NAME}: ${guard.message}`);
+    return guard.code;
+  }
   const { Client } = require("pg");
   const client = new Client({ connectionString: url });
   try {
     await client.connect();
     await client.query("SET default_transaction_read_only = on");
+    const [{ default_transaction_read_only: ro }] = (
+      await client.query("SHOW default_transaction_read_only")
+    ).rows;
+    if (ro !== "on") {
+      console.error(`${NAME}: session is not read-only`);
+      return 2;
+    }
     await client.query("SET statement_timeout = '60s'");
     await client.query("SET lock_timeout = '5s'");
     const scope = [args.all ? null : args.tenant];

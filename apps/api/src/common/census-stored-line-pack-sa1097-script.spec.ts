@@ -23,12 +23,10 @@ const SA_UNBILLED_SHA256 = "4f1b503172b2e3a3aead159fe413ea55b01b22c418aa28a011f6
 const SA_THIRD_SHA256 = "7ea78269ad97bb03bbe7ab37e6d0d90e95a7d23b9c028776d67a7409a3975877";
 // SA-1097 A-8: rf-specs decisions/sa/SA-1097-q10-line.sql at 03eb45aa48 (Q10's July line again), LF line endings as filed.
 const SA_Q10_LINE_SHA256 = "19d7a0f681863448f7f5f47bb91f38df93cf2dcc36aa1ceb0baadff44c4fa1d9";
-// SA-1097 A-9: rf-specs decisions/sa/SA-1097-q10-owner.sql at f65160b0dc (the owner's read of the July line), LF line endings as filed.
-const SA_Q10_OWNER_SHA256 = "c0ca4c4f15b7c46b044a87f4d0f2b515069c9546fc55ce8f36187b60e1b6cb29";
 
 function run(body: string): any {
   const code = `
-import { CENSUS_SQL, CENSUS_SQL_SHA256, DENOMINATORS_SQL, DENOMINATORS_SQL_SHA256, UNBILLED_SQL, UNBILLED_SQL_SHA256, THIRD_SQL, THIRD_SQL_SHA256, Q10_LINE_SQL, Q10_LINE_SQL_SHA256, Q10_OWNER_SQL, Q10_OWNER_SQL_SHA256, OWNER_OUT_NAME, OWNER_OUT_DIR, writeOwnerRead, splitCensusSql, checkArgs, runCensus } from "${HREF}";
+import { CENSUS_SQL, CENSUS_SQL_SHA256, DENOMINATORS_SQL, DENOMINATORS_SQL_SHA256, UNBILLED_SQL, UNBILLED_SQL_SHA256, THIRD_SQL, THIRD_SQL_SHA256, Q10_LINE_SQL, Q10_LINE_SQL_SHA256, splitCensusSql, checkArgs, runCensus } from "${HREF}";
 ${body}
 `;
   const res = spawnSync(process.execPath, ["--input-type=module", "-e", code], {
@@ -364,140 +362,6 @@ describe("SA-1097 census script", () => {
     expect(seen.keys).toEqual(["spec", "timingMs", "q10_line"]);
   });
 
-  // SA-1097 A-9: the owner read, behind --q10-owner. It prints names and money, so its output has rules of its own.
-  it("embeds the SA's owner read unchanged (sha-256 of rf-specs SA-1097-q10-owner.sql)", () => {
-    expect(run(`console.log(JSON.stringify(Q10_OWNER_SQL_SHA256));`)).toBe(SA_Q10_OWNER_SHA256);
-    expect(run(`console.log(JSON.stringify(Q10_OWNER_SQL.includes("\\r")));`)).toBe(false);
-  });
-
-  it("--q10-owner is one query named q10_owner, a plain WITH ... SELECT that writes nothing and ends at LIMIT 5", () => {
-    const qs = run(`console.log(JSON.stringify(splitCensusSql(Q10_OWNER_SQL)));`);
-    expect(qs.map((q: any) => q.name)).toEqual(["q10_owner"]);
-    const code = qs[0].sql.replace(/^--.*$/gm, "");
-    expect(code).toMatch(/^\s*WITH\b/);
-    expect(code).not.toMatch(
-      /\b(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|GRANT|COPY|SET)\b/i,
-    );
-    expect(code.trim().endsWith("LIMIT 5;")).toBe(true);
-  });
-
-  it("--q10-owner is its own flag: it refuses to run with any other count or a write flag", () => {
-    const out = run(`
-      console.log(JSON.stringify([
-        checkArgs(["--q10-owner"]), checkArgs(["--q10-owner", "--timeout-s=60"]),
-        checkArgs(["--q10-owner", "--denominators"]), checkArgs(["--q10-owner", "--unbilled"]), checkArgs(["--q10-owner", "--third"]),
-        checkArgs(["--q10-owner", "--q10-line"]), checkArgs(["--q10-owner", "--apply"]), checkArgs(["--q10-owner=1"]),
-      ].map((r) => r.ok ? [r.timeoutS, r.denominators, r.unbilled, r.third, r.q10Line, r.q10Owner] : "refused")));
-    `);
-    expect(out).toEqual([
-      [300, false, false, false, false, true],
-      [60, false, false, false, false, true],
-      "refused",
-      "refused",
-      "refused",
-      "refused",
-      "refused",
-      "refused",
-    ]);
-  });
-
-  it("with --q10-owner: read-only before any read, the one query in its own READ ONLY transaction, rolled back", () => {
-    const seen = run(`
-      const log = [];
-      const client = { async query(sql) {
-        log.push(sql.trim().split("\\n")[0].slice(0, 40));
-        if (sql === "SHOW transaction_read_only") return { rows: [{ transaction_read_only: "on" }] };
-        return { rows: [] };
-      } };
-      const out = await runCensus(client, { timeoutS: 60, q10Owner: true });
-      console.log(JSON.stringify({ log, spec: out.spec, keys: Object.keys(out) }));
-    `);
-    expect(seen.log).toEqual([
-      "SET default_transaction_read_only = on",
-      "SHOW transaction_read_only",
-      "SET statement_timeout = '60s'",
-      "BEGIN READ ONLY",
-      expect.stringMatching(/^-- SA-1097 A-9 read/),
-      "ROLLBACK",
-    ]);
-    expect(seen.spec.sqlSha256).toBe(SA_Q10_OWNER_SHA256);
-    expect(seen.spec.sqlCommit).toBe("f65160b0dcd589f57842521e6bf9c71861a6619b");
-    expect(seen.keys).toEqual(["spec", "timingMs", "q10_owner"]);
-  });
-
-  describe("writeOwnerRead: names and money go to the file, never to stdout", () => {
-    // Made-up values only; the point is that none of them is ever printed.
-    const ROW = {
-      business: "Zed Test Wholesale",
-      customer: "Quux Corner Shop",
-      invoice_number: "INV-TEST-0001",
-      line_total: "95.00",
-    };
-    const writeRun = (rows: unknown[], dirName: string) => {
-      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "owner-read-"));
-      try {
-        const dir = path.join(tmp, dirName);
-        const out = run(`
-          import fs from "node:fs";
-          const printed = [];
-          const code = writeOwnerRead(
-            { spec: { sqlCommit: "c", sqlSha256: "s" }, q10_owner: ${JSON.stringify(rows)} },
-            { dir: ${JSON.stringify(dir)}, print: (...a) => printed.push(a.join(" ")) },
-          );
-          const file = ${JSON.stringify(path.join(dir, "sa1097-q10-owner-2026-11-03.json"))};
-          console.log(JSON.stringify({
-            code, printed, dirMade: fs.existsSync(${JSON.stringify(dir)}),
-            file: fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : null,
-            mode: fs.existsSync(file) ? (fs.statSync(file).mode & 0o777).toString(8) : null,
-          }));
-        `);
-        return { ...out, dir };
-      } finally {
-        fs.rmSync(tmp, { recursive: true, force: true });
-      }
-    };
-
-    it("exactly one row: written to the file, stdout says the count and the path and nothing else", () => {
-      const r = writeRun([ROW], "local-assets");
-      expect(r.code).toBe(0);
-      expect(r.file.q10_owner).toEqual([ROW]);
-      expect(r.printed).toHaveLength(1);
-      expect(r.printed[0]).toMatch(/q10_owner rows 1 written to /);
-      expect(r.printed[0]).toContain("sa1097-q10-owner-2026-11-03.json");
-      for (const v of Object.values(ROW)) expect(r.printed.join("\n")).not.toContain(v);
-      if (process.platform !== "win32") expect(r.mode).toBe("600");
-    });
-
-    it.each([
-      ["no row", []],
-      ["two rows", [ROW, { ...ROW, invoice_number: "INV-TEST-0002" }]],
-    ])("%s: nothing is written, the count is printed, exit 3", (_label, rows) => {
-      const r = writeRun(rows as unknown[], "local-assets");
-      expect(r.code).toBe(3);
-      expect(r.file).toBeNull();
-      expect(r.dirMade).toBe(false);
-      expect(r.printed).toHaveLength(1);
-      expect(r.printed[0]).toContain(`rows ${rows.length}`);
-      expect(r.printed[0]).toContain("nothing written");
-      for (const v of Object.values(ROW)) expect(r.printed.join("\n")).not.toContain(v);
-    });
-
-    it("the file lands in the repo's gitignored local-assets, under the SA's name", () => {
-      expect(run(`console.log(JSON.stringify([OWNER_OUT_NAME, OWNER_OUT_DIR]));`)).toEqual([
-        "sa1097-q10-owner-2026-11-03.json",
-        path.resolve(API_DIR, "../../local-assets"),
-      ]);
-    });
-
-    it("main sends the owner read to writeOwnerRead before it could print any JSON", () => {
-      const main = SOURCE.slice(SOURCE.indexOf("async function main("));
-      const route = main.indexOf("if (args.q10Owner) return writeOwnerRead(census)");
-      const dump = main.indexOf("console.log(JSON.stringify(census");
-      expect(route).toBeGreaterThan(-1);
-      expect(dump).toBeGreaterThan(route);
-    });
-  });
-
   it("is import-safe and uses the shared report resolver, with no write path in the source", () => {
     expect(SOURCE).toContain('from "./lib/report-db-url.mjs"');
     expect(SOURCE).toContain("process.argv[1] === fileURLToPath(import.meta.url)");
@@ -505,5 +369,39 @@ describe("SA-1097 census script", () => {
     expect(code).not.toMatch(
       /\.query\(\s*[`"'](INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE)\b/i,
     );
+  });
+});
+
+describe("SA-1097 census target-host guard and counts-only surface", () => {
+  const SCRIPT_PATH = path.resolve(API_DIR, "scripts/census-stored-line-pack-sa1097.mjs");
+  const spawnRemote = (extra: string[]) =>
+    spawnSync(process.execPath, [SCRIPT_PATH, ...extra], {
+      cwd: API_DIR,
+      encoding: "utf8",
+      timeout: 60_000,
+      env: {
+        ...process.env,
+        DATABASE_URL: "postgresql://u:p@db.example.test:5432/app",
+        RAILWAY_TCP_PROXY_DOMAIN: "",
+        RAILWAY_TCP_PROXY_PORT: "",
+      },
+    });
+  it("refuses a non-loopback host before connecting: 64 without the flag, 65 on a mismatch", () => {
+    const missing = spawnRemote([]);
+    expect(missing.status).toBe(64);
+    expect(missing.stderr).toContain("--target-host=<host> is required");
+    const wrong = spawnRemote(["--target-host=other.example.test"]);
+    expect(wrong.status).toBe(65);
+    expect(wrong.stderr).not.toContain("u:p");
+  });
+  it("checkArgs takes --target-host once and the names-printing owner mode is gone", () => {
+    const out = run(`
+      console.log(JSON.stringify([
+        checkArgs(["--target-host=h"]).targetHost, checkArgs([]).targetHost,
+        checkArgs(["--target-host=a", "--target-host=b"]).ok, checkArgs(["--q10-owner"]).ok,
+      ]));
+    `);
+    expect(out).toEqual(["h", null, false, false]);
+    expect(SOURCE).not.toMatch(/q10.owner|OWNER_OUT|writeOwnerRead/i);
   });
 });
