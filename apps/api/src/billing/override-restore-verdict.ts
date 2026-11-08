@@ -21,11 +21,7 @@ import type { TxOrClient } from "../prisma/prisma.service";
 import type { ConfigSnapshotSkipReason } from "@routeflow/types";
 import { includedAtPlanVerdict } from "./addon-catalog-invalid";
 import { addonCodeOf, isStripeBillableAddonRow } from "./addon-row";
-import {
-  ADDON_KEY_TO_REGISTRY_KEY,
-  checkFeatureRequires,
-  featureDefByKey,
-} from "./feature-registry";
+import { registryKeyForAddonKey, checkFeatureRequires, featureDefByKey } from "./feature-registry";
 import type { SnapshotOverrideEntry } from "./tenant-config-snapshot";
 
 /** What the transition service knows about the tenant's catalog (its plan version), by SKU. */
@@ -66,7 +62,7 @@ export type OverrideHoldReason = Extract<
   "ADDON_NOT_PAID" | "REQUIRES_UNMET"
 >;
 
-const registryKeyOf = (addonKey: string): string => ADDON_KEY_TO_REGISTRY_KEY[addonKey] ?? addonKey;
+const registryKeyOf = (addonKey: string): string => registryKeyForAddonKey(addonKey);
 const isAddonKeyed = (key: string): boolean => {
   const via = featureDefByKey(key)?.gate.via;
   return via === "RequireAddon" || via === "guard";

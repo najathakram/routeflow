@@ -680,6 +680,12 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
       expect(res.stderr).toContain('"not_a_real_key" is not a FEATURE_REGISTRY addon-gate key');
     });
 
+    it("K4 --include-addon-keys limit_seats is refused: its registry row takes no override (SA-1106 WP7)", () => {
+      const res = runCli(["--apply", "--include-addon-keys", "limit_seats"]);
+      expect(res.status).toBe(2);
+      expect(res.stderr).toContain("does not accept an override");
+    });
+
     it("K3 --apply --include-addon-keys ocr,email.connected_mailbox: preview names included vs. still-excluded addon keys; --live grants only those two (ocr gets a 90-day expiry, email.connected_mailbox does not), crm_gohighlevel stays excluded", async () => {
       const prose = runCli(["--apply", "--include-addon-keys", "ocr,email.connected_mailbox"]);
       expect(prose.status).toBe(0);

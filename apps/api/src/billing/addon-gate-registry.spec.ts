@@ -40,13 +40,16 @@ function reviewByExpired(reviewBy: string | undefined, todayUtc: number): boolea
 const REVIEW_AS_OF = "2026-10-26";
 const REVIEW_AS_OF_UTC = new Date(`${REVIEW_AS_OF}T00:00:00Z`).getTime();
 
-/** Dark rows (as "key:reviewBy") whose reviewBy is missing, malformed, or before `todayUtc`. */
+/**
+ * Dark rows (as "key:reviewBy") whose reviewBy is missing, malformed, or before `todayUtc`.
+ * `ocr` is exempt: it is dark for good (SA-1106 A-2 Q3, OCR_DECISION "included_all") and carries no review date.
+ */
 function expiredDarkRows(
   registry: Record<string, { state: string; reviewBy?: string }>,
   todayUtc: number,
 ): string[] {
   return Object.entries(registry)
-    .filter(([, row]) => row.state === "dark")
+    .filter(([key, row]) => row.state === "dark" && key !== "ocr")
     .filter(([, row]) => reviewByExpired(row.reviewBy, todayUtc))
     .map(([key, row]) => `${key}:${row.reviewBy ?? "missing"}`);
 }
@@ -94,7 +97,6 @@ describe("ADDON_GATE_REGISTRY pins (P1)", () => {
       const offenders = expiredDarkRows(ADDON_GATE_REGISTRY, farFuture);
       expect(offenders).toEqual(
         expect.arrayContaining([
-          "ocr:2027-03-31",
           "crm_gohighlevel:2027-03-11",
           "email.connected_mailbox:2027-03-17",
         ]),

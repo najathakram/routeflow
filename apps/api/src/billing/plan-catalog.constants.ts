@@ -99,9 +99,10 @@ export const TRIAL_LENGTH_DAYS = 14;
  *
  * RESERVED — no code exists yet to gate, so no decorator:
  *   - flag.api_sso — no SSO implementation exists.
- *   - flag.settlement — no driver run-settlement feature exists (distinct
- *     from Stripe Connect payment settlement, which is unrelated and
- *     already live).
+ *   - flag.settlement — office run settlement now exists (SA-1098) and is
+ *     ungated on purpose (owner ruling 2026-10-25: improvements ship to all).
+ *     Nothing reads this flag, so its registry row declares no grant path
+ *     (SA-1106 M-3); it is distinct from Stripe Connect payment settlement.
  *
  * DELIBERATELY UNENFORCED:
  *   - flag.dispatch_live — v8 grants this to no plan tier. Dispatch is
@@ -277,7 +278,7 @@ export function effectivePlanFlags(
   return flags;
 }
 
-/** The 8 add-on SKUs (pricing-plans.md §Add-on SKUs). */
+/** The 10 add-on SKU names the code knows (pricing-plans.md §Add-on SKUs); the retired ones are in RETIRED_ADDON_SKUS. */
 export const ADDON_SKUS = [
   "SEAT_EXTRA",
   "BUYER_PORTAL",
@@ -291,6 +292,18 @@ export const ADDON_SKUS = [
   "SALES_AGENTS",
 ] as const;
 export type AddonSkuCode = (typeof ADDON_SKUS)[number];
+
+/**
+ * SKU names the v11 catalog retired (publish-plan-catalog-v11.ts) that registry rows and old
+ * add-on rows still carry. `OCR_PACK_250` is deliberately NOT listed yet: its readers bill
+ * legacy `ocr` rows, so it joins here with the bill-path cut (SA-1106 A-2 §3, after the census).
+ */
+export const RETIRED_ADDON_SKUS: readonly AddonSkuCode[] = [
+  "BUYER_PORTAL",
+  "SEAT_EXTRA",
+  "ROUTE_EXTRA",
+  "MSG_BUNDLE_500",
+] as const;
 
 /** Meter keys (mirror the Prisma MeterKey enum). */
 export const METER_KEYS = ["SEATS", "ROUTES", "SCANS", "MSGS", "CUSTOMERS"] as const;

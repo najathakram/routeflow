@@ -199,14 +199,9 @@ describe("FEATURE_REGISTRY plain words (SA-950 A4, A6, A7)", () => {
 });
 
 describe("FEATURE_REGISTRY readiness (SA-950 A5)", () => {
-  it("incomplete is set on exactly the four rows with no working feature", () => {
+  it("incomplete is set on exactly the three rows with no working feature (settlement shipped, SA-1106 M-3)", () => {
     const incomplete = rows.filter((f) => f.incomplete !== undefined).map((f) => f.key);
-    expect(incomplete.sort()).toEqual([
-      "flag.api_sso",
-      "flag.dispatch_live",
-      "flag.settlement",
-      "mixed_packs",
-    ]);
+    expect(incomplete.sort()).toEqual(["flag.api_sso", "flag.dispatch_live", "mixed_packs"]);
   });
 
   it("every incomplete.missing is one non-empty line", () => {
@@ -273,6 +268,7 @@ describe("GET features/registry wire row (SA-950 A3)", () => {
         keywords: _keywords,
         incomplete: _incomplete,
         release: _release,
+        grant: _grant,
         ...rest
       } = toFeatureRegistryRow(f);
       expect(rest).toEqual(legacy(f));

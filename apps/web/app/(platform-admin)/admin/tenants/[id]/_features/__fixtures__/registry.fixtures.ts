@@ -18,6 +18,7 @@ export const REGISTRY_FIXTURE: FeatureRegistryRow[] = [
     keywords: [],
     gate: { via: "RequireAddon", state: "enforced" },
     billing: { skus: ["tobacco_dealer"] },
+    grant: { override: true, addonKey: "tobacco_dealer", plan: false, mode: false },
   },
   {
     key: "msrp",
@@ -32,6 +33,7 @@ export const REGISTRY_FIXTURE: FeatureRegistryRow[] = [
     keywords: [],
     gate: { via: "service", state: "enforced" },
     billing: { skus: ["msrp"] },
+    grant: { override: true, plan: false, mode: false },
   },
   {
     key: "recurring_routes",
@@ -46,6 +48,7 @@ export const REGISTRY_FIXTURE: FeatureRegistryRow[] = [
     keywords: [],
     gate: { via: "RequireAddon", state: "enforced" },
     billing: { skus: ["recurring_routes"] },
+    grant: { override: true, addonKey: "recurring_routes", plan: false, mode: false },
   },
   {
     key: "route_optimization",
@@ -60,6 +63,7 @@ export const REGISTRY_FIXTURE: FeatureRegistryRow[] = [
     keywords: [],
     gate: { via: "RequirePlanFlag", state: "dark" },
     billing: { skus: [] },
+    grant: { override: true, plan: true, mode: false },
     config: {
       fallbackMode: "manual",
       modes: [
@@ -87,6 +91,7 @@ export const REGISTRY_FIXTURE: FeatureRegistryRow[] = [
     keywords: [],
     gate: { via: "RequireAddon", state: "dark" },
     billing: { skus: [] },
+    grant: { override: true, addonKey: "developer_mode", plan: false, mode: false },
   },
   {
     key: "boxes_pieces_mode",
@@ -101,6 +106,7 @@ export const REGISTRY_FIXTURE: FeatureRegistryRow[] = [
     keywords: [],
     gate: { via: "guard", state: "enforced" },
     billing: { skus: [] },
+    grant: { override: true, plan: false, mode: false },
   },
 ];
 
@@ -119,6 +125,7 @@ export const FULFILMENT_MODEL_ROW: FeatureRegistryRow = {
   keywords: [],
   gate: { via: "none", state: "none" },
   billing: { skus: [] },
+  grant: { override: false, plan: false, mode: true },
   config: {
     fallbackMode: "unset",
     modes: [
@@ -143,4 +150,5 @@ export const UNCHECKED_SETTING_ROW: FeatureRegistryRow = {
   keywords: [],
   gate: { via: "none", state: "none" },
   billing: { skus: [] },
+  grant: { override: false, plan: false, mode: true },
 };

@@ -29,6 +29,7 @@ export function toFeatureRegistryRow(f: FeatureDef): FeatureRegistryRow {
     // (catalog metadata only) -- an override there can never have any effect.
     gate: { via: f.gate.via, state: f.gate.state },
     billing: { skus: [...f.billing.skus] },
+    grant: { ...f.grant },
     // B519: the console needs this to warn before enabling a key whose prerequisites
     // aren't met — verbatim from the registry, never a client-side mirror.
     ...(f.requires

@@ -114,6 +114,8 @@ export interface FeatureRegistryRow {
     state: "dark" | "enforced" | "none";
   };
   billing: { skus: string[] };
+  /** Which path can grant this row (SA-1106 WP7); mirrors `FeatureDef.grant` verbatim. */
+  grant: { override: boolean; addonKey?: string; plan: boolean; mode: boolean };
   config?: { fallbackMode: string; modes: FeatureModeOption[] };
   /** Other registry keys this one depends on (B519) — mirrors `FeatureDef.requires` in
    *  apps/api/src/billing/feature-registry.ts verbatim; not to be confused with

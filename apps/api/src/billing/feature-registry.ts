@@ -87,8 +87,25 @@ export interface FeatureConfigMode {
   settings: FeatureSettingsDescriptor;
 }
 
+/**
+ * SA-1106 WP7: which path can grant a row — ONE declaration, read by the override writer, the console
+ * (via the wire row) and the add-on key map. A row that omits a path does not offer it.
+ *   override — a per-business override (GRANT / DENY) changes the served answer; false = 409 on create.
+ *   addonKey — the `TenantAddon.addonKey` the console may enable it with (absent = no add-on path).
+ *   plan     — a plan or plan-bundled SKU grants it.
+ *   mode     — a business setting (TenantFeatureConfig) picks it.
+ */
+export interface FeatureGrant {
+  override: boolean;
+  addonKey?: string;
+  plan: boolean;
+  mode: boolean;
+}
+
 export interface FeatureDef {
   key: string;
+  /** Which path can grant this row. Required: a row without it fails the build. */
+  grant: FeatureGrant;
   kind: FeatureKind;
   area: FeatureArea;
   label: string;
@@ -125,11 +142,19 @@ const CATALOG_ONLY_BACKFILL = "Catalog-only flag; no gate to backfill.";
 const NEW_ROW_GRANT_PATH = "Config only — no grant surface; free for every plan";
 const NEW_ROW_BACKFILL = "New registry entry; nothing to backfill.";
 
+/**
+ * SA-1106 A-2 (owner ruling 2026-11-07, Q3): bill scanning is included on every plan; the cost
+ * guard is the AI cap, not a gate. `ocr` therefore stays `dark` (allows and logs) and never
+ * flips to `enforced`; `feature-registry.spec.ts` fails if the state or the grant says otherwise.
+ */
+export const OCR_DECISION = "included_all" as const;
+
 export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   // ── Six RequireAddon rows — byte-identical to today's ADDON_GATE_REGISTRY (see the zero-diff
   // proof in feature-registry.spec.ts). Copied verbatim from addon-gate-registry.ts.
   {
     key: "ocr",
+    grant: { override: true, plan: true, mode: false },
     nature: { purpose: "commercial", category: "allowance" },
     keywords: ["ocr", "scan", "scanning", "receipt", "document"],
     kind: "metered",
@@ -147,18 +172,18 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
         "POST /supplier-statements/scan",
       ],
       grantPath:
-        'Platform Admin → Tenants → [tenant] → add-ons (AddonService.enableAddon writes addonKey "ocr")',
+        "Included on every plan (see OCR_DECISION). A Platform Admin override still works and is the only way a LITE business scans until scanning is plan-included for every plan",
       backfill:
-        "Owner decision 2026-09-05: OCR available to all tenants; gate stays dark until OCR is " +
-        "monetized; no grants required",
-      reviewBy: "2027-03-31",
+        "Owner ruling 2026-11-07 (SA-1106 A-2 Q3): included on every plan; the cost guard is the AI cap; never enforced.",
     },
+    // The bill path (skus, the legacy key bridge) stays until the census + SA ruling: see OCR_DECISION.
     billing: { skus: ["OCR_PACK_250"], catalogFlag: "addon.ocr", selfService: false },
     defaultGranted: false,
     meter: "SCANS",
   },
   {
     key: "tobacco_dealer",
+    grant: { override: true, addonKey: "tobacco_dealer", plan: false, mode: false },
     nature: { purpose: "business", category: "what_it_sells" },
     keywords: ["tobacco", "regulated", "compliance", "cigarettes", "filing"],
     kind: "boolean",
@@ -193,6 +218,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "recurring_routes",
+    grant: { override: true, addonKey: "recurring_routes", plan: false, mode: false },
     nature: { purpose: "business", category: "hand_over" },
     keywords: ["route", "routes", "recurring", "schedule", "driver", "delivery"],
     kind: "boolean",
@@ -220,6 +246,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "order_delivery",
+    grant: { override: true, addonKey: "order_delivery", plan: false, mode: false },
     nature: { purpose: "business", category: "hand_over" },
     keywords: ["ad hoc", "on demand", "one-off", "delivery", "driver"],
     kind: "boolean",
@@ -247,6 +274,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "crm_gohighlevel",
+    grant: { override: true, addonKey: "crm_gohighlevel", plan: false, mode: false },
     nature: { purpose: "commercial", category: "office_tools" },
     keywords: ["crm", "gohighlevel", "ghl", "contacts", "pipeline"],
     kind: "boolean",
@@ -289,6 +317,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   // transport). Covered by mailbox-send.addon-gate.spec.ts.
   {
     key: "email.connected_mailbox",
+    grant: { override: true, plan: false, mode: false },
     nature: { purpose: "commercial", category: "office_tools" },
     keywords: ["email", "mailbox", "gmail", "outlook", "microsoft", "google"],
     kind: "boolean",
@@ -309,7 +338,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
         "DELETE /settings/email/mailbox",
       ],
       grantPath:
-        'Platform Admin → Tenants → [tenant] → add-ons (AddonService.enableAddon writes addonKey "email.connected_mailbox")',
+        "Platform Admin → Tenants → [tenant] → Features → Set override (the add-on path does not accept this key)",
       backfill:
         "New feature 2026-09-17: no tenant has a connection; gate stays dark through the pilot " +
         "(owner review window for Google gmail.send verification — see local-assets/handoff/" +
@@ -321,6 +350,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "developer_mode",
+    grant: { override: true, addonKey: "developer_mode", plan: false, mode: false },
     nature: { purpose: "commercial", category: "office_tools" },
     keywords: ["developer", "dev", "preview", "in development"],
     kind: "boolean",
@@ -352,6 +382,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   // ── One hand-written-guard row (not a decorator).
   {
     key: "driver_payments",
+    grant: { override: true, addonKey: "driver_payments", plan: false, mode: false },
     nature: { purpose: "business", category: "how_it_gets_paid" },
     keywords: ["door", "cash", "collect", "payment", "pay at the door", "cod"],
     kind: "boolean",
@@ -374,6 +405,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "orders_inline_returns",
+    grant: { override: true, plan: false, mode: true },
     nature: { purpose: "commercial", category: "office_tools" },
     keywords: ["return", "returns", "credit", "order entry"],
     kind: "boolean",
@@ -473,6 +505,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   // ── Nine RequirePlanFlag rows — key IS the dotted legacy catalog-flag string.
   {
     key: "flag.msrp",
+    grant: { override: true, addonKey: "msrp", plan: false, mode: false },
     nature: { purpose: "business", category: "what_it_sells" },
     keywords: ["msrp", "retail price", "suggested price"],
     kind: "boolean",
@@ -493,6 +526,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.sales_agents",
+    grant: { override: true, addonKey: "sales_agents", plan: false, mode: false },
     nature: { purpose: "commercial", category: "office_tools" },
     keywords: ["sales agent", "commission", "rep", "salesperson"],
     kind: "boolean",
@@ -513,6 +547,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.units_v1",
+    grant: { override: true, plan: false, mode: false },
     nature: {
       purpose: "release",
       release: {
@@ -543,6 +578,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.units_settings_v1",
+    grant: { override: true, plan: false, mode: false },
     nature: {
       purpose: "release",
       release: {
@@ -576,6 +612,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.analytics",
+    grant: { override: true, plan: true, mode: false },
     nature: { purpose: "commercial", category: "office_tools" },
     keywords: ["analytics", "dashboard", "revenue", "performance"],
     kind: "boolean",
@@ -597,6 +634,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.forecasting",
+    grant: { override: true, plan: true, mode: false },
     nature: { purpose: "commercial", category: "office_tools" },
     keywords: ["forecast", "reorder", "stock", "inventory"],
     kind: "boolean",
@@ -621,6 +659,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.reports",
+    grant: { override: true, plan: true, mode: false },
     nature: { purpose: "commercial", category: "office_tools" },
     keywords: ["reports", "bookkeeping", "p&l", "aging", "sales report"],
     kind: "boolean",
@@ -647,6 +686,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.returns",
+    grant: { override: true, plan: true, mode: false },
     nature: { purpose: "commercial", category: "office_tools" },
     keywords: ["returns", "refund", "credit note", "rma"],
     kind: "boolean",
@@ -668,6 +708,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.ap_bills",
+    grant: { override: true, plan: true, mode: false },
     nature: { purpose: "commercial", category: "office_tools" },
     keywords: ["bills", "ap", "accounts payable", "vendor bills", "expenses"],
     kind: "boolean",
@@ -689,6 +730,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.pricing_tiers",
+    grant: { override: true, plan: true, mode: false },
     nature: { purpose: "business", category: "what_it_sells" },
     keywords: ["pricing", "price tiers", "negotiated", "customer price", "special price"],
     kind: "boolean",
@@ -714,6 +756,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.units_prices_v2",
+    grant: { override: true, plan: false, mode: false },
     nature: {
       purpose: "release",
       release: {
@@ -754,6 +797,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.import_integrations",
+    grant: { override: true, plan: true, mode: false },
     nature: { purpose: "commercial", category: "office_tools" },
     keywords: ["import", "migrate", "migration", "switch systems"],
     kind: "boolean",
@@ -780,6 +824,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   // (see the "frozen catalog-only rows" block below, now three rows instead of four).
   {
     key: "flag.estimates",
+    grant: { override: true, plan: true, mode: false },
     nature: { purpose: "commercial", category: "office_tools" },
     keywords: ["estimate", "quote", "quotation"],
     kind: "boolean",
@@ -801,6 +846,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.recurring_invoices",
+    grant: { override: true, plan: true, mode: false },
     nature: { purpose: "commercial", category: "office_tools" },
     keywords: ["recurring", "subscription", "autobill", "repeat invoice"],
     kind: "boolean",
@@ -822,6 +868,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.credit_notes",
+    grant: { override: true, plan: true, mode: false },
     nature: { purpose: "commercial", category: "office_tools" },
     keywords: ["credit note", "credit memo", "refund"],
     kind: "boolean",
@@ -843,6 +890,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.suppliers",
+    grant: { override: true, plan: true, mode: false },
     nature: { purpose: "commercial", category: "office_tools" },
     keywords: ["suppliers", "vendors", "purchasing"],
     kind: "boolean",
@@ -864,6 +912,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.messaging",
+    grant: { override: true, plan: true, mode: false },
     nature: { purpose: "commercial", category: "office_tools" },
     keywords: ["messages", "chat", "inbox", "sms"],
     kind: "boolean",
@@ -885,6 +934,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "addon.buyer_portal",
+    grant: { override: true, plan: true, mode: false },
     nature: { purpose: "commercial", category: "office_tools" },
     keywords: ["portal", "self-serve", "customer ordering", "online ordering", "storefront"],
     kind: "boolean",
@@ -918,6 +968,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   // DARK_PLAN_FLAGS parity check on purpose).
   {
     key: "flag.credit_limits",
+    grant: { override: true, plan: true, mode: false },
     nature: { purpose: "business", category: "how_it_gets_paid" },
     keywords: ["credit limit", "credit", "over limit", "hold"],
     kind: "boolean",
@@ -950,6 +1001,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   // (addon.buyer_portal moved above: Lite-L2 gave it a real RequirePlanFlag gate.)
   {
     key: "flag.dispatch_live",
+    grant: { override: false, plan: false, mode: false },
     nature: { purpose: "commercial", category: "office_tools" },
     keywords: ["dispatch", "live", "map", "tracking"],
     incomplete: {
@@ -973,14 +1025,14 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.settlement",
+    grant: { override: false, plan: false, mode: false },
     nature: { purpose: "commercial", category: "office_tools" },
     keywords: ["settlement", "driver cash", "reconcile", "end of run"],
-    incomplete: { missing: "Not built yet: no settlement screen or API exists." },
     kind: "boolean",
     area: "finance",
     label: "Driver run settlement",
     description:
-      "Reconcile each driver's cash and payments at the end of a run. Not available yet.",
+      "Reconcile each driver's cash and payments at the end of a run. Every business has it; there is nothing to switch.",
     gate: {
       via: "none",
       state: "none",
@@ -994,6 +1046,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "flag.api_sso",
+    grant: { override: false, plan: false, mode: false },
     nature: { purpose: "commercial", category: "office_tools" },
     keywords: ["api", "sso", "single sign-on", "login"],
     incomplete: { missing: "Not built yet: no sign-on or API-key feature exists." },
@@ -1016,6 +1069,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   // ── Seven brand-new rows — pure data, no consumer yet.
   {
     key: "limit_seats",
+    grant: { override: false, plan: true, mode: false },
     nature: { purpose: "commercial", category: "allowance" },
     keywords: ["seats", "users", "logins"],
     kind: "limit",
@@ -1035,6 +1089,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "limit_routes",
+    grant: { override: false, plan: true, mode: false },
     nature: { purpose: "commercial", category: "allowance" },
     keywords: ["routes", "limit"],
     kind: "limit",
@@ -1054,6 +1109,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "limit_customers",
+    grant: { override: false, plan: true, mode: false },
     nature: { purpose: "commercial", category: "allowance" },
     keywords: ["customers", "limit", "customer pack"],
     kind: "limit",
@@ -1073,6 +1129,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "metered_scans",
+    grant: { override: false, plan: false, mode: false },
     nature: { purpose: "commercial", category: "allowance" },
     keywords: ["scans", "scan allowance", "usage"],
     kind: "metered",
@@ -1093,6 +1150,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "metered_msgs",
+    grant: { override: false, plan: false, mode: false },
     nature: { purpose: "commercial", category: "allowance" },
     keywords: ["messages", "message allowance", "usage"],
     kind: "metered",
@@ -1113,6 +1171,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "catalog_varieties",
+    grant: { override: false, plan: false, mode: true },
     nature: { purpose: "business", category: "what_it_sells" },
     keywords: ["varieties", "flavor", "flavour", "variants"],
     kind: "boolean",
@@ -1176,6 +1235,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "mixed_packs",
+    grant: { override: false, plan: false, mode: true },
     nature: { purpose: "business", category: "what_it_sells" },
     keywords: ["mixed pack", "recipe", "assortment", "family", "bundle"],
     incomplete: { missing: "No screen lets staff build a mixed pack yet." },
@@ -1206,6 +1266,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "routes_dispatch",
+    grant: { override: false, plan: false, mode: true },
     nature: { purpose: "business", category: "hand_over" },
     keywords: ["routes", "schedule", "ad hoc", "dispatch"],
     kind: "boolean",
@@ -1271,6 +1332,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "fulfilment_model",
+    grant: { override: false, plan: false, mode: true },
     nature: { purpose: "business", category: "hand_over" },
     keywords: ["pickup", "ship", "shipping", "carrier", "delivery", "fulfilment"],
     kind: "boolean",
@@ -1328,6 +1390,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "counter_sales",
+    grant: { override: false, plan: false, mode: true },
     nature: { purpose: "business", category: "hand_over" },
     keywords: ["pos", "till", "walk-in", "counter", "cash sale", "over the counter"],
     kind: "boolean",
@@ -1362,6 +1425,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
   },
   {
     key: "promotions",
+    grant: { override: false, plan: false, mode: true },
     nature: { purpose: "business", category: "what_it_sells" },
     keywords: ["promotion", "promo", "bogo", "buy one get one", "sale price"],
     kind: "boolean",
@@ -1482,21 +1546,21 @@ export function gateVia(key: string): FeatureGateVia | undefined {
  * `"flag.msrp"`, addonKey `"sales_agents"` is `"flag.sales_agents"`. Looking `addonKey` up
  * directly in `FEATURE_REGISTRY` (what the pre-fix code did) silently found nothing for those
  * two and skipped the requires check outright — harmless today only because neither bridged
- * row currently declares `requires`, not because the lookup was correct. This is the exact
- * inverse of the web app's own `ADDON_ROW_KEY_BY_REGISTRY_KEY` (`FeatureConsole.tsx`, #899) —
- * hand-kept in sync with it the same way `checkFeatureRequires` is kept in sync with its web
- * twin, for the same reason (no shared module reaches both apps).
+ * row currently declares `requires`, not because the lookup was correct. WP7: derived from each row's `grant.addonKey`, no longer a hand map (the web console reads the same
+ * declaration off the wire row).
  */
-export const ADDON_KEY_TO_REGISTRY_KEY: Readonly<Record<string, string>> = {
-  tobacco_dealer: "tobacco_dealer",
-  driver_payments: "driver_payments",
-  recurring_routes: "recurring_routes",
-  order_delivery: "order_delivery",
-  ocr: "ocr",
-  developer_mode: "developer_mode",
-  msrp: "flag.msrp",
-  sales_agents: "flag.sales_agents",
-};
+export const ADDON_KEY_TO_REGISTRY_KEY: Readonly<Record<string, string>> = Object.fromEntries(
+  FEATURE_REGISTRY.flatMap((f) => (f.grant.addonKey ? [[f.grant.addonKey, f.key]] : [])),
+);
+
+/**
+ * The registry key a `TenantAddon.addonKey` stands for. An add-on row can hold a key the registry no
+ * longer offers (a legacy `ocr` row): it names itself. WP7 keeps this answer byte-identical to the
+ * pre-WP7 hand map for every key (`feature-registry.spec.ts` pins the eight).
+ */
+export function registryKeyForAddonKey(addonKey: string): string {
+  return ADDON_KEY_TO_REGISTRY_KEY[addonKey] ?? addonKey;
+}
 
 const FEATURE_DEF_BY_KEY = new Map(FEATURE_REGISTRY.map((f) => [f.key, f]));
 

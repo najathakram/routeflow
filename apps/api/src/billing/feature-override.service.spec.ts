@@ -238,6 +238,60 @@ describe("FeatureOverrideService.create", () => {
     expect(err.getResponse()).toMatchObject({ code: "FEATURE_KEY_UNKNOWN" });
   });
 
+  // SA-1106 WP7 (T13): the row's `grant.override` decides. A row that declares none is refused with 409
+  // and nothing is written; a row that declares it (a per-tenant release row included) still creates.
+  it.each(["limit_seats", "flag.settlement", "metered_scans", "fulfilment_model"])(
+    "refuses an override on %s with 409 FEATURE_NOT_OVERRIDABLE and writes nothing",
+    async (key) => {
+      const { svc, prisma } = build();
+      const err = await svc
+        .create({
+          tenantId: "t1",
+          featureKey: key,
+          effect: "GRANT",
+          reason: "pilot",
+          expiresAt: null,
+          createdById: "admin1",
+        })
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getResponse()).toMatchObject({ code: "FEATURE_NOT_OVERRIDABLE" });
+      expect(prisma.tenantFeatureOverride.create).not.toHaveBeenCalled();
+      expect(prisma.tenantFeatureOverride.updateMany).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["GRANT", "DENY"] as const)(
+    "still creates an ocr %s override (the scan guard honours it)",
+    async (effect) => {
+      const { svc, prisma } = build();
+      prisma.tenantFeatureOverride.create.mockResolvedValue(row());
+      await svc.create({
+        tenantId: "t1",
+        featureKey: "ocr",
+        effect,
+        reason: "pilot",
+        expiresAt: null,
+        createdById: "admin1",
+      });
+      expect(prisma.tenantFeatureOverride.create).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("still creates an override on a per_tenant_legacy release row (flag.units_settings_v1)", async () => {
+    const { svc, prisma } = build();
+    prisma.tenantFeatureOverride.create.mockResolvedValue(row());
+    await svc.create({
+      tenantId: "t1",
+      featureKey: "flag.units_settings_v1",
+      effect: "GRANT",
+      reason: "pilot",
+      expiresAt: null,
+      createdById: "admin1",
+    });
+    expect(prisma.tenantFeatureOverride.create).toHaveBeenCalledTimes(1);
+  });
+
   // Opus review of 8130b204, item 7a: an already-past expiresAt creates a row that is never
   // active for even one read — reject it outright rather than silently accepting a no-op row.
   it("rejects an expiresAt already in the past with EXPIRES_AT_MUST_BE_FUTURE", async () => {

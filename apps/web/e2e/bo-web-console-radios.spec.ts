@@ -61,6 +61,7 @@ const FULFILMENT_ROW = {
   gate: { via: "none", state: "none" },
   via: "none",
   billing: { skus: [] },
+  grant: { override: false, plan: false, mode: true },
   config: {
     fallbackMode: "unset",
     modes: [
@@ -84,6 +85,7 @@ const PLAIN_ROW = {
   gate: { via: "none", state: "none" },
   via: "none",
   billing: { skus: [] },
+  grant: { override: false, plan: false, mode: false },
 };
 
 // serving:false is what a gate-less config row really reports; that is the bug this card fixes.

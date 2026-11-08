@@ -31,6 +31,7 @@ function fixtureRegistry(overrides: Partial<FeatureDef> = {}): readonly FeatureD
     nature: { purpose: "commercial", category: "office_tools" },
     keywords: [],
     defaultGranted: true,
+    grant: { override: true, plan: false, mode: true },
     config: {
       fallbackMode: "unset",
       modes: {

@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { ADDON_KEY_TO_REGISTRY_KEY, featureDefByKey } from "../billing/feature-registry";
+import { featureDefByKey, registryKeyForAddonKey } from "../billing/feature-registry";
 
 // Row 640 (SA-834) — apps/api/scripts/report-640-restored-grants.mjs contract: read-only, counts
 // only, fails closed without a database url, and its billable-key map mirrors the registry.
@@ -146,6 +146,18 @@ describe("report-640-restored-grants.mjs", () => {
     expect(source).toContain('"AddonSku"');
   });
 
+  // The pre-WP7 hand map, verbatim: the answers registryKeyForAddonKey must keep giving.
+  const MASTER_REGISTRY_KEY_BY_ADDON_KEY: Record<string, string> = {
+    tobacco_dealer: "tobacco_dealer",
+    driver_payments: "driver_payments",
+    recurring_routes: "recurring_routes",
+    order_delivery: "order_delivery",
+    ocr: "ocr",
+    developer_mode: "developer_mode",
+    msrp: "flag.msrp",
+    sales_agents: "flag.sales_agents",
+  };
+
   it("its billable keys are registry add-on keys carrying exactly those catalog SKUs (parity pin)", () => {
     const block = source.match(/export const BILLABLE_KEYS = \{([\s\S]*?)\};/);
     expect(block).not.toBeNull();
@@ -154,7 +166,7 @@ describe("report-640-restored-grants.mjs", () => {
     );
     expect(Object.keys(mirror).length).toBeGreaterThan(0);
     for (const [key, sku] of Object.entries(mirror)) {
-      expect(ADDON_KEY_TO_REGISTRY_KEY[key]).toBe(key);
+      expect(registryKeyForAddonKey(key)).toBe(MASTER_REGISTRY_KEY_BY_ADDON_KEY[key] ?? key);
       expect(featureDefByKey(key)?.billing.skus).toContain(sku);
     }
   });

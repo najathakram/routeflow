@@ -1,7 +1,7 @@
 import { isAlwaysEnforcedPlan } from "./plan-catalog.constants";
 import { PAYING_TENANT_CONDITIONS } from "./mrr.service";
 import { includedAtPlanVerdict } from "./addon-catalog-invalid";
-import { ADDON_KEY_TO_REGISTRY_KEY, featureDefByKey } from "./feature-registry";
+import { featureDefByKey, registryKeyForAddonKey } from "./feature-registry";
 import { servedAnswer } from "./served-answer";
 
 /** R25: the owner is told this long before a billable free period ends. */
@@ -103,7 +103,7 @@ export function billablePilotEnding(
       r.active &&
       (r.sku === sku.sku ||
         r.addonKey === override.featureKey ||
-        ADDON_KEY_TO_REGISTRY_KEY[r.addonKey] === override.featureKey),
+        registryKeyForAddonKey(r.addonKey) === override.featureKey),
   );
   if (holds) return null;
 

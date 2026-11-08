@@ -28,7 +28,7 @@ import {
 import { addonCatalogInvalidException } from "./addon-catalog-invalid";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import {
-  ADDON_KEY_TO_REGISTRY_KEY,
+  registryKeyForAddonKey,
   DEFAULT_GRANTED_ADDON_FEATURES,
   defaultGrantRequirementKeys,
   isDefaultGrantedAddon,
@@ -261,7 +261,7 @@ export class AddonService {
    * `PlatformAdminController#createFeatureOverride`'s identical guard, see that method's doc
    * for why it lives there and not here or in a service both would need to depend on. A
    * legacy addonKey with no registry row (or a registered row with no `requires`) is a no-op
-   * passthrough. `ADDON_KEY_TO_REGISTRY_KEY` translates the addonKey namespace into the
+   * passthrough. `registryKeyForAddonKey` translates the addonKey namespace into the
    * registry-key namespace first (B524 fix round, finding F2) — they diverge for the two
    * `RequirePlanFlag`-bridged legacy keys (`msrp`→`flag.msrp`, `sales_agents`→
    * `flag.sales_agents`); an addonKey with no entry there is passed through unchanged (every
@@ -308,7 +308,7 @@ export class AddonService {
     // B524 — see the method doc above for the full rationale.
     await this.authority.assertFeatureRequiresMet(
       tenantId,
-      ADDON_KEY_TO_REGISTRY_KEY[addonKey] ?? addonKey,
+      registryKeyForAddonKey(addonKey),
       acknowledgeUnmetRequires,
     );
 

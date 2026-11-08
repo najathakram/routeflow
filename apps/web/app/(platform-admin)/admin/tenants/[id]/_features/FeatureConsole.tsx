@@ -44,25 +44,11 @@ type PendingPreview =
   | { kind: "mode"; featureKey: string; newMode: string; response: FeaturePreviewResponse };
 
 /**
- * Registry rows the console can provision as a real, billable `TenantAddon` row via
- * `POST /addons/enable` (B2b) — the value is the legacy `addonKey` that endpoint expects,
- * which is NOT always the registry row's own key. Six of these are `RequireAddon`/`guard`
- * rows keyed identically to their addonKey. `flag.msrp`/`flag.sales_agents` are
- * `RequirePlanFlag` rows whose SERVER gate a "Customise" override on the flag key would
- * satisfy — but their web-side UI (the MSRP price field, the sales-agents nav item) reads
- * `useHasAddon()`, which checks the literal `TenantAddon.addonKey` list and never sees a
- * feature-override. Without this addon-row path those two keys have NO working "on" switch
- * once the legacy AVAILABLE_ADDONS toggle cards are deleted (review catch, 2026-09-17) — an
- * override would look like it worked (the route gate passes) while the UI stayed hidden.
- *
- * Mirrors `LEGACY_ADDON_KEY_TO_SKU` in `apps/api/src/billing/plan-catalog.constants.ts` (the
- * server's addonKey -> Stripe SKU bridge for these same legacy keys) — update both together.
- * This map is hardcoded, not derived from the registry (no "gate kind"/legacy-addonKey field
- * exists there yet — a future SHARED ticket across packages/types + apps/api could add one),
- * so a 9th flag-gated key needing this path will NOT light up here automatically; the pinned
- * test below (`FeatureConsole.test.tsx`) fails loudly if this map's contents drift instead.
+ * An older API (web deployed first, or the API rolled back alone) sends rows without `grant`. Until it
+ * catches up the console shows what it showed before the grant declaration: an override on every gated
+ * row and the add-on button on the eight rows that had one. Delete this with the next API-first deploy.
  */
-export const ADDON_ROW_KEY_BY_REGISTRY_KEY: Readonly<Record<string, string>> = {
+const PRE_GRANT_ADDON_KEYS: Readonly<Record<string, string>> = {
   tobacco_dealer: "tobacco_dealer",
   driver_payments: "driver_payments",
   recurring_routes: "recurring_routes",
@@ -72,6 +58,18 @@ export const ADDON_ROW_KEY_BY_REGISTRY_KEY: Readonly<Record<string, string>> = {
   "flag.msrp": "msrp",
   "flag.sales_agents": "sales_agents",
 };
+
+/** The add-on key a row turns on with: its `grant.addonKey`, or the pre-grant answer on an older API. */
+export function addonKeyOf(row: {
+  key: string;
+  grant?: { addonKey?: string };
+}): string | undefined {
+  return row.grant ? row.grant.addonKey : PRE_GRANT_ADDON_KEYS[row.key];
+}
+
+function grantOf(row: FeatureRegistryRow): { override: boolean; addonKey?: string } {
+  return { override: row.grant?.override ?? true, addonKey: addonKeyOf(row) };
+}
 
 interface RequirementStatus {
   satisfied: boolean;
@@ -472,7 +470,12 @@ export function FeatureConsole({
                       >
                         Details
                       </button>
-                      {row.gate.via !== "none" && (
+                      {row.gate.via !== "none" && !grantOf(row).override && (
+                        <span className="text-xs text-slate-400" data-testid="no-override">
+                          An override has no effect on this feature.
+                        </span>
+                      )}
+                      {row.gate.via !== "none" && grantOf(row).override && (
                         <button
                           onClick={() => onCustomise(row.key)}
                           className={QUIET_ACTION}
@@ -481,11 +484,11 @@ export function FeatureConsole({
                           Set override
                         </button>
                       )}
-                      {ADDON_ROW_KEY_BY_REGISTRY_KEY[row.key] && (
+                      {grantOf(row).addonKey && (
                         <button
                           onClick={() =>
                             setEnabling({
-                              addonKey: ADDON_ROW_KEY_BY_REGISTRY_KEY[row.key],
+                              addonKey: grantOf(row).addonKey!,
                               label: row.label,
                               unmetRequirement,
                             })
