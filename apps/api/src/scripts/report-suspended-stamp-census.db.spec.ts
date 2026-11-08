@@ -1,6 +1,6 @@
 /**
  * DB-lane spec for `scripts/report-suspended-stamp-census.mjs`: plants SUSPENDED tenants of mixed class / reason
- * (qa-* / acme-* placeholders, never a real client), runs the script as a child process with
+ * (qa-* slugs only, never a real client), runs the script as a child process with
  * --target-host=<the lane host>, and asserts exact count DELTAS against a baseline run (the lane DB may hold
  * other specs' rows). Also pins: a deleted tenant is excluded, no id / slug reaches the output, and a write inside
  * withReadOnlyTx is refused by Postgres (25006).
@@ -21,7 +21,10 @@ const lib = require("../../scripts/lib/report-suspended-stamp-census.cjs");
 const { withReadOnlyTx } = require("../../scripts/lib/report-839-regulated-void-residue.cjs");
 
 const SUFFIX = randomUUID().slice(0, 8);
-const slug = (p: string, n: string) => `${p}-sc${SUFFIX}-${n}`;
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
+const slug = (p: string, n: string) =>
+  assertTestTenant(`${p}-sc${SUFFIX}-${n}`, "report-suspended-stamp-census.db.spec.ts");
 
 describeDb("report-suspended-stamp-census.mjs (db)", () => {
   const dbUrl = requireLocalDatabaseUrl();
@@ -85,13 +88,13 @@ describeDb("report-suspended-stamp-census.mjs (db)", () => {
 
   it("counts SUSPENDED tenants by class and reason, excludes deleted, leaks no id or slug", async () => {
     const before = census().json.classes;
-    await plant("acme", "p1", { cls: "PRODUCTION", sub: "stripe" });
-    await plant("acme", "p2", { cls: "PRODUCTION", sub: "nostripe" });
-    await plant("acme", "p3", { cls: "PRODUCTION", reason: "overdue_suspended" });
-    await plant("acme", "p4", { cls: "PRODUCTION", reason: "admin_set", sub: "stripe" });
-    await plant("acme", "p5", { cls: "PRODUCTION", reason: "weird_reason" });
-    await plant("acme", "p6", { cls: "PRODUCTION", deleted: true, sub: "stripe" });
-    await plant("acme", "p7", { cls: "PRODUCTION", status: "ACTIVE" });
+    await plant("qa", "p1", { cls: "PRODUCTION", sub: "stripe" });
+    await plant("qa", "p2", { cls: "PRODUCTION", sub: "nostripe" });
+    await plant("qa", "p3", { cls: "PRODUCTION", reason: "overdue_suspended" });
+    await plant("qa", "p4", { cls: "PRODUCTION", reason: "admin_set", sub: "stripe" });
+    await plant("qa", "p5", { cls: "PRODUCTION", reason: "weird_reason" });
+    await plant("qa", "p6", { cls: "PRODUCTION", deleted: true, sub: "stripe" });
+    await plant("qa", "p7", { cls: "PRODUCTION", status: "ACTIVE" });
     await plant("qa", "t1", { cls: "TEST" });
     await plant("qa", "t2", { cls: "TEST", reason: "admin_set" });
     await plant("qa", "d1", { cls: "DEMO", reason: "overdue_suspended" });
