@@ -5,6 +5,7 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
 import { render, screen, waitFor, within } from "@testing-library/react";
+import { DEFAULT_MONTHLY_AI_CAP_USD } from "@routeflow/types";
 import AdminSettingsPage from "./page";
 
 const mockGet = jest.fn();
@@ -36,7 +37,7 @@ function config(over: Record<string, unknown> = {}) {
     model: "claude-sonnet-5-5",
     scanModel: "claude-haiku-5-5",
     maxTokens: 4096,
-    monthlyCapUsd: 25,
+    monthlyCapUsd: 10,
     verifiedAt: null,
     availableModels: MODELS,
     ...over,
@@ -159,5 +160,30 @@ describe("admin settings: AI models (SA-1035)", () => {
     await user.click(screen.getByRole("button", { name: /Save AI Settings/ }));
     await waitFor(() => expect(mockPatch).toHaveBeenCalledTimes(1));
     expect(mockPatch.mock.calls[0][1]).not.toHaveProperty("monthlyCapUsd");
+  });
+
+  it("SA-1102: a server answer with no allowance shows the platform default, which is not re-sent", async () => {
+    const user = userEvent.setup();
+    serve(config({ monthlyCapUsd: undefined }));
+    mockPatch.mockResolvedValue({ data: config() });
+    render(<AdminSettingsPage />);
+    const cap = await screen.findByRole("spinbutton", {
+      name: "Monthly AI allowance per business (USD)",
+    });
+    expect(cap).toHaveValue(DEFAULT_MONTHLY_AI_CAP_USD);
+    expect(DEFAULT_MONTHLY_AI_CAP_USD).toBe(10);
+    await user.click(screen.getByRole("button", { name: /Save AI Settings/ }));
+    await waitFor(() => expect(mockPatch).toHaveBeenCalledTimes(1));
+    expect(mockPatch.mock.calls[0][1]).not.toHaveProperty("monthlyCapUsd");
+  });
+
+  it("SA-1102: the allowance note says 0 turns AI off for every business whatever its own limit", async () => {
+    serve(config());
+    render(<AdminSettingsPage />);
+    await screen.findByRole("spinbutton", { name: "Monthly AI allowance per business (USD)" });
+    expect(
+      screen.getByText(/Set 0 here to turn AI off for every business, whatever its own limit/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/own key are not blocked/)).not.toBeInTheDocument();
   });
 });

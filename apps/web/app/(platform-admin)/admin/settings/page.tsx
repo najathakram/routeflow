@@ -13,6 +13,7 @@ import {
   Info,
   Zap,
 } from "lucide-react";
+import { DEFAULT_MONTHLY_AI_CAP_USD } from "@routeflow/types";
 import { superAdminClient } from "@/lib/admin-api";
 import { DisabledHint } from "../../_components/DisabledHint";
 import { MobileAppLinksCard } from "./MobileAppLinksCard";
@@ -143,7 +144,7 @@ export default function AdminSettingsPage() {
   const [model, setModel] = React.useState("");
   const [scanModel, setScanModel] = React.useState("");
   const [maxTokens, setMaxTokens] = React.useState(4096);
-  const [monthlyCapUsd, setMonthlyCapUsd] = React.useState(25);
+  const [monthlyCapUsd, setMonthlyCapUsd] = React.useState<number>(DEFAULT_MONTHLY_AI_CAP_USD);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -156,7 +157,7 @@ export default function AdminSettingsPage() {
       setModel(cfg.data.model);
       setScanModel(cfg.data.scanModel);
       setMaxTokens(cfg.data.maxTokens);
-      setMonthlyCapUsd(cfg.data.monthlyCapUsd ?? 25);
+      setMonthlyCapUsd(cfg.data.monthlyCapUsd ?? DEFAULT_MONTHLY_AI_CAP_USD);
       if (use) setUsage(use.data);
     } catch {
       // handled by showing error state
@@ -203,7 +204,7 @@ export default function AdminSettingsPage() {
       // would be refused.
       if (config && model !== config.model) body.model = model;
       if (config && scanModel !== config.scanModel) body.scanModel = scanModel;
-      if (config && monthlyCapUsd !== (config.monthlyCapUsd ?? 25))
+      if (config && monthlyCapUsd !== (config.monthlyCapUsd ?? DEFAULT_MONTHLY_AI_CAP_USD))
         body.monthlyCapUsd = monthlyCapUsd;
       // Only send apiKey if the field has been touched (not empty placeholder)
       if (apiKey !== "") {
@@ -213,7 +214,7 @@ export default function AdminSettingsPage() {
       setConfig(data);
       setModel(data.model);
       setScanModel(data.scanModel);
-      setMonthlyCapUsd(data.monthlyCapUsd ?? 25);
+      setMonthlyCapUsd(data.monthlyCapUsd ?? DEFAULT_MONTHLY_AI_CAP_USD);
       setApiKey(""); // clear after save
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
@@ -428,9 +429,9 @@ export default function AdminSettingsPage() {
                   <span className="text-sm text-slate-400">a month</span>
                 </div>
                 <p className="mt-2 text-xs text-slate-400">
-                  The most one business can spend each month on RouteFlow&apos;s Claude key. Scans
-                  on a business&apos;s own key are not blocked. Set 0 to turn AI off on
-                  RouteFlow&apos;s key for every business.
+                  The most one business can spend each month on RouteFlow&apos;s Claude key. A
+                  business can carry its own limit. Set 0 here to turn AI off for every business,
+                  whatever its own limit.
                 </p>
               </div>
 
