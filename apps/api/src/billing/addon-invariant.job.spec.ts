@@ -449,6 +449,27 @@ describe("I5: billed while a DENY override hides the key (FG-1 WP4, T7)", () => 
     expect(await i5(m)).toHaveLength(1);
   });
 
+  it("T7 (one helper): where the catalogs DISAGREE the pinned one wins, as it does in the preview", async () => {
+    const m = make({ rows: [billed()], denies: [deny("flag.regulated")] });
+    withGrants(m, [], ["flag.regulated"]); // pinned lists the SKU with no flags; published grants one
+    expect(await i5(m)).toHaveLength(0);
+    const m2 = make({ rows: [billed()], denies: [deny("flag.regulated")] });
+    withGrants(m2, ["flag.regulated"], []); // the reverse
+    expect(await i5(m2)).toHaveLength(1);
+  });
+
+  it("T7: a MANUAL (external payment) tenant is billed by hand: the charge sentence, not the trial one", async () => {
+    const manual = tenant({
+      subscription: { ...tenant().subscription, stripeSubId: null, externalPayment: true },
+    });
+    const found = await i5(
+      make({ pages: [[manual]], rows: [billed({ stripeItemId: null })], denies }),
+    );
+    expect(findingMessage(found[0])).toBe(
+      "Add-on Regulated items for Acme: is billed while an override hides it: turning it off does not stop the charge. Check the tenant's add-ons.",
+    );
+  });
+
   it("T7 (one helper): a legacy sku-null row is read through its add-on key's SKU, as it is in the preview", async () => {
     const legacy = billed({ sku: null, addonKey: "tobacco_dealer" }); // legacy map: tobacco_dealer -> REGULATED_ITEMS
     const m = make({ rows: [legacy], denies: [deny("flag.regulated")] });

@@ -540,6 +540,41 @@ describe("FG-1 WP4: a DENY over a billed key is named, never silently accepted",
     expect(r.stillBilled).toEqual(["flag.msrp"]);
   });
 
+  it("T7 (one helper): where the pinned and published catalogs DISAGREE the pinned one wins, as in I5", async () => {
+    const c = mockCollaborators(V11_PIN_FIXTURE);
+    c.prisma.tenantAddon.findMany.mockResolvedValue([
+      {
+        addonKey: "msrp",
+        sku: null,
+        active: true,
+        isComp: false,
+        priceSnapshot: 20,
+        stripeItemId: null,
+      },
+    ]);
+    const published = await c.catalog.getPublishedCatalog();
+    const pinned = await c.catalog.getVersionForTenant("v1");
+    c.catalog.getPublishedCatalog.mockResolvedValue({
+      ...published,
+      addonSkus: [{ sku: "MSRP", grantsFlags: ["flag.msrp"] }],
+    });
+    c.catalog.getVersionForTenant.mockResolvedValue({
+      ...pinned,
+      addonSkus: [{ sku: "MSRP", grantsFlags: [] }],
+    });
+    const preview = new FeaturePreviewService(
+      c.entitlements as any,
+      c.featureOverrides as any,
+      c.catalog as any,
+      c.prisma as any,
+      featureConfigOver({}).service,
+    );
+    const r = (await preview.preview("t1", {
+      overrides: [{ featureKey: "flag.msrp", effect: "DENY", reason: "pilot over" }],
+    })) as { stillBilled?: string[] };
+    expect(r.stillBilled).toBeUndefined();
+  });
+
   it("T7: a key sent twice is named once", async () => {
     const r = (await previewOver([
       {

@@ -362,3 +362,17 @@ describe("T6 (R6) + courtesy through the service: compute() and preview share on
     expect(r!.byKey.get("ocr")).toMatchObject({ effective: false, strict: false });
   });
 });
+
+describe("pinnedOverPublishedGrants: the one grants map I5 and the preview share", () => {
+  it("the pinned entry wins where the catalogs disagree; the published one fills a code the pin lacks", () => {
+    const m = resolverModule.pinnedOverPublishedGrants(
+      [
+        { sku: "A", grantsFlags: ["flag.a"] },
+        { sku: "B", grantsFlags: ["flag.b"] },
+      ],
+      [{ sku: "A", grantsFlags: [] }],
+    );
+    expect(m.get("A")).toEqual([]);
+    expect(m.get("B")).toEqual(["flag.b"]);
+  });
+});

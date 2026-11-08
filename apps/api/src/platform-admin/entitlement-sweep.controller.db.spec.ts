@@ -424,6 +424,29 @@ describeDb("FG-1 WP1: entitlement sweep endpoint (real Postgres)", () => {
     }
   });
 
+  it("FG-1 WP3: liveDoor() REFUSES on Postgres when one tenant has a courtesy gap (the old path allows what the resolver does not)", async () => {
+    const authority = (
+      sweepSvc as unknown as {
+        authority: { computeOldPathAll: (id: string) => Promise<Map<string, boolean>> };
+      }
+    ).authority;
+    const real = authority.computeOldPathAll.bind(authority);
+    const spy = jest
+      .spyOn(authority, "computeOldPathAll")
+      .mockImplementation(async (id: string) => {
+        const m = await real(id);
+        if (id === t.lite) m.set("flag.reports", true); // the resolver says false for a Lite plan (see above)
+        return m;
+      });
+    try {
+      const verdict = await sweepSvc.liveDoor();
+      expect(verdict).toMatchObject({ clear: false, reason: "gaps" });
+      expect((verdict as { courtesyGaps: number }).courtesyGaps).toBeGreaterThanOrEqual(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("an OPERATOR gets 403 and an unauthenticated caller is refused", async () => {
     const operator = await sweepPage("", "OPERATOR");
     expect(operator.status).toBe(403);

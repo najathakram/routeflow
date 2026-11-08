@@ -127,7 +127,34 @@ describe("T8: `force` is deleted", () => {
     expect(optional).toContain(sweepIndex);
   });
 
-  it("the controller is the ONE non-spec caller of any .setMode( , and no script writes entitlements.mode", () => {
+  /** A write verb within 300 characters of the key's name: a Prisma-client call or a raw-SQL statement. */
+  const WRITE_NEAR_KEY =
+    /\.(?:upsert|update|updateMany|create|createMany)\s*\(|INSERT\s+INTO|UPDATE\s+"?PlatformConfig|\$executeRaw/i;
+  const writesTheKey = (text: string): boolean => {
+    let at = text.indexOf("entitlements.mode");
+    while (at !== -1) {
+      if (WRITE_NEAR_KEY.test(text.slice(Math.max(0, at - 300), at + 300))) return true;
+      at = text.indexOf("entitlements.mode", at + 1);
+    }
+    return false;
+  };
+
+  it("the write detector flags a Prisma-client upsert and a raw-SQL write, in .ts and in .mjs", () => {
+    expect(
+      writesTheKey('await prisma.platformConfig.upsert({ where: { key: "entitlements.mode" } });'),
+    ).toBe(true);
+    expect(
+      writesTheKey("await tx.$executeRaw`INSERT INTO x VALUES ('entitlements.mode', 'live')`;"),
+    ).toBe(true);
+    expect(
+      writesTheKey(
+        "await q('UPDATE \"PlatformConfig\" SET value = 1 WHERE key = $1', ['entitlements.mode'])",
+      ),
+    ).toBe(true);
+    expect(writesTheKey("// entitlements.mode is read here, never written")).toBe(false);
+  });
+
+  it("the controller is the ONE non-spec caller of any .setMode( , and nothing else writes entitlements.mode", () => {
     const repo = join(__dirname, "..", "..", "..", "..");
     const roots = [
       join(repo, "apps", "api", "src"),
@@ -135,7 +162,8 @@ describe("T8: `force` is deleted", () => {
       join(repo, "scripts"),
     ];
     const setModeCallers: string[] = [];
-    const scriptsNamingTheKey: string[] = [];
+    const keyWriters: string[] = [];
+    let filesWithKey = 0;
     const walk = (dir: string) => {
       for (const name of readdirSync(dir)) {
         if (name === "node_modules") continue;
@@ -144,22 +172,15 @@ describe("T8: `force` is deleted", () => {
         else if (/\.(ts|mjs|js|cjs)$/.test(name) && !/\.(spec|test|self-test)\./.test(name)) {
           const text = readFileSync(path, "utf8");
           if (/\.setMode\(/.test(text)) setModeCallers.push(name);
-          if (/\.(mjs|js|cjs)$/.test(name) && text.includes("entitlements.mode")) {
-            // read-only mentions are fine; any write to PlatformConfig from a script is not
-            expect({
-              name,
-              writes: /INSERT INTO "PlatformConfig"|UPDATE "PlatformConfig"/.test(text),
-            }).toEqual({
-              name,
-              writes: false,
-            });
-            scriptsNamingTheKey.push(name);
-          }
+          if (text.includes("entitlements.mode")) filesWithKey += 1;
+          // the mode service is the one writer of its own key
+          if (name !== "entitlements-mode.service.ts" && writesTheKey(text)) keyWriters.push(name);
         }
       }
     };
     roots.forEach(walk);
     expect(setModeCallers).toEqual(["platform-admin.controller.ts"]);
-    expect(scriptsNamingTheKey.length).toBeGreaterThan(0); // the scan really reached the scripts
+    expect(keyWriters).toEqual([]);
+    expect(filesWithKey).toBeGreaterThan(0); // the scan really reached the sources and scripts
   });
 });

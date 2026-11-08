@@ -18,7 +18,7 @@ import {
   planKeyFromEnum,
 } from "./plan-catalog.constants";
 import { OVERRIDE_RULE_ORDER, resolveLiveRows } from "./feature-override-rule";
-import { billedKeysOfRow, skuGrantsFlags } from "./feature-resolver.service";
+import { billedKeysOfRow, pinnedOverPublishedGrants } from "./feature-resolver.service";
 import { StripeService } from "./stripe.service";
 import { TRACKED_ADDON_FIELDS } from "./tenant-addon-writer";
 
@@ -437,10 +437,10 @@ export class AddonInvariantJob {
         modeOf: (t) => addonBillingModeOf(this.stripe.isConfigured, t.subscription),
         deniedKeysOf: (id) => deniedBy.get(id) ?? new Map<string, string>(),
         grantsOf: (t) =>
-          skuGrantsFlags([
-            ...(published?.addonSkus ?? []),
-            ...(skuCache.get(resolvePlanVersionId(t.subscription, t) ?? "") ?? []),
-          ] as never),
+          pinnedOverPublishedGrants(
+            (published?.addonSkus ?? []) as never,
+            (skuCache.get(resolvePlanVersionId(t.subscription, t) ?? "") ?? []) as never,
+          ),
       };
       for (const check of ADDON_INVARIANTS) {
         for (const f of check.run(ctx)) {
