@@ -77,6 +77,7 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/check-tenant-logo.js": "read-only",
   "apps/api/scripts/census-base-label-row621.mjs": "read-only",
   "apps/api/scripts/census-partial-invoice-unbooked-sa962.mjs": "read-only", // SA-962 G5 / A-1: counts only, default_transaction_read_only = on, each query READ ONLY then ROLLBACK
+  "apps/api/scripts/census-stored-line-pack-sa1097.mjs": "read-only", // W-867 SA-1097: counts only, BEGIN READ ONLY then ROLLBACK, statement_timeout set
   "apps/api/scripts/data-questions-report.mjs": "read-only",
   "apps/api/scripts/demo-bookings.mjs": "global-catalog",
   "apps/api/scripts/demo-seed.js": "test-slug-only",
@@ -142,8 +143,10 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/report-plaintext-secrets.mjs": "read-only",
   "apps/api/scripts/report-order-discounts.mjs": "read-only",
   "apps/api/scripts/report-read-only-sellers-with-buyers.mjs": "read-only",
+  "apps/api/scripts/units-legacy-parent-census.mjs": "read-only",
   "apps/api/scripts/report-rf-invoice-calendar-census.mjs": "read-only",
   "apps/api/scripts/report-rf-invoice-zero-rows.mjs": "read-only",
+  "apps/api/scripts/report-suspended-stamp-census.mjs": "read-only", // counts only, default_transaction_read_only = on + READ ONLY tx
   "apps/api/scripts/report-tenant-timezone-census.mjs": "read-only",
   "apps/api/scripts/report-train4-damage.mjs": "read-only",
   "apps/api/scripts/report-unsafe-customer-names.mjs": "read-only",
