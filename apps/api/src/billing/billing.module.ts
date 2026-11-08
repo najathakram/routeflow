@@ -40,6 +40,7 @@ import { DunningService } from "./dunning.service";
 import { AutoLockSwitchService } from "./auto-lock-switch.service";
 import { AutoLockAdminService } from "./auto-lock-admin.service";
 import { EntitlementSweepService } from "./entitlement-sweep.service";
+import { PlanFlagBootAlert } from "./plan-flag-boot-alert";
 
 @Module({
   // forwardRef: MailboxModule (imported by EmailModule for MailboxSendService) imports this
@@ -106,6 +107,8 @@ import { EntitlementSweepService } from "./entitlement-sweep.service";
     TenantConfigSnapshotAdminService,
     // FG-1 WP1: the read-only entitlement sweep (platform-admin EntitlementSweepController).
     EntitlementSweepService,
+    // FG-1 WP3: the one owner alert at boot when PLAN_FLAG_ENFORCEMENT is on.
+    PlanFlagBootAlert,
   ],
   exports: [
     EntitlementSweepService,

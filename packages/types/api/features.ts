@@ -215,6 +215,8 @@ export interface FeaturePreviewResponse {
   changed: string[];
   /** Keys that stay on after the change (courtesy) but would go when their dark gate is enforced. */
   laterLost?: string[];
+  /** Keys the request turns off (DENY) although the business is billed for them: the charge continues (FG-1 WP4). */
+  stillBilled?: string[];
   /** What this preview leaves out (a plan move leaves out customer limits and monthly price). */
   omitted?: PreviewOmission[];
 }

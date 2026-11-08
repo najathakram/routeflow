@@ -39,6 +39,41 @@ export const MULTI_KEY_ADDON_SETS: readonly (readonly string[])[] = [
   ["order_delivery", "developer_mode"],
 ];
 
+/** How long the live door waits for the whole sweep before it refuses (fail closed). */
+export const LIVE_DOOR_TIMEOUT_MS = 30_000;
+
+/**
+ * FG-1 WP3: what the sweep says about switching to `live`. A COURTESY GAP is a gated key the served (old) path allows
+ * and the resolver does not: a business would lose it. UNEXPLAINED is the other way round (the resolver allows what the
+ * served path does not) and a tenant the resolver could not compute. Only `clear` opens the door; a sweep that did not
+ * finish (`timeout`, `error`) never does.
+ */
+export type LiveDoorVerdict =
+  | { clear: true; tenants: number }
+  | {
+      clear: false;
+      reason: "gaps" | "timeout" | "error";
+      courtesyGaps: number;
+      unexplained: number;
+      tenants: number;
+    };
+
+/** The refusal in plain words, naming the counts. Never names a business. */
+export function liveDoorRefusal(v: Extract<LiveDoorVerdict, { clear: false }>): string {
+  const head = "Can't switch to live.";
+  if (v.reason === "timeout") {
+    return `${head} The check didn't finish in ${LIVE_DOOR_TIMEOUT_MS / 1000} seconds. Nothing was changed. Try again.`;
+  }
+  if (v.reason === "error") return `${head} The check failed. Nothing was changed.`;
+  const n = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+  const parts = [
+    v.courtesyGaps > 0 &&
+      `${n(v.courtesyGaps, "feature check", "feature checks")} would lose access`,
+    v.unexplained > 0 && `${n(v.unexplained, "check", "checks")} can't be explained`,
+  ].filter(Boolean);
+  return `${head} ${parts.join(" and ")}. Nothing was changed.`;
+}
+
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 100;
 
@@ -126,6 +161,66 @@ export class EntitlementSweepService {
       page.nextCursor = hashTenantId(slice[slice.length - 1].id);
     }
     return page;
+  }
+
+  /**
+   * The ONE reading the `live` door uses: every tenant, every gated key and gate set, through `sweep()` itself (the
+   * same function the report reads). Read-only. Fails closed: past `timeoutMs`, or on any error, the verdict is not clear.
+   */
+  async liveDoor(timeoutMs: number = LIVE_DOOR_TIMEOUT_MS): Promise<LiveDoorVerdict> {
+    // One door sweep in flight per replica: a second request while one runs shares its answer, so retries cannot stack.
+    if (!this.doorInFlight) {
+      this.doorInFlight = this.runLiveDoor(timeoutMs).finally(() => {
+        this.doorInFlight = undefined;
+      });
+    }
+    return this.doorInFlight;
+  }
+
+  private doorInFlight?: Promise<LiveDoorVerdict>;
+
+  private async runLiveDoor(timeoutMs: number): Promise<LiveDoorVerdict> {
+    let courtesyGaps = 0;
+    let unexplained = 0;
+    let tenants = 0;
+    const count = (bits: { old: boolean; effective: boolean }) => {
+      if (bits.old && !bits.effective) courtesyGaps += 1;
+      else if (!bits.old && bits.effective) unexplained += 1;
+    };
+    let stopped = false;
+    const walk = async () => {
+      let cursor: string | undefined;
+      do {
+        if (stopped) return;
+        const page = await this.sweep({ cursor, limit: MAX_LIMIT });
+        for (const t of page.tenants) {
+          tenants += 1;
+          if (t.error) unexplained += 1;
+          for (const bits of Object.values(t.keys)) count(bits);
+          for (const bits of Object.values(t.sets)) count(bits);
+        }
+        cursor = page.nextCursor ?? undefined;
+      } while (cursor);
+    };
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      const walked = walk().then(() => "done" as const);
+      const late = new Promise<"late">((resolve) => {
+        timer = setTimeout(() => resolve("late"), timeoutMs);
+      });
+      if ((await Promise.race([walked, late])) === "late") {
+        stopped = true;
+        walked.catch(() => undefined);
+        return { clear: false, reason: "timeout", courtesyGaps, unexplained, tenants };
+      }
+    } catch (err) {
+      this.logger.error("Live door: the sweep failed", err as Error);
+      return { clear: false, reason: "error", courtesyGaps, unexplained, tenants };
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+    if (courtesyGaps === 0 && unexplained === 0) return { clear: true, tenants };
+    return { clear: false, reason: "gaps", courtesyGaps, unexplained, tenants };
   }
 
   private async sweepTenant(tenantId: string, tenantClass: string): Promise<SweepTenant> {

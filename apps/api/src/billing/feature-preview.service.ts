@@ -12,6 +12,7 @@ import { FEATURE_REGISTRY } from "./feature-registry";
 import { effectivePlanFlags, findPlanDefinition } from "./plan-catalog.constants";
 import {
   billedKeySet,
+  billedKeysOfRow,
   courtesyFor,
   heldAddonKeys,
   loadActiveAddonRows,
@@ -83,10 +84,10 @@ export class FeaturePreviewService {
 
     // The billing fact is the same on both sides (a plan move leaves the rows alone); SKU grants read like
     // `compute` does: the tenant's pinned version, the published catalog for a code it lacks.
-    const billed = billedKeySet(
-      activeAddonRows,
-      skuGrantsFlags([...publishedCatalog.addonSkus, ...version.addonSkus]),
-    );
+    const skuGrants = skuGrantsFlags([...publishedCatalog.addonSkus, ...version.addonSkus]);
+    const billed = billedKeySet(activeAddonRows, skuGrants);
+    // The "still billed" answer shares invariant I5's helper (sku-null rows included), not the served set above.
+    const billedForWarning = new Set(activeAddonRows.flatMap((r) => billedKeysOfRow(r, skuGrants)));
 
     const beforeCtx: ResolveContext = {
       overrides: currentOverrides,
@@ -108,8 +109,11 @@ export class FeaturePreviewService {
     // SA-963 A-1: each requested key REPLACES the stored detail with the request's own, so a preview of a DENY over a
     // stored dated GRANT never shows the old grant's date.
     const afterDetail = new Map<string, FeatureOverrideDetail>(currentDetail);
+    // FG-1 WP4: a DENY never stops the charge, so a requested DENY over a billed key is named in the response.
+    const stillBilled = new Set<string>();
     for (const o of request.overrides ?? []) {
       afterOverrides.set(o.featureKey, o.effect);
+      if (o.effect === "DENY" && billedForWarning.has(o.featureKey)) stillBilled.add(o.featureKey);
       const ends = o.expiresAt ? new Date(o.expiresAt) : null;
       afterDetail.set(o.featureKey, {
         kind: o.kind ?? "COMP",
@@ -207,6 +211,13 @@ export class FeaturePreviewService {
       (_f, i) => before[i].resolver && !after[i].resolver && after[i].serving,
     ).map((f) => f.key);
 
-    return { before, after, changed, laterLost, omitted: isSwap ? [...PLAN_MOVE_OMISSIONS] : [] };
+    return {
+      before,
+      after,
+      changed,
+      laterLost,
+      omitted: isSwap ? [...PLAN_MOVE_OMISSIONS] : [],
+      ...(stillBilled.size > 0 ? { stillBilled: [...stillBilled] } : {}),
+    };
   }
 }

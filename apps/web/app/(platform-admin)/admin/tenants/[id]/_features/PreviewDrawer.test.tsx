@@ -147,6 +147,31 @@ describe("PreviewDrawer: omissions and stays-on-for-now (FG-1 WP2)", () => {
     expect(screen.queryByTestId("preview-panel-lost")).toBeNull();
   });
 
+  it("WP4: warns that a turned-off key is still billed, naming it", () => {
+    show({
+      before: [f("flag.reports", true, true)],
+      after: [f("flag.reports", false, false)],
+      changed: ["flag.reports"],
+      stillBilled: ["flag.reports"],
+      omitted: [],
+    });
+    const warning = screen.getByTestId("preview-still-billed");
+    expect(
+      within(warning).getByText("Still billed: turning this off doesn't stop the charge."),
+    ).toBeInTheDocument();
+    expect(within(warning).getByText("Reports")).toBeInTheDocument();
+  });
+
+  it("WP4: no billing warning when nothing is still billed", () => {
+    show({
+      before: [f("flag.reports", true, true)],
+      after: [f("flag.reports", false, false)],
+      changed: ["flag.reports"],
+      omitted: [],
+    });
+    expect(screen.queryByTestId("preview-still-billed")).toBeNull();
+  });
+
   it("says nothing about omissions when there are none", () => {
     show({
       before: [f("flag.reports", false, false)],

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { FEATURE_REGISTRY } from "./feature-registry";
 import { servedAnswer } from "./served-answer";
-import { EntitlementSweepService } from "./entitlement-sweep.service";
+import { EntitlementSweepService, liveDoorRefusal } from "./entitlement-sweep.service";
 
 /**
  * SA-1100 §3 (WP1): what the sweep puts on the wire, with every collaborator faked. The real
@@ -260,5 +260,113 @@ describe("EntitlementSweepService: the strict bit comes from the resolver (FG-1 
       effective: true,
       strict: false,
     });
+  });
+});
+
+describe("EntitlementSweepService.liveDoor (FG-1 WP3: the one reading the live door uses)", () => {
+  const bits = (old: boolean, effective: boolean) => ({
+    old,
+    effective,
+    strict: effective,
+    clientAddon: null,
+    clientFlag: null,
+    courtesy: false,
+  });
+  const tenant = (
+    keys: Record<string, ReturnType<typeof bits>>,
+    over: Record<string, unknown> = {},
+  ) => ({ id: "h", class: "PRODUCTION", inputsHash: "x", keys, sets: {}, ...over });
+  const pages = (...p: { tenants: unknown[]; nextCursor: string | null }[]) => {
+    const { service } = build();
+    const spy = jest.spyOn(service, "sweep");
+    p.forEach((page) => spy.mockResolvedValueOnce(page as never));
+    return { service, spy };
+  };
+
+  it("is clear only when every key and set reads old == effective, across every page", async () => {
+    const { service, spy } = pages(
+      { tenants: [tenant({ a: bits(true, true), b: bits(false, false) })], nextCursor: "c1" },
+      { tenants: [tenant({ a: bits(true, true) })], nextCursor: null },
+    );
+    await expect(service.liveDoor()).resolves.toEqual({ clear: true, tenants: 2 });
+    expect(spy.mock.calls[1][0]).toMatchObject({ cursor: "c1" });
+  });
+
+  it("T8: a courtesy gap (old allows, resolver does not) is counted and refuses", async () => {
+    const { service } = pages({
+      tenants: [tenant({ a: bits(true, false), b: bits(true, false) })],
+      nextCursor: null,
+    });
+    await expect(service.liveDoor()).resolves.toMatchObject({
+      clear: false,
+      reason: "gaps",
+      courtesyGaps: 2,
+      unexplained: 0,
+    });
+  });
+
+  it("T8: a resolver-only allow, a gate set mismatch and a tenant that failed to resolve are unexplained", async () => {
+    const { service } = pages({
+      tenants: [
+        tenant({ a: bits(false, true) }, { sets: { "x|y": bits(false, true) } }),
+        tenant({}, { error: "resolve_failed" }),
+      ],
+      nextCursor: null,
+    });
+    await expect(service.liveDoor()).resolves.toMatchObject({
+      clear: false,
+      reason: "gaps",
+      courtesyGaps: 0,
+      unexplained: 3,
+    });
+  });
+
+  it("T8: fails closed after the time limit, however clean the pages read so far", async () => {
+    const { service } = build();
+    jest.spyOn(service, "sweep").mockReturnValue(new Promise(() => undefined));
+    await expect(service.liveDoor(20)).resolves.toMatchObject({ clear: false, reason: "timeout" });
+  });
+
+  it("T8: one door sweep in flight per replica: a second request shares it, a later one runs fresh", async () => {
+    const { service } = build();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const spy = jest.spyOn(service, "sweep").mockImplementation(async () => {
+      await gate;
+      return { tenants: [tenant({ a: bits(true, true) })], nextCursor: null } as never;
+    });
+    const first = service.liveDoor();
+    const second = service.liveDoor();
+    release();
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      { clear: true, tenants: 1 },
+      { clear: true, tenants: 1 },
+    ]);
+    expect(spy).toHaveBeenCalledTimes(1);
+    await service.liveDoor();
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it("T8: fails closed when the sweep throws", async () => {
+    const { service } = build();
+    jest.spyOn(service, "sweep").mockRejectedValue(new Error("db down"));
+    jest.spyOn((service as any).logger, "error").mockImplementation(() => undefined);
+    await expect(service.liveDoor()).resolves.toMatchObject({ clear: false, reason: "error" });
+  });
+
+  it("the refusal says the counts in plain words and names no business", () => {
+    const base = { clear: false as const, tenants: 3, courtesyGaps: 0, unexplained: 0 };
+    expect(liveDoorRefusal({ ...base, reason: "gaps", courtesyGaps: 2, unexplained: 1 })).toBe(
+      "Can't switch to live. 2 feature checks would lose access and 1 check can't be explained. Nothing was changed.",
+    );
+    expect(liveDoorRefusal({ ...base, reason: "gaps", courtesyGaps: 1 })).toBe(
+      "Can't switch to live. 1 feature check would lose access. Nothing was changed.",
+    );
+    expect(liveDoorRefusal({ ...base, reason: "timeout" })).toBe(
+      "Can't switch to live. The check didn't finish in 30 seconds. Nothing was changed. Try again.",
+    );
+    expect(liveDoorRefusal({ ...base, reason: "error" })).toBe(
+      "Can't switch to live. The check failed. Nothing was changed.",
+    );
   });
 });

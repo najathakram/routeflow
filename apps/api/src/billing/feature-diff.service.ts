@@ -57,11 +57,6 @@ export class FeatureDiffService {
     });
   }
 
-  async hasUnexplained(): Promise<boolean> {
-    const count = await this.prisma.featureResolverDiff.count({ where: { explainedAt: null } });
-    return count > 0;
-  }
-
   async explain(id: string, explanation: string) {
     try {
       return await this.prisma.featureResolverDiff.update({

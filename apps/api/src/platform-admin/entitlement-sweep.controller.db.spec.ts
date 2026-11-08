@@ -93,6 +93,8 @@ describeDb("FG-1 WP1: entitlement sweep endpoint (real Postgres)", () => {
       .get(`/platform-admin/entitlements/sweep${qs}`)
       .set("x-test-role", role);
 
+  let sweepSvc: EntitlementSweepService;
+
   beforeAll(async () => {
     pool = new Pool({ connectionString: requireLocalDatabaseUrl() });
     prisma = new PrismaClient({ adapter: new PrismaPg(pool) } as any);
@@ -192,6 +194,7 @@ describeDb("FG-1 WP1: entitlement sweep endpoint (real Postgres)", () => {
       new AddonAccessService(addons, entitlements, overrides),
     );
 
+    sweepSvc = sweep;
     const moduleRef = await Test.createTestingModule({
       controllers: [EntitlementSweepController],
       providers: [{ provide: EntitlementSweepService, useValue: sweep }],
@@ -386,6 +389,40 @@ describeDb("FG-1 WP1: entitlement sweep endpoint (real Postgres)", () => {
     expect(seen).toHaveLength(await prisma.tenant.count());
     for (const id of tenantIds) expect(seen).toContain(hashTenantId(id));
   }, 120_000);
+
+  it("FG-1 WP3: liveDoor() reads the real sweep: its verdict equals the counts from walking the pages itself", async () => {
+    let gaps = 0;
+    let unexplained = 0;
+    let tenants = 0;
+    let cursor: string | undefined;
+    do {
+      const page = await sweepSvc.sweep({ cursor, limit: 100 });
+      for (const row of page.tenants) {
+        tenants += 1;
+        if (row.error) unexplained += 1;
+        for (const b of [...Object.values(row.keys), ...Object.values(row.sets)]) {
+          if (b.old && !b.effective) gaps += 1;
+          else if (!b.old && b.effective) unexplained += 1;
+        }
+      }
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+
+    const verdict = await sweepSvc.liveDoor();
+    expect(verdict.tenants).toBe(tenants);
+    expect(tenants).toBeGreaterThanOrEqual(4); // this run's four tenants at least
+    if (gaps === 0 && unexplained === 0) {
+      expect(verdict).toEqual({ clear: true, tenants });
+    } else {
+      expect(verdict).toMatchObject({
+        clear: false,
+        reason: "gaps",
+        courtesyGaps: gaps,
+        unexplained,
+        tenants,
+      });
+    }
+  });
 
   it("an OPERATOR gets 403 and an unauthenticated caller is refused", async () => {
     const operator = await sweepPage("", "OPERATOR");

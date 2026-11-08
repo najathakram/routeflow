@@ -120,6 +120,8 @@ const CATALOG_READ =
 export const CATALOG_READS: Readonly<Record<string, string>> = {
   "billing/addon-inclusion.ts#targetVersionFor.getPublishedVersion":
     "TARGET: the version a scheduled move re-pins to when the pinned one lacks the plan",
+  "billing/addon-invariant.job.ts#run.getPublishedCatalog":
+    "FLAGS: I5 asks which flags a SKU grants, from the published catalog plus the pinned one, as the preview does (billedKeysOfRow; report only, no inclusion judgment)",
   "billing/addon.service.ts#enableAddon.getPublishedCatalog":
     "LIST: existence of the SKU (and the fallback); the row's price and the inclusion verdict are the pinned catalog's (inclusionContextOf, pricedAddonSku)",
   "billing/addon.service.ts#uncompAddon.getPublishedCatalog":

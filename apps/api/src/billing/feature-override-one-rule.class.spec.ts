@@ -188,6 +188,7 @@ function sortByOrder(rows: any[], orderBy?: ReadonlyArray<Record<string, unknown
  */
 const FEEDING_READS: Record<string, number> = {
   "billing/feature-override.service.ts": 2, // activeRows (the served answer) and list() (business-profile)
+  "billing/addon-invariant.job.ts": 1, // invariant I5: the keys the applying row DENIES
   "billing/feature-override-review.job.ts": 1, // the other-overrides read
   "billing/tenant-config-snapshot.service.ts": 3, // take, preview and apply read the set that feeds isActive / currentEffects
 };

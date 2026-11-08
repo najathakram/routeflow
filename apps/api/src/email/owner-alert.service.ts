@@ -152,6 +152,25 @@ export class OwnerAlertService {
     });
   }
 
+  /** Set once this process has sent (or tried) the boot alert: one per boot, never per request. */
+  private planFlagBootAlerted = false;
+
+  /**
+   * FG-1 WP3: `PLAN_FLAG_ENFORCEMENT` is on at boot, so plan features the courtesy kept on are now enforced for every
+   * business. The owner flips that switch on purpose, per command; this is the one mail that says it is on, so a stray
+   * environment variable cannot do it quietly. Deduped per boot, and it NEVER throws.
+   */
+  async planFlagEnforcementOnAtBoot(): Promise<void> {
+    if (this.planFlagBootAlerted) return;
+    this.planFlagBootAlerted = true;
+    await this.guarded("plan-flag-enforcement", "platform", async () => {
+      await this.deliver("Plan feature enforcement is on", [
+        "Plan feature enforcement is on. A business whose plan doesn't include a feature can no longer use it.",
+        "If you didn't turn this on, check the PLAN_FLAG_ENFORCEMENT setting.",
+      ]);
+    });
+  }
+
   // ─── internals ────────────────────────────────────────────────────────────────
 
   private async guarded(what: string, tenantId: string, fn: () => Promise<void>): Promise<void> {

@@ -482,6 +482,106 @@ describe("WP2 preview: courtesy per side, laterLost, omissions", () => {
   });
 });
 
+describe("FG-1 WP4: a DENY over a billed key is named, never silently accepted", () => {
+  function previewOver(rows: Record<string, unknown>[]) {
+    const c = mockCollaborators(V11_PIN_FIXTURE);
+    c.prisma.tenantAddon.findMany.mockResolvedValue(rows);
+    return new FeaturePreviewService(
+      c.entitlements as any,
+      c.featureOverrides as any,
+      c.catalog as any,
+      c.prisma as any,
+      featureConfigOver({}).service,
+    );
+  }
+  const deny = { featureKey: "recurring_routes", effect: "DENY" as const, reason: "pilot over" };
+
+  it("T7: a DENY over an active, priced row lists the key in stillBilled", async () => {
+    const r = (await previewOver([
+      {
+        addonKey: "recurring_routes",
+        sku: null,
+        active: true,
+        isComp: false,
+        priceSnapshot: 25,
+        stripeItemId: null,
+      },
+    ]).preview("t1", { overrides: [deny] })) as { stillBilled?: string[] };
+    expect(r.stillBilled).toEqual(["recurring_routes"]);
+  });
+
+  it("T7 (one helper): a legacy sku-null row is billed for the flag its add-on key's SKU grants, as in I5", async () => {
+    const c = mockCollaborators(V11_PIN_FIXTURE);
+    c.prisma.tenantAddon.findMany.mockResolvedValue([
+      {
+        addonKey: "msrp",
+        sku: null,
+        active: true,
+        isComp: false,
+        priceSnapshot: 20,
+        stripeItemId: null,
+      },
+    ]); // legacy map: msrp -> MSRP
+    const published = await c.catalog.getPublishedCatalog();
+    c.catalog.getPublishedCatalog.mockResolvedValue({
+      ...published,
+      addonSkus: [{ sku: "MSRP", grantsFlags: ["flag.msrp"] }],
+    });
+    const preview = new FeaturePreviewService(
+      c.entitlements as any,
+      c.featureOverrides as any,
+      c.catalog as any,
+      c.prisma as any,
+      featureConfigOver({}).service,
+    );
+    const r = (await preview.preview("t1", {
+      overrides: [{ featureKey: "flag.msrp", effect: "DENY", reason: "pilot over" }],
+    })) as { stillBilled?: string[] };
+    expect(r.stillBilled).toEqual(["flag.msrp"]);
+  });
+
+  it("T7: a key sent twice is named once", async () => {
+    const r = (await previewOver([
+      {
+        addonKey: "recurring_routes",
+        sku: null,
+        active: true,
+        isComp: false,
+        priceSnapshot: 25,
+        stripeItemId: null,
+      },
+    ]).preview("t1", { overrides: [deny, { ...deny }] })) as { stillBilled?: string[] };
+    expect(r.stillBilled).toEqual(["recurring_routes"]);
+  });
+
+  it("T7: no warning for a comp row, a $0 row, a GRANT, or a key the request does not turn off", async () => {
+    const comp = {
+      addonKey: "recurring_routes",
+      sku: null,
+      active: true,
+      isComp: true,
+      priceSnapshot: 25,
+      stripeItemId: null,
+    };
+    const free = { ...comp, isComp: false, priceSnapshot: 0 };
+    const priced = { ...comp, isComp: false };
+    expect(
+      ((await previewOver([comp]).preview("t1", { overrides: [deny] })) as any).stillBilled,
+    ).toBeUndefined();
+    expect(
+      ((await previewOver([free]).preview("t1", { overrides: [deny] })) as any).stillBilled,
+    ).toBeUndefined();
+    expect(
+      (
+        (await previewOver([priced]).preview("t1", {
+          overrides: [{ ...deny, effect: "GRANT" }],
+        })) as any
+      ).stillBilled,
+    ).toBeUndefined();
+    expect(((await previewOver([priced]).preview("t1", {})) as any).stillBilled).toBeUndefined();
+  });
+});
+
 /**
  * SA-1099 A-2 / SV-12: the preview's promise tied to the SHIPPED catalog, not the synthetic fixture.
  * Growth to Starter on `V11_DEFINITIONS` loses nothing now (0) and leaves exactly six rows on for now

@@ -128,6 +128,22 @@ export function PreviewDrawer({
           {error}
         </div>
       )}
+      {response?.stillBilled && response.stillBilled.length > 0 && (
+        <div
+          role="alert"
+          data-testid="preview-still-billed"
+          className="mb-3 rounded-lg bg-amber-900/30 px-4 py-3 text-sm text-amber-200 ring-1 ring-amber-500/30"
+        >
+          <p className="font-medium">
+            Still billed: turning this off doesn&apos;t stop the charge.
+          </p>
+          <ul className="mt-1 list-disc pl-5 text-xs text-amber-200/90">
+            {response.stillBilled.map((key) => (
+              <li key={key}>{registryByKey[key]?.label ?? key}</li>
+            ))}
+          </ul>
+        </div>
+      )}
       {groups.total === 0 ? (
         <p id="preview-empty-reason" className="text-sm text-slate-400" data-testid="preview-empty">
           {emptyMessage ?? "This change makes no difference for this tenant."}
