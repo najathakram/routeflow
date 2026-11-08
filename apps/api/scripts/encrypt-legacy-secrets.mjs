@@ -6,7 +6,7 @@
 //
 //   node apps/api/scripts/encrypt-legacy-secrets.mjs            # DRY RUN (default): counts per key, no value read
 //   node apps/api/scripts/encrypt-legacy-secrets.mjs --apply    # local database only
-//       [--live-target-override --backup-taken]                 # any other: typed `ENCRYPT <n> LIVE`
+//       [--live-tenant-override --backup-taken]                 # any other: typed `ENCRYPT <n> LIVE`
 //       [--allow-protected <tenantId> ...]                      # a protected tenant's rows, typed per tenant
 //
 // ONE WRITER: lib/legacy-secrets-core.cjs. Needs `npm run build -w apps/api` and the API's ENCRYPTION_KEY. Nobody runs
@@ -99,7 +99,7 @@ async function main() {
       const gate = applyGate({
         apply,
         local,
-        liveOverride: argv.includes("--live-target-override"),
+        liveOverride: argv.includes("--live-tenant-override"),
         backupTaken: argv.includes("--backup-taken"),
         isTTY: Boolean(process.stdin.isTTY && process.stdout.isTTY),
         rows: writable,

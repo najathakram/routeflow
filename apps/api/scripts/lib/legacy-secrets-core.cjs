@@ -96,14 +96,14 @@ async function encryptAll({
   return res;
 }
 
-// Pure: a dry run, nothing to encrypt, or a provably local database passes; any other needs --live-target-override,
+// Pure: a dry run, nothing to encrypt, or a provably local database passes; any other needs --live-tenant-override,
 // --backup-taken, a real terminal and the typed phrase `ENCRYPT <rows> LIVE`.
 function applyGate({ apply, local, liveOverride, backupTaken, isTTY, rows }) {
   if (!apply || rows === 0 || local) return { ok: true, phrase: null };
   if (!liveOverride)
     return {
       ok: false,
-      reason: "the database is not provably local: --apply needs --live-target-override",
+      reason: "the database is not provably local: --apply needs --live-tenant-override",
     };
   if (!backupTaken) return { ok: false, reason: "--backup-taken is required for a live run" };
   if (!isTTY)
