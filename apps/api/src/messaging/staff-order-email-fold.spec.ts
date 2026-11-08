@@ -100,7 +100,13 @@ async function build(h: ReturnType<typeof makeHarness>): Promise<StaffOrderEmail
 
 const sent = (h: ReturnType<typeof makeHarness>) =>
   h.email.send.mock.calls.map(
-    (c) => c[0] as { subject: string; html: string; delivery: { kind: string; entityId: string } },
+    (c) =>
+      c[0] as {
+        subject: string;
+        html: string;
+        text: string;
+        delivery: { kind: string; entityId: string };
+      },
   );
 
 const OLD = { id: "old-1", orderNumber: "ORD-00001" };
@@ -121,7 +127,10 @@ describe("SA-1063 A-1 notifyBuyerOrderPlaced fold table", () => {
     expect(mail).toHaveLength(1);
     expect(mail[0].delivery).toMatchObject({ kind: "BUYER_ORDER_EDITED", entityId: "new-2" });
     expect(mail[0].subject).toBe("Order ORD-00002 replaces ORD-00001 - Acme Deli");
-    expect(mail[0].html).toContain("<p>The customer's orders were combined.</p>");
+    expect(mail[0].html).toContain("The customer's orders were combined.");
+    // W-1163 review: the total keeps its dollar sign in both parts.
+    expect(mail[0].html).toContain("Total: $100.00");
+    expect(mail[0].text).toContain("Total: $100.00");
   });
 
   it("F2: the folded order's only row was an edit row -> still counts as told", async () => {

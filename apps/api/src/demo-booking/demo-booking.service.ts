@@ -21,6 +21,7 @@ import {
 import { BusyBlock, GoogleCalendarService } from "./google-calendar.service";
 import { isValidTimeZone, zonedDateParts, zonedWallClockToUtc } from "./zoned-time";
 import { escapeHtml } from "../common/html-escape";
+import { routeflowFragmentMail, type BuiltEmail } from "../email/routeflow-mail";
 
 export interface AvailabilitySlot {
   /** Slot start as a UTC ISO instant — the only value a client sends back. */
@@ -675,14 +676,13 @@ export class DemoBookingService {
     kind: "booked" | "rescheduled" | "cancelled",
     config: DemoBookingConfig,
   ): Promise<boolean> {
-    const { subject, html } = buildBookingEmail(booking, manageToken, kind, webUrl());
+    const booker = buildBookingEmail(booking, manageToken, kind, webUrl());
     const bookerDelivered = await this.sendBookingEmail(
       booking.id,
       kind,
       "booker",
       booking.email,
-      subject,
-      html,
+      booker,
     );
 
     const admin = buildAdminNotificationEmail(booking, kind, webUrl());
@@ -691,7 +691,7 @@ export class DemoBookingService {
     // try/catch already isolates a failure to that one recipient's result alone.
     await Promise.allSettled(
       config.demoBookingAdminEmails.map((to) =>
-        this.sendBookingEmail(booking.id, kind, "admin", to, admin.subject, admin.html),
+        this.sendBookingEmail(booking.id, kind, "admin", to, admin),
       ),
     );
 
@@ -709,11 +709,15 @@ export class DemoBookingService {
     kind: "booked" | "rescheduled" | "cancelled",
     recipientKind: "booker" | "admin",
     to: string,
-    subject: string,
-    html: string,
+    mail: BuiltEmail,
   ): Promise<boolean> {
     try {
-      const result = await this.email.send({ to, subject, html });
+      const result = await this.email.send({
+        to,
+        subject: mail.subject,
+        html: mail.html,
+        text: mail.text,
+      });
       if (!result.delivered) {
         this.logger.warn(
           `demo-booking: ${kind} email to ${recipientKind} (${to}) for booking ${bookingId} was not delivered (${result.error ?? "no transport"})`,
@@ -788,7 +792,7 @@ export function buildBookingEmail(
   manageToken: string,
   kind: "booked" | "rescheduled" | "cancelled",
   baseUrl: string,
-): { subject: string; html: string } {
+): BuiltEmail {
   const when = formatSlot(booking);
   // A fragment, not a query string: a fragment is never sent to the server —
   // it never reaches an access log or a Referer header the way a `?token=`
@@ -813,26 +817,24 @@ export function buildBookingEmail(
       ? `<tr><td style="padding:6px 0;color:#4c607a;">Video call</td><td style="padding:6px 0;"><a href="${escapeHtml(booking.meetUrl)}" style="color:#234f7e;">Join with Google Meet</a></td></tr>`
       : "";
 
-  const action =
+  const cta =
     kind === "cancelled"
-      ? `<a href="${escapeHtml(baseUrl)}/book-a-demo" style="display:inline-block;padding:12px 22px;border-radius:26px;background:#10264d;color:#ffffff;text-decoration:none;font-weight:600;">Book another time</a>`
-      : `<a href="${escapeHtml(manageUrl)}" style="display:inline-block;padding:12px 22px;border-radius:26px;background:#10264d;color:#ffffff;text-decoration:none;font-weight:600;">Reschedule or cancel</a>`;
+      ? { label: "Book another time", url: `${baseUrl}/book-a-demo` }
+      : { label: "Reschedule or cancel", url: manageUrl };
 
-  const html = `<!doctype html><html><body style="margin:0;padding:24px;background:#eef3fb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;color:#152d51;">
-  <div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:18px;padding:32px;">
-    <h1 style="margin:0 0 12px;font-size:22px;line-height:1.3;">${heading}</h1>
-    <p style="margin:0 0 22px;font-size:14px;line-height:1.7;color:#4c607a;">${intro}</p>
+  const mail = routeflowFragmentMail({
+    subject: `${heading} — ${when}`,
+    heading,
+    bodyHtml: `<p style="margin:0 0 22px;font-size:14px;line-height:1.7;color:#4c607a;">${intro}</p>
     <table style="width:100%;border-collapse:collapse;font-size:14px;">
       <tr><td style="padding:6px 0;color:#4c607a;width:110px;">When</td><td style="padding:6px 0;font-weight:600;${kind === "cancelled" ? "text-decoration:line-through;" : ""}">${escapeHtml(when)}</td></tr>
       <tr><td style="padding:6px 0;color:#4c607a;">Company</td><td style="padding:6px 0;">${escapeHtml(booking.company)}</td></tr>
       ${meetRow}
-    </table>
-    <div style="margin:28px 0 8px;">${action}</div>
-    <p style="margin:22px 0 0;font-size:12px;line-height:1.7;color:#738aa0;">Questions before then? Just reply to this email.</p>
-  </div>
-</body></html>`;
-
-  return { subject: `${heading} — ${when}`, html };
+    </table>`,
+    cta,
+    why: "You are getting this because this address was used to book a RouteFlow demo.",
+  });
+  return mail;
 }
 
 /**
@@ -845,7 +847,7 @@ export function buildAdminNotificationEmail(
   booking: DemoBooking,
   kind: "booked" | "rescheduled" | "cancelled",
   baseUrl: string,
-): { subject: string; html: string } {
+): BuiltEmail {
   const when = formatSlot(booking);
   const heading =
     kind === "cancelled"
@@ -870,15 +872,13 @@ export function buildAdminNotificationEmail(
     )
     .join("");
 
-  const html = `<!doctype html><html><body style="margin:0;padding:24px;background:#eef3fb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;color:#152d51;">
-  <div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:18px;padding:32px;">
-    <h1 style="margin:0 0 12px;font-size:20px;line-height:1.3;">${escapeHtml(heading)}</h1>
-    <table style="width:100%;border-collapse:collapse;font-size:14px;">
+  return routeflowFragmentMail({
+    subject: `${heading} — ${booking.company}`,
+    heading,
+    bodyHtml: `<table style="width:100%;border-collapse:collapse;font-size:14px;">
       ${rowsHtml}
     </table>
-    <p style="margin:22px 0 0;font-size:12px;line-height:1.7;color:#738aa0;">${escapeHtml(baseUrl)}</p>
-  </div>
-</body></html>`;
-
-  return { subject: `${heading} — ${booking.company}`, html };
+    <p style="margin:22px 0 0;font-size:12px;line-height:1.7;color:#738aa0;">${escapeHtml(baseUrl)}</p>`,
+    why: "You are getting this because this address is on the list for RouteFlow demo-booking alerts.",
+  });
 }

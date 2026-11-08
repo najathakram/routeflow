@@ -5,6 +5,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { EmailService } from "../email/email.service";
+import { emailParagraph } from "../email/email-layout";
 import { AuditService } from "../audit/audit.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { formatDate } from "../messaging/messaging.helpers";
@@ -245,7 +246,12 @@ export class AuthorizationExpiryService {
           .send({
             to: op.email,
             subject: `${who} — ${subject}`,
-            html: `<p>${escapeHtml(opBody)}</p>`,
+            html: emailParagraph(escapeHtml(opBody)),
+            text: opBody,
+            layout: {
+              heading: subject,
+              footerNote: "You are getting this because you are an operator on this workspace.",
+            },
           })
           .catch(() => {});
       }

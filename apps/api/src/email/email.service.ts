@@ -26,11 +26,13 @@ import {
   endSentence,
   renderBrandButton,
   emailParagraph,
+  htmlToPlainText,
   renderBrandedEmail,
   renderEmailLayout,
   tenantHeaderHtml,
   isLayoutHtml,
   wrapUnbrandedHtml,
+  type EmailLayoutSpec,
   type EmailLook,
 } from "./email-layout";
 
@@ -230,6 +232,12 @@ export type EmailSendParams = {
    *  EXISTING caller is unaffected — a transport that doesn't get one just sends
    *  HTML-only, same as before this field existed. */
   text?: string;
+  /**
+   * W-1163: `html` is a body fragment (every dynamic value escaped) and this is how it is dressed:
+   * the send composes it in the tenant's look. A tenant's own mail (statements, orders, invites to
+   * its buyers) uses this instead of building a document of its own.
+   */
+  layout?: EmailLayoutSpec;
   /**
    * email-connect-google PR-3 (security review Phase 2): `"platform"` DELEGATES the whole
    * send to `sendPlatform()` — bare platform From, no tenant Reply-To, no tenant domain, no
@@ -585,10 +593,55 @@ export class EmailService {
 
   /** The tenant's configured name, or null (no tenant context, or none configured). */
   private async tenantNameOrNull(): Promise<string | null> {
+    const look = await this.tenantLook();
+    return look.kind === "tenant" ? look.name : null;
+  }
+
+  /**
+   * The look of this tenant's own mail (W-1163): its name, its logo (through the public logo
+   * route, so a mail client can load it without a login) and its brand colour. A tenant with no
+   * configured name, or no tenant context at all, gets the neutral look: never RouteFlow's.
+   * No logo when `API_PUBLIC_URL` is unset.
+   */
+  async tenantLook(): Promise<EmailLook> {
     const tenantId = this.prisma.getTenantId();
-    if (!tenantId) return null;
+    if (!tenantId) return { kind: "neutral" };
     const cfg = await this.prisma.tenantConfig.findFirst({ where: { tenantId } });
-    return sellerDisplayName(cfg, null) || null;
+    const name = sellerDisplayName(cfg, null);
+    if (!name) return { kind: "neutral" };
+    const apiUrl = this.config.get<string>("API_PUBLIC_URL")?.replace(/\/+$/, "");
+    let logoUrl: string | null = null;
+    if (cfg?.logoKey && apiUrl) {
+      const tenant = await this.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { slug: true },
+      });
+      if (tenant?.slug) {
+        logoUrl = `${apiUrl}/api/v1/public/tenants/${encodeURIComponent(tenant.slug)}/logo`;
+      }
+    }
+    return { kind: "tenant", name, logoUrl, color: cfg?.primaryColor ?? null };
+  }
+
+  /**
+   * A sender that hands over a body fragment plus a `layout` spec gets it composed here, in the
+   * tenant's look: the one place a tenant's mail meets the layout.
+   */
+  private async composeLayout<T extends { html: string; text?: string; layout?: EmailLayoutSpec }>(
+    params: T,
+  ): Promise<T> {
+    const { layout } = params;
+    if (!layout) return params;
+    const { html, text } = renderEmailLayout({
+      look: await this.tenantLook(),
+      heading: layout.heading,
+      preheader: layout.preheader,
+      bodyHtml: params.html,
+      bodyText: [params.text ?? htmlToPlainText(params.html)],
+      cta: layout.cta,
+      footerNote: layout.footerNote,
+    });
+    return { ...params, html, text, layout: undefined };
   }
 
   /**
@@ -608,9 +661,11 @@ export class EmailService {
       `Email "${params.subject.slice(0, 60)}" reached the send path outside the shared layout${isDocument ? "" : " — wrapped it"}. Build it with email-layout.ts.`,
     );
     if (isDocument) return params;
-    const name = tenantScoped ? await this.tenantNameOrNull() : null;
-    const look: EmailLook = name ? { kind: "tenant", name } : { kind: "neutral" };
-    const footerNote = name ? endSentence(`Sent by ${name}`) : "This is an automated message.";
+    const look: EmailLook = tenantScoped ? await this.tenantLook() : { kind: "neutral" };
+    const footerNote =
+      look.kind === "tenant"
+        ? endSentence(`Sent by ${look.name}`)
+        : "This is an automated message.";
     return {
       ...params,
       html: wrapUnbrandedHtml({ look, subject: params.subject, html: params.html, footerNote }),
@@ -1091,7 +1146,7 @@ export class EmailService {
         ? `Payment Reminder — Invoice ${params.invoiceNumber}`
         : `Invoice ${params.invoiceNumber}`;
 
-    const { html, text } = this.buildInvoiceEmail(params, businessName);
+    const { html, text } = this.buildInvoiceEmail(params, businessName, await this.tenantLook());
     return this.send({
       to: params.to,
       subject,
@@ -1225,6 +1280,13 @@ export class EmailService {
     // in-request platform send (e.g. an admin's own action triggering a security notice)
     // cannot accidentally pick up THEIR tenant's own anything.
     if (params.senderClass === "platform") {
+      // `sendPlatform` has no `layout` or attachments: they would vanish without a sound (a
+      // tenant fragment would go out in the neutral wrap, a PDF would not go at all). Say so.
+      if (params.layout || params.attachments?.length) {
+        this.logger.error(
+          `Email "${params.subject.slice(0, 60)}" asked for a platform send with ${params.layout ? "a layout spec" : "attachments"}, which the platform path drops. Build a platform email with email-layout.ts, or send tenant mail without senderClass "platform".`,
+        );
+      }
       return this.sendPlatform({
         to: params.to,
         subject: params.subject,
@@ -1234,6 +1296,7 @@ export class EmailService {
       });
     }
 
+    params = await this.composeLayout(params);
     params = await this.ensureLayout(params, true);
 
     // Reply-To = the business's own email so customer replies reach the tenant, not the
@@ -1613,6 +1676,7 @@ export class EmailService {
       depositDueDate?: string | null;
     },
     businessName: string,
+    look?: EmailLook,
   ): { html: string; text: string } {
     const fmt = (n: number) =>
       new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -1848,11 +1912,15 @@ export class EmailService {
     );
 
     return renderBrandedEmail({
-      headerHtml: tenantHeaderHtml(businessName),
+      look,
       heading: "Invoice",
       bodyHtml,
       bodyText,
-      footerNote: endSentence(`This is an automated email from ${businessName}`),
+      footerNote: endSentence(
+        look?.kind !== "neutral"
+          ? `This is an automated email from ${businessName}`
+          : "This is an automated email",
+      ),
     });
   }
 
@@ -2226,7 +2294,8 @@ export class EmailService {
    */
   async sendLowStockDigest(params: {
     to: string;
-    businessName: string;
+    /** The tenant's configured name, or null: an unnamed tenant gets the neutral look, never RouteFlow's. */
+    businessName: string | null;
     items: { name: string; sku: string | null; currentStock: number; reorderPoint: number }[];
   }): Promise<{
     delivered: boolean;
@@ -2257,7 +2326,7 @@ export class EmailService {
    * server-controlled.
    */
   private buildLowStockDigestEmail(params: {
-    businessName: string;
+    businessName: string | null;
     items: { name: string; sku: string | null; currentStock: number; reorderPoint: number }[];
   }): { html: string; text: string } {
     const shown = params.items.slice(0, EmailService.MAX_DIGEST_ROWS);
@@ -2313,12 +2382,15 @@ export class EmailService {
       "This is a daily summary — you will not receive another alert for these items until tomorrow. You can turn this digest off in your account preferences.",
     ];
 
-    return renderBrandedEmail({
-      headerHtml: tenantHeaderHtml(params.businessName),
+    // The sweep runs without a tenant context (SYSTEM scan), so the look comes from the name it
+    // passes, not from `tenantLook()`: named tenant -> its look, otherwise neutral.
+    const name = params.businessName?.trim();
+    return renderEmailLayout({
+      look: name ? { kind: "tenant", name } : { kind: "neutral" },
       heading: "Low Stock Alert",
       bodyHtml,
       bodyText,
-      footerNote: "RouteFlow Platform — automated notification.",
+      footerNote: "You are getting this because low-stock alerts are on for your business.",
     });
   }
 }

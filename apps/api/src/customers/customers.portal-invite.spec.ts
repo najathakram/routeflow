@@ -78,7 +78,10 @@ describe("CustomersService.sendPortalInvite — sentinel emails", () => {
         },
         {
           provide: EmailService,
-          useValue: { send: jest.fn().mockResolvedValue({ delivered: true, transport: "resend" }) },
+          useValue: {
+            send: jest.fn().mockResolvedValue({ delivered: true, transport: "resend" }),
+            tenantLook: jest.fn().mockResolvedValue({ kind: "tenant", name: "Acme Distribution" }),
+          },
         },
       ],
     }).compile();

@@ -115,7 +115,7 @@ export function downgradeScheduledTemplate(params: {
       ${ctaButtonHtml(manageUrl, "Manage your plan")}
     `,
   });
-  const text = `Hi ${params.adminName},\n\nWe've scheduled a downgrade for ${params.businessName} from ${params.fromPlanName} to ${params.toPlanName}, effective ${params.effectiveAt}. Nothing changes until then.\n\nManage your plan: ${manageUrl}`;
+  const text = `Hi ${params.adminName},\n\nWe've scheduled a downgrade for ${params.businessName} from ${params.fromPlanName} to ${params.toPlanName}, effective ${params.effectiveAt}. Nothing changes until then.\n\nChanged your mind? You can cancel this scheduled downgrade any time before it takes effect.\n\nManage your plan: ${manageUrl}`;
   return {
     subject: `Downgrade scheduled — ${params.businessName}`,
     html,
@@ -205,7 +205,7 @@ export function cancelledTemplate(params: {
       ${ctaButtonHtml(manageUrl, "Resubscribe")}
     `,
   });
-  const text = `Hi ${params.adminName},\n\nYour RouteFlow subscription for ${params.businessName} has been cancelled. Your account will move to read-only access at the end of your current billing period.\n\nResubscribe: ${manageUrl}`;
+  const text = `Hi ${params.adminName},\n\nYour RouteFlow subscription for ${params.businessName} has been cancelled. Your account will move to read-only access at the end of your current billing period.\n\nChanged your mind? You can resubscribe any time.\n\nResubscribe: ${manageUrl}`;
   return {
     subject: `Subscription cancelled — ${params.businessName}`,
     html,
@@ -283,7 +283,7 @@ export function checkoutPlanNotAppliedTemplate(params: {
       ${ctaButtonHtml(manageUrl, "Review your plan")}
     `,
   });
-  const text = `Hi ${params.adminName},\n\nWe received your payment for ${params.requestedPlanKey} on ${params.businessName}, but your plan was NOT changed: it was downgraded after you started that checkout, and we never override a newer plan choice. Please review your plan or contact support.\n\nReview your plan: ${manageUrl}`;
+  const text = `Hi ${params.adminName},\n\nWe received your payment for ${params.requestedPlanKey} on ${params.businessName}, but your plan was NOT changed: it was downgraded after you started that checkout, and we never override a newer plan choice. Please review your plan below or contact support and we will sort it out.\n\nReview your plan: ${manageUrl}`;
   return {
     subject: `Payment received, plan not changed — ${params.businessName}`,
     html,

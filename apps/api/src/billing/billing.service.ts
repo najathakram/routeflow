@@ -17,6 +17,7 @@ import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../com
 import { Prisma, TenantPlan } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
+import { routeflowNotice } from "../email/routeflow-mail";
 import { escapeHtml, safeLinkHref } from "../common/html-escape";
 import {
   PAYMENT_FAILED_EMAIL_DEDUPE_STATUSES,
@@ -3131,17 +3132,26 @@ export class BillingService {
     // Best-effort billing-portal link; any portal error (or a non-http(s) URL, which
     // safeLinkHref refuses) falls back to today's plain text.
     const href = safeLinkHref(await this.portalUrlOrEmpty(sub.tenantId), "onPaymentFailed");
-    const updateLine = href
-      ? `<p><a href="${escapeHtml(href)}">Update your payment method in the billing portal</a>.</p>`
-      : `<p>You can update your payment details by contacting support or visiting your billing portal.</p>`;
+    const tenantName = sub.tenant.name ?? sub.tenant.slug;
+    const mail = routeflowNotice({
+      subject: `Payment failed — ${tenantName}`,
+      heading: "Payment failed",
+      lines: [
+        `Hello ${adminUser.username},`,
+        ["We were unable to process your subscription payment for ", { b: tenantName }, "."],
+        "Please update your payment method to avoid service interruption.",
+        ...(href
+          ? []
+          : [
+              "You can update your payment details by contacting support or visiting your billing portal.",
+            ]),
+      ],
+      cta: href ? { label: "Update payment method", url: href } : undefined,
+      why: "You are getting this because you manage this RouteFlow account’s billing.",
+    });
     await this.email.send({
       to: adminUser.email,
-      subject: `Payment failed — ${sub.tenant.name ?? sub.tenant.slug}`,
-      html: `<p>Hello ${escapeHtml(adminUser.username)},</p>
-<p>We were unable to process your subscription payment for <strong>${escapeHtml(sub.tenant.name ?? sub.tenant.slug)}</strong>.</p>
-<p>Please update your payment method to avoid service interruption.</p>
-${updateLine}
-<p>RouteFlow Platform</p>`,
+      ...mail,
       delivery: {
         tenantId: sub.tenantId,
         kind: PAYMENT_FAILED_EMAIL_KIND,

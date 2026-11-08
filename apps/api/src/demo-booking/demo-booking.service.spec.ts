@@ -390,6 +390,15 @@ describe("DemoBookingService.create", () => {
     expect(prisma.rows[0].manageTokenHash).not.toContain(manageToken);
   });
 
+  it("W-1163: the booker's confirmation keeps the Google Meet row inside the branded layout", async () => {
+    const { email, service } = build();
+    await service.create(input);
+
+    const booker = email.sent.find((m) => m.to === "alex@example.com")!;
+    expect(booker.html).toContain("Join with Google Meet");
+    expect(booker.html).toContain('href="https://meet.google.com/abc-defg-hij"');
+  });
+
   // Review finding 7: name/company/notes are attacker-controlled (a public,
   // unauthenticated form) and land in the Calendar event's plain-text
   // description. Newlines let one field forge a fake extra "line" that

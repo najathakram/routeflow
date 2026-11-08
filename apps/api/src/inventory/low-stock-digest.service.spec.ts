@@ -146,7 +146,7 @@ describe("LowStockDigestService (N4)", () => {
       expect(email.sendLowStockDigest).not.toHaveBeenCalled();
     });
 
-    it("REG-N4 + SA-738: a tenant with no TenantConfig row falls back to UTC and 'RouteFlow' business name, never crashes", async () => {
+    it("REG-N4 + SA-738: a tenant with no TenantConfig row falls back to UTC and passes no business name (so the mail is neutral, never RouteFlow's), never crashes", async () => {
       const { svc, email } = make({
         tenants: [{ id: "t1", config: null }],
         products: [product({ currentStock: 1, reorderPoint: 10 })],
@@ -157,7 +157,7 @@ describe("LowStockDigestService (N4)", () => {
       await svc.sendLowStockDigest(new Date("2026-09-16T07:30:00.000Z"));
 
       expect(email.sendLowStockDigest).toHaveBeenCalledWith(
-        expect.objectContaining({ businessName: "RouteFlow" }),
+        expect.objectContaining({ businessName: "" }),
       );
     });
 

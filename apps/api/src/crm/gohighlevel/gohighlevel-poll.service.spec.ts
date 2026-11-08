@@ -284,6 +284,8 @@ describe("GoHighLevelPollService", () => {
     await svc.pollTenant("tenant-1");
 
     expect(emailService.send).toHaveBeenCalledTimes(1);
+    // W-1163: RouteFlow telling the business about its integration: RouteFlow look, platform sender.
+    expect(emailService.send.mock.calls[0][0].senderClass).toBe("platform");
     const sentTo = emailService.send.mock.calls[0][0]?.to;
     const recipients = Array.isArray(sentTo) ? sentTo : [sentTo];
     expect(recipients).toEqual(

@@ -1,5 +1,5 @@
 import { escapeHtml } from "../common/html-escape";
-import { emailParagraph, renderEmailLayout } from "./email-layout";
+import { emailParagraph, htmlToPlainText, renderEmailLayout } from "./email-layout";
 
 /**
  * RouteFlow's OWN emails (as opposed to mail a tenant sends its people): each builder returns the
@@ -147,4 +147,24 @@ export function passwordSetMessage(p: { portal: boolean; ip: string; time: strin
     ],
     why: "You are getting this because a password was added to your RouteFlow account.",
   });
+}
+
+/** A RouteFlow notice whose body is html a sender already built (escaped there); text is derived. */
+export function routeflowFragmentMail(p: {
+  subject: string;
+  heading: string;
+  bodyHtml: string;
+  cta?: { label: string; url: string };
+  why: string;
+}): BuiltEmail {
+  const { html, text } = renderEmailLayout({
+    look: { kind: "routeflow" },
+    heading: p.heading,
+    preheader: p.subject,
+    bodyHtml: p.bodyHtml,
+    bodyText: [htmlToPlainText(p.bodyHtml)],
+    cta: p.cta,
+    footerNote: p.why,
+  });
+  return { subject: p.subject, html, text };
 }

@@ -433,6 +433,47 @@ describe("renderOrderReceipt (email)", () => {
       businessName: "",
     });
     expect(r.subject).toBe("Your receipt for order ORD-1001");
+    // W-1163: a tenant's receipt never carries RouteFlow's name when it has none of its own.
+    for (const body of [r.html, r.text]) {
+      expect(body).not.toMatch(/Sent by RouteFlow|alt="RouteFlow"/);
+    }
+    expect(r.text).toContain("This is an automated receipt.");
+  });
+
+  it("W-1163: a neutral look from the tenant config still shows the receipt's own business name", () => {
+    const r = renderOrderReceipt(
+      orderFixture(),
+      [INVOICE],
+      paymentsFixture(),
+      BRANDING,
+      ZONE,
+      undefined,
+      { kind: "neutral" },
+    );
+    expect(r.html).toContain("Acme Test Store");
+    expect(r.text).toContain("Sent by Acme Test Store.");
+  });
+
+  it("W-1163: a tenant look it is GIVEN is the one it wears: the tenant's name, logo and colour, 'Sent with RouteFlow', never RouteFlow's mark", () => {
+    const r = renderOrderReceipt(
+      orderFixture(),
+      [INVOICE],
+      paymentsFixture(),
+      BRANDING,
+      ZONE,
+      undefined,
+      {
+        kind: "tenant",
+        name: "Acme Foods",
+        logoUrl: "https://api.test/api/v1/public/tenants/acme/logo",
+        color: "#1D4E89",
+      },
+    );
+    expect(r.html).toContain('alt="Acme Foods"');
+    expect(r.html).toContain("#1D4E89");
+    expect(r.html.replace(/<[^>]+>/g, "")).toContain("Sent with RouteFlow");
+    expect(r.html).not.toMatch(/alt="RouteFlow"|routeflow-mark/);
+    expect(r.text).toContain("Sent with RouteFlow");
   });
 
   it("signs the email 'Sent by <business name>.' (row 345), never 'Receipt sent by'", () => {

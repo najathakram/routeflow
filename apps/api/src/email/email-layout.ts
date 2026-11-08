@@ -32,6 +32,16 @@ export type EmailLook =
   | { kind: "tenant"; name: string; logoUrl?: string | null; color?: string | null }
   | { kind: "neutral" };
 
+/** How a sender dresses a body fragment: see `EmailSendParams.layout`. */
+export type EmailLayoutSpec = {
+  heading: string;
+  preheader?: string;
+  /** The one action: a button, a short fallback link, and the full link in the text part. */
+  cta?: { label: string; url: string };
+  /** Why this person got the email, said in the footer. */
+  footerNote: string;
+};
+
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;
 /** A `#rrggbb` colour as given, otherwise the fallback: a colour never reaches a style attribute unchecked. */
 const hexOr = (c: string, fallback: string) => (HEX_COLOR.test(c) ? c : fallback);
@@ -192,28 +202,59 @@ ${preheader}
 const footerLine = (text: string) =>
   `<p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:18px;color:${BRAND_STEEL};text-align:center;">${escapeHtml(text)}</p>`;
 
+/** What a look contributes to the shell: header row, bar and button colours, the "Sent with" line. */
+function lookParts(look: EmailLook): {
+  headerHtml: string;
+  barBg: string;
+  buttonColor: string;
+  sentWith: string;
+} {
+  if (look.kind === "tenant") {
+    const c = resolveBarColors(look.color);
+    return {
+      headerHtml: tenantLookHeaderHtml(look.name, look.logoUrl, c.fg),
+      barBg: c.bg,
+      buttonColor: c.button,
+      sentWith: `<p style="margin:8px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:16px;color:${BRAND_STEEL};text-align:center;">Sent with <a href="${BRAND_SITE_URL}" style="color:${BRAND_STEEL};">RouteFlow</a></p>`,
+    };
+  }
+  return {
+    headerHtml:
+      look.kind === "routeflow"
+        ? brandHeaderHtml()
+        : `<span style="font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;color:${BRAND_WHITE};">&nbsp;</span>`,
+    barBg: BRAND_NAVY,
+    buttonColor: BRAND_TEAL,
+    sentWith: "",
+  };
+}
+
 /**
- * The shell with the caller's own header row (Route Navy bar) — the entry the older builders in
- * `email.service.ts` and `render-order-receipt.ts` use. Returns the HTML AND a plain-text
- * alternative built from the SAME structured pieces the caller supplies — never derived by
- * stripping tags, which could silently drop a dollar figure or a link.
+ * The shell for the older builders in `email.service.ts` and `render-order-receipt.ts`: their own
+ * header row (Route Navy bar), or a tenant `look` (its header, colour and "Sent with" line).
+ * Returns the HTML AND a plain-text alternative built from the SAME structured pieces the caller
+ * supplies, never derived by stripping tags, which could drop a dollar figure or a link.
  */
 export function renderBrandedEmail(params: {
-  headerHtml: string;
+  /** Used when no `look` is given. */
+  headerHtml?: string;
+  look?: EmailLook;
   heading: string;
   bodyHtml: string;
   /** Plain-text paragraphs — parallel content to `bodyHtml`, `\n\n`-joined in the output. */
   bodyText: string[];
   footerNote: string;
 }): { html: string; text: string } {
+  const parts = lookParts(params.look ?? { kind: "routeflow" });
   const html = shell({
-    headerHtml: params.headerHtml,
-    barBg: BRAND_NAVY,
+    headerHtml: params.look ? parts.headerHtml : (params.headerHtml ?? parts.headerHtml),
+    barBg: parts.barBg,
     heading: params.heading,
     bodyHtml: params.bodyHtml,
-    footerHtml: footerLine(params.footerNote),
+    footerHtml: `${footerLine(params.footerNote)}${parts.sentWith}`,
   });
-  const text = `${params.heading}\n\n${params.bodyText.join("\n\n")}\n\n--\n${params.footerNote}`;
+  const sent = parts.sentWith ? "\nSent with RouteFlow" : "";
+  const text = `${params.heading}\n\n${params.bodyText.join("\n\n")}\n\n--\n${params.footerNote}${sent}`;
   return { html, text };
 }
 
@@ -238,21 +279,10 @@ export function renderEmailLayout(params: {
   footerNote: string;
 }): { html: string; text: string } {
   const { look } = params;
-  const colors = look.kind === "tenant" ? resolveBarColors(look.color) : null;
-  const barBg = colors ? colors.bg : BRAND_NAVY;
-  const headerHtml =
-    look.kind === "routeflow"
-      ? brandHeaderHtml()
-      : look.kind === "tenant"
-        ? tenantLookHeaderHtml(look.name, look.logoUrl, colors?.fg ?? BRAND_WHITE)
-        : `<span style="font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;color:${BRAND_WHITE};">&nbsp;</span>`;
+  const { headerHtml, barBg, buttonColor, sentWith } = lookParts(look);
   const cta = params.cta
-    ? `<div style="margin:24px 0 0;">${renderBrandButton(params.cta.label, params.cta.url, colors?.button ?? BRAND_TEAL)}</div>${fallbackLinkHtml(params.cta.url)}`
+    ? `<div style="margin:24px 0 0;">${renderBrandButton(params.cta.label, params.cta.url, buttonColor)}</div>${fallbackLinkHtml(params.cta.url)}`
     : "";
-  const sentWith =
-    look.kind === "tenant"
-      ? `<p style="margin:8px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:16px;color:${BRAND_STEEL};text-align:center;">Sent with <a href="${BRAND_SITE_URL}" style="color:${BRAND_STEEL};">RouteFlow</a></p>`
-      : "";
   const html = shell({
     headerHtml,
     barBg,
@@ -315,7 +345,8 @@ export function htmlToPlainText(html: string): string {
     html
       .replace(/<a\s[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, "$2 ($1)")
       .replace(/<\/(p|blockquote|ul|ol|div|h[1-6])>/gi, "\n\n")
-      .replace(/<\/li>|<br\s*\/?>/gi, "\n")
+      .replace(/<\/li>|<\/tr>|<br\s*\/?>/gi, "\n")
+      .replace(/<\/t[dh]>/gi, " ")
       .replace(/<[^>]+>/g, "")
       .replace(/[ \t]+\n/g, "\n")
       .replace(/\n{3,}/g, "\n\n"),

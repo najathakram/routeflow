@@ -95,6 +95,8 @@ describe("sendCustomerStatementEmail (SA-1078 PR-4)", () => {
     const sent = a.send.mock.calls[0][0];
     expect(sent.to).toBe("ap@acme.example");
     expect(sent.subject).toBe("Your statement from Test Wholesale");
+    // W-1163: the send carries the layout spec that makes EmailService dress it in the tenant's look.
+    expect(sent.layout).toMatchObject({ heading: "Your statement" });
     expect(sent.attachments).toEqual([
       { filename: expect.stringMatching(/\.pdf$/), content: PDF, contentType: "application/pdf" },
     ]);

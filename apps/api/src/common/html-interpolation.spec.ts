@@ -51,11 +51,11 @@ const ALLOWED: Record<string, Record<string, Allowed>> = {
     },
     "shell :: p.headerHtml": "built by the header helpers above, which escape their inputs",
     "shell :: p.bodyHtml": "escaped by every caller (the `bodyHtml` property is a sink there)",
-    "renderBrandedEmail :: params.headerHtml":
+    "renderBrandedEmail :: params.headerHtml ?? parts.headerHtml":
       "escaped by every caller (the `headerHtml` property is a sink there)",
     "renderBrandedEmail :: params.bodyHtml":
       "escaped by every caller (the `bodyHtml` property is a sink there)",
-    "renderEmailLayout :: href BRAND_SITE_URL": "a constant URL",
+    "lookParts :: href BRAND_SITE_URL": "a constant URL",
     "renderEmailLayout :: params.bodyHtml":
       "escaped by every caller (the `bodyHtml` property is a sink there)",
     "wrapUnbrandedHtml :: inner":
@@ -63,12 +63,22 @@ const ALLOWED: Record<string, Record<string, Allowed>> = {
     "emailParagraph :: innerHtml":
       "scanned at every call: LAYOUT_WRAPPING_CALLS follows the argument",
   },
+  "billing/addon-invariant.job.ts": {
+    "sendEmail :: mail.html": "built by routeflowNotice, which escapes every line",
+  },
+  "email/owner-alert.service.ts": {
+    "deliver :: mail.html": "built by routeflowNotice, which escapes every line",
+  },
   "email/routeflow-mail.ts": {
+    "routeflowFragmentMail :: p.bodyHtml":
+      "escaped by every caller (the `bodyHtml` property is a sink there)",
     "signIn :: href escapeHtml(loginUrl)": ENV_LINK,
   },
   "email/email.service.ts": {
     "ensureLayout :: wrapUnbrandedHtml({ look, subject: params.subject, html: params.html, footerNote })":
       "the safety net around a sender's own html (see wrapUnbrandedHtml)",
+    "composeLayout :: params.html":
+      "a body fragment its sender escaped (the `html` property is a sink at every call that sets `layout`)",
     "ensureLayout :: params.html":
       "the safety net around a sender's own html (see wrapUnbrandedHtml)",
     "sendUnrecorded :: params.html": { reason: TRANSPORT, count: 5 },
@@ -92,25 +102,20 @@ const ALLOWED: Record<string, Record<string, Allowed>> = {
       "built in billing-notification.templates.ts, which this guard scans (0 hits)",
   },
   "messaging/providers/email-channel.provider.ts": {
-    "send :: html": "built by buildNotificationEmailHtml, which this guard scans (0 hits)",
-  },
-  "customers/portal-invite-email.ts": {
-    "portalInviteEmailHtml :: href url": { reason: ENV_LINK, count: 2 },
+    "send :: buildNotificationEmailBody(input.body)":
+      "built in messaging/providers/email-notification-template.ts, which escapes the whole body and which this guard scans (0 hits)",
   },
   "demo-booking/demo-booking.service.ts": {
+    "sendBookingEmail :: mail.html":
+      "built by routeflowFragmentMail in the two builders above (every value escapeHtml'd)",
     "buildBookingEmail :: href escapeHtml(booking.meetUrl)":
       "the Meet link Google Calendar returned for the booking, never user input",
-    "buildBookingEmail :: href escapeHtml(baseUrl)": ENV_LINK,
-    "buildBookingEmail :: href escapeHtml(manageUrl)": ENV_LINK,
   },
   "documents/receipt.service.ts": {
     "send :: html":
       "built in documents/render-order-receipt.ts (every dynamic value escapeHtml'd), which this guard scans (0 hits)",
   },
-  "customers/customers.service.ts": {
-    "sendPortalInvite :: portalInviteEmailHtml(sellerName, inviteUrl)":
-      "built in customers/portal-invite-email.ts, which this guard scans (0 hits)",
-  },
+  "customers/customers.service.ts": {},
 };
 
 const SRC = join(__dirname, "..");

@@ -4,6 +4,7 @@ import { ConflictException, NotFoundException, UnauthorizedException } from "@ne
 import { BuyerService } from "./buyer.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
+import { paragraphsMissingFromText } from "../testing/email-text-parity";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { createMockPrisma } from "../testing/prisma-mock";
 import type { RequestSellerDto } from "./dto/request-seller.dto";
@@ -215,6 +216,12 @@ describe("BuyerService.requestSeller — identity-gated auto-connect (security)"
     expect(gateway.emitBuyerAutoLinked).not.toHaveBeenCalled();
     expect(prisma.user.findMany).toHaveBeenCalled(); // notifySellerOfRequest ran
     expect(emailService.send).toHaveBeenCalled();
+    // W-1163: the seller's operator is told who asked to connect, in both parts, in the tenant look.
+    const mail = emailService.send.mock.calls[0][0];
+    expect(mail.layout).toMatchObject({ heading: "New buyer connection request" });
+    expect(mail.text).toContain("impostor@evil.example");
+    expect(mail.text).toContain("Retail Corner");
+    expect(paragraphsMissingFromText(mail.html, mail.text)).toEqual([]);
   });
 
   it("4. case-insensitivity both directions (sign-in email vs. customer email, and typed email vs. customer email)", async () => {

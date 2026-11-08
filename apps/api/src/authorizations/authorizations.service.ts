@@ -4,6 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { EmailService } from "../email/email.service";
+import { emailParagraph } from "../email/email-layout";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { CreateAuthorizationDto } from "./dto/create-authorization.dto";
 import { RejectAuthorizationDto } from "./dto/reject-authorization.dto";
@@ -475,7 +476,12 @@ export class AuthorizationsService {
           .send({
             to: op.email,
             subject: `${who} — ${subject}`,
-            html: `<p>${escapeHtml(body)}</p>`,
+            html: emailParagraph(escapeHtml(body)),
+            text: body,
+            layout: {
+              heading: subject,
+              footerNote: "You are getting this because you are an operator on this workspace.",
+            },
           })
           .catch(() => {});
       }
