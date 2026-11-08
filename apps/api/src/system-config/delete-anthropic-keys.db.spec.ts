@@ -101,6 +101,15 @@ describeDb("delete-tenant-anthropic-keys core (AI limits PR-2)", () => {
     expect(await core.deleteAll({ client: pool, write: [] })).toBe(0);
   });
 
+  it("D-5: liveTenantCount counts only tenants that are not approved test tenants", async () => {
+    const before = await core.liveTenantCount(pool);
+    const live = await prisma.tenant.create({
+      data: { slug: `acme-delkeys-${RUN}`, name: "acme" },
+    });
+    tenantIds.push(live.id);
+    expect(await core.liveTenantCount(pool)).toBe(before + 1);
+  });
+
   it("D-4: one stale row rolls the whole run back: nothing deleted, no audit row", async () => {
     const d = await makeTenant(4);
     const e = await makeTenant(5);

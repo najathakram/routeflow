@@ -21,6 +21,7 @@ import {
   applyGate,
   deleteAll,
   keyRefs,
+  liveTenantCount,
   parseAllowProtected,
   planDeletes,
 } from "./lib/delete-anthropic-keys-core.cjs";
@@ -56,10 +57,17 @@ async function main() {
   const { protectedTenantIds, confirmProtectedOverride } = requireCjs(
     "./lib/live-target-guard.cjs",
   );
-  const local = classifyDbTarget(url, process.env).ok;
   const pool = new pg.Pool({ connectionString: url });
   try {
     const refs = await keyRefs(pool);
+    // A tunnel to production looks local: the host counts as local only when every tenant in it is a test tenant.
+    const hostLocal = classifyDbTarget(url, process.env).ok;
+    const liveTenants = hostLocal ? await liveTenantCount(pool) : 0;
+    const local = hostLocal && liveTenants === 0;
+    if (hostLocal && !local)
+      console.error(
+        `${SCRIPT}: local host, but ${liveTenants} non-test tenant(s): treated as live`,
+      );
     const slugs = loadProtectedSlugs(process.env, url);
     const protectedIds = new Set(await protectedTenantIds(pool, slugs));
     const unknown = allowIds.filter((id) => !protectedIds.has(id));

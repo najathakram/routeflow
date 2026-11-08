@@ -22,6 +22,12 @@ async function keyRefs(client) {
   return r.rows.map((x) => ({ id: x.id, tenantId: x.tenantId, isTest: isTestTenant(x.slug) }));
 }
 
+/** How many tenants are not approved test tenants. A host that LOOKS local (a tunnel) holding any is not local. */
+async function liveTenantCount(client) {
+  const { rows } = await client.query(`SELECT slug FROM "Tenant"`);
+  return rows.filter((t) => !isTestTenant(t.slug)).length;
+}
+
 /** Which rows may be deleted: a protected tenant's only if named; a non-test tenant's only with `liveOverride`. */
 function planDeletes({ refs, protectedIds = new Set(), allowProtected = new Set(), liveOverride }) {
   const write = [];
@@ -94,6 +100,7 @@ module.exports = {
   KEY,
   AUDIT_ACTION,
   keyRefs,
+  liveTenantCount,
   planDeletes,
   applyGate,
   parseAllowProtected,

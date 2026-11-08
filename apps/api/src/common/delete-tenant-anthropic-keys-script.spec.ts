@@ -30,6 +30,8 @@ describe("delete-tenant-anthropic-keys.mjs", () => {
   it("structural: dry run returns before the gate; it uses the live-target guard and prints no value", () => {
     expect(cli.indexOf("if (!apply) return")).toBeGreaterThan(-1);
     expect(cli.indexOf("if (!apply) return")).toBeLessThan(cli.indexOf("applyGate({"));
+    expect(cli).toContain("liveTenantCount(");
+    expect(cli).toMatch(/const local = hostLocal && liveTenants === 0/);
     expect(cli).toContain("protectedTenantIds(");
     expect(cli).toContain("confirmProtectedOverride(");
     expect(cli).not.toMatch(/console\.(log|error)\([^)]*\$\{[^}]*\b(value|slug|secret)\b/);
