@@ -31,6 +31,7 @@ import {
 import { FeatureOverrideService } from "../billing/feature-override.service";
 import { UpdateTenantStatusDto } from "./dto/update-tenant-status.dto";
 import { UpdateAiConfigDto } from "./dto/update-ai-config.dto";
+import { SetTenantAiCapDto } from "./dto/set-tenant-ai-cap.dto";
 import { UpdateTenantPlanDto } from "./dto/update-tenant-plan.dto";
 import { CreateTenantDto } from "./dto/create-tenant.dto";
 import { CreateTenantAdminDto } from "./dto/create-tenant-admin.dto";
@@ -177,6 +178,25 @@ export class PlatformAdminController {
     @CurrentUser() admin: JwtPayload,
   ) {
     return this.svc.updateTenantConfig(id, dto, admin.sub);
+  }
+
+  @Get("tenants/:id/ai-cap")
+  @ApiOperation({
+    summary: "A business's monthly AI allowance on RouteFlow's key (override and default)",
+  })
+  getTenantAiCap(@Param("id") id: string) {
+    return this.platformConfig.getTenantAiCap(id);
+  }
+
+  @Patch("tenants/:id/ai-cap")
+  @ApiOperation({ summary: "Set, clear (null) or leave a business's monthly AI allowance" })
+  async setTenantAiCap(
+    @Param("id") id: string,
+    @Body() dto: SetTenantAiCapDto,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    await this.svc.setTenantAiCap(id, dto.aiMonthlyCapUsd, admin.sub);
+    return this.platformConfig.getTenantAiCap(id);
   }
 
   @Delete("tenants/:id")

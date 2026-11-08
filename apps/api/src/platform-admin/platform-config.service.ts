@@ -1,4 +1,10 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger } from "@nestjs/common";
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { roundMoney } from "@routeflow/pricing";
 import type { AppLinks, AppLinksPatch } from "@routeflow/types";
@@ -78,8 +84,17 @@ export function capResetsAt(err: unknown, now = new Date()): string {
   return typeof body?.resetsAt === "string" ? body.resetsAt : nextUtcMonthStart(now).toISOString();
 }
 
-/** SA-1102 B1: one business's monthly allowance on RouteFlow's key, in USD, when `ai.monthlyCapUsd` is unset. */
-export const DEFAULT_MONTHLY_AI_CAP_USD = 25;
+/** SA-1102 B1: one business's monthly allowance on RouteFlow's key, in USD, when `ai.monthlyCapUsd` is unset (owner 2026-11-07: $10). */
+export const DEFAULT_MONTHLY_AI_CAP_USD = 10;
+
+/** What the super admin business page shows and edits. */
+export interface TenantAiCap {
+  tenantId: string;
+  /** The business's own override in whole USD, or null for the platform value. */
+  aiMonthlyCapUsd: number | null;
+  platformCapUsd: number;
+  effectiveCapUsd: number;
+}
 
 /**
  * Secret-valued PlatformConfig keys (SA-1102 2.1): encrypted at rest through the same helper and cipher as the
@@ -151,7 +166,7 @@ export class PlatformConfigService {
       scanModel: storedScanModel ?? AI_TASKS.bill_scan.fallback,
       maxTokens: storedMaxTokens ? parseInt(storedMaxTokens) : 4096,
       verifiedAt,
-      monthlyCapUsd: await this.monthlyCapUsdFor(""),
+      monthlyCapUsd: await this.platformMonthlyCapUsd(),
       availableModels: AI_MODELS.map(({ id, label }) => ({ id, label })),
     };
   }
@@ -268,20 +283,51 @@ export class PlatformConfigService {
   }
 
   /**
-   * The monthly allowance for one business, in USD. Today it is the platform-wide `ai.monthlyCapUsd` (unset or
-   * unreadable = $25, `"0"` = AI off on RouteFlow's key for every business). A per-business override plugs in here.
+   * The monthly allowance for one business, in USD: its own override (`Tenant.aiMonthlyCapUsd`, set by super admin; 0 =
+   * AI off on RouteFlow's key for that business) when it has a usable one, else the platform-wide `ai.monthlyCapUsd`
+   * (unset or unreadable = $10). The platform's `"0"` is the kill switch: AI is off on RouteFlow's key for EVERY business,
+   * whatever its override (lead ruling 2026-11-07, matching the super admin settings screen).
    */
-  async monthlyCapUsdFor(_tenantId: string): Promise<number> {
+  async monthlyCapUsdFor(tenantId: string): Promise<number> {
+    const platform = await this.platformMonthlyCapUsd();
+    if (platform === 0) return 0;
+    const own = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { aiMonthlyCapUsd: true },
+    });
+    const override = own?.aiMonthlyCapUsd;
+    if (typeof override === "number" && Number.isInteger(override) && override >= 0)
+      return override;
+    return platform;
+  }
+
+  /** The platform-wide `ai.monthlyCapUsd`: unset or unreadable = $10, `"0"` = AI off on RouteFlow's key for every business. */
+  async platformMonthlyCapUsd(): Promise<number> {
     const raw = await this.getValue("ai.monthlyCapUsd");
     if (raw === null || raw.trim() === "") return DEFAULT_MONTHLY_AI_CAP_USD;
     const cap = Number(raw);
     return Number.isFinite(cap) && cap >= 0 ? cap : DEFAULT_MONTHLY_AI_CAP_USD;
   }
 
+  /** One business's AI allowance for the super admin screen: its override, the platform value, and the one that applies. */
+  async getTenantAiCap(tenantId: string): Promise<TenantAiCap> {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { aiMonthlyCapUsd: true },
+    });
+    if (!tenant) throw new NotFoundException(`Tenant ${tenantId} not found`);
+    return {
+      tenantId,
+      aiMonthlyCapUsd: tenant.aiMonthlyCapUsd,
+      platformCapUsd: await this.platformMonthlyCapUsd(),
+      effectiveCapUsd: await this.monthlyCapUsdFor(tenantId),
+    };
+  }
+
   /**
-   * Refuse (403 AI_MONTHLY_CAP_REACHED) when this business's estimated spend this UTC month has reached its cap. Until
-   * the B2 migration adds `keySource`, EVERY usage row counts, a business's own-key scans included; that is
-   * conservative and never refuses an own-key call. It is a soft cap: concurrent calls can each pass and overshoot by
+   * Refuse (403 AI_MONTHLY_CAP_REACHED) when this business's estimated spend this UTC month has reached its cap. EVERY
+   * usage row counts (there is no `keySource` column), a business's own-key scans included, until PR-3 removes the
+   * business key; that is conservative and never refuses an own-key call. It is a soft cap: concurrent calls can each pass and overshoot by
    * about one call each. The Anthropic workspace spend limit is the hard stop behind it.
    */
   async assertAiBudget(tenantId: string): Promise<void> {

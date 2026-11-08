@@ -956,6 +956,7 @@ model AiUsageEvent {
   createdAt    DateTime @default(now())
 
   @@index([createdAt])
+  @@index([tenantId, createdAt])
 }
 
 /// Replay guard for order submission — written by RoutesService's idempotency
