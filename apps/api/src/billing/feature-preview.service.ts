@@ -17,7 +17,7 @@ import {
   heldAddonKeys,
   loadActiveAddonRows,
   resolveOneKey,
-  skuGrantsFlags,
+  pinnedOverPublishedGrants,
   toEffectiveFeature,
   ResolveContext,
 } from "./feature-resolver.service";
@@ -84,7 +84,7 @@ export class FeaturePreviewService {
 
     // The billing fact is the same on both sides (a plan move leaves the rows alone); SKU grants read like
     // `compute` does: the tenant's pinned version, the published catalog for a code it lacks.
-    const skuGrants = skuGrantsFlags([...publishedCatalog.addonSkus, ...version.addonSkus]);
+    const skuGrants = pinnedOverPublishedGrants(publishedCatalog.addonSkus, version.addonSkus);
     const billed = billedKeySet(activeAddonRows, skuGrants);
     // The "still billed" answer shares invariant I5's helper (sku-null rows included), not the served set above.
     const billedForWarning = new Set(activeAddonRows.flatMap((r) => billedKeysOfRow(r, skuGrants)));

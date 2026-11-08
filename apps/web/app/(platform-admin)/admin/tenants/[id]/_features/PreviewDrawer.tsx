@@ -137,6 +137,10 @@ export function PreviewDrawer({
           <p className="font-medium">
             Still billed: turning this off doesn&apos;t stop the charge.
           </p>
+          <p className="mt-1 text-xs text-amber-200/90">
+            If paid billing hasn&apos;t started yet, the charge starts when it does. Turning this
+            off won&apos;t stop that either.
+          </p>
           <ul className="mt-1 list-disc pl-5 text-xs text-amber-200/90">
             {response.stillBilled.map((key) => (
               <li key={key}>{registryByKey[key]?.label ?? key}</li>

@@ -160,6 +160,12 @@ describe("PreviewDrawer: omissions and stays-on-for-now (FG-1 WP2)", () => {
       within(warning).getByText("Still billed: turning this off doesn't stop the charge."),
     ).toBeInTheDocument();
     expect(within(warning).getByText("Reports")).toBeInTheDocument();
+    // matches invariant I5's text for a business that has not started paying (trial, full coupon)
+    expect(
+      within(warning).getByText(
+        "If paid billing hasn't started yet, the charge starts when it does. Turning this off won't stop that either.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("WP4: no billing warning when nothing is still billed", () => {

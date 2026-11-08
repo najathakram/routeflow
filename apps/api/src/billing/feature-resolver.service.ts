@@ -225,6 +225,18 @@ export function skuGrantsFlags(
 }
 
 /**
+ * The ONE grants map for "which flags does this SKU grant": the PINNED catalog's entry wins over the published one
+ * (a business keeps the SKU as it was sold to it), the published catalog fills in a code the pin lacks. I5 and the
+ * preview both build their map here.
+ */
+export function pinnedOverPublishedGrants(
+  published: ReadonlyArray<{ sku: string; grantsFlags: readonly string[] }>,
+  pinned: ReadonlyArray<{ sku: string; grantsFlags: readonly string[] }>,
+): ReadonlyMap<string, readonly string[]> {
+  return skuGrantsFlags([...published, ...pinned]);
+}
+
+/**
  * The registry keys that have a billed row: the row's own `addonKey`, and the flags its SKU grants (a flag
  * bridged by a purchased SKU is charged through that row).
  */
