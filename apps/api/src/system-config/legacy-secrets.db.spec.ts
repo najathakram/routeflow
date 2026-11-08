@@ -78,7 +78,7 @@ describeDb("encrypt-legacy-secrets core (AI limits PR-2)", () => {
         key,
       ])
     ).rows[0]?.value as string;
-  const mine = (refs: Array<{ tenantId: string | null }>) =>
+  const mine = <T extends { tenantId: string | null }>(refs: T[]) =>
     refs.filter((r) => r.tenantId && tenantIds.includes(r.tenantId));
 
   it("L-1: it finds exactly the plaintext secret rows, by reference, never reading a value", async () => {
