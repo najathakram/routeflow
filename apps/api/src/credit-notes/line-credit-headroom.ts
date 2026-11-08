@@ -358,7 +358,8 @@ const returnedOf = (
  */
 export async function loadUnlinkedRefundReturns(
   db: any,
-  orderId: string,
+  /** one order, or many at once (the read-only census): `amountByOrder` then says what each order has */
+  orderId: string | string[],
   opts: { excludeCreditNoteId?: string } = {},
 ): Promise<{
   returns: Array<{
@@ -366,14 +367,21 @@ export async function loadUnlinkedRefundReturns(
     items: Array<{ productId: string; qty: unknown; sourceOrderItemId?: string | null }>;
   }>;
   amount: number;
+  amountByOrder: Map<string, number>;
 }> {
   const rows: Array<{
+    orderId?: string;
     creditNoteId: string | null;
     items: Array<{ productId: string; qty: unknown; sourceOrderItemId?: string | null }>;
   }> =
     (await db.return?.findMany?.({
-      where: { orderId, kind: { not: "INLINE" }, creditNoteId: { not: null } },
+      where: {
+        orderId: Array.isArray(orderId) ? { in: orderId } : orderId,
+        kind: { not: "INLINE" },
+        creditNoteId: { not: null },
+      },
       select: {
+        orderId: true,
         creditNoteId: true,
         items: { select: { productId: true, qty: true, sourceOrderItemId: true } },
       },
@@ -381,13 +389,25 @@ export async function loadUnlinkedRefundReturns(
   const noteIds = [
     ...new Set(rows.map((r) => r.creditNoteId).filter((id): id is string => !!id)),
   ].filter((id) => id !== opts.excludeCreditNoteId);
-  if (noteIds.length === 0) return { returns: [], amount: 0 };
+  if (noteIds.length === 0) return { returns: [], amount: 0, amountByOrder: new Map() };
   const notes: Array<{ id: string; amount: unknown }> =
     (await db.creditNote.findMany({
       where: { id: { in: noteIds }, status: { not: "VOID" }, items: { none: {} }, invoiceId: null },
       select: { id: true, amount: true },
     })) ?? [];
   const live = new Map(notes.map((n) => [n.id, Number(n.amount ?? 0) || 0]));
+  const noteIdsOfOrder = new Map<string, Set<string>>();
+  for (const r of rows)
+    if (r.orderId && r.creditNoteId && live.has(r.creditNoteId)) {
+      if (!noteIdsOfOrder.has(r.orderId)) noteIdsOfOrder.set(r.orderId, new Set());
+      noteIdsOfOrder.get(r.orderId)!.add(r.creditNoteId);
+    }
+  const amountByOrder = new Map(
+    [...noteIdsOfOrder].map(([order, ids]) => [
+      order,
+      roundMoney([...ids].reduce((t, id) => t + (live.get(id) ?? 0), 0)),
+    ]),
+  );
   return {
     returns: rows
       .filter(
@@ -396,6 +416,7 @@ export async function loadUnlinkedRefundReturns(
       )
       .map((r) => ({ creditNoteId: r.creditNoteId, items: r.items ?? [] })),
     amount: roundMoney([...live.values()].reduce((t, a) => t + a, 0)),
+    amountByOrder,
   };
 }
 
@@ -435,7 +456,6 @@ export async function loadOrderRefundRoom(
   // a row read without its total is no bill (every real Invoice has one): no figure, no bound
   if (invoices.length === 0 || invoices.some((i) => i.total == null)) return null;
   const ids = invoices.map((i) => i.id);
-  const billed = roundMoney(invoices.reduce((t, i) => t + Number(i.total ?? 0), 0));
 
   // the inline returns sourced from these invoices' lines, at their gross (net + tax + category tax of each item)
   const lines: Array<{ id: string }> =
@@ -467,18 +487,6 @@ export async function loadOrderRefundRoom(
             return: { select: { creditNoteId: true } },
           },
         })) ?? []);
-  const inline = roundMoney(
-    inlineItems.reduce(
-      (t, it) =>
-        t + Number(it.subtotal ?? 0) + Number(it.taxAmount ?? 0) + Number(it.categoryTax ?? 0),
-      0,
-    ),
-  );
-  // an inline return's note is counted by the return above: should it ever sit on an invoice, never twice
-  const inlineNoteIds = new Set(
-    inlineItems.map((it) => it.return?.creditNoteId).filter((id): id is string => !!id),
-  );
-
   const noteRows: Array<{ id: string; amount: unknown }> =
     (db.creditNote
       ? await db.creditNote.findMany({
@@ -490,19 +498,16 @@ export async function loadOrderRefundRoom(
           select: { id: true, amount: true },
         })
       : null) ?? [];
-  const notes = roundMoney(
-    noteRows.filter((n) => !inlineNoteIds.has(n.id)).reduce((t, n) => t + Number(n.amount ?? 0), 0),
-  );
 
   let unlinked = 0;
-  let recorded = 0;
+  let external: Array<{ refundAmount: unknown }> = [];
   if (orderId) {
     unlinked = (
       await loadUnlinkedRefundReturns(db, orderId, {
         excludeCreditNoteId: opts.excludeCreditNoteId,
       })
     ).amount;
-    const external: Array<{ refundAmount: unknown }> =
+    external =
       (await db.return?.findMany?.({
         where: {
           orderId,
@@ -514,13 +519,165 @@ export async function loadOrderRefundRoom(
         },
         select: { refundAmount: true },
       })) ?? [];
-    recorded = roundMoney(external.reduce((t, r) => t + Number(r.refundAmount ?? 0), 0));
   }
+  return composeOrderRefundRoom({ invoices, inlineItems, noteRows, unlinked, external });
+}
+
+/**
+ * The arithmetic of the order-wide bound, from rows already read. The one place the figure is made: the live helper above
+ * reads one order under its locks, and `loadOrderRefundRooms` (below) reads many for the owner-run census; both end here, so
+ * the two cannot disagree about what counts. `null`: no creditable invoice, or an invoice read without its total.
+ */
+export function composeOrderRefundRoom(parts: {
+  invoices: Array<{ total: unknown }>;
+  inlineItems: Array<{
+    subtotal: unknown;
+    taxAmount: unknown;
+    categoryTax: unknown;
+    return?: { creditNoteId?: string | null } | null;
+  }>;
+  noteRows: Array<{ id: string; amount: unknown }>;
+  unlinked: number;
+  external: Array<{ refundAmount: unknown }>;
+}): OrderRefundRoom | null {
+  const { invoices, inlineItems, noteRows, unlinked, external } = parts;
+  if (invoices.length === 0 || invoices.some((i) => i.total == null)) return null;
+  const billed = roundMoney(invoices.reduce((t, i) => t + Number(i.total ?? 0), 0));
+  const inline = roundMoney(
+    inlineItems.reduce(
+      (t, it) =>
+        t + Number(it.subtotal ?? 0) + Number(it.taxAmount ?? 0) + Number(it.categoryTax ?? 0),
+      0,
+    ),
+  );
+  // an inline return's note is counted by the return above: should it ever sit on an invoice, never twice
+  const inlineNoteIds = new Set(
+    inlineItems.map((it) => it.return?.creditNoteId).filter((id): id is string => !!id),
+  );
+  const notes = roundMoney(
+    noteRows.filter((n) => !inlineNoteIds.has(n.id)).reduce((t, n) => t + Number(n.amount ?? 0), 0),
+  );
+  const recorded = roundMoney(external.reduce((t, r) => t + Number(r.refundAmount ?? 0), 0));
   return {
     billed,
     given: { notes, unlinked, recorded, inline },
     room: roundMoney(billed - notes - unlinked - recorded - inline),
   };
+}
+
+const ROOM_IN_CHUNK = 5000;
+const inChunks = <T>(xs: readonly T[]): T[][] => {
+  const out: T[][] = [];
+  for (let i = 0; i < xs.length; i += ROOM_IN_CHUNK) out.push(xs.slice(i, i + ROOM_IN_CHUNK));
+  return out;
+};
+
+/**
+ * Many anchors at once, for the read-only census: the same figure as `loadOrderRefundRoom` for each anchor (a spec holds them
+ * equal over every kind of giver), from a handful of keyed reads for the whole batch instead of about eight per order. Plain
+ * reads only. The result lines up with `anchors`; a `null` is an anchor with no bound. No exclusions: a census counts everything.
+ */
+export async function loadOrderRefundRooms(
+  db: any,
+  anchors: ReadonlyArray<{ orderId?: string | null; invoiceId?: string | null }>,
+): Promise<Array<OrderRefundRoom | null>> {
+  const orderIds = [...new Set(anchors.map((a) => a.orderId).filter((x): x is string => !!x))];
+  const invoiceOnly = [
+    ...new Set(anchors.filter((a) => !a.orderId && a.invoiceId).map((a) => a.invoiceId as string)),
+  ];
+  const live = { status: { notIn: CREDIT_SOURCE_EXCLUDED } };
+
+  const invoices: Array<{ id: string; orderId: string | null; total: unknown }> = [];
+  for (const c of inChunks(orderIds))
+    invoices.push(
+      ...((await db.invoice.findMany({
+        where: { orderId: { in: c }, ...live },
+        select: { id: true, orderId: true, total: true },
+      })) ?? []),
+    );
+  for (const c of inChunks(invoiceOnly))
+    invoices.push(
+      ...((await db.invoice.findMany({
+        where: { id: { in: c }, ...live },
+        select: { id: true, orderId: true, total: true },
+      })) ?? []),
+    );
+  const invoiceIds = invoices.map((i) => i.id);
+
+  const lineInvoice = new Map<string, string>();
+  for (const c of inChunks(invoiceIds))
+    for (const l of (await db.invoiceItem.findMany({
+      where: { invoiceId: { in: c } },
+      select: { id: true, invoiceId: true },
+    })) ?? [])
+      lineInvoice.set(l.id, l.invoiceId);
+
+  const inlineByInvoice = new Map<string, any[]>();
+  for (const c of inChunks([...lineInvoice.keys()]))
+    for (const it of (await db.returnItem.findMany({
+      where: {
+        sourceInvoiceItemId: { in: c },
+        return: { kind: "INLINE", status: { notIn: ["CANCELLED", "REJECTED"] } },
+      },
+      select: {
+        subtotal: true,
+        taxAmount: true,
+        categoryTax: true,
+        sourceInvoiceItemId: true,
+        return: { select: { creditNoteId: true } },
+      },
+    })) ?? []) {
+      const inv = lineInvoice.get(it.sourceInvoiceItemId);
+      if (!inv) continue;
+      if (!inlineByInvoice.has(inv)) inlineByInvoice.set(inv, []);
+      inlineByInvoice.get(inv)!.push(it);
+    }
+
+  const notesByInvoice = new Map<string, Array<{ id: string; amount: unknown }>>();
+  for (const c of inChunks(invoiceIds))
+    for (const n of (await db.creditNote.findMany({
+      where: { invoiceId: { in: c }, status: { not: "VOID" } },
+      select: { id: true, amount: true, invoiceId: true },
+    })) ?? []) {
+      if (!notesByInvoice.has(n.invoiceId)) notesByInvoice.set(n.invoiceId, []);
+      notesByInvoice.get(n.invoiceId)!.push({ id: n.id, amount: n.amount });
+    }
+
+  // SA-1053: the refund notes minted before the order was invoiced come from their one reader; then the recorded refunds
+  const unlinkedAmount = new Map<string, number>();
+  const externalOfOrder = new Map<string, Array<{ refundAmount: unknown }>>();
+  for (const c of inChunks(orderIds)) {
+    for (const [order, amount] of (await loadUnlinkedRefundReturns(db, c)).amountByOrder)
+      unlinkedAmount.set(order, amount);
+    for (const r of (await db.return.findMany({
+      where: {
+        orderId: { in: c },
+        kind: { not: "INLINE" },
+        refundMethod: "EXTERNAL_REFUND",
+        creditNoteId: null,
+        status: "REFUNDED",
+      },
+      select: { orderId: true, refundAmount: true },
+    })) ?? []) {
+      if (!externalOfOrder.has(r.orderId)) externalOfOrder.set(r.orderId, []);
+      externalOfOrder.get(r.orderId)!.push({ refundAmount: r.refundAmount });
+    }
+  }
+
+  return anchors.map((a) => {
+    const mine = a.orderId
+      ? invoices.filter((i) => i.orderId === a.orderId)
+      : a.invoiceId
+        ? invoices.filter((i) => i.id === a.invoiceId)
+        : [];
+    return composeOrderRefundRoom({
+      invoices: mine,
+      inlineItems: mine.flatMap((i) => inlineByInvoice.get(i.id) ?? []),
+      noteRows: mine.flatMap((i) => notesByInvoice.get(i.id) ?? []),
+      unlinked: a.orderId ? (unlinkedAmount.get(a.orderId) ?? 0) : 0,
+      external: a.orderId ? (externalOfOrder.get(a.orderId) ?? []) : [],
+    });
+  });
 }
 
 /** The refusal for a take past the room (null: it fits). `left` is what the order can still give back, never below 0. */
