@@ -299,6 +299,11 @@ describe("singular bucket keys", () => {
     expect(text([{ qty: 2, unit: "Gross" }])).toBe("1 line · 2 gross");
     expect(text([{ qty: 2, unit: "kg" }])).toBe("1 line · 2 kg");
   });
+
+  it("keeps a two-letter abbreviation whole", () => {
+    expect(text([{ qty: 1, unit: "CS" }])).toBe("1 line · 1 cs");
+    expect(text([{ qty: 3, unit: "CS" }])).toBe("1 line · 3 cs");
+  });
 });
 
 // W-1185 fix 1 (F8): a quantity shows up to 3 decimals, like the qty column.

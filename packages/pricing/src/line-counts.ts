@@ -52,11 +52,12 @@ const num = (v: unknown): number => Number(v ?? 0) || 0;
  * The singular, lower-case form of a free-text unit word: the inverse of `pluralize`, so a tenant's
  * "Cases", "Pcs" or "pc." lands in the same bucket as "Case", "Pc" and "pc". A trailing "." goes
  * first; an invariant word stays; "...ies" -> "...y"; "...(ch|sh|x|z)es" -> strip "es"; "...ss"
- * stays; any other "...s" -> strip "s".
+ * stays; a two-letter word stays; any other "...s" -> strip "s".
  */
 export function singularOf(word: string): string {
   const w = word.trim().replace(/\.$/, "").trim().toLowerCase();
-  if (w.length < 2 || INVARIANT_UNIT_WORDS.has(w) || w.endsWith("ss")) return w;
+  // A two-letter word is an abbreviation ("cs", "ea", "kg"), never a plural.
+  if (w.length <= 2 || INVARIANT_UNIT_WORDS.has(w) || w.endsWith("ss")) return w;
   if (w.endsWith("ies") && w.length > 3) return `${w.slice(0, -3)}y`;
   if (/(ch|sh|x|z)es$/.test(w)) return w.slice(0, -2);
   return w.endsWith("s") ? w.slice(0, -1) : w;
