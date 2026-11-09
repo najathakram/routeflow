@@ -110,10 +110,10 @@ export default function FinancesPage() {
   // total, never a count of `activeCredits` — that list is a capped, partial
   // view (at most the 6 most recent rows out of the ledger's own take cap).
   const hasActiveCredit = (statement?.availableCredit ?? 0) > 0;
-  // The card shows fewer credits than exist whenever EITHER cap bit: the
-  // server truncated the ledger, or the 6-row budget dropped rows it did send.
+  // The note is about THIS list: it shows only when the 6-row budget dropped credits the ledger did
+  // send. The ledger flag alone only words the count ("the latest") once the note is already due.
   const ledgerTruncated = statement?.transactionsTruncated === true;
-  const activeCreditsTruncated = ledgerTruncated || creditRows.length > activeCredits.length;
+  const activeCreditsTruncated = creditRows.length > activeCredits.length;
 
   if (isLoading) {
     return (
