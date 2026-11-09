@@ -52,6 +52,7 @@ import {
   TrendingDown,
   Filter,
   BookOpen,
+  ChevronDown,
   Download,
   Printer,
 } from "lucide-react";
@@ -2373,6 +2374,9 @@ function FinanceReportsContent() {
     searchParams.get("to") ?? new Date().toISOString().split("T")[0],
   );
 
+  // Phone width only (B476): the catalog is collapsed behind a button; from md up it is always shown.
+  const [catalogOpen, setCatalogOpen] = React.useState(false);
+
   const activeInfo = reportGroups.flatMap((g) => g.reports).find((r) => r.id === activeReport);
   const needsDates = !["ar-aging", "bad-debts", "customer-balance", "ledger"].includes(
     activeReport,
@@ -2382,6 +2386,7 @@ function FinanceReportsContent() {
     const params = new URLSearchParams({ report: id, from, to });
     if (context) Object.entries(context).forEach(([k, v]) => params.set(k, v));
     router.push(`/finance/reports?${params.toString()}`);
+    setCatalogOpen(false);
   };
 
   const handleFromChange = (val: string) => {
@@ -2435,52 +2440,77 @@ function FinanceReportsContent() {
 
   return (
     <ToastContext.Provider value={{ toast }}>
-      <div className="flex h-full">
-        {/* Left: Report catalog */}
-        <div className="w-72 shrink-0 overflow-y-auto border-r border-surface-border bg-white">
-          <div className="border-b border-surface-border px-4 py-4">
-            <h2 className="text-sm font-semibold text-navy">All reports</h2>
-          </div>
-          <div className="py-2">
-            {reportGroups.map((group) => {
-              const Icon = group.icon;
-              return (
-                <div key={group.id} className="mb-1">
-                  <div className="flex items-center gap-2 px-4 py-2">
-                    <span
-                      className={cn(
-                        "flex h-6 w-6 items-center justify-center rounded",
-                        group.color,
-                      )}
-                    >
-                      <Icon className="h-3.5 w-3.5" />
-                    </span>
-                    <span className="text-xs font-semibold uppercase tracking-wide text-navy/70">
-                      {group.label}
-                    </span>
+      <div className="flex h-full flex-col md:flex-row">
+        {/* Left: Report catalog. Below md it is collapsed behind a button (B476). */}
+        <div className="w-full shrink-0 border-b border-surface-border bg-white md:w-72 md:overflow-y-auto md:border-b-0 md:border-r">
+          <button
+            type="button"
+            aria-expanded={catalogOpen}
+            aria-controls="reports-catalog"
+            onClick={() => setCatalogOpen((o) => !o)}
+            className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left md:hidden"
+          >
+            <span className="min-w-0">
+              <span className="block text-sm font-semibold text-navy">All reports</span>
+              <span className="block truncate text-xs text-navy/70">
+                {activeInfo?.label ?? activeReport}
+              </span>
+            </span>
+            <ChevronDown
+              className={cn("h-4 w-4 shrink-0 text-navy/70", catalogOpen && "rotate-180")}
+            />
+          </button>
+          <div
+            id="reports-catalog"
+            className={cn(
+              catalogOpen ? "block" : "hidden",
+              "max-h-[60vh] overflow-y-auto md:block md:max-h-none md:overflow-visible",
+            )}
+          >
+            <div className="hidden border-b border-surface-border px-4 py-4 md:block">
+              <h2 className="text-sm font-semibold text-navy">All reports</h2>
+            </div>
+            <div className="py-2">
+              {reportGroups.map((group) => {
+                const Icon = group.icon;
+                return (
+                  <div key={group.id} className="mb-1">
+                    <div className="flex items-center gap-2 px-4 py-2">
+                      <span
+                        className={cn(
+                          "flex h-6 w-6 items-center justify-center rounded",
+                          group.color,
+                        )}
+                      >
+                        <Icon className="h-3.5 w-3.5" />
+                      </span>
+                      <span className="text-xs font-semibold uppercase tracking-wide text-navy/70">
+                        {group.label}
+                      </span>
+                    </div>
+                    {group.reports.map((report) => (
+                      <button
+                        key={report.id}
+                        onClick={() => selectReport(report.id)}
+                        className={cn(
+                          "w-full px-4 py-2 pl-12 text-left text-sm transition-colors hover:bg-surface-raised",
+                          activeReport === report.id
+                            ? "bg-brand-50 text-brand-600 font-medium"
+                            : "text-navy/70",
+                        )}
+                      >
+                        {report.label}
+                      </button>
+                    ))}
                   </div>
-                  {group.reports.map((report) => (
-                    <button
-                      key={report.id}
-                      onClick={() => selectReport(report.id)}
-                      className={cn(
-                        "w-full px-4 py-2 pl-12 text-left text-sm transition-colors hover:bg-surface-raised",
-                        activeReport === report.id
-                          ? "bg-brand-50 text-brand-600 font-medium"
-                          : "text-navy/70",
-                      )}
-                    >
-                      {report.label}
-                    </button>
-                  ))}
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
         </div>
 
         {/* Right: Report viewer */}
-        <div className="flex-1 overflow-y-auto">
+        <div className="min-w-0 flex-1 overflow-y-auto">
           {false ? null : (
             <div className="p-6 space-y-5">
               {/* Report header */}
