@@ -1183,6 +1183,16 @@ export default defineConfig({
               storageState: path.join(AUTH_DIR, "operator.json"),
             },
           },
+          // W-1184 / W-1186: leaving the counter parks the sale; an unknown scan opens New product. Local lane only, like 71-73.
+          {
+            name: "counter-auto-park",
+            testMatch: /83-counter-auto-park\.spec\.ts/,
+            dependencies: ["setup"],
+            use: {
+              ...devices["Desktop Chrome"],
+              storageState: path.join(AUTH_DIR, "operator.json"),
+            },
+          },
           {
             name: "till-permission",
             testMatch: /bo-api-till-permission\.spec\.ts/,

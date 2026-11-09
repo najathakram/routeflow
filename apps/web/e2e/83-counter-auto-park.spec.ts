@@ -81,9 +81,10 @@ for (const vp of VIEWPORTS) {
       await page.goto(COUNTER);
       await page.getByRole("button", { name: /^Parked/ }).click();
       const dialog = page.getByRole("dialog", { name: "Parked sales" });
-      for (const b of await dialog.getByRole("button", { name: /^Discard / }).all()) {
-        await b.click();
-      }
+      const discards = dialog.getByRole("button", { name: /^Discard / });
+      while ((await discards.count()) > 0) await discards.first().click(); // each one hides at once (Undo window)
+      await expect(dialog.getByText("No parked sales.")).toBeVisible();
+      await page.waitForTimeout(9_000); // the deletes leave once the Undo window has passed
     });
 
     test("an unknown scan opens New product with the code in SKU; Esc skips", async ({
@@ -97,9 +98,18 @@ for (const vp of VIEWPORTS) {
       const code = "0000000000017";
       await scan.fill(code);
       await scan.press("Enter");
-      await expect(page.getByRole("heading", { name: "New product" })).toBeVisible({
-        timeout: 15_000,
-      });
+      // a shop with tracked categories is asked the one required question first (compliance); answer No
+      const ask = page.getByRole("heading", { name: "Is this a licensed or regulated item?" });
+      const newProduct = page.getByRole("heading", { name: "New product" });
+      await expect(ask.or(newProduct)).toBeVisible({ timeout: 15_000 });
+      if (await ask.isVisible()) {
+        await page.screenshot({ path: `test-results/w1186-regulated-question-${vp.name}.png` });
+        await page.getByRole("button", { name: "No", exact: true }).click();
+      }
+      await expect(newProduct).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByRole("textbox", { name: "Scan or type", exact: true })).toHaveValue(
+        code,
+      );
       await page.screenshot({ path: `test-results/w1186-new-product-${vp.name}.png` });
       await page.keyboard.press("Escape");
       await expect(page.getByRole("heading", { name: "New product" })).toHaveCount(0);
