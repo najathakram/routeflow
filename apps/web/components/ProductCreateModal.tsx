@@ -130,9 +130,9 @@ function uomsForItemType(
 const TIER_NUMBERS = [2, 3, 4, 5] as const;
 type TierNumber = (typeof TIER_NUMBERS)[number];
 const tierKey = (t: TierNumber) => `priceTier${t}` as const;
-/** A typed tier price: digits with an optional decimal part. Anything else (a comma, a sign, letters) is refused. */
+/** A typed tier price: digits, up to 2 decimals. A comma, sign, letter or third decimal is refused. */
 const isTierPriceText = (raw: string) =>
-  /^[0-9]+([.][0-9]+)?$/.test(raw) || /^[.][0-9]+$/.test(raw);
+  /^[0-9]+([.][0-9]{1,2})?$/.test(raw) || /^[.][0-9]{1,2}$/.test(raw);
 
 /**
  * The full product-create form — extracted verbatim from the products page's

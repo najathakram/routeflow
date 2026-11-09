@@ -129,7 +129,7 @@ describe("W-1170 F12a: tier prices at create", () => {
     ).toBeInTheDocument();
   });
 
-  it.each([["12,50"], ["0"], ["-3"], ["abc"]])(
+  it.each([["12,50"], ["0"], ["-3"], ["abc"], ["33.333"], ["0.004"]])(
     "a tier of %p blocks Create, reopens the closed block and flags the input",
     async (bad) => {
       open();
