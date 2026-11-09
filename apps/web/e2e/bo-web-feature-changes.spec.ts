@@ -85,6 +85,26 @@ function fulfillJson(route: Route, body: unknown, status = 200) {
   });
 }
 
+const SAVED_SET = {
+  id: "cs-hist-1",
+  action: "FEATURE_CHANGE_SET_APPLIED",
+  createdAt: "2026-11-09T10:00:00.000Z",
+  actor: { email: "maria@acme.test", username: "maria" },
+  meta: {
+    reason: "Pilot ended",
+    changes: [
+      {
+        type: "override",
+        key: "msrp",
+        before: { id: "o1", effect: "GRANT", kind: "COMP", expiresAt: null },
+        after: { effect: "DENY", kind: "COMP", expiresAt: null },
+        createdIds: ["o2"],
+        revokedIds: ["o1"],
+      },
+    ],
+  },
+};
+
 const ON = { effect: "GRANT", kind: "COMP", expiresAt: null };
 const OFF = { effect: "DENY", kind: "COMP", expiresAt: null };
 
@@ -95,7 +115,10 @@ interface Recorded {
   undos: string[];
 }
 
-async function gotoConsole(page: Page, opts: { saveStatus?: number } = {}): Promise<Recorded> {
+async function gotoConsole(
+  page: Page,
+  opts: { saveStatus?: number; history?: boolean } = {},
+): Promise<Recorded> {
   const rec: Recorded = { dryRuns: [], saves: [], undos: [] };
   await mockUnmockedBackoffice(page);
   await mockOverviewReads(page, TENANT_ID, { fulfilment_model: "unset", counter_sales: "unset" });
@@ -132,9 +155,13 @@ async function gotoConsole(page: Page, opts: { saveStatus?: number } = {}): Prom
   await page.route(new RegExp(`/platform-admin/tenants/${TENANT_ID}/feature-overrides$`), (route) =>
     fulfillJson(route, []),
   );
-  await page.route(/\/platform-admin\/audit-logs(\?.*)?$/, (route) =>
-    fulfillJson(route, { data: [], meta: { total: 0, pages: 1 } }),
-  );
+  await page.route(/\/platform-admin\/audit-logs(\?.*)?$/, (route) => {
+    const applied = route.request().url().includes("action=FEATURE_CHANGE_SET_APPLIED");
+    return fulfillJson(route, {
+      data: opts.history && applied ? [SAVED_SET] : [],
+      meta: { total: 0, pages: 1 },
+    });
+  });
   await page.route(/\/platform-admin\/features\/registry(\?.*)?$/, (route) =>
     fulfillJson(route, ROWS),
   );
@@ -190,7 +217,14 @@ async function gotoConsole(page: Page, opts: { saveStatus?: number } = {}): Prom
     window.localStorage.setItem("superAdminToken", token);
   }, fakeSuperAdminToken());
   await page.goto(`/admin/tenants/${TENANT_ID}`);
-  await page.getByRole("button", { name: "Setup", exact: true }).click();
+  if (opts.history) {
+    await page.getByRole("button", { name: "History", exact: true }).click();
+    await expect(page.getByText(/maria@acme.test turned off MSRP on invoices/)).toBeVisible({
+      timeout: 15_000,
+    });
+    return rec;
+  }
+  await page.getByRole("button", { name: "Features", exact: true }).click();
   await expect(page.locator('[data-feature-key="msrp"]')).toBeVisible({ timeout: 15_000 });
   return rec;
 }
@@ -254,6 +288,22 @@ for (const vp of VIEWPORTS) {
       await page.getByRole("button", { name: "Undo", exact: true }).click();
       await expect.poll(() => rec.undos.length).toBe(1);
       expect(rec.undos[0]).toContain("/features/changes/cs-1/undo");
+    });
+
+    test("History reads the saved set as a sentence; Restore opens the sheet and Undo this change works", async ({
+      page,
+    }) => {
+      const rec = await gotoConsole(page, { history: true });
+      await expect(page.getByText(/Reason: Pilot ended\./)).toBeVisible();
+      await noSideScroll(page);
+      await page.getByRole("button", { name: "Restore the earlier settings" }).click();
+      const dialog = page.getByRole("dialog");
+      await expect(dialog.getByText(/MSRP on invoices: .* to On/)).toBeVisible();
+      await noSideScroll(page);
+      await dialog.getByRole("button", { name: "Cancel" }).click();
+      await page.getByRole("button", { name: "Undo this change" }).click();
+      await expect.poll(() => rec.undos.length).toBe(1);
+      expect(rec.undos[0]).toContain("/features/changes/cs-hist-1/undo");
     });
 
     test("a stale save says Changed by someone else and keeps the staged changes", async ({

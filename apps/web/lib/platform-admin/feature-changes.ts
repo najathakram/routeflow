@@ -4,6 +4,7 @@
 import type {
   ApplyFeatureChangesRequest,
   FeatureChangeInput,
+  FeatureChangeRecord,
   FeatureChangesApplyResponse,
   FeatureChangesPreviewResponse,
 } from "@routeflow/types";
@@ -55,6 +56,34 @@ export async function undoFeatureChanges(
     { reason },
   );
   return res.data;
+}
+
+/** One saved (or undone) set as History reads it: the audit row with the set kept in its meta (R53). */
+export interface FeatureChangeLogRow {
+  id: string;
+  action: "FEATURE_CHANGE_SET_APPLIED" | "FEATURE_CHANGE_SET_UNDONE";
+  createdAt: string;
+  actor?: { username?: string | null; email?: string | null } | null;
+  meta?: {
+    reason?: string;
+    undoOf?: string;
+    changes?: FeatureChangeRecord[];
+  } | null;
+}
+
+/** The saved and undone sets for one business, newest first. */
+export async function fetchFeatureChangeLog(tenantId: string): Promise<FeatureChangeLogRow[]> {
+  const get = (action: FeatureChangeLogRow["action"]) =>
+    superAdminClient.get<{ data: FeatureChangeLogRow[] }>(
+      `/platform-admin/audit-logs?tenantId=${tenantId}&action=${action}&limit=20`,
+    );
+  const [applied, undone] = await Promise.all([
+    get("FEATURE_CHANGE_SET_APPLIED"),
+    get("FEATURE_CHANGE_SET_UNDONE"),
+  ]);
+  return [...applied.data.data, ...undone.data.data].sort((a, b) =>
+    a.createdAt < b.createdAt ? 1 : -1,
+  );
 }
 
 /** The server's error code for a refused request, if it sent one. */
