@@ -43,6 +43,7 @@ import {
   FULFIL_METHOD_NOT_OFFERED_COPY,
   buyerFulfilmentChoice,
   isFulfilMethodNotOffered,
+  sellerShowsRouteWording,
 } from "@/lib/buyer-fulfilment";
 import { buyerBlockedMessage, parseSellingRestricted } from "@/lib/api/selling-restricted";
 import { API_ERROR_CODES, buyerNeedsStateCopy } from "@routeflow/types";
@@ -622,15 +623,17 @@ export default function BuyerCartPage() {
           <div className="rounded-xl border border-surface-border bg-white p-4 space-y-4">
             <h3 className="text-sm font-semibold text-navy">Order options</h3>
 
-            <div>
-              <label className="block text-xs text-navy/70 mb-1">Requested delivery date</label>
-              <input
-                type="date"
-                value={deliveryDate}
-                onChange={(e) => setDeliveryDate(e.target.value)}
-                className="h-9 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-buyer-500 focus:outline-none focus:ring-1 focus:ring-buyer-500"
-              />
-            </div>
+            {sellerShowsRouteWording(capability) && (
+              <div>
+                <label className="block text-xs text-navy/70 mb-1">Requested delivery date</label>
+                <input
+                  type="date"
+                  value={deliveryDate}
+                  onChange={(e) => setDeliveryDate(e.target.value)}
+                  className="h-9 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-buyer-500 focus:outline-none focus:ring-1 focus:ring-buyer-500"
+                />
+              </div>
+            )}
 
             {choice.showChoice && (
               <fieldset>
