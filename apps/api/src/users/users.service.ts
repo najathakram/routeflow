@@ -408,11 +408,11 @@ export class UsersService {
     const emailWritten = emailChanged && !holdEmail;
     if (holdEmail) {
       // Refuse a taken address now, not a day later when the owner of the new mailbox clicks. The unique index at
-      // confirm time stays the backstop for a race. `insensitive`: the same comparison the N2 normalisation makes.
+      // confirm time stays the backstop for a race. `insensitive`: the same comparison the N2 normalisation makes. No
+      // `deletedAt` filter: `@@unique([tenantId, email])` covers a soft-deleted row too.
       const taken = await this.prisma.forTenant().user.findFirst({
         where: {
           id: { not: userId },
-          deletedAt: null,
           email: { equals: normalizedEmail as string, mode: "insensitive" },
         },
         select: { id: true },
@@ -453,7 +453,11 @@ export class UsersService {
     };
     // F03 slice 2 (SA-1096): the write and the burn of the account's live links are ONE transaction, so a crash
     // between them can never leave a link that outlives the identity or role it was minted for.
-    const { row: updated, changeToken } = await this.prisma.tenantTransaction(async (tx) => {
+    const {
+      row: updated,
+      changeToken,
+      fromEmail,
+    } = await this.prisma.tenantTransaction(async (tx) => {
       const row = await tx.user.update({
         where: { id: userId },
         data,
@@ -472,18 +476,27 @@ export class UsersService {
       // The hold's row is written AFTER the burn above, so a role change in the same edit cannot burn it. It burns the
       // user's older change rows itself: a newer request supersedes an older one.
       let changeToken: string | null = null;
+      let fromEmail = user.email;
       if (holdEmail) {
         // The row records the address as it stands once the User row is locked, not the pre-transaction snapshot.
         await tx.$executeRaw`SELECT 1 FROM "User" WHERE id = ${userId} FOR UPDATE`;
         const now = await tx.user.findUnique({ where: { id: userId }, select: { email: true } });
-        changeToken = await issueEmailChange(tx, {
-          userId,
-          fromEmail: now?.email ?? user.email,
-          toEmail: normalizedEmail as string,
-          requestedByUserId: requestedByUserId ?? userId,
-        });
+        fromEmail = now?.email ?? user.email;
+        // A set-password or reset link mailed to the OLD address dies with the hold, as it does on an at-once write: an
+        // admin who corrects a mistyped address must not leave a live link in the wrong inbox. Burn only, never a
+        // write to the sign-up table, so B448 stays closed. It also burns older change rows; the new row comes after.
+        await revokeUserLinkTokens(tx, userId);
+        // Someone already moved it to this very address: nothing to hold (the row's CHECK would refuse from = to).
+        if (fromEmail.trim().toLowerCase() !== normalizedEmail) {
+          changeToken = await issueEmailChange(tx, {
+            userId,
+            fromEmail,
+            toEmail: normalizedEmail as string,
+            requestedByUserId: requestedByUserId ?? userId,
+          });
+        }
       }
-      return { row, changeToken };
+      return { row, changeToken, fromEmail };
     });
 
     // Best-effort account notices (NOTIFY-SPEC N2) — never let a delivery failure
@@ -491,7 +504,7 @@ export class UsersService {
     if (holdEmail && changeToken) {
       await this.notifyEmailChangeRequested(
         userId,
-        user.email,
+        fromEmail,
         normalizedEmail as string,
         updated.username,
         changeToken,
@@ -534,7 +547,7 @@ export class UsersService {
     }
 
     // The user as it stands, plus the address it is waiting on. A write at once burned any pending row (above).
-    const pendingEmail = holdEmail
+    const pendingEmail = changeToken
       ? (normalizedEmail as string)
       : emailWritten
         ? null

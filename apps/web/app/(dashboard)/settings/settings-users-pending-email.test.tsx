@@ -10,7 +10,14 @@ jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
 }));
 
+const mockToast = jest.fn();
+jest.mock("@routeflow/ui/web", () => ({
+  ...jest.requireActual("@routeflow/ui/web"),
+  useToast: () => ({ toast: mockToast }),
+}));
+
 let mockUser: Record<string, unknown>;
+const mockUpdate = jest.fn();
 jest.mock("@/lib/api/users", () => ({
   ...jest.requireActual("@/lib/api/users"),
   useUsers: () => ({
@@ -18,7 +25,7 @@ jest.mock("@/lib/api/users", () => ({
     isLoading: false,
   }),
   useCreateOperator: () => ({ mutateAsync: jest.fn(), isPending: false, error: null }),
-  useUpdateUser: () => ({ mutateAsync: jest.fn(), isPending: false, error: null }),
+  useUpdateUser: () => ({ mutateAsync: mockUpdate, isPending: false, error: null }),
   useChangeUserStatus: () => ({ mutate: jest.fn(), isPending: false }),
   useResetUserPassword: () => ({ mutate: jest.fn(), isPending: false }),
 }));
@@ -60,6 +67,55 @@ describe("SettingsPage: Edit user, pending email", () => {
     // the stored email stays in the field until the change confirms
     expect(dialog.getByLabelText("Email")).toHaveValue("jdoe@example.com");
   });
+
+  // The request-time 409 EMAIL_TAKEN is shown as the fixed sentence for its code, never the server's text; any other
+  // failure gets the generic copy. (Ratchet: the raw-message allowlist for this page drops by this one read.)
+  it.each([
+    [
+      "EMAIL_TAKEN",
+      { status: 409, data: { code: "EMAIL_TAKEN", message: "SERVER PROSE MUST NOT SHOW" } },
+      "Another account already uses this address. Choose a different email.",
+    ],
+    [
+      "an unknown 500",
+      { status: 500, data: { message: "SERVER PROSE MUST NOT SHOW" } },
+      "Something went wrong on our side. Please try again.",
+    ],
+  ])(
+    "a failed save (%s) toasts fixed copy, never the server message",
+    async (_n, response, copy) => {
+      mockUser = { ...baseUser, pendingEmail: null };
+      mockToast.mockClear();
+      mockUpdate.mockImplementation(
+        async (_vars: unknown, opts: { onError: (e: Error) => void }) => {
+          opts.onError(
+            Object.assign(new Error("Request failed with status code " + response.status), {
+              response,
+            }),
+          );
+        },
+      );
+      const user = userEvent.setup();
+      renderWithProviders(<SettingsPage />);
+
+      await user.click(await screen.findByRole("button", { name: /edit user/i }));
+      const dialog = within(await screen.findByRole("dialog"));
+      await user.clear(dialog.getByLabelText("Email"));
+      await user.type(dialog.getByLabelText("Email"), "taken@example.com");
+      await user.click(dialog.getByRole("button", { name: /save changes/i }));
+
+      await screen.findByRole("dialog");
+      const toasts = mockToast.mock.calls.map((c) => c[0]);
+      expect(toasts).toHaveLength(1);
+      expect(toasts[0]).toMatchObject({
+        title: "Update failed",
+        description: copy,
+        variant: "error",
+      });
+      expect(JSON.stringify(toasts)).not.toContain("SERVER PROSE");
+      expect(JSON.stringify(toasts)).not.toContain("Request failed with status code");
+    },
+  );
 
   it("shows no waiting line when nothing is pending", async () => {
     mockUser = { ...baseUser, pendingEmail: null };

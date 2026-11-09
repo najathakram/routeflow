@@ -350,6 +350,47 @@ describeDb("B461: a login-email change waits for the new address (real database)
     }).toEqual({ stored: driver.email, pending: next, liveRows: 1 });
   });
 
+  // Reader S-new-2: a legacy invitee (created before the sign-in stamp was reliable) now HOLDS an email edit. The
+  // set-password link mailed to the old, mistyped address must still die when an admin corrects it. Red before: the
+  // hold burned nothing, so the link stayed live in the wrong inbox.
+  it("R-13: a legacy invitee's live set-password link dies when an admin corrects the email, though the change is held", async () => {
+    const tenantId = await mkTenant("r13");
+    const admin = await mkUser(tenantId, "admin", { role: UserRole.TENANT_ADMIN });
+    const invitee = await mkUser(tenantId, "legacyinv", {
+      signedIn: false,
+      forcePasswordChange: true,
+      createdAt: new Date("2026-09-01T00:00:00Z"),
+    });
+    const linkToken = randomUUID().replace(/-/g, "");
+    await prisma.passwordResetToken.create({
+      data: {
+        userId: invitee.id,
+        tokenHash: sha(linkToken),
+        expiresAt: new Date(Date.now() + 3_600_000),
+      },
+    });
+    const next = newAddress("legacyinv-fixed");
+    const res = await edit(
+      tenantId,
+      invitee.id,
+      { email: next },
+      { id: admin.id, role: UserRole.TENANT_ADMIN },
+    );
+
+    expect({
+      held: res.pendingEmail,
+      stored: await emailOf(invitee.id),
+      liveSetPasswordLinks: await prisma.passwordResetToken.count({
+        where: { userId: invitee.id, usedAt: null },
+      }),
+    }).toEqual({ held: next, stored: invitee.email, liveSetPasswordLinks: 0 });
+    await expect(auth.resetPassword(linkToken, "Abcdefg1!")).rejects.toBeDefined();
+    // B448 stays closed: the hold wrote nothing to the sign-up link table
+    expect(await prisma.userEmailVerificationToken.count({ where: { userId: invitee.id } })).toBe(
+      0,
+    );
+  });
+
   it("R-10: a new address another live user already holds is refused at the request (case-insensitive): EMAIL_TAKEN, no row, no mail", async () => {
     const tenantId = await mkTenant("r10");
     const holder = await mkUser(tenantId, "holder");

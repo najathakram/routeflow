@@ -110,7 +110,12 @@ import { useInvalidFocus } from "@/lib/form-errors";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 import { isReadOnlyRefusal, showReadOnlyRefusal } from "@/lib/read-only-refusal";
 import { userStatusRefusalCopy } from "@/lib/user-status-refusal";
-import { EMAIL_CHANGE_PENDING_COPY, EMAIL_CHANGE_SENT_COPY } from "@/lib/email-change-copy";
+import {
+  EMAIL_CHANGE_PENDING_COPY,
+  EMAIL_CHANGE_SENT_COPY,
+  emailEditRefusalCopy,
+} from "@/lib/email-change-copy";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { newPasswordSchema, passwordErrorMessage } from "@/lib/password-policy";
 import { PasswordChecklist } from "@/components/auth";
 import { isZoneUnset } from "@/lib/tenant-timezone";
@@ -792,9 +797,14 @@ function EditUserModal({
           }
           onClose();
         },
+        // A taken address has its own sentence; every other failure gets the generic copy, never the server's text.
         onError: (err) =>
           isReadOnlyRefusal(err) ||
-          toast({ title: "Update failed", description: err.message, variant: "error" }),
+          toast({
+            title: "Update failed",
+            description: emailEditRefusalCopy(err) ?? genericToastCopy(err),
+            variant: "error",
+          }),
       },
     );
   };
