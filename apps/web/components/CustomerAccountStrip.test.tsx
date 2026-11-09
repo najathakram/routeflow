@@ -49,6 +49,7 @@ jest.mock("@/components/CustomerRecordPaymentModal", () => ({
         >
           stub-pay
         </button>
+        <button onClick={() => p.onSuccess?.()}>stub-refresh-only</button>
       </div>
     );
   },
@@ -366,6 +367,25 @@ describe("CustomerAccountStrip", () => {
       await user.click(await screen.findByRole("button", { name: "Record payment" }));
       expect(modalProps?.customerId).toBe("c1");
       expect(modalProps?.focusInvoiceId).toBeUndefined();
+    });
+
+    // W-1170 P12: the quiet "No open invoices" note is an early return, and it must not take an open payment with it
+    it("the payment modal stays mounted when the balance reads zero behind it (a refresh mid-payment)", async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<CustomerAccountStrip customerId="c1" />);
+      await line();
+      await user.click(screen.getByRole("button", { name: /view/i }));
+      await user.click(await screen.findByRole("button", { name: "Record payment" }));
+      expect(screen.getByRole("dialog", { name: "Record payment stub" })).toBeInTheDocument();
+
+      statement = { outstandingAmount: 0, overdueAmount: 0 };
+      customer = { id: "c1", creditLimit: null };
+      invoices = [];
+      await user.click(screen.getByRole("button", { name: "stub-refresh-only" }));
+      await waitFor(() =>
+        expect(screen.getByTestId("account-strip-line")).toHaveTextContent("No open invoices"),
+      );
+      expect(screen.getByRole("dialog", { name: "Record payment stub" })).toBeInTheDocument();
     });
 
     it("after a payment the statement and open list are read again and the strip updates in place", async () => {

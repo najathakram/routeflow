@@ -71,6 +71,22 @@ export function CustomerAccountStrip({
 
   if (!id) return null;
 
+  const afterPayment = () => {
+    void qc.invalidateQueries({ queryKey: ["customers", id] });
+    void qc.invalidateQueries({ queryKey: ["invoices"] });
+  };
+  // An open payment outlives every shape of the strip: a refresh behind it can read zero owed (the quiet note), still
+  // loading or failed, and none of those may unmount the modal and drop the amount being typed or a save in flight.
+  const payModal = pay ? (
+    <CustomerRecordPaymentModal
+      customerId={id}
+      customerName={customerName}
+      focusInvoiceId={pay.focusInvoiceId}
+      onClose={() => setPay(null)}
+      onSuccess={afterPayment}
+    />
+  ) : null;
+
   // (d) the time zone only dates the rows: a failed read drops the day counts, never the strip.
   const failed =
     view.openBalance.state === "failed" ||
@@ -90,39 +106,45 @@ export function CustomerAccountStrip({
 
   if (failed) {
     return (
-      <div
-        role="status"
-        data-testid="account-strip"
-        className={cn(
-          shell,
-          "flex items-center justify-between gap-3 border-surface-border text-navy/70",
-        )}
-      >
-        <span title={COUNTER_CUSTOMER_LOAD_FAILED_COPY}>{ACCOUNT_STRIP_FAILED_COPY}</span>
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          onClick={() => {
-            void qc.invalidateQueries({ queryKey: ["customers", id] });
-            void qc.invalidateQueries({ queryKey: ["invoices"] });
-            void qc.invalidateQueries({ queryKey: ["settings"] });
-          }}
+      <>
+        <div
+          role="status"
+          data-testid="account-strip"
+          className={cn(
+            shell,
+            "flex items-center justify-between gap-3 border-surface-border text-navy/70",
+          )}
         >
-          Retry
-        </Button>
-      </div>
+          <span title={COUNTER_CUSTOMER_LOAD_FAILED_COPY}>{ACCOUNT_STRIP_FAILED_COPY}</span>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => {
+              void qc.invalidateQueries({ queryKey: ["customers", id] });
+              void qc.invalidateQueries({ queryKey: ["invoices"] });
+              void qc.invalidateQueries({ queryKey: ["settings"] });
+            }}
+          >
+            Retry
+          </Button>
+        </div>
+        {payModal}
+      </>
     );
   }
   if (loading || view.openBalance.state !== "ready" || view.creditLimit.state !== "ready") {
     return (
-      <div
-        role="status"
-        data-testid="account-strip"
-        className={cn(shell, "border-surface-border text-navy/60")}
-      >
-        Checking account…
-      </div>
+      <>
+        <div
+          role="status"
+          data-testid="account-strip"
+          className={cn(shell, "border-surface-border text-navy/60")}
+        >
+          Checking account…
+        </div>
+        {payModal}
+      </>
     );
   }
 
@@ -168,11 +190,6 @@ export function CustomerAccountStrip({
   if (overLimitBy > 0) parts.push(`${fmt(overLimitBy)} over limit`);
 
   const shown = showAll ? rows : rows.slice(0, COLLAPSED_ROWS);
-  const afterPayment = () => {
-    void qc.invalidateQueries({ queryKey: ["customers", id] });
-    void qc.invalidateQueries({ queryKey: ["invoices"] });
-  };
-
   // W-1170 P12: nothing owed is a quiet note, not a bordered box that reads as an input.
   if (nothing && !warn) {
     return (
@@ -180,6 +197,7 @@ export function CustomerAccountStrip({
         <p data-testid="account-strip-line" className="text-xs text-navy/60">
           No open invoices
         </p>
+        {payModal}
       </div>
     );
   }
@@ -307,15 +325,7 @@ export function CustomerAccountStrip({
         </div>
       ) : null}
 
-      {pay ? (
-        <CustomerRecordPaymentModal
-          customerId={id}
-          customerName={customerName}
-          focusInvoiceId={pay.focusInvoiceId}
-          onClose={() => setPay(null)}
-          onSuccess={afterPayment}
-        />
-      ) : null}
+      {payModal}
     </div>
   );
 }
