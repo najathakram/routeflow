@@ -574,6 +574,19 @@ export function ProductCreateModal({
       <p className="mt-0.5 text-xs text-navy/70">
         How many individual units are in one {w.pack.lower} (optional)
       </p>
+      {/* v2: one place to answer the pack size; the parsed suggestion is helper text under this field. */}
+      {pricesV2 && (
+        <PackSizePrompt
+          variant="helper"
+          className="mt-0.5"
+          // Mirrors the submit-time name resolution: a variant is created under its own `variantName`.
+          name={form.parentProductId && form.variantName.trim() ? form.variantName : form.name}
+          unit={form.unit}
+          unitSku={form.unitSku}
+          unitsPerBox={form.unitsPerBox}
+          onAccept={(value) => set("unitsPerBox", String(value))}
+        />
+      )}
       {validUnitsPerBoxPrefill(initialUnitsPerBox) &&
         form.unitsPerBox === String(initialUnitsPerBox) && (
           <p className="mt-0.5 text-[11px] text-navy/70">
@@ -1185,19 +1198,23 @@ export function ProductCreateModal({
             {/* `col-span-2` goes on the component itself, not a wrapper: the
                   prompt renders null most of the time and an empty wrapper would
                   still cost a grid row of `gap-4`. */}
-            <PackSizePrompt
-              className="col-span-2"
-              // Mirrors the submit-time name resolution above: a variant is
-              // created under its own `variantName`, not the blank name field.
-              name={form.parentProductId && form.variantName.trim() ? form.variantName : form.name}
-              unit={form.unit}
-              unitSku={form.unitSku}
-              unitsPerBox={form.unitsPerBox}
-              onAccept={(value) => set("unitsPerBox", String(value))}
-              onPendingChange={(value) => {
-                pendingPackSizeRef.current = value;
-              }}
-            />
+            {!pricesV2 && (
+              <PackSizePrompt
+                className="col-span-2"
+                // Mirrors the submit-time name resolution above: a variant is
+                // created under its own `variantName`, not the blank name field.
+                name={
+                  form.parentProductId && form.variantName.trim() ? form.variantName : form.name
+                }
+                unit={form.unit}
+                unitSku={form.unitSku}
+                unitsPerBox={form.unitsPerBox}
+                onAccept={(value) => set("unitsPerBox", String(value))}
+                onPendingChange={(value) => {
+                  pendingPackSizeRef.current = value;
+                }}
+              />
+            )}
           </div>
         </div>
         {/* K14 P16: a short fade over the last rows, so a scrolled form ends soft, not in a flat cut at the footer */}

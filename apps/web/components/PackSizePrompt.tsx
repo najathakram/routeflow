@@ -66,6 +66,13 @@ export interface PackSizePromptProps {
    * behind a "Saved" is the one thing this prompt must never do. A pre-filled suggestion never counts until typed.
    */
   onPendingChange?: (value: number | null) => void;
+  /**
+   * "card" (default) is the boxed prompt with its own count input. "helper" is for a form that already has its own
+   * Units per box field (W-1170 F12b): the same parser and the same never-guess rules, rendered as helper text under
+   * that field, so the pack size is asked in one place. HIGH/MEDIUM offer the count with a one-click "Use N",
+   * AMBIGUOUS states the conflict and offers nothing, LOW and PIECE_UNIT render nothing (the field itself asks).
+   */
+  variant?: "card" | "helper";
   className?: string;
 }
 
@@ -90,6 +97,7 @@ export function PackSizePrompt({
   currentStock,
   onAccept,
   onPendingChange,
+  variant = "card",
   className,
 }: PackSizePromptProps) {
   const currentUnitsPerBox = toPositiveNumber(unitsPerBox);
@@ -138,6 +146,30 @@ export function PackSizePrompt({
   if (dismissed) return null;
 
   const w = unitWords();
+  if (variant === "helper") {
+    if (suggestion.confidence === "AMBIGUOUS") {
+      return (
+        <p className={cn("text-[11px] text-navy/70", className)}>
+          This name mentions {suggestion.counts.length} different counts (
+          {formatCountList(suggestion.counts)}). Enter the one that is a {w.pack.lower}.
+        </p>
+      );
+    }
+    if (suggestion.confidence === "LOW" || suggestion.packSize == null) return null;
+    const n = suggestion.packSize;
+    return (
+      <p className={cn("text-[11px] text-navy/70", className)}>
+        Looks like {n} per {w.pack.lower}.{" "}
+        <button
+          type="button"
+          onClick={() => onAccept(n)}
+          className="font-medium text-accent-deep underline underline-offset-[3px] hover:no-underline"
+        >
+          {`Use ${n}`}
+        </button>
+      </p>
+    );
+  }
   const isAmbiguous = suggestion.confidence === "AMBIGUOUS";
   const isConfident = suggestion.confidence === "HIGH" || suggestion.confidence === "MEDIUM";
   const acceptableValue = parseAcceptableCount(draftValue);
