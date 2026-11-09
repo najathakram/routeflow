@@ -54,13 +54,17 @@ function braceBlock(src: string, open: number): string {
 }
 
 /** Watched columns written by an object-literal text: `key:` or a shorthand `{ key }`/`, key,`. */
-function watchedIn(model: Model, block: string): string[] {
-  return WATCHED_KEYS[model].filter((k) =>
-    new RegExp(String.raw`(?:\b${k}\s*:|[{,]\s*${k}\s*[,}])`).test(block),
-  );
+function watchedIn(keys: string[], block: string): string[] {
+  return keys.filter((k) => new RegExp(String.raw`(?:\b${k}\s*:|[{,]\s*${k}\s*[,}])`).test(block));
 }
 
-export function findWriters(file: string, raw: string, model: Model): Writer[] {
+export function findWriters(
+  file: string,
+  raw: string,
+  model: Model,
+  keys: string[] = WATCHED_KEYS[model],
+  revoke: RegExp = REVOKE[model],
+): Writer[] {
   const src = stripComments(raw);
   const out: Writer[] = [];
   const re = new RegExp(String.raw`\b${model}\.(update|updateMany|upsert)\(`, "g");
@@ -77,11 +81,11 @@ export function findWriters(file: string, raw: string, model: Model): Writer[] {
     const hasEntry = new RegExp(String.raw`\b${entry}\s*[:,}]`).test(args) || shorthand;
     let watched: string[] = [];
     let unreadable = false;
-    if (inline) watched = watchedIn(model, braceBlock(args, inline.index + inline[0].length - 1));
+    if (inline) watched = watchedIn(keys, braceBlock(args, inline.index + inline[0].length - 1));
     else if (shorthand) {
       const from = Math.max(0, m.index - 1500);
       const decl = /const data(?:\s*:\s*[^=]+)?\s*=\s*\{/.exec(src.slice(from, m.index));
-      if (decl) watched = watchedIn(model, braceBlock(src, from + decl.index + decl[0].length - 1));
+      if (decl) watched = watchedIn(keys, braceBlock(src, from + decl.index + decl[0].length - 1));
       else unreadable = true;
     } else if (hasEntry)
       unreadable = true; // `data: patch`, a ternary, a call result
@@ -102,7 +106,7 @@ export function findWriters(file: string, raw: string, model: Model): Writer[] {
       model,
       method: last ? last[1]! : "(module)",
       keys: watched,
-      revokes: REVOKE[model].test(src.slice(start, end)),
+      revokes: revoke.test(src.slice(start, end)),
       unreadable,
     });
   }
@@ -320,17 +324,52 @@ describe("writer inventory: an account change burns the account's live links (SA
     );
   });
 
-  it("B461: both password-reset writers burn a pending email change", () => {
-    const sites: Array<[string, string]> = [
-      ["users/users.service.ts", "async resetPassword("],
-      ["auth/auth.service.ts", "async resetPassword("],
-    ];
-    for (const [file, header] of sites) {
-      const src = stripComments(fs.readFileSync(path.join(SRC, file), "utf8"));
-      const at = src.indexOf(header);
-      expect(at).toBeGreaterThan(-1);
-      const next = src.indexOf("\n  async ", at + header.length);
-      expect(src.slice(at, next < 0 ? src.length : next)).toMatch(/\brevokeUserEmailChanges\(/);
-    }
+  // B461 (SA-1116): a password change on an EXISTING account ends the session that may have asked for an email change,
+  // so a pending change must not outlive it. Derived, not listed: every `user.update*` in non-spec code whose data
+  // block writes `password` must burn pending changes (`revokeUserEmailChanges`, or `revokeUserLinkTokens`, which
+  // calls it) in the same method. A `user.create` is not an update and is out of scope. A `data` the pin cannot read
+  // (a ternary, a variable) is skipped here; the writer inventory above reports those. Zero found is a red row (L-202).
+  it("B461: every writer that changes an existing account's password burns pending email changes", () => {
+    const burn = /\brevokeUserEmailChanges\(|\brevokeUserLinkTokens\(/;
+    const writers = files
+      .flatMap((f) => findWriters(f.rel, f.raw, "user", ["password"], burn))
+      .filter((w) => !w.unreadable);
+    expect(writers.length).toBeGreaterThan(0);
+    const names = writers.map(id).sort();
+    expect(names).toEqual(
+      expect.arrayContaining([
+        "auth/auth.service.ts:changePassword",
+        "auth/auth.service.ts:resetPassword",
+        "auth/auth.service.ts:setPassword",
+        "platform-admin/platform-admin.service.ts:resetTenantAdminPassword",
+        "users/users.service.ts:resetPassword",
+      ]),
+    );
+    expect(writers.filter((w) => !w.revokes).map(id)).toEqual([]);
+  });
+
+  it("detector self-test (password census): a password update without a burn is reported, one with it is not", () => {
+    const sample = [
+      "class S {",
+      "  async a(id: string) {",
+      "    await tx.user.update({ where: { id }, data: { password: 'x' } });",
+      "  }",
+      "  async b(id: string) {",
+      "    await tx.user.update({ where: { id }, data: { password: 'x' } });",
+      "    await revokeUserEmailChanges(tx, id);",
+      "  }",
+      "  async c(data: object) {",
+      "    await tx.user.create({ data: { password: 'x' } });",
+      "  }",
+      "}",
+    ].join("\n");
+    expect(
+      findWriters("sample.ts", sample, "user", ["password"], /\brevokeUserEmailChanges\(/).map(
+        (w) => [w.method, w.revokes],
+      ),
+    ).toEqual([
+      ["a", false],
+      ["b", true],
+    ]);
   });
 });

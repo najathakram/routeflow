@@ -91,6 +91,34 @@ describe("confirm-email-change page", () => {
     ).toBeInTheDocument();
   });
 
+  it("a network failure says Try again and keeps a button that tries again; a coded refusal offers none", async () => {
+    const user = userEvent.setup();
+    fetchSpy
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockReturnValueOnce(reply(200, { email: "new@example.com" }));
+    render(<ConfirmEmailChangePage />);
+
+    await user.click(await screen.findByRole("button", { name: /confirm this address/i }));
+    expect(await screen.findByText(/something went wrong\. try again/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^try again$/i }));
+
+    expect(await screen.findByText(/your login email is now new@example.com/i)).toBeInTheDocument();
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("a coded refusal is final: no retry button", async () => {
+    const user = userEvent.setup();
+    fetchSpy.mockReturnValueOnce(
+      reply(400, { code: API_ERROR_CODES.EMAIL_CHANGE_LINK_INVALID, message: "x" }),
+    );
+    render(<ConfirmEmailChangePage />);
+
+    await user.click(await screen.findByRole("button", { name: /confirm this address/i }));
+    await screen.findByText(EMAIL_CHANGE_REFUSAL_COPY[API_ERROR_CODES.EMAIL_CHANGE_LINK_INVALID]);
+
+    expect(screen.queryByRole("button", { name: /try again/i })).not.toBeInTheDocument();
+  });
+
   it("a page opened without a token shows the invalid-link sentence and no button", async () => {
     mockSearchParams = new URLSearchParams();
     render(<ConfirmEmailChangePage />);

@@ -24,10 +24,13 @@ function ConfirmEmailChangeInner() {
   const [errorCopy, setErrorCopy] = React.useState<string>(
     token ? "" : emailChangeRefusalCopy(undefined),
   );
+  // Only a network failure can be retried: the link was never spent. A coded refusal is final.
+  const [retryable, setRetryable] = React.useState(false);
 
   const confirm = async () => {
     if (!token || state === "confirming") return;
     setState("confirming");
+    setRetryable(false);
     try {
       const res = await fetch(`${apiUrl}/auth/confirm-email-change`, {
         method: "POST",
@@ -44,6 +47,7 @@ function ConfirmEmailChangeInner() {
       setState("success");
     } catch {
       setErrorCopy("Something went wrong. Try again.");
+      setRetryable(true);
       setState("error");
     }
   };
@@ -106,6 +110,17 @@ function ConfirmEmailChangeInner() {
               <XCircle className="h-8 w-8 text-danger" />
             </div>
             <p className="mt-2 text-sm text-navy/70">{errorCopy}</p>
+            {retryable && (
+              <div className="mt-6">
+                <button
+                  type="button"
+                  className="rf-btn flex w-full items-center justify-center"
+                  onClick={confirm}
+                >
+                  Try again
+                </button>
+              </div>
+            )}
             <div className="mt-6">
               <a href="/login" className="rf-btn secondary flex w-full items-center justify-center">
                 Back to sign in

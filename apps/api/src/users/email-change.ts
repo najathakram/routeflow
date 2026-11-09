@@ -12,21 +12,24 @@
 import * as crypto from "crypto";
 import type { Prisma } from "@prisma/client";
 import type { PrismaService } from "../prisma/prisma.service";
+import { hasNeverSignedIn, type VerificationDb } from "../auth/verification-link-eligibility";
 
 /** How long an email-change link lives. The same window as the sign-up link (`SIGNUP_LINK_TTL_MS`). */
 export const EMAIL_CHANGE_LINK_TTL_MS = 24 * 60 * 60 * 1000;
 
 /**
- * The ONE rule for whether an email edit waits for proof: the account has signed in. A user who has never signed in
- * (`lastLoginAt` null) is written at once, as before: the set-password invite sent to the corrected address is the
- * proof. A missing user or an unknown `lastLoginAt` fails closed and holds. `forcePasswordChange` is NOT the test: an
- * admin password reset sets it on accounts that have signed in, and those must hold.
+ * The ONE rule for whether an email edit waits for proof: anything but "never signed in" holds. Only a user who has
+ * never signed in (`hasNeverSignedIn`, the same rule as the sign-up link: no `lastLoginAt`, created after the stamp
+ * was reliable, no refresh-token row) is written at once, as before: the set-password invite sent to the corrected
+ * address is the proof. A missing user, an unknown `lastLoginAt` or `createdAt` fails closed and holds.
+ * `forcePasswordChange` is NOT the test: an admin password reset sets it on accounts that have signed in.
  */
-export function emailChangeNeedsHold(
-  user: { lastLoginAt?: Date | null } | null | undefined,
-): boolean {
+export async function emailChangeNeedsHold(
+  db: Pick<VerificationDb, "refreshToken">,
+  user: { id: string; lastLoginAt?: Date | null; createdAt?: Date | null } | null | undefined,
+): Promise<boolean> {
   if (!user) return true;
-  return user.lastLoginAt !== null;
+  return !(await hasNeverSignedIn(db, user));
 }
 
 /** `jane@example.com` -> `j***@e***.com`: names the mailbox without giving it away to the old address's owner. */

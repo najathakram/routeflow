@@ -590,6 +590,7 @@ export class AuthService {
     const tokenHash = hashEmailChangeToken(typeof token === "string" ? token : "");
     let change: { userId: string; fromEmail: string; toEmail: string; username: string };
     try {
+      // A plain transaction on purpose: the tenant guard only sees forTenant()/tenantTransaction, so this is never reported.
       change = await this.prisma.$transaction(async (tx) => {
         const [row] = await tx.$queryRaw<
           { id: string; userId: string; fromEmail: string; toEmail: string; username: string }[]
@@ -796,16 +797,20 @@ export class AuthService {
     if (sameAsOld) throw new BadRequestException("New password must differ from current password");
 
     const newHash = await bcrypt.hash(newPassword, 10);
-    const updated = await this.prisma.user.update({
-      where: { id: userId },
-      data: { password: newHash, forcePasswordChange: false },
-    });
-
-    // N2 review fix: a 72h staff-invite/admin-reset set-password link must not
-    // outlive the user changing their own password through a different path.
-    await this.prisma.passwordResetToken.updateMany({
-      where: { userId, usedAt: null },
-      data: { usedAt: new Date() },
+    // One transaction: the password write, the burn of its links and of a pending email change (B461) land together.
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.user.update({
+        where: { id: userId },
+        data: { password: newHash, forcePasswordChange: false },
+      });
+      // N2 review fix: a 72h staff-invite/admin-reset set-password link must not
+      // outlive the user changing their own password through a different path.
+      await tx.passwordResetToken.updateMany({
+        where: { userId, usedAt: null },
+        data: { usedAt: new Date() },
+      });
+      await revokeUserEmailChanges(tx, userId);
+      return row;
     });
 
     const tokens = await this.mintSessionForUser(updated);
@@ -835,16 +840,19 @@ export class AuthService {
       );
 
     const newHash = await bcrypt.hash(newPassword, 10);
-    const updated = await this.prisma.user.update({
-      where: { id: userId },
-      data: { password: newHash, forcePasswordChange: false },
-    });
-
-    // N2 review fix: same invalidation as changePassword — a 72h staff-invite/
-    // admin-reset set-password link must not outlive this mutation either.
-    await this.prisma.passwordResetToken.updateMany({
-      where: { userId, usedAt: null },
-      data: { usedAt: new Date() },
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.user.update({
+        where: { id: userId },
+        data: { password: newHash, forcePasswordChange: false },
+      });
+      // N2 review fix: same invalidation as changePassword — a 72h staff-invite/
+      // admin-reset set-password link must not outlive this mutation either.
+      await tx.passwordResetToken.updateMany({
+        where: { userId, usedAt: null },
+        data: { usedAt: new Date() },
+      });
+      await revokeUserEmailChanges(tx, userId);
+      return row;
     });
 
     const tokens = await this.mintSessionForUser(updated, deviceInfo);

@@ -21,6 +21,7 @@ import { TenantContextService } from "../tenant/tenant-context.service";
 import { UsersService } from "./users.service";
 import { TenantsService } from "../tenants/tenants.service";
 import { AuthService } from "../auth/auth.service";
+import * as bcrypt from "bcrypt";
 import { signupLinkState } from "../auth/verification-link-eligibility";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -61,6 +62,9 @@ describeDb("B461: a login-email change waits for the new address (real database)
       status?: UserStatus;
       signedIn?: boolean;
       forcePasswordChange?: boolean;
+      /** a fixed date, never the clock */
+      createdAt?: Date;
+      password?: string;
     } = {},
   ) =>
     prisma.user.create({
@@ -72,6 +76,8 @@ describeDb("B461: a login-email change waits for the new address (real database)
         status: opts.status ?? UserStatus.ACTIVE,
         lastLoginAt: opts.signedIn === false ? null : new Date("2026-11-01T12:00:00Z"),
         forcePasswordChange: opts.forcePasswordChange ?? false,
+        ...(opts.createdAt ? { createdAt: opts.createdAt } : {}),
+        ...(opts.password ? { password: opts.password } : {}),
       },
     });
   const newAddress = (name: string) => `${name}-${RUN}-${++seq}@example.invalid`;
@@ -143,6 +149,7 @@ describeDb("B461: a login-email change waits for the new address (real database)
       sendEmailChangeConfirmation: rec("changed-confirmation"),
       sendEmailChangeLink: rec("link"),
       sendEmailChangeRequestedNotice: rec("requested-notice"),
+      sendRoleChangedNotice: rec("role-notice"),
     };
     const jwtConfig = {
       secret: SECRET,
@@ -289,6 +296,134 @@ describeDb("B461: a login-email change waits for the new address (real database)
       inviteTo: [next],
       linkMails: 0,
     });
+  });
+
+  // Reader M1: `lastLoginAt` alone is not "never signed in". `refresh()` never stamps it and the stamp is unreliable
+  // before 2026-09-29, so an account with no stamp may still be signed in on a phone. Both rows are red on the
+  // `lastLoginAt !== null` rule: the email was written at once.
+  it("R-9a: no sign-in stamp but created before the stamp was reliable (2026-09-01): the edit holds", async () => {
+    const tenantId = await mkTenant("r9a");
+    const admin = await mkUser(tenantId, "admin", { role: UserRole.TENANT_ADMIN });
+    const old = await mkUser(tenantId, "legacy", {
+      signedIn: false,
+      createdAt: new Date("2026-09-01T00:00:00Z"),
+    });
+    const next = newAddress("legacy-new");
+    const res = await edit(
+      tenantId,
+      old.id,
+      { email: next },
+      { id: admin.id, role: UserRole.TENANT_ADMIN },
+    );
+
+    expect({
+      stored: await emailOf(old.id),
+      pending: res.pendingEmail,
+      liveRows: (await rowsOf(old.id)).filter((r) => !r.usedAt).length,
+    }).toEqual({ stored: old.email, pending: next, liveRows: 1 });
+  });
+
+  it("R-9b: no sign-in stamp but a refresh-token row (signed in on a phone): the edit holds", async () => {
+    const tenantId = await mkTenant("r9b");
+    const admin = await mkUser(tenantId, "admin", { role: UserRole.TENANT_ADMIN });
+    const driver = await mkUser(tenantId, "phone", { signedIn: false, role: UserRole.DRIVER });
+    await prisma.refreshToken.create({
+      data: {
+        userId: driver.id,
+        tenantId,
+        tokenHash: sha(randomUUID()),
+        expiresAt: new Date(Date.now() + 86_400_000),
+      },
+    });
+    const next = newAddress("phone-new");
+    const res = await edit(
+      tenantId,
+      driver.id,
+      { email: next },
+      { id: admin.id, role: UserRole.TENANT_ADMIN },
+    );
+
+    expect({
+      stored: await emailOf(driver.id),
+      pending: res.pendingEmail,
+      liveRows: (await rowsOf(driver.id)).filter((r) => !r.usedAt).length,
+    }).toEqual({ stored: driver.email, pending: next, liveRows: 1 });
+  });
+
+  it("R-10: a new address another live user already holds is refused at the request (case-insensitive): EMAIL_TAKEN, no row, no mail", async () => {
+    const tenantId = await mkTenant("r10");
+    const holder = await mkUser(tenantId, "holder");
+    const user = await mkUser(tenantId, "wants");
+    await expect(
+      edit(
+        tenantId,
+        user.id,
+        { email: holder.email.toUpperCase() },
+        { id: user.id, role: user.role },
+      ),
+    ).rejects.toMatchObject({ response: { code: "EMAIL_TAKEN" } });
+
+    expect({
+      stored: await emailOf(user.id),
+      rows: (await rowsOf(user.id)).length,
+      mails: mails.length,
+    }).toEqual({ stored: user.email, rows: 0, mails: 0 });
+  });
+
+  it("R-11: a pending change, then an admin's role-only edit, then the old link: refused, email unchanged", async () => {
+    const tenantId = await mkTenant("r11");
+    const admin = await mkUser(tenantId, "admin", { role: UserRole.TENANT_ADMIN });
+    const user = await mkUser(tenantId, "rolechg");
+    await edit(
+      tenantId,
+      user.id,
+      { email: newAddress("rolechg-new") },
+      { id: user.id, role: user.role },
+    );
+    const token = lastToken();
+    await edit(
+      tenantId,
+      user.id,
+      { role: UserRole.DRIVER },
+      { id: admin.id, role: UserRole.TENANT_ADMIN },
+    );
+
+    await expect(confirm(token)).rejects.toMatchObject({
+      response: { code: "EMAIL_CHANGE_LINK_INVALID" },
+    });
+    expect(await emailOf(user.id)).toBe(user.email);
+  });
+
+  it("R-12: changePassword and setPassword each kill a pending link, in the password write's transaction", async () => {
+    const tenantId = await mkTenant("r12");
+    const hash = await bcrypt.hash("Old-pass-1!", 4);
+    const withPw = await mkUser(tenantId, "haspw", { password: hash });
+    await edit(
+      tenantId,
+      withPw.id,
+      { email: newAddress("haspw-new") },
+      { id: withPw.id, role: withPw.role },
+    );
+    const tokenA = lastToken();
+    await auth.changePassword(withPw.id, "Old-pass-1!", "New-pass-2@");
+    await expect(confirm(tokenA)).rejects.toMatchObject({
+      response: { code: "EMAIL_CHANGE_LINK_INVALID" },
+    });
+    expect(await emailOf(withPw.id)).toBe(withPw.email);
+
+    const noPw = await mkUser(tenantId, "nopw");
+    await edit(
+      tenantId,
+      noPw.id,
+      { email: newAddress("nopw-new") },
+      { id: noPw.id, role: noPw.role },
+    );
+    const tokenB = lastToken();
+    await auth.setPassword(noPw.id, "Fresh-pass-3#");
+    await expect(confirm(tokenB)).rejects.toMatchObject({
+      response: { code: "EMAIL_CHANGE_LINK_INVALID" },
+    });
+    expect(await emailOf(noPw.id)).toBe(noPw.email);
   });
 
   it("R-4: a valid confirm writes the email and emailVerifiedAt, marks the row used and notices both addresses", async () => {

@@ -135,6 +135,7 @@ describe("UsersService.updateUser writes an explicit pick (SA-726 M5)", () => {
     status: "ACTIVE",
     // B461: a user who has never signed in is written at once; one who has waits for the new address to confirm.
     lastLoginAt: null,
+    createdAt: new Date("2026-10-01T00:00:00Z"),
   };
   let prisma: ReturnType<typeof createMockPrisma>;
   let update: jest.Mock;
@@ -142,6 +143,7 @@ describe("UsersService.updateUser writes an explicit pick (SA-726 M5)", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    prisma.refreshToken.count.mockResolvedValue(0);
     prisma.user.findUnique.mockResolvedValue(stored as never);
     update = prisma.user.update;
     update.mockResolvedValue({ ...stored, id: "u1" });

@@ -404,8 +404,26 @@ export class UsersService {
     // B461 (SA-1116): an email edit on an account that has signed in does not write the email. The new address is held
     // in a `UserEmailChange` row until the NEW mailbox confirms (`AuthService.confirmEmailChange`). A user who has
     // never signed in is written at once, as before: the set-password invite sent to the corrected address is the proof.
-    const holdEmail = emailChanged && emailChangeNeedsHold(user);
+    const holdEmail = emailChanged && (await emailChangeNeedsHold(this.prisma, user));
     const emailWritten = emailChanged && !holdEmail;
+    if (holdEmail) {
+      // Refuse a taken address now, not a day later when the owner of the new mailbox clicks. The unique index at
+      // confirm time stays the backstop for a race. `insensitive`: the same comparison the N2 normalisation makes.
+      const taken = await this.prisma.forTenant().user.findFirst({
+        where: {
+          id: { not: userId },
+          deletedAt: null,
+          email: { equals: normalizedEmail as string, mode: "insensitive" },
+        },
+        select: { id: true },
+      });
+      if (taken) {
+        throw new ConflictException({
+          code: API_ERROR_CODES.EMAIL_TAKEN,
+          message: "This address is already used by another account.",
+        });
+      }
+    }
     const roleChanged = !!dto.role && dto.role !== previousRole;
 
     // SA-1050 A-5: a row that ENTERS the operator role starts without the groups the owner keeps off by default.
@@ -453,14 +471,18 @@ export class UsersService {
       if (emailWritten || roleChanged) await revokeUserLinkTokens(tx, userId);
       // The hold's row is written AFTER the burn above, so a role change in the same edit cannot burn it. It burns the
       // user's older change rows itself: a newer request supersedes an older one.
-      const changeToken = holdEmail
-        ? await issueEmailChange(tx, {
-            userId,
-            fromEmail: user.email,
-            toEmail: normalizedEmail as string,
-            requestedByUserId: requestedByUserId ?? userId,
-          })
-        : null;
+      let changeToken: string | null = null;
+      if (holdEmail) {
+        // The row records the address as it stands once the User row is locked, not the pre-transaction snapshot.
+        await tx.$executeRaw`SELECT 1 FROM "User" WHERE id = ${userId} FOR UPDATE`;
+        const now = await tx.user.findUnique({ where: { id: userId }, select: { email: true } });
+        changeToken = await issueEmailChange(tx, {
+          userId,
+          fromEmail: now?.email ?? user.email,
+          toEmail: normalizedEmail as string,
+          requestedByUserId: requestedByUserId ?? userId,
+        });
+      }
       return { row, changeToken };
     });
 
@@ -653,13 +675,14 @@ export class UsersService {
     await this.assertNotWalkInAccount(userId);
     const tempPassword = `${crypto.randomBytes(3).toString("hex").toUpperCase()}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
     const hashedPassword = await bcrypt.hash(tempPassword, 10);
-    // B461: a reset kills a pending login-email change (one requested from a stolen session must not outlive it).
-    // Burned BEFORE the write: a crash between the two leaves the password unchanged and the change dead, never the
-    // other way round.
-    await revokeUserEmailChanges(this.prisma, userId);
-    await this.prisma.forTenant().user.update({
-      where: { id: userId },
-      data: { password: hashedPassword, forcePasswordChange: true },
+    // B461: a reset kills a pending login-email change (one requested from a stolen session must not outlive it), in
+    // the same transaction as the write. User row first, then the burn: the lock order of confirm and changeStatus.
+    await this.prisma.tenantTransaction(async (tx) => {
+      await tx.user.update({
+        where: { id: userId },
+        data: { password: hashedPassword, forcePasswordChange: true },
+      });
+      await revokeUserEmailChanges(tx, userId);
     });
 
     // N2 review fix: never email a set-password link for a deactivated/deleted

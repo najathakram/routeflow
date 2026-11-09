@@ -1,7 +1,15 @@
 -- B461 (SA-1116): a staff login-email change waits for the NEW address to confirm. One new table, its own, because an
 -- unused "UserEmailVerificationToken" row means "a live sign-up link" (B448). Additive only: nothing existing is touched.
 -- No tenantId, like the other token tables: the tenant comes from the user row. The CHECK refuses a no-op change.
--- Rollback = drop the table, after the code is rolled back. The table is new and empty, so no lock outlasts the create.
+-- Rollback = drop the table, after the code is rolled back. The table is new and empty, so nothing is rewritten.
+--
+-- LOCK PROFILE: one transaction, so every lock is held until COMMIT. CREATE TABLE and its indexes touch only the new
+-- table, which nothing else can reference yet. The FK `ADD CONSTRAINT ... REFERENCES "User"` takes SHARE ROW EXCLUSIVE
+-- on "User", which every request reads and writes, so that statement goes LAST: "User" is locked only for the instant
+-- between it and COMMIT, never through the table or index builds. lock_timeout makes it give up rather than queue.
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+
 -- CreateTable
 CREATE TABLE "UserEmailChange" (
     "id" TEXT NOT NULL,
@@ -29,3 +37,5 @@ CREATE INDEX "UserEmailChange_expiresAt_idx" ON "UserEmailChange"("expiresAt");
 
 -- AddForeignKey
 ALTER TABLE "UserEmailChange" ADD CONSTRAINT "UserEmailChange_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+COMMIT;
