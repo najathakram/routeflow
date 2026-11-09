@@ -111,8 +111,8 @@ describe("invoice e-mail item count (W-1185)", () => {
       item("Sample Rice", { qty: 1, product: { unit: "bag" } }),
       item("Manual fee line", { qty: 2 }),
     ]);
-    expect(html).toContain("4 lines · 1 box · 1 case · 1 bag · 2 pcs</td>");
-    expect(text).toContain("Items: 4 lines · 1 box · 1 case · 1 bag · 2 pcs");
+    expect(html).toContain("4 lines · 1 box · 1 bag · 1 case · 2 pcs</td>");
+    expect(text).toContain("Items: 4 lines · 1 box · 1 bag · 1 case · 2 pcs");
   });
 
   it("the NSF fee is not goods and a plain line counts in its selling unit", () => {

@@ -109,8 +109,11 @@ export function summarizeLineCounts(lines: ReadonlyArray<CountableLine>): LineCo
     }
     if (added) counted += 1;
   }
-  // Box words first, other words in first-seen order, pieces last.
-  const others = [...buckets].filter(([w]) => w !== BOX && w !== PIECE);
+  // Box words first, the other words alphabetical by their singular word (never line order, so the
+  // builder, the till, the invoice page, the PDF and the email read alike), pieces last.
+  const others = [...buckets]
+    .filter(([w]) => w !== BOX && w !== PIECE)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
   const ordered: Array<[string, number]> = [];
   const boxes = buckets.get(BOX) ?? 0;
   const pieces = buckets.get(PIECE) ?? 0;

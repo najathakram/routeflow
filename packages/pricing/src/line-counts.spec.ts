@@ -69,12 +69,12 @@ describe("summarizeLineCounts / formatLineCounts", () => {
       text([
         { qty: 13, boxes: 1, pieces: 1, unitsPerBox: 12, packLabel: "Case", baseLabel: "Can" },
       ]),
-    ).toBe("1 line · 1 case · 1 can");
+    ).toBe("1 line · 1 can · 1 case");
     expect(
       text([
         { qty: 26, boxes: 2, pieces: 2, unitsPerBox: 12, packLabel: "Case", baseLabel: "Can" },
       ]),
-    ).toBe("1 line · 2 cases · 2 cans");
+    ).toBe("1 line · 2 cans · 2 cases");
   });
 
   it("generic pack and base labels fall back to the default words", () => {
@@ -248,13 +248,29 @@ describe("formatInvoiceLineCounts", () => {
     expect(formatInvoiceLineCounts([{ qty: 6, baseLabel: "Bottle" }])).toBe("1 line · 6 pcs");
   });
 
+  it("orders the named words alphabetically, whatever the line order", () => {
+    const box = { qty: 1, product: { unit: "box" } };
+    const named = { qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12, unitLabel: "Case" };
+    const bag = { qty: 1, product: { unit: "bag" } };
+    const piece = { qty: 2 };
+    const want = "4 lines · 1 box · 1 bag · 1 case · 2 pcs";
+    for (const lines of [
+      [box, named, bag, piece],
+      [piece, bag, named, box],
+      [named, piece, box, bag],
+    ]) {
+      expect(text(lines)).toBe(want);
+      expect(formatInvoiceLineCounts(lines)).toBe(want);
+    }
+  });
+
   it("matches the builder's own count for the same lines (parity)", () => {
     const lines = [
       { qty: 1, product: { unit: "box" } },
       { qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12, unitLabel: "Case" },
       { qty: 1, product: { unit: "bag" } },
     ];
-    expect(formatInvoiceLineCounts(lines)).toBe("3 lines · 1 box · 1 case · 1 bag");
+    expect(formatInvoiceLineCounts(lines)).toBe("3 lines · 1 box · 1 bag · 1 case");
     expect(formatInvoiceLineCounts(lines)).toBe(text(lines));
   });
 
@@ -301,7 +317,7 @@ describe("formatInvoiceLineCounts", () => {
           product: { unit: "x" },
         },
       ]),
-    ).toBe("1 line · 1 case · 1 can");
+    ).toBe("1 line · 1 can · 1 case");
   });
 
   // W-1185 fix 1 (F2): the NSF bounce fee is a system line, not goods.
