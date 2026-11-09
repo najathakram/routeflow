@@ -1770,6 +1770,18 @@ export function CounterSaleScreen() {
                     )
                       focusPayment(); // the next keys are the payment
                   }
+                  // W-1184: Esc on an empty scan field moves the cursor to the way out, in one key: "Resume sale" when a
+                  // sale is waiting, else "Exit counter". It only MOVES focus (the next Enter decides), so a stray Esc loses nothing.
+                  if (e.key === "Escape" && !scanText && !e.defaultPrevented) {
+                    const out =
+                      document.querySelector<HTMLElement>(
+                        '[data-testid="counter-resume-bar"] button',
+                      ) ?? document.querySelector<HTMLElement>('button[aria-label="Exit counter"]');
+                    if (out) {
+                      e.preventDefault();
+                      out.focus();
+                    }
+                  }
                 }}
                 onBlur={(e) => {
                   // only when focus is LOST (a click on blank space); Tab/click to another control keeps it there

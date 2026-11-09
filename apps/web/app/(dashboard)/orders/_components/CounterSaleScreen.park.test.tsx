@@ -817,4 +817,14 @@ describe("W-1184: leaving parks the sale", () => {
     renderScreen();
     expect(await screen.findByTestId("counter-resume-bar")).toHaveTextContent("Resume sale (");
   });
+
+  it("Esc on the empty scan field moves the cursor to Resume sale (one key; Enter then decides)", async () => {
+    seed("a", { lineCount: 1 }, parkedPayload());
+    renderScreen();
+    const bar = await screen.findByTestId("counter-resume-bar");
+    const scanField = screen.getByLabelText("Scan or search items");
+    scanField.focus();
+    fireEvent.keyDown(scanField, { key: "Escape" });
+    expect(document.activeElement).toBe(within(bar).getByRole("button", { name: /^Resume sale/ }));
+  });
 });
