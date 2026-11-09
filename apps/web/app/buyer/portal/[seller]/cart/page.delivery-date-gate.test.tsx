@@ -68,3 +68,34 @@ describe("buyer cart — requested delivery date gate", () => {
     expect(await screen.findByText("Requested delivery date")).toBeInTheDocument();
   });
 });
+
+describe("buyer cart — a typed delivery date follows the gate (B1164)", () => {
+  it("date typed while capability is unresolved is NOT sent once the seller is ship-only", async () => {
+    capability = undefined;
+    const { container, rerender } = render(<BuyerCartPage />);
+    const input = container.querySelector('input[type="date"]') as HTMLInputElement;
+    expect(input).not.toBeNull();
+    fireEvent.change(input, { target: { value: "2026-12-01" } });
+    expect(input.value).toBe("2026-12-01");
+
+    capability = { portalMethods: ["SHIP"], portalDefault: "SHIP", fleet: false };
+    rerender(<BuyerCartPage />);
+    await waitFor(() =>
+      expect(container.querySelector('input[type="date"]')).not.toBeInTheDocument(),
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: /place order/i }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(mutateAsync.mock.calls[0][0].requestedDeliveryDate).toBeUndefined();
+  });
+
+  it("route seller with a typed date still sends it", async () => {
+    capability = { portalMethods: ["ROUTE"], portalDefault: "ROUTE", fleet: true };
+    const { container } = render(<BuyerCartPage />);
+    const input = container.querySelector('input[type="date"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "2026-12-01" } });
+    fireEvent.click(await screen.findByRole("button", { name: /place order/i }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(mutateAsync.mock.calls[0][0].requestedDeliveryDate).toBe("2026-12-01");
+  });
+});
