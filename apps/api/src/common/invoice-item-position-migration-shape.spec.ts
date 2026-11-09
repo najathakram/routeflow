@@ -4,8 +4,10 @@ import { join } from "path";
 /**
  * W-1187 PR-1: `InvoiceItem.position`, the invoice line's slot, as one additive migration folder.
  *
- * Nothing in the app reads or writes the column in this PR (the copier contract carries it as an `unfiled` gap until
- * PR-1c), so the folder deploys to production first (L-184) with no code depending on it. It has NO default and NO
+ * No app code reads or writes the column in this PR (the copier contract carries it as an `unfiled` gap until PR-1c),
+ * but the generated Prisma client SELECTS it on every invoice-line read, so merging before the migration has run in
+ * production fails those reads with P2022: backup -> prod-migrate.mjs -> schema-drift.mjs exit 0 -> merge (L-184;
+ * nothing auto-migrates on deploy). It has NO default and NO
  * backfill (owner Q2, "Leave them"): a default of 0 would tie every legacy line and silently lose the A-Z order a
  * legacy invoice keeps rendering through the SA-1058 comparator.
  */
@@ -51,6 +53,10 @@ describe("W-1187 PR-1 migration folder", () => {
   it("states the lock profile, the deploy order and the rollback in its header", () => {
     expect(sql).toMatch(/LOCK PROFILE/);
     expect(sql).toMatch(/DEPLOY ORDER \(L-184\)/);
+    // the header must not call a merge-first order safe: the client selects the column (P2022 until migrated)
+    expect(sql).toMatch(/NOT safe/);
+    expect(sql).toMatch(/P2022/);
+    expect(sql).not.toMatch(/carries no code that reads or writes it/);
     expect(sql).toMatch(/Rollback/);
   });
 

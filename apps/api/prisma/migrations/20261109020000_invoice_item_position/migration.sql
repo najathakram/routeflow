@@ -15,8 +15,11 @@
 -- `SET LOCAL lock_timeout = '5s'` bounds the wait; a timeout rolls the whole file back (recorded FAILED; recover with
 -- `prisma migrate resolve --rolled-back 20261109020000_invoice_item_position` from apps/api, then re-run; NEVER
 -- `--applied`).
--- DEPLOY ORDER (L-184): apply to prod (owner sitting, fresh backup, `prod-migrate.mjs`), `schema-drift.mjs` exit 0, and
--- ONLY THEN merge the code that writes the column (W-1187 PR-1c). This PR carries no code that reads or writes it.
+-- DEPLOY ORDER (L-184): merging this PR BEFORE the column exists in production is NOT safe. The generated Prisma
+-- client selects `InvoiceItem.position` on every invoice-line read, so every one of those reads fails with P2022 until
+-- the migration has run, and nothing auto-migrates on deploy. Order: fresh backup, `prod-migrate.mjs` (owner
+-- sitting), `schema-drift.mjs` exit 0, THEN merge (and only then W-1187 PR-1c, the code that writes the column).
+-- No application code reads or writes the value in this PR; the client select is the whole dependence.
 --
 -- Rollback (instant; nothing else references the column):
 --   ALTER TABLE "InvoiceItem" DROP CONSTRAINT "InvoiceItem_position_nonneg_chk", DROP COLUMN "position";
