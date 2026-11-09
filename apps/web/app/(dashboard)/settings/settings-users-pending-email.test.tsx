@@ -77,6 +77,14 @@ describe("SettingsPage: Edit user, pending email", () => {
       "Another account already uses this address. Choose a different email.",
     ],
     [
+      "EMAIL_CHANGE_ACCOUNT_INACTIVE",
+      {
+        status: 409,
+        data: { code: "EMAIL_CHANGE_ACCOUNT_INACTIVE", message: "SERVER PROSE MUST NOT SHOW" },
+      },
+      "Reactivate this account, then change its email.",
+    ],
+    [
       "an unknown 500",
       { status: 500, data: { message: "SERVER PROSE MUST NOT SHOW" } },
       "Something went wrong on our side. Please try again.",

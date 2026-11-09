@@ -420,6 +420,50 @@ describeDb("B461: a login-email change waits for the new address (real database)
     await expect(confirm(token2)).resolves.toMatchObject({ email: next2 });
     expect(await emailOf(owing.id)).toBe(next2);
   });
+
+  // SA-1126 (b): a held change on an account that is not ACTIVE is refused at the request. Red before: it wrote a
+  // change row and mailed a link that the confirm could never use (its CAS needs ACTIVE).
+  it("B-1: an INACTIVE signed-in account's email edit is refused: 409 EMAIL_CHANGE_ACCOUNT_INACTIVE, nothing written", async () => {
+    const tenantId = await mkTenant("b1");
+    const admin = await mkUser(tenantId, "admin", { role: UserRole.TENANT_ADMIN });
+    const off = await mkUser(tenantId, "b1off", { status: UserStatus.INACTIVE });
+    await expect(
+      edit(
+        tenantId,
+        off.id,
+        { email: newAddress("b1off-new") },
+        { id: admin.id, role: UserRole.TENANT_ADMIN },
+      ),
+    ).rejects.toMatchObject({ response: { code: "EMAIL_CHANGE_ACCOUNT_INACTIVE" } });
+
+    expect({
+      stored: await emailOf(off.id),
+      rows: (await rowsOf(off.id)).length,
+      mails: mails.length,
+    }).toEqual({ stored: off.email, rows: 0, mails: 0 });
+  });
+
+  it("B-2 (guard): an INACTIVE account that never signed in is still written at once", async () => {
+    const tenantId = await mkTenant("b2");
+    const admin = await mkUser(tenantId, "admin", { role: UserRole.TENANT_ADMIN });
+    const pending = await mkUser(tenantId, "b2pending", {
+      status: UserStatus.INACTIVE,
+      signedIn: false,
+    });
+    const next = newAddress("b2pending-fixed");
+    await edit(
+      tenantId,
+      pending.id,
+      { email: next },
+      { id: admin.id, role: UserRole.TENANT_ADMIN },
+    );
+
+    expect({ stored: await emailOf(pending.id), rows: (await rowsOf(pending.id)).length }).toEqual({
+      stored: next,
+      rows: 0,
+    });
+  });
+
   it("R-13: a legacy invitee's live set-password link dies when an admin corrects the email, though the change is held", async () => {
     const tenantId = await mkTenant("r13");
     const admin = await mkUser(tenantId, "admin", { role: UserRole.TENANT_ADMIN });
@@ -699,7 +743,7 @@ describeDb("B461: a login-email change waits for the new address (real database)
     expect(mails).toHaveLength(0);
   });
 
-  it("R-8 (B448 guard): a change request for a deactivated admin writes no sign-up link row: signupLinkState stays none, resend does nothing", async () => {
+  it("R-8 (B448 guard): an email edit on a deactivated admin is refused (SA-1126) and writes no sign-up link row: signupLinkState stays none, resend does nothing", async () => {
     const tenantId = await mkTenant("r8");
     const keeper = await mkUser(tenantId, "keeper", { role: UserRole.TENANT_ADMIN });
     const target = await mkUser(tenantId, "target", { role: UserRole.TENANT_ADMIN });
@@ -712,15 +756,12 @@ describeDb("B461: a login-email change waits for the new address (real database)
       ),
     );
     const next = newAddress("target-new");
-    await edit(
-      tenantId,
-      target.id,
-      { email: next },
-      { id: keeper.id, role: UserRole.TENANT_ADMIN },
-    );
+    await expect(
+      edit(tenantId, target.id, { email: next }, { id: keeper.id, role: UserRole.TENANT_ADMIN }),
+    ).rejects.toMatchObject({ response: { code: "EMAIL_CHANGE_ACCOUNT_INACTIVE" } });
 
-    // the hold really ran (a live change row), and it never touched the sign-up link table
-    expect((await rowsOf(target.id)).filter((r) => !r.usedAt)).toHaveLength(1);
+    // refused: no change row, and nothing ever touched the sign-up link table
+    expect(await rowsOf(target.id)).toHaveLength(0);
     expect(await prisma.userEmailVerificationToken.count({ where: { userId: target.id } })).toBe(0);
     const fresh = await prisma.user.findUniqueOrThrow({ where: { id: target.id } });
     expect(await signupLinkState(prisma, fresh)).toBe("none");

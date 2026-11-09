@@ -661,6 +661,34 @@ describe("UsersService", () => {
       expect(email.sendEmailChangeLink).not.toHaveBeenCalled();
     });
 
+    it.each([
+      ["INACTIVE", { status: "INACTIVE" }],
+      ["soft-deleted", { deletedAt: new Date("2026-10-01T00:00:00Z") }],
+    ])(
+      "a held change on a %s account is refused before anything is written: 409 EMAIL_CHANGE_ACCOUNT_INACTIVE",
+      async (_n, off) => {
+        prisma.user.findUnique.mockResolvedValue({ ...signedIn, ...off } as any);
+
+        await expect(
+          service.updateUser(
+            "u1",
+            { email: "new@acme.example" } as any,
+            "ad",
+            "TENANT_ADMIN" as any,
+          ),
+        ).rejects.toMatchObject({
+          response: {
+            code: "EMAIL_CHANGE_ACCOUNT_INACTIVE",
+            message: "Reactivate this account, then change its email.",
+          },
+        });
+
+        expect(prisma.user.update).not.toHaveBeenCalled();
+        expect(prisma.txExecuteRaw).not.toHaveBeenCalled();
+        expect(email.sendEmailChangeLink).not.toHaveBeenCalled();
+      },
+    );
+
     it("a SOFT-DELETED holder of the address refuses it too: the unique index covers deleted rows (no deletedAt filter)", async () => {
       prisma.user.findUnique.mockResolvedValue(signedIn as any);
       prisma.forTenant().user.findFirst.mockResolvedValue({

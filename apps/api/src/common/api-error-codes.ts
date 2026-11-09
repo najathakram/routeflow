@@ -853,6 +853,7 @@ export const API_ERROR_CODES = {
   EMAIL_CHANGE_LINK_INVALID: "EMAIL_CHANGE_LINK_INVALID",
   /** 409 from POST /auth/confirm-email-change: the new address now belongs to another account of the business. Nothing was written (B461, SA-1116). */
   EMAIL_TAKEN: "EMAIL_TAKEN",
+  EMAIL_CHANGE_ACCOUNT_INACTIVE: "EMAIL_CHANGE_ACCOUNT_INACTIVE",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

@@ -424,6 +424,13 @@ export class UsersService {
     // never signed in is written at once, as before: the set-password invite sent to the corrected address is the proof.
     const holdEmail = emailChanged && (await emailChangeNeedsHold(this.prisma, user));
     const emailWritten = emailChanged && !holdEmail;
+    if (holdEmail && (user.status !== "ACTIVE" || user.deletedAt)) {
+      // The confirm needs an ACTIVE account (its CAS), so a link for this one could never be used. Nothing is written.
+      throw new ConflictException({
+        code: API_ERROR_CODES.EMAIL_CHANGE_ACCOUNT_INACTIVE,
+        message: "Reactivate this account, then change its email.",
+      });
+    }
     if (holdEmail) {
       // Refuse a taken address now, not a day later when the owner of the new mailbox clicks. The unique index at
       // confirm time stays the backstop for a race. `insensitive`: the same comparison the N2 normalisation makes. No

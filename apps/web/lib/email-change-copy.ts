@@ -14,6 +14,8 @@ export const EMAIL_CHANGE_REFUSAL_COPY = {
     "This link has expired, was already used, or was replaced. Ask for the email change again.",
   [API_ERROR_CODES.EMAIL_TAKEN]:
     "Another account already uses this address. Choose a different email.",
+  [API_ERROR_CODES.EMAIL_CHANGE_ACCOUNT_INACTIVE]:
+    "Reactivate this account, then change its email.",
 } as const;
 
 /**
@@ -22,8 +24,14 @@ export const EMAIL_CHANGE_REFUSAL_COPY = {
  */
 export function emailEditRefusalCopy(error: unknown): string | null {
   const res = (error as { response?: { status?: number; data?: { code?: unknown } } })?.response;
-  if (res?.status !== 409 || res.data?.code !== API_ERROR_CODES.EMAIL_TAKEN) return null;
-  return EMAIL_CHANGE_REFUSAL_COPY[API_ERROR_CODES.EMAIL_TAKEN];
+  const code = res?.data?.code;
+  if (res?.status !== 409) return null;
+  if (
+    code !== API_ERROR_CODES.EMAIL_TAKEN &&
+    code !== API_ERROR_CODES.EMAIL_CHANGE_ACCOUNT_INACTIVE
+  )
+    return null;
+  return EMAIL_CHANGE_REFUSAL_COPY[code];
 }
 
 /** The sentence for a refused confirm. An unknown code, or none, reads as an invalid link. */

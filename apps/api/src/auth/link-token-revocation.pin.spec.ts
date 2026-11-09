@@ -348,6 +348,60 @@ describe("writer inventory: an account change burns the account's live links (SA
     expect(writers.filter((w) => !w.revokes).map(id)).toEqual([]);
   });
 
+  // SA-1126 (b): a change row for an account that is not ACTIVE is a link the confirm can never use (its CAS needs
+  // ACTIVE). Every non-spec `issueEmailChange(` call sits in a method that refuses a non-ACTIVE account first, with
+  // the coded 409. Census count 1 (`updateUser`); red on zero (a renamed helper) and on an unguarded site.
+  const issueSites = (rel: string, raw: string) => {
+    const src = stripComments(raw);
+    const out: { file: string; method: string; guarded: boolean }[] = [];
+    for (const m of src.matchAll(/\bissueEmailChange\(/g)) {
+      if (/function\s+$/.test(src.slice(Math.max(0, m.index! - 20), m.index!))) continue;
+      const heads = [
+        ...src.slice(0, m.index).matchAll(/^ {2}(?:async |private |public )*(\w+)\s*\(/gm),
+      ];
+      const last = heads[heads.length - 1];
+      const before = src.slice(last ? last.index! : 0, m.index);
+      out.push({
+        file: rel,
+        method: last ? last[1]! : "(module)",
+        guarded:
+          /status\s*!==\s*"ACTIVE"/.test(before) && /EMAIL_CHANGE_ACCOUNT_INACTIVE/.test(before),
+      });
+    }
+    return out;
+  };
+
+  it("B461: every issueEmailChange call site is behind an ACTIVE check (census: exactly one)", () => {
+    const sites = files
+      .flatMap((f) => issueSites(f.rel, f.raw))
+      .filter((s) => !/email-change\.ts$/.test(s.file));
+    expect(sites.map((s) => `${s.file}:${s.method}`)).toEqual([
+      "users/users.service.ts:updateUser",
+    ]);
+    expect(sites.filter((s) => !s.guarded)).toEqual([]);
+  });
+
+  it("detector self-test (issueEmailChange census): a guarded site passes, an unguarded one is reported, none is zero", () => {
+    const guarded = [
+      "class S {",
+      "  async a(u: any) {",
+      '    if (holdEmail && u.status !== "ACTIVE") throw new C({ code: API_ERROR_CODES.EMAIL_CHANGE_ACCOUNT_INACTIVE });',
+      "    await issueEmailChange(tx, {});",
+      "  }",
+      "}",
+    ].join("\n");
+    const bare = [
+      "class S {",
+      "  async b(u: any) {",
+      "    await issueEmailChange(tx, {});",
+      "  }",
+      "}",
+    ].join("\n");
+    expect(issueSites("s.ts", guarded).map((s) => s.guarded)).toEqual([true]);
+    expect(issueSites("s.ts", bare).map((s) => [s.method, s.guarded])).toEqual([["b", false]]);
+    expect(issueSites("s.ts", "class S {}")).toEqual([]);
+  });
+
   it("detector self-test (password census): a password update without a burn is reported, one with it is not", () => {
     const sample = [
       "class S {",
