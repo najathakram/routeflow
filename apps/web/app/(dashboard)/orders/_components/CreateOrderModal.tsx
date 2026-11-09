@@ -897,7 +897,16 @@ export function CreateOrderModal({
         // B1139 (prices v2): a line priced before the customer's history loaded takes the last-given price now, by the same
         // decision an add after the history makes. Only an untouched line (nobody priced it) and never a remembered upsell
         // (the branch above already moves that one).
-        if (priceLayer.enabled && !li.priceTouched && !lp.remembered && priceHistory) {
+        // A line the units shaped (a derived Piece, or one that switched unit) never takes it: that shape drops a one-time
+        // price on purpose (applyLineUnit), so a later refresh must not put the last-given price back.
+        if (
+          priceLayer.enabled &&
+          !li.priceTouched &&
+          !li.derivedBase &&
+          !li.packBase &&
+          !lp.remembered &&
+          priceHistory
+        ) {
           const late = linePriceAtAdd({
             product: li.tierPrices as unknown as Record<string, unknown>,
             tier,
@@ -1482,7 +1491,13 @@ export function CreateOrderModal({
       const tier = tierForProduct(target.productId);
       const layer = priceLayer.layerOf(target.productId);
       const remembered = rememberedOf(target.productId);
-      return applyUnitToLines(prev, tempId, option, refresh, tier, layer, remembered);
+      const next = applyUnitToLines(prev, tempId, option, refresh, tier, layer, remembered);
+      // A switch that leaves or returns from a unit shape drops the line's one-time price (applyLineUnit), and that is a
+      // choice: the last-given price (B1139) is never put back over it. A same-pack pick changes nothing.
+      const reshaped = option.kind !== "pack" || !!target.packBase || !!target.derivedBase;
+      return reshaped
+        ? next.map((li) => (li.productId === target.productId ? { ...li, priceTouched: true } : li))
+        : next;
     });
   // SA-626c: a flagged line holds its default unit from the moment it is added, not only once its row mounts.
   const { user: authUser } = useAuth();
