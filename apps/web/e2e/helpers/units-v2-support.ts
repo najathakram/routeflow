@@ -49,6 +49,15 @@ export async function requireUnitsV2Flag(
   return ctx;
 }
 
+/** Non-failing read of the same served flags: true when the tenant is served `flag.units_prices_v2`. */
+export async function hasUnitsV2Flag(page: Page): Promise<boolean> {
+  const ctx = await apiContext(page);
+  const res = await page.request.get(`${ctx.api}/billing/subscription`, { headers: ctx.headers });
+  if (!res.ok()) return false;
+  const body: any = await res.json();
+  return Array.isArray(body?.flags) && (body.flags as string[]).includes(FLAG);
+}
+
 export async function shot(page: Page, info: TestInfo, name: string) {
   const vp = page.viewportSize()?.width ?? "x";
   await page.screenshot({ path: path.join(SHOTS, `${name}-${vp}.png`), fullPage: false });
