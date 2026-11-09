@@ -20,6 +20,7 @@ import { isInternalEmail } from "../common/internal-email";
 import {
   addCalendarDays,
   calendarDateFromIso,
+  daysLateOn,
   overdueCutoff,
   startOfCalendarDay,
   startOfLocalDay,
@@ -56,20 +57,6 @@ export const OPEN_BALANCE_INVOICE_SELECT = {
 export const STATEMENT_RECENT_DAYS = 30;
 /** The payments list is cut here, newest first; `recentPaymentsTruncated` says when rows were left out. */
 export const STATEMENT_RECENT_PAYMENTS = 50;
-
-/**
- * Whole calendar days past the due date on the tenant's own calendar. `tenantDay` is the tenant's "today"
- * (YYYY-MM-DD) and `dueDate` the stored UTC-midnight calendar date. 0 = due today, not yet due, or no due date.
- * Same count as web's `daysPastDue` (apps/web/lib/days-past-due.ts).
- */
-export function daysLateOn(tenantDay: string, dueDate: Date | string | null | undefined): number {
-  const due = calendarDateFromIso(dueDate);
-  if (!due) return 0;
-  const diff = Math.round(
-    (Date.parse(`${tenantDay}T00:00:00Z`) - Date.parse(`${due}T00:00:00Z`)) / 86_400_000,
-  );
-  return diff > 0 ? diff : 0;
-}
 
 const isoOf = (d: Date | string): string => (d instanceof Date ? d : new Date(d)).toISOString();
 

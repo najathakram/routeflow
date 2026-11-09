@@ -15,6 +15,8 @@ export async function sweepAllPendingOrdersImpl(self: OrdersService): Promise<{
   customers: number;
   merged: number;
   skipped: number;
+  /** B324: customers whose merge failed for a real (non-contention) reason; logged at error level. */
+  failed: number;
   /** B776: customers whose merge folded 2+ disagreeing packs for a product this sweep run. */
   packMismatches: number;
   /** SA-124: customers whose merge resolved a box-unaware, no-snapshot contribution via the
@@ -70,6 +72,7 @@ export async function sweepAllPendingOrdersImpl(self: OrdersService): Promise<{
   const mergeCandidateGroups = await openTenantGroups(self.prisma, groups);
 
   let merged = 0;
+  let failed = 0;
   let packMismatches = 0;
   let livePackFallbacks = 0;
   for (const g of mergeCandidateGroups) {
@@ -92,26 +95,32 @@ export async function sweepAllPendingOrdersImpl(self: OrdersService): Promise<{
       if (winner) merged++;
     } catch (e) {
       // Skip by CAUSE, not by exception type: only the two coded lock-contention errors mean
-      // "someone else holds this customer's lock, try again next hour". A 409/503 raised for
-      // any OTHER reason inside the merge (a credit-limit conflict, a genuinely dead
-      // dependency) is a real fault and must still stop the sweep — swallowing it by type
-      // would hide a broken merge behind an hourly "skipped" line forever.
+      // "someone else holds this customer's lock, try again next hour" (warn, not counted). A 409/503
+      // raised for any OTHER reason inside the merge (a credit-limit conflict, a genuinely dead
+      // dependency) is a real fault: it is logged at error level and counted in `failed`, never hidden
+      // as a skip. B324: it must not end the loop either. One bad customer must not leave every later
+      // customer's duplicate pending orders unmerged (double stops, double bills) until someone notices.
       if (isMergeContention(e)) {
         self.logger.warn(
           `sweepAllPendingOrders: skipped customer ${g.customerId} — ${(e as Error)?.message ?? e}`,
         );
         continue;
       }
-      throw e;
+      self.logger.error(
+        `sweepAllPendingOrders: merge failed for customer ${g.customerId} (tenant ${g.tenantId}) — ${(e as Error)?.message ?? e}`,
+        e instanceof Error ? e.stack : String(e),
+      );
+      failed++;
     }
   }
   self.logger.log(
-    `sweepAllPendingOrders: swept ${mergeCandidateGroups.length} customer(s), merged into ${merged} winner(s), skipped ${skipped} without tenantId, ${packMismatches} pack mismatch(es), ${livePackFallbacks} live-pack fallback(s) (B776)`,
+    `sweepAllPendingOrders: swept ${mergeCandidateGroups.length} customer(s), merged into ${merged} winner(s), skipped ${skipped} without tenantId, ${failed} failed, ${packMismatches} pack mismatch(es), ${livePackFallbacks} live-pack fallback(s) (B776)`,
   );
   return {
     customers: mergeCandidateGroups.length,
     merged,
     skipped,
+    failed,
     packMismatches,
     livePackFallbacks,
   };
