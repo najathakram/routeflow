@@ -16,6 +16,7 @@ import { revealClearOfBar } from "./reveal-clear-of-bar";
 import { BTN, SkipToSave } from "./PriceEditBar";
 import { usePriceDraft, type EditSurface } from "./usePriceDraft";
 import type { GridEditApi } from "./edit-types";
+import { usePriceGridEditAllowed } from "@/lib/api/my-permissions";
 
 /**
  * The units v2 prices section with edit mode (S12a). V08: Edit and Change prices live in the section's
@@ -63,6 +64,8 @@ export function EditablePricesGrid({
   density?: GridDensity;
 }) {
   const d = usePriceDraft();
+  // F6: the server refuses a price save for staff without the PRICING group, so none of the entries are offered.
+  const mayEdit = usePriceGridEditAllowed();
   const root = React.useRef<HTMLDivElement>(null);
   const editBtn = React.useRef<HTMLButtonElement>(null);
   const was = React.useRef(false);
@@ -79,7 +82,7 @@ export function EditablePricesGrid({
     rows: editing ? d.api.rows : null,
   };
   // Every row family-governed (each says `editable: false`): nothing to edit or change here.
-  const anyEditable = d.grid?.rows.some((r) => r.editable) ?? true;
+  const anyEditable = mayEdit && (d.grid?.rows.some((r) => r.editable) ?? true);
   const pendingFocus = d.api.focus;
   // K13 F05/F12: the audit id of an inline save this render reports (null otherwise).
   const savedHere =
@@ -154,6 +157,11 @@ export function EditablePricesGrid({
               Editing
             </span>
           )}
+          {surface === "inline" && !mayEdit && (
+            <span data-testid={T.pricingAccessNote} className="text-xs text-navy/60">
+              Ask an admin for pricing access.
+            </span>
+          )}
           {onOpenChangePrices && anyEditable && (
             <button
               ref={changePricesRef}
@@ -207,7 +215,7 @@ export function EditablePricesGrid({
         ) : null}
         <ProductPricesGrid
           product={product}
-          edit={edit}
+          edit={mayEdit ? edit : undefined}
           rowAction={editing ? rowAction : undefined}
           layout={layout}
           density={density}

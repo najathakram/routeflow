@@ -17,6 +17,7 @@ export const UNITS_V2_TESTIDS = {
   word: (layout: string, ref: string, tier: number) => `units-v2-word-${layout}-${ref}-${tier}`,
   notEditable: (ref: string) => `units-v2-not-editable-${ref}`,
   btnEdit: "units-v2-btn-edit",
+  pricingAccessNote: "units-v2-pricing-access-note",
   btnChange: "units-v2-btn-change-open",
   editingPill: "units-v2-editing-pill",
   editbar: "units-v2-editbar",

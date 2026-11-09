@@ -3,6 +3,7 @@
 import * as React from "react";
 import { usePriceGrid } from "@/lib/api/usePriceGrid";
 import { useUndoPrices } from "@/lib/api/usePriceWrites";
+import { usePriceGridEditAllowed } from "@/lib/api/my-permissions";
 import type { UnitsCardProduct } from "./ProductUnitsCard";
 import { CustomerPriceView } from "./units-v2/customer/CustomerPriceView";
 import { ChangePrices, useChangePrices } from "./units-v2/change-prices/ChangePrices";
@@ -133,7 +134,9 @@ export function PriceSaveStatus({
   surface: EditSurface;
 }) {
   const draft = usePriceDraft();
-  const lastSave = draft.lastSave?.surface === surface ? draft.lastSave : null;
+  // F6: Undo posts to the same PRICING-gated write route, so it is not offered to staff the server would refuse.
+  const mayEdit = usePriceGridEditAllowed();
+  const lastSave = mayEdit && draft.lastSave?.surface === surface ? draft.lastSave : null;
   const served = usePriceGrid(productId).data;
   const undoPrices = useUndoPrices(productId);
   const undo = usePriceUndo({

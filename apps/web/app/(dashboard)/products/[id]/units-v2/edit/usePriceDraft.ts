@@ -25,6 +25,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { fetchPriceGrid, priceGridKey, usePriceGrid } from "@/lib/api/usePriceGrid";
 import { formatMoney } from "@/lib/format";
+import { usePriceGridEditAllowed } from "@/lib/api/my-permissions";
 import {
   priceWriteError,
   useSavePrices,
@@ -216,6 +217,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   const hooksRef = React.useRef(hooks);
   hooksRef.current = hooks;
   const gridQuery = usePriceGrid(productId);
+  const mayEdit = usePriceGridEditAllowed();
   const grid = gridQuery.data;
   const labels = useTierLabels().data;
   const tierName = React.useCallback((t: PriceTier) => productTierLabel(labels, t), [labels]);
@@ -574,6 +576,8 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   const api: GridEditApi = {
     editing,
     begin: (cell, surface = "inline") => {
+      // F6: staff without PRICING cannot save, so no entry (Reset to Auto, Add a unit price) opens an editor for them.
+      if (!mayEdit) return false;
       // One editor at a time: the other surface keeps the draft until it saves or discards.
       if (surfaceRef.current !== null && surfaceRef.current !== surface) return false;
       beginEditing(surface);
