@@ -10,8 +10,9 @@ import * as path from "path";
  * them. Scope: apps/web, apps/api/src, packages/* except packages/types, apps/mobile. A deliberate
  * SUBSET (fewer members) is not a mirror and is not flagged.
  *
- * BASELINE is shrink-only: an entry that no longer matches any union fails, so fixing a copy
- * forces removing it here.
+ * BASELINE is shrink-only and counted per file::ENUM key: an entry that no longer matches fails,
+ * and a second copy of an already-listed enum in the same file fails. List a key twice to tolerate
+ * two copies. Known gaps: a union with null/a comment mid-list and single-quoted unions are missed.
  */
 const ROOT = path.resolve(__dirname, "../../../..");
 const MIN_MEMBERS = 3;
@@ -86,6 +87,7 @@ const BASELINE: string[] = [
   "apps/mobile/lib/api/inventory.ts::MOVEMENT_TYPE_VALUES",
   "apps/mobile/lib/api/invoices.ts::INVOICE_STATUS_VALUES",
   "apps/mobile/lib/api/orders.ts::FULFILL_PATH_VALUES",
+  "apps/mobile/lib/api/orders.ts::FULFILL_PATH_VALUES",
   "apps/mobile/lib/api/orders.ts::ORDER_STATUS_VALUES",
   "apps/mobile/lib/api/payments.ts::CHECK_STATUS_VALUES",
   "apps/mobile/lib/api/recurring-invoices.ts::RECURRING_FREQUENCY_VALUES",
@@ -117,6 +119,8 @@ const BASELINE: string[] = [
   "apps/web/app/(dashboard)/routes/page.tsx::ROUTE_RUN_STATUS_VALUES",
   "apps/web/app/(dashboard)/settings/_components/GoHighLevelSettingsTab.tsx::CRM_CONNECTION_STATUS_VALUES",
   "apps/web/app/(platform-admin)/admin/buyers/[id]/page.tsx::BUYER_ACCOUNT_STATUS_VALUES",
+  "apps/web/app/(platform-admin)/admin/buyers/[id]/page.tsx::BUYER_ACCOUNT_STATUS_VALUES",
+  "apps/web/app/(platform-admin)/admin/buyers/page.tsx::BUYER_ACCOUNT_STATUS_VALUES",
   "apps/web/app/(platform-admin)/admin/buyers/page.tsx::BUYER_ACCOUNT_STATUS_VALUES",
   "apps/web/app/buyer/portal/[seller]/orders/[id]/page.tsx::CHANGE_REQUEST_TYPE_VALUES",
   "apps/web/components/RoutePlanningControls.tsx::ROUTE_END_KIND_VALUES",
@@ -124,6 +128,7 @@ const BASELINE: string[] = [
   "apps/web/lib/api/authorizations.ts::AUTHORIZATION_STATUS_VALUES",
   "apps/web/lib/api/batch-import.ts::IMPORT_BATCH_STATUS_VALUES",
   "apps/web/lib/api/batch-import.ts::IMPORT_FILE_STATUS_VALUES",
+  "apps/web/lib/api/finance.ts::EXPENSE_STATUS_VALUES",
   "apps/web/lib/api/finance.ts::EXPENSE_STATUS_VALUES",
   "apps/web/lib/api/invoices.ts::CHECK_STATUS_VALUES",
   "apps/web/lib/api/migration.ts::MIGRATION_JOB_STATUS_VALUES",
@@ -134,8 +139,10 @@ const BASELINE: string[] = [
   "apps/web/lib/api/returns.ts::RETURN_REASON_VALUES",
   "apps/web/lib/api/returns.ts::RETURN_STATUS_VALUES",
   "apps/web/lib/api/routes.ts::ROUTE_END_KIND_VALUES",
+  "apps/web/lib/api/routes.ts::ROUTE_END_KIND_VALUES",
   "apps/web/lib/api/routes.ts::ROUTE_ORIGIN_KIND_VALUES",
   "apps/web/lib/api/routes.ts::ROUTE_RUN_STATUS_VALUES",
+  "apps/web/lib/api/routes.ts::ROUTE_RUN_STOP_STATUS_VALUES",
   "apps/web/lib/api/routes.ts::ROUTE_RUN_STOP_STATUS_VALUES",
   "apps/web/lib/api/sales-agents.ts::COMMISSION_ACCRUAL_STATUS_VALUES",
   "apps/web/lib/api/sales-agents.ts::COMMISSION_RATE_SOURCE_VALUES",
@@ -148,6 +155,7 @@ const BASELINE: string[] = [
   "apps/web/lib/api/tracked-categories.ts::REPORT_CADENCE_VALUES",
   "apps/web/lib/api/tracked-categories.ts::TRACKED_CATEGORY_TAX_TYPE_VALUES",
   "apps/web/lib/api/users.ts::USER_STATUS_VALUES",
+  "apps/web/lib/api/users.ts::USER_STATUS_VALUES",
   "apps/web/lib/api/vendor-bills.ts::INVOICE_SCAN_STATUS_VALUES",
   "apps/web/lib/auth.ts::USER_STATUS_VALUES",
   "apps/web/lib/check-badge.ts::CHECK_STATUS_VALUES",
@@ -159,6 +167,7 @@ const BASELINE: string[] = [
   "apps/api/src/bookkeeping/dto/create-expense.dto.ts::EXPENSE_STATUS_VALUES",
   "apps/api/src/buyer/buyer-admin.controller.ts::BUYER_ACCOUNT_STATUS_VALUES",
   "apps/api/src/buyer/buyer-admin.service.ts::BUYER_ACCOUNT_STATUS_VALUES",
+  "apps/api/src/email/mailbox/mailbox-connection.service.ts::MAILBOX_CONNECTION_STATUS_VALUES",
   "apps/api/src/email/mailbox/mailbox-connection.service.ts::MAILBOX_CONNECTION_STATUS_VALUES",
   "apps/api/src/import/batch-import.service.ts::IMPORT_BATCH_STATUS_VALUES",
   "apps/api/src/inventory/dto/stock-count-session.dto.ts::STOCK_COUNT_STATUS_VALUES",
@@ -178,6 +187,29 @@ const BASELINE: string[] = [
   "packages/pricing/src/pricing.ts::PROMOTION_TYPE_VALUES",
   "packages/pricing/src/pricing.ts::TRACKED_CATEGORY_TAX_TYPE_VALUES",
 ];
+
+/** Copies per `file::ENUM` key; a key listed N times in BASELINE tolerates N copies. */
+export function countKeys(keys: string[]): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const k of keys) m.set(k, (m.get(k) ?? 0) + 1);
+  return m;
+}
+
+/** More copies than the baseline allows = unexpected; fewer = stale (shrink-only both ways). */
+export function diffCounts(
+  found: Map<string, number>,
+  base: Map<string, number>,
+): { unexpected: string[]; stale: string[] } {
+  const unexpected: string[] = [];
+  const stale: string[] = [];
+  for (const k of new Set([...found.keys(), ...base.keys()])) {
+    const f = found.get(k) ?? 0;
+    const b = base.get(k) ?? 0;
+    for (let i = b; i < f; i++) unexpected.push(k);
+    for (let i = f; i < b; i++) stale.push(k);
+  }
+  return { unexpected: unexpected.sort(), stale: stale.sort() };
+}
 
 describe("enum-literal-union scan (B1059, L-072)", () => {
   const enums = parseEnumValueSets(
@@ -203,6 +235,21 @@ describe("enum-literal-union scan (B1059, L-072)", () => {
       expect(parseEnumValueSets('export const T_VALUES = ["A", "B"] as const;').size).toBe(0);
       expect(findMirrors('type A = "A" | "B";', two)).toHaveLength(1); // guarded by the parse floor
     });
+    it("counts copies per key: a second copy in a listed file goes red, a removed one is stale", () => {
+      const base = countKeys(["f.ts::X_VALUES"]);
+      expect(diffCounts(countKeys(["f.ts::X_VALUES", "f.ts::X_VALUES"]), base)).toEqual({
+        unexpected: ["f.ts::X_VALUES"],
+        stale: [],
+      });
+      expect(diffCounts(countKeys([]), base)).toEqual({
+        unexpected: [],
+        stale: ["f.ts::X_VALUES"],
+      });
+      expect(diffCounts(countKeys(["f.ts::X_VALUES"]), base)).toEqual({
+        unexpected: [],
+        stale: [],
+      });
+    });
     it("parses X_VALUES arrays", () => {
       expect(
         parseEnumValueSets('export const X_VALUES = ["A", "B", "C"] as const;').get("X_VALUES"),
@@ -216,17 +263,16 @@ describe("enum-literal-union scan (B1059, L-072)", () => {
   });
 
   it("no hand-typed literal union mirrors a shared enum outside packages/types (shrink-only baseline)", () => {
-    const found = new Set<string>();
+    const found = new Map<string, number>();
     for (const root of scanRoots()) {
       for (const file of walk(root, [])) {
         const rel = path.relative(ROOT, file).split(path.sep).join("/");
         for (const name of findMirrors(fs.readFileSync(file, "utf8"), enums)) {
-          found.add(`${rel}::${name}`);
+          found.set(`${rel}::${name}`, (found.get(`${rel}::${name}`) ?? 0) + 1);
         }
       }
     }
-    const unexpected = [...found].filter((f) => !BASELINE.includes(f)).sort();
-    const stale = BASELINE.filter((b) => !found.has(b)).sort();
+    const { unexpected, stale } = diffCounts(found, countKeys(BASELINE));
     expect({ unexpected, stale }).toEqual({ unexpected: [], stale: [] });
   });
 });
