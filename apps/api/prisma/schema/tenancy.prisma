@@ -124,6 +124,7 @@ model Tenant {
   routeRuns                RouteRun[]
   routeRunStops            RouteRunStop[]
   orders                   Order[]
+  orderReviewFlags         OrderReviewFlag[]
   orderItems               OrderItem[]
   deliveryMutations        DeliveryMutation[]
   transactions             Transaction[]
@@ -356,6 +357,7 @@ model User {
   stockCountsStarted   StockCountSession[]  @relation("StockCountStarted")
   stockCountsCommitted StockCountSession[]  @relation("StockCountCommitted")
   invoiceWriteOffEvents InvoiceWriteOffEvent[] @relation("InvoiceWriteOffBy")
+  resolvedReviewFlags  OrderReviewFlag[] @relation("OrderReviewFlagResolvedBy")
   stockCountLines      StockCountLine[]
   expenses             Expense[]
   messages             Message[]

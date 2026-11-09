@@ -170,6 +170,7 @@ const MODEL_DOMAIN = {
   RouteRun: "sales",
   RouteRunStop: "sales",
   Order: "sales",
+  OrderReviewFlag: "sales",
   OrderIdempotencyKey: "sales",
   OrderRevision: "sales",
   ChangeRequest: "sales",
