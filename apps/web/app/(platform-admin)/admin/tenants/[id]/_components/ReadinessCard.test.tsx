@@ -166,7 +166,7 @@ describe("ReadinessCard (SA-3, BO-02)", () => {
       expect(screen.queryByRole("button", { name: /details/i })).toBeNull();
     });
 
-    it("(b) the unset line links Choose to the Setup tab's capabilities target", async () => {
+    it("(b) the unset line links Choose to the Features tab's capabilities target", async () => {
       mockFetchCaps.mockResolvedValue(caps({ configured: false, counter: false }));
       render(<Card tenant={tenant()} />);
       const link = await screen.findByRole("link", { name: "Choose how Acme Retail sells" });

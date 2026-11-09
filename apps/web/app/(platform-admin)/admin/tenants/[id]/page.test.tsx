@@ -546,7 +546,7 @@ describe("Tenant detail page — Impersonate and Extend trial ask first (back of
     expect(btn).toBeDisabled();
     expect(btn).toHaveAttribute("aria-describedby", "extend-trial-hint");
     expect(document.getElementById("extend-trial-hint")).toHaveTextContent(
-      "This tenant is Active, so it can't be put on a trial. Suspend it or change its plan instead.",
+      "This business is Active, so it can't be put on a trial. Suspend it or change its plan instead.",
     );
     fireEvent.click(btn);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -593,7 +593,7 @@ describe("Tenant detail page — Impersonate and Extend trial ask first (back of
     fireEvent.click(within(dialog).getByRole("button", { name: "Extend trial" }));
     expect(
       await screen.findByText(
-        "This tenant is Active, so it can't be put on a trial. Suspend it or change its plan instead.",
+        "This business is Active, so it can't be put on a trial. Suspend it or change its plan instead.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/raw internal wording/)).toBeNull();
@@ -695,9 +695,12 @@ describe("Tenant detail page — Suspend and Delete ask first (back office P1)",
     expect(del).toBeDisabled();
     expect(client().delete).not.toHaveBeenCalled();
 
-    fireEvent.change(within(dialog).getByLabelText("Type the tenant slug to confirm deletion"), {
-      target: { value: "acme" },
-    });
+    fireEvent.change(
+      within(dialog).getByLabelText("Type the business web name to confirm deletion"),
+      {
+        target: { value: "acme" },
+      },
+    );
     fireEvent.click(del);
     await waitFor(() => expect(client().delete).toHaveBeenCalledTimes(1));
     expect(client().delete).toHaveBeenCalledWith("/platform-admin/tenants/tenant-1");
@@ -713,9 +716,12 @@ describe("Tenant detail page — Suspend and Delete ask first (back office P1)",
     await gotoTab("Business details");
     fireEvent.click(screen.getByRole("button", { name: "Delete business" }));
     const dialog = await screen.findByRole("dialog", { name: "Delete Acme (acme)?" });
-    fireEvent.change(within(dialog).getByLabelText("Type the tenant slug to confirm deletion"), {
-      target: { value: "acme" },
-    });
+    fireEvent.change(
+      within(dialog).getByLabelText("Type the business web name to confirm deletion"),
+      {
+        target: { value: "acme" },
+      },
+    );
     fireEvent.click(within(dialog).getByRole("button", { name: "Delete business" }));
     expect(
       await within(dialog).findByText(
@@ -1245,7 +1251,34 @@ describe("R33: every row of the owner's list has a home", () => {
     const img = await screen.findByRole("img", { name: /logo/i });
     expect(img).toHaveAttribute("src", expect.stringMatching(/\/public\/tenants\/acme\/logo$/));
     expect(screen.queryByText("Logo Key")).toBeNull();
-    expect(screen.queryByText("tenants/acme/logo.png")).toBeNull();
+    // Not even inside a longer line: the storage key never reaches the screen in any element.
+    expect(document.body.textContent).not.toContain("tenants/acme/logo.png");
+    expect(document.body.textContent).not.toMatch(/Logo Key/i);
+  });
+
+  it("row 26: a logo that fails to load falls back to the placeholder and says so", async () => {
+    FULL();
+    render(<TenantDetailPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Business details" }));
+    fireEvent.error(await screen.findByRole("img", { name: /logo/i }));
+    expect(screen.queryByRole("img", { name: /logo/i })).toBeNull();
+    expect(screen.getByText("The logo could not be loaded.")).toBeInTheDocument();
+  });
+
+  it("row 7: the payment method reads in plain words, never the stored code", async () => {
+    FULL();
+    tenantOverrides = {
+      ...tenantOverrides,
+      subscription: {
+        ...(tenantOverrides.subscription as object),
+        externalPayment: true,
+        externalPaymentMethod: "BANK_TRANSFER",
+      },
+    };
+    await gotoBillingTab();
+    const dt = await screen.findByText("Payment method", { selector: "dt" });
+    expect(dt.parentElement).not.toHaveTextContent("BANK_TRANSFER");
+    expect(dt.parentElement).toHaveTextContent(/Bank transfer/i);
   });
 
   it("row 14: Delete sits alone, in red, at the very bottom of Business details", async () => {

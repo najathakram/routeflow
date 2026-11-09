@@ -191,7 +191,7 @@ async function mockTenantShell(page: Page) {
   await page.route(/\/platform-admin\/business-profiles(\?.*)?$/, (route) =>
     fulfillJson(route, { profiles: [] }),
   );
-  // BO-05: the Setup tab's "What this business does" card reads these. A tenant nobody set up keeps the console
+  // BO-05: the Features tab's "What this business does" card reads these. A tenant nobody set up keeps the console
   // specs unchanged; a write is answered with a 500 so a real one can never succeed from here.
   await page.route(
     new RegExp(`/platform-admin/tenants/${TENANT_ID}/business-capabilities$`),

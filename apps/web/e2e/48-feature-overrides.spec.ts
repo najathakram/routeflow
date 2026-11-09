@@ -1,6 +1,6 @@
 /**
  * Feature grants PR-1 — the Overrides section on the platform-admin tenant detail page's
- * Setup tab (/admin/tenants/[id]). Every endpoint the page touches to reach that
+ * Features tab (/admin/tenants/[id]). Every endpoint the page touches to reach that
  * tab is MOCKED (same pattern as 09-regulated-compliance.spec.ts's mockRegulatedApi). Auth is
  * ALSO faked client-side: (platform-admin)/layout.tsx's SuperAdminGuard only decodes the JWT
  * payload and checks role/exp locally (no server round-trip to verify the signature), so

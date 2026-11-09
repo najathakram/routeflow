@@ -585,7 +585,10 @@ function BillingTab({
 
   const sub = tenant.subscription;
   const paymentMethodLabel = sub?.externalPayment
-    ? (sub.externalPaymentMethod ?? "External")
+    ? (sub.externalPaymentMethod &&
+        EXTERNAL_PAYMENT_METHODS.find((m) => m.value === sub.externalPaymentMethod)?.label) ||
+      sub.externalPaymentMethod ||
+      "External"
     : sub?.stripeCustomerId
       ? "Card (Stripe)"
       : null;
@@ -985,7 +988,7 @@ function FeaturesTab({
   );
 }
 
-// ─── Feature Overrides (within the Setup tab) ─────────────────────────────────
+// ─── Feature Overrides (within the Features tab) ─────────────────────────────────
 
 interface FeatureOverrideRow {
   id: string;
@@ -1596,6 +1599,8 @@ function BusinessDetailsTab({
   onRefreshTenant: () => void;
   onAskDelete: () => void;
 }) {
+  // A missing storage object (or a cancelled business) makes the logo route 404: fall back to the placeholder.
+  const [logoBroken, setLogoBroken] = React.useState(false);
   const [form, setForm] = React.useState({
     addressLine1: tenant.addressLine1 ?? "",
     city: tenant.city ?? "",
@@ -1644,18 +1649,23 @@ function BusinessDetailsTab({
         {/* Row 26: the logo as a picture, never the storage code. The public logo route streams it with no login. */}
         <div className="mb-5 flex items-center gap-4">
           <div className="flex h-16 w-16 flex-shrink-0 items-center justify-center overflow-hidden rounded-xl bg-slate-700/50 ring-1 ring-white/10">
-            {tenant.logoKey ? (
+            {tenant.logoKey && !logoBroken ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={`${API_URL}/public/tenants/${encodeURIComponent(tenant.slug)}/logo`}
                 alt={`${tenantDisplayName(tenant)} logo`}
                 className="h-full w-full object-contain"
+                onError={() => setLogoBroken(true)}
               />
             ) : (
               <Building2 aria-hidden="true" className="h-6 w-6 text-slate-400" />
             )}
           </div>
-          {!tenant.logoKey && <p className="text-sm text-slate-400">No logo uploaded.</p>}
+          {(!tenant.logoKey || logoBroken) && (
+            <p className="text-sm text-slate-400">
+              {tenant.logoKey ? "The logo could not be loaded." : "No logo uploaded."}
+            </p>
+          )}
         </div>
         <dl className="mb-6 flex flex-col gap-3 text-sm">
           <div className="flex items-center justify-between">
