@@ -225,12 +225,12 @@ export function LineItemRow({
   const showQtyNote = qtyBelowMin && !li.unitsPerBox; // only the plain (unit-sold) stepper can type a 0
   const qtyNoteId = React.useId();
   const w = unitWords({ packLabel: li.packLabel, baseUnitLabel: li.baseLabel });
-  // F15/Q12: a pack line's price is per PACK, so its suffix is the same pack word as the toggle and the qty
-  // (not the product's stored unit, e.g. "case" beside a "Box" toggle). A named-unit or single-unit line keeps its own unit.
   // a SPECIAL line strikes its list only when the price is under it; at or over the list the pill is the marker
   const belowList =
     li.listPrice !== li.unitPrice &&
     !isAboveListLine({ unitPrice: li.unitPrice, originalPrice: li.listPrice });
+  // F15/Q12: a pack line's price is per PACK, so its suffix is the same pack word as the toggle and the qty
+  // (not the product's stored unit, e.g. "case" beside a "Box" toggle). A named-unit or single-unit line keeps its own unit.
   const priceUnit = li.unitsPerBox && li.unitsPerBox > 1 && !li.unitLabel ? w.pack.lower : li.unit;
   const historyButton = customerPriceHistory && !li.isUnlisted && (
     <PriceHistoryButton
