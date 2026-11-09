@@ -1,5 +1,9 @@
 "use client";
 
+// W-1170: this control is not rendered on the product page since the prices-grid polish round (the Pricing unit select
+// was a disabled control with nothing to do). The file and its tests (for example OrderUnitFooter.k13-p12.test.tsx) stay
+// on purpose: it returns with the units settings update (flag.units_settings_v1, W-899), when U-1 owns the switch.
+
 import * as React from "react";
 import { FIELD_BORDER } from "../../ProductPricesGrid";
 import { UNITS_V2_TESTIDS as T } from "../../units-v2-testids";
