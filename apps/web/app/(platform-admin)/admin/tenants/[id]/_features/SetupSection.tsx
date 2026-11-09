@@ -6,7 +6,7 @@ import { SetupSummary } from "./SetupSummary";
 import { currentRoleIsSuperAdmin } from "./super-admin";
 
 /**
- * The top of the tenant's "Setup" tab: the plain-English current setup, then the "What this business does" capabilities card. Platform
+ * The top of the business's "Features" tab: the plain-English current setup, then the "What this business does" capabilities card. Platform
  * admin only — it renders nothing for any other role (the feature console below it already says so), and every route
  * behind it is SuperAdminGuard-ed server-side. `version` remounts the summary after the capabilities changed.
  */

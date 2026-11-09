@@ -65,7 +65,7 @@ function buildRows(
         adminVerdict !== "fail"
           ? undefined
           : {
-              href: `${base}?focus=admin-account`,
+              href: `${base}?tab=details&focus=admin-account`,
               text: "Create admin",
               aria: `Create admin for ${name}`,
             },
@@ -176,7 +176,7 @@ export function ReadinessCard({
           </span>
           <span>Choose how this business sells.</span>
           <Link
-            href={`/admin/tenants/${tenant.id}?tab=setup&focus=capabilities`}
+            href={`/admin/tenants/${tenant.id}?tab=features&focus=capabilities`}
             scroll={false}
             aria-label={`Choose how ${name} sells`}
             className="admin-tap-text ml-auto inline-flex !min-h-[44px] items-center px-1 text-indigo-400 hover:underline sm:!min-h-6"

@@ -241,7 +241,7 @@ describe("SuspendDialog", () => {
   it("tells the admin a suspended tenant is reinstated automatically when it pays", () => {
     setup();
     expect(
-      screen.getByText("Suspended tenants are reinstated automatically when they pay."),
+      screen.getByText("Suspended businesses are reinstated automatically when they pay."),
     ).toBeInTheDocument();
   });
 
@@ -265,7 +265,7 @@ describe("DeleteTenantDialog", () => {
     );
     return { onClose, onConfirm };
   };
-  const slugBox = () => screen.getByLabelText("Type the tenant slug to confirm deletion");
+  const slugBox = () => screen.getByLabelText("Type the business web name to confirm deletion");
 
   it("names the tenant and slug, says it cannot be undone, and asks for the slug", () => {
     setup();
@@ -275,13 +275,13 @@ describe("DeleteTenantDialog", () => {
     expect(
       screen.getByText("This cancels and archives Acme Wholesale (acme). You can't undo this."),
     ).toBeInTheDocument();
-    expect(screen.getByText(/To confirm, type the tenant slug:/)).toBeInTheDocument();
+    expect(screen.getByText(/To confirm, type the business web name:/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
   });
 
-  it("Delete tenant stays disabled until the slug is typed EXACTLY", () => {
+  it("Delete business stays disabled until the slug is typed EXACTLY", () => {
     const { onConfirm } = setup();
-    const del = screen.getByRole("button", { name: "Delete tenant" });
+    const del = screen.getByRole("button", { name: "Delete business" });
     expect(del).toBeDisabled();
     for (const wrong of ["acm", "ACME", "acme ", " acme", "acme-2", ""]) {
       fireEvent.change(slugBox(), { target: { value: wrong } });
@@ -372,8 +372,8 @@ describe("DeleteTenantDialog slug input (N2)", () => {
         onConfirm={() => {}}
       />,
     );
-    expect(screen.getByLabelText("Type the tenant slug to confirm deletion").className).toMatch(
-      /focus:ring-2.*focus:ring-red-500\/30/,
-    );
+    expect(
+      screen.getByLabelText("Type the business web name to confirm deletion").className,
+    ).toMatch(/focus:ring-2.*focus:ring-red-500\/30/);
   });
 });
