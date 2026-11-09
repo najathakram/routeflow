@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import type { FeatureChangeInput } from "@routeflow/types";
+import { API_ERROR_CODES, type FeatureChangeInput } from "@routeflow/types";
 import { fetchFeatureRegistry } from "@/lib/platform-admin/features";
 import {
   fetchFeatureChangeLog,
@@ -66,7 +66,7 @@ export function FeatureChangeHistory({ tenantId }: { tenantId: string }) {
       load();
     } catch (e) {
       setError(
-        featureChangeErrorCode(e) === "FEATURE_CHANGE_NOT_UNDOABLE"
+        featureChangeErrorCode(e) === API_ERROR_CODES.FEATURE_CHANGE_NOT_UNDOABLE
           ? NOT_UNDOABLE
           : "Couldn't undo. Nothing was changed.",
       );
