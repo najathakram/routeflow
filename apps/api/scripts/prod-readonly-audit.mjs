@@ -14,6 +14,12 @@
  */
 import pg from "pg";
 import { resolveReportDbUrl } from "./lib/report-db-url.mjs";
+import {
+  NULL_TENANT_SPLITS,
+  READ_ONLY_PRELUDE,
+  formatSplitLines,
+  formatUnknownLine,
+} from "./lib/null-tenant-split.mjs";
 
 /**
  * Resolve a connection string. Railway's `postgres` service publishes only its
@@ -51,8 +57,7 @@ async function main() {
   await client.connect();
 
   // Hard read-only guarantee + query cap, before anything else runs.
-  await client.query("SET default_transaction_read_only = on");
-  await client.query("SET statement_timeout = '45s'");
+  for (const stmt of READ_ONLY_PRELUDE) await client.query(stmt);
 
   console.log(`\n=== READ-ONLY AUDIT — ${host} ===`);
   console.log(`    session is READ ONLY; no writes are possible\n`);
@@ -150,6 +155,19 @@ async function main() {
       ? "   → invisible to the app IF RLS is enabled AND the role does not bypass it.\n"
       : "   → none; RLS is safe from this angle.\n",
   );
+
+  // ── 4b. NULL-tenant counts split by design vs defect (C-1b, SA-1123) ───────
+  // Counts only; a failing table prints "unknown" and never aborts the run.
+  console.log("4b. NULL-tenantId COUNTS, BY DESIGN vs DEFECT (counts only)");
+  for (const split of NULL_TENANT_SPLITS) {
+    try {
+      const rows = await q(split.sql);
+      for (const line of formatSplitLines(split, rows[0])) console.log(line);
+    } catch {
+      console.log(formatUnknownLine(split));
+    }
+  }
+  console.log("");
 
   // ── 5. Table inventory ────────────────────────────────────────────────────
   const tables = await q(`SELECT count(*) AS public_tables FROM information_schema.tables
