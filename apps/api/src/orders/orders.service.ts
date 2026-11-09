@@ -2991,7 +2991,14 @@ export class OrdersService implements OnApplicationBootstrap {
           // (skipped/invalid items `continue` before it).
           let pos = 0;
           const splitPromos = isBuyerEdit
-            ? keep.planPromos(dto.items, heldById, order.lineItems, productMap, pieceDenominated)
+            ? keep.planPromos(
+                dto.items,
+                heldById,
+                order.lineItems,
+                productMap,
+                pieceDenominated,
+                !!dto.namesLines,
+              )
             : new Map<string, SplitPromoGroup>();
           for (const item of dto.items) {
             if (!item.productId) {
@@ -3028,7 +3035,14 @@ export class OrdersService implements OnApplicationBootstrap {
             // Row 355: pack vs pieces per LINE, from its own unit fields (`piecesDenominated`).
             const upb = Number(product.unitsPerBox ?? 0);
             const shouldSplit =
-              upb > 1 && piecesDenominated(order.lineItems, item, pieceDenominated, isBuyerEdit);
+              upb > 1 &&
+              piecesDenominated(
+                order.lineItems,
+                item,
+                pieceDenominated,
+                isBuyerEdit,
+                !!dto.namesLines,
+              );
             // SA-601 / #2780 (PACK ONLY): a PLAIN buyer qty (no boxes/pieces/unitLabel) on a
             // product NEW to the order is NOT re-split as pieces — it is the DEFAULT SELLING
             // UNIT (the pack: qty N = N packs), exactly as create() stores it. It falls through

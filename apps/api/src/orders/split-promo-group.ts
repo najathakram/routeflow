@@ -42,6 +42,7 @@ export function planSplitPromos(
   }>,
   productMap: ReadonlyMap<string, { unitsPerBox?: unknown }>,
   pieceDenominated: ReadonlySet<string>,
+  namesLines: boolean,
 ): Map<string, SplitPromoGroup> {
   const byProduct = new Map<string, PlanItem[]>();
   for (const it of items) {
@@ -83,7 +84,7 @@ export function planSplitPromos(
     // Each entry as the write loop will store it (the same per-line pieces-or-units decision).
     const shaped = ordered.map((it) => {
       const split =
-        upb > 1 && piecesDenominated(lineItems, it, pieceDenominated, true)
+        upb > 1 && piecesDenominated(lineItems, it, pieceDenominated, true, namesLines)
           ? normalizeBoxesPieces({ qty: Number(it.qty), unitsPerBox: upb })
           : null;
       return split

@@ -352,9 +352,11 @@ export function applyBuyerEditLines<T extends BuyerEditEntry>(
  * once (row 340 splits), and reading the pack line as pieces under-charges it by `unitsPerBox`.
  *  - an entry carrying an explicit boxes/pieces split is in pieces (the split is a signal, re-derived server-side);
  *  - an entry naming a line of this product (`sourceLineId`) reads like that line: box-split => pieces;
- *  - an entry naming none reads like the product's live lines WHEN THEY AGREE (every one box-split => pieces:
- *    the legacy plain qty of a box-split line); with a pack line among them, or none at all, it is a plain
- *    buyer qty = the default selling unit. A DRIVER entry keeps the product-wide gate.
+ *  - SA-1118: an entry naming none, from an editor that names its lines (`namesLines`), is the pack: a plain
+ *    buyer qty = the default selling unit, whatever the product's other lines hold;
+ *  - an entry naming none from a legacy editor (`namesLines` false) reads like the product's live lines when
+ *    they agree (every one box-split => pieces: the legacy plain qty of a box-split line); with a pack line
+ *    among them, or none at all, it is the pack. A DRIVER entry keeps the product-wide gate.
  */
 export function piecesDenominated(
   lineItems:
@@ -370,6 +372,7 @@ export function piecesDenominated(
   item: { productId?: string | null; boxes?: unknown; pieces?: unknown; sourceLineId?: string },
   productPieceDenominated: ReadonlySet<string>,
   isBuyerEdit: boolean,
+  namesLines: boolean,
 ): boolean {
   if (isBuyerEdit && (item.boxes != null || item.pieces != null)) return true;
   const lines = lineItems ?? [];
@@ -378,6 +381,7 @@ export function piecesDenominated(
     : undefined;
   if (own) return own.boxes != null || own.pieces != null;
   if (!isBuyerEdit) return !!item.productId && productPieceDenominated.has(item.productId);
+  if (namesLines) return false;
   const live = lines.filter((l) => l.productId === item.productId && l.status !== "CANCELLED");
   return live.length > 0 && live.every((l) => l.boxes != null || l.pieces != null);
 }
