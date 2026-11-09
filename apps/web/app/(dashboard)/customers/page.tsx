@@ -59,7 +59,7 @@ import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
 import { fmt, displayEmail, NO_EMAIL_COPY } from "@/lib/formatting";
 import { ImportCsvPanel } from "@/components/import/ImportCsvPanel";
-import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
+import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
 import { CUSTOMER_IMPORT_COLUMNS, CUSTOMER_IMPORT_TEMPLATE_HEADERS } from "@routeflow/types";
 import {
   OpenBalanceButton,
@@ -226,6 +226,20 @@ export default function CustomersPage() {
     if (t) setTagFilter(t);
   }, [searchParams]);
   const [isAddOpen, setIsAddOpen] = React.useState(false);
+  // B1019: the command palette's "New customer" (and /customers/create) deep-link here with
+  // ?action=new. Open the same Add modal the New customer button opens — unless the workspace is
+  // read-only, where that button is disabled too — and consume the param as soon as it is honored
+  // (this effect re-runs on every searchParams change; search/filters write to the URL), so
+  // a refresh, Back or the next keystroke never reopens the modal. Same pattern as products.
+  const { readOnly: writesBlocked } = useReadOnlyGate();
+  React.useEffect(() => {
+    if (searchParams.get("action") !== "new") return;
+    if (!writesBlocked) setIsAddOpen(true);
+    const params = new URLSearchParams(window.location.search);
+    params.delete("action");
+    const qs = params.toString();
+    router.replace(qs ? `/customers?${qs}` : "/customers", { scroll: false });
+  }, [searchParams, router, writesBlocked]);
   const [isImportOpen, setIsImportOpen] = React.useState(false);
   // POST /import/contacts is admin-only on the api.
   const canImport = isAccountAdmin(useAuth().user);
