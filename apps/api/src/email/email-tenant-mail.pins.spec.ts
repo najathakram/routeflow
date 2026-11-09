@@ -18,7 +18,16 @@ const visible = (html: string) =>
     .replace(/<[^>]+>/g, "")
     .replace(/\s+/g, " ");
 
-function service(tenantId: string | null = "t1", businessName: string | null = "Acme Foods") {
+/**
+ * `withReplyAddresses` gives the tenant BOTH reply sources `getReplyTo` reads (a customer-facing
+ * email and an active admin login), so a tenant mail would get a Reply-To and a platform mail
+ * must not.
+ */
+function service(
+  tenantId: string | null = "t1",
+  businessName: string | null = "Acme Foods",
+  withReplyAddresses = false,
+) {
   const env: Record<string, string> = {
     SMTP_HOST: "smtp.test",
     SMTP_USER: "u@t.test",
@@ -26,14 +35,23 @@ function service(tenantId: string | null = "t1", businessName: string | null = "
   };
   const prisma = {
     getTenantId: () => tenantId,
-    tenantConfig: { findFirst: jest.fn().mockResolvedValue({ businessName }) },
+    tenantConfig: {
+      findFirst: jest.fn().mockResolvedValue({
+        businessName,
+        ...(withReplyAddresses ? { customerEmail: "orders@acme.example" } : {}),
+      }),
+    },
     forTenant: () => ({
       systemConfig: {
         findMany: jest.fn().mockResolvedValue([]),
         findFirst: jest.fn().mockResolvedValue(null),
       },
     }),
-    user: { findFirst: jest.fn().mockResolvedValue(null) },
+    user: {
+      findFirst: jest
+        .fn()
+        .mockResolvedValue(withReplyAddresses ? { email: "admin@acme.example" } : null),
+    },
   } as any;
   const sendMail = jest.fn().mockResolvedValue({ messageId: "m1" });
   (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
@@ -78,6 +96,23 @@ describe("the buyer-portal invite: tenant look, platform transport (#824)", () =
     expect(sent.replyTo).toBeUndefined();
     const errors = (Logger.prototype.error as jest.Mock).mock.calls.map((c) => String(c[0]));
     expect(errors.filter((m) => m.includes("platform path drops"))).toEqual([]);
+  });
+
+  it("a tenant with a reply address and an admin login still gets no Reply-To on the invite", async () => {
+    const { svc, sendMail } = service("t1", "Acme Foods", true);
+    await svc.send({
+      to: "buyer@acme.example",
+      ...portalInviteEmail("Acme Foods", INVITE_URL, await svc.tenantLook()),
+      senderClass: "platform",
+    });
+    expect(sendMail).toHaveBeenCalledTimes(1);
+    expect(sendMail.mock.calls[0][0].replyTo).toBeUndefined();
+  });
+
+  it("probe: the same tenant's ordinary tenant mail DOES get its Reply-To (the fixture is live)", async () => {
+    const { svc, sendMail } = service("t1", "Acme Foods", true);
+    await svc.send({ to: "buyer@acme.example", subject: "Hi", html: "<p>x</p>" });
+    expect(sendMail.mock.calls[0][0].replyTo).toBe("orders@acme.example");
   });
 
   it("the text part carries the link and the expiry line", () => {
