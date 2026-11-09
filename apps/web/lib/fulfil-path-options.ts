@@ -2,7 +2,9 @@
  * The staff order-detail "Fulfillment" select. Every fulfil path has a label, so a PICKUP order never renders a
  * blank select; PICKUP is shown but not selectable (the PATCH only writes ROUTE / SHIP — writable-fulfill-paths.ts).
  */
-export type FulfilPath = "ROUTE" | "SHIP" | "PICKUP";
+import type { FulfillPath } from "@routeflow/types";
+
+export type FulfilPath = FulfillPath;
 
 const LABELS: Record<FulfilPath, string> = {
   ROUTE: "Delivery route",

@@ -10,6 +10,7 @@ import type {
 } from "@routeflow/types";
 import type { InvoiceSendLock, InvoiceSendState } from "@/lib/invoice-send-state";
 import { isPostDeliveryOrderStatus } from "@routeflow/types";
+import type { FulfillPath } from "@routeflow/types";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import { isRecordPaymentLocalRefusal } from "@/lib/duplicate-payment-ref";
@@ -228,7 +229,7 @@ export interface Invoice {
   order?: {
     status: string;
     orderNumber?: string | null;
-    fulfillPath?: "ROUTE" | "SHIP" | "PICKUP" | null;
+    fulfillPath?: FulfillPath | null;
     /** Row 342, STAFF reads only: where and by whom the order was handed over (absent for a buyer / older API). */
     registerKey?: string | null;
     handedOverBy?: string | null;

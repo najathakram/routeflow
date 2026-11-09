@@ -20,7 +20,7 @@ import type {
   OrderCancelBlockedReason,
 } from "@routeflow/types";
 import type { LocalErrorToastOption } from "@/lib/local-error-toast";
-import type { OverrideStampView, RestrictionAck } from "@routeflow/types";
+import type { FulfillPath, OverrideStampView, RestrictionAck } from "@routeflow/types";
 import { splitIdAck, type IdWithAck } from "@/lib/api/restriction-warning";
 import type { HandOverSoldBy } from "@/lib/handover-stamp";
 
@@ -54,7 +54,7 @@ export interface Order {
   status:
     "DRAFT" | "PENDING" | "CONFIRMED" | "OUT_FOR_DELIVERY" | "DELIVERED" | "REFUSED" | "CANCELLED";
   /** ROUTE = dispatched on a delivery route (default); SHIP = supplier/carrier-shipped, excluded from trip/route dispatch; PICKUP = order ahead, picked up at the store. */
-  fulfillPath: "ROUTE" | "SHIP" | "PICKUP";
+  fulfillPath: FulfillPath;
   /** Walk-in counter sale (PICKUP + counterSale). Never a POS-mode order: see `isPosOrder` (pos-orders.ts). */
   counterSale?: boolean | null;
   /** Row 342, STAFF reads only (absent on a buyer read / older API): the register the order was handed over at. */
@@ -470,7 +470,7 @@ export function useUninvoicedOrders(customerId: string | null | undefined) {
 export function useActiveOrderForCustomer(
   customerId: string | null | undefined,
   /** The path the order being built is on: the merge preview must look for the same target create would. */
-  fulfillPath?: "ROUTE" | "SHIP" | "PICKUP",
+  fulfillPath?: FulfillPath,
 ) {
   return useQuery<ActiveOrderSummary | null>({
     queryKey: ["orders", "active", customerId, fulfillPath],
@@ -723,11 +723,7 @@ export function usePatchOrderCommissionRate() {
 
 export function usePatchOrderFulfillPath(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
-  return useMutation<
-    Order,
-    Error,
-    { id: string; fulfillPath: "ROUTE" | "SHIP" | "PICKUP" } & RestrictionAck
-  >({
+  return useMutation<Order, Error, { id: string; fulfillPath: FulfillPath } & RestrictionAck>({
     meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: ({ id, fulfillPath, ...ack }) =>
       apiClient.patch(`/orders/${id}/fulfill-path`, { fulfillPath, ...ack }).then((r) => r.data),
