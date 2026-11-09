@@ -38,12 +38,12 @@ const hasField = (m: Prisma.DMMF.Model | undefined, name: string, kind: string):
  * fails on any relation this rule gets wrong, so a new unconventional FK name is caught the day it lands.
  */
 const OWNING_WITH_OTHER_FK_NAME: ReadonlySet<string> = new Set([
-  "Product.parent",
-  "ProductUnit.parent",
-  "Recipe.family",
-  "Order.orderTemplate",
-  "CommissionStatementLine.carriedFrom",
-  "BuyerMergeRequest.initiatingTenant",
+  "Product.parent", // FK scalar: parentProductId
+  "ProductUnit.parent", // FK scalar: parentUnitId
+  "Recipe.family", // FK scalar: familyProductId
+  "Order.orderTemplate", // FK scalar: templateId
+  "CommissionStatementLine.carriedFrom", // FK scalar: carriedFromStatementId
+  "BuyerMergeRequest.initiatingTenant", // FK scalar: initiatedByTenantId
 ]);
 
 function holdsFk(m: Prisma.DMMF.Model, f: Prisma.DMMF.Field): boolean {
