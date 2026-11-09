@@ -102,6 +102,7 @@ import { PriceWindowHost, ProductPricingRegion } from "./PriceWindowHost";
 import { ProductLowerColumns } from "./ProductLowerColumns";
 import { DetailsMore } from "./DetailsMore";
 import { unitStructureGoverned } from "./units-v2/structure/unit-structure";
+import { tierWarns, tiersBreakOrder } from "./tier-order";
 import { ProductJumpLinks } from "./units-v2/nav/ProductJumpLinks";
 import { ImageLightbox } from "./ImageLightbox";
 import { objectPositionForUrl, type FocalPoint } from "@/lib/image-focal";
@@ -198,15 +199,19 @@ function EditableNumber({
   value,
   onChange,
   onCommit,
+  auto,
 }: {
   value: number;
+  /** An Auto (0) tier: an empty box that reads "Auto". */
+  auto?: boolean;
   onChange: (v: number) => void;
   onCommit?: (v: number, valueAtFocus: number | null) => void;
 }) {
   return (
     <DecimalInput
       min={0}
-      value={Number.isFinite(value) ? value : null}
+      value={!auto && Number.isFinite(value) ? value : null}
+      placeholder={auto ? "Auto" : undefined}
       onChange={(v) => onChange(v ?? 0)}
       onCommit={onCommit}
       className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
@@ -1121,17 +1126,10 @@ export default function ProductDetailPage() {
             [productTierLabel(tierLabels, 5), "priceTier5", product.priceTier5],
           ] as [string, string, any][]
         ).map(([label, field, productVal], idx) => {
-          const prevFields = ["pricePerUnit", "priceTier2", "priceTier3", "priceTier4"];
-          const prevField = prevFields[idx];
           const curVal = isEditing
             ? parseFloat(String(editDraft[field] ?? parseFloat(String(productVal ?? priceNumber))))
             : parseFloat(String(productVal ?? priceNumber));
-          const prevVal = isEditing
-            ? parseFloat(String(editDraft[prevField] ?? priceNumber))
-            : parseFloat(
-                String(idx === 0 ? priceNumber : ((product as any)[prevField] ?? priceNumber)),
-              );
-          const warn = isEditing && curVal > prevVal;
+          const warn = isEditing && tierWarns(idx, editDraft, product as any, priceNumber, v2);
           const inheritsList = !(Number(productVal) > 0);
           return (
             <div key={field}>
@@ -1143,6 +1141,7 @@ export default function ProductDetailPage() {
                 <>
                   <EditableNumber
                     value={curVal}
+                    auto={v2 && !(curVal > 0)}
                     onChange={(v) => setEditDraft((d) => ({ ...d, [field]: String(v) }))}
                     onCommit={(v, atFocus) => {
                       // P0 2026-10-14: lower tiers move only by applyLadderChange (tracking, 0 or above
@@ -1195,7 +1194,8 @@ export default function ProductDetailPage() {
           const t3 = parseFloat(String(editDraft.priceTier3 ?? (product as any).priceTier3 ?? t1));
           const t4 = parseFloat(String(editDraft.priceTier4 ?? (product as any).priceTier4 ?? t1));
           const t5 = parseFloat(String(editDraft.priceTier5 ?? (product as any).priceTier5 ?? t1));
-          const hasViolation = t2 > t1 || t3 > t2 || t4 > t3 || t5 > t4;
+          const ts = [t2, t3, t4, t5];
+          const hasViolation = ts.some((_, i) => tiersBreakOrder(t1, ts, i, v2));
           return hasViolation ? (
             <p className="mt-1.5 text-xs text-warning">
               Higher tier prices should be ≤ the tier above (volume discounts are lower).

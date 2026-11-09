@@ -66,6 +66,10 @@ describe("family page with units v2 on: parity", () => {
       'const pricingSplit = v2 && product.kind !== "FAMILY";',
       // K11-20c: prices are edited in the floating window (and shown read-only in Details) for a non-governed product
       "const pricesInWindow = v2 && !unitStructureGoverned(product);",
+      // W-1170 F2: the Auto (0) tier rule is on with the prices grid
+      "const warn = isEditing && tierWarns(idx, editDraft, product as any, priceNumber, v2);",
+      "auto={v2 && !(curVal > 0)}",
+      "const hasViolation = ts.some((_, i) => tiersBreakOrder(t1, ts, i, v2));",
       '{v2 ? null : stockStatus === "OUT_OF_STOCK" ? (',
       "<ProductHeaderLine product={product} currentStock={currentStock} pricesV2={v2} />",
       '{v2 && product.kind !== "FAMILY" ? <ProductJumpLinks reserveSpace /> : null}',
