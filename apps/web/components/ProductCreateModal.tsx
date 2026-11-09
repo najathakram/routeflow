@@ -136,6 +136,8 @@ function uomsForItemType(
  * catalog, regulated type/category pickers), its own `createProduct`
  * mutation, and the post-create image upload.
  */
+const TIER_NUMBERS = [2, 3, 4, 5] as const;
+
 export function ProductCreateModal({
   isOpen,
   onClose,
@@ -249,6 +251,10 @@ export function ProductCreateModal({
   const pendingPackSizeRef = React.useRef<number | null>(null);
   const [priceError, setPriceError] = React.useState("");
   const [pieceError, setPieceError] = React.useState("");
+  // W-1170 F12a: optional Tier 2-5 prices (v2 only). Blank = Auto (the server stores 0 and follows Retail).
+  const [tiersOpen, setTiersOpen] = React.useState(false);
+  const [tierPrices, setTierPrices] = React.useState<Record<number, string>>({});
+  const [tierError, setTierError] = React.useState("");
   const [isSavingPiece, setIsSavingPiece] = React.useState(false);
   // K11-28: the piece price needs both units flags (the units POST and the S9 prices write are gated on them).
   const pricesV2 = usePricesV2Enabled();
@@ -257,6 +263,8 @@ export function ProductCreateModal({
   // it beside Units per box without typing first. Creating WITH a piece price still needs a whole Units per box of 2
   // or more (a factor-1 unit equal to the pack's is refused): submit checks `piecesPerPack`, not visibility.
   const piecesPerPack = /^\d+$/.test(form.unitsPerBox.trim()) ? Number(form.unitsPerBox) : 0;
+  // F12a: tiers are priced at create for a standalone product only (a variant is priced by its family).
+  const showTierPrices = pricesV2 && !form.parentProductId;
   const showPiecePrice = pricesV2 && unitsV1 && isPackUnit(form.unit) && !form.parentProductId;
   // The cell appears one row below the field being typed in, possibly past the visible part of the scroll body (on a
   // phone, behind the pinned footer). Reveal it by the minimum scroll; focus stays where it is.
@@ -328,6 +336,9 @@ export function ProductCreateModal({
     setFormProgrammatic(() => ({ ...EMPTY_DRAFT_FORM }));
     setPendingImages([]);
     setPreviews([]);
+    setTiersOpen(false);
+    setTierPrices({});
+    setTierError("");
   };
 
   // Unfinished-product draft: only a plain New product (no prefill, not a variant) keeps one.
@@ -380,6 +391,22 @@ export function ProductCreateModal({
       return;
     }
     setPriceError("");
+    // W-1170 F12a: only typed tier prices are sent, as numbers; the server rounds, a blank tier stays Auto.
+    const tierBody: Record<string, number> = {};
+    if (showTierPrices) {
+      for (const t of TIER_NUMBERS) {
+        const raw = (tierPrices[t] ?? "").trim();
+        if (raw === "") continue;
+        const n = Number(raw);
+        if (!Number.isFinite(n) || n < 0) {
+          setTierError(`Enter a valid price for Tier ${t}, or leave it blank.`);
+          setTiersOpen(true);
+          return;
+        }
+        tierBody[`priceTier${t}`] = n;
+      }
+    }
+    setTierError("");
     // K11-28: a bad piece price blocks Create BEFORE anything is written (validateSetPrice is the one rule).
     let pieceTo: number | null = null;
     if (showPiecePrice && form.pricePerPiece.trim() !== "") {
@@ -415,6 +442,7 @@ export function ProductCreateModal({
         unitSku: form.unitSku.trim() || undefined,
         unit: form.unit,
         pricePerUnit: form.pricePerUnit,
+        ...tierBody,
         // One category axis: a regulated type's structured Category picker
         // drives `category` server-side — never send the free-text value
         // (which is hidden/cleared in the form) when a type is selected.
@@ -856,6 +884,54 @@ export function ProductCreateModal({
                 >
                   {qtyHint}
                 </p>
+                {showTierPrices && (
+                  <div className="mt-2">
+                    <button
+                      type="button"
+                      aria-expanded={tiersOpen}
+                      aria-controls="product-tier-prices"
+                      onClick={() => setTiersOpen((o) => !o)}
+                      className="text-xs font-medium text-accent-deep underline underline-offset-[3px] hover:no-underline"
+                    >
+                      Different prices for tiers
+                    </button>
+                    {tiersOpen && (
+                      <div id="product-tier-prices" className="mt-2 grid grid-cols-2 gap-2">
+                        {TIER_NUMBERS.map((t) => (
+                          <div key={t}>
+                            <label
+                              htmlFor={`product-tier-${t}`}
+                              className="mb-1 block text-xs font-medium text-navy"
+                            >
+                              {`Tier ${t}`}
+                            </label>
+                            <div className="flex items-center">
+                              <span className="flex h-[38px] items-center rounded-l border border-r-0 border-surface-border bg-surface-raised px-2.5 text-sm text-navy/70">
+                                $
+                              </span>
+                              <input
+                                id={`product-tier-${t}`}
+                                aria-label={`Tier ${t} price`}
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                placeholder="Auto (same as Retail)"
+                                value={tierPrices[t] ?? ""}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setTierPrices((p) => ({ ...p, [t]: v }));
+                                  setTierError("");
+                                }}
+                                className="w-full min-w-0 rounded-r border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                              />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {tierError && <p className="mt-1 text-xs text-danger">{tierError}</p>}
+                  </div>
+                )}
                 {initialCost != null && initialCost > 0 && (
                   <p className="mt-1 text-[11px] text-navy/70">
                     {validUnitsPerBoxPrefill(initialUnitsPerBox)

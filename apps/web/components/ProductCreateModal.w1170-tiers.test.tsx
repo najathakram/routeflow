@@ -1,0 +1,109 @@
+import * as React from "react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { getStoredUser } from "@/lib/auth";
+import { renderWithProviders } from "@/test-utils/render";
+import { ProductCreateModal } from "./ProductCreateModal";
+
+/**
+ * W-1170 F12a: under prices v2 the New product form offers optional Tier 2-5 prices behind a closed disclosure.
+ * Only typed values are sent, as numbers; the server rounds and a blank tier stays Auto. Variants never show it.
+ */
+const mutateAsync = jest.fn();
+const flags = { v2: true };
+let products: { data: unknown[] } = { data: [] };
+
+jest.mock("@/lib/auth", () => ({
+  ...jest.requireActual("@/lib/auth"),
+  getStoredUser: jest.fn(),
+}));
+jest.mock("@/lib/api/units-v2", () => ({ usePricesV2Enabled: () => flags.v2 }));
+jest.mock("@/lib/api/product-units", () => ({ useUnitsEnabled: () => false }));
+jest.mock("@/lib/api/products", () => ({
+  useCreateProduct: () => ({ mutateAsync, isPending: false }),
+  useProducts: () => ({ data: products }),
+  uploadProductImages: jest.fn(),
+}));
+jest.mock("@/lib/api/tracked-categories", () => ({
+  useTrackedCategories: () => ({ data: [] }),
+  useRegulatedTemplates: () => ({ data: [] }),
+}));
+jest.mock("./CategoryCombobox", () => ({ CategoryCombobox: () => <div /> }));
+jest.mock("./SubcategoryCombobox", () => ({ SubcategoryCombobox: () => <div /> }));
+jest.mock("./BarcodeScannerButton", () => ({ BarcodeScannerButton: () => null }));
+
+const open = () =>
+  renderWithProviders(<ProductCreateModal isOpen onClose={jest.fn()} onCreated={jest.fn()} />);
+const create = () => fireEvent.click(screen.getByRole("button", { name: "Create product" }));
+const toggle = () => screen.queryByRole("button", { name: /Different prices for tiers/ });
+
+beforeEach(() => {
+  localStorage.clear();
+  (getStoredUser as jest.Mock).mockReturnValue(null);
+  flags.v2 = true;
+  products = { data: [] };
+  mutateAsync.mockReset();
+  mutateAsync.mockResolvedValue({ id: "p1", name: "UX-Soda", unit: "each", pricePerUnit: "10" });
+});
+
+async function fill() {
+  await userEvent.type(screen.getByLabelText("Name *"), "UX-Soda");
+  await userEvent.type(screen.getByLabelText(/^Unit \*/), "each");
+  await userEvent.type(screen.getByLabelText(/^Price per each/), "10");
+}
+
+describe("W-1170 F12a: tier prices at create", () => {
+  it("starts closed: no tier inputs until the disclosure opens", async () => {
+    open();
+    expect(toggle()).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByLabelText("Tier 2 price")).toBeNull();
+  });
+
+  it("sends a typed Tier 2 as a number and leaves untouched tiers out", async () => {
+    open();
+    await fill();
+    await userEvent.click(toggle()!);
+    const t2 = screen.getByLabelText("Tier 2 price");
+    expect(t2).toHaveAttribute("placeholder", "Auto (same as Retail)");
+    await userEvent.type(t2, "33.00");
+    create();
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    const body = mutateAsync.mock.calls[0][0];
+    expect(body.priceTier2).toBe(33);
+    expect(body).not.toHaveProperty("priceTier3");
+    expect(body).not.toHaveProperty("priceTier4");
+    expect(body).not.toHaveProperty("priceTier5");
+  });
+
+  it("sends no tier keys when the disclosure is never used", async () => {
+    open();
+    await fill();
+    create();
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(
+      Object.keys(mutateAsync.mock.calls[0][0]).filter((k) => k.startsWith("priceTier")),
+    ).toEqual([]);
+  });
+
+  it("is absent when prices v2 is off", () => {
+    flags.v2 = false;
+    open();
+    expect(toggle()).toBeNull();
+  });
+
+  it("is absent for a variant of a family", async () => {
+    products = {
+      data: [{ id: "par1", name: "UX-Acme", unit: "each", pricePerUnit: "5", unitsPerBox: 1 }],
+    };
+    renderWithProviders(
+      <ProductCreateModal
+        isOpen
+        onClose={jest.fn()}
+        onCreated={jest.fn()}
+        defaultParentId="par1"
+      />,
+    );
+    await waitFor(() => expect(screen.getByLabelText(/^Unit \*/)).toHaveValue("each"));
+    expect(toggle()).toBeNull();
+  });
+});
