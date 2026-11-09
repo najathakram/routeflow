@@ -21,10 +21,12 @@ export const SIGN_IN_TIMESTAMP_RELIABLE_FROM = new Date("2026-09-29T00:00:00.000
  * B448 legacy window: an account created before this instant may have registered before sign-up links were written
  * to `UserEmailVerificationToken`. Such an account, with no link row ever written, is treated as pending only while it
  * is the sole account of its business (nobody else exists who could have deactivated it). Accounts created from this
- * instant on are judged by their link rows alone. Must sit after the deploy that ships `issueSignupLink`.
+ * instant on are judged by their link rows alone. STOP RULE: must sit after the deploy that ships `issueSignupLink`;
+ * if that deploy is not live a week before this date, move the date in the same window (a sign-up registered after the
+ * date but before the deploy has no row and would be refused).
  * remove the legacy branch once a census reads zero row-less pending sign-ups, added 2026-11-09
  */
-export const SIGNUP_LINK_ROWS_FROM = new Date("2026-12-01T00:00:00.000Z");
+export const SIGNUP_LINK_ROWS_FROM = new Date("2027-01-15T00:00:00.000Z");
 
 /** How long a sign-up link lives; the JWT and its row carry the same life. */
 export const SIGNUP_LINK_TTL_MS = 24 * 60 * 60 * 1000;

@@ -193,6 +193,22 @@ describeDb("B448: the sign-up verification link on a real database", () => {
     await expect(auth.verifyEmailAndLogin(second)).rejects.toMatchObject({ status: 400 });
   });
 
+  it("an expired live row is refused and activates nothing", async () => {
+    const tenantId = await mkTenant("e");
+    const pending = await mkUser(tenantId, "expired", UserStatus.INACTIVE);
+    await issueSignupLink(prisma, pending.id);
+    expect(await tenants.resendVerification(pending.email)).toBe(true);
+    const link = lastLinkToken();
+    await prisma.userEmailVerificationToken.updateMany({
+      where: { userId: pending.id, usedAt: null },
+      data: { expiresAt: new Date(Date.now() - 60_000) },
+    });
+    await expect(auth.verifyEmailAndLogin(link)).rejects.toMatchObject({ status: 400 });
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: pending.id } })).status).toBe(
+      UserStatus.INACTIVE,
+    );
+  });
+
   it("legacy: a row-less sign-up alone in its business can resend, which writes its first live row", async () => {
     const tenantId = await mkTenant("d");
     // a fixed date inside the legacy window, never the real clock (L-353)

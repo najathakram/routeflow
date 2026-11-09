@@ -304,11 +304,13 @@ describe("verification link lifecycle", () => {
       expect(statusWrites()).toHaveLength(0);
     });
 
-    it("the claim and the activation run in one transaction, claim first", async () => {
+    it("the claim and the activation run in one transaction: User row lock, then the claim (same order as resend)", async () => {
       (prisma.user.findUnique as jest.Mock).mockResolvedValue(base);
       await auth.verifyEmailAndLogin("t");
       expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
-      expect(rawSql()[0]).toMatch(/^UPDATE "UserEmailVerificationToken" SET "usedAt"/);
+      expect(rawSql()[0]).toBe(`SELECT 1 FROM "User" WHERE id = ? FOR UPDATE`);
+      expect(rawSql()[1]).toMatch(/^UPDATE "UserEmailVerificationToken" SET "usedAt"/);
+      expect(rawSql()[1]).toContain(`"tokenHash" = ? AND "usedAt" IS NULL AND "expiresAt" > ?`);
       expect(statusWrites()).toHaveLength(1);
     });
 

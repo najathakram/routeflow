@@ -124,11 +124,10 @@ export class AuthService {
     // a "Resend verification email" affordance) to a deactivated staff member
     // handed them a path back to ACTIVE via TenantsService.resendVerification +
     // verifyEmailAndLogin below — a self-reactivation hole caught in review.
-    // UserStatus (prisma/schema/tenancy.prisma) has no column distinguishing
-    // "never verified" from "deliberately deactivated," so this cannot be
-    // gated safely without a schema discriminator (e.g. a nullable
-    // `emailVerifiedAt` column or a distinct `PENDING_VERIFICATION` status) —
-    // proposed as a follow-up, not built here.
+    // UserStatus alone does not tell "never verified" from "deliberately
+    // deactivated"; the sign-up link is gated by a live UserEmailVerificationToken
+    // row instead (B448, verification-link-eligibility.ts), which every
+    // deactivation burns. Login stays generic for every non-ACTIVE status.
     if (!isLoginEligible(user)) return null;
     if (user.failedLoginAttempts > 0 || user.lockedUntil) {
       await this.prisma.user.update({
@@ -532,6 +531,9 @@ export class AuthService {
     // the same transaction, so a failed audit write rolls the activation back. A legacy account (no link row was
     // ever written for it) has nothing to claim; its status CAS is the only claim.
     const claimed = await this.prisma.tenantTransaction(async (tx) => {
+      // One lock order with resend and deactivation: the User row first, then its link rows. Taking the link row
+      // first would invert it and let a click racing a resend or a deactivation deadlock (40P01).
+      await tx.$executeRaw`SELECT 1 FROM "User" WHERE id = ${user.id} FOR UPDATE`;
       if (linkId && !(await claimSignupLink(tx, user.id, linkId))) return false;
       const res = await tx.user.updateMany({
         where: { id: user.id, status: "INACTIVE", lastLoginAt: null },
