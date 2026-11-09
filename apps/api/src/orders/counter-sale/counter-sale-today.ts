@@ -18,6 +18,7 @@ import {
   settlementTotals,
   type SettlementCreditNote,
   foldItemNames,
+  orderDateDrift,
   roundMoney,
   storedTaxRatePercent,
   sumConfirmed,
@@ -427,6 +428,7 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
       status: true,
       total: true,
       createdAt: true,
+      orderDate: true,
       customerId: true,
       counterCashTendered: true,
       customer: { select: { businessName: true, isWalkIn: true } },
@@ -628,6 +630,8 @@ export interface TodayOrderRecord {
   status: string;
   total: unknown;
   createdAt: Date;
+  /** W-1188: the chosen business day (midnight UTC of it); null/absent = not dated */
+  orderDate?: Date | null;
   customerId: string;
   /** SA-764: the cash handed over (null = not a cash sale / rung before it was stored) */
   counterCashTendered?: unknown;
@@ -916,6 +920,12 @@ export function counterReturnSplit(input: CounterReturnSplitInput): CounterRetur
   };
 }
 
+/** W-1188: the "Dated Fri" tag, from the ONE drift helper; null when not dated or dated to its entry day. */
+function datedTag(o: TodayOrderRecord, zone: string | null): TodaysSaleRow["dated"] {
+  const drift = orderDateDrift(o.orderDate, o.createdAt, zone);
+  return drift ? { day: drift.day, direction: drift.direction } : null;
+}
+
 export function toTodaysSaleRow(
   o: TodayOrderRecord,
   /** the tenant's configured rate in percent (`settings.taxRate`): a stored line rate is named only when it equals this */
@@ -924,6 +934,8 @@ export function toTodaysSaleRow(
   carriedReturns: readonly ReturnProvenance[] = [],
   /** SA-838a: the ONE batched credit-note read, by note id (see `creditNoteFacts`) */
   creditNotes: ReadonlyMap<string, CreditNoteFact> = new Map(),
+  /** the tenant's zone: the entry day the `dated` tag is judged against (UTC when null) */
+  zone: string | null = null,
 ): TodaysSaleRow {
   const live = o.invoices.filter((i) => !isDeadInvoice(i.status));
   const voided = o.status === OrderStatus.CANCELLED || (o.invoices.length > 0 && live.length === 0);
@@ -984,6 +996,7 @@ export function toTodaysSaleRow(
     invoiceId: shown?.id ?? null,
     invoiceNumber: shown?.invoiceNumber ?? null,
     createdAt: o.createdAt.toISOString(),
+    dated: datedTag(o, zone),
     customerId: o.customerId,
     customerName: o.customer?.businessName ?? "",
     isWalkIn,
