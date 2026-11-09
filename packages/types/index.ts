@@ -195,6 +195,7 @@ export * from "./api/staff-order-email";
 export * from "./api/us-states";
 export * from "./api/zip-state";
 export * from "./api/config-snapshots";
+export * from "./api/feature-changes";
 export * from "./api/auto-locks";
 export * from "./api/counter-day-close";
 export * from "./api/counter-drawer-event";
