@@ -227,6 +227,10 @@ export function LineItemRow({
   const w = unitWords({ packLabel: li.packLabel, baseUnitLabel: li.baseLabel });
   // F15/Q12: a pack line's price is per PACK, so its suffix is the same pack word as the toggle and the qty
   // (not the product's stored unit, e.g. "case" beside a "Box" toggle). A named-unit or single-unit line keeps its own unit.
+  // a SPECIAL line strikes its list only when the price is under it; at or over the list the pill is the marker
+  const belowList =
+    li.listPrice !== li.unitPrice &&
+    !isAboveListLine({ unitPrice: li.unitPrice, originalPrice: li.listPrice });
   const priceUnit = li.unitsPerBox && li.unitsPerBox > 1 && !li.unitLabel ? w.pack.lower : li.unit;
   const historyButton = customerPriceHistory && !li.isUnlisted && (
     <PriceHistoryButton
@@ -322,23 +326,25 @@ export function LineItemRow({
               {li.priceType === "SPECIAL" ? (
                 <>
                   {/* The struck list beside the price already says "special" (W-1170 P10), so it carries no pill. Above its
-                      list (a tier over Retail) the lower list is not struck; the pill is then the only signal and stays. */}
-                  {!isAboveListLine({ unitPrice: li.unitPrice, originalPrice: li.listPrice }) && (
-                    <span className="text-xs text-navy/70 line-through">
-                      {formatMoney(li.listPrice)}
-                    </span>
+                      list (a tier over Retail), or at it, nothing is struck; the pill is then the only marker and stays. A
+                      screen reader hears one sentence: the struck list is hidden and a visually hidden lead-in names both. */}
+                  {belowList && (
+                    <>
+                      <span className="sr-only">
+                        List price {formatMoney(li.listPrice)}, special price{" "}
+                      </span>
+                      <span aria-hidden="true" className="text-xs text-navy/70 line-through">
+                        {formatMoney(li.listPrice)}
+                      </span>
+                    </>
                   )}
                   <span
                     className="text-xs font-medium text-emerald-600"
-                    title={
-                      isAboveListLine({ unitPrice: li.unitPrice, originalPrice: li.listPrice })
-                        ? undefined
-                        : "Special price"
-                    }
+                    title={belowList ? "Special price" : undefined}
                   >
                     {formatMoney(li.unitPrice)} / {priceUnit}
                   </span>
-                  {isAboveListLine({ unitPrice: li.unitPrice, originalPrice: li.listPrice }) && (
+                  {!belowList && (
                     <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
                       Special price
                     </span>

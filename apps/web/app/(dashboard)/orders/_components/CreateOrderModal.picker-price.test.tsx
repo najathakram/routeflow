@@ -170,6 +170,18 @@ describe("CreateOrderModal product picker - the customer's price (W-1170 F8)", (
     expect(struck(was)).toBe(true);
   });
 
+  it("a screen reader hears one sentence for a struck list: list price, then the customer price", async () => {
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await pickCustomer();
+    const list = await openPicker("wid");
+    const row = within(list).getByRole("option", { name: /Widget/ });
+    expect(row).toHaveAccessibleName(
+      expect.stringContaining("List price $45.00, customer price $42.00"),
+    );
+    expect(row.textContent).toContain("List price $45.00, customer price ");
+    expect(row.querySelector(".line-through")).toHaveAttribute("aria-hidden", "true");
+  });
+
   it("the row price is the price the added line gets", async () => {
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     await pickCustomer();

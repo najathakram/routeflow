@@ -1915,7 +1915,14 @@ export function CreateOrderModal({
     const { price, was } = pickerPriceOf(p);
     return (
       <span className="ml-2 flex shrink-0 items-baseline gap-1.5 text-xs font-medium text-navy/70">
-        {was != null && <span className="font-normal line-through">{formatMoney(was)}</span>}
+        {was != null && (
+          <>
+            <span className="sr-only">List price {formatMoney(was)}, customer price </span>
+            <span aria-hidden="true" className="font-normal line-through">
+              {formatMoney(was)}
+            </span>
+          </>
+        )}
         <span>{formatMoney(price)}</span>
       </span>
     );

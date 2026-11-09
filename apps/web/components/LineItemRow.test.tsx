@@ -401,6 +401,31 @@ describe("the struck list price on a SPECIAL line", () => {
     expect(screen.queryByText("Special price")).not.toBeInTheDocument();
   });
 
+  // a11y: without the pill, a screen reader would hear "$12.00 $10.00 / each" with nothing saying which is which
+  it("10 against a list of 12: one spoken sentence, the struck list hidden from it", () => {
+    const { container } = renderRow(
+      makeProps({ ...plainItem, priceType: "SPECIAL", listPrice: 12, unitPrice: 10 }),
+    );
+    const spoken = screen.getByText("List price $12.00, special price", { exact: false });
+    expect(spoken).toHaveClass("sr-only");
+    expect(container.querySelector(".line-through")).toHaveAttribute("aria-hidden", "true");
+    const row = screen.getByTestId("line-price-row");
+    const heard = Array.from(row.querySelectorAll("span"))
+      .filter((el) => !el.closest("[aria-hidden=true]"))
+      .map((el) => el.textContent)
+      .join("");
+    expect(heard).toContain("List price $12.00, special price $10.00 / each");
+    expect(heard).not.toContain("$12.00$12.00");
+  });
+
+  it("a special price equal to its list is not struck and keeps the Special price pill", () => {
+    const { container } = renderRow(
+      makeProps({ ...plainItem, priceType: "SPECIAL", listPrice: 10, unitPrice: 10 }),
+    );
+    expect(container.querySelector(".line-through")).toBeNull();
+    expect(screen.getByText("Special price")).toBeInTheDocument();
+  });
+
   it("12 over a list of 10: the Special price pill stays and the list is not struck", () => {
     const { container } = renderRow(
       makeProps({ ...plainItem, priceType: "SPECIAL", listPrice: 10, unitPrice: 12 }),
