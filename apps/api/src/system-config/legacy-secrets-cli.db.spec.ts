@@ -183,10 +183,17 @@ describeDb("encrypt-legacy-secrets CLI gate wiring (AI limits PR-2)", () => {
         ENCRYPTION_KEY: KEY,
         PROTECTED_TENANT_SLUGS: liveSlug,
       });
+      // The refusal itself, not its wording: the CLI scrubs the database password out of every error it throws, and CI's
+      // password is the word "test" (db-migrations.yml), so "non-test" reaches the log as "non-***". The run ends with
+      // exit 1 BEFORE any later gate speaks, nothing is written, and no id is printed; the one fact it states is a count.
       expect(r.code).toBe(1);
-      expect(r.out).toMatch(/protected non-test tenant/);
+      expect(r.out).toMatch(/env-listed 1/);
+      expect(r.out).not.toMatch(
+        /treated as live|real terminal|--backup-taken|encrypted \d|would encrypt/,
+      );
       expect(r.out).not.toContain(live.id);
       expect(await read(t)).toBe(PLAIN);
+      expect(await audits(t)).toEqual([]);
     });
   });
 });
