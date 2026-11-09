@@ -24,6 +24,7 @@ import {
   CATCHUP_MARKER_ACTIONS,
   CATCHUP_MARKER_SELECT,
   readCatchupMarkers,
+  type MarkerAuditRow,
   type MarkerView,
 } from "./catchup-markers";
 import { planRefusalException, refusalCodesOf } from "./catchup-refusal";
@@ -163,7 +164,7 @@ export class CatchupCheckoutService {
   async plan(
     tenantId: string,
     now: Date = new Date(),
-    opts: { ownClaim?: boolean } = {},
+    opts: { ownClaim?: boolean; extraMarkerRows?: MarkerAuditRow[] } = {},
   ): Promise<CatchupReport> {
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
@@ -253,7 +254,9 @@ export class CatchupCheckoutService {
       orderBy: { createdAt: "asc" },
       select: CATCHUP_MARKER_SELECT,
     })) as { id: string; action: string; createdAt: Date; meta: Record<string, unknown> | null }[];
-    const markers = readCatchupMarkers(markerRows);
+    // `extraMarkerRows`: HYPOTHETICAL rows a correction preview appends (never read from or written to the DB), so the
+    // AFTER of a correction is computed by this very function and cannot drift from the real catch-up.
+    const markers = readCatchupMarkers([...markerRows, ...(opts.extraMarkerRows ?? [])]);
     const override = markers.billingStartOverride;
     if (override && !override.ok) ineligible.push("invalid_billing_start");
     const plan = planCatchup({

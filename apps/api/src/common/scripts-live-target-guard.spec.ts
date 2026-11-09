@@ -71,6 +71,9 @@ const EXEMPT: Record<string, Reason> = {
   // An HTTP client of the platform-admin routes: no database client of its own. Its applyGate runs the guard
   // (assertWritableTenant) through lib/billing-catchup-core.cjs.
   "apps/api/scripts/billing-catchup.mjs": "not-a-db-client",
+  // SA-1122 (i): the same shape since the corrections moved behind the API (CatchupCorrectionService is the one
+  // writer); its applyGate runs the guard through lib/billing-correct-activation-core.cjs.
+  "apps/api/scripts/billing-correct-activation.mjs": "not-a-db-client",
   "apps/api/scripts/bootstrap-house-tenant.mjs": "house-tenant",
   "apps/api/scripts/check-customer-tenants.js": "read-only",
   "apps/api/scripts/check-discrepancies.js": "read-only",

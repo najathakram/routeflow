@@ -113,33 +113,37 @@ describe("the files exist and the script is safe by construction", () => {
     }
   });
 
-  it("RED: it only APPENDS audit rows - no UPDATE / DELETE of an AuditLog row anywhere (the original markers are never edited)", () => {
+  // SA-1122 (i): the CLI is an HTTP client; CatchupCorrectionService is the one writer (its own spec pins the claim
+  // refusal under the Tenant lock before any insert, and that it is the only file naming the marker actions).
+  it("SA-1122: the script is an HTTP client - no database client, no SQL, no AuditLog write, no marker action name", () => {
     for (const file of [SCRIPT, CORE]) {
       const src = read(file);
-      expect(src).not.toMatch(/UPDATE\s+"?AuditLog|DELETE\s+FROM\s+"?AuditLog/i);
-      expect(src).not.toMatch(/auditLog\.(update|updateMany|delete|deleteMany|upsert)\b/);
+      expect(src).not.toMatch(/from\s+["']pg["']|require\(["']pg["']\)|new pg\.Client|new Pool\(/);
+      expect(src).not.toMatch(/INSERT\s+INTO|UPDATE\s+"|DELETE\s+FROM|SELECT\s+.*\s+FROM\s+"/i);
+      expect(src).not.toMatch(/auditLog\./);
+      expect(src).not.toMatch(
+        /TENANT_MANUAL_ACTIVATION_COVERAGE_(VOID|RESTORE)|TENANT_BILLING_START_OVERRIDE/,
+      );
     }
-    expect(read(SCRIPT)).toMatch(/INSERT\s+INTO\s+"?AuditLog|auditLog\.create/i);
   });
 
-  it("RED: it writes only the three correction actions (void, restore, billing-start override)", () => {
-    const src = read(SCRIPT) + read(CORE);
-    expect(src).toContain("TENANT_MANUAL_ACTIVATION_COVERAGE_VOID");
-    expect(src).toContain("TENANT_MANUAL_ACTIVATION_COVERAGE_RESTORE");
-    expect(src).toContain("TENANT_BILLING_START_OVERRIDE");
+  it("SA-1122: it reaches the corrections only through the platform-admin routes, the amount pinned with the request", () => {
+    const src = read(SCRIPT);
+    expect(src).toContain("/catchup-corrections/preview");
+    expect(src).toContain("confirmTenantName");
+    expect(src).toMatch(/expectedBefore:\s*preview\.before/);
+    // the server reports the marker version; the client asserts it (N4)
+    expect(src).toMatch(
+      /assertMarkersVersion\(\{ CATCHUP_MARKERS_VERSION: preview\.markersVersion/,
+    );
   });
 
   it("RED: the live-target guard is called for real (assertWritableTenant / assertSafeTarget) before any write", () => {
     expect(read(SCRIPT) + read(CORE)).toMatch(/assertWritableTenant\(|assertSafeTarget\(/);
-  });
-
-  it("N11: the tool REFUSES while a claim is held - the source re-reads catchupState under the Tenant lock and throws before any INSERT", () => {
+    // ... and the apply route is only reached after the gate passed
     const src = read(SCRIPT);
-    const refusal = src.search(/if \(held\) throw refuse\(/);
-    const insert = src.search(/INSERT\s+INTO\s+"?AuditLog/i);
-    expect(refusal).toBeGreaterThan(0);
-    expect(insert).toBeGreaterThan(refusal);
-    expect(src.slice(0, refusal)).toMatch(/FOR UPDATE/); // the lock is taken before the claim is read
+    expect(src.indexOf("core.applyGate(")).toBeGreaterThan(0);
+    expect(src.indexOf("core.applyGate(")).toBeLessThan(src.indexOf("expectedBefore:"));
   });
 });
 
@@ -427,7 +431,7 @@ describe("N3: the preview says how it priced the line", () => {
   });
 });
 
-describe("N4: the tool asserts the compiled marker semantics version after loading dist", () => {
+describe("N4: the tool asserts the marker semantics version the SERVER reports (SA-1122)", () => {
   it("catchup-markers.ts exports CATCHUP_MARKERS_VERSION and the core expects the same number", () => {
     const ts = read(path.resolve(__dirname, "catchup-markers.ts"));
     const m = ts.match(/export const CATCHUP_MARKERS_VERSION = (\d+)/);
@@ -444,7 +448,7 @@ describe("N4: the tool asserts the compiled marker semantics version after loadi
     expect(() => core.assertMarkersVersion(null)).toThrow(/version/i);
   });
 
-  it("the script calls it right after loading the compiled module", () => {
+  it("the script calls it on the server's preview, before printing or applying anything", () => {
     expect(read(SCRIPT)).toMatch(/assertMarkersVersion\(/);
   });
 });

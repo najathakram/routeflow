@@ -1,12 +1,10 @@
-// SA-733r11 + r12 (row 385) - the PURE core of apps/api/scripts/billing-correct-activation.mjs: argument parsing, the
-// billing-start validation, the printed (anonymised) before/after, the marker rows to append, and the --apply gate. No
-// network, no database, no process.exit. Pinned by apps/api/src/billing/billing-correct-activation-tool.spec.ts.
+// SA-733r11 + r12 (row 385), SA-1122 (i) - the PURE core of apps/api/scripts/billing-correct-activation.mjs: argument
+// parsing, the billing-start pre-check, the printed (anonymised) before/after, and the --apply gate. No network, no
+// database, no process.exit. Pinned by apps/api/src/billing/billing-correct-activation-tool.spec.ts.
 //
-// The tool APPENDS up to three kinds of AuditLog rows (never edits or deletes one):
-//   TENANT_MANUAL_ACTIVATION_COVERAGE_VOID     { voidsMarkerId, reason, actor, ownerApprovedAt }
-//   TENANT_MANUAL_ACTIVATION_COVERAGE_RESTORE  { restoresMarkerId, reason, actor, ownerApprovedAt }
-//   TENANT_BILLING_START_OVERRIDE              { billingStart, reason, actor, ownerApprovedAt }
-// They change what the NEXT catch-up computes; nothing is charged and Stripe is never called.
+// The tool is an HTTP client of the platform-admin catch-up correction routes. The marker rows are built and written
+// ONLY by CatchupCorrectionService (apps/api/src/billing/catchup-correction.service.ts): this file names no marker
+// action and writes nothing. The rows change what the NEXT catch-up computes; nothing is charged and Stripe is never called.
 //
 // --apply needs ALL of (any one missing = refused, exit 1, nothing written):
 //   1. exactly one tenant, named with --tenant <slug>
@@ -26,12 +24,6 @@ const { loadProtectedGuard } = require("./billing-catchup-core.cjs");
 
 /** Go-live: billing starts Oct 1 12:00Z (mirrors CATCHUP_GO_LIVE in catchup-plan.ts). */
 const GO_LIVE_MS = Date.UTC(2026, 9, 1, 12);
-
-const ACTIONS = {
-  void: "TENANT_MANUAL_ACTIVATION_COVERAGE_VOID",
-  restore: "TENANT_MANUAL_ACTIVATION_COVERAGE_RESTORE",
-  billingStart: "TENANT_BILLING_START_OVERRIDE",
-};
 
 const VALUE_FLAGS = new Set([
   "--tenant",
@@ -168,8 +160,8 @@ function formatState(label, s) {
 }
 
 /**
- * The marker semantics version this tool expects from the COMPILED apps/api/dist/billing/catchup-markers.js
- * (CATCHUP_MARKERS_VERSION in catchup-markers.ts; a spec pins that the two numbers agree). A stale dist fails loudly.
+ * The marker semantics version this tool expects (CATCHUP_MARKERS_VERSION in catchup-markers.ts; a spec pins that the
+ * two numbers agree). The SERVER reports its version with every view and preview; an older or newer API fails loudly.
  */
 const EXPECTED_MARKERS_VERSION = 1;
 
@@ -177,7 +169,7 @@ function assertMarkersVersion(mod) {
   const got = mod && mod.CATCHUP_MARKERS_VERSION;
   if (got !== EXPECTED_MARKERS_VERSION) {
     throw new Error(
-      `the compiled marker reader has version ${got === undefined ? "(missing)" : got}, this tool expects version ${EXPECTED_MARKERS_VERSION}: rebuild the API ("npm run build -w apps/api")`,
+      `the server reports marker version ${got === undefined ? "(missing)" : got}, this tool expects version ${EXPECTED_MARKERS_VERSION}: update the tool or the API`,
     );
   }
 }
@@ -194,11 +186,14 @@ function formatDryRun(r) {
       `    ${m.id}  ${m.action}  window ${day(m.periodStart)} -> ${day(m.periodEnd)}  ${markerState(m)}`,
     );
   }
-  lines.push(
-    r.pricing
-      ? `  price ${money(r.pricing.cents)} (${r.pricing.source}), add-ons excluded - preview only; the catch-up dry-run is the authority`
-      : "  price n/a (no override or snapshot on the subscription row), add-ons excluded - preview only; the catch-up dry-run is the authority",
-  );
+  // the server prices the line (add-ons included); a report that carries no `pricing` key prints no price line
+  if ("pricing" in r) {
+    lines.push(
+      r.pricing
+        ? `  price ${money(r.pricing.cents)} (${r.pricing.source}), add-ons excluded - preview only; the catch-up dry-run is the authority`
+        : "  price n/a (no override or snapshot on the subscription row), add-ons excluded - preview only; the catch-up dry-run is the authority",
+    );
+  }
   lines.push(...formatState("BEFORE this change", r.before));
   lines.push(...formatState("AFTER this change", r.after));
   lines.push(
@@ -208,25 +203,6 @@ function formatDryRun(r) {
     "  Nothing is charged by this tool; the next catch-up has its own dry-run and owner yes.",
   );
   return lines;
-}
-
-/** The AuditLog rows --apply appends (no row is edited or deleted). */
-function buildMarkerRows({ args, actor, ownerApprovedAt }) {
-  const reason = args.reason ?? "operator correction (billing-correct-activation)";
-  const common = { reason, actor, ownerApprovedAt };
-  return [
-    ...args.voidCoverage.map((id) => ({
-      action: ACTIONS.void,
-      meta: { voidsMarkerId: id, ...common },
-    })),
-    ...args.restoreCoverage.map((id) => ({
-      action: ACTIONS.restore,
-      meta: { restoresMarkerId: id, ...common },
-    })),
-    ...(args.billingStart
-      ? [{ action: ACTIONS.billingStart, meta: { billingStart: args.billingStart, ...common } }]
-      : []),
-  ];
 }
 
 /** Protected-tenant guard: returns the override token (null for an unprotected tenant); throws to refuse. */
@@ -315,13 +291,11 @@ async function applyGate(p) {
 }
 
 module.exports = {
-  ACTIONS,
   EXPECTED_MARKERS_VERSION,
   assertMarkersVersion,
   parseArgs,
   validateBillingStart,
   formatDryRun,
-  buildMarkerRows,
   loadProtectedGuard,
   checkProtectedTenant,
   applyGate,

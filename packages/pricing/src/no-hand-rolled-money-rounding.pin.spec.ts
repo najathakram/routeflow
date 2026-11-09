@@ -347,13 +347,6 @@ describe("detector self-test (G-1): it leaves these alone", () => {
 
 const ALLOW: Allow[] = [
   {
-    file: "apps/api/scripts/billing-correct-activation.mjs",
-    form: "F3",
-    count: 2,
-    why: "pending:PR-3",
-    note: "a script money site that PR-3 converts",
-  },
-  {
     file: "apps/api/scripts/demo-seed.js",
     form: "F3",
     count: 1,

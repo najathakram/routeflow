@@ -36,6 +36,7 @@ import { EntitlementsModule } from "./entitlements.module";
 import { ScheduledPriceChangeService } from "./scheduled-price-change";
 import { CatchupClaimService } from "./catchup-claim.service";
 import { CatchupCheckoutService } from "./catchup-checkout.service";
+import { CatchupCorrectionService } from "./catchup-correction.service";
 import { DunningService } from "./dunning.service";
 import { AutoLockSwitchService } from "./auto-lock-switch.service";
 import { AutoLockAdminService } from "./auto-lock-admin.service";
@@ -76,6 +77,8 @@ import { PlanFlagBootAlert } from "./plan-flag-boot-alert";
     CatchupClaimService,
     // SA-733 D7: plan + open the October catch-up checkout (platform-admin CatchupAdminController).
     CatchupCheckoutService,
+    // SA-1122 (i): the one writer of the catch-up correction markers (platform-admin CatchupAdminController).
+    CatchupCorrectionService,
     // The tenant's own "payment due" read + self-serve pay over the catch-up planner (PaymentDueController).
     PaymentDueService,
     // SA-733r7 PR-B3: dunning (clock stamp, hourly pause sweep, invoice.paid resume, pause_collection reconciler).
@@ -117,6 +120,7 @@ import { PlanFlagBootAlert } from "./plan-flag-boot-alert";
     // The platform-admin RfInvoice queue refuses payments while a claim is held.
     CatchupClaimService,
     CatchupCheckoutService,
+    CatchupCorrectionService,
     // Platform-admin activation / extendTrial clear a pause's Stripe pause_collection after their commit.
     DunningService,
     // SA-775: the platform-admin controller reads / flips the switch and previews the unpause.
