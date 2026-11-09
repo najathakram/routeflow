@@ -206,7 +206,7 @@ describe("formatLineWord", () => {
 });
 
 describe("formatInvoiceLineCounts", () => {
-  it("counts from the line's own stored fields, never the catalog's live product.unit", () => {
+  it("counts a plain line in its own selling unit, a named line in its own word", () => {
     const items = [
       { qty: 6, boxes: null, pieces: null, unitLabel: null, product: { unit: "bottle" } },
       {
@@ -218,24 +218,48 @@ describe("formatInvoiceLineCounts", () => {
         product: { unit: "can" },
       },
     ];
-    // The invoice qty column prints a bare 6 for the first line: the bare number is pieces by
-    // default, and the catalog's "bottle" is never read.
-    expect(formatInvoiceLineCounts(items)).toBe("2 lines · 2 cases · 6 pcs");
-    expect(text(items)).toBe("2 lines · 6 bottles · 2 cases");
+    expect(formatInvoiceLineCounts(items)).toBe("2 lines · 6 bottles · 2 cases");
+    expect(formatInvoiceLineCounts(items)).toBe(text(items));
   });
 
-  // W-1185 fix 1 (F3): an unboxed invoice line is named only by its own frozen base label.
-  it("an unboxed line with no frozen word counts as pieces, never the live catalog unit", () => {
+  // W-1185 fix 3 (selling unit): the live product.unit names a plain line; baseLabel is not read.
+  it("a plain line counts in product.unit: box, bag, kg", () => {
+    expect(formatInvoiceLineCounts([{ qty: 1, product: { unit: "box" } }])).toBe("1 line · 1 box");
+    expect(formatInvoiceLineCounts([{ qty: 1, product: { unit: "bag" } }])).toBe("1 line · 1 bag");
     expect(formatInvoiceLineCounts([{ qty: 1.5, product: { unit: "kg" } }])).toBe(
-      "1 line · 1.5 pcs",
+      "1 line · 1.5 kg",
     );
-    expect(
-      formatInvoiceLineCounts([{ qty: 1.5, boxes: null, pieces: null, baseLabel: "Piece" }]),
-    ).toBe("1 line · 1.5 pcs");
+    expect(formatInvoiceLineCounts([{ qty: 2, unit: "bottle" }])).toBe("1 line · 2 bottles");
+  });
+
+  it("a manual line (no product) or a generic unit word counts as pieces", () => {
+    expect(formatInvoiceLineCounts([{ qty: 4 }])).toBe("1 line · 4 pcs");
+    expect(formatInvoiceLineCounts([{ qty: 4, product: { unit: "each" } }])).toBe("1 line · 4 pcs");
+    expect(formatInvoiceLineCounts([{ qty: 4, product: null, baseLabel: "Piece" }])).toBe(
+      "1 line · 4 pcs",
+    );
+  });
+
+  it("an issued plain line's baseLabel is not read: product.unit wins", () => {
+    expect(formatInvoiceLineCounts([{ qty: 1, baseLabel: "bar", product: { unit: "box" } }])).toBe(
+      "1 line · 1 box",
+    );
+    // No unit to read: baseLabel is still not the word, so the generic piece word.
+    expect(formatInvoiceLineCounts([{ qty: 6, baseLabel: "Bottle" }])).toBe("1 line · 6 pcs");
+  });
+
+  it("matches the builder's own count for the same lines (parity)", () => {
+    const lines = [
+      { qty: 1, product: { unit: "box" } },
+      { qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12, unitLabel: "Case" },
+      { qty: 1, product: { unit: "bag" } },
+    ];
+    expect(formatInvoiceLineCounts(lines)).toBe("3 lines · 1 box · 1 case · 1 bag");
+    expect(formatInvoiceLineCounts(lines)).toBe(text(lines));
   });
 
   // W-1185 fix round 2 (MUST): the bare number in the qty column is pieces by default.
-  it("three plain lines with no word keep their quantity", () => {
+  it("three plain lines with no unit keep their quantity", () => {
     expect(formatInvoiceLineCounts([{ qty: 10 }, { qty: 5 }, { qty: 3 }])).toBe("3 lines · 18 pcs");
   });
 
@@ -263,11 +287,6 @@ describe("formatInvoiceLineCounts", () => {
     expect(formatInvoiceLineCounts([{ qty: 4, unitsPerBox: null, unitLabel: "Case" }])).toBe(
       "1 line · 4 cases",
     );
-  });
-
-  it("an unboxed line with a frozen non-generic base label counts in that word", () => {
-    expect(formatInvoiceLineCounts([{ qty: 1.5, baseLabel: "kg" }])).toBe("1 line · 1.5 kg");
-    expect(formatInvoiceLineCounts([{ qty: 6, baseLabel: "Bottle" }])).toBe("1 line · 6 bottles");
   });
 
   it("a boxed line reads the frozen pack and base words, as the till does", () => {

@@ -85,8 +85,8 @@ export function qtyCellText(item: InvoicePdfQtyItemLike): string {
 }
 
 /** boxes/pieces/unitLabel, normalized — the fields an invoice-email item payload
- *  threads through for `qtyCellText` on its own send (B653). W-1185: plus the sale-time words and
- *  the system marker the "Items" count reads, so the email counts exactly what the web page and
+ *  threads through for `qtyCellText` on its own send (B653). W-1185: plus the sale-time words, the
+ *  selling unit and the system marker the "Items" count reads, so the email counts exactly what the web page and
  *  the PDF count (`formatInvoiceLineCounts`). */
 export function invoiceItemQtyFields(item: {
   boxes?: number | string | null;
@@ -96,6 +96,8 @@ export function invoiceItemQtyFields(item: {
   packLabel?: string | null;
   baseLabel?: string | null;
   systemKind?: string | null;
+  /** The loaded product row: only its live selling `unit` is read (the count of a plain line). */
+  product?: { unit?: string | null } | null;
 }): {
   boxes: number | null;
   pieces: number | null;
@@ -104,6 +106,7 @@ export function invoiceItemQtyFields(item: {
   packLabel: string | null;
   baseLabel: string | null;
   systemKind: string | null;
+  unit: string | null;
 } {
   return {
     boxes: item.boxes != null ? Number(item.boxes) : null,
@@ -113,6 +116,8 @@ export function invoiceItemQtyFields(item: {
     packLabel: item.packLabel ?? null,
     baseLabel: item.baseLabel ?? null,
     systemKind: item.systemKind ?? null,
+    // W-1185: a plain line counts in its selling unit. The live product.unit; a later step snapshots product.unit at issue.
+    unit: item.product?.unit ?? null,
   };
 }
 

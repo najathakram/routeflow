@@ -132,7 +132,7 @@ export interface InvoicePdfData {
     priceType?: string | null;
     /** BUY_N_GET_M free units on this line — null/0 renders no note. */
     promoFreeUnits?: number | null;
-    product?: { name: string } | null;
+    product?: { name: string; unit?: string | null } | null;
     /** CQ-03: the levy this line billed and its category: the totals show it as its own named charge, not inside Tax. */
     categoryTaxAmount?: DecimalLike | null;
     trackedCategoryId?: string | null;
@@ -858,6 +858,7 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
                       unitLabel: i.unitLabel,
                       packLabel: i.packLabel,
                       baseLabel: i.baseLabel,
+                      unit: i.product?.unit,
                       systemKind: i.systemKind,
                     })),
                   )}

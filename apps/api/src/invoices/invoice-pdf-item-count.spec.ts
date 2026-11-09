@@ -64,7 +64,7 @@ const MIXED = [
   line("a", { qty: 36, boxes: 3, pieces: 0, unitsPerBox: 12 }),
   line("b", { qty: 16, boxes: 1, pieces: 4, unitsPerBox: 12 }),
   line("c", { qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12, unitLabel: "Case" }),
-  line("d", { qty: 2, product: { unit: "each" } }), // no frozen word: the bare qty counts as pieces
+  line("d", { qty: 2, product: { unit: "bag" } }), // a plain line counts in its selling unit
 ];
 
 const render = (items: any[]) =>
@@ -99,7 +99,10 @@ function itemsRow(tree: El[]): string[] | undefined {
 
 describe("the invoice PDF's item count (W-1185)", () => {
   it("prints lines, boxes, named units and pieces in the Items row, never added together", () => {
-    expect(itemsRow(render(MIXED))).toEqual(["Items", "4 lines · 4 boxes · 2 cases · 6 pcs"]);
+    expect(itemsRow(render(MIXED))).toEqual([
+      "Items",
+      "4 lines · 4 boxes · 2 cases · 2 bags · 4 pcs",
+    ]);
   });
 
   it("reads singular words for a one-line invoice", () => {
@@ -110,10 +113,19 @@ describe("the invoice PDF's item count (W-1185)", () => {
   it("counts the sale-time words and skips the NSF fee line", () => {
     const items = [
       line("a", { qty: 13, boxes: 1, pieces: 1, packLabel: "Case", baseLabel: "Can" }),
-      line("b", { qty: 1.5, baseLabel: "kg" }),
+      line("b", { qty: 1.5, baseLabel: "bar", product: { unit: "kg" } }),
       line("n", { qty: 1, systemKind: "NSF_FEE" }),
     ];
     expect(itemsRow(render(items))).toEqual(["Items", "2 lines · 1 case · 1 can · 1.5 kg"]);
+  });
+
+  it("a plain line counts in its selling unit, like the builder: 1 box, 1 case, 1 bag", () => {
+    const items = [
+      line("a", { qty: 1, product: { unit: "box" } }),
+      line("b", { qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12, unitLabel: "Case" }),
+      line("c", { qty: 1, product: { unit: "bag" } }),
+    ];
+    expect(itemsRow(render(items))).toEqual(["Items", "3 lines · 1 box · 1 case · 1 bag"]);
   });
 
   // W-1185 fix 1 (F5): a long count wraps inside the 220 pt box, right-aligned, off the label.

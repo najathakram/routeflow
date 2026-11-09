@@ -1111,6 +1111,8 @@ export class EmailService {
       unitsPerBox?: number | null;
       packLabel?: string | null;
       baseLabel?: string | null;
+      /** W-1185: the line's selling unit (live product.unit): a plain line counts in it. */
+      unit?: string | null;
       systemKind?: string | null;
     }[];
     pdfUrl?: string;
@@ -1674,6 +1676,7 @@ export class EmailService {
         unitsPerBox?: number | null;
         packLabel?: string | null;
         baseLabel?: string | null;
+        unit?: string | null;
         systemKind?: string | null;
       }[];
       pdfUrl?: string;

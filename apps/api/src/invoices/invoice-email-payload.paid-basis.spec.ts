@@ -146,3 +146,25 @@ describe("the email payloads carry the tenant's hidePerPiece (owner ruling 2026-
     }
   });
 });
+
+describe("the item payload carries the selling unit (W-1185)", () => {
+  const withItems = {
+    ...inv,
+    items: [
+      { id: "a", description: "Rice", qty: 1, unitPrice: 1, subtotal: 1, product: { unit: "bag" } },
+      { id: "b", description: "Manual", qty: 1, unitPrice: 1, subtotal: 1, product: null },
+    ],
+  };
+  const parts = { recipientEmail: "ap@example.test", pdfUrl: undefined, attachment: undefined };
+
+  it("the invoice email and the reminder both read product.unit, null for a manual line", () => {
+    const sent = buildInvoiceEmailPayload(withItems, { ...parts, hideOriginalPrice: false });
+    const reminder = buildReminderEmailPayload(withItems, { ...parts, hideOriginalPrice: false });
+    for (const p of [sent, reminder]) {
+      const unitOf = (d: string) =>
+        p.items.find((i: { description: string }) => i.description === d)?.unit;
+      expect(unitOf("Rice")).toBe("bag");
+      expect(unitOf("Manual")).toBeNull();
+    }
+  });
+});

@@ -79,16 +79,32 @@ describe("invoice detail item count (W-1185)", () => {
     mockInvoice = invoice([
       item("a", { qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12 }),
       item("b", { qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12, unitLabel: "Case" }),
-      // No frozen word: the qty column prints a bare 6, which counts as pieces.
-      item("c", { qty: 6 }),
-      item("d", { qty: 1.5, baseLabel: "kg" }),
+      // A plain line counts in its own selling unit (the loaded product's unit).
+      item("c", { qty: 6, product: { id: "p1", name: "Acme Rice", unit: "bag" } }),
+      item("d", {
+        qty: 1.5,
+        baseLabel: "bar",
+        product: { id: "p2", name: "Acme Tea", unit: "kg" },
+      }),
       // The returned-check fee is a system line, not goods.
       item("n", { qty: 1, systemKind: "NSF_FEE" }),
     ]);
     renderWithProviders(<InvoiceDetailPage />);
     const row = screen.getByTestId("invoice-item-count");
     expect(row).toHaveTextContent("Items");
-    expect(row).toHaveTextContent("4 lines · 2 boxes · 1 case · 1.5 kg · 6 pcs");
+    expect(row).toHaveTextContent("4 lines · 2 boxes · 1 case · 6 bags · 1.5 kg");
+  });
+
+  it("reads the builder's count: a plain box line, a named Case line and a plain bag line", () => {
+    mockInvoice = invoice([
+      item("a", { qty: 1, product: { id: "p1", name: "Acme Tea", unit: "box" } }),
+      item("b", { qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12, unitLabel: "Case" }),
+      item("c", { qty: 1, product: { id: "p2", name: "Acme Rice", unit: "bag" } }),
+    ]);
+    renderWithProviders(<InvoiceDetailPage />);
+    expect(screen.getByTestId("invoice-item-count")).toHaveTextContent(
+      "3 lines · 1 box · 1 case · 1 bag",
+    );
   });
 
   it("an invoice with no lines reads 0 lines", () => {

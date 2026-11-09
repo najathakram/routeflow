@@ -82,11 +82,13 @@ describe("invoice e-mail item count (W-1185)", () => {
       item("Sample Cola", { qty: 36, boxes: 3, pieces: 0, unitsPerBox: 12 }),
       item("Sample Juice", { qty: 16, boxes: 1, pieces: 4, unitsPerBox: 12 }),
       item("Sample Water", { qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12, unitLabel: "Case" }),
-      item("Sample Gum", { qty: 2 }),
+      item("Sample Gum", { qty: 2, product: { unit: "bag" } }),
     ]);
-    // The plain gum line has no frozen word: its bare qty counts as pieces.
-    const count = "4 lines · 4 boxes · 2 cases · 6 pcs";
-    expect(html).toMatch(/Items<\/td>\s*<td[^>]*>4 lines · 4 boxes · 2 cases · 6 pcs<\/td>/);
+    // The plain gum line counts in its own selling unit (the loaded product's unit).
+    const count = "4 lines · 4 boxes · 2 bags · 2 cases · 4 pcs";
+    expect(html).toMatch(
+      /Items<\/td>\s*<td[^>]*>4 lines · 4 boxes · 2 bags · 2 cases · 4 pcs<\/td>/,
+    );
     expect(text).toContain(`Items: ${count}`);
     // Items row opens the tfoot, above the Balance Due row; the text line sits above the money line.
     expect(html.indexOf("<tfoot>")).toBeLessThan(html.indexOf("Items</td>"));
@@ -102,10 +104,21 @@ describe("invoice e-mail item count (W-1185)", () => {
     expect(text).toContain("Items: 1 line · 2 cases");
   });
 
-  it("the NSF fee is not goods and a frozen base label names a plain line", () => {
+  it("a plain line counts in its selling unit, never its frozen base label", () => {
+    const { html, text } = build([
+      item("Sample Tea", { qty: 1, baseLabel: "bar", product: { unit: "box" } }),
+      item("Sample Case", { qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12, unitLabel: "Case" }),
+      item("Sample Rice", { qty: 1, product: { unit: "bag" } }),
+      item("Manual fee line", { qty: 2 }),
+    ]);
+    expect(html).toContain("4 lines · 1 box · 1 case · 1 bag · 2 pcs</td>");
+    expect(text).toContain("Items: 4 lines · 1 box · 1 case · 1 bag · 2 pcs");
+  });
+
+  it("the NSF fee is not goods and a plain line counts in its selling unit", () => {
     const { html } = build([
       item("Sample Cola", { qty: 36, boxes: 3, pieces: 0, unitsPerBox: 12 }),
-      item("Sample Produce", { qty: 1.5, baseLabel: "kg" }),
+      item("Sample Produce", { qty: 1.5, product: { unit: "kg" } }),
       item("Returned check fee", { qty: 1, systemKind: "NSF_FEE" }),
     ]);
     expect(html).toContain("2 lines · 3 boxes · 1.5 kg</td>");

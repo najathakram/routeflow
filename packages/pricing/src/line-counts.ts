@@ -71,21 +71,7 @@ function wordOf(label: string | null | undefined): string {
   return t;
 }
 
-export interface SummarizeOptions {
-  /**
-   * How a plain (unboxed, unnamed) line is worded. "unit" (default): its own selling unit
-   * (`unit` / `product.unit`), the live documents. "stored-only": only a frozen, non-generic
-   * `baseLabel`; with none, the qty counts under the generic piece word (an invoice prints a bare
-   * quantity, and a bare number is pieces by default). The live catalog unit is never read.
-   */
-  unboxedWord?: "unit" | "stored-only";
-}
-
-export function summarizeLineCounts(
-  lines: ReadonlyArray<CountableLine>,
-  options: SummarizeOptions = {},
-): LineCounts {
-  const storedOnly = options.unboxedWord === "stored-only";
+export function summarizeLineCounts(lines: ReadonlyArray<CountableLine>): LineCounts {
   const buckets = new Map<string, number>();
   let counted = 0;
   for (const li of lines) {
@@ -116,10 +102,9 @@ export function summarizeLineCounts(
       const base = singularOf(li.baseLabel ?? "");
       add(!pack || BOX_LIKE.test(pack) ? BOX : pack, num(li.boxes));
       add(!base || GENERIC_PIECE.test(base) ? PIECE : base, num(li.pieces));
-    } else if (storedOnly) {
-      const frozen = wordOf(li.baseLabel);
-      add(frozen, num(li.qty));
     } else {
+      // A plain line counts in its own selling unit (`unit` / live `product.unit`); baseLabel names
+      // only the pieces of a boxed line, above.
       add(wordOf(li.unit ?? li.product?.unit), num(li.qty));
     }
     if (added) counted += 1;
@@ -170,18 +155,18 @@ export function formatLineCounts(c: LineCounts): string {
 }
 
 /**
- * An invoice's count, from the line's OWN stored fields only (qty, boxes, pieces, unitsPerBox,
- * unitLabel, and the sale-time `packLabel` / `baseLabel` snapshots frozen at issue): the same
- * fields its qty column prints. The catalog's live `product` / `unit` is never read, so a reprint
- * after a catalog edit, and the web page, the PDF and the email, always agree. A system line (the
- * NSF fee) is skipped; a plain line with no frozen word counts its qty as pieces (the bare
- * number in the qty column).
+ * An invoice's count: the same words the builder, the order page and the till print. A boxed line
+ * reads its sale-time `packLabel` / `baseLabel`, a named unit its own word, and a plain line its
+ * OWN selling unit: `unit`, else the live `product.unit` (drafts and issued invoices alike), else
+ * pieces (a manual line, or a generic word). Known seam: an issued line reads the LIVE unit, so a
+ * catalog unit edit shows on a reprint; a later step snapshots product.unit at issue (no field yet).
+ * A system line (the NSF fee) is skipped.
  */
 export function formatInvoiceLineCounts(items: ReadonlyArray<CountableLine>): string {
   return formatLineCounts(
     summarizeLineCounts(
       items.map(
-        ({ qty, boxes, pieces, unitsPerBox, unitLabel, packLabel, baseLabel, systemKind }) => ({
+        ({
           qty,
           boxes,
           pieces,
@@ -189,10 +174,22 @@ export function formatInvoiceLineCounts(items: ReadonlyArray<CountableLine>): st
           unitLabel,
           packLabel,
           baseLabel,
+          unit,
+          product,
+          systemKind,
+        }) => ({
+          qty,
+          boxes,
+          pieces,
+          unitsPerBox,
+          unitLabel,
+          packLabel,
+          baseLabel,
+          unit,
+          product: { unit: product?.unit },
           systemKind,
         }),
       ),
-      { unboxedWord: "stored-only" },
     ),
   );
 }
