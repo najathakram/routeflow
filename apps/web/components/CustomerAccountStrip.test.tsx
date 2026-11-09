@@ -265,6 +265,18 @@ describe("CustomerAccountStrip", () => {
     expect(await line()).toHaveTextContent("No open invoices");
   });
 
+  // W-1170 P12: nothing owed is helper text, never a bordered, input-shaped box
+  it("shows 'No open invoices' as plain helper text, not in a bordered box", async () => {
+    statement = { outstandingAmount: 0, overdueAmount: 0 };
+    customer = { id: "c1", creditLimit: null };
+    invoices = [];
+    renderWithProviders(<CustomerAccountStrip customerId="c1" />);
+    const el = await line();
+    expect(screen.queryByTestId("account-strip-bar")).not.toBeInTheDocument();
+    expect(el.className).not.toMatch(/border|rounded/);
+    expect(el.closest("[class*='border']")).toBeNull();
+  });
+
   it("renders nothing with no customer picked (walk-in or before a pick)", () => {
     renderWithProviders(<CustomerAccountStrip customerId={null} />);
     expect(screen.queryByTestId("account-strip")).not.toBeInTheDocument();

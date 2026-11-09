@@ -166,6 +166,12 @@ describe("a click during a dialog's exit window (W-687)", () => {
 });
 
 describe("Requested Delivery Date placement (F09 + F12)", () => {
+  // W-1170 P13: sentence case, like "Store pickup" and the other labels
+  it("the label is sentence case", async () => {
+    await openWithCustomerAndLine();
+    expect(screen.getByLabelText("Requested delivery date (optional)")).toBe(dateField());
+  });
+
   it("renders right after the customer and before the products, with a line added", async () => {
     await openWithCustomerAndLine();
     const field = dateField();

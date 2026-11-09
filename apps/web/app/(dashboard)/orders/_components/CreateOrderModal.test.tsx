@@ -976,7 +976,9 @@ describe("CreateOrderModal", () => {
           await pickCustomer("Acme Foods");
 
           expect(await screen.findByText("$8.00 / each")).toBeInTheDocument();
-          expect(screen.getByText("Special price")).toBeInTheDocument();
+          // the struck list says "special"; no pill repeats it (W-1170 P10)
+          expect(screen.getByText("$10.00")).toHaveClass("line-through");
+          expect(screen.queryByText("Special price")).not.toBeInTheDocument();
         },
       );
 
@@ -1441,7 +1443,7 @@ describe("CreateOrderModal", () => {
       },
     };
     const openSheet = async () => {
-      expect(await screen.findByText("Special price")).toBeInTheDocument();
+      expect(await screen.findByText("$2.00 / each")).toBeInTheDocument();
       fireEvent.click(screen.getByLabelText("Change price"));
       return screen.findByRole("dialog", { name: /^edit /i });
     };

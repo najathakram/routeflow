@@ -173,6 +173,17 @@ export function CustomerAccountStrip({
     void qc.invalidateQueries({ queryKey: ["invoices"] });
   };
 
+  // W-1170 P12: nothing owed is a quiet note, not a bordered box that reads as an input.
+  if (nothing && !warn) {
+    return (
+      <div data-testid="account-strip">
+        <p data-testid="account-strip-line" className="text-xs text-navy/60">
+          No open invoices
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div data-testid="account-strip" className="space-y-2">
       <div

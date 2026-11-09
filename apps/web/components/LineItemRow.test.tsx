@@ -392,6 +392,15 @@ describe("F08: a typed 0 says why it became 1", () => {
 
 // SA-1077 / W-1093: the struck list on a SPECIAL line follows pricing's `isAboveListLine`, as the order table's does.
 describe("the struck list price on a SPECIAL line", () => {
+  // W-1170 P10: the struck list beside the special price already says "special": no pill repeats it
+  it("10 against a list of 12: the list is struck and no Special price pill repeats it", () => {
+    const { container } = renderRow(
+      makeProps({ ...plainItem, priceType: "SPECIAL", listPrice: 12, unitPrice: 10 }),
+    );
+    expect(container.querySelector(".line-through")).toHaveTextContent("$12.00");
+    expect(screen.queryByText("Special price")).not.toBeInTheDocument();
+  });
+
   it("12 over a list of 10: the Special price pill stays and the list is not struck", () => {
     const { container } = renderRow(
       makeProps({ ...plainItem, priceType: "SPECIAL", listPrice: 10, unitPrice: 12 }),

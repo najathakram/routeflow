@@ -50,7 +50,7 @@ import { DraftConflictDialog } from "./DraftConflictDialog";
 import { apiClient } from "@/lib/api-client";
 import { useTenantToday } from "@/lib/tenant-timezone";
 import { ACTION_TOAST_MS, addedLineQty, showOrderCreatedToast } from "./order-created-toast";
-import { linePriceAtAdd } from "./order-line-price";
+import { linePackWords, linePriceAtAdd } from "./order-line-price";
 import {
   mergePieceIntoLine,
   mergeQtyIntoLine,
@@ -211,6 +211,9 @@ interface LineItem extends DerivedBaseMarker {
   productId: string;
   productName: string;
   unit: string;
+  /** W-1170 P11: the product's own pack / loose-item words, so price, quantity and stock text agree (LineItemRow, stock note). */
+  packLabel?: string;
+  baseLabel?: string;
   listPrice: number; // standard pricePerUnit from product catalog
   specialPrice?: number; // permanent customer-specific price (from CustomerPrice)
   discountedPrice?: number; // one-time ad-hoc override (below list = discount, above = upsell)
@@ -1072,6 +1075,7 @@ export function CreateOrderModal({
       // just the variant name in `product.name` (PR #44).
       productName: displayProductName(product),
       unit: product.unit ?? "each",
+      ...linePackWords(product),
       listPrice: decided.lineListPrice,
       specialPrice: customerLineSpecial(linePrice),
       discountedPrice: hasHistOverride ? histEntry!.lastPrice : undefined,
@@ -2865,7 +2869,7 @@ export function CreateOrderModal({
             {!posMode && (
               <div className="space-y-1 sm:max-w-[16rem]">
                 <label className="block text-xs font-medium text-navy/70" htmlFor="delivery-date">
-                  Requested Delivery Date{" "}
+                  Requested delivery date{" "}
                   <span className="font-normal text-navy/70">(optional)</span>
                 </label>
                 <input

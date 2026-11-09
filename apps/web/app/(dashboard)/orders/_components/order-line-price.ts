@@ -82,3 +82,20 @@ export function linePriceAtAdd(i: {
           : linePrice.priceType,
   };
 }
+
+/**
+ * W-1170 P11: the unit words the BUSINESS chose for a product (its `packLabel` and `baseUnitLabel`), carried onto a new
+ * line exactly as the counter sale does, so the row's price ("/ case"), quantity ("1 case = 12 pcs") and stock note
+ * ("3 cases left") read one word. Without a label the line keeps the default Box / Piece words. Words only.
+ */
+export function linePackWords(product: Record<string, unknown>): {
+  packLabel?: string;
+  baseLabel?: string;
+} {
+  const words: { packLabel?: string; baseLabel?: string } = {};
+  const pack = String(product.packLabel ?? "").trim();
+  if (pack) words.packLabel = pack;
+  const base = String(product.baseUnitLabel ?? "").trim();
+  if (base) words.baseLabel = base;
+  return words;
+}

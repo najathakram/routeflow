@@ -321,18 +321,28 @@ export function LineItemRow({
             >
               {li.priceType === "SPECIAL" ? (
                 <>
-                  {/* above its list (a tier over Retail) the lower list is not struck; the pill stays */}
+                  {/* The struck list beside the price already says "special" (W-1170 P10), so it carries no pill. Above its
+                      list (a tier over Retail) the lower list is not struck; the pill is then the only signal and stays. */}
                   {!isAboveListLine({ unitPrice: li.unitPrice, originalPrice: li.listPrice }) && (
                     <span className="text-xs text-navy/70 line-through">
                       {formatMoney(li.listPrice)}
                     </span>
                   )}
-                  <span className="text-xs font-medium text-emerald-600">
+                  <span
+                    className="text-xs font-medium text-emerald-600"
+                    title={
+                      isAboveListLine({ unitPrice: li.unitPrice, originalPrice: li.listPrice })
+                        ? undefined
+                        : "Special price"
+                    }
+                  >
                     {formatMoney(li.unitPrice)} / {priceUnit}
                   </span>
-                  <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
-                    Special price
-                  </span>
+                  {isAboveListLine({ unitPrice: li.unitPrice, originalPrice: li.listPrice }) && (
+                    <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
+                      Special price
+                    </span>
+                  )}
                 </>
               ) : li.priceType === "DISCOUNTED" ? (
                 <>
