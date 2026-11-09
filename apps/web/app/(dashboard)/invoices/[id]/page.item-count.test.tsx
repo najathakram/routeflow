@@ -79,12 +79,17 @@ describe("invoice detail item count (W-1185)", () => {
     mockInvoice = invoice([
       item("a", { qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12 }),
       item("b", { qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12, unitLabel: "Case" }),
+      // No frozen word: the qty column prints a bare 6, so the line is counted and no unit is claimed.
       item("c", { qty: 6 }),
+      item("d", { qty: 1.5, baseLabel: "kg" }),
+      // The returned-check fee is a system line, not goods.
+      item("n", { qty: 1, systemKind: "NSF_FEE" }),
     ]);
     renderWithProviders(<InvoiceDetailPage />);
     const row = screen.getByTestId("invoice-item-count");
     expect(row).toHaveTextContent("Items");
-    expect(row).toHaveTextContent("3 lines · 2 boxes · 1 case · 6 pcs");
+    expect(row).toHaveTextContent("4 lines · 2 boxes · 1 case · 1.5 kg");
+    expect(row).not.toHaveTextContent("pcs");
   });
 
   it("an invoice with no lines reads 0 lines", () => {

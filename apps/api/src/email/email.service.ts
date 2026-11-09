@@ -1107,6 +1107,11 @@ export class EmailService {
       pieces?: number | null;
       /** units_v1 sold-unit noun ("Case") — null/undefined defaults to "box"/"boxes". */
       unitLabel?: string | null;
+      /** W-1185: what the "Items" count reads; the sale-time words and the system marker (NSF fee). */
+      unitsPerBox?: number | null;
+      packLabel?: string | null;
+      baseLabel?: string | null;
+      systemKind?: string | null;
     }[];
     pdfUrl?: string;
     isReminder?: boolean;
@@ -1665,6 +1670,11 @@ export class EmailService {
         pieces?: number | null;
         /** units_v1 sold-unit noun ("Case") — null/undefined defaults to "box"/"boxes". */
         unitLabel?: string | null;
+        /** W-1185: what the "Items" count reads; see sendInvoice's item type. */
+        unitsPerBox?: number | null;
+        packLabel?: string | null;
+        baseLabel?: string | null;
+        systemKind?: string | null;
       }[];
       pdfUrl?: string;
       isReminder?: boolean;

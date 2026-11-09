@@ -111,6 +111,10 @@ export interface InvoicePdfData {
     unitsPerBox?: number | null;
     /** units_v1 (B653): the line's own selling unit ("Case") — see `qtyCellText`. */
     unitLabel?: string | null;
+    /** W-1185: the sale-time unit words (frozen at issue) and the system marker the Items count reads. */
+    packLabel?: string | null;
+    baseLabel?: string | null;
+    systemKind?: string | null;
     /**
      * Suggested retail price snapshot, per PIECE, taken when this line was
      * created — display-only, never re-read from the live product. Null/undefined
@@ -339,6 +343,17 @@ function buildStyles(primary: string, navy: string) {
     totalRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 4 },
     totalLabel: { fontSize: 9, color: GRAY },
     totalValue: { fontSize: 9, color: navy, fontFamily: "Helvetica-Bold" },
+    // W-1185: the count can list several units; it wraps right-aligned inside the box, off its label.
+    itemsLabel: { fontSize: 9, color: GRAY, flexShrink: 0 },
+    itemsValue: {
+      fontSize: 9,
+      color: navy,
+      fontFamily: "Helvetica-Bold",
+      flex: 1,
+      flexShrink: 1,
+      textAlign: "right",
+      marginLeft: 8,
+    },
     totalDivider: { borderTopWidth: 1, borderTopColor: BORDER, marginVertical: 4 },
     totalBigRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 5 },
     totalBigLabel: { fontSize: 11, fontFamily: "Helvetica-Bold", color: navy },
@@ -832,8 +847,8 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
             <View style={styles.totalsBox}>
               {/* W-1185: the item count opens the totals box. */}
               <View style={styles.totalRow}>
-                <Text style={styles.totalLabel}>Items</Text>
-                <Text style={styles.totalValue}>
+                <Text style={styles.itemsLabel}>Items</Text>
+                <Text style={styles.itemsValue}>
                   {formatInvoiceLineCounts(
                     invoice.items.map((i) => ({
                       qty: toNum(i.qty),
@@ -841,6 +856,9 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
                       pieces: i.pieces,
                       unitsPerBox: i.unitsPerBox,
                       unitLabel: i.unitLabel,
+                      packLabel: i.packLabel,
+                      baseLabel: i.baseLabel,
+                      systemKind: i.systemKind,
                     })),
                   )}
                 </Text>

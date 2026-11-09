@@ -1891,7 +1891,7 @@ export default function OrderDetailPage() {
               )}
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-navy/70">Line items</dt>
-                <dd className="mono font-medium text-navy">{counts.lines}</dd>
+                <dd className="mono font-medium text-navy">{summaryLineItems.length}</dd>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-navy/70">Total quantity</dt>

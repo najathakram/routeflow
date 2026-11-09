@@ -18,8 +18,6 @@ export function LineCountChip({
   const text = formatLineCounts(counts);
   return (
     <div
-      role="status"
-      aria-live="polite"
       data-testid="line-count-chip"
       className={cn(
         "inline-flex max-w-full items-center rounded-full bg-sunken px-2.5 py-1 text-xs font-medium tabular-nums text-navy/80",

@@ -109,9 +109,9 @@ describe("summarizeLineCounts / formatLineCounts", () => {
     ).toBe("1 line · 2 pcs");
   });
 
-  it("a fraction shows at most 2 decimals, trailing zeros dropped", () => {
+  it("a fraction shows at most 3 decimals, trailing zeros dropped", () => {
     expect(text([{ qty: 1.5, unit: "kg" }])).toBe("1 line · 1.5 kg");
-    expect(text([{ qty: 0.333, unit: "kg" }])).toBe("1 line · 0.33 kg");
+    expect(text([{ qty: 0.3333, unit: "kg" }])).toBe("1 line · 0.333 kg");
     expect(
       text([
         { qty: 2.5, unit: "lb" },
@@ -218,8 +218,94 @@ describe("formatInvoiceLineCounts", () => {
         product: { unit: "can" },
       },
     ];
-    // The invoice qty column prints a bare 6 for the first line, so the count reads it as pcs.
-    expect(formatInvoiceLineCounts(items)).toBe("2 lines · 2 cases · 6 pcs");
+    // The invoice qty column prints a bare 6 for the first line, so the count claims no unit for
+    // it: the line is counted, the bottles are not named.
+    expect(formatInvoiceLineCounts(items)).toBe("2 lines · 2 cases");
     expect(text(items)).toBe("2 lines · 6 bottles · 2 cases");
+  });
+
+  // W-1185 fix 1 (F3): an unboxed invoice line is named only by its own frozen base label.
+  it("an unboxed line with no frozen word counts the line only, never pcs", () => {
+    expect(formatInvoiceLineCounts([{ qty: 1.5, product: { unit: "kg" } }])).toBe("1 line");
+    expect(
+      formatInvoiceLineCounts([{ qty: 1.5, boxes: null, pieces: null, baseLabel: "Piece" }]),
+    ).toBe("1 line");
+  });
+
+  it("an unboxed line with a frozen non-generic base label counts in that word", () => {
+    expect(formatInvoiceLineCounts([{ qty: 1.5, baseLabel: "kg" }])).toBe("1 line · 1.5 kg");
+    expect(formatInvoiceLineCounts([{ qty: 6, baseLabel: "Bottle" }])).toBe("1 line · 6 bottles");
+  });
+
+  it("a boxed line reads the frozen pack and base words, as the till does", () => {
+    expect(
+      formatInvoiceLineCounts([
+        {
+          qty: 13,
+          boxes: 1,
+          pieces: 1,
+          packLabel: "Case",
+          baseLabel: "Can",
+          product: { unit: "x" },
+        },
+      ]),
+    ).toBe("1 line · 1 case · 1 can");
+  });
+
+  // W-1185 fix 1 (F2): the NSF bounce fee is a system line, not goods.
+  it("a system line (the NSF bounce fee) is not counted", () => {
+    expect(
+      formatInvoiceLineCounts([
+        { qty: 3, boxes: 3, pieces: 0 },
+        { qty: 1, boxes: null, pieces: null, systemKind: "NSF_FEE" },
+      ]),
+    ).toBe("1 line · 3 boxes");
+    expect(formatInvoiceLineCounts([{ qty: 1, systemKind: "NSF_FEE" }])).toBe("0 lines");
+  });
+});
+
+// W-1185 fix 1 (F1): every bucket key is singular, so a tenant's plural spelling folds in.
+describe("singular bucket keys", () => {
+  it("an already-plural named label reads as its singular for one", () => {
+    expect(text([{ qty: 1, unitLabel: "Cases" }])).toBe("1 line · 1 case");
+    expect(text([{ qty: 1, unitLabel: "Pallets" }])).toBe("1 line · 1 pallet");
+  });
+
+  it("Case and Cases share one bucket", () => {
+    expect(
+      text([
+        { qty: 24, boxes: 2, unitsPerBox: 12, unitLabel: "Case" },
+        { qty: 12, boxes: 1, unitsPerBox: 12, unitLabel: "Cases" },
+      ]),
+    ).toBe("2 lines · 3 cases");
+  });
+
+  it("plural pack, base and unit words fold into the same words", () => {
+    expect(text([{ qty: 1, boxes: 0, pieces: 1, baseLabel: "Cans" }])).toBe("1 line · 1 can");
+    expect(text([{ qty: 1, unit: "Bottles" }])).toBe("1 line · 1 bottle");
+    expect(text([{ qty: 3, unit: "pc." }])).toBe("1 line · 3 pcs");
+    expect(text([{ qty: 2, unit: "Pieces" }])).toBe("1 line · 2 pcs");
+    expect(text([{ qty: 2, unit: "Units" }])).toBe("1 line · 2 pcs");
+    expect(text([{ qty: 2, boxes: 2, packLabel: "Boxes" }])).toBe("1 line · 2 boxes");
+    expect(text([{ qty: 2, unit: "Boxes" }])).toBe("1 line · 2 boxes");
+  });
+
+  it("singularises ies, ch/sh/x/z + es and leaves ss and invariant words alone", () => {
+    expect(text([{ qty: 2, unit: "Candies" }])).toBe("1 line · 2 candies");
+    expect(text([{ qty: 1, unit: "Candies" }])).toBe("1 line · 1 candy");
+    expect(text([{ qty: 1, unit: "Batches" }])).toBe("1 line · 1 batch");
+    expect(text([{ qty: 1, unit: "Glass" }])).toBe("1 line · 1 glass");
+    expect(text([{ qty: 2, unit: "Dozen" }])).toBe("1 line · 2 dozen");
+    expect(text([{ qty: 2, unit: "Gross" }])).toBe("1 line · 2 gross");
+    expect(text([{ qty: 2, unit: "kg" }])).toBe("1 line · 2 kg");
+  });
+});
+
+// W-1185 fix 1 (F8): a quantity shows up to 3 decimals, like the qty column.
+describe("fraction precision", () => {
+  it("a small fraction is not rounded to 0, a 3-dp one is kept", () => {
+    expect(text([{ qty: 0.004, unit: "kg" }])).toBe("1 line · 0.004 kg");
+    expect(text([{ qty: 0.333, unit: "kg" }])).toBe("1 line · 0.333 kg");
+    expect(text([{ qty: 1.25, unit: "kg" }])).toBe("1 line · 1.25 kg");
   });
 });

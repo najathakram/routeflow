@@ -14,8 +14,15 @@ describe("LineCountChip", () => {
     );
     const chip = screen.getByTestId("line-count-chip");
     expect(chip).toHaveTextContent("2 lines · 2 boxes · 6 pcs");
-    expect(chip).toHaveAttribute("role", "status");
-    expect(chip).toHaveAttribute("aria-live", "polite");
+  });
+
+  // W-1185 fix 1 (F7): the till's scan feedback already announces each scan, and a builder keystroke
+  // would announce every partial count, so the chip is plain text, not a live region.
+  it("is not a live region", () => {
+    render(<LineCountChip lines={[{ qty: 6, unit: "each" }]} />);
+    const chip = screen.getByTestId("line-count-chip");
+    expect(chip).not.toHaveAttribute("role");
+    expect(chip).not.toHaveAttribute("aria-live");
   });
 
   it("renders nothing for an empty list and for lines with no quantity", () => {

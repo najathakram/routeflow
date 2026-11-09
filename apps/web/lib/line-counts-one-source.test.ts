@@ -41,7 +41,23 @@ const SURFACES = [
   "apps/api/src/email/email.service.ts",
 ];
 
+/** A surface uses the helper only if it CALLS it (an unused import stays red). */
+const callsHelper = (src: string) =>
+  /summarizeLineCounts\(|formatInvoiceLineCounts\(|<LineCountChip\b/.test(
+    src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, ""),
+  );
+
 describe("W-1185 line counts have one source", () => {
+  it("an import or a comment alone is not a call", () => {
+    expect(callsHelper('import { summarizeLineCounts } from "@routeflow/pricing";')).toBe(false);
+    expect(callsHelper("import { LineCountChip } from './LineCountChip';")).toBe(false);
+    expect(callsHelper("// formatInvoiceLineCounts(items) is read elsewhere")).toBe(false);
+    expect(callsHelper("/* <LineCountChip lines={x} /> */ const a = 1;")).toBe(false);
+    expect(callsHelper("const c = summarizeLineCounts(lines);")).toBe(true);
+    expect(callsHelper("itemCount={formatInvoiceLineCounts(items)}")).toBe(true);
+    expect(callsHelper("<LineCountChip lines={lines} />")).toBe(true);
+  });
+
   it("scans real files (no fail-open)", () => {
     expect(sources.length).toBeGreaterThan(300);
     expect(sources.some((f) => rel(f).startsWith("apps/web/"))).toBe(true);
@@ -57,7 +73,7 @@ describe("W-1185 line counts have one source", () => {
   it.each(SURFACES)("%s reads the shared helper", (file) => {
     const full = path.join(ROOT, file);
     expect(fs.existsSync(full)).toBe(true);
-    expect(/summarizeLineCounts|formatInvoiceLineCounts|LineCountChip/.test(read(full))).toBe(true);
+    expect(callsHelper(read(full))).toBe(true);
   });
 
   it("no second line word is defined outside packages/pricing", () => {

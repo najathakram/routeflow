@@ -1,6 +1,5 @@
-import { roundMoney } from "./pricing";
 import { unitLineCount } from "./unit-line-count";
-import { plural, unitWords } from "./unit-words";
+import { INVARIANT_UNIT_WORDS, plural, unitWords } from "./unit-words";
 
 /**
  * W-1185: the ONE count of an order's or invoice's lines and units ("12 lines · 30 boxes · 6 pcs").
@@ -24,6 +23,8 @@ export interface CountableLine {
   /** The selling unit of an unboxed line ("each", "bottle", "kg"). */
   unit?: string | null;
   product?: { unit?: string | null } | null;
+  /** A system-written line (the NSF bounce fee): never goods, never counted. */
+  systemKind?: string | null;
 }
 
 /** `word` is the singular, lower-case form ("box", "pc", "case", "bottle"). */
@@ -47,18 +48,48 @@ const BOX_LIKE = /^box(es)?$/i;
 
 const num = (v: unknown): number => Number(v ?? 0) || 0;
 
-/** A label's counting word: generic piece words fold into "pc", box words into "box". */
-function wordOf(label: string | null | undefined): string {
-  const t = (label ?? "").trim();
-  if (!t || GENERIC_PIECE.test(t)) return PIECE;
-  if (BOX_LIKE.test(t)) return BOX;
-  return t.toLowerCase();
+/**
+ * The singular, lower-case form of a free-text unit word: the inverse of `pluralize`, so a tenant's
+ * "Cases", "Pcs" or "pc." lands in the same bucket as "Case", "Pc" and "pc". A trailing "." goes
+ * first; an invariant word stays; "...ies" -> "...y"; "...(ch|sh|x|z)es" -> strip "es"; "...ss"
+ * stays; any other "...s" -> strip "s".
+ */
+export function singularOf(word: string): string {
+  const w = word.trim().replace(/\.$/, "").trim().toLowerCase();
+  if (w.length < 2 || INVARIANT_UNIT_WORDS.has(w) || w.endsWith("ss")) return w;
+  if (w.endsWith("ies") && w.length > 3) return `${w.slice(0, -3)}y`;
+  if (/(ch|sh|x|z)es$/.test(w)) return w.slice(0, -2);
+  return w.endsWith("s") ? w.slice(0, -1) : w;
 }
 
-export function summarizeLineCounts(lines: ReadonlyArray<CountableLine>): LineCounts {
+/** A label's counting word: generic piece words fold into "pc", box words into "box". */
+function wordOf(label: string | null | undefined): string {
+  const t = singularOf(label ?? "");
+  if (!t || GENERIC_PIECE.test(t)) return PIECE;
+  if (BOX_LIKE.test(t)) return BOX;
+  return t;
+}
+
+export interface SummarizeOptions {
+  /**
+   * How a plain (unboxed, unnamed) line is worded. "unit" (default): its own selling unit
+   * (`unit` / `product.unit`), the live documents. "stored-only": only a frozen, non-generic
+   * `baseLabel`; with none, the line is counted and no unit is claimed (an invoice prints a bare
+   * quantity, so "pcs" would be a unit the document never stated).
+   */
+  unboxedWord?: "unit" | "stored-only";
+}
+
+export function summarizeLineCounts(
+  lines: ReadonlyArray<CountableLine>,
+  options: SummarizeOptions = {},
+): LineCounts {
+  const storedOnly = options.unboxedWord === "stored-only";
   const buckets = new Map<string, number>();
   let counted = 0;
   for (const li of lines) {
+    // A system line (the NSF bounce fee) is a charge, not goods.
+    if (li.systemKind != null && String(li.systemKind).trim() !== "") continue;
     let added = false;
     const add = (word: string, n: number) => {
       if (!(n > 0)) return;
@@ -71,10 +102,14 @@ export function summarizeLineCounts(lines: ReadonlyArray<CountableLine>): LineCo
     if (named) {
       add(wordOf(named), unitLineCount(li) ?? num(li.qty));
     } else if (li.boxes != null || li.pieces != null) {
-      const pack = (li.packLabel ?? "").trim();
-      const base = (li.baseLabel ?? "").trim();
-      add(!pack || BOX_LIKE.test(pack) ? BOX : pack.toLowerCase(), num(li.boxes));
-      add(!base || GENERIC_PIECE.test(base) ? PIECE : base.toLowerCase(), num(li.pieces));
+      const pack = singularOf(li.packLabel ?? "");
+      const base = singularOf(li.baseLabel ?? "");
+      add(!pack || BOX_LIKE.test(pack) ? BOX : pack, num(li.boxes));
+      add(!base || GENERIC_PIECE.test(base) ? PIECE : base, num(li.pieces));
+    } else if (storedOnly) {
+      const frozen = wordOf(li.baseLabel);
+      if (frozen !== PIECE) add(frozen, num(li.qty));
+      else if (num(li.qty) > 0) added = true;
     } else {
       add(wordOf(li.unit ?? li.product?.unit), num(li.qty));
     }
@@ -101,8 +136,9 @@ export function formatLineWord(n: number): string {
   return n === 1 ? "1 line" : `${n} lines`;
 }
 
+/** A quantity, not money: up to 3 decimals like the qty column, trailing zeros dropped. */
 function shown(n: number): string {
-  return String(Number.isInteger(n) ? n : roundMoney(n));
+  return String(Number.isInteger(n) ? n : Math.round(n * 1000) / 1000);
 }
 
 function wordFor(word: string, n: number): string {
@@ -126,19 +162,27 @@ export function formatLineCounts(c: LineCounts): string {
 
 /**
  * An invoice's count, from the line's OWN stored fields only (qty, boxes, pieces, unitsPerBox,
- * unitLabel): the same fields its qty column prints (`invoiceLineQtyText`). The catalog's live
- * `product.unit` is never read, so the web page, the PDF and the email always agree.
+ * unitLabel, and the sale-time `packLabel` / `baseLabel` snapshots frozen at issue): the same
+ * fields its qty column prints. The catalog's live `product` / `unit` is never read, so a reprint
+ * after a catalog edit, and the web page, the PDF and the email, always agree. A system line (the
+ * NSF fee) is skipped; a plain line with no frozen word is counted as a line, with no unit.
  */
 export function formatInvoiceLineCounts(items: ReadonlyArray<CountableLine>): string {
   return formatLineCounts(
     summarizeLineCounts(
-      items.map(({ qty, boxes, pieces, unitsPerBox, unitLabel }) => ({
-        qty,
-        boxes,
-        pieces,
-        unitsPerBox,
-        unitLabel,
-      })),
+      items.map(
+        ({ qty, boxes, pieces, unitsPerBox, unitLabel, packLabel, baseLabel, systemKind }) => ({
+          qty,
+          boxes,
+          pieces,
+          unitsPerBox,
+          unitLabel,
+          packLabel,
+          baseLabel,
+          systemKind,
+        }),
+      ),
+      { unboxedWord: "stored-only" },
     ),
   );
 }

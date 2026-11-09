@@ -99,3 +99,43 @@ it("Total quantity names each unit and is not the unitless sum 42", async () => 
   expect(text).toContain("3 boxes · 6 bottles");
   expect(text).not.toMatch(/42/);
 });
+
+// W-1185 fix 1 (F6): "Line items" is the number of rows in the table, a zero-quantity row included.
+it("Line items counts every non-cancelled row, not only the rows with a quantity", async () => {
+  const withZero = {
+    ...order,
+    lineItems: [
+      ...order.lineItems,
+      {
+        id: "li-3",
+        productId: "p3",
+        product: { id: "p3", name: "Gum", unit: "each", unitsPerBox: null },
+        qty: 0,
+        unitPrice: 1,
+        subtotal: 0,
+        status: "CONFIRMED",
+      },
+      {
+        id: "li-4",
+        productId: "p4",
+        product: { id: "p4", name: "Mints", unit: "each", unitsPerBox: null },
+        qty: 4,
+        unitPrice: 1,
+        subtotal: 4,
+        status: "CANCELLED",
+      },
+    ],
+  };
+  get.mockImplementation((url: string) => {
+    if (url === "/orders/o1") return Promise.resolve({ data: withZero });
+    if (url === "/tenants/me/addons") return Promise.resolve({ data: { addons: [] } });
+    return Promise.resolve({ data: [] });
+  });
+  render(
+    <Providers>
+      <OrderDetailPage />
+    </Providers>,
+  );
+  const dt = (await screen.findAllByText("Line items")).find((el) => el.tagName === "DT");
+  expect(dt!.parentElement!.textContent).toBe("Line items3");
+});
