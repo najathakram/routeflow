@@ -92,6 +92,7 @@ describe("product create draft storage", () => {
   it("only counts a change from the blank form as input", () => {
     expect(draftHasInput(EMPTY_DRAFT_FORM)).toBe(false);
     expect(draftHasInput({ ...EMPTY_DRAFT_FORM, name: "  " })).toBe(false);
+    expect(draftHasInput({ ...EMPTY_DRAFT_FORM, priceTier2: "33" })).toBe(true);
     expect(draftHasInput({ ...EMPTY_DRAFT_FORM, name: "Cola" })).toBe(true);
     expect(draftHasInput({ ...EMPTY_DRAFT_FORM, costingMethod: "FIFO" })).toBe(true);
   });

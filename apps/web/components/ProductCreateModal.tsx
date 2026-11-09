@@ -127,6 +127,13 @@ function uomsForItemType(
   return productConfig.itemTypes.find((t) => t.code === itemType)?.uoms ?? [];
 }
 
+const TIER_NUMBERS = [2, 3, 4, 5] as const;
+type TierNumber = (typeof TIER_NUMBERS)[number];
+const tierKey = (t: TierNumber) => `priceTier${t}` as const;
+/** A typed tier price: digits with an optional decimal part. Anything else (a comma, a sign, letters) is refused. */
+const isTierPriceText = (raw: string) =>
+  /^[0-9]+([.][0-9]+)?$/.test(raw) || /^[.][0-9]+$/.test(raw);
+
 /**
  * The full product-create form — extracted verbatim from the products page's
  * former inline `CreateProductModal` so every surface that needs to create a
@@ -136,8 +143,6 @@ function uomsForItemType(
  * catalog, regulated type/category pickers), its own `createProduct`
  * mutation, and the post-create image upload.
  */
-const TIER_NUMBERS = [2, 3, 4, 5] as const;
-
 export function ProductCreateModal({
   isOpen,
   onClose,
@@ -175,6 +180,10 @@ export function ProductCreateModal({
     standardCost: initialCost != null && initialCost > 0 ? String(initialCost) : "",
     unitsPerBox: validUnitsPerBoxPrefill(initialUnitsPerBox) ? String(initialUnitsPerBox) : "",
     pricePerPiece: "",
+    priceTier2: "",
+    priceTier3: "",
+    priceTier4: "",
+    priceTier5: "",
     parentProductId: defaultParentId ?? "",
     variantName: "",
     trackedCategoryId: "",
@@ -253,8 +262,9 @@ export function ProductCreateModal({
   const [pieceError, setPieceError] = React.useState("");
   // W-1170 F12a: optional Tier 2-5 prices (v2 only). Blank = Auto (the server stores 0 and follows Retail).
   const [tiersOpen, setTiersOpen] = React.useState(false);
-  const [tierPrices, setTierPrices] = React.useState<Record<number, string>>({});
-  const [tierError, setTierError] = React.useState("");
+  const [tierError, setTierError] = React.useState<{ message: string; bad: TierNumber[] } | null>(
+    null,
+  );
   // P24: under v2 the Unit code helper shows on screen only while its field is focused (never floating without it).
   const [unitSkuFocused, setUnitSkuFocused] = React.useState(false);
   const [isSavingPiece, setIsSavingPiece] = React.useState(false);
@@ -339,8 +349,7 @@ export function ProductCreateModal({
     setPendingImages([]);
     setPreviews([]);
     setTiersOpen(false);
-    setTierPrices({});
-    setTierError("");
+    setTierError(null);
   };
 
   // Unfinished-product draft: only a plain New product (no prefill, not a variant) keeps one.
@@ -397,18 +406,24 @@ export function ProductCreateModal({
     const tierBody: Record<string, number> = {};
     if (showTierPrices) {
       for (const t of TIER_NUMBERS) {
-        const raw = (tierPrices[t] ?? "").trim();
+        const raw = form[tierKey(t)].trim();
         if (raw === "") continue;
         const n = Number(raw);
-        if (!Number.isFinite(n) || n < 0) {
-          setTierError(`Enter a valid price for Tier ${t}, or leave it blank.`);
+        // A typed 0 would silently mean Auto, so it is refused; so is anything a number input would have read as blank.
+        const message = !isTierPriceText(raw)
+          ? `Enter a valid price for Tier ${t}, or leave it blank.`
+          : n === 0
+            ? "Leave blank to follow Retail."
+            : null;
+        if (message) {
+          setTierError({ message, bad: [t] });
           setTiersOpen(true);
           return;
         }
-        tierBody[`priceTier${t}`] = n;
+        tierBody[tierKey(t)] = n;
       }
     }
-    setTierError("");
+    setTierError(null);
     // K11-28: a bad piece price blocks Create BEFORE anything is written (validateSetPrice is the one rule).
     let pieceTo: number | null = null;
     if (showPiecePrice && form.pricePerPiece.trim() !== "") {
@@ -550,6 +565,7 @@ export function ProductCreateModal({
     );
 
   const packUnit = isPackUnit(form.unit);
+  const tiersSet = TIER_NUMBERS.filter((t) => form[tierKey(t)].trim() !== "").length;
   const unitWord = priceUnitWord(form.unit);
   const qtyHint = packUnit
     ? priceQtyHint({
@@ -905,54 +921,6 @@ export function ProductCreateModal({
                 >
                   {qtyHint}
                 </p>
-                {showTierPrices && (
-                  <div className="mt-2">
-                    <button
-                      type="button"
-                      aria-expanded={tiersOpen}
-                      aria-controls="product-tier-prices"
-                      onClick={() => setTiersOpen((o) => !o)}
-                      className="text-xs font-medium text-accent-deep underline underline-offset-[3px] hover:no-underline"
-                    >
-                      Different prices for tiers
-                    </button>
-                    {tiersOpen && (
-                      <div id="product-tier-prices" className="mt-2 grid grid-cols-2 gap-2">
-                        {TIER_NUMBERS.map((t) => (
-                          <div key={t}>
-                            <label
-                              htmlFor={`product-tier-${t}`}
-                              className="mb-1 block text-xs font-medium text-navy"
-                            >
-                              {`Tier ${t}`}
-                            </label>
-                            <div className="flex items-center">
-                              <span className="flex h-[38px] items-center rounded-l border border-r-0 border-surface-border bg-surface-raised px-2.5 text-sm text-navy/70">
-                                $
-                              </span>
-                              <input
-                                id={`product-tier-${t}`}
-                                aria-label={`Tier ${t} price`}
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                placeholder="Auto (same as Retail)"
-                                value={tierPrices[t] ?? ""}
-                                onChange={(e) => {
-                                  const v = e.target.value;
-                                  setTierPrices((p) => ({ ...p, [t]: v }));
-                                  setTierError("");
-                                }}
-                                className="w-full min-w-0 rounded-r border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                              />
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    {tierError && <p className="mt-1 text-xs text-danger">{tierError}</p>}
-                  </div>
-                )}
                 {initialCost != null && initialCost > 0 && (
                   <p className="mt-1 text-[11px] text-navy/70">
                     {validUnitsPerBoxPrefill(initialUnitsPerBox)
@@ -1004,6 +972,66 @@ export function ProductCreateModal({
                 </div>
               )}
             </div>
+
+            {showTierPrices && (
+              <div data-tier-block className="col-span-2">
+                <button
+                  type="button"
+                  aria-expanded={tiersOpen}
+                  aria-controls={tiersOpen ? "product-tier-prices" : undefined}
+                  onClick={() => setTiersOpen((o) => !o)}
+                  className="text-xs font-medium text-accent-deep underline underline-offset-[3px] hover:no-underline"
+                >
+                  {tiersSet > 0
+                    ? `Different prices for tiers · ${tiersSet} set`
+                    : "Different prices for tiers"}
+                </button>
+                {tiersOpen && (
+                  <div id="product-tier-prices" className="mt-2">
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      {TIER_NUMBERS.map((t) => {
+                        const isBad = !!tierError?.bad.includes(t);
+                        return (
+                          <div key={t}>
+                            <label
+                              htmlFor={`product-tier-${t}`}
+                              className="mb-1 block text-xs font-medium text-navy"
+                            >
+                              {`Tier ${t}`}
+                            </label>
+                            <div className="flex items-center">
+                              <span className="flex h-[38px] items-center rounded-l border border-r-0 border-surface-border bg-surface-raised px-2.5 text-sm text-navy/70">
+                                $
+                              </span>
+                              <input
+                                id={`product-tier-${t}`}
+                                type="text"
+                                inputMode="decimal"
+                                placeholder="Auto"
+                                aria-invalid={isBad ? "true" : undefined}
+                                aria-describedby={isBad ? "product-tier-error" : undefined}
+                                value={form[tierKey(t)]}
+                                onChange={(e) => {
+                                  set(tierKey(t), e.target.value);
+                                  setTierError(null);
+                                }}
+                                className={`w-full min-w-0 rounded-r border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 ${isBad ? "border-danger focus:ring-danger" : "border-surface-border"}`}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <p className="mt-1 text-xs text-navy/70">Blank tiers follow Retail.</p>
+                  </div>
+                )}
+                {tierError && (
+                  <p id="product-tier-error" role="alert" className="mt-1 text-xs text-danger">
+                    {tierError.message}
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* Category — ONE axis. Free-text for non-regulated products;
                   once a regulated type is chosen this slot switches to that

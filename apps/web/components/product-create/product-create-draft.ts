@@ -25,6 +25,11 @@ export const EMPTY_DRAFT_FORM = {
   unitsPerBox: "",
   /** K11-28: the optional price of one piece when a cased product is created (units v2 only). */
   pricePerPiece: "",
+  /** W-1170 F12a: optional Tier 2-5 prices at create (prices v2); blank = Auto (follows Retail). */
+  priceTier2: "",
+  priceTier3: "",
+  priceTier4: "",
+  priceTier5: "",
   parentProductId: "",
   variantName: "",
   trackedCategoryId: "",

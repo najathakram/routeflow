@@ -56,15 +56,15 @@ describe("W-1170 F12a: tier prices at create", () => {
   it("starts closed: no tier inputs until the disclosure opens", async () => {
     open();
     expect(toggle()).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByLabelText("Tier 2 price")).toBeNull();
+    expect(screen.queryByLabelText("Tier 2")).toBeNull();
   });
 
   it("sends a typed Tier 2 as a number and leaves untouched tiers out", async () => {
     open();
     await fill();
     await userEvent.click(toggle()!);
-    const t2 = screen.getByLabelText("Tier 2 price");
-    expect(t2).toHaveAttribute("placeholder", "Auto (same as Retail)");
+    const t2 = screen.getByLabelText("Tier 2");
+    expect(t2).toHaveAttribute("placeholder", "Auto");
     await userEvent.type(t2, "33.00");
     create();
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
@@ -105,5 +105,65 @@ describe("W-1170 F12a: tier prices at create", () => {
     );
     await waitFor(() => expect(screen.getByLabelText(/^Unit \*/)).toHaveValue("each"));
     expect(toggle()).toBeNull();
+  });
+
+  it("lays the tier block out below the price row, full width (not inside the half-width price cell)", async () => {
+    open();
+    await userEvent.click(toggle()!);
+    const block = screen.getByLabelText("Tier 2").closest("[data-tier-block]") as HTMLElement;
+    expect(block).toBeInTheDocument();
+    expect(block.className).toMatch(/col-span-2/);
+    const row = document.querySelector("[data-price-row]") as HTMLElement;
+    expect(row).not.toContainElement(block);
+    expect(screen.getByText("Blank tiers follow Retail.")).toBeInTheDocument();
+  });
+
+  it("shows how many tiers are set on the closed toggle", async () => {
+    open();
+    await userEvent.click(toggle()!);
+    await userEvent.type(screen.getByLabelText("Tier 2"), "33");
+    await userEvent.type(screen.getByLabelText("Tier 4"), "30");
+    await userEvent.click(toggle()!);
+    expect(
+      screen.getByRole("button", { name: /Different prices for tiers · 2 set/ }),
+    ).toBeInTheDocument();
+  });
+
+  it.each([["12,50"], ["0"], ["-3"], ["abc"]])(
+    "a tier of %p blocks Create, reopens the closed block and flags the input",
+    async (bad) => {
+      open();
+      await fill();
+      await userEvent.click(toggle()!);
+      await userEvent.type(screen.getByLabelText("Tier 3"), bad);
+      await userEvent.click(toggle()!);
+      expect(screen.queryByLabelText("Tier 3")).toBeNull();
+      create();
+      const alert = await screen.findByRole("alert");
+      expect(mutateAsync).not.toHaveBeenCalled();
+      const input = screen.getByLabelText("Tier 3");
+      expect(input).toHaveAttribute("aria-invalid", "true");
+      expect(input.getAttribute("aria-describedby")).toBe(alert.id);
+      if (bad === "0") expect(alert).toHaveTextContent("Leave blank to follow Retail.");
+    },
+  );
+
+  it("keeps aria-controls only while the block is open", async () => {
+    open();
+    expect(toggle()).not.toHaveAttribute("aria-controls");
+    await userEvent.click(toggle()!);
+    expect(toggle()).toHaveAttribute("aria-controls", "product-tier-prices");
+  });
+
+  it("Escape does not close the dialog once only a tier value was typed (not pristine)", async () => {
+    const onClose = jest.fn();
+    renderWithProviders(<ProductCreateModal isOpen onClose={onClose} onCreated={jest.fn()} />);
+    await userEvent.click(toggle()!);
+    fireEvent.keyDown(screen.getByLabelText("Tier 2"), { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    onClose.mockClear();
+    await userEvent.type(screen.getByLabelText("Tier 2"), "33");
+    fireEvent.keyDown(screen.getByLabelText("Tier 2"), { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
   });
 });
