@@ -111,8 +111,6 @@ import {
   ChangeRequestStatus,
   ChangeRequestType,
   FulfillPath,
-  RouteRunStatus,
-  RouteRunStopStatus,
   type Prisma,
 } from "@prisma/client";
 import { ListOrdersDto } from "./dto/list-orders.dto";
@@ -242,6 +240,7 @@ import {
 import { SystemConfigService } from "../system-config/system-config.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
+import { resolveDriverRunLink } from "./driver-run-link";
 import { resolveLineUnits } from "../products/line-units";
 import * as unitLines from "./unit-line-build";
 import * as unitEdit from "./unit-line-edit";
@@ -1296,48 +1295,8 @@ export class OrdersService implements OnApplicationBootstrap {
       if (customer.deletedAt) throw new BadRequestException("Customer not found");
       customerId = customer.id;
 
-      // B309: a driver may only link a new order to a stop/run that is their own
-      // and currently active — mirrors routes.service.ts's completeWithPayment /
-      // reopenStop driver-isolation guard (B72). This runs BEFORE any order row
-      // is written, so a rejected link never leaves an orphan order.
-      if (dto.routeRunId || dto.routeRunStopId) {
-        const driver = await this.prisma
-          .forTenant()
-          .driver.findFirst({ where: { userId: user.sub } });
-
-        let stop: { id: string; status: RouteRunStopStatus; routeRunId: string } | null = null;
-        let runId = dto.routeRunId ?? null;
-        if (dto.routeRunStopId) {
-          stop = await this.prisma.forTenant().routeRunStop.findFirst({
-            where: { id: dto.routeRunStopId },
-            select: { id: true, status: true, routeRunId: true },
-          });
-          if (!stop) throw new BadRequestException("Stop not found");
-          if (dto.routeRunId && dto.routeRunId !== stop.routeRunId) {
-            throw new BadRequestException("Stop does not belong to the supplied route run");
-          }
-          runId = stop.routeRunId;
-        }
-
-        const run = await this.prisma.forTenant().routeRun.findFirst({
-          where: { id: runId as string },
-          select: { id: true, driverId: true, status: true },
-        });
-        if (!driver || !run || run.driverId !== driver.id) {
-          throw new ForbiddenException("You do not have access to this route run");
-        }
-        if (run.status !== RouteRunStatus.IN_PROGRESS) {
-          throw new BadRequestException("Route run is not in progress");
-        }
-        if (
-          stop &&
-          (stop.status === RouteRunStopStatus.COMPLETED ||
-            stop.status === RouteRunStopStatus.SKIPPED)
-        ) {
-          throw new BadRequestException("Stop is already completed or skipped");
-        }
-        resolvedRouteRunId = runId;
-      }
+      // B309: a driver links only to their own active stop/run (driver-run-link.ts).
+      resolvedRouteRunId = await resolveDriverRunLink(this.prisma, dto, user);
     } else {
       // Customer creates their own order
       // B309 (Opus MAJOR): the routeRunId/routeRunStopId link block later in
