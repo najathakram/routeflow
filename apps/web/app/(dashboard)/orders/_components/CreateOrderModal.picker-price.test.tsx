@@ -265,6 +265,18 @@ describe("CreateOrderModal product picker - the customer's price (W-1170 F8)", (
     expect(within(row).queryByText((text) => text.startsWith("/"))).not.toBeInTheDocument();
   });
 
+  it("an Auto customer (tier 0) is priced at list: one price, no strike, and the line gets it", async () => {
+    cust.pricingTier = 0;
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await pickCustomer();
+    const list = await openPicker("wid");
+    const row = within(list).getByRole("option", { name: /Widget/ });
+    expect(struck(within(row).getByText("$45.00"))).toBe(false);
+    expect(within(row).queryByText("$42.00")).not.toBeInTheDocument();
+    fireEvent.click(row);
+    expect(await screen.findByText("$45.00 / each")).toBeInTheDocument();
+  });
+
   it("a customer on the list price: one price, no strike", async () => {
     cust.pricingTier = 1;
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);

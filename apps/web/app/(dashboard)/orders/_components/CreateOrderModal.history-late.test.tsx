@@ -14,9 +14,13 @@ type LayerState = {
 let layer: LayerState;
 let history: Record<string, { lastPrice: number; stickyPrice?: number | null }> | undefined;
 let historyPending = false;
+// customer B (a second customer in the A to B case): its own history read
+let historyB: typeof history;
+let historyBPending = false;
 let mockRows: unknown[] = [];
 const mockNoCustomerPrices = { data: [] };
 const cust = { id: "c1", businessName: "UX-Acme Foods", pricingTier: 3 };
+const custB = { id: "c2", businessName: "UX-Beta Bakery", pricingTier: 1 };
 
 jest.mock("@/lib/api/useCustomerPriceLayer", () => {
   const { priceLayerStatus } = jest.requireActual("@routeflow/pricing");
@@ -34,7 +38,7 @@ jest.mock("@/lib/api/useCustomerPriceLayer", () => {
   };
 });
 jest.mock("@/lib/api/customers", () => ({
-  useCustomers: () => ({ data: { data: [cust] } }),
+  useCustomers: () => ({ data: { data: [cust, custB] } }),
   useCustomerPrices: () => mockNoCustomerPrices,
   useCustomer: () => ({ data: undefined }),
 }));
@@ -46,7 +50,10 @@ jest.mock("@/lib/api/products", () => ({
 jest.mock("@/lib/api/orders", () => ({
   useCreateOrder: () => ({ mutate: jest.fn(), isPending: false, error: null, reset: jest.fn() }),
   useActiveOrderForCustomer: () => ({ data: undefined }),
-  useCustomerPriceHistory: () => ({ data: history, isPending: historyPending }),
+  useCustomerPriceHistory: (customerId?: string) =>
+    customerId === "c2"
+      ? { data: historyB, isPending: historyBPending }
+      : { data: history, isPending: historyPending },
 }));
 jest.mock("@/lib/api/drafts", () => ({
   useCreateDraft: () => ({ mutate: jest.fn(), mutateAsync: jest.fn(), isPending: false }),
@@ -151,6 +158,8 @@ describe("CreateOrderModal - the last-given price arrives after the add (B1139)"
     historyPending = true; // the history read is still out
     mockRows = [WIDGET];
     cust.pricingTier = 1;
+    historyB = undefined;
+    historyBPending = false;
   });
 
   it("a line added before the history loaded takes the last-given price when it arrives", async () => {
@@ -193,5 +202,60 @@ describe("CreateOrderModal - the last-given price arrives after the add (B1139)"
     await addBeforeHistory();
     historyArrives(LATE);
     expect(screen.getByText("$45.00 / each")).toBeInTheDocument();
+  });
+
+  it("a special-tier customer (permanent price): the late last-given price is not pre-filled", async () => {
+    cust.pricingTier = 3; // tier 3 is a special tier: $42 is the price, and a last-given discount never sits on it
+    await addLine("$42.00 / each");
+    historyArrives(LATE);
+    expect(screen.getByText("$42.00 / each")).toBeInTheDocument();
+    expect(screen.queryByText("$40.00 / each")).not.toBeInTheDocument();
+    expect(screen.queryByText("Discounted")).not.toBeInTheDocument();
+  });
+
+  it("a customer with their own typed price (the layer): the late last-given price is not pre-filled", async () => {
+    layer = {
+      ...layerReady(),
+      data: {
+        complete: true,
+        products: {
+          "prod-1": [
+            {
+              ref: "pack",
+              label: null,
+              price: 33,
+              listPrice: 45,
+              source: "customer",
+              aboveList: false,
+            },
+          ],
+        },
+      },
+    };
+    await addLine("$33.00 / each");
+    historyArrives({ "prod-1": { lastPrice: 30 } });
+    expect(screen.getByText("$33.00 / each")).toBeInTheDocument();
+    expect(screen.queryByText("$30.00 / each")).not.toBeInTheDocument();
+    expect(screen.queryByText("Discounted")).not.toBeInTheDocument();
+  });
+
+  it("customer A to customer B: A's pre-fill drops, and B's history arriving late fills B's price", async () => {
+    history = LATE; // A's last-given price is $40
+    historyPending = false;
+    await addLine("$40.00 / each"); // added for A with A's pre-fill
+    historyBPending = true; // B's history read is still out when B is picked
+    fireEvent.click(screen.getByRole("button", { name: "Change customer" }));
+    fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
+      target: { value: "UX-B" },
+    });
+    fireEvent.click(await screen.findByText("UX-Beta Bakery"));
+    // A's price is not B's: the line is back on B's tier price while B's history is out
+    expect(await screen.findByText("$45.00 / each")).toBeInTheDocument();
+    expect(screen.queryByText("$40.00 / each")).not.toBeInTheDocument();
+    historyBPending = false;
+    historyB = { "prod-1": { lastPrice: 38 } };
+    rerenderModal();
+    expect(await screen.findByText("$38.00 / each")).toBeInTheDocument();
+    expect(screen.getByText("Discounted")).toBeInTheDocument();
   });
 });
