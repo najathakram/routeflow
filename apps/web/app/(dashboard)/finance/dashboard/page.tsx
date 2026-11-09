@@ -386,15 +386,15 @@ export default function FinanceDashboardPage() {
       </div>
 
       {/* Sales and Expenses + Top Expenses row */}
-      <div className="grid grid-cols-3 gap-4">
-        {/* Sales Bar Chart - takes 2/3 */}
-        <div className="col-span-2 rounded-card border border-line bg-paper shadow-card">
-          <div className="flex items-start justify-between border-b border-surface-border px-5 py-3.5">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        {/* Sales Bar Chart - takes 2/3 from md, full width below (B477) */}
+        <div className="rounded-card border border-line bg-paper shadow-card md:col-span-2">
+          <div className="flex flex-wrap items-start justify-between gap-2 border-b border-surface-border px-5 py-3.5">
             <div>
               <h3 className="text-base font-semibold text-navy">Sales and Expenses</h3>
               <p className="text-xs text-navy/70">This fiscal year</p>
             </div>
-            <div className="flex gap-4 text-xs">
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
               <div className="flex items-center gap-1.5">
                 <span className="h-2.5 w-2.5 rounded-sm bg-navy/80" />
                 <span className="text-navy/70">Total sales</span>
