@@ -1,5 +1,10 @@
 import type { CustomerLayerUnit } from "@routeflow/pricing";
-import { applyLineUnit, repriceLineFromLayer, type UnitLine } from "./order-line-unit";
+import {
+  applyLineUnit,
+  repriceLineFromLayer,
+  type LayerPricedLine,
+  type UnitLine,
+} from "./order-line-unit";
 import { saleLinePricing } from "./sale-line-pricing";
 import type { UnitOption } from "./unit-options";
 
@@ -80,6 +85,40 @@ describe("order-line-unit: the customer's layer (B-4)", () => {
     expect(back.unitPrice).toBe(33);
     const backMaster = applyLineUnit(caseLine, { kind: "pack" } as UnitOption, { tier: 3 });
     expect(backMaster.unitPrice).toBe(38);
+  });
+});
+
+describe("order-line-unit: a layer row that goes away (B1139 follow-up)", () => {
+  const was = { unitPrice: 38, listPrice: 42, priceType: "SPECIAL" as const, specialPrice: 38 };
+  const noRow: CustomerLayerUnit[] = []; // layer data arrived with nothing for this unit
+  const lineOf = (over: Partial<LayerPricedLine>): LayerPricedLine => ({ ...packLine(), ...over });
+
+  it("restores master's number and drops a late last-given pre-fill that no longer matches it", () => {
+    const line = lineOf({
+      unitPrice: 33,
+      layerFrom: was,
+      discountedPrice: 31,
+      priceType: "DISCOUNTED",
+      systemPrefill: true,
+      prefillCustomerId: "c1",
+    });
+    const r = repriceLineFromLayer(line, { tier: 3, layer: noRow });
+    expect(r.unitPrice).toBe(38);
+    expect(r.priceType).toBe("SPECIAL");
+    expect(r.discountedPrice).toBeUndefined();
+    expect(r.systemPrefill).toBeUndefined();
+    expect(r.prefillCustomerId).toBeUndefined();
+    expect(r.layerFrom).toBeUndefined();
+  });
+
+  it("an operator's one-time price is not a system pre-fill: it stands", () => {
+    const typed = lineOf({
+      layerFrom: was,
+      discountedPrice: 31,
+      unitPrice: 31,
+      priceType: "DISCOUNTED",
+    });
+    expect(repriceLineFromLayer(typed, { tier: 3, layer: noRow })).toBe(typed);
   });
 });
 

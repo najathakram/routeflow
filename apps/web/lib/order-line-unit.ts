@@ -237,6 +237,8 @@ export interface LayerPricedLine extends UnitLine {
   isUnlisted?: boolean;
   /** A price the SYSTEM pre-filled from last-given history (not the operator): the layer replaces it once known. */
   systemPrefill?: boolean;
+  /** The customer a system pre-fill was taken from (cleared with the pre-fill). */
+  prefillCustomerId?: string;
   overrideReason?: string;
   /** Set while the layer prices this line; the pre-layer values to restore if the row disappears. */
   layerFrom?: LayerFrom;
@@ -280,6 +282,12 @@ export function repriceLineFromLayer<T extends LayerPricedLine>(
   if (!lp.layered) {
     if (!li.layerFrom) return li;
     const { layerFrom, ...rest } = li;
+    // A late last-given pre-fill (B1139) on a line the layer once priced no longer matches the restored tier price: it goes too.
+    // (An operator-typed one-time price returned above.)
+    if (prefilled) {
+      const { systemPrefill: _s, prefillCustomerId: _c, overrideReason: _r, ...plain } = rest;
+      return { ...plain, ...layerFrom, discountedPrice: undefined } as T;
+    }
     return { ...rest, ...layerFrom } as T;
   }
   const specialPrice = customerLineSpecial(lp);
