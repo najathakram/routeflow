@@ -36,7 +36,7 @@
     "@routeflow/scanning": "*",
     "@routeflow/types": "*",
     "@sentry/react": "^10.78.0",
-    "@tanstack/react-query": "^5.105.0",
+    "@tanstack/react-query": "^5.106.1",
     "@zxing/browser": "^0.2.1",
     "@zxing/library": "^0.23.0",
     "axios": "^1.21.0",
