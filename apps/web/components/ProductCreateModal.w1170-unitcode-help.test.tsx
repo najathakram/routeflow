@@ -4,12 +4,11 @@ import { renderWithProviders } from "@/test-utils/render";
 import { ProductCreateModal } from "./ProductCreateModal";
 
 /**
- * W-1170 P24: at 390 px the scrolled form showed "Printed on invoices..." at the top with its Unit code field scrolled
- * away. Under v2 the helper is visible only while its field is focused (so it is never on screen without it) and stays
- * available to screen readers through aria-describedby. Flag off keeps today's always-visible line.
+ * W-1170 P24: the Unit code helper ("Printed on invoices...") belongs to its field. It is always visible, directly
+ * under the field in the same wrapper (so it can never be a line with no field), is linked with aria-describedby,
+ * and does NOT appear or disappear on focus (that moved the rows below by 18-34 px).
  */
-const flags = { v2: true };
-jest.mock("@/lib/api/units-v2", () => ({ usePricesV2Enabled: () => flags.v2 }));
+jest.mock("@/lib/api/units-v2", () => ({ usePricesV2Enabled: () => true }));
 jest.mock("@/lib/api/products", () => ({
   useCreateProduct: () => ({ mutateAsync: jest.fn(), isPending: false }),
   useProducts: () => ({ data: { data: [] } }),
@@ -24,26 +23,16 @@ jest.mock("./CategoryCombobox", () => ({ CategoryCombobox: () => <div /> }));
 jest.mock("./SubcategoryCombobox", () => ({ SubcategoryCombobox: () => <div /> }));
 jest.mock("./BarcodeScannerButton", () => ({ BarcodeScannerButton: () => null }));
 
-const open = () =>
+it("keeps the helper visible, in the field's own wrapper, and described-by, with or without focus", () => {
   renderWithProviders(<ProductCreateModal isOpen onClose={jest.fn()} onCreated={jest.fn()} />);
-const help = () => screen.getByText(/Printed on invoices\./);
-
-describe("W-1170 P24: Unit code helper stays with its field", () => {
-  it("v2: not shown on screen until the Unit code field is focused, always described to screen readers", () => {
-    flags.v2 = true;
-    open();
-    const field = screen.getByLabelText("Unit code");
-    expect(help()).toHaveClass("sr-only");
-    expect(field.getAttribute("aria-describedby")).toBe(help().id);
-    fireEvent.focus(field);
-    expect(help()).not.toHaveClass("sr-only");
-    fireEvent.blur(field);
-    expect(help()).toHaveClass("sr-only");
-  });
-
-  it("flag off: unchanged, the line is always visible", () => {
-    flags.v2 = false;
-    open();
-    expect(help()).not.toHaveClass("sr-only");
-  });
+  const field = screen.getByLabelText("Unit code");
+  const help = screen.getByText(/Printed on invoices\./);
+  expect(help).not.toHaveClass("sr-only");
+  expect(help.closest("div.col-span-2")).toContainElement(field);
+  expect(field.getAttribute("aria-describedby")).toBe(help.id);
+  const before = help.className;
+  fireEvent.focus(field);
+  expect(help.className).toBe(before);
+  fireEvent.blur(field);
+  expect(help.className).toBe(before);
 });

@@ -265,8 +265,6 @@ export function ProductCreateModal({
   const [tierError, setTierError] = React.useState<{ message: string; bad: TierNumber[] } | null>(
     null,
   );
-  // P24: under v2 the Unit code helper shows on screen only while its field is focused (never floating without it).
-  const [unitSkuFocused, setUnitSkuFocused] = React.useState(false);
   const [isSavingPiece, setIsSavingPiece] = React.useState(false);
   // K11-28: the piece price needs both units flags (the units POST and the S9 prices write are gated on them).
   const pricesV2 = usePricesV2Enabled();
@@ -860,8 +858,6 @@ export function ProductCreateModal({
                   value={form.unitSku}
                   onChange={(e) => set("unitSku", e.target.value)}
                   aria-describedby="product-unit-sku-help"
-                  onFocus={() => setUnitSkuFocused(true)}
-                  onBlur={() => setUnitSkuFocused(false)}
                   className="flex-1 rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                   placeholder="Scan or enter the unit's own code"
                 />
@@ -871,10 +867,7 @@ export function ProductCreateModal({
                   title="Scan unit code"
                 />
               </div>
-              <p
-                id="product-unit-sku-help"
-                className={pricesV2 && !unitSkuFocused ? "sr-only" : "mt-0.5 text-xs text-navy/70"}
-              >
+              <p id="product-unit-sku-help" className="mt-0.5 text-xs text-navy/70">
                 Printed on invoices. Leave blank if it&apos;s the same as the {w.pack.lower} code.
               </p>
             </div>
