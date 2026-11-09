@@ -85,6 +85,14 @@ export function legacyOrderKept<S extends ShownLine>(
   return shown.length === saved.length && shown.every((id, i) => id === saved[i]);
 }
 
+/** `stampInvoicePositions` for lines billed from an order: ranks come from the order's UNCANCELLED lines. */
+export function stampFromOrder<T extends object>(
+  lines: T[],
+  orderLines: readonly RankableLine[],
+): T[] {
+  return stampInvoicePositions(lines, orderLineRanks(orderLines));
+}
+
 /** The slice of a Prisma client the DB-side helpers use (a transaction or the tenant client). */
 interface PositionDb {
   order: {
@@ -114,6 +122,36 @@ export async function loadOrderLineRanks(
  * A rebuild keeps the NSF fee rows in place; the rebuilt lines take 0..n-1, so the kept fee rows move to n, n+1, ...
  * (last, in the order they are handed in). No query when nothing was kept.
  */
+/**
+ * The `update` stamp: the payload's order for a standalone invoice, the ORDER's order for a linked one (the payload never
+ * overrides it). A legacy invoice saved in the order it is shown in writes nothing (`legacyOrderKept`).
+ */
+export async function stampEditedPositions(
+  db: Pick<PositionDb, "order">,
+  stored: readonly ShownLine[],
+  editLines: ReadonlyArray<{ rowId?: string | null }>,
+  itemsData: object[],
+  orderId: string | null | undefined,
+): Promise<void> {
+  if (
+    legacyOrderKept(
+      stored,
+      editLines.map((l) => l.rowId),
+    )
+  )
+    return;
+  stampInvoicePositions(itemsData, orderId ? await loadOrderLineRanks(db, orderId) : undefined);
+}
+
+/** The slot a line appended LAST takes (the invoice's max + 1; an all-NULL legacy invoice starts at 0). */
+export async function nextTailPosition(
+  db: { invoiceItem: { aggregate: (args: any) => Promise<any> } },
+  invoiceId: string,
+): Promise<number> {
+  const tail = await db.invoiceItem.aggregate({ where: { invoiceId }, _max: { position: true } });
+  return ((tail._max.position as number | null) ?? -1) + 1;
+}
+
 export async function restampKeptTail(
   db: Pick<PositionDb, "invoiceItem">,
   keptIds: readonly string[],

@@ -184,10 +184,10 @@ import { buildInvoiceEmailPayload } from "./invoice-email-payload";
 import {
   copyInvoicePositions,
   invoiceLinesInOrder,
-  legacyOrderKept,
-  loadOrderLineRanks,
-  orderLineRanks,
+  nextTailPosition,
   restampKeptTail,
+  stampEditedPositions,
+  stampFromOrder,
   stampInvoicePositions,
 } from "./invoice-line-position";
 import {
@@ -1162,7 +1162,6 @@ export class InvoicesService {
       },
     );
     const orderSubtotal = Number(order.subtotal) || 1;
-    const lineRanksOfOrder = orderLineRanks(order.lineItems); // W-1187: each sibling lists its lines in the order's order
 
     const groupData = groups.map((g) => {
       const pids = new Set(g.items.map(({ li }: any) => li.productId));
@@ -1175,7 +1174,7 @@ export class InvoicesService {
           priorBilledQty: Number(li.invoicedQty ?? 0),
         }),
       );
-      stampInvoicePositions(itemsData, lineRanksOfOrder);
+      stampFromOrder(itemsData, order.lineItems); // W-1187: each sibling lists its lines in the order's order
       // B294: stamp the order's effective regular-tax rate onto every line so a
       // later applyPriceAdjustment recompute (Σ li.subtotal * li.taxRate) reproduces
       // this group's regular tax instead of the previous hardcoded 0.
@@ -1633,7 +1632,7 @@ export class InvoicesService {
     const itemsData = billable.map(({ li, billQty }: any) =>
       this.buildInvoiceItemData(li, billQty, tenantId, { priorPack: priorPackByLine.get(li.id) }),
     );
-    stampInvoicePositions(itemsData, orderLineRanks(order.lineItems)); // W-1187: the order's order
+    stampFromOrder(itemsData, order.lineItems); // W-1187: the order's order
     await this.applyMsrpSnapshots(db, order.customerId, itemsData);
     const subtotal = roundMoney(itemsData.reduce((s: number, it: any) => s + it.subtotal, 0));
 
@@ -2030,7 +2029,7 @@ export class InvoicesService {
       const itemsData = billable.map(({ li, billQty }: any) =>
         this.buildInvoiceItemData(li, billQty, tenantId, { priorPack: priorPackByLine.get(li.id) }),
       );
-      stampInvoicePositions(itemsData, orderLineRanks(order.lineItems)); // W-1187: the order's order, per draft
+      stampFromOrder(itemsData, order.lineItems); // W-1187: the order's order, per draft
       // B294: stamp the order's effective regular-tax rate onto every line so a
       // later applyPriceAdjustment recompute reproduces this draft's regular tax.
       applyOrderDerivedTaxRate(itemsData, order, isTaxExempt);
@@ -2700,7 +2699,7 @@ export class InvoicesService {
       subtotal += itemData.subtotal;
       itemsData.push(itemData);
     }
-    stampInvoicePositions(itemsData, orderLineRanks(order.lineItems)); // W-1187: source order, not request order
+    stampFromOrder(itemsData, order.lineItems); // W-1187: source order, not request order
     // F2: a DRAFT order's partial SELLS these lines: refuse a banned one (standard 409) before the
     // number is reserved (no series gap), the transaction opens or the optional send runs.
     const partialIds = dto.items.map((req) => (itemById.get(req.orderItemId) as any)?.productId);
@@ -3217,20 +3216,7 @@ export class InvoicesService {
         const preferredRate = await tenantPreferredRate(tx); // the tenant rate wins the inference when it reproduces the tax
         guardItemsEditTaxState({ locked: { ...locked, preferredRate }, items, matches, editLines }); // SA-814 R5-2
         const itemsData = editLines.map((l) => l.data);
-        // W-1187: a standalone invoice lists its lines in the payload's order; a linked one follows its ORDER
-        // (manual lines after), and the payload never overrides it. A legacy invoice (a NULL position) saved in the
-        // order it is shown in writes none: an unchanged save stays a no-op and the invoice keeps its A-Z (owner Q2).
-        if (
-          !legacyOrderKept(
-            storedRows,
-            editLines.map((l) => l.rowId),
-          )
-        ) {
-          stampInvoicePositions(
-            itemsData as any[],
-            inv.orderId ? await loadOrderLineRanks(tx, inv.orderId) : undefined,
-          );
-        }
+        await stampEditedPositions(tx, storedRows, editLines, itemsData, inv.orderId); // W-1187: payload order, or the order's
         // B1026: the SAME discount-exceeds-line guard create() runs, over the lines THIS edit writes
         // (changed or new), before any write; a stored line the edit leaves verbatim is not re-judged.
         assertNoNegativeLineSubtotal(
@@ -5368,15 +5354,10 @@ export class InvoicesService {
       let newSubtotal = Number(invoice.subtotal);
       let newTotal = Number(invoice.total);
       if (fee > 0) {
-        // W-1187: the fee is appended LAST (max + 1); an all-NULL legacy invoice keeps its A-Z fallback either way.
-        const tail = await tx.invoiceItem.aggregate({
-          where: { invoiceId },
-          _max: { position: true },
-        });
         await tx.invoiceItem.create({
           data: {
             invoiceId,
-            position: (tail._max.position ?? -1) + 1,
+            position: await nextTailPosition(tx, invoiceId), // W-1187: appended LAST (max + 1)
             description: `${NSF_FEE_DESCRIPTION_PREFIX}${
               payment.paymentNumber
                 ? ` ${payment.paymentNumber}`

@@ -1,8 +1,11 @@
 import {
   invoiceLinesInOrder,
   legacyOrderKept,
+  nextTailPosition,
   orderLineRanks,
   rankInvoiceLines,
+  stampEditedPositions,
+  stampFromOrder,
   stampInvoicePositions,
 } from "./invoice-line-position";
 
@@ -175,5 +178,94 @@ describe("legacyOrderKept", () => {
   it("a half-positioned invoice (the NSF fee on a legacy one) counts as legacy", () => {
     const half = [row("z", "Zebra", null), row("a", "Apple", 0)];
     expect(legacyOrderKept(half, ["a", "z"])).toBe(true); // shown A-Z: Apple, Zebra
+  });
+});
+
+describe("stampFromOrder", () => {
+  it("ranks linked lines by the order's lines (position, then createdAt, then id), the rest after", () => {
+    const data = [line("m", null), line("ia", "o-a"), line("ib", "o-b")] as Array<
+      Record<string, unknown>
+    >;
+    stampFromOrder(data, [
+      { id: "o-b", position: 0 },
+      { id: "o-a", position: 1 },
+    ]);
+    expect(data.map((d) => d.position)).toEqual([2, 1, 0]);
+  });
+});
+
+describe("stampEditedPositions", () => {
+  const stored = (id: string, description: string, position: number | null) => ({
+    id,
+    description,
+    position,
+    createdAt: new Date("2026-01-01"),
+    productId: "p",
+  });
+  const noOrder = { order: { findUnique: jest.fn() } };
+
+  it("a standalone edit stamps the payload's order", async () => {
+    const data = [line("b", null), line("a", null)] as Array<Record<string, unknown>>;
+    await stampEditedPositions(
+      noOrder,
+      [stored("a", "A", 0), stored("b", "B", 1)],
+      [{ rowId: "b" }, { rowId: "a" }],
+      data,
+      null,
+    );
+    expect(data.map((d) => d.position)).toEqual([0, 1]);
+    expect(noOrder.order.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("a linked edit ranks by the order's lines, read once", async () => {
+    const findUnique = jest.fn().mockResolvedValue({
+      lineItems: [
+        { id: "o-b", position: 0 },
+        { id: "o-a", position: 1 },
+      ],
+    });
+    const data = [line("ia", "o-a"), line("ib", "o-b")] as Array<Record<string, unknown>>;
+    await stampEditedPositions(
+      { order: { findUnique } },
+      [stored("ia", "A", 1), stored("ib", "B", 0)],
+      [{ rowId: "ia" }, { rowId: "ib" }],
+      data,
+      "ord-1",
+    );
+    expect(data.map((d) => d.position)).toEqual([1, 0]);
+    expect(findUnique).toHaveBeenCalledTimes(1);
+  });
+
+  it("a legacy invoice saved in its shown order writes no position and reads no order", async () => {
+    const findUnique = jest.fn();
+    const data = [line("a", null), line("z", null)] as Array<Record<string, unknown>>;
+    await stampEditedPositions(
+      { order: { findUnique } },
+      [stored("z", "Zebra", null), stored("a", "Apple", null)],
+      [{ rowId: "a" }, { rowId: "z" }],
+      data,
+      "ord-1",
+    );
+    expect(data.map((d) => d.position)).toEqual([undefined, undefined]);
+    expect(findUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe("nextTailPosition", () => {
+  const dbWith = (max: number | null) => ({
+    invoiceItem: { aggregate: jest.fn().mockResolvedValue({ _max: { position: max } }) },
+  });
+
+  it("is the invoice's max position + 1", async () => {
+    const db = dbWith(4);
+    expect(await nextTailPosition(db, "inv")).toBe(5);
+    expect(db.invoiceItem.aggregate).toHaveBeenCalledWith({
+      where: { invoiceId: "inv" },
+      _max: { position: true },
+    });
+  });
+
+  it("starts at 0 when no line has a position (a legacy or empty invoice)", async () => {
+    expect(await nextTailPosition(dbWith(null), "inv")).toBe(0);
   });
 });

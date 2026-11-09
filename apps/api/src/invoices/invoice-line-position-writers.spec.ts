@@ -14,6 +14,7 @@ import * as ts from "typescript";
  *       pinned, so a new writer fails here until it is placed on purpose.
  *   W2  the three writers the copier contract lists as NOT copiers (`create`, `update`, `setCheckStatus`) are pinned by
  *       name: the contract's column check never sees them, so this is the only thing that forces `position` on them.
+ *       (`position` for the NSF fee comes from `nextTailPosition`, unit-tested in invoice-line-position.spec.ts.)
  *   W3  the helpers are the ONLY place that calls the A-Z comparator: every other reader asks for the shown order.
  */
 const SRC = path.resolve(__dirname, "..");
@@ -52,7 +53,8 @@ const nameOf = (n: ts.Node | undefined): string =>
     ? n.name.getText()
     : "<top level>";
 
-const STAMPS = /\b(?:stampInvoicePositions|rankInvoiceLines|copyInvoicePositions)\(/;
+const STAMPS =
+  /\b(?:stampInvoicePositions|stampFromOrder|stampEditedPositions|rankInvoiceLines|copyInvoicePositions)\(/;
 
 interface Site {
   file: string;
@@ -160,8 +162,8 @@ describe("W2: the writers the copier contract lists as not-copiers are pinned by
     expect(STAMPS.test(b) || /\bposition\b/.test(b)).toBe(true);
   });
 
-  it("the NSF fee lands LAST: its position is the invoice's max + 1", () => {
-    expect(body("setCheckStatus")).toMatch(/_max:\s*\{\s*position:\s*true\s*\}/);
+  it("the NSF fee lands LAST: its position comes from nextTailPosition (the invoice's max + 1)", () => {
+    expect(body("setCheckStatus")).toMatch(/position:\s*await nextTailPosition\(/);
   });
 });
 
