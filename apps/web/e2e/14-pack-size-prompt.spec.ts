@@ -105,7 +105,8 @@ test.describe("Operator — Product-create pack-size prompt (WP2-14)", () => {
     await expect(page.getByText(/mentions 2 different counts/i)).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText(/\(5 or 12\)/)).toBeVisible();
     if (v2) {
-      // The refusal contract: no count to accept, so no "Use N" button.
+      // The refusal contract: no count to accept, so no "Use N" button, and nothing was written to the field.
+      await expect(unitsPerBoxField(page)).toHaveValue("");
       await expect(page.getByRole("button", { name: /^Use \d+$/ })).toHaveCount(0);
     } else {
       await expect(packSizeInput(page)).toHaveValue("");

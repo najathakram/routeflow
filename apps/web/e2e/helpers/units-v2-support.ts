@@ -49,12 +49,16 @@ export async function requireUnitsV2Flag(
   return ctx;
 }
 
-/** Non-failing read of the same served flags: true when the tenant is served `flag.units_prices_v2`. */
+/**
+ * Reads the same served flags as requireUnitsV2Flag but never fails on the flag: true when the tenant is served
+ * `flag.units_prices_v2`, false when it is not or the subscription call is not ok. (apiContext still asserts that an
+ * operator access token exists.)
+ */
 export async function hasUnitsV2Flag(page: Page): Promise<boolean> {
   const ctx = await apiContext(page);
   const res = await page.request.get(`${ctx.api}/billing/subscription`, { headers: ctx.headers });
   if (!res.ok()) return false;
-  const body: any = await res.json();
+  const body = (await res.json()) as { flags?: unknown } | null;
   return Array.isArray(body?.flags) && (body.flags as string[]).includes(FLAG);
 }
 
