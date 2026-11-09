@@ -11,8 +11,12 @@ const WEB = resolve(__dirname, "..");
 
 const READERS: Record<string, { uses: number; why: string }> = {
   "app/(dashboard)/orders/_components/CreateOrderModal.tsx": {
+    uses: 1,
+    why: "the pre-filled one-time price of a line the add path builds from linePriceAtAdd",
+  },
+  "app/(dashboard)/orders/_components/order-line-price.ts": {
     uses: 3,
-    why: "the discount test and the value both pre-fills use, which equals stickyPrice on an upsell",
+    why: "the add-time decision: the discount test and the value both pre-fills use, plus the helper's own type",
   },
   "app/(dashboard)/orders/[id]/_components/order-line-edit.tsx": {
     uses: 3,

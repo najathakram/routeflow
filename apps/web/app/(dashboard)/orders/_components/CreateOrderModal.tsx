@@ -50,6 +50,7 @@ import { DraftConflictDialog } from "./DraftConflictDialog";
 import { apiClient } from "@/lib/api-client";
 import { useTenantToday } from "@/lib/tenant-timezone";
 import { ACTION_TOAST_MS, addedLineQty, showOrderCreatedToast } from "./order-created-toast";
+import { linePriceAtAdd } from "./order-line-price";
 import {
   mergePieceIntoLine,
   mergeQtyIntoLine,
@@ -59,7 +60,7 @@ import {
 import {
   customerLinePrice,
   computeLineSubtotal,
-  isStickyUpsell,
+  isAboveListLine,
   pendingScanDecision,
   undoPendingTap,
   type DerivedBaseMarker,
@@ -1023,37 +1024,18 @@ export function CreateOrderModal({
     // customer/pricing context, so there is nothing here a race could make stale.
     const newTempId = product.id + "-" + Date.now();
     const upb: number | undefined = product.unitsPerBox ? Number(product.unitsPerBox) : undefined;
-    const listPrice = Number(product.pricePerUnit ?? 0);
     const customerTier = selectedCustomer?.pricingTier ?? 1;
     const tierOverride = cpMap.get(product.id);
     const effectiveTier = tierOverride ?? customerTier;
-    // S19b: the customer's layer price (flag on) or master's tier price (no layer): getTierPrice lives inside the helper.
-    const linePrice = customerLinePrice({
+    // W-1170 F8: the ONE add-time price decision (tier / layer, last-given pre-fill, remembered price); the picker prints it too.
+    const histEntry = priceHistory?.[product.id as string];
+    const decided = linePriceAtAdd({
       product,
       tier: effectiveTier,
       layer: priceLayer.layerOf(product.id),
+      histEntry,
     });
-    const tierPrice = linePrice.price;
-    const priceType = linePrice.priceType;
-    // Pre-fill from customer's last-given price for this product (only when below
-    // the effective tier price, and only when this isn't already a SPECIAL price
-    // — SPECIAL prices are permanent, the discount is already in tierPrice).
-    // R3 (SA-811a): a price from the customer's layer is that same permanent price, so last-given is skipped for it too.
-    const histEntry = priceHistory?.[product.id as string];
-    const permanentPrice = priceType === "SPECIAL" || linePrice.layered;
-    const hasHistDiscount = !permanentPrice && histEntry != null && histEntry.lastPrice < tierPrice;
-    // Carry forward a remembered UPSELL too (a saved price ABOVE list). It pre-fills
-    // as a MANUAL override, mirroring the operator's last agreed above-list price.
-    const hasHistUpsell = !permanentPrice && isStickyUpsell(histEntry?.stickyPrice, listPrice);
-    const hasHistOverride = hasHistDiscount || hasHistUpsell;
-    // SA-1068 M20: no pre-fill, but the server books the memory: the line starts there, sends nothing and keeps its tier.
-    const memory = hasHistOverride
-      ? undefined
-      : memoryOf({
-          productId: product.id as string,
-          listPrice,
-          tierPrices: product as LineItem["tierPrices"],
-        });
+    const { linePrice, hasHistOverride } = decided;
     const orderedUnit =
       opts?.ordered?.unit && opts.ordered.unit.kind !== "pack" ? opts.ordered.unit : undefined;
     const baseLine: LineItem = {
@@ -1064,7 +1046,7 @@ export function CreateOrderModal({
       // just the variant name in `product.name` (PR #44).
       productName: displayProductName(product),
       unit: product.unit ?? "each",
-      listPrice: linePrice.layered ? (linePrice.listPrice ?? listPrice) : listPrice,
+      listPrice: decided.lineListPrice,
       specialPrice: customerLineSpecial(linePrice),
       discountedPrice: hasHistOverride ? histEntry!.lastPrice : undefined,
       // a price the system pre-filled from history: the layer replaces it if one turns out to price this line (review 1)
@@ -1083,13 +1065,8 @@ export function CreateOrderModal({
             effectiveTier,
           )
         : undefined,
-      unitPrice: hasHistOverride ? histEntry!.lastPrice : (memory ?? tierPrice),
-      priceType:
-        hasHistUpsell || memory != null
-          ? ("MANUAL" as const)
-          : hasHistDiscount
-            ? ("DISCOUNTED" as const)
-            : priceType,
+      unitPrice: decided.unitPrice,
+      priceType: decided.priceType,
       ...(opts?.ordered ? opts.ordered.qty : newLineQtyForLevel(upb, level, n)),
       unitsPerBox: upb,
       startOnDefaultUnit: opts?.startOnDefaultUnit,
@@ -1863,6 +1840,38 @@ export function CreateOrderModal({
     priceLayer,
   });
   const resumePricesReady = priceLayer.ready && !pricingGate.pending && !priceHistoryRead.isPending;
+  // W-1170 F8: what a picker row prints. With a customer chosen (prices v2) it is the price the added line will carry, the
+  // list price struck beside it when they differ; while the customer's reads are still out (or failed) the row keeps the list
+  // price, muted and unstruck, so it never claims a price that may change.
+  const pickerPriceOf = (p: { id: string; pricePerUnit: unknown }) => {
+    const list = Number(p.pricePerUnit ?? 0);
+    const unconfirmed =
+      !priceLayer.ready ||
+      pricingGate.pending ||
+      priceHistoryRead.isPending ||
+      !priceLayer.lineReady(p.id);
+    if (!selectedCustomer || !priceLayer.enabled || unconfirmed) return { price: list, was: null };
+    const d = linePriceAtAdd({
+      product: p as Record<string, unknown>,
+      tier: tierForProduct(p.id),
+      layer: priceLayer.layerOf(p.id),
+      histEntry: priceHistory?.[p.id],
+    });
+    const below = !isAboveListLine({ unitPrice: d.unitPrice, originalPrice: d.lineListPrice });
+    return {
+      price: d.unitPrice,
+      was: below && d.unitPrice !== d.lineListPrice ? d.lineListPrice : null,
+    };
+  };
+  const renderPickerPrice = (p: { id: string; pricePerUnit: unknown }) => {
+    const { price, was } = pickerPriceOf(p);
+    return (
+      <span className="ml-2 flex shrink-0 items-baseline gap-1.5 text-xs font-medium text-navy/70">
+        {was != null && <span className="font-normal line-through">{formatMoney(was)}</span>}
+        <span>{formatMoney(price)}</span>
+      </span>
+    );
+  };
   // SA-1076: the resume's product read can land after a customer change, so it prices from these, not the effect's capture.
   const pricingNowRef = React.useRef({ tierForProduct, priceLayer, rememberedOf });
   pricingNowRef.current = { tierForProduct, priceLayer, rememberedOf };
@@ -3002,11 +3011,7 @@ export function CreateOrderModal({
                                   </span>
                                 )}
                               </div>
-                              {!hasVariants && (
-                                <span className="text-xs font-medium text-navy/70 shrink-0 ml-2">
-                                  {formatMoney(p.pricePerUnit)}
-                                </span>
-                              )}
+                              {!hasVariants && renderPickerPrice(p)}
                             </button>
                           </li>
                           {/* Expanded variants */}
@@ -3043,9 +3048,7 @@ export function CreateOrderModal({
                                         {v.unit}
                                       </span>
                                     </div>
-                                    <span className="text-xs font-medium text-navy/70 shrink-0 ml-2">
-                                      {formatMoney(v.pricePerUnit)}
-                                    </span>
+                                    {renderPickerPrice(v)}
                                   </button>
                                 </li>
                               );
