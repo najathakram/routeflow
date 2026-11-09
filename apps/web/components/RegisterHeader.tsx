@@ -85,8 +85,8 @@ export function RegisterHeader({
         )}
       >
         <ArrowLeft className="h-5 w-5" aria-hidden="true" />
-        {/* W-1184: icon only below sm so the shop name is not cut to "RouteF..." at 390 */}
-        <span className="hidden sm:inline">Exit counter</span>
+        {/* W-1184: icon only below sm and on tablets (md) so the shop name is not cut to "RouteF..." */}
+        <span className="hidden sm:inline md:hidden lg:inline">Exit counter</span>
       </button>
       <button
         type="button"
