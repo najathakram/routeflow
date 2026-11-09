@@ -233,7 +233,8 @@ if (m === "stdout" || m === "both") process.stdout.isTTY = true;
         await seedKey(qa);
         const r = run([...APPLY, ...flags], { tty, input: "DELETE 1 LIVE\n" });
         expect(r.code).toBe(1);
-        expect(r.out).toMatch(/non-test tenant\(s\): treated as live/);
+        // No "test" in the pattern: a message the CLI scrubs reaches CI with the database password ("test") starred out.
+        expect(r.out).toMatch(/treated as live/);
         expect(r.out).toMatch(reason);
         expect(r.out).not.toMatch(/deleted \d/);
         expect(await hasKey(qa)).toBe(true);
