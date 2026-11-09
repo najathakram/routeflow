@@ -13,7 +13,7 @@ import { formatMoney } from "@/lib/format";
 import { cartTotals } from "@/lib/counter-sale";
 import { PARKED_EDITED_PRICES_COPY } from "@/lib/counter-park";
 import { ParkedSalesDialog } from "./ParkedSalesDialog";
-import { useParkedSales, type ParkedSalesDeps } from "./useParkedSales";
+import { discardUndo, useParkedSales, type ParkedSalesDeps } from "./useParkedSales";
 
 export interface ParkedSalesProps extends ParkedSalesDeps {
   /** the ONE price-edit gate (`canEditPrices(user)`) of the person completing this sale */
@@ -42,6 +42,7 @@ export function ParkedSales({ canEditPrices, ...deps }: ParkedSalesProps) {
         title: `Discarded · ${row.label}`,
         description: "The parked sale is gone unless you undo.",
         action: { label: "Undo", onClick: undo },
+        duration: discardUndo.ms, // the toast lives as long as the Undo does
       }),
   });
   const { data: draftRows } = useDrafts();
@@ -68,6 +69,7 @@ export function ParkedSales({ canEditPrices, ...deps }: ParkedSalesProps) {
             : "Sale parked",
           description: "Find it under Parked to pick it back up.",
           variant: "success",
+          duration: 7000, // long enough to read where the sale went and to reach Undo
           ...(id
             ? {
                 action: {

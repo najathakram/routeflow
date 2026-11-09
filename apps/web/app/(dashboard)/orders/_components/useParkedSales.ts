@@ -39,7 +39,7 @@ export interface ParkedSalesDeps {
 }
 
 /** How long a Discard can be taken back before the delete leaves (an object so a test can shorten it). */
-export const discardUndo = { ms: 6000 };
+export const discardUndo = { ms: 8000 };
 
 export type ParkWork = { kind: "park" | "resume" | "discard"; id?: string } | null;
 export type ParkMessage = { scope: "header" | "dialog"; text: string } | null;
