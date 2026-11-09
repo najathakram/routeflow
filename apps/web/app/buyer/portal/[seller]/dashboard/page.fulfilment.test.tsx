@@ -121,3 +121,22 @@ describe("BuyerDashboardPage — Recent Orders badge = the detail page's label",
     expect(within(row("ORD-00003")).getByText("Confirmed")).toBeInTheDocument();
   });
 });
+
+describe("BuyerDashboardPage — Pending deliveries tile follows the route gate (B1163)", () => {
+  it("shipping-only seller: no Pending deliveries tile", () => {
+    mockCaps = caps("SHIP", false);
+    renderWithProviders(<BuyerDashboardPage />);
+    expect(screen.queryByText("Pending deliveries")).toBeNull();
+    expect(screen.getByText("Active orders")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["a fleet seller", () => caps("ROUTE", true)],
+    ["an unset seller", () => caps(null, false)],
+    ["an unreadable capability", () => ({ data: undefined, isLoading: false, isError: true })],
+  ])("%s: the Pending deliveries tile is shown", (_l, c) => {
+    mockCaps = c();
+    renderWithProviders(<BuyerDashboardPage />);
+    expect(screen.getByText("Pending deliveries")).toBeInTheDocument();
+  });
+});

@@ -31,7 +31,7 @@ import {
   SellerUnavailableLine,
   useSellerAcceptingOrders,
 } from "@/components/SellerUnavailableLine";
-import { buyerOrderStatusLabel } from "@/lib/buyer-fulfilment";
+import { buyerOrderStatusLabel, sellerShowsRouteWording } from "@/lib/buyer-fulfilment";
 import { objectPositionForUrl } from "@/lib/image-focal";
 import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
 import { ReorderReviewSheet, REORDER_FAILED_COPY } from "../_components/ReorderReviewSheet";
@@ -321,12 +321,17 @@ export default function BuyerDashboardPage() {
             value: fmt(dashboard.stats.spend30d),
             color: "text-success bg-success-bg",
           },
-          {
-            icon: Truck,
-            label: "Pending deliveries",
-            value: dashboard.stats.pendingDeliveries,
-            color: "text-warning bg-warning-bg",
-          },
+          // A seller with no route (ship-only) has no pending deliveries to count.
+          ...(sellerShowsRouteWording(capabilities)
+            ? [
+                {
+                  icon: Truck,
+                  label: "Pending deliveries",
+                  value: dashboard.stats.pendingDeliveries,
+                  color: "text-warning bg-warning-bg",
+                },
+              ]
+            : []),
           {
             icon: Repeat,
             label: "Standing orders",
