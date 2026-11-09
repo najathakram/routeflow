@@ -4,6 +4,8 @@
 // server derives ONE capability answer from them plus the fleet modules, and every client and
 // server rule reads only that answer, never the raw modes. `unset` = today's behavior.
 
+import type { FulfillPath } from "./enums";
+
 export const FULFILMENT_MODE_VALUES = [
   "unset",
   "delivery",
@@ -27,7 +29,7 @@ export const FLEET_MODULE_KEYS = ["recurring_routes", "order_delivery"] as const
  * the 20261004150000 migration). No order write accepts "PICKUP" yet (WRITABLE_FULFILL_PATHS);
  * pickup orders come from the counter-sale path once it lands.
  */
-export type FulfilmentMethod = "ROUTE" | "SHIP" | "PICKUP";
+export type FulfilmentMethod = FulfillPath;
 
 /**
  * `GET /tenants/me/features` -> `capabilities.fulfilment`.
