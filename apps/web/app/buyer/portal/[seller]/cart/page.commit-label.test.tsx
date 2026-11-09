@@ -81,7 +81,7 @@ describe("buyer cart — the commit button, the banner and the request agree", (
     fireEvent.click(screen.getByRole("button", { name: "Add to existing order" }));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     expect(mutateAsync.mock.calls[0][0].forceNew).toBeFalsy();
-    await waitFor(() => expect(push).toHaveBeenCalledWith("/buyer/portal/acme/orders/o-old"));
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/buyer/portal/acme/orders/o-new"));
   });
 
   it("while the open-order read is loading: the button is disabled, says it is checking, and nothing is sent", () => {

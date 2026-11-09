@@ -66,7 +66,7 @@ describe("buyer cart — create new order instead (B1239)", () => {
     await place();
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     expect(mutateAsync.mock.calls[0][0]).toMatchObject({ forceNew: false });
-    await waitFor(() => expect(push).toHaveBeenCalledWith("/buyer/portal/acme/orders/o-old"));
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/buyer/portal/acme/orders/o-new"));
   });
 
   it("after 'Create new order instead' the request carries forceNew true and lands on the NEW order", async () => {

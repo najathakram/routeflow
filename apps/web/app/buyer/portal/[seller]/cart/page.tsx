@@ -275,7 +275,8 @@ export default function BuyerCartPage() {
       setForceNew(false);
 
       if (mergeTarget) {
-        router.push(`/buyer/portal/${sellerSlug}/orders/${mergeTarget.id}`);
+        // The server id is the truth; the client-derived merge target is only a fallback.
+        router.push(`/buyer/portal/${sellerSlug}/orders/${result?.id ?? mergeTarget.id}`);
       } else {
         setOrderPlaced(result);
       }

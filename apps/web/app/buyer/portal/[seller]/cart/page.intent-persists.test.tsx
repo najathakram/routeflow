@@ -79,7 +79,7 @@ describe("buyer cart - the new-order choice survives a remount (row 695)", () =>
     fireEvent.click(await screen.findByRole("button", { name: PRIMARY }));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     expect(mutateAsync.mock.calls[0][0]).toMatchObject({ forceNew: false });
-    await waitFor(() => expect(push).toHaveBeenCalledWith("/buyer/portal/acme/orders/o-old"));
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/buyer/portal/acme/orders/o-new"));
   });
 
   it("the choice is forgotten once the order is placed", async () => {

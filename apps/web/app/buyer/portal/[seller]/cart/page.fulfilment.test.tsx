@@ -206,7 +206,7 @@ describe("buyer cart — merge follows the chosen fulfilment path", () => {
     render(<BuyerCartPage />);
     expect(await screen.findByText(/added to your existing order/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /add to existing order/i }));
-    await waitFor(() => expect(push).toHaveBeenCalledWith("/buyer/portal/acme/orders/a1"));
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/buyer/portal/acme/orders/o1"));
   });
 
   it("no path sent (no offer): today's rule, any active order merges", async () => {
