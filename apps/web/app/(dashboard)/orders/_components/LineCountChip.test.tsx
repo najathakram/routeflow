@@ -16,6 +16,16 @@ describe("LineCountChip", () => {
     expect(chip).toHaveTextContent("2 lines · 2 boxes · 6 pcs");
   });
 
+  // W-1185 fix 5: a pack word prints before the piece word it holds, never alphabetical.
+  it("reads a case of cans as 1 case · 1 can", () => {
+    render(
+      <LineCountChip
+        lines={[{ qty: 13, boxes: 1, pieces: 1, packLabel: "Case", baseLabel: "Can" }]}
+      />,
+    );
+    expect(screen.getByTestId("line-count-chip")).toHaveTextContent("1 line · 1 case · 1 can");
+  });
+
   // W-1185 fix 1 (F7): the till's scan feedback already announces each scan, and a builder keystroke
   // would announce every partial count, so the chip is plain text, not a live region.
   it("is not a live region", () => {

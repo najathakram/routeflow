@@ -85,9 +85,9 @@ describe("invoice e-mail item count (W-1185)", () => {
       item("Sample Gum", { qty: 2, product: { unit: "bag" } }),
     ]);
     // The plain gum line counts in its own selling unit (the loaded product's unit).
-    const count = "4 lines · 4 boxes · 2 bags · 2 cases · 4 pcs";
+    const count = "4 lines · 4 boxes · 2 cases · 2 bags · 4 pcs";
     expect(html).toMatch(
-      /Items<\/td>\s*<td[^>]*>4 lines · 4 boxes · 2 bags · 2 cases · 4 pcs<\/td>/,
+      /Items<\/td>\s*<td[^>]*>4 lines · 4 boxes · 2 cases · 2 bags · 4 pcs<\/td>/,
     );
     expect(text).toContain(`Items: ${count}`);
     // Items row opens the tfoot, above the Balance Due row; the text line sits above the money line.
@@ -111,8 +111,16 @@ describe("invoice e-mail item count (W-1185)", () => {
       item("Sample Rice", { qty: 1, product: { unit: "bag" } }),
       item("Manual fee line", { qty: 2 }),
     ]);
-    expect(html).toContain("4 lines · 1 box · 1 bag · 1 case · 2 pcs</td>");
-    expect(text).toContain("Items: 4 lines · 1 box · 1 bag · 1 case · 2 pcs");
+    expect(html).toContain("4 lines · 1 box · 1 case · 1 bag · 2 pcs</td>");
+    expect(text).toContain("Items: 4 lines · 1 box · 1 case · 1 bag · 2 pcs");
+  });
+
+  it("reads a case of cans as 1 case · 1 can, as the builder does", () => {
+    const { html, text } = build([
+      item("Sample Cola", { qty: 13, boxes: 1, pieces: 1, packLabel: "Case", baseLabel: "Can" }),
+    ]);
+    expect(html).toContain("1 line · 1 case · 1 can</td>");
+    expect(text).toContain("Items: 1 line · 1 case · 1 can");
   });
 
   it("the NSF fee is not goods and a plain line counts in its selling unit", () => {

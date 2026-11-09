@@ -92,7 +92,7 @@ describe("invoice detail item count (W-1185)", () => {
     renderWithProviders(<InvoiceDetailPage />);
     const row = screen.getByTestId("invoice-item-count");
     expect(row).toHaveTextContent("Items");
-    expect(row).toHaveTextContent("4 lines · 2 boxes · 6 bags · 1 case · 1.5 kg");
+    expect(row).toHaveTextContent("4 lines · 2 boxes · 1 case · 6 bags · 1.5 kg");
   });
 
   it("reads the builder's count: a plain box line, a named Case line and a plain bag line", () => {
@@ -103,8 +103,16 @@ describe("invoice detail item count (W-1185)", () => {
     ]);
     renderWithProviders(<InvoiceDetailPage />);
     expect(screen.getByTestId("invoice-item-count")).toHaveTextContent(
-      "3 lines · 1 box · 1 bag · 1 case",
+      "3 lines · 1 box · 1 case · 1 bag",
     );
+  });
+
+  it("reads a case of cans as 1 case · 1 can, as the builder does", () => {
+    mockInvoice = invoice([
+      item("a", { qty: 13, boxes: 1, pieces: 1, packLabel: "Case", baseLabel: "Can" }),
+    ]);
+    renderWithProviders(<InvoiceDetailPage />);
+    expect(screen.getByTestId("invoice-item-count")).toHaveTextContent("1 line · 1 case · 1 can");
   });
 
   it("an invoice with no lines reads 0 lines", () => {

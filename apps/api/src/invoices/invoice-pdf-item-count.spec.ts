@@ -101,7 +101,7 @@ describe("the invoice PDF's item count (W-1185)", () => {
   it("prints lines, boxes, named units and pieces in the Items row, never added together", () => {
     expect(itemsRow(render(MIXED))).toEqual([
       "Items",
-      "4 lines · 4 boxes · 2 bags · 2 cases · 4 pcs",
+      "4 lines · 4 boxes · 2 cases · 2 bags · 4 pcs",
     ]);
   });
 
@@ -116,16 +116,23 @@ describe("the invoice PDF's item count (W-1185)", () => {
       line("b", { qty: 1.5, baseLabel: "bar", product: { unit: "kg" } }),
       line("n", { qty: 1, systemKind: "NSF_FEE" }),
     ];
-    expect(itemsRow(render(items))).toEqual(["Items", "2 lines · 1 can · 1 case · 1.5 kg"]);
+    expect(itemsRow(render(items))).toEqual(["Items", "2 lines · 1 case · 1 can · 1.5 kg"]);
   });
 
-  it("a plain line counts in its selling unit, like the builder: 1 box, 1 bag, 1 case", () => {
+  it("reads a case of cans as 1 case · 1 can, as the builder does", () => {
+    const items = [
+      line("a", { qty: 13, boxes: 1, pieces: 1, packLabel: "Case", baseLabel: "Can" }),
+    ];
+    expect(itemsRow(render(items))).toEqual(["Items", "1 line · 1 case · 1 can"]);
+  });
+
+  it("a plain line counts in its selling unit, like the builder: 1 box, 1 case, 1 bag", () => {
     const items = [
       line("a", { qty: 1, product: { unit: "box" } }),
       line("b", { qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12, unitLabel: "Case" }),
       line("c", { qty: 1, product: { unit: "bag" } }),
     ];
-    expect(itemsRow(render(items))).toEqual(["Items", "3 lines · 1 box · 1 bag · 1 case"]);
+    expect(itemsRow(render(items))).toEqual(["Items", "3 lines · 1 box · 1 case · 1 bag"]);
   });
 
   // W-1185 fix 1 (F5): a long count wraps inside the 220 pt box, right-aligned, off the label.

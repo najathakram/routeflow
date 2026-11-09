@@ -69,12 +69,12 @@ describe("summarizeLineCounts / formatLineCounts", () => {
       text([
         { qty: 13, boxes: 1, pieces: 1, unitsPerBox: 12, packLabel: "Case", baseLabel: "Can" },
       ]),
-    ).toBe("1 line · 1 can · 1 case");
+    ).toBe("1 line · 1 case · 1 can");
     expect(
       text([
         { qty: 26, boxes: 2, pieces: 2, unitsPerBox: 12, packLabel: "Case", baseLabel: "Can" },
       ]),
-    ).toBe("1 line · 2 cans · 2 cases");
+    ).toBe("1 line · 2 cases · 2 cans");
   });
 
   it("generic pack and base labels fall back to the default words", () => {
@@ -124,7 +124,7 @@ describe("summarizeLineCounts / formatLineCounts", () => {
     expect(text([{ qty: "12.000", boxes: "2.000", pieces: "0.000" }])).toBe("1 line · 2 boxes");
   });
 
-  it("orders boxes first, named units in first-seen order, pcs last", () => {
+  it("orders boxes first, named units in line-order-free tiers, pcs last", () => {
     const c = summarizeLineCounts([
       { qty: 6, unit: "each" },
       { qty: 2, unit: "bottle" },
@@ -132,8 +132,17 @@ describe("summarizeLineCounts / formatLineCounts", () => {
       { qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12 },
       { qty: 1, unit: "dozen" },
     ]);
-    expect(c.byUnit.map((u) => u.word)).toEqual(["box", "bottle", "case", "dozen", "pc"]);
-    expect(formatLineCounts(c)).toBe("5 lines · 1 box · 2 bottles · 2 cases · 1 dozen · 6 pcs");
+    expect(c.byUnit.map((u) => u.word)).toEqual(["box", "case", "bottle", "dozen", "pc"]);
+    expect(formatLineCounts(c)).toBe("5 lines · 1 box · 2 cases · 2 bottles · 1 dozen · 6 pcs");
+  });
+
+  it("a pack word prints before the piece word it holds, never alphabetical across tiers", () => {
+    expect(text([{ qty: 13, boxes: 1, pieces: 1, packLabel: "Carton", baseLabel: "Bottle" }])).toBe(
+      "1 line · 1 carton · 1 bottle",
+    );
+    expect(text([{ qty: 13, boxes: 1, pieces: 1, packLabel: "Tray", baseLabel: "Bar" }])).toBe(
+      "1 line · 1 tray · 1 bar",
+    );
   });
 
   it("keys are compared lower-case", () => {
@@ -218,7 +227,7 @@ describe("formatInvoiceLineCounts", () => {
         product: { unit: "can" },
       },
     ];
-    expect(formatInvoiceLineCounts(items)).toBe("2 lines · 6 bottles · 2 cases");
+    expect(formatInvoiceLineCounts(items)).toBe("2 lines · 2 cases · 6 bottles");
     expect(formatInvoiceLineCounts(items)).toBe(text(items));
   });
 
@@ -248,12 +257,12 @@ describe("formatInvoiceLineCounts", () => {
     expect(formatInvoiceLineCounts([{ qty: 6, baseLabel: "Bottle" }])).toBe("1 line · 6 pcs");
   });
 
-  it("orders the named words alphabetically, whatever the line order", () => {
+  it("orders pack words before other words, alphabetical within a tier, whatever the line order", () => {
     const box = { qty: 1, product: { unit: "box" } };
     const named = { qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12, unitLabel: "Case" };
     const bag = { qty: 1, product: { unit: "bag" } };
     const piece = { qty: 2 };
-    const want = "4 lines · 1 box · 1 bag · 1 case · 2 pcs";
+    const want = "4 lines · 1 box · 1 case · 1 bag · 2 pcs";
     for (const lines of [
       [box, named, bag, piece],
       [piece, bag, named, box],
@@ -270,7 +279,7 @@ describe("formatInvoiceLineCounts", () => {
       { qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12, unitLabel: "Case" },
       { qty: 1, product: { unit: "bag" } },
     ];
-    expect(formatInvoiceLineCounts(lines)).toBe("3 lines · 1 box · 1 bag · 1 case");
+    expect(formatInvoiceLineCounts(lines)).toBe("3 lines · 1 box · 1 case · 1 bag");
     expect(formatInvoiceLineCounts(lines)).toBe(text(lines));
   });
 
@@ -317,7 +326,7 @@ describe("formatInvoiceLineCounts", () => {
           product: { unit: "x" },
         },
       ]),
-    ).toBe("1 line · 1 can · 1 case");
+    ).toBe("1 line · 1 case · 1 can");
   });
 
   // W-1185 fix 1 (F2): the NSF bounce fee is a system line, not goods.

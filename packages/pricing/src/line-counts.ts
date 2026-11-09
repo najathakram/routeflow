@@ -73,6 +73,8 @@ function wordOf(label: string | null | undefined): string {
 
 export function summarizeLineCounts(lines: ReadonlyArray<CountableLine>): LineCounts {
   const buckets = new Map<string, number>();
+  // Words that name a pack (a named unit, a boxed line's pack word): they print before the other words.
+  const packWords = new Set<string>();
   let counted = 0;
   for (const li of lines) {
     // A system line (the NSF bounce fee) is a charge, not goods.
@@ -88,6 +90,7 @@ export function summarizeLineCounts(lines: ReadonlyArray<CountableLine>): LineCo
     const named = (li.unitLabel ?? "").trim();
     if (named) {
       const count = unitLineCount(li);
+      packWords.add(wordOf(named));
       if (count != null) add(wordOf(named), count);
       else {
         // No safe count. Raw qty is base pieces (qty = count x factor), so reading it as the count
@@ -100,6 +103,7 @@ export function summarizeLineCounts(lines: ReadonlyArray<CountableLine>): LineCo
     } else if (li.boxes != null || li.pieces != null) {
       const pack = singularOf(li.packLabel ?? "");
       const base = singularOf(li.baseLabel ?? "");
+      if (pack && !BOX_LIKE.test(pack)) packWords.add(pack);
       add(!pack || BOX_LIKE.test(pack) ? BOX : pack, num(li.boxes));
       add(!base || GENERIC_PIECE.test(base) ? PIECE : base, num(li.pieces));
     } else {
@@ -109,11 +113,13 @@ export function summarizeLineCounts(lines: ReadonlyArray<CountableLine>): LineCo
     }
     if (added) counted += 1;
   }
-  // Box words first, the other words alphabetical by their singular word (never line order, so the
-  // builder, the till, the invoice page, the PDF and the email read alike), pieces last.
+  // Tiers, never line order, so the builder, the till, the invoice page, the PDF and the email read
+  // alike: box; pack words (named units, a boxed line's pack word); every other word; pcs last.
+  // Within a tier, alphabetical by the singular word.
+  const tier = (w: string) => (packWords.has(w) ? 0 : 1);
   const others = [...buckets]
     .filter(([w]) => w !== BOX && w !== PIECE)
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    .sort(([a], [b]) => tier(a) - tier(b) || (a < b ? -1 : a > b ? 1 : 0));
   const ordered: Array<[string, number]> = [];
   const boxes = buckets.get(BOX) ?? 0;
   const pieces = buckets.get(PIECE) ?? 0;
