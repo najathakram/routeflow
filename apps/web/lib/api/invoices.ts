@@ -496,10 +496,8 @@ export function useUpdateInvoiceTerms() {
   return useMutation<Invoice, Error, { id: string } & UpdateInvoiceTermsDto>({
     mutationFn: ({ id, ...dto }) =>
       apiClient.patch(`/invoices/${id}/terms`, dto).then((r) => r.data),
-    onSuccess: (_, { id }) => {
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["invoices", id] });
-    },
+    // B76: a new due date can move the status (OVERDUE <-> SENT), and the order card shows both.
+    onSuccess: (_, { id }) => invalidateInvoiceMoney(qc, id),
   });
 }
 

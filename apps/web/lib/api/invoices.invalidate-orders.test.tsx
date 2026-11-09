@@ -33,10 +33,12 @@ import {
   useUnvoidInvoice,
   useUpdateInvoice,
   useUpdateInvoicePayment,
+  useUpdateInvoiceTerms,
   useVoidInvoice,
   useVoidPayment,
   useWriteOffInvoice,
 } from "./invoices";
+import { useApplyCreditNote as useApplyCreditNoteFromNote } from "./credit-notes";
 
 jest.mock("@/lib/api-client", () => ({
   apiClient: { get: jest.fn(), post: jest.fn(), patch: jest.fn(), delete: jest.fn() },
@@ -102,6 +104,15 @@ const CASES: Array<[string, () => { mutateAsync: (v: any) => Promise<unknown> },
   ],
   ["void invoice", useVoidInvoice, "inv-1"],
   ["delete invoice", useDeleteInvoice, "inv-1"],
+  // The API's updateTerms recomputes the status from the new due date (OVERDUE <-> SENT) and emits no
+  // invoice.updated, and the order card shows the due date.
+  ["update terms", useUpdateInvoiceTerms, { id: "inv-1", dueDate: "2026-12-01" }],
+  // The credit note page's apply changes the invoice balance; the API emits no invoice.updated for it.
+  [
+    "apply credit note (credit note page)",
+    useApplyCreditNoteFromNote,
+    { id: "cn-1", invoiceId: "inv-1" },
+  ],
 ];
 
 describe("B76: invoice money mutations refresh the orders that show the invoice", () => {
@@ -168,7 +179,6 @@ describe("invalidateInvoiceMoney", () => {
 const NOT_MONEY: Record<string, string> = {
   useCreateInvoice: "creates a new DRAFT with no order link: no existing order badge changes",
   useDuplicateInvoice: "creates a new DRAFT copy: no existing order badge changes",
-  useUpdateInvoiceTerms: "dueDate / label / subject only: status and balance are untouched",
   useUpdateInvoiceShipment: "shipment fields only: status and balance are untouched",
   useUploadPaymentImage: "attaches an image to a payment: amount and status unchanged",
   useDeletePaymentImage: "removes an image from a payment: amount and status unchanged",
@@ -179,7 +189,10 @@ const NOT_MONEY: Record<string, string> = {
 };
 
 describe("B76 inventory: invoice mutations that invalidate invoice keys use the shared helper", () => {
-  const src = readFileSync(join(__dirname, "invoices.ts"), "utf8");
+  // credit-notes.ts too: its apply and void change an invoice's balance and status.
+  const src = ["invoices.ts", "credit-notes.ts"]
+    .map((file) => readFileSync(join(__dirname, file), "utf8"))
+    .join("\n");
   const blocks = src
     .split(/\r?\n(?=export function )/)
     .map((b) => ({ name: /^export function (\w+)/.exec(b)?.[1] ?? "", body: b }))

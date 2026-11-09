@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import { invalidateInvoiceMoney } from "./invoices";
 import type {
   CreditNoteStatus,
   CreditNoteSummary,
@@ -143,10 +144,11 @@ export function useApplyCreditNote() {
   return useMutation<CreditNote, Error, { id: string; invoiceId: string }>({
     mutationFn: ({ id, invoiceId }) =>
       apiClient.post(`/credit-notes/${id}/apply`, { invoiceId }).then((r) => r.data),
-    onSuccess: (data, { id }) => {
+    onSuccess: (data, { id, invoiceId }) => {
       qc.invalidateQueries({ queryKey: ["credit-notes"] });
       qc.invalidateQueries({ queryKey: ["credit-notes", id] });
-      qc.invalidateQueries({ queryKey: ["invoices"] });
+      // B76: the applied credit changes the invoice's balance, so the order's invoice badge refreshes too.
+      invalidateInvoiceMoney(qc, invoiceId);
       qc.invalidateQueries({ queryKey: ["customers", data.customerId, "statement"] });
     },
   });
@@ -166,11 +168,9 @@ export function useUnapplyCreditNote() {
     onSuccess: (data, { id, invoiceId }) => {
       qc.invalidateQueries({ queryKey: ["credit-notes"] });
       qc.invalidateQueries({ queryKey: ["credit-notes", id] });
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["invoices", invoiceId] });
+      // #2404 / B76: the order's "Applied credits" panel and invoice badge refresh too.
+      invalidateInvoiceMoney(qc, invoiceId);
       qc.invalidateQueries({ queryKey: ["customers", data.customerId, "statement"] });
-      // #2404: the order's "Applied credits" panel lists applied credits too.
-      qc.invalidateQueries({ queryKey: ["orders"] });
     },
   });
 }
@@ -227,8 +227,7 @@ export function useVoidWithReversal() {
     onSuccess: (data, { id }) => {
       qc.invalidateQueries({ queryKey: ["credit-notes"] });
       qc.invalidateQueries({ queryKey: ["credit-notes", id] });
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["orders"] });
+      invalidateInvoiceMoney(qc);
       qc.invalidateQueries({ queryKey: ["customers", data.creditNote.customerId, "statement"] });
     },
   });
@@ -254,8 +253,7 @@ export function useReissueCreditNote() {
     onSuccess: (data, { id }) => {
       qc.invalidateQueries({ queryKey: ["credit-notes"] });
       qc.invalidateQueries({ queryKey: ["credit-notes", id] });
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["orders"] });
+      invalidateInvoiceMoney(qc);
       qc.invalidateQueries({ queryKey: ["customers", data.creditNote.customerId, "statement"] });
     },
   });
