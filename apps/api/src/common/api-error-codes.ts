@@ -853,6 +853,7 @@ export const API_ERROR_CODES = {
   EMAIL_CHANGE_LINK_INVALID: "EMAIL_CHANGE_LINK_INVALID",
   /** 409 from POST /auth/confirm-email-change: the new address now belongs to another account of the business. Nothing was written (B461, SA-1116). */
   EMAIL_TAKEN: "EMAIL_TAKEN",
+  /** 409 from PATCH /users/:id: a login-email change that must wait for the new address was asked for an account that is not ACTIVE, or is deleted; the confirm could never land. Nothing was written and no mail was sent (B461, SA-1126). */
   EMAIL_CHANGE_ACCOUNT_INACTIVE: "EMAIL_CHANGE_ACCOUNT_INACTIVE",
 } as const satisfies Record<string, ApiErrorCode>;
 

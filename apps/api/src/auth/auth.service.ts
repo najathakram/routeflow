@@ -633,6 +633,17 @@ export class AuthService {
       throw err;
     }
 
+    // SA-1126: an account still owing a first password gets a fresh invite at the NEW address (the old address's links
+    // died with the change). The account is ACTIVE and not deleted: the compare-and-set above required it. Best-effort.
+    // Minted FIRST, right after the commit: the notice mails below can take seconds, and a deactivation in that window
+    // must not be followed by a fresh link (reader B, S-r3-1).
+    await this.usersService.sendInviteIfOwed({
+      id: change.userId,
+      email: change.toEmail,
+      username: change.username,
+      status: "ACTIVE",
+      forcePasswordChange: change.forcePasswordChange,
+    });
     // Best-effort notices, after the commit: the old address learns the change was made, the new one that it is now
     // the login email. A delivery failure never undoes the change.
     try {
@@ -660,15 +671,6 @@ export class AuthService {
         `Failed to send email-change notices for user ${change.userId}: ${(err as Error).message}`,
       );
     }
-    // SA-1126: an account still owing a first password gets a fresh invite at the NEW address (the old address's links
-    // died with the change). The account is ACTIVE and not deleted: the compare-and-set above required it. Best-effort.
-    await this.usersService.sendInviteIfOwed({
-      id: change.userId,
-      email: change.toEmail,
-      username: change.username,
-      status: "ACTIVE",
-      forcePasswordChange: change.forcePasswordChange,
-    });
     return { email: change.toEmail };
   }
 
