@@ -1,5 +1,5 @@
 import * as React from "react";
-import { fireEvent, screen } from "@testing-library/react";
+import { act, fireEvent, screen } from "@testing-library/react";
 import { renderWithProviders } from "@/test-utils/render";
 import { ProductCreateModal } from "./ProductCreateModal";
 
@@ -10,8 +10,9 @@ import { ProductCreateModal } from "./ProductCreateModal";
  * PIECE_UNIT shows nothing.
  */
 jest.mock("@/lib/api/units-v2", () => ({ usePricesV2Enabled: () => true }));
+const mutateAsync = jest.fn();
 jest.mock("@/lib/api/products", () => ({
-  useCreateProduct: () => ({ mutateAsync: jest.fn(), isPending: false }),
+  useCreateProduct: () => ({ mutateAsync, isPending: false }),
   useProducts: () => ({ data: { data: [] } }),
   uploadProductImages: jest.fn(),
 }));
@@ -42,6 +43,8 @@ describe("W-1170 F12b: pack size asked once", () => {
     expect(screen.getByLabelText("Units per box")).toHaveValue(null);
     fireEvent.click(screen.getByRole("button", { name: "Use 24" }));
     expect(screen.getByLabelText("Units per box")).toHaveValue(24);
+    // The Use button disappears; focus must land on the field, not be lost to the page.
+    expect(screen.getByLabelText("Units per box")).toHaveFocus();
     expect(screen.queryByRole("button", { name: "Use 24" })).toBeNull();
   });
 
@@ -59,9 +62,25 @@ describe("W-1170 F12b: pack size asked once", () => {
     expect(screen.queryByRole("button", { name: /^Use \d+$/ })).toBeNull();
   });
 
-  it("a typed Units per box is sent with Create (the field is the only answer)", () => {
+  it("the suggestion is linked to the field (aria-describedby) so it is read with it", () => {
+    fill("UX Cola 24PK", "case");
+    const help = screen.getByText(/Looks like 24 per box./);
+    expect(screen.getByLabelText("Units per box").getAttribute("aria-describedby")).toContain(
+      help.id,
+    );
+  });
+
+  it("a typed Units per box is the pack size Create sends", async () => {
+    mutateAsync.mockReset();
+    mutateAsync.mockResolvedValue({ id: "p1", name: "UX Cola", unit: "case", pricePerUnit: "5" });
     fill("UX Cola", "case");
+    fireEvent.change(screen.getByLabelText(/^Price per/), { target: { value: "5" } });
     fireEvent.change(screen.getByLabelText("Units per box"), { target: { value: "12" } });
-    expect(screen.getByLabelText("Units per box")).toHaveValue(12);
+    fireEvent.click(screen.getByRole("button", { name: "Create product" }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mutateAsync).toHaveBeenCalledTimes(1);
+    expect(mutateAsync.mock.calls[0][0].unitsPerBox).toBe(12);
   });
 });

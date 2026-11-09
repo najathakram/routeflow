@@ -73,6 +73,8 @@ export interface PackSizePromptProps {
    * AMBIGUOUS states the conflict and offers nothing, LOW and PIECE_UNIT render nothing (the field itself asks).
    */
   variant?: "card" | "helper";
+  /** The helper's id, so the form can point the field's aria-describedby at it. */
+  id?: string;
   className?: string;
 }
 
@@ -98,6 +100,7 @@ export function PackSizePrompt({
   onAccept,
   onPendingChange,
   variant = "card",
+  id,
   className,
 }: PackSizePromptProps) {
   const currentUnitsPerBox = toPositiveNumber(unitsPerBox);
@@ -149,7 +152,7 @@ export function PackSizePrompt({
   if (variant === "helper") {
     if (suggestion.confidence === "AMBIGUOUS") {
       return (
-        <p className={cn("text-[11px] text-navy/70", className)}>
+        <p id={id} className={cn("text-[11px] text-navy/70", className)}>
           This name mentions {suggestion.counts.length} different counts (
           {formatCountList(suggestion.counts)}). Enter the one that is a {w.pack.lower}.
         </p>
@@ -158,7 +161,7 @@ export function PackSizePrompt({
     if (suggestion.confidence === "LOW" || suggestion.packSize == null) return null;
     const n = suggestion.packSize;
     return (
-      <p className={cn("text-[11px] text-navy/70", className)}>
+      <p id={id} className={cn("text-[11px] text-navy/70", className)}>
         Looks like {n} per {w.pack.lower}.{" "}
         <button
           type="button"

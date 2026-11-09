@@ -291,6 +291,7 @@ export function ProductCreateModal({
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const barcodeInputRef = React.useRef<HTMLInputElement>(null);
   const skuInputRef = React.useRef<HTMLInputElement>(null);
+  const unitsPerInputRef = React.useRef<HTMLInputElement>(null);
 
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
   const unitSkuInputRef = React.useRef<HTMLInputElement>(null);
@@ -581,6 +582,8 @@ export function ProductCreateModal({
       </label>
       <input
         id="product-units-per"
+        ref={unitsPerInputRef}
+        aria-describedby="product-units-per-help product-units-per-suggest"
         type="number"
         min="1"
         step="1"
@@ -589,20 +592,25 @@ export function ProductCreateModal({
         onChange={(e) => set("unitsPerBox", e.target.value)}
         className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
       />
-      <p className="mt-0.5 text-xs text-navy/70">
+      <p id="product-units-per-help" className="mt-0.5 text-xs text-navy/70">
         How many individual units are in one {w.pack.lower} (optional)
       </p>
       {/* v2: one place to answer the pack size; the parsed suggestion is helper text under this field. */}
       {pricesV2 && (
         <PackSizePrompt
           variant="helper"
+          id="product-units-per-suggest"
           className="mt-0.5"
           // Mirrors the submit-time name resolution: a variant is created under its own `variantName`.
           name={form.parentProductId && form.variantName.trim() ? form.variantName : form.name}
           unit={form.unit}
           unitSku={form.unitSku}
           unitsPerBox={form.unitsPerBox}
-          onAccept={(value) => set("unitsPerBox", String(value))}
+          onAccept={(value) => {
+            set("unitsPerBox", String(value));
+            // The Use button unmounts once the count is set; keep focus on the field it filled.
+            unitsPerInputRef.current?.focus();
+          }}
         />
       )}
       {validUnitsPerBoxPrefill(initialUnitsPerBox) &&
