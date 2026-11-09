@@ -63,7 +63,7 @@ function minusYears(day: string, years: number): string {
   const [y, m, d] = day.split("-").map(Number);
   const target = new Date(Date.UTC(y - years, m - 1, d));
   if (target.getUTCMonth() !== m - 1)
-    return new Date(Date.UTC(y - years, m - 1, 0)).toISOString().slice(0, 10);
+    return new Date(Date.UTC(y - years, m, 0)).toISOString().slice(0, 10);
   return target.toISOString().slice(0, 10);
 }
 
