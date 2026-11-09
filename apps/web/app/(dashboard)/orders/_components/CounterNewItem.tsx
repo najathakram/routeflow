@@ -10,8 +10,8 @@ import { newProductPrefill, type PrefillDoor } from "@/lib/product-prefill";
 import { scanLevelForHit } from "./scan/useScanCodeHandler";
 
 /**
- * W-1042 (SA-1062): a new item at the counter. Nothing here opens by itself: the miss line's Create item and the live
- * list's Create "<typed>" call `open`. A business with tracked categories is asked one required question first, and Yes
+ * W-1042 (SA-1062): a new item at the counter. W-1186: an unknown scan opens it by itself (the screen calls `open` on a miss,
+ * as the regular order does); the live list's Create "<typed>" and the miss line's Create item call it too. A business with tracked categories is asked one required question first, and Yes
  * stops (a licensed or regulated item is added from Products, so its category and tax are set). Save adds ONE line of 1
  * through the counter's own add path, the same one a scan takes, then hands the cursor back to the scan box.
  */
@@ -23,6 +23,8 @@ interface Options {
   refocus: () => void;
   /** The item is on the cart: the screen clears the scan box and the miss line. */
   onAdded: () => void;
+  /** W-1186: the window was closed without an item (Esc = Skip): the screen drops the miss so the same scan can open it again. */
+  onSkipped?: () => void;
 }
 
 type Step = "ask" | "stopped" | "form";
@@ -42,7 +44,7 @@ export function trackedCategoriesLine(
   return `Tracked categories: ${shown}${names.length > 3 ? ` and ${names.length - 3} more` : ""}.`;
 }
 
-export function useCounterNewItem({ allowed, add, refocus, onAdded }: Options) {
+export function useCounterNewItem({ allowed, add, refocus, onAdded, onSkipped }: Options) {
   const { data: categoryRows, isSuccess } = useTrackedCategories();
   // Unknown (still loading, or the read failed) asks: regulated goods must not slip through on a slow read.
   const asks =
@@ -57,7 +59,10 @@ export function useCounterNewItem({ allowed, add, refocus, onAdded }: Options) {
 
   const open = (text: string, from: PrefillDoor = "typed") =>
     setRequest({ text, from, step: asks ? "ask" : "form" });
-  const close = () => setRequest(null);
+  const close = () => {
+    setRequest(null);
+    onSkipped?.();
+  };
   // The cursor goes back once the window is really gone: `refocus` waits while a scan pause is held.
   const wasOpenRef = React.useRef(false);
   React.useEffect(() => {

@@ -138,14 +138,18 @@ describe("W-1042 the miss line", () => {
     expect(createItem()).not.toBeNull();
   });
 
-  it("R6 guard: the window never opens by itself and the cursor stays in the scan field", async () => {
+  it("W-1186: an unknown scan opens New product by itself with the code in SKU; Esc skips and the cursor returns to the scan field", async () => {
     renderWithProviders(<CounterSaleScreen />);
     field().focus();
     submitScan(MISS);
-    await screen.findByText(`No product for '${MISS}'`);
+    await screen.findByRole("heading", { name: "New product" });
+    expect(skuInput().value).toBe(MISS);
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "New product" })).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(field()));
-    expect(openDialog()).toBeNull();
-    expect(screen.queryByText("New product")).toBeNull();
+    // skipped: the same code scanned again opens it again (nothing is held over)
+    submitScan(MISS);
+    await screen.findByRole("heading", { name: "New product" });
   });
 
   it("R6: Create item opens the window with the scanned code in SKU", async () => {

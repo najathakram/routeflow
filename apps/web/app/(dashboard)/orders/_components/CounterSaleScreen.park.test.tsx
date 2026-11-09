@@ -2,6 +2,7 @@ import * as React from "react";
 import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-utils/render";
 import { apiClient } from "@/lib/api-client";
 import { COUNTER_PRICE_EDIT_NOT_PERMITTED_COPY } from "@/lib/counter-sale";
+import { guardCounterLeave } from "@/lib/counter-cart-signal";
 import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
@@ -745,5 +746,23 @@ describe("price edits on a resumed cart (the existing Complete-time check)", () 
     await waitFor(() => expect(itemNames().join(" ")).toContain("Cola"));
     expect(screen.queryByText(/edited prices and you can't change prices/)).toBeNull();
     expect(screen.getByTestId("line-price-chip")).toBeInTheDocument();
+  });
+});
+
+describe("W-1184: leaving parks the sale", () => {
+  it("every leave parks the open sale, then goes: no Discard question, one park, the sale stored", async () => {
+    renderScreen();
+    await scan("COLA");
+    const proceed = jest.fn();
+    expect(guardCounterLeave(proceed)).toBe(true);
+    await waitFor(() => expect(proceed).toHaveBeenCalledTimes(1));
+    expect(parkCalls()).toHaveLength(1);
+    expect(screen.queryByText("Discard this sale?")).toBeNull();
+  });
+
+  it("an empty till with a parked sale offers one tap back into it", async () => {
+    seed("a", { lineCount: 1 }, parkedPayload());
+    renderScreen();
+    expect(await screen.findByTestId("counter-resume-bar")).toHaveTextContent("Resume sale (");
   });
 });

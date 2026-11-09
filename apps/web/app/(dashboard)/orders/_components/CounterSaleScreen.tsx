@@ -910,7 +910,18 @@ export function CounterSaleScreen() {
       scan.dismissMessage();
       setScanText("");
     },
+    onSkipped: () => scan.dismissMessage(),
   });
+  // W-1186: an unknown scan opens the New product window straight away, barcode filled in (the regular order does the same);
+  // a buzz on phones that have one. A clerk who cannot set prices keeps the miss line (newItem.open is undefined for them).
+  const missCodeNow = scan.missCode;
+  React.useEffect(() => {
+    if (!missCodeNow || !newItem.open) return;
+    if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function")
+      navigator.vibrate(200);
+    newItem.open(missCodeNow, scan.missCamera ? "camera" : "scanBox");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [missCodeNow]);
   function onScanSubmit(e: React.FormEvent) {
     e.preventDefault();
     lastScanActivityRef.current = performance.now();
@@ -1555,6 +1566,7 @@ export function CounterSaleScreen() {
             reprice.blocked ||
             shipIntent
           }
+          summary={{ items: lines.length, total: totals.total }}
           inFlight={() => saleInFlight() || shipRunningRef.current || scanBusyRef.current}
           canEditPrices={mayEditPrices}
           onBusyChange={onParkBusy}
