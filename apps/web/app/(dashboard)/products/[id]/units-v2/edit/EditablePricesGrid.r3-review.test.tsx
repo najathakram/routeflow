@@ -135,7 +135,7 @@ describe("R3 review item 3: the entry button stays Edit, described by the region
 });
 
 describe("R3 review item 4: Name / Contains read straight under the grid card", () => {
-  it("renders afterGrid after the grid card and before the order-unit footer", async () => {
+  it("renders afterGrid after the grid card", async () => {
     const user = userEvent.setup();
     mount({ afterGrid: <div data-testid="after-grid" /> });
     await user.click(screen.getByRole("button", { name: /^Edit$/ }));
@@ -143,14 +143,14 @@ describe("R3 review item 4: Name / Contains read straight under the grid card", 
     const follows = (a: Element, b: Element) =>
       !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
     expect(follows(screen.getByTestId(T.grid), after)).toBe(true);
-    expect(follows(after, screen.getByTestId(T.orderUnit))).toBe(true);
   });
 
-  it("keeps the disabled Pricing unit select (the guarded control) where it is", async () => {
+  it("P3: the disabled Pricing unit select is not drawn at all", async () => {
     const user = userEvent.setup();
     mount();
     await user.click(screen.getByRole("button", { name: /^Edit$/ }));
-    expect(screen.getByTestId(T.orderUnit)).toHaveAttribute("aria-disabled", "true");
+    expect(screen.queryByTestId(T.orderUnit)).toBeNull();
+    expect(screen.queryByText("Available after units settings update")).toBeNull();
   });
 });
 

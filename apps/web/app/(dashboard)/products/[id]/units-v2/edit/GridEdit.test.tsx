@@ -215,23 +215,13 @@ describe("units v2 edit grid (S12a)", () => {
     ).toBeTruthy();
   });
 
-  it("V06: the order-unit switch is disabled in edit mode, with its reason; the current unit still shows", async () => {
+  it("V06 / P3: no order-unit switch is drawn in edit mode (it waits for the units settings update), and a save carries no orderUnit", async () => {
     const user = userEvent.setup();
     render(<ProductPricingV2 product={product} />);
     await enterEdit(user);
-    const select = screen.getByTestId(T.orderUnit) as HTMLSelectElement;
-    expect(select.getAttribute("aria-disabled")).toBe("true");
-    expect(select.title).toBe("Available after units settings update");
-    // K12: it is the pricing anchor, so it must never read like the live "Default order unit" select.
-    expect(screen.getByLabelText("Pricing unit")).toBe(select);
-    expect(screen.queryByLabelText("Order unit")).toBeNull();
-    expect(screen.getByTestId(T.orderUnitReason).textContent).toBe(
-      "Available after units settings update",
-    );
-    expect(select.getAttribute("aria-describedby")).toBe(screen.getByTestId(T.orderUnitReason).id);
-    expect(select.value).toBe("piece");
-    await user.selectOptions(select, "case").catch(() => undefined);
-    expect(select.value).toBe("piece");
+    expect(screen.queryByTestId(T.orderUnit)).toBeNull();
+    expect(screen.queryByLabelText("Pricing unit")).toBeNull();
+    expect(screen.queryByTestId(T.orderUnitReason)).toBeNull();
     await type(user, 2, "14.5");
     await user.click(screen.getByTestId(T.ebSave));
     expect(mockSave.mock.calls[0][0]).not.toHaveProperty("orderUnit");

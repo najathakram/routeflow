@@ -156,12 +156,12 @@ describe("K11-20a window: what it contains", () => {
     expect(outside).toHaveLength(0);
   });
 
-  it("has Change prices, the order unit and the bar; not Edit, Editing, Add a unit, Reset, or the Customer view", async () => {
+  it("has Change prices and the bar; not the pricing unit select (P3), Edit, Editing, Add a unit, Reset, or the Customer view", async () => {
     render();
     await screen.findByRole("dialog", { name: "Edit prices" });
     const d = inDialog();
     expect(d.getByRole("button", { name: "Change prices" })).toBeTruthy();
-    expect(d.getByTestId(T.orderUnit)).toBeTruthy();
+    expect(d.queryByTestId(T.orderUnit)).toBeNull();
     expect(d.getByTestId(T.editbar)).toBeTruthy();
     expect(d.queryByTestId(T.btnEdit)).toBeNull();
     expect(d.queryByTestId(T.editingPill)).toBeNull();
