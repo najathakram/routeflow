@@ -239,6 +239,9 @@ interface LineItem extends DerivedBaseMarker {
   unitLabel?: string;
   /** S19b: a price the SYSTEM pre-filled from last-given history; the customer layer replaces it once ready. */
   systemPrefill?: boolean;
+  /** B1139 UI-only: a person has priced this line (typed, chose a chip, cleared a pre-fill, gave a reason). The last-given
+   *  price arriving late never touches it; an untouched line takes it, as an add after the history would have. */
+  priceTouched?: boolean;
   /** B755: the customer whose last-given history pre-filled this line's price. A different customer chosen later
    *  re-prices the line like a plain one; a price the operator typed (or confirmed with a reason) clears it.
    *  A line the system priced keeps its link until a person prices it (SA-1068 M27). */
@@ -888,6 +891,29 @@ export function CreateOrderModal({
         const tierPrice = lp.price;
         const priceType = lp.priceType;
         const specialPrice = customerLineSpecial(lp, li.specialPrice);
+        // B1139 (prices v2): a line priced before the customer's history loaded takes the last-given price now, by the same
+        // decision an add after the history makes. Only an untouched line (nobody priced it) and never a remembered upsell
+        // (the branch above already moves that one).
+        if (priceLayer.enabled && !li.priceTouched && !lp.remembered && priceHistory) {
+          const late = linePriceAtAdd({
+            product: li.tierPrices as unknown as Record<string, unknown>,
+            tier,
+            layer: priceLayer.layerOf(li.productId),
+            histEntry: priceHistory[li.productId],
+          });
+          if (late.hasHistOverride) {
+            changed = true;
+            return {
+              ...li,
+              unitPrice: late.unitPrice,
+              priceType: late.priceType,
+              specialPrice,
+              discountedPrice: late.unitPrice,
+              systemPrefill: true,
+              prefillCustomerId: selectedCustomer?.id,
+            };
+          }
+        }
         if (
           !fromOtherCustomer &&
           li.unitPrice === tierPrice &&
@@ -1489,6 +1515,7 @@ export function CreateOrderModal({
           const memory = memoryOf(li);
           return {
             ...li,
+            priceTouched: true,
             discountedPrice: undefined,
             systemPrefill: undefined,
             prefillCustomerId: undefined,
@@ -1507,6 +1534,7 @@ export function CreateOrderModal({
         });
         const consumed = {
           ...next,
+          priceTouched: true,
           startOnDefaultUnit: false,
           systemPrefill: undefined,
           prefillCustomerId: undefined,
@@ -1525,6 +1553,7 @@ export function CreateOrderModal({
           ? {
               ...li,
               overrideReason: reason,
+              priceTouched: true,
               systemPrefill: undefined,
               prefillCustomerId: undefined,
             }
