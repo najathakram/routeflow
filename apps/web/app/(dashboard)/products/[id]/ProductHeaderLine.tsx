@@ -1,7 +1,19 @@
 import * as React from "react";
 import Link from "next/link";
+import { formatMoney } from "@/lib/format";
 import { stockCountLabel } from "../_components/product-status";
 import { UNITS_V2_TESTIDS } from "./units-v2-testids";
+
+/**
+ * Open the page's own Units and prices section through the jump strip's link (its scroll clearance, focus and settle
+ * rules); with no strip on the page the plain hash link does the jump.
+ */
+function openUnitsAndPrices(e: React.MouseEvent<HTMLAnchorElement>) {
+  const strip = document.querySelector<HTMLAnchorElement>('nav a[href="#h-units"]');
+  if (!strip || strip === e.currentTarget) return;
+  e.preventDefault();
+  strip.click();
+}
 
 /** The page header's provenance line: SKU · Category (or Variant of …) · on-hand count. */
 export function ProductHeaderLine({
@@ -14,6 +26,8 @@ export function ProductHeaderLine({
     category?: string | null;
     parent?: { name: string } | null;
     kind?: string | null;
+    unit?: string | null;
+    pricePerUnit?: number | string | null;
   };
   currentStock: number;
   pricesV2?: boolean;
@@ -32,7 +46,24 @@ export function ProductHeaderLine({
           Family. Can&apos;t be sold. Choose a variant.
         </span>,
       );
-    else
+    else {
+      // F11: the product opens with no price in view, so the header says it and links to Units and prices.
+      const price = Number(product.pricePerUnit);
+      if (product.pricePerUnit != null && product.pricePerUnit !== "" && Number.isFinite(price))
+        parts.push(
+          <>
+            Price:{" "}
+            <a
+              href="#h-units"
+              data-testid={UNITS_V2_TESTIDS.headerPriceLink}
+              onClick={openUnitsAndPrices}
+              className="font-medium text-brand-600 hover:underline"
+            >
+              {formatMoney(price)}
+              {product.unit ? ` / ${product.unit}` : ""}
+            </a>
+          </>,
+        );
       parts.push(
         <>
           Stock:{" "}
@@ -46,6 +77,7 @@ export function ProductHeaderLine({
           </Link>
         </>,
       );
+    }
   } else if (product.kind !== "FAMILY")
     parts.push(<span className="font-medium tabular-nums">{stockCountLabel(currentStock)}</span>);
   return (

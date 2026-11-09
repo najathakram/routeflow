@@ -45,3 +45,49 @@ describe("ProductHeaderLine with pricesV2 (T36)", () => {
     expect(container.textContent).toBe("SKU-1 · Snacks · 417 in stock");
   });
 });
+
+describe("ProductHeaderLine price summary (W-1170 F11)", () => {
+  const priced = { ...base, unit: "Case", pricePerUnit: "41.88" };
+
+  it("shows 'Price: $41.88 / Case' as a link that opens Units and prices", () => {
+    const { container } = render(<ProductHeaderLine product={priced} currentStock={5} pricesV2 />);
+    const link = screen.getByTestId(UNITS_V2_TESTIDS.headerPriceLink);
+    expect(link.textContent).toBe("$41.88 / Case");
+    expect(link).toHaveAttribute("href", "#h-units");
+    expect(container.textContent).toBe(
+      "SKU-1 · Snacks · Price: $41.88 / Case · Stock: see Inventory",
+    );
+  });
+
+  it("the link clicks the strip's own Units and prices link, so its scroll and focus rules apply", () => {
+    const strip = jest.fn((e: React.MouseEvent) => e.preventDefault());
+    render(
+      <>
+        <nav>
+          <a href="#h-units" data-testid="strip" onClick={strip}>
+            Units and prices
+          </a>
+        </nav>
+        <ProductHeaderLine product={priced} currentStock={5} pricesV2 />
+      </>,
+    );
+    screen.getByTestId(UNITS_V2_TESTIDS.headerPriceLink).click();
+    expect(strip).toHaveBeenCalledTimes(1);
+  });
+
+  it("a family has no price segment, and flag-off renders none", () => {
+    const { container, rerender } = render(
+      <ProductHeaderLine product={{ ...priced, kind: "FAMILY" }} currentStock={0} pricesV2 />,
+    );
+    expect(container.textContent).not.toContain("Price:");
+    rerender(<ProductHeaderLine product={priced} currentStock={5} pricesV2={false} />);
+    expect(container.textContent).not.toContain("Price:");
+  });
+
+  it("a product with no usable price shows no price segment", () => {
+    const { container } = render(
+      <ProductHeaderLine product={{ ...priced, pricePerUnit: null }} currentStock={5} pricesV2 />,
+    );
+    expect(container.textContent).not.toContain("Price:");
+  });
+});
