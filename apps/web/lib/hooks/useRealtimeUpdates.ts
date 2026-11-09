@@ -6,6 +6,7 @@ import { useToast } from "@routeflow/ui/web";
 import { connectSocket, disconnectSocket } from "../socket";
 import { OP_KEYS } from "../auth-keys";
 import { describeReturnReason } from "@/lib/reason-copy";
+import { invalidateInvoiceMoney } from "@/lib/api/invoices";
 import { ECHO_GRACE_MS, wasCreatedHere } from "@/lib/order-created-echo";
 
 export function useRealtimeUpdates() {
@@ -92,8 +93,8 @@ export function useRealtimeUpdates() {
     socket.on(
       "invoice.updated",
       (data: { invoiceNumber: string; invoiceId: string; status: string }) => {
-        void qc.invalidateQueries({ queryKey: ["invoices"] });
-        void qc.invalidateQueries({ queryKey: ["invoices", data.invoiceId] });
+        // B76: a remote payment / status change also moves the order page's invoice badge.
+        invalidateInvoiceMoney(qc, data.invoiceId);
       },
     );
 

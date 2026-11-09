@@ -10,7 +10,7 @@ import type {
 } from "@routeflow/types";
 import type { InvoiceSendLock, InvoiceSendState } from "@/lib/invoice-send-state";
 import { isPostDeliveryOrderStatus } from "@routeflow/types";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import { isRecordPaymentLocalRefusal } from "@/lib/duplicate-payment-ref";
 import { isDayClosedRefusal } from "../day-closed-copy";
@@ -37,6 +37,19 @@ import { keptDraftInvoiceId } from "@/lib/kept-draft-invoice";
 import { sendWithPaymentKey, type PaymentKeyHolder } from "@/lib/payment-submit-key";
 import type { HandOverSoldBy } from "@/lib/handover-stamp";
 import { splitIdAck, type IdWithAck } from "@/lib/api/restriction-warning";
+
+/**
+ * B76: THE refresh for a mutation that changes an invoice's status or balance (a payment recorded, edited, deleted
+ * or voided; a credit note or advance applied; a write-off; reopen / revert / unvoid; a send that sets SENT; a
+ * price or total edit). The invoice keys alone left the order page's invoice badge (it reads `order.invoices`) on
+ * the old status and balance until a reload, so `["orders"]` is refreshed with them. The `invoice.updated` socket
+ * handler calls it too. A new invoice money mutation calls this (pinned by invoices.invalidate-orders.test.tsx).
+ */
+export function invalidateInvoiceMoney(qc: QueryClient, invoiceId?: string) {
+  qc.invalidateQueries({ queryKey: ["invoices"] });
+  if (invoiceId) qc.invalidateQueries({ queryKey: ["invoices", invoiceId] });
+  qc.invalidateQueries({ queryKey: ["orders"] });
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -459,8 +472,7 @@ export function useUpdateInvoice() {
   >({
     mutationFn: ({ id, ...dto }) => apiClient.patch(`/invoices/${id}`, dto).then((r) => r.data),
     onSuccess: (_, { id }) => {
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["invoices", id] });
+      invalidateInvoiceMoney(qc, id);
     },
   });
 }
@@ -517,8 +529,7 @@ export function useSendInvoice(options?: LocalErrorToastOption) {
     meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: (id) => apiClient.post(`/invoices/${id}/send`).then((r) => r.data),
     onSuccess: (_, id) => {
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["invoices", id] });
+      invalidateInvoiceMoney(qc, id);
     },
   });
 }
@@ -558,8 +569,7 @@ export function useSendInvoiceEmail(options?: LocalErrorToastOption) {
     mutationFn: ({ id, email, variant }) =>
       apiClient.post(`/invoices/${id}/send-email`, { email, variant }).then((r) => r.data),
     onSuccess: (_, { id }) => {
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["invoices", id] });
+      invalidateInvoiceMoney(qc, id);
     },
   });
 }
@@ -577,11 +587,9 @@ export function useVoidInvoice() {
   return useMutation<Invoice, Error, string>({
     mutationFn: (id) => apiClient.post(`/invoices/${id}/void`).then((r) => r.data),
     onSuccess: (_, id) => {
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["invoices", id] });
       // Voiding releases OrderItem.invoicedQty, so the source order's
       // "Split into invoice…" button should reappear immediately.
-      qc.invalidateQueries({ queryKey: ["orders"] });
+      invalidateInvoiceMoney(qc, id);
     },
   });
 }
@@ -591,8 +599,7 @@ export function useReopenInvoice() {
   return useMutation<Invoice, Error, string>({
     mutationFn: (id) => apiClient.post(`/invoices/${id}/reopen`).then((r) => r.data),
     onSuccess: (_, id) => {
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["invoices", id] });
+      invalidateInvoiceMoney(qc, id);
     },
   });
 }
@@ -603,8 +610,7 @@ export function useApplyCreditNote() {
     mutationFn: ({ creditNoteId, ...data }) =>
       apiClient.post(`/credit-notes/${creditNoteId}/apply`, data).then((r) => r.data),
     onSuccess: (updated) => {
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["invoices", updated.id] });
+      invalidateInvoiceMoney(qc, updated.id);
       qc.invalidateQueries({ queryKey: ["credit-notes"] });
     },
   });
@@ -625,8 +631,7 @@ export function useApplyAdvanceToInvoice() {
         .post(`/customers/${customerId}/advance-payments/${advancePaymentId}/apply`, data)
         .then((r) => r.data),
     onSuccess: (updated, { customerId }) => {
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["invoices", updated.id] });
+      invalidateInvoiceMoney(qc, updated.id);
       qc.invalidateQueries({ queryKey: ["customers", customerId, "advance-payments"] });
     },
   });
@@ -637,10 +642,9 @@ export function useDeleteInvoice() {
   return useMutation<{ id: string; message: string }, Error, string>({
     mutationFn: (id) => apiClient.delete(`/invoices/${id}`).then((r) => r.data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["invoices"] });
       // Same reason as void: releases OrderItem.invoicedQty so the order can
       // be re-split.
-      qc.invalidateQueries({ queryKey: ["orders"] });
+      invalidateInvoiceMoney(qc);
     },
   });
 }
@@ -658,8 +662,7 @@ export function useWriteOffInvoice() {
           return apiClient.get(`/invoices/${id}`).then((r) => r.data as Invoice);
         }),
     onSuccess: (_, { id }) => {
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["invoices", id] });
+      invalidateInvoiceMoney(qc, id);
     },
   });
 }
@@ -714,8 +717,7 @@ export function useRecordInvoicePayment() {
     // Row 498: and a duplicate-reference refusal with its own "Record anyway" toast.
     meta: { localErrorToast: isRecordPaymentLocalRefusal },
     onSuccess: (_, { id }) => {
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["invoices", id] });
+      invalidateInvoiceMoney(qc, id);
     },
   });
 }
@@ -746,8 +748,7 @@ export function useUpdateInvoicePayment() {
     // W-718: the invoice page also answers a duplicate-reference refusal itself ("Record anyway").
     meta: { localErrorToast: isRecordPaymentLocalRefusal },
     onSuccess: (updated) => {
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["invoices", updated.id] });
+      invalidateInvoiceMoney(qc, updated.id);
     },
   });
 }
@@ -759,8 +760,7 @@ export function useDeleteInvoicePayment() {
       apiClient.delete(`/invoices/${invoiceId}/payments/${paymentId}`).then((r) => r.data),
     meta: { localErrorToast: isDayClosedRefusal },
     onSuccess: (updated) => {
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["invoices", updated.id] });
+      invalidateInvoiceMoney(qc, updated.id);
     },
   });
 }
@@ -836,7 +836,7 @@ export function useRecordPaymentStandalone() {
     // toast ("Failed to record payment" + the fixed reason), so the global one stays quiet for all of them: ONCE.
     meta: { localErrorToast: true },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["invoices"] });
+      invalidateInvoiceMoney(qc);
       qc.invalidateQueries({ queryKey: ["invoices", "payments"] });
     },
   });
@@ -849,8 +849,8 @@ export function useVoidPayment() {
       apiClient.patch(`/invoices/${invoiceId}/payments/${paymentId}/void`).then((r) => r.data),
     // Row 348: both void surfaces toast a closed-day refusal themselves; the global toast stays quiet for it.
     meta: { localErrorToast: isDayClosedRefusal },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["invoices"] });
+    onSuccess: (_, { invoiceId }) => {
+      invalidateInvoiceMoney(qc, invoiceId);
       qc.invalidateQueries({ queryKey: ["invoices", "payments"] });
     },
   });
@@ -870,8 +870,7 @@ export function useSetCheckStatus() {
         .then((r) => r.data),
     meta: { localErrorToast: isDayClosedRefusal },
     onSuccess: (_, { invoiceId }) => {
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["invoices", invoiceId] });
+      invalidateInvoiceMoney(qc, invoiceId);
       qc.invalidateQueries({ queryKey: ["invoices", "payments"] });
     },
   });
@@ -1011,8 +1010,7 @@ export function useRevertInvoiceToDraft() {
   return useMutation<any, Error, string>({
     mutationFn: (id) => apiClient.post(`/invoices/${id}/revert-to-draft`).then((r) => r.data),
     onSuccess: (_, id) => {
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["invoices", id] });
+      invalidateInvoiceMoney(qc, id);
     },
   });
 }
@@ -1031,8 +1029,7 @@ export function useUnvoidInvoice() {
       ).then((r) => r.data);
     },
     onSuccess: (_, v) => {
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["invoices", splitIdAck(v).id] });
+      invalidateInvoiceMoney(qc, splitIdAck(v).id);
     },
   });
 }
@@ -1136,15 +1133,11 @@ export function useAdjustInvoicePrices() {
     mutationFn: ({ id, ...dto }) =>
       apiClient.post(`/invoices/${id}/price-adjustment`, dto).then((r) => r.data),
     onSuccess: (updated) => {
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["invoices", updated.id] });
+      invalidateInvoiceMoney(qc, updated.id);
     },
     // A PARTIAL run committed invoices before it stopped: the cached invoice and the lists are stale.
     onError: (err, { id }) => {
-      if (priceAdjustmentFailure(err)?.committed) {
-        qc.invalidateQueries({ queryKey: ["invoices"] });
-        qc.invalidateQueries({ queryKey: ["invoices", id] });
-      }
+      if (priceAdjustmentFailure(err)?.committed) invalidateInvoiceMoney(qc, id);
     },
   });
 }
