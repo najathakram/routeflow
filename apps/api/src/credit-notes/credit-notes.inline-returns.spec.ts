@@ -302,7 +302,13 @@ describe("CreditNotesService — PR-1c (m-1 mintStandaloneInTx, §6.3 met exclus
         expiresAt: null,
       });
       // Post-restore re-read: amountUsed is back to 0.
-      prisma.creditNote.findFirst.mockResolvedValue({ status: "ISSUED", amountUsed: 0 });
+      prisma.creditNote.findFirst.mockResolvedValue({
+        status: "ISSUED",
+        amountUsed: 0,
+        creditNoteNumber: "CN-0001",
+        customerId: "cust-1",
+        amount: 30,
+      });
       prisma.creditNote.updateMany.mockResolvedValue({ count: 1 });
 
       const result = await service.cancelStandaloneInTx(prisma, "cn-1");
@@ -319,6 +325,13 @@ describe("CreditNotesService — PR-1c (m-1 mintStandaloneInTx, §6.3 met exclus
         creditNoteId: "cn-1",
       });
       expect(result.restored).toBe(30);
+      // B548: the caller emits creditNote.voided after its commit, from what was flipped here.
+      expect(result.voided).toEqual({
+        creditNoteId: "cn-1",
+        creditNoteNumber: "CN-0001",
+        customerId: "cust-1",
+        amount: 30,
+      });
     });
 
     it("m-5: refuses (RETURN_CREDIT_CONSUMED) when amountUsed can't be fully traced back to a restorable payment", async () => {
@@ -341,6 +354,23 @@ describe("CreditNotesService — PR-1c (m-1 mintStandaloneInTx, §6.3 met exclus
 
       expect(prisma.creditNote.updateMany).not.toHaveBeenCalled();
       expect(result.restored).toBe(0);
+      expect(result.voided).toBeUndefined(); // nothing flipped, nothing to announce (B548)
+    });
+
+    it("B548: a note another writer voided between the read and the flip (count 0) reports nothing voided", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValue([]);
+      prisma.creditNote.findFirst.mockResolvedValue({
+        status: "ISSUED",
+        amountUsed: 0,
+        creditNoteNumber: "CN-0001",
+        customerId: "cust-1",
+        amount: 30,
+      });
+      prisma.creditNote.updateMany.mockResolvedValue({ count: 0 });
+
+      const result = await service.cancelStandaloneInTx(prisma, "cn-1");
+
+      expect(result.voided).toBeUndefined();
     });
   });
 });
