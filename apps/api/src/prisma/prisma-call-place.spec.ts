@@ -9,6 +9,16 @@ import { runAtPlace, callPlace } from "../common/call-place";
  * the same kind, model and op no longer share one capture gate. Its own spec file on purpose: the process guard (and its
  * 20-captures-per-second budget) is module state, and a fresh module registry keeps these rows off the other specs' budget.
  */
+// SA-1110: under TENANT the walker stamps nested creates first, so the signal below is the walker-miss signal. These
+// rows simulate a miss (identity stamp) to keep proving the guard still reports it, with the same keys and labels.
+let mockWalkerMisses = false;
+jest.mock("./tenant-nested-walker", () => {
+  const real = jest.requireActual("./tenant-nested-walker");
+  return {
+    ...real,
+    stampNestedTenant: (...a: any[]) => (mockWalkerMisses ? a[1] : real.stampNestedTenant(...a)),
+  };
+});
 const proto = PrismaService.prototype as unknown as Record<string, any>;
 const host = (ctx: TenantContextService) =>
   ({
@@ -49,6 +59,8 @@ describe("B5-5 two jobs with the same kind, model and op are both logged", () =>
 });
 
 describe("B5-7 a tenant run inside a job keeps the job's place", () => {
+  beforeEach(() => (mockWalkerMisses = true));
+  afterEach(() => (mockWalkerMisses = false));
   it("a TENANT-kind nested-create signal inside run(tenantId) is named by the job", async () => {
     const ctx = new TenantContextService();
     const h = host(ctx);
