@@ -298,6 +298,20 @@ export function tenantTodayDay(zone: string | null | undefined, now: Date = new 
 }
 
 /**
+ * Whole calendar days past the due date on the tenant's own calendar. `tenantDay` is the tenant's "today"
+ * (YYYY-MM-DD) and `dueDate` the stored UTC-midnight calendar date. 0 = due today, not yet due, or no due date.
+ * Same count as web's `daysPastDue` (apps/web/lib/days-past-due.ts).
+ */
+export function daysLateOn(tenantDay: string, dueDate: Date | string | null | undefined): number {
+  const due = calendarDateFromIso(dueDate);
+  if (!due) return 0;
+  const diff = Math.round(
+    (Date.parse(`${tenantDay}T00:00:00Z`) - Date.parse(`${due}T00:00:00Z`)) / 86_400_000,
+  );
+  return diff > 0 ? diff : 0;
+}
+
+/**
  * A CLIENT-supplied calendar-date field (e.g. invoice `issueDate`) → the
  * UTC-midnight SYMBOLIC stamp of the literal day it names (#2197): its first
  * ten characters, the house `calendarDayOf` rule. The client's offset and the

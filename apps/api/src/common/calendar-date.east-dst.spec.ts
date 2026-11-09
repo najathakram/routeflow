@@ -1,4 +1,4 @@
-import { startOfCalendarDay, startOfLocalDay } from "./calendar-date";
+import { daysLateOn, startOfCalendarDay, startOfLocalDay, tenantTodayDay } from "./calendar-date";
 
 /**
  * #3686: the zone's offset is taken at the local midnight itself, not at 00:00Z. East of UTC the two instants
@@ -106,5 +106,31 @@ describe("startOfLocalDay on the DST-change day (#3686)", () => {
       expect(checked).toBeGreaterThanOrEqual(ZONES.length * 4);
       expect(mismatches).toEqual([]);
     });
+  });
+});
+
+/**
+ * B331: `daysLateOn` counts whole TENANT calendar days. East of UTC the tenant's day runs ahead of the UTC
+ * instant, so a floor((now - due) / 86400000) count is one low in the early morning (the edge that moved a
+ * balance from the 31-60 bucket back into 1-30).
+ */
+describe("daysLateOn at an east-of-UTC edge (B331)", () => {
+  const due = new Date("2026-11-01T00:00:00.000Z");
+
+  it("Asia/Tokyo 05:00 on Dec 2 (Dec 1 20:00Z) is 31 days late, not the UTC-instant 30", () => {
+    const now = new Date("2026-12-01T20:00:00.000Z");
+    expect(Math.floor((now.getTime() - due.getTime()) / 86_400_000)).toBe(30); // the old, wrong count
+    expect(daysLateOn(tenantTodayDay("Asia/Tokyo", now), due)).toBe(31);
+  });
+
+  it("America/Chicago 21:00 on Nov 16 (Nov 17 03:00Z) is 15 days late, not the UTC-instant 16", () => {
+    const now = new Date("2026-11-17T03:00:00.000Z");
+    expect(daysLateOn(tenantTodayDay("America/Chicago", now), due)).toBe(15);
+  });
+
+  it("is 0 on the due day, before it, and with no due date", () => {
+    expect(daysLateOn("2026-11-01", due)).toBe(0);
+    expect(daysLateOn("2026-10-31", due)).toBe(0);
+    expect(daysLateOn("2026-11-30", null)).toBe(0);
   });
 });
