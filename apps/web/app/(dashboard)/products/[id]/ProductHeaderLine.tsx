@@ -22,6 +22,7 @@ export function ProductHeaderLine({
   pricesV2,
 }: {
   product: {
+    name?: string | null;
     sku?: string | null;
     category?: string | null;
     parent?: { name: string } | null;
@@ -33,6 +34,9 @@ export function ProductHeaderLine({
   pricesV2?: boolean;
 }) {
   const v2 = pricesV2 === true;
+  // F5: the Inventory page reads ?search= (useUrlSearch), so the link lands on this product, not the whole list.
+  const find = product.sku || product.name;
+  const inventoryHref = find ? `/inventory?search=${encodeURIComponent(find)}` : "/inventory";
   const origin = product.parent ? `Variant of ${product.parent.name}` : product.category;
   const parts: React.ReactNode[] = [];
   if (product.sku) parts.push(<span className="font-mono">{product.sku}</span>);
@@ -68,7 +72,7 @@ export function ProductHeaderLine({
         <>
           Stock:{" "}
           <Link
-            href="/inventory"
+            href={inventoryHref}
             aria-label="Stock: see Inventory"
             data-testid={UNITS_V2_TESTIDS.headerStockLink}
             className="font-medium text-brand-600 hover:underline"
