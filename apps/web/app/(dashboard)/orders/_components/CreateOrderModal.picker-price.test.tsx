@@ -111,6 +111,8 @@ const WIDGET = {
   unit: "each",
   isActive: true,
 };
+// A 12-pack sold by the Case, priced per pack: the row must say which unit its price is for.
+const BOXED = { ...WIDGET, id: "prod-3", name: "UX-Crate", unitsPerBox: 12, packLabel: "Case" };
 const FAMILY = {
   id: "f-1",
   name: "UX-Pod",
@@ -243,6 +245,24 @@ describe("CreateOrderModal product picker - the customer's price (W-1170 F8)", (
     const row = within(list).getByRole("option", { name: /Widget/ });
     expect(struck(within(row).getByText("$45.00"))).toBe(false);
     expect(within(row).queryByText("$42.00")).not.toBeInTheDocument();
+  });
+
+  it("a boxed product: the price names the pack word it is for (the line may start on another unit)", async () => {
+    mockRows = [BOXED];
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await pickCustomer();
+    const list = await openPicker("crate");
+    const row = within(list).getByRole("option", { name: /UX-Crate/ });
+    expect(within(row).getByText("$42.00")).toBeInTheDocument();
+    expect(within(row).getByText("/ case")).toBeInTheDocument();
+  });
+
+  it("a product sold by one unit: no extra word, its unit already sits beside the name", async () => {
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await pickCustomer();
+    const list = await openPicker("wid");
+    const row = within(list).getByRole("option", { name: /Widget/ });
+    expect(within(row).queryByText((text) => text.startsWith("/"))).not.toBeInTheDocument();
   });
 
   it("a customer on the list price: one price, no strike", async () => {

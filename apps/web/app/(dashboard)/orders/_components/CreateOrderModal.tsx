@@ -50,7 +50,7 @@ import { DraftConflictDialog } from "./DraftConflictDialog";
 import { apiClient } from "@/lib/api-client";
 import { useTenantToday } from "@/lib/tenant-timezone";
 import { ACTION_TOAST_MS, addedLineQty, showOrderCreatedToast } from "./order-created-toast";
-import { linePackWords, linePriceAtAdd } from "./order-line-price";
+import { linePackWords, linePriceAtAdd, pickerPriceUnit } from "./order-line-price";
 import {
   mergePieceIntoLine,
   mergeQtyIntoLine,
@@ -1914,6 +1914,7 @@ export function CreateOrderModal({
   };
   const renderPickerPrice = (p: { id: string; pricePerUnit: unknown }) => {
     const { price, was } = pickerPriceOf(p);
+    const unit = pickerPriceUnit(p as Record<string, unknown>);
     return (
       <span className="ml-2 flex shrink-0 items-baseline gap-1.5 text-xs font-medium text-navy/70">
         {was != null && (
@@ -1925,6 +1926,7 @@ export function CreateOrderModal({
           </>
         )}
         <span>{formatMoney(price)}</span>
+        {unit && <span className="font-normal">/ {unit}</span>}
       </span>
     );
   };

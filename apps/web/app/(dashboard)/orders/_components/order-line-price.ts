@@ -1,8 +1,16 @@
-import { customerLinePrice, isStickyUpsell, type CustomerLayerUnit } from "@routeflow/pricing";
+import {
+  customerLinePrice,
+  isStickyUpsell,
+  unitWords,
+  type CustomerLayerUnit,
+} from "@routeflow/pricing";
 
 /**
  * W-1170 F8: the ONE add-time price decision of the new-order modal. `addLineItem` builds a line from it and the product
- * picker prints its `unitPrice`, so a row never claims a price the added line will not carry. Pure: no money math of its own
+ * picker prints its `unitPrice`, so a row shows the price the line is added at. That is the price of the product's PACK (or
+ * its single unit): a product whose default selling unit is another one (a Piece) starts its line on that unit and re-prices
+ * it through the unit picker, which the row cannot know. So a boxed row names the pack word it prices
+ * (`pickerPriceUnit`, "/ case") and never implies the line carries that number per piece. Pure: no money math of its own
  * (every number comes from `customerLinePrice` / the customer's remembered price), nothing read from a render.
  */
 
@@ -98,4 +106,13 @@ export function linePackWords(product: Record<string, unknown>): {
   const base = String(product.baseUnitLabel ?? "").trim();
   if (base) words.baseLabel = base;
   return words;
+}
+
+/**
+ * The unit word a picker row's price is for: the pack word (the business's own, else "box") on a boxed product, whose
+ * price is per pack. A product sold by one unit returns null: its unit already sits beside its name.
+ */
+export function pickerPriceUnit(product: Record<string, unknown>): string | null {
+  if (!(Number(product.unitsPerBox ?? 0) > 1)) return null;
+  return unitWords({ packLabel: String(product.packLabel ?? "") }).pack.lower;
 }
