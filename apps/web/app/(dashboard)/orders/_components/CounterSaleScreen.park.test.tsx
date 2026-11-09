@@ -106,6 +106,7 @@ function seed(id: string, over: Partial<Row>, payload: unknown) {
   });
   payloads[id] = payload;
 }
+let withDraft = false; // only the W-1184 dock test has a paused order draft
 const isResume = (url: unknown) => typeof url === "string" && /\/parked\/.+\/resume$/.test(url);
 const resumeCalls = () => post.mock.calls.filter((c) => isResume(c[0]));
 const parkCalls = () => post.mock.calls.filter((c) => c[0] === PARKED);
@@ -132,6 +133,7 @@ const parkedPayload = (over: Record<string, unknown> = {}) => ({
 });
 
 beforeEach(() => {
+  withDraft = false;
   jest.clearAllMocks();
   window.localStorage.clear();
   window.sessionStorage.clear();
@@ -146,6 +148,21 @@ beforeEach(() => {
     if (url === PARKED)
       return Promise.resolve({
         data: { data: [...rows], total: rows.length, page: 1, pageSize: 20 },
+      });
+    if (url === "/drafts")
+      return Promise.resolve({
+        data: !withDraft
+          ? []
+          : [
+              {
+                id: "d1",
+                kind: "ORDER",
+                title: null,
+                customerName: "Acme Cafe",
+                payload: { lineItems: [{ productId: "p1", unitPrice: 4, qty: 2 }] },
+                updatedAt: new Date().toISOString(),
+              },
+            ],
       });
     return Promise.resolve({ data: [] });
   });
@@ -758,6 +775,18 @@ describe("W-1184: leaving parks the sale", () => {
     await waitFor(() => expect(proceed).toHaveBeenCalledTimes(1));
     expect(parkCalls()).toHaveLength(1);
     expect(screen.queryByText("Discard this sale?")).toBeNull();
+  });
+
+  it("one Parked button holds the order drafts too: count, section, Resume (no separate Drafts button)", async () => {
+    withDraft = true;
+    renderScreen();
+    expect(await screen.findByRole("button", { name: "Parked (1)" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Drafts/ })).toBeNull();
+    fireEvent.click(parkedBtn());
+    const dialog = await screen.findByRole("dialog", { name: "Parked sales" });
+    const row = await within(dialog).findByTestId("draft-row-d1");
+    expect(row).toHaveTextContent("Order, Acme Cafe");
+    expect(within(row).getByRole("button", { name: /^Resume / })).toBeInTheDocument();
   });
 
   it("an empty till with a parked sale offers one tap back into it", async () => {

@@ -156,7 +156,6 @@ import { useCounterScanFocus } from "./useCounterScanFocus";
 import { CounterReceiptActions } from "./CounterReceiptActions";
 import { CounterTodaysSales } from "./CounterTodaysSales";
 import { ParkedSales } from "./ParkedSales";
-import { DraftDockSlot } from "@/components/DraftDockSlot";
 import { QuickKeysGrid } from "./QuickKeysGrid";
 import { CounterCheckDetails } from "./CounterCheckDetails";
 import {
@@ -910,7 +909,6 @@ export function CounterSaleScreen() {
       scan.dismissMessage();
       setScanText("");
     },
-    onSkipped: () => scan.dismissMessage(),
   });
   // W-1186: an unknown scan opens the New product window straight away, barcode filled in (the regular order does the same);
   // a buzz on phones that have one. A clerk who cannot set prices keeps the miss line (newItem.open is undefined for them).
@@ -1573,7 +1571,6 @@ export function CounterSaleScreen() {
           onParked={resetSale}
           onRestore={restoreParked}
         />
-        <DraftDockSlot />
         {gate.offerShipInstead ? (
           <WriteButton
             className="min-h-[44px]"

@@ -147,9 +147,8 @@ describe("W-1042 the miss line", () => {
     fireEvent.keyDown(window, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("heading", { name: "New product" })).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(field()));
-    // skipped: the same code scanned again opens it again (nothing is held over)
-    submitScan(MISS);
-    await screen.findByRole("heading", { name: "New product" });
+    // skipped: the inline miss line and its Create item are what is left (the message shows only on cancel)
+    expect(screen.getByText(`No product for '${MISS}'`)).toBeInTheDocument();
   });
 
   it("R6: Create item opens the window with the scanned code in SKU", async () => {

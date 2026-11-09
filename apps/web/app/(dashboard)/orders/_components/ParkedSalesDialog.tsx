@@ -19,6 +19,9 @@ import {
   lineCountLabel,
   parkedRowTitle,
 } from "@/lib/counter-park";
+import { useDeleteDraft, type SaleDraft } from "@/lib/api/drafts";
+import { draftSummary, parkedAgo } from "@/lib/drafts";
+import { useGuardedRouter } from "@/lib/use-guarded-router";
 import type { useParkedSales } from "./useParkedSales";
 
 type Parked = ReturnType<typeof useParkedSales>;
@@ -99,12 +102,67 @@ function ParkedRow({
   );
 }
 
+/** W-1184: the regular order's paused drafts, listed in the SAME Parked window (one entry point, two sections). */
+function DraftsSection({ drafts, onGo }: { drafts: SaleDraft[]; onGo: () => void }) {
+  const router = useGuardedRouter(); // leaving a live cart parks it first
+  const del = useDeleteDraft();
+  if (drafts.length === 0) return null;
+  return (
+    <section aria-label="Order drafts" className="space-y-2">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-navy/60">Order drafts</h3>
+      <ul className="divide-y">
+        {drafts.map((d) => {
+          const { title, itemCount, total } = draftSummary(d);
+          return (
+            <li
+              key={d.id}
+              className="flex items-center gap-3 py-3"
+              data-testid={`draft-row-${d.id}`}
+            >
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold text-navy">{title}</p>
+                <p className="truncate text-xs text-navy/70">
+                  {lineCountLabel(itemCount)} · {formatMoney(total)} · paused{" "}
+                  {parkedAgo(d.updatedAt)}
+                </p>
+              </div>
+              <Button
+                className="min-h-11"
+                aria-label={`Resume ${title}`}
+                onClick={() => {
+                  onGo();
+                  router.push(
+                    `${d.kind === "INVOICE" ? "/invoices/new" : "/orders"}?resumeDraft=${encodeURIComponent(d.id)}`,
+                  );
+                }}
+              >
+                Resume
+              </Button>
+              <Button
+                className="min-h-11"
+                variant="secondary"
+                aria-label={`Discard ${title}`}
+                disabled={del.isPending}
+                onClick={() => del.mutate(d.id)}
+              >
+                Discard
+              </Button>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
 export function ParkedSalesDialog({
   parked,
   openerRef,
+  drafts = [],
 }: {
   parked: Parked;
   openerRef: React.RefObject<HTMLButtonElement | null>;
+  drafts?: SaleDraft[];
 }) {
   const { data: settings } = useQuery<{ timezone?: string | null; taxRate?: number | null }>({
     queryKey: ["settings"],
@@ -148,7 +206,9 @@ export function ParkedSalesDialog({
               Loading parked sales
             </p>
           ) : parked.rows.length === 0 ? (
-            <p className="py-6 text-center text-sm text-navy/70">{PARKED_EMPTY_COPY}</p>
+            drafts.length === 0 ? (
+              <p className="py-6 text-center text-sm text-navy/70">{PARKED_EMPTY_COPY}</p>
+            ) : null
           ) : (
             <ul className="divide-y" aria-label="Parked sales">
               {parked.rows.map((r) => (
@@ -162,6 +222,7 @@ export function ParkedSalesDialog({
               ))}
             </ul>
           )}
+          <DraftsSection drafts={drafts} onGo={() => parked.setOpen(false)} />
         </div>
       </Modal>
       <Modal

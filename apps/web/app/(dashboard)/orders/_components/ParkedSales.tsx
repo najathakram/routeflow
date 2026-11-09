@@ -7,6 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { Button, useToast } from "@routeflow/ui/web";
 import { apiClient } from "@/lib/api-client";
+import { useDrafts } from "@/lib/api/drafts";
 import { setCounterAutoParkHook } from "@/lib/counter-cart-signal";
 import { formatMoney } from "@/lib/format";
 import { cartTotals } from "@/lib/counter-sale";
@@ -34,6 +35,8 @@ function parkedAge(iso: string | undefined, nowMs: number = Date.now()): string 
 export function ParkedSales({ canEditPrices, ...deps }: ParkedSalesProps) {
   const p = useParkedSales(deps);
   const { toast } = useToast();
+  const { data: draftRows } = useDrafts();
+  const drafts = Array.isArray(draftRows) ? draftRows : [];
   const router = useRouter();
   const { data: settings } = useQuery<{ taxRate?: number | null }>({
     queryKey: ["settings"],
@@ -110,7 +113,7 @@ export function ParkedSales({ canEditPrices, ...deps }: ParkedSalesProps) {
           variant="secondary"
           onClick={() => p.setOpen(true)}
         >
-          {p.count > 0 ? `Parked (${p.count})` : "Parked"}
+          {p.count + drafts.length > 0 ? `Parked (${p.count + drafts.length})` : "Parked"}
         </Button>
       </div>
       {showResume ? (
@@ -144,7 +147,7 @@ export function ParkedSales({ canEditPrices, ...deps }: ParkedSalesProps) {
           {PARKED_EDITED_PRICES_COPY}
         </p>
       ) : null}
-      <ParkedSalesDialog parked={p} openerRef={openerRef} />
+      <ParkedSalesDialog parked={p} openerRef={openerRef} drafts={drafts} />
     </>
   );
 }

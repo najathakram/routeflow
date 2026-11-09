@@ -23,8 +23,6 @@ interface Options {
   refocus: () => void;
   /** The item is on the cart: the screen clears the scan box and the miss line. */
   onAdded: () => void;
-  /** W-1186: the window was closed without an item (Esc = Skip): the screen drops the miss so the same scan can open it again. */
-  onSkipped?: () => void;
 }
 
 type Step = "ask" | "stopped" | "form";
@@ -44,7 +42,7 @@ export function trackedCategoriesLine(
   return `Tracked categories: ${shown}${names.length > 3 ? ` and ${names.length - 3} more` : ""}.`;
 }
 
-export function useCounterNewItem({ allowed, add, refocus, onAdded, onSkipped }: Options) {
+export function useCounterNewItem({ allowed, add, refocus, onAdded }: Options) {
   const { data: categoryRows, isSuccess } = useTrackedCategories();
   // Unknown (still loading, or the read failed) asks: regulated goods must not slip through on a slow read.
   const asks =
@@ -59,10 +57,7 @@ export function useCounterNewItem({ allowed, add, refocus, onAdded, onSkipped }:
 
   const open = (text: string, from: PrefillDoor = "typed") =>
     setRequest({ text, from, step: asks ? "ask" : "form" });
-  const close = () => {
-    setRequest(null);
-    onSkipped?.();
-  };
+  const close = () => setRequest(null); // Esc = Skip: the miss line and its Create item stay
   // The cursor goes back once the window is really gone: `refocus` waits while a scan pause is held.
   const wasOpenRef = React.useRef(false);
   React.useEffect(() => {
