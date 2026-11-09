@@ -106,7 +106,6 @@ function ParkedRow({
 function DraftsSection({ drafts, onGo }: { drafts: SaleDraft[]; onGo: () => void }) {
   const router = useGuardedRouter(); // leaving a live cart parks it first
   const del = useDeleteDraft();
-  if (drafts.length === 0) return null;
   return (
     <section aria-label="Order drafts" className="space-y-2">
       <h3 className="text-xs font-semibold uppercase tracking-wide text-navy/60">Order drafts</h3>
@@ -222,7 +221,9 @@ export function ParkedSalesDialog({
               ))}
             </ul>
           )}
-          <DraftsSection drafts={drafts} onGo={() => parked.setOpen(false)} />
+          {drafts.length > 0 ? (
+            <DraftsSection drafts={drafts} onGo={() => parked.setOpen(false)} />
+          ) : null}
         </div>
       </Modal>
       <Modal
