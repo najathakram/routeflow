@@ -33,8 +33,17 @@ function parkedAge(iso: string | undefined, nowMs: number = Date.now()): string 
 }
 
 export function ParkedSales({ canEditPrices, ...deps }: ParkedSalesProps) {
-  const p = useParkedSales(deps);
   const { toast } = useToast();
+  // Discard is taken back, not confirmed (owner rule: autosave + Undo; confirm only for sent or posted money).
+  const p = useParkedSales({
+    ...deps,
+    onDiscarded: (undo, row) =>
+      toast({
+        title: `Discarded · ${row.label}`,
+        description: "The parked sale is gone unless you undo.",
+        action: { label: "Undo", onClick: undo },
+      }),
+  });
   const { data: draftRows } = useDrafts();
   const drafts = Array.isArray(draftRows) ? draftRows : [];
   const router = useRouter();

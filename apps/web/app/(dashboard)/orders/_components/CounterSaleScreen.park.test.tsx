@@ -1,10 +1,11 @@
 import * as React from "react";
-import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-utils/render";
+import { renderWithProviders, screen, waitFor, fireEvent, within, act } from "@/test-utils/render";
 import { apiClient } from "@/lib/api-client";
 import { COUNTER_PRICE_EDIT_NOT_PERMITTED_COPY } from "@/lib/counter-sale";
 import { guardCounterLeave } from "@/lib/counter-cart-signal";
 import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
+import { discardUndo } from "./useParkedSales";
 
 /**
  * SA-748 PARK / RESUME at the counter. The API client is mocked at the module boundary by URL (a tiny in-memory "server" of
@@ -14,6 +15,11 @@ import { CounterSaleScreen } from "./CounterSaleScreen";
 
 type MockUser = { id: string; tenantSlug: string; role?: string } | null | undefined;
 let mockUser: MockUser;
+const mockToast = jest.fn();
+jest.mock("@routeflow/ui/web", () => ({
+  ...jest.requireActual("@routeflow/ui/web"),
+  useToast: () => ({ toast: mockToast }),
+}));
 jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
   useOptionalAuth: () => ({ user: mockUser }),
@@ -133,6 +139,8 @@ const parkedPayload = (over: Record<string, unknown> = {}) => ({
 });
 
 beforeEach(() => {
+  mockToast.mockClear();
+  discardUndo.ms = 0; // most tests want the delete at once; the Undo tests set their own window
   withDraft = false;
   jest.clearAllMocks();
   window.localStorage.clear();
@@ -664,6 +672,21 @@ describe("Resume with lines on the cart: the replace prompt comes FIRST", () => 
 });
 
 describe("Discard a parked sale", () => {
+  it("W-1184: Discard hides the row and offers Undo; Undo brings it back and no delete is sent", async () => {
+    discardUndo.ms = 60_000;
+    seed("a", { label: "Hold A" }, parkedPayload());
+    renderScreen();
+    const dialog = await openList(1);
+    fireEvent.click(discardBtn("Hold A"));
+    await waitFor(() => expect(within(dialog).queryByTestId("parked-row-a")).toBeNull());
+    expect(del).not.toHaveBeenCalled();
+    const undo = mockToast.mock.calls.map((c) => c[0]).find((c) => /^Discarded/.test(c.title));
+    expect(undo?.action?.label).toBe("Undo");
+    act(() => undo.action.onClick());
+    expect(await within(dialog).findByTestId("parked-row-a")).toBeInTheDocument();
+    expect(del).not.toHaveBeenCalled();
+  });
+
   it("calls DELETE, refreshes the list, and the row goes", async () => {
     seed("a", { label: "Hold A" }, parkedPayload());
     seed("b", { label: "Hold B" }, parkedPayload());

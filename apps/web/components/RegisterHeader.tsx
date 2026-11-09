@@ -102,7 +102,8 @@ export function RegisterHeader({
       <p
         data-testid="register-store"
         title={storeName}
-        className="min-w-[4rem] flex-1 truncate text-base font-semibold text-navy"
+        // Below sm the name may take two lines (the tools beside it leave ~120px); from sm up it stays one truncated line.
+        className="min-w-[4rem] flex-1 line-clamp-2 break-words text-sm font-semibold leading-tight text-navy sm:line-clamp-1 sm:text-base sm:leading-normal"
       >
         {storeName}
       </p>

@@ -31,7 +31,15 @@ export interface ParkedSalesDeps {
   onParked: () => void;
   /** called with the server-rebuilt payload after a resume: the screen restores its state from it */
   onRestore: (payload: ParkedCartPayload) => void;
+  /**
+   * Discard with Undo: when given, a Discard hides the row at once and sends the delete after `discardUndo.ms`
+   * (or when the screen goes away); calling `undo` inside that window cancels it and the row is back. Absent = delete now.
+   */
+  onDiscarded?: (undo: () => void, row: { id: string; label: string }) => void;
 }
+
+/** How long a Discard can be taken back before the delete leaves (an object so a test can shorten it). */
+export const discardUndo = { ms: 6000 };
 
 export type ParkWork = { kind: "park" | "resume" | "discard"; id?: string } | null;
 export type ParkMessage = { scope: "header" | "dialog"; text: string } | null;
@@ -130,8 +138,59 @@ export function useParkedSales(deps: ParkedSalesDeps) {
     await doResume(id);
   };
 
+  // Discards waiting out their Undo window: the row is hidden, the delete has not left yet.
+  const [hidden, setHidden] = React.useState<ReadonlySet<string>>(() => new Set());
+  const pending = React.useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const unhide = (id: string) =>
+    setHidden((h) => {
+      if (!h.has(id)) return h;
+      const n = new Set(h);
+      n.delete(id);
+      return n;
+    });
+  const commitDiscard = async (id: string) => {
+    const t = pending.current.get(id);
+    if (t) clearTimeout(t);
+    pending.current.delete(id);
+    try {
+      await discardM.mutateAsync(id);
+    } catch (err) {
+      unhide(id);
+      setMessage({ scope: "dialog", text: discardErrorCopy(err) });
+    }
+  };
+  // Leaving the screen sends every waiting delete now: the clerk chose Discard, and an Undo needs this screen to answer.
+  React.useEffect(() => {
+    const waiting = pending.current;
+    return () => {
+      for (const id of [...waiting.keys()]) void commitDiscard(id);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const discard = async (id: string) => {
     if (!canAct()) return;
+    const notify = d.current.onDiscarded;
+    if (notify) {
+      const row = (list.data?.data ?? []).find((r) => r.id === id);
+      setMessage(null);
+      setHidden((h) => new Set(h).add(id));
+      pending.current.set(
+        id,
+        setTimeout(() => void commitDiscard(id), discardUndo.ms),
+      );
+      notify(
+        () => {
+          const t = pending.current.get(id);
+          if (!t) return;
+          clearTimeout(t);
+          pending.current.delete(id);
+          unhide(id);
+        },
+        { id, label: row?.label ?? "Sale" },
+      );
+      return;
+    }
     begin({ kind: "discard", id });
     try {
       await discardM.mutateAsync(id);
@@ -152,9 +211,11 @@ export function useParkedSales(deps: ParkedSalesDeps) {
   };
 
   const total = list.data?.total;
+  const allRows = Array.isArray(list.data?.data) ? list.data.data : [];
+  const shown = allRows.filter((r) => !hidden.has(r.id));
   return {
-    count: typeof total === "number" ? total : 0,
-    rows: Array.isArray(list.data?.data) ? list.data.data : [],
+    count: typeof total === "number" ? Math.max(0, total - (allRows.length - shown.length)) : 0,
+    rows: shown,
     listLoading: list.isLoading,
     listFailed: list.isError,
     retryList: () => void list.refetch(),
