@@ -42,7 +42,7 @@ describe("CatchupAdminController", () => {
       open: jest.fn().mockResolvedValue({ sessionId: "cs_1" }),
     };
     const admin = { recordAdminAction: jest.fn().mockResolvedValue(undefined) };
-    const c = new CatchupAdminController(svc as any, admin as any);
+    const c = new CatchupAdminController(svc as any, admin as any, {} as any);
     expect(await c.plan(ID)).toMatchObject({ tenantId: ID, plan: { ok: false } });
     await c.open(ID, { expectedStubCents: 1234 }, { sub: "sa-1" } as any);
     expect(svc.open).toHaveBeenCalledWith(ID, { expectedStubCents: 1234 });
@@ -61,7 +61,7 @@ describe("CatchupAdminController", () => {
         })
         .mockRejectedValueOnce(new Error("refused")),
     };
-    const c = new CatchupAdminController(svc as any, admin as any);
+    const c = new CatchupAdminController(svc as any, admin as any, {} as any);
     const out = await c.open(ID, { expectedStubCents: 31000 }, { sub: "sa-1" } as any);
     expect(out).toMatchObject({ sessionId: "cs_1" });
     expect(admin.recordAdminAction).toHaveBeenCalledTimes(1);
