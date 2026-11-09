@@ -2669,7 +2669,8 @@ describe("OrdersService", () => {
   });
 
   describe("sweepAllPendingOrders — tenant scoping (B323)", () => {
-    const noMismatches = { packMismatches: 0, livePackFallbacks: 0 }; // SA-124: neither below
+    // SA-124: neither below; B324: no merge failed either.
+    const noMismatches = { packMismatches: 0, livePackFallbacks: 0, failed: 0 };
     it("REG-B323 sweepAllPendingOrders runs each customer group inside its own tenant context and skips null-tenant groups", async () => {
       const mergeSpy = jest
         .spyOn(service, "mergeAllPendingForCustomer")
