@@ -33,7 +33,7 @@ describe("W-1188: one order-date writer, one gate", () => {
     expect(hits).toEqual(["orders/orders.service.ts:1"]);
   });
 
-  it("every resolveOrderDate( call passes a policy, from the two reviewed files", () => {
+  it("every resolveOrderDate( call passes a policy, from the reviewed files (the create() path goes through order-date.ts itself)", () => {
     const callers: string[] = [];
     for (const f of files) {
       if (rel(f) === "orders/order-date.ts") continue;
@@ -46,7 +46,7 @@ describe("W-1188: one order-date writer, one gate", () => {
         at = text.indexOf("resolveOrderDate(", at + 1);
       }
     }
-    expect(callers.sort()).toEqual(["orders/orders.service.ts", "orders/sale-options.ts"]);
+    expect(callers.sort()).toEqual(["orders/sale-options.ts"]);
   });
 
   it("parseOrderDate (the UTC end-of-day leak) is gone", () => {

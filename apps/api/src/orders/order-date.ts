@@ -1,5 +1,15 @@
 import { BadRequestException, ConflictException, ForbiddenException } from "@nestjs/common";
-import { orderDateRange, tenantDayOf, isRealDay, type OrderDatePolicy } from "@routeflow/pricing";
+import {
+  orderDateDrift,
+  orderDateRange,
+  tenantDayOf,
+  isRealDay,
+  type OrderDatePolicy,
+} from "@routeflow/pricing";
+import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
+import { operatorDeniedGroups } from "../auth/permissions/operator-denied-groups";
+import type { PrismaService } from "../prisma/prisma.service";
+import { tenantTimeZone } from "../common/tenant-time-zone";
 import { staffMay } from "../auth/permissions/staff-capabilities";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { isoFromCalendarDate } from "../common/calendar-date";
@@ -102,4 +112,96 @@ export async function assertOrderDateOpen(
     periodKey: hit.periodBucket,
     categoryName: category?.[0]?.name ?? null,
   });
+}
+
+type DatedUser = {
+  role: string;
+  sub: string;
+  tenantId: string | null;
+  impersonatedBy?: string | null;
+};
+
+/**
+ * `OrdersService.create`'s date step: the zone and the caller's denied groups are read ONLY when a date is sent, so an
+ * undated order costs nothing. Returns the day to store and the zone the audit row and the drift are judged in.
+ */
+export async function resolveCreate(
+  prisma: PrismaService,
+  dto: { orderDate?: string | null },
+  user: DatedUser,
+  options: { counterSale?: boolean } | undefined,
+): Promise<{ orderDate: Date | undefined; orderZone: string | null }> {
+  if (dto.orderDate == null) return { orderDate: undefined, orderZone: null };
+  const orderZone = await tenantTimeZone(prisma, { tenantId: user.tenantId });
+  const orderDate = resolveOrderDate(dto.orderDate, {
+    role: user.role,
+    deniedGroups: await operatorDeniedGroups(prisma, user as never),
+    zone: orderZone,
+    policy: orderDatePolicyFor(options),
+  });
+  return { orderDate, orderZone };
+}
+
+/**
+ * The pre-write lock check for `create` (after its replay branch, so a retry of a sale that landed still replays):
+ * refused HERE, before the stock lock and the transaction, in plain words.
+ */
+export async function assertCreateOrderDateOpen(
+  prisma: PrismaService,
+  orderDate: Date | undefined,
+  items: ReadonlyArray<{ productId?: string | null }> | undefined,
+): Promise<void> {
+  const tenantId = prisma.getTenantId();
+  if (!orderDate || !tenantId) return;
+  await assertOrderDateOpen(prisma.forTenant() as never, {
+    tenantId,
+    orderDay: orderDate,
+    productIds: (items ?? []).flatMap((i) => (i.productId ? [i.productId] : [])),
+  });
+}
+
+/** ONE `order.dated` audit row per dated order (day differs from its entry day), written inside create()'s transaction. */
+export async function recordOrderDated(
+  tx: { auditLog: { create(args: any): Promise<unknown> } },
+  user: DatedUser,
+  created: { id: string; createdAt: Date; orderNumber: unknown; registerKey?: string | null },
+  dated: { orderDate: Date | undefined; zone: string | null; options?: { counterSale?: boolean } },
+): Promise<void> {
+  const drift = orderDateDrift(dated.orderDate, created.createdAt, dated.zone);
+  if (!drift) return;
+  await tx.auditLog.create({
+    data: {
+      tenantId: user.tenantId,
+      userId: user.sub,
+      impersonatedBy: user.impersonatedBy ?? null,
+      action: AUDIT_ACTIONS.ORDER_DATED,
+      entityType: "Order",
+      entityId: created.id,
+      meta: {
+        orderNumber: created.orderNumber,
+        orderDay: drift.day,
+        enteredDay: drift.enteredDay,
+        direction: drift.direction,
+        days: drift.days,
+        surface: dated.options?.counterSale ? "counter" : "office",
+        registerKey: created.registerKey ?? null,
+      },
+    },
+  });
+}
+
+/** The gate `resolveSaleDelivery` needs for `createSale` (denied groups read only when a date is sent). */
+export async function saleDateGate(
+  prisma: PrismaService,
+  dto: { deliveredOn?: string | null; orderDate?: string | null },
+  user: DatedUser,
+  sale: { counterSale?: boolean } | undefined,
+): Promise<{ deniedGroups: readonly string[]; policy: OrderDatePolicy }> {
+  return {
+    deniedGroups:
+      dto.deliveredOn != null || dto.orderDate != null
+        ? await operatorDeniedGroups(prisma, user as never)
+        : [],
+    policy: orderDatePolicyFor(sale),
+  };
 }
