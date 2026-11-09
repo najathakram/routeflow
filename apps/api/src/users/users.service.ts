@@ -89,6 +89,24 @@ export class UsersService {
     }
   }
 
+  /**
+   * The ONE N2 #811 rule for a fresh set-password invite: an account still owing a first password
+   * (`forcePasswordChange`) that `mayMintInvite` allows gets one, to its CURRENT address. Best-effort (a delivery
+   * failure is logged, never thrown). The at-once email write, the role change, the admin toggle, the admin reset and
+   * the email-change confirm (`AuthService`) all ask here.
+   */
+  async sendInviteIfOwed(account: {
+    id: string;
+    email: string | null;
+    username: string;
+    status: string;
+    deletedAt?: Date | null;
+    forcePasswordChange?: boolean;
+  }): Promise<void> {
+    if (!account.forcePasswordChange || !account.email || !this.mayMintInvite(account)) return;
+    await this.sendSetPasswordInvite(account.id, account.email, account.username);
+  }
+
   async findByUsername(username: string, tenantId?: string | null): Promise<User | null> {
     // Accept either username or email in the login field. Email match is
     // case-insensitive (N2 review fix, #811) — updateUser now lowercases a
@@ -517,13 +535,7 @@ export class UsersService {
       // any outstanding token; then — only if the user has never set their own password — mint and
       // send a fresh one to the corrected address so they aren't left with no way in at all.
       await this.notifyEmailChanged(userId, previousEmail, updated.email, updated.username);
-      if (
-        updated.forcePasswordChange &&
-        updated.email &&
-        this.mayMintInvite({ ...updated, deletedAt: user.deletedAt })
-      ) {
-        await this.sendSetPasswordInvite(userId, updated.email, updated.username);
-      }
+      await this.sendInviteIfOwed({ ...updated, deletedAt: user.deletedAt });
     }
     if (roleChanged) {
       // A link minted for the old role does not carry over to the new one (burned above).
@@ -536,14 +548,7 @@ export class UsersService {
         changedByUsername ?? "an administrator",
       );
       // The same rule as the email branch: a person who has never set a password is not left with a dead first mail.
-      if (
-        !emailWritten &&
-        updated.forcePasswordChange &&
-        updated.email &&
-        this.mayMintInvite({ ...updated, deletedAt: user.deletedAt })
-      ) {
-        await this.sendSetPasswordInvite(userId, updated.email, updated.username);
-      }
+      if (!emailWritten) await this.sendInviteIfOwed({ ...updated, deletedAt: user.deletedAt });
     }
 
     // The user as it stands, plus the address it is waiting on. A write at once burned any pending row (above).
@@ -701,9 +706,7 @@ export class UsersService {
     // N2 review fix: never email a set-password link for a deactivated/deleted
     // account — an admin resetting a SUSPENDED/INACTIVE user's password (e.g. to
     // lock them out) must not hand them a working way back in.
-    if (user.email && this.mayMintInvite(user)) {
-      await this.sendSetPasswordInvite(userId, user.email, user.username);
-    }
+    await this.sendInviteIfOwed({ ...user, forcePasswordChange: true });
 
     return { tempPassword };
   }
@@ -737,13 +740,11 @@ export class UsersService {
       return row;
     });
     // Same rule as an email or role change: a person who has never set a password is not left with a dead first mail.
-    if (
-      user.forcePasswordChange &&
-      updated.email &&
-      this.mayMintInvite({ ...updated, deletedAt: user.deletedAt })
-    ) {
-      await this.sendSetPasswordInvite(userId, updated.email, updated.username);
-    }
+    await this.sendInviteIfOwed({
+      ...updated,
+      deletedAt: user.deletedAt,
+      forcePasswordChange: user.forcePasswordChange,
+    });
     return updated;
   }
 

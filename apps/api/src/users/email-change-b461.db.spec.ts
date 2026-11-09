@@ -47,6 +47,7 @@ describeDb("B461: a login-email change waits for the new address (real database)
   const tenantIds: string[] = [];
   let mails: Mail[] = [];
   let seq = 0;
+  let failInvite = false;
 
   const mkTenant = async (tag: string) => {
     const slug = assertTestTenant(`qa-b461-${RUN}-${tag}`, SPEC);
@@ -144,7 +145,10 @@ describeDb("B461: a login-email change waits for the new address (real database)
       };
     const email = {
       send: rec("send"),
-      sendSetPasswordEmail: rec("invite"),
+      sendSetPasswordEmail: async (p: Record<string, unknown>) => {
+        if (failInvite) throw new Error("smtp down");
+        return rec("invite")(p);
+      },
       sendEmailChangedNotice: rec("changed-notice"),
       sendEmailChangeConfirmation: rec("changed-confirmation"),
       sendEmailChangeLink: rec("link"),
@@ -179,7 +183,7 @@ describeDb("B461: a login-email change waits for the new address (real database)
     );
     auth = new AuthService(
       prisma,
-      {} as never,
+      users,
       jwt,
       config as never,
       email as never,
@@ -191,6 +195,7 @@ describeDb("B461: a login-email change waits for the new address (real database)
 
   beforeEach(() => {
     mails = [];
+    failInvite = false;
   });
 
   afterAll(async () => {
@@ -353,6 +358,68 @@ describeDb("B461: a login-email change waits for the new address (real database)
   // Reader S-new-2: a legacy invitee (created before the sign-in stamp was reliable) now HOLDS an email edit. The
   // set-password link mailed to the old, mistyped address must still die when an admin corrects it. Red before: the
   // hold burned nothing, so the link stayed live in the wrong inbox.
+  // SA-1126 (a): a confirm that lands for an account still owing a first password sends a fresh set-password invite
+  // to the NEW address (the old address's link died with the hold). Red before: the confirm sent none.
+  it("A-1: a legacy invitee's admin-corrected change is confirmed: exactly one invite, to the NEW address", async () => {
+    const tenantId = await mkTenant("a1");
+    const admin = await mkUser(tenantId, "admin", { role: UserRole.TENANT_ADMIN });
+    const invitee = await mkUser(tenantId, "a1inv", {
+      signedIn: false,
+      forcePasswordChange: true,
+      createdAt: new Date("2026-09-01T00:00:00Z"),
+    });
+    const next = newAddress("a1inv-fixed");
+    await edit(
+      tenantId,
+      invitee.id,
+      { email: next },
+      { id: admin.id, role: UserRole.TENANT_ADMIN },
+    );
+    const token = lastToken();
+    mails = [];
+
+    await confirm(token);
+
+    expect(await emailOf(invitee.id)).toBe(next);
+    expect(mailsOfKind("invite").map((m) => m.to)).toEqual([next]);
+    expect(
+      await prisma.passwordResetToken.count({ where: { userId: invitee.id, usedAt: null } }),
+    ).toBe(1);
+  });
+
+  it("A-2: a signed-in account after an admin password reset confirms: the invite goes to the new address", async () => {
+    const tenantId = await mkTenant("a2");
+    const user = await mkUser(tenantId, "a2user");
+    await ctx.run(tenantId, () => users.resetPassword(user.id, UserRole.TENANT_ADMIN));
+    const next = newAddress("a2user-new");
+    await edit(tenantId, user.id, { email: next }, { id: user.id, role: user.role });
+    const token = lastToken();
+    mails = [];
+
+    await confirm(token);
+
+    expect(mailsOfKind("invite").map((m) => m.to)).toEqual([next]);
+  });
+
+  it("A-3: no forced password change means no invite; a failing invite mail never undoes the confirm", async () => {
+    const tenantId = await mkTenant("a3");
+    const plain = await mkUser(tenantId, "a3plain");
+    const next = newAddress("a3plain-new");
+    await edit(tenantId, plain.id, { email: next }, { id: plain.id, role: plain.role });
+    const token = lastToken();
+    mails = [];
+    await confirm(token);
+    expect(await emailOf(plain.id)).toBe(next);
+    expect(mailsOfKind("invite")).toEqual([]);
+
+    const owing = await mkUser(tenantId, "a3owing", { forcePasswordChange: true });
+    const next2 = newAddress("a3owing-new");
+    await edit(tenantId, owing.id, { email: next2 }, { id: owing.id, role: owing.role });
+    const token2 = lastToken();
+    failInvite = true;
+    await expect(confirm(token2)).resolves.toMatchObject({ email: next2 });
+    expect(await emailOf(owing.id)).toBe(next2);
+  });
   it("R-13: a legacy invitee's live set-password link dies when an admin corrects the email, though the change is held", async () => {
     const tenantId = await mkTenant("r13");
     const admin = await mkUser(tenantId, "admin", { role: UserRole.TENANT_ADMIN });

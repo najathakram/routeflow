@@ -588,13 +588,26 @@ export class AuthService {
       });
     const now = new Date();
     const tokenHash = hashEmailChangeToken(typeof token === "string" ? token : "");
-    let change: { userId: string; fromEmail: string; toEmail: string; username: string };
+    let change: {
+      userId: string;
+      fromEmail: string;
+      toEmail: string;
+      username: string;
+      forcePasswordChange: boolean;
+    };
     try {
       // A plain transaction on purpose: the tenant guard only sees forTenant()/tenantTransaction, so this is never reported.
       change = await this.prisma.$transaction(async (tx) => {
         const [row] = await tx.$queryRaw<
-          { id: string; userId: string; fromEmail: string; toEmail: string; username: string }[]
-        >`SELECT c."id", c."userId", c."fromEmail", c."toEmail", u."username"
+          {
+            id: string;
+            userId: string;
+            fromEmail: string;
+            toEmail: string;
+            username: string;
+            forcePasswordChange: boolean;
+          }[]
+        >`SELECT c."id", c."userId", c."fromEmail", c."toEmail", u."username", u."forcePasswordChange"
           FROM "UserEmailChange" c JOIN "User" u ON u."id" = c."userId"
           WHERE c."tokenHash" = ${tokenHash} AND c."usedAt" IS NULL AND c."expiresAt" > ${now}`;
         if (!row) throw refused();
@@ -647,6 +660,15 @@ export class AuthService {
         `Failed to send email-change notices for user ${change.userId}: ${(err as Error).message}`,
       );
     }
+    // SA-1126: an account still owing a first password gets a fresh invite at the NEW address (the old address's links
+    // died with the change). The account is ACTIVE and not deleted: the compare-and-set above required it. Best-effort.
+    await this.usersService.sendInviteIfOwed({
+      id: change.userId,
+      email: change.toEmail,
+      username: change.username,
+      status: "ACTIVE",
+      forcePasswordChange: change.forcePasswordChange,
+    });
     return { email: change.toEmail };
   }
 
