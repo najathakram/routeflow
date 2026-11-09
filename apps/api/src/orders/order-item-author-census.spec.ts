@@ -126,7 +126,8 @@ describe("OrderItem create-site census (authorChannel)", () => {
       "apps/api/scripts/reset-seed.js": 1,
       "apps/api/src/invoices/invoices.service.ts": 1,
       "apps/api/src/order-templates/order-templates.service.ts": 1,
-      "apps/api/src/orders/orders.service.ts": 12,
+      "apps/api/src/orders/merge-unlisted-lines.ts": 1,
+      "apps/api/src/orders/orders.service.ts": 10,
       "apps/api/src/orders/unit-line-edit.ts": 1,
     });
   });

@@ -261,7 +261,7 @@ import {
   type MergeWarnOpts,
   type MergeWinner,
 } from "./merge-restriction-warning";
-import { collectUnlistedLoserItems } from "./merge-unlisted-lines";
+import { collectUnlistedLoserItems, createUnlistedLoserLine } from "./merge-unlisted-lines";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
@@ -760,25 +760,7 @@ export class OrdersService implements OnApplicationBootstrap {
               }
             }
             // 2b. Append unlisted loser lines as fresh winner lines.
-            for (const data of unlistedNewItems) {
-              await tx.orderItem.create({
-                data: {
-                  orderId: winner.id,
-                  productId: null,
-                  name: data.name,
-                  qty: data.qty,
-                  unitPrice: data.unitPrice,
-                  subtotal: computeLineSubtotal({ unitPrice: data.unitPrice, qty: data.qty }),
-                  status: ItemStatus.PENDING,
-                  priceType: data.priceType,
-                  originalPrice: data.originalPrice,
-                  overrideReason: data.overrideReason,
-                  overriddenBy: data.overriddenBy,
-                  notes: data.notes,
-                  authorChannel: data.authorChannel, // SA ruling #3418: the moved line's own author
-                },
-              });
-            }
+            for (const data of unlistedNewItems) await createUnlistedLoserLine(tx, winner.id, data);
 
             // 3. Drop loser orders and their items — carrying a loser's Idempotency-
             //    Key onto the winner FIRST when the winner's slot is free (R6): the
@@ -1018,25 +1000,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 });
               }
             }
-            for (const data of unlistedNewItems) {
-              await tx.orderItem.create({
-                data: {
-                  orderId: winner.id,
-                  productId: null,
-                  name: data.name,
-                  qty: data.qty,
-                  unitPrice: data.unitPrice,
-                  subtotal: computeLineSubtotal({ unitPrice: data.unitPrice, qty: data.qty }),
-                  status: ItemStatus.PENDING,
-                  priceType: data.priceType,
-                  originalPrice: data.originalPrice,
-                  overrideReason: data.overrideReason,
-                  overriddenBy: data.overriddenBy,
-                  notes: data.notes,
-                  authorChannel: data.authorChannel, // SA ruling #3418: the moved line's own author
-                },
-              });
-            }
+            for (const data of unlistedNewItems) await createUnlistedLoserLine(tx, winner.id, data);
             for (const loser of losers) {
               // Remove a loser's pending mirror draft (and its items) before deleting the order. The
               // Invoice→Order FK is ON DELETE SET NULL, so it would NOT block: a loser with a billed

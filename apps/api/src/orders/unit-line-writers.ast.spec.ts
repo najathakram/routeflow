@@ -417,6 +417,7 @@ const FREE_WRITER_FILES = [
 const KNOWN_UNSCANNED_FREE_WRITERS = [
   "orders/line-composition.ts::syncLineCompositions",
   "orders/merge-lock-recheck.ts::deleteLoserGuarded",
+  "orders/merge-unlisted-lines.ts::createUnlistedLoserLine",
   "orders/order-edit-composition.ts::restoreCarriedComposition",
   "orders/order-line-removal.ts::writeLineRemoval",
   "orders/order-line-removal.ts::writeLineUpdate",
@@ -1009,6 +1010,10 @@ const REVISIONS: Record<string, RevisionRow> = {
   "orders/order-line-removal.ts::writeLineUpdate": covered(
     UPDATE_ITEMS,
     "line qty/price written by the edit",
+  ),
+  "orders/merge-unlisted-lines.ts::createUnlistedLoserLine": covered(
+    MERGE_ALL,
+    "an unlisted loser line appended to the winner; forceConsolidateCustomer calls it too and bumps the same way",
   ),
   "orders/unit-line-edit.ts::createUnitLine": covered(
     UPDATE_ITEMS,

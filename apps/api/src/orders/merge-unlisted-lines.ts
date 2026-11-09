@@ -1,4 +1,5 @@
-import type { PriceType } from "@prisma/client";
+import { ItemStatus, type Prisma, type PriceType } from "@prisma/client";
+import { computeLineSubtotal } from "@routeflow/pricing";
 import { resolvedLineAuthor, type OrderItemAuthorChannel } from "./line-author-channel";
 
 /** A catalog-free loser line, ready to be appended to the merge winner as its own new line. */
@@ -19,6 +20,7 @@ export interface UnlistedMergeItem {
  * Unlisted (catalog-free) loser lines can't be keyed by product — each is appended to the winner as its
  * own new line (never boxed, unaffected by B776). A verbatim move of the loop `mergeAllPendingForCustomer`
  * and `forceConsolidateCustomer` each carried inline (pure: no query, no write).
+ * `createUnlistedLoserLine` below is the one write both merges share.
  */
 export function collectUnlistedLoserItems(
   losers: ReadonlyArray<{
@@ -56,4 +58,29 @@ export function collectUnlistedLoserItems(
     }
   }
   return unlistedNewItems;
+}
+
+/** Appends one unlisted loser line to the merge winner as its own new line. */
+export async function createUnlistedLoserLine(
+  tx: Prisma.TransactionClient,
+  winnerId: string,
+  data: UnlistedMergeItem,
+): Promise<void> {
+  await tx.orderItem.create({
+    data: {
+      orderId: winnerId,
+      productId: null,
+      name: data.name,
+      qty: data.qty,
+      unitPrice: data.unitPrice,
+      subtotal: computeLineSubtotal({ unitPrice: data.unitPrice, qty: data.qty }),
+      status: ItemStatus.PENDING,
+      priceType: data.priceType,
+      originalPrice: data.originalPrice,
+      overrideReason: data.overrideReason,
+      overriddenBy: data.overriddenBy,
+      notes: data.notes,
+      authorChannel: data.authorChannel, // SA ruling #3418: the moved line's own author
+    },
+  });
 }

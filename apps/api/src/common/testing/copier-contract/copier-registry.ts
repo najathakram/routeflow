@@ -98,7 +98,7 @@ const MERGE = {
   target: "OrderItem" as const,
   anchor: { via: "delegate", model: "orderItem" } as Anchor,
   carried:
-    "productId name qty unitPrice subtotal priceType originalPrice promoFreeUnits boxes pieces unitsPerBox notes overrideReason overriddenBy status trackedCategoryId " +
+    "productId qty unitPrice subtotal priceType originalPrice promoFreeUnits boxes pieces unitsPerBox notes overrideReason overriddenBy status trackedCategoryId " +
     // B297: the loser line's trio, via `...copyCategoryTaxSnapshot(meta)` (SPREAD_HELPER_KEYS).
     "categoryTaxType categoryTaxRate categoryPriceIncludesTax " +
     // SA-716 MUST 2: the backorder marker is a fact of the sale; the fold CARRIES it (winner += losers').
@@ -111,7 +111,7 @@ const MERGE = {
   // carried); the components are rescaled from the winner's own stored rows by syncOrderLineCompositions.
   rederived: "categoryTaxAmount compositionMode recipeId recipeVersion", // recomputeLineCategoryTaxes after the fold
   components: "rederived" as const,
-  na: "deliveredQty invoicedQty",
+  na: "deliveredQty invoicedQty name", // a catalog line shows its product's name; only an unlisted line has its own (C9c)
   gaps: {
     ...P0A_LABELS,
     ...SA772_ORDER_TAX_GAP,
@@ -295,6 +295,33 @@ export const COPIERS: Copier[] = [
   },
   { id: "C9a", fn: "mergeAllPendingForCustomer", ...MERGE },
   { id: "C9b", fn: "forceConsolidateCustomer", ...MERGE },
+  {
+    // The unlisted (catalog-free) loser line both merges append, one literal shared by C9a and C9b (it was inline in
+    // each). Written from the loser line's own columns; never boxed, never a catalog line.
+    id: "C9c",
+    file: "orders/merge-unlisted-lines.ts",
+    fn: "createUnlistedLoserLine",
+    target: "OrderItem",
+    anchor: { via: "delegate", model: "orderItem" },
+    carried:
+      "name qty unitPrice priceType originalPrice notes overrideReason overriddenBy authorChannel",
+    rederived: "subtotal categoryTaxAmount compositionMode recipeId recipeVersion", // computeLineSubtotal; the tax pass after the merge
+    reset: "productId status", // an unlisted line has no product; it lands PENDING on the winner
+    components: "na", // an unlisted line is never composed
+    na: "deliveredQty invoicedQty promoFreeUnits boxes pieces unitsPerBox trackedCategoryId categoryTaxType categoryTaxRate categoryPriceIncludesTax backorderedPieces",
+    gaps: {
+      ...P0A_LABELS,
+      ...SA772_ORDER_TAX_GAP,
+      unitLabel: "unfiled",
+      trackedSubcategoryId: "unverified",
+      position: "unverified",
+      // the loser line's staff-override stamp is not carried onto an unlisted line (the catalog literal carries it)
+      restrictionOverrideReason: "unverified",
+      restrictionOverrideBy: "unverified",
+      restrictionOverrideAt: "unverified",
+      restrictionOverrideRuleIds: "unverified",
+    },
+  },
   {
     id: "C10",
     file: "credit-notes/credit-notes.service.ts",

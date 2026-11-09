@@ -116,6 +116,11 @@ const REGISTRY: Record<string, Entry> = {
     kind: "exempt",
     reason: "called only from updateOrderItems, which syncs at its end",
   },
+  "orders/merge-unlisted-lines.ts::createUnlistedLoserLine": {
+    kind: "exempt",
+    reason:
+      "an unlisted (catalog-free) line is never composed; both merges sync compositions at their end",
+  },
   "orders/order-edit-composition.ts::restoreCarriedComposition": {
     kind: "exempt",
     reason:

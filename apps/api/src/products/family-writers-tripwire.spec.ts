@@ -22,7 +22,7 @@ const GUARD = /assertSellableLines\(/g;
 const GUARDED: Record<string, { calls: number; sites: number; why: string }> = {
   "orders/orders.service.ts": {
     calls: 6,
-    sites: 12,
+    sites: 10,
     why: "create(); updateOrderItems: replace-all (x2 load sites), the diff edit-add, the substitute line; approveChangeRequestAtStop ADD_ITEM",
   },
   "orders/change-requests.service.ts": {
@@ -69,6 +69,10 @@ const ALLOWED: Record<string, { sites: number; why: string }> = {
   "inventory/b562-repair/d2-repair.ts": {
     sites: 1,
     why: "the B562 D2 repair input (row 635): a quantity-0 COST_BASIS row, only on a product that already carries its own D1 anchor and stock ledger (a FAMILY is never stocked, so it never has one)",
+  },
+  "orders/merge-unlisted-lines.ts": {
+    sites: 1,
+    why: "the merges append a loser line that is UNLISTED (productId null, so no product can be a family): the one literal both merges share",
   },
   "bookkeeping/bookkeeping.service.ts": {
     sites: 1,
