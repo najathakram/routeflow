@@ -14,6 +14,8 @@ export interface UnlistedMergeItem {
   notes: string | null;
   /** SA ruling (#3418): the moved line's own author (its marker, else its loser order's rule). */
   authorChannel: OrderItemAuthorChannel;
+  /** W-1187 (D4): the line's rank in the sequence the merge appends in (`loserLineRanks`), shared with the catalog creates. */
+  appendRank: number;
 }
 
 /**
@@ -27,6 +29,7 @@ export function collectUnlistedLoserItems(
     source?: string | null;
     sourceRecorded?: boolean | null;
     lineItems: ReadonlyArray<{
+      id: string;
       authorChannel?: string | null;
       productId: string | null;
       name: string | null;
@@ -39,6 +42,7 @@ export function collectUnlistedLoserItems(
       notes: string | null;
     }>;
   }>,
+  ranks: ReadonlyMap<string, number>,
 ): UnlistedMergeItem[] {
   const unlistedNewItems: UnlistedMergeItem[] = [];
   for (const loser of losers) {
@@ -54,17 +58,19 @@ export function collectUnlistedLoserItems(
         overriddenBy: li.overriddenBy,
         notes: li.notes,
         authorChannel: resolvedLineAuthor(li, loser),
+        appendRank: ranks.get(li.id) ?? Number.MAX_SAFE_INTEGER,
       });
     }
   }
   return unlistedNewItems;
 }
 
-/** Appends one unlisted loser line to the merge winner as its own new line. */
+/** Appends one unlisted loser line to the merge winner as its own new line, in the slot the caller's allocator gave it. */
 export async function createUnlistedLoserLine(
   tx: Prisma.TransactionClient,
   winnerId: string,
   data: UnlistedMergeItem,
+  position: number,
 ): Promise<void> {
   await tx.orderItem.create({
     data: {
@@ -81,6 +87,7 @@ export async function createUnlistedLoserLine(
       overriddenBy: data.overriddenBy,
       notes: data.notes,
       authorChannel: data.authorChannel, // SA ruling #3418: the moved line's own author
+      position,
     },
   });
 }

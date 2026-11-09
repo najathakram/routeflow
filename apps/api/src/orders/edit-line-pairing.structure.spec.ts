@@ -79,7 +79,7 @@ describe("one pairing helper for the buyer, staff and driver edits (row 373b)", 
       "bookkeeping/bookkeeping.service.ts",
       "invoices/invoices.service.ts",
       "order-templates/order-templates.service.ts",
-      "orders/merge-unlisted-lines.ts", // the merges' one unlisted-line append (a loser line moved, nothing to pair)
+      "orders/merge-unlisted-lines.ts", // W-1187: the merges' one unlisted-line append (a loser line moved, nothing to pair)
       "orders/orders.service.ts",
       "orders/unit-line-edit.ts",
     ]);

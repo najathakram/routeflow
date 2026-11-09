@@ -188,6 +188,7 @@ export * from "./api/restrictions-settings";
 export * from "./api/product-labels";
 export * from "./api/restrictions-admin";
 export * from "./api/buyer-reorder";
+export * from "./api/line-order";
 export * from "./api/selling-restrictions";
 export * from "./api/messaging-matrix";
 export * from "./api/messaging-delivery";

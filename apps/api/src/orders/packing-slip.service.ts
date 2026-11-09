@@ -19,6 +19,7 @@ import {
   type PackingSlipSeller,
 } from "./packing-slip-data";
 import { PackingSlipPdfTemplate } from "./packing-slip-pdf-template";
+import { ORDER_LINE_ORDER_BY } from "./line-position";
 
 export interface PackingSlipsOut {
   url: string | null;
@@ -69,7 +70,7 @@ export class PackingSlipService {
             // SA-1067 C3: the order the lines were scanned in (position), then when they were added; legacy rows with no
             // position sort last (Postgres puts NULLs last on ASC). Lines made in one write share a createdAt, so
             // createdAt alone left their order to chance.
-            orderBy: [{ position: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+            orderBy: ORDER_LINE_ORDER_BY,
             select: PACKING_SLIP_LINE_SELECT,
           },
         },

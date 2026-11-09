@@ -125,13 +125,14 @@ describe("SA-1034: price-edit capability is checked at every override site", () 
     expect(found).toEqual(CUSTOM_ASSERT_COUNTS);
   });
 
-  it("orders.service.ts holds exactly 5 `productId: null` sites, each classified in the SA-1034 PR body", () => {
+  it("orders.service.ts holds exactly 4 `productId: null` sites, each classified in the SA-1034 PR body", () => {
     // AUTHORING (assertCustomPricesAllowed): create, staff full replace, diff-add. COPY: the buyer/driver replace (a
     // buyer's entry is ignored, B51; a driver keeps today's behaviour). The two auto-merge re-homes of an unlisted loser
-    // line are the ONE `createUnlistedLoserLine` in merge-unlisted-lines.ts. The fifth is the
-    // `where: { productId: null }` filter. A new site must be classed AUTHORING or COPY in its own diff.
+    // line are the ONE `createUnlistedLoserLine` in merge-unlisted-lines.ts (W-1187), and the B51
+    // `where: { productId: null }` re-stamp filter went with it (the replace keeps each line's own slot through
+    // replaceSlotPlanner). A new site must be classed AUTHORING or COPY in its own diff.
     expect([...code(read("orders/orders.service.ts")).matchAll(/productId: null/g)]).toHaveLength(
-      5,
+      4,
     );
   });
 

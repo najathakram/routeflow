@@ -72,7 +72,7 @@ const ALLOWED: Record<string, { sites: number; why: string }> = {
   },
   "orders/merge-unlisted-lines.ts": {
     sites: 1,
-    why: "the merges append a loser line that is UNLISTED (productId null, so no product can be a family): the one literal both merges share",
+    why: "W-1187: the merges append a loser line that is UNLISTED (productId null, so no product can be a family): the one literal both merges share",
   },
   "bookkeeping/bookkeeping.service.ts": {
     sites: 1,

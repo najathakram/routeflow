@@ -9376,7 +9376,11 @@ describe("OrdersService", () => {
         await service.approveChangeRequestAtStop("cr-1", operatorPayload, null);
 
         expect(prisma.orderItem.create).toHaveBeenCalled();
-        expect(prisma.orderItem.update).not.toHaveBeenCalled();
+        // the CANCELLED row is not revived or rewritten: the only write it may get is its display slot (W-1187 densify)
+        for (const [arg] of prisma.orderItem.update.mock.calls) {
+          expect(Object.keys(arg.data)).toEqual(["position"]);
+        }
+        expect(prisma.orderItem.create.mock.calls[0][0].data).toMatchObject({ position: 1 });
       });
 
       it("P4: the at-door approval still aborts before any claim when the un-send throws for recorded payments", async () => {
