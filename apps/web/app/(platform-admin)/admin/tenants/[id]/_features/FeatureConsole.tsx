@@ -200,6 +200,8 @@ export function FeatureConsole({
   const [undoing, setUndoing] = React.useState(false);
   const [undoError, setUndoError] = React.useState<string | null>(null);
   const hashRead = React.useRef<Promise<string> | null>(null);
+  // The reason and end date typed in the sheet survive a Reload after a stale save; Discard and a save clear them.
+  const draft = React.useRef({ reason: "", endDate: "" });
   // An empty stage forgets the hash it was staged against: the next change reads a fresh one.
   React.useEffect(() => {
     if (staged.count === 0) hashRead.current = null;
@@ -360,6 +362,7 @@ export function FeatureConsole({
 
   function onSaved(result: FeatureChangesApplyResponse, count: number) {
     setReviewing(false);
+    draft.current = { reason: "", endDate: "" };
     staged.discard();
     setUndoError(null);
     setSaved({ id: result.changeSetId, count });
@@ -473,7 +476,10 @@ export function FeatureConsole({
       <FeatureChangeBar
         count={staged.count}
         onReview={() => setReviewing(true)}
-        onDiscard={staged.discard}
+        onDiscard={() => {
+          draft.current = { reason: "", endDate: "" };
+          staged.discard();
+        }}
       />
 
       {/* Body: registry rows grouped by area */}
@@ -673,6 +679,16 @@ export function FeatureConsole({
           expected={staged.stage.baseHash}
           changes={staged.stage.changes}
           labelOf={(key) => registryByKey[key]?.label ?? key}
+          planOnOf={(key) => {
+            const f = effectiveByKey[key];
+            // With an override in force, `serving` is the override's doing, not the plan's.
+            return f && !f.source.startsWith("OVERRIDE") ? f.serving : undefined;
+          }}
+          initialReason={draft.current.reason}
+          initialEndDate={draft.current.endDate}
+          onDraftChange={(d) => {
+            draft.current = d;
+          }}
           onClose={() => setReviewing(false)}
           onSaved={onSaved}
           onStale={() => {

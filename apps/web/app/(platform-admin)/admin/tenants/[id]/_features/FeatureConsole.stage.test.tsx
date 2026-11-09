@@ -135,6 +135,67 @@ describe("FeatureConsole staging (WP11)", () => {
     expect(screen.queryByRole("region", { name: "Staged changes" })).not.toBeInTheDocument();
   });
 
+  it("F-A: a row that is on through the plan says 'On from plan to Off', not 'Plan default to Off'", async () => {
+    mockFetchEffective.mockResolvedValue(
+      EFFECTIVE_FIXTURE.map((f) =>
+        f.key === "msrp" ? { ...f, serving: true, source: "NONE" as const } : f,
+      ),
+    );
+    mockPreview.mockResolvedValue({
+      inputsHash: "h1",
+      stale: false,
+      changes: [
+        {
+          key: "msrp",
+          before: null,
+          after: { effect: "DENY", kind: "COMP", expiresAt: null },
+          unchanged: false,
+        },
+      ],
+    });
+    await renderConsole();
+    fireEvent.click(screen.getByRole("button", { name: `Turn off ${MSRP} for this business` }));
+    await waitFor(() => expect(screen.getByTestId("stage-count")).toHaveTextContent("1 change"));
+    fireEvent.click(screen.getByRole("button", { name: "Review changes" }));
+    expect(await screen.findByText(`${MSRP}: On from plan to Off`)).toBeInTheDocument();
+  });
+
+  it("F-D: after a stale save, Reload keeps the staged change and the typed reason and end date", async () => {
+    mockPreview.mockResolvedValue({
+      inputsHash: "h1",
+      stale: false,
+      changes: [
+        {
+          key: "msrp",
+          before: null,
+          after: { effect: "GRANT", kind: "COMP", expiresAt: null },
+          unchanged: false,
+        },
+      ],
+    });
+    mockApply.mockRejectedValue({
+      response: { status: 409, data: { code: "FEATURE_INPUTS_CHANGED" } },
+    });
+    await renderConsole();
+    fireEvent.click(screen.getByRole("button", { name: `Turn on ${MSRP} for this business` }));
+    await waitFor(() => expect(screen.getByTestId("stage-count")).toHaveTextContent("1 change"));
+    fireEvent.click(screen.getByRole("button", { name: "Review changes" }));
+    await screen.findByText(/MSRP on invoices:/);
+    fireEvent.change(screen.getByLabelText(/Why are you making these changes/), {
+      target: { value: "Pilot ended" },
+    });
+    fireEvent.change(screen.getByLabelText(/End date/), { target: { value: "2030-06-30" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Save 1/ })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: /^Save 1/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Reload" }));
+    await waitFor(() => expect(screen.getByTestId("stage-count")).toHaveTextContent("1 change"));
+    fireEvent.click(screen.getByRole("button", { name: "Review changes" }));
+    expect(await screen.findByLabelText(/Why are you making these changes/)).toHaveValue(
+      "Pilot ended",
+    );
+    expect(screen.getByLabelText(/End date/)).toHaveValue("2030-06-30");
+  });
+
   it("Undo in the toast calls undo once with the saved set's id, then the toast goes", async () => {
     mockPreview.mockResolvedValue({
       inputsHash: "h1",

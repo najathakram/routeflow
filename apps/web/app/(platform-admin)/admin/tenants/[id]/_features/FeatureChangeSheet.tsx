@@ -34,8 +34,19 @@ export function stateWords(s: FeatureChangeState | null): string {
 }
 
 /** One line for a row of the sheet: "Sales agents: Plan default to On". */
-export function changeSentence(label: string, row: FeatureChangePreviewRow): string {
-  return `${label}: ${stateWords(row.before)} to ${stateWords(row.after)}`;
+export function changeSentence(
+  label: string,
+  row: FeatureChangePreviewRow,
+  /** What the plan gives this business now (true = on). Used when no override is set, so "Plan default" never hides the real state. */
+  planOn?: boolean,
+): string {
+  const before =
+    row.before || planOn === undefined
+      ? stateWords(row.before)
+      : planOn
+        ? "On from plan"
+        : "Off from plan";
+  return `${label}: ${before} to ${stateWords(row.after)}`;
 }
 
 /** The last moment of the chosen day, so "ends 30 June" holds through the 30th. */
@@ -56,6 +67,11 @@ export interface FeatureChangeSheetProps {
   expected: string;
   changes: FeatureChangeInput[];
   labelOf: (key: string) => string;
+  /** Whether the plan gives the feature now (no override considered); undefined when unknown. */
+  planOnOf?: (key: string) => boolean | undefined;
+  /** Typed text the page keeps across a Reload. */
+  initialEndDate?: string;
+  onDraftChange?: (draft: { reason: string; endDate: string }) => void;
   onClose: () => void;
   /** The save went through: the stage is cleared and the toast offers Undo. */
   onSaved: (result: FeatureChangesApplyResponse, savedCount: number) => void;
@@ -72,6 +88,9 @@ export function FeatureChangeSheet({
   expected,
   changes,
   labelOf,
+  planOnOf,
+  initialEndDate = "",
+  onDraftChange,
   onClose,
   onSaved,
   onStale,
@@ -80,7 +99,11 @@ export function FeatureChangeSheet({
 }: FeatureChangeSheetProps) {
   const [checked, setChecked] = React.useState<Checked>({ status: "checking" });
   const [reason, setReason] = React.useState(initialReason);
-  const [endDate, setEndDate] = React.useState("");
+  const [endDate, setEndDate] = React.useState(initialEndDate);
+  React.useEffect(() => {
+    onDraftChange?.({ reason, endDate });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reason, endDate]);
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [attempt, setAttempt] = React.useState(0);
@@ -195,7 +218,7 @@ export function FeatureChangeSheet({
             </h3>
             <ul className="mt-1 space-y-1">
               {changing.map((r) => (
-                <li key={r.key}>{changeSentence(labelOf(r.key), r)}</li>
+                <li key={r.key}>{changeSentence(labelOf(r.key), r, planOnOf?.(r.key))}</li>
               ))}
             </ul>
           </section>
@@ -234,7 +257,7 @@ export function FeatureChangeSheet({
             maxLength={500}
             className={FIELD}
           />
-          {!reasonOk && reason.length > 0 && (
+          {!reasonOk && (
             <p className="mt-1 text-xs text-amber-300">Add a few words. History shows this.</p>
           )}
         </div>

@@ -67,6 +67,29 @@ describe("FeatureChangeSheet (WP11)", () => {
     expect(changeSentence("Gamma", row("c", null, ON))).toBe("Gamma: Plan default to On");
   });
 
+  it("F-A: with no override set, the before-state is what the plan gives, not 'Plan default'", () => {
+    expect(changeSentence("Gamma", row("c", null, OFF), true)).toBe("Gamma: On from plan to Off");
+    expect(changeSentence("Gamma", row("c", null, ON), false)).toBe("Gamma: Off from plan to On");
+    expect(changeSentence("Gamma", row("c", ON, OFF), false)).toBe("Gamma: On to Off");
+  });
+
+  it("F-A: the sheet shows the plan state for a row with no override", async () => {
+    ready([row("a", null, OFF)]);
+    renderSheet({ changes: CHANGES.slice(0, 1), planOnOf: () => true });
+    expect(await screen.findByText("Alpha: On from plan to Off")).toBeInTheDocument();
+  });
+
+  it("F-B: the reason hint is there from the start, and goes once the reason is long enough", async () => {
+    ready([row("a", ON, OFF)]);
+    renderSheet({ changes: CHANGES.slice(0, 1) });
+    await screen.findByText("Alpha: On to Off");
+    expect(screen.getByText(/Add a few words/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/Why are you making these changes/), {
+      target: { value: "Pilot ended" },
+    });
+    expect(screen.queryByText(/Add a few words/)).not.toBeInTheDocument();
+  });
+
   it("T-ui1: checks the set on open (one dry run), lists the changes under Changes now, offers Save 3 changes", async () => {
     ready([row("a", ON, OFF), row("b", ON, OFF), row("c", null, ON)]);
     renderSheet();

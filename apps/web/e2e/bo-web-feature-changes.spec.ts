@@ -235,8 +235,8 @@ for (const vp of VIEWPORTS) {
       await stageThree(page);
       await page.getByRole("button", { name: "Review changes" }).click();
       const dialog = page.getByRole("dialog");
-      await expect(dialog.getByText("MSRP on invoices: Plan default to Off")).toBeVisible();
-      await expect(dialog.getByText("Scan invoices: Plan default to On")).toBeVisible();
+      await expect(dialog.getByText("MSRP on invoices: Off from plan to Off")).toBeVisible();
+      await expect(dialog.getByText("Scan invoices: Off from plan to On")).toBeVisible();
       await noSideScroll(page);
       await dialog.getByLabel(/Why are you making these changes/).fill("Pilot ended");
       await dialog.getByRole("button", { name: "Save 3 changes" }).click();
