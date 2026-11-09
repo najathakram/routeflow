@@ -143,6 +143,8 @@ beforeEach(() => {
 
 describe("F2: an Auto (0) family tier", () => {
   it("shows no false 'Higher tier prices' warning when tier 3 sits below Retail and tier 2 is Auto", async () => {
+    // Auto T2 charges Retail 1.25; T3 1.10, T4 1.05 and T5 1.00 are each at or below the tier above
+    current = { ...FAMILY, priceTier4: "1.05", priceTier5: "1" };
     const user = userEvent.setup();
     renderWithProviders(<ProductDetailPage />);
     await user.click(screen.getByTitle("Edit product"));
@@ -164,5 +166,17 @@ describe("F2: an Auto (0) family tier", () => {
     renderWithProviders(<ProductDetailPage />);
     await user.click(screen.getByTitle("Edit product"));
     expect(screen.getByText(/Higher tier prices should be/)).toBeTruthy();
+  });
+
+  it("an Auto tier under a lower priced tier charges Retail, so it warns (Retail 1.25, T2 1.00, T3 Auto)", async () => {
+    current = { ...FAMILY, priceTier2: "1", priceTier3: "0", priceTier4: "0", priceTier5: "0" };
+    const user = userEvent.setup();
+    renderWithProviders(<ProductDetailPage />);
+    await user.click(screen.getByTitle("Edit product"));
+    expect(screen.getByText(/Higher tier prices should be/)).toBeTruthy();
+    // the Auto boxes stay empty with the placeholder
+    expect(
+      (screen.getAllByPlaceholderText("Auto") as HTMLInputElement[]).map((b) => b.value),
+    ).toEqual(["", "", ""]);
   });
 });

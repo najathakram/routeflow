@@ -1,17 +1,30 @@
 import { tierWarns, tiersBreakOrder } from "./tier-order";
 
-// W-1170 F2: a tier stored as 0 is Auto (follows Retail); the order check skips it with the prices grid on.
+// W-1170 F2: a tier stored as 0 is Auto and charges Retail (getTierPrice), so with the prices grid on the order check
+// compares what each tier charges: effective = tier > 0 ? tier : Retail.
 describe("tiersBreakOrder", () => {
-  it("skipAuto: an Auto tier 2 never makes tier 3 a violation, and an Auto tier never warns", () => {
-    expect(tiersBreakOrder(1.25, [0, 1.1, 0, 0], 1, true)).toBe(false);
-    expect(tiersBreakOrder(1.25, [0, 1.1, 0, 0], 0, true)).toBe(false);
-    expect(tiersBreakOrder(1.25, [0, 1.1, 0, 0], 2, true)).toBe(false);
+  it("skipAuto: an Auto tier below a lower priced tier charges Retail, so it warns (Retail 1.25, T2 1.00, T3 Auto)", () => {
+    expect(tiersBreakOrder(1.25, [1.0, 0, 0, 0], 1, true)).toBe(true);
+    expect(tiersBreakOrder(1.25, [1.0, 0, 0, 0], 0, true)).toBe(false);
   });
 
-  it("skipAuto: compares against the nearest priced tier above, else Retail", () => {
-    expect(tiersBreakOrder(1.25, [0, 2, 0, 0], 1, true)).toBe(true); // above Retail
-    expect(tiersBreakOrder(1.25, [1, 0, 1.2, 0], 2, true)).toBe(true); // above tier 2 (skipping Auto tier 3)
-    expect(tiersBreakOrder(1.25, [1, 0, 0.9, 0], 2, true)).toBe(false);
+  it("skipAuto: a priced tier is checked against the tier above's effective price (T4 1.05 after an Auto T3)", () => {
+    // T3 Auto charges 1.25: T4 1.05 is below it (no warning on T4), T3 itself is above T2 1.00 (warning on T3)
+    expect(tiersBreakOrder(1.25, [1.0, 0, 1.05, 0], 2, true)).toBe(false);
+    expect(tiersBreakOrder(1.25, [1.0, 0, 1.05, 0], 1, true)).toBe(true);
+    // T4 above the effective 1.25 of the Auto T3 is a violation
+    expect(tiersBreakOrder(1.25, [1.3, 0, 1.3, 0], 2, true)).toBe(true);
+  });
+
+  it("skipAuto: an Auto tier under Retail with Auto tiers above it follows Retail and never warns", () => {
+    expect(tiersBreakOrder(1.25, [0, 0, 0, 0], 0, true)).toBe(false);
+    expect(tiersBreakOrder(1.25, [0, 0, 0, 0], 3, true)).toBe(false);
+    expect(tiersBreakOrder(1.25, [0, 1.1, 1.05, 1], 1, true)).toBe(false);
+  });
+
+  it("skipAuto: tier 2 is checked against Retail, and a tier above Retail warns", () => {
+    expect(tiersBreakOrder(1.25, [2, 0, 0, 0], 0, true)).toBe(true);
+    expect(tiersBreakOrder(1.25, [1.25, 1.25, 1.2, 0], 2, true)).toBe(false);
   });
 
   it("without skipAuto a 0 compares as a price, as before", () => {
@@ -21,10 +34,14 @@ describe("tiersBreakOrder", () => {
 });
 
 describe("tierWarns", () => {
-  const product = { priceTier2: "0", priceTier3: "1.1", priceTier4: "0", priceTier5: null };
+  const product = { priceTier2: "0", priceTier3: "1.1", priceTier4: "1.05", priceTier5: null };
   it("reads the draft first, then the saved product, and a missing tier follows Retail", () => {
     expect(tierWarns(1, {}, product, 1.25, true)).toBe(false);
     expect(tierWarns(1, { priceTier3: "2" }, product, 1.25, true)).toBe(true);
     expect(tierWarns(1, { pricePerUnit: "1" }, product, 1.25, true)).toBe(true);
+    // Retail 1.25, T2 1.00, T3 Auto: T3 charges Retail, above T2
+    expect(tierWarns(1, { priceTier2: "1", priceTier3: "0" }, product, 1.25, true)).toBe(true);
+    // tier 5 is missing (follows Retail 1.25), above tier 4 1.05
+    expect(tierWarns(3, {}, product, 1.25, true)).toBe(true);
   });
 });
