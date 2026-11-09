@@ -87,7 +87,7 @@ describe("CounterSaleService.ring", () => {
   let replay: boolean;
   // SA-764: the Order.counterCashTendered column, which the CASH tender writes before paying and the read-back serves change from
   let storedTendered: number | null;
-  let replayOrder: { id: string; counterSale?: boolean };
+  let replayOrder: { id: string; counterSale?: boolean; orderDate?: Date | null };
 
   const inv = (id: string, total: number, payments: any[] = [], at = 1): Inv => ({
     id,
@@ -216,6 +216,56 @@ describe("CounterSaleService.ring", () => {
         staff,
         expect.objectContaining({ counterSale: true }),
       );
+    });
+
+    describe("W-1188: the sale's business day", () => {
+      it("R1: a dated sale hands createSale the day (master: orderDate never reached createSale)", async () => {
+        await service.ring(named({ method: "CASH" }, { orderDate: "2026-11-06" }) as never, staff);
+        expect(createSale.mock.calls[0][0].orderDate).toBe("2026-11-06");
+      });
+
+      it("an undated sale hands createSale no orderDate key at all (the default path is byte-identical)", async () => {
+        await service.ring(named({ method: "CASH" }) as never, staff);
+        expect(createSale.mock.calls[0][0]).not.toHaveProperty("orderDate");
+      });
+
+      it("R18: the same key with a different day is 409 COUNTER_SALE_KEY_CONFLICT, nothing written", async () => {
+        replay = true;
+        replayOrder = {
+          id: "ord-1",
+          counterSale: true,
+          orderDate: new Date("2026-11-06T00:00:00.000Z"),
+        };
+        const e = await errorOf(
+          service.ring(
+            named({ method: "CASH" }, { orderDate: "2026-11-05" }) as never,
+            staff,
+            "k-date",
+          ),
+        );
+        expect(e.getStatus()).toBe(409);
+        expect(e.getResponse().code).toBe("COUNTER_SALE_KEY_CONFLICT");
+        expect(recordPayment).not.toHaveBeenCalled();
+        // a replay that now sends NO day against a dated sale is a different sale too
+        const e2 = await errorOf(service.ring(named({ method: "CASH" }) as never, staff, "k-date"));
+        expect(e2.getResponse().code).toBe("COUNTER_SALE_KEY_CONFLICT");
+      });
+
+      it("the same key with the same day replays", async () => {
+        replay = true;
+        replayOrder = {
+          id: "ord-1",
+          counterSale: true,
+          orderDate: new Date("2026-11-06T00:00:00.000Z"),
+        };
+        await expect(
+          service.ring(
+            named({ method: "CASH" }, { orderDate: "2026-11-06" }) as never,
+            staff,
+            "k-date",
+          ),
+        ).resolves.toBeDefined();
+      });
     });
 
     it("a walk-in counter POST also marks the order as a counter sale", async () => {
