@@ -566,21 +566,23 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     };
   };
 
-  const beginEditing = (surface: EditSurface) => {
+  // F6: staff without PRICING cannot save, so no entry (begin, Apply, Use family prices) opens an editor for them.
+  const beginEditing = (surface: EditSurface): boolean => {
+    if (!mayEdit) return false;
     surfaceRef.current = surface;
     setEditingIn(surface);
     setLastSave(null);
     hooksRef.current.onEdit?.();
+    return true;
   };
 
   const api: GridEditApi = {
     editing,
     begin: (cell, surface = "inline") => {
-      // F6: staff without PRICING cannot save, so no entry (Reset to Auto, Add a unit price) opens an editor for them.
       if (!mayEdit) return false;
       // One editor at a time: the other surface keeps the draft until it saves or discards.
       if (surfaceRef.current !== null && surfaceRef.current !== surface) return false;
-      beginEditing(surface);
+      if (!beginEditing(surface)) return false;
       beginTarget.current = cell ?? null;
       if (cell) setFocus(cell);
       return true;
@@ -691,6 +693,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
         return on ? [...rest, move] : rest;
       }),
     applyPlan: (plan, replan, lead, follows = 0) => {
+      if (!mayEdit) return;
       // Only a draft that was empty, or still exactly the last Apply, can be described by Apply's words.
       const leads =
         lead && (count === 0 || appliedLead)
@@ -711,8 +714,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     canTakeFamilyPrices:
       familyCells != null && familyCells[0]?.value != null && familyCells.some((c) => !c.follows),
     takeFamilyPrices: () => {
-      if (!familyCells) return;
-      beginEditing(surfaceRef.current ?? "inline");
+      if (!familyCells || !beginEditing(surfaceRef.current ?? "inline")) return;
       setEntries([
         ...entries.filter((e) => !(e.kind === "cell" && parseKey(e.key).ref === "pack")),
         ...([1, 2, 3, 4, 5] as const).map((t): DraftEntry => ({

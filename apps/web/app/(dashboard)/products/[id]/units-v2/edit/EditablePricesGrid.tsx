@@ -175,7 +175,7 @@ export function EditablePricesGrid({
               Change prices
             </button>
           )}
-          {surface === "inline" && d.canTakeFamilyPrices && (
+          {surface === "inline" && mayEdit && d.canTakeFamilyPrices && (
             <button
               type="button"
               data-testid={T.btnUseFamilyPrices}
