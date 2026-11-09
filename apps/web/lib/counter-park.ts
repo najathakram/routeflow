@@ -134,5 +134,3 @@ export function parkedRowTitle(
     return { title: `Walk-in · ${formatParkedTime(createdAt, timeZone)}`, timeShown: true };
   return { title: label, timeShown: false };
 }
-
-export const lineCountLabel = (n: number): string => (n === 1 ? "1 line" : `${n} lines`);

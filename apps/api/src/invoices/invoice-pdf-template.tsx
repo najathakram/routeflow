@@ -3,6 +3,7 @@ import { Document, Page, Text, View, StyleSheet, Image, Link } from "@react-pdf/
 import { carrierLabel, getTrackingUrl } from "../common/shipping";
 import {
   baseUnitSuffix,
+  formatInvoiceLineCounts,
   formatPerBaseUnitPrice,
   invoiceTaxSplit,
   roundMoney,
@@ -827,8 +828,23 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
           ) : null}
 
           {/* Totals */}
-          <View style={styles.totalsWrapper}>
+          <View style={styles.totalsWrapper} wrap={false}>
             <View style={styles.totalsBox}>
+              {/* W-1185: the item count opens the totals box. */}
+              <View style={styles.totalRow}>
+                <Text style={styles.totalLabel}>Items</Text>
+                <Text style={styles.totalValue}>
+                  {formatInvoiceLineCounts(
+                    invoice.items.map((i) => ({
+                      qty: toNum(i.qty),
+                      boxes: i.boxes,
+                      pieces: i.pieces,
+                      unitsPerBox: i.unitsPerBox,
+                      unitLabel: i.unitLabel,
+                    })),
+                  )}
+                </Text>
+              </View>
               <View style={styles.totalRow}>
                 <Text style={styles.totalLabel}>Subtotal</Text>
                 <Text style={styles.totalValue}>{fmt(subtotal)}</Text>

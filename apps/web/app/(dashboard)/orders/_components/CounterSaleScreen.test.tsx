@@ -147,7 +147,12 @@ describe("CounterSaleScreen", () => {
     renderTill(<CounterSaleScreen />);
     await scan("WATER");
     await scan("WATER");
-    await waitFor(() => expect(screen.getByText(/2 boxes/)).toBeInTheDocument());
+    // W-1185: the item-count chip also reads "2 boxes", so the line is read inside the Items list.
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("list", { name: "Items" })).getByText(/2 boxes/),
+      ).toBeInTheDocument(),
+    );
     expect(screen.getAllByRole("listitem", { name: "" }).length).toBeGreaterThan(0);
     expect(screen.getByTestId("running-total")).toHaveTextContent("$24.00");
   });

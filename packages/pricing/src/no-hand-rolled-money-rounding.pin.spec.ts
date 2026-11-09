@@ -921,13 +921,6 @@ const ALLOW: Allow[] = [
     note: "formatQty: a quantity, not an amount (W10)",
   },
   {
-    file: "apps/web/lib/order-qty-summary.ts",
-    form: "F1",
-    count: 1,
-    why: "not-money",
-    note: "an order quantity summary, not an amount",
-  },
-  {
     file: "packages/types/order-applied-credits.ts",
     form: "F3",
     count: 1,

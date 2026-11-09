@@ -125,7 +125,7 @@ import { customerPricingGate, gateNoticeLayer } from "@/lib/customer-pricing-gat
 import { useCustomerLinePricing } from "@/lib/useCustomerLinePricing";
 import { MoneyInput } from "@/components/MoneyInput";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { summarizeQtyByUnit } from "@/lib/order-qty-summary";
+import { formatUnitCounts, summarizeLineCounts } from "@routeflow/pricing";
 import { isEditDirty, useEditLeaveGuard } from "./edit-leave-guard";
 import { AppliedCreditsPanel, appliedOnOrderRows } from "./AppliedCreditsPanel";
 import { SplitInvoiceModal } from "../_components/SplitInvoiceModal";
@@ -963,6 +963,8 @@ export default function OrderDetailPage() {
     order.status === "CANCELLED"
       ? order.lineItems
       : order.lineItems.filter((li) => li.status !== "CANCELLED");
+  // W-1185: the shared line/unit counts (boxes and pieces are never added together).
+  const counts = summarizeLineCounts(summaryLineItems);
 
   const shipFirst = order.fulfillPath === "SHIP";
   const shipmentSection = (
@@ -1889,13 +1891,11 @@ export default function OrderDetailPage() {
               )}
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-navy/70">Line items</dt>
-                <dd className="mono font-medium text-navy">{summaryLineItems.length}</dd>
+                <dd className="mono font-medium text-navy">{counts.lines}</dd>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-navy/70">Total quantity</dt>
-                <dd className="mono font-medium text-navy">
-                  {summarizeQtyByUnit(summaryLineItems)}
-                </dd>
+                <dd className="mono font-medium text-navy">{formatUnitCounts(counts) || "0"}</dd>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-navy/70">Subtotal</dt>
