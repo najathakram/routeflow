@@ -1,5 +1,5 @@
 {"id":"B394","batch":"F51","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B395","batch":"F51","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B395","batch":"F51","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Re-check 2026-11-09 at 27d8125e17: apps/api/src/estimates/estimates.service.ts:281-294 (tax computed, discount not an input); estimates/dto/create-estimate.dto.spec.ts:68. line last changed at 338a9b96b6 (fixed in 338a9b96b6cdf7d21730bbda9d1bbdb6da3a6191)","sha":"338a9b96b6cdf7d21730bbda9d1bbdb6da3a6191"}
 {"id":"B396","batch":"F51","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B397","batch":"F51","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B398","batch":"F51","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
@@ -9,7 +9,7 @@
 {"id":"B402","batch":"F51","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B855","batch":"F51","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B856","batch":"F51","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B857","batch":"F51","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B857","batch":"F51","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Re-check 2026-11-09 at 27d8125e17: a407d5267d (#2166): usePlanOptions.ts catalog-driven list; admin/tenants/[id]/page.tsx:389 and :889 use usePlanOptions/withCurrentPlan. fixed in a407d5267d (fixed in a407d5267dd24d12ed7ee1f7e3583fbab3634d12)","sha":"a407d5267dd24d12ed7ee1f7e3583fbab3634d12"}
 {"id":"B863","batch":"F51","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B864","batch":"F51","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B865","batch":"F51","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
