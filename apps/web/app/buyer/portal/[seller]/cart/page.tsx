@@ -265,7 +265,8 @@ export default function BuyerCartPage() {
         items: cartOrderItems(lines),
         notes: notes || undefined,
         urgent,
-        requestedDeliveryDate: deliveryDate || undefined,
+        requestedDeliveryDate:
+          sellerShowsRouteWording(capability) && deliveryDate ? deliveryDate : undefined,
         status: "PENDING",
         forceNew,
         ...(fulfillPath ? { fulfillPath } : {}),
