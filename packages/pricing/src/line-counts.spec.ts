@@ -218,18 +218,51 @@ describe("formatInvoiceLineCounts", () => {
         product: { unit: "can" },
       },
     ];
-    // The invoice qty column prints a bare 6 for the first line, so the count claims no unit for
-    // it: the line is counted, the bottles are not named.
-    expect(formatInvoiceLineCounts(items)).toBe("2 lines · 2 cases");
+    // The invoice qty column prints a bare 6 for the first line: the bare number is pieces by
+    // default, and the catalog's "bottle" is never read.
+    expect(formatInvoiceLineCounts(items)).toBe("2 lines · 2 cases · 6 pcs");
     expect(text(items)).toBe("2 lines · 6 bottles · 2 cases");
   });
 
   // W-1185 fix 1 (F3): an unboxed invoice line is named only by its own frozen base label.
-  it("an unboxed line with no frozen word counts the line only, never pcs", () => {
-    expect(formatInvoiceLineCounts([{ qty: 1.5, product: { unit: "kg" } }])).toBe("1 line");
+  it("an unboxed line with no frozen word counts as pieces, never the live catalog unit", () => {
+    expect(formatInvoiceLineCounts([{ qty: 1.5, product: { unit: "kg" } }])).toBe(
+      "1 line · 1.5 pcs",
+    );
     expect(
       formatInvoiceLineCounts([{ qty: 1.5, boxes: null, pieces: null, baseLabel: "Piece" }]),
+    ).toBe("1 line · 1.5 pcs");
+  });
+
+  // W-1185 fix round 2 (MUST): the bare number in the qty column is pieces by default.
+  it("three plain lines with no word keep their quantity", () => {
+    expect(formatInvoiceLineCounts([{ qty: 10 }, { qty: 5 }, { qty: 3 }])).toBe("3 lines · 18 pcs");
+  });
+
+  it("two boxed lines plus one plain line read boxes then pieces", () => {
+    expect(
+      formatInvoiceLineCounts([
+        { qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12 },
+        { qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12 },
+        { qty: 1 },
+      ]),
+    ).toBe("3 lines · 2 boxes · 1 pc");
+  });
+
+  // W-1185 fix round 2 (SHOULD 2): a named unit with no safe count never reads qty as the count.
+  it("a named unit with no safe count and a real factor counts the line only", () => {
+    expect(
+      formatInvoiceLineCounts([{ qty: 30, boxes: null, unitsPerBox: 12, unitLabel: "Case" }]),
     ).toBe("1 line");
+  });
+
+  it("a named unit with no safe count and factor 1 or none reads qty", () => {
+    expect(formatInvoiceLineCounts([{ qty: 4, unitsPerBox: 1, unitLabel: "Each" }])).toBe(
+      "1 line · 4 pcs",
+    );
+    expect(formatInvoiceLineCounts([{ qty: 4, unitsPerBox: null, unitLabel: "Case" }])).toBe(
+      "1 line · 4 cases",
+    );
   });
 
   it("an unboxed line with a frozen non-generic base label counts in that word", () => {

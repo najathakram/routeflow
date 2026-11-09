@@ -84,9 +84,9 @@ describe("invoice e-mail item count (W-1185)", () => {
       item("Sample Water", { qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12, unitLabel: "Case" }),
       item("Sample Gum", { qty: 2 }),
     ]);
-    // The plain gum line has no frozen word, so it is a line but names no unit.
-    const count = "4 lines · 4 boxes · 2 cases · 4 pcs";
-    expect(html).toMatch(/Items<\/td>\s*<td[^>]*>4 lines · 4 boxes · 2 cases · 4 pcs<\/td>/);
+    // The plain gum line has no frozen word: its bare qty counts as pieces.
+    const count = "4 lines · 4 boxes · 2 cases · 6 pcs";
+    expect(html).toMatch(/Items<\/td>\s*<td[^>]*>4 lines · 4 boxes · 2 cases · 6 pcs<\/td>/);
     expect(text).toContain(`Items: ${count}`);
     // Items row opens the tfoot, above the Balance Due row; the text line sits above the money line.
     expect(html.indexOf("<tfoot>")).toBeLessThan(html.indexOf("Items</td>"));

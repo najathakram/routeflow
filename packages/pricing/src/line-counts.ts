@@ -75,8 +75,8 @@ export interface SummarizeOptions {
   /**
    * How a plain (unboxed, unnamed) line is worded. "unit" (default): its own selling unit
    * (`unit` / `product.unit`), the live documents. "stored-only": only a frozen, non-generic
-   * `baseLabel`; with none, the line is counted and no unit is claimed (an invoice prints a bare
-   * quantity, so "pcs" would be a unit the document never stated).
+   * `baseLabel`; with none, the qty counts under the generic piece word (an invoice prints a bare
+   * quantity, and a bare number is pieces by default). The live catalog unit is never read.
    */
   unboxedWord?: "unit" | "stored-only";
 }
@@ -101,7 +101,16 @@ export function summarizeLineCounts(
     // BEFORE the boxed branch and counted in its own unit.
     const named = (li.unitLabel ?? "").trim();
     if (named) {
-      add(wordOf(named), unitLineCount(li) ?? num(li.qty));
+      const count = unitLineCount(li);
+      if (count != null) add(wordOf(named), count);
+      else {
+        // No safe count. Raw qty is base pieces (qty = count x factor), so reading it as the count
+        // is the 12x class unitLineCount's doc warns about; only a factor of 1 (or none) makes
+        // qty the count. Otherwise the line is counted and no unit is claimed.
+        const factor = li.unitsPerBox == null ? null : Number(li.unitsPerBox);
+        if (factor == null || factor === 1) add(wordOf(named), num(li.qty));
+        else if (num(li.qty) > 0) added = true;
+      }
     } else if (li.boxes != null || li.pieces != null) {
       const pack = singularOf(li.packLabel ?? "");
       const base = singularOf(li.baseLabel ?? "");
@@ -109,8 +118,7 @@ export function summarizeLineCounts(
       add(!base || GENERIC_PIECE.test(base) ? PIECE : base, num(li.pieces));
     } else if (storedOnly) {
       const frozen = wordOf(li.baseLabel);
-      if (frozen !== PIECE) add(frozen, num(li.qty));
-      else if (num(li.qty) > 0) added = true;
+      add(frozen, num(li.qty));
     } else {
       add(wordOf(li.unit ?? li.product?.unit), num(li.qty));
     }
@@ -166,7 +174,8 @@ export function formatLineCounts(c: LineCounts): string {
  * unitLabel, and the sale-time `packLabel` / `baseLabel` snapshots frozen at issue): the same
  * fields its qty column prints. The catalog's live `product` / `unit` is never read, so a reprint
  * after a catalog edit, and the web page, the PDF and the email, always agree. A system line (the
- * NSF fee) is skipped; a plain line with no frozen word is counted as a line, with no unit.
+ * NSF fee) is skipped; a plain line with no frozen word counts its qty as pieces (the bare
+ * number in the qty column).
  */
 export function formatInvoiceLineCounts(items: ReadonlyArray<CountableLine>): string {
   return formatLineCounts(

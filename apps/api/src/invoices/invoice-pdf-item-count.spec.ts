@@ -64,7 +64,7 @@ const MIXED = [
   line("a", { qty: 36, boxes: 3, pieces: 0, unitsPerBox: 12 }),
   line("b", { qty: 16, boxes: 1, pieces: 4, unitsPerBox: 12 }),
   line("c", { qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12, unitLabel: "Case" }),
-  line("d", { qty: 2, product: { unit: "each" } }), // no frozen word: a line, no unit claimed
+  line("d", { qty: 2, product: { unit: "each" } }), // no frozen word: the bare qty counts as pieces
 ];
 
 const render = (items: any[]) =>
@@ -99,7 +99,7 @@ function itemsRow(tree: El[]): string[] | undefined {
 
 describe("the invoice PDF's item count (W-1185)", () => {
   it("prints lines, boxes, named units and pieces in the Items row, never added together", () => {
-    expect(itemsRow(render(MIXED))).toEqual(["Items", "4 lines · 4 boxes · 2 cases · 4 pcs"]);
+    expect(itemsRow(render(MIXED))).toEqual(["Items", "4 lines · 4 boxes · 2 cases · 6 pcs"]);
   });
 
   it("reads singular words for a one-line invoice", () => {
