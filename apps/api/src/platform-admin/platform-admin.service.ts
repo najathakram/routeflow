@@ -3065,8 +3065,8 @@ export class PlatformAdminService {
 
   /**
    * Set (a number), clear (`null`) or leave (`undefined`) one business's monthly AI allowance on RouteFlow's key. One
-   * audit row on the platform trail (tenantId null, so the business does not see it) when the value actually changes:
-   * old and new only. The write lives here with the other Tenant writes (`trial-write-sites.spec`).
+   * audit row, keyed to the target business so it shows under the per-business audit filter, when the value actually
+   * changes: `{ from, to }` only. The write lives here with the other Tenant writes (`trial-write-sites.spec`).
    */
   async setTenantAiCap(tenantId: string, cap: number | null | undefined, actorId: string | null) {
     const tenant = await this.prisma.tenant.findUnique({

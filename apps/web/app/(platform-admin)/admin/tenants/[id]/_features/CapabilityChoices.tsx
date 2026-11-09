@@ -42,7 +42,7 @@ const FOCUS_RING = "focus:outline-none focus-visible:ring-2 focus-visible:ring-i
 /**
  * What this business does: three checkboxes (Delivers on own trucks with its door-payments sub-option, Ships by
  * carrier, Sells at the counter), the "New staff orders open as" choice, and a "Start from…" menu of presets that only
- * pre-ticks. Controlled and shared by the tenant's Setup tab and the create-tenant form. It holds no server shape and
+ * pre-ticks. Controlled and shared by the tenant's Features tab and the create-tenant form. It holds no server shape and
  * derives no mode: what the ticks mean is the preview's job.
  */
 export function CapabilityChoices({

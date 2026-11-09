@@ -152,7 +152,7 @@ describe("Back office P2: the list row no longer carries Suspend or Sign in as a
     mockPatch.mockRejectedValueOnce({ response: { data: { message: "db constraint x_fk" } } });
     fireEvent.click(await screen.findByRole("button", { name: "Reactivate" }));
     expect(
-      await screen.findByText("Couldn't change the tenant's status. Try again."),
+      await screen.findByText("Couldn't change the business's status. Try again."),
     ).toBeInTheDocument();
     expect(screen.queryByText(/x_fk/)).toBeNull();
   });
@@ -164,13 +164,16 @@ describe("Back office P1: Delete on the tenants list uses the shared dialog", ()
     render(<AdminTenantsPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
     const dialog = await screen.findByRole("dialog", { name: "Delete Acme (acme)?" });
-    const del = within(dialog).getByRole("button", { name: "Delete tenant" });
+    const del = within(dialog).getByRole("button", { name: "Delete business" });
     expect(del).toBeDisabled();
     expect(mockDelete).not.toHaveBeenCalled();
 
-    fireEvent.change(within(dialog).getByLabelText("Type the tenant slug to confirm deletion"), {
-      target: { value: "acme" },
-    });
+    fireEvent.change(
+      within(dialog).getByLabelText("Type the business web name to confirm deletion"),
+      {
+        target: { value: "acme" },
+      },
+    );
     expect(del).toBeEnabled();
     fireEvent.click(del);
     await waitFor(() => expect(mockDelete).toHaveBeenCalledTimes(1));
@@ -185,13 +188,16 @@ describe("Back office P1: Delete on the tenants list uses the shared dialog", ()
     render(<AdminTenantsPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
     const dialog = await screen.findByRole("dialog", { name: "Delete Acme (acme)?" });
-    fireEvent.change(within(dialog).getByLabelText("Type the tenant slug to confirm deletion"), {
-      target: { value: "acme" },
-    });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Delete tenant" }));
+    fireEvent.change(
+      within(dialog).getByLabelText("Type the business web name to confirm deletion"),
+      {
+        target: { value: "acme" },
+      },
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete business" }));
     expect(
       await within(dialog).findByText(
-        "Only a suspended tenant can be deleted. Suspend it first, then delete.",
+        "Only a suspended business can be deleted. Suspend it first, then delete.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/internal: tenant has live subscription rows/)).toBeNull();

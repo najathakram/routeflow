@@ -11,6 +11,8 @@ import { PlatformAdminBuyersService } from "./platform-admin-buyers.service";
 import { RfInvoicesController } from "./rf-invoices.controller";
 import { CatchupAdminController } from "./catchup-admin.controller";
 import { AutoLocksAdminController } from "./auto-locks-admin.controller";
+import { AiUsageAdminController } from "./ai-usage-admin.controller";
+import { AiUsageAdminService } from "./ai-usage-admin.service";
 import { EntitlementSweepController } from "./entitlement-sweep.controller";
 import { RfInvoicesAdminService } from "./rf-invoices.service";
 import { AppConfig } from "../config/configuration";
@@ -39,6 +41,7 @@ import { BillingModule } from "../billing/billing.module";
     RfInvoicesController,
     CatchupAdminController,
     AutoLocksAdminController,
+    AiUsageAdminController,
     EntitlementSweepController,
   ],
   providers: [
@@ -48,6 +51,7 @@ import { BillingModule } from "../billing/billing.module";
     TenantMirrorService,
     PlatformAdminBuyersService,
     RfInvoicesAdminService,
+    AiUsageAdminService,
   ],
   exports: [PlatformConfigService],
 })

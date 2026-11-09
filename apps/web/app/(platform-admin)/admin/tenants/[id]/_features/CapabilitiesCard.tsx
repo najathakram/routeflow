@@ -59,7 +59,7 @@ function blockedCopy(b: NonNullable<BusinessCapabilitiesPreviewResponse["blocked
 }
 
 /**
- * The Setup tab's "What this business does" card. The ticks come from the server's `business-capabilities` read; every
+ * The Features tab's "What this business does" card. The ticks come from the server's `business-capabilities` read; every
  * tick change asks for a live preview (a dry run that writes nothing, 300 ms debounce, last request wins, an inline
  * panel under the boxes); Apply is one audited write that sends the fingerprint of the preview on screen. A change that
  * stops billing goes through one alert dialog naming each add-on. Failures show fixed copy chosen by the API's error

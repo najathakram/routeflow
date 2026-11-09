@@ -215,6 +215,7 @@ export * from "./api/onboarding";
 export * from "./api/order-tracking-view";
 export * from "./api/error-codes";
 export * from "./api/app-links";
+export * from "./api/ai-allowance";
 export * from "./api/policies";
 export * from "./api/inventory-settings";
 export * from "./api/preferences";

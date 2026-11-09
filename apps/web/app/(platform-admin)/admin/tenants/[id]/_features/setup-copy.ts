@@ -1,7 +1,7 @@
 import { FLEET_MODULE_KEYS, type FulfilmentMode } from "@routeflow/types";
 
 /**
- * Fixed plain-English copy for the Setup tab and the business-profile flow. Everything the admin reads here comes from
+ * Fixed plain-English copy for the Features tab and the business-profile flow. Everything the admin reads here comes from
  * this file or from the API's own registry text (profile labels and descriptions, the preview's change list) — never
  * from a server error message.
  */

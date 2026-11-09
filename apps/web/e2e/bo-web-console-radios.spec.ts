@@ -200,7 +200,7 @@ async function gotoConsole(page: Page) {
     window.localStorage.setItem("superAdminToken", token);
   }, fakeSuperAdminToken());
   await page.goto(`/admin/tenants/${TENANT_ID}`);
-  await page.getByRole("button", { name: "Setup", exact: true }).click();
+  await page.getByRole("button", { name: "Features", exact: true }).click();
   await expect(page.locator('[data-feature-key="fulfilment_model"]')).toBeVisible({
     timeout: 15_000,
   });

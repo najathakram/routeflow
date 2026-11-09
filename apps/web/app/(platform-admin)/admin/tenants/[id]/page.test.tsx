@@ -150,9 +150,13 @@ jest.mock("@/lib/api/platform-pricing", () => ({
 
 jest.mock("@/lib/tenant-cookie", () => ({ setTenantCookie: jest.fn() }));
 
+async function gotoTab(name: string) {
+  fireEvent.click(await screen.findByRole("button", { name }));
+}
+
 async function gotoSetupTab() {
   render(<TenantDetailPage />);
-  fireEvent.click(await screen.findByRole("button", { name: "Setup" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Features" }));
   await screen.findByText("compliance");
 }
 
@@ -186,31 +190,19 @@ beforeEach(() => {
   mockFetchPlanCatalog.mockResolvedValue(v11Catalog());
 });
 
-describe("Tenant detail page — Setup tab groups the Feature Console and Overrides under Advanced", () => {
-  it("both controls live inside the one Advanced section and survive a collapse/expand", async () => {
+describe("Tenant detail page — Features tab shows the Feature Console and Overrides with no Advanced fold", () => {
+  it("both controls are on the tab, always open, and Set override opens the drawer for that feature", async () => {
     await gotoSetupTab();
 
-    const advanced = screen.getByTestId("setup-advanced");
-    expect(within(advanced).getByRole("button", { name: /^Advanced/ })).toHaveAttribute(
-      "aria-expanded",
-      "true",
-    );
-    // Feature Console: its per-feature rows and "Set override" action; Overrides: its heading + New override.
-    const tobaccoRow = advanced.querySelector('[data-feature-key="tobacco_dealer"]') as HTMLElement;
+    const list = screen.getByTestId("features-list");
+    expect(screen.queryByRole("button", { name: /^Advanced/ })).toBeNull();
+    expect(screen.queryByTestId("setup-advanced")).toBeNull();
+    const tobaccoRow = list.querySelector('[data-feature-key="tobacco_dealer"]') as HTMLElement;
     expect(within(tobaccoRow).getByRole("button", { name: /^Set override/ })).toBeInTheDocument();
-    expect(within(advanced).getByRole("heading", { name: "Overrides" })).toBeInTheDocument();
-    expect(within(advanced).getByRole("button", { name: "+ New override" })).toBeInTheDocument();
+    expect(within(list).getByRole("heading", { name: "Overrides" })).toBeInTheDocument();
+    expect(within(list).getByRole("button", { name: "+ New override" })).toBeInTheDocument();
 
-    // Collapsing hides the body but keeps it mounted (the Customise ref stays valid).
-    fireEvent.click(within(advanced).getByRole("button", { name: /^Advanced/ }));
-    expect(document.getElementById("setup-advanced-body")).not.toBeVisible();
-    expect(advanced.querySelector('[data-feature-key="tobacco_dealer"]')).not.toBeNull();
-
-    // "Set override" from a collapsed section reopens it and opens the drawer for that feature.
-    fireEvent.click(
-      within(tobaccoRow).getByRole("button", { name: /^Set override/, hidden: true }),
-    );
-    expect(document.getElementById("setup-advanced-body")).toBeVisible();
+    fireEvent.click(within(tobaccoRow).getByRole("button", { name: /^Set override/ }));
     expect(((await screen.findByLabelText("Feature key")) as HTMLSelectElement).value).toBe(
       "tobacco_dealer",
     );
@@ -303,7 +295,7 @@ function optionValues(select: HTMLElement): string[] {
 
 async function gotoBillingTab() {
   render(<TenantDetailPage />);
-  fireEvent.click(await screen.findByRole("button", { name: "Billing & subscription" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Plan & billing" }));
 }
 
 describe("REG-B857: tenant plan controls offer the published catalog, not a hardcoded list", () => {
@@ -364,7 +356,7 @@ describe("REG-B857: tenant plan controls offer the published catalog, not a hard
 
   it("REG-B857 T3: Change Plan offers the catalog plans with the tenant's resolved plan selected", async () => {
     tenantOverrides = { plan: "TEAM", planKey: "GROWTH" };
-    render(<TenantDetailPage />);
+    await gotoBillingTab();
     const select = (await screen.findByRole("combobox", { name: "New plan" })) as HTMLSelectElement;
     await waitFor(() =>
       expect(optionValues(select)).toEqual(["STARTER", "GROWTH", "SCALE", "ENTERPRISE"]),
@@ -394,11 +386,12 @@ describe("REG-B857: tenant plan controls offer the published catalog, not a hard
   });
 });
 
-describe("Tenant detail page — the Setup tab (business profiles)", () => {
-  it("names the tab Setup (not 'Addons & Features')", async () => {
+describe("Tenant detail page — the Features tab (business profiles)", () => {
+  it("names the tab Features (not 'Setup' or 'Addons & Features')", async () => {
     render(<TenantDetailPage />);
-    expect(await screen.findByRole("button", { name: "Setup" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Features" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Addons & Features" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Setup" })).not.toBeInTheDocument();
   });
 
   it("opens with the plain-English current setup, then What this business does, then the feature console", async () => {
@@ -471,8 +464,8 @@ describe("Tenant detail page — Impersonate and Extend trial ask first (back of
   it("Impersonate: click sends nothing and opens a dialog naming the tenant and its admin; Cancel sends nothing; Confirm sends one request", async () => {
     mockAdmin = ADMIN;
     render(<TenantDetailPage />);
-    await screen.findByText("Quick actions");
-    await waitFor(() => expect(screen.getAllByText("acme_admin").length).toBeGreaterThan(0));
+    await screen.findByTestId("tenant-header-actions");
+    await act(async () => {}); // the page's one admin read has settled
 
     fireEvent.click(screen.getByRole("button", { name: "Sign in as admin" }));
     const dialog = await screen.findByRole("dialog", { name: "Sign in as admin for Acme (acme)?" });
@@ -501,8 +494,8 @@ describe("Tenant detail page — Impersonate and Extend trial ask first (back of
   it("Impersonate remembers the source tenant ID (only the id, never a URL) for Exit", async () => {
     mockAdmin = ADMIN;
     render(<TenantDetailPage />);
-    await screen.findByText("Quick actions");
-    await waitFor(() => expect(screen.getAllByText("acme_admin").length).toBeGreaterThan(0));
+    await screen.findByTestId("tenant-header-actions");
+    await act(async () => {}); // the page's one admin read has settled
     fireEvent.click(screen.getByRole("button", { name: "Sign in as admin" }));
     const dialog = await screen.findByRole("dialog", { name: "Sign in as admin for Acme (acme)?" });
     post().mockResolvedValueOnce({
@@ -516,7 +509,7 @@ describe("Tenant detail page — Impersonate and Extend trial ask first (back of
   it("Extend trial on a SUSPENDED tenant: nothing is sent until Confirm, and the dialog says the status becomes Trial", async () => {
     tenantOverrides = { status: "SUSPENDED" };
     render(<TenantDetailPage />);
-    await screen.findByText("Quick actions");
+    await gotoTab("Plan & billing");
     fireEvent.click(screen.getByRole("button", { name: "Extend trial" }));
 
     const dialog = await screen.findByRole("dialog", { name: "Extend the trial for Acme (acme)?" });
@@ -548,12 +541,12 @@ describe("Tenant detail page — Impersonate and Extend trial ask first (back of
 
   it("Extend trial on an ACTIVE tenant is off, with the reason on screen (the server refuses it too)", async () => {
     render(<TenantDetailPage />);
-    await screen.findByText("Quick actions");
+    await gotoTab("Plan & billing");
     const btn = screen.getByRole("button", { name: "Extend trial" });
     expect(btn).toBeDisabled();
     expect(btn).toHaveAttribute("aria-describedby", "extend-trial-hint");
     expect(document.getElementById("extend-trial-hint")).toHaveTextContent(
-      "This tenant is Active, so it can't be put on a trial. Suspend it or change its plan instead.",
+      "This business is Active, so it can't be put on a trial. Suspend it or change its plan instead.",
     );
     fireEvent.click(btn);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -565,7 +558,7 @@ describe("Tenant detail page — Impersonate and Extend trial ask first (back of
     async (status) => {
       tenantOverrides = { status };
       render(<TenantDetailPage />);
-      await screen.findByText("Quick actions");
+      await gotoTab("Plan & billing");
       expect(screen.getByRole("heading", { name: "Extend Trial" })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Extend trial" })).toBeInTheDocument();
       expect(screen.getByLabelText("Days")).toBeInTheDocument();
@@ -580,7 +573,7 @@ describe("Tenant detail page — Impersonate and Extend trial ask first (back of
   it("on a TRIAL tenant there is no 'Not on a trial.' note and Extend trial is enabled", async () => {
     tenantOverrides = { status: "TRIAL" };
     render(<TenantDetailPage />);
-    await screen.findByText("Quick actions");
+    await gotoTab("Plan & billing");
     expect(screen.queryByText("Not on a trial.")).toBeNull();
     expect(screen.getByRole("button", { name: "Extend trial" })).toBeEnabled();
   });
@@ -594,13 +587,13 @@ describe("Tenant detail page — Impersonate and Extend trial ask first (back of
       },
     });
     render(<TenantDetailPage />);
-    await screen.findByText("Quick actions");
+    await gotoTab("Plan & billing");
     fireEvent.click(screen.getByRole("button", { name: "Extend trial" }));
     const dialog = await screen.findByRole("dialog", { name: "Extend the trial for Acme (acme)?" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Extend trial" }));
     expect(
       await screen.findByText(
-        "This tenant is Active, so it can't be put on a trial. Suspend it or change its plan instead.",
+        "This business is Active, so it can't be put on a trial. Suspend it or change its plan instead.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/raw internal wording/)).toBeNull();
@@ -609,7 +602,7 @@ describe("Tenant detail page — Impersonate and Extend trial ask first (back of
   it("Extend trial on a TRIAL tenant: the dialog states the end date and says nothing about a status change", async () => {
     tenantOverrides = { status: "TRIAL" };
     render(<TenantDetailPage />);
-    await screen.findByText("Quick actions");
+    await gotoTab("Plan & billing");
     fireEvent.click(screen.getByRole("button", { name: "Extend trial" }));
     const dialog = await screen.findByRole("dialog", { name: "Extend the trial for Acme (acme)?" });
     expect(within(dialog).getByText(/^The trial will end on /)).toBeInTheDocument();
@@ -624,7 +617,7 @@ describe("Tenant detail page — Suspend and Delete ask first (back office P1)",
 
   it("Suspend: nothing is sent until Confirm; the dialog names the tenant and slug; Cancel sends nothing", async () => {
     render(<TenantDetailPage />);
-    await screen.findByText("Quick actions");
+    await screen.findByTestId("tenant-header-actions");
     fireEvent.click(screen.getByRole("button", { name: "Suspend" }));
     const dialog = await screen.findByRole("dialog", { name: 'Suspend "Acme (acme)"?' });
     expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
@@ -645,7 +638,7 @@ describe("Tenant detail page — Suspend and Delete ask first (back office P1)",
   it("Reactivate stays a single click (it restores access, it removes nothing)", async () => {
     tenantOverrides = { status: "SUSPENDED" };
     render(<TenantDetailPage />);
-    await screen.findByText("Quick actions");
+    await screen.findByTestId("tenant-header-actions");
     fireEvent.click(screen.getByRole("button", { name: "Reactivate" }));
     await waitFor(() => expect(statusPatches()).toHaveLength(1));
     expect(statusPatches()[0][1]).toEqual({ status: "ACTIVE" });
@@ -653,16 +646,16 @@ describe("Tenant detail page — Suspend and Delete ask first (back office P1)",
   });
 
   it.each(["ACTIVE", "TRIAL", "READ_ONLY"])(
-    "Delete tenant is visible but DIM for a %s tenant, with the reason on screen (P2 flips the P1 enabled pin)",
+    "Delete business is visible but DIM for a %s tenant, with the reason on screen (P2 flips the P1 enabled pin)",
     async (status) => {
       tenantOverrides = { status };
       render(<TenantDetailPage />);
-      await screen.findByText("Quick actions");
-      const del = screen.getByRole("button", { name: "Delete tenant" });
+      await gotoTab("Business details");
+      const del = screen.getByRole("button", { name: "Delete business" });
       expect(del).toBeDisabled();
       expect(del).toHaveAttribute("aria-describedby", "delete-tenant-hint");
       expect(document.getElementById("delete-tenant-hint")).toHaveTextContent(
-        "Only a suspended tenant can be deleted. Suspend it first, then delete.",
+        "Only a suspended business can be deleted. Suspend it first, then delete.",
       );
       fireEvent.click(del);
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -670,11 +663,11 @@ describe("Tenant detail page — Suspend and Delete ask first (back office P1)",
     },
   );
 
-  it("Delete tenant is enabled once the tenant is SUSPENDED, and the suspend-first line is gone", async () => {
+  it("Delete business is enabled once the tenant is SUSPENDED, and the suspend-first line is gone", async () => {
     tenantOverrides = { status: "SUSPENDED" };
     render(<TenantDetailPage />);
-    await screen.findByText("Quick actions");
-    expect(screen.getByRole("button", { name: "Delete tenant" })).toBeEnabled();
+    await gotoTab("Business details");
+    expect(screen.getByRole("button", { name: "Delete business" })).toBeEnabled();
     expect(document.getElementById("delete-tenant-hint")).toBeNull();
   });
 
@@ -682,7 +675,7 @@ describe("Tenant detail page — Suspend and Delete ask first (back office P1)",
     let release: (v: unknown) => void = () => {};
     client().patch.mockImplementationOnce(() => new Promise((r) => (release = r)));
     render(<TenantDetailPage />);
-    await screen.findByText("Quick actions");
+    await screen.findByTestId("tenant-header-actions");
     fireEvent.click(screen.getByRole("button", { name: "Suspend" }));
     const dialog = await screen.findByRole("dialog", { name: 'Suspend "Acme (acme)"?' });
     fireEvent.click(within(dialog).getByRole("button", { name: "Suspend" }));
@@ -695,16 +688,19 @@ describe("Tenant detail page — Suspend and Delete ask first (back office P1)",
   it("Delete: the type-the-slug dialog gates the button; DELETE is sent once and the page navigates away", async () => {
     tenantOverrides = { status: "SUSPENDED" };
     render(<TenantDetailPage />);
-    await screen.findByText("Quick actions");
-    fireEvent.click(screen.getByRole("button", { name: "Delete tenant" }));
+    await gotoTab("Business details");
+    fireEvent.click(screen.getByRole("button", { name: "Delete business" }));
     const dialog = await screen.findByRole("dialog", { name: "Delete Acme (acme)?" });
-    const del = within(dialog).getByRole("button", { name: "Delete tenant" });
+    const del = within(dialog).getByRole("button", { name: "Delete business" });
     expect(del).toBeDisabled();
     expect(client().delete).not.toHaveBeenCalled();
 
-    fireEvent.change(within(dialog).getByLabelText("Type the tenant slug to confirm deletion"), {
-      target: { value: "acme" },
-    });
+    fireEvent.change(
+      within(dialog).getByLabelText("Type the business web name to confirm deletion"),
+      {
+        target: { value: "acme" },
+      },
+    );
     fireEvent.click(del);
     await waitFor(() => expect(client().delete).toHaveBeenCalledTimes(1));
     expect(client().delete).toHaveBeenCalledWith("/platform-admin/tenants/tenant-1");
@@ -717,22 +713,27 @@ describe("Tenant detail page — Suspend and Delete ask first (back office P1)",
       response: { status: 400, data: { message: "Tenant must be SUSPENDED (internal state 7)" } },
     });
     render(<TenantDetailPage />);
-    await screen.findByText("Quick actions");
-    fireEvent.click(screen.getByRole("button", { name: "Delete tenant" }));
+    await gotoTab("Business details");
+    fireEvent.click(screen.getByRole("button", { name: "Delete business" }));
     const dialog = await screen.findByRole("dialog", { name: "Delete Acme (acme)?" });
-    fireEvent.change(within(dialog).getByLabelText("Type the tenant slug to confirm deletion"), {
-      target: { value: "acme" },
-    });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Delete tenant" }));
+    fireEvent.change(
+      within(dialog).getByLabelText("Type the business web name to confirm deletion"),
+      {
+        target: { value: "acme" },
+      },
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete business" }));
     expect(
       await within(dialog).findByText(
-        "Only a suspended tenant can be deleted. Suspend it first, then delete.",
+        "Only a suspended business can be deleted. Suspend it first, then delete.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/internal state 7/)).toBeNull();
     // N4: ONE message (inside the dialog), not a second banner on the page behind it.
     expect(
-      screen.getAllByText("Only a suspended tenant can be deleted. Suspend it first, then delete."),
+      screen.getAllByText(
+        "Only a suspended business can be deleted. Suspend it first, then delete.",
+      ),
     ).toHaveLength(1);
     expect(screen.getByRole("dialog", { name: "Delete Acme (acme)?" })).toBeInTheDocument();
     expect(mockRouterPush).not.toHaveBeenCalled();
@@ -741,8 +742,8 @@ describe("Tenant detail page — Suspend and Delete ask first (back office P1)",
   it("Escape closes the delete dialog and sends nothing", async () => {
     tenantOverrides = { status: "SUSPENDED" };
     render(<TenantDetailPage />);
-    await screen.findByText("Quick actions");
-    fireEvent.click(screen.getByRole("button", { name: "Delete tenant" }));
+    await gotoTab("Business details");
+    fireEvent.click(screen.getByRole("button", { name: "Delete business" }));
     await screen.findByRole("dialog", { name: "Delete Acme (acme)?" });
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -752,7 +753,7 @@ describe("Tenant detail page — Suspend and Delete ask first (back office P1)",
   it("Extend trial: days cleared / 0 / over 365 block Confirm with a plain line and send nothing", async () => {
     tenantOverrides = { status: "TRIAL" };
     render(<TenantDetailPage />);
-    await screen.findByText("Quick actions");
+    await gotoTab("Plan & billing");
     fireEvent.change(screen.getByLabelText("Days"), { target: { value: "" } });
     fireEvent.click(screen.getByRole("button", { name: "Extend trial" }));
     const dialog = await screen.findByRole("dialog", { name: "Extend the trial for Acme (acme)?" });
@@ -772,7 +773,7 @@ describe("Tenant detail page — Suspend and Delete ask first (back office P1)",
       response: { data: { message: "prisma: unique constraint failed" } },
     });
     render(<TenantDetailPage />);
-    await screen.findByText("Quick actions");
+    await gotoTab("Plan & billing");
     fireEvent.click(screen.getByRole("button", { name: "Extend trial" }));
     const dialog = await screen.findByRole("dialog", { name: "Extend the trial for Acme (acme)?" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Extend trial" }));
@@ -784,38 +785,58 @@ describe("Tenant detail page — Suspend and Delete ask first (back office P1)",
 describe("SA-1: the tab lives in the URL (?tab=)", () => {
   it("no ?tab= opens Overview", async () => {
     render(<TenantDetailPage />);
-    await screen.findByRole("button", { name: "Setup" });
+    await screen.findByRole("button", { name: "Features" });
     expect(screen.queryByText("Current setup")).toBeNull();
   });
 
-  it("?tab=setup opens the Setup tab without a click", async () => {
-    mockSearch = "tab=setup";
+  it("?tab=features opens the Features tab without a click, and writes no redirect", async () => {
+    mockSearch = "tab=features";
     render(<TenantDetailPage />);
     expect(await screen.findByText("Current setup")).toBeInTheDocument();
+    expect(mockRouterReplace).not.toHaveBeenCalled();
   });
 
-  it("the legacy ?tab=addons resolves to Setup", async () => {
-    mockSearch = "tab=addons";
+  // R26: every old tab key opens its new tab, and the address bar is rewritten to it.
+  it.each([
+    ["setup", "features", "Current setup"],
+    ["addons", "features", "Current setup"],
+    ["config", "details", "Business Address & Contact"],
+    ["snapshots", "history", "Configuration snapshots"],
+    ["audit", "history", "Configuration snapshots"],
+  ])("R26: the old ?tab=%s opens %s and rewrites the URL", async (old, next, marker) => {
+    mockSearch = `tab=${old}`;
     render(<TenantDetailPage />);
-    expect(await screen.findByText("Current setup")).toBeInTheDocument();
+    expect(await screen.findByText(new RegExp(marker))).toBeInTheDocument();
+    await waitFor(() =>
+      expect(mockRouterReplace).toHaveBeenCalledWith(`/admin/tenants/${TENANT_ID}?tab=${next}`, {
+        scroll: false,
+      }),
+    );
+  });
+
+  it("R26: the old ?tab=billing still opens Plan & billing with no rewrite", async () => {
+    mockSearch = "tab=billing";
+    render(<TenantDetailPage />);
+    expect(await screen.findByRole("heading", { name: "Current plan" })).toBeInTheDocument();
+    expect(mockRouterReplace).not.toHaveBeenCalled();
   });
 
   it("an unknown ?tab= falls back to Overview", async () => {
     mockSearch = "tab=nonsense";
     render(<TenantDetailPage />);
-    await screen.findByRole("button", { name: "Setup" });
+    await screen.findByRole("button", { name: "Features" });
     expect(screen.queryByText("Current setup")).toBeNull();
   });
 
   it("clicking a tab shows it AND writes ?tab= with router.replace (never push)", async () => {
     render(<TenantDetailPage />);
-    fireEvent.click(await screen.findByRole("button", { name: "Setup" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Features" }));
     expect(await screen.findByText("Current setup")).toBeInTheDocument();
-    expect(mockRouterReplace).toHaveBeenCalledWith(`/admin/tenants/${TENANT_ID}?tab=setup`, {
+    expect(mockRouterReplace).toHaveBeenCalledWith(`/admin/tenants/${TENANT_ID}?tab=features`, {
       scroll: false,
     });
     expect(mockRouterPush).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Billing & subscription" }));
+    fireEvent.click(screen.getByRole("button", { name: "Plan & billing" }));
     expect(mockRouterReplace).toHaveBeenLastCalledWith(`/admin/tenants/${TENANT_ID}?tab=billing`, {
       scroll: false,
     });
@@ -856,12 +877,12 @@ describe("SA-3: the Readiness card on Overview", () => {
     capabilitiesValue = capabilitiesFixture({ counter: true, counterCapability: "always" });
   });
 
-  it("is the first card, above Tenant info, and the fix anchors exist", async () => {
+  it("is the first card, above Business info, and the fix anchors exist", async () => {
     const { container } = render(<TenantDetailPage />);
     const heading = await screen.findByRole("heading", { name: "Ready to take a sale?" });
-    const info = await screen.findByRole("heading", { name: "Tenant info" });
+    const info = await screen.findByRole("heading", { name: "Business info" });
     expect(heading.compareDocumentPosition(info) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(container.querySelector("#admin-account")).not.toBeNull();
+    expect(container.querySelector("#admin-account")).toBeNull(); // the admin card lives on Business details
   });
 
   it("?focus=admin-account focuses the Admin Account card and the Create admin link points at it", async () => {
@@ -874,9 +895,12 @@ describe("SA-3: the Readiness card on Overview", () => {
       return el as HTMLElement;
     });
     expect(card).toHaveAttribute("tabindex", "-1");
-    expect(await screen.findByRole("link", { name: /^Create admin for/ })).toHaveAttribute(
-      "href",
-      `/admin/tenants/${TENANT_ID}?focus=admin-account`,
+    // The old tab-less link lands on Business details and the address bar says so.
+    await waitFor(() =>
+      expect(mockRouterReplace).toHaveBeenCalledWith(
+        `/admin/tenants/${TENANT_ID}?focus=admin-account&tab=details`,
+        { scroll: false },
+      ),
     );
   });
 
@@ -898,10 +922,12 @@ describe("SA-3: the Readiness card on Overview", () => {
         /\/admin$/.test(String(c[0])),
       );
     expect(adminGets()).toHaveLength(1);
+    await gotoTab("Business details");
     fireEvent.click(await screen.findByRole("button", { name: "Create admin account" }));
     fireEvent.change(screen.getByLabelText("Username"), { target: { value: "new_admin" } });
     fireEvent.change(screen.getByLabelText("Email"), { target: { value: "a@b.co" } });
     fireEvent.click(screen.getByRole("button", { name: "Create admin" }));
+    await gotoTab("Overview");
     await waitFor(async () => expect(within(await rowOf()).queryByText(/Not ready/)).toBeNull());
     expect(within(await rowOf()).getByText(/Ready/)).toBeInTheDocument();
     expect(adminGets()).toHaveLength(1);
@@ -932,17 +958,15 @@ describe("BO-08: the Overview and Billing grids fit a narrow screen", () => {
       },
     ];
     render(<TenantDetailPage />);
-    const grid = (await screen.findByRole("heading", { name: "Tenant info" })).closest(
+    const grid = (await screen.findByRole("heading", { name: "Business info" })).closest(
       "div.grid",
     ) as HTMLElement;
     expect(grid).toHaveClass("grid-cols-1", "lg:grid-cols-2");
-    for (const title of ["Tenant info", "Quick actions", "Recent audit logs"]) {
+    for (const title of ["Business info", "Recent audit logs"]) {
       const card = cardOf(title);
       expect(card.parentElement).toBe(grid);
       expect(card).toHaveClass("min-w-0");
     }
-    expect(document.getElementById("admin-account")).toHaveClass("min-w-0");
-    expect(document.getElementById("admin-account")!.parentElement).toBe(grid);
   });
 
   it("Overview: the audit table scrolls inside its own box", async () => {
@@ -968,7 +992,7 @@ describe("BO-08: the Overview and Billing grids fit a narrow screen", () => {
 
   it("Billing: one column by default, two from lg, items can shrink", async () => {
     render(<TenantDetailPage />);
-    fireEvent.click(await screen.findByRole("button", { name: "Billing & subscription" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Plan & billing" }));
     const grid = (await screen.findByRole("heading", { name: "Current plan" })).closest(
       "div.grid",
     ) as HTMLElement;
@@ -999,6 +1023,7 @@ describe("B1271: the one-time temporary password of a new tenant admin stays on 
       });
     });
     render(<TenantDetailPage />);
+    await gotoTab("Business details");
     fireEvent.click(await screen.findByRole("button", { name: "Create admin account" }));
     fireEvent.change(screen.getByLabelText("Username"), { target: { value: "newadmin" } });
     fireEvent.change(screen.getByLabelText("Email"), { target: { value: "n@acme.test" } });
@@ -1035,7 +1060,7 @@ describe("R49: the tenant page plan change needs a reason", () => {
   async function confirmPlanPreview() {
     tenantOverrides = { plan: "STARTER", planKey: "STARTER" };
     mockPreview.mockResolvedValue(previewFixture({ planKey: "GROWTH" }));
-    render(<TenantDetailPage />);
+    await gotoBillingTab();
     const select = (await screen.findByRole("combobox", { name: "New plan" })) as HTMLSelectElement;
     await waitFor(() => expect(optionValues(select)).toContain("GROWTH"));
     fireEvent.change(select, { target: { value: "GROWTH" } });
@@ -1088,5 +1113,197 @@ describe("R49: the tenant page plan change needs a reason", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByLabelText("Why is this business moving?")).toBeNull());
     expect(patchCalls()).toEqual([]);
+  });
+});
+
+// R33 (SA-1106 A-1): the owner's 30-row keep-move-remove list is this table. Every KEEP or MOVE row is reachable on
+// its named tab, row 26 (Logo Key) is gone and the logo shows as a picture, row 14 (Delete) sits alone at the
+// bottom of Business details, and the six old tab names are replaced by five. A row missing here is red.
+describe("R33: every row of the owner's list has a home", () => {
+  const FULL = () => {
+    tenantOverrides = {
+      status: "SUSPENDED",
+      primaryColor: "#112233",
+      logoKey: "tenants/acme/logo.png",
+      addressLine1: "1 Main St",
+      trialEndsAt: "2099-01-01T00:00:00.000Z",
+      estMrrUsd: 249,
+      orders30d: 7,
+      counts: { users: 3, customers: 4, orders: 5, drivers: 2, routes: 6, customerLinks: 9 },
+      subscription: {
+        currentPlan: "GROWTH",
+        periodStart: "2026-10-01T00:00:00.000Z",
+        periodEnd: "2026-11-01T00:00:00.000Z",
+        cancelAtPeriodEnd: false,
+        stripeCustomerId: "cus_123",
+        externalPayment: false,
+      },
+    };
+    mockAdmin = {
+      id: "u-1",
+      username: "acme_admin",
+      email: "a@acme.test",
+      status: "ACTIVE",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      forcePasswordChange: false,
+    };
+  };
+  const TAB_NAMES = ["Overview", "Features", "Plan & billing", "Business details", "History"];
+
+  it("row 30: the five tab names, and none of the six old ones", async () => {
+    FULL();
+    render(<TenantDetailPage />);
+    await screen.findByTestId("tenant-header-actions");
+    for (const n of TAB_NAMES) expect(screen.getByRole("button", { name: n })).toBeInTheDocument();
+    for (const old of ["Billing & subscription", "Setup", "Configuration", "Audit log"]) {
+      expect(screen.queryByRole("button", { name: old })).toBeNull();
+    }
+    expect(screen.queryByRole("button", { name: "Configuration snapshots" })).toBeNull();
+  });
+
+  it("rows 1, 9, 10: the name, status, plan and the two daily actions show on every tab", async () => {
+    FULL();
+    render(<TenantDetailPage />);
+    for (const n of TAB_NAMES) {
+      fireEvent.click(await screen.findByRole("button", { name: n }));
+      expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Acme");
+      const bar = screen.getByTestId("tenant-header-actions");
+      expect(within(bar).getByRole("button", { name: "Reactivate" })).toBeInTheDocument();
+      expect(within(bar).getByRole("button", { name: "Sign in as admin" })).toBeInTheDocument();
+    }
+  });
+
+  it("rows 2-5, 15: Overview has readiness, one row of numbers (Users once), the facts and recent changes", async () => {
+    FULL();
+    render(<TenantDetailPage />);
+    await screen.findByRole("heading", { name: "Ready to take a sale?" });
+    const numbers = screen.getByTestId("overview-numbers");
+    for (const label of [
+      "Est. MRR",
+      "Orders, 30d",
+      "Users",
+      "Customers",
+      "Orders",
+      "Drivers",
+      "Routes",
+    ]) {
+      expect(within(numbers).getAllByText(label)).toHaveLength(1);
+    }
+    const info = screen.getByRole("heading", { name: "Business info" }).closest("div.rounded-xl")!;
+    for (const label of ["Slug", "Business Name", "Plan", "Status", "Created", "Trial Ends"]) {
+      expect(within(info as HTMLElement).getByText(label)).toBeInTheDocument();
+    }
+    // Rows 6 and 7 are not here any more.
+    for (const label of ["Brand color", "Linked buyers", "Next renewal", "Payment method"]) {
+      expect(within(info as HTMLElement).queryByText(label)).toBeNull();
+    }
+    expect(screen.queryByText("Quick actions")).toBeNull();
+    expect(screen.getByRole("link", { name: "View all" })).toHaveAttribute(
+      "href",
+      `/admin/tenants/${TENANT_ID}?tab=history`,
+    );
+  });
+
+  it("rows 7, 11, 12, 16-20: Plan & billing has the plan, change, trial, renewal, payment, Stripe, activation, pricing", async () => {
+    FULL();
+    await gotoBillingTab();
+    expect(await screen.findByRole("heading", { name: "Current plan" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "New plan" })).toBeInTheDocument(); // 11
+    expect(screen.getByRole("button", { name: "Extend trial" })).toBeInTheDocument(); // 12
+    expect(screen.getByRole("heading", { name: "Subscription" })).toBeInTheDocument(); // 17
+    expect(screen.getByText("Next renewal")).toBeInTheDocument(); // 7
+    expect(screen.getByText("Payment method", { selector: "dt" })).toBeInTheDocument(); // 7
+    expect(screen.getByRole("heading", { name: "Manual activation" })).toBeInTheDocument(); // 18
+    expect(screen.getByRole("heading", { name: "Stripe actions" })).toBeInTheDocument(); // 19
+    expect(screen.getByRole("heading", { name: /Pricing/ })).toBeInTheDocument(); // 20
+    // Row 17: the Stripe number is under "More details", not on the card face.
+    const more = screen.getByText("More details").closest("details")!;
+    expect(more).toHaveTextContent("cus_123");
+  });
+
+  it("rows 21-24: Features has the setup, the profile picker and the console, with no Advanced fold", async () => {
+    FULL();
+    await gotoSetupTab();
+    expect(await screen.findByText("Current setup")).toBeInTheDocument(); // 21
+    expect(screen.getAllByText("What this business does").length).toBeGreaterThan(0); // 22
+    expect(screen.getByTestId("features-list")).toBeInTheDocument(); // 23
+    expect(screen.getByRole("heading", { name: "Overrides" })).toBeInTheDocument(); // 24
+    expect(screen.queryByRole("button", { name: /^Advanced/ })).toBeNull();
+  });
+
+  it("rows 6, 8, 13, 25-27: Business details has the look, buyers, admin, reset and address", async () => {
+    FULL();
+    render(<TenantDetailPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Business details" }));
+    expect(await screen.findByText("Primary Color")).toBeInTheDocument(); // 25
+    expect(screen.getByText("#112233")).toBeInTheDocument(); // 6
+    expect(screen.getByText("Linked buyers")).toBeInTheDocument(); // 6
+    expect(await screen.findByText("acme_admin")).toBeInTheDocument(); // 8
+    expect(screen.getByRole("button", { name: "Reset admin password" })).toBeInTheDocument(); // 13
+    expect(screen.getByLabelText("Street")).toHaveValue("1 Main St"); // 27
+    expect(screen.getByLabelText("Phone")).toBeInTheDocument(); // 27
+  });
+
+  it("row 26: the Logo Key is gone and the logo shows as a picture", async () => {
+    FULL();
+    render(<TenantDetailPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Business details" }));
+    const img = await screen.findByRole("img", { name: /logo/i });
+    expect(img).toHaveAttribute("src", expect.stringMatching(/\/public\/tenants\/acme\/logo$/));
+    expect(screen.queryByText("Logo Key")).toBeNull();
+    // Not even inside a longer line: the storage key never reaches the screen in any element.
+    expect(document.body.textContent).not.toContain("tenants/acme/logo.png");
+    expect(document.body.textContent).not.toMatch(/Logo Key/i);
+  });
+
+  it("row 26: a logo that fails to load falls back to the placeholder and says so", async () => {
+    FULL();
+    render(<TenantDetailPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Business details" }));
+    fireEvent.error(await screen.findByRole("img", { name: /logo/i }));
+    expect(screen.queryByRole("img", { name: /logo/i })).toBeNull();
+    expect(screen.getByText("The logo could not be loaded.")).toBeInTheDocument();
+  });
+
+  it("row 7: the payment method reads in plain words, never the stored code", async () => {
+    FULL();
+    tenantOverrides = {
+      ...tenantOverrides,
+      subscription: {
+        ...(tenantOverrides.subscription as object),
+        externalPayment: true,
+        externalPaymentMethod: "BANK_TRANSFER",
+      },
+    };
+    await gotoBillingTab();
+    const dt = await screen.findByText("Payment method", { selector: "dt" });
+    expect(dt.parentElement).not.toHaveTextContent("BANK_TRANSFER");
+    expect(dt.parentElement).toHaveTextContent(/Bank transfer/i);
+  });
+
+  it("row 14: Delete sits alone, in red, at the very bottom of Business details", async () => {
+    FULL();
+    render(<TenantDetailPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Business details" }));
+    const del = await screen.findByRole("button", { name: "Delete business" });
+    const zone = screen.getByTestId("delete-zone");
+    expect(within(zone).getAllByRole("button")).toEqual([del]); // alone
+    expect(del.className).toContain("text-red-400");
+    expect(zone.parentElement!.lastElementChild).toBe(zone); // the last block on the tab
+    // And nowhere else.
+    for (const n of ["Overview", "Features", "Plan & billing", "History"]) {
+      fireEvent.click(screen.getByRole("button", { name: n }));
+      expect(screen.queryByRole("button", { name: "Delete business" })).toBeNull();
+    }
+  });
+
+  it("rows 28, 29: History has the audit log and the saved setups", async () => {
+    FULL();
+    render(<TenantDetailPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "History" }));
+    expect(
+      await screen.findByRole("heading", { name: "Configuration snapshots" }),
+    ).toBeInTheDocument(); // 28
+    expect(screen.getByRole("heading", { name: "Audit log" })).toBeInTheDocument(); // 29
   });
 });
