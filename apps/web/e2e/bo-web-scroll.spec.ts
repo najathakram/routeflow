@@ -49,11 +49,11 @@ for (const size of WIDTHS) {
       await expectEndsAtContent(page, false);
     });
 
-    test("tenant Setup, Overview and Billing end where their content ends", async ({ page }) => {
+    test("tenant Features, Overview and Billing end where their content ends", async ({ page }) => {
       const id = await testTenantId(page);
-      for (const tab of ["setup", "overview", "billing"]) {
+      for (const tab of ["features", "overview", "billing"]) {
         await page.goto(`/admin/tenants/${id}?tab=${tab}`);
-        await expectEndsAtContent(page, tab === "setup");
+        await expectEndsAtContent(page, tab === "features");
       }
     });
   });

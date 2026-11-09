@@ -176,7 +176,7 @@ export function ConfigSnapshotsTab({ tenantId }: { tenantId: string }) {
       )}
       {!loading && !error && (
         <div
-          className="overflow-x-auto"
+          className="relative overflow-x-auto"
           role="region"
           aria-label="Configuration snapshots"
           tabIndex={0}

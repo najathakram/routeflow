@@ -77,9 +77,9 @@ describe("secret-named config keys are encrypted at rest (SA-1102 S-10)", () => 
       expect(seen.has(k) || text.includes(`"${k}"`)).toBe(true);
   });
 
-  it("the plaintext-secrets script lists exactly the same keys and the same cipher shape", () => {
+  it("the one key-list file (read by the plaintext report and encrypt-legacy-secrets) lists exactly the same keys and the same cipher shape", () => {
     const script = fs.readFileSync(
-      path.join(__dirname, "../../scripts/report-plaintext-secrets.mjs"),
+      path.join(__dirname, "../../scripts/lib/secret-config-keys.cjs"),
       "utf8",
     );
     const list = (name: string) => {

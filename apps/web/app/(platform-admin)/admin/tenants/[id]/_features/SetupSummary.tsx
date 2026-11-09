@@ -38,7 +38,7 @@ function fleetWarning(setup: Setup): string | null {
 }
 
 /**
- * The Setup tab's "Current setup" card: how this tenant's orders reach customers, whether counter sales are on, and
+ * The Features tab's "Current setup" card: how this tenant's orders reach customers, whether counter sales are on, and
  * which fleet modules are on, in plain English. Read-only; every value comes through the platform-admin API and
  * unknown values are described, never printed raw.
  */

@@ -1,5 +1,5 @@
 /**
- * BO-05: "What this business does", the capability checkboxes on the Backoffice tenant Setup tab, proved at 1440, 768
+ * BO-05: "What this business does", the capability checkboxes on the Backoffice tenant Features tab, proved at 1440, 768
  * and 390.
  *
  * NOT RUN by the author (no stack in the build worktree). Every API call is mocked (the same pattern as
@@ -244,7 +244,7 @@ async function gotoSetup(page: Page): Promise<{ writes: string[] }> {
     fulfillJson(route, PREVIEW),
   );
 
-  await page.goto(`/admin/tenants/${TENANT_ID}?tab=setup`);
+  await page.goto(`/admin/tenants/${TENANT_ID}?tab=features`);
   await expect(page.getByRole("group", { name: "What this business does" })).toBeVisible({
     timeout: 15_000,
   });
