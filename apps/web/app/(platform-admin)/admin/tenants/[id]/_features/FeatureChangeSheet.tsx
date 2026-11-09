@@ -133,7 +133,6 @@ export function FeatureChangeSheet({
     } catch (e) {
       if (isInputsChanged(e)) {
         setChecked({ status: "stale" });
-        onStale();
       } else {
         setError(featureChangeMessage(e, "Couldn't save. Nothing was changed."));
       }

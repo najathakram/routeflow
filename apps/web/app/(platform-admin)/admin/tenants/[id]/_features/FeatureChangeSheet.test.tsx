@@ -125,7 +125,7 @@ describe("FeatureChangeSheet (WP11)", () => {
     expect(sent[1].expiresAt).toBe(endOfDayIso("2030-06-30"));
   });
 
-  it("T-ui2: a 409 on save shows Changed by someone else, calls onStale, and does not close the sheet or clear anything", async () => {
+  it("T-ui2: a 409 on save shows Changed by someone else, waits for Reload (onStale), and does not close the sheet or clear anything", async () => {
     ready([row("a", ON, OFF)]);
     mockApply.mockRejectedValue({
       response: { status: 409, data: { code: "FEATURE_INPUTS_CHANGED" } },
@@ -137,6 +137,8 @@ describe("FeatureChangeSheet (WP11)", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Save 1 change" }));
     expect(await screen.findByText(new RegExp(CHANGED_BY_SOMEONE_ELSE))).toBeInTheDocument();
+    expect(props.onStale).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Reload" }));
     expect(props.onStale).toHaveBeenCalledTimes(1);
     expect(props.onSaved).not.toHaveBeenCalled();
     expect(props.onClose).not.toHaveBeenCalled();
