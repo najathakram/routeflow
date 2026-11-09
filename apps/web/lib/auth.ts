@@ -5,6 +5,7 @@ import { OP_KEYS } from "./auth-keys";
 import { setOpPresenceCookie, clearOpPresenceCookie } from "./presence-cookies";
 import { getImpersonation, clearImpersonation } from "./impersonation";
 import { clearAllLiveCarts } from "./counter-live-cart-keys";
+import { parkStoredLiveCarts } from "./counter-live-cart-park";
 import { clearAllInvoiceDrafts, resumeInvoiceDraftWrites } from "./invoice-draft-storage";
 
 export { OP_PRESENCE_COOKIE, clearOpPresenceCookie } from "./presence-cookies";
@@ -126,6 +127,7 @@ export async function login(username: string, password: string): Promise<AuthRes
  * `logout` then goes to /login; W-839's "Shop" goes to the buyer login instead (SA-937 MUST 5: never two live sessions).
  */
 export async function endStaffSession(): Promise<void> {
+  await parkStoredLiveCarts(); // W-1184: an unfinished counter sale is parked on the server first, never lost to the sign-out
   try {
     await apiClient.post("/auth/logout");
   } catch {

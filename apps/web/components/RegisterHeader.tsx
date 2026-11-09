@@ -66,12 +66,13 @@ export function RegisterHeader({
   return (
     <header
       data-testid="register-header"
-      className="relative flex h-16 shrink-0 items-center gap-3 border-b border-surface-border bg-white px-4"
+      className="relative flex h-16 shrink-0 items-center gap-3 border-b border-surface-border bg-white px-3 sm:px-4"
     >
       <button
         type="button"
         ref={exitRef}
         aria-disabled={busy || undefined}
+        aria-label="Exit counter"
         onClick={() => {
           const exit = () => router.push(readExitTarget());
           if (guardCounterLeave(exit)) return;
@@ -84,7 +85,8 @@ export function RegisterHeader({
         )}
       >
         <ArrowLeft className="h-5 w-5" aria-hidden="true" />
-        Exit counter
+        {/* W-1184: icon only below sm so the shop name is not cut to "RouteF..." at 390 */}
+        <span className="hidden sm:inline">Exit counter</span>
       </button>
       <button
         type="button"

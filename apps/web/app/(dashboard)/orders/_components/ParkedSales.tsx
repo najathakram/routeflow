@@ -97,7 +97,10 @@ export function ParkedSales({ canEditPrices, ...deps }: ParkedSalesProps) {
   const headerMessage = p.message?.scope === "header" ? p.message.text : null;
   return (
     <>
-      <div className="flex flex-wrap items-center gap-2" data-testid="counter-park-actions">
+      <div
+        className="flex w-full flex-nowrap items-center gap-2 sm:w-auto [&>button]:flex-1 sm:[&>button]:flex-none"
+        data-testid="counter-park-actions"
+      >
         <Button className="min-h-[44px]" variant="secondary" disabled={!p.canPark} onClick={p.park}>
           Park
         </Button>
