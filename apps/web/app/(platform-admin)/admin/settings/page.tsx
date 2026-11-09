@@ -430,8 +430,9 @@ export default function AdminSettingsPage() {
                 </div>
                 <p className="mt-2 text-xs text-slate-400">
                   The most one business can spend each month on RouteFlow&apos;s Claude key. A
-                  business can carry its own limit. Set 0 here to turn AI off for every business,
-                  whatever its own limit.
+                  business can carry its own limit. Set 0 here to turn AI off on RouteFlow&apos;s
+                  key for every business, whatever its own limit. Scans on a business&apos;s own key
+                  are not blocked.
                 </p>
               </div>
 

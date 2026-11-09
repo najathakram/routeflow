@@ -177,13 +177,15 @@ describe("admin settings: AI models (SA-1035)", () => {
     expect(mockPatch.mock.calls[0][1]).not.toHaveProperty("monthlyCapUsd");
   });
 
-  it("SA-1102: the allowance note says 0 turns AI off for every business whatever its own limit", async () => {
+  it("SA-1102: the allowance note says 0 turns AI off on RouteFlow's key only; own-key scans are not blocked", async () => {
     serve(config());
     render(<AdminSettingsPage />);
     await screen.findByRole("spinbutton", { name: "Monthly AI allowance per business (USD)" });
-    expect(
-      screen.getByText(/Set 0 here to turn AI off for every business, whatever its own limit/),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/own key are not blocked/)).not.toBeInTheDocument();
+    const note = screen.getByText(
+      /Set 0 here to turn AI off on RouteFlow's key for every business/,
+    );
+    expect(note).toHaveTextContent(/whatever its own limit/);
+    expect(note).toHaveTextContent(/Scans on a business's own key are not blocked\./);
+    expect(note).not.toHaveTextContent(/turn AI off for every business/);
   });
 });
