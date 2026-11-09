@@ -15,6 +15,7 @@ type LayerState = {
 let layer: LayerState;
 let history: Record<string, { lastPrice: number; stickyPrice?: number | null }> | undefined;
 let historyPending = false;
+let historyError = false;
 let mockRows: unknown[] = [];
 const mockNoCustomerPrices = { data: [] };
 const cust = { id: "c1", businessName: "UX-Acme Foods", pricingTier: 3 };
@@ -47,7 +48,11 @@ jest.mock("@/lib/api/products", () => ({
 jest.mock("@/lib/api/orders", () => ({
   useCreateOrder: () => ({ mutate: jest.fn(), isPending: false, error: null, reset: jest.fn() }),
   useActiveOrderForCustomer: () => ({ data: undefined }),
-  useCustomerPriceHistory: () => ({ data: history, isPending: historyPending }),
+  useCustomerPriceHistory: () => ({
+    data: history,
+    isPending: historyPending,
+    isError: historyError,
+  }),
 }));
 jest.mock("@/lib/api/drafts", () => ({
   useCreateDraft: () => ({ mutate: jest.fn(), mutateAsync: jest.fn(), isPending: false }),
@@ -156,6 +161,7 @@ describe("CreateOrderModal product picker - the customer's price (W-1170 F8)", (
     layer = layerReady();
     history = undefined;
     historyPending = false;
+    historyError = false;
     mockRows = [WIDGET];
     cust.pricingTier = 3;
   });
@@ -221,6 +227,16 @@ describe("CreateOrderModal product picker - the customer's price (W-1170 F8)", (
 
   it("while the price history is still loading: the list price, no strike", async () => {
     historyPending = true;
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await pickCustomer();
+    const list = await openPicker("wid");
+    const row = within(list).getByRole("option", { name: /Widget/ });
+    expect(struck(within(row).getByText("$45.00"))).toBe(false);
+    expect(within(row).queryByText("$42.00")).not.toBeInTheDocument();
+  });
+
+  it("when the price history read failed: the list price, muted and unstruck, like a read still out", async () => {
+    historyError = true; // the read failed: whether a last-given price exists is unknown
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     await pickCustomer();
     const list = await openPicker("wid");

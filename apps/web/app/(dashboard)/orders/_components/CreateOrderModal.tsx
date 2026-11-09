@@ -1897,6 +1897,7 @@ export function CreateOrderModal({
       !priceLayer.ready ||
       pricingGate.pending ||
       priceHistoryRead.isPending ||
+      priceHistoryRead.isError ||
       !priceLayer.lineReady(p.id);
     if (!selectedCustomer || !priceLayer.enabled || unconfirmed) return { price: list, was: null };
     const d = linePriceAtAdd({
