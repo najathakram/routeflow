@@ -447,6 +447,16 @@ export const API_ERROR_CODES = {
    */
   COUNTER_SALE_KEY_CONFLICT: "COUNTER_SALE_KEY_CONFLICT",
   /**
+   * 400 (W-1188): a typed order date is outside what the policy accepts (the office: no day after the tenant's today; the
+   * counter: up to 366 days ahead; both: not before two years back). Carries {policy, min, max}; clients show their own copy.
+   */
+  ORDER_DATE_OUT_OF_RANGE: "ORDER_DATE_OUT_OF_RANGE",
+  /**
+   * 409 (W-1188): the order date falls in a filed and locked regulated period for a category in the cart. Refused before
+   * anything is written. Carries {periodKey, categoryName}.
+   */
+  ORDER_DATE_PERIOD_LOCKED: "ORDER_DATE_PERIOD_LOCKED",
+  /**
    * 403 from the counter-sale POST (POS-5): a line carries a real price change (a price off the server's own price
    * for this customer) from a caller who may not edit prices (`canEditPrices`: account admins only today). Raised
    * before anything is written; the Idempotency-Key is not consumed. A typed price equal to the server's is no change.

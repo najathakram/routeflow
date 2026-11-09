@@ -50,6 +50,7 @@ const ORDER = {
 
 async function build(timezone: string | null = "America/New_York") {
   const h = await buildOrdersService();
+  h.prisma.user.findFirst.mockResolvedValue({ deniedPermissionGroups: [], permissionsVersion: 1 }); // W-870: the operator holds every group (the order-date gate reads it)
   h.prisma.tenantConfig.findUnique.mockResolvedValue(timezone ? { timezone } : null);
   h.prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
   h.prisma.customer.findUnique.mockResolvedValue({

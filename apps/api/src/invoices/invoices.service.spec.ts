@@ -5998,6 +5998,18 @@ describe("InvoicesService", () => {
       expect(daysBetween(data.issueDate, data.dueDate)).toBe(30);
     });
 
+    it("W-1188 R10 (guard): a FUTURE-dated counter order issues on that day and the term runs from it", async () => {
+      seedDatingSpies();
+      const ahead = new Date(Date.UTC(2026, 10, 16)); // dated Nov 16, Net 30: due Dec 16
+      prisma.order.findUnique.mockResolvedValue(orderWith({ orderDate: ahead }));
+
+      await service.createInvoiceFromOrder("ord-1");
+
+      const data = (prisma.invoice.create.mock.calls[0][0] as any).data;
+      expect(data.issueDate).toEqual(ahead);
+      expect(data.dueDate.toISOString().slice(0, 10)).toBe("2026-12-16");
+    });
+
     it("createInvoiceFromOrder falls back to today when the order has no business date", async () => {
       seedDatingSpies();
       prisma.order.findUnique.mockResolvedValue(orderWith({ orderDate: null }));

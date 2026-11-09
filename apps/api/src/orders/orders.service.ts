@@ -47,6 +47,7 @@ import {
   getTierPrice,
   isSpecialPrice,
   normalizeBoxesPieces,
+  orderDateDrift,
   regulatedUnitBasis,
   roundMoney,
   withinStaffOverrideTolerance,
@@ -177,7 +178,10 @@ import {
 } from "./order-edit-restrictions";
 import * as rGate from "./order-restriction-gate";
 import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-restrictions.core";
-import { parseCommissionRatePct, parseOrderDate } from "./order-parsers";
+import { parseCommissionRatePct } from "./order-parsers";
+import { assertOrderDateOpen, orderDatePolicyFor, resolveOrderDate } from "./order-date";
+import { operatorDeniedGroups } from "../auth/permissions/operator-denied-groups";
+import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
 import { assertDeliveryDateNotPast } from "./delivery-date-guard";
 import { tenantTimeZone } from "../common/tenant-time-zone";
 import { getOrderTracking } from "./order-tracking";
@@ -1245,13 +1249,19 @@ export class OrdersService implements OnApplicationBootstrap {
     // routeRunId (resolved from the validated stop).
     let resolvedRouteRunId: string | null = null;
 
-    // Row 751: a staff-supplied order date is judged on the tenant's calendar day (the zone is read only when one is sent).
-    const orderDate = parseOrderDate(dto.orderDate, user.role, {
-      zone:
-        dto.orderDate != null
-          ? await tenantTimeZone(this.prisma, { tenantId: user.tenantId })
-          : null,
-    });
+    // W-1188 (751): a staff-supplied order date goes through the ONE gate, on the tenant's calendar day, under the counter's
+    // or the office's policy. The zone and the caller's denied groups are read only when a date is sent.
+    const orderZone =
+      dto.orderDate != null ? await tenantTimeZone(this.prisma, { tenantId: user.tenantId }) : null;
+    const orderDate =
+      dto.orderDate != null
+        ? resolveOrderDate(dto.orderDate, {
+            role: user.role,
+            deniedGroups: await operatorDeniedGroups(this.prisma, user),
+            zone: orderZone,
+            policy: orderDatePolicyFor(options),
+          })
+        : undefined;
     // Sales agents & commissions: staff-gated per-order rate override.
     const commissionRatePct = parseCommissionRatePct(dto.commissionRatePct, user.role);
 
@@ -1384,6 +1394,16 @@ export class OrdersService implements OnApplicationBootstrap {
         return withCreditsPendingHint(this.prisma, replay, appliedCreditNotes);
       }
     }
+
+    // W-1188: a date that falls in a filed and locked regulated period is refused HERE, before the stock lock and the
+    // transaction, in plain words (after the replay branch above, so a retry of a sale that landed still replays).
+    const lockTenantId = this.prisma.getTenantId();
+    if (orderDate && lockTenantId)
+      await assertOrderDateOpen(this.prisma.forTenant() as never, {
+        tenantId: lockTenantId,
+        orderDay: orderDate,
+        productIds: (dto.items ?? []).flatMap((i) => (i.productId ? [i.productId] : [])),
+      });
 
     // Row 718: a day before the TENANT's today is refused (400 DELIVERY_DATE_IN_PAST) - after the replay branch above, so a retry of an order that already landed still replays.
     await assertDeliveryDateNotPast(this.prisma, dto.requestedDeliveryDate, {
@@ -1984,6 +2004,28 @@ export class OrdersService implements OnApplicationBootstrap {
               },
             });
             await this.syncCompositions(tx, created.id);
+            // W-1188: ONE audit row per dated order, in this transaction (orderDate has one writer: this create()).
+            const drift = orderDateDrift(orderDate, created.createdAt, orderZone);
+            if (drift)
+              await tx.auditLog.create({
+                data: {
+                  tenantId: user.tenantId,
+                  userId: user.sub,
+                  impersonatedBy: user.impersonatedBy ?? null,
+                  action: AUDIT_ACTIONS.ORDER_DATED,
+                  entityType: "Order",
+                  entityId: created.id,
+                  meta: {
+                    orderNumber: created.orderNumber,
+                    orderDay: drift.day,
+                    enteredDay: drift.enteredDay,
+                    direction: drift.direction,
+                    days: drift.days,
+                    surface: options.counterSale ? "counter" : "office",
+                    registerKey: created.registerKey ?? null,
+                  },
+                },
+              });
             await restriction?.stamp(tx, created.id);
             inlineMinted = await applyReturn(tx, inlineRet, {
               customerId,
@@ -2109,6 +2151,14 @@ export class OrdersService implements OnApplicationBootstrap {
       dto,
       user,
       saleZone,
+      new Date(),
+      {
+        deniedGroups:
+          dto.deliveredOn != null || dto.orderDate != null
+            ? await operatorDeniedGroups(this.prisma, user)
+            : [],
+        policy: orderDatePolicyFor(sale),
+      },
     );
 
     // 1. Create the backing order (reuses pricing tiers/overrides + stock lock/decrement). With an
