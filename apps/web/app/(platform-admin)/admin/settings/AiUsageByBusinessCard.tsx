@@ -65,7 +65,7 @@ export function AiUsageByBusinessCard() {
             value={month}
             max={thisMonth()}
             onChange={(e) => e.target.value && setMonth(e.target.value)}
-            className="rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-slate-200"
+            className="w-40 rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-slate-200"
           />
         </label>
       </div>
