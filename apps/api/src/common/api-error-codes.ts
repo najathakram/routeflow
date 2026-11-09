@@ -849,6 +849,10 @@ export const API_ERROR_CODES = {
   LOW_STOCK_TOO_MANY: "LOW_STOCK_TOO_MANY",
   /** 409 from DELETE /routes/:id and DELETE /route-runs/:id: the route or run holds delivery records (POD, signatures, payments); deactivate it instead (SA-842). Nothing was written. */
   ROUTE_HAS_DELIVERY_EVIDENCE: "ROUTE_HAS_DELIVERY_EVIDENCE",
+  /** 400 from POST /auth/confirm-email-change: the link is unknown, used, expired, replaced by a newer request, burned by an account change, or the email moved since the request. One answer for all of them; nothing was written (B461, SA-1116). */
+  EMAIL_CHANGE_LINK_INVALID: "EMAIL_CHANGE_LINK_INVALID",
+  /** 409 from POST /auth/confirm-email-change: the new address now belongs to another account of the business. Nothing was written (B461, SA-1116). */
+  EMAIL_TAKEN: "EMAIL_TAKEN",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

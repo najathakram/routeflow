@@ -281,4 +281,56 @@ describe("writer inventory: an account change burns the account's live links (SA
       for (const m of Object.keys(methods)) expect(names).toContain(`${file}:${m}`);
     }
   });
+
+  // B461 (SA-1116): a login email is written in exactly two places by a person's edit. `updateUser` writes it for an
+  // account that has never signed in; `confirmEmailChange` writes it once the NEW mailbox confirmed. Any third
+  // editing writer would bypass the hold, so a new `email:` inside a `user.update*` data block is a red row here
+  // until the ruling is amended. The pin names two more writers it found on master (SA-1116 counted two): a customer's
+  // removal replaces the login email with a placeholder, and its restore puts the original back. Neither takes an
+  // address from a person.
+  it("B461: `email:` inside a user.update* data block appears in exactly two editing writers", () => {
+    const customerRemoval = [
+      "customers/customers.service.ts:deleteCustomer",
+      "customers/customers.service.ts:restoreCustomer",
+    ];
+    const emailWriters = all
+      .filter((w) => w.model === "user" && w.keys.includes("email"))
+      .map(id)
+      .sort();
+    expect(emailWriters.filter((w) => !customerRemoval.includes(w))).toEqual([
+      "auth/auth.service.ts:confirmEmailChange",
+      "users/users.service.ts:updateUser",
+    ]);
+    // the two named exceptions are still there: a rename or removal of one is noticed, not silently kept
+    expect(emailWriters.filter((w) => customerRemoval.includes(w))).toEqual(customerRemoval);
+  });
+
+  it("B461: revokeUserLinkTokens burns pending email changes through one helper, and the helper writes the row", () => {
+    const src = stripComments(
+      fs.readFileSync(path.join(SRC, "auth/link-token-revocation.ts"), "utf8"),
+    );
+    const body = (name: string) => {
+      const start = src.indexOf(`export async function ${name}(`);
+      expect(start).toBeGreaterThan(-1);
+      return braceBlock(src, src.indexOf("{", src.indexOf(")", start + 1) + 1));
+    };
+    expect(body("revokeUserLinkTokens")).toContain("await revokeUserEmailChanges(db, list);");
+    expect(body("revokeUserEmailChanges")).toMatch(
+      /UPDATE "UserEmailChange" SET "usedAt" = now\(\) WHERE "userId" = ANY\(\$\{list\}::text\[\]\) AND "usedAt" IS NULL/,
+    );
+  });
+
+  it("B461: both password-reset writers burn a pending email change", () => {
+    const sites: Array<[string, string]> = [
+      ["users/users.service.ts", "async resetPassword("],
+      ["auth/auth.service.ts", "async resetPassword("],
+    ];
+    for (const [file, header] of sites) {
+      const src = stripComments(fs.readFileSync(path.join(SRC, file), "utf8"));
+      const at = src.indexOf(header);
+      expect(at).toBeGreaterThan(-1);
+      const next = src.indexOf("\n  async ", at + header.length);
+      expect(src.slice(at, next < 0 ? src.length : next)).toMatch(/\brevokeUserEmailChanges\(/);
+    }
+  });
 });

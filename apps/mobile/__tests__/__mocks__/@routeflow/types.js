@@ -567,6 +567,8 @@ module.exports = {
     RETURN_CANCEL_RETRY: "RETURN_CANCEL_RETRY",
     LOW_STOCK_TOO_MANY: "LOW_STOCK_TOO_MANY",
     ROUTE_HAS_DELIVERY_EVIDENCE: "ROUTE_HAS_DELIVERY_EVIDENCE",
+    EMAIL_CHANGE_LINK_INVALID: "EMAIL_CHANGE_LINK_INVALID",
+    EMAIL_TAKEN: "EMAIL_TAKEN",
   },
   // SA-814e: hand copy of packages/types/api/error-codes.ts (pinned to the API's literal by the API parity spec).
   FILING_STALE_COPY:

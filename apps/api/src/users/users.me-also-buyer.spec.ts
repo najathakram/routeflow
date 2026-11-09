@@ -23,8 +23,10 @@ function fakeSelf(linkFound: boolean) {
       user: { findUnique: jest.fn().mockResolvedValue(row) },
       customerLink: { findFirst },
     }),
+    userEmailChange: { findMany: jest.fn().mockResolvedValue([]) },
   };
   const self: any = { prisma };
+  self.pendingEmails = (UsersService.prototype as any).pendingEmails.bind(self);
   self.findById = (UsersService.prototype as any).findById.bind(self);
   return { self, findFirst };
 }
@@ -70,8 +72,11 @@ describe("GET /users/me carries alsoBuyer; GET /users/:id never does", () => {
         },
         customerLink: { findFirst },
       }),
+      userEmailChange: { findMany: jest.fn().mockResolvedValue([]) },
     };
-    const out = await (UsersService.prototype as any).findAll.call({ prisma }, {}, "TENANT_ADMIN");
+    const self: any = { prisma };
+    self.pendingEmails = (UsersService.prototype as any).pendingEmails.bind(self);
+    const out = await (UsersService.prototype as any).findAll.call(self, {}, "TENANT_ADMIN");
     const rows: unknown[] = out?.data ?? out;
     expect(rows.length).toBeGreaterThan(0);
     for (const r of rows) expect(r).not.toHaveProperty("alsoBuyer");

@@ -39,6 +39,7 @@ describe("UsersController: admin account protection wiring", () => {
       "ad",
       UserRole.TENANT_ADMIN,
       undefined, // SA-778: no impersonatedBy claim
+      "ad1", // B461: the editor id (the requester of a held email change)
     );
     await controller.update("op1", { email: "a@b.example" } as any, operator);
     expect(service.updateUser).toHaveBeenLastCalledWith(
@@ -47,6 +48,7 @@ describe("UsersController: admin account protection wiring", () => {
       "op",
       UserRole.OPERATOR,
       undefined,
+      "op1", // B461: the editor id (the requester of a held email change)
     );
   });
   it("unlock and driver-permit pass the caller's role", async () => {

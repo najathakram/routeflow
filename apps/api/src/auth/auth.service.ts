@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -31,6 +32,9 @@ import {
   VERIFICATION_REFUSED,
 } from "./verification-link-eligibility";
 import { hasForeignAudience, STAFF_ACCESS_AUDIENCE, STAFF_REFRESH_AUDIENCE } from "./session-token";
+import { revokeUserEmailChanges, revokeUserLinkTokens } from "./link-token-revocation";
+import { hashEmailChangeToken } from "../users/email-change";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 export interface DeviceInfo {
   userAgent?: string;
@@ -564,6 +568,87 @@ export class AuthService {
     return this.login(safeUser, deviceInfo);
   }
 
+  // ─── Login email change (B461, SA-1116) ───────────────────────────────────────
+
+  /**
+   * POST /auth/confirm-email-change. The NEW mailbox proves itself with the link, and only then does the account's
+   * email change. ONE transaction: find the live, unexpired row by the hash of the token, lock the user row first (the
+   * lock order of every other writer, B448), claim the row, then write the email behind a compare-and-set on the
+   * address the request was made against (the account must still be ACTIVE, not deleted, and still hold that address),
+   * and burn the account's other links. Any failed step throws inside the transaction, so nothing is written and the
+   * row stays as it was. The `@@unique([tenantId, email])` index decides a race for the new address: P2002 is
+   * `EMAIL_TAKEN`. A used, expired, unknown or superseded link and a moved address all answer the one coded
+   * `EMAIL_CHANGE_LINK_INVALID`. Plain `$transaction` with raw SQL for the token table (no `tenantId` column, SA-1096).
+   */
+  async confirmEmailChange(token: string): Promise<{ email: string }> {
+    const refused = () =>
+      new BadRequestException({
+        code: API_ERROR_CODES.EMAIL_CHANGE_LINK_INVALID,
+        message: "This link is invalid or has expired.",
+      });
+    const now = new Date();
+    const tokenHash = hashEmailChangeToken(typeof token === "string" ? token : "");
+    let change: { userId: string; fromEmail: string; toEmail: string; username: string };
+    try {
+      change = await this.prisma.$transaction(async (tx) => {
+        const [row] = await tx.$queryRaw<
+          { id: string; userId: string; fromEmail: string; toEmail: string; username: string }[]
+        >`SELECT c."id", c."userId", c."fromEmail", c."toEmail", u."username"
+          FROM "UserEmailChange" c JOIN "User" u ON u."id" = c."userId"
+          WHERE c."tokenHash" = ${tokenHash} AND c."usedAt" IS NULL AND c."expiresAt" > ${now}`;
+        if (!row) throw refused();
+        await tx.$executeRaw`SELECT 1 FROM "User" WHERE id = ${row.userId} FOR UPDATE`;
+        const claimed =
+          await tx.$executeRaw`UPDATE "UserEmailChange" SET "usedAt" = ${now} WHERE "id" = ${row.id} AND "usedAt" IS NULL AND "expiresAt" > ${now}`;
+        if (claimed !== 1) throw refused();
+        const res = await tx.user.updateMany({
+          where: { id: row.userId, email: row.fromEmail, status: "ACTIVE", deletedAt: null },
+          data: { email: row.toEmail, emailVerifiedAt: now },
+        });
+        if (res.count !== 1) throw refused();
+        await revokeUserLinkTokens(tx, row.userId);
+        return row;
+      });
+    } catch (err) {
+      if ((err as { code?: string })?.code === "P2002") {
+        throw new ConflictException({
+          code: API_ERROR_CODES.EMAIL_TAKEN,
+          message: "This address is already used by another account.",
+        });
+      }
+      throw err;
+    }
+
+    // Best-effort notices, after the commit: the old address learns the change was made, the new one that it is now
+    // the login email. A delivery failure never undoes the change.
+    try {
+      const old = await this.emailService.sendEmailChangedNotice({
+        to: change.fromEmail,
+        username: change.username,
+        newEmail: change.toEmail,
+      });
+      if (!old.delivered) {
+        this.logger.error(
+          `Email-changed notice NOT delivered to the old address for user ${change.userId}.`,
+        );
+      }
+      const added = await this.emailService.sendEmailChangeConfirmation({
+        to: change.toEmail,
+        username: change.username,
+      });
+      if (!added.delivered) {
+        this.logger.error(
+          `Email-change confirmation NOT delivered to the new address for user ${change.userId}.`,
+        );
+      }
+    } catch (err) {
+      this.logger.error(
+        `Failed to send email-change notices for user ${change.userId}: ${(err as Error).message}`,
+      );
+    }
+    return { email: change.toEmail };
+  }
+
   // ─── Password reset (RF-018) ──────────────────────────────────────────────────
 
   /**
@@ -675,6 +760,8 @@ export class AuthService {
         data: { password: newHash, forcePasswordChange: false },
       });
       await tx.refreshToken.deleteMany({ where: { userId: record.userId } });
+      // B461: a reset also kills a pending login-email change, one requested from a stolen session included.
+      await revokeUserEmailChanges(tx, record.userId);
       return "done" as const;
     });
     // One answer for a spent link and a link on an account that cannot sign in: nothing about the account.

@@ -100,7 +100,14 @@ export class UsersController {
       throw new ForbiddenException("Access denied");
     }
     const safeDto: UpdateUserDto = isAdmin && !isSelf ? dto : { ...dto, role: undefined };
-    return this.usersService.updateUser(id, safeDto, user.username, user.role, user.impersonatedBy);
+    return this.usersService.updateUser(
+      id,
+      safeDto,
+      user.username,
+      user.role,
+      user.impersonatedBy,
+      user.sub,
+    );
   }
 
   @Patch(":id/status")

@@ -12,6 +12,8 @@ export interface AppUser {
   isAdmin?: boolean;
   canActAsDriver?: boolean;
   createdAt: string;
+  /** B461: the new login email this user is waiting to confirm, else null. */
+  pendingEmail?: string | null;
 }
 
 interface PaginatedResponse<T> {

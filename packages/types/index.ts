@@ -83,6 +83,8 @@ export interface User {
   role: UserRole;
   status: UserStatus;
   createdAt: string;
+  /** B461: the new login email this user is waiting to confirm (a live change request), else null. */
+  pendingEmail?: string | null;
 }
 
 export interface Order {

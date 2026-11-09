@@ -110,6 +110,7 @@ import { useInvalidFocus } from "@/lib/form-errors";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 import { isReadOnlyRefusal, showReadOnlyRefusal } from "@/lib/read-only-refusal";
 import { userStatusRefusalCopy } from "@/lib/user-status-refusal";
+import { EMAIL_CHANGE_PENDING_COPY, EMAIL_CHANGE_SENT_COPY } from "@/lib/email-change-copy";
 import { newPasswordSchema, passwordErrorMessage } from "@/lib/password-policy";
 import { PasswordChecklist } from "@/components/auth";
 import { isZoneUnset } from "@/lib/tenant-timezone";
@@ -778,8 +779,17 @@ function EditUserModal({
     await updateUser.mutateAsync(
       { id: user.id, username: data.username, email: data.email, role: data.role },
       {
-        onSuccess: () => {
-          toast({ title: "User updated", variant: "success" });
+        onSuccess: (saved) => {
+          // B461: an email edit on a user who has signed in waits for the new address (the PATCH answers `pendingEmail`).
+          if (saved?.pendingEmail) {
+            toast({
+              title: "Confirmation sent",
+              description: EMAIL_CHANGE_SENT_COPY,
+              variant: "success",
+            });
+          } else {
+            toast({ title: "User updated", variant: "success" });
+          }
           onClose();
         },
         onError: (err) =>
@@ -874,6 +884,11 @@ function EditUserModal({
           register={register("email")}
           error={errors.email?.message}
         />
+        {user?.pendingEmail && (
+          <p className="-mt-2 text-xs text-navy/70" data-testid="pending-email-note">
+            {EMAIL_CHANGE_PENDING_COPY}: {user.pendingEmail}
+          </p>
+        )}
       </form>
 
       {/* Password reset section (admin-only on the api) */}

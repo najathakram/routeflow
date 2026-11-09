@@ -85,6 +85,7 @@ const ALLOWED: Record<string, Record<string, Allowed>> = {
     "sendPlatform :: params.html": { reason: TRANSPORT, count: 2 },
     "buildInvoiceEmail :: freeUnits": NUMBER,
     "sendSetPasswordEmail :: params.expiryHours": NUMBER,
+    "sendEmailChangeLink :: params.expiryHours": NUMBER,
     "sendTenantWelcomeEmail :: params.expiryHours": NUMBER,
     "sendTenantWelcomeEmail :: params.trialDays": NUMBER,
     "buildLowStockDigestEmail :: it.currentStock": NUMBER,
