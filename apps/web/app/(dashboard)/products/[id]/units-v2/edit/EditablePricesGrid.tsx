@@ -13,7 +13,7 @@ import { UNITS_V2_TESTIDS as T } from "../../units-v2-testids";
 import { AlsoUpdatePanel } from "../change-prices/AlsoUpdatePanel";
 import { OrderUnitDraft } from "./OrderUnitDraft";
 import { revealClearOfBar } from "./reveal-clear-of-bar";
-import { BTN, SkipToSave } from "./PriceEditBar";
+import { BTN, BTN_PRIMARY, SkipToSave } from "./PriceEditBar";
 import { usePriceDraft, type EditSurface } from "./usePriceDraft";
 import type { GridEditApi } from "./edit-types";
 import { usePriceGridEditAllowed } from "@/lib/api/my-permissions";
@@ -194,7 +194,7 @@ export function EditablePricesGrid({
               // Visible name stays "Edit" (the removed price-window opener owned "Edit prices"); the region heading in
               // this row says what it edits.
               aria-describedby={`units-v2-grid-title${sfx}`}
-              className={BTN}
+              className={BTN_PRIMARY}
               onClick={() => d.startEditing()}
             >
               Edit

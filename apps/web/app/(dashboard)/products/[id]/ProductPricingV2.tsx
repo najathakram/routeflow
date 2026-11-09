@@ -61,6 +61,7 @@ function PricingSection({
   };
 }) {
   const cp = useChangePrices();
+  const draft = usePriceDraft();
   // K10d: Add a unit / Remove / Reset to Auto (+ the default order unit and Name / Contains beside the grid), only where the unit ladder can be edited.
   const structure = useUnitStructureAllowed(product);
   return (
@@ -74,7 +75,14 @@ function PricingSection({
           onOpenChangePrices={cp.enabled ? cp.toggle : undefined}
           changePricesOpen={cp.open}
           changePricesRef={cp.opener}
-          panel={<ChangePrices open={cp.open} onClose={cp.close} openerRef={cp.opener} />}
+          panel={
+            <ChangePrices
+              open={cp.open}
+              onClose={cp.close}
+              openerRef={cp.opener}
+              onTypeExact={() => draft.startEditing()}
+            />
+          }
           unitControls={
             structure ? (
               <UnitStructureControls
