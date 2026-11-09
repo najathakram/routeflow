@@ -33,7 +33,9 @@ describeDb("B929 nested-create walker (real Postgres)", () => {
     unitCost: 2,
     ...extra,
   });
-  const billData = (items: unknown) => ({
+  // `any`: the rows mix checked (`product: { connect }`) and unchecked (`tenantId`) item shapes on purpose.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const billData = (items: any) => ({
     billNumber: `B929-${randomUUID().slice(0, 8)}`,
     totalOwed: 2,
     items,
@@ -87,7 +89,7 @@ describeDb("B929 nested-create walker (real Postgres)", () => {
   it("W-2: the same through tenantTransaction", async () => {
     const bill = await inTenant(() =>
       track(
-        prisma.tenantTransaction((tx) =>
+        prisma.tenantTransaction<{ id: string }>((tx) =>
           tx.vendorBill.create({ data: billData({ create: [line()] }) }),
         ),
       ),
@@ -114,7 +116,7 @@ describeDb("B929 nested-create walker (real Postgres)", () => {
         ["Walker line", tenantId],
         ["added", tenantId],
       ]);
-      const removed = await run((db) =>
+      const removed = await run<{ count: number }>((db) =>
         db.vendorBillItem.deleteMany({ where: { vendorBillId: bill.id } }),
       );
       expect(removed.count).toBe(2);
@@ -133,7 +135,7 @@ describeDb("B929 nested-create walker (real Postgres)", () => {
     });
 
     it("W-4: a checked-form nested child (product connect, no tenantId) is written with tenant: { connect }", async () => {
-      const bill = await run((db) =>
+      const bill = await run<{ id: string }>((db) =>
         db.vendorBill.create({
           data: billData({ create: [line({ product: { connect: { id: productId } } })] }),
         }),
