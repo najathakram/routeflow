@@ -195,10 +195,12 @@ function CellDisplay({
   /** The tenant's name for tier 1, in the "Follows ..." caption of an Auto tier box (P28). */
   leader?: string;
 }) {
+  // `tier` here is the grid column (1 = Retail), not a customer's tier: the Retail column follows nothing by name.
+  const isRetailColumn = view.tier === 1;
   return (
     <>
       {!dim && <div className="font-medium tabular-nums text-navy">{view.display}</div>}
-      {dim && view.word === "Auto" && view.tier > 1 && leader && (
+      {dim && view.word === "Auto" && !isRetailColumn && leader && (
         <div aria-hidden="true" className="mt-0.5 text-[11px] text-navy/45">
           Follows {leader}
         </div>
