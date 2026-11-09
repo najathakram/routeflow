@@ -233,6 +233,7 @@ import {
   overdueCutoff,
   addCalendarDays,
   startOfCalendarDay,
+  tenantTodayDay,
 } from "../common/calendar-date";
 import { calendarFieldStamp, dueDateStamps, dueStamp } from "./invoice-due-dates";
 import { counterPay, type CounterPayOpts, type TillUser } from "./counter-payment-guard";
@@ -2858,7 +2859,12 @@ export class InvoicesService {
    * relies on `NumberingService` resolving it from the request context as before.
    */
   private async generateInvoiceNumber(tenantId?: string, tx?: any): Promise<string> {
-    const year = new Date().getFullYear();
+    // W-1188: the year segment is the tenant's calendar year at mint time (entry sequence, entry year; never the issue year).
+    // Read through the caller's tx when it has one, so this never asks the pool for a second connection while that tx holds one.
+    const zone = await tenantTimeZone(tx ?? this.prisma, {
+      tenantId: tenantId ?? this.prisma.getTenantId() ?? null,
+    });
+    const year = Number(tenantTodayDay(zone).slice(0, 4));
     return this.numbering.reserveNext("INVOICE", { year, tenantId, ...(tx ? { tx } : {}) });
   }
 

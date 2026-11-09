@@ -353,6 +353,36 @@ describe("InvoicesService", () => {
     });
   });
 
+  describe("W-1188 R22 — the numbering year is read on the tenant's calendar", () => {
+    afterEach(() => jest.useRealTimers());
+
+    it("Dec 31 23:30 in Chicago (2027-01-01T05:30Z) mints INV-2026, not INV-2027", async () => {
+      jest.useFakeTimers({ now: new Date("2027-01-01T05:30:00.000Z") });
+      prisma.tenantConfig.findUnique.mockResolvedValue({ timezone: "America/Chicago" });
+      mockNumbering.reserveNext.mockResolvedValueOnce("INV-2026-0099");
+
+      await (service as any).generateInvoiceNumber("t-1");
+
+      expect(mockNumbering.reserveNext).toHaveBeenCalledWith(
+        "INVOICE",
+        expect.objectContaining({ year: 2026 }),
+      );
+    });
+
+    it("a tenant with no zone reads UTC (guard)", async () => {
+      jest.useFakeTimers({ now: new Date("2027-01-01T05:30:00.000Z") });
+      prisma.tenantConfig.findUnique.mockResolvedValue(null);
+      mockNumbering.reserveNext.mockResolvedValueOnce("INV-2027-0001");
+
+      await (service as any).generateInvoiceNumber("t-1");
+
+      expect(mockNumbering.reserveNext).toHaveBeenCalledWith(
+        "INVOICE",
+        expect.objectContaining({ year: 2027 }),
+      );
+    });
+  });
+
   // D7 pin (fix-round-2b.md): WHERE the number is reserved follows the caller.
   //  - Delivery path — routes stop completion → recordDeliveryPaymentInTx →
   //    createInvoiceFromOrder(orderId, tx): the reservation must run ON that tx.
@@ -419,6 +449,7 @@ describe("InvoicesService", () => {
             customer: {},
           })),
         },
+        tenantConfig: { findUnique: jest.fn().mockResolvedValue(null) }, // W-1188: the numbering year reads the zone ON the caller tx
         customer: { findFirst: jest.fn().mockResolvedValue({ isTaxExempt: false }) },
         trackedCategory: { findMany: jest.fn().mockResolvedValue([]) },
         orderItem: {
