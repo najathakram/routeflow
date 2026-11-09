@@ -39,7 +39,8 @@ const user = {
   createdAt: new Date("2026-10-01T00:00:00Z"),
   tenant: { id: "tenant-1", name: "Acme", slug: "acme" },
 };
-const claims = { sub: "user-1", tenantId: "tenant-1", type: "email_verify" };
+// B448: a link carries the id of its live UserEmailVerificationToken row.
+const claims = { sub: "user-1", tenantId: "tenant-1", type: "email_verify", jti: "link-1" };
 
 describe("email-verify token keys and audience", () => {
   const jwt = new JwtService({ secret: SECRET });
@@ -56,6 +57,9 @@ describe("email-verify token keys and audience", () => {
     (prisma.tenant.findUnique as jest.Mock).mockResolvedValue({ slug: "acme" });
     (prisma.refreshToken.count as jest.Mock).mockResolvedValue(0);
     (prisma.refreshToken.upsert as jest.Mock).mockResolvedValue({});
+    // B448: the account holds one live sign-up link row, and the claim of it wins.
+    (prisma.userEmailVerificationToken.count as jest.Mock).mockResolvedValue(1);
+    prisma.txExecuteRaw.mockResolvedValue(1);
     const mod = await Test.createTestingModule({
       providers: [
         AuthService,

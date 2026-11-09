@@ -57,7 +57,12 @@ describe("verification link lifecycle", () => {
     prisma = createMockPrisma();
     jwt = {
       sign: jest.fn().mockReturnValue("mock-token"),
-      verify: jest.fn().mockReturnValue({ sub: "user-1", type: "email_verify", tenantId: "t" }),
+      verify: jest.fn().mockReturnValue({
+        sub: "user-1",
+        type: "email_verify",
+        tenantId: "t",
+        jti: "link-1",
+      }),
       decode: jest.fn().mockReturnValue({ exp: Math.floor(Date.now() / 1000) + 3600 }),
     };
     email = { send: jest.fn().mockResolvedValue({ delivered: true, transport: "resend" }) };
@@ -66,6 +71,9 @@ describe("verification link lifecycle", () => {
     (prisma.tenant.findUnique as jest.Mock).mockResolvedValue({ slug: "acme" });
     (prisma.refreshToken.count as jest.Mock).mockResolvedValue(0);
     (prisma.refreshToken.upsert as jest.Mock).mockResolvedValue({});
+    // B448: by default the account holds one live sign-up link row and the claim of it wins.
+    (prisma.userEmailVerificationToken.count as jest.Mock).mockResolvedValue(1);
+    prisma.txExecuteRaw.mockResolvedValue(1);
     const mod = await Test.createTestingModule({
       providers: [
         AuthService,
@@ -213,7 +221,105 @@ describe("verification link lifecycle", () => {
 
   it("resend still sends for a signup admin who never signed in", async () => {
     (prisma.user.findFirst as jest.Mock).mockResolvedValue(base);
+    (prisma.user.findUnique as jest.Mock).mockResolvedValue(base);
     expect(await tenants.resendVerification("owner@acme.example")).toBe(true);
     expect(email.send).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * B448: an admin another admin deactivated is INACTIVE + TENANT_ADMIN + never signed in, exactly like a sign-up
+   * waiting to verify. The deactivation burned their link rows (SA-1096), so they hold rows but none live.
+   */
+  describe("B448: a deactivated admin who never signed in", () => {
+    const linkRows = (live: number, ever: number) =>
+      (prisma.userEmailVerificationToken.count as jest.Mock).mockImplementation(
+        async (args: { where: { usedAt?: null } }) => ("usedAt" in args.where ? live : ever),
+      );
+
+    beforeEach(() => {
+      (prisma.user.findUnique as jest.Mock).mockResolvedValue(base);
+      (prisma.user.findFirst as jest.Mock).mockResolvedValue(base);
+      linkRows(0, 1);
+    });
+
+    it("REG-B448: resend sends no new link", async () => {
+      const sent = await tenants.resendVerification("owner@acme.example");
+      expect(sent).toBe(false);
+      expect(email.send).not.toHaveBeenCalled();
+      expect(jwt.sign).not.toHaveBeenCalled();
+    });
+
+    it("REG-B448: a link minted before the deactivation is refused, no activation", async () => {
+      const err: any = await auth.verifyEmailAndLogin("t").catch((e) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.getResponse()).toEqual(expect.objectContaining({ code: "ALREADY_VERIFIED" }));
+      expect(statusWrites()).toHaveLength(0);
+      expect(prisma.refreshToken.upsert).not.toHaveBeenCalled();
+    });
+
+    it("REG-B448: a pre-row account that is not alone in its business gets no link", async () => {
+      linkRows(0, 0);
+      (prisma.user.count as jest.Mock).mockResolvedValue(2);
+      expect(await tenants.resendVerification("owner@acme.example")).toBe(false);
+      expect(email.send).not.toHaveBeenCalled();
+      (prisma.user.findUnique as jest.Mock).mockResolvedValue(base);
+      jwt.verify.mockReturnValue({ sub: "user-1", type: "email_verify", tenantId: "t" });
+      await expect(auth.verifyEmailAndLogin("t")).rejects.toBeInstanceOf(BadRequestException);
+      expect(statusWrites()).toHaveLength(0);
+    });
+  });
+
+  describe("B448 pins: the live sign-up link", () => {
+    const rawSql = () =>
+      prisma.txExecuteRaw.mock.calls.map((c: [TemplateStringsArray]) => c[0].join("?"));
+
+    it("resend locks the account, then rotates the link: burns the live row, writes a new one, the JWT carries its id", async () => {
+      (prisma.user.findFirst as jest.Mock).mockResolvedValue(base);
+      (prisma.user.findUnique as jest.Mock).mockResolvedValue(base);
+      expect(await tenants.resendVerification("owner@acme.example")).toBe(true);
+      const sql = rawSql();
+      expect(sql[0]).toBe(`SELECT 1 FROM "User" WHERE id = ? FOR UPDATE`);
+      expect(sql[1]).toMatch(/^UPDATE "UserEmailVerificationToken" SET "usedAt"/);
+      expect(sql[2]).toMatch(/^INSERT INTO "UserEmailVerificationToken"/);
+      const claims = jwt.sign.mock.calls[0][0];
+      expect(claims).toEqual(
+        expect.objectContaining({ sub: "user-1", type: "email_verify", jti: expect.any(String) }),
+      );
+      // only the hash of the link id is stored
+      expect(prisma.txExecuteRaw.mock.calls[2]).not.toContain(claims.jti);
+    });
+
+    it("a link whose row is spent or expired is refused, nothing activated", async () => {
+      (prisma.user.findUnique as jest.Mock).mockResolvedValue(base);
+      prisma.txExecuteRaw.mockResolvedValue(0);
+      const err: any = await auth.verifyEmailAndLogin("t").catch((e) => e);
+      expect(err.getResponse()).toEqual(expect.objectContaining({ code: "ALREADY_VERIFIED" }));
+      expect(statusWrites()).toHaveLength(0);
+    });
+
+    it("a JWT with no link id is refused while the account holds a live row", async () => {
+      (prisma.user.findUnique as jest.Mock).mockResolvedValue(base);
+      jwt.verify.mockReturnValue({ sub: "user-1", type: "email_verify", tenantId: "t" });
+      await expect(auth.verifyEmailAndLogin("t")).rejects.toBeInstanceOf(BadRequestException);
+      expect(statusWrites()).toHaveLength(0);
+    });
+
+    it("the claim and the activation run in one transaction, claim first", async () => {
+      (prisma.user.findUnique as jest.Mock).mockResolvedValue(base);
+      await auth.verifyEmailAndLogin("t");
+      expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
+      expect(rawSql()[0]).toMatch(/^UPDATE "UserEmailVerificationToken" SET "usedAt"/);
+      expect(statusWrites()).toHaveLength(1);
+    });
+
+    it("legacy: a pre-row sign-up alone in its business can resend and use a JWT with no link id", async () => {
+      (prisma.userEmailVerificationToken.count as jest.Mock).mockResolvedValue(0);
+      (prisma.user.count as jest.Mock).mockResolvedValue(1);
+      (prisma.user.findFirst as jest.Mock).mockResolvedValue(base);
+      (prisma.user.findUnique as jest.Mock).mockResolvedValue(base);
+      expect(await tenants.resendVerification("owner@acme.example")).toBe(true);
+      jwt.verify.mockReturnValue({ sub: "user-1", type: "email_verify", tenantId: "t" });
+      await expect(auth.verifyEmailAndLogin("t")).resolves.toHaveProperty("accessToken");
+    });
   });
 });
