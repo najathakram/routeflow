@@ -104,6 +104,11 @@ const REGISTRY: Record<string, Entry> = {
     reason:
       "W-1187: writes only OrderItem.position (the display order); no qty, price or composition column",
   },
+  "invoices/invoice-line-position.ts::restampKeptTail": {
+    kind: "exempt",
+    reason:
+      "W-1187: writes only InvoiceItem.position (a rebuild moves the kept NSF fee rows after the rebuilt lines); no qty, price or composition column",
+  },
   "orders/line-position.ts::restampKeptLines": {
     kind: "exempt",
     reason:

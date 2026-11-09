@@ -181,7 +181,15 @@ import {
   tenantPreferredRate,
 } from "./stored-tax-state";
 import { buildInvoiceEmailPayload } from "./invoice-email-payload";
-import { sortInvoiceLines } from "./invoice-line-order";
+import {
+  copyInvoicePositions,
+  invoiceLinesInOrder,
+  legacyOrderKept,
+  loadOrderLineRanks,
+  orderLineRanks,
+  restampKeptTail,
+  stampInvoicePositions,
+} from "./invoice-line-position";
 import {
   LINE_NAME_PRODUCT_SELECT,
   ORDER_LINE_PRODUCT_SELECT,
@@ -516,6 +524,7 @@ export class InvoicesService {
       resolved,
       override,
     });
+    stampInvoicePositions(itemsData); // W-1187: a manual invoice lists its lines in the payload's order
     // A regulated line makes this a filable sale — the SALE ledger rows are written below.
     const hasRegulated = itemsData.some((it: any) => it.trackedCategoryId != null);
     await this.applyMsrpSnapshots(this.prisma.forTenant(), dto.customerId, itemsData);
@@ -1153,6 +1162,7 @@ export class InvoicesService {
       },
     );
     const orderSubtotal = Number(order.subtotal) || 1;
+    const lineRanksOfOrder = orderLineRanks(order.lineItems); // W-1187: each sibling lists its lines in the order's order
 
     const groupData = groups.map((g) => {
       const pids = new Set(g.items.map(({ li }: any) => li.productId));
@@ -1165,6 +1175,7 @@ export class InvoicesService {
           priorBilledQty: Number(li.invoicedQty ?? 0),
         }),
       );
+      stampInvoicePositions(itemsData, lineRanksOfOrder);
       // B294: stamp the order's effective regular-tax rate onto every line so a
       // later applyPriceAdjustment recompute (Σ li.subtotal * li.taxRate) reproduces
       // this group's regular tax instead of the previous hardcoded 0.
@@ -1622,6 +1633,7 @@ export class InvoicesService {
     const itemsData = billable.map(({ li, billQty }: any) =>
       this.buildInvoiceItemData(li, billQty, tenantId, { priorPack: priorPackByLine.get(li.id) }),
     );
+    stampInvoicePositions(itemsData, orderLineRanks(order.lineItems)); // W-1187: the order's order
     await this.applyMsrpSnapshots(db, order.customerId, itemsData);
     const subtotal = roundMoney(itemsData.reduce((s: number, it: any) => s + it.subtotal, 0));
 
@@ -1676,6 +1688,7 @@ export class InvoicesService {
       : InvoiceStatus.DRAFT;
 
     await db.invoiceItem.deleteMany({ where: { invoiceId: draft.id, id: { notIn: nsf.keepIds } } });
+    await restampKeptTail(db, nsf.keepIds, itemsData.length); // W-1187: the kept NSF fee follows the rebuilt lines
     const updated = await db.invoice.update({
       where: { id: draft.id },
       data: {
@@ -2017,6 +2030,7 @@ export class InvoicesService {
       const itemsData = billable.map(({ li, billQty }: any) =>
         this.buildInvoiceItemData(li, billQty, tenantId, { priorPack: priorPackByLine.get(li.id) }),
       );
+      stampInvoicePositions(itemsData, orderLineRanks(order.lineItems)); // W-1187: the order's order, per draft
       // B294: stamp the order's effective regular-tax rate onto every line so a
       // later applyPriceAdjustment recompute reproduces this draft's regular tax.
       applyOrderDerivedTaxRate(itemsData, order, isTaxExempt);
@@ -2108,6 +2122,7 @@ export class InvoicesService {
       }
       // B297 PR4: a line whose rebuilt data equals the stored row is KEPT as the same row (kept-invoice-lines.ts).
       const createLines = await rebuildKeptItems(db, pd.draft.id, pd.nsf.keepIds, pd.itemsData);
+      await restampKeptTail(db, pd.nsf.keepIds, pd.itemsData.length); // W-1187: the kept NSF fee follows
       const inv = await db.invoice.update({
         where: { id: pd.draft.id },
         data: {
@@ -2685,6 +2700,7 @@ export class InvoicesService {
       subtotal += itemData.subtotal;
       itemsData.push(itemData);
     }
+    stampInvoicePositions(itemsData, orderLineRanks(order.lineItems)); // W-1187: source order, not request order
     // F2: a DRAFT order's partial SELLS these lines: refuse a banned one (standard 409) before the
     // number is reserved (no series gap), the transaction opens or the optional send runs.
     const partialIds = dto.items.map((req) => (itemById.get(req.orderItemId) as any)?.productId);
@@ -3068,7 +3084,7 @@ export class InvoicesService {
       ),
       revisedAt: (await revisedAtByInvoice(this.prisma.forTenant(), [id])).get(id) ?? null,
       items: withFamilyNames(
-        sortInvoiceLines(await du.itemsWithDisplayUnits(db, inv, this.entitlements)),
+        invoiceLinesInOrder(await du.itemsWithDisplayUnits(db, inv, this.entitlements)),
       ), // SA-1058; #2717 M3 + SA-827; the order reads the stored text, the family name composes after it
       payments: withNoLongerFits(inv).payments, // W-769: each row's derived noLongerFits flag
       hideOriginalPrice,
@@ -3201,6 +3217,20 @@ export class InvoicesService {
         const preferredRate = await tenantPreferredRate(tx); // the tenant rate wins the inference when it reproduces the tax
         guardItemsEditTaxState({ locked: { ...locked, preferredRate }, items, matches, editLines }); // SA-814 R5-2
         const itemsData = editLines.map((l) => l.data);
+        // W-1187: a standalone invoice lists its lines in the payload's order; a linked one follows its ORDER
+        // (manual lines after), and the payload never overrides it. A legacy invoice (a NULL position) saved in the
+        // order it is shown in writes none: an unchanged save stays a no-op and the invoice keeps its A-Z (owner Q2).
+        if (
+          !legacyOrderKept(
+            storedRows,
+            editLines.map((l) => l.rowId),
+          )
+        ) {
+          stampInvoicePositions(
+            itemsData as any[],
+            inv.orderId ? await loadOrderLineRanks(tx, inv.orderId) : undefined,
+          );
+        }
         // B1026: the SAME discount-exceeds-line guard create() runs, over the lines THIS edit writes
         // (changed or new), before any write; a stored line the edit leaves verbatim is not re-judged.
         assertNoNegativeLineSubtotal(
@@ -4136,6 +4166,7 @@ export class InvoicesService {
       tenantId: this.prisma.getTenantId(),
     }));
     const isTaxExempt = !!(customer as any)?.isTaxExempt; // the CURRENT customer: a duplicate is a new invoice
+    copyInvoicePositions(inv.items as any[], itemsData); // W-1187: a copy keeps the source's SHOWN order
     // Row 588: a legacy 0 / 4-dp-rounded rate is re-taken (verified inference, else the tenant rate), never copied.
     const src = { subtotal: inv.subtotal, taxAmount: inv.taxAmount, isTaxExempt };
     await retakeDuplicateTaxRates(src, inv.items, itemsData, () =>
@@ -5337,9 +5368,15 @@ export class InvoicesService {
       let newSubtotal = Number(invoice.subtotal);
       let newTotal = Number(invoice.total);
       if (fee > 0) {
+        // W-1187: the fee is appended LAST (max + 1); an all-NULL legacy invoice keeps its A-Z fallback either way.
+        const tail = await tx.invoiceItem.aggregate({
+          where: { invoiceId },
+          _max: { position: true },
+        });
         await tx.invoiceItem.create({
           data: {
             invoiceId,
+            position: (tail._max.position ?? -1) + 1,
             description: `${NSF_FEE_DESCRIPTION_PREFIX}${
               payment.paymentNumber
                 ? ` ${payment.paymentNumber}`
