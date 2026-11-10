@@ -15,6 +15,7 @@ import {
   featureDefByKey,
   isRegisteredFeatureKey,
 } from "../billing/feature-registry";
+import { isLiveOverride } from "../billing/feature-override-rule";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "./audit-actions.constant";
 import {
@@ -390,7 +391,12 @@ export class FeatureChangeService {
           for (const old of c.revoked) {
             // An earlier override whose end date has passed since the save is already gone; putting it back would be
             // refused (an end date must be in the future), so the set could never be undone. Skip it and say so.
-            if (old.expiresAt && new Date(old.expiresAt).getTime() <= Date.now()) {
+            if (
+              !isLiveOverride(
+                { expiresAt: old.expiresAt ? new Date(old.expiresAt) : null },
+                Date.now(),
+              )
+            ) {
               skippedExpired.push(c.key);
               continue;
             }
