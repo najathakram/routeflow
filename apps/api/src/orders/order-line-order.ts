@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { UserRole, type Prisma } from "@prisma/client";
+import type { ReorderLinesResponse } from "@routeflow/types";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { lockRowsNoWait } from "../common/db-locks";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
@@ -19,13 +20,6 @@ const logger = new Logger("OrderLineOrder");
 
 /** The audit action both reorder routes write, and the staff order read looks up. */
 export const LINES_REORDERED_ACTION = "order.lines.reordered";
-
-export interface ReorderLinesResult {
-  id: string;
-  updatedAt: string;
-  lineIds: string[];
-  linesRearranged: { by: "CUSTOMER" | "STAFF"; at: string };
-}
 
 export interface ReorderDeps {
   prisma: PrismaService;
@@ -42,9 +36,12 @@ const changed = () =>
 
 /**
  * W-1187 (SA ruling D5): put an order's lines in the order the caller arranged them. Its OWN transaction (never through
- * `updateOrderItems`): lock the Order row (NOWAIT: a drag that meets an edit in flight answers a retryable 409 instead of
- * queueing), then, in this order and before anything is written:
- *   1. a buyer must own the order: a bare 403 that names no status and no line (REG-B131 `deletedAt: null`);
+ * `updateOrderItems`): a caller with no tenant is refused first (403: the scoped `where` would otherwise match any order
+ * by id). Then, still before any lock:
+ *   1. a buyer must own the order: a bare 403 that names no status and no line (REG-B131 `deletedAt: null`); checked before
+ *      the lock so a same-tenant non-owner never gets the lock's 409 and never holds the row;
+ * then lock the Order row (NOWAIT: a drag that meets an edit in flight answers a retryable 409 instead of queueing) and,
+ * in this order and before anything is written:
  *   2. the status gate: CANCELLED is refused for everyone; a buyer is also refused once the edit window is closed;
  *   3. the CAS on `Order.updatedAt` (409 ORDER_CHANGED_DURING_EDIT);
  *   4. the id set: every line of the order, cancelled and staff-added rows included, each exactly once (the same 409).
@@ -57,16 +54,24 @@ export async function reorderOrderLines(
   orderId: string,
   dto: ReorderLinesDto,
   user: JwtPayload,
-): Promise<ReorderLinesResult> {
+): Promise<ReorderLinesResponse> {
   const tenantId = deps.prisma.getTenantId();
-  const scoped = tenantId ? { tenantId } : {};
+  // fail closed: without a tenant the scoped `where` below would be `{}` and match any order by id
+  if (!tenantId) throw new ForbiddenException("Rearranging lines needs a tenant-scoped session");
+  const scoped = { tenantId };
   return deps.prisma.tenantTransaction(async (tx: Prisma.TransactionClient) => {
     // a foreign (or unknown) id is a 404, found before any lock is taken on it
     const known = await tx.order.findFirst({
       where: { id: orderId, ...scoped },
-      select: { id: true },
+      select: { id: true, customerId: true },
     });
     if (!known) throw new NotFoundException("Order not found");
+    // a buyer must own the order, checked BEFORE the lock: a non-owner is a 403, never the lock's 409
+    const isBuyer = user.role === UserRole.CUSTOMER;
+    if (isBuyer) {
+      const owner = await tx.customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
+      if (!owner || owner.id !== known.customerId) throw new ForbiddenException();
+    }
     await lockRowsNoWait(tx, "Order", [orderId], "ORDER_LINE_ORDER_BUSY");
 
     const order = await tx.order.findFirst({
@@ -75,14 +80,12 @@ export async function reorderOrderLines(
     });
     if (!order) throw new NotFoundException("Order not found");
 
-    if (user.role === UserRole.CUSTOMER) {
-      const owner = await tx.customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
-      if (!owner || owner.id !== order.customerId) throw new ForbiddenException();
-    }
+    // the locked read is the truth: an order that changed hands between the two reads is not the buyer's any more
+    if (isBuyer && order.customerId !== known.customerId) throw new ForbiddenException();
     if (order.status === "CANCELLED") {
       throw new BadRequestException("Lines can't be rearranged on a cancelled order");
     }
-    if (user.role === UserRole.CUSTOMER && !computeEditWindow(order, UserRole.CUSTOMER).editable) {
+    if (isBuyer && !computeEditWindow(order, UserRole.CUSTOMER).editable) {
       throw new ForbiddenException(await deps.closedMessage(order));
     }
     if (new Date(dto.expectedUpdatedAt).getTime() !== order.updatedAt.getTime()) throw changed();
