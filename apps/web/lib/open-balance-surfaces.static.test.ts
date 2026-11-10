@@ -2,6 +2,12 @@ import { execSync } from "child_process";
 import { readFileSync } from "fs";
 import { join } from "path";
 
+// The ONE shared GIT_* scrub (scripts/lib/scrubbed-git-env.cjs). Under the pre-push hook git exports GIT_DIR, which
+// makes `git grep` treat apps/web as the repo root and find nothing (exit 1).
+const { scrubbedGitEnv } = require("../../../scripts/lib/scrubbed-git-env.cjs") as {
+  scrubbedGitEnv: (env?: NodeJS.ProcessEnv) => NodeJS.ProcessEnv;
+};
+
 /**
  * SA-1078 U21: every staff surface that prints a customer's open balance prints it inside `OpenBalanceButton`, so a tap
  * always opens the one statement sheet and no figure is left plain by accident. A new surface that prints the figure adds
@@ -82,7 +88,7 @@ describe("U21: the open-balance figure is only printed inside OpenBalanceButton"
   it("no other staff file reads the statement's open balance without being listed", () => {
     const files = execSync(
       'git grep -l -E "outstandingAmount|openBalance" -- "*.tsx" ":!*.test.tsx"',
-      { cwd: ROOT, encoding: "utf8" },
+      { cwd: ROOT, encoding: "utf8", env: scrubbedGitEnv() },
     )
       .split("\n")
       .filter(Boolean);
