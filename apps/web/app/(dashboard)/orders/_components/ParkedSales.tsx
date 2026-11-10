@@ -15,6 +15,7 @@ import { PARKED_EDITED_PRICES_COPY } from "@/lib/counter-park";
 import { ParkedSalesDialog, type UndoNote } from "./ParkedSalesDialog";
 import { getImpersonation } from "@/lib/impersonation";
 import { discardUndo, useParkedSales, type ParkedSalesDeps } from "./useParkedSales";
+import { useWaitingDiscards } from "@/lib/use-waiting-discards";
 
 export interface ParkedSalesProps extends ParkedSalesDeps {
   /** the ONE price-edit gate (`canEditPrices(user)`) of the person completing this sale */
@@ -34,7 +35,7 @@ function parkedAge(iso: string | undefined, nowMs: number = Date.now()): string 
 }
 
 export function ParkedSales({ canEditPrices, ...deps }: ParkedSalesProps) {
-  const { toast } = useToast();
+  const { toast, dismiss } = useToast();
   // The Undo also lives INSIDE the Parked window: the toast sits outside it, and the window hides everything else from a
   // keyboard and a screen reader. One note per waiting discard; it goes when its toast closes or the Undo is used.
   const [undoNotes, setUndoNotes] = React.useState<UndoNote[]>([]);
@@ -44,18 +45,30 @@ export function ParkedSales({ canEditPrices, ...deps }: ParkedSalesProps) {
   const p = useParkedSales({
     ...deps,
     onDiscarded: (undo, row) => {
+      let toastId = "";
       const back = () => {
         undo();
-        dropNote(row.id);
+        dropNote(row.token);
       };
-      setUndoNotes((n) => [...n, { id: row.id, text: `Discarded · ${row.label}`, undo: back }]);
-      toast({
+      setUndoNotes((n) => [
+        ...n,
+        {
+          id: row.token,
+          text: `Discarded · ${row.label}`,
+          // used inside the window: the toast it belongs to closes with it
+          undo: () => {
+            back();
+            if (toastId) dismiss(toastId);
+          },
+        },
+      ]);
+      toastId = toast({
         title: `Discarded · ${row.label}`,
         description: "The parked sale is gone unless you undo.",
         action: { label: "Undo", onClick: back },
         duration: discardUndo.ms,
         onDismiss: () => {
-          dropNote(row.id);
+          dropNote(row.token);
           row.commit();
         },
       });
@@ -63,43 +76,46 @@ export function ParkedSales({ canEditPrices, ...deps }: ParkedSalesProps) {
   });
   const { data: draftRows } = useDrafts();
   const delDraft = useDeleteDraft();
-  // An order draft Discard is taken back like a sale Discard: the row hides, the delete leaves after the Undo window (or on leaving).
-  const [hiddenDrafts, setHiddenDrafts] = React.useState<ReadonlySet<string>>(() => new Set());
-  const draftWaiting = React.useRef(new Set<string>());
+  // An order draft Discard is taken back like a sale Discard: the row hides, the delete leaves when its Undo toast closes.
+  const draftWaiting = useWaitingDiscards();
   const delDraftRef = React.useRef(delDraft.mutate);
   delDraftRef.current = delDraft.mutate;
-  const unhideDraft = (id: string) =>
-    setHiddenDrafts((h) => {
-      if (!h.has(id)) return h;
-      const n = new Set(h);
-      n.delete(id);
-      return n;
-    });
-  const commitDraft = (id: string) => {
-    if (!draftWaiting.current.delete(id)) return; // taken back or already sent
-    delDraftRef.current(id, { onError: () => unhideDraft(id) });
+  const commitDraft = (token: string) => {
+    const id = draftWaiting.commit(token);
+    if (id === null) return; // taken back or already sent
+    delDraftRef.current(id, { onError: () => draftWaiting.failed(id) });
   };
   const discardDraft = (d: SaleDraft, title: string) => {
-    setHiddenDrafts((h) => new Set(h).add(d.id));
-    draftWaiting.current.add(d.id);
+    const token = draftWaiting.begin(d.id);
+    let toastId = "";
     const back = () => {
-      if (!draftWaiting.current.delete(d.id)) return;
-      unhideDraft(d.id);
-      dropNote(d.id);
+      if (draftWaiting.undo(token)) dropNote(token);
     };
-    setUndoNotes((n) => [...n, { id: d.id, text: `Discarded · ${title}`, undo: back }]);
-    toast({
+    setUndoNotes((n) => [
+      ...n,
+      {
+        id: token,
+        text: `Discarded · ${title}`,
+        undo: () => {
+          back();
+          if (toastId) dismiss(toastId);
+        },
+      },
+    ]);
+    toastId = toast({
       title: `Discarded · ${title}`,
       description: "The order draft is gone unless you undo.",
       action: { label: "Undo", onClick: back },
       duration: discardUndo.ms,
       onDismiss: () => {
-        dropNote(d.id);
-        commitDraft(d.id);
+        dropNote(token);
+        commitDraft(token);
       },
     });
   };
-  const drafts = (Array.isArray(draftRows) ? draftRows : []).filter((d) => !hiddenDrafts.has(d.id));
+  const drafts = (Array.isArray(draftRows) ? draftRows : []).filter(
+    (d) => !draftWaiting.hidden.has(d.id),
+  );
   const router = useRouter();
   const { data: settings } = useQuery<{ taxRate?: number | null }>({
     queryKey: ["settings"],

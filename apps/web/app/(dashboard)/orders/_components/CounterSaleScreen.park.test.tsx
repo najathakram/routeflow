@@ -23,11 +23,12 @@ import { parkStoredLiveCarts } from "@/lib/counter-live-cart-park";
 type MockUser = { id: string; tenantSlug: string; role?: string } | null | undefined;
 let mockUser: MockUser;
 const mockToast = jest.fn();
+const mockDismiss = jest.fn();
 let holdToasts = false; // true = the toast stays open (paused by hover, focus or a hidden window)
 const dismissToast = (c: { onDismiss?: () => void }) => c.onDismiss?.();
 jest.mock("@routeflow/ui/web", () => ({
   ...jest.requireActual("@routeflow/ui/web"),
-  useToast: () => ({ toast: mockToast }),
+  useToast: () => ({ toast: mockToast, dismiss: mockDismiss }),
 }));
 jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
@@ -149,6 +150,7 @@ const parkedPayload = (over: Record<string, unknown> = {}) => ({
 
 beforeEach(() => {
   mockToast.mockReset();
+  mockDismiss.mockReset();
   holdToasts = false;
   mockToast.mockImplementation((c: { onDismiss?: () => void }) => {
     if (!holdToasts) setTimeout(() => dismissToast(c), 0);
@@ -805,6 +807,64 @@ describe("Discard a parked sale", () => {
     expect(proceed).not.toHaveBeenCalled();
     expect(parkCalls()).toHaveLength(0);
     cancelCounterLeave();
+  });
+
+  it("a stale toast never acts on a later discard: Discard A, Undo in the window, Discard A again, first toast closes", async () => {
+    holdToasts = true;
+    seed("a", { label: "Hold A" }, parkedPayload());
+    renderScreen();
+    const dialog = await openList(1);
+    fireEvent.click(discardBtn("Hold A"));
+    fireEvent.click(await within(dialog).findByRole("button", { name: /^Undo/ })); // the in-window Undo
+    fireEvent.click(await within(dialog).findByRole("button", { name: "Discard Hold A" }));
+    await waitFor(() => expect(within(dialog).queryByTestId("parked-row-a")).toBeNull());
+    const toasts = mockToast.mock.calls.map((c) => c[0]).filter((c) => /^Discarded/.test(c.title));
+    expect(toasts).toHaveLength(2);
+    act(() => toasts[0].onDismiss()); // the FIRST toast finally closes
+    await new Promise((r) => setTimeout(r, 50));
+    expect(del).not.toHaveBeenCalled(); // it must not delete the sale the second discard is still waiting on
+    expect(within(dialog).getAllByRole("button", { name: /^Undo/ })).toHaveLength(1);
+    act(() => toasts[1].action.onClick()); // the second toast's own Undo still works
+    expect(await within(dialog).findByTestId("parked-row-a")).toBeInTheDocument();
+    act(() => toasts[1].onDismiss());
+    expect(del).not.toHaveBeenCalled();
+  });
+
+  it("the same for an order draft: a stale toast never acts on a later discard of the same draft", async () => {
+    holdToasts = true;
+    withDraft = true;
+    renderScreen();
+    fireEvent.click(await screen.findByRole("button", { name: "Parked (1)" }));
+    const dialog = await screen.findByRole("dialog", { name: "Parked sales" });
+    const discardDraft = async () =>
+      fireEvent.click(
+        within(await within(dialog).findByTestId("draft-row-d1")).getByRole("button", {
+          name: /^Discard /,
+        }),
+      );
+    await discardDraft();
+    fireEvent.click(await within(dialog).findByRole("button", { name: /^Undo/ }));
+    await discardDraft();
+    await waitFor(() => expect(within(dialog).queryByTestId("draft-row-d1")).toBeNull());
+    const toasts = mockToast.mock.calls.map((c) => c[0]).filter((c) => /^Discarded/.test(c.title));
+    expect(toasts).toHaveLength(2);
+    act(() => toasts[0].onDismiss());
+    await new Promise((r) => setTimeout(r, 50)); // a delete would leave on the next ticks
+    expect(del).not.toHaveBeenCalled();
+    expect(within(dialog).getAllByRole("button", { name: /^Undo/ })).toHaveLength(1);
+    act(() => toasts[1].action.onClick());
+    expect(await within(dialog).findByTestId("draft-row-d1")).toBeInTheDocument();
+    expect(del).not.toHaveBeenCalled();
+  });
+
+  it("the in-window Undo also closes its own toast", async () => {
+    holdToasts = true;
+    seed("a", { label: "Hold A" }, parkedPayload());
+    renderScreen();
+    const dialog = await openList(1);
+    fireEvent.click(discardBtn("Hold A"));
+    fireEvent.click(await within(dialog).findByRole("button", { name: /^Undo/ }));
+    expect(mockDismiss).toHaveBeenCalledWith("t");
   });
 
   it("calls DELETE, refreshes the list, and the row goes", async () => {

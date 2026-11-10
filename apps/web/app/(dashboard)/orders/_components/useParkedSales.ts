@@ -4,6 +4,7 @@
 // (through `cart`), asks the server to keep or hand back a parked copy, and tells the screen to clear (`onParked`) or restore
 // (`onRestore`). Nothing here prices anything or reserves stock, and no sale key is minted: that happens at Complete.
 import * as React from "react";
+import { useWaitingDiscards } from "@/lib/use-waiting-discards";
 import type { ParkedCartPayload } from "@routeflow/pricing";
 import { useDiscard, useParkedCarts, usePark, useResume } from "@/lib/api/counter-park";
 import {
@@ -35,7 +36,10 @@ export interface ParkedSalesDeps {
    * Discard with Undo: when given, a Discard hides the row at once and sends the delete after `discardUndo.ms`
    * (or when the screen goes away); calling `undo` inside that window cancels it and the row is back. Absent = delete now.
    */
-  onDiscarded?: (undo: () => void, row: { id: string; label: string; commit: () => void }) => void;
+  onDiscarded?: (
+    undo: () => void,
+    row: { id: string; token: string; label: string; commit: () => void },
+  ) => void;
 }
 
 /** How long the Undo toast stays up (an object so a test can shorten it). The delete leaves when that toast CLOSES, not on a timer of its own. */
@@ -138,22 +142,16 @@ export function useParkedSales(deps: ParkedSalesDeps) {
     await doResume(id);
   };
 
-  // Discards waiting out their Undo window: the row is hidden, the delete has not left yet.
-  const [hidden, setHidden] = React.useState<ReadonlySet<string>>(() => new Set());
-  const pending = React.useRef(new Set<string>());
-  const unhide = (id: string) =>
-    setHidden((h) => {
-      if (!h.has(id)) return h;
-      const n = new Set(h);
-      n.delete(id);
-      return n;
-    });
-  const commitDiscard = async (id: string) => {
-    if (!pending.current.delete(id)) return; // taken back (Undo) or already sent
+  // Discards waiting for their Undo toast to close: the row is hidden, the delete has not left yet. One token per discard.
+  const waiting = useWaitingDiscards();
+  const hidden = waiting.hidden;
+  const commitDiscard = async (token: string) => {
+    const id = waiting.commit(token);
+    if (id === null) return; // taken back (Undo) or already sent
     try {
       await discardM.mutateAsync(id);
     } catch (err) {
-      unhide(id);
+      waiting.failed(id);
       setMessage({ scope: "dialog", text: discardErrorCopy(err) });
     }
   };
@@ -165,15 +163,13 @@ export function useParkedSales(deps: ParkedSalesDeps) {
     if (notify) {
       const row = (list.data?.data ?? []).find((r) => r.id === id);
       setMessage(null);
-      setHidden((h) => new Set(h).add(id));
-      pending.current.add(id);
-      notify(
-        () => {
-          if (!pending.current.delete(id)) return;
-          unhide(id);
-        },
-        { id, label: row?.label ?? "Sale", commit: () => void commitDiscard(id) },
-      );
+      const token = waiting.begin(id);
+      notify(() => void waiting.undo(token), {
+        id,
+        token,
+        label: row?.label ?? "Sale",
+        commit: () => void commitDiscard(token),
+      });
       return;
     }
     begin({ kind: "discard", id });
