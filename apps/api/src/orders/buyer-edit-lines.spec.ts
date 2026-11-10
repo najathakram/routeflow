@@ -1,4 +1,6 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
+import { readFileSync } from "fs";
+import { join } from "path";
 import {
   BUYER_EDIT_IDLESS_FALLBACK,
   BUYER_EDIT_IDLESS_FALLBACK_REMOVE_ON,
@@ -457,5 +459,12 @@ describe("denominationGate: the per-save pack-or-pieces gate of updateOrderItems
     expect(denominationGate(lines, true, true).isPieces(entry)).toBe(false);
     expect(denominationGate(lines, true, false).isPieces(entry)).toBe(true);
     expect(denominationGate(lines, false, true).isPieces(entry)).toBe(true);
+  });
+
+  it("the promo planner gets the gate's own products and namesLines, so it reads what the write reads (SA-1118)", () => {
+    expect(denominationGate(lines, true, true).namesLines).toBe(true);
+    expect(denominationGate(lines, true, false).namesLines).toBe(false);
+    const src = readFileSync(join(__dirname, "orders.service.ts"), "utf8");
+    expect(src).toMatch(/keep\.planPromos\([^)]*denom\.products,\s*denom\.namesLines,/);
   });
 });

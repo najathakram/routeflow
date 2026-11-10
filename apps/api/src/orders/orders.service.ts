@@ -2985,7 +2985,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 order.lineItems,
                 productMap,
                 denom.products,
-                !!dto.namesLines,
+                denom.namesLines, // the same flag the write reads (SA-1118)
               )
             : new Map<string, SplitPromoGroup>();
           for (const item of dto.items) {
@@ -3023,8 +3023,8 @@ export class OrdersService implements OnApplicationBootstrap {
             // Row 355: pack vs pieces per LINE, from its own unit fields (`piecesDenominated`).
             const upb = Number(product.unitsPerBox ?? 0);
             const shouldSplit = upb > 1 && denom.isPieces(item);
-            // SA-601 / #2780 (PACK ONLY): a PLAIN buyer qty (no boxes/pieces/unitLabel) on a
-            // product NEW to the order is NOT re-split as pieces — it is the DEFAULT SELLING
+            // SA-601 / #2780 (PACK ONLY): a PLAIN buyer qty (no boxes/pieces/unitLabel) naming no line
+            // (SA-1118, under namesLines; legacy: a product NEW to the order) is the DEFAULT SELLING
             // UNIT (the pack: qty N = N packs), exactly as create() stores it. It falls through
             // to the box-unaware branch below (qty as selling units, boxes/pieces/unitsPerBox
             // null). An explicit boxes/pieces (clause above) still wins.
