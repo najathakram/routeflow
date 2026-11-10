@@ -62,10 +62,16 @@ const P0A_LABELS: Record<string, GapRef> = { baseLabel: "unfiled", packLabel: "u
  * snapshots its own display unit when it is first issued.
  */
 const INVOICE_UNIT_RESET = "invoiceUnitLabel invoiceUnitFactor baseLabel";
-/** The InvoiceItem copiers' gaps: `baseLabel` is reset (SA-1029 A-1), `packLabel` and `lineCode` stay unfiled. */
+/**
+ * The InvoiceItem copiers' gaps: `baseLabel` is reset (SA-1029 A-1), `packLabel` and `lineCode` stay unfiled.
+ * W-1187: `position` (the invoice line's slot) exists as a column but no copier writes it yet: the migration lands and
+ * deploys first (L-184). PR-1c moves it to `carried` / `rederived` on every copier below, and this entry goes red
+ * ("looks fixed") until it does.
+ */
 const P0A_LABELS_LINECODE: Record<string, GapRef> = {
   packLabel: "unfiled",
   lineCode: "unfiled",
+  position: "unfiled",
 };
 
 /**
