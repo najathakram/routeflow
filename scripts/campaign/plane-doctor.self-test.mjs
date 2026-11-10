@@ -40,6 +40,7 @@ import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import { startFakePlane } from "./plane-fake-server.mjs";
 import { scrubbedGitEnv } from "../lib/check-git-hooks.mjs";
+import { scanForbidden } from "./plane-client.mjs";
 
 const REAL_DOCTOR = readFileSync(fileURLToPath(new URL("./plane-doctor.mjs", import.meta.url)));
 const REAL_CLIENT = readFileSync(fileURLToPath(new URL("./plane-client.mjs", import.meta.url)));
@@ -344,6 +345,24 @@ function checkTrue(name, got) {
 
 async function main() {
   const before = countFixtureTmpDirs(); // always 0: FIXTURE_PREFIX embeds this process's own pid+random, so no dir under it can predate this run.
+
+  // ── B933: the denylist blocks Stripe-style keys, built at runtime (no literal secret) ──
+  {
+    const patterns = JSON.parse(REAL_DENYLIST.toString("utf8")).patterns;
+    const body = "a".repeat(12) + "B1".repeat(6);
+    for (const prefix of ["sk_" + "live_", "sk_" + "test_", "pk_" + "live_"]) {
+      check(
+        `denylist: blocks ${prefix}<24 alnum> (api-key-ish)`,
+        scanForbidden(`key ${prefix}${body}`, patterns)?.name,
+        "api-key-ish",
+      );
+    }
+    check(
+      "denylist: still lets a normal sentence through",
+      scanForbidden("Ship the sk and pk label fix for the live test run", patterns),
+      null,
+    );
+  }
 
   // ── T3a: --help before anything else, zero requests, exit 0 ────────────
   {
