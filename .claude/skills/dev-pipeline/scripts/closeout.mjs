@@ -781,32 +781,44 @@ function readLedgerEntries(ledgerPath) {
   return entries;
 }
 
-// AI OS Phase 0 (2026-11-09): fill the ledger's branch, pr and taskRef from git
-// when the caller did not pass them, so cost can be tied to a merged task.
-// branch: the checked-out branch. pr: the newest PR (any state) whose head is
-// that branch, via gh. taskRef: the newest "Task:" trailer on the branch's
-// commits (written by `ctl pr-body` / lane commits). Default branches never
-// get a PR or task looked up -- their history mixes many tasks. Every lookup
-// is best-effort: a failure leaves the field null, never fails the close-out.
-// CLOSEOUT_NO_GIT_REFS=1 turns it off (selftests, offline runs).
+// AI OS Phase 0 (2026-11-09, corrected after review): fill the ledger's
+// branch, pr and taskRef from git when the caller did not pass them, so cost
+// can be tied to a merged task.
+//   branch  the checked-out branch.
+//   taskRef the newest "Task:" trailer among the branch's OWN commits
+//           (<default>..HEAD, merges excluded) -- never one inherited from
+//           master or from a "merge master into ..." commit.
+//   pr      an OPEN PR with that head preferred, else the newest; accepted
+//           only when its head commit is this HEAD or an ancestor of it, so
+//           an old PR on a reused branch name is not attached.
+// Default branches get no lookup. Every lookup is best-effort (a failure
+// leaves the field null). CLOSEOUT_NO_GIT_REFS=1 turns it off.
 const DEFAULT_BRANCHES = new Set(["main", "master", "HEAD", "develop"]);
 function resolveGitRefs(project, branch, pr, run = spawnSync) {
   const out = { branch: branch || null, pr: pr != null ? pr : null, taskRef: null };
   if (process.env.CLOSEOUT_NO_GIT_REFS === "1" || !project) return out;
-  const git = (args) => {
-    const r = run("git", ["-C", project, ...args], { encoding: "utf8", timeout: 10000 });
-    return r && r.status === 0 ? String(r.stdout || "").trim() : "";
-  };
+  const gitRun = (args) => run("git", ["-C", project, ...args], { encoding: "utf8", timeout: 10000 });
+  const git = (args) => { const r = gitRun(args); return r && r.status === 0 ? String(r.stdout || "").trim() : ""; };
   if (!out.branch) out.branch = git(["rev-parse", "--abbrev-ref", "HEAD"]) || null;
   if (!out.branch || DEFAULT_BRANCHES.has(out.branch)) return out;
-  const trailers = git(["log", "-30", "--format=%(trailers:key=Task,valueonly,separator=%x2C)"]);
-  const first = trailers.split(String.fromCharCode(10)).map((s) => s.split(",")[0].trim()).find(Boolean);
-  if (first) out.taskRef = first;
+  const base = ["origin/HEAD", "origin/master", "origin/main"].find((r) => git(["rev-parse", "--verify", "--quiet", r]));
+  if (base) {
+    const trailers = git(["log", "--no-merges", "--format=%(trailers:key=Task,valueonly,separator=%x2C)", `${base}..HEAD`]);
+    const first = trailers.split(String.fromCharCode(10)).map((x) => x.split(",")[0].trim()).find(Boolean);
+    if (first) out.taskRef = first;
+  }
   if (out.pr == null) {
-    const r = run("gh", ["pr", "list", "--head", out.branch, "--state", "all", "--limit", "1", "--json", "number"],
+    const r = run("gh", ["pr", "list", "--head", out.branch, "--state", "all", "--limit", "5", "--json", "number,state,headRefOid"],
       { cwd: project, encoding: "utf8", timeout: 15000 });
     if (r && r.status === 0) {
-      try { const n = JSON.parse(r.stdout || "[]")[0]?.number; if (Number.isInteger(n)) out.pr = n; } catch { /* leave null */ }
+      let list = [];
+      try { list = JSON.parse(r.stdout || "[]"); } catch { list = []; }
+      list.sort((a, b) => (a.state === "OPEN" ? 0 : 1) - (b.state === "OPEN" ? 0 : 1));
+      for (const p of list) {
+        if (!Number.isInteger(p.number) || !p.headRefOid) continue;
+        const anc = gitRun(["merge-base", "--is-ancestor", p.headRefOid, "HEAD"]);
+        if (anc && anc.status === 0) { out.pr = p.number; break; }
+      }
     }
   }
   return out;
@@ -814,7 +826,8 @@ function resolveGitRefs(project, branch, pr, run = spawnSync) {
 
 function stepLedger(ctx) {
   const { flags, project, runDir, slug, dry, startedAt, endedAt, usageResult, mode, scale, result } = ctx;
-  const { branch, pr, taskRef } = resolveGitRefs(project, ctx.branch, ctx.pr);
+  let { branch, pr } = ctx;
+  let taskRef = null;
   const ledgerPath = typeof flags.ledger === "string" ? path.resolve(flags.ledger) : defaultLedgerPath(project);
 
   // Idempotence by slug -- with ONE repair exception. An existing row
@@ -854,6 +867,9 @@ function stepLedger(ctx) {
     appendProjectDir = derived;
   }
 
+  // Git lookups only for a row that will really be written (after the
+  // idempotence skip, never in --dry), so a skipped close-out stays fast.
+  if (!dry) ({ branch, pr, taskRef } = resolveGitRefs(project, branch, pr));
   const args = ["append", resultJsonPath, "--run", slug, "--project", appendProjectDir, "--ended", endedAt];
   if (startedAt) args.push("--started", startedAt);
   if (branch) args.push("--branch", branch);
