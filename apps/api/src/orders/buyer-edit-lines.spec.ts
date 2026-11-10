@@ -4,6 +4,7 @@ import {
   BUYER_EDIT_IDLESS_FALLBACK_REMOVE_ON,
   applyBuyerEditLines,
   assertNoOrderItemIdOutsideBuyerEdit,
+  denominationGate,
   guardBuyerEditLineIds,
   piecesDenominated,
   preflightBuyerEditLines,
@@ -436,5 +437,25 @@ describe("applyBuyerEditLines", () => {
       new Map([["cat-1", { taxType: "EXCISE_PER_UNIT", rate: "0.0700", priceIncludesTax: false }]]),
     );
     expect(items).toEqual([{ productId: "p1", qty: 5 }]);
+  });
+});
+
+describe("denominationGate: the per-save pack-or-pieces gate of updateOrderItems", () => {
+  const lines = [
+    { id: "pack", productId: "p1", status: "ACTIVE", boxes: null, pieces: null },
+    { id: "gone", productId: "p2", status: "CANCELLED", boxes: 1, pieces: 0 },
+    { id: "split", productId: "p3", status: "ACTIVE", boxes: 2, pieces: 3 },
+  ];
+
+  it("SA-422 (3): a seller-CANCELLED box-split line denominates nothing for a buyer, but still does for staff", () => {
+    expect([...denominationGate(lines, true, true).products]).toEqual(["p3"]);
+    expect([...denominationGate(lines, false, false).products].sort()).toEqual(["p2", "p3"]);
+  });
+
+  it("isPieces is piecesDenominated with the save's namesLines (SA-1118)", () => {
+    const entry = { productId: "p3", qty: 2 };
+    expect(denominationGate(lines, true, true).isPieces(entry)).toBe(false);
+    expect(denominationGate(lines, true, false).isPieces(entry)).toBe(true);
+    expect(denominationGate(lines, false, true).isPieces(entry)).toBe(true);
   });
 });

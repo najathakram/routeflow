@@ -3,6 +3,7 @@ import { normalizeBoxesPieces, round4, withinStaffOverrideTolerance } from "@rou
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { carriedLineFor } from "./carry-line-category";
 import { foldTarget, liveTrioFor, type FoldTrio } from "./fold-target";
+import { liveLines } from "./order-edit-cancelled";
 
 /**
  * B297 row 352 (SA-734r2 r-note 4): the buyer's PATCH /buyer/orders/:id/items names each existing line it
@@ -384,6 +385,32 @@ export function piecesDenominated(
   if (namesLines) return false;
   const live = lines.filter((l) => l.productId === item.productId && l.status !== "CANCELLED");
   return live.length > 0 && live.every((l) => l.boxes != null || l.pieces != null);
+}
+
+/**
+ * The pack-or-pieces gate of one replace save (`updateOrderItems`), built once. A boxed line's incoming `qty`
+ * is only PIECES when a line of the product was stored with a box/piece split (box-aware create). Lines created
+ * box-UNAWARE (mobile cart, operator add-line) store `qty` as a selling-unit/box count with boxes=null; those
+ * must NOT re-split, or a $120 (2-box) line would drop to $20 (2-piece) on any edit. SA-422 (3): a buyer's fresh
+ * add is never denominated by a seller-CANCELLED line (`liveLines`). `products` feeds the promo planners;
+ * `isPieces` is `piecesDenominated` for one entry.
+ */
+export function denominationGate(
+  lineItems: Parameters<typeof piecesDenominated>[0],
+  isBuyerEdit: boolean,
+  namesLines: boolean,
+) {
+  const lines = lineItems ?? [];
+  const products: ReadonlySet<string> = new Set(
+    (isBuyerEdit ? liveLines(lines) : lines)
+      .filter((li) => li.productId && (li.boxes != null || li.pieces != null))
+      .map((li) => li.productId as string),
+  );
+  return {
+    products,
+    isPieces: (item: Parameters<typeof piecesDenominated>[1]) =>
+      piecesDenominated(lineItems, item, products, isBuyerEdit, namesLines),
+  };
 }
 
 /** Who is editing: the three replace paths share ONE pairing (row 373b). */

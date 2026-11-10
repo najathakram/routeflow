@@ -208,7 +208,7 @@ import { recomputeLineCategoryTaxes } from "./recompute-line-category-taxes";
 import { loadLiveTrioByProduct } from "./fold-target";
 import { carriedLineFor } from "./carry-line-category";
 import { assertLockedEditLines, assertRevisionCurrent } from "./locked-edit-guards";
-import { guardBuyerEditLineIds, pairEditLines, piecesDenominated } from "./buyer-edit-lines";
+import { denominationGate, guardBuyerEditLineIds, pairEditLines } from "./buyer-edit-lines";
 import * as keep from "./buyer-replace-keep"; // row 497 / 496
 import type { SplitPromoGroup } from "./split-promo-group";
 import { settleSplitFreeUnits } from "./settle-split-free-units";
@@ -2956,20 +2956,8 @@ export class OrdersService implements OnApplicationBootstrap {
           // buyerPromos + buyerPriceHistory (sticky upsell) are hoisted above the
           // transaction (pool-starvation fix) and closed over here.
 
-          // Denomination gate: a boxed line's incoming `qty` is only PIECES when the
-          // existing line was stored with a box/piece split (box-aware create). Lines
-          // created box-UNAWARE (mobile cart, operator add-line) store `qty` as a
-          // selling-unit/box count with boxes=null — for those we must NOT re-split,
-          // or a $120 (2-box) line would drop to $20 (2-piece) on any edit.
-          // SA-422 (3): a buyer's fresh add is never denominated by a seller-CANCELLED line.
-          const denomLines = isBuyerEdit
-            ? cancelledLines.liveLines(order.lineItems ?? [])
-            : (order.lineItems ?? []);
-          const pieceDenominated = new Set(
-            denomLines
-              .filter((li) => li.productId && (li.boxes != null || li.pieces != null))
-              .map((li) => li.productId as string),
-          );
+          // Pack or pieces per entry, built once per save: `denominationGate` (buyer-edit-lines.ts).
+          const denom = denominationGate(order.lineItems, isBuyerEdit, !!dto.namesLines);
           // B51 (REG-B51): buyers can neither author, reprice, nor drop unlisted
           // (catalog-free) lines — create()'s staff-only rule, mirrored. Stored
           // unlisted rows are preserved IN PLACE (same row ids — invoice/delivery
@@ -2996,7 +2984,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 heldById,
                 order.lineItems,
                 productMap,
-                pieceDenominated,
+                denom.products,
                 !!dto.namesLines,
               )
             : new Map<string, SplitPromoGroup>();
@@ -3034,15 +3022,7 @@ export class OrdersService implements OnApplicationBootstrap {
             if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
             // Row 355: pack vs pieces per LINE, from its own unit fields (`piecesDenominated`).
             const upb = Number(product.unitsPerBox ?? 0);
-            const shouldSplit =
-              upb > 1 &&
-              piecesDenominated(
-                order.lineItems,
-                item,
-                pieceDenominated,
-                isBuyerEdit,
-                !!dto.namesLines,
-              );
+            const shouldSplit = upb > 1 && denom.isPieces(item);
             // SA-601 / #2780 (PACK ONLY): a PLAIN buyer qty (no boxes/pieces/unitLabel) on a
             // product NEW to the order is NOT re-split as pieces — it is the DEFAULT SELLING
             // UNIT (the pack: qty N = N packs), exactly as create() stores it. It falls through
