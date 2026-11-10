@@ -55,6 +55,30 @@ describe("judgeOfflineDrift (SA-1124 item 7)", () => {
     ]);
   });
 
+  it("S1: a qty-sold line (server pack snapshot null) whose quote sends the product's pack size gets no flag", () => {
+    const lines = [q(0, 12, { unitsPerBox: 24 })];
+    expect(judgeOfflineDrift([server()], 12, { total: 12, lines })).toEqual([]);
+  });
+
+  it("S1: a box-split line compares the pack: the same pack is no drift, another pack or none is", () => {
+    const s = server({ unitsPerBox: 24 });
+    const same = { total: 12, lines: [q(0, 12, { unitsPerBox: 24 })] };
+    expect(judgeOfflineDrift([s], 12, same)).toEqual([]);
+    for (const unitsPerBox of [12, null]) {
+      const out = judgeOfflineDrift([s], 12, { total: 12, lines: [q(0, 12, { unitsPerBox })] });
+      expect(out).toEqual([
+        { kind: "LINE", lineIndex: 0, productId: "p1", shown: 12, now: 12, unitChanged: true },
+      ]);
+    }
+  });
+
+  it("S1: a null and an empty unit label are the same label", () => {
+    const empty = { total: 12, lines: [q(0, 12, { unitLabel: "" })] };
+    expect(judgeOfflineDrift([server()], 12, empty)).toEqual([]);
+    const none = { total: 12, lines: [q(0, 12)] };
+    expect(judgeOfflineDrift([server({ unitLabel: "" })], 12, none)).toEqual([]);
+  });
+
   it("unit labels compare case- and space-insensitively", () => {
     const s = server({ unitLabel: "Case", unitsPerBox: 24 });
     const lines = [q(0, 12, { unitLabel: " case ", unitsPerBox: 24 })];

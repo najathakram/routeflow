@@ -6,7 +6,6 @@ import {
   GATE_FLAG_KINDS,
   MANUAL_FLAG_KINDS,
   needsReviewWhere,
-  NEEDS_REVIEW_WHERE,
   PASSED_AT_PROMOTION,
   resolveGateFlagsAtPromotion,
   resolveReviewFlag,
@@ -34,9 +33,26 @@ describe("seesReviewFlags", () => {
 });
 
 describe("needsReviewWhere", () => {
-  it("filters for staff when true, and never for a customer or when not true", () => {
-    expect(needsReviewWhere(true, staff)).toBe(NEEDS_REVIEW_WHERE);
-    expect(needsReviewWhere(true, { ...staff, role: "CUSTOMER" } as JwtPayload)).toEqual({});
+  const scoped = (tenantId: string) => ({
+    reviewFlags: { some: { tenantId, resolvedAt: null } },
+  });
+
+  it("filters for staff when true, scoped to the caller's tenant (S2: the relation filter carries tenantId)", () => {
+    expect(needsReviewWhere(true, staff)).toEqual(scoped("t1"));
+  });
+
+  it("a token without a tenant (super admin) takes the request's tenant; with neither it is the open-flag filter alone", () => {
+    const noTenant = { ...staff, tenantId: null } as JwtPayload;
+    expect(needsReviewWhere(true, noTenant, "t9")).toEqual(scoped("t9"));
+    expect(needsReviewWhere(true, noTenant, null)).toEqual({
+      reviewFlags: { some: { resolvedAt: null } },
+    });
+  });
+
+  it("never filters a customer or a driver (staff only, as seesReviewFlags), or when not true", () => {
+    for (const role of ["CUSTOMER", "DRIVER"]) {
+      expect(needsReviewWhere(true, { ...staff, role } as JwtPayload)).toEqual({});
+    }
     expect(needsReviewWhere(undefined, staff)).toEqual({});
     expect(needsReviewWhere(false, staff)).toEqual({});
   });
@@ -106,15 +122,14 @@ describe("resolveGateFlagsAtPromotion", () => {
 });
 
 describe("resolveGateFlagsAtPromotion with no tenant on the order", () => {
-  it("still scopes to the order id (one order, one tenant) and adds no null tenant filter", async () => {
+  it("writes nothing: a flag row always carries its tenant, so none can exist (never an unscoped update)", async () => {
     const updateMany = jest.fn().mockResolvedValue({ count: 0 });
     await resolveGateFlagsAtPromotion(
       { orderReviewFlag: { updateMany } },
       { id: "o1", tenantId: null },
       null,
     );
-    expect(updateMany.mock.calls[0][0].where).not.toHaveProperty("tenantId");
-    expect(updateMany.mock.calls[0][0].where.orderId).toBe("o1");
+    expect(updateMany).not.toHaveBeenCalled();
   });
 });
 

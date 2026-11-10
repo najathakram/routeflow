@@ -65,7 +65,11 @@ export async function findAllOrdersImpl(
   // Ad-hoc trips + fulfillment mode: filter by ROUTE/SHIP. Omitted ⇒ no where
   // key at all (every existing order stays visible either way).
   if (fulfillPath) where.fulfillPath = fulfillPath;
-  Object.assign(where, dateAndShipmentFilters(query), needsReviewWhere(query.needsReview, user));
+  Object.assign(
+    where,
+    dateAndShipmentFilters(query),
+    needsReviewWhere(query.needsReview, user, query.needsReview ? prisma.getTenantId() : null),
+  );
 
   const [data, total] = await Promise.all([
     prisma.forTenant().order.findMany({

@@ -55,9 +55,6 @@ export function seesReviewFlags(user: { role?: string } | null | undefined): boo
   return !!user?.role && FLAG_READERS.includes(user.role);
 }
 
-/** The `GET /orders` filter for `needsReview=true`: an order with any open flag. Never applied to a customer. */
-export const NEEDS_REVIEW_WHERE = { reviewFlags: { some: { resolvedAt: null } } } as const;
-
 /**
  * `POST /orders/:id/review-flags/:flagId/resolve`. The flag is looked up by id, order AND the caller's tenant, so another
  * tenant's flag (or a flag of another order) is a 404. An already-resolved flag returns its current state unchanged (200,
@@ -124,10 +121,12 @@ export async function resolveGateFlagsAtPromotion(
   order: { id: string; tenantId: string | null },
   userId: string | null,
 ): Promise<void> {
+  // A flag row always carries its tenant (required column), so an order with none has no flags: never an unscoped update.
+  if (!order.tenantId) return;
   await tx.orderReviewFlag.updateMany({
     where: {
       orderId: order.id,
-      ...(order.tenantId ? { tenantId: order.tenantId } : {}), // an order id belongs to one tenant either way
+      tenantId: order.tenantId,
       kind: { in: [...GATE_FLAG_KINDS] },
       resolvedAt: null,
     },
@@ -135,7 +134,17 @@ export async function resolveGateFlagsAtPromotion(
   });
 }
 
-/** `needsReview=true` for anyone but a customer: a customer's list is never filtered (or probed) by flags. */
-export function needsReviewWhere(needsReview: boolean | undefined, user: JwtPayload) {
-  return needsReview === true && user.role !== UserRole.CUSTOMER ? NEEDS_REVIEW_WHERE : {};
+/**
+ * The `GET /orders` filter for `needsReview=true`: an order with any open flag. Staff only (the same callers that see the
+ * flags): a customer's or driver's list is never filtered, or probed, by flags. The relation filter is NOT tenant-injected
+ * by Prisma, so it carries the tenant itself (the caller's, else the request's) and so reads (tenantId, kind, resolvedAt).
+ */
+export function needsReviewWhere(
+  needsReview: boolean | undefined,
+  user: JwtPayload,
+  requestTenantId?: string | null,
+) {
+  if (needsReview !== true || !seesReviewFlags(user)) return {};
+  const tenantId = user.tenantId ?? requestTenantId ?? null;
+  return { reviewFlags: { some: { ...(tenantId ? { tenantId } : {}), resolvedAt: null } } };
 }

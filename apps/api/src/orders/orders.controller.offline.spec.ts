@@ -214,6 +214,38 @@ describe("OrdersController.create - the offline mode (SA-1124 PR-1a)", () => {
       expect(ordersService.create).not.toHaveBeenCalled();
     });
 
+    it("M1: immediateDelivery (a delivered-now link that would overwrite a DRAFT): 400 OFFLINE_IMMEDIATE_DELIVERY_ONLINE_ONLY", async () => {
+      const res = await codeOf(
+        controller.create(
+          body({
+            offline: true,
+            offlineQuote: quote,
+            routeRunId: "run-1",
+            immediateDelivery: true,
+          }),
+          payload("OPERATOR"),
+        ),
+      );
+      expect(res).toMatchObject({
+        status: 400,
+        code: "OFFLINE_IMMEDIATE_DELIVERY_ONLINE_ONLY",
+      });
+      expect(ordersService.create).not.toHaveBeenCalled();
+    });
+
+    it("M1: immediateDelivery false offline is accepted; online immediateDelivery is untouched", async () => {
+      await controller.create(
+        body({ offline: true, offlineQuote: quote, immediateDelivery: false }),
+        payload("OPERATOR"),
+      );
+      ordersService.findActiveOrder.mockResolvedValue(null); // no open order: the online call needs no merge choice
+      await controller.create(
+        body({ routeRunId: "run-1", immediateDelivery: true }),
+        payload("OPERATOR"),
+      );
+      expect(ordersService.create).toHaveBeenCalledTimes(2);
+    });
+
     it("no offlineQuote: 400 OFFLINE_QUOTE_REQUIRED (fail closed)", async () => {
       const res = await codeOf(controller.create(body({ offline: true }), payload("OPERATOR")));
       expect(res).toMatchObject({ status: 400, code: "OFFLINE_QUOTE_REQUIRED" });

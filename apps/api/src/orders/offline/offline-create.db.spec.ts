@@ -44,6 +44,7 @@ import { Pool } from "pg";
 import { describeDb, requireLocalDatabaseUrl } from "../../common/testing/db-spec";
 import { OrdersService } from "../orders.service";
 import { resolveReviewFlag } from "./review-flags";
+import { offlineCreateOptions, resolveOfflineRequest } from "./offline-create";
 import { oversellReaderOffProvider } from "../testing/policy-reader-provider";
 import { InvoicesService } from "../../invoices/invoices.service";
 import { SystemConfigService } from "../../system-config/system-config.service";
@@ -478,6 +479,49 @@ describeDb("SA-1124 PR-1a: offline create mode - real Postgres", () => {
       expect(flags).toHaveLength(1);
       expect(flags[0].orderItemId).toBeNull();
       expect(flags[0].detail).toMatchObject({ limit: 5, exposure: Number(bodyOf(e).exposure) });
+    }, 60_000);
+
+    it("M1: offline + immediateDelivery + a routeRunId on an over-credit cart is refused 400 and stores no order (it was stored CONFIRMED, no gate passed)", async () => {
+      const cust = await customer("b4m", 5);
+      const route = await raw.route.create({
+        data: { name: `sa1124-m1-${RUN}`, tenantId: w.tenantId } as any,
+      });
+      const run = await raw.routeRun.create({
+        data: {
+          tenantId: w.tenantId,
+          routeId: route.id,
+          scheduledDate: new Date("2026-11-09T00:00:00.000Z"),
+          status: "SCHEDULED" as any,
+        },
+      });
+      try {
+        const dto = {
+          customerId: cust,
+          items: [{ productId: w.clean, qty: 2 }],
+          routeRunId: run.id,
+          immediateDelivery: true,
+          offline: true,
+          offlineQuote: quoteOf(22, [line(0, 10)]),
+        };
+        let stored = "refused";
+        let refusal: any = null;
+        try {
+          const req = resolveOfflineRequest(dto as never, staff());
+          const options = await as(() => offlineCreateOptions(svc, dto as never, staff(), req!));
+          const o: any = await as(() => svc.create(dto as never, staff(), options));
+          stored = o.status; // red today: the DRAFT the credit gate produced is overwritten with CONFIRMED
+        } catch (e) {
+          refusal = e;
+        }
+        expect(stored).toBe("refused");
+        expect(refusal.getStatus()).toBe(400);
+        expect(bodyOf(refusal).code).toBe("OFFLINE_IMMEDIATE_DELIVERY_ONLINE_ONLY");
+        expect(await raw.order.count({ where: { customerId: cust } })).toBe(0);
+      } finally {
+        await raw.order.updateMany({ where: { routeRunId: run.id }, data: { routeRunId: null } });
+        await raw.routeRun.delete({ where: { id: run.id } });
+        await raw.route.delete({ where: { id: route.id } });
+      }
     }, 60_000);
 
     it("a lost-response resend of an order the server saved as a DRAFT replays it (no 409 draft mismatch, no second set of flags)", async () => {

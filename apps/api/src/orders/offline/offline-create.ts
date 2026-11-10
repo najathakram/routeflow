@@ -68,7 +68,7 @@ function quoteIsUsable(quote: OfflineQuote | undefined, itemCount: number): quot
 
 /**
  * The FIRST step of `OrdersController.create`, before any merge logic. Null = an ordinary create (the offline fields
- * are never read again). `offline: true` is staff only (403), books no money (400: credit notes, an inline return) and
+ * are never read again). `offline: true` is staff only (403), books no money and delivers nothing now (400: credit notes, an inline return, immediateDelivery) and
  * needs a usable quote (400, fail closed). The service never reads `dto.offline`: it gets the internal option.
  */
 export function resolveOfflineRequest(
@@ -94,6 +94,15 @@ export function resolveOfflineRequest(
       BadRequestException,
       API_ERROR_CODES.OFFLINE_PAYMENT_ONLINE_ONLY,
       "A return that issues credit is taken online. Take it once the order is saved.",
+    );
+  }
+  if (dto.immediateDelivery) {
+    // `create()` writes CONFIRMED over whatever status the gates left when a run link and immediateDelivery are sent,
+    // which would store a refused (DRAFT) order as CONFIRMED with no gate passed. Delivered-now is an online step.
+    throw refuse(
+      BadRequestException,
+      API_ERROR_CODES.OFFLINE_IMMEDIATE_DELIVERY_ONLINE_ONLY,
+      "Delivering an order on the spot is done online. Save the order first, then deliver it.",
     );
   }
   if (!quoteIsUsable(dto.offlineQuote as OfflineQuote | undefined, (dto.items ?? []).length)) {

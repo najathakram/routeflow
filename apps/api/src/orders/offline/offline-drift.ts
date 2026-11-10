@@ -51,8 +51,10 @@ export function judgeOfflineDrift(
     const s = server[q.index];
     if (!s || s.override) continue;
     const priceMoved = cents(s.unitPrice) !== cents(q.unitPrice);
-    const unitMoved =
-      !sameUnit(s.unitsPerBox, q.unitsPerBox) || !sameLabel(s.unitLabel, q.unitLabel);
+    // The server's pack is a SNAPSHOT: null unless the line was sold in boxes with a pack above 1. A line the server did
+    // not box-split carries no pack to compare, so the device's pack on it (e.g. the product's size on a qty line) is no drift.
+    const packMoved = s.unitsPerBox != null && !sameUnit(s.unitsPerBox, q.unitsPerBox);
+    const unitMoved = packMoved || !sameLabel(s.unitLabel, q.unitLabel);
     if (!priceMoved && !unitMoved) continue;
     findings.push({
       kind: "LINE",
