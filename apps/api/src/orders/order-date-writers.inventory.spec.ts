@@ -1,7 +1,7 @@
 /**
  * W-1188 pin (a): the sale's business date has ONE writer and ONE gate.
  *  - `Order.orderDate` is written in exactly one place, `OrdersService.create` (the shorthand `orderDate,` in its
- *    order.create data), and no update path writes it.
+ *    order.create data), and no update path writes it. Every `orderDate:` key in source is on a reviewed list.
  *  - every `resolveOrderDate(` call in the API passes a `policy` (the compiler already requires it; this keeps a
  *    cast from hiding one) and the callers are exactly the two reviewed files.
  *  - the old UTC-leaking `parseOrderDate` stays deleted.
@@ -31,6 +31,35 @@ describe("W-1188: one order-date writer, one gate", () => {
       return n > 0 ? [`${rel(f)}:${n}`] : [];
     });
     expect(hits).toEqual(["orders/orders.service.ts:1"]);
+  });
+
+  it("every `orderDate:` key in source is a reviewed read, a pass-through or the stamp; a new one needs a review", () => {
+    // Reviewed 2026-11-09 (W-1188 PR-1b). Reads: where/select/orderBy in analytics, suggestions, open lines, product open
+    // orders, commissions, receipts. Pass-through of the DTO day: counter-sale.service, orders.service createSale.
+    // order-date.ts holds the gate (resolve/drift/audit meta). A hit outside this list, or one more in a listed file,
+    // fails here so a second writer (or an update path) cannot slip in beside the one reviewed writer.
+    const reviewed: Record<string, number> = {
+      "analytics/analytics.service.ts": 2,
+      "customers/customer-order-suggestions.service.ts": 3,
+      "documents/receipt-model.ts": 1,
+      "documents/receipt.fixtures.ts": 1,
+      "documents/receipt.service.ts": 1,
+      "orders/counter-sale/counter-sale-today.ts": 1,
+      "orders/counter-sale/counter-sale.service.ts": 1,
+      "orders/open-order-lines.ts": 4,
+      "orders/order-date.ts": 4,
+      "orders/orders.service.ts": 1,
+      "products/product-open-orders.service.ts": 1,
+      "sales-agents/commission-engine.service.ts": 2,
+    };
+    const found: Record<string, number> = {};
+    for (const f of files) {
+      const n = read(f)
+        .split("\n")
+        .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l) && /\borderDate\s*:/.test(l)).length;
+      if (n > 0) found[rel(f)] = n;
+    }
+    expect(found).toEqual(reviewed);
   });
 
   it("every resolveOrderDate( call passes a policy, from the reviewed files (the create() path goes through order-date.ts itself)", () => {
