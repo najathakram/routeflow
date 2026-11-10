@@ -232,6 +232,8 @@ describeDb(
       await prisma.advancePayment.deleteMany({ where: { tenantId } });
       await prisma.invoicePayment.deleteMany({ where: { invoice: { tenantId } } });
       await prisma.invoice.deleteMany({ where: { tenantId } });
+      await prisma.orderReviewFlag.deleteMany({ where: { tenantId } });
+      await prisma.order.deleteMany({ where: { tenantId } });
       await prisma.paymentCounter.deleteMany({ where: { id: tenantId } });
       await prisma.customer.deleteMany({ where: { tenantId } });
       await prisma.user.deleteMany({ where: { tenantId } });
@@ -441,6 +443,67 @@ describeDb(
       expect(flagged).toHaveLength(1);
       expect(flagged[0].meta).toMatchObject({ displaced: [d.id] });
       expect(chargeReview.flagUnconfirmedOverReserved).toHaveBeenCalledTimes(1);
+    }, 60_000);
+
+    // SA-1130 guard (SA-1124 PR-1b): a card settle allocates only to OPEN_STATUSES (SENT, VIEWED, PARTIAL,
+    // OVERDUE), so it can never reach the DRAFT invoice of an order that carries an open review flag.
+    it("SA-1130 guard: a card settle allocates nothing to a flagged order's DRAFT", async () => {
+      const s = await seed("sa1130", { invoiceTotal: 200 });
+      const order = await prisma.order.create({
+        data: {
+          tenantId: s.tenant.id,
+          customerId: s.invoice!.customerId,
+          fulfillPath: "ROUTE",
+          status: "CONFIRMED",
+          subtotal: 50,
+          tax: 5,
+          total: 55,
+        },
+      });
+      const flag = await prisma.orderReviewFlag.create({
+        data: {
+          tenantId: s.tenant.id,
+          orderId: order.id,
+          kind: "PRICE_CHANGED_OFFLINE",
+          detail: { quotedUnitPrice: 20, currentUnitPrice: 25 },
+        },
+      });
+      const draft = await prisma.invoice.create({
+        data: {
+          tenantId: s.tenant.id,
+          customerId: s.invoice!.customerId,
+          orderId: order.id,
+          invoiceNumber: `INV-SEED-${randomUUID().slice(0, 8)}`,
+          status: "DRAFT",
+          subtotal: 50,
+          taxAmount: 5,
+          total: 55,
+        },
+      });
+      const pi = `pi_sa1130_${randomUUID().slice(0, 8)}`;
+      await expect(
+        service.settleByPaymentIntent({
+          type: "payment_intent.succeeded",
+          eventId: `evt_${pi}`,
+          accountRef: "acct_sa1130",
+          created: new Date(),
+          paymentIntentId: pi,
+          amountDollars: 300,
+          currency: "usd",
+          methodKind: "card",
+          metadata: { tenantId: s.tenant.id, buyerPaymentRequestId: s.requestId },
+        }),
+      ).resolves.toEqual({ handled: true });
+
+      const sentRows = await prisma.invoicePayment.findMany({
+        where: { invoiceId: s.invoice!.id },
+      });
+      expect(sentRows.map((r) => `${r.status} ${Number(r.amount)}`)).toEqual(["PAID 200"]); // the 100 overflow has nowhere to go but on-account
+      expect(await prisma.invoicePayment.count({ where: { invoiceId: draft.id } })).toBe(0);
+      const draftAfter = await prisma.invoice.findUnique({ where: { id: draft.id } });
+      expect(draftAfter?.status).toBe("DRAFT");
+      const flagAfter = await prisma.orderReviewFlag.findUnique({ where: { id: flag.id } });
+      expect(flagAfter?.resolvedAt).toBeNull();
     }, 60_000);
   },
 );
