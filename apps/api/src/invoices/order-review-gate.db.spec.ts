@@ -126,7 +126,10 @@ describeDb("the offline price-review gate on a real database (SA-1124 PR-1b)", (
         },
         {
           provide: MessagingService,
-          useValue: { notify: jest.fn().mockResolvedValue([]), notifyEvent: jest.fn() },
+          useValue: {
+            notify: jest.fn().mockResolvedValue([]),
+            notifyEvent: jest.fn().mockResolvedValue(undefined),
+          },
         },
         {
           provide: StorageService,
@@ -341,7 +344,7 @@ describeDb("the offline price-review gate on a real database (SA-1124 PR-1b)", (
         {
           customerId: s.customerId,
           totalAmount: 10,
-          method: "CARD",
+          method: "CREDIT_CARD",
           reference: `pi_1124${RUN}`,
           allocations: [{ invoiceId: s.invoiceId!, amount: 10 }],
         } as any,
