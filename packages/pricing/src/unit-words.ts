@@ -12,7 +12,7 @@ export const DEFAULT_BASE_LABEL = "Piece";
 const DEFAULT_BASE_SHORT = { one: "pc", other: "pcs" } as const;
 
 /** Labels that read the same in the singular and plural ("2 Dozen", "3 kg", "6 each"). */
-const INVARIANT = new Set([
+export const INVARIANT_UNIT_WORDS: ReadonlySet<string> = new Set([
   "each",
   "dozen",
   "gross",
@@ -33,7 +33,7 @@ export function pluralize(label: string): string {
   const w = label.trim();
   if (!w) return w;
   const lc = w.toLowerCase();
-  if (lc.endsWith("s") || INVARIANT.has(lc)) return w;
+  if (lc.endsWith("s") || INVARIANT_UNIT_WORDS.has(lc)) return w;
   if (/(ch|sh|x|z)$/i.test(w)) return `${w}es`;
   if (/[^aeiou]y$/i.test(w)) return `${w.slice(0, -1)}ies`;
   return `${w}s`;

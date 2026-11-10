@@ -44,7 +44,12 @@ export { endSentence, renderBrandedEmail, tenantHeaderHtml };
 // shared with the email too — one formatter, never a second copy of the same
 // boxes/pieces/unitLabel display logic.
 import { showOriginalPrice, qtyCellText } from "../invoices/invoice-pdf-item";
-import { baseUnitSuffix, formatPerBaseUnitPrice, type PerBaseUnitPrice } from "@routeflow/pricing";
+import {
+  baseUnitSuffix,
+  formatInvoiceLineCounts,
+  formatPerBaseUnitPrice,
+  type PerBaseUnitPrice,
+} from "@routeflow/pricing";
 import { sellerDisplayName } from "../common/seller-display-name";
 
 // F6-001: SSRF guard — block private/loopback/metadata IPs as SMTP hosts.
@@ -1102,6 +1107,13 @@ export class EmailService {
       pieces?: number | null;
       /** units_v1 sold-unit noun ("Case") — null/undefined defaults to "box"/"boxes". */
       unitLabel?: string | null;
+      /** W-1185: what the "Items" count reads; the sale-time words and the system marker (NSF fee). */
+      unitsPerBox?: number | null;
+      packLabel?: string | null;
+      baseLabel?: string | null;
+      /** W-1185: the line's selling unit (live product.unit): a plain line counts in it. */
+      unit?: string | null;
+      systemKind?: string | null;
     }[];
     pdfUrl?: string;
     isReminder?: boolean;
@@ -1660,6 +1672,12 @@ export class EmailService {
         pieces?: number | null;
         /** units_v1 sold-unit noun ("Case") — null/undefined defaults to "box"/"boxes". */
         unitLabel?: string | null;
+        /** W-1185: what the "Items" count reads; see sendInvoice's item type. */
+        unitsPerBox?: number | null;
+        packLabel?: string | null;
+        baseLabel?: string | null;
+        unit?: string | null;
+        systemKind?: string | null;
       }[];
       pdfUrl?: string;
       isReminder?: boolean;
@@ -1779,14 +1797,20 @@ export class EmailService {
                 <td style="padding:8px 12px;font-size:14px;font-weight:600;color:#374151;text-align:right;">${fmt(params.advanceApplied)}</td>
               </tr>`
         : "";
+    // W-1185: the item count opens the footer (lines, boxes, named units, pieces; never added together).
+    const itemCount = formatInvoiceLineCounts(params.items);
+    const itemCountRow = `<tr>
+                <td colspan="${footSpan}" style="padding:8px 12px;font-size:13px;font-weight:600;color:#374151;text-align:right;">Items</td>
+                <td style="padding:8px 12px;font-size:14px;font-weight:600;color:#374151;text-align:right;">${escapeHtml(itemCount)}</td>
+              </tr>`;
     const totalsFooter =
       params.balanceDue != null
-        ? `${amountPaidRow}${creditAppliedRow}${advanceAppliedRow}
+        ? `${itemCountRow}${amountPaidRow}${creditAppliedRow}${advanceAppliedRow}
               <tr style="background:#f9fafb;">
                 <td colspan="${footSpan}" style="padding:12px;font-size:14px;font-weight:700;color:#1D2A3D;text-align:right;">Balance Due</td>
                 <td style="padding:12px;font-size:16px;font-weight:700;color:${params.balanceDue > 0 ? "#dc2626" : "#16a34a"};text-align:right;">${fmt(params.balanceDue)}</td>
               </tr>`
-        : `<tr style="background:#f9fafb;">
+        : `${itemCountRow}<tr style="background:#f9fafb;">
                 <td colspan="${footSpan}" style="padding:12px;font-size:14px;font-weight:700;color:#1D2A3D;text-align:right;">Amount Due</td>
                 <td style="padding:12px;font-size:16px;font-weight:700;color:#1D2A3D;text-align:right;">${fmt(params.total)}</td>
               </tr>`;
@@ -1893,6 +1917,7 @@ export class EmailService {
         })
         .join("\n"),
     );
+    bodyText.push(`Items: ${itemCount}`);
     const totalsLines: string[] = [];
     if (params.totalPaid != null && params.totalPaid > 0)
       totalsLines.push(`Amount Paid: ${fmt(params.totalPaid)}`);

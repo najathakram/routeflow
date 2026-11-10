@@ -82,6 +82,7 @@ import {
   baseUnitSuffix,
   formatPerBaseUnitPrice,
   resolveConfirmedAmounts,
+  formatInvoiceLineCounts,
 } from "@routeflow/pricing";
 import { useInvoiceTaxSplit } from "@/lib/use-invoice-tax-split";
 import { useDuplicateInvoiceAction } from "@/lib/use-duplicate-invoice-action";
@@ -2752,6 +2753,7 @@ export default function InvoiceDetailPage() {
                 advanceApplied={advanceApplied}
                 balanceDue={balanceDue}
                 isDraft={status === "DRAFT"}
+                itemCount={formatInvoiceLineCounts(invoice.items ?? [])}
               />
             </div>
 

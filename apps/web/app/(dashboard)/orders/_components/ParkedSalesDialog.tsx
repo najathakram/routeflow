@@ -16,9 +16,9 @@ import {
   PARKED_STALE_COPY,
   formatParkedTime,
   isStaleParked,
-  lineCountLabel,
   parkedRowTitle,
 } from "@/lib/counter-park";
+import { formatLineWord } from "@routeflow/pricing"; // W-1185: the one line word
 import type { useParkedSales } from "./useParkedSales";
 
 type Parked = ReturnType<typeof useParkedSales>;
@@ -60,7 +60,7 @@ function ParkedRow({
               {names}
             </span>
           ) : (
-            lineCountLabel(row.lineCount)
+            formatLineWord(row.lineCount)
           )}
           {row.customerName ? ` · ${row.customerName}` : ""}
         </p>
