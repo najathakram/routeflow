@@ -20,7 +20,7 @@
     { "name": "railway-host", "regex": "\\.up\\.railway\\.app\\b" },
     {
       "name": "api-key-ish",
-      "regex": "\\b(sk|pk|plane_api|plane_wh)_[A-Za-z0-9]{12,}"
+      "regex": "\\b((sk|pk|plane_api|plane_wh)_[A-Za-z0-9]{12,}|(sk|pk|rk)_(live|test)_[A-Za-z0-9]{12,})"
     }
   ]
 }
