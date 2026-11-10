@@ -72,6 +72,19 @@ describe("judgeOfflineDrift (SA-1124 item 7)", () => {
     }
   });
 
+  it("a named-unit line (factor 1 and factor 12) whose quote sends the factor and label gets no flag; one that sends null is flagged unitChanged", () => {
+    for (const factor of [1, 12]) {
+      const s = server({ unitsPerBox: factor, unitLabel: "Case" });
+      const sent = { total: 12, lines: [q(0, 12, { unitsPerBox: factor, unitLabel: "Case" })] };
+      expect(judgeOfflineDrift([s], 12, sent)).toEqual([]);
+      // the factor is stored (1 included), so a quote that omits it differs from what the server holds
+      const omitted = { total: 12, lines: [q(0, 12, { unitsPerBox: null, unitLabel: "Case" })] };
+      expect(judgeOfflineDrift([s], 12, omitted)).toEqual([
+        { kind: "LINE", lineIndex: 0, productId: "p1", shown: 12, now: 12, unitChanged: true },
+      ]);
+    }
+  });
+
   it("S1: a null and an empty unit label are the same label", () => {
     const empty = { total: 12, lines: [q(0, 12, { unitLabel: "" })] };
     expect(judgeOfflineDrift([server()], 12, empty)).toEqual([]);

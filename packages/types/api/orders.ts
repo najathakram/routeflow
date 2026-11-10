@@ -175,8 +175,10 @@ export const CREDITS_PENDING_COPY =
  * One line of what the device showed; `index` is the position in the request's `items`. Money has at most 2 decimals.
  *
  * Contract (the server compares, it never prices from this):
- * - `unitsPerBox` is the line's pack SNAPSHOT: null unless the line is sold in boxes with a pack above 1. On a line sold
- *   by quantity send null (the product's pack size is not the line's); it is compared only on lines the server box-splits.
+ * - `unitsPerBox` is the line's pack SNAPSHOT. Send null on a line sold by quantity (the product's pack size is not the
+ *   line's), and the pack size on a line sold in boxes with a pack above 1. On a named-unit line (a Case, or a Piece off a
+ *   pack) send the unit's factor, 1 included: the server stores it there. It is compared only where the server stored a
+ *   value: a named-unit or box-split line that sends null, or another value, is flagged `unitChanged`.
  * - `unitLabel` is only for named-unit lines; null and "" are the same.
  * - `items[i].unitPrice` is sent ONLY for a real staff override. Any `unitPrice` on an item is treated as an override:
  *   that line is judged as online and never flagged for price drift.
