@@ -4,7 +4,7 @@ import {
   ForbiddenException,
   NotFoundException,
 } from "@nestjs/common";
-import { OrderReviewFlagKind, UserRole } from "@prisma/client";
+import { OrderReviewFlagKind, OrderStatus, UserRole } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
@@ -135,7 +135,8 @@ export async function resolveGateFlagsAtPromotion(
 }
 
 /**
- * The `GET /orders` filter for `needsReview=true`: an order with any open flag. Staff only (the same callers that see the
+ * The `GET /orders` filter for `needsReview=true`: a live (not CANCELLED) order with any open flag (SA-1134 R-2: a cancel
+ * resolves no flag, so a cancelled order keeps its flags; a reopen brings it back by itself). Staff only (the same callers that see the
  * flags): a customer's or driver's list is never filtered, or probed, by flags. The relation filter is NOT tenant-injected
  * by Prisma, so it carries the tenant itself (the caller's, else the request's) and so reads (tenantId, kind, resolvedAt).
  */
@@ -146,5 +147,9 @@ export function needsReviewWhere(
 ) {
   if (needsReview !== true || !seesReviewFlags(user)) return {};
   const tenantId = user.tenantId ?? requestTenantId ?? null;
-  return { reviewFlags: { some: { ...(tenantId ? { tenantId } : {}), resolvedAt: null } } };
+  return {
+    reviewFlags: { some: { ...(tenantId ? { tenantId } : {}), resolvedAt: null } },
+    // An AND clause, not a `status` key: the list assigns this over its own `where`, whose `status` is the caller's filter.
+    AND: [{ status: { not: OrderStatus.CANCELLED } }],
+  };
 }

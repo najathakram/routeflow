@@ -152,6 +152,7 @@ import { fulfillPathLocked } from "./fulfil-path-lock";
 import { assertCancelImpactAllows, cancelImpact } from "./order-cancel-impact";
 import { cancelOrderInTx, lockDeleteLines, type CancelOrderTxOptions } from "./order-cancel-tx";
 import { claimReopenInTx } from "./order-reopen-claim";
+import { judgeUnlessDraft, reopenTarget } from "./offline/reopen-target";
 import { assertNoCashRefundOnOrder } from "../invoices/invoice-cash-refund-guard";
 import {
   assertBuyerDiffShape,
@@ -2500,14 +2501,17 @@ export class OrdersService implements OnApplicationBootstrap {
     // not only of the item-CANCELLED lines (cancelling a DRAFT never marks its lines CANCELLED, and drafts are
     // written without the check). Staff-only path; no delta, so every catalog line is checked, before any write.
     const tenant = rGate.tenantId(this.prisma, user, order.tenantId);
-    const restriction = await this.sellingRestrictions.assertLinesSellable({
-      ...rGate.whole({ tenant, order, user, lines: order.lineItems, dto: ack, allLive: true }),
-      channel: "STAFF", // a staff-only route; the principal below decides who may override
-    });
+    const target = await reopenTarget(this.prisma.forTenant(), id); // SA-1134 R-1: DRAFT while a gate flag is open
+    const restriction = await judgeUnlessDraft(target, () =>
+      this.sellingRestrictions.assertLinesSellable({
+        ...rGate.whole({ tenant, order, user, lines: order.lineItems, dto: ack, allLive: true }),
+        channel: "STAFF", // a staff-only route; the principal below decides who may override
+      }),
+    );
     return this.stockTx(
       "orders.reopen",
       async (tx) => {
-        await claimReopenInTx(tx, id); // B695: Order lock + CANCELLED -> PENDING CAS; the loser gets the 409
+        await claimReopenInTx(tx, id, target); // B695: Order lock + CANCELLED -> target CAS; the loser gets the 409
         // Row 510: under that lock, the override re-judged against the locked lines (every line goes live).
         const judged = new Set(order.lineItems.map((li) => li.productId as string));
         const stamped = await rGate.recheck(tx, restriction, id, judged, { allLive: true });
@@ -2531,7 +2535,7 @@ export class OrdersService implements OnApplicationBootstrap {
         const reopened = await tx.order.update({
           where: { id },
           data: {
-            status: OrderStatus.PENDING, // already set by the claim; kept so this write names the transition
+            status: target, // already set by the claim; kept so this write names the transition
             notes: order.notes
               ? `${order.notes}\n[Reopened ${new Date().toLocaleDateString()}]`
               : `[Reopened ${new Date().toLocaleDateString()}]`,
