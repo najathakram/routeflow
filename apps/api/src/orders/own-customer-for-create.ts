@@ -18,7 +18,7 @@ export async function resolveOwnCustomerForCreate(
   // create() is role-agnostic and the controller admits CUSTOMER — without
   // this a buyer could POST either field directly and attach their own
   // order to a driver's manifest, bypassing the DRIVER-only
-  // ownership/in-progress checks in the branch above entirely. Refuse
+  // ownership/in-progress checks in create()'s DRIVER branch entirely. Refuse
   // before any read or write; the OPERATOR/TENANT_ADMIN path is untouched.
   if (dto.routeRunId || dto.routeRunStopId) {
     throw new BadRequestException("Route run linkage is not allowed for customer orders");
