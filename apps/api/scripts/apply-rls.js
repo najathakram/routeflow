@@ -30,6 +30,7 @@ const TENANT_TABLES = [
   "Order",
   "OrderItem",
   "OrderIdempotencyKey",
+  "OrderReviewFlag",
   "OrderTemplate",
   "OrderTemplateItem",
   "Transaction",
