@@ -5,7 +5,7 @@
  * `lineIds` is EVERY line of the order (cancelled and staff-added rows included), in the new order; the server refuses a
  * missing, extra, duplicated or foreign id with 409 ORDER_CHANGED_DURING_EDIT (the client refetches), and a stale
  * `expectedUpdatedAt` the same way. The API keeps an equal copy of `LINE_ORDER_MAX_IDS` (it never value-imports this package
- * at runtime); `line-order-types-parity.spec.ts` pins the two.
+ * at runtime); `apps/api/src/orders/dto/reorder-lines.dto.spec.ts` pins the two.
  */
 
 /** Above any real order: it bounds the payload. */
