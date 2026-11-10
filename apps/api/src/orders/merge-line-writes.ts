@@ -23,6 +23,7 @@ import {
   type OverrideStamp,
 } from "../common/restriction-override-columns";
 import type { OrderItemAuthorChannel } from "./line-author-channel";
+import type { UnlistedMergeItem } from "./merge-unlisted-lines";
 
 export { compositionStampOf };
 
@@ -51,12 +52,24 @@ export interface MergeLine extends PackCandidate, Partial<OverrideStamp> {
   backorderedPieces?: unknown;
   /** SA ruling (#3418): the line's author marker; a loser's is RESOLVED first (`loserLinesOf`). Unset = BUYER. */
   authorChannel?: string | null;
+  /** W-1187: a LOSER line's rank in the sequence the merge appends in (`loserLineRanks`); unset on a winner line. */
+  appendRank?: number;
 }
+
+/** A loser line the caller did not rank sorts after every ranked one. */
+const UNRANKED = Number.MAX_SAFE_INTEGER;
+const rankOf = (li: MergeLine): number => li.appendRank ?? UNRANKED;
 
 /** Row 510: extends the staff-override stamp (a created line carries the losing line's; NULL columns when none). */
 export interface MergeLineWriteData extends OverrideStamp {
   productId: string;
   qty: number;
+  /**
+   * W-1187 (D4): where this created line goes in the winner: the smallest `appendRank` among the loser lines folded into
+   * it (a loser-only product whose lines fold into one takes its earliest line's slot). REQUIRED, so the compiler finds
+   * every producer; the caller sorts the creates (and the unlisted lines) by it and stamps `position` in that order.
+   */
+  appendRank: number;
   boxes: number | null;
   pieces: number | null;
   /** SA-101(1)(c): the pack this line was actually priced at — never the live product row. */
@@ -245,6 +258,7 @@ export function buildMergeLineWrites(
           kind: "create",
           data: {
             productId,
+            appendRank: rankOf(c),
             qty: Number(c.qty),
             boxes: c.boxes,
             pieces: c.pieces,
@@ -330,6 +344,7 @@ export function buildMergeLineWrites(
           kind: "create",
           data: {
             productId,
+            appendRank: Math.min(...losersInGroup.map(rankOf)),
             qty: merged.qty,
             boxes: merged.boxes,
             pieces: merged.pieces,
@@ -363,3 +378,34 @@ export function buildMergeLineWrites(
   // Row 355: a product left on several lines earns its free units on the COMBINED quantity.
   return { writes: allocateSplitFreeUnits(writes, winnerLines, opts), warnings };
 }
+
+/** One line a merge appends to the winner: a catalog create or an unlisted (catalog-free) loser line. */
+export type MergeAppend =
+  { kind: "catalog"; data: MergeLineWriteData } | { kind: "unlisted"; data: UnlistedMergeItem };
+
+/**
+ * W-1187 (D4): every line a merge appends, catalog creates and unlisted lines TOGETHER, in the sequence the losers' carts
+ * were laid out (`appendRank`), so write order and position agree. Stable: equal ranks keep catalog before unlisted, then
+ * the order they were produced in. Pure.
+ */
+export function orderMergeAppends(
+  writes: readonly MergeLineWrite[],
+  unlisted: readonly UnlistedMergeItem[],
+): MergeAppend[] {
+  const appends: MergeAppend[] = [
+    ...writes.flatMap((w): MergeAppend[] =>
+      w.kind === "create" ? [{ kind: "catalog", data: w.data }] : [],
+    ),
+    ...unlisted.map((data): MergeAppend => ({ kind: "unlisted", data })),
+  ];
+  return appends.sort((a, b) => a.data.appendRank - b.data.appendRank);
+}
+
+/** W-1187: a loser's catalog lines (unlisted ones travel separately), each stamped with its rank in the append sequence. */
+export const withAppendRanks = <T extends { id?: string | null; productId?: string | null }>(
+  lines: readonly T[],
+  ranks: ReadonlyMap<string, number>,
+) =>
+  lines
+    .filter((li) => li.productId)
+    .map((li) => ({ ...li, appendRank: li.id ? ranks.get(li.id) : undefined }));

@@ -12,15 +12,10 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { ORDER_LINE_ORDER_BY } from "./line-position";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
-
-const LINE_ORDER = [
-  { position: "asc" as const },
-  { createdAt: "asc" as const },
-  { id: "asc" as const },
-];
 
 describeDb(
   "SA-1067 C3: an order's lines read by position, then createdAt, then id (real Postgres)",
@@ -93,7 +88,7 @@ describeDb(
       return o.id;
     }
     const read = async (orderId: string) =>
-      (await raw.orderItem.findMany({ where: { orderId }, orderBy: LINE_ORDER })).map(
+      (await raw.orderItem.findMany({ where: { orderId }, orderBy: ORDER_LINE_ORDER_BY })).map(
         (l) => [l.name, l.position] as const,
       );
 
@@ -114,7 +109,7 @@ describeDb(
     it("an equal position and createdAt falls back to id, so the order is fixed", async () => {
       const id = await orderWith([null, null, null]);
       const ids = (
-        await raw.orderItem.findMany({ where: { orderId: id }, orderBy: LINE_ORDER })
+        await raw.orderItem.findMany({ where: { orderId: id }, orderBy: ORDER_LINE_ORDER_BY })
       ).map((l) => l.id);
       expect(ids).toEqual([...ids].sort());
     });

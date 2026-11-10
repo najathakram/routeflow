@@ -10,6 +10,7 @@ import type {
 import { PrismaService } from "../prisma/prisma.service";
 import { tenantSafeParent } from "../products/product-parent";
 import { defaultSaleFulfilmentKind } from "../orders/default-sale-fulfilment";
+import { ORDER_LINE_ORDER_BY } from "../orders/line-position";
 import type { SaleFulfilmentKind } from "../selling-restrictions/sale-fulfilment";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
@@ -160,7 +161,7 @@ export class CustomerOrderSuggestionsService {
           createdAt: true,
           lineItems: {
             where: REORDERABLE_LINE,
-            orderBy: [{ position: { sort: "asc", nulls: "last" } }, { createdAt: "asc" }],
+            orderBy: ORDER_LINE_ORDER_BY,
             select: {
               productId: true,
               qty: true,

@@ -104,20 +104,22 @@ const MERGE = {
   target: "OrderItem" as const,
   anchor: { via: "delegate", model: "orderItem" } as Anchor,
   carried:
-    "productId name qty unitPrice subtotal priceType originalPrice promoFreeUnits boxes pieces unitsPerBox notes overrideReason overriddenBy status trackedCategoryId " +
+    "productId qty unitPrice subtotal priceType originalPrice promoFreeUnits boxes pieces unitsPerBox notes overrideReason overriddenBy status trackedCategoryId " +
     // B297: the loser line's trio, via `...copyCategoryTaxSnapshot(meta)` (SPREAD_HELPER_KEYS).
     "categoryTaxType categoryTaxRate categoryPriceIncludesTax " +
     // SA-716 MUST 2: the backorder marker is a fact of the sale; the fold CARRIES it (winner += losers').
     "backorderedPieces " +
     // SA ruling (#3418): the folded line's OWN author (its marker, else its loser order's rule), never the winner's.
     "authorChannel " +
+    // W-1187 (D4): a created line takes the next slot after the winner's lines, in the losers' cart order.
+    "position " +
     // row 510: the loser line's staff-override stamp (a fold keeps the acknowledged sale), via write.data.
     R510_STAMP,
   // #2717 M3: the stamp rides `...compositionStampOf(write.data)` (an opaque local spread, so not checked as
   // carried); the components are rescaled from the winner's own stored rows by syncOrderLineCompositions.
   rederived: "categoryTaxAmount compositionMode recipeId recipeVersion", // recomputeLineCategoryTaxes after the fold
   components: "rederived" as const,
-  na: "deliveredQty invoicedQty",
+  na: "deliveredQty invoicedQty name", // a catalog line shows its product's name; only an unlisted line has its own (C9c)
   gaps: {
     ...P0A_LABELS,
     ...SA772_ORDER_TAX_GAP,
@@ -126,7 +128,6 @@ const MERGE = {
     // live product's CURRENT pack) — unitsPerBox moved to carried above, gap closed.
     unitLabel: "unfiled",
     trackedSubcategoryId: "unverified",
-    position: "unverified",
   } as Record<string, GapRef>,
 };
 
@@ -246,7 +247,7 @@ export const COPIERS: Copier[] = [
     fn: "createOrderFromTemplate",
     target: "OrderItem",
     anchor: { via: "prop", name: "lineItems" },
-    carried: "productId qty notes",
+    carried: "productId qty notes position", // W-1187: the standing order's own line order (its template index)
     // B658: categoryTaxAmount is now priced from the live category (it was a hard 0), and B297 stamps
     // the trio beside it (`...categorySnapshot`, an opaque spread: presence is not checked).
     rederived:
@@ -267,7 +268,6 @@ export const COPIERS: Copier[] = [
       trackedSubcategoryId: "B658",
       unitLabel: "unfiled",
       name: "unfiled",
-      position: "unfiled",
     },
   },
   {
@@ -301,6 +301,32 @@ export const COPIERS: Copier[] = [
   },
   { id: "C9a", fn: "mergeAllPendingForCustomer", ...MERGE },
   { id: "C9b", fn: "forceConsolidateCustomer", ...MERGE },
+  {
+    // W-1187: the unlisted (catalog-free) loser line both merges append, one literal shared by C9a and C9b (it was
+    // inline in each). Written from the loser line's own columns; never boxed, never a catalog line.
+    id: "C9c",
+    file: "orders/merge-unlisted-lines.ts",
+    fn: "createUnlistedLoserLine",
+    target: "OrderItem",
+    anchor: { via: "delegate", model: "orderItem" },
+    carried:
+      "name qty unitPrice priceType originalPrice notes overrideReason overriddenBy authorChannel position",
+    rederived: "subtotal categoryTaxAmount compositionMode recipeId recipeVersion", // computeLineSubtotal; the tax pass after the merge
+    reset: "productId status", // an unlisted line has no product; it lands PENDING on the winner
+    components: "na", // an unlisted line is never composed
+    na: "deliveredQty invoicedQty promoFreeUnits boxes pieces unitsPerBox trackedCategoryId categoryTaxType categoryTaxRate categoryPriceIncludesTax backorderedPieces",
+    gaps: {
+      ...P0A_LABELS,
+      ...SA772_ORDER_TAX_GAP,
+      unitLabel: "unfiled",
+      trackedSubcategoryId: "unverified",
+      // the loser line's staff-override stamp is not carried onto an unlisted line (the catalog literal carries it)
+      restrictionOverrideReason: "unverified",
+      restrictionOverrideBy: "unverified",
+      restrictionOverrideAt: "unverified",
+      restrictionOverrideRuleIds: "unverified",
+    },
+  },
   {
     id: "C10",
     file: "credit-notes/credit-notes.service.ts",
@@ -378,6 +404,7 @@ export const COPIERS: Copier[] = [
     carried:
       "productId qty unitPrice subtotal boxes pieces unitsPerBox unitLabel categoryTaxAmount promoFreeUnits " +
       "trackedCategoryId trackedSubcategoryId categoryTaxType categoryTaxRate categoryPriceIncludesTax " + // row 373
+      "position " + // W-1187: a line the invoice edit adds goes last (linePositionAllocator)
       R510_STAMP, // row 510: a line rebuilt from an invoice line keeps its staff-override stamp
     // SA-716: a line rebuilt from invoice lines has no sale-time stock history — backorderedPieces stays 0.
     reset: "priceType status invoicedQty backorderedPieces",
@@ -390,7 +417,6 @@ export const COPIERS: Copier[] = [
       ...SA772_ORDER_TAX_GAP,
       originalPrice: "unfiled",
       notes: "unfiled",
-      position: "unfiled",
     },
   },
   // Client copiers: NOT column-checked (the spec is API-side; a request body is not a Prisma model).
