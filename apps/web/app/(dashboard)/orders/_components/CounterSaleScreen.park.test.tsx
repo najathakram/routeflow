@@ -727,6 +727,7 @@ describe("Discard a parked sale", () => {
     const dialog = await screen.findByRole("dialog", { name: "Parked sales" });
     const row = await within(dialog).findByTestId("draft-row-d1");
     fireEvent.click(within(row).getByRole("button", { name: /^Discard / }));
+    fireEvent.keyDown(dialog, { key: "Escape" });
     await waitFor(() => expect(del).toHaveBeenCalledWith("/drafts/d1"));
   });
 
@@ -867,15 +868,68 @@ describe("Discard a parked sale", () => {
     expect(mockDismiss).toHaveBeenCalledWith("t");
   });
 
+  it("an early toast close (Escape) while the Parked window shows the Undo sends no delete until the window closes", async () => {
+    holdToasts = true;
+    seed("a", { label: "Hold A" }, parkedPayload());
+    renderScreen();
+    const dialog = await openList(1);
+    fireEvent.click(discardBtn("Hold A"));
+    await within(dialog).findByRole("button", { name: /^Undo/ });
+    const toasts = mockToast.mock.calls.map((c) => c[0]).filter((c) => /^Discarded/.test(c.title));
+    act(() => toasts[0].onDismiss()); // Escape closed the toast first
+    await new Promise((r) => setTimeout(r, 50));
+    expect(del).not.toHaveBeenCalled();
+    expect(within(dialog).getByRole("button", { name: /^Undo/ })).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: /^Undo/ }));
+    expect(await within(dialog).findByTestId("parked-row-a")).toBeInTheDocument();
+    expect(del).not.toHaveBeenCalled();
+  });
+
+  it("the delete of a toast closed early goes out when the Parked window closes", async () => {
+    holdToasts = true;
+    seed("a", { label: "Hold A" }, parkedPayload());
+    renderScreen();
+    const dialog = await openList(1);
+    fireEvent.click(discardBtn("Hold A"));
+    await within(dialog).findByRole("button", { name: /^Undo/ });
+    const toasts = mockToast.mock.calls.map((c) => c[0]).filter((c) => /^Discarded/.test(c.title));
+    act(() => toasts[0].onDismiss());
+    expect(del).not.toHaveBeenCalled();
+    fireEvent.keyDown(dialog, { key: "Escape" }); // the window closes
+    await waitFor(() => expect(del).toHaveBeenCalledWith(`${PARKED}/a`));
+    expect(del).toHaveBeenCalledTimes(1);
+  });
+
+  it("an early toast close for an order draft is held the same way while its Undo is in the window", async () => {
+    holdToasts = true;
+    withDraft = true;
+    renderScreen();
+    fireEvent.click(await screen.findByRole("button", { name: "Parked (1)" }));
+    const dialog = await screen.findByRole("dialog", { name: "Parked sales" });
+    fireEvent.click(
+      within(await within(dialog).findByTestId("draft-row-d1")).getByRole("button", {
+        name: /^Discard /,
+      }),
+    );
+    await within(dialog).findByRole("button", { name: /^Undo/ });
+    const toasts = mockToast.mock.calls.map((c) => c[0]).filter((c) => /^Discarded/.test(c.title));
+    act(() => toasts[0].onDismiss());
+    await new Promise((r) => setTimeout(r, 50));
+    expect(del).not.toHaveBeenCalled();
+    expect(within(dialog).getByRole("button", { name: /^Undo/ })).toBeInTheDocument();
+  });
+
   it("calls DELETE, refreshes the list, and the row goes", async () => {
     seed("a", { label: "Hold A" }, parkedPayload());
     seed("b", { label: "Hold B" }, parkedPayload());
     renderScreen();
     const dialog = await openList(2);
     fireEvent.click(discardBtn("Hold A"));
+    fireEvent.keyDown(dialog, { key: "Escape" }); // the toast closed while the window showed its Undo: the delete leaves with the window
     await waitFor(() => expect(del).toHaveBeenCalledWith(`${PARKED}/a`));
-    await waitFor(() => expect(within(dialog).queryByTestId("parked-row-a")).toBeNull());
-    expect(within(dialog).getByTestId("parked-row-b")).toBeInTheDocument();
+    const again = await openList();
+    await waitFor(() => expect(within(again).queryByTestId("parked-row-a")).toBeNull());
+    expect(within(again).getByTestId("parked-row-b")).toBeInTheDocument();
     expect(
       await screen.findByRole("button", { name: "Parked (1)", hidden: true }),
     ).toBeInTheDocument();
@@ -888,11 +942,14 @@ describe("Discard a parked sale", () => {
     delete payloads.a;
     rows = [];
     fireEvent.click(discardBtn("Hold A"));
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(del).toHaveBeenCalled());
+    const again = await openList();
     expect(
-      await within(dialog).findByText("That parked sale was already taken back or has expired."),
+      await within(again).findByText("That parked sale was already taken back or has expired."),
     ).toBeInTheDocument();
-    expect(within(dialog).queryByText(new RegExp(SECRET))).toBeNull();
-    await waitFor(() => expect(within(dialog).queryByTestId("parked-row-a")).toBeNull());
+    expect(within(again).queryByText(new RegExp(SECRET))).toBeNull();
+    await waitFor(() => expect(within(again).queryByTestId("parked-row-a")).toBeNull());
   });
 });
 

@@ -40,6 +40,26 @@ export function ParkedSales({ canEditPrices, ...deps }: ParkedSalesProps) {
   // keyboard and a screen reader. One note per waiting discard; it goes when its toast closes or the Undo is used.
   const [undoNotes, setUndoNotes] = React.useState<UndoNote[]>([]);
   const dropNote = (id: string) => setUndoNotes((n) => n.filter((x) => x.id !== id));
+  // A toast can close early (Escape, a swipe) while the Parked window still shows that discard's Undo. The delete is held until
+  // no Undo for its token is showing: it leaves when the window closes (or the screen goes), never under a visible Undo.
+  const windowOpenRef = React.useRef(false);
+  const heldCommits = React.useRef(new Map<string, () => void>());
+  const toastClosed = (token: string, commit: () => void) => {
+    if (windowOpenRef.current) {
+      heldCommits.current.set(token, commit);
+      return;
+    }
+    dropNote(token);
+    commit();
+  };
+  const flushHeld = () => {
+    const held = [...heldCommits.current];
+    heldCommits.current.clear();
+    for (const [token, commit] of held) {
+      dropNote(token);
+      commit();
+    }
+  };
   // Discard is taken back, not confirmed (owner rule: autosave + Undo; confirm only for sent or posted money).
   // The delete leaves when the toast CLOSES (expiry, close, swipe), so an Undo on screen can always undo.
   const p = useParkedSales({
@@ -67,13 +87,23 @@ export function ParkedSales({ canEditPrices, ...deps }: ParkedSalesProps) {
         description: "The parked sale is gone unless you undo.",
         action: { label: "Undo", onClick: back },
         duration: discardUndo.ms,
-        onDismiss: () => {
-          dropNote(row.token);
-          row.commit();
-        },
+        onDismiss: () => toastClosed(row.token, row.commit),
       });
     },
   });
+  windowOpenRef.current = p.open;
+  const flushHeldRef = React.useRef(flushHeld);
+  flushHeldRef.current = flushHeld;
+  React.useEffect(() => {
+    if (!p.open) flushHeldRef.current();
+  }, [p.open]);
+  React.useEffect(
+    () => () => {
+      flushHeldRef.current();
+      windowOpenRef.current = false; // a toast that closes after the screen is gone has no window to wait for
+    },
+    [],
+  );
   const { data: draftRows } = useDrafts();
   const delDraft = useDeleteDraft();
   // An order draft Discard is taken back like a sale Discard: the row hides, the delete leaves when its Undo toast closes.
@@ -107,10 +137,7 @@ export function ParkedSales({ canEditPrices, ...deps }: ParkedSalesProps) {
       description: "The order draft is gone unless you undo.",
       action: { label: "Undo", onClick: back },
       duration: discardUndo.ms,
-      onDismiss: () => {
-        dropNote(token);
-        commitDraft(token);
-      },
+      onDismiss: () => toastClosed(token, () => commitDraft(token)),
     });
   };
   const drafts = (Array.isArray(draftRows) ? draftRows : []).filter(
