@@ -18,6 +18,12 @@ setWideViewport();
 let mockGrid: { data?: ProductPriceGridDto; isLoading: boolean; isError: boolean };
 let mockRole: string | null = "OPERATOR";
 let mockUnitsOn = true;
+let mockMayEdit = true;
+const mockMayEditListeners = new Set<() => void>();
+const setMayEdit = (v: boolean) => {
+  mockMayEdit = v;
+  mockMayEditListeners.forEach((l) => l());
+};
 let mockUnits: unknown[] = [];
 const mockSave = jest.fn();
 jest.mock("@/lib/api/usePriceGrid", () => ({
@@ -42,6 +48,18 @@ jest.mock("@/lib/api/usePriceWrites", () => ({
 }));
 jest.mock("@/lib/api/tier-labels", () => ({
   useTierLabels: () => ({ data: { "2": "Wholesale", "3": "Distributor" } }),
+}));
+jest.mock("@/lib/api/my-permissions", () => ({
+  ...jest.requireActual("@/lib/api/my-permissions"),
+  // a store, like the real hook's query, so a flip re-renders every reader (the draft provider included)
+  usePriceGridEditAllowed: () =>
+    jest.requireActual("react").useSyncExternalStore(
+      (cb: () => void) => {
+        mockMayEditListeners.add(cb);
+        return () => mockMayEditListeners.delete(cb);
+      },
+      () => mockMayEdit,
+    ),
 }));
 jest.mock("@/lib/api/tobacco", () => ({ useHasAddon: () => false }));
 jest.mock("@/lib/api/units-v2", () => ({ usePricesV2Enabled: () => true }));
@@ -134,6 +152,7 @@ beforeEach(() => {
   (apiClient.delete as jest.Mock).mockReset();
   mockRole = "OPERATOR";
   mockUnitsOn = true;
+  mockMayEdit = true;
   mockGrid = { data: grid, isLoading: false, isError: false };
 });
 
@@ -695,5 +714,61 @@ describe("K10e F07, SA-1082: a product with no 1-piece unit can still add it", (
     await user.click(addOpener());
     await user.type(count(), "1");
     expect(screen.getByTestId("units-v2-add-submit")).toBeEnabled();
+  });
+});
+
+describe("W-1170 F6: structure follows the PRICING group (Add a unit is CATALOG and stays)", () => {
+  it("denied: no Reset to Auto and no price field in Add a unit, Add a unit itself stays", async () => {
+    mockMayEdit = false;
+    const user = userEvent.setup();
+    render();
+    expect(screen.queryByTestId("units-v2-reset-open")).toBeNull();
+    await user.click(addOpener());
+    expect(screen.getByTestId("units-v2-add-name")).toBeInTheDocument();
+    expect(screen.queryByTestId("units-v2-add-price")).toBeNull();
+  });
+
+  it("allowed: Reset to Auto and the price field are there", async () => {
+    const user = userEvent.setup();
+    render();
+    expect(resetOpener()).toBeInTheDocument();
+    await user.click(addOpener());
+    expect(screen.getByTestId("units-v2-add-price")).toBeInTheDocument();
+  });
+
+  it("the right is lost before the new unit's price lands: note shown, no draft, no stuck hint", async () => {
+    const added = {
+      ref: "u-pack",
+      label: "Pack",
+      factor: 6,
+      kind: "unit" as const,
+      editable: true,
+      code: null,
+      cells: cells([2, 1.9, 1.8, 1.7, 1.6]),
+    };
+    (apiClient.post as jest.Mock).mockImplementation(async () => {
+      setMayEdit(false); // the permission read settles as denied while the add is in flight
+      mockGrid = {
+        data: { ...grid, rows: [...grid.rows, added] },
+        isLoading: false,
+        isError: false,
+      };
+      return { data: { id: "u-pack", label: "Pack" } };
+    });
+    const user = userEvent.setup();
+    render();
+    await user.click(addOpener());
+    await user.type(screen.getByTestId("units-v2-add-name"), "Pack");
+    await user.type(screen.getByTestId("units-v2-add-n"), "6");
+    await user.type(screen.getByTestId("units-v2-add-price"), "7.50");
+    await user.click(screen.getByTestId("units-v2-add-submit"));
+    await waitFor(() =>
+      expect(screen.getByTestId("units-v2-add-note")).toHaveTextContent(
+        "Unit added. Type its price in the grid.",
+      ),
+    );
+    expect(screen.queryByTestId(T.editbar)).toBeNull();
+    expect(screen.queryByTestId("units-v2-structure-hint")).toBeNull();
+    expect(addOpener()).toBeEnabled();
   });
 });

@@ -45,6 +45,7 @@ jest.mock("../edit/PriceEditBar", () => ({ PriceEditBar: () => null, BTN: "" }))
 jest.mock("../edit/usePriceDraft", () => ({
   usePriceDraft: () => ({ lastSave: null, dirty: false }),
 }));
+jest.mock("@/lib/api/my-permissions", () => ({ usePriceGridEditAllowed: () => true }));
 jest.mock("@/lib/api/usePriceGrid", () => ({ usePriceGrid: () => ({ data: undefined }) }));
 jest.mock("@/lib/api/usePriceWrites", () => ({
   useUndoPrices: () => ({ mutateAsync: jest.fn() }),

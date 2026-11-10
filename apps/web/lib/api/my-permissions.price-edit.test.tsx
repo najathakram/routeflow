@@ -1,7 +1,7 @@
 import * as React from "react";
 import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { usePriceEditAllowed } from "./my-permissions";
+import { useMyPermissions, usePriceEditAllowed, usePriceGridEditAllowed } from "./my-permissions";
 
 const get = jest.fn();
 jest.mock("../api-client", () => ({ apiClient: { get: (...a: unknown[]) => get(...a) } }));
@@ -70,6 +70,55 @@ describe("usePriceEditAllowed", () => {
     authUser = null;
     const { result } = renderHook(() => usePriceEditAllowed(), { wrapper });
     expect(result.current).toBe(true);
+    expect(get).not.toHaveBeenCalled();
+  });
+});
+
+/** W-1170 F6: the product price grid follows the PRICING group (the server refuses its writes without it). */
+describe("usePriceGridEditAllowed", () => {
+  beforeEach(() => {
+    get.mockReset();
+    authUser = { id: "u1", role: "OPERATOR" };
+  });
+
+  it("an operator without PRICING is not allowed; pending reads as allowed", async () => {
+    get.mockResolvedValue({ data: { groups: ["SELLING"], version: 1, mode: "live" } });
+    const { result } = renderHook(() => usePriceGridEditAllowed(), { wrapper });
+    expect(result.current).toBe(true);
+    await waitFor(() => expect(result.current).toBe(false));
+  });
+
+  // The answer is asserted only once the permissions read has settled (same query key, same cache), so a pending read
+  // cannot make these pass: a failed read that returned false, or a held PRICING that did, would fail them.
+  const probe = (userId: string) =>
+    renderHook(
+      () => ({
+        allowed: usePriceGridEditAllowed(),
+        read: useMyPermissions(userId, { enabled: true }),
+      }),
+      { wrapper },
+    );
+
+  it("an operator with PRICING is allowed once the read has settled", async () => {
+    get.mockResolvedValue({ data: { groups: ["PRICING"], version: 1, mode: "live" } });
+    const held = probe("u1");
+    await waitFor(() => expect(held.result.current.read.isSuccess).toBe(true));
+    expect(held.result.current.read.data?.groups).toEqual(["PRICING"]);
+    expect(held.result.current.allowed).toBe(true);
+  });
+
+  it("an operator whose read failed is allowed once the read has settled as an error", async () => {
+    get.mockRejectedValue(new Error("boom"));
+    authUser = { id: "u2", role: "OPERATOR" };
+    const failed = probe("u2");
+    await waitFor(() => expect(failed.result.current.read.isError).toBe(true));
+    expect(failed.result.current.read.data).toBeUndefined();
+    expect(failed.result.current.allowed).toBe(true);
+  });
+
+  it("an admin is allowed and asks nothing", () => {
+    authUser = { id: "a1", role: "TENANT_ADMIN" };
+    expect(renderHook(() => usePriceGridEditAllowed(), { wrapper }).result.current).toBe(true);
     expect(get).not.toHaveBeenCalled();
   });
 });

@@ -2631,9 +2631,10 @@ check(
     /tier-ladder-wiring\.static\.test\.ts$/.test(s.spec),
   );
   check(
-    "FS12 the detector derives the products source pin: it reads both product pages",
+    "FS12 the detector derives the products source pin: it reads both product pages and EditableNumber",
     tier?.reads,
     [
+      "apps/web/app/(dashboard)/products/[id]/EditableNumber.tsx",
       "apps/web/app/(dashboard)/products/[id]/page.tsx",
       "apps/web/app/(dashboard)/products/page.tsx",
     ],
