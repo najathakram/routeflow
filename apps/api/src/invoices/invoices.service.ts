@@ -2583,7 +2583,7 @@ export class InvoicesService {
       if (
         collectRaw?.value === "true" &&
         !isPostDeliveryOrderStatus((order as any).status) &&
-        !(await hasOpenReviewBlock(this.prisma, order.id)) // SA-1124 PR-1b: a flagged order stays DRAFT
+        !(await hasOpenReviewBlock(this.prisma, order.id, tenantId)) // SA-1124 PR-1b: a flagged order stays DRAFT
       ) {
         // Update by primary key of the row this method just created for this tenant —
         // safe without a tenant filter (the id came from our own create), and the

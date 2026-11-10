@@ -22,6 +22,7 @@ export interface ReviewGateDb {
     findMany(args: {
       where: {
         orderId: string;
+        tenantId?: string;
         kind: { in: OrderReviewFlagKind[] };
         resolvedAt: null;
       };
@@ -33,9 +34,15 @@ export interface ReviewGateDb {
 async function openBlockingKinds(
   db: ReviewGateDb,
   orderId: string,
+  tenantId?: string,
 ): Promise<OrderReviewFlagKind[]> {
   const rows = await db.orderReviewFlag.findMany({
-    where: { orderId, kind: { in: [...REVIEW_BLOCKING_KINDS] }, resolvedAt: null },
+    where: {
+      orderId,
+      ...(tenantId ? { tenantId } : {}),
+      kind: { in: [...REVIEW_BLOCKING_KINDS] },
+      resolvedAt: null,
+    },
     select: { kind: true },
   });
   return [...new Set(rows.map((r) => r.kind))];
@@ -57,6 +64,10 @@ export async function assertOrderReviewed(db: ReviewGateDb, orderId: string): Pr
  * The non-throwing form, for a step that must leave a DRAFT behind instead of failing (the deposit invoice mirror
  * written while an offline order is created, or while a delivered order reconciles).
  */
-export async function hasOpenReviewBlock(db: ReviewGateDb, orderId: string): Promise<boolean> {
-  return (await openBlockingKinds(db, orderId)).length > 0;
+export async function hasOpenReviewBlock(
+  db: ReviewGateDb,
+  orderId: string,
+  tenantId?: string, // name it on a client with no request context (the shipment path): the read never leans on ambient scope
+): Promise<boolean> {
+  return (await openBlockingKinds(db, orderId, tenantId)).length > 0;
 }

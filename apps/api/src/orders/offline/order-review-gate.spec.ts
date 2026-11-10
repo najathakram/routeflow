@@ -95,6 +95,21 @@ describe("assertOrderReviewed", () => {
   });
 });
 
+describe("the optional tenant scope (a read on a client with no request context)", () => {
+  it("adds tenantId to the where only when the caller names one", async () => {
+    const { db, findMany } = fakeDb([]);
+    await hasOpenReviewBlock(db, "o1", "t1");
+    expect(findMany.mock.calls[0][0].where).toEqual({
+      orderId: "o1",
+      tenantId: "t1",
+      kind: { in: [OrderReviewFlagKind.PRICE_CHANGED_OFFLINE] },
+      resolvedAt: null,
+    });
+    await hasOpenReviewBlock(db, "o1");
+    expect(findMany.mock.calls[1][0].where).not.toHaveProperty("tenantId");
+  });
+});
+
 describe("hasOpenReviewBlock (the non-throwing form, for a step that must leave a DRAFT instead of failing)", () => {
   it("is true only while a price flag is open", async () => {
     expect(

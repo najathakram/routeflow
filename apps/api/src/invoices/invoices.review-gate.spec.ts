@@ -195,11 +195,52 @@ describe("InvoicesService: the review gate on an order with an open price flag (
       expect(prisma.invoice.update).not.toHaveBeenCalled();
     });
 
-    it("sendReminder is not gated: it refuses an un-issued invoice (400) before any flag could matter", async () => {
+    it("sendReminder still refuses an un-issued invoice (400) first", async () => {
       seedDraft("ord-1");
       open();
       const err = await service.sendReminder("i1").catch((e) => e);
       expect(err).toBeInstanceOf(BadRequestException);
+    });
+
+    // S3: exempt driver cash can issue a flagged order's invoice, so a reminder must not go out for the unreviewed price
+    const seedIssued = (orderId: string | null) => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "i1",
+        orderId,
+        status: InvoiceStatus.SENT,
+        invoiceNumber: "INV-1",
+        customerId: "c1",
+        total: 100,
+        dueDate: null,
+        customer: { id: "c1", businessName: "Acme", contactName: "A", email: "buyer@example.test" },
+        items: [],
+        payments: [],
+      } as any);
+    };
+
+    it("sendReminder: 409 ORDER_REVIEW_REQUIRED on a flagged order's issued invoice, nothing emailed", async () => {
+      seedIssued("ord-1");
+      open();
+      const err = await service.sendReminder("i1").catch((e) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getResponse()).toMatchObject({
+        code: "ORDER_REVIEW_REQUIRED",
+        orderId: "ord-1",
+        openKinds: ["PRICE_CHANGED_OFFLINE"],
+      });
+    });
+
+    it("sendReminder: the same issued invoice passes the gate once the flag is resolved, and an order-less one never asks", async () => {
+      seedIssued("ord-1");
+      resolved();
+      const after = await service.sendReminder("i1").catch((e) => e);
+      expect(after).not.toBeInstanceOf(ConflictException);
+      expect(prisma.orderReviewFlag.findMany).toHaveBeenCalledTimes(1);
+      prisma.orderReviewFlag.findMany.mockClear();
+      seedIssued(null);
+      open();
+      const none = await service.sendReminder("i1").catch((e) => e);
+      expect(none).not.toBeInstanceOf(ConflictException);
       expect(prisma.orderReviewFlag.findMany).not.toHaveBeenCalled();
     });
   });
@@ -253,6 +294,17 @@ describe("InvoicesService: the review gate on an order with an open price flag (
           .recordStandalonePayment(dto(), { source: "STAFF_ALLOCATION" })
           .catch((e) => e),
       );
+      expect(prisma.invoicePayment.create).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["a missing source", {}],
+      ["an unknown source", { source: "SOMETHING_ELSE" }],
+      ["a lower-case look-alike", { source: "stripe_settle" }],
+    ])("recordStandalonePayment with %s is gated, never exempt (fail closed)", async (_n, opts) => {
+      seedSent();
+      open();
+      refused(await service.recordStandalonePayment(dto(), opts as any).catch((e) => e));
       expect(prisma.invoicePayment.create).not.toHaveBeenCalled();
     });
 
@@ -396,6 +448,11 @@ describe("InvoicesService: the review gate on an order with an open price flag (
       const out = await service.createInvoiceFromOrderWithTenant("ord-1", "test-tenant");
       expect(prisma.invoice.update).not.toHaveBeenCalled(); // the SENT flip is the only update on this path
       expect((out as any[])[0].status).toBe(InvoiceStatus.DRAFT);
+      // the context-less shipment path reads the flag with the tenant named, never ambient
+      expect(prisma.orderReviewFlag.findMany.mock.calls[0][0].where).toMatchObject({
+        orderId: "ord-1",
+        tenantId: "test-tenant",
+      });
     });
 
     it("G4 (shipment path) master value: no open flag, the same call flips the deposit mirror to SENT", async () => {

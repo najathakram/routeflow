@@ -43,7 +43,7 @@ function enclosing(text: string, index: number): { name: string; start: number }
 const CREATE_RE = /invoicePayment\s*\.\s*create\b/g;
 /** createMany / upsert / nested create: never allowed without a new classification (the row-498 regex plus the typed forms). */
 const OTHER_WRITE_RE =
-  /invoicePayment\s*\.\s*(?:createMany|createManyAndReturn|upsert)\b|payments:\s*\{\s*(?:create|createMany|connectOrCreate)\b/g;
+  /invoicePayment\s*\.\s*(?:createMany|createManyAndReturn|upsert)\b|(?:payments|invoicePayments|applications):\s*\{\s*(?:create|createMany|connectOrCreate|upsert)\b/g;
 
 type Gate = "GATED" | "GATED_BY_SOURCE" | "EXEMPT";
 interface Site {
@@ -110,7 +110,8 @@ const SITES: Site[] = [
     fn: "recordDeliveryPaymentInTx",
     gate: "EXEMPT",
     why: "the driver holds the cash at the door: refusing would lose the record of money already taken.",
-    caller: "RoutesService.completeWithPayment",
+    caller:
+      "RoutesService.completeWithPayment (OPERATOR-reachable: office staff can record door cash through it, bounded to one stop completion)",
   },
   {
     file: "invoices/invoices.service.ts",
@@ -284,6 +285,20 @@ describe("the send paths and the DRAFT paths (SA-1124 PR-1b)", () => {
       const body = methodBody("invoices/invoices.service.ts", name);
       expect({ name, throws: /assertOrderReviewed\(/.test(body) }).toEqual({ name, throws: false });
       expect({ name, asks: /hasOpenReviewBlock\(/.test(body) }).toEqual({ name, asks: true });
+    }
+  });
+
+  it("sendReminder carries the guard (driver cash can issue a flagged invoice) and pickup-complete judges it before any write", () => {
+    expect(strip(read("invoices/invoice-reminder-email.ts"))).toMatch(/assertOrderReviewed\(/);
+    const pc = strip(read("orders/counter-sale/pickup-complete.service.ts"));
+    const guard = pc.indexOf("assertOrderReviewed(");
+    expect(guard).toBeGreaterThan(0);
+    // before the claim, the path switch and the hand-over
+    for (const write of ["changeStatus(", "updateFulfillPath(", "recordPayment(", ".send("]) {
+      expect({ write, after: pc.indexOf(write, pc.indexOf("async complete(")) > guard }).toEqual({
+        write,
+        after: true,
+      });
     }
   });
 
