@@ -48,6 +48,11 @@ const ALLOWED: Record<string, Reviewed> = {
       "the DELETEs are strings fed to its own assertReadOnlySql refusal checks, never executed",
     localOnly: false,
   },
+  "lib/null-tenant-split.self-test.mjs": {
+    reason:
+      "the DELETE/UPDATE strings are deliberately bad examples fed to its own assertReadOnlySql refusal check, never executed",
+    localOnly: false,
+  },
 };
 
 const LOCAL_ONLY_GUARD = /productionGuard\(\s*\{[^}]*\bdbUrl\b/s;
