@@ -50,7 +50,7 @@ const ALLOWED: Record<string, Reviewed> = {
   },
   "lib/null-tenant-split.self-test.mjs": {
     reason:
-      "the DELETE/UPDATE strings are deliberately bad examples fed to its own assertReadOnlySql refusal check, never executed",
+      "the DELETE/UPDATE words are banned-word regex literals the self-test asserts over its own SQL builders and the audit source (self-test.mjs:123, :165); it never calls assertReadOnlySql and never runs SQL",
     localOnly: false,
   },
 };
