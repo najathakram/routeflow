@@ -241,6 +241,7 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { resolveDriverRunLink } from "./driver-run-link";
+import { resolveOwnCustomerForCreate } from "./own-customer-for-create";
 import { offlineCreate } from "./offline/offline-create";
 import * as flags from "./offline/review-flags";
 import { resolveLineUnits } from "../products/line-units";
@@ -1301,28 +1302,8 @@ export class OrdersService implements OnApplicationBootstrap {
       // B309: a driver links only to their own active stop/run (driver-run-link.ts).
       resolvedRouteRunId = await resolveDriverRunLink(this.prisma, dto, user);
     } else {
-      // Customer creates their own order
-      // B309 (Opus MAJOR): the routeRunId/routeRunStopId link block later in
-      // create() is role-agnostic and the controller admits CUSTOMER — without
-      // this a buyer could POST either field directly and attach their own
-      // order to a driver's manifest, bypassing the DRIVER-only
-      // ownership/in-progress checks in the branch above entirely. Refuse
-      // before any read or write; the OPERATOR/TENANT_ADMIN path is untouched.
-      if (dto.routeRunId || dto.routeRunStopId) {
-        throw new BadRequestException("Route run linkage is not allowed for customer orders");
-      }
-      // REG-B131: `deletedAt: null` here, not a second check below — a removal deactivates the
-      // user but an access token minted just before it stays valid for up to 15 minutes, so a
-      // removed customer's own in-flight session must fall into the existing refusal.
-      const customer = await this.prisma
-        .forTenant()
-        .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
-      if (!customer)
-        throw new ForbiddenException({
-          code: API_ERROR_CODES.CUSTOMER_NOT_LINKED,
-          message: "Customer record not found",
-        });
-      customerId = customer.id;
+      // Customer creates their own order (own-customer-for-create.ts: B309 link refusal, REG-B131 lookup).
+      customerId = await resolveOwnCustomerForCreate(this.prisma, dto, user);
     }
 
     // F30/R8: the replay lookup runs HERE — after the caller's own customer is
