@@ -128,7 +128,8 @@ export async function login(username: string, password: string): Promise<AuthRes
  */
 export async function endStaffSession(): Promise<void> {
   const me = getStoredUser();
-  await parkStoredLiveCarts(liveCartKey(me?.tenantSlug, me?.id)); // W-1184: an unfinished counter sale is parked on the server first, never lost to the sign-out
+  // A support session parks nothing into the client's business (the cart there is not this operator's to keep).
+  if (!getImpersonation()) await parkStoredLiveCarts(liveCartKey(me?.tenantSlug, me?.id)); // W-1184: an unfinished counter sale is parked on the server first, never lost to the sign-out
   try {
     await apiClient.post("/auth/logout");
   } catch {

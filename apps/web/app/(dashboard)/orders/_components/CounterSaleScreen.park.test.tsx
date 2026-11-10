@@ -2,10 +2,15 @@ import * as React from "react";
 import { renderWithProviders, screen, waitFor, fireEvent, within, act } from "@/test-utils/render";
 import { apiClient } from "@/lib/api-client";
 import { COUNTER_PRICE_EDIT_NOT_PERMITTED_COPY } from "@/lib/counter-sale";
-import { guardCounterLeave } from "@/lib/counter-cart-signal";
+import {
+  cancelCounterLeave,
+  getCounterLeaveRequest,
+  guardCounterLeave,
+} from "@/lib/counter-cart-signal";
 import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 import { discardUndo } from "./useParkedSales";
+import { setImpersonation } from "@/lib/impersonation";
 import { liveCartKey } from "@/lib/counter-live-cart-keys";
 import { parkStoredLiveCarts } from "@/lib/counter-live-cart-park";
 
@@ -18,6 +23,8 @@ import { parkStoredLiveCarts } from "@/lib/counter-live-cart-park";
 type MockUser = { id: string; tenantSlug: string; role?: string } | null | undefined;
 let mockUser: MockUser;
 const mockToast = jest.fn();
+let holdToasts = false; // true = the toast stays open (paused by hover, focus or a hidden window)
+const dismissToast = (c: { onDismiss?: () => void }) => c.onDismiss?.();
 jest.mock("@routeflow/ui/web", () => ({
   ...jest.requireActual("@routeflow/ui/web"),
   useToast: () => ({ toast: mockToast }),
@@ -141,7 +148,12 @@ const parkedPayload = (over: Record<string, unknown> = {}) => ({
 });
 
 beforeEach(() => {
-  mockToast.mockClear();
+  mockToast.mockReset();
+  holdToasts = false;
+  mockToast.mockImplementation((c: { onDismiss?: () => void }) => {
+    if (!holdToasts) setTimeout(() => dismissToast(c), 0);
+    return "t";
+  });
   discardUndo.ms = 0; // most tests want the delete at once; the Undo tests set their own window
   withDraft = false;
   jest.clearAllMocks();
@@ -675,7 +687,7 @@ describe("Resume with lines on the cart: the replace prompt comes FIRST", () => 
 
 describe("Discard a parked sale", () => {
   it("W-1184: Discard hides the row and offers Undo; Undo brings it back and no delete is sent", async () => {
-    discardUndo.ms = 60_000;
+    holdToasts = true;
     seed("a", { label: "Hold A" }, parkedPayload());
     renderScreen();
     const dialog = await openList(1);
@@ -690,7 +702,7 @@ describe("Discard a parked sale", () => {
   });
 
   it("an order draft Discard gets the same Undo: row hides, no delete until the window ends, Undo brings it back", async () => {
-    discardUndo.ms = 60_000;
+    holdToasts = true;
     withDraft = true;
     renderScreen();
     fireEvent.click(await screen.findByRole("button", { name: "Parked (1)" }));
@@ -730,6 +742,69 @@ describe("Discard a parked sale", () => {
     expect(storedAtProceed).toBeNull();
     await parkStoredLiveCarts(key); // what the sign-out runs next
     expect(parkCalls()).toHaveLength(1);
+  });
+
+  it("a late Undo still works: the delete waits for the toast to close, not for a separate timer", async () => {
+    holdToasts = true; // hover / focus / hidden window keeps the toast open past the old 8 s
+    discardUndo.ms = 20;
+    seed("a", { label: "Hold A" }, parkedPayload());
+    renderScreen();
+    const dialog = await openList(1);
+    fireEvent.click(discardBtn("Hold A"));
+    await waitFor(() => expect(within(dialog).queryByTestId("parked-row-a")).toBeNull());
+    await new Promise((r) => setTimeout(r, 150));
+    expect(del).not.toHaveBeenCalled();
+    const undo = mockToast.mock.calls.map((c) => c[0]).find((c) => /^Discarded/.test(c.title));
+    act(() => undo.action.onClick());
+    expect(await within(dialog).findByTestId("parked-row-a")).toBeInTheDocument();
+    act(() => undo.onDismiss());
+    expect(del).not.toHaveBeenCalled();
+  });
+
+  it("leaving the screen does not delete while the toast is open; closing it then deletes, Undo keeps the sale", async () => {
+    holdToasts = true;
+    seed("a", { label: "Hold A" }, parkedPayload());
+    seed("b", { label: "Hold B" }, parkedPayload());
+    const { unmount } = renderScreen();
+    await openList(2);
+    fireEvent.click(discardBtn("Hold A"));
+    await waitFor(() => expect(mockToast).toHaveBeenCalled());
+    fireEvent.click(discardBtn("Hold B"));
+    await waitFor(() => expect(mockToast.mock.calls.length).toBeGreaterThanOrEqual(2));
+    unmount();
+    expect(del).not.toHaveBeenCalled(); // leaving never commits a delete whose Undo is still on screen
+    const toasts = mockToast.mock.calls.map((c) => c[0]).filter((c) => /^Discarded/.test(c.title));
+    act(() => toasts[0].action.onClick()); // Undo A after leaving: A is kept
+    act(() => toasts[0].onDismiss());
+    act(() => toasts[1].onDismiss()); // B's toast just closed: B goes
+    await waitFor(() => expect(del).toHaveBeenCalledTimes(1));
+    expect(del).toHaveBeenCalledWith(`${PARKED}/b`);
+  });
+
+  it("Undo is inside the open Parked window and takes focus, so a keyboard reaches it (the toast sits outside it)", async () => {
+    holdToasts = true;
+    seed("a", { label: "Hold A" }, parkedPayload());
+    renderScreen();
+    const dialog = await openList(1);
+    fireEvent.click(discardBtn("Hold A"));
+    const undo = await within(dialog).findByRole("button", { name: /^Undo/ });
+    await waitFor(() => expect(undo).toHaveFocus());
+    fireEvent.click(undo);
+    expect(await within(dialog).findByTestId("parked-row-a")).toBeInTheDocument();
+    expect(del).not.toHaveBeenCalled();
+  });
+
+  it("no auto-park during a support session: the leave is held on the old Discard question and nothing is parked", async () => {
+    setImpersonation("tok", "acme", "support");
+    renderScreen();
+    await scan("COLA");
+    const proceed = jest.fn();
+    expect(guardCounterLeave(proceed)).toBe(true);
+    // the shell header owns the question; here the leave is held on it and nothing was parked
+    await waitFor(() => expect(getCounterLeaveRequest()).toBe(true));
+    expect(proceed).not.toHaveBeenCalled();
+    expect(parkCalls()).toHaveLength(0);
+    cancelCounterLeave();
   });
 
   it("calls DELETE, refreshes the list, and the row goes", async () => {

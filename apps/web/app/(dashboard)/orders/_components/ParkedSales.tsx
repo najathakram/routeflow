@@ -12,7 +12,8 @@ import { setCounterAutoParkHook } from "@/lib/counter-cart-signal";
 import { formatMoney } from "@/lib/format";
 import { cartTotals } from "@/lib/counter-sale";
 import { PARKED_EDITED_PRICES_COPY } from "@/lib/counter-park";
-import { ParkedSalesDialog } from "./ParkedSalesDialog";
+import { ParkedSalesDialog, type UndoNote } from "./ParkedSalesDialog";
+import { getImpersonation } from "@/lib/impersonation";
 import { discardUndo, useParkedSales, type ParkedSalesDeps } from "./useParkedSales";
 
 export interface ParkedSalesProps extends ParkedSalesDeps {
@@ -34,22 +35,37 @@ function parkedAge(iso: string | undefined, nowMs: number = Date.now()): string 
 
 export function ParkedSales({ canEditPrices, ...deps }: ParkedSalesProps) {
   const { toast } = useToast();
+  // The Undo also lives INSIDE the Parked window: the toast sits outside it, and the window hides everything else from a
+  // keyboard and a screen reader. One note per waiting discard; it goes when its toast closes or the Undo is used.
+  const [undoNotes, setUndoNotes] = React.useState<UndoNote[]>([]);
+  const dropNote = (id: string) => setUndoNotes((n) => n.filter((x) => x.id !== id));
   // Discard is taken back, not confirmed (owner rule: autosave + Undo; confirm only for sent or posted money).
+  // The delete leaves when the toast CLOSES (expiry, close, swipe), so an Undo on screen can always undo.
   const p = useParkedSales({
     ...deps,
-    onDiscarded: (undo, row) =>
+    onDiscarded: (undo, row) => {
+      const back = () => {
+        undo();
+        dropNote(row.id);
+      };
+      setUndoNotes((n) => [...n, { id: row.id, text: `Discarded · ${row.label}`, undo: back }]);
       toast({
         title: `Discarded · ${row.label}`,
         description: "The parked sale is gone unless you undo.",
-        action: { label: "Undo", onClick: undo },
-        duration: discardUndo.ms, // the toast lives as long as the Undo does
-      }),
+        action: { label: "Undo", onClick: back },
+        duration: discardUndo.ms,
+        onDismiss: () => {
+          dropNote(row.id);
+          row.commit();
+        },
+      });
+    },
   });
   const { data: draftRows } = useDrafts();
   const delDraft = useDeleteDraft();
   // An order draft Discard is taken back like a sale Discard: the row hides, the delete leaves after the Undo window (or on leaving).
   const [hiddenDrafts, setHiddenDrafts] = React.useState<ReadonlySet<string>>(() => new Set());
-  const draftTimers = React.useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const draftWaiting = React.useRef(new Set<string>());
   const delDraftRef = React.useRef(delDraft.mutate);
   delDraftRef.current = delDraft.mutate;
   const unhideDraft = (id: string) =>
@@ -60,38 +76,27 @@ export function ParkedSales({ canEditPrices, ...deps }: ParkedSalesProps) {
       return n;
     });
   const commitDraft = (id: string) => {
-    const t = draftTimers.current.get(id);
-    if (t) clearTimeout(t);
-    draftTimers.current.delete(id);
+    if (!draftWaiting.current.delete(id)) return; // taken back or already sent
     delDraftRef.current(id, { onError: () => unhideDraft(id) });
   };
-  React.useEffect(() => {
-    const waiting = draftTimers.current;
-    return () => {
-      for (const id of [...waiting.keys()]) commitDraft(id);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
   const discardDraft = (d: SaleDraft, title: string) => {
     setHiddenDrafts((h) => new Set(h).add(d.id));
-    draftTimers.current.set(
-      d.id,
-      setTimeout(() => commitDraft(d.id), discardUndo.ms),
-    );
+    draftWaiting.current.add(d.id);
+    const back = () => {
+      if (!draftWaiting.current.delete(d.id)) return;
+      unhideDraft(d.id);
+      dropNote(d.id);
+    };
+    setUndoNotes((n) => [...n, { id: d.id, text: `Discarded · ${title}`, undo: back }]);
     toast({
       title: `Discarded · ${title}`,
       description: "The order draft is gone unless you undo.",
-      action: {
-        label: "Undo",
-        onClick: () => {
-          const t = draftTimers.current.get(d.id);
-          if (!t) return;
-          clearTimeout(t);
-          draftTimers.current.delete(d.id);
-          unhideDraft(d.id);
-        },
-      },
+      action: { label: "Undo", onClick: back },
       duration: discardUndo.ms,
+      onDismiss: () => {
+        dropNote(d.id);
+        commitDraft(d.id);
+      },
     });
   };
   const drafts = (Array.isArray(draftRows) ? draftRows : []).filter((d) => !hiddenDrafts.has(d.id));
@@ -108,6 +113,8 @@ export function ParkedSales({ canEditPrices, ...deps }: ParkedSalesProps) {
   parkForLeaveRef.current = p.parkForLeave;
   React.useEffect(() => {
     setCounterAutoParkHook(async () => {
+      // A support session never parks into the client's business: the old Discard question stays there.
+      if (getImpersonation()) return false;
       const { ok, parked } = await parkForLeaveRef.current();
       if (ok) {
         const id = parked?.id;
@@ -211,6 +218,7 @@ export function ParkedSales({ canEditPrices, ...deps }: ParkedSalesProps) {
         openerRef={openerRef}
         drafts={drafts}
         onDiscardDraft={discardDraft}
+        undoNotes={undoNotes}
       />
     </>
   );

@@ -35,10 +35,10 @@ export interface ParkedSalesDeps {
    * Discard with Undo: when given, a Discard hides the row at once and sends the delete after `discardUndo.ms`
    * (or when the screen goes away); calling `undo` inside that window cancels it and the row is back. Absent = delete now.
    */
-  onDiscarded?: (undo: () => void, row: { id: string; label: string }) => void;
+  onDiscarded?: (undo: () => void, row: { id: string; label: string; commit: () => void }) => void;
 }
 
-/** How long a Discard can be taken back before the delete leaves (an object so a test can shorten it). */
+/** How long the Undo toast stays up (an object so a test can shorten it). The delete leaves when that toast CLOSES, not on a timer of its own. */
 export const discardUndo = { ms: 8000 };
 
 export type ParkWork = { kind: "park" | "resume" | "discard"; id?: string } | null;
@@ -140,7 +140,7 @@ export function useParkedSales(deps: ParkedSalesDeps) {
 
   // Discards waiting out their Undo window: the row is hidden, the delete has not left yet.
   const [hidden, setHidden] = React.useState<ReadonlySet<string>>(() => new Set());
-  const pending = React.useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const pending = React.useRef(new Set<string>());
   const unhide = (id: string) =>
     setHidden((h) => {
       if (!h.has(id)) return h;
@@ -149,9 +149,7 @@ export function useParkedSales(deps: ParkedSalesDeps) {
       return n;
     });
   const commitDiscard = async (id: string) => {
-    const t = pending.current.get(id);
-    if (t) clearTimeout(t);
-    pending.current.delete(id);
+    if (!pending.current.delete(id)) return; // taken back (Undo) or already sent
     try {
       await discardM.mutateAsync(id);
     } catch (err) {
@@ -159,14 +157,7 @@ export function useParkedSales(deps: ParkedSalesDeps) {
       setMessage({ scope: "dialog", text: discardErrorCopy(err) });
     }
   };
-  // Leaving the screen sends every waiting delete now: the clerk chose Discard, and an Undo needs this screen to answer.
-  React.useEffect(() => {
-    const waiting = pending.current;
-    return () => {
-      for (const id of [...waiting.keys()]) void commitDiscard(id);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Leaving the screen sends nothing: the Undo toast outlives this screen, and the delete waits for that toast to close.
 
   const discard = async (id: string) => {
     if (!canAct()) return;
@@ -175,19 +166,13 @@ export function useParkedSales(deps: ParkedSalesDeps) {
       const row = (list.data?.data ?? []).find((r) => r.id === id);
       setMessage(null);
       setHidden((h) => new Set(h).add(id));
-      pending.current.set(
-        id,
-        setTimeout(() => void commitDiscard(id), discardUndo.ms),
-      );
+      pending.current.add(id);
       notify(
         () => {
-          const t = pending.current.get(id);
-          if (!t) return;
-          clearTimeout(t);
-          pending.current.delete(id);
+          if (!pending.current.delete(id)) return;
           unhide(id);
         },
-        { id, label: row?.label ?? "Sale" },
+        { id, label: row?.label ?? "Sale", commit: () => void commitDiscard(id) },
       );
       return;
     }

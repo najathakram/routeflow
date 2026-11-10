@@ -26,6 +26,31 @@ import type { useParkedSales } from "./useParkedSales";
 
 type Parked = ReturnType<typeof useParkedSales>;
 
+/** A discard that can still be taken back, shown inside the window so a keyboard reaches its Undo. */
+export interface UndoNote {
+  id: string;
+  text: string;
+  undo: () => void;
+}
+
+function UndoNoteRow({ note }: { note: UndoNote }) {
+  const ref = React.useRef<HTMLButtonElement>(null);
+  // The Discard button that was pressed is gone: put the cursor on Undo, one key from where it was.
+  React.useEffect(() => ref.current?.focus(), []);
+  return (
+    <div
+      role="status"
+      className="flex items-center gap-3 rounded-md border border-navy/15 bg-surface-raised px-3 py-2"
+      data-testid={`undo-note-${note.id}`}
+    >
+      <p className="min-w-0 flex-1 truncate text-sm text-navy">{note.text}</p>
+      <Button ref={ref} className="min-h-11" variant="secondary" onClick={note.undo}>
+        {`Undo ${note.text.replace(/^Discarded · /, "")}`}
+      </Button>
+    </div>
+  );
+}
+
 function ParkedRow({
   row,
   timezone,
@@ -165,11 +190,13 @@ export function ParkedSalesDialog({
   openerRef,
   drafts = [],
   onDiscardDraft,
+  undoNotes = [],
 }: {
   parked: Parked;
   openerRef: React.RefObject<HTMLButtonElement | null>;
   drafts?: SaleDraft[];
   onDiscardDraft?: (draft: SaleDraft, title: string) => void;
+  undoNotes?: UndoNote[];
 }) {
   const { data: settings } = useQuery<{ timezone?: string | null; taxRate?: number | null }>({
     queryKey: ["settings"],
@@ -196,6 +223,9 @@ export function ParkedSalesDialog({
         className="max-w-2xl"
       >
         <div className="space-y-3">
+          {undoNotes.map((n) => (
+            <UndoNoteRow key={n.id} note={n} />
+          ))}
           {dialogMessage ? (
             <p role="alert" className="text-sm text-red-700" data-testid="parked-dialog-error">
               {dialogMessage}
