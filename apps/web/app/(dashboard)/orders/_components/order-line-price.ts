@@ -4,6 +4,7 @@ import {
   unitWords,
   type CustomerLayerUnit,
 } from "@routeflow/pricing";
+import type { PriceType } from "@routeflow/types";
 
 /**
  * W-1170 F8: the ONE add-time price decision of the new-order modal. `addLineItem` builds a line from it and the product
@@ -38,7 +39,8 @@ export interface LinePriceAtAdd {
   memory: number | undefined;
   /** What the line starts at and what the picker shows. */
   unitPrice: number;
-  priceType: "STANDARD" | "SPECIAL" | "MANUAL" | "DISCOUNTED";
+  /** Every value but PROMO: an add-time price is never a promotion. */
+  priceType: Exclude<PriceType, "PROMO">;
 }
 
 export function linePriceAtAdd(i: {
