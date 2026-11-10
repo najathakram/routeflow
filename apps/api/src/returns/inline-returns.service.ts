@@ -1946,7 +1946,10 @@ export class InlineReturnsService {
     const tenantId = this.prisma.getTenantId();
     await this.assertGranted(tenantId);
 
-    return this.prisma.tenantTransaction(async (tx: any) => {
+    // B548: the note this cancel voids, announced once the transaction has committed (never from inside it).
+    let voidedNote: Awaited<ReturnType<CreditNotesService["cancelStandaloneInTx"]>>["voided"];
+    const result = await this.prisma.tenantTransaction(async (tx: any) => {
+      voidedNote = undefined; // a retried attempt starts clean
       await tx.$executeRaw`SELECT id FROM "Return" WHERE id = ${id} FOR UPDATE`;
       const fresh = await tx.return.findFirst({
         where: { id, kind: "INLINE" },
@@ -2064,8 +2067,9 @@ export class InlineReturnsService {
         // sweeps a DIFFERENT credit note that happens to sit on the same order/invoice.
         // Throws RETURN_CREDIT_CONSUMED if some of its `amountUsed` can't be traced back to a
         // restorable payment (m-5: "restore < amountUsed").
-        const voided = await this.creditNotes.cancelStandaloneInTx(tx, fresh.creditNoteId);
-        amendedPeriod ??= voided?.amendedPeriod ?? null;
+        const cancelledNote = await this.creditNotes.cancelStandaloneInTx(tx, fresh.creditNoteId);
+        amendedPeriod ??= cancelledNote?.amendedPeriod ?? null;
+        voidedNote = cancelledNote?.voided;
         await tx.orderCreditNote.deleteMany({
           where: { orderId: fresh.orderId, creditNoteId: fresh.creditNoteId },
         });
@@ -2075,5 +2079,7 @@ export class InlineReturnsService {
       const cancelled = await tx.return.findUnique({ where: { id } });
       return cancelled ? { ...cancelled, amendedPeriod } : cancelled;
     });
+    if (voidedNote) this.gateway.emitCreditNoteVoided(tenantId, voidedNote);
+    return result;
   }
 }
