@@ -1021,13 +1021,16 @@ describeDb(
         };
         const pPay = settle(
           tenantCtx.run(s.tenantId, () =>
-            invoicesService.recordStandalonePayment({
-              customerId: s.customerId,
-              totalAmount: 20,
-              method: "CHECK",
-              status: "DRAFT",
-              allocations: [{ invoiceId: s.invoiceId, amount: 20 }],
-            } as any),
+            invoicesService.recordStandalonePayment(
+              {
+                customerId: s.customerId,
+                totalAmount: 20,
+                method: "CHECK",
+                status: "DRAFT",
+                allocations: [{ invoiceId: s.invoiceId, amount: 20 }],
+              } as any,
+              { source: "STAFF_ALLOCATION" },
+            ),
           ),
         );
         await waitFor(1);
@@ -1112,13 +1115,16 @@ describeDb(
     };
     const standalone = (s: { tenantId: string; invoiceId: string }, customerId: string) =>
       tenantCtx.run(s.tenantId, () =>
-        invoicesService.recordStandalonePayment({
-          customerId,
-          totalAmount: 20,
-          method: "CASH",
-          status: "PAID",
-          allocations: [{ invoiceId: s.invoiceId, amount: 20 }],
-        } as any),
+        invoicesService.recordStandalonePayment(
+          {
+            customerId,
+            totalAmount: 20,
+            method: "CASH",
+            status: "PAID",
+            allocations: [{ invoiceId: s.invoiceId, amount: 20 }],
+          } as any,
+          { source: "STAFF_ALLOCATION" },
+        ),
       );
     const customerOf = async (invoiceId: string) =>
       (await prisma.invoice.findUniqueOrThrow({ where: { id: invoiceId } })).customerId;

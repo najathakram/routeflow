@@ -108,16 +108,19 @@ describe("InvoicesService — B769 money rounding", () => {
     // CORRECT rounded total (100.02): unrounded, allocatedTotal (100.005) leaves a stray
     // excess of ~0.015 that today wrongly mints a sub-cent AdvancePayment; rounded first,
     // excess is exactly 0 and no AdvancePayment should exist.
-    await service.recordStandalonePayment({
-      customerId: "cust-1",
-      totalAmount: 100.02,
-      method: "CASH",
-      allocations: [
-        { invoiceId: "inv-1", amount: 33.335 },
-        { invoiceId: "inv-1", amount: 33.335 },
-        { invoiceId: "inv-1", amount: 33.335 },
-      ],
-    } as any);
+    await service.recordStandalonePayment(
+      {
+        customerId: "cust-1",
+        totalAmount: 100.02,
+        method: "CASH",
+        allocations: [
+          { invoiceId: "inv-1", amount: 33.335 },
+          { invoiceId: "inv-1", amount: 33.335 },
+          { invoiceId: "inv-1", amount: 33.335 },
+        ],
+      } as any,
+      { source: "STAFF_ALLOCATION" },
+    );
 
     const calls = prisma.invoicePayment.create.mock.calls;
     expect(calls).toHaveLength(3);
@@ -144,15 +147,18 @@ describe("InvoicesService — B769 money rounding", () => {
   it("REG-SA-112a: the excess advance is written ROUNDED (100.004 − 80.00 → 20.00, never 20.004)", async () => {
     oneInvoice();
 
-    const res = await service.recordStandalonePayment({
-      customerId: "cust-1",
-      totalAmount: 100.004,
-      method: "CASH",
-      allocations: [
-        { invoiceId: "inv-1", amount: 50.001 },
-        { invoiceId: "inv-1", amount: 30 },
-      ],
-    } as any);
+    const res = await service.recordStandalonePayment(
+      {
+        customerId: "cust-1",
+        totalAmount: 100.004,
+        method: "CASH",
+        allocations: [
+          { invoiceId: "inv-1", amount: 50.001 },
+          { invoiceId: "inv-1", amount: 30 },
+        ],
+      } as any,
+      { source: "STAFF_ALLOCATION" },
+    );
 
     expect(prisma.advancePayment.create).toHaveBeenCalledWith({
       data: expect.objectContaining({ amount: 20, balance: 20 }),
@@ -164,15 +170,18 @@ describe("InvoicesService — B769 money rounding", () => {
     oneInvoice();
 
     const err = await service
-      .recordStandalonePayment({
-        customerId: "cust-1",
-        totalAmount: 100,
-        method: "CASH",
-        allocations: [
-          { invoiceId: "inv-1", amount: 60 },
-          { invoiceId: "inv-1", amount: 40.01 },
-        ],
-      } as any)
+      .recordStandalonePayment(
+        {
+          customerId: "cust-1",
+          totalAmount: 100,
+          method: "CASH",
+          allocations: [
+            { invoiceId: "inv-1", amount: 60 },
+            { invoiceId: "inv-1", amount: 40.01 },
+          ],
+        } as any,
+        { source: "STAFF_ALLOCATION" },
+      )
       .catch((e) => e);
 
     expect(err).toBeInstanceOf(BadRequestException);
@@ -190,15 +199,18 @@ describe("InvoicesService — B769 money rounding", () => {
   it("PIN-SA-112: allocations exactly equal to the payment are accepted, with no advance", async () => {
     oneInvoice();
 
-    const res = await service.recordStandalonePayment({
-      customerId: "cust-1",
-      totalAmount: 100,
-      method: "CASH",
-      allocations: [
-        { invoiceId: "inv-1", amount: 60 },
-        { invoiceId: "inv-1", amount: 40 },
-      ],
-    } as any);
+    const res = await service.recordStandalonePayment(
+      {
+        customerId: "cust-1",
+        totalAmount: 100,
+        method: "CASH",
+        allocations: [
+          { invoiceId: "inv-1", amount: 60 },
+          { invoiceId: "inv-1", amount: 40 },
+        ],
+      } as any,
+      { source: "STAFF_ALLOCATION" },
+    );
 
     expect(prisma.invoicePayment.create).toHaveBeenCalledTimes(2);
     expect(prisma.advancePayment.create).not.toHaveBeenCalled();

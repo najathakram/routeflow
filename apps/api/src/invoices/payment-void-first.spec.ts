@@ -181,7 +181,7 @@ describe("SA-404f — payment writers lock before they read (void-first)", () =>
       total: 100,
       payments: [],
     } as any);
-    await service.recordStandalonePayment(standalone()); // NO assertAllocationsWithinBalance
+    await service.recordStandalonePayment(standalone(), { source: "STAFF_ALLOCATION" }); // NO assertAllocationsWithinBalance
     expect(log.indexOf("lock Invoice")).toBeGreaterThan(-1);
     expect(log.indexOf("lock Invoice")).toBeLessThan(log.indexOf("read invoice"));
   });
@@ -199,9 +199,9 @@ describe("SA-404f — payment writers lock before they read (void-first)", () =>
       } as any);
       // The refusal's own message — a bare BadRequestException would also match the allocation
       // totals check and pass for the wrong reason.
-      await expect(service.recordStandalonePayment(standalone())).rejects.toThrow(
-        status === "VOID" ? /is voided/ : /is written-off/,
-      );
+      await expect(
+        service.recordStandalonePayment(standalone(), { source: "STAFF_ALLOCATION" }),
+      ).rejects.toThrow(status === "VOID" ? /is voided/ : /is written-off/);
       expect(prisma.invoicePayment.create).not.toHaveBeenCalled();
     }
   });
@@ -294,7 +294,7 @@ describe("SA-404f — payment writers lock before they read (void-first)", () =>
         total: 100,
         payments: [],
       } as any);
-      await service.recordStandalonePayment(standalone());
+      await service.recordStandalonePayment(standalone(), { source: "STAFF_ALLOCATION" });
       expect(prisma.tenantTransaction).toHaveBeenCalledTimes(2);
       expect(prisma.invoicePayment.create).toHaveBeenCalledTimes(1);
     });

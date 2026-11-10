@@ -250,6 +250,7 @@ describeDb(
       // A claims and writes, then holds its transaction open for 800ms inside the money tx.
       const winner = asTenant(() =>
         invoicesA.recordStandalonePayment(dto, {
+          source: "STAFF_ALLOCATION",
           idempotencyKey: key,
           inTx: async () => {
             winnerInTx();
@@ -262,10 +263,12 @@ describeDb(
       // B starts while A's claim is uncommitted: its pre-read sees nothing, its claim WAITS on the index.
       let loserDoneAt = 0;
       const loser = asTenant(() =>
-        invoicesB.recordStandalonePayment(dto, { idempotencyKey: key }).then((r) => {
-          loserDoneAt = Date.now(); // the loser's OWN resolve time, not the Promise.all's
-          return r;
-        }),
+        invoicesB
+          .recordStandalonePayment(dto, { source: "STAFF_ALLOCATION", idempotencyKey: key })
+          .then((r) => {
+            loserDoneAt = Date.now(); // the loser's OWN resolve time, not the Promise.all's
+            return r;
+          }),
       );
 
       const [w, l]: any[] = await Promise.all([winner, loser]);
@@ -292,6 +295,7 @@ describeDb(
       await expect(
         asTenant(() =>
           invoicesA.recordStandalonePayment(dto, {
+            source: "STAFF_ALLOCATION",
             idempotencyKey: key,
             inTx: async () => {
               throw new Error("injected failure after the claim");
@@ -306,7 +310,7 @@ describeDb(
       });
 
       const retry: any = await asTenant(() =>
-        invoicesB.recordStandalonePayment(dto, { idempotencyKey: key }),
+        invoicesB.recordStandalonePayment(dto, { source: "STAFF_ALLOCATION", idempotencyKey: key }),
       );
       expect(retry.replayed).toBeUndefined();
       const afterRetry = await state();
@@ -322,10 +326,16 @@ describeDb(
       const key = `shared-${randomUUID()}`;
 
       const a: any = await one.asTenant(() =>
-        invoicesA.recordStandalonePayment(one.dto, { idempotencyKey: key }),
+        invoicesA.recordStandalonePayment(one.dto, {
+          source: "STAFF_ALLOCATION",
+          idempotencyKey: key,
+        }),
       );
       const b: any = await two.asTenant(() =>
-        invoicesB.recordStandalonePayment(two.dto, { idempotencyKey: key }),
+        invoicesB.recordStandalonePayment(two.dto, {
+          source: "STAFF_ALLOCATION",
+          idempotencyKey: key,
+        }),
       );
 
       expect(b.replayed).toBeUndefined();
@@ -471,6 +481,7 @@ describeDb(
       const done = seeded
         .asTenant(() =>
           invoicesA.recordStandalonePayment(seeded.dto, {
+            source: "STAFF_ALLOCATION",
             idempotencyKey: key,
             inTx: async () => {
               inTx();
@@ -530,7 +541,12 @@ describeDb(
         state: "tombstoned",
       });
       const late = await seeded
-        .asTenant(() => invoicesA.recordStandalonePayment(seeded.dto, { idempotencyKey: key }))
+        .asTenant(() =>
+          invoicesA.recordStandalonePayment(seeded.dto, {
+            source: "STAFF_ALLOCATION",
+            idempotencyKey: key,
+          }),
+        )
         .catch((e: unknown) => e);
       expect(late).toBeInstanceOf(ConflictException);
       expect(codeOf(late).code).toBe("PAYMENT_KEY_RESOLVED");
@@ -592,7 +608,10 @@ describeDb(
       const two = await seed("r6b");
       const key = `r6-${randomUUID()}`;
       const paid: any = await one.asTenant(() =>
-        invoicesA.recordStandalonePayment(one.dto, { idempotencyKey: key }),
+        invoicesA.recordStandalonePayment(one.dto, {
+          source: "STAFF_ALLOCATION",
+          idempotencyKey: key,
+        }),
       );
       const fullRow = (tenantId: string) =>
         prismaA.paymentIdempotencyKey.findFirstOrThrow({ where: { tenantId, key } });
@@ -642,7 +661,12 @@ describeDb(
       await b.held;
       let postDoneAt = 0;
       const posting = seeded
-        .asTenant(() => invoicesA.recordStandalonePayment(seeded.dto, { idempotencyKey: key }))
+        .asTenant(() =>
+          invoicesA.recordStandalonePayment(seeded.dto, {
+            source: "STAFF_ALLOCATION",
+            idempotencyKey: key,
+          }),
+        )
         .catch((e: unknown) => e)
         .then((r) => ((postDoneAt = Date.now()), r));
       await new Promise((r) => setTimeout(r, 700)); // A's claim is blocked on the unique index
@@ -686,7 +710,10 @@ describeDb(
       const y = await seed("r9y");
       const key = `r9-${randomUUID()}`;
       const paid: any = await x.asTenant(() =>
-        invoicesA.recordStandalonePayment(x.dto, { idempotencyKey: key }),
+        invoicesA.recordStandalonePayment(x.dto, {
+          source: "STAFF_ALLOCATION",
+          idempotencyKey: key,
+        }),
       );
       const fullRow = (tenantId: string) =>
         prismaA.paymentIdempotencyKey.findFirstOrThrow({ where: { tenantId, key } });
@@ -697,7 +724,12 @@ describeDb(
       expect(await fullRow(x.tenant.id)).toEqual(xBefore);
 
       const replay: any = await x
-        .asTenant(() => invoicesB.recordStandalonePayment(x.dto, { idempotencyKey: key }))
+        .asTenant(() =>
+          invoicesB.recordStandalonePayment(x.dto, {
+            source: "STAFF_ALLOCATION",
+            idempotencyKey: key,
+          }),
+        )
         .catch((e: unknown) => e);
       expect(replay).not.toBeInstanceOf(ConflictException);
       expect(replay.replayed).toBe(true);
