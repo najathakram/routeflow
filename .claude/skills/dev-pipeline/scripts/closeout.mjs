@@ -781,8 +781,40 @@ function readLedgerEntries(ledgerPath) {
   return entries;
 }
 
+// AI OS Phase 0 (2026-11-09): fill the ledger's branch, pr and taskRef from git
+// when the caller did not pass them, so cost can be tied to a merged task.
+// branch: the checked-out branch. pr: the newest PR (any state) whose head is
+// that branch, via gh. taskRef: the newest "Task:" trailer on the branch's
+// commits (written by `ctl pr-body` / lane commits). Default branches never
+// get a PR or task looked up -- their history mixes many tasks. Every lookup
+// is best-effort: a failure leaves the field null, never fails the close-out.
+// CLOSEOUT_NO_GIT_REFS=1 turns it off (selftests, offline runs).
+const DEFAULT_BRANCHES = new Set(["main", "master", "HEAD", "develop"]);
+function resolveGitRefs(project, branch, pr, run = spawnSync) {
+  const out = { branch: branch || null, pr: pr != null ? pr : null, taskRef: null };
+  if (process.env.CLOSEOUT_NO_GIT_REFS === "1" || !project) return out;
+  const git = (args) => {
+    const r = run("git", ["-C", project, ...args], { encoding: "utf8", timeout: 10000 });
+    return r && r.status === 0 ? String(r.stdout || "").trim() : "";
+  };
+  if (!out.branch) out.branch = git(["rev-parse", "--abbrev-ref", "HEAD"]) || null;
+  if (!out.branch || DEFAULT_BRANCHES.has(out.branch)) return out;
+  const trailers = git(["log", "-30", "--format=%(trailers:key=Task,valueonly,separator=%x2C)"]);
+  const first = trailers.split(String.fromCharCode(10)).map((s) => s.split(",")[0].trim()).find(Boolean);
+  if (first) out.taskRef = first;
+  if (out.pr == null) {
+    const r = run("gh", ["pr", "list", "--head", out.branch, "--state", "all", "--limit", "1", "--json", "number"],
+      { cwd: project, encoding: "utf8", timeout: 15000 });
+    if (r && r.status === 0) {
+      try { const n = JSON.parse(r.stdout || "[]")[0]?.number; if (Number.isInteger(n)) out.pr = n; } catch { /* leave null */ }
+    }
+  }
+  return out;
+}
+
 function stepLedger(ctx) {
-  const { flags, project, runDir, slug, dry, startedAt, endedAt, branch, pr, usageResult, mode, scale, result } = ctx;
+  const { flags, project, runDir, slug, dry, startedAt, endedAt, usageResult, mode, scale, result } = ctx;
+  const { branch, pr, taskRef } = resolveGitRefs(project, ctx.branch, ctx.pr);
   const ledgerPath = typeof flags.ledger === "string" ? path.resolve(flags.ledger) : defaultLedgerPath(project);
 
   // Idempotence by slug -- with ONE repair exception. An existing row
@@ -826,6 +858,7 @@ function stepLedger(ctx) {
   if (startedAt) args.push("--started", startedAt);
   if (branch) args.push("--branch", branch);
   if (pr != null) args.push("--pr", String(pr));
+  if (taskRef) args.push("--task-ref", taskRef);
   if (ctx.approach) args.push("--approach", ctx.approach);
   if (ctx.engineSha) args.push("--engine-sha", ctx.engineSha);
   if (usageResult && usageResult.outFile) {
