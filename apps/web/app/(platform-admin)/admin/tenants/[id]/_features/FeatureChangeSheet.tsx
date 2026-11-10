@@ -33,6 +33,14 @@ export function stateWords(s: FeatureChangeState | null): string {
   return s.effect === "GRANT" ? "On" : "Off";
 }
 
+/** " (Pilot, ends 20 Nov 2026)": the kind and end date of the setting being written, when it is not a plain standing one. */
+export function afterDetail(s: FeatureChangeState | null): string {
+  if (!s || (s.kind === "COMP" && !s.expiresAt)) return "";
+  const kind = s.kind === "COMP" ? "" : s.kind.charAt(0) + s.kind.slice(1).toLowerCase();
+  const end = s.expiresAt ? `ends ${new Date(s.expiresAt).toLocaleDateString()}` : "";
+  return ` (${[kind, end].filter(Boolean).join(", ")})`;
+}
+
 /** One line for a row of the sheet: "Sales agents: Plan default to On". */
 export function changeSentence(
   label: string,
@@ -46,7 +54,7 @@ export function changeSentence(
       : planOn
         ? "On from plan"
         : "Off from plan";
-  return `${label}: ${before} to ${stateWords(row.after)}`;
+  return `${label}: ${before} to ${stateWords(row.after)}${afterDetail(row.after)}`;
 }
 
 /** The last moment of the chosen day, so "ends 30 June" holds through the 30th. */

@@ -15,6 +15,7 @@ import { FeatureChangeSheet } from "./FeatureChangeSheet";
 import {
   describeChangeSet,
   notRestoredCopy,
+  restorePlan,
   restoreInputs,
   undoableId,
 } from "./feature-change-history";
@@ -87,7 +88,14 @@ export function FeatureChangeHistory({ tenantId }: { tenantId: string }) {
     setError(null);
     try {
       const expected = await fetchFeatureInputsHash(tenantId);
-      setRestoring({ row, expected, changes: restoreInputs(row) });
+      const plan = restorePlan(row);
+      const left = notRestoredCopy(plan.skippedExpired, labelOf);
+      if (plan.changes.length === 0) {
+        setError(left || "Nothing to restore.");
+        return;
+      }
+      if (left) setNotice(left);
+      setRestoring({ row, expected, changes: plan.changes });
     } catch {
       setError("Couldn't start the restore. Try again.");
     } finally {

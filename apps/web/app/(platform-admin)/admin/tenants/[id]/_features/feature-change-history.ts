@@ -46,25 +46,42 @@ export function describeChangeSet(
   return `${who} ${joinWords(changes.map((c) => didWhat(labelOf(c.key), c)))}.${tail}`;
 }
 
+/** Same rule as the server's isLiveOverride (billing/feature-override-rule.ts): no end date, or one in the future. */
+const stillApplies = (expiresAt: string | null | undefined, nowMs: number): boolean =>
+  expiresAt == null || new Date(expiresAt).getTime() > nowMs;
+
 /**
- * The set that puts a saved set's "before" back (R50): a key that had no override is cleared, a key that had
- * one gets that effect again. Goes through the same review sheet as any other change.
+ * The set that puts a saved set's "before" back (R50): a key that had no override is cleared; a key that had one gets
+ * that override again with its own kind and end date (a pilot comes back as a pilot, not a standing grant). A "before"
+ * whose end date has passed is not put back and is named (SA-1133, same shape and copy as undo).
+ * Goes through the same review sheet as any other change.
  */
-export function restoreInputs(row: FeatureChangeLogRow): FeatureChangeInput[] {
-  const out: FeatureChangeInput[] = [];
+export function restorePlan(
+  row: FeatureChangeLogRow,
+  nowMs: number = Date.now(),
+): { changes: FeatureChangeInput[]; skippedExpired: SkippedExpiredRow[] } {
+  const changes: FeatureChangeInput[] = [];
+  const skippedExpired: SkippedExpiredRow[] = [];
   for (const c of row.meta?.changes ?? []) {
     if (c.before === null) {
-      if (c.after !== null) out.push({ type: "override", key: c.key, action: "CLEAR" });
+      if (c.after !== null) changes.push({ type: "override", key: c.key, action: "CLEAR" });
+    } else if (!stillApplies(c.before.expiresAt, nowMs)) {
+      skippedExpired.push({ key: c.key, id: c.before.id, expiresAt: c.before.expiresAt });
     } else {
-      out.push({
+      changes.push({
         type: "override",
         key: c.key,
         action: c.before.effect === "GRANT" ? "GRANT" : "DENY",
+        kind: c.before.kind,
+        ...(c.before.expiresAt ? { expiresAt: c.before.expiresAt } : {}),
       });
     }
   }
-  return out;
+  return { changes, skippedExpired };
 }
+
+export const restoreInputs = (row: FeatureChangeLogRow, nowMs?: number): FeatureChangeInput[] =>
+  restorePlan(row, nowMs).changes;
 
 /**
  * Only the newest row can still be undone (the server refuses once anything changed after it), and only if it is a

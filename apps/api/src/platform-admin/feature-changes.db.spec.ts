@@ -558,6 +558,23 @@ describeDb("WP11: feature change sets (real Postgres)", () => {
     );
   });
 
+  it("V-1 (SA-1133 SHOULD): an ended row the job has not closed yet is not the preview's before-state", async () => {
+    const t = await tenant();
+    await overrides.create({
+      tenantId: t,
+      featureKey: A,
+      effect: "GRANT",
+      kind: "PILOT",
+      reason: "fixture",
+      expiresAt: soonEnd(),
+      createdById: actor,
+    } as never);
+    await waitPastEnd();
+    const p = await svc.preview(t, dto(await svc.inputsHash(t), [{ key: A, action: "CLEAR" }]));
+    expect(p.changes[0].before).toBeNull();
+    expect(p.changes[0].unchanged).toBe(true);
+  });
+
   it("T28b: undo after a later change is refused and writes nothing", async () => {
     const t = await tenant();
     const set = await svc.apply(

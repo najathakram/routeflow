@@ -2,7 +2,12 @@ import * as React from "react";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { FeatureChangeLogRow } from "@/lib/platform-admin/feature-changes";
 import { FeatureChangeHistory } from "./FeatureChangeHistory";
-import { describeChangeSet, restoreInputs, undoableId } from "./feature-change-history";
+import {
+  describeChangeSet,
+  restoreInputs,
+  restorePlan,
+  undoableId,
+} from "./feature-change-history";
 
 const mockLog = jest.fn();
 const mockUndo = jest.fn();
@@ -91,9 +96,69 @@ describe("feature change history helpers (WP11, R48/R50)", () => {
 
   it("R50: restore puts the before-state back: no override clears, an override is set again", () => {
     expect(restoreInputs(applied())).toEqual([
-      { type: "override", key: "sales_agents", action: "GRANT" },
+      { type: "override", key: "sales_agents", action: "GRANT", kind: "COMP" },
       { type: "override", key: "msrp", action: "CLEAR" },
-      { type: "override", key: "ocr", action: "DENY" },
+      { type: "override", key: "ocr", action: "DENY", kind: "COMP" },
+    ]);
+  });
+
+  it("R-1 (SA-1133): a PILOT before comes back as a PILOT with the same end date, not a standing COMP", () => {
+    const row = applied({
+      meta: {
+        reason: "x",
+        changes: [
+          {
+            type: "override",
+            key: "ocr",
+            before: {
+              effect: "GRANT",
+              kind: "PILOT",
+              expiresAt: "2099-11-20T23:59:59.000Z",
+              id: "o1",
+            },
+            after: null,
+            createdIds: [],
+            revokedIds: [],
+          },
+        ],
+      },
+    });
+    expect(restoreInputs(row)).toEqual([
+      {
+        type: "override",
+        key: "ocr",
+        action: "GRANT",
+        kind: "PILOT",
+        expiresAt: "2099-11-20T23:59:59.000Z",
+      },
+    ]);
+  });
+
+  it("R-2 (SA-1133): a before whose end date has passed is skipped and named, not written as a standing grant", () => {
+    const row = applied({
+      meta: {
+        reason: "x",
+        changes: [
+          {
+            type: "override",
+            key: "ocr",
+            before: {
+              effect: "GRANT",
+              kind: "PILOT",
+              expiresAt: "2026-11-01T00:00:00.000Z",
+              id: "o9",
+            },
+            after: null,
+            createdIds: [],
+            revokedIds: [],
+          },
+        ],
+      },
+    });
+    const plan = restorePlan(row, Date.parse("2026-11-10T00:00:00.000Z"));
+    expect(plan.changes).toEqual([]);
+    expect(plan.skippedExpired).toEqual([
+      { key: "ocr", id: "o9", expiresAt: "2026-11-01T00:00:00.000Z" },
     ]);
   });
 
@@ -207,9 +272,9 @@ describe("FeatureChangeHistory (WP11)", () => {
     expect(mockApply.mock.calls[0][1]).toMatchObject({
       expected: "h1",
       changes: [
-        { key: "sales_agents", action: "GRANT" },
+        { key: "sales_agents", action: "GRANT", kind: "COMP" },
         { key: "msrp", action: "CLEAR" },
-        { key: "ocr", action: "DENY" },
+        { key: "ocr", action: "DENY", kind: "COMP" },
       ],
     });
     expect(await screen.findByText(/Restored\. 2 changes saved\./)).toBeInTheDocument();

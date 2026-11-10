@@ -294,7 +294,8 @@ export class FeatureChangeService {
     await this.validate(tenantId, dto);
     const rows: FeatureChangePreviewRow[] = [];
     for (const c of dto.changes) {
-      const live = (await this.liveRows(this.prisma, tenantId, c.key))[0];
+      const open = await this.liveRows(this.prisma, tenantId, c.key);
+      const live = open.find((r) => isLiveOverride(r, Date.now()));
       rows.push({
         type: "override",
         key: c.key,
@@ -328,18 +329,20 @@ export class FeatureChangeService {
         }
         const records: FeatureChangeRecord[] = [];
         for (const c of dto.changes) {
-          const live = await this.liveRows(tx, tenantId, c.key);
+          const open = await this.liveRows(tx, tenantId, c.key);
+          // SA-1133: an ended row is not "before" (it no longer applies); it is still swept so the one-open-row index stays free.
+          const live = open.filter((r) => isLiveOverride(r, Date.now()));
           if (c.action === "CLEAR") {
             if (live.length === 0) continue; // nothing to clear
             const revoked: OverrideSnapshot[] = [];
-            for (const row of live) {
+            for (const row of open) {
               revoked.push(snap(row));
               await this.overrides.revoke(tenantId, row.id, tx);
             }
             records.push({
               type: "override",
               key: c.key,
-              before: revoked[0] ?? null,
+              before: snap(live[0]),
               after: null,
               createdIds: [],
               revokedIds: revoked.map((r) => r.id),
@@ -349,7 +352,7 @@ export class FeatureChangeService {
           }
           if (this.sameAsLive(live[0], c)) continue; // already exactly this
           const revoked: OverrideSnapshot[] = [];
-          for (const row of live) {
+          for (const row of open) {
             revoked.push(snap(row));
             await this.overrides.revoke(tenantId, row.id, tx);
           }
@@ -368,7 +371,7 @@ export class FeatureChangeService {
           records.push({
             type: "override",
             key: c.key,
-            before: revoked[0] ?? null,
+            before: live[0] ? snap(live[0]) : null,
             after: snap(created),
             createdIds: [created.id],
             revokedIds: revoked.map((r) => r.id),
