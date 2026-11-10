@@ -65,6 +65,7 @@
 //   node scripts/campaign/bugs.mjs prove <B###> --pr <n> --proof "REG-B### ..." [--pending-deploy] [--build-plan <path>]  (--build-plan is REQUIRED for a T3 row)
 //   node scripts/campaign/bugs.mjs close <B###> --sha <commit sha> --why "<how verified fixed>" [--batch F## --tier T1|T2|T3]   # registry state already-fixed; a bug with no ledger row needs --batch + --tier
 //   node scripts/campaign/bugs.mjs already-fixed <B###> --pr <n> --why "<where verified fixed>" [--was-proven "<why the proof was wrong>"]   # --was-proven is the only way a proven row can reach already-fixed
+//   node scripts/campaign/bugs.mjs invalid <B###> --why "<why this row should never have been filed>"   # withdraws a queued/in-flight row (e.g. a fixture error) as state refuted
 //   node scripts/campaign/bugs.mjs discharge <F##> --evidence "<post-deploy proof>" [--evidence-B### "<per-row proof>"]   # per-row evidence is REQUIRED for every T2 row
 //   node scripts/campaign/bugs.mjs reopen <B###> --why "<failing REG-B### token or the run that showed the regression>"
 //   node scripts/campaign/bugs.mjs claim <F##>                  # flip that batch's workable rows to in-flight (next/waves skip it)
@@ -2642,6 +2643,54 @@ cmds["already-fixed"] = (args) => {
   });
 };
 
+// B1193: withdraw a row that should never have been minted (a fixture error, a repro that never
+// existed). Before this it could only be noted, so it sat in `next`/`waves` forever. The terminal
+// state is the EXISTING evidence-only `refuted` (campaign-check holds it to a non-empty evidence
+// field, plane-sync maps it to Cancelled) — no new state value. Same lock/read-back shape as
+// `already-fixed`, and queued/in-flight only: a row that is already closed is not re-stamped.
+// `closed` is left to `sync`'s derivation (frontFor), exactly as for the existing refuted rows.
+cmds.invalid = (args) => {
+  const typed = (args[0] ?? "").toUpperCase();
+  const why = flag(args, "why");
+  if (!BUG_ID_RE.test(typed) || !why)
+    fail('usage: invalid <B###> --why "<why this row should never have been filed>"');
+  const id = resolveId(typed);
+  if (why.length < 20)
+    fail(`--why must be at least 20 characters saying why ${id} is invalid (got ${why.length})`);
+
+  const batch = findShardOf(id);
+  if (!batch) fail(`${id} is in no ledger shard — there is no row to withdraw`);
+
+  withShardLock(batch, () => {
+    const row = readShard(batch).rows.find((r) => r.id === id);
+    if (!row) fail(`${id} vanished from ${batch}.jsonl while this invalid waited for the lock`);
+    if (!["queued", "in-flight"].includes(row.state))
+      fail(
+        `${id} is "${row.state}" — invalid only applies to a queued or in-flight row (it is already closed or claimed as proven)`,
+      );
+
+    const { what, row: after } = upsertLedgerRow(batch, {
+      ...row,
+      state: "refuted",
+      evidence: why,
+    });
+    if (after?.state !== "refuted" || after?.evidence !== why)
+      fail(
+        `ledger write for ${id} did not land as intended — re-read row is ${JSON.stringify(after)}`,
+      );
+
+    const rec = readRecord(id);
+    if (rec) {
+      writeRecord(
+        id,
+        { ...rec.front, state: "refuted" },
+        appendEvent(rec.body, "state-refuted-invalid", "refuted", `withdrawn as invalid: ${why}`),
+      );
+    }
+    console.log(`${id}: ${batch} row ${what} → refuted (withdrawn as invalid)`);
+  });
+};
+
 // The proof sha for `close`: a real commit (resolved to its full 40-hex form) that is reachable from
 // origin/master. Returns the full sha or throws with the reason; `close` turns that into a refusal.
 function resolveCloseSha(sha) {
@@ -3163,7 +3212,7 @@ cmds.status = (args) => {
       const rec = readRecord(r.id);
       return rec && !rec.body.includes(UNANALYSED);
     }).length;
-    const done = (by.done || 0) + (by["already-fixed"] || 0);
+    const done = (by.done || 0) + (by["already-fixed"] || 0) + (by.refuted || 0);
     const statusIssue = boardIssue(board.batches?.[b]);
     console.log(
       `${b.padEnd(4)} ${String(done + "/" + rows.length).padStart(6)} done · ${String(analysed).padStart(2)} analysed · ` +
@@ -9068,6 +9117,95 @@ cmds["self-test"] = () => {
     }
   }
 
+  // B1193: a row minted from a fixture error could only be noted, never withdrawn. `invalid <id>
+  // --why` closes it in the existing evidence-only terminal state `refuted` (campaign-check and
+  // plane-sync already understand it; no new state value), from queued/in-flight only.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    try {
+      const fileRow = (title) =>
+        runCli(
+          [
+            "file",
+            title,
+            "--location",
+            "apps/api/src/self-test.ts",
+            "--severity",
+            "low",
+            "--batch",
+            "F01",
+            "--tier",
+            "T1",
+          ],
+          tmp,
+        );
+      fileRow("B1193 fixture error row");
+      fileRow("B1193 second row");
+      runCli(["sync", "--quiet"], tmp); // baseline: records mirror the ledger before we move one
+      const rowOf = (id) =>
+        readFileSync(join(tmp, "status", "F01.jsonl"), "utf8")
+          .split(/\r?\n/)
+          .filter(Boolean)
+          .map((l) => JSON.parse(l))
+          .find((r) => r.id === id);
+      const why = "minted from a fixture error: the repro row never existed in the tenant";
+
+      const shortWhy = runCli(["invalid", "B1", "--why", "typo"], tmp);
+      check(
+        "B1193: invalid needs a real --why (>=20 chars) and writes nothing when short",
+        {
+          code: shortWhy.code,
+          state: rowOf("B1")?.state,
+          namesWhy: /--why/.test(shortWhy.out),
+          notUnknownCommand: !/unknown command/i.test(shortWhy.out),
+        },
+        { code: 1, state: "queued", namesWhy: true, notUnknownCommand: true },
+      );
+
+      const first = runCli(["invalid", "B1", "--why", why], tmp);
+      const row = rowOf("B1");
+      check(
+        "B1193: invalid closes a queued row in the existing terminal state, keeping the reason",
+        { code: first.code, state: row?.state, evidence: row?.evidence },
+        { code: 0, state: "refuted", evidence: why },
+      );
+      const rec = readFileSync(join(tmp, "bugs", "B1.md"), "utf8");
+      check(
+        "B1193: the record front matter and History carry the withdrawal",
+        {
+          front: rec.includes("state: refuted"),
+          history: rec.includes("**refuted**") && rec.includes(why),
+        },
+        { front: true, history: true },
+      );
+      const mirror = runCli(["sync", "--check"], tmp);
+      check(
+        "B1193: after invalid the records still mirror the ledger (sync --check)",
+        { code: mirror.code, mirrors: /\d+ record\(s\) mirror the ledger/.test(mirror.out) },
+        { code: 0, mirrors: true },
+      );
+
+      const replay = runCli(["invalid", "B1", "--why", why], tmp);
+      check(
+        "B1193: invalid on an already closed row is refused and changes nothing",
+        { code: replay.code, state: rowOf("B1")?.state, namesState: /refuted/.test(replay.out) },
+        { code: 1, state: "refuted", namesState: true },
+      );
+      runCli(
+        ["already-fixed", "B2", "--pr", "92", "--why", "verified fixed upstream in PR #92 already"],
+        tmp,
+      );
+      const afterFixed = runCli(["invalid", "B2", "--why", why], tmp);
+      check(
+        "B1193: invalid on an already-fixed row is refused too",
+        { code: afterFixed.code, state: rowOf("B2")?.state },
+        { code: 1, state: "already-fixed" },
+      );
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
   console.log(failures ? `\nself-test: ${failures} FAILURE(S)` : "\nself-test: all checks passed");
   if (failures) process.exit(1);
 };
@@ -9611,7 +9749,7 @@ cmds.render = (args) => {
   );
 
   const stateOf = (r) => r.st?.state ?? "unbatched";
-  const isDone = (r) => ["done", "already-fixed"].includes(stateOf(r));
+  const isDone = (r) => ["done", "already-fixed", "refuted"].includes(stateOf(r));
   const counts = rows.reduce((a, r) => ((a[sev(r)] = (a[sev(r)] || 0) + 1), a), {});
   const open = rows.filter((r) => !isDone(r)).length;
   const analysed = rows.filter((r) => !r.rec.body.includes(UNANALYSED)).length;
