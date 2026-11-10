@@ -729,8 +729,9 @@ describe("BillingCronService", () => {
       status: "ACTIVE",
       id: { notIn: ["u1"] },
     });
-    // ...and burn exactly those accounts' live links in the same transaction (two statements: reset + verify).
-    expect(tx.$executeRaw).toHaveBeenCalledTimes(2);
+    // ...and burn exactly those accounts' live links in the same transaction (three statements: reset + verify +
+    // pending login-email change, B461).
+    expect(tx.$executeRaw).toHaveBeenCalledTimes(3);
     for (const call of tx.$executeRaw.mock.calls) expect(call.slice(1)).toEqual([["f1", "f2"]]);
     expect(emitted(events)).toEqual(
       expect.arrayContaining([BILLING_EVENTS.SEAT_FREED, BILLING_EVENTS.PLAN_CHANGED]),
