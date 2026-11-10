@@ -7,7 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { Button, useToast } from "@routeflow/ui/web";
 import { apiClient } from "@/lib/api-client";
-import { useDrafts } from "@/lib/api/drafts";
+import { useDeleteDraft, useDrafts, type SaleDraft } from "@/lib/api/drafts";
 import { setCounterAutoParkHook } from "@/lib/counter-cart-signal";
 import { formatMoney } from "@/lib/format";
 import { cartTotals } from "@/lib/counter-sale";
@@ -46,7 +46,55 @@ export function ParkedSales({ canEditPrices, ...deps }: ParkedSalesProps) {
       }),
   });
   const { data: draftRows } = useDrafts();
-  const drafts = Array.isArray(draftRows) ? draftRows : [];
+  const delDraft = useDeleteDraft();
+  // An order draft Discard is taken back like a sale Discard: the row hides, the delete leaves after the Undo window (or on leaving).
+  const [hiddenDrafts, setHiddenDrafts] = React.useState<ReadonlySet<string>>(() => new Set());
+  const draftTimers = React.useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const delDraftRef = React.useRef(delDraft.mutate);
+  delDraftRef.current = delDraft.mutate;
+  const unhideDraft = (id: string) =>
+    setHiddenDrafts((h) => {
+      if (!h.has(id)) return h;
+      const n = new Set(h);
+      n.delete(id);
+      return n;
+    });
+  const commitDraft = (id: string) => {
+    const t = draftTimers.current.get(id);
+    if (t) clearTimeout(t);
+    draftTimers.current.delete(id);
+    delDraftRef.current(id, { onError: () => unhideDraft(id) });
+  };
+  React.useEffect(() => {
+    const waiting = draftTimers.current;
+    return () => {
+      for (const id of [...waiting.keys()]) commitDraft(id);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const discardDraft = (d: SaleDraft, title: string) => {
+    setHiddenDrafts((h) => new Set(h).add(d.id));
+    draftTimers.current.set(
+      d.id,
+      setTimeout(() => commitDraft(d.id), discardUndo.ms),
+    );
+    toast({
+      title: `Discarded · ${title}`,
+      description: "The order draft is gone unless you undo.",
+      action: {
+        label: "Undo",
+        onClick: () => {
+          const t = draftTimers.current.get(d.id);
+          if (!t) return;
+          clearTimeout(t);
+          draftTimers.current.delete(d.id);
+          unhideDraft(d.id);
+        },
+      },
+      duration: discardUndo.ms,
+    });
+  };
+  const drafts = (Array.isArray(draftRows) ? draftRows : []).filter((d) => !hiddenDrafts.has(d.id));
   const router = useRouter();
   const { data: settings } = useQuery<{ taxRate?: number | null }>({
     queryKey: ["settings"],
@@ -158,7 +206,12 @@ export function ParkedSales({ canEditPrices, ...deps }: ParkedSalesProps) {
           {PARKED_EDITED_PRICES_COPY}
         </p>
       ) : null}
-      <ParkedSalesDialog parked={p} openerRef={openerRef} drafts={drafts} />
+      <ParkedSalesDialog
+        parked={p}
+        openerRef={openerRef}
+        drafts={drafts}
+        onDiscardDraft={discardDraft}
+      />
     </>
   );
 }

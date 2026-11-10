@@ -19,7 +19,7 @@ import {
   lineCountLabel,
   parkedRowTitle,
 } from "@/lib/counter-park";
-import { useDeleteDraft, type SaleDraft } from "@/lib/api/drafts";
+import type { SaleDraft } from "@/lib/api/drafts";
 import { draftSummary, parkedAgo } from "@/lib/drafts";
 import { useGuardedRouter } from "@/lib/use-guarded-router";
 import type { useParkedSales } from "./useParkedSales";
@@ -103,9 +103,16 @@ function ParkedRow({
 }
 
 /** W-1184: the regular order's paused drafts, listed in the SAME Parked window (one entry point, two sections). */
-function DraftsSection({ drafts, onGo }: { drafts: SaleDraft[]; onGo: () => void }) {
+function DraftsSection({
+  drafts,
+  onGo,
+  onDiscard,
+}: {
+  drafts: SaleDraft[];
+  onGo: () => void;
+  onDiscard: (draft: SaleDraft, title: string) => void;
+}) {
   const router = useGuardedRouter(); // leaving a live cart parks it first
-  const del = useDeleteDraft();
   return (
     <section aria-label="Order drafts" className="space-y-2">
       <h3 className="text-xs font-semibold uppercase tracking-wide text-navy/60">Order drafts</h3>
@@ -141,8 +148,7 @@ function DraftsSection({ drafts, onGo }: { drafts: SaleDraft[]; onGo: () => void
                 className="min-h-11"
                 variant="secondary"
                 aria-label={`Discard ${title}`}
-                disabled={del.isPending}
-                onClick={() => del.mutate(d.id)}
+                onClick={() => onDiscard(d, title)}
               >
                 Discard
               </Button>
@@ -158,10 +164,12 @@ export function ParkedSalesDialog({
   parked,
   openerRef,
   drafts = [],
+  onDiscardDraft,
 }: {
   parked: Parked;
   openerRef: React.RefObject<HTMLButtonElement | null>;
   drafts?: SaleDraft[];
+  onDiscardDraft?: (draft: SaleDraft, title: string) => void;
 }) {
   const { data: settings } = useQuery<{ timezone?: string | null; taxRate?: number | null }>({
     queryKey: ["settings"],
@@ -222,7 +230,11 @@ export function ParkedSalesDialog({
             </ul>
           )}
           {drafts.length > 0 ? (
-            <DraftsSection drafts={drafts} onGo={() => parked.setOpen(false)} />
+            <DraftsSection
+              drafts={drafts}
+              onGo={() => parked.setOpen(false)}
+              onDiscard={onDiscardDraft ?? (() => undefined)}
+            />
           ) : null}
         </div>
       </Modal>

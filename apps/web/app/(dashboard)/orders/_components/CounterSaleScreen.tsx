@@ -1568,7 +1568,10 @@ export function CounterSaleScreen() {
           inFlight={() => saleInFlight() || shipRunningRef.current || scanBusyRef.current}
           canEditPrices={mayEditPrices}
           onBusyChange={onParkBusy}
-          onParked={resetSale}
+          onParked={() => {
+            liveCart.dropStored(); // one copy only: the server has it now, so a sign-out cannot park it twice
+            resetSale();
+          }}
           onRestore={restoreParked}
         />
         {gate.offerShipInstead ? (

@@ -34,7 +34,7 @@ beforeEach(() => {
 describe("parkStoredLiveCarts (sign-out)", () => {
   it("parks the stored sale on the server before the browser forgets it", async () => {
     save();
-    await parkStoredLiveCarts();
+    await parkStoredLiveCarts(KEY);
     expect(post).toHaveBeenCalledTimes(1);
     const [url, body] = post.mock.calls[0];
     expect(url).toBe("/orders/counter-sale/parked");
@@ -46,11 +46,31 @@ describe("parkStoredLiveCarts (sign-out)", () => {
   it("a refused park keeps going: sign-out is never blocked, and nothing throws", async () => {
     save();
     post.mockRejectedValue(new Error("offline"));
-    await expect(parkStoredLiveCarts()).resolves.toBeUndefined();
+    await expect(parkStoredLiveCarts(KEY)).resolves.toBeUndefined();
+  });
+
+  it("parks only the signed-in user's cart: another user's stored cart is left untouched", async () => {
+    save();
+    const other = liveCartKey("acme", "u2")!;
+    writeLiveCart(
+      other,
+      { lines: [line], customer: null, method: "CASH", tendered: "", reference: "", walkIn: true },
+      "tab",
+    );
+    await parkStoredLiveCarts(KEY);
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(localStorage.getItem(other)).not.toBeNull();
+    expect(localStorage.getItem(KEY!)).toBeNull();
+  });
+
+  it("with no signed-in user (no key) nothing is parked", async () => {
+    save();
+    await parkStoredLiveCarts(null);
+    expect(post).not.toHaveBeenCalled();
   });
 
   it("an empty browser makes no request", async () => {
-    await parkStoredLiveCarts();
+    await parkStoredLiveCarts(KEY);
     expect(post).not.toHaveBeenCalled();
   });
 });

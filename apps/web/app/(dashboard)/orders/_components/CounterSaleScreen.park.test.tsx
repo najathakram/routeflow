@@ -6,6 +6,8 @@ import { guardCounterLeave } from "@/lib/counter-cart-signal";
 import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 import { discardUndo } from "./useParkedSales";
+import { liveCartKey } from "@/lib/counter-live-cart-keys";
+import { parkStoredLiveCarts } from "@/lib/counter-live-cart-park";
 
 /**
  * SA-748 PARK / RESUME at the counter. The API client is mocked at the module boundary by URL (a tiny in-memory "server" of
@@ -685,6 +687,49 @@ describe("Discard a parked sale", () => {
     act(() => undo.action.onClick());
     expect(await within(dialog).findByTestId("parked-row-a")).toBeInTheDocument();
     expect(del).not.toHaveBeenCalled();
+  });
+
+  it("an order draft Discard gets the same Undo: row hides, no delete until the window ends, Undo brings it back", async () => {
+    discardUndo.ms = 60_000;
+    withDraft = true;
+    renderScreen();
+    fireEvent.click(await screen.findByRole("button", { name: "Parked (1)" }));
+    const dialog = await screen.findByRole("dialog", { name: "Parked sales" });
+    const row = await within(dialog).findByTestId("draft-row-d1");
+    fireEvent.click(within(row).getByRole("button", { name: /^Discard / }));
+    await waitFor(() => expect(within(dialog).queryByTestId("draft-row-d1")).toBeNull());
+    expect(del).not.toHaveBeenCalled();
+    const undo = mockToast.mock.calls.map((c) => c[0]).find((c) => /^Discarded/.test(c.title));
+    expect(undo?.action?.label).toBe("Undo");
+    act(() => undo.action.onClick());
+    expect(await within(dialog).findByTestId("draft-row-d1")).toBeInTheDocument();
+    expect(del).not.toHaveBeenCalled();
+  });
+
+  it("an order draft Discard that is not undone sends the delete once the window ends", async () => {
+    withDraft = true;
+    renderScreen();
+    fireEvent.click(await screen.findByRole("button", { name: "Parked (1)" }));
+    const dialog = await screen.findByRole("dialog", { name: "Parked sales" });
+    const row = await within(dialog).findByTestId("draft-row-d1");
+    fireEvent.click(within(row).getByRole("button", { name: /^Discard / }));
+    await waitFor(() => expect(del).toHaveBeenCalledWith("/drafts/d1"));
+  });
+
+  it("signing out right after a leave-park makes exactly one park request (the stored cart goes with the park)", async () => {
+    renderScreen();
+    await scan("COLA");
+    const key = liveCartKey("acme", "u-o")!;
+    await waitFor(() => expect(window.localStorage.getItem(key)).not.toBeNull());
+    let storedAtProceed: string | null = "unset";
+    const proceed = jest.fn(() => {
+      storedAtProceed = window.localStorage.getItem(key);
+    });
+    expect(guardCounterLeave(proceed)).toBe(true);
+    await waitFor(() => expect(proceed).toHaveBeenCalledTimes(1));
+    expect(storedAtProceed).toBeNull();
+    await parkStoredLiveCarts(key); // what the sign-out runs next
+    expect(parkCalls()).toHaveLength(1);
   });
 
   it("calls DELETE, refreshes the list, and the row goes", async () => {
