@@ -87,6 +87,15 @@ export function tenantRelationTarget(parent: string, key: string): string | unde
 
 export const FOR_SYSTEM_MIN_REASON = 12;
 
+declare const SYSTEM_CLIENT_BRAND: unique symbol;
+/**
+ * B1296 / SA-1131: the client `forSystem` hands its callback, the same PrismaService instance under a compile-time brand.
+ * A helper that does system work declares `db: SystemClient`, so it can be called only with the callback's client, never
+ * with an injected `this.prisma`. Typing only: the kind still comes from the SYSTEM frame (AsyncLocalStorage), and
+ * direct `this.*` captures inside a callback are the `for-system.allow-list.spec` pin's job.
+ */
+export type SystemClient = PrismaService & { readonly [SYSTEM_CLIENT_BRAND]: true };
+
 const CREATE_OPS = new Set<string>(["create", "createMany", "createManyAndReturn", "upsert"]);
 
 /** The one dispatch from a Prisma operation to the guard: a create's payload, an upsert's `create`, else an access. */
@@ -540,13 +549,14 @@ export class PrismaService
    * a client exists, so `forSystem(reason)` without `fn` does not compile. `reason` must be a string LITERAL of at least
    * 12 characters: the `for-system.allow-list.spec` reads every call site and holds the list set-equal to its own.
    */
-  forSystem<T>(reason: string, fn: (db: this) => Promise<T>): Promise<T> {
+  forSystem<T>(reason: string, fn: (db: SystemClient) => Promise<T>): Promise<T> {
     if (typeof reason !== "string" || reason.trim().length < FOR_SYSTEM_MIN_REASON) {
       throw new Error(
         `forSystem(reason): a literal reason of at least ${FOR_SYSTEM_MIN_REASON} characters is required`,
       );
     }
-    if (!this.tenantCtx) return fn(this);
-    return this.tenantCtx.runSystem(reason, () => fn(this));
+    const db = this as unknown as SystemClient; // B1296: the brand only; the same instance
+    if (!this.tenantCtx) return fn(db);
+    return this.tenantCtx.runSystem(reason, () => fn(db));
   }
 }
