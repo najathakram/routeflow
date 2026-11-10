@@ -50,12 +50,19 @@ export async function undoFeatureChanges(
   tenantId: string,
   changeSetId: string,
   reason: string,
-): Promise<{ changeSetId: string; undoOf: string; skippedExpired?: string[] }> {
+): Promise<{ changeSetId: string; undoOf: string; skippedExpired?: SkippedExpiredRow[] }> {
   const res = await superAdminClient.post(
     `/platform-admin/tenants/${tenantId}/features/changes/${changeSetId}/undo`,
     { reason },
   );
   return res.data;
+}
+
+/** An earlier override an undo did not put back because its end date had passed (SA-1133). */
+export interface SkippedExpiredRow {
+  key: string;
+  id: string;
+  expiresAt: string | null;
 }
 
 /** One saved (or undone) set as History reads it: the audit row with the set kept in its meta (R53). */
@@ -67,6 +74,7 @@ export interface FeatureChangeLogRow {
   meta?: {
     reason?: string;
     undoOf?: string;
+    skippedExpired?: SkippedExpiredRow[];
     changes?: FeatureChangeRecord[];
   } | null;
 }

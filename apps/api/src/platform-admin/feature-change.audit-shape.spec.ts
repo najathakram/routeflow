@@ -4,6 +4,8 @@
  * That second writer must not drift from `PlatformAdminService.recordAdminAction`, so this drives BOTH with one
  * fixture, through the real `AuditService`, and compares what each hands to `auditLog.create`.
  */
+import * as fs from "fs";
+import * as path from "path";
 import { AuditService } from "../audit/audit.service";
 import { PlatformAdminService } from "./platform-admin.service";
 import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "./audit-actions.constant";
@@ -49,5 +51,25 @@ describe("WP11: the in-transaction audit row has the same shape as recordAdminAc
     (svc as unknown as { auditService: AuditService }).auditService = audit;
     await svc.recordAdminAction(TENANT, ACTOR, AdminAuditAction.FEATURE_OVERRIDE_SET, {});
     expect(create).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("U-6 (SA-1133 pin): undo compares with the undo hash only, never inputsHash or hashAfter", () => {
+  const src = fs.readFileSync(path.join(__dirname, "feature-change.service.ts"), "utf8");
+  const undoBody = src.slice(src.indexOf("async undo("), src.indexOf("async writeAudit("));
+
+  it("the undo method reads undoDigest and the stored undoHashAfter, and nothing of the preview hash", () => {
+    expect(undoBody).toContain("this.undoDigest(");
+    expect(undoBody).toContain("meta.undoHashAfter");
+    // the comparison is the undo digest against the stored undo hash; the preview hash is only recorded on the undo row
+    expect(undoBody).toMatch(/hashBefore !== meta\.undoHashAfter/);
+    expect(undoBody).not.toMatch(/meta\.hashAfter/);
+    expect(undoBody).not.toMatch(/hashBefore = await this\.inputsHash/);
+  });
+
+  it("apply stores the undo hash next to the preview hash", () => {
+    const applyBody = src.slice(src.indexOf("async apply("), src.indexOf("async undo("));
+    expect(applyBody).toMatch(/undoHashAfter/);
+    expect(applyBody).toMatch(/this\.undoHash\(tenantId, tx\)/);
   });
 });

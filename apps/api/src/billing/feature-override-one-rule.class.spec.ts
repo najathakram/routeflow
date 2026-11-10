@@ -259,7 +259,11 @@ const EFFECT_MAP = /[oO]verrides\.set\(|new Map(?:<[^>]*>)?\([^)]*[eE]ffects/g;
 
 /** file (relative to src) -> [expected live-check hits, expected effect-map hits], with the reason it is a different question. */
 const ALLOWED: Record<string, { live: number; set: number; why: string }> = {
-  "billing/feature-override-rule.ts": { live: 2, set: 0, why: "the rule itself" },
+  "billing/feature-override-rule.ts": {
+    live: 4,
+    set: 0,
+    why: "the rule itself (is the row live; was it closed by its own end date, SA-1133)",
+  },
   "billing/billable-pilot-ending.ts": {
     live: 3,
     set: 0,

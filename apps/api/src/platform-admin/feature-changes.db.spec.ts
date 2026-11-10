@@ -442,9 +442,120 @@ describeDb("WP11: feature change sets (real Postgres)", () => {
     );
     await new Promise((r) => setTimeout(r, 1_800));
     const undone = await svc.undo(t, actor, set.changeSetId, "mistake");
-    expect(undone.skippedExpired).toEqual([A]);
+    expect(undone.skippedExpired.map((s) => s.key)).toEqual([A]);
     expect(await live(t)).toHaveLength(0);
     expect(await audits(t, AdminAuditAction.FEATURE_CHANGE_SET_UNDONE)).toHaveLength(1);
+  });
+
+  /** An end date a moment ahead, so the row really reaches it during the test (the table is never edited to fake it). */
+  const soonEnd = () => new Date(Date.now() + 1_500);
+  const waitPastEnd = () => new Promise((r) => setTimeout(r, 1_800));
+  /** What the expiry job does once the end date has passed: it revokes the row and leaves its end date alone. */
+  const jobRevoke = async (id: string) => {
+    await prisma.tenantFeatureOverride.update({ where: { id }, data: { revokedAt: new Date() } });
+  };
+
+  it("U-1 (SA-1133): a row the save created that has since ended does not block the undo, and is not re-stamped", async () => {
+    const t = await tenant();
+    const set = await svc.apply(
+      t,
+      actor,
+      dto(await svc.inputsHash(t), [
+        { key: A, action: "GRANT", expiresAt: soonEnd().toISOString() },
+      ]),
+    );
+    const createdId = set.changes[0].createdIds[0];
+    await waitPastEnd();
+    await jobRevoke(createdId);
+    const stamp = (
+      await prisma.tenantFeatureOverride.findUniqueOrThrow({ where: { id: createdId } })
+    ).revokedAt;
+    expect(await codeOf(svc.undo(t, actor, set.changeSetId, "late"))).toBe("ok");
+    const after = await prisma.tenantFeatureOverride.findUniqueOrThrow({
+      where: { id: createdId },
+    });
+    expect(after.revokedAt?.toISOString()).toBe(stamp?.toISOString());
+  });
+
+  it("U-2 (SA-1133): an unrelated override reaching its end date after the save does not block the undo", async () => {
+    const t = await tenant();
+    const other = await overrides.create({
+      tenantId: t,
+      featureKey: B,
+      effect: "GRANT",
+      kind: "COMP",
+      reason: "fixture",
+      expiresAt: soonEnd(),
+      createdById: actor,
+    } as never);
+    const set = await svc.apply(
+      t,
+      actor,
+      dto(await svc.inputsHash(t), [{ key: A, action: "GRANT" }]),
+    );
+    await waitPastEnd();
+    await jobRevoke(other.id);
+    expect(await codeOf(svc.undo(t, actor, set.changeSetId, "later"))).toBe("ok");
+    expect((await live(t)).map((r) => r.featureKey)).toEqual([]);
+  });
+
+  it("U-3 (SA-1133): an ended earlier row is skipped, named in the response AND in the undo audit row", async () => {
+    const t = await tenant();
+    const end = soonEnd();
+    const first = await svc.apply(
+      t,
+      actor,
+      dto(await svc.inputsHash(t), [{ key: A, action: "DENY", expiresAt: end.toISOString() }]),
+    );
+    const oldId = first.changes[0].createdIds[0];
+    const set = await svc.apply(
+      t,
+      actor,
+      dto(await svc.inputsHash(t), [{ key: A, action: "GRANT" }]),
+    );
+    await waitPastEnd();
+    const undone = await svc.undo(t, actor, set.changeSetId, "mistake");
+    const want = [{ key: A, id: oldId, expiresAt: end.toISOString() }];
+    expect(undone.skippedExpired).toEqual(want);
+    const row = (await audits(t, AdminAuditAction.FEATURE_CHANGE_SET_UNDONE))[0];
+    expect((row.meta as { skippedExpired?: unknown }).skippedExpired).toEqual(want);
+    expect(await live(t)).toHaveLength(0);
+  });
+
+  it("U-4 (guard): real newer work after the save still refuses the undo", async () => {
+    const t = await tenant();
+    const set = await svc.apply(
+      t,
+      actor,
+      dto(await svc.inputsHash(t), [{ key: A, action: "GRANT" }]),
+    );
+    await svc.apply(t, actor, dto(await svc.inputsHash(t), [{ key: B, action: "GRANT" }]));
+    expect(await codeOf(svc.undo(t, actor, set.changeSetId, "newer work"))).toBe(
+      "FEATURE_CHANGE_NOT_UNDOABLE",
+    );
+  });
+
+  it("U-5 (guard): preview to save still uses inputsHash, which moves when a live row's end date passes", async () => {
+    const t = await tenant();
+    const row = await overrides.create({
+      tenantId: t,
+      featureKey: B,
+      effect: "GRANT",
+      kind: "COMP",
+      reason: "fixture",
+      expiresAt: soonEnd(),
+      createdById: actor,
+    } as never);
+    const h1 = await svc.inputsHash(t);
+    const p = await svc.preview(t, dto(h1, [{ key: A, action: "GRANT" }]));
+    expect(p.inputsHash).toBe(h1);
+    expect(p.stale).toBe(false);
+    await waitPastEnd();
+    await jobRevoke(row.id);
+    expect(await svc.inputsHash(t)).not.toBe(h1);
+    expect(await codeOf(svc.apply(t, actor, dto(h1, [{ key: A, action: "GRANT" }])))).toBe(
+      "FEATURE_INPUTS_CHANGED",
+    );
   });
 
   it("T28b: undo after a later change is refused and writes nothing", async () => {

@@ -127,10 +127,35 @@ describe("FeatureChangeHistory (WP11)", () => {
 
   it("T28d: an undo that skipped settings which had already ended says so", async () => {
     mockLog.mockResolvedValue([applied()]);
-    mockUndo.mockResolvedValue({ changeSetId: "u1", undoOf: "cs1", skippedExpired: ["ocr"] });
+    mockUndo.mockResolvedValue({
+      changeSetId: "u1",
+      undoOf: "cs1",
+      skippedExpired: [{ key: "ocr", id: "o9", expiresAt: "2026-11-01T00:00:00.000Z" }],
+    });
     render(<FeatureChangeHistory tenantId="t1" />);
     fireEvent.click(await screen.findByRole("button", { name: "Undo this change" }));
-    expect(await screen.findByText(/had already ended, so they were not put back/)).toBeVisible();
+    expect(
+      await screen.findByText("Undone. Not restored: Scan invoices. Its end date has passed."),
+    ).toBeVisible();
+  });
+
+  it("U-3 (SA-1133): an undo row keeps what it left alone, so History says so after a reload", async () => {
+    mockLog.mockResolvedValue([
+      applied({
+        id: "u",
+        action: "FEATURE_CHANGE_SET_UNDONE",
+        meta: {
+          reason: "Oops",
+          skippedExpired: [{ key: "ocr", id: "o9", expiresAt: "2026-11-01T00:00:00.000Z" }],
+        },
+      }),
+    ]);
+    render(<FeatureChangeHistory tenantId="t1" />);
+    expect(
+      await screen.findByText(
+        "maria@acme.test undid an earlier change. Reason: Oops. Not restored: Scan invoices. Its end date has passed.",
+      ),
+    ).toBeVisible();
   });
 
   it("T28b: a refused undo says why in plain words and writes nothing else", async () => {

@@ -1,5 +1,5 @@
 import type { FeatureChangeInput, FeatureChangeRecord } from "@routeflow/types";
-import type { FeatureChangeLogRow } from "@/lib/platform-admin/feature-changes";
+import type { FeatureChangeLogRow, SkippedExpiredRow } from "@/lib/platform-admin/feature-changes";
 
 /** "Maria": the name a person knows the admin by (email before username, no raw ids). */
 export function whoDid(row: FeatureChangeLogRow): string {
@@ -10,6 +10,15 @@ export function whoDid(row: FeatureChangeLogRow): string {
 function didWhat(label: string, change: FeatureChangeRecord): string {
   if (!change.after) return `cleared the override on ${label}`;
   return `${change.after.effect === "GRANT" ? "turned on" : "turned off"} ${label}`;
+}
+
+/** SA-1133: what an undo left alone, one sentence per feature: "Not restored: Sales agents. Its end date has passed." */
+export function notRestoredCopy(
+  skipped: readonly SkippedExpiredRow[] | undefined,
+  labelOf: (key: string) => string,
+): string {
+  const keys = [...new Set((skipped ?? []).map((s) => s.key))];
+  return keys.map((k) => `Not restored: ${labelOf(k)}. Its end date has passed.`).join(" ");
 }
 
 function joinWords(parts: string[]): string {
@@ -28,7 +37,10 @@ export function describeChangeSet(
   const who = whoDid(row);
   const reason = row.meta?.reason?.trim();
   const tail = reason ? ` Reason: ${reason}${/[.!?]$/.test(reason) ? "" : "."}` : "";
-  if (row.action === "FEATURE_CHANGE_SET_UNDONE") return `${who} undid an earlier change.${tail}`;
+  if (row.action === "FEATURE_CHANGE_SET_UNDONE") {
+    const left = notRestoredCopy(row.meta?.skippedExpired, labelOf);
+    return `${who} undid an earlier change.${tail}${left ? ` ${left}` : ""}`;
+  }
   const changes = row.meta?.changes ?? [];
   if (changes.length === 0) return `${who} saved feature changes.${tail}`;
   return `${who} ${joinWords(changes.map((c) => didWhat(labelOf(c.key), c)))}.${tail}`;

@@ -12,7 +12,12 @@ import {
 } from "@/lib/platform-admin/feature-changes";
 import { AdminCard } from "../../../../_components/AdminCard";
 import { FeatureChangeSheet } from "./FeatureChangeSheet";
-import { describeChangeSet, restoreInputs, undoableId } from "./feature-change-history";
+import {
+  describeChangeSet,
+  notRestoredCopy,
+  restoreInputs,
+  undoableId,
+} from "./feature-change-history";
 
 const LINK =
   "min-h-[36px] rounded px-2 py-1 text-xs font-semibold text-indigo-300 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 disabled:opacity-50";
@@ -62,11 +67,8 @@ export function FeatureChangeHistory({ tenantId }: { tenantId: string }) {
     setError(null);
     try {
       const res = await undoFeatureChanges(tenantId, row.id, "Undone from History.");
-      setNotice(
-        res?.skippedExpired?.length
-          ? "Undone. Some earlier settings had already ended, so they were not put back."
-          : "Undone. The earlier settings are back.",
-      );
+      const left = notRestoredCopy(res?.skippedExpired, labelOf);
+      setNotice(left ? `Undone. ${left}` : "Undone. The earlier settings are back.");
       load();
     } catch (e) {
       setError(

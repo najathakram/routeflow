@@ -15,7 +15,7 @@ import {
   featureDefByKey,
   isRegisteredFeatureKey,
 } from "../billing/feature-registry";
-import { isLiveOverride } from "../billing/feature-override-rule";
+import { closedByItsEndDate, isLiveOverride } from "../billing/feature-override-rule";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "./audit-actions.constant";
 import {
@@ -54,8 +54,18 @@ export interface FeatureChangeSetMeta {
   actor: string;
   hashBefore: string;
   hashAfter: string;
+  /** What undo compares with (SA-1133): the state without any "is this row still live" flag. */
+  undoHashAfter?: string;
   changes: FeatureChangeRecord[];
   undoOf?: string;
+  /** An earlier override undo did not put back because its end date had passed. */
+  skippedExpired?: SkippedExpired[];
+}
+
+export interface SkippedExpired {
+  key: string;
+  id: string;
+  expiresAt: string | null;
 }
 
 export interface FeatureChangePreviewRow {
@@ -108,16 +118,12 @@ export class FeatureChangeService {
   ) {}
 
   /**
-   * The hash `expected` is compared with. It moves whenever a plan, a plan version, an add-on row or an override
-   * row (id, effect, kind, end date, whether it is still live) changes. Read on `db` so a transaction sees its own
-   * writes and the locked state.
+   * One read of everything the two hashes and undo look at: the plan, the plan version, the add-on rows and EVERY
+   * override row of the business (revoked ones too, with when). Read on `db` so a transaction sees its own writes
+   * and the locked state.
    */
-  async inputsHash(
-    tenantId: string,
-    db: Prisma.TransactionClient | PrismaService = this.prisma,
-  ): Promise<string> {
-    const now = Date.now();
-    const [tenant, addonRows, overrideRows] = await Promise.all([
+  private async readInputs(tenantId: string, db: Prisma.TransactionClient | PrismaService) {
+    const [tenant, addonRows, rows] = await Promise.all([
       db.tenant.findUnique({
         where: { id: tenantId },
         select: { plan: true, planVersionId: true },
@@ -128,20 +134,66 @@ export class FeatureChangeService {
         orderBy: { addonKey: "asc" },
       }),
       db.tenantFeatureOverride.findMany({
-        where: { tenantId, revokedAt: null },
-        select: { id: true, featureKey: true, effect: true, kind: true, expiresAt: true },
+        where: { tenantId },
+        select: {
+          id: true,
+          featureKey: true,
+          effect: true,
+          kind: true,
+          expiresAt: true,
+          revokedAt: true,
+        },
         orderBy: [{ featureKey: "asc" }, { id: "asc" }],
       }),
     ]);
+    return { plan: tenant?.plan ?? null, version: tenant?.planVersionId ?? null, addonRows, rows };
+  }
+
+  /**
+   * The hash `expected` is compared with (preview to save). It moves whenever a plan, a plan version, an add-on row or
+   * an override row (id, effect, kind, end date, whether it is still live) changes.
+   */
+  async inputsHash(
+    tenantId: string,
+    db: Prisma.TransactionClient | PrismaService = this.prisma,
+  ): Promise<string> {
+    const now = Date.now();
+    const { plan, version, addonRows, rows } = await this.readInputs(tenantId, db);
     return digest({
-      plan: tenant?.plan ?? null,
-      version: tenant?.planVersionId ?? null,
+      plan,
+      version,
       addonRows,
-      overrideRows: overrideRows.map((r) => ({
-        ...r,
-        live: r.expiresAt == null || r.expiresAt.getTime() > now,
-      })),
+      overrideRows: rows
+        .filter((r) => r.revokedAt == null)
+        .map(({ revokedAt: _revokedAt, ...r }) => ({
+          ...r,
+          live: r.expiresAt == null || r.expiresAt.getTime() > now,
+        })),
     });
+  }
+
+  /**
+   * SA-1133: the hash undo compares with. The same inputs (plan, version, add-ons) plus every override row that is not
+   * revoked or that was closed by its own end date (`closedByItsEndDate`), with id, key, effect, kind and end date and
+   * NO "is it live now" flag. A row reaching its end date, or the expiry job closing it, never moves it; any other write
+   * (a save, a manual revoke, an add-on or plan change) does.
+   */
+  private undoDigest(inputs: Awaited<ReturnType<FeatureChangeService["readInputs"]>>): string {
+    return digest({
+      plan: inputs.plan,
+      version: inputs.version,
+      addonRows: inputs.addonRows,
+      overrideRows: inputs.rows
+        .filter((r) => r.revokedAt == null || closedByItsEndDate(r))
+        .map(({ revokedAt: _revokedAt, ...r }) => r),
+    });
+  }
+
+  async undoHash(
+    tenantId: string,
+    db: Prisma.TransactionClient | PrismaService = this.prisma,
+  ): Promise<string> {
+    return this.undoDigest(await this.readInputs(tenantId, db));
   }
 
   /** Whole-set checks that need no write and no lock. Throws the first problem naming the key. */
@@ -327,9 +379,17 @@ export class FeatureChangeService {
           throw new BadRequestException("Nothing to change: every key is already set that way.");
         }
         const hashAfter = await this.inputsHash(tenantId, tx);
+        const undoHashAfter = await this.undoHash(tenantId, tx);
         const changeSetId = await this.writeAudit(tx, tenantId, actorId, {
           action: AdminAuditAction.FEATURE_CHANGE_SET_APPLIED,
-          meta: { reason: dto.reason, actor: actorId, hashBefore, hashAfter, changes: records },
+          meta: {
+            reason: dto.reason,
+            actor: actorId,
+            hashBefore,
+            hashAfter,
+            undoHashAfter,
+            changes: records,
+          },
         });
         return { changeSetId, hashAfter, changes: records };
       },
@@ -351,7 +411,7 @@ export class FeatureChangeService {
     });
     if (!set) throw new NotFoundException("No saved change set with that id for this business.");
     const meta = set.meta as unknown as FeatureChangeSetMeta | null;
-    if (!meta || !Array.isArray(meta.changes) || typeof meta.hashAfter !== "string") {
+    if (!meta || !Array.isArray(meta.changes) || typeof meta.undoHashAfter !== "string") {
       throw refuse(
         API_ERROR_CODES.FEATURE_CHANGE_NOT_UNDOABLE,
         "This save was recorded before undo existed, so it can't be undone here.",
@@ -376,17 +436,22 @@ export class FeatureChangeService {
             "This save was already undone.",
           );
         }
-        const hashBefore = await this.inputsHash(tenantId, tx);
-        if (hashBefore !== meta.hashAfter) {
+        const inputs = await this.readInputs(tenantId, tx);
+        const hashBefore = this.undoDigest(inputs);
+        if (hashBefore !== meta.undoHashAfter) {
           throw refuse(
             API_ERROR_CODES.FEATURE_CHANGE_NOT_UNDOABLE,
             "Something changed after this save, so it can't be undone without undoing newer work.",
           );
         }
         const records: FeatureChangeRecord[] = [];
-        const skippedExpired: string[] = [];
+        const skippedExpired: SkippedExpired[] = [];
         for (const c of meta.changes) {
-          for (const id of c.createdIds) await this.overrides.revoke(tenantId, id, tx);
+          // Only a row that is still open: one the expiry job already closed keeps its own revoke time (SA-1133).
+          const revokedNow = c.createdIds.filter((id) =>
+            inputs.rows.some((r) => r.id === id && r.revokedAt == null),
+          );
+          for (const id of revokedNow) await this.overrides.revoke(tenantId, id, tx);
           const recreated: OverrideSnapshot[] = [];
           for (const old of c.revoked) {
             // An earlier override whose end date has passed since the save is already gone; putting it back would be
@@ -397,7 +462,7 @@ export class FeatureChangeService {
                 Date.now(),
               )
             ) {
-              skippedExpired.push(c.key);
+              skippedExpired.push({ key: c.key, id: old.id, expiresAt: old.expiresAt });
               continue;
             }
             const row = await this.overrides.create(
@@ -420,7 +485,7 @@ export class FeatureChangeService {
             before: c.after,
             after: recreated[0] ?? null,
             createdIds: recreated.map((r) => r.id),
-            revokedIds: c.createdIds,
+            revokedIds: revokedNow,
             revoked: [],
           });
         }
@@ -434,6 +499,7 @@ export class FeatureChangeService {
             hashAfter,
             changes: records,
             undoOf: auditId,
+            skippedExpired,
           },
         });
         return { changeSetId, hashAfter, undoOf: auditId, changes: records, skippedExpired };
