@@ -8,6 +8,7 @@ import * as path from "path";
  * pinned in packages/pricing/src/ladder-change.spec.ts.
  */
 const detail = fs.readFileSync(path.join(__dirname, "[id]/page.tsx"), "utf8");
+const editableNumber = fs.readFileSync(path.join(__dirname, "[id]/EditableNumber.tsx"), "utf8");
 const list = fs.readFileSync(path.join(__dirname, "page.tsx"), "utf8");
 
 describe("tier commits go through applyLadderChange with the old value", () => {
@@ -23,7 +24,9 @@ describe("tier commits go through applyLadderChange with the old value", () => {
       /applyLadderChange\(\s*field as TierField,\s*atFocus \?\? lastTierCommitRef\.current\[field\] \?\? productVal,\s*v,/,
     );
     expect(detail).not.toMatch(/tierCommitBaseRef/);
-    expect(detail).toMatch(/onCommit\?: \(v: number, valueAtFocus: number \| null\) => void;/);
+    expect(editableNumber).toMatch(
+      /onCommit\?: \(v: number, valueAtFocus: number \| null\) => void;/,
+    );
     expect(detail).toMatch(/setLadderNote\(\s*ladderChangeNote\(moved,/);
     expect(detail).toMatch(/data-testid="ladder-note"/);
   });
