@@ -505,21 +505,20 @@ cmds.file = (args) => {
       shardMaxId,
       rows.reduce((m, r) => Math.max(m, Number(r.id.slice(1))), 0),
     );
-    // B453: an explicit --id must be strictly ahead of every id this tree
-    // already knows about (catalogue ∪ every ledger shard — the same union
-    // maxId is derived from) — a reservation behind or equal to that union
-    // is either already filed here or about to collide with the very next
-    // auto-mint, so refuse rather than silently accept a stale reservation.
-    // A record file can exist with no catalogue/ledger row behind it (an
-    // orphan from a prior partial `file` or a hand-created fixture) even
-    // above maxId, so that is checked too.
+    // B453/B455: an explicit --id is refused only when it is actually IN USE — a row in the
+    // catalogue or in any ledger shard (the same union maxId is derived from). A free id below
+    // max (a gap another lane reserved but never filed here) is a legitimate reservation; the
+    // auto-mint is unaffected because it still takes max+1 over the union. A record file can
+    // exist with no catalogue/ledger row behind it (an orphan from a prior partial `file` or a
+    // hand-created fixture), so that is checked too.
     if (explicitId) {
-      const explicitNum = Number(explicitId.slice(1));
-      if (explicitNum <= maxId)
+      const inUse =
+        rows.some((r) => String(r.id).toUpperCase() === explicitId) ||
+        [...readState().keys()].some((id) => String(id).toUpperCase() === explicitId);
+      if (inUse)
         fail(
-          `--id ${explicitId} is not ahead of this tree's current max id (B${maxId}) — ` +
-            `a lead-reserved id must be strictly greater than every id already filed or ` +
-            `ledgered here (mint the next id with no --id, or reserve a higher one)`,
+          `--id ${explicitId} is already in use in this tree (catalogue or ledger; current max ` +
+            `id is B${maxId}) — pick a free id, or mint the next id with no --id`,
         );
       if (existsSync(recordPath(explicitId)))
         fail(`--id ${explicitId} already has a record at ${recordPath(explicitId)}`);
@@ -7989,8 +7988,8 @@ cmds["self-test"] = () => {
   // shared across several lanes/trees) instead of taking this tree's own
   // max+1 — the exact collision the bug report names: three lanes each
   // minting max+1 independently landed on the same id. Covers: a reservation
-  // ahead of this tree's max is honoured; one at or below max is refused
-  // (would either collide with an id already here, or silently reuse one);
+  // ahead of this tree's max is honoured; one already in use is refused
+  // (B455: in use, not merely at-or-below max — a free id below max is honoured);
   // an id with an orphan record but no catalogue/ledger row is still refused
   // (a stale fixture from a prior partial `file` must not be silently
   // overwritten); the reservation being far ahead of max+1 does not disturb
@@ -8045,20 +8044,22 @@ cmds["self-test"] = () => {
         { code: 1, namesMax: true },
       );
 
+      // B455: refusal is about an id being IN USE, not about being at-or-below max. B1 is below
+      // max AND in use, so it is still refused; a FREE id below max is accepted at the end.
       const belowMax = runCli(
         [
           "file",
-          "id-flag fixture: reservation below max",
+          "id-flag fixture: reservation below max but in use",
           "--location",
           "apps/api/src/self-test.ts",
           "--severity",
           "low",
           "--id",
-          "B3",
+          "B1",
         ],
         tmp,
       );
-      check("B453/R-id: --id below this tree's current max is refused too", belowMax.code, 1);
+      check("B453/R-id: --id below max that is already in use is refused", belowMax.code, 1);
 
       // an id ahead of max but with an orphan record (no catalogue/ledger row
       // behind it — e.g. a prior `file` that wrote the record then crashed
@@ -8125,6 +8126,90 @@ cmds["self-test"] = () => {
           .map((r) => r.id)
           .sort(),
         ["B1", "B5", "B6"],
+      );
+
+      // B455: B3 sits in the B2-B4 gap, below max (B6) and free — a lead filing a reserved id
+      // that a peer lane never used must not be refused for being "behind" the tree.
+      const free = runCli(
+        [
+          "file",
+          "id-flag fixture: free id below max",
+          "--location",
+          "apps/api/src/self-test.ts",
+          "--severity",
+          "low",
+          "--id",
+          "B3",
+        ],
+        tmp,
+      );
+      check(
+        "B455: --id that is free but below this tree's max is accepted",
+        {
+          code: free.code,
+          ids: readCatalogue()
+            .map((r) => r.id)
+            .sort(),
+          record: existsSync(recordPath("B3")),
+        },
+        { code: 0, ids: ["B1", "B3", "B5", "B6"], record: true },
+      );
+      const again = runCli(
+        [
+          "file",
+          "id-flag fixture: the same free id twice",
+          "--location",
+          "apps/api/src/self-test.ts",
+          "--severity",
+          "low",
+          "--id",
+          "B3",
+        ],
+        tmp,
+      );
+      check(
+        "B455: the id just filed is now in use and is refused",
+        { code: again.code, namesId: again.out.includes("B3") },
+        { code: 1, namesId: true },
+      );
+      // An id held only by a ledger row (no catalogue row, no record) is in use too.
+      mkdirSync(join(tmp, "status"), { recursive: true });
+      writeFileSync(
+        join(tmp, "status", "F09.jsonl"),
+        JSON.stringify({ id: "B4", batch: "F09", tier: "T1", state: "queued" }) + "\n",
+      );
+      const shardOnly = runCli(
+        [
+          "file",
+          "id-flag fixture: id held only by a ledger shard",
+          "--location",
+          "apps/api/src/self-test.ts",
+          "--severity",
+          "low",
+          "--id",
+          "B4",
+        ],
+        tmp,
+      );
+      check(
+        "B455: an id held only by a ledger shard row is refused",
+        { code: shardOnly.code, namesId: shardOnly.out.includes("B4") },
+        { code: 1, namesId: true },
+      );
+      // The auto-mint is untouched: max+1 over the union, never the free gap id.
+      cmds.file([
+        "id-flag fixture: auto-mint after a below-max reservation",
+        "--location",
+        "apps/api/src/self-test.ts",
+        "--severity",
+        "low",
+      ]);
+      check(
+        "B455: auto-mint still takes max+1 over the union (B7), not a gap",
+        readCatalogue()
+          .map((r) => r.id)
+          .sort(),
+        ["B1", "B3", "B5", "B6", "B7"],
       );
     } finally {
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
