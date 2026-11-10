@@ -843,6 +843,11 @@ export const API_ERROR_CODES = {
    */
   ORDER_REVIEW_FLAG_NOT_MANUAL: "ORDER_REVIEW_FLAG_NOT_MANUAL",
   /**
+   * 409 from invoice send and every staff payment: the invoice's order carries an open PRICE_CHANGED_OFFLINE flag, so
+   * the price drift must be reviewed first. Body `{ orderId, openKinds }`. Resolve the flag, then retry (SA-1124).
+   */
+  ORDER_REVIEW_REQUIRED: "ORDER_REVIEW_REQUIRED",
+  /**
    * 400 from every order and invoice edit: the same stored line id appears twice in the incoming `items`. Checked on
    * the payload alone before any read or write, so nothing is saved; the client refreshes and resubmits once.
    */

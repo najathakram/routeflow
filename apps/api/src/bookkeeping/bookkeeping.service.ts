@@ -77,6 +77,7 @@ import {
 import { overdueInvoiceCount } from "../invoices/invoice-balance-sql";
 import { confirmedBalance, signedBalance } from "../invoices/invoice-balance-classify";
 import { paidInstantOf } from "../common/paid-instant";
+import { assertOrderReviewed } from "../orders/offline/order-review-gate";
 
 @Injectable()
 export class BookkeepingService implements OnModuleInit {
@@ -272,6 +273,8 @@ export class BookkeepingService implements OnModuleInit {
           `Cannot record a payment on a ${inv.status === InvoiceStatus.VOID ? "voided" : "written-off"} invoice.`,
         );
       }
+
+      if (inv.orderId) await assertOrderReviewed(tx, inv.orderId); // SA-1124 PR-1b: staff money waits for the price review
 
       // B812: round every monetary write — summing already-rounded payments can
       // still land off-cent in float (0.70 + 0.10 === 0.7999999999999999), which

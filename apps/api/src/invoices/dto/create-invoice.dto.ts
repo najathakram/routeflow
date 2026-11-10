@@ -123,8 +123,18 @@ export interface RecordPaymentOpts extends KeyedWriterOpts<any> {
 /** What `recordStandalonePayment` returns, and hands its `opts.inTx` hook (SA-818). */
 export type StandalonePaymentResult = { payments: any[]; paymentGroupId: string; excess: number };
 
+/**
+ * Who is recording a standalone payment (SA-1124 PR-1b). Required, no default: the caller states it. STAFF_ALLOCATION
+ * is a person allocating money to invoices (refused with 409 ORDER_REVIEW_REQUIRED while an invoice's order has an open
+ * price-drift flag). STRIPE_SETTLE is money that already moved at the processor, which must always be recorded
+ * (refusing it is the B269 settlement stall); ONLY `PaymentRequestsService.settle` passes it. It lives on the internal
+ * opts, never on the request DTO, so no client can claim it.
+ */
+export type StandalonePaymentSource = "STAFF_ALLOCATION" | "STRIPE_SETTLE";
+
 /** Internal options of `recordStandalonePayment` (never part of a request body). SA-824: + the key's hooks. */
 export interface StandalonePaymentOpts extends KeyedWriterOpts<StandalonePaymentResult> {
+  source: StandalonePaymentSource;
   /**
    * Reject any allocation exceeding the invoice's live balance, computed
    * inside the transaction. Buyer-initiated payments compute their

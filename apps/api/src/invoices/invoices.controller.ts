@@ -121,6 +121,7 @@ export class InvoicesController {
     @Headers("idempotency-key") rawIdempotencyKey?: string,
   ) {
     return this.invoicesService.recordStandalonePayment(dto, {
+      source: "STAFF_ALLOCATION",
       actor: user?.sub ?? null,
       idempotencyKey: optionalIdempotencyKey(rawIdempotencyKey),
       refDedupe: refDedupeFromRequest(user, dto), // row 498: the staff "record anyway" flag

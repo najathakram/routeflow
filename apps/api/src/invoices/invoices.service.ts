@@ -102,6 +102,7 @@ import { exportPayments, findPaymentById, listAllPayments } from "./payment-list
 import { settledAtShipment } from "../orders/order-status-invoicing";
 import { assertCarrierLinesUnchanged, invoiceOrderWithCarrier } from "./invoice-carrier-lock";
 import { resolvePendingMirror } from "./pending-mirror";
+import { assertOrderReviewed, hasOpenReviewBlock } from "../orders/offline/order-review-gate";
 import {
   guardedEmail,
   invoiceFingerprintOf,
@@ -788,7 +789,8 @@ export class InvoicesService {
       created.length === 1 &&
       depositFields.depositPercent != null &&
       !isPostDeliveryOrderStatus(order.status) &&
-      (await this.systemConfig.get("invoice.depositCollectAtOrder")) === "true"
+      (await this.systemConfig.get("invoice.depositCollectAtOrder")) === "true" &&
+      !(await hasOpenReviewBlock(this.prisma.forTenant(), order.id)) // SA-1124 PR-1b: a flagged order stays DRAFT
     ) {
       const issued: any[] = [];
       for (const inv of created) {
@@ -2578,7 +2580,11 @@ export class InvoicesService {
         where: { tenantId, key: "invoice.depositCollectAtOrder" },
         select: { value: true },
       });
-      if (collectRaw?.value === "true" && !isPostDeliveryOrderStatus((order as any).status)) {
+      if (
+        collectRaw?.value === "true" &&
+        !isPostDeliveryOrderStatus((order as any).status) &&
+        !(await hasOpenReviewBlock(this.prisma, order.id)) // SA-1124 PR-1b: a flagged order stays DRAFT
+      ) {
         // Update by primary key of the row this method just created for this tenant —
         // safe without a tenant filter (the id came from our own create), and the
         // unscoped client is the same handle the rest of this method uses.
@@ -3377,6 +3383,7 @@ export class InvoicesService {
     const refusal = sendRefusal(inv.status); // #2255: fast pre-tx; markSent re-checks under the lock
     if (refusal) throw new BadRequestException(refusal);
     await this.assertOrderInvoiceUnlocked(inv, opts);
+    if (inv.orderId) await assertOrderReviewed(this.prisma.forTenant(), inv.orderId); // SA-1124 PR-1b
     // P5-13: SENT flip + oldest-first credit auto-apply are ONE atomic operation.
     // Idempotent on re-send. If the tx throws, the send fails — money first.
     const { updated, auto } = await this.markSent(id, inv.orderId);
@@ -3516,6 +3523,7 @@ export class InvoicesService {
     const refusal = sendRefusal(inv.status); // #2255: fast pre-tx; markSent re-checks under the lock
     if (refusal) throw new BadRequestException(refusal);
     await this.assertOrderInvoiceUnlocked(inv);
+    if (inv.orderId) await assertOrderReviewed(this.prisma.forTenant(), inv.orderId); // SA-1124 PR-1b
 
     const recipientEmail = resolveRecipientEmail(overrideEmail, inv.customer?.email);
 
@@ -4185,6 +4193,7 @@ export class InvoicesService {
       if (!inv) throw new NotFoundException("Invoice not found");
       const refusal = paymentRefusal(inv.status); // #2472 (4): VOID and WRITTEN_OFF, like the others
       if (refusal) throw new BadRequestException(`Cannot record payment on ${refusal} invoice`);
+      if (inv.orderId) await assertOrderReviewed(tx, inv.orderId); // SA-1124 PR-1b: staff money waits for the price review
 
       const total = Number(inv.total);
       const alreadyPaid = sumConfirmed(inv.payments);
@@ -4896,14 +4905,14 @@ export class InvoicesService {
 
   // ─── Standalone (bulk-allocation) payment ────────────────────────────────
 
-  async recordStandalonePayment(dto: StandalonePaymentDto, opts?: StandalonePaymentOpts) {
+  async recordStandalonePayment(dto: StandalonePaymentDto, opts: StandalonePaymentOpts) {
     // SA-824: a keyed call claims in the money tx below (its first statement) or replays the stored result.
     return keyedPayment(this.prisma, standalonePaymentKey(dto), opts, (o) =>
-      this.writeStandalonePayment(dto, o),
+      this.writeStandalonePayment(dto, o ?? opts),
     );
   }
 
-  private async writeStandalonePayment(dto: StandalonePaymentDto, opts?: StandalonePaymentOpts) {
+  private async writeStandalonePayment(dto: StandalonePaymentDto, opts: StandalonePaymentOpts) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     const paymentGroupId = randomUUID();
     const paidAt = paidInstantOf(dto.paidAt, tz); // SA-943: tenant-local day, today = now
@@ -4966,6 +4975,9 @@ export class InvoicesService {
             throw new NotFoundException(`Invoice ${alloc.invoiceId} not found for customer`);
           const refused = paymentRefusal(invoice.status); // SA-404f F1: on the LOCKED row
           if (refused) throw new BadRequestException(`Invoice ${alloc.invoiceId} is ${refused}`);
+          // SA-1124 PR-1b: staff money waits for the price review; money that already moved at the processor never does
+          if (opts?.source !== "STRIPE_SETTLE" && invoice.orderId)
+            await assertOrderReviewed(tx, invoice.orderId);
           if (opts?.assertAllocationsWithinBalance) {
             const alreadyPaid = sumConfirmed(invoice.payments);
             const balance = roundMoney(Number(invoice.total) - alreadyPaid);
