@@ -383,10 +383,17 @@ export class FeatureChangeService {
           );
         }
         const records: FeatureChangeRecord[] = [];
+        const skippedExpired: string[] = [];
         for (const c of meta.changes) {
           for (const id of c.createdIds) await this.overrides.revoke(tenantId, id, tx);
           const recreated: OverrideSnapshot[] = [];
           for (const old of c.revoked) {
+            // An earlier override whose end date has passed since the save is already gone; putting it back would be
+            // refused (an end date must be in the future), so the set could never be undone. Skip it and say so.
+            if (old.expiresAt && new Date(old.expiresAt).getTime() <= Date.now()) {
+              skippedExpired.push(c.key);
+              continue;
+            }
             const row = await this.overrides.create(
               {
                 tenantId,
@@ -423,7 +430,7 @@ export class FeatureChangeService {
             undoOf: auditId,
           },
         });
-        return { changeSetId, hashAfter, undoOf: auditId, changes: records };
+        return { changeSetId, hashAfter, undoOf: auditId, changes: records, skippedExpired };
       },
       { timeout: 20_000 },
     );

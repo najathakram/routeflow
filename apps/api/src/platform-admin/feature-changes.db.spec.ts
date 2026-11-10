@@ -427,6 +427,26 @@ describeDb("WP11: feature change sets (real Postgres)", () => {
     expect((rows[0].meta as { undoOf?: string }).undoOf).toBe(set.changeSetId);
   });
 
+  it("T28e: an earlier override that has ended since the save is skipped, the undo still goes through and says so", async () => {
+    const t = await tenant();
+    const soon = new Date(Date.now() + 1_500).toISOString();
+    await svc.apply(
+      t,
+      actor,
+      dto(await svc.inputsHash(t), [{ key: A, action: "DENY", expiresAt: soon }]),
+    );
+    const set = await svc.apply(
+      t,
+      actor,
+      dto(await svc.inputsHash(t), [{ key: A, action: "GRANT" }]),
+    );
+    await new Promise((r) => setTimeout(r, 1_800));
+    const undone = await svc.undo(t, actor, set.changeSetId, "mistake");
+    expect(undone.skippedExpired).toEqual([A]);
+    expect(await live(t)).toHaveLength(0);
+    expect(await audits(t, AdminAuditAction.FEATURE_CHANGE_SET_UNDONE)).toHaveLength(1);
+  });
+
   it("T28b: undo after a later change is refused and writes nothing", async () => {
     const t = await tenant();
     const set = await svc.apply(

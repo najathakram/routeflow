@@ -9,10 +9,10 @@ import type {
 } from "@routeflow/types";
 import {
   applyFeatureChanges,
-  featureChangeMessage,
   isInputsChanged,
   previewFeatureChanges,
 } from "@/lib/platform-admin/feature-changes";
+import { codedToastCopy } from "@/lib/generic-toast-copy";
 import { AdminModal } from "../../../../_components/AdminModal";
 import { changeCountLabel } from "./useFeatureStage";
 
@@ -157,7 +157,7 @@ export function FeatureChangeSheet({
       if (isInputsChanged(e)) {
         setChecked({ status: "stale" });
       } else {
-        setError(featureChangeMessage(e, "Couldn't save. Nothing was changed."));
+        setError(codedToastCopy(e) ?? "Couldn't save. Nothing was changed.");
       }
     } finally {
       setSaving(false);

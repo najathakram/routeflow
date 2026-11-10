@@ -30,7 +30,6 @@ jest.mock("@/lib/platform-admin/feature-changes", () => ({
   undoFeatureChanges: (...a: unknown[]) => mockUndo(...a),
   isInputsChanged: (e: { response?: { data?: { code?: string } } }) =>
     e?.response?.data?.code === "FEATURE_INPUTS_CHANGED",
-  featureChangeMessage: (_e: unknown, fallback: string) => fallback,
 }));
 
 const TOBACCO = "Regulated items (tobacco)";

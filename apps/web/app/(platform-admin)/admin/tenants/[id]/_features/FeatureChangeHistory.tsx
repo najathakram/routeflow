@@ -61,8 +61,12 @@ export function FeatureChangeHistory({ tenantId }: { tenantId: string }) {
     setNotice(null);
     setError(null);
     try {
-      await undoFeatureChanges(tenantId, row.id, "Undone from History.");
-      setNotice("Undone. The earlier settings are back.");
+      const res = await undoFeatureChanges(tenantId, row.id, "Undone from History.");
+      setNotice(
+        res?.skippedExpired?.length
+          ? "Undone. Some earlier settings had already ended, so they were not put back."
+          : "Undone. The earlier settings are back.",
+      );
       load();
     } catch (e) {
       setError(

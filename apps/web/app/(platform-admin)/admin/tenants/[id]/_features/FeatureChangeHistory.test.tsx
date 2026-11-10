@@ -26,7 +26,6 @@ jest.mock("@/lib/platform-admin/feature-changes", () => ({
   featureChangeErrorCode: (e: { response?: { data?: { code?: string } } }) =>
     e?.response?.data?.code,
   isInputsChanged: () => false,
-  featureChangeMessage: (_e: unknown, fallback: string) => fallback,
 }));
 
 const ON = { effect: "GRANT" as const, kind: "COMP", expiresAt: null, id: "o1" };
@@ -124,6 +123,14 @@ describe("FeatureChangeHistory (WP11)", () => {
     expect(mockUndo.mock.calls[0].slice(0, 2)).toEqual(["t1", "cs1"]);
     expect(await screen.findByText(/Undone\./)).toBeInTheDocument();
     expect(mockLog).toHaveBeenCalledTimes(2);
+  });
+
+  it("T28d: an undo that skipped settings which had already ended says so", async () => {
+    mockLog.mockResolvedValue([applied()]);
+    mockUndo.mockResolvedValue({ changeSetId: "u1", undoOf: "cs1", skippedExpired: ["ocr"] });
+    render(<FeatureChangeHistory tenantId="t1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Undo this change" }));
+    expect(await screen.findByText(/had already ended, so they were not put back/)).toBeVisible();
   });
 
   it("T28b: a refused undo says why in plain words and writes nothing else", async () => {

@@ -50,7 +50,7 @@ export async function undoFeatureChanges(
   tenantId: string,
   changeSetId: string,
   reason: string,
-): Promise<{ changeSetId: string; undoOf: string }> {
+): Promise<{ changeSetId: string; undoOf: string; skippedExpired?: string[] }> {
   const res = await superAdminClient.post(
     `/platform-admin/tenants/${tenantId}/features/changes/${changeSetId}/undo`,
     { reason },
@@ -88,18 +88,11 @@ export async function fetchFeatureChangeLog(tenantId: string): Promise<FeatureCh
 
 /** The server's error code for a refused request, if it sent one. */
 export function featureChangeErrorCode(e: unknown): string | undefined {
-  const data = (e as { response?: { data?: { code?: string; message?: string } } })?.response?.data;
+  const data = (e as { response?: { data?: { code?: string } } })?.response?.data;
   return data?.code;
 }
 
 /** True when the business changed after the page read it (409, nothing was saved). */
 export function isInputsChanged(e: unknown): boolean {
   return featureChangeErrorCode(e) === API_ERROR_CODES.FEATURE_INPUTS_CHANGED;
-}
-
-/** The server's own sentence for a refusal (it is written for a person), or the fallback. */
-export function featureChangeMessage(e: unknown, fallback: string): string {
-  const data = (e as { response?: { data?: { message?: string | string[] } } })?.response?.data;
-  const m = Array.isArray(data?.message) ? data?.message.join(" ") : data?.message;
-  return m && m.length < 300 ? m : fallback;
 }

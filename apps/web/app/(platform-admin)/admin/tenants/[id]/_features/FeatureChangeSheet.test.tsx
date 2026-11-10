@@ -17,7 +17,6 @@ jest.mock("@/lib/platform-admin/feature-changes", () => ({
   applyFeatureChanges: (...a: unknown[]) => mockApply(...a),
   isInputsChanged: (e: { response?: { data?: { code?: string } } }) =>
     e?.response?.data?.code === "FEATURE_INPUTS_CHANGED",
-  featureChangeMessage: (_e: unknown, fallback: string) => fallback,
 }));
 
 const CHANGES: FeatureChangeInput[] = [
