@@ -155,6 +155,7 @@ export const PUBLIC_WRITE_ROUTES: ReadonlyArray<ClassifiedRoute> = [
       ["request-password-reset", "password-reset request (always answers the same)"],
       ["reset-password", "password reset by emailed token"],
       ["verify-email", "e-mail verification by emailed token"],
+      ["confirm-email-change", "login-email change confirmation by emailed token (B461)"],
     ] as const
   ).map(([tail, why]) => ({
     route: `POST /api/v1/auth/${tail}`,

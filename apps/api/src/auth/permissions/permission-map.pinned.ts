@@ -32,6 +32,7 @@ export const PERMISSION_MAP: Readonly<Record<string, string>> = {
   "AuthController.appleNotifications": "UNGUARDED",
   "AuthController.appleSignIn": "UNGUARDED",
   "AuthController.changePassword": "UNGUARDED",
+  "AuthController.confirmEmailChange": "UNGUARDED",
   "AuthController.exchangeHandoff": "UNGUARDED",
   "AuthController.googleAuthUrl": "UNGUARDED",
   "AuthController.googleCallback": "UNGUARDED",

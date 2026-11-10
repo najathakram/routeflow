@@ -80,6 +80,24 @@ export async function signupLinkState(
   return accounts === 1 ? "legacy" : "none";
 }
 
+/**
+ * The ONE rule for "this account has never signed in", shared by the sign-up link (B448) and the email-change hold
+ * (B461). `lastLoginAt` alone is not proof: `refresh()` never stamps it, the stamp is best effort, and it is
+ * unreliable before `SIGN_IN_TIMESTAMP_RELIABLE_FROM`. So true only when ALL hold: `lastLoginAt` is null, the account
+ * was created on or after that date, and it owns no refresh-token row. An unknown `lastLoginAt` or `createdAt` is
+ * "may have signed in" (false).
+ */
+export async function hasNeverSignedIn(
+  db: Pick<VerificationDb, "refreshToken">,
+  user: { id: string; lastLoginAt?: Date | null; createdAt?: Date | null },
+): Promise<boolean> {
+  if (user.lastLoginAt !== null) return false;
+  if (!(user.createdAt instanceof Date) || user.createdAt < SIGN_IN_TIMESTAMP_RELIABLE_FROM) {
+    return false;
+  }
+  return (await db.refreshToken.count({ where: { userId: user.id } })) === 0;
+}
+
 /** The account-class test plus the link state; `none` for every refused case. */
 export async function verificationLinkState(
   db: VerificationDb,
@@ -87,11 +105,7 @@ export async function verificationLinkState(
 ): Promise<SignupLinkState> {
   if (user.status !== "INACTIVE") return "none";
   if (user.role !== "TENANT_ADMIN") return "none";
-  if (user.lastLoginAt) return "none";
-  if (!(user.createdAt instanceof Date) || user.createdAt < SIGN_IN_TIMESTAMP_RELIABLE_FROM) {
-    return "none";
-  }
-  if ((await db.refreshToken.count({ where: { userId: user.id } })) !== 0) return "none";
+  if (!(await hasNeverSignedIn(db, user))) return "none";
   return signupLinkState(db, user);
 }
 
