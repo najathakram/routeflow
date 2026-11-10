@@ -241,6 +241,8 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { resolveDriverRunLink } from "./driver-run-link";
+import { offlineCreate } from "./offline/offline-create";
+import * as flags from "./offline/review-flags";
 import { resolveLineUnits } from "../products/line-units";
 import * as unitLines from "./unit-line-build";
 import * as unitEdit from "./unit-line-edit";
@@ -452,6 +454,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // sort LAST (NULLS LAST), with createdAt as the final tiebreak.
           orderBy: [{ position: "asc" }, { createdAt: "asc" }],
         },
+        ...(flags.seesReviewFlags(user) ? flags.REVIEW_FLAGS_INCLUDE : {}), // SA-1124: staff only
         // row 342: who handed it over (staff only; `registerKey` is a scalar already on the row)
         ...(seesHandOverStamp(user) ? { soldBy: HANDOVER_SOLD_BY_SELECT } : {}),
         transaction: true,
@@ -1370,7 +1373,8 @@ export class OrdersService implements OnApplicationBootstrap {
       );
     }
 
-    const isDraft = dto.status === "DRAFT";
+    let isDraft = dto.status === "DRAFT";
+    const off = offlineCreate(options.offline); // SA-1124: inert unless the controller proved an offline staff request
     const items = dto.items ?? [];
 
     // Non-draft orders require at least one item
@@ -1810,17 +1814,22 @@ export class OrdersService implements OnApplicationBootstrap {
     // Tobacco (requiresLicense=false) is never gated — its warn-only flow is intact.
     let restriction: rGate.Decision | undefined; // row 510: the staff override, stamped in the create tx
     let returnCredit = 0; // W-863: the credit the B585 gate netted (a counter sale's server-priced preview)
+    off.judgeDrift(items, lineItemsData, total);
     if (!isDraft) {
-      await this.authGuard.assertAuthorizedOrThrow({
-        customerId,
-        lines: lineItemsData.map((li) => ({ trackedCategoryId: li.trackedCategoryId })),
-      });
+      await off.gate(() =>
+        this.authGuard.assertAuthorizedOrThrow({
+          customerId,
+          lines: lineItemsData.map((li) => ({ trackedCategoryId: li.trackedCategoryId })),
+        }),
+      );
       // Lane R: a banned product warns (staff) or refuses BEFORE the stock tx; a DRAFT is judged at its promotion.
       const tenant = rGate.tenantId(this.prisma, user);
-      restriction = await this.sellingRestrictions.assertLinesSellable({
-        ...rGate.create({ tenant, customerId, user, lineItemsData, fulfillPath, options, dto }),
-        channel: restrictionChannelForPrincipal(user), // judged at ENTRY time, like the license guard
-      });
+      restriction = await off.gate(() =>
+        this.sellingRestrictions.assertLinesSellable({
+          ...rGate.create({ tenant, customerId, user, lineItemsData, fulfillPath, options, dto }),
+          channel: restrictionChannelForPrincipal(user), // judged at ENTRY time, like the license guard
+        }),
+      );
       // S1: net of the till tender. W-863 (SA-945 MUST 6): the COUNTER sale also nets its SERVER-priced return credit
       // (never a client figure); Create Order keeps SA-194 (an unapplied credit never loosens the gate), pinned in
       // orders-inline-return-create.db.spec.ts.
@@ -1828,8 +1837,10 @@ export class OrdersService implements OnApplicationBootstrap {
         ? await inlineReturn.previewInlineReturnCredit(inlineRet, customerId, user)
         : 0;
       const projectedTotal = creditProjectedTotal(total, options, returnCredit);
-      await this.creditGate({ customerId, projectedTotal, principal: user }); // B585: NEW order
+      await off.gate(() => this.creditGate({ customerId, projectedTotal, principal: user })); // B585: NEW order
     }
+    isDraft ||= off.blocked; // SA-1124: an offline order a gate refused is saved as a DRAFT with flags
+    if (isDraft) restriction = undefined; // a draft is never stamped: judged at its promotion
 
     // WS9: the oversell policy is resolved ONCE, here, before the transaction (so before any
     // FOR UPDATE); only the resulting boolean enters the locked stock section below.
@@ -1933,6 +1944,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 sourceRecorded: true, // F1(i): the source above is from the creating principal, not the column default
                 // SA-672e/row 317: only the counter-sale POST passes this; it also stamps the cashier (a replay writes nothing).
                 ...(options.counterSale ? { counterSale: true, soldById: user.sub } : {}),
+                ...off.orderData(), // SA-1124: Order.offlineCreatedAt (device time, display only)
                 lineItems: { create: authorship.withAuthor(lineItemsData, lineAuthor) },
               },
               include: {
@@ -1944,6 +1956,7 @@ export class OrdersService implements OnApplicationBootstrap {
             });
             await this.syncCompositions(tx, created.id);
             await restriction?.stamp(tx, created.id);
+            await off.writeFlags(tx, created, items, lineItemsData); // SA-1124: one createMany, never nested
             inlineMinted = await applyReturn(tx, inlineRet, {
               customerId,
               orderId: created.id,
@@ -2204,6 +2217,7 @@ export class OrdersService implements OnApplicationBootstrap {
         },
         { order, user, tenantId: rGate.tenantId(this.prisma, user, order.tenantId), ack: dto },
       );
+      await flags.assertPromotionCredit(this.prisma, order, (p) => this.creditGate(p), user); // SA-1124
     }
 
     // B585: goods leaving is the enforcement moment (operators only, by the role gates above; before
@@ -2299,6 +2313,7 @@ export class OrdersService implements OnApplicationBootstrap {
               customerFacing: user.role === UserRole.CUSTOMER,
             });
             await stamped?.stamp(tx, id);
+            await flags.resolveGateFlagsAtPromotion(tx, order, user.sub); // SA-1124: passed at promotion
             return tx.order.findUniqueOrThrow({ where: { id } });
           },
           { isolationLevel: "Serializable", timeout: 15_000 },

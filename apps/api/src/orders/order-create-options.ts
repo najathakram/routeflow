@@ -1,5 +1,6 @@
 import { BadRequestException } from "@nestjs/common";
 import type { FulfillPath } from "@prisma/client";
+import type { OfflineQuote } from "@routeflow/types";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import type { SourceLines } from "./source-line";
 import type { OrderItemAuthorChannel } from "./line-author-channel";
@@ -28,6 +29,19 @@ export type ReplayedCart = ReadonlyArray<{
 }> | null;
 
 /**
+ * SA-1124: the internal form of a staff `offline` create (offline/offline-create.ts). ONLY the controller builds it, after
+ * its role and quote checks; the service never reads `dto.offline`.
+ */
+export interface OfflineCreateOption {
+  /** What the device showed (the controller proved its lines index into `items`). Display evidence for the drift flag. */
+  quote: OfflineQuote;
+  /** Device time (display only); null when the device sent none. */
+  createdAt: Date | null;
+  /** The customer's open DRAFT/PENDING order the controller found (never merged into); null when none. */
+  openOrderId: string | null;
+}
+
+/**
  * `OrdersService.create`'s third argument. Every field is INTERNAL (never a request DTO field).
  *  - `fulfillPath` (SA-655): PICKUP is not a writable DTO value (writable-fulfill-paths.ts), so a counter
  *    sale can only arrive here. It beats `dto.fulfillPath` and the customer default.
@@ -47,6 +61,8 @@ export type ReplayedCart = ReadonlyArray<{
  *  - `creditPaidNow` (S1, C42): ONLY the counter sale sets it: given the SERVER total, how much is paid at the till
  *    by this request's tender (`clearedTenderNow`). The B585 credit gate then judges `total - paid` (what stays owed),
  *    not the whole total. Absent (every other caller) = the whole total, unchanged.
+ *  - `offline` (SA-1124): the staff offline create; the three gates turn into a saved DRAFT plus flags, price drift and an
+ *    open order are flagged, and a resend of a key whose first press was saved as a DRAFT still replays.
  *  - `internalCustomerDraft` (F1 ii): INTERNAL only, never a DTO field. create() refuses a DRAFT from a CUSTOMER
  *    principal (ORDER_DRAFT_STAFF_ONLY); the one caller that drafts under the buyer pseudo-user on purpose is the
  *    not-on-truck change-request approval (a next-delivery draft), which sets this.
@@ -70,6 +86,7 @@ export interface CreateOrderOptions {
   onReplay?: (order: ReplayedOrder, cart?: ReplayedCart) => void;
   beforeWrite?: (priced: { total: number }) => void | Promise<void>;
   creditPaidNow?: (total: number) => number;
+  offline?: OfflineCreateOption;
 }
 
 /**

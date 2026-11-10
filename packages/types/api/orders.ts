@@ -4,7 +4,7 @@
 // apps/mobile/lib/api/orders.ts, per the DTO-duplication sweep. Near-identical
 // resolution: field order/comments only — comment kept from the richer side.
 
-import type { ToCollectState } from "./enums";
+import type { OrderReviewFlagKindValue, ToCollectState } from "./enums";
 
 export interface ActiveOrderSummary {
   id: string;
@@ -167,3 +167,37 @@ export interface PackingSlipsResult {
  */
 export const CREDITS_PENDING_COPY =
   "The order was saved, but the credit notes weren't applied yet. Someone in the office needs to apply them on the order.";
+
+// SA-1124 (SA-817): the offline staff order create. `POST /orders` with `offline: true` is staff only (403 OFFLINE_STAFF_ONLY).
+// The server prices and judges at replay time; the quote is display evidence for the drift check, never a price.
+
+/** One line of what the device showed; `index` is the position in the request's `items`. Money has at most 2 decimals. */
+export interface OfflineQuoteLine {
+  index: number;
+  unitPrice: number;
+  unitsPerBox: number | null;
+  unitLabel: string | null;
+}
+
+/** What the device showed while offline: the order total and one entry per priced line. */
+export interface OfflineQuote {
+  total: number;
+  lines: OfflineQuoteLine[];
+}
+
+/** One review flag on an order (`GET /orders/:id` `reviewFlags`; staff only, never in a customer read). `detail` is per kind. */
+export interface OrderReviewFlagView {
+  id: string;
+  kind: OrderReviewFlagKindValue;
+  detail: Record<string, unknown>;
+  orderItemId: string | null;
+  createdAt: string;
+  resolvedAt: string | null;
+  resolvedBy: { id: string; username: string } | null;
+  resolution: string | null;
+}
+
+/** `POST /orders/:id/review-flags/:flagId/resolve`: a short note (3 to 500 characters); the response is the flag. */
+export interface ResolveReviewFlagRequest {
+  resolution: string;
+}

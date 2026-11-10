@@ -195,7 +195,7 @@ describe("S1 wiring pins", () => {
   const src = (f: string) => fs.readFileSync(path.join(__dirname, f), "utf8");
   it("create() hands the B585 gate creditProjectedTotal(total, options, returnCredit), not the bare total", () => {
     expect(src("orders.service.ts")).toMatch(
-      /const projectedTotal = creditProjectedTotal\(total,\s*options,\s*returnCredit\);[^\n]*\n\s*await this\.creditGate\(\{ customerId, projectedTotal,/,
+      /const projectedTotal = creditProjectedTotal\(total,\s*options,\s*returnCredit\);[^\n]*\n\s*await (?:off\.gate\(\(\) => )?this\.creditGate\(\{ customerId, projectedTotal,/,
     );
   });
   it("only the COUNTER sale nets a return credit at the gate (Create Order keeps SA-194)", () => {

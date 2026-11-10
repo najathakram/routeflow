@@ -6,6 +6,7 @@ import type { PrismaService } from "../prisma/prisma.service";
 import { ordersFor } from "../common/staff-only-fields";
 import { ListOrdersDto } from "./dto/list-orders.dto";
 import { dateAndShipmentFilters } from "./list-filters";
+import { needsReviewWhere } from "./offline/review-flags";
 
 /** OrdersService.findAll, moved verbatim (size ratchet): the paged, role-scoped order list. */
 export async function findAllOrdersImpl(
@@ -64,7 +65,7 @@ export async function findAllOrdersImpl(
   // Ad-hoc trips + fulfillment mode: filter by ROUTE/SHIP. Omitted ⇒ no where
   // key at all (every existing order stays visible either way).
   if (fulfillPath) where.fulfillPath = fulfillPath;
-  Object.assign(where, dateAndShipmentFilters(query));
+  Object.assign(where, dateAndShipmentFilters(query), needsReviewWhere(query.needsReview, user));
 
   const [data, total] = await Promise.all([
     prisma.forTenant().order.findMany({

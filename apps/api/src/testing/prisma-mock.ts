@@ -157,6 +157,7 @@ export function createMockPrisma(): MockPrisma {
     recipeComponent: modelProxy(),
     order: modelProxy(),
     orderItem: modelProxy(),
+    orderReviewFlag: modelProxy(), // SA-1124: default count 0 (no open flag), updateMany count 0
     // #2717 M3: frozen FIXED-line component rows (default findMany() -> [] = a plain line).
     orderItemComponent: modelProxy(),
     orderRevision: modelProxy(),
