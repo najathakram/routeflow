@@ -16,11 +16,11 @@ describe("tier commits go through applyLadderChange with the old value", () => {
   });
 
   it("detail page: the old side is the field's focus-time value, and the move is shown", () => {
-    // SA MUST: the old side is DecimalInput's focus-time value, never a page-held copy (stale after "Set all to
+    // SA MUST: the old side is DecimalInput's focus-time value, else (an Auto box focuses with none) the value at the field's last commit in this edit; never a page-held copy of the saved ladder (stale after "Set all to
     // Tier 1" or a cleared-field blur).
     expect(detail).toMatch(/onCommit=\{\(v, atFocus\) => \{/);
     expect(detail).toMatch(
-      /applyLadderChange\(\s*field as TierField,\s*atFocus \?\? productVal,\s*v,/,
+      /applyLadderChange\(\s*field as TierField,\s*atFocus \?\? lastTierCommitRef\.current\[field\] \?\? productVal,\s*v,/,
     );
     expect(detail).not.toMatch(/tierCommitBaseRef/);
     expect(detail).toMatch(/onCommit\?: \(v: number, valueAtFocus: number \| null\) => void;/);

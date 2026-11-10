@@ -45,3 +45,19 @@ describe("tierWarns", () => {
     expect(tierWarns(3, {}, product, 1.25, true)).toBe(true);
   });
 });
+
+// W-1170 round 2: Auto is Retail less the tenant's tier rule (from @routeflow/pricing), not always Retail.
+describe("tiersBreakOrder with tier rules", () => {
+  const rules = { 2: 10 };
+  it("Retail 20, Tier 2 Auto under a 10% rule charges 18, so a typed Tier 3 of 19 breaks the order", () => {
+    expect(tiersBreakOrder(20, [0, 19, 0, 0], 1, true, rules)).toBe(true);
+  });
+  it("with no rule the same row is fine (Tier 2 Auto charges Retail 20)", () => {
+    expect(tiersBreakOrder(20, [0, 19, 0, 0], 1, true)).toBe(false);
+  });
+  it("tierWarns carries the rules through", () => {
+    const product = { priceTier2: "0", priceTier3: "19", priceTier4: "0", priceTier5: "0" };
+    expect(tierWarns(1, {}, product, 20, true, rules)).toBe(true);
+    expect(tierWarns(1, {}, product, 20, true)).toBe(false);
+  });
+});

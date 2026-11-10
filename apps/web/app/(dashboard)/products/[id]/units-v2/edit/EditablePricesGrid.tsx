@@ -11,6 +11,7 @@ import {
 import type { UnitsCardProduct } from "../../ProductUnitsCard";
 import { UNITS_V2_TESTIDS as T } from "../../units-v2-testids";
 import { AlsoUpdatePanel } from "../change-prices/AlsoUpdatePanel";
+import { OrderUnitDraft } from "./OrderUnitDraft";
 import { revealClearOfBar } from "./reveal-clear-of-bar";
 import { BTN, BTN_PRIMARY, SkipToSave } from "./PriceEditBar";
 import { usePriceDraft, type EditSurface } from "./usePriceDraft";
@@ -223,7 +224,7 @@ export function EditablePricesGrid({
           // The window has no Add a unit control of its own; the pointer would click a hidden page control.
         />
         {afterGrid}
-        {/* P3: the Pricing unit select is not drawn while it cannot be used (it waits for the units settings update). */}
+        {editing && <OrderUnitDraft />}
         {/* K12 F13: the slot is held (8rem) while a plan exists, so its panel never shoves the page; with no plan it is
             empty and takes no height. */}
         {editing && (

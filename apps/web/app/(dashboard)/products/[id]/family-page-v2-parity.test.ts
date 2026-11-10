@@ -62,14 +62,16 @@ describe("family page with units v2 on: parity", () => {
       .filter((l) => !/const v2( |Family)/.test(l))
       .map((l) => l.trim());
     expect(refs).toEqual([
+      // W-1170 round 2: the tenant tier rules for the order check (the price card's own query, one fetch)
+      "const tierRules = usePriceGrid(id, v2).data?.tierRules;",
       // K11-23: the prices region is its own grid item right after Details
       'const pricingSplit = v2 && product.kind !== "FAMILY";',
       // K11-20c: prices are edited in the floating window (and shown read-only in Details) for a non-governed product
       "const pricesInWindow = v2 && !unitStructureGoverned(product);",
       // W-1170 F2: the Auto (0) tier rule is on with the prices grid
-      "const warn = isEditing && tierWarns(idx, editDraft, product as any, priceNumber, v2);",
+      "isEditing && tierWarns(idx, editDraft, product as any, priceNumber, v2, tierRules);",
       "auto={v2 && !(curVal > 0)}",
-      "const hasViolation = ts.some((_, i) => tiersBreakOrder(t1, ts, i, v2));",
+      "const hasViolation = ts.some((_, i) => tiersBreakOrder(t1, ts, i, v2, tierRules));",
       '{v2 ? null : stockStatus === "OUT_OF_STOCK" ? (',
       "<ProductHeaderLine product={product} currentStock={currentStock} pricesV2={v2} />",
       '{v2 && product.kind !== "FAMILY" ? <ProductJumpLinks reserveSpace /> : null}',

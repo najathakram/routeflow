@@ -180,3 +180,26 @@ describe("F2: an Auto (0) family tier", () => {
     ).toEqual(["", "", ""]);
   });
 });
+
+describe("W-1170 round 2: the old side of a tier commit is the last commit of this edit", () => {
+  // Saved Retail 1.25, T2 Auto, T3 1.10, T4 Auto, T5 Auto. In one edit: type 0 into T3 (Auto, commits 0), type T4 1.10, retype T3 1.50.
+  // T3's old side is 0 (its last commit), so T4 (1.10, typed by hand) is not "tracking" T3 and stays 1.10.
+  it("a tier cleared to Auto and retyped compares with 0, not with its saved price", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ProductDetailPage />);
+    await user.click(screen.getByTitle("Edit product"));
+    const box = (tier: number) =>
+      screen.getByText(new RegExp(`^Tier ${tier}`)).parentElement!.querySelector("input")!;
+    await user.clear(box(3));
+    await user.type(box(3), "0");
+    await user.tab();
+    await user.type(box(4), "1.10");
+    await user.tab();
+    expect(box(4).value).toBe("1.10");
+    await user.type(box(3), "1.50");
+    await user.tab();
+    expect(box(3).value).toBe("1.50");
+    expect(box(4).value).toBe("1.10");
+    expect(box(5).value).toBe("1.10");
+  });
+});

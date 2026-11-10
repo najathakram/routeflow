@@ -70,6 +70,7 @@ import { PackSizePrompt } from "@/components/PackSizePrompt";
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
 import { usePricesV2Enabled, usePricesV2Pending } from "@/lib/api/units-v2";
+import { usePriceGrid } from "@/lib/api/usePriceGrid";
 import { MSRP_ADDON } from "@/lib/api/addons";
 import { CropModal } from "./CropModal";
 import { ProductImagesEmpty } from "./ProductImagesEmpty";
@@ -251,6 +252,8 @@ export default function ProductDetailPage() {
   const pendingPackSizeRef = React.useRef<number | null>(null);
   const packSave = usePackReadingSave(updateProduct);
   // The price strings the Details form was SEEDED with: a price is sent only when the draft differs (a dirty field).
+  // The value each Details tier box held at its last commit in this edit (an Auto box focuses with no value).
+  const lastTierCommitRef = React.useRef<Record<string, number>>({});
   const pricesWhenEditStartedRef = React.useRef<Record<PriceDraftKey, string> | undefined>(
     undefined,
   );
@@ -341,6 +344,8 @@ export default function ProductDetailPage() {
   const hasMsrpAddon = useHasAddon(MSRP_ADDON);
   const v2 = usePricesV2Enabled({ enabled: isStaff }) && isStaff;
   const v2Pending = usePricesV2Pending({ enabled: isStaff });
+  // Tier rules for the order check (Auto charges Retail less its rule): the same query the price card reads, one fetch.
+  const tierRules = usePriceGrid(id, v2).data?.tierRules;
 
   // ── Lightbox state ────────────────────────────────────────────────────────
   const [lightboxOpen, setLightboxOpen] = React.useState(false);
@@ -449,6 +454,7 @@ export default function ProductDetailPage() {
       priceTier5: String(parseFloat(String(product.priceTier5 ?? priceNumber))),
     };
     pricesWhenEditStartedRef.current = seededPrices;
+    lastTierCommitRef.current = {};
     setEditDraft({
       name: product.name,
       sku: product.sku ?? "",
@@ -1129,7 +1135,8 @@ export default function ProductDetailPage() {
           const curVal = isEditing
             ? parseFloat(String(editDraft[field] ?? parseFloat(String(productVal ?? priceNumber))))
             : parseFloat(String(productVal ?? priceNumber));
-          const warn = isEditing && tierWarns(idx, editDraft, product as any, priceNumber, v2);
+          const warn =
+            isEditing && tierWarns(idx, editDraft, product as any, priceNumber, v2, tierRules);
           const inheritsList = !(Number(productVal) > 0);
           return (
             <div key={field}>
@@ -1146,10 +1153,11 @@ export default function ProductDetailPage() {
                     onCommit={(v, atFocus) => {
                       // P0 2026-10-14: lower tiers move only by applyLadderChange (tracking, 0 or above
                       // the new price), never a blind copy-down, and the move is named on screen. The
-                      // OLD side is the field's own focus-time value (SA MUST: no staleable copy).
+                      // OLD side is the field's own focus-time value (SA MUST: no staleable copy); an Auto box focuses with none, so it
+                      // is the value at its last commit in this edit, else the saved one.
                       const moved = applyLadderChange(
                         field as TierField,
-                        atFocus ?? productVal,
+                        atFocus ?? lastTierCommitRef.current[field] ?? productVal,
                         v,
                         cascadeTiers(
                           product,
@@ -1157,6 +1165,7 @@ export default function ProductDetailPage() {
                           pricesWhenEditStartedRef.current,
                         ),
                       );
+                      lastTierCommitRef.current[field] = v;
                       setEditDraft((d) => ({ ...d, ...moved }));
                       setLadderNote(
                         ladderChangeNote(moved, (n) => productTierLabel(tierLabels, n)),
@@ -1195,7 +1204,7 @@ export default function ProductDetailPage() {
           const t4 = parseFloat(String(editDraft.priceTier4 ?? (product as any).priceTier4 ?? t1));
           const t5 = parseFloat(String(editDraft.priceTier5 ?? (product as any).priceTier5 ?? t1));
           const ts = [t2, t3, t4, t5];
-          const hasViolation = ts.some((_, i) => tiersBreakOrder(t1, ts, i, v2));
+          const hasViolation = ts.some((_, i) => tiersBreakOrder(t1, ts, i, v2, tierRules));
           return hasViolation ? (
             <p className="mt-1.5 text-xs text-warning">
               Higher tier prices should be ≤ the tier above (volume discounts are lower).

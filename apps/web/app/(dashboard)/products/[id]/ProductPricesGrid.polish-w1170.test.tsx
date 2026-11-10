@@ -8,7 +8,7 @@ import { setWideViewport } from "@/test-utils/viewport";
 setWideViewport();
 
 // W-1170 polish P28 (Auto boxes read "Follows Retail" while editing) and P29 (unit names capitalised, one empty barcode
-// form). P3 and P5 are pinned in GridEdit.test.tsx and ProductPricesGrid.test.tsx.
+// form). P5 is pinned in ProductPricesGrid.test.tsx.
 let mockGrid: { data?: ProductPriceGridDto; isLoading: boolean; isError: boolean };
 jest.mock("@/lib/api/usePriceGrid", () => ({ usePriceGrid: () => mockGrid }));
 jest.mock("@/lib/api/tier-labels", () => ({
