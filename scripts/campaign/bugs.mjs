@@ -64,6 +64,7 @@
 //   node scripts/campaign/bugs.mjs brief <F##|B###>             # everything an agent needs to start a batch, in one output
 //   node scripts/campaign/bugs.mjs prove <B###> --pr <n> --proof "REG-B### ..." [--pending-deploy] [--build-plan <path>]  (--build-plan is REQUIRED for a T3 row)
 //   node scripts/campaign/bugs.mjs close <B###> --sha <commit sha> --why "<how verified fixed>" [--batch F## --tier T1|T2|T3]   # registry state already-fixed; a bug with no ledger row needs --batch + --tier
+//   node scripts/campaign/bugs.mjs already-fixed <B###> --pr <n> --why "<where verified fixed>" [--was-proven "<why the proof was wrong>"]   # --was-proven is the only way a proven row can reach already-fixed
 //   node scripts/campaign/bugs.mjs discharge <F##> --evidence "<post-deploy proof>" [--evidence-B### "<per-row proof>"]   # per-row evidence is REQUIRED for every T2 row
 //   node scripts/campaign/bugs.mjs reopen <B###> --why "<failing REG-B### token or the run that showed the regression>"
 //   node scripts/campaign/bugs.mjs claim <F##>                  # flip that batch's workable rows to in-flight (next/waves skip it)
@@ -2539,7 +2540,10 @@ cmds["already-fixed"] = (args) => {
   const prRaw = flag(args, "pr");
   const why = flag(args, "why");
   if (!BUG_ID_RE.test(typed) || !prRaw || !why)
-    fail('usage: already-fixed <B###> --pr <number> --why "<how/where this was verified fixed>"');
+    fail(
+      'usage: already-fixed <B###> --pr <number> --why "<how/where this was verified fixed>" ' +
+        '[--was-proven "<why the proof was wrong>"]   # the flag lets a mis-proven row through',
+    );
   const id = resolveId(typed);
   const pr = Number(prRaw);
   if (!Number.isInteger(pr) || pr <= 0) fail(`--pr must be a positive integer (got "${prRaw}")`);
@@ -2549,6 +2553,13 @@ cmds["already-fixed"] = (args) => {
   if (why.length < 20)
     fail(
       `--why must be at least 20 characters citing where/how this was verified fixed (got ${why.length})`,
+    );
+  // A row `prove`n by mistake (mis-tiered, wrong proof) has no other lawful way here: `reopen`
+  // forces `regressed`. The flag is the one explicit opt-in, and it costs a real reason.
+  const wasProven = flag(args, "was-proven");
+  if (wasProven !== null && wasProven.length < 20)
+    fail(
+      `--was-proven must be at least 20 characters saying why the proof was wrong (got ${wasProven.length})`,
     );
 
   const batch = findShardOf(id);
@@ -2560,18 +2571,29 @@ cmds["already-fixed"] = (args) => {
       fail(`${id} vanished from ${batch}.jsonl while this already-fixed waited for the lock`);
     // Only from queued/in-flight — a row already proven, discharged, done, or
     // itself already-fixed does not get silently re-stamped by a second call.
-    if (!["queued", "in-flight"].includes(row.state))
+    const misProven = wasProven !== null && row.state === "proven";
+    if (wasProven !== null && !misProven)
+      fail(`--was-proven only applies to a proven row (${id} is "${row.state}")`);
+    if (!misProven && !["queued", "in-flight"].includes(row.state))
       fail(
         `${id} is "${row.state}" — already-fixed only applies to a queued or in-flight row (it is not a replacement for reopen)`,
       );
 
+    // The mistaken proof is erased with the transition (the same way `reopen` clears it); the
+    // History line below is the only place it is kept.
     const { what, row: after } = upsertLedgerRow(batch, {
       ...row,
       state: "already-fixed",
       pr,
       evidence: why,
+      ...(misProven ? { proof: null } : {}),
     });
-    if (after?.state !== "already-fixed" || after?.pr !== pr || after?.evidence !== why)
+    if (
+      after?.state !== "already-fixed" ||
+      after?.pr !== pr ||
+      after?.evidence !== why ||
+      (misProven && (after?.proof ?? null) !== null)
+    )
       fail(
         `ledger write for ${id} did not land as intended — re-read row is ${JSON.stringify(after)}`,
       );
@@ -2580,8 +2602,22 @@ cmds["already-fixed"] = (args) => {
     if (rec) {
       writeRecord(
         id,
-        { ...rec.front, state: "already-fixed" },
-        appendEvent(rec.body, `state-already-fixed-${pr}`, "already-fixed", `PR #${pr}`),
+        // `closed` is derived (frontFor) for an already-fixed row; leaving it off made the record
+        // lag the ledger until the next `sync`, which `sync --check` reports as out of date.
+        {
+          ...rec.front,
+          state: "already-fixed",
+          closed: "yes",
+          ...(misProven ? { proof: null } : {}),
+        },
+        appendEvent(
+          rec.body,
+          `state-already-fixed-${pr}`,
+          "already-fixed",
+          misProven
+            ? `PR #${pr} (was proven in PR #${row.pr ?? "—"}; proof withdrawn: ${wasProven})`
+            : `PR #${pr}`,
+        ),
       );
     }
     console.log(`${id}: ${batch} row ${what} → already-fixed (PR #${pr})`);
@@ -8729,6 +8765,133 @@ cmds["self-test"] = () => {
           longCode: 0,
           stateAfterLong: "already-fixed",
         },
+      );
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // B426: a row `prove`n by mistake (mis-tiered, wrong proof) had no lawful way to reach
+  // `already-fixed` — the verb refuses anything but queued/in-flight and `reopen` forces
+  // `regressed`. `--was-proven "<why the proof was wrong>"` is the one explicit opt-in; without
+  // it the old refusal stays word for word, and no new state exists.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    try {
+      const fileRow = (title) =>
+        runCli(
+          [
+            "file",
+            title,
+            "--location",
+            "apps/api/src/self-test.ts",
+            "--severity",
+            "low",
+            "--batch",
+            "F01",
+            "--tier",
+            "T1",
+          ],
+          tmp,
+        );
+      fileRow("B426 mis-proven fixture");
+      fileRow("B426 queued fixture");
+      runCli(["sync", "--quiet"], tmp); // baseline: the records mirror the ledger before we move one
+      const rowOf = (id) =>
+        readFileSync(join(tmp, "status", "F01.jsonl"), "utf8")
+          .split(/\r?\n/)
+          .filter(Boolean)
+          .map((l) => JSON.parse(l))
+          .find((r) => r.id === id);
+      const why = "the proof asserted the wrong behaviour; fixed earlier in PR #91";
+      const proved = runCli(
+        ["prove", "B1", "--pr", "90", "--proof", "REG-B1 asserts the wrong thing"],
+        tmp,
+      );
+      const plain = runCli(["already-fixed", "B1", "--pr", "91", "--why", why], tmp);
+      check(
+        "B426: already-fixed on a proven row without --was-proven keeps the old refusal verbatim",
+        { proved: proved.code, code: plain.code, state: rowOf("B1")?.state },
+        { proved: 0, code: 1, state: "proven" },
+      );
+      check(
+        "B426: the refusal text is unchanged",
+        plain.out.includes(
+          'B1 is "proven" — already-fixed only applies to a queued or in-flight row (it is not a replacement for reopen)',
+        ),
+        true,
+      );
+      const shortWas = runCli(
+        ["already-fixed", "B1", "--pr", "91", "--why", why, "--was-proven", "wrong"],
+        tmp,
+      );
+      check(
+        "B426: --was-proven needs a real reason (>=20 chars) and writes nothing when short",
+        {
+          code: shortWas.code,
+          state: rowOf("B1")?.state,
+          namesFlag: /--was-proven/.test(shortWas.out),
+        },
+        { code: 1, state: "proven", namesFlag: true },
+      );
+      const queuedWas = runCli(
+        [
+          "already-fixed",
+          "B2",
+          "--pr",
+          "91",
+          "--why",
+          why,
+          "--was-proven",
+          "the proof was recorded against the wrong tier",
+        ],
+        tmp,
+      );
+      check(
+        "B426: --was-proven on a row that was never proven is refused",
+        { code: queuedWas.code, state: rowOf("B2")?.state },
+        { code: 1, state: "queued" },
+      );
+      const lawful = runCli(
+        [
+          "already-fixed",
+          "B1",
+          "--pr",
+          "91",
+          "--why",
+          why,
+          "--was-proven",
+          "the proof was recorded against the wrong tier",
+        ],
+        tmp,
+      );
+      const after = rowOf("B1");
+      check(
+        "B426: --was-proven moves a proven row to already-fixed, erasing the wrong proof",
+        {
+          code: lawful.code,
+          state: after?.state,
+          pr: after?.pr,
+          proof: after?.proof ?? null,
+          evidence: after?.evidence,
+        },
+        { code: 0, state: "already-fixed", pr: 91, proof: null, evidence: why },
+      );
+      const rec = readFileSync(join(tmp, "bugs", "B1.md"), "utf8");
+      check(
+        "B426: the history line records that the row was proven and why that was wrong",
+        {
+          event: rec.includes("**already-fixed**"),
+          reason: rec.includes("the proof was recorded against the wrong tier"),
+          front: rec.includes("state: already-fixed"),
+        },
+        { event: true, reason: true, front: true },
+      );
+      const mirror = runCli(["sync", "--check"], tmp);
+      check(
+        "B426: after the transition the record still mirrors the ledger",
+        { code: mirror.code, mirrors: /\d+ record\(s\) mirror the ledger/.test(mirror.out) },
+        { code: 0, mirrors: true },
       );
     } finally {
       rmSync(tmp, { recursive: true, force: true });
