@@ -5,7 +5,9 @@
 --   "OrderReviewFlag"         new table, one row per reason an order needs a person's look. "tenantId" is NOT NULL from day one.
 --                             FKs: "Tenant" RESTRICT, "Order" CASCADE, "OrderItem" SET NULL (a line edit replaces items; the
 --                             "detail" JSON keeps the line index and product), "User" SET NULL (the resolver). Indexes
---                             ("tenantId","orderId") and ("tenantId","kind","resolvedAt") (the Needs-review list).
+--                             ("tenantId","orderId") and ("tenantId","kind","resolvedAt") (the Needs-review list), plus one
+--                             on each FK column with no leading index ("orderId", "orderItemId", "resolvedById"): without them
+--                             every "OrderItem"/"Order"/"User" delete scans this table for the FK check.
 --                             Two inline CHECKs (raw SQL; Prisma does not model them):
 --                               "OrderReviewFlag_resolution_pair"  ("resolvedAt" IS NULL) = ("resolution" IS NULL)
 --                               "OrderReviewFlag_resolution_len"   "resolution" IS NULL OR char_length("resolution") BETWEEN 3 AND 500
@@ -59,6 +61,15 @@ CREATE INDEX "OrderReviewFlag_tenantId_orderId_idx" ON "OrderReviewFlag"("tenant
 
 -- CreateIndex
 CREATE INDEX "OrderReviewFlag_tenantId_kind_resolvedAt_idx" ON "OrderReviewFlag"("tenantId", "kind", "resolvedAt");
+
+-- CreateIndex
+CREATE INDEX "OrderReviewFlag_orderId_idx" ON "OrderReviewFlag"("orderId");
+
+-- CreateIndex
+CREATE INDEX "OrderReviewFlag_orderItemId_idx" ON "OrderReviewFlag"("orderItemId");
+
+-- CreateIndex
+CREATE INDEX "OrderReviewFlag_resolvedById_idx" ON "OrderReviewFlag"("resolvedById");
 
 -- AddForeignKey
 ALTER TABLE "OrderReviewFlag" ADD CONSTRAINT "OrderReviewFlag_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
