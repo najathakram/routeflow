@@ -126,6 +126,8 @@ lines, corrupted rows — ids and amounts only, never client identifiers); the a
 `LESSONS-DIGEST.md`, each with its one-line Lesson; and excerpts of any prior fix-cards for the same area. No
 judgment, no fix proposals.
 
+Before S2, build a tight red-capable loop per `~/.claude/skill-library/pocock-diagnosing-bugs/SKILL.md` (machine-local; skip if absent).
+
 ### S2 — Cause refutation (Opus @ medium routine / Opus @ high HIGH-risk — a verdict over the S1 brief, ≤ 12 tool calls, read-only)
 
 Trace with `shortest_path`; no path refutes nothing (the graph is blind to env vars, Prisma and some cross-package edges). One agent whose job is to **refute the suspected cause**: "assume the suspicion is wrong; find the evidence that

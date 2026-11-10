@@ -325,20 +325,66 @@ describe("OrdersService merge paths — customer advisory lock (T3, R3)", () => 
         customers: 2,
         merged: 1,
         skipped: 0,
+        failed: 0,
         packMismatches: 0,
         livePackFallbacks: 0,
       });
       expect(warn).toHaveBeenCalledWith(expect.stringContaining("cust-A"));
     });
 
-    it("still propagates a non-lock error from a customer's merge", async () => {
+    it("B324: a non-lock error in one customer's merge is logged at error level and counted, and the next customer still merges", async () => {
+      prisma.order.groupBy
+        .mockResolvedValueOnce([
+          { customerId: "cust-A", tenantId: "tenant-1" },
+          { customerId: "cust-B", tenantId: "tenant-1" },
+        ] as any)
+        .mockResolvedValueOnce([]);
+      const warn = jest.spyOn((service as any).logger, "warn").mockImplementation(() => undefined);
+      const error = jest
+        .spyOn((service as any).logger, "error")
+        .mockImplementation(() => undefined);
+      const log = jest.spyOn((service as any).logger, "log").mockImplementation(() => undefined);
+      const merge = jest
+        .spyOn(service, "mergeAllPendingForCustomer")
+        .mockImplementation(async (customerId: string) => {
+          if (customerId === "cust-A") throw new Error("boom");
+          return { id: "winner-B" } as any;
+        });
+
+      const result = await service.sweepAllPendingOrders();
+
+      expect(merge).toHaveBeenCalledTimes(2);
+      expect(result).toEqual({
+        customers: 2,
+        merged: 1,
+        skipped: 0,
+        failed: 1,
+        packMismatches: 0,
+        livePackFallbacks: 0,
+      });
+      expect(error).toHaveBeenCalledWith(expect.stringContaining("cust-A"), expect.any(String));
+      expect(error.mock.calls[0][0]).toContain("tenant-1");
+      expect(error.mock.calls[0][0]).toContain("boom");
+      // A real fault is never hidden as a contention skip.
+      expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("cust-A"));
+      expect(log).toHaveBeenCalledWith(expect.stringContaining("1 failed"));
+    });
+
+    it("B324: a lone failing customer does not reject the sweep: it resolves with failed 1", async () => {
       prisma.order.groupBy
         .mockResolvedValueOnce([{ customerId: "cust-A", tenantId: "tenant-1" }] as any)
         .mockResolvedValueOnce([]);
       jest.spyOn((service as any).logger, "warn").mockImplementation(() => undefined);
+      jest.spyOn((service as any).logger, "log").mockImplementation(() => undefined);
+      const error = jest
+        .spyOn((service as any).logger, "error")
+        .mockImplementation(() => undefined);
       jest.spyOn(service, "mergeAllPendingForCustomer").mockRejectedValue(new Error("boom"));
 
-      await expect(service.sweepAllPendingOrders()).rejects.toThrow("boom");
+      const result = await service.sweepAllPendingOrders();
+
+      expect(result).toEqual(expect.objectContaining({ customers: 1, merged: 0, failed: 1 }));
+      expect(error).toHaveBeenCalledTimes(1);
     });
 
     it("skips a customer whose merge throws the coded 503 (LOCK_UNAVAILABLE) and continues to the next", async () => {
@@ -371,32 +417,38 @@ describe("OrdersService merge paths — customer advisory lock (T3, R3)", () => 
         customers: 2,
         merged: 1,
         skipped: 0,
+        failed: 0,
         packMismatches: 0,
         livePackFallbacks: 0,
       });
       expect(warn).toHaveBeenCalledWith(expect.stringContaining("cust-A"));
     });
 
-    it("does NOT swallow a 503 raised for some other reason — the skip is by CODE, not by exception type", async () => {
+    it("does NOT treat a 503 raised for some other reason as contention: the skip is by CODE, it is a counted failure", async () => {
       prisma.order.groupBy
         .mockResolvedValueOnce([
           { customerId: "cust-A", tenantId: "tenant-1" },
           { customerId: "cust-B", tenantId: "tenant-1" },
         ] as any)
         .mockResolvedValueOnce([]);
-      jest.spyOn((service as any).logger, "warn").mockImplementation(() => undefined);
+      const warn = jest.spyOn((service as any).logger, "warn").mockImplementation(() => undefined);
+      jest.spyOn((service as any).logger, "log").mockImplementation(() => undefined);
+      const error = jest
+        .spyOn((service as any).logger, "error")
+        .mockImplementation(() => undefined);
       const merge = jest
         .spyOn(service, "mergeAllPendingForCustomer")
         .mockRejectedValue(new ServiceUnavailableException("upstream pricing service is down"));
 
-      // Behaviour CHANGE from the type-based skip this replaced: an uncoded 503 (or an
-      // uncoded 409) used to be swallowed as contention, so a genuinely broken merge
-      // showed up only as an hourly "skipped" line and never as a failure. It now stops
-      // the sweep on the first customer.
-      await expect(service.sweepAllPendingOrders()).rejects.toBeInstanceOf(
-        ServiceUnavailableException,
-      );
-      expect(merge).toHaveBeenCalledTimes(1);
+      // An uncoded 503 (or uncoded 409) is not contention: it must never be swallowed as an
+      // hourly "skipped" line. B324: it is error-logged and counted in `failed`, and the loop
+      // goes on so one broken customer cannot leave every later customer unmerged.
+      const result = await service.sweepAllPendingOrders();
+
+      expect(merge).toHaveBeenCalledTimes(2);
+      expect(result).toEqual(expect.objectContaining({ merged: 0, skipped: 0, failed: 2 }));
+      expect(error).toHaveBeenCalledTimes(2);
+      expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("skipped customer"));
     });
   });
 });

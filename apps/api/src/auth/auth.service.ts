@@ -25,7 +25,11 @@ import {
   derivedJwtKey,
 } from "../common/derived-jwt-key";
 import { isLoginEligible, isSignInBlocked } from "./login-eligibility";
-import { mayUseVerificationLink, VERIFICATION_REFUSED } from "./verification-link-eligibility";
+import {
+  claimSignupLink,
+  verificationLinkState,
+  VERIFICATION_REFUSED,
+} from "./verification-link-eligibility";
 import { hasForeignAudience, STAFF_ACCESS_AUDIENCE, STAFF_REFRESH_AUDIENCE } from "./session-token";
 
 export interface DeviceInfo {
@@ -120,11 +124,10 @@ export class AuthService {
     // a "Resend verification email" affordance) to a deactivated staff member
     // handed them a path back to ACTIVE via TenantsService.resendVerification +
     // verifyEmailAndLogin below — a self-reactivation hole caught in review.
-    // UserStatus (prisma/schema/tenancy.prisma) has no column distinguishing
-    // "never verified" from "deliberately deactivated," so this cannot be
-    // gated safely without a schema discriminator (e.g. a nullable
-    // `emailVerifiedAt` column or a distinct `PENDING_VERIFICATION` status) —
-    // proposed as a follow-up, not built here.
+    // UserStatus alone does not tell "never verified" from "deliberately
+    // deactivated"; the sign-up link is gated by a live UserEmailVerificationToken
+    // row instead (B448, verification-link-eligibility.ts), which every
+    // deactivation burns. Login stays generic for every non-ACTIVE status.
     if (!isLoginEligible(user)) return null;
     if (user.failedLoginAttempts > 0 || user.lockedUntil) {
       await this.prisma.user.update({
@@ -487,7 +490,7 @@ export class AuthService {
   async verifyEmailAndLogin(token: string, deviceInfo?: DeviceInfo) {
     const jwtConfig = this.configService.get<AppConfig["jwt"]>("jwt")!;
 
-    let payload: { sub: string; type: string; tenantId: string; aud?: unknown };
+    let payload: { sub: string; type: string; tenantId: string; aud?: unknown; jti?: unknown };
     try {
       payload = this.jwtService.verify(token, {
         secret: this.emailVerifyKey,
@@ -516,14 +519,22 @@ export class AuthService {
       throw new BadRequestException("Account not found.");
     }
 
-    // Only a signup admin that has never signed in may be activated by this link; every other
-    // account is refused with one coded, reason-free answer (see verification-link-eligibility).
-    if (!(await mayUseVerificationLink(this.prisma, user))) {
+    // Only a signup admin that has never signed in and still holds a live sign-up link may be activated by this
+    // link; every other account is refused with one coded, reason-free answer (see verification-link-eligibility).
+    // B448: a link row is the only thing that tells a pending sign-up from an admin another admin deactivated.
+    const linkState = await verificationLinkState(this.prisma, user);
+    const linkId = typeof payload.jti === "string" && payload.jti ? payload.jti : null;
+    if (linkState === "none" || (linkState === "live" && !linkId)) {
       throw new BadRequestException({ ...VERIFICATION_REFUSED });
     }
-    // Claim the activation atomically (a second concurrent use loses) and record it in the same
-    // transaction, so a failed audit write rolls the activation back.
+    // Claim the link, then the activation, atomically (a second concurrent use loses either claim) and record it in
+    // the same transaction, so a failed audit write rolls the activation back. A legacy account (no link row was
+    // ever written for it) has nothing to claim; its status CAS is the only claim.
     const claimed = await this.prisma.tenantTransaction(async (tx) => {
+      // One lock order with resend and deactivation: the User row first, then its link rows. Taking the link row
+      // first would invert it and let a click racing a resend or a deactivation deadlock (40P01).
+      await tx.$executeRaw`SELECT 1 FROM "User" WHERE id = ${user.id} FOR UPDATE`;
+      if (linkId && !(await claimSignupLink(tx, user.id, linkId))) return false;
       const res = await tx.user.updateMany({
         where: { id: user.id, status: "INACTIVE", lastLoginAt: null },
         data: { status: "ACTIVE" },
