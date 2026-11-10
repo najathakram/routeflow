@@ -27,6 +27,9 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
+/** Source text with block and line comments removed (a comment naming a call is not a call). */
+const stripComments = (s: string) => s.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
+
 const KEYWORDS = new Set(["if", "for", "while", "switch", "catch", "return", "function"]);
 /** The name of the class method (indent 2) or top-level function (indent 0) that contains `index`, and where it starts. */
 function enclosing(text: string, index: number): { name: string; start: number } {
@@ -45,7 +48,7 @@ const CREATE_RE = /invoicePayment\s*\.\s*create\b/g;
 const OTHER_WRITE_RE =
   /invoicePayment\s*\.\s*(?:createMany|createManyAndReturn|upsert)\b|(?:payments|invoicePayments|applications):\s*\{\s*(?:create|createMany|connectOrCreate|upsert)\b/g;
 
-type Gate = "GATED" | "GATED_BY_SOURCE" | "EXEMPT";
+type Gate = "GATED" | "GATED_BY_SOURCE" | "GATED_SKIP" | "EXEMPT";
 interface Site {
   file: string;
   fn: string;
@@ -80,22 +83,22 @@ const SITES: Site[] = [
   {
     file: "import/import.service.ts",
     fn: "importInvoices",
-    gate: "EXEMPT",
-    why: "historical import: reproduces the source system's ledger for an invoice that is not an offline order.",
+    gate: "GATED_SKIP",
+    why: "the re-import by Invoice ID: its status sync can flip an order-linked prior to PAID/PARTIAL with a synthetic payment; the locked row asks hasOpenReviewBlock and the row is skipped with a stated reason (SA-1130).",
     caller: "ImportService (upload)",
   },
   {
     file: "import/import.service.ts",
     fn: "importInvoices",
     gate: "EXEMPT",
-    why: "historical import: reproduces the source system's ledger for an invoice that is not an offline order.",
+    why: "creates a new invoice with no order link, so no review flag can apply (its synthetic payment reproduces the source ledger).",
     caller: "ImportService (upload)",
   },
   {
     file: "import/import.service.ts",
     fn: "importPayments",
-    gate: "EXEMPT",
-    why: "historical import: reproduces the source system's payment rows.",
+    gate: "GATED_SKIP",
+    why: "a payments file reaches any invoice by number, order-linked ones included; the locked row asks hasOpenReviewBlock and the row is skipped with a stated reason, the zoho-import placeholder kept (SA-1130).",
     caller: "ImportService (upload)",
   },
   {
@@ -123,7 +126,7 @@ const SITES: Site[] = [
 ];
 
 /** The exemption lists, count-pinned (OP-7). Growing either one is a decision, made here and nowhere else. */
-const EXEMPT_CREATE_SITES = 4;
+const EXEMPT_CREATE_SITES = 2; // driver cash at the door, and the brand-new imported invoice (SA-1130: 4 -> 2)
 const EXEMPT_SOURCES = ["STRIPE_SETTLE"];
 
 describe("the InvoicePayment write census, review-gate axis (SA-1124 PR-1b)", () => {
@@ -157,17 +160,43 @@ describe("the InvoicePayment write census, review-gate axis (SA-1124 PR-1b)", ()
     expect(EXEMPT_SOURCES).toEqual(["STRIPE_SETTLE"]);
   });
 
-  it("a GATED site calls assertOrderReviewed before the write; an EXEMPT site never does", () => {
-    const byFile = new Map<string, typeof found>();
-    for (const s of found) byFile.set(s.file, [...(byFile.get(s.file) ?? []), s]);
+  it("a GATED site calls assertOrderReviewed before the write; a GATED_SKIP site asks hasOpenReviewBlock in the write's own transaction, after the refusal check; an EXEMPT site never throws the guard", () => {
+    // SITES lists the sites in file order, so a repeated file#fn pairs with its n-th write
+    const seen = new Map<string, number>();
     for (const site of SITES) {
-      const here = found.find((f) => f.file === site.file && f.fn === site.fn)!;
-      const body = here.text.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
+      const key = `${site.file}#${site.fn}`;
+      const nth = seen.get(key) ?? 0;
+      seen.set(key, nth + 1);
+      const here = found.filter((f) => f.file === site.file && f.fn === site.fn)[nth]!;
+      const body = stripComments(here.text);
       const calls = /assertOrderReviewed\(/.test(body);
-      if (site.gate === "EXEMPT")
-        expect({ site: site.fn, gate: calls }).toEqual({ site: site.fn, gate: false });
+      if (site.gate === "EXEMPT" || site.gate === "GATED_SKIP")
+        expect({ site: site.fn, throws: calls }).toEqual({ site: site.fn, throws: false });
       else expect({ site: site.fn, gate: calls }).toEqual({ site: site.fn, gate: true });
+      if (site.gate === "GATED_SKIP") {
+        // from the start of the write's own tenantTransaction to the write: the refusal check, then the skip
+        const text = read(site.file);
+        const tx = text.slice(text.lastIndexOf("tenantTransaction(", here.at), here.at);
+        const txBody = stripComments(tx);
+        const refusal = txBody.indexOf("importPaymentRefusal(");
+        const ask = txBody.indexOf("hasOpenReviewBlock(");
+        expect({ site: site.fn, order: refusal >= 0 && ask > refusal }).toEqual({
+          site: site.fn,
+          order: true,
+        });
+        expect(txBody).toContain("new ImportRowRefused(IMPORT_REVIEW_REQUIRED_REASON)");
+      }
     }
+  });
+
+  it("import.service.ts asks the non-throwing predicate in exactly 3 places (the 3 existing-invoice branches) and never the throwing guard (SA-1130)", () => {
+    const text = stripComments(read("import/import.service.ts"));
+    expect((text.match(/hasOpenReviewBlock\(/g) ?? []).length).toBe(3);
+    expect((text.match(/assertOrderReviewed\(/g) ?? []).length).toBe(0);
+    // one named reason, shared by the three skips
+    expect(
+      (text.match(/new ImportRowRefused\(IMPORT_REVIEW_REQUIRED_REASON\)/g) ?? []).length,
+    ).toBe(3);
   });
 
   it("no createMany / upsert / nested payments create exists anywhere (it would bypass this census)", () => {

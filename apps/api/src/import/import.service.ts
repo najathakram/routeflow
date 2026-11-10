@@ -131,6 +131,7 @@ import {
 } from "./import-pack-reading";
 import { ensureWriteOffEvent } from "../invoices/invoice-write-off";
 import { lockInvoiceRow } from "../invoices/invoice-send-guard";
+import { hasOpenReviewBlock } from "../orders/offline/order-review-gate";
 import { columnEntitlementDenied } from "./import-column-entitlement";
 import { maskedIdentity } from "../customers/customer-identity-fields";
 
@@ -146,6 +147,14 @@ const IMPORT_IDENTITY_COMPARE = { taxId: false, tobaccoLicenseNo: false } as con
 const IDENTITY_DIFF_FIELDS = new Set(["taxId", "tobaccoLicenseNo"]);
 
 const MAX_IMPORT_ROWS = 20_000;
+
+/**
+ * SA-1130: the one reason a row is skipped when its invoice belongs to an order with an open price-change review. The
+ * import writes to an EXISTING invoice (status sync, synthetic or real payment) only after the order is reviewed; a
+ * skipped row writes nothing and the file never fails over it.
+ */
+const IMPORT_REVIEW_REQUIRED_REASON =
+  "This order has a price change to review. Review it, then import this row again.";
 
 /**
  * B268/D4: the external-ref source recorded for invoice CSV rows that carry NO
@@ -1585,6 +1594,12 @@ export class ImportService {
               if (!needsUpdate) return false;
               const refused = locked ? importPaymentRefusal(locked.status) : null;
               if (refused) throw new ImportRowRefused(`${refused} — re-import skipped`);
+              // SA-1130: an order-linked invoice with an open price review is not moved past it by a file.
+              if (
+                locked?.orderId &&
+                (await hasOpenReviewBlock(tx, locked.orderId, locked.tenantId ?? undefined))
+              )
+                throw new ImportRowRefused(IMPORT_REVIEW_REQUIRED_REASON);
               await tx.invoice.update({
                 where: { id: existing.id },
                 data: { status, dueDate, paidAt },
@@ -1671,6 +1686,12 @@ export class ImportService {
               if (!needsUpdate) return false;
               const refused = locked ? importPaymentRefusal(locked.status) : null;
               if (refused) throw new ImportRowRefused(`${refused} — re-import skipped`);
+              // SA-1130: as the source-number branch above (this one also writes the synthetic payment below).
+              if (
+                locked?.orderId &&
+                (await hasOpenReviewBlock(tx, locked.orderId, locked.tenantId ?? undefined))
+              )
+                throw new ImportRowRefused(IMPORT_REVIEW_REQUIRED_REASON);
               await tx.invoice.update({
                 where: { id: prior.id },
                 data: { status, dueDate, paidAt },
@@ -1987,10 +2008,16 @@ export class ImportService {
           // no payment, and the zoho-import placeholder is kept.
           const current = await tx.invoice.findFirst({
             where: { id: invoice.id },
-            select: { status: true },
+            select: { status: true, orderId: true, tenantId: true },
           });
           const refused = current ? importPaymentRefusal(current.status) : null;
           if (refused) throw new ImportRowRefused(refused);
+          // SA-1130: no payment lands on an order whose price change is still to review (row skipped, placeholder kept).
+          if (
+            current?.orderId &&
+            (await hasOpenReviewBlock(tx, current.orderId, current.tenantId ?? undefined))
+          )
+            throw new ImportRowRefused(IMPORT_REVIEW_REQUIRED_REASON);
           await tx.invoicePayment.deleteMany({
             where: { invoiceId: invoice.id, reference: "zoho-import" },
           });
