@@ -1002,6 +1002,9 @@ model OrderReviewFlag {
 
   @@index([tenantId, orderId])
   @@index([tenantId, kind, resolvedAt])
+  @@index([orderId])
+  @@index([orderItemId])
+  @@index([resolvedById])
 }
 
 // #2717 M3 (SA-572 A1/I9/I12): the frozen per-component snapshot of a FIXED order line. Sum of qty

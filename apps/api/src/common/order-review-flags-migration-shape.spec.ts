@@ -103,6 +103,17 @@ describe("SA-1124 PR-0 migration folder", () => {
     );
   });
 
+  it("indexes every foreign key column that has no leading index (a parent delete must not scan the table)", () => {
+    const flat = squash(executable);
+    for (const col of ["orderId", "orderItemId", "resolvedById"]) {
+      expect(flat).toContain(
+        `CREATE INDEX "OrderReviewFlag_${col}_idx" ON "OrderReviewFlag"("${col}");`,
+      );
+    }
+    // tenantId leads both composite indexes, so the Tenant FK needs no index of its own
+    expect(flat).not.toContain(`"OrderReviewFlag_tenantId_idx"`);
+  });
+
   it("needs no squawk-ignore: the table is new and the gate keeps only the destructive rules", () => {
     expect(sql).not.toMatch(/squawk-ignore/);
   });
@@ -136,11 +147,25 @@ describe("SA-1124 PR-0 migration folder", () => {
     expect((model![0].match(/onDelete: SetNull/g) ?? []).length).toBe(2);
     expect(model![0]).toMatch(/@@index\(\[tenantId, orderId\]\)/);
     expect(model![0]).toMatch(/@@index\(\[tenantId, kind, resolvedAt\]\)/);
+    expect(model![0]).toMatch(/^\s*@@index\(\[orderId\]\)\s*$/m);
+    expect(model![0]).toMatch(/^\s*@@index\(\[orderItemId\]\)\s*$/m);
+    expect(model![0]).toMatch(/^\s*@@index\(\[resolvedById\]\)\s*$/m);
 
     const order = sales.match(/model Order \{[\s\S]*?\n\}/);
     expect(order![0]).toMatch(/^\s*offlineCreatedAt\s+DateTime\?\s*$/m);
     expect(order![0]).toMatch(/^\s*reviewFlags\s+OrderReviewFlag\[\]\s*$/m);
     const item = sales.match(/model OrderItem \{[\s\S]*?\n\}/);
     expect(item![0]).toMatch(/^\s*reviewFlags\s+OrderReviewFlag\[\]\s*$/m);
+  });
+
+  it("is in the tenant RLS set: apply-rls.js and BOTH table literals of the deferred RLS migration", () => {
+    const applyRls = readFileSync(join(__dirname, "..", "..", "scripts", "apply-rls.js"), "utf8");
+    expect(applyRls).toMatch(/^\s*"OrderReviewFlag",\s*$/m);
+    const deferred = readFileSync(
+      join(__dirname, "..", "..", "prisma", "deferred-rls", "20260909000000_rls", "migration.sql"),
+      "utf8",
+    );
+    // the apply and the rollback/verify halves each carry one ARRAY literal; both must list the table
+    expect((deferred.match(/'OrderReviewFlag'/g) ?? []).length).toBe(2);
   });
 });

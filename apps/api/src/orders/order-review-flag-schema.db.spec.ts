@@ -111,6 +111,16 @@ describeDb("SA-1124 PR-0 OrderReviewFlag schema — real Postgres", () => {
     ]);
   });
 
+  it("every foreign key column has an index that leads with it (a parent delete does not scan the table)", async () => {
+    const { rows } = await pool.query(
+      `SELECT indexdef FROM pg_indexes WHERE schemaname = current_schema() AND tablename = 'OrderReviewFlag'`,
+    );
+    const defs: string[] = rows.map((r) => r.indexdef);
+    for (const col of ["orderId", "orderItemId", "resolvedById"]) {
+      expect(defs.some((d) => d.includes(`("${col}")`))).toBe(true);
+    }
+  });
+
   it("M2: a resolvedAt without a resolution is refused, and a resolution without a resolvedAt", async () => {
     const order = await newOrder();
     expect(await stateOf(flag(order.id, { resolvedAt: new Date() }))).toBe("23514");
