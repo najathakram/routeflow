@@ -59,7 +59,7 @@
 //   node scripts/campaign/bugs.mjs sync [--quiet] [--rescan] [--check]    # derive History from the ledger + an ANCHORED git scan (idempotent; Gate 4 runs this every turn)
 //     --check: read-only; exits 1 naming records whose front matter lags the ledger (front matter only; the commit scan is out of scope) (the pre-push self-test runs it on the real tree)
 //   node scripts/campaign/bugs.mjs show <B###>
-//   node scripts/campaign/bugs.mjs note <B###> "<text>" [--section "Root cause"]
+//   node scripts/campaign/bugs.mjs note <B###> "<text>" [--section "Root cause" [--replace]]   # --section APPENDS under the existing body (a placeholder section is replaced); --replace overwrites on purpose
 //   node scripts/campaign/bugs.mjs index                        # rebuild bugs.jsonl from the records (regenerate, never hand-edit)
 //   node scripts/campaign/bugs.mjs brief <F##|B###>             # everything an agent needs to start a batch, in one output
 //   node scripts/campaign/bugs.mjs prove <B###> --pr <n> --proof "REG-B### ..." [--pending-deploy] [--build-plan <path>]  (--build-plan is REQUIRED for a T3 row)
@@ -1551,6 +1551,19 @@ function replaceSection(body, sectionName, text) {
   return body.replace(rx, (_m, heading) => `${heading}${text}\n`);
 }
 
+// B840: the default way `note --section` writes — APPEND under what is already there (blank line
+// between), so a second analyst never destroys the first one's text. A section that is still the
+// placeholder (or empty) has nothing to keep, so it is replaced. Built on replaceSection so the
+// heading-bounded regex and the $-safe replacement live in exactly one place.
+function appendToSection(body, sectionName, text) {
+  const rx = new RegExp(`## ${sectionName}\\n\\n([\\s\\S]*?)(?=\\n## |$)`);
+  const m = rx.exec(body);
+  if (!m) return null;
+  const existing = m[1].replace(/\s+$/, "");
+  if (existing === "" || existing === UNANALYSED) return replaceSection(body, sectionName, text);
+  return replaceSection(body, sectionName, `${existing}\n\n${text}`);
+}
+
 const frontFor = (bug, st) => ({
   id: bug.id,
   title: bug.title,
@@ -1967,25 +1980,31 @@ cmds.show = (args) => {
   process.stdout.write(readFileSync(recordPath(id), "utf8"));
 };
 
-// How an analysis agent writes its findings back. `--section` replaces one
-// narrative section; without it the text lands as a history note.
+// How an analysis agent writes its findings back. `--section` APPENDS to one narrative section
+// (a placeholder section is replaced; `--replace` overwrites on purpose); without `--section` the
+// text lands as a history note.
 cmds.note = (args) => {
   const typed = (args[0] ?? "").toUpperCase();
   const text = args[1];
   if (!BUG_ID_RE.test(typed) || !text || text.startsWith("--"))
-    fail('usage: note <B###> "<text>" [--section "Root cause"]');
+    fail('usage: note <B###> "<text>" [--section "Root cause" [--replace]]');
   const id = resolveId(typed);
   const rec = readRecord(id);
   if (!rec) fail(`no record for ${id} — run \`expand\``);
   const section = flag(args, "section");
+  const replace = args.includes("--replace");
+  if (replace && !section)
+    fail("--replace only applies together with --section (there is no section to replace)");
 
   if (section) {
     const match = SECTIONS.find((s) => s.toLowerCase() === section.toLowerCase());
     if (!match) fail(`--section must be one of: ${SECTIONS.join(" | ")}`);
-    const body = replaceSection(rec.body, match, text);
+    const body = replace
+      ? replaceSection(rec.body, match, text)
+      : appendToSection(rec.body, match, text);
     if (body === null) fail(`section "${match}" not found in ${id}`);
     writeRecord(id, rec.front, body);
-    console.log(`${id}: wrote "${match}".`);
+    console.log(`${id}: ${replace ? "replaced" : "appended to"} "${match}".`);
   } else {
     const key = `note-${Date.now()}`;
     writeRecord(id, rec.front, appendHistory(rec.body, key, "note", text));
@@ -8979,6 +8998,72 @@ cmds["self-test"] = () => {
         { code: 0, mirrors: true },
       );
     } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  // B840: `note --section` used to REPLACE the section body, destroying an earlier analyst's text
+  // (it caused a real loss). It now APPENDS under the existing body; a section still holding the
+  // placeholder is replaced by the text; `--replace` is the explicit opt-in for the old behaviour.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
+    const prevRoot = process.env.BUGS_ROOT;
+    process.env.BUGS_ROOT = tmp;
+    try {
+      cmds.file([
+        "note append fixture",
+        "--location",
+        "apps/api/src/self-test.ts",
+        "--severity",
+        "low",
+      ]);
+      const section = (name) =>
+        readRecord("B1").body.match(new RegExp(`## ${name}\\n\\n([\\s\\S]*?)(?=\\n## |$)`))?.[1] ??
+        null;
+      // A fresh record carries the placeholder in every section; seed Summary with one analysis.
+      cmds.note(["B1", "OLD TEXT", "--section", "Summary"]);
+      cmds.note(["B1", "SECOND TEXT", "--section", "Summary"]);
+      check(
+        "B840: note --section appends under the existing body (blank line between)",
+        section("Summary"),
+        "OLD TEXT\n\nSECOND TEXT\n",
+      );
+      cmds.note(["B1", "THIRD $& TEXT", "--section", "Summary"]);
+      check(
+        "B840: a second append keeps every earlier paragraph and $-patterns verbatim",
+        section("Summary"),
+        "OLD TEXT\n\nSECOND TEXT\n\nTHIRD $& TEXT\n",
+      );
+      cmds.note(["B1", "FIRST ANALYSIS", "--section", "Root cause"]);
+      check(
+        "B840: a section still holding the placeholder is replaced, not appended to",
+        section("Root cause"),
+        "FIRST ANALYSIS\n",
+      );
+      cmds.note(["B1", "ONLY THIS", "--section", "Summary", "--replace"]);
+      check(
+        "B840: --replace is the explicit opt-in for the old replace behaviour",
+        section("Summary"),
+        "ONLY THIS\n",
+      );
+      check(
+        "B840: an unrelated section is left alone by every note",
+        section("Root cause"),
+        "FIRST ANALYSIS\n",
+      );
+      const strayReplace = runCli(["note", "B1", "x", "--replace"], tmp);
+      check(
+        "B840: --replace without --section is refused (nothing to replace)",
+        {
+          code: strayReplace.code,
+          namesFlag: /--replace/.test(strayReplace.out),
+          summary: section("Summary"),
+        },
+        { code: 1, namesFlag: true, summary: "ONLY THIS\n" },
+      );
+    } finally {
+      if (prevRoot === undefined) delete process.env.BUGS_ROOT;
+      else process.env.BUGS_ROOT = prevRoot;
       rmSync(tmp, { recursive: true, force: true });
     }
   }
