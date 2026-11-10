@@ -2,7 +2,7 @@ import { ArrayMaxSize, ArrayUnique, IsArray, IsDateString, IsUUID } from "class-
 
 /**
  * Equal copy of `LINE_ORDER_MAX_IDS` in packages/types/api/line-order.ts (this app never value-imports that package at
- * runtime); `common/line-order-types-parity.spec.ts` pins the two.
+ * runtime); `orders/dto/reorder-lines.dto.spec.ts` pins the two.
  */
 export const LINE_ORDER_MAX_IDS = 1000;
 
