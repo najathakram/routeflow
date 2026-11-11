@@ -13,6 +13,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import type { PrismaService } from "../prisma/prisma.service";
 import { computeEditWindow } from "./edit-window";
 import { seesInvoicesNeedReview } from "./order-invoices-review";
+import { followOrderLineOrder } from "../invoices/invoice-follow-order";
 import { ORDER_LINE_ORDER_BY } from "./line-position";
 import type { ReorderLinesDto } from "./dto/reorder-lines.dto";
 
@@ -114,6 +115,7 @@ export async function reorderOrderLines(
     if (rearranged) {
       updatedAt = new Date();
       await tx.order.update({ where: { id: orderId }, data: { updatedAt } });
+      await followOrderLineOrder(tx, orderId); // PR-1e: the invoices take the new order in this transaction
       await tx.auditLog.create({
         data: {
           tenantId: order.tenantId,
