@@ -8,6 +8,7 @@ Shared workspace packages (types, UI, configs) consumed by apps via npm workspac
 | ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
 | Money math (line totals, tax, promos, tiers)                                                               | `packages/pricing/src/` → `pricing.ts`, `tier-pricing.ts`                  |
 | Payment-confirmation predicate (B421 cash/credit/advance split)                                            | `packages/pricing/src/payment-confirmation.ts`                             |
+| One count of an order's or invoice's lines and units (W-1185)                                            | `packages/pricing/src/line-counts.ts` (`summarizeLineCounts`, `formatLineCounts`, `formatInvoiceLineCounts`) |
 | Held/capacity money (PR-1: PENDING, HELD_STATUSES, remainingCapacity)                                      | `packages/pricing/src/payment-confirmation.ts`                             |
 | Check-lifecycle transition table (`CHECK_TRANSITIONS`, canonical; web/mobile import it directly)           | `packages/types/api/checks.ts`                                             |
 | Check-lifecycle transition table, API-local copy (`setCheckStatus` imports THIS, never `@routeflow/types`) | `apps/api/src/common/check-transitions.ts`                                 |
