@@ -13,6 +13,11 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import type { PrismaService } from "../prisma/prisma.service";
 import { computeEditWindow } from "./edit-window";
 import { seesInvoicesNeedReview } from "./order-invoices-review";
+import { sortPrintedLines } from "@routeflow/pricing";
+import {
+  LINE_NAME_PRODUCT_SELECT,
+  orderLineInvoiceDescription,
+} from "../invoices/invoice-line-name";
 import { followOrderLineOrder } from "../invoices/invoice-follow-order";
 import { ORDER_LINE_ORDER_BY } from "./line-position";
 import type { ReorderLinesDto } from "./dto/reorder-lines.dto";
@@ -93,20 +98,43 @@ export async function reorderOrderLines(
 
     const lines = await tx.orderItem.findMany({
       where: { orderId },
-      select: { id: true, position: true },
+      select: {
+        id: true,
+        position: true,
+        // the facts Sort A to Z reads: the description the invoice copy would store, the pack and the product
+        name: true,
+        productId: true,
+        boxes: true,
+        unitsPerBox: true,
+        product: { select: LINE_NAME_PRODUCT_SELECT },
+      },
       orderBy: ORDER_LINE_ORDER_BY,
     });
+    // Sort A to Z (ruling 7): the permutation is computed here, once, from the lines as locked; never a stored view mode.
+    // It sorts cancelled rows too (the id list is always every line), on the description an invoice copy would print.
+    const lineIds =
+      dto.sort === "name"
+        ? sortPrintedLines(
+            lines.map((l) => ({
+              id: l.id,
+              description: orderLineInvoiceDescription(l),
+              productId: l.productId,
+              boxes: l.boxes,
+              unitsPerBox: l.unitsPerBox, // the line's own sale-time pack, never the live product's (units_v1 call-site ratchet)
+            })),
+          ).map((l) => l.id)
+        : (dto.lineIds ?? []);
     const have = new Set(lines.map((l) => l.id));
-    if (dto.lineIds.length !== lines.length || !dto.lineIds.every((id) => have.has(id))) {
+    if (lineIds.length !== lines.length || !lineIds.every((id) => have.has(id))) {
       throw changed(); // missing, extra or foreign (the DTO already refused a duplicate)
     }
 
     const before = lines.map((l) => l.id);
-    const rearranged = dto.lineIds.some((id, i) => id !== before[i]);
+    const rearranged = lineIds.some((id, i) => id !== before[i]);
     const stored = new Map(lines.map((l) => [l.id, l.position]));
-    for (let i = 0; i < dto.lineIds.length; i++) {
-      if (stored.get(dto.lineIds[i]) !== i) {
-        await tx.orderItem.update({ where: { id: dto.lineIds[i] }, data: { position: i } });
+    for (let i = 0; i < lineIds.length; i++) {
+      if (stored.get(lineIds[i]) !== i) {
+        await tx.orderItem.update({ where: { id: lineIds[i] }, data: { position: i } });
       }
     }
 
@@ -123,7 +151,7 @@ export async function reorderOrderLines(
           action: LINES_REORDERED_ACTION,
           entityType: "Order",
           entityId: orderId,
-          meta: { role: user.role, before, after: dto.lineIds },
+          meta: { role: user.role, before, after: lineIds },
         },
       });
     } else {
@@ -133,7 +161,7 @@ export async function reorderOrderLines(
     return {
       id: orderId,
       updatedAt: updatedAt.toISOString(),
-      lineIds: dto.lineIds,
+      lineIds,
       linesRearranged: {
         by: user.role === UserRole.CUSTOMER ? "CUSTOMER" : "STAFF",
         at: at.toISOString(),
