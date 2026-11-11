@@ -119,3 +119,68 @@ describe("reorderOrderLines: the buyer ownership check runs before the row lock"
     expect(lock).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("reorderOrderLines: existing invoices follow (W-1187 PR-1e, ruling (4)/(6))", () => {
+  const inv = (id: string, rows: Array<[string, string | null, number | null]>) => ({
+    id,
+    items: rows.map(([rid, orderItemId, position]) => ({
+      id: rid,
+      orderItemId,
+      position,
+      createdAt: AT,
+      description: rid,
+      productId: orderItemId,
+    })),
+  });
+  function withInvoices(invoices: unknown[]) {
+    const ctx = build({ tenantId: "t1" });
+    const tx = ctx.tx as Record<string, any>;
+    tx.invoice = { findMany: jest.fn().mockResolvedValue(invoices) };
+    tx.invoiceItem = { update: jest.fn() };
+    // the order's lines AFTER the reorder wrote them: b first, then a
+    tx.order.findUnique = jest.fn().mockResolvedValue({
+      lineItems: [
+        { id: "b", position: 0, createdAt: AT },
+        { id: "a", position: 1, createdAt: AT },
+      ],
+    });
+    return { ...ctx, tx };
+  }
+  const swap = { expectedUpdatedAt: AT.toISOString(), lineIds: ["b", "a"] };
+
+  it("R-follow: a draft/sent invoice billed [a, b] is re-ranked [b, a] in the same call, unlinked lines stay last", async () => {
+    const { tx, deps } = withInvoices([
+      inv("i1", [
+        ["ia", "a", 0],
+        ["ib", "b", 1],
+        ["fee", null, 2],
+      ]),
+    ]);
+    await reorderOrderLines(deps, "o1", swap as never, staff);
+    expect(tx.invoice.findMany.mock.calls[0][0].where).toMatchObject({
+      orderId: "o1",
+      status: { not: "VOID" },
+    });
+    const wrote = Object.fromEntries(
+      tx.invoiceItem.update.mock.calls.map(([a]: any) => [a.where.id, a.data.position]),
+    );
+    expect(wrote).toEqual({ ib: 0, ia: 1 });
+  });
+
+  it("a legacy invoice (any NULL position) is left alone: it prints A-Z for good (owner Q2)", async () => {
+    const { tx, deps } = withInvoices([
+      inv("old", [
+        ["ia", "a", null],
+        ["ib", "b", null],
+      ]),
+    ]);
+    await reorderOrderLines(deps, "o1", swap as never, staff);
+    expect(tx.invoiceItem.update).not.toHaveBeenCalled();
+  });
+
+  it("an order whose lines did not move touches no invoice", async () => {
+    const { tx, deps } = withInvoices([inv("i1", [["ia", "a", 0]])]);
+    await reorderOrderLines(deps, "o1", dto, staff);
+    expect(tx.invoice.findMany).not.toHaveBeenCalled();
+  });
+});

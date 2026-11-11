@@ -183,6 +183,8 @@ describeDb("W-1187 PR-1b: reordering an order's lines (real Postgres)", () => {
 
   afterAll(async () => {
     await raw.auditLog.deleteMany({ where: { tenantId } });
+    await raw.invoiceItem.deleteMany({ where: { tenantId } });
+    await raw.invoice.deleteMany({ where: { tenantId } });
     await raw.orderItem.deleteMany({ where: { tenantId } });
     await raw.order.deleteMany({ where: { tenantId } });
     await raw.product.deleteMany({ where: { id: { in: productIds } } });
@@ -196,6 +198,8 @@ describeDb("W-1187 PR-1b: reordering an order's lines (real Postgres)", () => {
 
   beforeEach(async () => {
     await raw.auditLog.deleteMany({ where: { tenantId } });
+    await raw.invoiceItem.deleteMany({ where: { tenantId } });
+    await raw.invoice.deleteMany({ where: { tenantId } });
     await raw.orderItem.deleteMany({ where: { tenantId } });
     await raw.order.deleteMany({ where: { tenantId } });
   });
@@ -507,6 +511,76 @@ describeDb("W-1187 PR-1b: reordering an order's lines (real Postgres)", () => {
       expect(staffView.lineItems.map((l: any) => label.get(l.productId))).toEqual(["B", "A", "C"]);
       const buyerView: any = await inTenant(() => orders.findOne(o.id, buyer()));
       expect(buyerView.linesRearranged).toBeUndefined();
+    });
+  });
+  describe("W-1187 PR-1e: the order's invoices follow (R-follow)", () => {
+    let n = 0;
+    async function invoiceOf(
+      o: { id: string; lineItems: any[] },
+      status: string,
+      rows: Array<[string, number | null]>,
+    ) {
+      const inv = await raw.invoice.create({
+        data: {
+          tenantId,
+          customerId: customers.buyer,
+          orderId: o.id,
+          invoiceNumber: `INV-1187-${run}-${++n}`,
+          status: status as any,
+          subtotal: 3,
+          total: 3,
+        } as any,
+      });
+      for (const [tag, at] of rows) {
+        await raw.invoiceItem.create({
+          data: {
+            invoiceId: inv.id,
+            tenantId,
+            description: tag === "fee" ? "Delivery fee" : tag,
+            productId:
+              tag === "fee"
+                ? null
+                : o.lineItems.find((l) => label.get(l.productId) === tag)!.productId,
+            orderItemId: tag === "fee" ? null : lineId(o, tag),
+            qty: 1,
+            unitPrice: 1,
+            subtotal: 1,
+            position: at,
+          } as any,
+        });
+      }
+      return inv;
+    }
+    const shown = async (invoiceId: string) =>
+      (await raw.invoiceItem.findMany({ where: { invoiceId }, orderBy: { position: "asc" } })).map(
+        (i) => i.description,
+      );
+
+    it("R-follow: DRAFT and SENT invoices re-rank in the reorder's transaction; VOID and legacy stay put", async () => {
+      const o = await abc();
+      const rows: Array<[string, number | null]> = [
+        ["A", 0],
+        ["B", 1],
+        ["C", 2],
+        ["fee", 3],
+      ];
+      const draft = await invoiceOf(o, "DRAFT", rows);
+      const sent = await invoiceOf(o, "SENT", rows);
+      const voided = await invoiceOf(o, "VOID", rows);
+      const legacy = await invoiceOf(o, "SENT", [
+        ["A", null],
+        ["B", null],
+        ["C", null],
+      ]);
+      await reorder(o, [lineId(o, "C"), lineId(o, "A"), lineId(o, "B")]);
+      expect(await shown(draft.id)).toEqual(["C", "A", "B", "Delivery fee"]);
+      expect(await shown(sent.id)).toEqual(["C", "A", "B", "Delivery fee"]);
+      expect(await shown(voided.id)).toEqual(["A", "B", "C", "Delivery fee"]);
+      expect(
+        (await raw.invoiceItem.findMany({ where: { invoiceId: legacy.id } })).map(
+          (i) => i.position,
+        ),
+      ).toEqual([null, null, null]);
     });
   });
 });
