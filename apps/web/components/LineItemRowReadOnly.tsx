@@ -74,6 +74,10 @@ export interface LineItemRowReadOnlyProps {
    */
   footer?: React.ReactNode;
   className?: string;
+  /** W-1187: a sortable list draws its move handle at the row's leading edge and owns the row's ref and drag style. */
+  leading?: React.ReactNode;
+  rowRef?: React.Ref<HTMLLIElement>;
+  rowStyle?: React.CSSProperties;
 }
 
 /**
@@ -108,6 +112,9 @@ export function LineItemRowReadOnly({
   backorderPieces,
   footer,
   className,
+  leading,
+  rowRef,
+  rowStyle,
 }: LineItemRowReadOnlyProps) {
   const [imageFailed, setImageFailed] = React.useState(false);
   const { stem, anchor } = splitProductName(displayName);
@@ -157,7 +164,12 @@ export function LineItemRowReadOnly({
   const freeCount = Math.max(0, Math.trunc(Number(freeUnits ?? 0) || 0));
 
   return (
-    <li className={cn("flex items-start gap-3 px-3 py-3", cancelled && "opacity-50", className)}>
+    <li
+      ref={rowRef}
+      style={rowStyle}
+      className={cn("flex items-start gap-3 px-3 py-3", cancelled && "opacity-50", className)}
+    >
+      {leading}
       {/* Reserved 40x40 in every case so a missing/failed image never shifts the row. */}
       <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md bg-surface-raised">
         {thumbnailUrl && !imageFailed ? (

@@ -15,6 +15,33 @@ import { RestrictionOverrideNote } from "@/components/RestrictionOverrideNote";
 import { displayLineStatus } from "./line-status";
 import { lineDisplayPack } from "@/lib/line-own-pack";
 import { ComponentSubLines } from "@/components/ComponentSubLines";
+import { SortableLines, useSortableLine } from "@/components/SortableLines";
+import { useOrderLineOrder } from "@/lib/use-order-line-order";
+
+/** The row's move handle, drawn by the product cell at the row's leading edge (null when moving is off). */
+const HandleSlot = React.createContext<React.ReactNode>(null);
+
+/** One line's `<tr>`: sortable, and it hands its handle to the product cell. */
+function SortableRow({
+  id,
+  className,
+  children,
+}: {
+  id: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  const { setNodeRef, style, handle } = useSortableLine(id);
+  return (
+    <tr role="row" ref={setNodeRef} style={style} className={className}>
+      <HandleSlot.Provider value={handle}>{children}</HandleSlot.Provider>
+    </tr>
+  );
+}
+
+function RowHandle() {
+  return <>{React.useContext(HandleSlot)}</>;
+}
 
 /**
  * Below md each `<tr role="row">` re-flows into a stacked card (row 508): product full width, then Qty,
@@ -31,18 +58,68 @@ const CARD_CELL =
  * the markup below is the page's own, with `order.lineItems` / `order.status` renamed to the
  * `lineItems` / `orderStatus` props.
  */
-export function OrderLineItemsTable({
-  lineItems,
-  orderStatus,
-  fulfillPath,
-  total,
+export function OrderLineItemsTable(props: TableProps) {
+  // Without the order's id and `updatedAt` the list is read-only: no move hook, no providers needed.
+  return props.orderId && props.updatedAt ? (
+    <MovableLines {...props} />
+  ) : (
+    <TableBody {...props} shown={props.lineItems} Row={PlainRow} />
+  );
+}
+
+function MovableLines(props: TableProps) {
+  const order = useOrderLineOrder({
+    orderId: props.orderId,
+    updatedAt: props.updatedAt,
+    lineItems: props.lineItems,
+    enabled: props.orderStatus !== "CANCELLED",
+  });
+  return (
+    <SortableLines lines={order.lines} onMove={order.onMove} enabled={order.canMove}>
+      <TableBody {...props} shown={order.shown} Row={SortableRow} />
+    </SortableLines>
+  );
+}
+
+type RowComponent = React.ComponentType<{
+  id: string;
+  className?: string;
+  children: React.ReactNode;
+}>;
+
+function PlainRow({
+  className,
+  children,
 }: {
+  id: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <tr role="row" className={className}>
+      {children}
+    </tr>
+  );
+}
+
+interface TableProps {
   lineItems: OrderItem[];
   orderStatus: string;
   /** The order's path: a default line on an open PICKUP order shows no status badge (SA-1066 F15). */
   fulfillPath?: string | null;
   total: number;
-}) {
+  /** W-1187: with the order's id and `updatedAt` the lines can be dragged into any order; without them the list is read-only. */
+  orderId?: string;
+  updatedAt?: string;
+}
+
+function TableBody({
+  shown,
+  Row,
+  orderStatus,
+  fulfillPath,
+  total,
+}: TableProps & { shown: OrderItem[]; Row: RowComponent }) {
   return (
     <div className="-mx-6 -mb-6 overflow-x-auto">
       <table role="table" className="w-full text-sm max-md:block">
@@ -84,10 +161,10 @@ export function OrderLineItemsTable({
           </tr>
         </thead>
         <tbody role="rowgroup" className="divide-y divide-surface-border max-md:block max-md:px-6">
-          {lineItems.map((li) => (
-            <tr
-              role="row"
+          {shown.map((li) => (
+            <Row
               key={li.id}
+              id={li.id}
               className={cn(
                 "hover:bg-surface-raised",
                 // r4 Q21: below md a line is a divided row in the one Line Items card, not a bordered card nested in it.
@@ -95,8 +172,18 @@ export function OrderLineItemsTable({
                 li.status === "CANCELLED" && "opacity-50",
               )}
             >
-              <td role="cell" className="px-6 py-3 max-md:col-span-2 max-md:block max-md:p-0">
+              <td
+                role="cell"
+                className="px-6 py-3 md:relative max-md:col-span-2 max-md:block max-md:p-0"
+              >
                 <div className="flex items-center gap-3">
+                  {/* md+: the handle sits in the cell's own left padding (24 px wide, full row tall), so the table gains no width */}
+                  <div
+                    data-testid="row-handle-slot"
+                    className="empty:hidden md:absolute md:inset-y-0 md:left-0 md:flex md:items-center md:[&>button]:w-6"
+                  >
+                    <RowHandle />
+                  </div>
                   <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-raised">
                     <Package className="h-4 w-4 text-navy/30" />
                   </div>
@@ -260,7 +347,7 @@ export function OrderLineItemsTable({
                   </td>
                 );
               })()}
-            </tr>
+            </Row>
           ))}
         </tbody>
         {/* r5 Q20: from lg the Summary card sits beside the lines and carries the total; below it this footer does. */}

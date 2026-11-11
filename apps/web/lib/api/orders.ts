@@ -23,6 +23,7 @@ import type { LocalErrorToastOption } from "@/lib/local-error-toast";
 import type { OverrideStampView, RestrictionAck } from "@routeflow/types";
 import { splitIdAck, type IdWithAck } from "@/lib/api/restriction-warning";
 import type { HandOverSoldBy } from "@/lib/handover-stamp";
+import type { ReorderLinesRequest, ReorderLinesResponse } from "@routeflow/types";
 
 export type { ChangeRequest } from "@/lib/change-requests";
 
@@ -40,6 +41,8 @@ export interface Order {
   orderNumber: string;
   /** Row 372: the latest edit revision (GET /orders/:id); the edit save sends it back as `expectedRevisionNumber`. */
   revisionNumber?: number;
+  /** W-1187: the CAS token of `PUT /orders/:id/line-order`; a reorder bumps it and returns the new one. */
+  updatedAt?: string;
   customerId: string;
   customer?: {
     id: string;
@@ -604,6 +607,17 @@ export function useUpdateOrderItems(options?: LocalErrorToastOption) {
       // this order" panel (GET /returns?orderId=), which reads the server's own figures.
       if (variables.inlineReturn) qc.invalidateQueries({ queryKey: ["returns"] });
     },
+  });
+}
+
+/** W-1187: put the order's lines in the order the staff arranged them (every line id, the `updatedAt` the caller read). */
+export function useReorderOrderLines() {
+  return useMutation<ReorderLinesResponse, Error, { id: string } & ReorderLinesRequest>({
+    // The order page renders every outcome itself (409 "changed on another screen", other errors "Couldn't move the line"):
+    // the app-wide error toast would be a second toast for the same failure.
+    meta: { localErrorToast: true },
+    mutationFn: ({ id, ...body }) =>
+      apiClient.put<ReorderLinesResponse>(`/orders/${id}/line-order`, body).then((r) => r.data),
   });
 }
 
