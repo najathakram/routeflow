@@ -613,6 +613,9 @@ export function useUpdateOrderItems(options?: LocalErrorToastOption) {
 /** W-1187: put the order's lines in the order the staff arranged them (every line id, the `updatedAt` the caller read). */
 export function useReorderOrderLines() {
   return useMutation<ReorderLinesResponse, Error, { id: string } & ReorderLinesRequest>({
+    // The order page renders every outcome itself (409 "changed on another screen", other errors "Couldn't move the line"):
+    // the app-wide error toast would be a second toast for the same failure.
+    meta: { localErrorToast: true },
     mutationFn: ({ id, ...body }) =>
       apiClient.put<ReorderLinesResponse>(`/orders/${id}/line-order`, body).then((r) => r.data),
   });
