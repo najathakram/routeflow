@@ -1,5 +1,7 @@
+import * as fs from "fs";
+import * as path from "path";
 import { Logger } from "@nestjs/common";
-import { PrismaService } from "./prisma.service";
+import { PrismaService, type SystemClient } from "./prisma.service";
 import { tenantContextCounts } from "./tenant-context-guard";
 import { TenantContextService, type TenantContextKind } from "../tenant/tenant-context.service";
 
@@ -296,6 +298,77 @@ describe("forSystem(reason, fn): the deliberate unscoped door, callback shape on
       }),
     ).toThrow("boom");
     expect(ctx.kind()).toBe("NONE");
+  });
+
+  it("B1296-1 (guard, SA-1131): a query deferred inside fn runs SYSTEM after forSystem has returned, inside a SUPER_ADMIN caller", async () => {
+    const ctx = new TenantContextService();
+    const h = host(ctx);
+    const before = { ...hits() };
+    let deferred!: Promise<{ kind: TenantContextKind; client: unknown }>;
+    await ctx.run(
+      null,
+      async () => {
+        await h.forSystem(REASON, async (db: SystemClient) => {
+          deferred = new Promise((resolve, reject) =>
+            setTimeout(() => {
+              const client = (db as any).forTenant();
+              const observe = h._observeExtension(ctx.kind()).query.$allModels.$allOperations;
+              const kind = ctx.kind();
+              void Promise.resolve(
+                observe({ model: "Product", operation: "findMany", args: { where: {} }, query }),
+              ).then(() => resolve({ kind, client }), reject);
+            }, 0),
+          );
+        });
+        expect(ctx.kind()).toBe("SUPER_ADMIN"); // forSystem has returned; the caller's kind is back
+      },
+      "SUPER_ADMIN",
+    );
+    // AsyncLocalStorage carries the SYSTEM frame into work scheduled inside it: the deferred read is the unscoped
+    // client, unreported. If a change to forSystem ever ends that propagation, this row says so the day it lands.
+    await expect(deferred).resolves.toEqual({ kind: "SYSTEM", client: h });
+    expect(hits()).toEqual(before);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("B1296-2 a synchronous helper typed SystemClient, called with db inside fn, works and runs SYSTEM", async () => {
+    const ctx = new TenantContextService();
+    const h = host(ctx);
+    const helper = (db: SystemClient) => ({ same: db === h, kind: ctx.kind() });
+    await expect(h.forSystem(REASON, async (db: SystemClient) => helper(db))).resolves.toEqual({
+      same: true,
+      kind: "SYSTEM",
+    });
+  });
+
+  it("B1296-3 (type) a SystemClient helper refuses a plain PrismaService, and forSystem's callback hands a SystemClient", () => {
+    const plain = {} as PrismaService;
+    const helper = (db: SystemClient) => db;
+    // @ts-expect-error -- B1296: an injected PrismaService is not the callback's client
+    const outside = () => helper(plain);
+    const inside = () => plain.forSystem(REASON, async (db) => helper(db));
+    expect([typeof outside, typeof inside]).toEqual(["function", "function"]);
+  });
+
+  it("B1296-4 the brand is minted in one place: only prisma.service.ts asserts a value to SystemClient, once", () => {
+    // `x as SystemClient` compiles (a subtype narrowing), so the compiler alone does not stop a forged client. In B1296-1/2
+    // `h` is `any`, so their `db: SystemClient` annotations check nothing; B1296-3 is the typed row, this is the mint pin.
+    const root = path.resolve(__dirname, "..");
+    const self = path.resolve(__filename);
+    const mint = /\bas\s+(?:unknown\s+as\s+)?SystemClient\b/g;
+    const found: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (e.name.endsWith(".ts") && p !== self) {
+          const rel = path.relative(root, p).replace(/\\/g, "/");
+          found.push(...Array.from(fs.readFileSync(p, "utf8").matchAll(mint), () => rel));
+        }
+      }
+    };
+    walk(root);
+    expect(found).toEqual(["prisma/prisma.service.ts"]);
   });
 });
 

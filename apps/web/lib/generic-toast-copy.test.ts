@@ -995,3 +995,19 @@ describe("SA-1091 AC-16: the app-wide toast names the room left on an order-wide
     },
   );
 });
+
+describe("WP11 feature-change refusals (B986): fixed sentence by code, never the server's text", () => {
+  it.each([
+    "FEATURE_KEY_UNKNOWN",
+    "FEATURE_NOT_OVERRIDABLE",
+    "EXPIRES_AT_MUST_BE_FUTURE",
+    "FEATURE_REQUIRES_UNMET",
+    "FEATURE_CHANGE_NOT_UNDOABLE",
+  ])("%s", (code) => {
+    const copy = codedToastCopy({
+      response: { status: 400, data: { code, message: "developer words: row_id=42" } },
+    });
+    expect(copy).toEqual(expect.any(String));
+    expect(copy).not.toMatch(/developer words|row_id/);
+  });
+});

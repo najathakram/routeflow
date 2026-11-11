@@ -30,6 +30,8 @@ const NOT_SHOWN: Record<string, string> = {
   "credit-notes/line-credit-headroom.ts": "headroom, as above",
   "customers/customer-price-history.service.ts": "keyed by product",
   "estimates/estimates.service.ts": "matches lines for a conversion",
+  "invoices/invoice-follow-order.ts":
+    "re-ranks stored positions after an order reorder; shows no list",
   "invoices/invoice-display-unit.ts": "maps the array it receives, in order",
   "invoices/invoice-pdf-template.tsx": "renders the array the PDF service hands it",
   "invoices/invoices.service.ts": "writers and guards; findOne is pinned below",

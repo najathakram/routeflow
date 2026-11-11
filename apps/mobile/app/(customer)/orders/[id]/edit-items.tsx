@@ -14,6 +14,7 @@ import {
 import { showToast } from "../../../../lib/toast";
 import { invoiceLineUnitNoun } from "../../../../lib/invoice-line-display";
 import {
+  addCatalogItem,
   buyerSavePlan,
   CUSTOM_LINES_NOTE,
   customLineCount,
@@ -22,6 +23,7 @@ import {
   orderUnitLabel,
   readOnlyNotice,
   readOnlyQtyText,
+  setDraftQty,
   type BuyerDraftItem,
 } from "../../../../lib/buyer-edit-items";
 
@@ -53,28 +55,10 @@ export default function BuyerEditItemsScreen() {
   const items = useMemo(() => Object.values(draft).filter((i) => i.qty > 0), [draft]);
 
   // B297 row 352: rows are keyed by their stored line (`draftKey`), so two lines of one product stay two rows.
-  const setQty = (key: string, qty: number) => {
-    if (qty <= 0) {
-      setDraft((d) => {
-        const next = { ...d };
-        delete next[key];
-        return next;
-      });
-    } else {
-      setDraft((d) => ({ ...d, [key]: { ...d[key], qty } }));
-    }
-  };
+  const setQty = (key: string, qty: number) => setDraft((d) => setDraftQty(d, key, qty));
 
   const addFromCatalog = (p: any) => {
-    const price = p.buyerPrice;
-    setDraft((d) => {
-      const held = Object.values(d).find((i) => i.productId === p.id);
-      if (held) return { ...d, [draftKey(held)]: { ...held, qty: held.qty + 1 } };
-      return {
-        ...d,
-        [p.id]: { productId: p.id, name: p.name, unit: p.unit, qty: 1, unitPrice: price },
-      };
-    });
+    setDraft((d) => addCatalogItem(d, p));
     setShowCatalog(false);
   };
 

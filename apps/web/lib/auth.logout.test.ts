@@ -6,7 +6,10 @@ jest.mock("./api-client", () => ({
   apiClient: { post: jest.fn().mockResolvedValue({}), get: jest.fn() },
 }));
 
+import { apiClient } from "./api-client";
 import { logout } from "./auth";
+import { writeLiveCart } from "./counter-live-cart";
+import { liveCartKey } from "./counter-live-cart-keys";
 import { setImpersonation } from "./impersonation";
 
 describe("logout and unsaved-invoice drafts", () => {
@@ -38,5 +41,42 @@ describe("logout and unsaved-invoice drafts", () => {
     setImpersonation("tok", "acme", "support");
     await logout();
     expect(window.localStorage.getItem("rf.invoice-draft.v1:acme:u1")).toBe('{"keep":1}');
+  });
+
+  it("a support session's logout parks nothing in the client's business", async () => {
+    const post = apiClient.post as unknown as jest.Mock;
+    post.mockClear();
+    const payload = Buffer.from(JSON.stringify({ sub: "u1", tenantSlug: "acme" })).toString(
+      "base64url",
+    );
+    window.localStorage.setItem("impersonationToken", `h.${payload}.s`);
+    window.localStorage.setItem("impersonationTenantSlug", "acme");
+    const key = liveCartKey("acme", "u1")!;
+    writeLiveCart(
+      key,
+      {
+        lines: [
+          {
+            tempId: "t1",
+            productId: "p1",
+            name: "Cola",
+            unitPrice: 2.5,
+            qty: 2,
+            listPrice: 2.5,
+            unit: "each",
+            priceType: "STANDARD",
+          },
+        ],
+        customer: null,
+        method: "CASH",
+        tendered: "",
+        reference: "",
+        walkIn: true,
+      },
+      "tab",
+    );
+    expect(window.localStorage.getItem(key)).not.toBeNull();
+    await logout();
+    expect(post.mock.calls.filter((c) => /parked/.test(String(c[0])))).toHaveLength(0);
   });
 });

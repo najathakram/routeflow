@@ -36,6 +36,7 @@
  * read can hide an increase under a concurrent edit).
  */
 
+import { denominationGate } from "../orders/buyer-denomination";
 import { keepsHeldUnit } from "../orders/unit-label-norm";
 
 /**
@@ -67,6 +68,8 @@ export interface ExistingLine {
 /** One entry of an `UpdateOrderItemsDto.items` payload. */
 export interface EditItem {
   id?: string;
+  /** A buyer entry naming its stored line (B297 row 352); read like that line (`piecesDenominated`). */
+  orderItemId?: string;
   productId?: string;
   action?: "CANCEL" | "DELETE" | "UPDATE";
   qty?: number;
@@ -216,6 +219,21 @@ export function sellableLinesForMergeEdit(
 /** Who sent a replace-all payload: it decides what a bare `qty` MEANS (see below). */
 export type ReplaceActor = "staff" | "buyer" | "driver";
 
+/** One entry's pack-or-pieces answer, exactly as `updateOrderItems` writes it. */
+export type IsPieces = ReturnType<typeof denominationGate>["isPieces"];
+
+/**
+ * SA-1132: the replace check's `isPieces`, built by the write's own builder over the same rows: `denominationGate(rows,
+ * actor === "buyer", namesLines)` (SA-422 (3) live lines for a buyer, the named line first, SA-1118 `namesLines`).
+ */
+export function replaceIsPieces(
+  rows: Parameters<typeof denominationGate>[0],
+  actor: ReplaceActor,
+  namesLines: boolean,
+): IsPieces {
+  return denominationGate(rows, actor === "buyer", namesLines).isPieces;
+}
+
 /**
  * The lines of a REPLACE-ALL order edit — the payload IS the full line set (an operator's
  * `replaceAll: true`, or a buyer / non-diff driver payload). The service deletes every line and
@@ -228,9 +246,9 @@ export type ReplaceActor = "staff" | "buyer" | "driver";
  *     <= 1) compares raw quantities. Otherwise everything is compared in PIECES:
  *       staff  — a positive split writes boxes × size + pieces (qty ignored); a bare qty is
  *                selling units (cases), × size;
- *       buyer  — the split is only a signal, `qty` is written; those pieces when the product's
- *                lines are piece-denominated or the payload carries a split, else cases;
- *       driver — as buyer, but pieces only when the product's lines are piece-denominated;
+ *       buyer, driver — the split is only a signal, `qty` is written; pieces or cases per ITEM by
+ *                the write's own decision (`opts.isPieces`, SA-1132): the entry's named line first
+ *                (buyer `orderItemId`, driver `id`), then the actor's rule over the live lines;
  *     an existing box-UNAWARE line stores cases (× size), a box-split line stores pieces; a
  *     cancelled line carries nothing.
  * Caller contract: `existing` = the LOCK-time rows (cancelled and unlisted included);
@@ -240,7 +258,16 @@ export type ReplaceActor = "staff" | "buyer" | "driver";
 export function sellableLinesForReplaceEdit(
   existing: readonly ExistingLine[],
   items: readonly EditItem[],
-  opts: { actor: ReplaceActor; liveUnitsPerBox?: LiveUnitsPerBox; keys?: string[] },
+  opts: {
+    actor: ReplaceActor;
+    liveUnitsPerBox?: LiveUnitsPerBox;
+    keys?: string[];
+    /**
+     * SA-1132: the write's pack-or-pieces decision for a buyer / driver entry, `denominationGate(existing, actor ===
+     * "buyer", namesLines).isPieces` (`replaceIsPieces`). Required, so this file never decides it by itself.
+     */
+    isPieces: IsPieces;
+  },
 ): EditLine[] {
   const lines: EditLine[] = [];
   // Row 510: `opts.keys` is filled parallel to the returned lines. Replace-all recreates every line, so a product's
@@ -280,12 +307,6 @@ export function sellableLinesForReplaceEdit(
     }
     const upb = Math.trunc(Number(size ?? 0));
     const boxed = upb > 1;
-    // The service's `pieceDenominated` reads EVERY row of the product, cancelled ones included.
-    const pieceRows = rows.some((l) => l.boxes != null || l.pieces != null);
-    // A buyer's bare qty is pieces when the product is piece-denominated OR THIS item carries a
-    // split hint (decided per item, like the service); a driver's only when piece-denominated.
-    const bareIsPieces = (i: EditItem) =>
-      pieceRows || (opts.actor === "buyer" && (i.boxes != null || i.pieces != null));
     let incoming = 0;
     for (const item of list) {
       const bare = hasNumber(item.qty) && item.qty > 0 ? item.qty : 0;
@@ -293,7 +314,15 @@ export function sellableLinesForReplaceEdit(
         const derived = (item.boxes ?? 0) * upb + (item.pieces ?? 0);
         incoming += boxed && hasSplit(item) ? derived : boxed ? bare * upb : bare;
       } else {
-        incoming += boxed && !bareIsPieces(item) ? bare * upb : bare; // the split is only a signal
+        // SA-1132: the write's own decision, the entry naming its line (buyer: orderItemId; driver: id)
+        const sourceLineId = opts.actor === "buyer" ? item.orderItemId : item.id;
+        const pieces = opts.isPieces({
+          productId,
+          boxes: item.boxes,
+          pieces: item.pieces,
+          sourceLineId,
+        });
+        incoming += boxed && !pieces ? bare * upb : bare; // the split is only a signal
       }
     }
     const before = current.reduce(

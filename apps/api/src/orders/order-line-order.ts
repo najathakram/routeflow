@@ -18,6 +18,7 @@ import {
   LINE_NAME_PRODUCT_SELECT,
   orderLineInvoiceDescription,
 } from "../invoices/invoice-line-name";
+import { followOrderLineOrder } from "../invoices/invoice-follow-order";
 import { ORDER_LINE_ORDER_BY } from "./line-position";
 import type { ReorderLinesDto } from "./dto/reorder-lines.dto";
 
@@ -142,6 +143,7 @@ export async function reorderOrderLines(
     if (rearranged) {
       updatedAt = new Date();
       await tx.order.update({ where: { id: orderId }, data: { updatedAt } });
+      await followOrderLineOrder(tx, orderId); // PR-1e: the invoices take the new order in this transaction
       await tx.auditLog.create({
         data: {
           tenantId: order.tenantId,

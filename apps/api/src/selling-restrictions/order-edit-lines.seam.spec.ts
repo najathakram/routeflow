@@ -1,5 +1,6 @@
 import {
   sellableLinesForMergeEdit,
+  replaceIsPieces,
   sellableLinesForReplaceEdit,
   type EditItem,
   type ExistingLine,
@@ -36,7 +37,11 @@ describe("order-edit helpers — snapshot (merge) vs live (replace) box size", (
     const replace = sellableLinesForReplaceEdit(
       [stored],
       [{ productId: "p1", boxes: 2 }] as EditItem[],
-      { actor: "staff", liveUnitsPerBox: live24 },
+      {
+        actor: "staff",
+        liveUnitsPerBox: live24,
+        isPieces: replaceIsPieces([stored], "staff", false),
+      },
     );
 
     expect(merge).toStrictEqual([{ productId: "p1", qtyDelta: 0 }]); // 2 × 12 vs 24 carried
@@ -51,6 +56,7 @@ describe("order-edit helpers — snapshot (merge) vs live (replace) box size", (
     expect(
       sellableLinesForReplaceEdit([stored], [{ productId: "p1", boxes: 2 }] as EditItem[], {
         actor: "staff",
+        isPieces: replaceIsPieces([stored], "staff", false),
       }),
     ).toStrictEqual([{ productId: "p1" }]); // no live size: UNSIZED, so it is checked
   });

@@ -1741,7 +1741,7 @@ export function CreateOrderModal({
       const parkedId = autosave.getDraftId();
       toast({
         title: "Draft saved",
-        description: "Find it in the drafts dock to resume.",
+        description: "Tap the parked draft chip, bottom left, to resume.",
         variant: "success",
         ...(parkedId
           ? {
