@@ -129,6 +129,8 @@ export interface ParkedCartPayload {
   reference: string;
   /** A check tender's typed date (YYYY-MM-DD), kept so a resumed cart is still judged against the business's day. */
   checkDate?: string;
+  /** W-1188: the sale date the clerk chose on the date chip (YYYY-MM-DD). Absent = Today; a resumed cart keeps it. */
+  orderDate?: string;
   /**
    * S5: the clerk tapped Walk-in for this cart (a null customer alone says nothing, so a resumed cart without it asks
    * "Who's buying?" again). Only ever `true`, and only with a null customer.
@@ -291,6 +293,7 @@ export function sanitizeParkedPayload(
   const reference = str(raw.reference, 100) ?? "";
   const value: ParkedCartPayload = { lines, customer, method, tendered, reference };
   if (isCalendarDay(raw.checkDate)) value.checkDate = raw.checkDate;
+  if (isCalendarDay(raw.orderDate)) value.orderDate = raw.orderDate;
   if (raw.walkIn === true && customer === null) value.walkIn = true;
   return { ok: true, value };
 }

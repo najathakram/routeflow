@@ -211,6 +211,37 @@ describe("browser zone must never leak into the receipt (SA-738)", () => {
   });
 });
 
+describe("W-1188: a dated sale prints its sale day and the entry time apart", () => {
+  it("the live receipt: a chosen past day is the date line, the entry time is its own label", () => {
+    const m = build({}, { orderDate: "2026-10-05" });
+    expect(m.dateLabel).toBe("Mon, Oct 5, 2026");
+    expect(m.enteredLabel).toBe("Oct 7, 2026, 3:30 PM");
+  });
+  it("a chosen day that is today prints as an undated sale", () => {
+    const m = build({}, { orderDate: "2026-10-07" });
+    expect(m.dateLabel).toBe("Oct 7, 2026, 3:30 PM");
+    expect(m.enteredLabel).toBeUndefined();
+  });
+  it("the reprint follows the Today's sales row's dated day", () => {
+    const m = receiptModelFromOrder({
+      order: { orderNumber: "ORD-1", lineItems: [], status: "COMPLETED" } as never,
+      sale: {
+        invoiceId: "i1",
+        invoiceNumber: "INV-1",
+        paid: 0,
+        balanceDue: 0,
+        methods: [],
+        createdAt: "2026-10-07T15:30:00Z",
+        timezone: "UTC",
+        datedDay: "2026-10-05",
+      } as never,
+      profile: null,
+    });
+    expect(m.dateLabel).toBe("Mon, Oct 5, 2026");
+    expect(m.enteredLabel).toBe("Oct 7, 2026, 3:30 PM");
+  });
+});
+
 describe("row 298: the receipt line names the product's unit", () => {
   const detailOf = (line: object) =>
     buildCounterReceipt({

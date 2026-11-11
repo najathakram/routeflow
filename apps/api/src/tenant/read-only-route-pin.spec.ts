@@ -45,6 +45,7 @@ const EXPECTED_ALLOWED: string[] = [
   "POST /api/v1/auth/apple/nonce",
   "POST /api/v1/auth/apple/notifications",
   "POST /api/v1/auth/change-password",
+  "POST /api/v1/auth/confirm-email-change",
   "POST /api/v1/auth/google/exchange",
   "POST /api/v1/auth/handoff",
   "POST /api/v1/auth/handoff/exchange",

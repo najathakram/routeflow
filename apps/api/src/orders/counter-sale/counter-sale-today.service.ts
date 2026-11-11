@@ -131,7 +131,9 @@ export class CounterSaleTodayService {
           );
 
     return {
-      data: rows.map((r) => toTodaysSaleRow(r, configuredTaxPercent, carriedReturns, creditNotes)),
+      data: rows.map((r) =>
+        toTodaysSaleRow(r, configuredTaxPercent, carriedReturns, creditNotes, zone),
+      ),
       meta: {
         total,
         page,

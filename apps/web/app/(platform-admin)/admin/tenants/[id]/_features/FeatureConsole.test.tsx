@@ -927,13 +927,16 @@ describe("BO-09: Set override stops shouting and leaves rows where it does nothi
     }
   });
 
-  it("buttons read in the order Why, Set override, Turn on as add-on", async () => {
+  it("buttons read in the order Why, stage on/off, Set override, Turn on as add-on", async () => {
     const { rowOf } = await renderRows();
     const names = within(rowOf("tobacco_dealer"))
       .getAllByRole("button")
       .map((b) => b.getAttribute("aria-label"));
     expect(names).toEqual([
       "Details for Regulated items (tobacco)",
+      "Turn on Regulated items (tobacco) for this business",
+      "Turn off Regulated items (tobacco) for this business",
+      "Clear the override on Regulated items (tobacco)", // this row carries an override
       "Set override Regulated items (tobacco)",
       "Turn on Regulated items (tobacco) as an add-on",
     ]);

@@ -16,12 +16,40 @@ import {
   PARKED_STALE_COPY,
   formatParkedTime,
   isStaleParked,
-  lineCountLabel,
   parkedRowTitle,
 } from "@/lib/counter-park";
+import type { SaleDraft } from "@/lib/api/drafts";
+import { draftSummary, parkedAgo } from "@/lib/drafts";
+import { useGuardedRouter } from "@/lib/use-guarded-router";
+import { formatLineWord } from "@routeflow/pricing"; // W-1185: the one line word
 import type { useParkedSales } from "./useParkedSales";
 
 type Parked = ReturnType<typeof useParkedSales>;
+
+/** A discard that can still be taken back, shown inside the window so a keyboard reaches its Undo. */
+export interface UndoNote {
+  id: string;
+  text: string;
+  undo: () => void;
+}
+
+function UndoNoteRow({ note }: { note: UndoNote }) {
+  const ref = React.useRef<HTMLButtonElement>(null);
+  // The Discard button that was pressed is gone: put the cursor on Undo, one key from where it was.
+  React.useEffect(() => ref.current?.focus(), []);
+  return (
+    <div
+      role="status"
+      className="flex items-center gap-3 rounded-md border border-navy/15 bg-surface-raised px-3 py-2"
+      data-testid={`undo-note-${note.id}`}
+    >
+      <p className="min-w-0 flex-1 truncate text-sm text-navy">{note.text}</p>
+      <Button ref={ref} className="min-h-11" variant="secondary" onClick={note.undo}>
+        {`Undo ${note.text.replace(/^Discarded · /, "")}`}
+      </Button>
+    </div>
+  );
+}
 
 function ParkedRow({
   row,
@@ -60,7 +88,7 @@ function ParkedRow({
               {names}
             </span>
           ) : (
-            lineCountLabel(row.lineCount)
+            formatLineWord(row.lineCount)
           )}
           {row.customerName ? ` · ${row.customerName}` : ""}
         </p>
@@ -99,12 +127,76 @@ function ParkedRow({
   );
 }
 
+/** W-1184: the regular order's paused drafts, listed in the SAME Parked window (one entry point, two sections). */
+function DraftsSection({
+  drafts,
+  onGo,
+  onDiscard,
+}: {
+  drafts: SaleDraft[];
+  onGo: () => void;
+  onDiscard: (draft: SaleDraft, title: string) => void;
+}) {
+  const router = useGuardedRouter(); // leaving a live cart parks it first
+  return (
+    <section aria-label="Order drafts" className="space-y-2">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-navy/60">Order drafts</h3>
+      <ul className="divide-y">
+        {drafts.map((d) => {
+          const { title, itemCount, total } = draftSummary(d);
+          return (
+            <li
+              key={d.id}
+              className="flex items-center gap-3 py-3"
+              data-testid={`draft-row-${d.id}`}
+            >
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold text-navy">{title}</p>
+                <p className="truncate text-xs text-navy/70">
+                  {formatLineWord(itemCount)} · {formatMoney(total)} · paused{" "}
+                  {parkedAgo(d.updatedAt)}
+                </p>
+              </div>
+              <Button
+                className="min-h-11"
+                aria-label={`Resume ${title}`}
+                onClick={() => {
+                  onGo();
+                  router.push(
+                    `${d.kind === "INVOICE" ? "/invoices/new" : "/orders"}?resumeDraft=${encodeURIComponent(d.id)}`,
+                  );
+                }}
+              >
+                Resume
+              </Button>
+              <Button
+                className="min-h-11"
+                variant="secondary"
+                aria-label={`Discard ${title}`}
+                onClick={() => onDiscard(d, title)}
+              >
+                Discard
+              </Button>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
 export function ParkedSalesDialog({
   parked,
   openerRef,
+  drafts = [],
+  onDiscardDraft,
+  undoNotes = [],
 }: {
   parked: Parked;
   openerRef: React.RefObject<HTMLButtonElement | null>;
+  drafts?: SaleDraft[];
+  onDiscardDraft?: (draft: SaleDraft, title: string) => void;
+  undoNotes?: UndoNote[];
 }) {
   const { data: settings } = useQuery<{ timezone?: string | null; taxRate?: number | null }>({
     queryKey: ["settings"],
@@ -131,6 +223,9 @@ export function ParkedSalesDialog({
         className="max-w-2xl"
       >
         <div className="space-y-3">
+          {undoNotes.map((n) => (
+            <UndoNoteRow key={n.id} note={n} />
+          ))}
           {dialogMessage ? (
             <p role="alert" className="text-sm text-red-700" data-testid="parked-dialog-error">
               {dialogMessage}
@@ -148,7 +243,9 @@ export function ParkedSalesDialog({
               Loading parked sales
             </p>
           ) : parked.rows.length === 0 ? (
-            <p className="py-6 text-center text-sm text-navy/70">{PARKED_EMPTY_COPY}</p>
+            drafts.length === 0 ? (
+              <p className="py-6 text-center text-sm text-navy/70">{PARKED_EMPTY_COPY}</p>
+            ) : null
           ) : (
             <ul className="divide-y" aria-label="Parked sales">
               {parked.rows.map((r) => (
@@ -162,6 +259,13 @@ export function ParkedSalesDialog({
               ))}
             </ul>
           )}
+          {drafts.length > 0 ? (
+            <DraftsSection
+              drafts={drafts}
+              onGo={() => parked.setOpen(false)}
+              onDiscard={onDiscardDraft ?? (() => undefined)}
+            />
+          ) : null}
         </div>
       </Modal>
       <Modal

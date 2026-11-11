@@ -30,6 +30,7 @@ import { isLiveInvoice, type ReceiptBranding, type ReceiptPaymentInput } from ".
 import { renderOrderReceipt } from "./render-order-receipt";
 import type { SendReceiptDto } from "./send-receipt.dto";
 import { sellerDisplayName } from "../common/seller-display-name";
+import { ORDER_LINE_ORDER_BY } from "../orders/line-position";
 
 /** The EmailDelivery `kind` and `entityType` every receipt send is logged (and counted) under. */
 const RECEIPT_KIND = "RECEIPT" as const;
@@ -104,7 +105,7 @@ export class ReceiptService {
         lineItems: {
           // SA-1067 C3: scan order (position), then when added, then id; legacy null positions last. Same order as the
           // packing slip (createdAt alone left lines made in one write in no fixed order).
-          orderBy: [{ position: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+          orderBy: ORDER_LINE_ORDER_BY,
           select: {
             id: true,
             name: true,

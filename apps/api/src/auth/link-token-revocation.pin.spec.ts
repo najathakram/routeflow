@@ -54,13 +54,17 @@ function braceBlock(src: string, open: number): string {
 }
 
 /** Watched columns written by an object-literal text: `key:` or a shorthand `{ key }`/`, key,`. */
-function watchedIn(model: Model, block: string): string[] {
-  return WATCHED_KEYS[model].filter((k) =>
-    new RegExp(String.raw`(?:\b${k}\s*:|[{,]\s*${k}\s*[,}])`).test(block),
-  );
+function watchedIn(keys: string[], block: string): string[] {
+  return keys.filter((k) => new RegExp(String.raw`(?:\b${k}\s*:|[{,]\s*${k}\s*[,}])`).test(block));
 }
 
-export function findWriters(file: string, raw: string, model: Model): Writer[] {
+export function findWriters(
+  file: string,
+  raw: string,
+  model: Model,
+  keys: string[] = WATCHED_KEYS[model],
+  revoke: RegExp = REVOKE[model],
+): Writer[] {
   const src = stripComments(raw);
   const out: Writer[] = [];
   const re = new RegExp(String.raw`\b${model}\.(update|updateMany|upsert)\(`, "g");
@@ -77,11 +81,11 @@ export function findWriters(file: string, raw: string, model: Model): Writer[] {
     const hasEntry = new RegExp(String.raw`\b${entry}\s*[:,}]`).test(args) || shorthand;
     let watched: string[] = [];
     let unreadable = false;
-    if (inline) watched = watchedIn(model, braceBlock(args, inline.index + inline[0].length - 1));
+    if (inline) watched = watchedIn(keys, braceBlock(args, inline.index + inline[0].length - 1));
     else if (shorthand) {
       const from = Math.max(0, m.index - 1500);
       const decl = /const data(?:\s*:\s*[^=]+)?\s*=\s*\{/.exec(src.slice(from, m.index));
-      if (decl) watched = watchedIn(model, braceBlock(src, from + decl.index + decl[0].length - 1));
+      if (decl) watched = watchedIn(keys, braceBlock(src, from + decl.index + decl[0].length - 1));
       else unreadable = true;
     } else if (hasEntry)
       unreadable = true; // `data: patch`, a ternary, a call result
@@ -102,7 +106,7 @@ export function findWriters(file: string, raw: string, model: Model): Writer[] {
       model,
       method: last ? last[1]! : "(module)",
       keys: watched,
-      revokes: REVOKE[model].test(src.slice(start, end)),
+      revokes: revoke.test(src.slice(start, end)),
       unreadable,
     });
   }
@@ -280,5 +284,146 @@ describe("writer inventory: an account change burns the account's live links (SA
     for (const [file, methods] of Object.entries(EXEMPT)) {
       for (const m of Object.keys(methods)) expect(names).toContain(`${file}:${m}`);
     }
+  });
+
+  // B461 (SA-1116): a login email is written in exactly two places by a person's edit. `updateUser` writes it for an
+  // account that has never signed in; `confirmEmailChange` writes it once the NEW mailbox confirmed. Any third
+  // editing writer would bypass the hold, so a new `email:` inside a `user.update*` data block is a red row here
+  // until the ruling is amended. The pin names two more writers it found on master (SA-1116 counted two): a customer's
+  // removal replaces the login email with a placeholder, and its restore puts the original back. Neither takes an
+  // address from a person.
+  it("B461: `email:` inside a user.update* data block appears in exactly two editing writers", () => {
+    const customerRemoval = [
+      "customers/customers.service.ts:deleteCustomer",
+      "customers/customers.service.ts:restoreCustomer",
+    ];
+    const emailWriters = all
+      .filter((w) => w.model === "user" && w.keys.includes("email"))
+      .map(id)
+      .sort();
+    expect(emailWriters.filter((w) => !customerRemoval.includes(w))).toEqual([
+      "auth/auth.service.ts:confirmEmailChange",
+      "users/users.service.ts:updateUser",
+    ]);
+    // the two named exceptions are still there: a rename or removal of one is noticed, not silently kept
+    expect(emailWriters.filter((w) => customerRemoval.includes(w))).toEqual(customerRemoval);
+  });
+
+  it("B461: revokeUserLinkTokens burns pending email changes through one helper, and the helper writes the row", () => {
+    const src = stripComments(
+      fs.readFileSync(path.join(SRC, "auth/link-token-revocation.ts"), "utf8"),
+    );
+    const body = (name: string) => {
+      const start = src.indexOf(`export async function ${name}(`);
+      expect(start).toBeGreaterThan(-1);
+      return braceBlock(src, src.indexOf("{", src.indexOf(")", start + 1) + 1));
+    };
+    expect(body("revokeUserLinkTokens")).toContain("await revokeUserEmailChanges(db, list);");
+    expect(body("revokeUserEmailChanges")).toMatch(
+      /UPDATE "UserEmailChange" SET "usedAt" = now\(\) WHERE "userId" = ANY\(\$\{list\}::text\[\]\) AND "usedAt" IS NULL/,
+    );
+  });
+
+  // B461 (SA-1116): a password change on an EXISTING account ends the session that may have asked for an email change,
+  // so a pending change must not outlive it. Derived, not listed: every `user.update*` in non-spec code whose data
+  // block writes `password` must burn pending changes (`revokeUserEmailChanges`, or `revokeUserLinkTokens`, which
+  // calls it) in the same method. A `user.create` is not an update and is out of scope. A `data` the pin cannot read
+  // (a ternary, a variable) is skipped here; the writer inventory above reports those. Zero found is a red row (L-202).
+  it("B461: every writer that changes an existing account's password burns pending email changes", () => {
+    const burn = /\brevokeUserEmailChanges\(|\brevokeUserLinkTokens\(/;
+    const writers = files
+      .flatMap((f) => findWriters(f.rel, f.raw, "user", ["password"], burn))
+      .filter((w) => !w.unreadable);
+    expect(writers.length).toBeGreaterThan(0);
+    const names = writers.map(id).sort();
+    expect(names).toEqual(
+      expect.arrayContaining([
+        "auth/auth.service.ts:changePassword",
+        "auth/auth.service.ts:resetPassword",
+        "auth/auth.service.ts:setPassword",
+        "platform-admin/platform-admin.service.ts:resetTenantAdminPassword",
+        "users/users.service.ts:resetPassword",
+      ]),
+    );
+    expect(writers.filter((w) => !w.revokes).map(id)).toEqual([]);
+  });
+
+  // SA-1126 (b): a change row for an account that is not ACTIVE is a link the confirm can never use (its CAS needs
+  // ACTIVE). Every non-spec `issueEmailChange(` call sits in a method that refuses a non-ACTIVE account first, with
+  // the coded 409. Census count 1 (`updateUser`); red on zero (a renamed helper) and on an unguarded site.
+  const issueSites = (rel: string, raw: string) => {
+    const src = stripComments(raw);
+    const out: { file: string; method: string; guarded: boolean }[] = [];
+    for (const m of src.matchAll(/\bissueEmailChange\(/g)) {
+      if (/function\s+$/.test(src.slice(Math.max(0, m.index! - 20), m.index!))) continue;
+      const heads = [
+        ...src.slice(0, m.index).matchAll(/^ {2}(?:async |private |public )*(\w+)\s*\(/gm),
+      ];
+      const last = heads[heads.length - 1];
+      const before = src.slice(last ? last.index! : 0, m.index);
+      out.push({
+        file: rel,
+        method: last ? last[1]! : "(module)",
+        guarded:
+          /status\s*!==\s*"ACTIVE"/.test(before) && /EMAIL_CHANGE_ACCOUNT_INACTIVE/.test(before),
+      });
+    }
+    return out;
+  };
+
+  it("B461: every issueEmailChange call site is behind an ACTIVE check (census: exactly one)", () => {
+    const sites = files
+      .flatMap((f) => issueSites(f.rel, f.raw))
+      .filter((s) => !/email-change\.ts$/.test(s.file));
+    expect(sites.map((s) => `${s.file}:${s.method}`)).toEqual([
+      "users/users.service.ts:updateUser",
+    ]);
+    expect(sites.filter((s) => !s.guarded)).toEqual([]);
+  });
+
+  it("detector self-test (issueEmailChange census): a guarded site passes, an unguarded one is reported, none is zero", () => {
+    const guarded = [
+      "class S {",
+      "  async a(u: any) {",
+      '    if (holdEmail && u.status !== "ACTIVE") throw new C({ code: API_ERROR_CODES.EMAIL_CHANGE_ACCOUNT_INACTIVE });',
+      "    await issueEmailChange(tx, {});",
+      "  }",
+      "}",
+    ].join("\n");
+    const bare = [
+      "class S {",
+      "  async b(u: any) {",
+      "    await issueEmailChange(tx, {});",
+      "  }",
+      "}",
+    ].join("\n");
+    expect(issueSites("s.ts", guarded).map((s) => s.guarded)).toEqual([true]);
+    expect(issueSites("s.ts", bare).map((s) => [s.method, s.guarded])).toEqual([["b", false]]);
+    expect(issueSites("s.ts", "class S {}")).toEqual([]);
+  });
+
+  it("detector self-test (password census): a password update without a burn is reported, one with it is not", () => {
+    const sample = [
+      "class S {",
+      "  async a(id: string) {",
+      "    await tx.user.update({ where: { id }, data: { password: 'x' } });",
+      "  }",
+      "  async b(id: string) {",
+      "    await tx.user.update({ where: { id }, data: { password: 'x' } });",
+      "    await revokeUserEmailChanges(tx, id);",
+      "  }",
+      "  async c(data: object) {",
+      "    await tx.user.create({ data: { password: 'x' } });",
+      "  }",
+      "}",
+    ].join("\n");
+    expect(
+      findWriters("sample.ts", sample, "user", ["password"], /\brevokeUserEmailChanges\(/).map(
+        (w) => [w.method, w.revokes],
+      ),
+    ).toEqual([
+      ["a", false],
+      ["b", true],
+    ]);
   });
 });

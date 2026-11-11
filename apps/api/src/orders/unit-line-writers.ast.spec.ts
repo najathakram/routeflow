@@ -119,6 +119,19 @@ const INVENTORY: Record<string, Row> = {
     kind: "FIELD_ONLY",
     why: "promoFreeUnits and the subtotal it implies (computeLineSubtotal); never a factor, quantity or unit price",
   },
+  // W-1187: the display order only. Both write `position` and nothing else; neither touches a factor, a quantity or a price.
+  "orders/line-position.ts::densifyOrderLines": {
+    kind: "FIELD_ONLY",
+    why: "position only: fills NULL and duplicate slots to dense 0..n-1 in the order the lines already read; never reorders",
+  },
+  "orders/line-position.ts::restampKeptLines": {
+    kind: "FIELD_ONLY",
+    why: "position only: a buyer or driver replace re-stamps the rows it never deleted to the slot the plan gives them",
+  },
+  "orders/order-line-order.ts::reorderOrderLines": {
+    kind: "FIELD_ONLY",
+    why: "position only: the caller's arrangement of an order's lines (W-1187 D5); never a factor, quantity or price",
+  },
   // SA-762r F1: the cancel's line status flip, moved verbatim out of changeStatus into the shared unwind.
   "orders/order-cancel-tx.ts::cancelOrderInTx": {
     kind: "FIELD_ONLY",
@@ -408,6 +421,8 @@ function classMethods(sf: ts.SourceFile): Map<string, ts.MethodDeclaration> {
  */
 const FREE_WRITER_FILES = [
   "orders/order-cancel-tx.ts",
+  "orders/line-position.ts",
+  "orders/order-line-order.ts",
   "orders/delivered-stamp.ts",
   "orders/office-evidence-completion.ts",
   "orders/recompute-line-category-taxes.ts",
@@ -417,6 +432,7 @@ const FREE_WRITER_FILES = [
 const KNOWN_UNSCANNED_FREE_WRITERS = [
   "orders/line-composition.ts::syncLineCompositions",
   "orders/merge-lock-recheck.ts::deleteLoserGuarded",
+  "orders/merge-unlisted-lines.ts::createUnlistedLoserLine",
   "orders/order-edit-composition.ts::restoreCarriedComposition",
   "orders/order-line-removal.ts::writeLineRemoval",
   "orders/order-line-removal.ts::writeLineUpdate",
@@ -467,6 +483,9 @@ const FREE_WRITER_DATA_KEYS: Record<string, string[]> = {
   "orders/delivered-stamp.ts::stampDeliveredInFull": ["deliveredQty"],
   "orders/office-evidence-completion.ts::completeOfficeEvidencedLines": ["deliveredQty"],
   "orders/settle-split-free-units.ts::settleSplitFreeUnits": ["promoFreeUnits", "subtotal"],
+  "orders/line-position.ts::densifyOrderLines": ["position"],
+  "orders/line-position.ts::restampKeptLines": ["position"],
+  "orders/order-line-order.ts::reorderOrderLines": ["position"],
   "orders/recompute-line-category-taxes.ts::recomputeLineCategoryTaxes": [
     "categoryPriceIncludesTax",
     "categoryTaxAmount",
@@ -970,6 +989,7 @@ const STATUS_COLUMNS = new Set([
   "compositionMode",
   "recipeId",
   "recipeVersion",
+  "position", // W-1187: the display order; a slot, never a sale column
 ]);
 const U = "orders/orders.service.ts::OrdersService";
 const UPDATE_ITEMS = `${U}.updateOrderItems`;
@@ -1088,6 +1108,19 @@ const REVISIONS: Record<string, RevisionRow> = {
   ),
   "orders/order-edit-composition.ts::restoreCarriedComposition": statusOnly(
     "derived recipe/composition stamp",
+  ),
+  "orders/line-position.ts::densifyOrderLines": statusOnly(
+    "W-1187: display position only (called inside the edit or merge that already moved the revision)",
+  ),
+  "orders/line-position.ts::restampKeptLines": statusOnly(
+    "W-1187: display position only (called inside the replace that already moved the revision)",
+  ),
+  "orders/merge-unlisted-lines.ts::createUnlistedLoserLine": covered(
+    MERGE_ALL,
+    "an unlisted loser line appended to the winner; forceConsolidateCustomer calls it too and bumps the same way",
+  ),
+  "orders/order-line-order.ts::reorderOrderLines": statusOnly(
+    "W-1187: presentation order only, no sale change: bumps Order.updatedAt (the CAS token) and writes an audit row, no revision",
   ),
   "invoices/finalize-order-recompute.ts::checkOrderCoverage": statusOnly("invoicedQty bookkeeping"),
   "invoices/partial-invoice-cas.ts::bumpInvoicedQtyCas": statusOnly("invoicedQty bookkeeping"),

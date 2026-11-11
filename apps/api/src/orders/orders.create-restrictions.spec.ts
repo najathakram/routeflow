@@ -77,6 +77,7 @@ describe("OrdersService.create — selling restrictions call site (lane R 2a-5)"
   beforeEach(async () => {
     featureConfig.getEffectiveMode.mockReset().mockResolvedValue("unset");
     prisma = createMockPrisma();
+    prisma.user.findFirst.mockResolvedValue({ deniedPermissionGroups: [], permissionsVersion: 1 }); // W-870: the operator holds every group (the order-date gate reads it)
     stock = wireStockHelper(prisma, { ample: true });
 
     const module: TestingModule = await Test.createTestingModule({

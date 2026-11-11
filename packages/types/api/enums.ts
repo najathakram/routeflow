@@ -499,6 +499,20 @@ export const ORDER_STATUS_VALUES = [
 export type OrderStatusValue = (typeof ORDER_STATUS_VALUES)[number];
 
 /**
+ * SA-1124 (SA-817 §6): why an order needs a person's look. Mirrors the Prisma `OrderReviewFlagKind`
+ * (pinned by `enum-parity.spec.ts`); the Needs-review UI keys its reason text on it, so a new kind fails the type-check.
+ */
+export const ORDER_REVIEW_FLAG_KIND_VALUES = [
+  "PRICE_CHANGED_OFFLINE",
+  "RESTRICTED",
+  "LICENSE_REQUIRED",
+  "CREDIT_BLOCKED",
+  "OPEN_ORDER_EXISTS",
+  "BACKORDERED_OFFLINE",
+] as const;
+export type OrderReviewFlagKindValue = (typeof ORDER_REVIEW_FLAG_KIND_VALUES)[number];
+
+/**
  * SA-1101: the order is done — not routable, not open, not cancellable, not releasable. ONE list, read by
  * the API, web and mobile by name; `terminal-order-status-lists.spec.ts` fails any new array that names
  * both DELIVERED and CANCELLED without REFUSED or this constant.

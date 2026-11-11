@@ -126,6 +126,7 @@ const MODEL_DOMAIN = {
   BuyerPasswordResetToken: "tenancy",
   BuyerEmailVerificationToken: "tenancy",
   UserEmailVerificationToken: "tenancy",
+  UserEmailChange: "tenancy",
   CustomerLink: "tenancy",
   BuyerMergeRequest: "tenancy",
 
@@ -170,6 +171,7 @@ const MODEL_DOMAIN = {
   RouteRun: "sales",
   RouteRunStop: "sales",
   Order: "sales",
+  OrderReviewFlag: "sales",
   OrderIdempotencyKey: "sales",
   OrderRevision: "sales",
   ChangeRequest: "sales",

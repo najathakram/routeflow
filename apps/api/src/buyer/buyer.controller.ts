@@ -11,6 +11,7 @@ import {
   Optional,
   Param,
   Patch,
+  Put,
   Post,
   Query,
   UseGuards,
@@ -56,6 +57,7 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { ListOrdersDto } from "../orders/dto/list-orders.dto";
 import { ListInvoicesDto } from "../invoices/dto/list-invoices.dto";
 import { UpdateOrderItemsDto } from "../orders/dto/update-order-items.dto";
+import { ReorderLinesDto } from "../orders/dto/reorder-lines.dto";
 import { SubmitAuthorizationDto } from "../authorizations/dto/submit-authorization.dto";
 import { normalizeScanCode } from "@routeflow/scanning";
 import { findScanMatches } from "../products/scan-match";
@@ -987,6 +989,24 @@ export class BuyerController {
     });
     void this.staffOrderEmail?.notifyBuyerOrderEdited(id); // SA-1063
     return toCustomerOrder(edited);
+  }
+
+  @Put("orders/:id/line-order")
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({
+    summary: "Put the lines of your own order in the order you arranged them (edit window open)",
+  })
+  reorderLines(
+    @Param("id") id: string,
+    @Body() dto: ReorderLinesDto,
+    @CurrentBuyerCustomer() ctx: any,
+  ) {
+    // W-1187 (D11): the tenant comes from the seller context, never from the body. The service settles ownership FIRST
+    // (a bare 403), then the edit window, the CAS and the id set. No email and no push: a drag session would send a burst
+    // about a change with no money in it; staff see it on the order (`linesRearranged`).
+    return this.ordersService.reorderLines(id, dto, makePseudoUser(ctx));
   }
 
   @Post("orders/:id/change-requests")

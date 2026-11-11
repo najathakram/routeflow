@@ -49,6 +49,10 @@ export function carrierBlocked({ featureConfig, prisma }: CarrierDeps, order: Ca
 export const SHIPPED_ORDER_MESSAGE =
   "This order has already shipped. Contact the seller for changes.";
 
+/** W-1189: the buyer's refused edit of an order that was refused at the door. */
+export const REFUSED_ORDER_MESSAGE =
+  "This order was refused at delivery and can no longer be changed. Contact the seller.";
+
 /**
  * B1135: a change request on a with-carrier order is refused with its own code. A carrier (SHIP) order has
  * no route run, so the G7 gate would otherwise answer "still directly editable" while the buyer's edit
@@ -70,6 +74,8 @@ export async function buyerEditClosedMessage(
   deps: CarrierDeps,
   order: CarrierOrder,
 ): Promise<string> {
+  // W-1189: a refused order is not "out for delivery", and a change request cannot change it
+  if ((order as { status?: string }).status === "REFUSED") return REFUSED_ORDER_MESSAGE;
   return (await carrierBlocked(deps, order)) === null
     ? "This order is already out for delivery. Send a change request instead."
     : SHIPPED_ORDER_MESSAGE;

@@ -546,6 +546,10 @@ export const API_ERROR_CODES = {
   FEATURE_NOT_OVERRIDABLE: "FEATURE_NOT_OVERRIDABLE",
   FEATURE_MODE_REQUIRES: "FEATURE_MODE_REQUIRES",
   FEATURE_REQUIRES_UNMET: "FEATURE_REQUIRES_UNMET",
+  // WP11: the saved set was read against an older state (another change landed since the page loaded).
+  FEATURE_INPUTS_CHANGED: "FEATURE_INPUTS_CHANGED",
+  // WP11: a change set cannot be undone (something changed since, already undone, or not an undoable row).
+  FEATURE_CHANGE_NOT_UNDOABLE: "FEATURE_CHANGE_NOT_UNDOABLE",
   PLAN_CHANGED_DURING_SUBSCRIBE: "PLAN_CHANGED_DURING_SUBSCRIBE",
   ADDON_ANNUAL_NOT_SUPPORTED: "ADDON_ANNUAL_NOT_SUPPORTED",
   ADDON_INCLUDED_IN_PLAN: "ADDON_INCLUDED_IN_PLAN",
@@ -694,6 +698,16 @@ export const API_ERROR_CODES = {
    * counter POST refuses it before any write; use a fresh key.
    */
   COUNTER_SALE_KEY_CONFLICT: "COUNTER_SALE_KEY_CONFLICT",
+  /**
+   * 400 (W-1188): a typed order date is outside what the policy accepts (the office: no day after the tenant's today; the
+   * counter: up to 366 days ahead; both: not before two years back). Carries {policy, min, max}; clients show their own copy.
+   */
+  ORDER_DATE_OUT_OF_RANGE: "ORDER_DATE_OUT_OF_RANGE",
+  /**
+   * 409 (W-1188): the order date falls in a filed and locked regulated period for a category in the cart. Refused before
+   * anything is written. Carries {periodKey, categoryName}.
+   */
+  ORDER_DATE_PERIOD_LOCKED: "ORDER_DATE_PERIOD_LOCKED",
   /**
    * 403 from the counter-sale POST (POS-5): a line carries a real price change (a price off the server's own price
    * for this customer) from a caller who may not edit prices (`canEditPrices`: account admins only today). Raised
@@ -1075,6 +1089,12 @@ export const API_ERROR_CODES = {
   RETURN_CANCEL_RETRY: "RETURN_CANCEL_RETRY",
   /** 409 from DELETE /routes/:id and DELETE /route-runs/:id: the route or run holds delivery records (POD, signatures, payments); deactivate it instead (SA-842). Nothing was written. */
   ROUTE_HAS_DELIVERY_EVIDENCE: "ROUTE_HAS_DELIVERY_EVIDENCE",
+  /** 400 from POST /auth/confirm-email-change: the link is unknown, used, expired, replaced by a newer request, burned by an account change, or the email moved since the request. One answer for all of them; nothing was written (B461, SA-1116). */
+  EMAIL_CHANGE_LINK_INVALID: "EMAIL_CHANGE_LINK_INVALID",
+  /** 409 from POST /auth/confirm-email-change: the new address now belongs to another account of the business. Nothing was written (B461, SA-1116). */
+  EMAIL_TAKEN: "EMAIL_TAKEN",
+  /** 409 from PATCH /users/:id: a login-email change that must wait for the new address was asked for an account that is not ACTIVE, or is deleted; the confirm could never land. Nothing was written and no mail was sent (B461, SA-1126). */
+  EMAIL_CHANGE_ACCOUNT_INACTIVE: "EMAIL_CHANGE_ACCOUNT_INACTIVE",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

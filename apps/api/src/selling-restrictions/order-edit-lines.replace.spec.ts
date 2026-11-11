@@ -1,4 +1,8 @@
+import { readFileSync } from "fs";
+import { join } from "path";
+import { denominationGate } from "../orders/buyer-denomination";
 import {
+  replaceIsPieces,
   sellableLinesForChangeRequest,
   sellableLinesForReplaceEdit,
   type EditItem,
@@ -22,12 +26,19 @@ const items = (...list: Array<Record<string, unknown>>): EditItem[] => list as E
 const LIVE12: LiveUnitsPerBox = new Map([["p1", 12]]);
 const LOOSE: LiveUnitsPerBox = new Map([["p1", null]]);
 
+// SA-1132: `isPieces` is the write's own builder (`replaceIsPieces` = `denominationGate`), as the plan passes it.
 const replace = (
   existing: ExistingLine[],
   payload: EditItem[],
   actor: ReplaceActor = "staff",
   live?: LiveUnitsPerBox,
-) => sellableLinesForReplaceEdit(existing, payload, { actor, liveUnitsPerBox: live });
+  namesLines = false,
+) =>
+  sellableLinesForReplaceEdit(existing, payload, {
+    actor,
+    liveUnitsPerBox: live,
+    isPieces: replaceIsPieces(existing, actor, namesLines),
+  });
 
 describe("sellableLinesForReplaceEdit", () => {
   it("a product NOT on the order is a new line when anything can be written; a qty-less item writes nothing", () => {
@@ -140,7 +151,90 @@ describe("sellableLinesForReplaceEdit", () => {
       expect(at({ pieces: 7, qty: 99 })).toStrictEqual([{ productId: "p1", qtyDelta: -53 }]);
     });
 
-    it("BUYER: qty is PIECES when the product's lines are piece-denominated (or a split rides along), else cases", () => {
+    // SA-1132: the check reads an edited item the same way the order does (`isPieces` = the write's builder).
+    const boxedOne = line({ qty: 12, boxes: 1, pieces: 0 }); // 1 box of 12, stored 12 pieces
+    const packLine = line({ id: "li-pack", qty: 2 }); // box-unaware: 2 packs = 24 pieces
+
+    it("M-1: an unnamed buyer re-add under namesLines is the pack (2 packs = 24 pieces against 12: +12)", () => {
+      const at = (over: Record<string, unknown>) =>
+        replace([boxedOne], items({ productId: "p1", qty: 2, ...over }), "buyer", LIVE12, true);
+      expect(at({})).toStrictEqual([{ productId: "p1", qtyDelta: 12 }]);
+      // the named box-split line and an explicit split stay pieces (2 against 12)
+      expect(at({ orderItemId: "li-1" })).toStrictEqual([{ productId: "p1", qtyDelta: -10 }]);
+      expect(at({ pieces: 2 })).toStrictEqual([{ productId: "p1", qtyDelta: -10 }]);
+    });
+
+    it("M-2: a buyer entry naming a pack line beside a box-split line is counted in packs (3 packs + 12 pieces = 48 against 36: +12)", () => {
+      const rows = [packLine, line({ id: "li-box", qty: 12, boxes: 1, pieces: 0 })];
+      const at = (namesLines: boolean) =>
+        replace(
+          rows,
+          items(
+            { productId: "p1", qty: 3, orderItemId: "li-pack" },
+            { productId: "p1", qty: 12, orderItemId: "li-box" },
+          ),
+          "buyer",
+          LIVE12,
+          namesLines,
+        );
+      expect(at(true)).toStrictEqual([{ productId: "p1", qtyDelta: 12 }]); // 36 + 12 against 36
+      expect(at(false)).toStrictEqual([{ productId: "p1", qtyDelta: 12 }]); // the named line decides either way
+    });
+
+    it("M-3 (guard): a driver's bare qty is still pieces when a row of the product is box-split, cases when none is", () => {
+      expect(
+        replace([boxedOne], items({ productId: "p1", qty: 30 }), "driver", LIVE12),
+      ).toStrictEqual([{ productId: "p1", qtyDelta: 18 }]);
+      expect(
+        replace([packLine], items({ productId: "p1", qty: 3 }), "driver", LIVE12),
+      ).toStrictEqual([{ productId: "p1", qtyDelta: 12 }]);
+    });
+
+    it("parity: over the R-1..R-4 and M-1..M-3 shapes, the check's reading equals the write's denominationGate", () => {
+      const shapes: Array<[ReplaceActor, ExistingLine[], EditItem, boolean]> = [
+        ["buyer", [boxedOne], { productId: "p1", qty: 2 }, true], // R-1 / M-1
+        ["buyer", [boxedOne], { productId: "p1", qty: 2 }, false], // R-2
+        ["buyer", [boxedOne], { productId: "p1", qty: 2, boxes: 2 } as EditItem, true], // R-3
+        ["buyer", [boxedOne], { productId: "p1", qty: 1 }, true], // R-4 (web / mobile re-add)
+        ["buyer", [packLine, boxedOne], { productId: "p1", qty: 3, orderItemId: "li-pack" }, true], // M-2
+        [
+          "buyer",
+          [line({ status: "CANCELLED", qty: 12, boxes: 1, pieces: 0 }), packLine],
+          { productId: "p1", qty: 3 },
+          false,
+        ],
+        ["driver", [boxedOne], { productId: "p1", qty: 30 }, false], // M-3
+        ["driver", [packLine], { productId: "p1", qty: 3 }, false], // M-3
+      ];
+      for (const [actor, rows, entry, namesLines] of shapes) {
+        const write = denominationGate(rows, actor === "buyer", namesLines).isPieces({
+          productId: entry.productId,
+          boxes: entry.boxes,
+          pieces: entry.pieces,
+          sourceLineId: actor === "buyer" ? entry.orderItemId : entry.id,
+        });
+        const bare = entry.qty ?? 0;
+        const before = rows
+          .filter((l) => l.status !== "CANCELLED")
+          .reduce(
+            (s, l) =>
+              s + (l.boxes == null && l.pieces == null ? Number(l.qty) * 12 : Number(l.qty)),
+            0,
+          );
+        expect([actor, replace(rows, [entry], actor, LIVE12, namesLines)]).toStrictEqual([
+          actor,
+          [{ productId: "p1", qtyDelta: (write ? bare : bare * 12) - before }],
+        ]);
+      }
+    });
+
+    it("structural: order-edit-lines.ts decides no pack-or-pieces rule of its own (no bareIsPieces, no pieceRows)", () => {
+      const src = readFileSync(join(__dirname, "order-edit-lines.ts"), "utf8");
+      expect(src).not.toMatch(/\bbareIsPieces\b|\bpieceRows\b/);
+    });
+
+    // SA-1132 SUPERSEDED: the unnamed-buyer rows below are the legacy (`namesLines: false`) reading only.
+    it("BUYER (legacy, namesLines false): qty is PIECES when the product's live lines are all piece-denominated (or a split rides along), else cases", () => {
       const at = (existing: ExistingLine[], over: Record<string, unknown>) =>
         replace(existing, items({ productId: "p1", ...over }), "buyer", LIVE12);
       expect(at([pieces], { qty: 12 })).toStrictEqual([{ productId: "p1", qtyDelta: -12 }]);
@@ -165,10 +259,12 @@ describe("sellableLinesForReplaceEdit", () => {
       ).toStrictEqual([{ productId: "p1", qtyDelta: 49 }]); // 1 piece + 60 pieces vs 12
     });
 
-    it("BUYER: a CANCELLED piece-denominated row still makes the product piece-denominated (the service reads every row) — a 30-piece cut of 60 is a decrease", () => {
+    // SUPERSEDED by SA-1132 (the check reads the write's decision): SA-422 (3) already made the write ignore
+    // a seller-CANCELLED row for a buyer, so 30 is 30 cases = 360 pieces against 60. The old pin read 30 pieces.
+    it("BUYER: a CANCELLED piece-denominated row does not denominate a buyer entry (SA-422 live lines) — 30 cases against 60 pieces is a raise", () => {
       const rows = [line({ id: "old", status: "CANCELLED", qty: 12, boxes: 1, pieces: 0 }), cases];
       expect(replace(rows, items({ productId: "p1", qty: 30 }), "buyer", LIVE12)).toStrictEqual([
-        { productId: "p1", qtyDelta: -30 },
+        { productId: "p1", qtyDelta: 300 },
       ]);
     });
 

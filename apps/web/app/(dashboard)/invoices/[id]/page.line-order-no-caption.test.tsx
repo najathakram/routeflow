@@ -4,8 +4,8 @@ import { seedSession } from "@/test-utils/session";
 import InvoiceDetailPage from "./page";
 
 /**
- * SA-1071 V2: SA-1058 sorts invoice lines by printed name on every copy (the owner's 10-30 ruling). The page says so in one
- * caption above the lines. No sort change; the caption is not drawn for a one-line invoice, where there is nothing to sort.
+ * W-1187 R14: the invoice follows the order's line order (the owner's 11-09 answer), so the SA-1071 caption "Listed by product
+ * name." is wrong and is gone. The rows are drawn in the order they come; the A to Z order is one tap away (Sort A-Z).
  */
 let mockInvoice: Record<string, unknown>;
 
@@ -81,19 +81,14 @@ const CAPTION = "Listed by product name.";
 beforeEach(() => seedSession("OPERATOR"));
 afterEach(() => seedSession(null));
 
-describe("staff invoice page: the sort is said once", () => {
-  it("V2: two or more lines carry the caption above the table", () => {
+describe("staff invoice page: the lines are drawn in the order they come", () => {
+  it("R14: two or more lines carry no 'Listed by product name.' caption", () => {
     mockInvoice = invoiceWith([line("a", "Zebra Cola", 10), line("b", "Acme Chips", 10)]);
     renderWithProviders(<InvoiceDetailPage />);
-    const caption = screen.getByText(CAPTION);
-    const table = screen.getByRole("table");
-    expect(Boolean(caption.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(
-      true,
-    );
-    expect(screen.getAllByText(CAPTION)).toHaveLength(1);
+    expect(screen.queryByText(CAPTION)).toBeNull();
   });
 
-  it("V2: the rows are drawn in the order they come (the caption sorts nothing)", () => {
+  it("the rows are drawn in the order they come (nothing re-sorts them)", () => {
     mockInvoice = invoiceWith([line("a", "Zebra Cola", 10), line("b", "Acme Chips", 10)]);
     renderWithProviders(<InvoiceDetailPage />);
     const rows = screen.getAllByRole("row").map((r) => r.textContent ?? "");
@@ -103,7 +98,7 @@ describe("staff invoice page: the sort is said once", () => {
     expect(acme).toBeGreaterThan(zebra);
   });
 
-  it("V2: a one-line invoice has nothing to say", () => {
+  it("a one-line invoice has no caption either", () => {
     mockInvoice = invoiceWith([line("a", "Zebra Cola", 20)]);
     renderWithProviders(<InvoiceDetailPage />);
     expect(screen.queryByText(CAPTION)).toBeNull();

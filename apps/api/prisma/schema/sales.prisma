@@ -696,6 +696,10 @@ model Order {
   // reader until the SA-761 T-2 PR merges after the apply.
   taxRate                Decimal?       @db.Decimal(9, 6)
   taxRateSource          TaxRateSource?
+  /// SA-1124 PR-0: the device clock when a staff member took this order offline (display only: "Taken offline <date>").
+  /// Never read by money, stock, status or ordering code; prices and rules are judged at replay (server time). NULL =
+  /// an order created online. No default, no backfill. No writer until SA-1124 PR-1a.
+  offlineCreatedAt       DateTime?
   createdAt              DateTime       @default(now())
   updatedAt              DateTime       @updatedAt
   tenantId               String?
@@ -715,6 +719,7 @@ model Order {
   changeRequests       ChangeRequest[]
   orderCreditNotes     OrderCreditNote[]
   mergeIdempotencyKeys OrderIdempotencyKey[]
+  reviewFlags          OrderReviewFlag[]
 
   // RF-014: prevent duplicate order numbers within the same tenant.
   // NULL values are treated as distinct by PostgreSQL, so rows with
@@ -950,6 +955,7 @@ model OrderItem {
   invoiceItems       InvoiceItem[]
   changeRequests     ChangeRequest[]
   components         OrderItemComponent[]
+  reviewFlags        OrderReviewFlag[]
   // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
   baseLabel          String?
   packLabel          String?
@@ -960,6 +966,45 @@ model OrderItem {
   @@index([tenantId])
   @@index([trackedCategoryId])
   @@index([trackedSubcategoryId])
+}
+
+/// SA-1124 PR-0 (SA-817 §6): why an order needs a person's look. One generic flag table; the kind says which rule.
+enum OrderReviewFlagKind {
+  PRICE_CHANGED_OFFLINE
+  RESTRICTED
+  LICENSE_REQUIRED
+  CREDIT_BLOCKED
+  OPEN_ORDER_EXISTS
+  BACKORDERED_OFFLINE
+}
+
+/// SA-1124 PR-0: a review flag on an order (an offline replay that met a rule that moved, a price that drifted, an open
+/// order). `tenantId` is NOT NULL from day one. Raw-SQL CHECKs (Prisma does not model them): the resolution pair
+/// ("resolvedAt" and "resolution" are both NULL or both set) and the resolution length (3..500). `orderItemId` is
+/// SET NULL on a line edit; `detail` keeps the lineIndex and productId. Nothing writes or reads the table until
+/// SA-1124 PR-1a.
+model OrderReviewFlag {
+  id           String              @id @default(uuid())
+  tenantId     String
+  orderId      String
+  orderItemId  String?
+  kind         OrderReviewFlagKind
+  detail       Json
+  createdAt    DateTime            @default(now())
+  resolvedAt   DateTime?
+  resolvedById String?
+  resolution   String?
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id])
+  order      Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderItem  OrderItem? @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
+  resolvedBy User?      @relation("OrderReviewFlagResolvedBy", fields: [resolvedById], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, orderId])
+  @@index([tenantId, kind, resolvedAt])
+  @@index([orderId])
+  @@index([orderItemId])
+  @@index([resolvedById])
 }
 
 // #2717 M3 (SA-572 A1/I9/I12): the frozen per-component snapshot of a FIXED order line. Sum of qty

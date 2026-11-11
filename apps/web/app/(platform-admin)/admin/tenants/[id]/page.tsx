@@ -42,6 +42,7 @@ import { LayoutDashboard, CreditCard, Puzzle, Building2, History } from "lucide-
 import { FeatureConsole } from "./_features/FeatureConsole";
 import { SetupSection } from "./_features/SetupSection";
 import { ConfigSnapshotsTab } from "./_features/ConfigSnapshotsTab";
+import { FeatureChangeHistory } from "./_features/FeatureChangeHistory";
 import { TierChangeControl } from "./_features/TierChangeControl";
 import { PreviewDrawer } from "./_features/PreviewDrawer";
 import { previewTenantFeatures } from "@/lib/platform-admin/features";
@@ -2171,6 +2172,9 @@ export default function AdminTenantDetailPage() {
       )}
       {activeTab === "history" && (
         <>
+          <div className="mb-8">
+            <FeatureChangeHistory tenantId={tenant.id} />
+          </div>
           <h2 className="mb-3 text-sm font-semibold text-slate-300">Audit log</h2>
           <AuditLogTab tenantId={tenant.id} />
           <div className="mt-8">

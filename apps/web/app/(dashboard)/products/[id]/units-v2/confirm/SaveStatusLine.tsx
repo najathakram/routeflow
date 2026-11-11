@@ -203,6 +203,28 @@ const prefersReducedMotion = () =>
   typeof window !== "undefined" &&
   window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
 
+/**
+ * F13: on a touch phone the inline slot below the grid is off screen, so the pinned line stays until the next edit, an
+ * Undo or Dismiss instead of letting go after PIN_MS. A coarse primary pointer or a viewport under 768 px.
+ */
+const KEEP_PINNED_QUERIES = ["(pointer: coarse)", "(max-width: 767px)"] as const;
+const keepPinnedNow = () =>
+  typeof window !== "undefined" &&
+  typeof window.matchMedia === "function" &&
+  KEEP_PINNED_QUERIES.some((q) => window.matchMedia(q).matches === true);
+
+function useKeepPinned(): boolean {
+  const [keep, setKeep] = React.useState(keepPinnedNow);
+  React.useEffect(() => {
+    if (typeof window.matchMedia !== "function") return undefined;
+    const lists = KEEP_PINNED_QUERIES.map((q) => window.matchMedia(q));
+    const update = () => setKeep(keepPinnedNow());
+    lists.forEach((l) => l.addEventListener?.("change", update));
+    return () => lists.forEach((l) => l.removeEventListener?.("change", update));
+  }, []);
+  return keep;
+}
+
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 /** "3 prices" / "1 price and 2 customer prices", from the inverse's LENGTHS only (no money math). */
@@ -277,8 +299,9 @@ export function PriceSaveStatusLine({
     setFocusIn(false);
   }, [hasUndoNow]);
   const pinOn = phase === "saved" && state.pin === "on";
+  const keepPinned = useKeepPinned();
   React.useEffect(() => {
-    if (!pinOn || hold) return;
+    if (!pinOn || hold || keepPinned) return;
     const t = setTimeout(() => {
       // A line that pinned under a pointer already resting there (where the bar's Save was) never got mouseenter, but
       // the browser reports it as :hover: hold it, and its mouseleave gives the 5 s back (K11-20c).
@@ -286,7 +309,7 @@ export function PriceSaveStatusLine({
       dispatch({ type: prefersReducedMotion() ? "unpin" : "fade" });
     }, PIN_MS);
     return () => clearTimeout(t);
-  }, [pinOn, hold, state.auditId]);
+  }, [pinOn, hold, keepPinned, state.auditId]);
   React.useEffect(() => {
     if (state.pin !== "fading") return;
     const t = setTimeout(() => dispatch({ type: "unpin" }), FADE_MS);
@@ -440,6 +463,17 @@ export function PriceSaveStatusLine({
               >
                 Undo
               </Button>
+              {pinned && keepPinned && phase === "saved" ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="link"
+                  className="min-h-11 min-w-11"
+                  onClick={() => dispatch({ type: "unpin" })}
+                >
+                  Dismiss
+                </Button>
+              ) : null}
             </>
           ) : null}
           {phase === "undone" ? (

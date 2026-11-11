@@ -1,9 +1,12 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
+import { readFileSync } from "fs";
+import { join } from "path";
 import {
   BUYER_EDIT_IDLESS_FALLBACK,
   BUYER_EDIT_IDLESS_FALLBACK_REMOVE_ON,
   applyBuyerEditLines,
   assertNoOrderItemIdOutsideBuyerEdit,
+  denominationGate,
   guardBuyerEditLineIds,
   piecesDenominated,
   preflightBuyerEditLines,
@@ -276,36 +279,53 @@ describe("piecesDenominated: pack vs pieces from the entry's own line (row 355)"
   const none = new Set<string>(["p1"]); // the old product-wide gate says p1 is pieces
 
   it("an explicit split is pieces", () => {
-    expect(piecesDenominated([], { productId: "p1", boxes: 1 }, new Set(), true)).toBe(true);
+    expect(piecesDenominated([], { productId: "p1", boxes: 1 }, new Set(), true, false)).toBe(true);
   });
 
   it("a named line decides: the pack line is selling units even though the product has a box-split line", () => {
-    expect(piecesDenominated(lines, { productId: "p1", sourceLineId: "pack" }, none, true)).toBe(
-      false,
-    );
-    expect(piecesDenominated(lines, { productId: "p1", sourceLineId: "box" }, none, true)).toBe(
-      true,
-    );
+    expect(
+      piecesDenominated(lines, { productId: "p1", sourceLineId: "pack" }, none, true, false),
+    ).toBe(false);
+    expect(
+      piecesDenominated(lines, { productId: "p1", sourceLineId: "box" }, none, true, false),
+    ).toBe(true);
   });
 
   it("an id naming another product's line is not that line", () => {
-    expect(piecesDenominated(lines, { productId: "p1", sourceLineId: "other" }, none, true)).toBe(
-      false,
-    );
+    expect(
+      piecesDenominated(lines, { productId: "p1", sourceLineId: "other" }, none, true, false),
+    ).toBe(false);
   });
 
   it("no named line: reads like the product's live lines when they agree, else the pack default", () => {
     const boxOnly = lines.filter((l) => l.id !== "pack");
-    expect(piecesDenominated(boxOnly, { productId: "p1" }, none, true)).toBe(true); // legacy plain qty
-    expect(piecesDenominated(lines, { productId: "p1" }, none, true)).toBe(false); // mixed: the pack default
-    expect(piecesDenominated([], { productId: "p9" }, none, true)).toBe(false); // new product: the pack
+    expect(piecesDenominated(boxOnly, { productId: "p1" }, none, true, false)).toBe(true); // legacy plain qty
+    expect(piecesDenominated(lines, { productId: "p1" }, none, true, false)).toBe(false); // mixed: the pack default
+    expect(piecesDenominated([], { productId: "p9" }, none, true, false)).toBe(false); // new product: the pack
     const cancelled = [{ ...lines[1], status: "CANCELLED" }];
-    expect(piecesDenominated(cancelled, { productId: "p1" }, none, true)).toBe(false);
+    expect(piecesDenominated(cancelled, { productId: "p1" }, none, true, false)).toBe(false);
   });
 
   it("a DRIVER entry naming no line keeps the product-wide gate", () => {
-    expect(piecesDenominated([], { productId: "p1" }, none, false)).toBe(true);
-    expect(piecesDenominated([], { productId: "p2" }, none, false)).toBe(false);
+    expect(piecesDenominated([], { productId: "p1" }, none, false, false)).toBe(true);
+    expect(piecesDenominated([], { productId: "p2" }, none, false, false)).toBe(false);
+  });
+
+  it("SA-1118 R-1: an editor that names its lines: an unnamed bare qty is the pack, even beside a box-split line", () => {
+    const boxOnly = lines.filter((l) => l.id !== "pack");
+    expect(piecesDenominated(boxOnly, { productId: "p1" }, none, true, true)).toBe(false);
+  });
+
+  it("SA-1118 R-2: a legacy editor (namesLines false) keeps the sibling inference", () => {
+    const boxOnly = lines.filter((l) => l.id !== "pack");
+    expect(piecesDenominated(boxOnly, { productId: "p1" }, none, true, false)).toBe(true);
+  });
+
+  it("SA-1118 R-3: an explicit split and a named line still decide when the editor names its lines", () => {
+    expect(piecesDenominated([], { productId: "p1", boxes: 2 }, new Set(), true, true)).toBe(true);
+    expect(
+      piecesDenominated(lines, { productId: "p1", sourceLineId: "box" }, none, true, true),
+    ).toBe(true);
   });
 });
 
@@ -419,5 +439,32 @@ describe("applyBuyerEditLines", () => {
       new Map([["cat-1", { taxType: "EXCISE_PER_UNIT", rate: "0.0700", priceIncludesTax: false }]]),
     );
     expect(items).toEqual([{ productId: "p1", qty: 5 }]);
+  });
+});
+
+describe("denominationGate: the per-save pack-or-pieces gate of updateOrderItems", () => {
+  const lines = [
+    { id: "pack", productId: "p1", status: "ACTIVE", boxes: null, pieces: null },
+    { id: "gone", productId: "p2", status: "CANCELLED", boxes: 1, pieces: 0 },
+    { id: "split", productId: "p3", status: "ACTIVE", boxes: 2, pieces: 3 },
+  ];
+
+  it("SA-422 (3): a seller-CANCELLED box-split line denominates nothing for a buyer, but still does for staff", () => {
+    expect([...denominationGate(lines, true, true).products]).toEqual(["p3"]);
+    expect([...denominationGate(lines, false, false).products].sort()).toEqual(["p2", "p3"]);
+  });
+
+  it("isPieces is piecesDenominated with the save's namesLines (SA-1118)", () => {
+    const entry = { productId: "p3", qty: 2 };
+    expect(denominationGate(lines, true, true).isPieces(entry)).toBe(false);
+    expect(denominationGate(lines, true, false).isPieces(entry)).toBe(true);
+    expect(denominationGate(lines, false, true).isPieces(entry)).toBe(true);
+  });
+
+  it("the promo planner gets the gate's own products and namesLines, so it reads what the write reads (SA-1118)", () => {
+    expect(denominationGate(lines, true, true).namesLines).toBe(true);
+    expect(denominationGate(lines, true, false).namesLines).toBe(false);
+    const src = readFileSync(join(__dirname, "orders.service.ts"), "utf8");
+    expect(src).toMatch(/keep\.planPromos\([^)]*denom\.products,\s*denom\.namesLines,/);
   });
 });

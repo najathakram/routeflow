@@ -46,6 +46,7 @@ export const SEND_SNAPSHOT_INCLUDE = {
           sku: true,
           unitSku: true,
           baseUnitLabel: true,
+          unit: true, // W-1185: the live selling unit names a plain line in the "Items" count
         },
       },
       // CQ-03: the category row names the levy charge ("CRV deposit")

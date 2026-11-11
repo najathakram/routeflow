@@ -13,7 +13,7 @@ const none = new Set<string>();
 
 describe("planSplitPromos", () => {
   it("gives no group to a product on one line", () => {
-    expect(planSplitPromos([{ productId: "p1", qty: 12 }], [], products, none).size).toBe(0);
+    expect(planSplitPromos([{ productId: "p1", qty: 12 }], [], products, none, false).size).toBe(0);
   });
 
   it("measures two lines of an unboxed product together", () => {
@@ -25,6 +25,7 @@ describe("planSplitPromos", () => {
       [],
       products,
       none,
+      false,
     ).get("p1")!;
     expect(g).toMatchObject({ qtyPieces: 12, qtyUnits: 12 });
   });
@@ -42,10 +43,26 @@ describe("planSplitPromos", () => {
       lineItems,
       products,
       none,
+      false,
     ).get("boxed")!;
     // 2 packs = 24 pieces, + 24 pieces = 48 pieces = 4 boxes
     expect(g).toMatchObject({ qtyPieces: 48, qtyUnits: 4 });
     expect(g.denomination).toMatchObject({ boxes: 4, pieces: 0, unitsPerBox: 12 });
+  });
+
+  it("SA-1118: an unnamed bare qty beside a box-split line is the pack when the editor names its lines", () => {
+    const lineItems = [{ id: "L-box", productId: "boxed", boxes: 1, pieces: 0 }];
+    const items = [
+      { productId: "boxed", qty: 12, sourceLineId: "L-box" },
+      { productId: "boxed", qty: 2 },
+    ];
+    // 12 pieces + 2 packs (24 pieces) = 36 pieces = 3 boxes; the legacy reading counts the 2 as pieces
+    expect(planSplitPromos(items, lineItems, products, none, true).get("boxed")).toMatchObject({
+      qtyPieces: 36,
+    });
+    expect(planSplitPromos(items, lineItems, products, none, false).get("boxed")).toMatchObject({
+      qtyPieces: 14,
+    });
   });
 
   it("allocates oldest first: stored lines by their createdAt (payload order be damned), then added lines in payload order", () => {
@@ -58,7 +75,7 @@ describe("planSplitPromos", () => {
       { productId: "p1", qty: 7, sourceLineId: "a-new" },
       { productId: "p1", qty: 2, sourceLineId: "z-old" }, // the OLDEST line, last in the payload
     ];
-    const g = planSplitPromos(items, lineItems, products, none).get("p1")!;
+    const g = planSplitPromos(items, lineItems, products, none, false).get("p1")!;
     // 2 free over caps [z-old:2, a-new:7, added:5]: the oldest line takes both
     expect(g.share(items[2], 2)).toBe(2);
     expect(g.share(items[1], 2)).toBe(0);

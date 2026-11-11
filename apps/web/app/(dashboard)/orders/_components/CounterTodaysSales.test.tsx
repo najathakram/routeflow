@@ -397,6 +397,30 @@ describe("CounterTodaysSales", () => {
     );
   });
 
+  it("W-1188: a backdated sale lists under its entry day, tagged Dated Fri with the full date on hover", async () => {
+    serve({ 1: page1([row({ dated: { day: "2026-10-02", direction: "BACK" } })]) });
+    await open();
+    const tag = within(await screen.findByTestId("today-row-o1")).getByTestId("today-row-dated");
+    expect(tag).toHaveTextContent("Dated Fri");
+    expect(tag).toHaveAttribute("data-direction", "BACK");
+    expect(tag.getAttribute("title")).toMatch(/^Dated Friday, October 2, 2026. Entered /);
+  });
+
+  it("W-1188: a future-dated sale is tagged Dated Mon · future", async () => {
+    serve({ 1: page1([row({ dated: { day: "2026-10-12", direction: "FORWARD" } })]) });
+    await open();
+    const tag = within(await screen.findByTestId("today-row-o1")).getByTestId("today-row-dated");
+    expect(tag).toHaveTextContent("Dated Mon · future");
+    expect(tag).toHaveAttribute("data-direction", "FORWARD");
+  });
+
+  it("W-1188: an undated sale, or one from an older server, carries no tag", async () => {
+    serve({ 1: page1([row({ dated: null }), row({ orderId: "o2", orderNumber: "ORD-2" })]) });
+    await open();
+    await screen.findByTestId("today-row-o1");
+    expect(screen.queryByTestId("today-row-dated")).toBeNull();
+  });
+
   it("a voided row is labelled Voided, struck through, with no Reprint or Return", async () => {
     serve({ 1: page1([row({ voided: true })]) });
     await open();

@@ -187,9 +187,13 @@ describe("OrdersService.findOne — invoicesNeedReview (B1116)", () => {
     const out = (await service.findOne("o-1", user("OPERATOR"))) as unknown as Detail;
     // A leftover audit row from an earlier episode never turns the badge on: the only audit read is
     // the left-off one, asked for by kind, and it finds nothing here, so no line is read either.
+    // (W-1187: the order read also asks the audit trail who last rearranged the lines; that read is not this signal's.)
     expect(out.invoicesNeedReview).toEqual({ flagged: false });
-    expect(auditFindFirst).toHaveBeenCalledTimes(1);
-    expect(auditFindFirst.mock.calls[0][0].where.meta).toEqual({
+    const reviewReads = auditFindFirst.mock.calls.filter(
+      ([args]) => args.where.action !== "order.lines.reordered",
+    );
+    expect(reviewReads).toHaveLength(1);
+    expect(reviewReads[0][0].where.meta).toEqual({
       path: ["kind"],
       equals: "line-left-off",
     });

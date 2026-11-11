@@ -28,6 +28,7 @@ import {
   receiptModelFromOrder,
   type ReceiptBusinessProfile,
 } from "@/lib/counter-receipt";
+import { CounterDatedTag } from "./CounterDatedTag";
 import { CounterDayClose } from "./CounterDayClose";
 import { HandOverRows, METHOD_LABEL, handOverFigure } from "./HandOverRows";
 import { receiptEmailPrefill } from "@/lib/email-receipt";
@@ -284,6 +285,7 @@ function Reprint({
             balanceDue: row.balanceDue,
             methods: row.methods,
             createdAt: row.createdAt,
+            datedDay: row.dated?.day ?? null, // W-1188: a dated sale reprints its sale day, the entry time apart
             // B1262 / SA-838 + SA-838a: the server's tender split and what the sale's own returns did (absent on an older server)
             tenderPaid: row.tenderPaid,
             tenderMethods: row.tenderMethods,
@@ -485,6 +487,9 @@ function SaleRow({
           <span className={BADGE}>{PAYMENT_LABEL[row.paymentState]}</span>
         )}
         {row.voided ? null : <ToCollectChip state={row.toCollect} />}
+        {row.dated ? (
+          <CounterDatedTag dated={row.dated} enteredAt={timeOf(row.createdAt, timezone)} />
+        ) : null}
         {returnLabel ? <span className={BADGE}>{returnLabel}</span> : null}
       </div>
       <div className="flex flex-wrap gap-2">
