@@ -16,6 +16,10 @@ const ALLOWED: Record<string, { count: number; why: string }> = {
     count: 4,
     why: "Esc in an EMPTY scan box moves focus to Resume sale, else Exit counter, so the keyboard reaches them in one key (it only moves focus, never presses; the scanner Enter cannot trigger it); the receipt heading takes focus when the receipt appears (POS-1); the digit redirect (row 237) focuses the scan box SYNCHRONOUSLY so the very keystroke lands in it (a scheduled refocus would lose it); and focusPaymentControl, the one place the payment area takes focus (Enter in an empty scan box, the tender radiogroup arrows; R7b 1.2)",
   },
+  "CounterDateChip.tsx": {
+    count: 1,
+    why: "W-1188: only when the chip is given no onDone (the regular order), focus returns to the chip itself after apply, cancel or clear so it never drops to the page behind a dialog; the till passes onDone, so its scan box stays the one owner of focus",
+  },
   "CounterNewItem.tsx": {
     count: 3,
     why: "SA-1066 F10: the regulated-item question box takes focus (preventScroll) when it opens, and the Tab / Shift+Tab trap wraps focus inside the box (first and last control), so the keyboard lands on the question box, not on Cancel or any answer button, and the page does not jump; it is a dialog's own box, never the scan field",
