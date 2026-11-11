@@ -302,3 +302,80 @@ describe("OrderLineItemsTable: the handle adds no table width at md (#4284 768 p
     expect(slot.closest("td")!.className).toContain("md:relative");
   });
 });
+
+describe("OrderLineItemsTable: Sort A–Z (W-1187 PR-2a2, ruling 7)", () => {
+  const sortBtn = () => screen.getByRole("button", { name: "Sort A–Z" });
+
+  it("R-sort-ui: the button sends ONE PUT carrying sort name (no list) and the screen shows the server's order", async () => {
+    mockPut.mockResolvedValueOnce({
+      data: { id: "o-1", updatedAt: "2026-11-11T08:00:09.000Z", lineIds: ["l2", "l3", "l1"] },
+    });
+    renderTable();
+    await act(async () => {
+      fireEvent.click(sortBtn());
+    });
+    expect(mockPut).toHaveBeenCalledTimes(1);
+    expect(mockPut).toHaveBeenCalledWith("/orders/o-1/line-order", {
+      expectedUpdatedAt: STAMP,
+      sort: "name",
+    });
+    expect(names()).toEqual(["Sample Pear", "Sample Zucchini", "Sample Apple"]);
+    expect(await screen.findByText("Sorted A to Z")).toBeInTheDocument();
+  });
+
+  it("Undo after a sort puts the previous list back", async () => {
+    mockPut.mockResolvedValueOnce({
+      data: { id: "o-1", updatedAt: "2026-11-11T08:00:09.000Z", lineIds: ["l3", "l2", "l1"] },
+    });
+    renderTable();
+    await act(async () => {
+      fireEvent.click(sortBtn());
+    });
+    mockPut.mockClear();
+    await act(async () => {
+      fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
+    });
+    expect(mockPut.mock.calls[0][1].lineIds).toEqual(["l1", "l2", "l3"]);
+    expect(mockPut.mock.calls[0][1].expectedUpdatedAt).toBe("2026-11-11T08:00:09.000Z");
+  });
+
+  it("an order already in A to Z order says so and offers no Undo", async () => {
+    mockPut.mockResolvedValueOnce({
+      data: { id: "o-1", updatedAt: STAMP, lineIds: ["l1", "l2", "l3"] },
+    });
+    renderTable();
+    await act(async () => {
+      fireEvent.click(sortBtn());
+    });
+    expect(await screen.findByText("Already in A to Z order")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+  });
+
+  it("a 409 snaps to the server's order, like a drag", async () => {
+    mockPut.mockRejectedValueOnce({
+      response: { status: 409, data: { code: "ORDER_CHANGED_DURING_EDIT" } },
+    });
+    renderTable();
+    await act(async () => {
+      fireEvent.click(sortBtn());
+    });
+    expect(await screen.findByText(/changed on another screen/)).toBeInTheDocument();
+    expect(names()).toEqual(["Sample Apple", "Sample Pear", "Sample Zucchini"]);
+  });
+
+  it("no button on a cancelled order or a one-line order", () => {
+    const { unmount } = renderTable("CANCELLED");
+    expect(screen.queryByRole("button", { name: "Sort A–Z" })).toBeNull();
+    unmount();
+    renderWithProviders(
+      <OrderLineItemsTable
+        lineItems={[LINES[0]]}
+        orderStatus="CONFIRMED"
+        total={10}
+        orderId="o-1"
+        updatedAt={STAMP}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Sort A–Z" })).toBeNull();
+  });
+});
