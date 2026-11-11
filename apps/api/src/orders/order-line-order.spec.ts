@@ -2,7 +2,7 @@ import { ForbiddenException } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { lockRowsNoWait } from "../common/db-locks";
-import { reorderOrderLines } from "./order-line-order";
+import { LINE_REORDER_VIA, reorderOrderLines } from "./order-line-order";
 import { orderLineInvoiceDescription } from "../invoices/invoice-line-name";
 import { sortInvoiceLines } from "../invoices/invoice-line-order";
 
@@ -275,7 +275,7 @@ describe("reorderOrderLines: existing invoices follow (W-1187 PR-1e, ruling (4)/
     expect(Object.keys(tx.order.update.mock.calls[0][0].data)).toEqual(["updatedAt"]);
   });
 
-  it("R-lock: the invoices are row-locked (NOWAIT, sorted ids) BEFORE their lines are read or written", async () => {
+  it("R-lock: the invoices are row-locked (NOWAIT; the lock orders them by id in SQL) BEFORE their lines are read or written", async () => {
     const { tx, deps } = withInvoices([
       inv("i2", [
         ["ia2", "a", 0],
@@ -293,8 +293,12 @@ describe("reorderOrderLines: existing invoices follow (W-1187 PR-1e, ruling (4)/
     tx.invoiceItem.update.mockImplementation(async () => order.push("write"));
     await reorderOrderLines(deps, "o1", swap as never, staff);
     const invoiceLock = lock.mock.calls.find((c) => c[1] === "Invoice")!;
-    expect(invoiceLock[2]).toEqual(["i1", "i2"]);
+    expect([...invoiceLock[2]].sort()).toEqual(["i1", "i2"]); // the helper orders them: PR-1g moved ORDER BY id into the SQL
     expect(invoiceLock[3]).toBe("INVOICE_BUSY");
+    // PR-1g: the raw lock SQL is tenant-scoped too (the scoped Prisma client does not cover `$executeRaw`)
+    const orderLock = lock.mock.calls.find((c) => c[1] === "Order")!;
+    expect(orderLock[4]).toEqual(expect.any(String));
+    expect(invoiceLock[4]).toBe(orderLock[4]);
     expect(order.indexOf("lock:Invoice")).toBeGreaterThan(order.indexOf("lock:Order"));
     expect(order.indexOf("lock:Invoice")).toBeLessThan(order.indexOf("write"));
     lock.mockReset();
@@ -302,7 +306,7 @@ describe("reorderOrderLines: existing invoices follow (W-1187 PR-1e, ruling (4)/
   });
 
   it.each([
-    ["a drag", swap, "drag"],
+    ["a list the caller sent (drag, keys or Undo)", swap, "list"],
     ["a name sort", { expectedUpdatedAt: AT.toISOString(), sort: "name" }, "sort"],
   ])("R-via: the one audit row records whether it was %s", async (_n, body, via) => {
     const { tx, deps } = withInvoices([]);
@@ -329,6 +333,7 @@ describe("reorderOrderLines: existing invoices follow (W-1187 PR-1e, ruling (4)/
     await reorderOrderLines(deps, "o1", body as never, staff);
     expect(tx.auditLog.create).toHaveBeenCalledTimes(1);
     expect(tx.auditLog.create.mock.calls[0][0].data.meta.via).toBe(via);
+    expect(LINE_REORDER_VIA).toContain(via);
   });
 
   it.each(["DRAFT", "SENT", "VIEWED", "PARTIAL", "PAID", "OVERDUE"])(

@@ -39,6 +39,29 @@ describe("db-locks — lockRowsNoWait", () => {
     }
   });
 
+  it("PR-1g: every table locks in id order (ORDER BY id), so 'sorted ids' is true in SQL, not in the caller", async () => {
+    for (const table of NOWAIT_LOCK_TABLES) {
+      const tx = fakeTx();
+      await lockRowsNoWait(tx, table, ["b", "a"], "REASON");
+      expect(sqlOf(tx)).toContain("ORDER BY id FOR");
+    }
+  });
+
+  it("PR-1g: with a tenantId the predicate carries it as a bound value; without one the SQL is as before", async () => {
+    for (const table of NOWAIT_LOCK_TABLES) {
+      const scoped = fakeTx();
+      await lockRowsNoWait(scoped, table, ["a"], "REASON", "t-1");
+      const nested = scoped.$executeRaw.mock.calls[0]
+        .slice(1)
+        .find((v: any) => v?.sql?.includes("tenantId"));
+      expect(nested.sql).toContain('"tenantId" = ');
+      expect(nested.values).toEqual(["t-1"]);
+      const open = fakeTx();
+      await lockRowsNoWait(open, table, ["a"], "REASON");
+      expect(sqlOf(open)).not.toContain("tenantId");
+    }
+  });
+
   it("P14c: a 55P03 on meta.code becomes a retryable CONCURRENT_UPDATE conflict", async () => {
     const tx = fakeTx();
     const lockErr: any = new Error("Raw query failed");
