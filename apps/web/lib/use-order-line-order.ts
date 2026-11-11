@@ -6,6 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@routeflow/ui/web";
 import { useReorderOrderLines, type OrderItem } from "@/lib/api/orders";
 import { useBuyerReorderOrderLines } from "@/lib/api/buyer";
+import { isReadOnlyRefusal, readOnlyRefusalCopy } from "@/lib/read-only-refusal";
 import { orderLineName } from "@/lib/product-display";
 import type { LineMove, SortableLine } from "@/components/SortableLines";
 
@@ -38,7 +39,8 @@ const isBusy = (err: unknown) => {
 };
 /** Thrown inside send() when the screen was left during the busy wait: no retry, no toast. */
 const LEFT = new Error("line-order: screen left");
-export const LINE_ORDER_CLOSED = "This order can't be rearranged any more.";
+export const LINE_ORDER_CLOSED =
+  "This order is no longer open for changes, so its lines can't be moved.";
 export const LINE_ORDER_CHANGED = "This order changed on another screen. Showing the latest.";
 
 const inTextField = (el: EventTarget | null) =>
@@ -170,16 +172,13 @@ export function useOrderLineOrder<L extends { id: string } = OrderItem>({
     (err: unknown, previous: string[], what = "move the line") => {
       if (err === LEFT) return;
       const busyNow = isBusy(err);
-      const res = (err as { response?: { status?: number; data?: { message?: unknown } } })
-        ?.response;
+      const res = (err as { response?: { status?: number } })?.response;
       const stale = !busyNow && res?.status === 409;
       // 403 after the screen drew its handles: the order stopped being movable (edit window closed, status moved on).
-      // Say the server's own reason in plain words when it sent one, and refetch so the handles go away.
+      // Our own plain sentence (no raw server text in the UI, B986); a read-only workspace gets the shared read-only line.
+      // Refetch so the handles go away.
       const closed = !busyNow && res?.status === 403;
-      const reason =
-        typeof res?.data?.message === "string" && res.data.message !== "Forbidden"
-          ? res.data.message
-          : LINE_ORDER_CLOSED;
+      const reason = isReadOnlyRefusal(err) ? readOnlyRefusalCopy() : LINE_ORDER_CLOSED;
       show(
         stale ? null : previous,
         lineItems.map((l) => l.id),

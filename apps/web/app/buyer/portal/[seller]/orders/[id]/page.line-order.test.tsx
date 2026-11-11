@@ -1,6 +1,7 @@
 import * as React from "react";
 import { act, fireEvent, screen } from "@testing-library/react";
 import { renderWithProviders } from "@/test-utils/render";
+import { readOnlyRefusalCopy } from "@/lib/read-only-refusal";
 import BuyerOrderDetailPage from "./page";
 
 /**
@@ -167,12 +168,9 @@ describe("buyer order page: arranging your own lines (W-1187 PR-2c)", () => {
     expect(screen.getAllByTestId("row-handle-slot")[0].className).toContain("[&>button]:ml-0");
   });
 
-  it("#4292: a 403 after dispatch (the order is no longer movable) says why in plain words, refetches, and drops the unsaved order", async () => {
+  it("#4292: a 403 after dispatch (the order is no longer movable) says why in our own plain words, refetches, and never shows the server text", async () => {
     mockPut.mockRejectedValueOnce({
-      response: {
-        status: 403,
-        data: { message: "This order is being prepared and can't be changed." },
-      },
+      response: { status: 403, data: { message: "SERVER RAW TEXT" } },
     });
     const view = renderWithProviders(<BuyerOrderDetailPage />);
     const refetch = jest.spyOn(view.queryClient, "invalidateQueries");
@@ -183,14 +181,17 @@ describe("buyer order page: arranging your own lines (W-1187 PR-2c)", () => {
       });
     });
     expect(
-      await screen.findByText("This order is being prepared and can't be changed."),
+      await screen.findByText(
+        "This order is no longer open for changes, so its lines can't be moved.",
+      ),
     ).toBeInTheDocument();
+    expect(screen.queryByText("SERVER RAW TEXT")).toBeNull();
     expect(screen.queryByText("Couldn't move the line. Try again.")).toBeNull();
     expect(refetch).toHaveBeenCalledWith({ queryKey: ["buyer", "order", "ord-1"] });
   });
 
-  it("#4292: a bare 403 falls back to our own sentence", async () => {
-    mockPut.mockRejectedValueOnce({ response: { status: 403, data: { message: "Forbidden" } } });
+  it("#4292: a READ_ONLY 403 gets the shared read-only line, not the closed-order one", async () => {
+    mockPut.mockRejectedValueOnce({ response: { status: 403, data: { code: "READ_ONLY" } } });
     renderWithProviders(<BuyerOrderDetailPage />);
     await act(async () => {
       fireEvent.keyDown(screen.getByRole("button", { name: /Move Sample Apple, line 1 of 3/ }), {
@@ -198,6 +199,9 @@ describe("buyer order page: arranging your own lines (W-1187 PR-2c)", () => {
         altKey: true,
       });
     });
-    expect(await screen.findByText("This order can't be rearranged any more.")).toBeInTheDocument();
+    expect(await screen.findByText(readOnlyRefusalCopy())).toBeInTheDocument();
+    expect(
+      screen.queryByText("This order is no longer open for changes, so its lines can't be moved."),
+    ).toBeNull();
   });
 });
