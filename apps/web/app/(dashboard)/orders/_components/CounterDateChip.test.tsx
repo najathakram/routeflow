@@ -155,11 +155,11 @@ describe("Alt+D and the picker", () => {
     expect(dialog.querySelector('[data-day="2027-11-11"]')).toBeDisabled();
   });
 
-  it("calendar keys: arrows move, T is today, Y is yesterday", async () => {
+  it("calendar keys: arrows move the cursor and Enter applies it", async () => {
     const { onChange } = setup();
     await userEvent.click(screen.getByRole("button", { name: "Order date: today. Change" }));
     const grid = within(await screen.findByTestId("counter-date-picker")).getByRole("grid", {
-      name: "Calendar",
+      name: /^Calendar/,
     });
     grid.focus();
     await userEvent.keyboard("{ArrowLeft}{ArrowLeft}{Enter}");
@@ -171,9 +171,51 @@ async function openGrid() {
   const view = setup();
   await userEvent.click(screen.getByRole("button", { name: "Order date: today. Change" }));
   const picker = await screen.findByTestId("counter-date-picker");
-  const grid = within(picker).getByRole("grid", { name: "Calendar" });
+  const grid = within(picker).getByRole("grid", { name: /^Calendar/ });
   return { ...view, picker, grid };
 }
+
+describe("calendar details (reader SHOULDs)", () => {
+  it("the grid's name carries the month and year", async () => {
+    const { picker } = await openGrid();
+    expect(
+      within(picker).getByRole("grid", { name: "Calendar, November 2026" }),
+    ).toBeInTheDocument();
+  });
+
+  it("paging back to the lowest month never leaves the cursor on a disabled day", async () => {
+    const { picker, grid } = await openGrid();
+    const prev = within(picker).getByRole("button", { name: "Previous month" });
+    for (let i = 0; i < 24; i++) await userEvent.click(prev);
+    expect(within(picker).getByText("November 2024")).toBeInTheDocument();
+    const cell = document.getElementById(grid.getAttribute("aria-activedescendant")!);
+    expect(cell).not.toBeNull();
+    expect(cell).toBeEnabled();
+  });
+
+  it("a scan landing on the grid after arrowing never applies the cursor day", async () => {
+    const { onChange, grid } = await openGrid();
+    grid.focus();
+    await userEvent.keyboard("{ArrowLeft}{ArrowLeft}");
+    await userEvent.keyboard("COLA123{Enter}");
+    expect(onChange).not.toHaveBeenCalled();
+    // a deliberate Enter, with no typing before it, still applies
+    await new Promise((r) => setTimeout(r, 400));
+    await userEvent.keyboard("{Enter}");
+    expect(onChange).toHaveBeenLastCalledWith("2026-11-07");
+  });
+
+  it("a two-digit year gets the same answer as the four-digit year", async () => {
+    const { picker } = await openGrid();
+    const input = within(picker).getByTestId("counter-date-input");
+    await userEvent.type(input, "11/02/2024");
+    const four = within(picker).getByTestId("counter-date-echo").textContent;
+    await userEvent.clear(input);
+    await userEvent.type(input, "11/02/24");
+    expect(within(picker).getByTestId("counter-date-echo").textContent).toBe(four);
+    expect(four).toMatch(/outside the dates/);
+  });
+});
 
 describe("calendar is a real grid (reader A2)", () => {
   it("Enter on Next month pages and does not apply or close", async () => {

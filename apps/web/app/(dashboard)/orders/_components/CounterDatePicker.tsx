@@ -73,6 +73,7 @@ export function CounterDatePicker({
   const length = new Date(Date.UTC(cy, cm, 0)).getUTCDate();
   for (let d = 1; d <= length; d++) cells.push(`${month}-${String(d).padStart(2, "0")}`);
 
+  const clampToRange = (d: string) => (d < range.min ? range.min : d > range.max ? range.max : d);
   const move = (by: number) => {
     const next = addDays(cursor, by);
     if (inRange(next)) setCursor(next);
@@ -87,9 +88,20 @@ export function CounterDatePicker({
   const weekdayOfCursor = new Date(`${cursor}T00:00:00Z`).getUTCDay();
   // Only keys typed ON the grid act here: Enter on a month button pages, and letters never set a date (a barcode
   // scanner types letters then Enter; the quick picks and the typed field are the ways to say "today" or "yesterday").
+  // A barcode scanner types characters then Enter within a few milliseconds. A character typed on the grid marks the moment;
+  // an Enter right after it is the scanner's, never a clerk choosing a day (a person pressing Enter has not just typed).
+  const lastTypedAt = React.useRef(0);
   const onGridKey = (e: React.KeyboardEvent) => {
     if (e.target !== e.currentTarget || e.altKey || e.ctrlKey || e.metaKey) return;
     const k = e.key;
+    if (k.length === 1) {
+      lastTypedAt.current = Date.now();
+      return;
+    }
+    if (k === "Enter" && Date.now() - lastTypedAt.current < 300) {
+      e.preventDefault();
+      return;
+    }
     if (k === "ArrowLeft") move(-1);
     else if (k === "ArrowRight") move(1);
     else if (k === "ArrowUp") move(-7);
@@ -185,7 +197,7 @@ export function CounterDatePicker({
               aria-label="Previous month"
               className="min-h-[44px]"
               disabled={shiftMonth(month, -1) < ym(range.min)}
-              onClick={() => setCursor(`${shiftMonth(month, -1)}-01`)}
+              onClick={() => setCursor(clampToRange(`${shiftMonth(month, -1)}-01`))}
             >
               ‹
             </Button>
@@ -198,7 +210,7 @@ export function CounterDatePicker({
               aria-label="Next month"
               className="min-h-[44px]"
               disabled={shiftMonth(month, 1) > ym(range.max)}
-              onClick={() => setCursor(`${shiftMonth(month, 1)}-01`)}
+              onClick={() => setCursor(clampToRange(`${shiftMonth(month, 1)}-01`))}
             >
               ›
             </Button>
@@ -206,7 +218,7 @@ export function CounterDatePicker({
           <div
             role="grid"
             tabIndex={0}
-            aria-label="Calendar"
+            aria-label={`Calendar, ${MONTHS[Number(month.slice(5)) - 1]} ${month.slice(0, 4)}`}
             aria-activedescendant={cellId(cursor)}
             onKeyDown={onGridKey}
             className="rounded-md outline-none focus-visible:ring-2 focus-visible:ring-navy/40"
