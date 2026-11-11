@@ -309,6 +309,29 @@ describe("PlatformAdminService — audit provenance", () => {
     );
   });
 
+  // B461 (SA-1116): the super-admin's tenant-admin password reset also kills a pending login-email change, in the
+  // same transaction as the password write (one `$transaction`, the user update first, then the burn).
+  it("resetTenantAdminPassword burns the admin's pending email change in the password write's transaction", async () => {
+    prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+    prisma.user.findFirst.mockResolvedValue({ id: "adm1", username: "acme_admin" } as any);
+    prisma.user.update.mockResolvedValue({} as any);
+    (prisma.$transaction as jest.Mock).mockClear();
+
+    const out = await service.resetTenantAdminPassword(TENANT_ID, ADMIN_ID);
+
+    expect(out.username).toBe("acme_admin");
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "adm1" },
+        data: expect.objectContaining({ forcePasswordChange: true }),
+      }),
+    );
+    const sql = (prisma.$executeRaw as jest.Mock).mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(sql.some((s: string) => s.includes('UPDATE "UserEmailChange"'))).toBe(true);
+    expect((prisma.$executeRaw as jest.Mock).mock.calls.at(-1)?.slice(1)).toEqual([["adm1"]]);
+  });
+
   // F4: an admin-set READ_ONLY carries the reason `admin_set` (never null) so a later renewal can tell it from a
   // lapsed trial; and a CANCELLED over a LIVE Stripe subscription is refused - cancel the subscription first.
   describe("updateStatus - F4 admin_set / cancel-the-subscription-first", () => {

@@ -296,6 +296,22 @@ describe("TenantsService", () => {
       const createCall = (prisma.user.create as jest.Mock).mock.calls[0][0];
       expect(createCall.data.status).toBe("INACTIVE");
     });
+
+    it("B448: writes the live sign-up link row inside the register transaction, and the mailed JWT carries its id", async () => {
+      email.send.mockResolvedValue({ delivered: true, transport: "resend" });
+      const jwt = (service as any).jwt as { sign: jest.Mock };
+      await service.register(REGISTER_DTO);
+      const sql = (prisma.$executeRaw as jest.Mock).mock.calls.map((c) => c[0].join("?"));
+      expect(
+        sql.some((q: string) => q.startsWith(`INSERT INTO "UserEmailVerificationToken"`)),
+      ).toBe(true);
+      // one register transaction carries the tenant, the account and the link row
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      const claims = jwt.sign.mock.calls[0][0];
+      expect(claims).toEqual(
+        expect.objectContaining({ type: "email_verify", jti: expect.any(String) }),
+      );
+    });
   });
 
   describe("resendVerification", () => {
@@ -313,6 +329,9 @@ describe("TenantsService", () => {
 
     beforeEach(() => {
       (prisma.refreshToken.count as jest.Mock).mockResolvedValue(0);
+      // B448: a pending sign-up holds one live link row; the resend re-reads the locked account row.
+      (prisma.userEmailVerificationToken.count as jest.Mock).mockResolvedValue(1);
+      (prisma.user.findUnique as jest.Mock).mockResolvedValue(PENDING_USER);
     });
 
     it("returns true and dispatches the email for a real pending account", async () => {

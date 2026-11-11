@@ -38,7 +38,7 @@ import {
 import { TenantPricingCard } from "./_components/TenantPricingCard";
 import { ReadinessCard, type AdminReadState } from "./_components/ReadinessCard";
 import { useFocusTarget } from "./_features/useFocusTarget";
-import { LayoutDashboard, CreditCard, Puzzle, Settings, ScrollText, Archive } from "lucide-react";
+import { LayoutDashboard, CreditCard, Puzzle, Building2, History } from "lucide-react";
 import { FeatureConsole } from "./_features/FeatureConsole";
 import { SetupSection } from "./_features/SetupSection";
 import { ConfigSnapshotsTab } from "./_features/ConfigSnapshotsTab";
@@ -124,18 +124,31 @@ interface AuditLogEntry {
   actor?: AuditActor | null;
 }
 
+// The owner's five tabs (keep-move-remove list, row 30). The URL key of "Plan & billing" stays `billing`.
 const TABS = [
   { key: "overview", label: "Overview", icon: <LayoutDashboard className="h-4 w-4" /> },
-  { key: "billing", label: "Billing & subscription", icon: <CreditCard className="h-4 w-4" /> },
-  { key: "setup", label: "Setup", icon: <Puzzle className="h-4 w-4" /> },
-  { key: "config", label: "Configuration", icon: <Settings className="h-4 w-4" /> },
-  { key: "snapshots", label: "Configuration snapshots", icon: <Archive className="h-4 w-4" /> },
-  { key: "audit", label: "Audit log", icon: <ScrollText className="h-4 w-4" /> },
+  { key: "features", label: "Features", icon: <Puzzle className="h-4 w-4" /> },
+  { key: "billing", label: "Plan & billing", icon: <CreditCard className="h-4 w-4" /> },
+  { key: "details", label: "Business details", icon: <Building2 className="h-4 w-4" /> },
+  { key: "history", label: "History", icon: <History className="h-4 w-4" /> },
 ];
 
-/** The tab named by `?tab=`; the legacy `addons` is the Setup tab, and anything else (or nothing) is Overview. */
-function resolveTab(param: string | null | undefined): string {
-  const key = param === "addons" ? "setup" : param;
+/** R26: the old tab keys, and the one new tab each opens. */
+const LEGACY_TAB_KEYS: Record<string, string> = {
+  setup: "features",
+  addons: "features",
+  config: "details",
+  snapshots: "history",
+  audit: "history",
+};
+
+/**
+ * The tab named by `?tab=`: a new key, an old key (mapped by LEGACY_TAB_KEYS), or Overview. The old
+ * `?focus=admin-account` link carried no tab (it opened Overview, where the card used to be): it opens Business details.
+ */
+function resolveTab(param: string | null | undefined, focus?: string | null): string {
+  if (focus === "admin-account" && (!param || param === "overview")) return "details";
+  const key = param ? (LEGACY_TAB_KEYS[param] ?? param) : param;
   return TABS.some((t) => t.key === key) ? (key as string) : "overview";
 }
 
@@ -167,15 +180,17 @@ interface TenantAdminUser {
 
 function TenantAdminSection({
   tenantId,
+  admin,
   onRefreshTenant,
   onAdminChange,
 }: {
   tenantId: string;
+  /** The page's one Admin Account read: undefined while loading, null when there is no admin. */
+  admin: TenantAdminUser | null | undefined;
   onRefreshTenant: () => void;
-  /** The admin's username once known (null when there is none): the Impersonate dialog names it. */
-  onAdminChange?: (admin: TenantAdminUser | null, state: AdminReadState) => void;
+  /** A create reports the new admin to the page, which feeds the Sign-in dialog and the readiness card. */
+  onAdminChange: (admin: TenantAdminUser | null, state: AdminReadState) => void;
 }) {
-  const [admin, setAdmin] = React.useState<TenantAdminUser | null | undefined>(undefined); // undefined = loading
   const [showCreateForm, setShowCreateForm] = React.useState(false);
   const [createForm, setCreateForm] = React.useState({ username: "", email: "" });
   const [creating, setCreating] = React.useState(false);
@@ -185,23 +200,6 @@ function TenantAdminSection({
     emailSent?: boolean;
   } | null>(null);
   const [msg, setMsg] = React.useState<{ type: "success" | "error"; text: string } | null>(null);
-
-  const fetchAdmin = React.useCallback(() => {
-    superAdminClient
-      .get(`/platform-admin/tenants/${tenantId}/admin`)
-      .then((res) => {
-        setAdmin(res.data.admin);
-        onAdminChange?.(res.data.admin ?? null, "loaded");
-      })
-      .catch(() => {
-        setAdmin(null);
-        onAdminChange?.(null, "failed");
-      });
-  }, [tenantId, onAdminChange]);
-
-  React.useEffect(() => {
-    fetchAdmin();
-  }, [fetchAdmin]);
 
   async function handleCreateAdmin(e: React.FormEvent) {
     e.preventDefault();
@@ -213,8 +211,7 @@ function TenantAdminSection({
         createForm,
       );
       setCreateResult(res.data);
-      setAdmin(res.data);
-      onAdminChange?.(res.data, "loaded");
+      onAdminChange(res.data, "loaded");
       setShowCreateForm(false);
       setCreateForm({ username: "", email: "" });
       onRefreshTenant();
@@ -368,52 +365,16 @@ function TenantAdminSection({
 }
 
 // ─── Overview Tab ──────────────────────────────────────────────────────────────
+// A one-glance health check (list rows 2-5, 15): ready to take a sale, the numbers in one row, the basic facts,
+// the last few changes. Everything that acts or edits lives on another tab.
 
 function OverviewTab({
   tenant,
-  onAction,
-  actionLoading,
-  statusMsg,
-  onRefreshTenant,
+  adminRead,
 }: {
   tenant: TenantDetail;
-  onAction: (action: string, payload?: unknown) => Promise<void>;
-  actionLoading: string | null;
-  statusMsg: string | null;
-  onRefreshTenant: () => void;
+  adminRead: { admin: TenantAdminUser | null; state: AdminReadState };
 }) {
-  const [showResetConfirm, setShowResetConfirm] = React.useState(false);
-  // B857: the resolved planKey, never the raw legacy `plan` enum (TEAM/BUSINESS/…), which is
-  // not among the options and left the select showing a plan the tenant isn't on.
-  const currentPlan = tenant.planKey ?? tenant.plan;
-  const planOptions = usePlanOptions();
-  const [resetResult, setResetResult] = React.useState<{
-    username: string;
-    tempPassword: string;
-  } | null>(null);
-  const [copied, setCopied] = React.useState(false);
-  const [trialDays, setTrialDays] = React.useState(14);
-  // Impersonate and Extend Trial act immediately, so each asks first (the dialogs only gate the call).
-  const [confirming, setConfirming] = React.useState<
-    "impersonate" | "extend-trial" | "suspend" | "delete" | null
-  >(null);
-  // The server only deletes SUSPENDED tenants: its refusal is shown inside the delete dialog, which stays open.
-  const [deleteError, setDeleteError] = React.useState<string | null>(null);
-  // The page's single Admin Account read (TenantAdminSection reports it): feeds the Impersonate dialog and the
-  // Readiness card, so a create updates both with no second fetch.
-  const [adminRead, setAdminRead] = React.useState<{
-    admin: TenantAdminUser | null;
-    state: AdminReadState;
-  }>({ admin: null, state: "loading" });
-  const adminUsername = adminRead.admin?.username ?? null;
-  // "Create admin" on the Readiness card lands here: ?focus=admin-account scrolls <main> to the card and focuses it.
-  const adminAccountRef = React.useRef<HTMLDivElement>(null);
-  useFocusTarget("admin-account", adminAccountRef);
-  const handleAdminChange = React.useCallback(
-    (admin: TenantAdminUser | null, state: AdminReadState) => setAdminRead({ admin, state }),
-    [],
-  );
-
   const [recentLogs, setRecentLogs] = React.useState<AuditLogEntry[]>([]);
   React.useEffect(() => {
     superAdminClient
@@ -422,46 +383,44 @@ function OverviewTab({
       .catch(() => {});
   }, [tenant.id]);
 
-  // The server deletes only a SUSPENDED tenant: the control is dim until then, and says why.
-  const canDelete = tenant.status === "SUSPENDED";
-  // An ACTIVE tenant is paying: the server refuses to move it to a trial (409), so the control is off too.
-  const canExtendTrial = tenant.status !== "ACTIVE";
-
-  const sub = tenant.subscription;
-  const paymentMethodLabel = sub?.externalPayment
-    ? (sub.externalPaymentMethod ?? "External")
-    : sub?.stripeCustomerId
-      ? "Card (Stripe)"
-      : null;
+  // Row 3 and row 4 are one row now: the money and the orders, then the counts (Users once).
+  const numbers: [string, string | number, string | null][] = [
+    [
+      "Est. MRR",
+      usd(tenant.estMrrUsd ?? 0),
+      `${planLabel(tenant.planKey ?? tenant.plan)} · stopgap estimate`,
+    ],
+    ["Orders, 30d", tenant.orders30d ?? 0, "Placed in the last 30 days"],
+    ["Users", tenant.counts?.users ?? 0, "Across this workspace"],
+    ...(tenant.counts
+      ? ([
+          ["Customers", tenant.counts.customers, null],
+          ["Orders", tenant.counts.orders, "All time"],
+          ["Drivers", tenant.counts.drivers, null],
+          ["Routes", tenant.counts.routes, null],
+        ] as [string, number, string | null][])
+      : []),
+  ];
 
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
       <ReadinessCard tenant={tenant} admin={adminRead.admin} adminState={adminRead.state} />
 
-      {/* At-a-glance KPIs */}
-      <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-3 lg:col-span-2">
-        <div className="rounded-xl bg-slate-800 p-5 ring-1 ring-white/5">
-          <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Est. MRR</p>
-          <p className="mt-2 text-2xl font-bold text-white">{usd(tenant.estMrrUsd ?? 0)}</p>
-          <p className="mt-1 text-xs text-slate-400">
-            {planLabel(tenant.planKey ?? tenant.plan)} · stopgap estimate
-          </p>
-        </div>
-        <div className="rounded-xl bg-slate-800 p-5 ring-1 ring-white/5">
-          <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Orders, 30d</p>
-          <p className="mt-2 text-2xl font-bold text-white">{tenant.orders30d ?? 0}</p>
-          <p className="mt-1 text-xs text-slate-400">Placed in the last 30 days</p>
-        </div>
-        <div className="rounded-xl bg-slate-800 p-5 ring-1 ring-white/5">
-          <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Users</p>
-          <p className="mt-2 text-2xl font-bold text-white">{tenant.counts?.users ?? 0}</p>
-          <p className="mt-1 text-xs text-slate-400">Across this workspace</p>
-        </div>
+      <div
+        className="grid min-w-0 grid-cols-2 gap-3 sm:grid-cols-4 lg:col-span-2 xl:grid-cols-7"
+        data-testid="overview-numbers"
+      >
+        {numbers.map(([label, value, note]) => (
+          <div key={label} className="rounded-xl bg-slate-800 p-4 ring-1 ring-white/5">
+            <p className="text-xs font-medium uppercase tracking-wider text-slate-400">{label}</p>
+            <p className="mt-2 text-2xl font-bold text-white">{value}</p>
+            {note && <p className="mt-1 text-xs text-slate-400">{note}</p>}
+          </div>
+        ))}
       </div>
 
-      {/* Tenant Info */}
-      <AdminCard title="Tenant info" className="min-w-0">
-        <dl className="flex flex-col gap-2.5 text-sm">
+      <AdminCard title="Business info" className="min-w-0 lg:col-span-2">
+        <dl className="grid grid-cols-1 gap-x-8 gap-y-2.5 text-sm sm:grid-cols-2">
           {[
             [
               "ID",
@@ -495,315 +454,29 @@ function OverviewTab({
               </span>,
             ],
           ].map(([label, value]) => (
-            <div key={String(label)} className="flex justify-between items-center">
+            <div key={String(label)} className="flex items-center justify-between">
               <dt className="text-slate-400">{label}</dt>
               <dd>{value}</dd>
             </div>
           ))}
           {tenant.trialEndsAt && (
-            <div className="flex justify-between items-center">
+            <div className="flex items-center justify-between">
               <dt className="text-slate-400">Trial Ends</dt>
               <dd>
                 <TrialEndsBadge trialEndsAt={tenant.trialEndsAt} />
               </dd>
             </div>
           )}
-          {tenant.primaryColor && (
-            <div className="flex justify-between items-center">
-              <dt className="text-slate-400">Brand color</dt>
-              <dd className="flex items-center gap-2">
-                <span
-                  className="inline-block h-3.5 w-3.5 rounded ring-1 ring-white/10"
-                  style={{ backgroundColor: tenant.primaryColor }}
-                />
-                <span className="font-mono text-xs text-slate-300">{tenant.primaryColor}</span>
-              </dd>
-            </div>
-          )}
-          {tenant.counts && (
-            <div className="flex justify-between items-center">
-              <dt className="text-slate-400">Linked buyers</dt>
-              <dd className="font-mono text-slate-300">{tenant.counts.customerLinks}</dd>
-            </div>
-          )}
-          {sub?.periodEnd && (
-            <div className="flex justify-between items-center">
-              <dt className="text-slate-400">Next renewal</dt>
-              <dd className="text-slate-300">{new Date(sub.periodEnd).toLocaleDateString()}</dd>
-            </div>
-          )}
-          {paymentMethodLabel && (
-            <div className="flex justify-between items-center">
-              <dt className="text-slate-400">Payment method</dt>
-              <dd className="text-slate-300">{paymentMethodLabel}</dd>
-            </div>
-          )}
         </dl>
       </AdminCard>
 
-      {/* Usage Stats */}
-      {tenant.counts && (
-        <AdminCard title="Usage stats">
-          <div className="grid grid-cols-3 gap-3">
-            {(
-              [
-                ["Users", tenant.counts.users],
-                ["Customers", tenant.counts.customers],
-                ["Orders", tenant.counts.orders],
-                ["Drivers", tenant.counts.drivers],
-                ["Routes", tenant.counts.routes],
-              ] as [string, number][]
-            ).map(([label, count]) => (
-              <div key={label} className="rounded-lg bg-slate-700/50 p-3 text-center">
-                <p className="text-lg font-bold text-white">{count}</p>
-                <p className="text-xs text-slate-400">{label}</p>
-              </div>
-            ))}
-          </div>
-        </AdminCard>
-      )}
-
-      {/* Admin Account */}
-      <div
-        id="admin-account"
-        ref={adminAccountRef}
-        tabIndex={-1}
-        className="min-w-0 scroll-mt-4 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
-      >
-        <TenantAdminSection
-          tenantId={tenant.id}
-          onRefreshTenant={onRefreshTenant}
-          onAdminChange={handleAdminChange}
-        />
-      </div>
-
-      <ImpersonateDialog
-        open={confirming === "impersonate"}
-        tenant={tenant}
-        adminUsername={adminUsername}
-        busy={actionLoading === "impersonate"}
-        onClose={() => setConfirming(null)}
-        onConfirm={() => {
-          setConfirming(null);
-          void onAction("impersonate");
-        }}
-      />
-      <SuspendDialog
-        open={confirming === "suspend"}
-        tenant={tenant}
-        busy={actionLoading === "toggle-status"}
-        onClose={() => setConfirming(null)}
-        onConfirm={() => {
-          setConfirming(null);
-          void onAction("toggle-status");
-        }}
-      />
-      <DeleteTenantDialog
-        open={confirming === "delete"}
-        tenant={tenant}
-        busy={actionLoading === "delete"}
-        error={deleteError}
-        onClose={() => setConfirming(null)}
-        onConfirm={async () => {
-          setDeleteError(null);
-          try {
-            await onAction("delete");
-          } catch (err: unknown) {
-            setDeleteError(deleteFailureCopy(err));
-          }
-        }}
-      />
-      <ExtendTrialDialog
-        open={confirming === "extend-trial"}
-        tenant={tenant}
-        status={tenant.status}
-        days={trialDays}
-        trialEndsAt={tenant.trialEndsAt}
-        busy={actionLoading === "extend-trial"}
-        onClose={() => setConfirming(null)}
-        onConfirm={() => {
-          setConfirming(null);
-          void onAction("extend-trial", { days: trialDays });
-        }}
-      />
-
-      {/* Quick Actions */}
-      <AdminCard title="Quick actions" className="min-w-0 lg:col-span-2">
-        {statusMsg && (
-          <div className="mb-4 rounded-lg bg-indigo-900/40 px-4 py-2 text-sm text-indigo-300 ring-1 ring-indigo-700">
-            {statusMsg}
-          </div>
-        )}
-        <div className="flex flex-wrap gap-3">
-          {tenant.status !== "CANCELLED" && (
-            <button
-              disabled={actionLoading === "toggle-status"}
-              onClick={() =>
-                tenant.status === "SUSPENDED" ? onAction("toggle-status") : setConfirming("suspend")
-              }
-              className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-50 ${
-                tenant.status === "SUSPENDED"
-                  ? "bg-green-700 text-white hover:bg-green-600"
-                  : "bg-yellow-700 text-white hover:bg-yellow-600"
-              }`}
-            >
-              {tenant.status === "SUSPENDED" ? "Reactivate" : "Suspend"}
-            </button>
-          )}
-
-          <TierChangeControl
-            tenantId={tenant.id}
-            currentPlan={currentPlan}
-            plans={withCurrentPlan(planOptions.planKeys, currentPlan)}
-            planLabel={planLabel}
-            disabled={actionLoading === "change-plan"}
-            onChangePlan={(plan) => onAction("change-plan", { plan })}
-          />
-
-          {tenant.status !== "CANCELLED" && (
-            <button
-              disabled={actionLoading === "impersonate"}
-              onClick={() => setConfirming("impersonate")}
-              className="rounded-lg bg-indigo-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-600 disabled:opacity-50"
-            >
-              Sign in as admin
-            </button>
-          )}
-
-          <div className="ml-auto flex flex-col items-end gap-1">
-            <button
-              disabled={!canDelete}
-              aria-describedby={canDelete ? undefined : "delete-tenant-hint"}
-              onClick={() => {
-                setDeleteError(null);
-                setConfirming("delete");
-              }}
-              className="rounded-lg bg-red-900/40 px-4 py-2 text-sm font-semibold text-red-400 ring-1 ring-red-700 transition-colors hover:bg-red-900/70 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-red-900/40"
-            >
-              Delete tenant
-            </button>
-            <DisabledHint id="delete-tenant-hint" show={!canDelete}>
-              {TENANT_ACTION_COPY.deleteRefused}
-            </DisabledHint>
-          </div>
-        </div>
-
-        {/* Extend Trial */}
-        <div className="mt-5 border-t border-slate-700 pt-4">
-          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">
-            Extend Trial
-          </h3>
-          {tenant.status !== "TRIAL" && (
-            <p id="not-on-trial-note" className="mb-3 text-sm text-slate-300">
-              Not on a trial.
-            </p>
-          )}
-          <div className="flex items-center gap-3">
-            <label className="text-sm text-slate-400">Days</label>
-            <input
-              aria-label="Days"
-              type="number"
-              min={1}
-              max={365}
-              value={trialDays}
-              onChange={(e) => setTrialDays(Number(e.target.value))}
-              className="h-9 w-20 rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
-            />
-            <button
-              disabled={actionLoading === "extend-trial" || !canExtendTrial}
-              aria-describedby={canExtendTrial ? undefined : "extend-trial-hint"}
-              onClick={() => setConfirming("extend-trial")}
-              className="rounded-lg bg-slate-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-500 disabled:opacity-50"
-            >
-              {actionLoading === "extend-trial" ? "Extending…" : "Extend trial"}
-            </button>
-          </div>
-          <DisabledHint
-            id="extend-trial-hint"
-            show={!canExtendTrial}
-            className="mt-2 text-xs text-slate-400"
-          >
-            {TENANT_ACTION_COPY.trialNotAllowed}
-          </DisabledHint>
-        </div>
-
-        {/* Reset Admin Password */}
-        <div className="mt-4 border-t border-slate-700 pt-4">
-          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">
-            Admin Password Reset
-          </h3>
-          {!showResetConfirm ? (
-            <button
-              disabled={actionLoading === "reset-pwd"}
-              onClick={() => setShowResetConfirm(true)}
-              className="rounded-lg bg-orange-700/60 px-4 py-2 text-sm font-semibold text-orange-300 ring-1 ring-orange-600/40 transition-colors hover:bg-orange-700 disabled:opacity-50"
-            >
-              Reset admin password
-            </button>
-          ) : (
-            <div className="flex items-center gap-2 rounded-lg bg-orange-900/40 px-4 py-2 ring-1 ring-orange-700">
-              <span className="text-sm text-orange-300">Force password reset?</span>
-              <button
-                disabled={actionLoading === "reset-pwd"}
-                onClick={async () => {
-                  setShowResetConfirm(false);
-                  try {
-                    const res = await superAdminClient.post(
-                      `/platform-admin/tenants/${tenant.id}/reset-admin-password`,
-                    );
-                    setResetResult(res.data);
-                    setCopied(false);
-                  } catch {}
-                }}
-                className="rounded px-3 py-1 text-xs font-bold text-orange-400 hover:bg-orange-800"
-              >
-                Yes, reset
-              </button>
-              <button
-                onClick={() => setShowResetConfirm(false)}
-                className="rounded px-3 py-1 text-xs text-slate-400 hover:bg-slate-700"
-              >
-                Cancel
-              </button>
-            </div>
-          )}
-          {resetResult && (
-            <div className="mt-3 rounded-lg bg-slate-700/60 p-4 ring-1 ring-slate-600">
-              <p className="mb-2 text-sm text-slate-300">
-                Temporary password for{" "}
-                <span className="font-mono text-white">{resetResult.username}</span>:
-              </p>
-              <div className="flex items-center gap-2">
-                <code className="flex-1 rounded bg-slate-900 px-3 py-2 font-mono text-sm text-green-400">
-                  {resetResult.tempPassword}
-                </code>
-                <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(resetResult.tempPassword).then(() => {
-                      setCopied(true);
-                      setTimeout(() => setCopied(false), 2000);
-                    });
-                  }}
-                  className="rounded px-3 py-2 text-xs font-medium text-slate-400 hover:bg-slate-600 hover:text-white"
-                >
-                  {copied ? "Copied!" : "Copy"}
-                </button>
-              </div>
-              <p className="mt-2 text-xs text-yellow-500">
-                Share this securely. The user will be forced to change it on next login.
-              </p>
-            </div>
-          )}
-        </div>
-      </AdminCard>
-
-      {/* Recent Audit Logs */}
+      {/* Recent Audit Logs: a few rows here, the rest on History (row 15) */}
       <AdminCard
         title="Recent audit logs"
         className="min-w-0 lg:col-span-2"
         actions={
           <Link
-            href={`/admin/audit-logs?tenantId=${tenant.id}`}
+            href={`/admin/tenants/${tenant.id}?tab=history`}
             className="admin-tap-text text-xs text-indigo-400 hover:text-indigo-300"
           >
             View all
@@ -871,11 +544,26 @@ function OverviewTab({
 function BillingTab({
   tenant,
   onRefreshTenant,
+  onAction,
+  actionLoading,
+  onAskExtendTrial,
+  trialDays,
+  onTrialDays,
 }: {
   tenant: TenantDetail;
   onRefreshTenant: () => void;
+  onAction: (action: string, payload?: unknown) => Promise<void>;
+  actionLoading: string | null;
+  /** Opens the page's Extend-trial confirm for `trialDays`. */
+  onAskExtendTrial: () => void;
+  trialDays: number;
+  onTrialDays: (days: number) => void;
 }) {
   const [portalLoading, setPortalLoading] = React.useState(false);
+  // B857: the resolved planKey, never the raw legacy `plan` enum (TEAM/BUSINESS/…), which is not among the options.
+  const currentPlan = tenant.planKey ?? tenant.plan;
+  // An ACTIVE tenant is paying: the server refuses to move it to a trial (409), so the control is off too.
+  const canExtendTrial = tenant.status !== "ACTIVE";
   // SA-788 (c): the tenant's add-ons as the last activation left them.
   const [activationAddons, setActivationAddons] = React.useState<ManualActivationAddons | null>(
     null,
@@ -896,6 +584,14 @@ function BillingTab({
   });
 
   const sub = tenant.subscription;
+  const paymentMethodLabel = sub?.externalPayment
+    ? (sub.externalPaymentMethod &&
+        EXTERNAL_PAYMENT_METHODS.find((m) => m.value === sub.externalPaymentMethod)?.label) ||
+      sub.externalPaymentMethod ||
+      "External"
+    : sub?.stripeCustomerId
+      ? "Card (Stripe)"
+      : null;
   const daysLeft = tenant.trialEndsAt
     ? Math.ceil((new Date(tenant.trialEndsAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
     : null;
@@ -965,6 +661,56 @@ function BillingTab({
               : "Trial expired"}
           </p>
         )}
+
+        {/* Rows 11 and 12: a plan move and a trial extension are billing, so they sit with the plan. */}
+        <div className="mt-5 border-t border-slate-700 pt-4">
+          <TierChangeControl
+            tenantId={tenant.id}
+            currentPlan={currentPlan}
+            plans={withCurrentPlan(planOptions.planKeys, currentPlan)}
+            planLabel={planLabel}
+            disabled={actionLoading === "change-plan"}
+            onChangePlan={(plan) => onAction("change-plan", { plan })}
+          />
+        </div>
+
+        <div className="mt-5 border-t border-slate-700 pt-4">
+          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">
+            Extend Trial
+          </h3>
+          {tenant.status !== "TRIAL" && (
+            <p id="not-on-trial-note" className="mb-3 text-sm text-slate-300">
+              Not on a trial.
+            </p>
+          )}
+          <div className="flex items-center gap-3">
+            <label className="text-sm text-slate-400">Days</label>
+            <input
+              aria-label="Days"
+              type="number"
+              min={1}
+              max={365}
+              value={trialDays}
+              onChange={(e) => onTrialDays(Number(e.target.value))}
+              className="h-9 w-20 rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
+            />
+            <button
+              disabled={actionLoading === "extend-trial" || !canExtendTrial}
+              aria-describedby={canExtendTrial ? undefined : "extend-trial-hint"}
+              onClick={onAskExtendTrial}
+              className="rounded-lg bg-slate-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-500 disabled:opacity-50"
+            >
+              {actionLoading === "extend-trial" ? "Extending…" : "Extend trial"}
+            </button>
+          </div>
+          <DisabledHint
+            id="extend-trial-hint"
+            show={!canExtendTrial}
+            className="mt-2 text-xs text-slate-400"
+          >
+            {TENANT_ACTION_COPY.trialNotAllowed}
+          </DisabledHint>
+        </div>
       </AdminCard>
 
       {/* Subscription Details */}
@@ -996,8 +742,14 @@ function BillingTab({
             )}
             {sub.periodEnd && (
               <div className="flex justify-between">
-                <dt className="text-slate-400">Period End</dt>
+                <dt className="text-slate-400">Next renewal</dt>
                 <dd className="text-slate-300">{new Date(sub.periodEnd).toLocaleDateString()}</dd>
+              </div>
+            )}
+            {paymentMethodLabel && (
+              <div className="flex justify-between">
+                <dt className="text-slate-400">Payment method</dt>
+                <dd className="text-slate-300">{paymentMethodLabel}</dd>
               </div>
             )}
             <div className="flex justify-between">
@@ -1021,10 +773,15 @@ function BillingTab({
               </div>
             )}
             {sub.stripeCustomerId && (
-              <div className="flex justify-between">
-                <dt className="text-slate-400">Stripe ID</dt>
-                <dd className="font-mono text-xs text-slate-400">{sub.stripeCustomerId}</dd>
-              </div>
+              <details className="text-sm">
+                <summary className="cursor-pointer text-slate-400 hover:text-slate-300">
+                  More details
+                </summary>
+                <div className="mt-2 flex justify-between">
+                  <span className="text-slate-400">Stripe ID</span>
+                  <span className="font-mono text-xs text-slate-400">{sub.stripeCustomerId}</span>
+                </div>
+              </details>
             )}
           </dl>
         ) : (
@@ -1183,11 +940,12 @@ function BillingTab({
   );
 }
 
-// ─── Setup Tab ─────────────────────────────────────────────────────────────────
-// The tab key is "setup" (the legacy ?tab=addons still resolves to it); the label is "Setup": the tenant's current setup in plain English,
-// the business-profile picker, then an Advanced section with the feature console and the per-feature overrides.
+// ─── Features Tab ──────────────────────────────────────────────────────────────
+// The new home for setup (list rows 21-24): the tenant's current setup in plain English, the business-profile
+// picker, then the feature console as the main list (no "Advanced" fold) with the per-feature overrides under it.
+// WP12 moves each override into its feature's row; until then the table stays here, one section below the list.
 
-function SetupTab({
+function FeaturesTab({
   tenant,
   onAction,
   actionLoading,
@@ -1199,8 +957,6 @@ function SetupTab({
   const overridesRef = React.useRef<FeatureOverridesSectionHandle>(null);
   // Bumped when a business profile changed this tenant's setup: the console and the overrides list remount and reload.
   const [setupVersion, setSetupVersion] = React.useState(0);
-  // Open by default: nothing a super admin used to see is hidden until they choose to fold it.
-  const [advancedOpen, setAdvancedOpen] = React.useState(true);
 
   return (
     <>
@@ -1210,55 +966,29 @@ function SetupTab({
         onApplied={() => setSetupVersion((v) => v + 1)}
       />
 
-      {/* One "Advanced" section holds the two power-user controls; both stay mounted when collapsed so
-          the console's "Customise" ref and any in-flight drawer keep working, and Customise reopens it. */}
-      <section
-        aria-labelledby="setup-advanced-heading"
-        className="mt-6"
-        data-testid="setup-advanced"
-      >
-        <h2 id="setup-advanced-heading" className="text-sm font-semibold text-slate-300">
-          <button
-            type="button"
-            aria-expanded={advancedOpen}
-            aria-controls="setup-advanced-body"
-            onClick={() => setAdvancedOpen((o) => !o)}
-            className="flex w-full items-center gap-2 text-left"
-          >
-            <span aria-hidden="true">{advancedOpen ? "▾" : "▸"}</span>
-            Advanced
-            <span className="text-xs font-normal text-slate-400">
-              Feature console and overrides
-            </span>
-          </button>
-        </h2>
-        <div id="setup-advanced-body" hidden={!advancedOpen}>
-          <div id="features">
-            <FeatureConsole
-              key={`console-${setupVersion}`}
-              tenant={tenant}
-              tenantLabel={tenant.businessName ?? tenant.slug}
-              onChangePlan={(plan) => onAction("change-plan", { plan })}
-              changePlanLoading={actionLoading === "change-plan"}
-              onCustomise={(featureKey) => {
-                setAdvancedOpen(true);
-                overridesRef.current?.openFor(featureKey);
-              }}
-            />
-          </div>
-
-          <FeatureOverridesSection
-            key={`overrides-${setupVersion}`}
-            ref={overridesRef}
+      <section className="mt-6" data-testid="features-list">
+        <div id="features">
+          <FeatureConsole
+            key={`console-${setupVersion}`}
             tenant={tenant}
+            tenantLabel={tenant.businessName ?? tenant.slug}
+            onChangePlan={(plan) => onAction("change-plan", { plan })}
+            changePlanLoading={actionLoading === "change-plan"}
+            onCustomise={(featureKey) => overridesRef.current?.openFor(featureKey)}
           />
         </div>
+
+        <FeatureOverridesSection
+          key={`overrides-${setupVersion}`}
+          ref={overridesRef}
+          tenant={tenant}
+        />
       </section>
     </>
   );
 }
 
-// ─── Feature Overrides (within the Setup tab) ─────────────────────────────────
+// ─── Feature Overrides (within the Features tab) ─────────────────────────────────
 
 interface FeatureOverrideRow {
   id: string;
@@ -1768,9 +1498,109 @@ export const FeatureOverridesSection = React.forwardRef<
 });
 FeatureOverridesSection.displayName = "FeatureOverridesSection";
 
-// ─── Configuration Tab ─────────────────────────────────────────────────────────
+// ─── Business details Tab ──────────────────────────────────────────────────────
+// Who the business is (list rows 6, 8, 13, 14, 25-27): name, look, logo picture, address and phone, the main login
+// with its password reset, and, alone at the very bottom, Delete.
 
-function ConfigTab({ tenant }: { tenant: TenantDetail }) {
+const API_URL =
+  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ?? "http://localhost:3000/api/v1";
+
+function AdminPasswordReset({ tenantId }: { tenantId: string }) {
+  const [showResetConfirm, setShowResetConfirm] = React.useState(false);
+  const [resetResult, setResetResult] = React.useState<{
+    username: string;
+    tempPassword: string;
+  } | null>(null);
+  const [copied, setCopied] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+
+  return (
+    <AdminCard title="Admin password reset" className="min-w-0">
+      {!showResetConfirm ? (
+        <button
+          disabled={busy}
+          onClick={() => setShowResetConfirm(true)}
+          className="rounded-lg bg-orange-700/60 px-4 py-2 text-sm font-semibold text-orange-300 ring-1 ring-orange-600/40 transition-colors hover:bg-orange-700 disabled:opacity-50"
+        >
+          Reset admin password
+        </button>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg bg-orange-900/40 px-4 py-2 ring-1 ring-orange-700">
+          <span className="text-sm text-orange-300">Force password reset?</span>
+          <button
+            disabled={busy}
+            onClick={async () => {
+              setShowResetConfirm(false);
+              setBusy(true);
+              try {
+                const res = await superAdminClient.post(
+                  `/platform-admin/tenants/${tenantId}/reset-admin-password`,
+                );
+                setResetResult(res.data);
+                setCopied(false);
+              } catch {
+              } finally {
+                setBusy(false);
+              }
+            }}
+            className="rounded px-3 py-1 text-xs font-bold text-orange-400 hover:bg-orange-800"
+          >
+            Yes, reset
+          </button>
+          <button
+            onClick={() => setShowResetConfirm(false)}
+            className="rounded px-3 py-1 text-xs text-slate-400 hover:bg-slate-700"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+      {resetResult && (
+        <div className="mt-3 rounded-lg bg-slate-700/60 p-4 ring-1 ring-slate-600">
+          <p className="mb-2 text-sm text-slate-300">
+            Temporary password for{" "}
+            <span className="font-mono text-white">{resetResult.username}</span>:
+          </p>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 rounded bg-slate-900 px-3 py-2 font-mono text-sm text-green-400">
+              {resetResult.tempPassword}
+            </code>
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(resetResult.tempPassword).then(() => {
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 2000);
+                });
+              }}
+              className="rounded px-3 py-2 text-xs font-medium text-slate-400 hover:bg-slate-600 hover:text-white"
+            >
+              {copied ? "Copied!" : "Copy"}
+            </button>
+          </div>
+          <p className="mt-2 text-xs text-yellow-500">
+            Share this securely. The user will be forced to change it on next login.
+          </p>
+        </div>
+      )}
+    </AdminCard>
+  );
+}
+
+function BusinessDetailsTab({
+  tenant,
+  adminRead,
+  onAdminChange,
+  onRefreshTenant,
+  onAskDelete,
+}: {
+  tenant: TenantDetail;
+  adminRead: { admin: TenantAdminUser | null; state: AdminReadState };
+  onAdminChange: (admin: TenantAdminUser | null, state: AdminReadState) => void;
+  onRefreshTenant: () => void;
+  onAskDelete: () => void;
+}) {
+  // A missing storage object (or a cancelled business) makes the logo route 404: fall back to the placeholder.
+  const [logoBroken, setLogoBroken] = React.useState(false);
   const [form, setForm] = React.useState({
     addressLine1: tenant.addressLine1 ?? "",
     city: tenant.city ?? "",
@@ -1782,6 +1612,9 @@ function ConfigTab({ tenant }: { tenant: TenantDetail }) {
   const [saving, setSaving] = React.useState(false);
   const [saved, setSaved] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  // "Create admin" on the Readiness card lands here: ?focus=admin-account scrolls <main> to the card and focuses it.
+  const adminAccountRef = React.useRef<HTMLDivElement>(null);
+  useFocusTarget("admin-account", adminAccountRef);
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -1798,12 +1631,6 @@ function ConfigTab({ tenant }: { tenant: TenantDetail }) {
     }
   }
 
-  const readOnlyFields: [string, string | null][] = [
-    ["Business Name", tenant.businessName],
-    ["Primary Color", tenant.primaryColor],
-    ["Logo Key", tenant.logoKey],
-  ];
-
   const addressFields = [
     { key: "addressLine1", label: "Street" },
     { key: "city", label: "City" },
@@ -1813,56 +1640,134 @@ function ConfigTab({ tenant }: { tenant: TenantDetail }) {
     { key: "phone", label: "Phone" },
   ] as const;
 
+  // The server only deletes SUSPENDED tenants: the control is dim until then, and says why.
+  const canDelete = tenant.status === "SUSPENDED";
+
   return (
-    <AdminCard title="Tenant Configuration">
-      {/* Read-only branding info */}
-      <dl className="mb-6 flex flex-col gap-3 text-sm">
-        {readOnlyFields.map(([label, value]) => (
-          <div key={label} className="flex items-center justify-between">
-            <dt className="text-slate-400">{label}</dt>
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+      <AdminCard title="Business" className="min-w-0">
+        {/* Row 26: the logo as a picture, never the storage code. The public logo route streams it with no login. */}
+        <div className="mb-5 flex items-center gap-4">
+          <div className="flex h-16 w-16 flex-shrink-0 items-center justify-center overflow-hidden rounded-xl bg-slate-700/50 ring-1 ring-white/10">
+            {tenant.logoKey && !logoBroken ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={`${API_URL}/public/tenants/${encodeURIComponent(tenant.slug)}/logo`}
+                alt={`${tenantDisplayName(tenant)} logo`}
+                className="h-full w-full object-contain"
+                onError={() => setLogoBroken(true)}
+              />
+            ) : (
+              <Building2 aria-hidden="true" className="h-6 w-6 text-slate-400" />
+            )}
+          </div>
+          {(!tenant.logoKey || logoBroken) && (
+            <p className="text-sm text-slate-400">
+              {tenant.logoKey ? "The logo could not be loaded." : "No logo uploaded."}
+            </p>
+          )}
+        </div>
+        <dl className="mb-6 flex flex-col gap-3 text-sm">
+          <div className="flex items-center justify-between">
+            <dt className="text-slate-400">Business Name</dt>
             <dd className="text-white">
-              {label === "Primary Color" && value ? (
+              {tenant.businessName ?? <span className="text-slate-400">Not set</span>}
+            </dd>
+          </div>
+          <div className="flex items-center justify-between">
+            <dt className="text-slate-400">Primary Color</dt>
+            <dd className="text-white">
+              {tenant.primaryColor ? (
                 <span className="flex items-center gap-2">
                   <span
                     className="inline-block h-4 w-4 rounded-full ring-1 ring-white/20"
-                    style={{ backgroundColor: value }}
+                    style={{ backgroundColor: tenant.primaryColor }}
                   />
-                  {value}
+                  {tenant.primaryColor}
                 </span>
               ) : (
-                (value ?? <span className="text-slate-400">Not set</span>)
+                <span className="text-slate-400">Not set</span>
               )}
             </dd>
           </div>
-        ))}
-      </dl>
+          {tenant.counts && (
+            <div className="flex items-center justify-between">
+              <dt className="text-slate-400">Linked buyers</dt>
+              <dd className="font-mono text-slate-300">{tenant.counts.customerLinks}</dd>
+            </div>
+          )}
+        </dl>
 
-      <hr className="mb-5 border-slate-700" />
+        <hr className="mb-5 border-slate-700" />
 
-      {/* Editable address / contact form */}
-      <form onSubmit={handleSave} className="flex flex-col gap-4">
-        <h3 className="text-sm font-semibold text-slate-300">Business Address &amp; Contact</h3>
-        {addressFields.map(({ key, label }) => (
-          <div key={key} className="flex flex-col gap-1">
-            <label className="text-xs text-slate-400">{label}</label>
-            <input
-              aria-label={label}
-              className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-              value={form[key]}
-              onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
-            />
-          </div>
-        ))}
-        {error && <p className="text-xs text-red-400">{error}</p>}
-        <button
-          type="submit"
-          disabled={saving}
-          className="self-end rounded bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+        <form onSubmit={handleSave} className="flex flex-col gap-4">
+          <h3 className="text-sm font-semibold text-slate-300">Business Address &amp; Contact</h3>
+          {addressFields.map(({ key, label }) => (
+            <div key={key} className="flex flex-col gap-1">
+              <label className="text-xs text-slate-400">{label}</label>
+              <input
+                aria-label={label}
+                className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                value={form[key]}
+                onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
+              />
+            </div>
+          ))}
+          {error && <p className="text-xs text-red-400">{error}</p>}
+          <button
+            type="submit"
+            disabled={saving}
+            className="self-end rounded bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+          >
+            {saving ? "Saving…" : saved ? "Saved" : "Save changes"}
+          </button>
+        </form>
+      </AdminCard>
+
+      <div className="flex min-w-0 flex-col gap-6">
+        <div
+          id="admin-account"
+          ref={adminAccountRef}
+          tabIndex={-1}
+          className="min-w-0 scroll-mt-4 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
         >
-          {saving ? "Saving…" : saved ? "Saved" : "Save changes"}
-        </button>
-      </form>
-    </AdminCard>
+          <TenantAdminSection
+            tenantId={tenant.id}
+            admin={adminRead.state === "loading" ? undefined : adminRead.admin}
+            onRefreshTenant={onRefreshTenant}
+            onAdminChange={onAdminChange}
+          />
+        </div>
+        <AdminPasswordReset tenantId={tenant.id} />
+      </div>
+
+      {/* Row 14: rare and permanent, so it sits alone at the very bottom, away from the daily buttons. */}
+      <section
+        aria-labelledby="delete-business-heading"
+        data-testid="delete-zone"
+        className="min-w-0 rounded-xl border border-red-900/50 bg-red-950/20 p-5 lg:col-span-2"
+      >
+        <h2 id="delete-business-heading" className="text-sm font-semibold text-red-300">
+          Delete this business
+        </h2>
+        <p className="mt-1 text-sm text-slate-400">
+          This removes the business and cannot be undone.
+        </p>
+        <div className="mt-4 flex flex-col items-start gap-1">
+          <button
+            disabled={!canDelete}
+            aria-describedby={canDelete ? undefined : "delete-tenant-hint"}
+            onClick={onAskDelete}
+            className="rounded-lg bg-red-900/40 px-4 py-2 text-sm font-semibold text-red-400 ring-1 ring-red-700 transition-colors hover:bg-red-900/70 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-red-900/40"
+          >
+            Delete business
+          </button>
+          <DisabledHint id="delete-tenant-hint" show={!canDelete}>
+            {TENANT_ACTION_COPY.deleteRefused}
+          </DisabledHint>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -1977,7 +1882,17 @@ export default function AdminTenantDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const urlTab = resolveTab(searchParams?.get("tab"));
+  const urlTab = resolveTab(searchParams?.get("tab"), searchParams?.get("focus"));
+  // R26: an old link (?tab=setup, config, snapshots, audit, addons, or a bare ?focus=admin-account) opens the new tab
+  // and the address bar is rewritten to it, keeping every other param (the focus target survives the move).
+  const rawTab = searchParams?.get("tab") ?? null;
+  React.useEffect(() => {
+    if (rawTab === urlTab || (rawTab === null && urlTab === "overview")) return;
+    const next = new URLSearchParams(searchParams?.toString() ?? "");
+    next.set("tab", urlTab);
+    router.replace(`/admin/tenants/${id}?${next.toString()}`, { scroll: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rawTab, urlTab]);
   const [tenant, setTenant] = React.useState<TenantDetail | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -2114,6 +2029,36 @@ export default function AdminTenantDetailPage() {
     }
   };
 
+  // The page's single Admin Account read (the Business details card shows it; Overview's readiness card and the
+  // Sign-in dialog use it too), so no tab mounts a second fetch.
+  const [adminRead, setAdminRead] = React.useState<{
+    admin: TenantAdminUser | null;
+    state: AdminReadState;
+  }>({ admin: null, state: "loading" });
+  const handleAdminChange = React.useCallback(
+    (admin: TenantAdminUser | null, state: AdminReadState) => setAdminRead({ admin, state }),
+    [],
+  );
+  React.useEffect(() => {
+    let live = true;
+    setAdminRead({ admin: null, state: "loading" });
+    superAdminClient
+      .get(`/platform-admin/tenants/${id}/admin`)
+      .then((res) => live && setAdminRead({ admin: res.data.admin ?? null, state: "loaded" }))
+      .catch(() => live && setAdminRead({ admin: null, state: "failed" }));
+    return () => {
+      live = false;
+    };
+  }, [id]);
+
+  // The four confirm dialogs live here, so the header, Plan & billing and Business details can all open them.
+  const [confirming, setConfirming] = React.useState<
+    "impersonate" | "extend-trial" | "suspend" | "delete" | null
+  >(null);
+  // The server only deletes SUSPENDED tenants: its refusal is shown inside the delete dialog, which stays open.
+  const [deleteError, setDeleteError] = React.useState<string | null>(null);
+  const [trialDays, setTrialDays] = React.useState(14);
+
   if (loading) return <div className="p-6 text-center text-slate-400">Loading tenant…</div>;
 
   if (error || !tenant) {
@@ -2137,8 +2082,8 @@ export default function AdminTenantDetailPage() {
 
   return (
     <div className="p-6">
-      {/* Header */}
-      <div className="mb-1 flex items-center gap-4">
+      {/* Header: which business, on every tab (list row 1), with the two daily actions (rows 9, 10) */}
+      <div className="mb-1 flex flex-wrap items-center gap-x-4 gap-y-2">
         <Link
           href="/admin/tenants"
           className="admin-tap-text text-sm text-slate-400 hover:text-slate-300"
@@ -2149,6 +2094,32 @@ export default function AdminTenantDetailPage() {
         <h1 className="text-xl font-bold text-white">{tenantDisplayName(tenant)}</h1>
         <AdminBadge>{tenant.status}</AdminBadge>
         <AdminBadge variant="plan">{tenant.planKey ?? tenant.plan}</AdminBadge>
+        {tenant.status !== "CANCELLED" && (
+          <div className="flex flex-wrap gap-2 sm:ml-auto" data-testid="tenant-header-actions">
+            <button
+              disabled={actionLoading === "toggle-status"}
+              onClick={() =>
+                tenant.status === "SUSPENDED"
+                  ? handleAction("toggle-status")
+                  : setConfirming("suspend")
+              }
+              className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-50 ${
+                tenant.status === "SUSPENDED"
+                  ? "bg-green-700 text-white hover:bg-green-600"
+                  : "bg-yellow-700 text-white hover:bg-yellow-600"
+              }`}
+            >
+              {tenant.status === "SUSPENDED" ? "Reactivate" : "Suspend"}
+            </button>
+            <button
+              disabled={actionLoading === "impersonate"}
+              onClick={() => setConfirming("impersonate")}
+              className="rounded-lg bg-indigo-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-600 disabled:opacity-50"
+            >
+              Sign in as admin
+            </button>
+          </div>
+        )}
       </div>
       <p className="mb-4 text-sm text-slate-400">
         <span className="font-mono">{tenant.slug}</span>.routeflow.info · created{" "}
@@ -2158,26 +2129,105 @@ export default function AdminTenantDetailPage() {
           : ""}
       </p>
 
+      {statusMsg && (
+        <div
+          role="status"
+          className="mb-4 rounded-lg bg-indigo-900/40 px-4 py-2 text-sm text-indigo-300 ring-1 ring-indigo-700"
+        >
+          {statusMsg}
+        </div>
+      )}
+
       {/* Tabs */}
       <AdminTabs tabs={TABS} active={activeTab} onChange={changeTab} />
 
       {/* Tab Content */}
-      {activeTab === "overview" && (
-        <OverviewTab
+      {activeTab === "overview" && <OverviewTab tenant={tenant} adminRead={adminRead} />}
+      {activeTab === "features" && (
+        <FeaturesTab tenant={tenant} onAction={handleAction} actionLoading={actionLoading} />
+      )}
+      {activeTab === "billing" && (
+        <BillingTab
           tenant={tenant}
+          onRefreshTenant={fetchTenant}
           onAction={handleAction}
           actionLoading={actionLoading}
-          statusMsg={statusMsg}
-          onRefreshTenant={fetchTenant}
+          onAskExtendTrial={() => setConfirming("extend-trial")}
+          trialDays={trialDays}
+          onTrialDays={setTrialDays}
         />
       )}
-      {activeTab === "billing" && <BillingTab tenant={tenant} onRefreshTenant={fetchTenant} />}
-      {activeTab === "setup" && (
-        <SetupTab tenant={tenant} onAction={handleAction} actionLoading={actionLoading} />
+      {activeTab === "details" && (
+        <BusinessDetailsTab
+          tenant={tenant}
+          adminRead={adminRead}
+          onAdminChange={handleAdminChange}
+          onRefreshTenant={fetchTenant}
+          onAskDelete={() => {
+            setDeleteError(null);
+            setConfirming("delete");
+          }}
+        />
       )}
-      {activeTab === "config" && <ConfigTab tenant={tenant} />}
-      {activeTab === "snapshots" && <ConfigSnapshotsTab tenantId={tenant.id} />}
-      {activeTab === "audit" && <AuditLogTab tenantId={tenant.id} />}
+      {activeTab === "history" && (
+        <>
+          <h2 className="mb-3 text-sm font-semibold text-slate-300">Audit log</h2>
+          <AuditLogTab tenantId={tenant.id} />
+          <div className="mt-8">
+            <ConfigSnapshotsTab tenantId={tenant.id} />
+          </div>
+        </>
+      )}
+
+      <ImpersonateDialog
+        open={confirming === "impersonate"}
+        tenant={tenant}
+        adminUsername={adminRead.admin?.username ?? null}
+        busy={actionLoading === "impersonate"}
+        onClose={() => setConfirming(null)}
+        onConfirm={() => {
+          setConfirming(null);
+          void handleAction("impersonate");
+        }}
+      />
+      <SuspendDialog
+        open={confirming === "suspend"}
+        tenant={tenant}
+        busy={actionLoading === "toggle-status"}
+        onClose={() => setConfirming(null)}
+        onConfirm={() => {
+          setConfirming(null);
+          void handleAction("toggle-status");
+        }}
+      />
+      <DeleteTenantDialog
+        open={confirming === "delete"}
+        tenant={tenant}
+        busy={actionLoading === "delete"}
+        error={deleteError}
+        onClose={() => setConfirming(null)}
+        onConfirm={async () => {
+          setDeleteError(null);
+          try {
+            await handleAction("delete");
+          } catch (err: unknown) {
+            setDeleteError(deleteFailureCopy(err));
+          }
+        }}
+      />
+      <ExtendTrialDialog
+        open={confirming === "extend-trial"}
+        tenant={tenant}
+        status={tenant.status}
+        days={trialDays}
+        trialEndsAt={tenant.trialEndsAt}
+        busy={actionLoading === "extend-trial"}
+        onClose={() => setConfirming(null)}
+        onConfirm={() => {
+          setConfirming(null);
+          void handleAction("extend-trial", { days: trialDays });
+        }}
+      />
 
       <PlanMoveReasonDialog
         open={moveAsk !== null}

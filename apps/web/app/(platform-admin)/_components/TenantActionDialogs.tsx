@@ -33,28 +33,28 @@ export const TENANT_ACTION_COPY = {
   impersonateFailed: "Couldn't start the impersonation. Try again.",
   noAdmin: (label: string) =>
     `${label} has no active admin. Create one in Admin Account, then try again.`,
-  statusFailed: "Couldn't change the tenant's status. Try again.",
+  statusFailed: "Couldn't change the business's status. Try again.",
   extendFailed: "Couldn't extend the trial. Try again.",
   trialNotAllowed:
-    "This tenant is Active, so it can't be put on a trial. Suspend it or change its plan instead.",
+    "This business is Active, so it can't be put on a trial. Suspend it or change its plan instead.",
   planFailed: "Couldn't change the plan. Try again.",
-  deleteRefused: "Only a suspended tenant can be deleted. Suspend it first, then delete.",
-  deleteFailed: "Couldn't delete the tenant. Try again.",
+  deleteRefused: "Only a suspended business can be deleted. Suspend it first, then delete.",
+  deleteFailed: "Couldn't delete the business. Try again.",
   cancelSubscriptionFirst:
-    "This tenant still has a Stripe subscription that hasn't ended (active, paused or incomplete). End it in Stripe first, then try again.",
+    "This business still has a Stripe subscription that hasn't ended (active, paused or incomplete). End it in Stripe first, then try again.",
   stripeNotConfigured:
     "Stripe isn't connected in this environment, so the subscription can't be checked.",
   stripeAccountMismatch:
-    "Stripe can't find this tenant's subscription or customer. Check the Stripe key and mode before cancelling.",
+    "Stripe can't find this business's subscription or customer. Check the Stripe key and mode before cancelling.",
   stripeSubscriptionOwnerMismatch:
-    "This subscription belongs to a different Stripe customer. Check the tenant's billing record before cancelling.",
+    "This subscription belongs to a different Stripe customer. Check the business's billing record before cancelling.",
   stripeNoStoredCustomer:
-    "This tenant has a subscription on file but no Stripe customer, so it can't be checked. Fix the tenant's billing record first.",
+    "This business has a subscription on file but no Stripe customer, so it can't be checked. Fix the business's billing record first.",
   subscriptionUnconfirmed:
-    "Couldn't confirm the tenant's Stripe subscription just now. Try again in a moment.",
-  tenantChanged: "This tenant changed while you were editing. Reload and try again.",
+    "Couldn't confirm the business's Stripe subscription just now. Try again in a moment.",
+  tenantChanged: "This business changed while you were editing. Reload and try again.",
   actionFailed: "That didn't work. Try again.",
-  suspendAutoReinstate: "Suspended tenants are reinstated automatically when they pay.",
+  suspendAutoReinstate: "Suspended businesses are reinstated automatically when they pay.",
 } as const;
 
 const errorCodeOf = (err: unknown): string | undefined =>
@@ -355,7 +355,7 @@ export function DeleteTenantDialog({
             }}
             className={DELETE_CLASS}
           >
-            {busy ? "Deleting…" : "Delete tenant"}
+            {busy ? "Deleting…" : "Delete business"}
           </button>
         </>
       }
@@ -373,11 +373,11 @@ export function DeleteTenantDialog({
           This cancels and archives {label}. You can&apos;t undo this.
         </p>
         <p className="text-sm text-slate-400">
-          To confirm, type the tenant slug:{" "}
+          To confirm, type the business web name:{" "}
           <strong className="font-mono text-slate-200">{tenant.slug}</strong>
         </p>
         <input
-          aria-label="Type the tenant slug to confirm deletion"
+          aria-label="Type the business web name to confirm deletion"
           type="text"
           value={typed}
           onChange={(e) => setTyped(e.target.value)}

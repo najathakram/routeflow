@@ -18,8 +18,9 @@ import { OrdersService } from "./orders.service";
 
 /**
  * W-762 / SA-918 §2: the hourly sweep SKIPS a customer whose merge group has a discounted order (one log line naming
- * DISCOUNTED) and CONTINUES with the rest. It must never abort the sweep (open B324: one un-mergeable customer aborts the
- * whole run), so the guard returns "nothing merged", never an error, on the automatic path.
+ * DISCOUNTED) and CONTINUES with the rest. The guard returns "nothing merged", never an error, on the automatic path
+ * (B324, fixed: a real fault in one customer's merge no longer aborts the run either; it is error-logged and counted in
+ * `failed`, see orders.merge-lock.spec.ts T3-d).
  */
 const order = (id: string, discountAmount: number) => ({
   id,

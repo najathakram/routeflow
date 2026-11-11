@@ -186,7 +186,8 @@ import {
 } from "./order-edit-restrictions";
 import * as rGate from "./order-restriction-gate";
 import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-restrictions.core";
-import { parseCommissionRatePct, parseOrderDate } from "./order-parsers";
+import { parseCommissionRatePct } from "./order-parsers";
+import * as od from "./order-date";
 import { assertDeliveryDateNotPast } from "./delivery-date-guard";
 import { tenantTimeZone } from "../common/tenant-time-zone";
 import { getOrderTracking } from "./order-tracking";
@@ -1246,13 +1247,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // routeRunId (resolved from the validated stop).
     let resolvedRouteRunId: string | null = null;
 
-    // Row 751: a staff-supplied order date is judged on the tenant's calendar day (the zone is read only when one is sent).
-    const orderDate = parseOrderDate(dto.orderDate, user.role, {
-      zone:
-        dto.orderDate != null
-          ? await tenantTimeZone(this.prisma, { tenantId: user.tenantId })
-          : null,
-    });
+    const { orderDate, orderZone } = await od.resolveCreate(this.prisma, dto, user, options);
     // Sales agents & commissions: staff-gated per-order rate override.
     const commissionRatePct = parseCommissionRatePct(dto.commissionRatePct, user.role);
 
@@ -1385,6 +1380,8 @@ export class OrdersService implements OnApplicationBootstrap {
         return withCreditsPendingHint(this.prisma, replay, appliedCreditNotes);
       }
     }
+
+    await od.assertCreateOrderDateOpen(this.prisma, orderDate, dto.items);
 
     // Row 718: a day before the TENANT's today is refused (400 DELIVERY_DATE_IN_PAST) - after the replay branch above, so a retry of an order that already landed still replays.
     await assertDeliveryDateNotPast(this.prisma, dto.requestedDeliveryDate, {
@@ -1985,6 +1982,7 @@ export class OrdersService implements OnApplicationBootstrap {
               },
             });
             await this.syncCompositions(tx, created.id);
+            await od.recordOrderDated(tx, user, created, { orderDate, zone: orderZone, options });
             await restriction?.stamp(tx, created.id);
             inlineMinted = await applyReturn(tx, inlineRet, {
               customerId,
@@ -2110,6 +2108,8 @@ export class OrdersService implements OnApplicationBootstrap {
       dto,
       user,
       saleZone,
+      new Date(),
+      await od.saleDateGate(this.prisma, dto, user, sale),
     );
 
     // 1. Create the backing order (reuses pricing tiers/overrides + stock lock/decrement). With an

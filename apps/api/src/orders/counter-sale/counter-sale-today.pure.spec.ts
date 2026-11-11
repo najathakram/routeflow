@@ -1,5 +1,6 @@
 import { PaymentMethod } from "@prisma/client";
 import {
+  counterSalesWhere,
   foldSummary,
   returnAmount,
   toTodaysSaleRow,
@@ -604,5 +605,45 @@ describe("the payment-method fold (ON_ACCOUNT pin)", () => {
     expect(todaysMethodOf("CREDIT_CARD")).toBe("CARD");
     expect(todaysMethodOf("CHECK")).toBe("CHECK");
     expect(todaysMethodOf("ON_ACCOUNT")).toBe("OTHER");
+  });
+});
+
+describe("toTodaysSaleRow: dated tag (W-1188 R11, R12)", () => {
+  const ENTERED = new Date("2026-11-09T22:12:00.000Z"); // Nov 9 in Chicago
+  const row = (orderDate: Date | null | undefined) =>
+    toTodaysSaleRow(
+      order({ createdAt: ENTERED, orderDate }),
+      null,
+      [],
+      new Map(),
+      "America/Chicago",
+    );
+
+  it("R11: entered Nov 9 and dated Nov 6 reads BACK", () => {
+    expect(row(new Date("2026-11-06T00:00:00.000Z")).dated).toEqual({
+      day: "2026-11-06",
+      direction: "BACK",
+    });
+  });
+
+  it("R12: dated Nov 16 reads FORWARD", () => {
+    expect(row(new Date("2026-11-16T00:00:00.000Z")).dated).toEqual({
+      day: "2026-11-16",
+      direction: "FORWARD",
+    });
+  });
+
+  it("an undated sale, or one dated to its entry day, is null (guard)", () => {
+    expect(row(null).dated).toBeNull();
+    expect(row(undefined).dated).toBeNull();
+    expect(row(new Date("2026-11-09T00:00:00.000Z")).dated).toBeNull();
+  });
+});
+
+describe("counter sales are listed by the ENTRY day (W-1188 R11 guard)", () => {
+  it("counterSalesWhere keys on createdAt and never on orderDate", () => {
+    const where = counterSalesWhere("t-1", { start: new Date(0), end: new Date(1) });
+    expect(Object.keys(where)).toContain("createdAt");
+    expect(JSON.stringify(where)).not.toContain("orderDate");
   });
 });

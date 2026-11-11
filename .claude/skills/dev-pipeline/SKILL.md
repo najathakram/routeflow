@@ -257,6 +257,8 @@ value known _independently_ of the implementation, stated **concretely** (a numb
 on _its own_ value before implementation, not merely on a stub's `undefined`. Prefer the lowest level that can fail
 for the right reason. Method, anti-vacuity rules and Playwright house rules: [TESTING-PLAYBOOK](references/TESTING-PLAYBOOK.md).
 
+Reference lenses for the test-author brief (machine-local; skip if absent): `~/.claude/skill-library/pocock-tdd/SKILL.md` (seams, vertical slices), `~/.claude/skill-library/addy-test-driven-development/SKILL.md` (Prove-It for bugs). House test-first rules win on conflict.
+
 ## S5 — Build plan: how (→ `build-plan.md`)
 
 1. **Self-contained** — subagents see only these artifacts, never the conversation.

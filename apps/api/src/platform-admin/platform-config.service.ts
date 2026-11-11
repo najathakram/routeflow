@@ -48,13 +48,29 @@ function modelPrice(model: string): { in: number; out: number } {
 }
 
 /** The one estimate of spend from token sums, per model: the 30-day panel and the monthly budget both use it. */
-function estimateSpendUsd(rows: Array<{ model: string; inTok: number; outTok: number }>): number {
+export function estimateSpendUsd(
+  rows: Array<{ model: string; inTok: number; outTok: number }>,
+): number {
   let usd = 0;
   for (const r of rows) {
     const price = modelPrice(r.model);
     usd += (Number(r.inTok) / 1e6) * price.in + (Number(r.outTok) / 1e6) * price.out;
   }
   return usd;
+}
+
+/**
+ * The one rule for a business's monthly allowance, in USD: the platform `"0"` is the kill switch and beats any
+ * override; else a usable override (a whole number >= 0, 0 = AI off for that business); else the platform value. The cap
+ * check (`monthlyCapUsdFor`) and the usage view both call it, so the screen never shows a different cap than the one enforced.
+ */
+export function effectiveCapUsd(
+  platformCapUsd: number,
+  override: number | null | undefined,
+): number {
+  if (platformCapUsd === 0) return 0;
+  if (typeof override === "number" && Number.isInteger(override) && override >= 0) return override;
+  return platformCapUsd;
 }
 
 /** True for the 403 `assertAiBudget` throws, so a caller with a useful non-AI answer can degrade instead of failing. */
@@ -295,10 +311,7 @@ export class PlatformConfigService {
       where: { id: tenantId },
       select: { aiMonthlyCapUsd: true },
     });
-    const override = own?.aiMonthlyCapUsd;
-    if (typeof override === "number" && Number.isInteger(override) && override >= 0)
-      return override;
-    return platform;
+    return effectiveCapUsd(platform, own?.aiMonthlyCapUsd);
   }
 
   /** The platform-wide `ai.monthlyCapUsd`: unset or unreadable = $10, `"0"` = AI off on RouteFlow's key for every business. */

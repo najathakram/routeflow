@@ -319,8 +319,10 @@ describe("marketing.css is delivered from the root layout — R-MKT T6", () => {
 // that stops the Tailwind enter / exit animation on every overlay) on the same precedent: an
 // accessibility rule for the dashboard overlays, not marketing leakage. Re-pinned again by SA-1071 A-2
 // (the 16px field rule on touch, so iOS doesn't zoom) on the same precedent: an app-wide rule, not
+// marketing leakage. Re-pinned again by W-1185 (the item-count chip pulse, inside the
+// `prefers-reduced-motion: no-preference` block) on the same precedent: a dashboard rule, not
 // marketing leakage.
-const GLOBALS_CSS_SHA256 = "8585aff1ebd04ca6b1854eb08bb6d6aa9d3a0908ee4a5ee22ba6ef6557902c02";
+const GLOBALS_CSS_SHA256 = "f5cc37a9c40070f57bdc4243f3a7ce3b1cd0faa8a2941294b35c3b4d18768d17";
 // tailwind.config.ts re-pinned by #2329: the preset now builds its values from the shared
 // Ledger token source (packages/ui/src/tokens/ledger.ts). Behaviour-preserving — the compiled
 // web CSS is byte-identical before and after — and unrelated to the marketing port.

@@ -102,6 +102,17 @@ describe("ConfigSnapshotsTab", () => {
     expect(await screen.findByText(/No snapshots yet/)).toBeTruthy();
   });
 
+  // The sr-only "Actions" header is absolutely positioned; without a positioned scroll wrapper it escapes the
+  // clip and makes the whole History tab scroll sideways on a phone (found in the WP10 390px capture).
+  it("keeps the table's scroll wrapper positioned so the hidden header cannot widen the page", async () => {
+    await renderTab([]);
+    await screen.findByText(/No snapshots yet/);
+    expect(screen.getByRole("region", { name: "Configuration snapshots" })).toHaveClass(
+      "relative",
+      "overflow-x-auto",
+    );
+  });
+
   it("shows a load error instead of an empty table", async () => {
     mockList.mockRejectedValue(new Error("boom"));
     render(<ConfigSnapshotsTab tenantId={TENANT} />);

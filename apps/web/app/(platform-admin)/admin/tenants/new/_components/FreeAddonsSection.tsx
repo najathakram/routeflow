@@ -68,8 +68,8 @@ export function FreeAddonsSection({
         </p>
         {failed ? (
           <p className="text-xs text-amber-400">
-            Free add-ons could not be loaded. You can turn them on later from the tenant&apos;s
-            Setup tab.
+            Free add-ons could not be loaded. You can turn them on later from the business&apos;s
+            Features tab.
           </p>
         ) : addons === null ? (
           <p className="text-xs text-slate-400">Loading add-ons…</p>

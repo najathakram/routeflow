@@ -124,6 +124,7 @@ model Tenant {
   routeRuns                RouteRun[]
   routeRunStops            RouteRunStop[]
   orders                   Order[]
+  orderReviewFlags         OrderReviewFlag[]
   orderItems               OrderItem[]
   deliveryMutations        DeliveryMutation[]
   transactions             Transaction[]
@@ -356,12 +357,14 @@ model User {
   stockCountsStarted   StockCountSession[]  @relation("StockCountStarted")
   stockCountsCommitted StockCountSession[]  @relation("StockCountCommitted")
   invoiceWriteOffEvents InvoiceWriteOffEvent[] @relation("InvoiceWriteOffBy")
+  resolvedReviewFlags  OrderReviewFlag[] @relation("OrderReviewFlagResolvedBy")
   stockCountLines      StockCountLine[]
   expenses             Expense[]
   messages             Message[]
   preferences          UserPreference[]
   passwordResetTokens  PasswordResetToken[]
   emailVerificationTokens   UserEmailVerificationToken[]
+  emailChanges              UserEmailChange[]
   soldOrders                Order[]                      @relation("OrderSoldBy")
   counterDayClosesClosed    CounterDayClose[]            @relation("CounterDayCloseClosedBy")
   counterDayClosesReopened  CounterDayClose[]            @relation("CounterDayCloseReopenedBy")
@@ -596,6 +599,29 @@ model UserEmailVerificationToken {
   expiresAt DateTime
   usedAt    DateTime?
   createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/// B461 (SA-1116): a staff login-email change that waits for the NEW address to confirm. A row is the pending
+/// address, so it survives a reload. A separate table on purpose: an unused UserEmailVerificationToken row means
+/// "a live sign-up link" (B448), so a row of another purpose there would reopen that bug. No tenantId, like the
+/// other token tables (the tenant comes from the user row); writes go through raw SQL inside a tenant transaction.
+/// Only the sha256 of the link id is stored.
+model UserEmailChange {
+  id                String    @id @default(uuid())
+  userId            String
+  fromEmail         String
+  toEmail           String
+  tokenHash         String    @unique
+  /// The editor: the user themselves, a tenant admin or a super admin. Plain id, no FK: the row outlives the editor.
+  requestedByUserId String
+  expiresAt         DateTime
+  usedAt            DateTime?
+  createdAt         DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

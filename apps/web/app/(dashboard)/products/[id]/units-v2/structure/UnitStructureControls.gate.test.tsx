@@ -103,6 +103,7 @@ beforeEach(() => {
   mockCount = 0;
   resetProps.length = 0;
   startEditing.mockReset();
+  startEditing.mockReturnValue(true); // the draft's startEditing says whether the editor opened
   setText.mockReset();
   resetAllToAuto.mockReset();
 });
@@ -124,6 +125,14 @@ describe("Reset to Auto Apply gate", () => {
     screen.getByTestId("reset-stub").click();
     expect(startEditing).toHaveBeenCalledTimes(1);
     expect(resetAllToAuto).toHaveBeenCalledTimes(1);
+  });
+
+  it("W-1170 F6: Apply stops when the editor does not open (no reset into a draft with no save bar)", () => {
+    startEditing.mockReturnValue(false);
+    mount(false);
+    screen.getByTestId("reset-stub").click();
+    expect(startEditing).toHaveBeenCalledTimes(1);
+    expect(resetAllToAuto).not.toHaveBeenCalled();
   });
 });
 

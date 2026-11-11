@@ -41,6 +41,7 @@ describe("UsersController.update: who may edit whom", () => {
       "op",
       UserRole.OPERATOR,
       undefined, // SA-778: the caller's impersonatedBy claim (none)
+      "op1", // B461: the editor id (the requester of a held email change)
     );
   });
 
@@ -52,6 +53,7 @@ describe("UsersController.update: who may edit whom", () => {
       "ad",
       UserRole.TENANT_ADMIN,
       undefined, // SA-778: no impersonatedBy claim
+      "ad1", // B461: the editor id (the requester of a held email change)
     );
   });
 
@@ -68,6 +70,7 @@ describe("UsersController.update: who may edit whom", () => {
       "sa",
       UserRole.SUPER_ADMIN,
       undefined, // SA-778: no impersonatedBy claim
+      "sa1", // B461: the editor id (the requester of a held email change)
     );
   });
 
@@ -79,6 +82,7 @@ describe("UsersController.update: who may edit whom", () => {
       "ad",
       UserRole.TENANT_ADMIN,
       undefined, // SA-778: no impersonatedBy claim
+      "ad1", // B461: the editor id (the requester of a held email change)
     );
   });
 
@@ -90,6 +94,7 @@ describe("UsersController.update: who may edit whom", () => {
       "dr",
       UserRole.DRIVER,
       undefined, // SA-778: no impersonatedBy claim
+      "dr1", // B461: the editor id (the requester of a held email change)
     );
     expect(() => controller.update("other", { email: "a@b.example" }, driver)).toThrow(
       ForbiddenException,
@@ -128,6 +133,9 @@ describe("UsersService.updateUser writes an explicit pick (SA-726 M5)", () => {
     email: "old@b.example",
     username: "old",
     status: "ACTIVE",
+    // B461: a user who has never signed in is written at once; one who has waits for the new address to confirm.
+    lastLoginAt: null,
+    createdAt: new Date("2026-10-01T00:00:00Z"),
   };
   let prisma: ReturnType<typeof createMockPrisma>;
   let update: jest.Mock;
@@ -135,6 +143,7 @@ describe("UsersService.updateUser writes an explicit pick (SA-726 M5)", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    prisma.refreshToken.count.mockResolvedValue(0);
     prisma.user.findUnique.mockResolvedValue(stored as never);
     update = prisma.user.update;
     update.mockResolvedValue({ ...stored, id: "u1" });

@@ -1,5 +1,5 @@
 {"id":"B14","batch":"F26","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"2d0270fd"}
-{"id":"B25","batch":"F26","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"2d0270fd"}
+{"id":"B25","batch":"F26","tier":"T2","state":"already-fixed","pr":null,"proof":null,"evidence":"Re-check 2026-11-09 at 27d8125e17: apps/web/app/(dashboard)/products/_components/product-status.tsx:17,31 uses lowStockThreshold(reorderPoint) (line last changed at cdac0ae2e26114af8e5e1d4877a54692aeae8ce9; this is not a named fix commit)","roundSha":"2d0270fd","sha":"cdac0ae2e26114af8e5e1d4877a54692aeae8ce9"}
 {"id":"B27","batch":"F26","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"2d0270fd"}
 {"id":"B28","batch":"F26","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"2d0270fd"}
 {"id":"B41","batch":"F26","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"2d0270fd"}

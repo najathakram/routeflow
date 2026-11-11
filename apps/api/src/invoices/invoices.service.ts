@@ -243,7 +243,7 @@ import {
   addCalendarDays,
   startOfCalendarDay,
 } from "../common/calendar-date";
-import { calendarFieldStamp, dueDateStamps, dueStamp } from "./invoice-due-dates";
+import { calendarFieldStamp, dueDateStamps, dueStamp, numberYear } from "./invoice-due-dates";
 import { counterPay, type CounterPayOpts, type TillUser } from "./counter-payment-guard";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { planInvoicedQtyAdjustment } from "./unvoid-billing-claim";
@@ -2877,7 +2877,7 @@ export class InvoicesService {
    * relies on `NumberingService` resolving it from the request context as before.
    */
   private async generateInvoiceNumber(tenantId?: string, tx?: any): Promise<string> {
-    const year = new Date().getFullYear();
+    const year = await numberYear(tx ?? this.prisma, tenantId ?? this.prisma.getTenantId());
     return this.numbering.reserveNext("INVOICE", { year, tenantId, ...(tx ? { tx } : {}) });
   }
 

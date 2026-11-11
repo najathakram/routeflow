@@ -494,7 +494,7 @@ describe("create-tenant capabilities", () => {
     expect(document.body.textContent).not.toContain("RAW SERVER TEXT");
     expect(screen.getByRole("link", { name: "Open Acme" })).toHaveAttribute(
       "href",
-      "/admin/tenants/t9?tab=setup",
+      "/admin/tenants/t9?tab=features",
     );
   });
 

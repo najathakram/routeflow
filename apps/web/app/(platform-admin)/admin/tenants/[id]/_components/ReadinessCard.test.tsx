@@ -127,7 +127,7 @@ describe("ReadinessCard (SA-3, BO-02)", () => {
     const r = rowOf("Has an admin");
     expect(within(r).getByRole("link", { name: "Create admin for Acme Retail" })).toHaveAttribute(
       "href",
-      "/admin/tenants/t-1?focus=admin-account",
+      "/admin/tenants/t-1?tab=details&focus=admin-account",
     );
   });
 
@@ -166,12 +166,12 @@ describe("ReadinessCard (SA-3, BO-02)", () => {
       expect(screen.queryByRole("button", { name: /details/i })).toBeNull();
     });
 
-    it("(b) the unset line links Choose to the Setup tab's capabilities target", async () => {
+    it("(b) the unset line links Choose to the Features tab's capabilities target", async () => {
       mockFetchCaps.mockResolvedValue(caps({ configured: false, counter: false }));
       render(<Card tenant={tenant()} />);
       const link = await screen.findByRole("link", { name: "Choose how Acme Retail sells" });
       expect(link).toHaveTextContent("Choose");
-      expect(link).toHaveAttribute("href", "/admin/tenants/t-1?tab=setup&focus=capabilities");
+      expect(link).toHaveAttribute("href", "/admin/tenants/t-1?tab=features&focus=capabilities");
       expect(link.className).toMatch(/admin-tap-text/);
     });
 

@@ -13,6 +13,7 @@ import { resolveSaleDelivery } from "./sale-options";
  */
 
 const staff = { sub: "op-1", role: UserRole.OPERATOR } as unknown as JwtPayload;
+const GATE = { deniedGroups: [] as string[], policy: "OFFICE" as const };
 const sale = (deliveredOn: string) =>
   ({ customerId: "c1", items: [], deliveredNow: false, deliveredOn }) as unknown as CreateSaleDto;
 
@@ -30,29 +31,29 @@ describe("resolveSaleDelivery — the tenant's day (row 735b)", () => {
   it("UTC tenant (or none): today delivers, tomorrow schedules (unchanged)", () => {
     const now = new Date("2026-10-22T15:00:00Z");
     for (const zone of ["UTC", null, undefined]) {
-      delivered(resolveSaleDelivery(sale("2026-10-22"), staff, zone, now), "2026-10-22");
-      delivered(resolveSaleDelivery(sale("2026-10-21"), staff, zone, now), "2026-10-21");
-      scheduled(resolveSaleDelivery(sale("2026-10-23"), staff, zone, now), "2026-10-23");
+      delivered(resolveSaleDelivery(sale("2026-10-22"), staff, zone, now, GATE), "2026-10-22");
+      delivered(resolveSaleDelivery(sale("2026-10-21"), staff, zone, now, GATE), "2026-10-21");
+      scheduled(resolveSaleDelivery(sale("2026-10-23"), staff, zone, now, GATE), "2026-10-23");
     }
   });
 
   it("UTC-10 (Pacific/Honolulu): at 05:00Z on the 22nd it is still the 21st there, so the 22nd is LATER", () => {
     const now = new Date("2026-10-22T05:00:00Z"); // 19:00 on the 21st in Honolulu
     const zone = "Pacific/Honolulu";
-    delivered(resolveSaleDelivery(sale("2026-10-21"), staff, zone, now), "2026-10-21");
-    scheduled(resolveSaleDelivery(sale("2026-10-22"), staff, zone, now), "2026-10-22");
+    delivered(resolveSaleDelivery(sale("2026-10-21"), staff, zone, now, GATE), "2026-10-21");
+    scheduled(resolveSaleDelivery(sale("2026-10-22"), staff, zone, now, GATE), "2026-10-22");
     // the UTC reading it replaces would have delivered the 22nd
-    delivered(resolveSaleDelivery(sale("2026-10-22"), staff, "UTC", now), "2026-10-22");
+    delivered(resolveSaleDelivery(sale("2026-10-22"), staff, "UTC", now, GATE), "2026-10-22");
   });
 
   it("UTC-10 at 10:00Z: the tenant has crossed midnight, the 22nd is today", () => {
     const now = new Date("2026-10-22T10:00:00Z"); // 00:00 on the 22nd in Honolulu
     delivered(
-      resolveSaleDelivery(sale("2026-10-22"), staff, "Pacific/Honolulu", now),
+      resolveSaleDelivery(sale("2026-10-22"), staff, "Pacific/Honolulu", now, GATE),
       "2026-10-22",
     );
     scheduled(
-      resolveSaleDelivery(sale("2026-10-23"), staff, "Pacific/Honolulu", now),
+      resolveSaleDelivery(sale("2026-10-23"), staff, "Pacific/Honolulu", now, GATE),
       "2026-10-23",
     );
   });
@@ -61,11 +62,11 @@ describe("resolveSaleDelivery — the tenant's day (row 735b)", () => {
     const now = new Date("2026-10-22T20:00:00Z"); // 09:00 on the 23rd in Auckland (UTC+13)
     // parseOrderDate's UTC "future" bound must not turn the tenant's own today into a 400
     delivered(
-      resolveSaleDelivery(sale("2026-10-23"), staff, "Pacific/Auckland", now),
+      resolveSaleDelivery(sale("2026-10-23"), staff, "Pacific/Auckland", now, GATE),
       "2026-10-23",
     );
     scheduled(
-      resolveSaleDelivery(sale("2026-10-24"), staff, "Pacific/Auckland", now),
+      resolveSaleDelivery(sale("2026-10-24"), staff, "Pacific/Auckland", now, GATE),
       "2026-10-24",
     );
   });
@@ -73,8 +74,8 @@ describe("resolveSaleDelivery — the tenant's day (row 735b)", () => {
   it("an invalid or empty zone falls back to the UTC day, never throws", () => {
     const now = new Date("2026-10-22T05:00:00Z");
     for (const zone of ["Not/AZone", ""]) {
-      delivered(resolveSaleDelivery(sale("2026-10-22"), staff, zone, now), "2026-10-22");
-      scheduled(resolveSaleDelivery(sale("2026-10-23"), staff, zone, now), "2026-10-23");
+      delivered(resolveSaleDelivery(sale("2026-10-22"), staff, zone, now, GATE), "2026-10-22");
+      scheduled(resolveSaleDelivery(sale("2026-10-23"), staff, zone, now, GATE), "2026-10-23");
     }
   });
 
@@ -82,7 +83,7 @@ describe("resolveSaleDelivery — the tenant's day (row 735b)", () => {
     const now = new Date("2026-10-22T15:00:00Z"); // the 22nd in New York
     // 2026-10-23T00:30-04:00 is the 23rd on its face (04:30Z): a later day than the tenant's 22nd
     scheduled(
-      resolveSaleDelivery(sale("2026-10-23T00:30:00-04:00"), staff, "America/New_York", now),
+      resolveSaleDelivery(sale("2026-10-23T00:30:00-04:00"), staff, "America/New_York", now, GATE),
       "2026-10-23T00:30:00-04:00",
     );
   });
@@ -94,37 +95,37 @@ describe("resolveSaleDelivery — the tenant's day (row 735b)", () => {
 
     it("fall-back day, before the repeated hour (01:30 CDT = 06:30Z): the 1st is today", () => {
       const now = new Date("2026-11-01T06:30:00Z");
-      delivered(resolveSaleDelivery(sale("2026-11-01"), staff, chicago, now), "2026-11-01");
-      scheduled(resolveSaleDelivery(sale("2026-11-02"), staff, chicago, now), "2026-11-02");
+      delivered(resolveSaleDelivery(sale("2026-11-01"), staff, chicago, now, GATE), "2026-11-01");
+      scheduled(resolveSaleDelivery(sale("2026-11-02"), staff, chicago, now, GATE), "2026-11-02");
     });
 
     it("fall-back day, in the repeated hour (01:30 CST = 07:30Z): still the 1st", () => {
       const now = new Date("2026-11-01T07:30:00Z");
-      delivered(resolveSaleDelivery(sale("2026-11-01"), staff, chicago, now), "2026-11-01");
-      scheduled(resolveSaleDelivery(sale("2026-11-02"), staff, chicago, now), "2026-11-02");
+      delivered(resolveSaleDelivery(sale("2026-11-01"), staff, chicago, now, GATE), "2026-11-01");
+      scheduled(resolveSaleDelivery(sale("2026-11-02"), staff, chicago, now, GATE), "2026-11-02");
     });
 
     it("fall-back day, 23:30 CST (05:30Z on the 2nd UTC): the tenant's day is still the 1st", () => {
       // a fixed CDT offset (UTC-5) would call this 00:30 on the 2nd
       const now = new Date("2026-11-02T05:30:00Z");
-      delivered(resolveSaleDelivery(sale("2026-11-01"), staff, chicago, now), "2026-11-01");
-      scheduled(resolveSaleDelivery(sale("2026-11-02"), staff, chicago, now), "2026-11-02");
+      delivered(resolveSaleDelivery(sale("2026-11-01"), staff, chicago, now, GATE), "2026-11-01");
+      scheduled(resolveSaleDelivery(sale("2026-11-02"), staff, chicago, now, GATE), "2026-11-02");
     });
 
     it("fall-back day, just past local midnight (00:30 CST = 06:30Z on the 2nd): the 2nd is today", () => {
       const now = new Date("2026-11-02T06:30:00Z");
-      delivered(resolveSaleDelivery(sale("2026-11-02"), staff, chicago, now), "2026-11-02");
-      scheduled(resolveSaleDelivery(sale("2026-11-03"), staff, chicago, now), "2026-11-03");
+      delivered(resolveSaleDelivery(sale("2026-11-02"), staff, chicago, now, GATE), "2026-11-02");
+      scheduled(resolveSaleDelivery(sale("2026-11-03"), staff, chicago, now, GATE), "2026-11-03");
     });
 
     it("spring-forward day (America/New_York, 2026-03-08, a 23-hour day): 23:30 EDT is still the 8th", () => {
       const now = new Date("2026-03-09T03:30:00Z"); // 23:30 EDT (UTC-4) on the 8th
       delivered(
-        resolveSaleDelivery(sale("2026-03-08"), staff, "America/New_York", now),
+        resolveSaleDelivery(sale("2026-03-08"), staff, "America/New_York", now, GATE),
         "2026-03-08",
       );
       scheduled(
-        resolveSaleDelivery(sale("2026-03-09"), staff, "America/New_York", now),
+        resolveSaleDelivery(sale("2026-03-09"), staff, "America/New_York", now, GATE),
         "2026-03-09",
       );
     });
@@ -137,7 +138,7 @@ describe("resolveSaleDelivery — the tenant's day (row 735b)", () => {
       deliveredNow: true,
       requestedDeliveryDate: "2026-12-01",
     } as unknown as CreateSaleDto;
-    expect(resolveSaleDelivery(dto, staff, "Pacific/Honolulu")).toEqual({
+    expect(resolveSaleDelivery(dto, staff, "Pacific/Honolulu", new Date(), GATE)).toEqual({
       deliveredNow: true,
       deliveredAt: undefined,
       requestedDeliveryDate: "2026-12-01",
@@ -145,7 +146,7 @@ describe("resolveSaleDelivery — the tenant's day (row 735b)", () => {
   });
 
   it("a deliveredOn that is not a date is still refused 400", () => {
-    expect(() => resolveSaleDelivery(sale("not-a-date"), staff, "UTC")).toThrow(
+    expect(() => resolveSaleDelivery(sale("not-a-date"), staff, "UTC", new Date(), GATE)).toThrow(
       BadRequestException,
     );
   });
@@ -157,16 +158,46 @@ describe("resolveSaleDelivery — orderDate is judged on the tenant's day too (r
   const now = new Date("2026-10-25T20:00:00Z"); // 09:00 on the 26th in Auckland
 
   it("Pacific/Auckland may back-date to its own today (the 26th), which is tomorrow in UTC", () => {
-    const r = resolveSaleDelivery(withOrderDate("2026-10-26"), staff, "Pacific/Auckland", now);
+    const r = resolveSaleDelivery(
+      withOrderDate("2026-10-26"),
+      staff,
+      "Pacific/Auckland",
+      now,
+      GATE,
+    );
     expect(r.deliveredAt?.toISOString().slice(0, 10)).toBe("2026-10-26");
   });
 
   it("control: a UTC tenant is refused the 26th, and Auckland the 27th", () => {
-    expect(() => resolveSaleDelivery(withOrderDate("2026-10-26"), staff, "UTC", now)).toThrow(
+    expect(() => resolveSaleDelivery(withOrderDate("2026-10-26"), staff, "UTC", now, GATE)).toThrow(
       BadRequestException,
     );
     expect(() =>
-      resolveSaleDelivery(withOrderDate("2026-10-27"), staff, "Pacific/Auckland", now),
+      resolveSaleDelivery(withOrderDate("2026-10-27"), staff, "Pacific/Auckland", now, GATE),
+    ).toThrow(BadRequestException);
+  });
+});
+
+describe("W-1188: a dated sale's hand-over (R8, R9)", () => {
+  const now = new Date("2026-11-09T18:00:00.000Z");
+  const dated = (orderDate: string) =>
+    ({ items: [], deliveredNow: true, orderDate }) as unknown as CreateSaleDto;
+  const COUNTER = { deniedGroups: [] as string[], policy: "COUNTER" as const };
+
+  it("R8: a counter sale dated in the future delivers now, never on the future day", () => {
+    const r = resolveSaleDelivery(dated("2026-11-16"), staff, "America/Chicago", now, COUNTER);
+    expect(r.deliveredAt).toEqual(now);
+    expect(r.deliveredNow).toBe(true);
+  });
+
+  it("R9: a sale dated in the past delivers on that day", () => {
+    const r = resolveSaleDelivery(dated("2026-11-06"), staff, "America/Chicago", now, COUNTER);
+    expect(r.deliveredAt?.toISOString()).toBe("2026-11-06T00:00:00.000Z");
+  });
+
+  it("the office policy still refuses a future orderDate", () => {
+    expect(() =>
+      resolveSaleDelivery(dated("2026-11-16"), staff, "America/Chicago", now, GATE),
     ).toThrow(BadRequestException);
   });
 });
