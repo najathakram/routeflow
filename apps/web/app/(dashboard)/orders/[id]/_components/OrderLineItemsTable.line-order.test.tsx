@@ -262,4 +262,43 @@ describe("OrderLineItemsTable: Ctrl+Z follows the visible Undo (#4284 review)", 
       jest.useRealTimers();
     }
   });
+
+  it("#4284 SHOULD 2: Ctrl+Z spends the toast's Undo, so the toast closes", async () => {
+    renderTable();
+    await act(async () => {
+      dragEnd?.({ active: { id: "l3" }, over: { id: "l1" } });
+    });
+    expect(await screen.findByText("Moved Sample Zucchini to line 1")).toBeInTheDocument();
+    await act(async () => {
+      ctrlZ();
+    });
+    expect(screen.queryByText("Moved Sample Zucchini to line 1")).toBeNull();
+  });
+
+  it("#4284 SHOULD 1: a toast kept open by hover closes with the Undo it offers (no dead button)", async () => {
+    jest.useFakeTimers();
+    try {
+      renderTable();
+      await act(async () => {
+        dragEnd?.({ active: { id: "l3" }, over: { id: "l1" } });
+      });
+      expect(screen.getByText("Moved Sample Zucchini to line 1")).toBeInTheDocument();
+      await act(async () => {
+        jest.advanceTimersByTime(6100);
+      });
+      expect(screen.queryByText("Moved Sample Zucchini to line 1")).toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
+
+describe("OrderLineItemsTable: the handle adds no table width at md (#4284 768 px clip)", () => {
+  it("MUST: the handle is drawn inside the product cell's own left padding, 24 px wide, out of the flow", () => {
+    renderTable();
+    const slot = screen.getAllByTestId("row-handle-slot")[0];
+    expect(slot.className).toContain("md:absolute");
+    expect(slot.className).toContain("md:[&>button]:w-6");
+    expect(slot.closest("td")!.className).toContain("md:relative");
+  });
 });

@@ -172,9 +172,18 @@ function TableBody({
                 li.status === "CANCELLED" && "opacity-50",
               )}
             >
-              <td role="cell" className="px-6 py-3 max-md:col-span-2 max-md:block max-md:p-0">
+              <td
+                role="cell"
+                className="px-6 py-3 md:relative max-md:col-span-2 max-md:block max-md:p-0"
+              >
                 <div className="flex items-center gap-3">
-                  <RowHandle />
+                  {/* md+: the handle sits in the cell's own left padding (24 px wide, full row tall), so the table gains no width */}
+                  <div
+                    data-testid="row-handle-slot"
+                    className="empty:hidden md:absolute md:inset-y-0 md:left-0 md:flex md:items-center md:[&>button]:w-6"
+                  >
+                    <RowHandle />
+                  </div>
                   <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-raised">
                     <Package className="h-4 w-4 text-navy/30" />
                   </div>

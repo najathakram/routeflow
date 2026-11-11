@@ -31,7 +31,12 @@ export function useOrderLineOrder({
   lineItems: OrderItem[];
   enabled: boolean;
 }) {
-  const { toast } = useToast();
+  const { toast, dismiss } = useToast();
+  const toastId = React.useRef<string | null>(null);
+  const closeToast = React.useCallback(() => {
+    if (toastId.current) dismiss(toastId.current);
+    toastId.current = null;
+  }, [dismiss]);
   const qc = useQueryClient();
   const reorder = useReorderOrderLines();
   const canMove = enabled && !!orderId && !!updatedAt && lineItems.length > 1;
@@ -111,6 +116,7 @@ export function useOrderLineOrder({
     if (!back || busy.current) return;
     if (undoTimer.current) clearTimeout(undoTimer.current);
     lastUndo.current = null;
+    closeToast(); // Ctrl/Cmd+Z used it: the toast's Undo is spent
     busy.current = true;
     const current = onScreen.current; // the moved order, whatever render this closure came from
     show(
@@ -124,7 +130,7 @@ export function useOrderLineOrder({
     } finally {
       busy.current = false;
     }
-  }, [fail, lineItems, send, show]);
+  }, [closeToast, fail, lineItems, send, show]);
   undoNow.current = () => void undo();
 
   const onMove = React.useCallback(
@@ -140,9 +146,14 @@ export function useOrderLineOrder({
         await send(ids);
         lastUndo.current = { ids: previous, stamp: stamp.current! };
         if (undoTimer.current) clearTimeout(undoTimer.current);
-        undoTimer.current = setTimeout(() => (lastUndo.current = null), UNDO_MS);
+        closeToast(); // a newer move replaces the older toast
+        // The toast pauses its own timer while hovered, so close it with the Undo it offers: a visible Undo always works.
+        undoTimer.current = setTimeout(() => {
+          lastUndo.current = null;
+          closeToast();
+        }, UNDO_MS);
         const name = lines.find((l) => l.id === movedId)?.label ?? "Line";
-        toast({
+        toastId.current = toast({
           title: `Moved ${name} to line ${toIndex + 1}`,
           variant: "success",
           duration: UNDO_MS,
@@ -154,7 +165,7 @@ export function useOrderLineOrder({
         busy.current = false;
       }
     },
-    [canMove, fail, lineItems, lines, send, show, toast],
+    [canMove, closeToast, fail, lineItems, lines, send, show, toast],
   );
 
   React.useEffect(() => {
