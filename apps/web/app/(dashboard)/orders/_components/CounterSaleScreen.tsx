@@ -116,6 +116,8 @@ import { repriceLines } from "./counter-sale-reprice";
 import { QTY_TOO_LARGE_COPY } from "./counter-qty-refusal";
 import { PRICE_LAYER_TOO_MANY_COPY } from "@/components/PriceLayerNotice";
 import { isTextEntryActive } from "@/lib/refocus-scanner";
+import { CartMovableList } from "@/components/CartMovableList";
+import { useCartLineOrder } from "@/lib/use-cart-line-order";
 import { unlockScanCue } from "@/lib/scan-cue";
 import { isTouchFirst } from "@/lib/touch-first";
 import { cameraFrameBlocked, counterDialogOpen, scanPauseHeld } from "./counter-scan-guard";
@@ -435,6 +437,15 @@ export function CounterSaleScreen() {
     setParkBusy(busy);
   };
   const lineLocked = locked || salePosting || parkBusy;
+  // W-1187 PR-2b: drag a line to any place; the array order is the order the sale is sent in. Focus goes back to the scan box.
+  const lineMove = useCartLineOrder<SaleLine>({
+    lines,
+    setLines,
+    idOf: (l) => l.tempId,
+    labelOf: (l) => l.name,
+    enabled: !lineLocked,
+    afterMove: refocus,
+  });
   // A KEYBOARD activation of a tender / method button (detail 0) keeps focus where it is, so Tab goes on to the next control.
   // One scan-focus owner (row 237): a digit typed while a NON-text control holds focus (a button, a checkbox, <body>)
   // is a scan or the start of one, so it goes to the scan box instead of starting an Enter on "Add note" or a stray shortcut.
@@ -1943,7 +1954,14 @@ export function CounterSaleScreen() {
               </Button>
             </div>
           ) : null}
-          <ul className="divide-y rounded border" aria-label="Items">
+          <CartMovableList
+            className="divide-y rounded border"
+            aria-label="Items"
+            sortable={lineMove.sortable}
+            onMove={lineMove.onMove}
+            enabled={lineMove.enabled}
+            scanTarget={() => scanRef.current}
+          >
             {lines.length === 0 ? (
               <li className="p-3 text-sm text-navy/60">No items yet.</li>
             ) : null}
@@ -1968,9 +1986,10 @@ export function CounterSaleScreen() {
                 onNoteClosed={refocus}
                 onQtyEnter={refocusFromActive}
                 hideOriginalPrice={settings?.hideOriginalPrice === true}
+                moveId={l.tempId}
               />
             ))}
-          </ul>
+          </CartMovableList>
 
           <div
             role="status"
