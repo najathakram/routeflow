@@ -21,13 +21,23 @@ interface FollowDb {
   invoiceItem: { update: (args: any) => Promise<unknown> };
 }
 
-export async function followOrderLineOrder(db: FollowDb, orderId: string): Promise<void> {
+export async function followOrderLineOrder(
+  db: FollowDb,
+  orderId: string,
+  tenantId: string,
+): Promise<void> {
   const open = { orderId, status: { notIn: ["VOID", "WRITTEN_OFF"] } };
   const ids: any[] = await db.invoice.findMany({ where: open, select: { id: true } });
   if (ids.length === 0) return;
-  // Row-lock the invoices (NOWAIT, sorted ids) BEFORE reading their lines: an invoice edit or a send in flight answers a
+  // Row-lock the invoices (NOWAIT, in id order, tenant-scoped) BEFORE reading their lines: an invoice edit or a send in flight answers a
   // retryable 409 instead of interleaving with the re-rank, and the lines read below are the locked truth.
-  await lockRowsNoWait(db, "Invoice", ids.map((i) => i.id as string).sort(), "INVOICE_BUSY");
+  await lockRowsNoWait(
+    db,
+    "Invoice",
+    ids.map((i) => i.id as string),
+    "INVOICE_BUSY",
+    tenantId,
+  );
   const invoices = await db.invoice.findMany({
     where: open,
     select: {

@@ -532,6 +532,7 @@ export async function lockRowsNoWait(
   table: NoWaitLockTable,
   ids: string[],
   reason: string,
+  tenantId?: string,
 ): Promise<void> {
   if (ids.length === 0) return;
   if (!(NOWAIT_LOCK_TABLES as readonly string[]).includes(table)) {
@@ -539,18 +540,21 @@ export async function lockRowsNoWait(
       `lockRowsNoWait: unknown table "${table}" (expected one of ${NOWAIT_LOCK_TABLES.join(", ")})`,
     );
   }
+  // W-1187 PR-1g: raw SQL is outside the tenant-scoped client, so a caller that knows its tenant passes it and the
+  // predicate carries it; rows are locked in id order (ORDER BY id) so two lockers over overlapping sets cannot deadlock.
+  const mine = tenantId ? Prisma.sql`AND "tenantId" = ${tenantId}` : Prisma.empty;
   try {
     // One literal statement per table rather than an interpolated identifier: the table name
     // never reaches the SQL from a value. This helper is the shared home of the lock — the
     // hand-written statements it replaced locked a single id (`WHERE id = $1`); it takes a set.
     if (table === "RouteRunStop") {
-      await tx.$executeRaw`SELECT id FROM "RouteRunStop" WHERE id IN (${Prisma.join(ids)}) FOR NO KEY UPDATE NOWAIT`;
+      await tx.$executeRaw`SELECT id FROM "RouteRunStop" WHERE id IN (${Prisma.join(ids)}) ${mine} ORDER BY id FOR NO KEY UPDATE NOWAIT`;
     } else if (table === "Order") {
       // B1053: the order-merge guard. FOR UPDATE (not NO KEY UPDATE) so it also conflicts with the FK
       // KEY SHARE an invoice insert takes on the order; ORDER BY id so two lockers share one order.
-      await tx.$executeRaw`SELECT id FROM "Order" WHERE id IN (${Prisma.join(ids)}) ORDER BY id FOR UPDATE NOWAIT`;
+      await tx.$executeRaw`SELECT id FROM "Order" WHERE id IN (${Prisma.join(ids)}) ${mine} ORDER BY id FOR UPDATE NOWAIT`;
     } else {
-      await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id IN (${Prisma.join(ids)}) FOR NO KEY UPDATE NOWAIT`;
+      await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id IN (${Prisma.join(ids)}) ${mine} ORDER BY id FOR NO KEY UPDATE NOWAIT`;
     }
   } catch (err) {
     // Prisma surfaces the SQLSTATE on `meta.code` for a raw query, but not on every driver/error

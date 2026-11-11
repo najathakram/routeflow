@@ -578,7 +578,7 @@ describeDb("W-1187 PR-1b: reordering an order's lines (real Postgres)", () => {
         (i) => i.description,
       );
 
-    it("R-status: every open status follows, VOID and WRITTEN_OFF do not; exactly one audit row records a drag (via drag)", async () => {
+    it("R-status: every open status follows, VOID and WRITTEN_OFF do not; exactly one audit row records a list from the caller (via list)", async () => {
       const o = await abc();
       const rows: Array<[string, number | null]> = [
         ["A", 0],
@@ -594,7 +594,45 @@ describeDb("W-1187 PR-1b: reordering an order's lines (real Postgres)", () => {
       for (const inv of closed) expect(await shown(inv.id)).toEqual(["A", "B", "C"]);
       const rowsAudit = await audits(o.id);
       expect(rowsAudit).toHaveLength(1);
-      expect((rowsAudit[0].meta as { via?: string }).via).toBe("drag");
+      expect((rowsAudit[0].meta as { via?: string }).via).toBe("list");
+    });
+
+    it("R-busy: an invoice another connection holds answers 409 INVOICE_BUSY (retryable) and the whole reorder rolls back", async () => {
+      const o = await abc();
+      const rows: Array<[string, number | null]> = [
+        ["A", 0],
+        ["B", 1],
+        ["C", 2],
+      ];
+      const held = await invoiceOf(o, "SENT", rows);
+      const free = await invoiceOf(o, "DRAFT", rows);
+      const stampBefore = await tokenOf(o.id);
+      const holder = await pool.connect();
+      try {
+        await holder.query("BEGIN");
+        await holder.query(`SELECT id FROM "Invoice" WHERE id = $1 FOR UPDATE`, [held.id]);
+        const started = Date.now();
+        await expect(
+          reorder(o, [lineId(o, "C"), lineId(o, "A"), lineId(o, "B")]),
+        ).rejects.toMatchObject({
+          status: 409,
+          response: { code: "CONCURRENT_UPDATE", reason: "INVOICE_BUSY", retryable: true },
+        });
+        expect(Date.now() - started).toBeLessThan(5000);
+      } finally {
+        await holder.query("ROLLBACK");
+        holder.release();
+      }
+      // full rollback: order line positions, the order's updatedAt, both invoices' lines, and no audit row
+      expect(await read(o.id)).toEqual([
+        ["A", 0],
+        ["B", 1],
+        ["C", 2],
+      ]);
+      expect(await tokenOf(o.id)).toBe(stampBefore);
+      expect(await shown(held.id)).toEqual(["A", "B", "C"]);
+      expect(await shown(free.id)).toEqual(["A", "B", "C"]);
+      expect(await audits(o.id)).toHaveLength(0);
     });
 
     it("R-follow: DRAFT, SENT and legacy invoices follow in the reorder's transaction; VOID and WRITTEN_OFF stay; another order's legacy invoice stays NULL", async () => {

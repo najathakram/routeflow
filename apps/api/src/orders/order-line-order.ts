@@ -41,6 +41,14 @@ const changed = () =>
   });
 
 /**
+ * What the one audit row says about the request (`meta.via`): "list" = the caller sent the order (a drag, a keyboard
+ * move or an Undo: the server cannot tell them apart and the before/after id lists say exactly what moved), "sort" = the
+ * server computed it (Sort A–Z). One list, so a reader of the audit trail and a writer cannot drift.
+ */
+export const LINE_REORDER_VIA = ["list", "sort"] as const;
+export type LineReorderVia = (typeof LINE_REORDER_VIA)[number];
+
+/**
  * W-1187 (SA ruling D5): put an order's lines in the order the caller arranged them. Its OWN transaction (never through
  * `updateOrderItems`): a caller with no tenant is refused first (403: the scoped `where` would otherwise match any order
  * by id). Then, still before any lock:
@@ -78,7 +86,7 @@ export async function reorderOrderLines(
       const owner = await tx.customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
       if (!owner || owner.id !== known.customerId) throw new ForbiddenException();
     }
-    await lockRowsNoWait(tx, "Order", [orderId], "ORDER_LINE_ORDER_BUSY");
+    await lockRowsNoWait(tx, "Order", [orderId], "ORDER_LINE_ORDER_BUSY", tenantId);
 
     const order = await tx.order.findFirst({
       where: { id: orderId, ...scoped },
@@ -143,7 +151,7 @@ export async function reorderOrderLines(
     if (rearranged) {
       updatedAt = new Date();
       await tx.order.update({ where: { id: orderId }, data: { updatedAt } });
-      await followOrderLineOrder(tx, orderId); // PR-1e: the invoices take the new order in this transaction
+      await followOrderLineOrder(tx, orderId, tenantId); // PR-1e: the invoices take the new order in this transaction
       await tx.auditLog.create({
         data: {
           tenantId: order.tenantId,
@@ -151,7 +159,12 @@ export async function reorderOrderLines(
           action: LINES_REORDERED_ACTION,
           entityType: "Order",
           entityId: orderId,
-          meta: { role: user.role, via: dto.sort ? "sort" : "drag", before, after: lineIds },
+          meta: {
+            role: user.role,
+            via: (dto.sort ? "sort" : "list") satisfies LineReorderVia,
+            before,
+            after: lineIds,
+          },
         },
       });
     } else {
