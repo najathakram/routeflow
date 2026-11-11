@@ -44,6 +44,8 @@ import { UpdatePlanPricesDto } from "./dto/update-plan-prices.dto";
 import { UpdateTenantClassDto } from "./dto/update-tenant-class.dto";
 import { EnableAddonDto, DisableAddonDto, UncompAddonDto } from "../billing/dto/manage-addon.dto";
 import { CreateFeatureOverrideDto } from "./dto/manage-feature-override.dto";
+import { ApplyFeatureChangesDto, UndoFeatureChangesDto } from "./dto/feature-changes.dto";
+import { FeatureChangeService } from "./feature-change.service";
 import { SetEntitlementsModeDto } from "./dto/set-entitlements-mode.dto";
 import { SetConfigSnapshotFlagDto } from "./dto/set-config-snapshot-flag.dto";
 import { ExplainFeatureDiffDto } from "./dto/explain-feature-diff.dto";
@@ -123,7 +125,15 @@ export class PlatformAdminController {
     private readonly applyService: BusinessProfileApplyService,
     // FG-1 WP3: the sweep the `live` door reads. Last and optional so a bare stub in a spec compiles; absent = refuse.
     @Optional() private readonly entitlementSweep?: EntitlementSweepService,
+    // WP11: the reviewed change-set writer. Last and optional, like the sweep, so the specs that build this
+    // controller by position stay valid; the module always provides it.
+    @Optional() private readonly featureChanges?: FeatureChangeService,
   ) {}
+
+  private requireChanges(): FeatureChangeService {
+    if (!this.featureChanges) throw new Error("FeatureChangeService is not provided");
+    return this.featureChanges;
+  }
 
   @Get("stats")
   @ApiOperation({ summary: "Platform-wide aggregate stats" })
@@ -640,6 +650,8 @@ export class PlatformAdminController {
     }
     const modes = await this.configModesByKey(id);
     return {
+      // WP11: the hash a save sends back as `expected` (compare-and-set against a concurrent change).
+      inputsHash: this.featureChanges ? await this.featureChanges.inputsHash(id) : undefined,
       effective: FEATURE_REGISTRY.map((f) => {
         const entry = resolved.byKey.get(f.key)!;
         // Opus review of 9923b87c, item 5: `serving` is the OLD PATH's verdict (what's
@@ -719,6 +731,35 @@ export class PlatformAdminController {
   })
   previewTenantFeatures(@Param("id") id: string, @Body() body: FeaturePreviewRequest) {
     return this.featurePreview.preview(id, body ?? {});
+  }
+
+  @Post("tenants/:id/features/changes")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      "Save one reviewed set of feature changes (grant, deny, clear) in one transaction. expected is the inputsHash the page read; a different current hash refuses the whole set (409). dryRun checks it and writes nothing.",
+  })
+  async applyFeatureChanges(
+    @Param("id") id: string,
+    @Body() dto: ApplyFeatureChangesDto,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    if (dto.dryRun) return this.requireChanges().preview(id, dto);
+    return this.requireChanges().apply(id, admin.sub, dto);
+  }
+
+  @Post("tenants/:id/features/changes/:auditId/undo")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: "Undo one saved set, once, if nothing has changed since it was saved (409 otherwise)",
+  })
+  async undoFeatureChanges(
+    @Param("id") id: string,
+    @Param("auditId") auditId: string,
+    @Body() dto: UndoFeatureChangesDto,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    return this.requireChanges().undo(id, admin.sub, auditId, dto.reason);
   }
 
   @Get("tenants/:id/feature-overrides")

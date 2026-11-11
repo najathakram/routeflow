@@ -88,6 +88,8 @@ const EXPECTED_PLATFORM_WRITES: string[] = [
   "POST /api/v1/platform-admin/tenants/:id/extend-trial PlatformAdminController#extendTrial",
   "POST /api/v1/platform-admin/tenants/:id/feature-overrides PlatformAdminController#createFeatureOverride",
   "POST /api/v1/platform-admin/tenants/:id/feature-overrides/:overrideId/revoke PlatformAdminController#revokeFeatureOverride",
+  "POST /api/v1/platform-admin/tenants/:id/features/changes PlatformAdminController#applyFeatureChanges",
+  "POST /api/v1/platform-admin/tenants/:id/features/changes/:auditId/undo PlatformAdminController#undoFeatureChanges",
   "POST /api/v1/platform-admin/tenants/:id/features/preview PlatformAdminController#previewTenantFeatures",
   "POST /api/v1/platform-admin/tenants/:id/impersonate PlatformAdminController#impersonate",
   "POST /api/v1/platform-admin/tenants/:id/reset-admin-password PlatformAdminController#resetAdminPassword",

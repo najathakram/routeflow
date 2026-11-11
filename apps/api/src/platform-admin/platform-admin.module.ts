@@ -3,6 +3,7 @@ import { JwtModule } from "@nestjs/jwt";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { PlatformAdminController } from "./platform-admin.controller";
 import { PlatformAdminService } from "./platform-admin.service";
+import { FeatureChangeService } from "./feature-change.service";
 import { PlatformConfigService } from "./platform-config.service";
 import { TenantMirrorService } from "./tenant-mirror.service";
 import { PlatformAdminBuyersController } from "./platform-admin-buyers.controller";
@@ -45,6 +46,7 @@ import { BillingModule } from "../billing/billing.module";
   ],
   providers: [
     PlatformAdminService,
+    FeatureChangeService,
     PlatformConfigService,
     TenantMirrorService,
     PlatformAdminBuyersService,
