@@ -19,6 +19,24 @@ jest.mock("./tenant-nested-walker", () => {
     stampNestedTenant: (...a: any[]) => (mockWalkerMisses ? a[1] : real.stampNestedTenant(...a)),
   };
 });
+// B929 (4274 red): the process guard reads time through `opts.now ?? Date.now`, bound ONCE at module load
+// (tenant-context-guard.ts:99, :221), so a later Date.now spy or fake timer never reaches it. The factory binds a
+// spec-owned clock for the one moment that module loads, then puts the real Date.now back.
+jest.mock("./tenant-context-guard", () => {
+  let t = 1_000_000;
+  const realNow = Date.now;
+  Date.now = () => t;
+  let actual: Record<string, unknown>;
+  try {
+    actual = jest.requireActual("./tenant-context-guard");
+  } finally {
+    Date.now = realNow;
+  }
+  return { ...actual, __clock: { advance: (ms: number) => void (t += ms) } };
+});
+const clock = (
+  jest.requireMock("./tenant-context-guard") as { __clock: { advance(ms: number): void } }
+).__clock;
 const proto = PrismaService.prototype as unknown as Record<string, any>;
 const host = (ctx: TenantContextService) =>
   ({
@@ -55,6 +73,19 @@ describe("B5-5 two jobs with the same kind, model and op are both logged", () =>
     expect(lines).toHaveLength(2);
     expect(lines[0]).toContain("kind=NONE model=Customer op=read at=a.one");
     expect(lines[1]).toContain("kind=NONE model=Customer op=read at=b.two");
+  });
+});
+
+describe("B5-5b the same job logs again once the 1 s gap has passed", () => {
+  it("1000 hits inside the gap are one line; the next hit after the gap is a second line for the same job", async () => {
+    const h = host(new TenantContextService());
+    await runAtPlace("d.four", async () => {
+      for (let i = 0; i < 1000; i++) await read(h);
+      clock.advance(1_001); // CAPTURE_GAP_MS is 1000: the same site may log again
+      await read(h);
+    });
+    const lines = missing().filter((l) => l.includes("at=d.four"));
+    expect(lines).toHaveLength(2);
   });
 });
 
