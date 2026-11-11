@@ -1667,6 +1667,7 @@ export default function OrderDetailPage() {
                 total={total}
                 orderId={order.id}
                 updatedAt={order.updatedAt}
+                linesRearranged={order.linesRearranged}
               />
             )}
           </div>

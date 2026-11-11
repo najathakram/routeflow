@@ -12,6 +12,7 @@ import type { OrderItem } from "@/lib/api/orders";
 import { orderLineName } from "@/lib/product-display";
 import { lineDisplayPack } from "@/lib/line-own-pack";
 import { displayLineStatus } from "./line-status";
+import { LinesRearrangedNote } from "@/components/LinesRearrangedNote";
 import { SortLinesButton } from "@/components/SortLinesButton";
 import { SortableLines, useSortableLine } from "@/components/SortableLines";
 import { useOrderLineOrder } from "@/lib/use-order-line-order";
@@ -80,6 +81,8 @@ interface CardsProps {
   /** W-1187: with the order's id and `updatedAt` the lines can be dragged into any order; without them the list is read-only. */
   orderId?: string;
   updatedAt?: string;
+  /** BR7: shown under the lines header when the customer arranged them. */
+  linesRearranged?: { by: "CUSTOMER" | "STAFF"; at: string };
 }
 
 /**
@@ -116,6 +119,7 @@ function MovableCards(props: CardsProps & Expand) {
   const open = props.expanded || props.lineItems.length <= COLLAPSE_AFTER;
   return (
     <>
+      <LinesRearrangedNote rearranged={props.linesRearranged} />
       {order.canMove && (
         <div className="flex justify-end pb-2">
           <SortLinesButton onSort={() => void order.sortByName()} />

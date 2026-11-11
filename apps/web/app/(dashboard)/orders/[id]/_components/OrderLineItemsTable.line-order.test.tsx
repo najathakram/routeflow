@@ -379,3 +379,30 @@ describe("OrderLineItemsTable: Sort A–Z (W-1187 PR-2a2, ruling 7)", () => {
     expect(screen.queryByRole("button", { name: "Sort A–Z" })).toBeNull();
   });
 });
+
+describe("OrderLineItemsTable: the customer-rearranged note (W-1187 BR7)", () => {
+  const withNote = (by: "CUSTOMER" | "STAFF" | null) =>
+    renderWithProviders(
+      <OrderLineItemsTable
+        lineItems={LINES}
+        orderStatus="CONFIRMED"
+        total={30}
+        orderId="o-1"
+        updatedAt={STAMP}
+        linesRearranged={by ? { by, at: "2026-11-11T14:14:00.000Z" } : undefined}
+      />,
+    );
+  it("BR7: says the customer rearranged the lines, with the time", () => {
+    withNote("CUSTOMER");
+    expect(screen.getByTestId("lines-rearranged-note").textContent).toMatch(
+      /^Customer rearranged the lines · /,
+    );
+  });
+  it("shows nothing when staff arranged them or nobody did", () => {
+    const { unmount } = withNote("STAFF");
+    expect(screen.queryByTestId("lines-rearranged-note")).toBeNull();
+    unmount();
+    withNote(null);
+    expect(screen.queryByTestId("lines-rearranged-note")).toBeNull();
+  });
+});
