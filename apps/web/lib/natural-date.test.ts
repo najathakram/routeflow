@@ -62,6 +62,32 @@ describe("parseNaturalDate", () => {
   });
 });
 
+describe("strict month names and years (reader A1)", () => {
+  it("a word that merely starts with a month is not a month", () => {
+    expect(p("junk 5")).toBeNull();
+    expect(p("marked 4")).toBeNull();
+    expect(p("5 junk")).toBeNull();
+    expect(p("novel 2")).toBeNull();
+  });
+  it("a month is its 3-letter abbreviation, sept, or the full name", () => {
+    expect(p("nov 2")).toBe("2026-11-02");
+    expect(p("november 2")).toBe("2026-11-02");
+    expect(p("sept 5")).toBe("2026-09-05");
+    expect(p("september 5")).toBe("2026-09-05");
+    expect(p("2 march")).toBe("2027-03-02"); // nearest occurrence
+  });
+  it("a two-digit year resolves inside the window the till takes, or refuses", () => {
+    expect(p("11/02/99")).toBeNull();
+    expect(p("11/02/25")).toBe("2025-11-02");
+    expect(p("11/02/27")).toBe("2027-11-02");
+    expect(p("11/02/40")).toBeNull();
+  });
+  it("month and day with no year is the nearest occurrence, a tie going to the past (ruling section 7)", () => {
+    expect(p("11/02", "2026-05-10")).toBe("2026-11-02");
+    expect(p("12/30", "2027-01-03")).toBe("2026-12-30");
+  });
+});
+
 describe("labels", () => {
   it("dayLabel adds the year only when it is not the tenant's year", () => {
     expect(dayLabel("2026-11-06", MON)).toBe("Fri, Nov 6");

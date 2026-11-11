@@ -148,12 +148,84 @@ describe("Alt+D and the picker", () => {
   it("calendar keys: arrows move, T is today, Y is yesterday", async () => {
     const { onChange } = setup();
     await userEvent.click(screen.getByRole("button", { name: "Order date: today. Change" }));
-    const grid = within(await screen.findByTestId("counter-date-picker")).getByRole("group", {
+    const grid = within(await screen.findByTestId("counter-date-picker")).getByRole("grid", {
       name: "Calendar",
     });
     grid.focus();
     await userEvent.keyboard("{ArrowLeft}{ArrowLeft}{Enter}");
     expect(onChange).toHaveBeenLastCalledWith("2026-11-07");
+  });
+});
+
+async function openGrid() {
+  const view = setup();
+  await userEvent.click(screen.getByRole("button", { name: "Order date: today. Change" }));
+  const picker = await screen.findByTestId("counter-date-picker");
+  const grid = within(picker).getByRole("grid", { name: "Calendar" });
+  return { ...view, picker, grid };
+}
+
+describe("calendar is a real grid (reader A2)", () => {
+  it("Enter on Next month pages and does not apply or close", async () => {
+    const { onChange, picker } = await openGrid();
+    within(picker).getByRole("button", { name: "Next month" }).focus();
+    await userEvent.keyboard("{Enter}");
+    expect(onChange).not.toHaveBeenCalled();
+    expect(within(picker).getByText("December 2026")).toBeInTheDocument();
+    within(picker).getByRole("button", { name: "Previous month" }).focus();
+    await userEvent.keyboard("{Enter}");
+    expect(onChange).not.toHaveBeenCalled();
+    expect(within(picker).getByText("November 2026")).toBeInTheDocument();
+  });
+
+  it("scanner-like letters never set a date: T and Y on the grid or the month buttons do nothing", async () => {
+    const { onChange, picker, grid } = await openGrid();
+    grid.focus();
+    await userEvent.keyboard("T");
+    await userEvent.keyboard("Y");
+    await userEvent.keyboard("t");
+    within(picker).getByRole("button", { name: "Next month" }).focus();
+    await userEvent.keyboard("T");
+    await userEvent.keyboard("Y");
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByTestId("counter-date-picker")).toBeInTheDocument();
+  });
+
+  it("rows, gridcells, the selected day, today, and the announced cursor", async () => {
+    const { picker, grid } = await openGrid();
+    expect(within(picker).getAllByRole("row").length).toBeGreaterThanOrEqual(5);
+    const today = picker.querySelector('[data-day="2026-11-09"]') as HTMLElement;
+    expect(today).toHaveAttribute("aria-current", "date");
+    expect(today.closest('[role="gridcell"]')).toHaveAttribute("aria-selected", "true");
+    expect(
+      picker.querySelector('[data-day="2026-11-10"]')!.closest('[role="gridcell"]'),
+    ).toHaveAttribute("aria-selected", "false");
+    const cursorId = grid.getAttribute("aria-activedescendant")!;
+    expect(document.getElementById(cursorId)).toBe(today);
+    grid.focus();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(document.getElementById(grid.getAttribute("aria-activedescendant")!)).toBe(
+      picker.querySelector('[data-day="2026-11-10"]'),
+    );
+  });
+
+  it("PageUp/PageDown change month, Home/End go to the week's ends", async () => {
+    const { onChange, picker, grid } = await openGrid();
+    grid.focus();
+    await userEvent.keyboard("{PageDown}");
+    expect(within(picker).getByText("December 2026")).toBeInTheDocument();
+    await userEvent.keyboard("{PageUp}{PageUp}");
+    expect(within(picker).getByText("October 2026")).toBeInTheDocument();
+    await userEvent.keyboard("{PageDown}{Home}{Enter}");
+    expect(onChange).toHaveBeenLastCalledWith("2026-11-08"); // Sunday of Mon Nov 9's week
+    onChange.mockClear();
+  });
+
+  it("End goes to the Saturday", async () => {
+    const { onChange, grid } = await openGrid();
+    grid.focus();
+    await userEvent.keyboard("{End}{Enter}");
+    expect(onChange).toHaveBeenLastCalledWith("2026-11-14");
   });
 });
 
