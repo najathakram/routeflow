@@ -209,7 +209,7 @@ export function useSortableLine(id: string) {
         onKeyDown={onKeyDown}
         aria-label={`Move ${ctx.lines[index].label}, line ${index + 1} of ${ctx.lines.length}`}
         className={cn(
-          "-my-2 flex h-11 w-11 shrink-0 cursor-grab touch-none items-center justify-center rounded-md",
+          "-my-2 flex h-11 w-11 shrink-0 max-md:-ml-3 cursor-grab touch-none items-center justify-center rounded-md",
           "text-navy/40 hover:text-navy focus-visible:text-navy focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500",
           isDragging && "cursor-grabbing text-navy",
         )}
