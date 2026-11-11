@@ -1,6 +1,8 @@
 import * as React from "react";
 import { renderWithProviders, screen, waitFor, fireEvent, within, act } from "@/test-utils/render";
 import { apiClient } from "@/lib/api-client";
+import { addDays } from "@routeflow/pricing";
+import { calendarDayInZone } from "@/lib/calendar-date";
 import { COUNTER_PRICE_EDIT_NOT_PERMITTED_COPY } from "@/lib/counter-sale";
 import {
   cancelCounterLeave,
@@ -720,6 +722,15 @@ describe("Discard a parked sale", () => {
     expect(del).not.toHaveBeenCalled();
   });
 
+  it("the parked order draft row pins its line text: 1 line · amount · paused", async () => {
+    withDraft = true;
+    renderScreen();
+    fireEvent.click(await screen.findByRole("button", { name: "Parked (1)" }));
+    const dialog = await screen.findByRole("dialog", { name: "Parked sales" });
+    const row = await within(dialog).findByTestId("draft-row-d1");
+    expect(row).toHaveTextContent("1 line · $8.00 · paused just now");
+  });
+
   it("an order draft Discard that is not undone sends the delete once the window ends", async () => {
     withDraft = true;
     renderScreen();
@@ -1063,5 +1074,98 @@ describe("W-1184: leaving parks the sale", () => {
     scanField.focus();
     fireEvent.keyDown(scanField, { key: "Escape" });
     expect(document.activeElement).toBe(within(bar).getByRole("button", { name: /^Resume sale/ }));
+  });
+});
+
+// W-1188 PR-2 (R24): the order date chip rides the park payload, the sale body, and resets with the sale.
+describe("order date chip on the till", () => {
+  const TODAY = calendarDayInZone("America/New_York");
+  const YESTERDAY = addDays(TODAY, -1);
+  const chip = () => screen.getByTestId("counter-date-chip");
+  async function pickYesterday() {
+    fireEvent.click(await screen.findByRole("button", { name: "Order date: today. Change" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Yesterday" }));
+    await waitFor(() => expect(chip()).toHaveAttribute("data-direction", "BACK"));
+  }
+
+  it("reads Today and sends no orderDate at all", async () => {
+    renderScreen();
+    await scan("COLA");
+    expect(chip()).toHaveAttribute("data-direction", "TODAY");
+    fireEvent.click(screen.getByRole("button", { name: "Exact" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(mutateAsync.mock.calls[0][0].dto).not.toHaveProperty("orderDate");
+  });
+
+  it("a chosen day is sent on the sale and a reminder sits above Complete", async () => {
+    renderScreen();
+    await scan("COLA");
+    await pickYesterday();
+    expect(screen.getByTestId("counter-date-reminder")).toHaveTextContent(
+      "This sale will be dated",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Exact" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(mutateAsync.mock.calls[0][0].dto.orderDate).toBe(YESTERDAY);
+  });
+
+  it("parks with the chosen day, and a resumed cart keeps it", async () => {
+    renderScreen();
+    await scan("COLA");
+    await pickYesterday();
+    fireEvent.click(parkBtn());
+    await waitFor(() => expect(parkCalls()).toHaveLength(1));
+    expect(parkCalls()[0][1].payload.orderDate).toBe(YESTERDAY);
+    await waitFor(() => expect(chip()).toHaveAttribute("data-direction", "TODAY")); // the next sale starts on Today
+    await openList(1);
+    fireEvent.click(screen.getByRole("button", { name: /^Resume / }));
+    await waitFor(() => expect(chip()).toHaveAttribute("data-direction", "BACK"));
+    expect(screen.getByRole("button", { name: /^Backdated to/ })).toBeInTheDocument();
+  });
+
+  it("a parked sale without a date resumes on Today", async () => {
+    seed("a", { label: "Hold A" }, parkedPayload());
+    renderScreen();
+    await openList(1);
+    fireEvent.click(resumeBtn("Hold A"));
+    await waitFor(() => expect(itemNames().join(" ")).toContain("Cola"));
+    expect(chip()).toHaveAttribute("data-direction", "TODAY");
+  });
+
+  it("a finished sale does not carry its date to the next one", async () => {
+    renderScreen();
+    await scan("COLA");
+    await pickYesterday();
+    fireEvent.click(screen.getByRole("button", { name: "Exact" }));
+    fireEvent.click(screen.getByRole("button", { name: /Complete & next sale/ }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    // the mocked server total differs from the screen's, so the receipt shows first; its New sale starts the next one
+    fireEvent.click(await screen.findByRole("button", { name: /New sale/ }));
+    await waitFor(() => expect(chip()).toHaveAttribute("data-direction", "TODAY"));
+  });
+
+  it("a refused date shows fixed copy and a red ring, and the date stays for the clerk to fix", async () => {
+    renderScreen();
+    await scan("COLA");
+    await pickYesterday();
+    mutateAsync.mockRejectedValueOnce({
+      response: {
+        status: 400,
+        data: {
+          code: "ORDER_DATE_OUT_OF_RANGE",
+          message: SECRET,
+          min: "2024-11-09",
+          max: "2027-11-10",
+        },
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Exact" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    expect(await screen.findByText(/more than 2 years back/)).toBeInTheDocument();
+    expect(screen.queryByText(SECRET)).toBeNull();
+    expect(chip().className).toContain("ring-red-500");
+    expect(chip()).toHaveAttribute("data-direction", "BACK");
   });
 });

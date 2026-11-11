@@ -28,6 +28,7 @@ import {
   receiptModelFromOrder,
   type ReceiptBusinessProfile,
 } from "@/lib/counter-receipt";
+import { CounterDatedTag } from "./CounterDatedTag";
 import { CounterDayClose } from "./CounterDayClose";
 import { HandOverRows, METHOD_LABEL, handOverFigure } from "./HandOverRows";
 import { receiptEmailPrefill } from "@/lib/email-receipt";
@@ -485,6 +486,9 @@ function SaleRow({
           <span className={BADGE}>{PAYMENT_LABEL[row.paymentState]}</span>
         )}
         {row.voided ? null : <ToCollectChip state={row.toCollect} />}
+        {row.dated ? (
+          <CounterDatedTag dated={row.dated} enteredAt={timeOf(row.createdAt, timezone)} />
+        ) : null}
         {returnLabel ? <span className={BADGE}>{returnLabel}</span> : null}
       </div>
       <div className="flex flex-wrap gap-2">

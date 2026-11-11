@@ -156,6 +156,8 @@ import { useNewCustomerDoor } from "./useNewCustomerDoor";
 import { useCounterScanFocus } from "./useCounterScanFocus";
 import { CounterReceiptActions } from "./CounterReceiptActions";
 import { CounterTodaysSales } from "./CounterTodaysSales";
+import { CounterDateChip, CounterDateReminder } from "./CounterDateChip";
+import { isOrderDateRefusalCopy } from "@/lib/counter-order-date";
 import { ParkedSales } from "./ParkedSales";
 import { QuickKeysGrid } from "./QuickKeysGrid";
 import { CounterCheckDetails } from "./CounterCheckDetails";
@@ -298,6 +300,7 @@ export function CounterSaleScreen() {
   const [tendered, setTendered] = React.useState("");
   const [reference, setReference] = React.useState("");
   const [checkDate, setCheckDate] = React.useState(""); // "" = today (the business's day)
+  const [orderDate, setOrderDate] = React.useState(""); // W-1188: the sale date chip; "" = Today, and Today is never sent
   // SA-1026: "Check not received yet" under Check (named customer): sent as On account + expectedMethod CHECK.
   const [checkNotReceived, setCheckNotReceived] = React.useState(false);
   const [error, setError] = React.useState("");
@@ -333,6 +336,7 @@ export function CounterSaleScreen() {
     setTendered(held.tendered ?? "");
     setReference(held.reference ?? "");
     setCheckDate(isCalendarDay(held.checkDate) ? held.checkDate : "");
+    setOrderDate((held.dto as CounterSaleRequest).orderDate ?? ""); // the attempt's own date, never re-derived
     setOutcomeUnknown(true);
   }, [heldKey, restoreBuyer, decideTender]);
   // The scan field is ALWAYS focused: after every action, and whenever the sale view is showing.
@@ -1109,6 +1113,7 @@ export function CounterSaleScreen() {
     setTendered("");
     setReference("");
     setCheckDate("");
+    setOrderDate("");
     setError("");
     setReceipt(null);
     setEnteredTender(null);
@@ -1137,6 +1142,7 @@ export function CounterSaleScreen() {
     setTendered(p.tendered);
     setReference(p.reference);
     setCheckDate(p.checkDate ?? "");
+    setOrderDate(p.orderDate ?? "");
     setRepriceEpoch((n) => n + 1);
   }
 
@@ -1197,7 +1203,12 @@ export function CounterSaleScreen() {
         clearHeldAttempt(heldKey);
         setOutcomeUnknown(false);
         // FIXED copy, never the server message; a walk-in sale has no customer record to fix a license on
-        setError(counterSaleErrorCopy(err, { walkIn: attempt.dto.walkIn === true }));
+        setError(
+          counterSaleErrorCopy(err, {
+            walkIn: attempt.dto.walkIn === true,
+            orderDate: attempt.dto.orderDate,
+          }),
+        );
         liveCart.endSend();
       } else {
         attempt.unknown = true;
@@ -1217,7 +1228,7 @@ export function CounterSaleScreen() {
         // A refusal the till owns (its global toast is silenced) says its own copy too, or the clerk would see nothing.
         setError(
           isCounterSaleDayClosed(err) || isCounterSaleHandledError(err)
-            ? counterSaleErrorCopy(err)
+            ? counterSaleErrorCopy(err, { orderDate: attempt.dto.orderDate })
             : "",
         );
         setRecordedHref(keptSaleHref(err));
@@ -1328,6 +1339,7 @@ export function CounterSaleScreen() {
         ...(tender.method === "CHECK" && submitCheckDate ? { checkDate: submitCheckDate } : {}),
       },
       ...(inlineReturn ? { inlineReturn } : {}),
+      ...(orderDate ? { orderDate } : {}),
     } as CounterSaleRequest);
     dropUndo(); // the sale is going out: a removed line can no longer come back
     attemptRef.current = {
@@ -1555,6 +1567,7 @@ export function CounterSaleScreen() {
             tendered,
             reference,
             checkDate,
+            orderDate,
             walkIn: buyerChoice.kind === "walk-in",
           }}
           blocked={
@@ -1574,6 +1587,14 @@ export function CounterSaleScreen() {
             resetSale();
           }}
           onRestore={restoreParked}
+        />
+        <CounterDateChip
+          value={orderDate}
+          today={today || undefined}
+          onChange={setOrderDate}
+          disabled={locked || salePosting || parkBusy}
+          refused={isOrderDateRefusalCopy(error)}
+          onDone={refocus}
         />
         {gate.offerShipInstead ? (
           <WriteButton
@@ -2358,6 +2379,7 @@ export function CounterSaleScreen() {
               </p>
             ) : null}
 
+            <CounterDateReminder value={orderDate} today={today || undefined} />
             <div className="flex flex-wrap gap-2" data-testid="counter-checkout-actions">
               <Button
                 className="min-h-[44px]"
