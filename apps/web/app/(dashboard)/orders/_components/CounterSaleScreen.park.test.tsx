@@ -13,6 +13,7 @@ import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 import { discardUndo } from "./useParkedSales";
 import { setImpersonation } from "@/lib/impersonation";
+import { dayLabel } from "@/lib/natural-date";
 import { liveCartKey } from "@/lib/counter-live-cart-keys";
 import { parkStoredLiveCarts } from "@/lib/counter-live-cart-park";
 
@@ -1123,6 +1124,7 @@ describe("order date chip on the till", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Resume / }));
     await waitFor(() => expect(chip()).toHaveAttribute("data-direction", "BACK"));
     expect(screen.getByRole("button", { name: /^Backdated to/ })).toBeInTheDocument();
+    expect(chip()).toHaveTextContent(`Dated ${dayLabel(YESTERDAY, TODAY)}`); // the exact day, not only the direction
   });
 
   it("a parked sale without a date resumes on Today", async () => {
@@ -1186,6 +1188,10 @@ describe("order date chip on the till", () => {
     expect(await screen.findByText(/more than 2 years back/)).toBeInTheDocument();
     expect(screen.queryByText(SECRET)).toBeNull();
     expect(chip().className).toContain("ring-red-500");
-    expect(chip()).toHaveAttribute("data-direction", "BACK");
+    // fixing the date clears the refusal and the ring
+    fireEvent.click(screen.getByRole("button", { name: "Clear the order date, back to today" }));
+    await waitFor(() => expect(screen.queryByText(/more than 2 years back/)).toBeNull());
+    expect(chip().className).not.toContain("ring-red-500");
+    expect(chip()).toHaveAttribute("data-direction", "TODAY");
   });
 });

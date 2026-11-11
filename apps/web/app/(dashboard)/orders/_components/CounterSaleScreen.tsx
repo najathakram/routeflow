@@ -1596,7 +1596,11 @@ export function CounterSaleScreen() {
         <CounterDateChip
           value={orderDate}
           today={today || undefined}
-          onChange={setOrderDate}
+          onChange={(d) => {
+            setOrderDate(d);
+            // fixing the date answers a date refusal: its message and the red ring go (any other message stays)
+            setError((e) => (isOrderDateRefusalCopy(e) ? "" : e));
+          }}
           disabled={locked || salePosting || parkBusy}
           refused={isOrderDateRefusalCopy(error)}
           onDone={refocus}
