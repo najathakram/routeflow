@@ -43,6 +43,8 @@ export interface Order {
   revisionNumber?: number;
   /** W-1187: the CAS token of `PUT /orders/:id/line-order`; a reorder bumps it and returns the new one. */
   updatedAt?: string;
+  /** W-1187 BR7: who last rearranged the lines (staff reads only; the buyer never gets it). */
+  linesRearranged?: { by: "CUSTOMER" | "STAFF"; at: string };
   customerId: string;
   customer?: {
     id: string;
