@@ -454,9 +454,9 @@ describe("POS-3 undo: merge, keyboard, one slot", () => {
     await buildCart();
     click("Remove Cola");
     expect(screen.getByRole("button", { name: UNDO }).tabIndex).toBe(0);
-    // the drag wrapper adds a hidden instructions node after the list (display: none, not in the tab order): skip it
+    // the drag wrapper adds a hidden instructions node and a visually hidden live region after the list (no tab stops): skip them
     let after = screen.getByRole("list", { name: "Items" }).nextElementSibling;
-    while (after?.id.startsWith("DndDescribedBy")) after = after.nextElementSibling;
+    while (after?.id.startsWith("Dnd")) after = after.nextElementSibling;
     expect(after).toBe(screen.getByTestId("line-undo-bar"));
   });
 });
