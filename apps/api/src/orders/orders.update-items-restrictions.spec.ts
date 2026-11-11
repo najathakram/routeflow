@@ -11,6 +11,7 @@ import { ConflictException } from "@nestjs/common";
 import { InvoicesService } from "../invoices/invoices.service";
 import {
   sellableLinesForMergeEdit,
+  replaceIsPieces,
   sellableLinesForReplaceEdit,
 } from "../selling-restrictions/order-edit-lines";
 
@@ -208,6 +209,7 @@ describe("OrdersService.updateOrderItems — selling restrictions (lane R 2a-7)"
             : sellableLinesForReplaceEdit(EXISTING, dto.items, {
                 actor: mode,
                 liveUnitsPerBox: live,
+                isPieces: replaceIsPieces(EXISTING, mode, false),
               });
         const call = h.restrictions.assertLinesSellable.mock.calls[0][0];
         expect(call.channel).toBe(channel);
@@ -246,6 +248,31 @@ describe("OrdersService.updateOrderItems — selling restrictions (lane R 2a-7)"
 
     it("control: a lock-time read that matches the judged rows completes the same edit", async () => {
       await expect(edit(ECHO_A)).resolves.toBeDefined();
+    });
+
+    // SA-1118 MUST-1: 1 box of 12 on the order (12 pieces); the buyer's editor sends the product again unnamed with
+    // qty 2, which the order stores as 2 packs = 24 pieces, so the check sees +12.
+    it("M-1 (SA-1132): the selling-limit check reads an edited item the same way the order does", async () => {
+      const boxed = { ...EXISTING[0], qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12 };
+      h.prisma.product.findMany.mockResolvedValue([
+        { id: "prod-a", pricePerUnit: 10, unitsPerBox: 12, category: null },
+      ]);
+      h.prisma.orderItem.findMany.mockResolvedValue([boxed]);
+      // The choke point refuses any raise of the restricted product (a cut or an echo is never checked).
+      h.restrictions.assertLinesSellable.mockImplementation(async (a: any) => {
+        if (a.lines.some((l: any) => l.productId === "prod-a" && !(l.qtyDelta <= 0)))
+          throw new ConflictException({ code: "SELLING_RESTRICTED", blockedLines: [] });
+        return undefined;
+      });
+
+      const readd = { namesLines: true, items: [{ productId: "prod-a", qty: 2 }] };
+      await expect(edit(readd, buyer, { ...ORDER, lineItems: [boxed] })).rejects.toMatchObject({
+        response: { code: "SELLING_RESTRICTED" },
+      });
+      expect(h.restrictions.assertLinesSellable.mock.calls[0][0].lines).toEqual([
+        { productId: "prod-a", qtyDelta: 12, lineKey: "n:0" },
+      ]);
+      expect(h.prisma.orderItem.create).not.toHaveBeenCalled();
     });
   });
 });

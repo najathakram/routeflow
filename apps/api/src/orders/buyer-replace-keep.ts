@@ -116,12 +116,14 @@ export function planPromos(
   lineItems: Parameters<typeof planSplitPromos>[1] | undefined,
   productMap: ReadonlyMap<string, { unitsPerBox?: unknown }>,
   pieceDenominated: ReadonlySet<string>,
+  namesLines: boolean,
 ) {
   return planSplitPromos(
     dropKeptOverrides(items, held, productMap),
     lineItems ?? [],
     productMap,
     pieceDenominated,
+    namesLines,
   );
 }
 

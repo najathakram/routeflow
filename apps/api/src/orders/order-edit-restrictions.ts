@@ -6,6 +6,7 @@ import type { SaleFulfilmentKind } from "../selling-restrictions/sale-fulfilment
 import type { StaffWriteDecision } from "../selling-restrictions/restriction-warning";
 import {
   sellableLinesForMergeEdit,
+  replaceIsPieces,
   sellableLinesForReplaceEdit,
   type EditItem,
   type EditLine,
@@ -129,6 +130,8 @@ export async function planOrderEditRestrictions(
     principal: ChannelPrincipal | null | undefined;
     fulfilmentKind: SaleFulfilmentKind;
     ack?: SellableLinesParams["ack"];
+    /** The request's `namesLines` (SA-1118): a buyer's unnamed entry is then the pack, as the write reads it. */
+    namesLines?: boolean;
   },
 ): Promise<OrderEditRestrictionPlan | null> {
   // OFF (staff channel, the tenant's owner-only switch off): one read, nothing else. The portal channel always applies.
@@ -157,6 +160,8 @@ export async function planOrderEditRestrictions(
           actor: p.mode.actor,
           liveUnitsPerBox: live,
           keys,
+          // SA-1132: the write's builder over the rows judged (pre-lock here, lock-time in assertHeld)
+          isPieces: replaceIsPieces(rows, p.mode.actor, !!p.namesLines),
         });
 
   const keys: string[] = [];

@@ -120,6 +120,37 @@ export function hydrateBuyerDraft(
   return draft;
 }
 
+/** A row's stepper: a count of 0 or less drops the row from the draft, any other count replaces it. */
+export function setDraftQty(
+  d: Record<string, BuyerDraftItem>,
+  key: string,
+  qty: number,
+): Record<string, BuyerDraftItem> {
+  if (qty <= 0) {
+    const next = { ...d };
+    delete next[key];
+    return next;
+  }
+  return { ...d, [key]: { ...d[key], qty } };
+}
+
+/**
+ * Add from the catalog: +1 to a row of that product still in the draft, else a new row with no line id at the
+ * catalog's buyer price. A row stepped to 0 has left the draft, so adding its product back is a new row
+ * (SA-1131 R-4); the server reads that unnamed count as the pack (SA-601).
+ */
+export function addCatalogItem(
+  d: Record<string, BuyerDraftItem>,
+  p: { id: string; name: string; unit?: string; buyerPrice: number },
+): Record<string, BuyerDraftItem> {
+  const held = Object.values(d).find((i) => i.productId === p.id);
+  if (held) return { ...d, [draftKey(held)]: { ...held, qty: held.qty + 1 } };
+  return {
+    ...d,
+    [p.id]: { productId: p.id, name: p.name, unit: p.unit, qty: 1, unitPrice: p.buyerPrice },
+  };
+}
+
 /**
  * #2316 review (Opus BLOCK): the quantity TEXT a read-only row shows, since its steppers are
  * hidden — a unit line reads "4 Cases" / "1 Case" (its COUNT, named by invoiceLineUnitNoun and
