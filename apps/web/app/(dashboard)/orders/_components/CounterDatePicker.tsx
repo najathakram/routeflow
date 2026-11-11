@@ -90,22 +90,25 @@ export function CounterDatePicker({
   // scanner types letters then Enter; the quick picks and the typed field are the ways to say "today" or "yesterday").
   // A barcode scanner types characters then Enter within a few milliseconds. A character typed on the grid marks the moment;
   // an Enter right after it is the scanner's, never a clerk choosing a day (a person pressing Enter has not just typed).
-  // Whatever keys a scanner sends (letters, an Alt-code, or Home/End/arrows from a keypad scanner), the time is recorded
-  // BEFORE any early return: a character within 300 ms, or a run of seven or more
-  // keys each under 80 ms after the last (faster than a hand), before Enter makes that Enter the scanner's.
+  // The rule is timing, not which keys: a scanner (letters, an Alt-code, or a keypad scanner sending Home/End/arrows) sends its
+  // keys a few milliseconds apart. Three or more keys (before the Enter) under 40 ms apart (modifier keys count, and the time is recorded before
+  // any early return) make a burst, and an Enter inside the burst or up to 600 ms after it is the scanner's, never a clerk
+  // choosing a day. A person (one key, a pause, Enter) is never a burst. A lone typed character also holds Enter for 300 ms.
   const lastTypedAt = React.useRef(0);
   const lastKeyAt = React.useRef(0);
+  const burstAt = React.useRef(0);
   const run = React.useRef(0);
   const onGridKey = (e: React.KeyboardEvent) => {
     const k = e.key;
     const now = Date.now();
-    run.current = now - lastKeyAt.current < 80 ? run.current + 1 : 1;
-    const burst = now - lastTypedAt.current < 300 || run.current > 6;
+    run.current = now - lastKeyAt.current < 40 ? run.current + 1 : 1;
+    const scanning = now - burstAt.current < 600 || now - lastTypedAt.current < 300;
+    if (run.current >= 3 && k !== "Enter") burstAt.current = now;
     if (k.length === 1) lastTypedAt.current = now;
     lastKeyAt.current = now;
     if (e.target !== e.currentTarget || e.altKey || e.ctrlKey || e.metaKey) return;
     if (k.length === 1) return;
-    if (k === "Enter" && burst) {
+    if (k === "Enter" && scanning) {
       e.preventDefault();
       return;
     }

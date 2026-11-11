@@ -1,5 +1,5 @@
 import * as React from "react";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { CounterDateChip, CounterDateReminder } from "./CounterDateChip";
 
@@ -118,7 +118,7 @@ describe("Alt+D and the picker", () => {
   });
 
   it("choosing Today clears the date rather than sending today's day", async () => {
-    const { onChange } = setup("2026-11-06");
+    const { onChange } = setup("2026-11-06", { onDone: undefined });
     await userEvent.click(screen.getByRole("button", { name: /Backdated to/ }));
     const dialog = await screen.findByTestId("counter-date-picker");
     await userEvent.click(within(dialog).getByRole("button", { name: "Today" }));
@@ -200,33 +200,9 @@ describe("calendar details (reader SHOULDs)", () => {
     await userEvent.keyboard("COLA123{Enter}");
     expect(onChange).not.toHaveBeenCalled();
     // a deliberate Enter, with no typing before it, still applies
-    await new Promise((r) => setTimeout(r, 400));
+    await new Promise((r) => setTimeout(r, 700));
     await userEvent.keyboard("{Enter}");
     expect(onChange).toHaveBeenLastCalledWith("2026-11-07");
-  });
-
-  it("an Alt-code scan or a keypad scan (Home/End/arrows) ending in Enter never applies the cursor day", async () => {
-    const { onChange, grid } = await openGrid();
-    grid.focus();
-    // Alt-code: digits typed with Alt held, then Enter
-    fireEvent.keyDown(grid, { key: "Alt", altKey: true });
-    fireEvent.keyDown(grid, { key: "6", altKey: true });
-    fireEvent.keyDown(grid, { key: "5", altKey: true });
-    fireEvent.keyDown(grid, { key: "Enter" });
-    expect(onChange).not.toHaveBeenCalled();
-    await new Promise((r) => setTimeout(r, 400));
-    // keypad scanner: navigation keys in a burst, then Enter
-    fireEvent.keyDown(grid, { key: "Home" });
-    fireEvent.keyDown(grid, { key: "End" });
-    fireEvent.keyDown(grid, { key: "ArrowDown" });
-    for (const key of ["ArrowUp", "ArrowLeft", "ArrowRight", "Home", "End"])
-      fireEvent.keyDown(grid, { key });
-    fireEvent.keyDown(grid, { key: "Enter" });
-    expect(onChange).not.toHaveBeenCalled();
-    // a deliberate Enter after a pause still applies
-    await new Promise((r) => setTimeout(r, 400));
-    fireEvent.keyDown(grid, { key: "Enter" });
-    expect(onChange).toHaveBeenCalledTimes(1);
   });
 
   it("a two-digit year gets the same answer as the four-digit year", async () => {
@@ -292,6 +268,7 @@ describe("calendar is a real grid (reader A2)", () => {
     expect(within(picker).getByText("December 2026")).toBeInTheDocument();
     await userEvent.keyboard("{PageUp}{PageUp}");
     expect(within(picker).getByText("October 2026")).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 700)); // a person pauses; a scanner's burst would hold Enter
     await userEvent.keyboard("{PageDown}{Home}{Enter}");
     expect(onChange).toHaveBeenLastCalledWith("2026-11-08"); // Sunday of Mon Nov 9's week
     onChange.mockClear();
@@ -320,6 +297,51 @@ describe("CounterDateReminder", () => {
     render(<CounterDateReminder value="2026-11-16" today={TODAY} />);
     expect(screen.getByTestId("counter-date-reminder")).toHaveTextContent(
       "This sale will be dated Mon, Nov 16 (future)",
+    );
+  });
+});
+
+describe("scan bursts never pick a date; people still can (browser MUST)", () => {
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  it("an Alt-code scan (digits with Alt held) then Enter up to 400 ms later applies nothing", async () => {
+    const { onChange, grid } = await openGrid();
+    grid.focus();
+    fireEvent.keyDown(grid, { key: "ArrowRight" });
+    fireEvent.keyDown(grid, { key: "Alt", altKey: true });
+    for (const key of ["1", "2", "3"]) fireEvent.keyDown(grid, { key, altKey: true });
+    await sleep(400);
+    fireEvent.keyDown(grid, { key: "Enter" });
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("a Home/End/Left/PageUp burst then Enter applies nothing, whatever the keys", async () => {
+    const { onChange, grid } = await openGrid();
+    grid.focus();
+    for (const key of ["Home", "End", "ArrowLeft", "PageUp"]) fireEvent.keyDown(grid, { key });
+    await sleep(400);
+    fireEvent.keyDown(grid, { key: "Enter" });
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("a slow person pressing Home, then Enter, still picks the day", async () => {
+    const { onChange, grid } = await openGrid();
+    grid.focus();
+    fireEvent.keyDown(grid, { key: "Home" });
+    await sleep(120);
+    fireEvent.keyDown(grid, { key: "Enter" });
+    expect(onChange).toHaveBeenCalledWith("2026-11-08");
+  });
+});
+
+describe("clear and focus (browser SHOULDs)", () => {
+  it("Enter on the clear x clears the date, and focus goes back to the chip", async () => {
+    const { onChange } = setup("2026-11-06", { onDone: undefined });
+    const x = screen.getByRole("button", { name: /Clear the order date/ });
+    x.focus();
+    await userEvent.keyboard("{Enter}");
+    expect(onChange).toHaveBeenCalledWith("");
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: /Backdated to/ })),
     );
   });
 });

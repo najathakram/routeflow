@@ -36,6 +36,7 @@ export function CounterDateChip({
   policy = "COUNTER",
 }: Props) {
   const [open, setOpen] = React.useState(false);
+  const mainRef = React.useRef<HTMLButtonElement>(null);
   const canOpen = !disabled && !!today;
   // What is seen must be what is sent: a set day is NEVER labelled Today. While the business's day is unknown the day shows
   // as dated with no past/future word (UNKNOWN), and it can still be cleared.
@@ -63,9 +64,26 @@ export function CounterDateChip({
     return () => window.removeEventListener("keydown", onKey, true);
   }, [canOpen]);
 
+  // After apply, cancel or clear: the till puts the cursor back in its scan box (onDone); anywhere else focus returns to the
+  // chip itself so it never drops to the page behind a dialog.
+  const done = () => {
+    if (onDone) onDone();
+    else setTimeout(() => mainRef.current?.focus(), 0);
+  };
   const close = () => {
     setOpen(false);
-    onDone?.();
+    done();
+  };
+  const clear = () => {
+    onChange("");
+    done();
+  };
+  // A form around the chip may swallow Enter (default-prevented) before a button's own click: Enter acts here, once.
+  const onEnter = (act: () => void) => (e: React.KeyboardEvent) => {
+    if (e.key !== "Enter" || e.ctrlKey || e.metaKey || e.altKey) return;
+    e.preventDefault();
+    e.stopPropagation();
+    act();
   };
   const apply = (day: string) => {
     onChange(day === today ? "" : day);
@@ -98,8 +116,12 @@ export function CounterDateChip({
         )}
       >
         <button
+          ref={mainRef}
           type="button"
           className="inline-flex min-h-[44px] items-center gap-1.5 bg-transparent"
+          onKeyDown={onEnter(() => {
+            if (canOpen) setOpen(true);
+          })}
           aria-label={name}
           aria-haspopup="dialog"
           disabled={!canOpen}
@@ -120,10 +142,8 @@ export function CounterDateChip({
             className="inline-flex min-h-[44px] w-8 items-center justify-center bg-transparent"
             aria-label="Clear the order date, back to today"
             disabled={disabled}
-            onClick={() => {
-              onChange("");
-              onDone?.();
-            }}
+            onKeyDown={onEnter(clear)}
+            onClick={clear}
           >
             <X className="h-4 w-4" aria-hidden />
           </button>
