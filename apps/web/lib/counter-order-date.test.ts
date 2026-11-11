@@ -1,6 +1,7 @@
 import { counterSaleErrorCopy } from "./counter-sale";
 import { isCounterSaleHandledError } from "./counter-sale";
 import { isOrderDateRefusalCopy } from "./counter-order-date";
+import { ORDER_DATE_MAX_FUTURE_DAYS, ORDER_DATE_MAX_PAST_YEARS } from "@routeflow/pricing";
 
 // W-1188: the server's two date refusals map to fixed plain copy; the server's own message is never shown.
 const refusal = (status: number, data: Record<string, unknown>) => ({ response: { status, data } });
@@ -34,6 +35,19 @@ describe("counter order date refusals", () => {
     );
   });
 
+  it("the limits in the copy come from the pricing constants", () => {
+    expect(ORDER_DATE_MAX_PAST_YEARS).toBe(2);
+    expect(ORDER_DATE_MAX_FUTURE_DAYS).toBe(366);
+    const err = refusal(400, {
+      code: "ORDER_DATE_OUT_OF_RANGE",
+      min: "2024-11-09",
+      max: "2027-11-10",
+    });
+    expect(counterSaleErrorCopy(err, { orderDate: "2024-01-01" })).toContain(
+      `more than ${ORDER_DATE_MAX_PAST_YEARS} years back`,
+    );
+  });
+
   it("a locked month names the month and the category", () => {
     const err = refusal(409, {
       code: "ORDER_DATE_PERIOD_LOCKED",
@@ -60,6 +74,9 @@ describe("counter order date refusals", () => {
     expect(isOrderDateRefusalCopy("That date is more than a year ahead. Check the year.")).toBe(
       true,
     );
+    expect(
+      isOrderDateRefusalCopy("That date is outside the dates this till takes. Pick another day."),
+    ).toBe(true);
     expect(isOrderDateRefusalCopy("Voided — start a new sale")).toBe(false);
   });
 });
