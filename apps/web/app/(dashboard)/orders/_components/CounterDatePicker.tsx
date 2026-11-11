@@ -3,7 +3,7 @@
 // W-1188: the date chip's picker. Quick picks, a typed date with a live echo, and a month calendar. Days outside the
 // till's range are disabled. Apply with Enter or a click; Esc closes and keeps the old value. Pure UI: the chip owns state.
 import * as React from "react";
-import { addDays, orderDateRange } from "@routeflow/pricing";
+import { addDays, orderDateRange, type OrderDatePolicy } from "@routeflow/pricing";
 import { Button, Modal, cn } from "@routeflow/ui/web";
 import {
   dayLabel,
@@ -33,10 +33,21 @@ interface Props {
   value: string;
   onApply: (day: string) => void;
   onClose: () => void;
+  /** COUNTER takes future days; OFFICE (the regular order) is past-only: a future day is the delivery date. */
+  policy?: OrderDatePolicy;
 }
 
-export function CounterDatePicker({ open, today, value, onApply, onClose }: Props) {
-  const range = orderDateRange(today, "COUNTER");
+export const OFFICE_FUTURE_HINT = "A future day? Set the delivery date instead.";
+
+export function CounterDatePicker({
+  open,
+  today,
+  value,
+  onApply,
+  onClose,
+  policy = "COUNTER",
+}: Props) {
+  const range = orderDateRange(today, policy);
   const [text, setText] = React.useState("");
   const [cursor, setCursor] = React.useState(value || today);
   React.useEffect(() => {
@@ -135,10 +146,17 @@ export function CounterDatePicker({ open, today, value, onApply, onClose }: Prop
               : typed === null
                 ? 'Try "yesterday", "fri" or "11/02"'
                 : !typedOk
-                  ? "That day is outside the dates this till takes."
+                  ? policy === "OFFICE" && typed > today
+                    ? OFFICE_FUTURE_HINT
+                    : "That day is outside the dates this till takes."
                   : `${weekdayShort(typed)}, ${longDay(typed)} · ${relativeDaysLabel(typed, today)}${typed > today ? " (future)" : ""}`}
           </p>
         </div>
+        {policy === "OFFICE" ? (
+          <p className="text-xs text-navy/70" data-testid="counter-date-office-hint">
+            {OFFICE_FUTURE_HINT}
+          </p>
+        ) : null}
         <div
           role="group"
           tabIndex={0}

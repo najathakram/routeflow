@@ -6,6 +6,7 @@
 // the till. The chip never sends Today: an empty value means "no orderDate in the sale".
 import * as React from "react";
 import { CalendarArrowUp, Calendar as CalendarIcon, History, X } from "lucide-react";
+import type { OrderDatePolicy } from "@routeflow/pricing";
 import { cn } from "@routeflow/ui/web";
 import { dayLabel, fullDayName } from "@/lib/natural-date";
 import { CounterDatePicker } from "./CounterDatePicker";
@@ -21,9 +22,19 @@ interface Props {
   refused?: boolean;
   /** called after apply, cancel or clear: the till puts the cursor back in the scan box */
   onDone?: () => void;
+  /** default COUNTER; the regular order passes OFFICE (past-only) */
+  policy?: OrderDatePolicy;
 }
 
-export function CounterDateChip({ value, today, onChange, disabled, refused, onDone }: Props) {
+export function CounterDateChip({
+  value,
+  today,
+  onChange,
+  disabled,
+  refused,
+  onDone,
+  policy = "COUNTER",
+}: Props) {
   const [open, setOpen] = React.useState(false);
   const canOpen = !disabled && !!today;
   const direction =
@@ -115,6 +126,7 @@ export function CounterDateChip({ value, today, onChange, disabled, refused, onD
           value={value}
           onApply={apply}
           onClose={close}
+          policy={policy}
         />
       ) : null}
     </>
