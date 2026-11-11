@@ -109,6 +109,11 @@ const REGISTRY: Record<string, Entry> = {
     reason:
       "W-1187: writes only InvoiceItem.position (a rebuild moves the kept NSF fee rows after the rebuilt lines); no qty, price or composition column",
   },
+  "invoices/invoice-follow-order.ts::followOrderLineOrder": {
+    kind: "exempt",
+    reason:
+      "W-1187 PR-1e: writes only InvoiceItem.position (the order's reorder re-ranks its invoices); no qty, price or composition column",
+  },
   "orders/line-position.ts::restampKeptLines": {
     kind: "exempt",
     reason:

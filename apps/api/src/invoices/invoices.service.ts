@@ -194,7 +194,7 @@ import {
   LINE_NAME_PRODUCT_SELECT,
   ORDER_LINE_PRODUCT_SELECT,
   displayLineDescription,
-  lineProductName,
+  orderLineInvoiceDescription,
   withFamilyNames,
 } from "./invoice-line-name";
 import { retakeDuplicateTaxRates } from "./duplicate-tax-rates";
@@ -986,7 +986,7 @@ export class InvoicesService {
     );
     return {
       // Catalog lines use the product's display name ("<Family> - <Variant>"); unlisted lines carry a free-text `name`.
-      description: li.product ? lineProductName(li.product) : (li.name ?? `Product`),
+      description: orderLineInvoiceDescription(li),
       productId: li.productId,
       // Provenance back to the source order line (null for freeform lines).
       orderItemId: li.id ?? null,
