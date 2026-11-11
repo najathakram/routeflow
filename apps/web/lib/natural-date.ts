@@ -1,6 +1,6 @@
 // W-1188: the counter's typed date ("yesterday", "fri", "11/02") and the plain labels the chip and the picker show.
 // Pure: the tenant's today is passed in (never the browser's clock), days are YYYY-MM-DD strings, US month-first by default.
-import { addDays, daysBetween, isRealDay } from "@routeflow/pricing";
+import { addDays, daysBetween, isRealDay, orderDateRange } from "@routeflow/pricing";
 
 export type DayOrder = "MDY" | "DMY";
 export interface NaturalDateOptions {
@@ -21,6 +21,20 @@ const WEEKDAY_NAMES = [
   "saturday",
 ];
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+const MONTH_WORDS = [
+  "january",
+  "february",
+  "march",
+  "april",
+  "may",
+  "june",
+  "july",
+  "august",
+  "september",
+  "october",
+  "november",
+  "december",
+];
 
 const pad = (n: number) => String(n).padStart(2, "0");
 const weekdayOf = (day: string) => {
@@ -31,9 +45,11 @@ const weekdayIndex = (w: string) => {
   const i = WEEKDAYS.indexOf(w.slice(0, 3));
   return i >= 0 && (w.length === 3 || w === WEEKDAY_NAMES[i]) ? i : -1;
 };
+// As strict as weekdayIndex: the 3-letter abbreviation, "sept", or the whole name. "junk" and "marked" are not months.
 const monthIndex = (w: string) => {
-  const i = MONTHS.indexOf(w.slice(0, 3));
-  return i >= 0 && (w.length === 3 || w.length >= 4) && /^[a-z]+$/.test(w) ? i : -1;
+  if (w === "sept") return 8;
+  const abbr = MONTHS.indexOf(w);
+  return abbr >= 0 ? abbr : MONTH_WORDS.indexOf(w);
 };
 
 /** The occurrence of month/day nearest `today` (a tie goes to the past), or null when the date is not real. */
@@ -53,10 +69,22 @@ function nearest(month: number, dom: number, today: string): string | null {
   return best;
 }
 
-function withYear(y: number, month: number, dom: number): string | null {
-  const full = y < 100 ? 2000 + y : y;
+/** A two-digit year ("99") is read in 2000-2099 and must land inside the widest window a till takes, or it refuses. */
+function withYear(
+  y: number,
+  month: number,
+  dom: number,
+  today: string,
+  twoDigit: boolean,
+): string | null {
+  const full = twoDigit ? 2000 + y : y;
   const day = `${full}-${pad(month)}-${pad(dom)}`;
-  return isRealDay(day) ? day : null;
+  if (!isRealDay(day)) return null;
+  if (twoDigit) {
+    const range = orderDateRange(today, "COUNTER");
+    if (day < range.min || day > range.max) return null;
+  }
+  return day;
 }
 
 /** The typed text as a day, or null when it is not one. Never throws. */
@@ -94,14 +122,18 @@ export function parseNaturalDate(
   if (ago) return addDays(today, -Number(ago[1]));
 
   const iso = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(text);
-  if (iso) return result(withYear(Number(iso[1]), Number(iso[2]), Number(iso[3])));
+  if (iso) return result(withYear(Number(iso[1]), Number(iso[2]), Number(iso[3]), today, false));
 
   const num = /^(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2}|\d{4}))?$/.exec(text);
   if (num) {
     const [a, b] = [Number(num[1]), Number(num[2])];
     const [month, dom] = order === "MDY" ? [a, b] : [b, a];
     if (month < 1 || month > 12) return null;
-    return result(num[3] ? withYear(Number(num[3]), month, dom) : nearest(month, dom, today));
+    return result(
+      num[3]
+        ? withYear(Number(num[3]), month, dom, today, num[3].length === 2)
+        : nearest(month, dom, today),
+    );
   }
 
   const named = /^([a-z]+) (\d{1,2})$/.exec(text) ?? /^(\d{1,2}) ([a-z]+)$/.exec(text);
