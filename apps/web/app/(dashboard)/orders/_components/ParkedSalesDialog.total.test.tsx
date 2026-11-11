@@ -71,6 +71,23 @@ describe("ParkedSalesDialog: row total (row 330e)", () => {
     expect(row).not.toHaveTextContent("$108.00");
   });
 
+  it("W-1188: a dated parked sale shows its sale day next to items and total; a Today sale shows none", async () => {
+    renderWithProviders(
+      <ParkedSalesDialog
+        openerRef={{ current: null }}
+        parked={parkedWith([
+          { ...ROW, orderDate: "2026-11-06", priceLines: [{ unitPrice: 2, qty: 1 }] },
+          { ...ROW, id: "p2" },
+        ])}
+      />,
+    );
+    const dated = await screen.findByTestId("parked-row-p1");
+    expect(within(dated).getByTestId("parked-row-dated")).toHaveTextContent("Dated Fri, Nov 6");
+    expect(
+      within(await screen.findByTestId("parked-row-p2")).queryByTestId("parked-row-dated"),
+    ).toBeNull();
+  });
+
   it("a parked row names its items instead of '1 line'", async () => {
     renderWithProviders(
       <ParkedSalesDialog
