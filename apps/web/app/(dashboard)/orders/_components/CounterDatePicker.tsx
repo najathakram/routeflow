@@ -90,15 +90,22 @@ export function CounterDatePicker({
   // scanner types letters then Enter; the quick picks and the typed field are the ways to say "today" or "yesterday").
   // A barcode scanner types characters then Enter within a few milliseconds. A character typed on the grid marks the moment;
   // an Enter right after it is the scanner's, never a clerk choosing a day (a person pressing Enter has not just typed).
+  // Whatever keys a scanner sends (letters, an Alt-code, or Home/End/arrows from a keypad scanner), the time is recorded
+  // BEFORE any early return: a character within 300 ms, or a run of seven or more
+  // keys each under 80 ms after the last (faster than a hand), before Enter makes that Enter the scanner's.
   const lastTypedAt = React.useRef(0);
+  const lastKeyAt = React.useRef(0);
+  const run = React.useRef(0);
   const onGridKey = (e: React.KeyboardEvent) => {
-    if (e.target !== e.currentTarget || e.altKey || e.ctrlKey || e.metaKey) return;
     const k = e.key;
-    if (k.length === 1) {
-      lastTypedAt.current = Date.now();
-      return;
-    }
-    if (k === "Enter" && Date.now() - lastTypedAt.current < 300) {
+    const now = Date.now();
+    run.current = now - lastKeyAt.current < 80 ? run.current + 1 : 1;
+    const burst = now - lastTypedAt.current < 300 || run.current > 6;
+    if (k.length === 1) lastTypedAt.current = now;
+    lastKeyAt.current = now;
+    if (e.target !== e.currentTarget || e.altKey || e.ctrlKey || e.metaKey) return;
+    if (k.length === 1) return;
+    if (k === "Enter" && burst) {
       e.preventDefault();
       return;
     }

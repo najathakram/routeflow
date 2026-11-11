@@ -205,6 +205,30 @@ describe("calendar details (reader SHOULDs)", () => {
     expect(onChange).toHaveBeenLastCalledWith("2026-11-07");
   });
 
+  it("an Alt-code scan or a keypad scan (Home/End/arrows) ending in Enter never applies the cursor day", async () => {
+    const { onChange, grid } = await openGrid();
+    grid.focus();
+    // Alt-code: digits typed with Alt held, then Enter
+    fireEvent.keyDown(grid, { key: "Alt", altKey: true });
+    fireEvent.keyDown(grid, { key: "6", altKey: true });
+    fireEvent.keyDown(grid, { key: "5", altKey: true });
+    fireEvent.keyDown(grid, { key: "Enter" });
+    expect(onChange).not.toHaveBeenCalled();
+    await new Promise((r) => setTimeout(r, 400));
+    // keypad scanner: navigation keys in a burst, then Enter
+    fireEvent.keyDown(grid, { key: "Home" });
+    fireEvent.keyDown(grid, { key: "End" });
+    fireEvent.keyDown(grid, { key: "ArrowDown" });
+    for (const key of ["ArrowUp", "ArrowLeft", "ArrowRight", "Home", "End"])
+      fireEvent.keyDown(grid, { key });
+    fireEvent.keyDown(grid, { key: "Enter" });
+    expect(onChange).not.toHaveBeenCalled();
+    // a deliberate Enter after a pause still applies
+    await new Promise((r) => setTimeout(r, 400));
+    fireEvent.keyDown(grid, { key: "Enter" });
+    expect(onChange).toHaveBeenCalledTimes(1);
+  });
+
   it("a two-digit year gets the same answer as the four-digit year", async () => {
     const { picker } = await openGrid();
     const input = within(picker).getByTestId("counter-date-input");
