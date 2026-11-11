@@ -275,6 +275,73 @@ describe("reorderOrderLines: existing invoices follow (W-1187 PR-1e, ruling (4)/
     expect(Object.keys(tx.order.update.mock.calls[0][0].data)).toEqual(["updatedAt"]);
   });
 
+  it("R-lock: the invoices are row-locked (NOWAIT, sorted ids) BEFORE their lines are read or written", async () => {
+    const { tx, deps } = withInvoices([
+      inv("i2", [
+        ["ia2", "a", 0],
+        ["ib2", "b", 1],
+      ]),
+      inv("i1", [
+        ["ia", "a", 0],
+        ["ib", "b", 1],
+      ]),
+    ]);
+    const order: string[] = [];
+    lock.mockImplementation(async (_t: unknown, table: string) => {
+      order.push(`lock:${table}`);
+    });
+    tx.invoiceItem.update.mockImplementation(async () => order.push("write"));
+    await reorderOrderLines(deps, "o1", swap as never, staff);
+    const invoiceLock = lock.mock.calls.find((c) => c[1] === "Invoice")!;
+    expect(invoiceLock[2]).toEqual(["i1", "i2"]);
+    expect(invoiceLock[3]).toBe("INVOICE_BUSY");
+    expect(order.indexOf("lock:Invoice")).toBeGreaterThan(order.indexOf("lock:Order"));
+    expect(order.indexOf("lock:Invoice")).toBeLessThan(order.indexOf("write"));
+    lock.mockReset();
+    lock.mockResolvedValue(undefined);
+  });
+
+  it.each([
+    ["a drag", swap, "drag"],
+    ["a name sort", { expectedUpdatedAt: AT.toISOString(), sort: "name" }, "sort"],
+  ])("R-via: the one audit row records whether it was %s", async (_n, body, via) => {
+    const { tx, deps } = withInvoices([]);
+    (tx.orderItem.findMany as jest.Mock).mockResolvedValue([
+      {
+        id: "a",
+        position: 0,
+        name: "Zed",
+        productId: null,
+        boxes: null,
+        unitsPerBox: null,
+        product: null,
+      },
+      {
+        id: "b",
+        position: 1,
+        name: "Abe",
+        productId: null,
+        boxes: null,
+        unitsPerBox: null,
+        product: null,
+      },
+    ]);
+    await reorderOrderLines(deps, "o1", body as never, staff);
+    expect(tx.auditLog.create).toHaveBeenCalledTimes(1);
+    expect(tx.auditLog.create.mock.calls[0][0].data.meta.via).toBe(via);
+  });
+
+  it.each(["DRAFT", "SENT", "VIEWED", "PARTIAL", "PAID", "OVERDUE"])(
+    "R-status: a %s invoice is not excluded from the follow (only VOID and WRITTEN_OFF are)",
+    async (status) => {
+      const { tx, deps } = withInvoices([]);
+      await reorderOrderLines(deps, "o1", swap as never, staff);
+      const excluded = tx.invoice.findMany.mock.calls[0][0].where.status.notIn as string[];
+      expect(excluded).toEqual(["VOID", "WRITTEN_OFF"]);
+      expect(excluded).not.toContain(status);
+    },
+  );
+
   it("an order whose lines did not move touches no invoice", async () => {
     const { tx, deps } = withInvoices([inv("i1", [["ia", "a", 0]])]);
     await reorderOrderLines(deps, "o1", dto, staff);

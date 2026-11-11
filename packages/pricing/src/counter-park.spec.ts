@@ -362,3 +362,18 @@ describe("S5: the explicit Walk-in choice rides the payload", () => {
       expect("walkIn" in ok(cart({ walkIn: v }))).toBe(false);
   });
 });
+
+describe("W-1188 R24: the chosen order date rides the park payload", () => {
+  it("keeps a real day", () => {
+    expect(ok(cart({ orderDate: "2026-11-06" }))).toHaveProperty("orderDate", "2026-11-06");
+  });
+  it("a cart on Today carries no key at all", () => {
+    expect(ok(cart())).not.toHaveProperty("orderDate");
+  });
+  it.each(["2026-02-31", "11/06/2026", "yesterday", "", 20261106, null, "2026-11-06T00:00:00Z"])(
+    "drops %p (never an instant, never a half day)",
+    (bad) => {
+      expect(ok(cart({ orderDate: bad }))).not.toHaveProperty("orderDate");
+    },
+  );
+});

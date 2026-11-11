@@ -39,6 +39,7 @@ const ALLOWED: Record<string, { count: number; why: string }> = {
 const AUTOFOCUS_ALLOWED: Record<string, number> = {
   "CounterSaleScreen.tsx": 1,
   "CounterLineRow.tsx": 1,
+  "CounterDatePicker.tsx": 1, // W-1188: the typed-date field takes the cursor when the picker opens (the dialog's only text field)
   "CounterDayClose.tsx": 1, // R7b 2.3: the Keep button of the "Keep your count for later?" confirm is the default
 };
 

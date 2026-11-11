@@ -125,7 +125,7 @@ export function useCounterLiveCart({
   const canRestoreRef = React.useRef(canRestore);
   canRestoreRef.current = canRestore;
 
-  const { lines, customer, method, tendered, reference, checkDate, walkIn } = snapshot;
+  const { lines, customer, method, tendered, reference, checkDate, orderDate, walkIn } = snapshot;
   React.useEffect(() => {
     if (!storeKey || !owner) return;
     if (suspended || sending || latest.current.lines.length === 0) {
@@ -148,6 +148,7 @@ export function useCounterLiveCart({
     tendered,
     reference,
     checkDate,
+    orderDate,
     walkIn,
   ]);
 

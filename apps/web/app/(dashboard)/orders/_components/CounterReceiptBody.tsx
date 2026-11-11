@@ -23,6 +23,7 @@ export function CounterReceiptBody({
   profile,
   fallbackMethod,
   customerName,
+  orderDate,
   headingRef,
 }: {
   receipt: CounterSaleResponse;
@@ -33,6 +34,8 @@ export function CounterReceiptBody({
   fallbackMethod?: CounterSalePaymentMethod;
   /** SA-762r: the named customer of the sale; omit for a walk-in (no customer line prints) */
   customerName?: string | null;
+  /** W-1188: the day the sale was dated to (the chip); omit for an undated sale */
+  orderDate?: string;
   /** POS-1: the screen focuses this heading when the receipt appears. */
   headingRef?: React.Ref<HTMLHeadingElement>;
 }) {
@@ -46,6 +49,7 @@ export function CounterReceiptBody({
     fallbackMethod,
     cashier,
     customerName,
+    orderDate,
     now,
     profile: {
       ...profile,
