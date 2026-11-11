@@ -11,11 +11,15 @@
 /** Above any real order: it bounds the payload. */
 export const LINE_ORDER_MAX_IDS = 1000;
 
-export interface ReorderLinesRequest {
+/** The modes of a server-side sort ("Sort A to Z"); one more mode is one more value and one more comparator. The API keeps an equal copy (`reorder-lines.dto.ts`), pinned by `reorder-lines.dto.spec.ts`. */
+export const LINE_SORT_VALUES = ["name"] as const;
+export type LineSort = (typeof LINE_SORT_VALUES)[number];
+
+/** Exactly one of `lineIds` (the caller arranged them) or `sort` (the server arranges them, once; never a stored view mode). */
+export type ReorderLinesRequest = {
   /** The order's `updatedAt` as the client read it; a different value is a 409. */
   expectedUpdatedAt: string;
-  lineIds: string[];
-}
+} & ({ lineIds: string[]; sort?: never } | { sort: LineSort; lineIds?: never });
 
 /** Who last rearranged an order's lines, from the audit row; staff-only on the order read. */
 export interface LinesRearranged {

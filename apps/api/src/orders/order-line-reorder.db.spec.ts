@@ -226,6 +226,28 @@ describeDb("W-1187 PR-1b: reordering an order's lines (real Postgres)", () => {
       expect(res.lineIds).toEqual([lineId(o, "C"), lineId(o, "A"), lineId(o, "B")]);
     });
 
+    it("R-sort: sort name puts C, B, A lines in A to Z on real rows, CANCELLED kept in the set", async () => {
+      const [a, b, c] = [await product("A"), await product("B"), await product("C")];
+      const o = await order([
+        { p: c, at: 0 },
+        { p: b, at: 1, status: "CANCELLED" },
+        { p: a, at: 2 },
+      ]);
+      const res = await inTenant(async () =>
+        orders.reorderLines(
+          o.id,
+          { expectedUpdatedAt: await tokenOf(o.id), sort: "name" },
+          staff(),
+        ),
+      );
+      expect(await read(o.id)).toEqual([
+        ["A", 0],
+        ["B", 1],
+        ["C", 2],
+      ]);
+      expect(res.lineIds).toHaveLength(3);
+    });
+
     it("G-e: a stale token is a 409 and nothing is written", async () => {
       const o = await abc();
       await expect(
