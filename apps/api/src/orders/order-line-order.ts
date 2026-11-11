@@ -151,7 +151,7 @@ export async function reorderOrderLines(
           action: LINES_REORDERED_ACTION,
           entityType: "Order",
           entityId: orderId,
-          meta: { role: user.role, before, after: lineIds },
+          meta: { role: user.role, via: dto.sort ? "sort" : "drag", before, after: lineIds },
         },
       });
     } else {

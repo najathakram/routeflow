@@ -578,6 +578,25 @@ describeDb("W-1187 PR-1b: reordering an order's lines (real Postgres)", () => {
         (i) => i.description,
       );
 
+    it("R-status: every open status follows, VOID and WRITTEN_OFF do not; exactly one audit row records a drag (via drag)", async () => {
+      const o = await abc();
+      const rows: Array<[string, number | null]> = [
+        ["A", 0],
+        ["B", 1],
+        ["C", 2],
+      ];
+      const open = ["DRAFT", "SENT", "VIEWED", "PARTIAL", "PAID", "OVERDUE"];
+      const follow = [] as Array<{ id: string }>;
+      for (const st of open) follow.push(await invoiceOf(o, st, rows));
+      const closed = [await invoiceOf(o, "VOID", rows), await invoiceOf(o, "WRITTEN_OFF", rows)];
+      await reorder(o, [lineId(o, "C"), lineId(o, "A"), lineId(o, "B")]);
+      for (const inv of follow) expect(await shown(inv.id)).toEqual(["C", "A", "B"]);
+      for (const inv of closed) expect(await shown(inv.id)).toEqual(["A", "B", "C"]);
+      const rowsAudit = await audits(o.id);
+      expect(rowsAudit).toHaveLength(1);
+      expect((rowsAudit[0].meta as { via?: string }).via).toBe("drag");
+    });
+
     it("R-follow: DRAFT, SENT and legacy invoices follow in the reorder's transaction; VOID and WRITTEN_OFF stay; another order's legacy invoice stays NULL", async () => {
       const o = await abc();
       const rows: Array<[string, number | null]> = [

@@ -1,3 +1,4 @@
+import { lockRowsNoWait } from "../common/db-locks";
 import { invoiceLinesInOrder, loadOrderLineRanks, rankInvoiceLines } from "./invoice-line-position";
 
 /**
@@ -21,14 +22,19 @@ interface FollowDb {
 }
 
 export async function followOrderLineOrder(db: FollowDb, orderId: string): Promise<void> {
+  const open = { orderId, status: { notIn: ["VOID", "WRITTEN_OFF"] } };
+  const ids: any[] = await db.invoice.findMany({ where: open, select: { id: true } });
+  if (ids.length === 0) return;
+  // Row-lock the invoices (NOWAIT, sorted ids) BEFORE reading their lines: an invoice edit or a send in flight answers a
+  // retryable 409 instead of interleaving with the re-rank, and the lines read below are the locked truth.
+  await lockRowsNoWait(db, "Invoice", ids.map((i) => i.id as string).sort(), "INVOICE_BUSY");
   const invoices = await db.invoice.findMany({
-    where: { orderId, status: { notIn: ["VOID", "WRITTEN_OFF"] } },
+    where: open,
     select: {
       id: true,
       items: { select: { id: true, orderItemId: true, position: true, createdAt: true } },
     },
   });
-  if (invoices.length === 0) return;
   const ranks = await loadOrderLineRanks(db, orderId);
   for (const inv of invoices) {
     const items: any[] = inv.items ?? [];
