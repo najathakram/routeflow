@@ -19,6 +19,16 @@ function setup(value = "", over: Partial<React.ComponentProps<typeof CounterDate
 }
 
 describe("CounterDateChip states", () => {
+  it("W-1188: while the business's day is unknown a set date is still shown as dated, never as Today", () => {
+    setup("2026-11-06", { today: undefined });
+    const chip = screen.getByTestId("counter-date-chip");
+    expect(chip).not.toHaveAttribute("data-direction", "TODAY");
+    expect(chip).toHaveTextContent("Dated");
+    expect(chip).toHaveTextContent("Nov 6");
+    expect(chip).not.toHaveTextContent("Today");
+    expect(screen.getByRole("button", { name: /Clear the order date/ })).toBeEnabled();
+  });
+
   it("reads Today by default, with the plain name", () => {
     setup();
     expect(screen.getByTestId("counter-date-chip")).toHaveAttribute("data-direction", "TODAY");

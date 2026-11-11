@@ -366,6 +366,7 @@ export function CounterSaleScreen() {
       tendered,
       reference,
       checkDate,
+      orderDate,
       walkIn: buyerChoice.kind === "walk-in",
     },
     suspended: createSale.isPending || outcomeUnknown || receipt !== null,
@@ -381,6 +382,7 @@ export function CounterSaleScreen() {
       if (snap.method === "CHECK" || snap.method === "CARD") setTendered(snap.tendered);
       setReference(snap.reference);
       setCheckDate(snap.checkDate ?? "");
+      setOrderDate(snap.orderDate ?? "");
     },
     onClearedElsewhere: () => {
       setLines([]);
@@ -388,6 +390,7 @@ export function CounterSaleScreen() {
       buyerChoice.reset();
       setReference("");
       setCheckDate("");
+      setOrderDate("");
     },
   });
   const hasLines = lines.length > 0; // POS-7: the register header's Exit asks before discarding a cart with lines
@@ -1339,7 +1342,8 @@ export function CounterSaleScreen() {
         ...(tender.method === "CHECK" && submitCheckDate ? { checkDate: submitCheckDate } : {}),
       },
       ...(inlineReturn ? { inlineReturn } : {}),
-      ...(orderDate ? { orderDate } : {}),
+      // Seen is sent: a day equal to today reads (and sends) as Today; while today is unknown the chip shows the set day
+      ...(orderDate && orderDate !== submitToday ? { orderDate } : {}),
     } as CounterSaleRequest);
     dropUndo(); // the sale is going out: a removed line can no longer come back
     attemptRef.current = {
@@ -1530,6 +1534,7 @@ export function CounterSaleScreen() {
           profile={settings}
           fallbackMethod={method}
           customerName={receiptCustomerName(customer)}
+          orderDate={orderDate || undefined}
           headingRef={receiptHeadingRef}
         />
         <CounterPaymentNotRecorded receipt={receipt} onReceipt={setReceipt} />

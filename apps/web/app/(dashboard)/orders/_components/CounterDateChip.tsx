@@ -26,8 +26,17 @@ interface Props {
 export function CounterDateChip({ value, today, onChange, disabled, refused, onDone }: Props) {
   const [open, setOpen] = React.useState(false);
   const canOpen = !disabled && !!today;
-  const direction =
-    value && today ? (value < today ? "BACK" : value > today ? "FORWARD" : null) : null;
+  // What is seen must be what is sent: a set day is NEVER labelled Today. While the business's day is unknown the day shows
+  // as dated with no past/future word (UNKNOWN), and it can still be cleared.
+  const direction: "BACK" | "FORWARD" | "UNKNOWN" | null = !value
+    ? null
+    : !today
+      ? "UNKNOWN"
+      : value < today
+        ? "BACK"
+        : value > today
+          ? "FORWARD"
+          : null;
 
   React.useEffect(() => {
     if (!canOpen) return;
@@ -53,12 +62,12 @@ export function CounterDateChip({ value, today, onChange, disabled, refused, onD
   };
 
   const text =
-    direction && value && today
-      ? `Dated ${dayLabel(value, today)}${direction === "FORWARD" ? " · future" : ""}`
+    direction && value
+      ? `Dated ${dayLabel(value, today ?? value)}${direction === "FORWARD" ? " · future" : ""}`
       : "Today";
   const name =
     direction && value
-      ? `${direction === "BACK" ? "Backdated to" : "Future-dated to"} ${fullDayName(value)}. Change or clear`
+      ? `${direction === "BACK" ? "Backdated to" : direction === "FORWARD" ? "Future-dated to" : "Dated"} ${fullDayName(value)}. Change or clear`
       : "Order date: today. Change";
 
   return (
@@ -69,7 +78,8 @@ export function CounterDateChip({ value, today, onChange, disabled, refused, onD
         className={cn(
           "inline-flex min-h-[44px] items-center gap-1 rounded-full border px-3 text-sm font-medium",
           !direction && "border-navy/25 text-navy",
-          direction === "BACK" && "border-amber-400 bg-amber-100 text-amber-900",
+          (direction === "BACK" || direction === "UNKNOWN") &&
+            "border-amber-400 bg-amber-100 text-amber-900",
           direction === "FORWARD" &&
             "border-dashed border-indigo-500 bg-indigo-100 text-indigo-900",
           refused && "ring-2 ring-red-500",
@@ -129,11 +139,11 @@ export function CounterDateReminder({
   value: string;
   today: string | undefined;
 }) {
-  if (!value || !today || value === today) return null;
+  if (!value || value === today) return null;
   return (
     <p className="text-xs text-navy/70" data-testid="counter-date-reminder">
-      This sale will be dated {dayLabel(value, today)}
-      {value > today ? " (future)" : ""}
+      This sale will be dated {dayLabel(value, today ?? value)}
+      {today && value > today ? " (future)" : ""}
     </p>
   );
 }
