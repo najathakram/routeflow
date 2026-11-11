@@ -27,6 +27,8 @@ export const CUSTOMER_ORDER_FIELDS = [
   "status",
   // Row 380: the edit revision a buyer edit sends back (a 409 ORDER_REVISION_STALE when it is behind).
   "revisionNumber",
+  // W-1187 PR-2c: the compare-and-swap token a buyer's line reorder sends back (a 409 when the order moved on).
+  "updatedAt",
   "createdAt",
   "requestedDeliveryDate",
   "deliveredAt",

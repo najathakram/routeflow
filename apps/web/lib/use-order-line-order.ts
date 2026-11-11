@@ -4,6 +4,7 @@ import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@routeflow/ui/web";
 import { useReorderOrderLines, type OrderItem } from "@/lib/api/orders";
+import { useBuyerReorderOrderLines } from "@/lib/api/buyer";
 import { orderLineName } from "@/lib/product-display";
 import type { LineMove, SortableLine } from "@/components/SortableLines";
 
@@ -20,16 +21,22 @@ const inTextField = (el: EventTarget | null) =>
   el instanceof HTMLElement &&
   (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
 
-export function useOrderLineOrder({
+export function useOrderLineOrder<L extends { id: string } = OrderItem>({
   orderId,
   updatedAt,
   lineItems,
   enabled,
+  buyer = false,
+  labelOf,
 }: {
   orderId?: string;
   updatedAt?: string;
-  lineItems: OrderItem[];
+  lineItems: L[];
   enabled: boolean;
+  /** The buyer portal: PUT /buyer/orders/:id/line-order, and the buyer order query is the one refetched. */
+  buyer?: boolean;
+  /** What a screen reader says for a line (default: the staff order line's name). */
+  labelOf?: (line: L) => string | null | undefined;
 }) {
   const { toast, dismiss } = useToast();
   const toastId = React.useRef<string | null>(null);
@@ -38,7 +45,13 @@ export function useOrderLineOrder({
     toastId.current = null;
   }, [dismiss]);
   const qc = useQueryClient();
-  const reorder = useReorderOrderLines();
+  const staffReorder = useReorderOrderLines();
+  const buyerReorder = useBuyerReorderOrderLines();
+  const reorder = buyer ? buyerReorder : staffReorder;
+  const orderKey = React.useMemo(
+    () => (buyer ? ["buyer", "order", orderId] : ["orders", orderId]),
+    [buyer, orderId],
+  );
   const canMove = enabled && !!orderId && !!updatedAt && lineItems.length > 1;
 
   // The ids as arranged on screen; null = what the server sent.
@@ -78,8 +91,12 @@ export function useOrderLineOrder({
     return [...lineItems].sort((a, b) => (at.get(a.id) ?? 1e9) - (at.get(b.id) ?? 1e9));
   }, [lineItems, local]);
   const lines: SortableLine[] = React.useMemo(
-    () => shown.map((l) => ({ id: l.id, label: orderLineName(l) ?? "Custom item" })),
-    [shown],
+    () =>
+      shown.map((l) => ({
+        id: l.id,
+        label: (labelOf ? labelOf(l) : orderLineName(l as unknown as OrderItem)) ?? "Custom item",
+      })),
+    [shown, labelOf],
   );
 
   const send = React.useCallback(
@@ -90,9 +107,9 @@ export function useOrderLineOrder({
         lineIds: ids,
       });
       stamp.current = res.updatedAt;
-      void qc.invalidateQueries({ queryKey: ["orders", orderId] });
+      void qc.invalidateQueries({ queryKey: orderKey });
     },
-    [orderId, qc, reorder],
+    [orderId, orderKey, qc, reorder],
   );
 
   const fail = React.useCallback(
@@ -102,13 +119,13 @@ export function useOrderLineOrder({
         stale ? null : previous,
         lineItems.map((l) => l.id),
       );
-      if (stale) void qc.invalidateQueries({ queryKey: ["orders", orderId] });
+      if (stale) void qc.invalidateQueries({ queryKey: orderKey });
       toast({
         title: stale ? LINE_ORDER_CHANGED : "Couldn't move the line. Try again.",
         variant: stale ? "warning" : "error",
       });
     },
-    [lineItems, orderId, qc, show, toast],
+    [lineItems, orderKey, qc, show, toast],
   );
 
   const undo = React.useCallback(async () => {
