@@ -104,3 +104,20 @@ describe("OrderLineItemCards: moving a saved line (W-1187)", () => {
     expect(screen.queryByRole("button", { name: "Sort A–Z" })).toBeNull();
   });
 });
+
+describe("OrderLineItemCards: Sort A–Z on a folded list (#4290)", () => {
+  it("the button is not shown while rows are folded, and appears once expanded", () => {
+    renderWithProviders(
+      <OrderLineItemCards
+        lineItems={many(8)}
+        orderStatus="CONFIRMED"
+        total={80}
+        orderId="o-1"
+        updatedAt="2026-11-11T08:00:00.000Z"
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Sort A–Z" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Show 2 more items/ }));
+    expect(screen.getByRole("button", { name: "Sort A–Z" })).toBeInTheDocument();
+  });
+});

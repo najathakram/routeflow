@@ -120,9 +120,9 @@ function MovableCards(props: CardsProps & Expand) {
   return (
     <>
       <LinesRearrangedNote rearranged={props.linesRearranged} />
-      {order.canMove && (
+      {order.canMove && open && (
         <div className="flex justify-end pb-2">
-          <SortLinesButton onSort={() => void order.sortByName()} />
+          <SortLinesButton onSort={() => void order.sortByName()} saving={order.saving} />
         </div>
       )}
       <SortableLines lines={order.lines} onMove={order.onMove} enabled={order.canMove && open}>

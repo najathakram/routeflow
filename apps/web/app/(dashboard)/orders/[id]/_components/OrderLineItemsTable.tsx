@@ -81,7 +81,7 @@ function MovableLines(props: TableProps) {
       <LinesRearrangedNote rearranged={props.linesRearranged} />
       {order.canMove && (
         <div className="flex justify-end pb-2">
-          <SortLinesButton onSort={() => void order.sortByName()} />
+          <SortLinesButton onSort={() => void order.sortByName()} saving={order.saving} />
         </div>
       )}
       <SortableLines lines={order.lines} onMove={order.onMove} enabled={order.canMove}>

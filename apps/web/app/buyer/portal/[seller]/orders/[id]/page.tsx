@@ -983,7 +983,7 @@ export default function BuyerOrderDetailPage() {
 
         {lineOrder.canMove && (
           <div className="flex justify-end border-b border-surface-border px-2 py-1">
-            <SortLinesButton onSort={() => void lineOrder.sortByName()} />
+            <SortLinesButton onSort={() => void lineOrder.sortByName()} saving={lineOrder.saving} />
           </div>
         )}
         <SortableLines
