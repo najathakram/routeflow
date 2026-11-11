@@ -46,6 +46,7 @@ import { assertNoUnitAwareLines } from "../orders/unit-aware-guard";
 import { customerPricing } from "../orders/units-prices-v2";
 import { CreateEstimateDto } from "./dto/create-estimate.dto";
 import { priceEditAllowedFor } from "../auth/permissions/price-edit";
+import { stampInvoicePositions } from "../invoices/invoice-line-position";
 import { assertCustomPricesAllowed, assertPriceEditAllowed } from "../orders/staff-override";
 import { describeUniqueViolation, uniqueViolationOn } from "../common/prisma-unique";
 
@@ -569,6 +570,7 @@ export class EstimatesService {
       const isTaxExempt = !!est.customer?.isTaxExempt;
       // B294 (L-159): regular tax and levy both come from THIS call, at today's rate (H5). est.taxAmount holds the
       // quote's REGULAR tax only and is read below solely to report the difference; it is never an input here.
+      stampInvoicePositions(itemsData); // W-1187: the converted invoice lists the estimate's lines in their order
       zeroExemptCategoryTax(itemsData, isTaxExempt); // exempt: $0 of BOTH taxes, snapshots zeroed
       const discount = Number(est.discount ?? 0);
       const {

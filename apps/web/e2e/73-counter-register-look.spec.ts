@@ -1,7 +1,7 @@
 /**
  * POS-7 (73): the counter's "register look" and the per-device "Open the counter on this device" preference.
  *   /orders -> Counter (nav) -> slim header (Exit counter first, clerk, store) + the 64 px rail (lg+) -> peek -> Exit.
- *   Exit with an empty cart goes back; with lines it asks "Discard this sale?" (Keep selling focused, Escape keeps, Discard leaves).
+ *   Exit with an empty cart goes back; with lines (W-1184: when the park fails) it asks "Discard this sale?" (Keep selling focused, Escape keeps, Discard leaves).
  *   Preference on -> landing at /dashboard opens the counter once, with a "Counter opened" toast.
  * At 390 / 768 / 1024 / 1440 px. The rail exists from lg (1024) up; below that the nav is the drawer and is asserted instead.
  *
@@ -11,6 +11,7 @@
  */
 import { test, expect, type Page } from "@playwright/test";
 import { setTenantCookie } from "./helpers/auth";
+import { failParks } from "./helpers/counter-park-fail";
 import { TENANT_SLUG } from "./helpers/constants";
 import { apiBase, operatorAccessToken } from "./helpers/api";
 import {
@@ -155,6 +156,7 @@ for (const vp of VIEWPORTS) {
       // F12: the line's price control says "Change price"
       await expect(page.getByRole("button", { name: /^Change price for / })).toBeVisible();
 
+      await failParks(page); // W-1184: a failed park is what brings the old question back
       await page.getByRole("button", { name: "Exit counter" }).click();
       await expect(page.getByText("Discard this sale?")).toBeVisible();
       // W-710: the dialog eases out on the way in (about 200 ms), not the plugin default (CSS ease, 150 ms)
@@ -231,6 +233,7 @@ for (const vp of [VIEWPORTS[0], VIEWPORTS[3]]) {
       await page.getByRole("button", { name: /^Change price for / }).scrollIntoViewIfNeeded();
       await page.evaluate(() => window.scrollBy(0, 200));
       await page.screenshot({ path: `test-results/w783-layout-line-${vp.name}.png` });
+      await failParks(page); // W-1184: a failed park is what brings the old question back
       await page.getByRole("button", { name: "Exit counter" }).click();
       await expect(page.getByText("Discard this sale?")).toBeVisible();
       const motion = await page.getByRole("dialog").evaluate((el) => ({

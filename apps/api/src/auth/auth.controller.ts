@@ -36,6 +36,7 @@ import { ChangePasswordDto } from "./dto/change-password.dto";
 import { SetPasswordDto } from "./dto/set-password.dto";
 import { RequestPasswordResetDto } from "./dto/request-password-reset.dto";
 import { ResetPasswordDto } from "./dto/reset-password.dto";
+import { ConfirmEmailChangeDto } from "./dto/confirm-email-change.dto";
 import { ExchangeCodeDto } from "./dto/exchange-code.dto";
 import { resolveLoginThrottle } from "./login-throttle.config";
 import { extractDeviceInfo } from "./device-info.util";
@@ -236,6 +237,17 @@ export class AuthController {
   verifyEmail(@Body() body: { token: string }, @Req() req: any) {
     const deviceInfo = extractDeviceInfo(req);
     return this.authService.verifyEmailAndLogin(body.token, deviceInfo);
+  }
+
+  // B461 (SA-1116): public like verify-email (the emailed token is the credential). Same throttle.
+  @Post("confirm-email-change")
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
+  @ApiOperation({
+    summary: "Confirm a held login-email change from the link mailed to the new address",
+  })
+  confirmEmailChange(@Body() dto: ConfirmEmailChangeDto) {
+    return this.authService.confirmEmailChange(dto.token);
   }
 
   // Topmost on purpose: decorators apply bottom-up, so this guard lands AFTER JwtAuthGuard in the guard list.

@@ -75,6 +75,14 @@ describe("pickCustomerOrderFields", () => {
     expect(out.lineItems[0].product).toEqual({ id: "p-1", name: "Widget", unit: "ea" });
   });
 
+  it("R-token: keeps updatedAt, the token a buyer's line reorder sends back (W-1187 PR-2c)", () => {
+    const out = pickCustomerOrderFields({
+      ...leakyOrder(),
+      updatedAt: "2026-11-11T08:00:00.000Z",
+    }) as Row;
+    expect(out.updatedAt).toBe("2026-11-11T08:00:00.000Z");
+  });
+
   it("keeps the derived order parts a buyer screen reads and trims their staff parts", () => {
     const out = pickCustomerOrderFields({
       ...leakyOrder(),

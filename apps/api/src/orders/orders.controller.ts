@@ -4,6 +4,7 @@ import {
   Get,
   Post,
   Patch,
+  Put,
   Delete,
   Body,
   Param,
@@ -33,6 +34,7 @@ import { CreateOrderDto } from "./dto/create-order.dto";
 import { CreateSaleDto } from "./dto/create-sale.dto";
 import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
 import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
+import { ReorderLinesDto } from "./dto/reorder-lines.dto";
 import { UpdateShipmentDto } from "./dto/update-shipment.dto";
 import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
 import { ReopenOrderDto } from "./dto/reopen-order.dto";
@@ -670,6 +672,21 @@ export class OrdersController {
         : await this.ordersService.updateOrderItems(id, dto, user);
     if (user.role === UserRole.CUSTOMER) void this.staffOrderEmail?.notifyBuyerOrderEdited(id); // SA-1063
     return this.forCaller(user, edited);
+  }
+
+  /**
+   * W-1187: put the order's lines in the order the staff arranged them (every line id, cancelled rows included, plus the
+   * `updatedAt` the client read). Staff only: a buyer's drag goes through `PUT /buyer/orders/:id/line-order`.
+   */
+  @Put(":id/line-order")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  reorderLines(
+    @Param("id") id: string,
+    @Body() dto: ReorderLinesDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.ordersService.reorderLines(id, dto, user);
   }
 
   // ─── P5-09: post-dispatch change requests ───────────────────────────────────

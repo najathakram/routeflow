@@ -69,6 +69,17 @@ const CODE_COPY: Record<string, string> = {
   // SA-804 (1): FIFO and LIFO costing are retired; the picker no longer offers them, so this is an old client or a direct API call.
   [API_ERROR_CODES.COSTING_METHOD_RETIRED]:
     "FIFO and LIFO costing are retired. Pick average cost, standard cost or last cost.",
+  // WP11 (SA-1106 C2): the feature-change save and undo refusals, fixed sentences (never the server's text, B986).
+  [API_ERROR_CODES.FEATURE_KEY_UNKNOWN]:
+    "One of these features no longer exists. Reload the page and review the changes again.",
+  [API_ERROR_CODES.FEATURE_NOT_OVERRIDABLE]:
+    "One of these features can't be turned on or off for a single business. Remove it from the changes.",
+  [API_ERROR_CODES.EXPIRES_AT_MUST_BE_FUTURE]:
+    "The end date has already passed. Pick a later date or remove it.",
+  [API_ERROR_CODES.FEATURE_REQUIRES_UNMET]:
+    "A feature you are turning on needs another one that stays off. Turn that on too, or remove this change.",
+  [API_ERROR_CODES.FEATURE_CHANGE_NOT_UNDOABLE]:
+    "This change can't be undone any more because something changed after it. Use Restore instead.",
   INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED:
     "This item was already returned. Add a reason to confirm another return.",
   INLINE_RETURN_KEY_CONFLICT: "This return was already submitted. Refresh to see it.",

@@ -99,6 +99,36 @@ const REGISTRY: Record<string, Entry> = {
       "B692: writes only OrderItem.deliveredQty (recomputed from the evidence rows it inserts)",
   },
   "orders/orders.service.ts::reopenOrder": { kind: "exempt", reason: "status only" },
+  "orders/line-position.ts::densifyOrderLines": {
+    kind: "exempt",
+    reason:
+      "W-1187: writes only OrderItem.position (the display order); no qty, price or composition column",
+  },
+  "invoices/invoice-line-position.ts::restampKeptTail": {
+    kind: "exempt",
+    reason:
+      "W-1187: writes only InvoiceItem.position (a rebuild moves the kept NSF fee rows after the rebuilt lines); no qty, price or composition column",
+  },
+  "invoices/invoice-follow-order.ts::followOrderLineOrder": {
+    kind: "exempt",
+    reason:
+      "W-1187 PR-1e: writes only InvoiceItem.position (the order's reorder re-ranks its invoices); no qty, price or composition column",
+  },
+  "orders/line-position.ts::restampKeptLines": {
+    kind: "exempt",
+    reason:
+      "W-1187: writes only OrderItem.position (a replace keeps each row's slot); no qty, price or composition column",
+  },
+  "orders/merge-unlisted-lines.ts::createUnlistedLoserLine": {
+    kind: "exempt",
+    reason:
+      "an unlisted (catalog-free) line is never composed; both merges sync compositions at their end",
+  },
+  "orders/order-line-order.ts::reorderOrderLines": {
+    kind: "exempt",
+    reason:
+      "W-1187: writes only OrderItem.position (the caller's arrangement); no qty, price or composition column",
+  },
   "orders/recompute-line-category-taxes.ts::recomputeLineCategoryTaxes": {
     kind: "exempt",
     reason: "tax amount, plus the rate trio stamped once on a NULL-trio line",

@@ -47,24 +47,29 @@ export function resolveRecipientEmail(
   return recipientEmail;
 }
 
+/** The reminder's one invoice read. Pinned by invoice-reminder-email.unit-select.spec.ts: `product.unit` names a plain line in the "Items" count. */
+export const REMINDER_INVOICE_INCLUDE = {
+  customer: { select: { id: true, businessName: true, contactName: true, email: true } },
+  // SA-1029 A-1: the product's base word for a legacy line that never froze one (no per-item query)
+  items: {
+    include: {
+      product: { select: { baseUnitLabel: true, unit: true, ...LINE_NAME_PRODUCT_SELECT } },
+    },
+  },
+  // F03/R8: CONFIRMED (PAID) payments only — feeds totalPaid/balanceDue below.
+  // B421: creditNote relation needed for the customer-facing "Credit
+  // issued — CN-…" line's number.
+  payments: {
+    where: CONFIRMED_PAYMENT,
+    include: { creditNote: { select: { creditNoteNumber: true } } },
+  },
+} as const;
+
 /** Send a payment reminder email without changing the invoice status. */
 export async function sendReminder(deps: ReminderEmailDeps, id: string, overrideEmail?: string) {
   const inv = await deps.prisma.forTenant().invoice.findUnique({
     where: { id },
-    include: {
-      customer: { select: { id: true, businessName: true, contactName: true, email: true } },
-      // SA-1029 A-1: the product's base word for a legacy line that never froze one (no per-item query)
-      items: {
-        include: { product: { select: { baseUnitLabel: true, ...LINE_NAME_PRODUCT_SELECT } } },
-      },
-      // F03/R8: CONFIRMED (PAID) payments only — feeds totalPaid/balanceDue below.
-      // B421: creditNote relation needed for the customer-facing "Credit
-      // issued — CN-…" line's number.
-      payments: {
-        where: CONFIRMED_PAYMENT,
-        include: { creditNote: { select: { creditNoteNumber: true } } },
-      },
-    },
+    include: REMINDER_INVOICE_INCLUDE,
   });
   if (!inv) throw new NotFoundException("Invoice not found");
   assertReminderIssued(inv.status); // row 318a: only SENT / VIEWED / PARTIAL / OVERDUE

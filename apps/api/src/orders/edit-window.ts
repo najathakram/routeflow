@@ -7,11 +7,13 @@ import type { BuyerOrderEditWindow } from "@routeflow/types";
  * descriptor (`computeEditWindow`) both read THIS list, so a buyer client is
  * never told the window is open on an order the API is about to refuse.
  * Operators and drivers keep editing at every live stage.
+ * W-1189: REFUSED (SA-1101, added after B63) is closed too: the goods came back, so a buyer's edit has nothing to change.
  */
 export const BUYER_EDIT_CLOSED_STATUSES: OrderStatus[] = [
   OrderStatus.OUT_FOR_DELIVERY,
   OrderStatus.PARTIALLY_DELIVERED,
   OrderStatus.DELIVERED,
+  OrderStatus.REFUSED,
 ];
 
 /**
@@ -38,7 +40,13 @@ export function computeEditWindow(
     role === UserRole.CUSTOMER &&
     BUYER_EDIT_CLOSED_STATUSES.includes(order.status as OrderStatus)
   ) {
-    return { editable: false, editableUntil: null, closedReason: "DISPATCHED" };
+    // W-1189: a refused order is closed by its status, not by dispatch (no "send a change request" explanation)
+    const refused = order.status === OrderStatus.REFUSED;
+    return {
+      editable: false,
+      editableUntil: null,
+      closedReason: refused ? "STATUS" : "DISPATCHED",
+    };
   }
   const editable = order.status !== "CANCELLED";
   return {

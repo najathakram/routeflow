@@ -39,6 +39,10 @@ import { API_ERROR_CODES, SHIPPED_ORDER_MESSAGE } from "@routeflow/types";
 import { describeChangeRequest, describeResolution } from "@/lib/change-requests";
 import { fmtCalendarDate } from "@/lib/formatting";
 import { ComponentSubLines } from "@/components/ComponentSubLines";
+import { LineHandle, LineRow } from "@/components/MovableTableRow";
+import { SortableLines } from "@/components/SortableLines";
+import { SortLinesButton } from "@/components/SortLinesButton";
+import { useOrderLineOrder } from "@/lib/use-order-line-order";
 import { DeliveryTrackingCard } from "./_components/DeliveryTrackingCard";
 import { ShipmentCard } from "./_components/ShipmentCard";
 import { useBuyerSellerCapabilities } from "@/lib/api/buyer-capabilities";
@@ -557,6 +561,8 @@ function RequestChangeModal({
  * `product: null` and carries its label in `name` (B586: reading `li.product.name` unguarded
  * crashed the whole page for any order containing one).
  */
+const NO_LINES: BuyerOrder["lineItems"] = [];
+
 function lineLabel(li: BuyerOrder["lineItems"][number]): string {
   return li.product?.name ?? li.name ?? "Custom item";
 }
@@ -632,6 +638,15 @@ export default function BuyerOrderDetailPage() {
   // and the custom line is left as the seller set it.
   const hasCustomLine = !!order?.lineItems.some((li) => li.status !== "CANCELLED" && !li.productId);
   const canEdit = editWindowOpen;
+  // W-1187 PR-2c: the buyer arranges their own order's lines while the edit window is open (not while editing items).
+  const lineOrder = useOrderLineOrder({
+    orderId,
+    updatedAt: order?.updatedAt,
+    lineItems: order?.lineItems ?? NO_LINES,
+    enabled: editWindowOpen && !editMode,
+    buyer: true,
+    labelOf: lineLabel,
+  });
   // P5-10: change requests exist exactly where direct editing ended — mirror
   // the server's create gate (run IN_PROGRESS + order still deliverable).
   const canRequestChange =
@@ -966,191 +981,207 @@ export default function BuyerOrderDetailPage() {
           </p>
         )}
 
-        <div className="overflow-x-auto">
-          <table className="w-full sm:min-w-[640px]">
-            <thead>
-              <tr className="border-b border-surface-border text-xs text-navy/70 uppercase tracking-wider">
-                <th className="px-4 py-2.5 text-left">Product</th>
-                <th className="px-4 py-2.5 text-right w-20">
-                  {showDeliveryProgress ? "Ordered" : "Qty"}
-                </th>
-                {showDeliveryProgress && (
-                  <>
-                    <th className="px-4 py-2.5 text-right w-20">
-                      {travel === "pickup" ? "Picked up" : "Delivered"}
-                    </th>
-                    <th className="px-4 py-2.5 text-right w-20">Remaining</th>
-                  </>
-                )}
-                <th className="px-4 py-2.5 text-right w-28 max-sm:hidden">Unit Price</th>
-                <th className="px-4 py-2.5 text-right w-28">Subtotal</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-surface-border">
-              {editMode
-                ? editItems.map((item) => (
-                    <tr key={editRowKey(item)} className="hover:bg-surface-raised/50">
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() =>
-                              setEditItems((prev) =>
-                                prev.filter((i) => editRowKey(i) !== editRowKey(item)),
-                              )
-                            }
-                            className="rounded p-1 text-danger/40 hover:bg-danger-bg hover:text-danger transition-colors disabled:opacity-40"
-                            title="Remove item"
-                            aria-label={`Remove ${item.name}`}
-                            disabled={stale}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                          <span className="text-sm font-medium text-navy">{item.name}</span>
-                          {/* BUY_N_GET_M: the preview subtotal already nets these off. */}
-                          {buyerLineAmountFreeUnits(item) > 0 && (
-                            <span className="inline-flex items-center rounded-full bg-buyer-50 px-1.5 py-0.5 text-[10px] font-semibold text-buyer-700">
-                              {buyerLineAmountFreeUnits(item)} free
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center justify-end gap-1">
-                          <button
-                            onClick={() =>
-                              setEditItems((prev) =>
-                                prev.map((i) =>
-                                  editRowKey(i) === editRowKey(item)
-                                    ? { ...i, qty: Math.max(1, i.qty - 1) }
-                                    : i,
-                                ),
-                              )
-                            }
-                            disabled={stale}
-                            className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy max-lg:inline-flex max-lg:min-h-11 max-lg:min-w-11 max-lg:items-center max-lg:justify-center disabled:opacity-40"
-                          >
-                            <Minus className="h-3.5 w-3.5" />
-                          </button>
-                          <input
-                            type="number"
-                            min={1}
-                            value={item.qty}
-                            onChange={(e) => {
-                              const v = Math.max(1, Number(e.target.value));
-                              setEditItems((prev) =>
-                                prev.map((i) =>
-                                  editRowKey(i) === editRowKey(item) ? { ...i, qty: v } : i,
-                                ),
-                              );
-                            }}
-                            disabled={stale}
-                            className="w-14 rounded border border-surface-border bg-white px-2 py-1 text-center text-sm text-navy max-lg:h-11 disabled:opacity-40"
-                          />
-                          <button
-                            onClick={() =>
-                              setEditItems((prev) =>
-                                prev.map((i) =>
-                                  editRowKey(i) === editRowKey(item) ? { ...i, qty: i.qty + 1 } : i,
-                                ),
-                              )
-                            }
-                            disabled={stale}
-                            className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy max-lg:inline-flex max-lg:min-h-11 max-lg:min-w-11 max-lg:items-center max-lg:justify-center disabled:opacity-40"
-                          >
-                            <Plus className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-right text-sm text-navy/70 max-sm:hidden">
-                        {item.unitPrice ? fmt(item.unitPrice) : "—"}
-                      </td>
-                      <td className="px-4 py-3 text-right text-sm font-medium text-navy">
-                        {item.unitPrice ? fmt(buyerLineAmount(item)) : "—"}
-                      </td>
-                    </tr>
-                  ))
-                : order.lineItems.map((li) => (
-                    <tr
-                      key={li.id}
-                      className={`hover:bg-surface-raised/50 ${li.status === "CANCELLED" ? "opacity-40 line-through" : ""}`}
-                    >
-                      <td className="px-4 py-3">
-                        <p className="text-sm font-medium text-navy">{lineLabel(li)}</p>
-                        <p className="text-xs text-navy/70">
-                          {li.product?.unit}
-                          <span className="sm:hidden"> · {fmt(Number(li.unitPrice))} each</span>
-                          {li.product && li.priceType !== "STANDARD" && (
-                            <span
-                              className={`ml-1.5 inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
-                                li.priceType === "DISCOUNTED"
-                                  ? "bg-success-bg text-success"
-                                  : "bg-buyer-50 text-buyer-600"
-                              }`}
+        {lineOrder.canMove && (
+          <div className="flex justify-end border-b border-surface-border px-2 py-1">
+            <SortLinesButton onSort={() => void lineOrder.sortByName()} saving={lineOrder.saving} />
+          </div>
+        )}
+        <SortableLines
+          lines={lineOrder.lines}
+          onMove={lineOrder.onMove}
+          enabled={lineOrder.canMove}
+        >
+          <div className="overflow-x-auto">
+            <table className="w-full sm:min-w-[640px]">
+              <thead>
+                <tr className="border-b border-surface-border text-xs text-navy/70 uppercase tracking-wider">
+                  <th className="px-4 py-2.5 text-left">Product</th>
+                  <th className="px-4 py-2.5 text-right w-20">
+                    {showDeliveryProgress ? "Ordered" : "Qty"}
+                  </th>
+                  {showDeliveryProgress && (
+                    <>
+                      <th className="px-4 py-2.5 text-right w-20">
+                        {travel === "pickup" ? "Picked up" : "Delivered"}
+                      </th>
+                      <th className="px-4 py-2.5 text-right w-20">Remaining</th>
+                    </>
+                  )}
+                  <th className="px-4 py-2.5 text-right w-28 max-sm:hidden">Unit Price</th>
+                  <th className="px-4 py-2.5 text-right w-28">Subtotal</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-surface-border">
+                {editMode
+                  ? editItems.map((item) => (
+                      <tr key={editRowKey(item)} className="hover:bg-surface-raised/50">
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() =>
+                                setEditItems((prev) =>
+                                  prev.filter((i) => editRowKey(i) !== editRowKey(item)),
+                                )
+                              }
+                              className="rounded p-1 text-danger/40 hover:bg-danger-bg hover:text-danger transition-colors disabled:opacity-40"
+                              title="Remove item"
+                              aria-label={`Remove ${item.name}`}
+                              disabled={stale}
                             >
-                              {li.priceType === "DISCOUNTED"
-                                ? "Discounted"
-                                : li.priceType === "PROMO"
-                                  ? "Promo"
-                                  : "Special"}
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                            <span className="text-sm font-medium text-navy">{item.name}</span>
+                            {/* BUY_N_GET_M: the preview subtotal already nets these off. */}
+                            {buyerLineAmountFreeUnits(item) > 0 && (
+                              <span className="inline-flex items-center rounded-full bg-buyer-50 px-1.5 py-0.5 text-[10px] font-semibold text-buyer-700">
+                                {buyerLineAmountFreeUnits(item)} free
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              onClick={() =>
+                                setEditItems((prev) =>
+                                  prev.map((i) =>
+                                    editRowKey(i) === editRowKey(item)
+                                      ? { ...i, qty: Math.max(1, i.qty - 1) }
+                                      : i,
+                                  ),
+                                )
+                              }
+                              disabled={stale}
+                              className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy max-lg:inline-flex max-lg:min-h-11 max-lg:min-w-11 max-lg:items-center max-lg:justify-center disabled:opacity-40"
+                            >
+                              <Minus className="h-3.5 w-3.5" />
+                            </button>
+                            <input
+                              type="number"
+                              min={1}
+                              value={item.qty}
+                              onChange={(e) => {
+                                const v = Math.max(1, Number(e.target.value));
+                                setEditItems((prev) =>
+                                  prev.map((i) =>
+                                    editRowKey(i) === editRowKey(item) ? { ...i, qty: v } : i,
+                                  ),
+                                );
+                              }}
+                              disabled={stale}
+                              className="w-14 rounded border border-surface-border bg-white px-2 py-1 text-center text-sm text-navy max-lg:h-11 disabled:opacity-40"
+                            />
+                            <button
+                              onClick={() =>
+                                setEditItems((prev) =>
+                                  prev.map((i) =>
+                                    editRowKey(i) === editRowKey(item)
+                                      ? { ...i, qty: i.qty + 1 }
+                                      : i,
+                                  ),
+                                )
+                              }
+                              disabled={stale}
+                              className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy max-lg:inline-flex max-lg:min-h-11 max-lg:min-w-11 max-lg:items-center max-lg:justify-center disabled:opacity-40"
+                            >
+                              <Plus className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-right text-sm text-navy/70 max-sm:hidden">
+                          {item.unitPrice ? fmt(item.unitPrice) : "—"}
+                        </td>
+                        <td className="px-4 py-3 text-right text-sm font-medium text-navy">
+                          {item.unitPrice ? fmt(buyerLineAmount(item)) : "—"}
+                        </td>
+                      </tr>
+                    ))
+                  : lineOrder.shown.map((li) => (
+                      <LineRow
+                        key={li.id}
+                        id={li.id}
+                        movable={lineOrder.canMove}
+                        className={`hover:bg-surface-raised/50 ${li.status === "CANCELLED" ? "opacity-40 line-through" : ""}`}
+                      >
+                        <td className={`px-4 py-3 ${lineOrder.canMove ? "relative pl-10" : ""}`}>
+                          <LineHandle />
+                          <p className="text-sm font-medium text-navy">{lineLabel(li)}</p>
+                          <p className="text-xs text-navy/70">
+                            {li.product?.unit}
+                            <span className="sm:hidden"> · {fmt(Number(li.unitPrice))} each</span>
+                            {li.product && li.priceType !== "STANDARD" && (
+                              <span
+                                className={`ml-1.5 inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+                                  li.priceType === "DISCOUNTED"
+                                    ? "bg-success-bg text-success"
+                                    : "bg-buyer-50 text-buyer-600"
+                                }`}
+                              >
+                                {li.priceType === "DISCOUNTED"
+                                  ? "Discounted"
+                                  : li.priceType === "PROMO"
+                                    ? "Promo"
+                                    : "Special"}
+                              </span>
+                            )}
+                          </p>
+                          {li.notes?.trim() && (
+                            <p className="mt-0.5 whitespace-pre-line text-xs font-normal italic text-navy/60">
+                              {li.notes}
+                            </p>
+                          )}
+                          <ComponentSubLines components={li.components} />
+                        </td>
+                        <td className="px-4 py-3 text-right text-sm text-navy">
+                          <span>{Number(li.qty)}</span>
+                          {li.boxes != null && li.boxes > 0 && (
+                            <p className="text-[10px] text-navy/70">
+                              {li.boxes} box{li.boxes > 1 ? "es" : ""}
+                              {li.pieces ? ` + ${li.pieces} pcs` : ""}
+                            </p>
+                          )}
+                          {/* BUY_N_GET_M: without this the reduced subtotal reads as a
+                          pricing error to the buyer. */}
+                          {Number(li.promoFreeUnits ?? 0) > 0 && (
+                            <p className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-buyer-50 px-1.5 py-0.5 text-[10px] font-semibold text-buyer-700">
+                              {Number(li.promoFreeUnits)} free
+                            </p>
+                          )}
+                        </td>
+                        {showDeliveryProgress && (
+                          <>
+                            <td className="px-4 py-3 text-right text-sm text-success font-medium">
+                              {Number(li.deliveredQty ?? 0)}
+                            </td>
+                            <td className="px-4 py-3 text-right text-sm">
+                              {(() => {
+                                const remaining = Number(li.qty) - Number(li.deliveredQty ?? 0);
+                                return remaining > 0 ? (
+                                  <span className="text-warning font-medium">{remaining}</span>
+                                ) : (
+                                  <span className="text-success">0</span>
+                                );
+                              })()}
+                            </td>
+                          </>
+                        )}
+                        <td className="px-4 py-3 text-right text-sm text-navy/70 max-sm:hidden">
+                          {fmt(Number(li.unitPrice))}
+                          {li.originalPrice && Number(li.originalPrice) > Number(li.unitPrice) && (
+                            <span className="ml-1 text-xs text-navy/70 line-through">
+                              {fmt(Number(li.originalPrice))}
                             </span>
                           )}
-                        </p>
-                        {li.notes?.trim() && (
-                          <p className="mt-0.5 whitespace-pre-line text-xs font-normal italic text-navy/60">
-                            {li.notes}
-                          </p>
-                        )}
-                        <ComponentSubLines components={li.components} />
-                      </td>
-                      <td className="px-4 py-3 text-right text-sm text-navy">
-                        <span>{Number(li.qty)}</span>
-                        {li.boxes != null && li.boxes > 0 && (
-                          <p className="text-[10px] text-navy/70">
-                            {li.boxes} box{li.boxes > 1 ? "es" : ""}
-                            {li.pieces ? ` + ${li.pieces} pcs` : ""}
-                          </p>
-                        )}
-                        {/* BUY_N_GET_M: without this the reduced subtotal reads as a
-                          pricing error to the buyer. */}
-                        {Number(li.promoFreeUnits ?? 0) > 0 && (
-                          <p className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-buyer-50 px-1.5 py-0.5 text-[10px] font-semibold text-buyer-700">
-                            {Number(li.promoFreeUnits)} free
-                          </p>
-                        )}
-                      </td>
-                      {showDeliveryProgress && (
-                        <>
-                          <td className="px-4 py-3 text-right text-sm text-success font-medium">
-                            {Number(li.deliveredQty ?? 0)}
-                          </td>
-                          <td className="px-4 py-3 text-right text-sm">
-                            {(() => {
-                              const remaining = Number(li.qty) - Number(li.deliveredQty ?? 0);
-                              return remaining > 0 ? (
-                                <span className="text-warning font-medium">{remaining}</span>
-                              ) : (
-                                <span className="text-success">0</span>
-                              );
-                            })()}
-                          </td>
-                        </>
-                      )}
-                      <td className="px-4 py-3 text-right text-sm text-navy/70 max-sm:hidden">
-                        {fmt(Number(li.unitPrice))}
-                        {li.originalPrice && Number(li.originalPrice) > Number(li.unitPrice) && (
-                          <span className="ml-1 text-xs text-navy/70 line-through">
-                            {fmt(Number(li.originalPrice))}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-right text-sm font-medium text-navy">
-                        {fmt(Number(li.subtotal))}
-                      </td>
-                    </tr>
-                  ))}
-            </tbody>
-          </table>
-        </div>
+                        </td>
+                        <td className="px-4 py-3 text-right text-sm font-medium text-navy">
+                          {fmt(Number(li.subtotal))}
+                        </td>
+                      </LineRow>
+                    ))}
+              </tbody>
+            </table>
+          </div>
+        </SortableLines>
 
         {/* Inline product search (edit mode only) */}
         {editMode && (

@@ -83,6 +83,8 @@ export interface User {
   role: UserRole;
   status: UserStatus;
   createdAt: string;
+  /** B461: the new login email this user is waiting to confirm (a live change request), else null. */
+  pendingEmail?: string | null;
 }
 
 export interface Order {
@@ -188,6 +190,7 @@ export * from "./api/restrictions-settings";
 export * from "./api/product-labels";
 export * from "./api/restrictions-admin";
 export * from "./api/buyer-reorder";
+export * from "./api/line-order";
 export * from "./api/selling-restrictions";
 export * from "./api/messaging-matrix";
 export * from "./api/messaging-delivery";
@@ -195,6 +198,7 @@ export * from "./api/staff-order-email";
 export * from "./api/us-states";
 export * from "./api/zip-state";
 export * from "./api/config-snapshots";
+export * from "./api/feature-changes";
 export * from "./api/auto-locks";
 export * from "./api/counter-day-close";
 export * from "./api/counter-drawer-event";

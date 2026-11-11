@@ -125,6 +125,8 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   // (packages/types/api/order-tracking.ts) that web and mobile branch on. Existing enums, so the
   // triage count below does not move.
   ["ORDER_STATUS_VALUES", "OrderStatus"],
+  // SA-1124 PR-0: brand-new Prisma enum, mirrored immediately — see the triage tripwire below.
+  ["ORDER_REVIEW_FLAG_KIND_VALUES", "OrderReviewFlagKind"],
   ["ROUTE_RUN_STATUS_VALUES", "RouteRunStatus"],
   ["ROUTE_RUN_STOP_STATUS_VALUES", "RouteRunStopStatus"],
   ["HANDOFF_REALM_VALUES", "HandoffRealm"],
@@ -311,7 +313,9 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // Triage for InvoiceWriteOffKind (SA-1050 PR-0, migration 20261105120000_invoice_write_off_events_and_bad_debt_group): a
 // brand-new Prisma enum, mirrored as `INVOICE_WRITE_OFF_KIND_VALUES` + its `ENUM_TABLE` row above (121 → 122). The same
 // folder adds BAD_DEBT to the existing OperatorPermissionGroup (a value, not an enum, so no count change from it).
-const PINNED_PRISMA_ENUM_COUNT = 122;
+// Triage for OrderReviewFlagKind (SA-1124 PR-0, migration 20261110000000_order_review_flags_offline): a brand-new Prisma
+// enum, mirrored as `ORDER_REVIEW_FLAG_KIND_VALUES` + its `ENUM_TABLE` row above (122 → 123).
+const PINNED_PRISMA_ENUM_COUNT = 123;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {

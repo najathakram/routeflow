@@ -5,6 +5,7 @@ import {
   counterMethodLine,
   explainedTaxRatePercent,
   formatReceiptMoney,
+  orderDateDrift,
   receiptFigures,
   receiptLineAmounts,
   receiptLineDetail,
@@ -179,6 +180,17 @@ export function formatSaleTime(at: Date, timeZone?: string | null): string {
   }
 }
 
+/** "Fri, Nov 6, 2026" for a chosen business day (a YYYY-MM-DD string has no time and no zone). */
+export function formatSaleDay(day: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(`${day}T00:00:00Z`));
+}
+
 /** A catalogue product's display name, the web's `displayProductName` rule: a variant reads "<parent> - <variant>". */
 function productName(p: NonNullable<ReceiptLineInput["product"]>): string {
   if (!p.parentProductId && !p.parent) return p.name;
@@ -323,7 +335,9 @@ export function buildReceiptModel(
   const footer = Array.from(clean(branding.footer)).slice(0, RECEIPT_FOOTER_MAX_CHARS).join("");
   const walkIn = !order.customer || !!order.customer.isWalkIn;
   const customerName = walkIn ? "" : clean(order.customer?.businessName);
-  // a counter sale is dated when it was rung; any other order by its business date
+  // a counter sale is dated when it was rung, unless it was dated to another day (W-1188: it prints that day and carries the
+  // entry time apart); any other order by its business date
+  const drift = order.counterSale ? orderDateDrift(order.orderDate, order.createdAt, zone) : null;
   const soldAt = order.counterSale ? order.createdAt : (order.orderDate ?? order.createdAt);
 
   return {
@@ -331,7 +345,8 @@ export function buildReceiptModel(
     orderNumber: order.orderNumber ?? "",
     invoiceNumber: shown?.invoiceNumber ?? "",
     invoiceId: shown?.id ?? "",
-    dateLabel: formatSaleTime(soldAt, zone),
+    dateLabel: drift ? formatSaleDay(drift.day) : formatSaleTime(soldAt, zone),
+    ...(drift ? { enteredLabel: formatSaleTime(order.createdAt, zone) } : {}),
     lines,
     cashier: cashierNameOf(order.soldBy),
     customerName: customerName || null,

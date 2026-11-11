@@ -15,6 +15,7 @@
  */
 import { test, expect, type BrowserContext, type Locator, type Page } from "@playwright/test";
 import { loginAsOperator, setTenantCookie } from "./helpers/auth";
+import { failParks } from "./helpers/counter-park-fail";
 import { TENANT_SLUG } from "./helpers/constants";
 import { apiBase, operatorAccessToken } from "./helpers/api";
 import {
@@ -64,6 +65,7 @@ const focusInDialog = (page: Page) =>
 
 async function openTillWithOneLine(page: Page, context: BrowserContext) {
   await setTenantCookie(context, BASE);
+  await failParks(page); // W-1184: a leave parks first; a failed park is what shows this dialog
   await page.goto("/orders");
   const token = await operatorAccessToken(page);
   const res = await page.request.get(`${apiBase(page.url())}/api/v1/products`, {

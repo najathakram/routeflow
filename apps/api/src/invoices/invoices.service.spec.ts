@@ -419,6 +419,7 @@ describe("InvoicesService", () => {
             customer: {},
           })),
         },
+        tenantConfig: { findUnique: jest.fn().mockResolvedValue(null) }, // W-1188: the numbering year reads the zone ON the caller tx
         customer: { findFirst: jest.fn().mockResolvedValue({ isTaxExempt: false }) },
         trackedCategory: { findMany: jest.fn().mockResolvedValue([]) },
         orderItem: {

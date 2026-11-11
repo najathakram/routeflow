@@ -115,9 +115,7 @@ function SourceCaption({
   // P06: one "Auto" pill and a caption; the word is never repeated in the caption.
   return (
     <span className="flex flex-wrap items-center gap-1.5">
-      <span className="rounded-full bg-navy/10 px-1.5 py-0.5 text-[11px] font-medium text-navy">
-        Auto
-      </span>
+      <span className="text-[11px] text-navy/60">Auto</span>
       <span>
         {why}
         <TierFigure tierName={tierName} tierPrice={tierPrice} />
@@ -152,10 +150,15 @@ function ProductBlock({
   const hasTierFigure = isSpecialTier(entry.tier);
   const own = entry.orderUnitScope === "customer";
   const rows = entry.rows;
+  // P22: the list price is a comparison, so it is drawn only when it differs from what this customer pays.
+  const differs = (r: CustomerUnitPriceRowDto) => formatMoney(r.listPrice) !== formatMoney(r.price);
+  const showList = rows.some(differs);
   return (
     <article
       data-testid={T.product(entry.productId)}
-      className={`min-w-0 rounded-lg border border-surface-border p-4 ${single ? "" : "self-start"}`}
+      className={
+        single ? "min-w-0" : "min-w-0 self-start rounded-lg border border-surface-border p-4"
+      }
     >
       {showName ? <h3 className="text-sm font-semibold text-navy">{entry.productName}</h3> : null}
       <p data-testid={T.ordersIn(entry.productId)} className="mt-1 text-sm text-navy/80">
@@ -166,16 +169,18 @@ function ProductBlock({
       <div className="mt-3 overflow-x-auto">
         <table data-testid={T.prices(entry.productId)} className="w-full text-sm">
           <thead>
-            <tr className="text-left text-xs text-navy/60">
+            <tr className="text-left text-[11px] uppercase tracking-wide text-navy/60">
               <th scope="col" className="py-1.5 pr-3 align-top font-medium">
                 Unit
               </th>
               <th scope="col" className="py-1.5 pr-3 align-top font-medium">
                 Price
               </th>
-              <th scope="col" className="hidden py-1.5 pr-3 align-top font-medium sm:table-cell">
-                {listName}
-              </th>
+              {showList ? (
+                <th scope="col" className="hidden py-1.5 pr-3 align-top font-medium sm:table-cell">
+                  {listName}
+                </th>
+              ) : null}
             </tr>
           </thead>
           <tbody>
@@ -189,9 +194,11 @@ function ProductBlock({
                   <div className="text-navy">{row.label}</div>
                   {row.code ? <div className="text-xs text-navy/60">{row.code}</div> : null}
                   {/* K14 P13: the list-price column is hidden below sm; keep it as a muted second line there */}
-                  <div className="mt-0.5 text-xs text-navy/60 sm:hidden">
-                    {`${listName} ${formatMoney(row.listPrice)}`}
-                  </div>
+                  {differs(row) ? (
+                    <div className="mt-0.5 text-xs text-navy/60 sm:hidden">
+                      {`${listName} ${formatMoney(row.listPrice)}`}
+                    </div>
+                  ) : null}
                 </td>
                 <td className="py-2 pr-3 align-top">
                   <PriceCell row={row} />
@@ -212,9 +219,11 @@ function ProductBlock({
                     />
                   </div>
                 </td>
-                <td className="hidden py-2 pr-3 align-top font-normal tabular-nums text-navy/70 sm:table-cell">
-                  {formatMoney(row.listPrice)}
-                </td>
+                {showList ? (
+                  <td className="hidden py-2 pr-3 align-top font-normal tabular-nums text-navy/70 sm:table-cell">
+                    {differs(row) ? formatMoney(row.listPrice) : null}
+                  </td>
+                ) : null}
               </tr>
             ))}
           </tbody>
@@ -312,7 +321,11 @@ export function CustomerPriceView({ customerId, productId }: CustomerPriceViewPr
       data-testid={T.section}
       aria-labelledby="h-cust"
       // K12 P05: on the product page the section follows a card; 24 px keeps the heading off it.
-      className={`space-y-3 ${productId ? "mt-6" : ""}`}
+      className={
+        productId
+          ? "mt-6 space-y-3 rounded-lg border border-surface-border bg-white p-4"
+          : "space-y-3"
+      }
     >
       <h2
         id="h-cust"
