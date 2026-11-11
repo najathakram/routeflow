@@ -15,6 +15,7 @@ import { RestrictionOverrideNote } from "@/components/RestrictionOverrideNote";
 import { displayLineStatus } from "./line-status";
 import { lineDisplayPack } from "@/lib/line-own-pack";
 import { ComponentSubLines } from "@/components/ComponentSubLines";
+import { SortLinesButton } from "@/components/SortLinesButton";
 import { SortableLines, useSortableLine } from "@/components/SortableLines";
 import { useOrderLineOrder } from "@/lib/use-order-line-order";
 
@@ -75,9 +76,16 @@ function MovableLines(props: TableProps) {
     enabled: props.orderStatus !== "CANCELLED",
   });
   return (
-    <SortableLines lines={order.lines} onMove={order.onMove} enabled={order.canMove}>
-      <TableBody {...props} shown={order.shown} Row={SortableRow} />
-    </SortableLines>
+    <>
+      {order.canMove && (
+        <div className="flex justify-end pb-2">
+          <SortLinesButton onSort={() => void order.sortByName()} saving={order.saving} />
+        </div>
+      )}
+      <SortableLines lines={order.lines} onMove={order.onMove} enabled={order.canMove}>
+        <TableBody {...props} shown={order.shown} Row={SortableRow} />
+      </SortableLines>
+    </>
   );
 }
 

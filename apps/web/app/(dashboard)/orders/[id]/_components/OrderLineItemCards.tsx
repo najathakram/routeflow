@@ -12,6 +12,7 @@ import type { OrderItem } from "@/lib/api/orders";
 import { orderLineName } from "@/lib/product-display";
 import { lineDisplayPack } from "@/lib/line-own-pack";
 import { displayLineStatus } from "./line-status";
+import { SortLinesButton } from "@/components/SortLinesButton";
 import { SortableLines, useSortableLine } from "@/components/SortableLines";
 import { useOrderLineOrder } from "@/lib/use-order-line-order";
 
@@ -114,9 +115,16 @@ function MovableCards(props: CardsProps & Expand) {
   // Folded rows are not on screen, so a drop could not land among them: move only with the whole list shown.
   const open = props.expanded || props.lineItems.length <= COLLAPSE_AFTER;
   return (
-    <SortableLines lines={order.lines} onMove={order.onMove} enabled={order.canMove && open}>
-      <CardsBody {...props} shown={order.shown} Row={SortableCardRow} />
-    </SortableLines>
+    <>
+      {order.canMove && open && (
+        <div className="flex justify-end pb-2">
+          <SortLinesButton onSort={() => void order.sortByName()} saving={order.saving} />
+        </div>
+      )}
+      <SortableLines lines={order.lines} onMove={order.onMove} enabled={order.canMove && open}>
+        <CardsBody {...props} shown={order.shown} Row={SortableCardRow} />
+      </SortableLines>
+    </>
   );
 }
 
