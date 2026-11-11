@@ -77,6 +77,7 @@ import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
 import { OrderLineItemCards } from "./_components/OrderLineItemCards";
 import { createInvoiceVariant } from "./_components/create-invoice-variant";
 import { creditSelectionsFromOrder, formatDateOnly } from "./order-detail-helpers";
+import { OrderDateHeader, OrderDateRow } from "./_components/OrderDateLine";
 import { ActionTier } from "./_components/ActionTier";
 import { useBelowBreakpoint } from "@/lib/hooks/useBelowBreakpoint";
 import { useScrollAfterSave } from "./_components/use-scroll-after-save";
@@ -1004,20 +1005,7 @@ export default function OrderDetailPage() {
             <OrderStaffFlags order={order} />
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2.5 text-sm text-navy/70">
-            <span>
-              Created{" "}
-              {new Date(order.createdAt).toLocaleDateString("en-US", {
-                month: "short",
-                day: "numeric",
-                year: "numeric",
-              })}
-            </span>
-            {order.orderDate && (
-              <span className="inline-flex h-6 items-center gap-1.5 rounded-full border border-surface-border bg-white px-2.5 text-xs font-medium text-navy">
-                <Calendar className="h-3.5 w-3.5 text-navy/40" />
-                Order date: {formatDateOnly(order.orderDate)}
-              </span>
-            )}
+            <OrderDateHeader createdAt={order.createdAt} orderDate={order.orderDate} />
             {order.requestedDeliveryDate && (
               <span className="inline-flex h-6 items-center gap-1.5 rounded-full border border-surface-border bg-white px-2.5 text-xs font-medium text-navy">
                 <Calendar className="h-3.5 w-3.5 text-navy/40" />
@@ -1850,12 +1838,7 @@ export default function OrderDetailPage() {
                     onLeavePickup={setPendingPath}
                   />
                 )}
-              {order.orderDate && (
-                <div className="flex items-center justify-between gap-3">
-                  <dt className="text-navy/70">Order date</dt>
-                  <dd className="font-medium text-navy">{formatDateOnly(order.orderDate)}</dd>
-                </div>
-              )}
+              <OrderDateRow createdAt={order.createdAt} orderDate={order.orderDate} />
               {hasSalesAgents && (
                 <div className="flex items-center justify-between gap-3">
                   <dt className="text-navy/70">Commission</dt>
