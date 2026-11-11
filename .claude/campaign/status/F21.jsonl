@@ -1,8 +1,8 @@
 {"id":"B76","batch":"F21","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"e5b0af8e"}
-{"id":"B77","batch":"F21","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"e5b0af8e"}
+{"id":"B77","batch":"F21","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Re-check 2026-11-09 at 27d8125e17: 1058f7e734: buyer-auth-context.tsx:140-148 removeQueries([\"buyer\"]) on seller switch; buyer-auth-context.test.tsx:159 and :175. fixed in 1058f7e734 (fixed in 1058f7e7345283ff591ad8ff9e4585cad51a2252)","roundSha":"e5b0af8e","sha":"1058f7e7345283ff591ad8ff9e4585cad51a2252"}
 {"id":"B86","batch":"F21","tier":"T2","state":"already-fixed","pr":2657,"proof":null,"evidence":"Merged dd51e65b (#2657, closes #1528): web and mobile return and vendor-bill stock writes now invalidate the product and inventory query caches","roundSha":"e5b0af8e"}
 {"id":"B93","batch":"F21","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"e5b0af8e"}
-{"id":"B104","batch":"F21","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"0cd59277"}
+{"id":"B104","batch":"F21","tier":"T2","state":"already-fixed","pr":null,"proof":null,"evidence":"Re-check 2026-11-09 at 27d8125e17: commit 3fd7680b50 (B104 buyer socket rooms); apps/api/src/buyer/buyer-link-scope.ts:15; apps/api/src/gateways/routeflow.gateway.buyer-rooms.spec.ts. fixed in 3fd7680b50 (fixed in 3fd7680b50fa5d0e1bdbea893589f4d4a7909df9)","roundSha":"0cd59277","sha":"3fd7680b50fa5d0e1bdbea893589f4d4a7909df9"}
 {"id":"B113","batch":"F21","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"0cd59277"}
 {"id":"B114","batch":"F21","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"0cd59277"}
 {"id":"B115","batch":"F21","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"0cd59277"}

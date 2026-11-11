@@ -16,12 +16,12 @@ import {
   PARKED_STALE_COPY,
   formatParkedTime,
   isStaleParked,
-  lineCountLabel,
   parkedRowTitle,
 } from "@/lib/counter-park";
 import type { SaleDraft } from "@/lib/api/drafts";
 import { draftSummary, parkedAgo } from "@/lib/drafts";
 import { useGuardedRouter } from "@/lib/use-guarded-router";
+import { formatLineWord } from "@routeflow/pricing"; // W-1185: the one line word
 import type { useParkedSales } from "./useParkedSales";
 
 type Parked = ReturnType<typeof useParkedSales>;
@@ -88,7 +88,7 @@ function ParkedRow({
               {names}
             </span>
           ) : (
-            lineCountLabel(row.lineCount)
+            formatLineWord(row.lineCount)
           )}
           {row.customerName ? ` · ${row.customerName}` : ""}
         </p>
@@ -153,7 +153,7 @@ function DraftsSection({
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold text-navy">{title}</p>
                 <p className="truncate text-xs text-navy/70">
-                  {lineCountLabel(itemCount)} · {formatMoney(total)} · paused{" "}
+                  {formatLineWord(itemCount)} · {formatMoney(total)} · paused{" "}
                   {parkedAgo(d.updatedAt)}
                 </p>
               </div>

@@ -30,6 +30,7 @@ import {
   orderMergeDiscounted,
 } from "./merge-discount-guard";
 import * as unitAware from "./unit-aware-guard";
+import { ORDER_LINE_ORDER_BY } from "./line-position";
 
 export type MergeKind = "auto" | "force";
 export type MergeOrder = Prisma.OrderGetPayload<{ include: { lineItems: true } }>;
@@ -94,7 +95,7 @@ export async function readMergeGroup(
       lineItems: {
         where: { status: { not: ItemStatus.CANCELLED } },
         // SA-124e(6): "the FIRST winner line in display order" needs a real order.
-        orderBy: { position: "asc" },
+        orderBy: ORDER_LINE_ORDER_BY,
       },
     },
     orderBy: { updatedAt: "desc" },

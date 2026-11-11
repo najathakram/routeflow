@@ -13,6 +13,7 @@ export const STAFF_CAPABILITY_VALUES = [
   "USE_POS_MODE",
   "EDIT_AFTER_FINAL",
   "OVERRIDE_SELLING_RESTRICTION",
+  "SET_ORDER_DATE",
 ] as const;
 export type StaffCapability = (typeof STAFF_CAPABILITY_VALUES)[number];
 
@@ -38,6 +39,8 @@ export const STAFF_CAPABILITY_RULES: Record<StaffCapability, StaffCapabilityRule
   // Row 510: sell a restricted product with a reason after a RESTRICTION_WARNING. Not DRIVER (the office approves) and
   // not SUPER_ADMIN (not in the ruling; driver-style hard block).
   OVERRIDE_SELLING_RESTRICTION: { roles: ["OPERATOR", "TENANT_ADMIN"], group: "ORDERS" },
+  // W-1188: date a sale (any day the order-date gate accepts). Same roles as the office backdate always had; who may is owner question Q2, one row.
+  SET_ORDER_DATE: { roles: ["OPERATOR", "TENANT_ADMIN"], group: "ORDERS" },
 };
 
 /**

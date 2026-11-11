@@ -150,6 +150,15 @@ import {
   type IdempotencyLookupDeps,
 } from "./merge-idempotency";
 import { BUYER_EDIT_CLOSED_STATUSES, computeEditWindow } from "./edit-window";
+import {
+  ORDER_LINE_ORDER_BY,
+  linePositionAllocator,
+  loserLineRanks,
+  replaceSlotPlanner,
+  settleReplaceSlots,
+} from "./line-position";
+import { attachLinesRearranged, reorderOrderLines } from "./order-line-order";
+import type { ReorderLinesDto } from "./dto/reorder-lines.dto";
 import { fulfillPathLocked } from "./fulfil-path-lock";
 import { assertCancelImpactAllows, cancelImpact } from "./order-cancel-impact";
 import { cancelOrderInTx, lockDeleteLines, type CancelOrderTxOptions } from "./order-cancel-tx";
@@ -177,7 +186,8 @@ import {
 } from "./order-edit-restrictions";
 import * as rGate from "./order-restriction-gate";
 import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-restrictions.core";
-import { parseCommissionRatePct, parseOrderDate } from "./order-parsers";
+import { parseCommissionRatePct } from "./order-parsers";
+import * as od from "./order-date";
 import { assertDeliveryDateNotPast } from "./delivery-date-guard";
 import { tenantTimeZone } from "../common/tenant-time-zone";
 import { getOrderTracking } from "./order-tracking";
@@ -222,7 +232,13 @@ import {
   resolveBuyerLinePrice,
 } from "./buyer-merge-pricing";
 import { captureMarkerCarry } from "./backorder-marker-writes";
-import { buildMergeLineWrites, type MergeLine, type MergeWarning } from "./merge-line-writes";
+import {
+  buildMergeLineWrites,
+  orderMergeAppends,
+  withAppendRanks,
+  type MergeLine,
+  type MergeWarning,
+} from "./merge-line-writes";
 import { assertReplaceAllPackMatchesLive } from "./replace-all-pack-resolution";
 import { decideAddedLinePrice, decideEditedLinePrice, isOverride } from "./staff-line-price";
 import { linesPriceAtCustomerTier, typedLinePrice } from "./driver-line-price";
@@ -261,7 +277,7 @@ import {
   type MergeWarnOpts,
   type MergeWinner,
 } from "./merge-restriction-warning";
-import { collectUnlistedLoserItems } from "./merge-unlisted-lines";
+import { collectUnlistedLoserItems, createUnlistedLoserLine } from "./merge-unlisted-lines";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
@@ -394,6 +410,12 @@ export class OrdersService implements OnApplicationBootstrap {
     return recomputeLineCategoryTaxes(tx, lines, this.logger, isTaxExempt);
   }
 
+  async reorderLines(orderId: string, dto: ReorderLinesDto, user: JwtPayload) {
+    const closedMessage = (order: object) =>
+      carrierGuard.buyerEditClosedMessage(this, order as never);
+    return reorderOrderLines({ prisma: this.prisma, closedMessage }, orderId, dto, user);
+  }
+
   async findAll(query: ListOrdersDto, user: JwtPayload) {
     return findAllOrdersImpl(this.prisma, query, user);
   }
@@ -450,8 +472,8 @@ export class OrdersService implements OnApplicationBootstrap {
           // Scan/insertion order (R2): all lines in one create share the same
           // createdAt (tx clock), so createdAt alone can't order them — `position`
           // carries the scanned order. Legacy/appended lines have null position and
-          // sort LAST (NULLS LAST), with createdAt as the final tiebreak.
-          orderBy: [{ position: "asc" }, { createdAt: "asc" }],
+          // sort LAST (NULLS LAST), with createdAt then id as the final tiebreaks (W-1187: ONE read order).
+          orderBy: ORDER_LINE_ORDER_BY,
         },
         // row 342: who handed it over (staff only; `registerKey` is a scalar already on the row)
         ...(seesHandOverStamp(user) ? { soldBy: HANDOVER_SOLD_BY_SELECT } : {}),
@@ -537,6 +559,7 @@ export class OrdersService implements OnApplicationBootstrap {
     await attachPaymentCreditNotes(this.prisma.forTenant(), order); // #2404
     await attachInvoicesNeedReview(this.prisma.forTenant(), order, user); // B1116 (staff only)
     await attachOrderToCollect(this.prisma.forTenant(), order, user); // SA-1026 (staff only)
+    await attachLinesRearranged(this.prisma.forTenant(), order, user); // W-1187 (staff only)
 
     stampHandedOverBy(order, user); // row 342: staff only; the display name is built once, here
     return orderFor(user, order); // customer-facing fields only for the customer
@@ -654,7 +677,8 @@ export class OrdersService implements OnApplicationBootstrap {
           const [winner, ...losers] = pendingOrders;
           // Unlisted (catalog-free) loser lines can't be keyed by product — each is
           // appended to the winner as its own new line (never boxed, unaffected by B776).
-          const unlistedNewItems = collectUnlistedLoserItems(losers);
+          const loserRanks = loserLineRanks(losers); // W-1187: the append sequence, one rank per loser line
+          const unlistedNewItems = collectUnlistedLoserItems(losers, loserRanks);
 
           // unitsPerBox for every product involved so boxed lines prorate by the box.
           const contributingLines = [...winner.lineItems, ...losers.flatMap((l) => l.lineItems)];
@@ -697,7 +721,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // into another, it gets its own line, at its own snapshot and price, with a warn.
           const { writes: mergeWrites, warnings: packWarnings } = buildMergeLineWrites(
             winner.lineItems.filter((li) => li.productId) as unknown as MergeLine[],
-            authorship.loserLinesOf(losers).filter((li) => li.productId) as unknown as MergeLine[],
+            withAppendRanks(authorship.loserLinesOf(losers), loserRanks) as unknown as MergeLine[],
             {
               promos: bogoPromos,
               canEarnNew: options.buyerInitiated === true,
@@ -722,8 +746,13 @@ export class OrdersService implements OnApplicationBootstrap {
             for (const write of mergeWrites) {
               if (write.kind === "update") {
                 await tx.orderItem.update({ where: { id: write.lineId }, data: write.data });
-              } else {
-                // SA-100: explicit inline keys (never a `...write.data` spread) — the mandatory
+              }
+            }
+            // W-1187 (D4): catalog creates and unlisted lines append TOGETHER in the losers' cart order, each in the next slot.
+            const slots = linePositionAllocator(tx, winner.id);
+            for (const append of orderMergeAppends(mergeWrites, unlistedNewItems)) {
+              if (append.kind === "catalog") {
+                // SA-100: explicit inline keys (never a `...append.data` spread) — the mandatory
                 // trioVia AST check finds a regulated writer by scanning for a literal
                 // `trackedCategoryId:` property in the object passed to `create()`; a spread
                 // hides it behind a variable reference and makes this row invisible.
@@ -731,53 +760,36 @@ export class OrdersService implements OnApplicationBootstrap {
                   data: {
                     orderId: winner.id,
                     status: ItemStatus.PENDING,
-                    productId: write.data.productId,
-                    qty: write.data.qty,
-                    boxes: write.data.boxes,
-                    pieces: write.data.pieces,
-                    unitsPerBox: write.data.unitsPerBox,
-                    unitPrice: write.data.unitPrice,
-                    subtotal: write.data.subtotal,
-                    promoFreeUnits: write.data.promoFreeUnits,
-                    priceType: write.data.priceType,
-                    originalPrice: write.data.originalPrice,
-                    overrideReason: write.data.overrideReason,
-                    overriddenBy: write.data.overriddenBy,
-                    notes: write.data.notes,
-                    trackedCategoryId: write.data.trackedCategoryId,
-                    categoryTaxType: write.data.categoryTaxType,
-                    categoryTaxRate: write.data.categoryTaxRate,
-                    categoryPriceIncludesTax: write.data.categoryPriceIncludesTax,
-                    backorderedPieces: write.data.backorderedPieces ?? 0, // SA-716: carried
-                    restrictionOverrideReason: write.data.restrictionOverrideReason, // row 510: carried
-                    restrictionOverrideBy: write.data.restrictionOverrideBy,
-                    restrictionOverrideAt: write.data.restrictionOverrideAt,
-                    restrictionOverrideRuleIds: write.data.restrictionOverrideRuleIds,
-                    ...compositionStampOf(write.data),
-                    authorChannel: write.data.authorChannel, // SA ruling #3418: the folded line's own author
+                    productId: append.data.productId,
+                    qty: append.data.qty,
+                    boxes: append.data.boxes,
+                    pieces: append.data.pieces,
+                    unitsPerBox: append.data.unitsPerBox,
+                    unitPrice: append.data.unitPrice,
+                    subtotal: append.data.subtotal,
+                    promoFreeUnits: append.data.promoFreeUnits,
+                    priceType: append.data.priceType,
+                    originalPrice: append.data.originalPrice,
+                    overrideReason: append.data.overrideReason,
+                    overriddenBy: append.data.overriddenBy,
+                    notes: append.data.notes,
+                    trackedCategoryId: append.data.trackedCategoryId,
+                    categoryTaxType: append.data.categoryTaxType,
+                    categoryTaxRate: append.data.categoryTaxRate,
+                    categoryPriceIncludesTax: append.data.categoryPriceIncludesTax,
+                    backorderedPieces: append.data.backorderedPieces ?? 0, // SA-716: carried
+                    restrictionOverrideReason: append.data.restrictionOverrideReason, // row 510: carried
+                    restrictionOverrideBy: append.data.restrictionOverrideBy,
+                    restrictionOverrideAt: append.data.restrictionOverrideAt,
+                    restrictionOverrideRuleIds: append.data.restrictionOverrideRuleIds,
+                    ...compositionStampOf(append.data),
+                    authorChannel: append.data.authorChannel, // SA ruling #3418: the folded line's own author
+                    position: await slots.next(), // W-1187: after the winner's lines, in the losers' order
                   },
                 });
+              } else {
+                await createUnlistedLoserLine(tx, winner.id, append.data, await slots.next()); // 2b
               }
-            }
-            // 2b. Append unlisted loser lines as fresh winner lines.
-            for (const data of unlistedNewItems) {
-              await tx.orderItem.create({
-                data: {
-                  orderId: winner.id,
-                  productId: null,
-                  name: data.name,
-                  qty: data.qty,
-                  unitPrice: data.unitPrice,
-                  subtotal: computeLineSubtotal({ unitPrice: data.unitPrice, qty: data.qty }),
-                  status: ItemStatus.PENDING,
-                  priceType: data.priceType,
-                  originalPrice: data.originalPrice,
-                  overrideReason: data.overrideReason,
-                  overriddenBy: data.overriddenBy,
-                  notes: data.notes,
-                  authorChannel: data.authorChannel, // SA ruling #3418: the moved line's own author
-                },
-              });
             }
 
             // 3. Drop loser orders and their items — carrying a loser's Idempotency-
@@ -924,7 +936,8 @@ export class OrdersService implements OnApplicationBootstrap {
 
           // Unlisted (catalog-free) loser lines are appended as their own winner lines
           // (never boxed, unaffected by B776).
-          const unlistedNewItems = collectUnlistedLoserItems(losers);
+          const loserRanks = loserLineRanks(losers); // W-1187: the append sequence, one rank per loser line
+          const unlistedNewItems = collectUnlistedLoserItems(losers, loserRanks);
 
           // unitsPerBox for every product involved so boxed lines prorate by the box.
           const involvedProductIds = [
@@ -965,7 +978,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // at (never the live product row) before folding — see mergeAllPendingForCustomer.
           const { writes: mergeWrites, warnings: packWarnings } = buildMergeLineWrites(
             winner.lineItems.filter((li) => li.productId) as unknown as MergeLine[],
-            authorship.loserLinesOf(losers).filter((li) => li.productId) as unknown as MergeLine[],
+            withAppendRanks(authorship.loserLinesOf(losers), loserRanks) as unknown as MergeLine[],
             {
               promos: bogoPromos,
               canEarnNew: false,
@@ -981,8 +994,13 @@ export class OrdersService implements OnApplicationBootstrap {
             for (const write of mergeWrites) {
               if (write.kind === "update") {
                 await tx.orderItem.update({ where: { id: write.lineId }, data: write.data });
-              } else {
-                // SA-100: explicit inline keys (never a `...write.data` spread) — the mandatory
+              }
+            }
+            // W-1187 (D4): catalog creates and unlisted lines append TOGETHER in the losers' cart order, each in the next slot.
+            const slots = linePositionAllocator(tx, winner.id);
+            for (const append of orderMergeAppends(mergeWrites, unlistedNewItems)) {
+              if (append.kind === "catalog") {
+                // SA-100: explicit inline keys (never a `...append.data` spread) — the mandatory
                 // trioVia AST check finds a regulated writer by scanning for a literal
                 // `trackedCategoryId:` property in the object passed to `create()`; a spread
                 // hides it behind a variable reference and makes this row invisible.
@@ -990,52 +1008,36 @@ export class OrdersService implements OnApplicationBootstrap {
                   data: {
                     orderId: winner.id,
                     status: ItemStatus.PENDING,
-                    productId: write.data.productId,
-                    qty: write.data.qty,
-                    boxes: write.data.boxes,
-                    pieces: write.data.pieces,
-                    unitsPerBox: write.data.unitsPerBox,
-                    unitPrice: write.data.unitPrice,
-                    subtotal: write.data.subtotal,
-                    promoFreeUnits: write.data.promoFreeUnits,
-                    priceType: write.data.priceType,
-                    originalPrice: write.data.originalPrice,
-                    overrideReason: write.data.overrideReason,
-                    overriddenBy: write.data.overriddenBy,
-                    notes: write.data.notes,
-                    trackedCategoryId: write.data.trackedCategoryId,
-                    categoryTaxType: write.data.categoryTaxType,
-                    categoryTaxRate: write.data.categoryTaxRate,
-                    categoryPriceIncludesTax: write.data.categoryPriceIncludesTax,
-                    backorderedPieces: write.data.backorderedPieces ?? 0, // SA-716: carried
-                    restrictionOverrideReason: write.data.restrictionOverrideReason, // row 510: carried
-                    restrictionOverrideBy: write.data.restrictionOverrideBy,
-                    restrictionOverrideAt: write.data.restrictionOverrideAt,
-                    restrictionOverrideRuleIds: write.data.restrictionOverrideRuleIds,
-                    ...compositionStampOf(write.data),
-                    authorChannel: write.data.authorChannel, // SA ruling #3418: the folded line's own author
+                    productId: append.data.productId,
+                    qty: append.data.qty,
+                    boxes: append.data.boxes,
+                    pieces: append.data.pieces,
+                    unitsPerBox: append.data.unitsPerBox,
+                    unitPrice: append.data.unitPrice,
+                    subtotal: append.data.subtotal,
+                    promoFreeUnits: append.data.promoFreeUnits,
+                    priceType: append.data.priceType,
+                    originalPrice: append.data.originalPrice,
+                    overrideReason: append.data.overrideReason,
+                    overriddenBy: append.data.overriddenBy,
+                    notes: append.data.notes,
+                    trackedCategoryId: append.data.trackedCategoryId,
+                    categoryTaxType: append.data.categoryTaxType,
+                    categoryTaxRate: append.data.categoryTaxRate,
+                    categoryPriceIncludesTax: append.data.categoryPriceIncludesTax,
+                    backorderedPieces: append.data.backorderedPieces ?? 0, // SA-716: carried
+                    restrictionOverrideReason: append.data.restrictionOverrideReason, // row 510: carried
+                    restrictionOverrideBy: append.data.restrictionOverrideBy,
+                    restrictionOverrideAt: append.data.restrictionOverrideAt,
+                    restrictionOverrideRuleIds: append.data.restrictionOverrideRuleIds,
+                    ...compositionStampOf(append.data),
+                    authorChannel: append.data.authorChannel, // SA ruling #3418: the folded line's own author
+                    position: await slots.next(), // W-1187: after the winner's lines, in the losers' order
                   },
                 });
+              } else {
+                await createUnlistedLoserLine(tx, winner.id, append.data, await slots.next()); // 2b
               }
-            }
-            for (const data of unlistedNewItems) {
-              await tx.orderItem.create({
-                data: {
-                  orderId: winner.id,
-                  productId: null,
-                  name: data.name,
-                  qty: data.qty,
-                  unitPrice: data.unitPrice,
-                  subtotal: computeLineSubtotal({ unitPrice: data.unitPrice, qty: data.qty }),
-                  status: ItemStatus.PENDING,
-                  priceType: data.priceType,
-                  originalPrice: data.originalPrice,
-                  overrideReason: data.overrideReason,
-                  overriddenBy: data.overriddenBy,
-                  notes: data.notes,
-                  authorChannel: data.authorChannel, // SA ruling #3418: the moved line's own author
-                },
-              });
             }
             for (const loser of losers) {
               // Remove a loser's pending mirror draft (and its items) before deleting the order. The
@@ -1245,13 +1247,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // routeRunId (resolved from the validated stop).
     let resolvedRouteRunId: string | null = null;
 
-    // Row 751: a staff-supplied order date is judged on the tenant's calendar day (the zone is read only when one is sent).
-    const orderDate = parseOrderDate(dto.orderDate, user.role, {
-      zone:
-        dto.orderDate != null
-          ? await tenantTimeZone(this.prisma, { tenantId: user.tenantId })
-          : null,
-    });
+    const { orderDate, orderZone } = await od.resolveCreate(this.prisma, dto, user, options);
     // Sales agents & commissions: staff-gated per-order rate override.
     const commissionRatePct = parseCommissionRatePct(dto.commissionRatePct, user.role);
 
@@ -1384,6 +1380,8 @@ export class OrdersService implements OnApplicationBootstrap {
         return withCreditsPendingHint(this.prisma, replay, appliedCreditNotes);
       }
     }
+
+    await od.assertCreateOrderDateOpen(this.prisma, orderDate, dto.items);
 
     // Row 718: a day before the TENANT's today is refused (400 DELIVERY_DATE_IN_PAST) - after the replay branch above, so a retry of an order that already landed still replays.
     await assertDeliveryDateNotPast(this.prisma, dto.requestedDeliveryDate, {
@@ -1984,6 +1982,7 @@ export class OrdersService implements OnApplicationBootstrap {
               },
             });
             await this.syncCompositions(tx, created.id);
+            await od.recordOrderDated(tx, user, created, { orderDate, zone: orderZone, options });
             await restriction?.stamp(tx, created.id);
             inlineMinted = await applyReturn(tx, inlineRet, {
               customerId,
@@ -2109,6 +2108,8 @@ export class OrdersService implements OnApplicationBootstrap {
       dto,
       user,
       saleZone,
+      new Date(),
+      await od.saleDateGate(this.prisma, dto, user, sale),
     );
 
     // 1. Create the backing order (reuses pricing tiers/overrides + stock lock/decrement). With an
@@ -2978,6 +2979,8 @@ export class OrdersService implements OnApplicationBootstrap {
           // SA-422 (1): a buyer save never deletes the seller's CANCELLED rows (F07 reopen marks).
           // rows 352 / 373b: the ONE pairing helper (buyer names lines by orderItemId, staff / driver by id)
           pairEditLines(dto, order, productMap, buyerCategoryMap, user, opts);
+          // W-1187: a list edit never rearranges; slots are planned BEFORE the delete recreates the lines.
+          const slotPlan = replaceSlotPlanner(order.lineItems ?? []);
           const carry = await captureCompositionCarry(tx, order.lineItems ?? [], dto.items); // #2717 SA-591(b)
           lineIdentity = await markLinesRecreated(tx, orderId, heldItems); // SA-763r M2
           await tx.orderItem.deleteMany({
@@ -2986,10 +2989,6 @@ export class OrdersService implements OnApplicationBootstrap {
               ...(isBuyerEdit ? { productId: { not: null }, status: { not: "CANCELLED" } } : {}),
             },
           });
-          // R2: full replace — the client's item array IS the desired order, so
-          // stamp position from a counter that only advances on a real create
-          // (skipped/invalid items `continue` before it).
-          let pos = 0;
           const splitPromos = isBuyerEdit
             ? keep.planPromos(dto.items, heldById, order.lineItems, productMap, pieceDenominated)
             : new Map<string, SplitPromoGroup>();
@@ -3016,7 +3015,7 @@ export class OrdersService implements OnApplicationBootstrap {
                   status: "PENDING",
                   notes: item.notes,
                   priceType: PriceType.MANUAL,
-                  position: pos++,
+                  position: slotPlan.slotFor(item),
                   authorChannel: authorOf(null), // SA ruling #3418
                 },
               });
@@ -3107,26 +3106,13 @@ export class OrdersService implements OnApplicationBootstrap {
                 // cart-submit fold) carries that line's own category and trio, never the product's current
                 // ones; a genuinely new line (no sourceLineId) keeps the live stamp above.
                 ...carriedLineFor(order.lineItems, item, item.productId),
-                // R2: preserve the client's line order on full replace.
-                position: pos++,
+                position: slotPlan.slotFor(item), // W-1187: the replaced line's slot (a new line appends)
                 authorChannel: authorOf(item.productId), // SA ruling #3418: after the carry, so it wins
               },
             });
             await carry.restore(tx, made.id, item);
           }
-          if (isBuyerEdit) {
-            // B51: the buyer's payload never mentions preserved unlisted rows,
-            // so they were never re-stamped by the loop above — re-stamp them
-            // to continue the position sequence after the client's own lines,
-            // keeping R2's "client array order" contract for a mixed order.
-            const preservedUnlisted = await tx.orderItem.findMany({
-              where: { orderId, productId: null },
-              orderBy: { position: "asc" },
-            });
-            for (const row of preservedUnlisted) {
-              await tx.orderItem.update({ where: { id: row.id }, data: { position: pos++ } });
-            }
-          }
+          await settleReplaceSlots(tx, orderId, order.lineItems ?? [], slotPlan, isBuyerEdit); // B51
         } else {
           // Operator/admin path.
           await unitEdit.assertBuyerOwnsOrder(tx, user, order.customerId); // SA-407: buyer diff
@@ -3316,11 +3302,9 @@ export class OrdersService implements OnApplicationBootstrap {
             }
           } else {
             // Individual item updates (dispatcher workflow with explicit item IDs).
-            // R2: existing lines keep their position (updated by id); NEW lines
-            // append after the current max so an added item lands at the bottom.
-            // Legacy lines with null position count as -1 → new lines start at 0.
-            let nextPos =
-              Math.max(-1, ...(order.lineItems ?? []).map((li) => li.position ?? -1)) + 1;
+            // R2: existing lines keep their position; NEW lines append at the bottom. W-1187: the slot
+            // comes from the ONE allocator (it first densifies a legacy order); lazy, no query if nothing is added.
+            const slots = linePositionAllocator(tx, orderId);
 
             // R9/B197: resolve every NEW catalog-linked add BEFORE writing
             // anything in this loop. The old `if (!product) continue` let an
@@ -3393,7 +3377,7 @@ export class OrdersService implements OnApplicationBootstrap {
                     notes: item.notes,
                     priceType: PriceType.MANUAL,
                     // R2: append this newly-added line after the existing lines.
-                    position: nextPos++,
+                    position: await slots.next(),
                     authorChannel: authorOf.editor, // SA ruling #3418: a diff-added line is the editor's
                   },
                 });
@@ -3414,7 +3398,8 @@ export class OrdersService implements OnApplicationBootstrap {
                 if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
                 const unitRow = unitRows.get(item);
                 if (unitRow && unitLines.isUnitAware(unitRow)) {
-                  await unitEdit.createUnitLine(uctx, orderId, product, unitRow, item, nextPos++);
+                  const slot = await slots.next();
+                  await unitEdit.createUnitLine(uctx, orderId, product, unitRow, item, slot);
                   continue;
                 }
                 // Recompute qty from boxes/pieces when present.
@@ -3530,7 +3515,7 @@ export class OrdersService implements OnApplicationBootstrap {
                         : null,
                     ),
                     // R2: append this newly-added line after the existing lines.
-                    position: nextPos++,
+                    position: await slots.next(),
                     authorChannel: authorOf.editor, // SA ruling #3418: a diff-added line is the editor's
                   },
                 });
@@ -4929,6 +4914,7 @@ export class OrdersService implements OnApplicationBootstrap {
                     ? (addItemCategoryMap.get(product.trackedCategoryId) ?? null)
                     : null,
                 ),
+                position: await linePositionAllocator(tx, order.id).next(), // W-1187: the at-door add goes last
               },
             });
             mutationRow = {

@@ -8,6 +8,7 @@ import {
   Optional,
 } from "@nestjs/common";
 import { syncOrderLineCompositions } from "../orders/order-composition";
+import { linePositionAllocator } from "../orders/line-position";
 import { sendAfterCommit } from "./send-after-commit";
 import { invoiceCompositionFields } from "./invoice-line-composition";
 import { applyComposedLineEdits } from "./invoice-composed-edit";
@@ -234,7 +235,7 @@ import {
   addCalendarDays,
   startOfCalendarDay,
 } from "../common/calendar-date";
-import { calendarFieldStamp, dueDateStamps, dueStamp } from "./invoice-due-dates";
+import { calendarFieldStamp, dueDateStamps, dueStamp, numberYear } from "./invoice-due-dates";
 import { counterPay, type CounterPayOpts, type TillUser } from "./counter-payment-guard";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { planInvoicedQtyAdjustment } from "./unvoid-billing-claim";
@@ -2296,6 +2297,7 @@ export class InvoicesService {
     });
     logSkippedMatches(this.logger, orderId, freeformSkipped, coverage);
     const touched = { lines: false }; // row 372 MF2: any order line sale field written below
+    const backSyncSlots = linePositionAllocator(db, orderId); // W-1187: slots for lines this sync creates
     if (!coverage.fullyCovered) {
       await bumpRevisionIfSaleMoved(db, tenantId, order, coverage.totals, touched);
       return coverage.totals;
@@ -2360,6 +2362,8 @@ export class InvoicesService {
             promoFreeUnits: lineFreeUnits > 0 ? lineFreeUnits : null,
             // SA ruling (#3418): an invoice edit is a staff-initiated system path, so its new order line is STAFF.
             authorChannel: "STAFF",
+            // W-1187: an order line made by an invoice edit goes last (the allocator fills a legacy order's holes first)
+            position: await backSyncSlots.next(),
             invoicedQty: shape.qty,
             status: "PENDING",
             restrictionOverrideReason: agg.sample?.restrictionOverrideReason ?? null, // row 510: carried back
@@ -2858,7 +2862,7 @@ export class InvoicesService {
    * relies on `NumberingService` resolving it from the request context as before.
    */
   private async generateInvoiceNumber(tenantId?: string, tx?: any): Promise<string> {
-    const year = new Date().getFullYear();
+    const year = await numberYear(tx ?? this.prisma, tenantId ?? this.prisma.getTenantId());
     return this.numbering.reserveNext("INVOICE", { year, tenantId, ...(tx ? { tx } : {}) });
   }
 

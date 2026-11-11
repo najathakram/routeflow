@@ -148,6 +148,7 @@ import { CounterScanFeedback } from "./CounterScanFeedback";
 import { useCounterNewItem } from "./CounterNewItem";
 import { CounterBuyerChoice } from "./CounterBuyerChoice";
 import { CounterRunningTotal } from "./CounterRunningTotal";
+import { LineCountChip } from "./LineCountChip";
 import { BUYER_REASON_COPY, kindOfPick } from "./counter-buyer-choice";
 import { useCounterBuyerChoice } from "./useCounterBuyerChoice";
 import { useCounterLineStock } from "./counter-line-stock";
@@ -2302,6 +2303,8 @@ export function CounterSaleScreen() {
                 <span>{money(c.amount)}</span>
               </div>
             ))}
+            {/* W-1185: the item count to check against the goods; in the sticky bar it stays on screen while scanning. */}
+            <LineCountChip lines={lines} />
             <CounterRunningTotal
               total={totals.total}
               cash={method === "CASH"}

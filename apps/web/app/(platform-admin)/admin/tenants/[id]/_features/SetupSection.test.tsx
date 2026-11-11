@@ -39,7 +39,7 @@ function setRole(role: string | null) {
     window.localStorage.setItem("superAdminToken", `h.${window.btoa(JSON.stringify({ role }))}.s`);
 }
 
-/** Mimics the Setup tab: the parent owns `version` and bumps it when told the setup changed. */
+/** Mimics the Features tab: the parent owns `version` and bumps it when told the setup changed. */
 function Harness({ onApplied }: { onApplied: () => void }) {
   const [version, setVersion] = React.useState(0);
   return (

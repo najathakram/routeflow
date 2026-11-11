@@ -10,7 +10,7 @@
  * `PLAYWRIGHT_BASE_URL` has no default: `baseUrl()` throws when it is unset, so a forgotten
  * variable can never point this spec at a real site.
  *
- * The "Choose" landing check relies on the Setup tab's CapabilitiesCard (BO-05) mounting
+ * The "Choose" landing check relies on the Features tab's CapabilitiesCard (BO-05) mounting
  * `data-focus-target="capabilities"` and `useFocusTarget`.
  */
 import { test, expect, type Page, type Route } from "@playwright/test";
@@ -200,9 +200,16 @@ for (const vp of VIEWPORTS) {
       await expect(page.getByText("Choose how this business sells.")).toBeVisible();
       await expect(page.getByText("Not ready")).toHaveCount(0);
       await expect(page.getByText("Counter sales")).toHaveCount(0);
-      await expect(page.getByRole("button", { name: /details/i })).toHaveCount(0);
+      // Scoped to the readiness line: the page now has a "Business details" tab button of its own.
+      await expect(
+        page
+          .locator("main")
+          .getByText("Choose how this business sells.")
+          .locator("xpath=ancestor::div[contains(@class,'rounded-xl')][1]")
+          .getByRole("button", { name: /details/i }),
+      ).toHaveCount(0);
       const link = page.getByRole("link", { name: /^Choose how .* sells$/ });
-      await expect(link).toHaveAttribute("href", /tab=setup&focus=capabilities/);
+      await expect(link).toHaveAttribute("href", /tab=features&focus=capabilities/);
       const height = (await link.boundingBox())?.height ?? 0;
       expect(height).toBeGreaterThanOrEqual(vp.width < 768 ? 44 : 24);
       // no amber text anywhere on the card
@@ -217,17 +224,19 @@ for (const vp of VIEWPORTS) {
       expect(requested.filter((u) => /business-capabilities/.test(u)).length).toBeGreaterThan(0);
     });
 
-    test("Choose opens the Setup tab and lands on the capabilities control", async ({ page }) => {
+    test("Choose opens the Features tab and lands on the capabilities control", async ({
+      page,
+    }) => {
       await gotoOverview(page, { caps: CAPS_UNSET, hasAdmin: false });
       await page.getByRole("link", { name: /^Choose how .* sells$/ }).click();
-      await expect(page).toHaveURL(/tab=setup/);
+      await expect(page).toHaveURL(/tab=features/);
       const target = page.locator('[data-focus-target="capabilities"]');
       await expect(target).toHaveCount(1);
       await expect(target).toBeFocused();
       await landsInMain(page, '[data-focus-target="capabilities"]').toBe(true);
       // the one-shot param is gone, the tab stays
       await expect(page).not.toHaveURL(/focus=/);
-      await expect(page).toHaveURL(/tab=setup/);
+      await expect(page).toHaveURL(/tab=features/);
     });
 
     test("Create admin scrolls main to the Admin Account card and focuses it, with no reload", async ({
@@ -261,7 +270,7 @@ for (const vp of VIEWPORTS) {
 
     test("delivery without a counter hides the card", async ({ page }) => {
       await gotoOverview(page, { caps: CAPS_DELIVERY_ONLY, hasAdmin: true });
-      await expect(page.getByRole("heading", { name: "Tenant info" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Business info" })).toBeVisible();
       await expect(page.getByRole("heading", { name: "Ready to take a sale?" })).toHaveCount(0);
     });
   });

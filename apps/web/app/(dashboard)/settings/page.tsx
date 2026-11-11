@@ -110,6 +110,12 @@ import { useInvalidFocus } from "@/lib/form-errors";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 import { isReadOnlyRefusal, showReadOnlyRefusal } from "@/lib/read-only-refusal";
 import { userStatusRefusalCopy } from "@/lib/user-status-refusal";
+import {
+  EMAIL_CHANGE_PENDING_COPY,
+  EMAIL_CHANGE_SENT_COPY,
+  emailEditRefusalCopy,
+} from "@/lib/email-change-copy";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { newPasswordSchema, passwordErrorMessage } from "@/lib/password-policy";
 import { PasswordChecklist } from "@/components/auth";
 import { isZoneUnset } from "@/lib/tenant-timezone";
@@ -778,13 +784,27 @@ function EditUserModal({
     await updateUser.mutateAsync(
       { id: user.id, username: data.username, email: data.email, role: data.role },
       {
-        onSuccess: () => {
-          toast({ title: "User updated", variant: "success" });
+        onSuccess: (saved) => {
+          // B461: an email edit on a user who has signed in waits for the new address (the PATCH answers `pendingEmail`).
+          if (saved?.pendingEmail) {
+            toast({
+              title: "Confirmation sent",
+              description: EMAIL_CHANGE_SENT_COPY,
+              variant: "success",
+            });
+          } else {
+            toast({ title: "User updated", variant: "success" });
+          }
           onClose();
         },
+        // A taken address has its own sentence; every other failure gets the generic copy, never the server's text.
         onError: (err) =>
           isReadOnlyRefusal(err) ||
-          toast({ title: "Update failed", description: err.message, variant: "error" }),
+          toast({
+            title: "Update failed",
+            description: emailEditRefusalCopy(err) ?? genericToastCopy(err),
+            variant: "error",
+          }),
       },
     );
   };
@@ -874,6 +894,11 @@ function EditUserModal({
           register={register("email")}
           error={errors.email?.message}
         />
+        {user?.pendingEmail && (
+          <p className="-mt-2 text-xs text-navy/70" data-testid="pending-email-note">
+            {EMAIL_CHANGE_PENDING_COPY}: {user.pendingEmail}
+          </p>
+        )}
       </form>
 
       {/* Password reset section (admin-only on the api) */}

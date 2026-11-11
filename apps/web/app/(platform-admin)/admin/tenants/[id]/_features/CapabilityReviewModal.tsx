@@ -10,7 +10,7 @@ import {
 } from "./CapabilityPlanSections";
 
 /**
- * The create form's review of a plan that stops billing: "Change what this business does". The Setup tab reviews the
+ * The create form's review of a plan that stops billing: "Change what this business does". The Features tab reviews the
  * same plan inline (CapabilitiesCard); this dialog survives only where the plan arrives after the tenant is created
  * and the admin must still see, and confirm, what stops. The lines are the same sections the inline panel shows. It
  * never applies anything itself: `onConfirm` is the caller's one audited write. While `confirming` it cannot be

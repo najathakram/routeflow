@@ -89,24 +89,33 @@ describe("order revision snapshot copier (order-revisions appendOrderRevision)",
 
 describe("merge loser copier (merge-unlisted-lines collectUnlistedLoserItems)", () => {
   it("an unlisted loser line keeps priceType + originalPrice verbatim", () => {
-    const items = collectUnlistedLoserItems([
-      {
-        lineItems: [
-          {
-            productId: null,
-            name: "Custom",
-            qty: 2,
-            unitPrice: 4,
-            priceType: PriceType.DISCOUNTED,
-            originalPrice: 6,
-            overrideReason: "promo",
-            overriddenBy: "u-1",
-            notes: null,
-          },
-        ],
-      },
-    ]);
-    expect(items[0]).toMatchObject({ priceType: "DISCOUNTED", originalPrice: 6, unitPrice: 4 });
+    const items = collectUnlistedLoserItems(
+      [
+        {
+          lineItems: [
+            {
+              id: "oi-1",
+              productId: null,
+              name: "Custom",
+              qty: 2,
+              unitPrice: 4,
+              priceType: PriceType.DISCOUNTED,
+              originalPrice: 6,
+              overrideReason: "promo",
+              overriddenBy: "u-1",
+              notes: null,
+            },
+          ],
+        },
+      ],
+      new Map([["oi-1", 3]]),
+    );
+    expect(items[0]).toMatchObject({
+      priceType: "DISCOUNTED",
+      originalPrice: 6,
+      unitPrice: 4,
+      appendRank: 3,
+    });
   });
 });
 

@@ -138,6 +138,19 @@ const REGISTRY: Record<string, Entry> = {
     kind: "not-a-lock-column",
     reason: "composition stamp and component rows after the line write; no qty, price or unit",
   },
+  "orders/line-position.ts::densifyOrderLines": {
+    kind: "not-a-lock-column",
+    reason: "W-1187: display position only; a delivered line keeps its quantity, price and unit",
+  },
+  "orders/line-position.ts::restampKeptLines": {
+    kind: "not-a-lock-column",
+    reason: "W-1187: display position only; a delivered line keeps its quantity, price and unit",
+  },
+  "orders/order-line-order.ts::reorderOrderLines": {
+    kind: "not-a-lock-column",
+    reason:
+      "W-1187: display position only (the caller's arrangement); never a quantity, price or unit",
+  },
   "orders/order-edit-composition.ts::restoreCarriedComposition": {
     kind: "not-a-lock-column",
     reason: "stamps the composition on a line re-created inside the same (guarded) edit",

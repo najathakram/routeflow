@@ -2,7 +2,7 @@
  * SA-963 A-1 (F13), the REAL API: the Feature Console's source chip and Details panel read the override's kind, reason and end date
  * off the live resolver. 49-feature-console.spec.ts and bo-web-console.spec.ts mock every endpoint, so they could not see that the
  * real `/features/effective` answer carried none of it (the chips "Free until <date>" and "On, kept from an earlier plan" never
- * rendered). This spec writes three real overrides on the approved `test` tenant through the platform-admin API, opens the Setup tab
+ * rendered). This spec writes three real overrides on the approved `test` tenant through the platform-admin API, opens the Features tab
  * and reads the chips and the panel words; it revokes its rows afterwards. Nothing is mocked.
  *
  * Needs a super admin (PLAYWRIGHT_SA_USERNAME / PLAYWRIGHT_SA_PASSWORD, `npm run local:sa`) and the `test` tenant (`npm run local:seed`).
@@ -117,7 +117,7 @@ test.describe("Feature Console source chips on the real API (SA-963 A-1)", () =>
       });
 
       await page.goto(`/admin/tenants/${tenantId}`);
-      await page.getByRole("button", { name: "Setup", exact: true }).click();
+      await page.getByRole("button", { name: "Features", exact: true }).click();
       const row = (key: string) => page.locator(`[data-feature-key="${key}"]`);
       const open = async (key: string) => {
         await row(key)

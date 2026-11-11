@@ -93,4 +93,7 @@ export class CounterSaleDto extends RestrictionAckDto {
   @ValidateNested()
   @Type(() => InlineReturnLinesDto)
   inlineReturn?: InlineReturnLinesDto;
+
+  /** W-1188: the sale's business day, a strict YYYY-MM-DD (the same rule as `checkDate`; no instants). Omitted = today. */
+  @IsOptional() @IsString() @Matches(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/) orderDate?: string;
 }

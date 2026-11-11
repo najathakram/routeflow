@@ -29,6 +29,7 @@ import {
 import { PlatformPricingService } from "../billing/platform-pricing.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { inclusionCatalogFor, pinPlanVersionTx } from "../billing/plan-version-pin";
+import { revokeUserEmailChanges } from "../auth/link-token-revocation";
 import { ProrationService } from "../billing/proration.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { MeterService } from "../billing/meter.service";
@@ -2852,9 +2853,13 @@ export class PlatformAdminService {
 
     const tempPassword = `${crypto.randomBytes(3).toString("hex").toUpperCase()}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
     const hashedPassword = await bcrypt.hash(tempPassword, 10);
-    await this.prisma.user.update({
-      where: { id: adminUser.id },
-      data: { password: hashedPassword, forcePasswordChange: true },
+    // B461: the reset also kills a pending login-email change, in the same transaction as the password write.
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: adminUser.id },
+        data: { password: hashedPassword, forcePasswordChange: true },
+      });
+      await revokeUserEmailChanges(tx, adminUser.id);
     });
     await this.recordAdminAction(tenantId, adminId, AdminAuditAction.TENANT_ADMIN_PASSWORD_RESET, {
       username: adminUser.username,
@@ -3065,8 +3070,8 @@ export class PlatformAdminService {
 
   /**
    * Set (a number), clear (`null`) or leave (`undefined`) one business's monthly AI allowance on RouteFlow's key. One
-   * audit row on the platform trail (tenantId null, so the business does not see it) when the value actually changes:
-   * old and new only. The write lives here with the other Tenant writes (`trial-write-sites.spec`).
+   * audit row, keyed to the target business so it shows under the per-business audit filter, when the value actually
+   * changes: `{ from, to }` only. The write lives here with the other Tenant writes (`trial-write-sites.spec`).
    */
   async setTenantAiCap(tenantId: string, cap: number | null | undefined, actorId: string | null) {
     const tenant = await this.prisma.tenant.findUnique({

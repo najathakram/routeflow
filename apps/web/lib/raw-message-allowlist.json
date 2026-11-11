@@ -193,7 +193,7 @@
     "why": "B986-3 settings + auth: per-surface raw message read, pending"
   },
   "app/(dashboard)/settings/page.tsx": {
-    "count": 10,
+    "count": 9,
     "why": "B986-3 settings + auth: per-surface raw message read, pending"
   },
   "app/(dashboard)/suppliers/[id]/page.tsx": {

@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -25,8 +26,15 @@ import {
   derivedJwtKey,
 } from "../common/derived-jwt-key";
 import { isLoginEligible, isSignInBlocked } from "./login-eligibility";
-import { mayUseVerificationLink, VERIFICATION_REFUSED } from "./verification-link-eligibility";
+import {
+  claimSignupLink,
+  verificationLinkState,
+  VERIFICATION_REFUSED,
+} from "./verification-link-eligibility";
 import { hasForeignAudience, STAFF_ACCESS_AUDIENCE, STAFF_REFRESH_AUDIENCE } from "./session-token";
+import { revokeUserEmailChanges, revokeUserLinkTokens } from "./link-token-revocation";
+import { hashEmailChangeToken } from "../users/email-change";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 export interface DeviceInfo {
   userAgent?: string;
@@ -120,11 +128,10 @@ export class AuthService {
     // a "Resend verification email" affordance) to a deactivated staff member
     // handed them a path back to ACTIVE via TenantsService.resendVerification +
     // verifyEmailAndLogin below — a self-reactivation hole caught in review.
-    // UserStatus (prisma/schema/tenancy.prisma) has no column distinguishing
-    // "never verified" from "deliberately deactivated," so this cannot be
-    // gated safely without a schema discriminator (e.g. a nullable
-    // `emailVerifiedAt` column or a distinct `PENDING_VERIFICATION` status) —
-    // proposed as a follow-up, not built here.
+    // UserStatus alone does not tell "never verified" from "deliberately
+    // deactivated"; the sign-up link is gated by a live UserEmailVerificationToken
+    // row instead (B448, verification-link-eligibility.ts), which every
+    // deactivation burns. Login stays generic for every non-ACTIVE status.
     if (!isLoginEligible(user)) return null;
     if (user.failedLoginAttempts > 0 || user.lockedUntil) {
       await this.prisma.user.update({
@@ -487,7 +494,7 @@ export class AuthService {
   async verifyEmailAndLogin(token: string, deviceInfo?: DeviceInfo) {
     const jwtConfig = this.configService.get<AppConfig["jwt"]>("jwt")!;
 
-    let payload: { sub: string; type: string; tenantId: string; aud?: unknown };
+    let payload: { sub: string; type: string; tenantId: string; aud?: unknown; jti?: unknown };
     try {
       payload = this.jwtService.verify(token, {
         secret: this.emailVerifyKey,
@@ -516,14 +523,22 @@ export class AuthService {
       throw new BadRequestException("Account not found.");
     }
 
-    // Only a signup admin that has never signed in may be activated by this link; every other
-    // account is refused with one coded, reason-free answer (see verification-link-eligibility).
-    if (!(await mayUseVerificationLink(this.prisma, user))) {
+    // Only a signup admin that has never signed in and still holds a live sign-up link may be activated by this
+    // link; every other account is refused with one coded, reason-free answer (see verification-link-eligibility).
+    // B448: a link row is the only thing that tells a pending sign-up from an admin another admin deactivated.
+    const linkState = await verificationLinkState(this.prisma, user);
+    const linkId = typeof payload.jti === "string" && payload.jti ? payload.jti : null;
+    if (linkState === "none" || (linkState === "live" && !linkId)) {
       throw new BadRequestException({ ...VERIFICATION_REFUSED });
     }
-    // Claim the activation atomically (a second concurrent use loses) and record it in the same
-    // transaction, so a failed audit write rolls the activation back.
+    // Claim the link, then the activation, atomically (a second concurrent use loses either claim) and record it in
+    // the same transaction, so a failed audit write rolls the activation back. A legacy account (no link row was
+    // ever written for it) has nothing to claim; its status CAS is the only claim.
     const claimed = await this.prisma.tenantTransaction(async (tx) => {
+      // One lock order with resend and deactivation: the User row first, then its link rows. Taking the link row
+      // first would invert it and let a click racing a resend or a deactivation deadlock (40P01).
+      await tx.$executeRaw`SELECT 1 FROM "User" WHERE id = ${user.id} FOR UPDATE`;
+      if (linkId && !(await claimSignupLink(tx, user.id, linkId))) return false;
       const res = await tx.user.updateMany({
         where: { id: user.id, status: "INACTIVE", lastLoginAt: null },
         data: { status: "ACTIVE" },
@@ -551,6 +566,112 @@ export class AuthService {
 
     const { password: _pw, ...safeUser } = activeUser;
     return this.login(safeUser, deviceInfo);
+  }
+
+  // ─── Login email change (B461, SA-1116) ───────────────────────────────────────
+
+  /**
+   * POST /auth/confirm-email-change. The NEW mailbox proves itself with the link, and only then does the account's
+   * email change. ONE transaction: find the live, unexpired row by the hash of the token, lock the user row first (the
+   * lock order of every other writer, B448), claim the row, then write the email behind a compare-and-set on the
+   * address the request was made against (the account must still be ACTIVE, not deleted, and still hold that address),
+   * and burn the account's other links. Any failed step throws inside the transaction, so nothing is written and the
+   * row stays as it was. The `@@unique([tenantId, email])` index decides a race for the new address: P2002 is
+   * `EMAIL_TAKEN`. A used, expired, unknown or superseded link and a moved address all answer the one coded
+   * `EMAIL_CHANGE_LINK_INVALID`. Plain `$transaction` with raw SQL for the token table (no `tenantId` column, SA-1096).
+   */
+  async confirmEmailChange(token: string): Promise<{ email: string }> {
+    const refused = () =>
+      new BadRequestException({
+        code: API_ERROR_CODES.EMAIL_CHANGE_LINK_INVALID,
+        message: "This link is invalid or has expired.",
+      });
+    const now = new Date();
+    const tokenHash = hashEmailChangeToken(typeof token === "string" ? token : "");
+    let change: {
+      userId: string;
+      fromEmail: string;
+      toEmail: string;
+      username: string;
+      forcePasswordChange: boolean;
+    };
+    try {
+      // A plain transaction on purpose: the tenant guard only sees forTenant()/tenantTransaction, so this is never reported.
+      change = await this.prisma.$transaction(async (tx) => {
+        const [row] = await tx.$queryRaw<
+          {
+            id: string;
+            userId: string;
+            fromEmail: string;
+            toEmail: string;
+            username: string;
+            forcePasswordChange: boolean;
+          }[]
+        >`SELECT c."id", c."userId", c."fromEmail", c."toEmail", u."username", u."forcePasswordChange"
+          FROM "UserEmailChange" c JOIN "User" u ON u."id" = c."userId"
+          WHERE c."tokenHash" = ${tokenHash} AND c."usedAt" IS NULL AND c."expiresAt" > ${now}`;
+        if (!row) throw refused();
+        await tx.$executeRaw`SELECT 1 FROM "User" WHERE id = ${row.userId} FOR UPDATE`;
+        const claimed =
+          await tx.$executeRaw`UPDATE "UserEmailChange" SET "usedAt" = ${now} WHERE "id" = ${row.id} AND "usedAt" IS NULL AND "expiresAt" > ${now}`;
+        if (claimed !== 1) throw refused();
+        const res = await tx.user.updateMany({
+          where: { id: row.userId, email: row.fromEmail, status: "ACTIVE", deletedAt: null },
+          data: { email: row.toEmail, emailVerifiedAt: now },
+        });
+        if (res.count !== 1) throw refused();
+        await revokeUserLinkTokens(tx, row.userId);
+        return row;
+      });
+    } catch (err) {
+      if ((err as { code?: string })?.code === "P2002") {
+        throw new ConflictException({
+          code: API_ERROR_CODES.EMAIL_TAKEN,
+          message: "This address is already used by another account.",
+        });
+      }
+      throw err;
+    }
+
+    // SA-1126: an account still owing a first password gets a fresh invite at the NEW address (the old address's links
+    // died with the change). The account is ACTIVE and not deleted: the compare-and-set above required it. Best-effort.
+    // Minted FIRST, right after the commit: the notice mails below can take seconds, and a deactivation in that window
+    // must not be followed by a fresh link (reader B, S-r3-1).
+    await this.usersService.sendInviteIfOwed({
+      id: change.userId,
+      email: change.toEmail,
+      username: change.username,
+      status: "ACTIVE",
+      forcePasswordChange: change.forcePasswordChange,
+    });
+    // Best-effort notices, after the commit: the old address learns the change was made, the new one that it is now
+    // the login email. A delivery failure never undoes the change.
+    try {
+      const old = await this.emailService.sendEmailChangedNotice({
+        to: change.fromEmail,
+        username: change.username,
+        newEmail: change.toEmail,
+      });
+      if (!old.delivered) {
+        this.logger.error(
+          `Email-changed notice NOT delivered to the old address for user ${change.userId}.`,
+        );
+      }
+      const added = await this.emailService.sendEmailChangeConfirmation({
+        to: change.toEmail,
+        username: change.username,
+      });
+      if (!added.delivered) {
+        this.logger.error(
+          `Email-change confirmation NOT delivered to the new address for user ${change.userId}.`,
+        );
+      }
+    } catch (err) {
+      this.logger.error(
+        `Failed to send email-change notices for user ${change.userId}: ${(err as Error).message}`,
+      );
+    }
+    return { email: change.toEmail };
   }
 
   // ─── Password reset (RF-018) ──────────────────────────────────────────────────
@@ -664,6 +785,8 @@ export class AuthService {
         data: { password: newHash, forcePasswordChange: false },
       });
       await tx.refreshToken.deleteMany({ where: { userId: record.userId } });
+      // B461: a reset also kills a pending login-email change, one requested from a stolen session included.
+      await revokeUserEmailChanges(tx, record.userId);
       return "done" as const;
     });
     // One answer for a spent link and a link on an account that cannot sign in: nothing about the account.
@@ -698,16 +821,20 @@ export class AuthService {
     if (sameAsOld) throw new BadRequestException("New password must differ from current password");
 
     const newHash = await bcrypt.hash(newPassword, 10);
-    const updated = await this.prisma.user.update({
-      where: { id: userId },
-      data: { password: newHash, forcePasswordChange: false },
-    });
-
-    // N2 review fix: a 72h staff-invite/admin-reset set-password link must not
-    // outlive the user changing their own password through a different path.
-    await this.prisma.passwordResetToken.updateMany({
-      where: { userId, usedAt: null },
-      data: { usedAt: new Date() },
+    // One transaction: the password write, the burn of its links and of a pending email change (B461) land together.
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.user.update({
+        where: { id: userId },
+        data: { password: newHash, forcePasswordChange: false },
+      });
+      // N2 review fix: a 72h staff-invite/admin-reset set-password link must not
+      // outlive the user changing their own password through a different path.
+      await tx.passwordResetToken.updateMany({
+        where: { userId, usedAt: null },
+        data: { usedAt: new Date() },
+      });
+      await revokeUserEmailChanges(tx, userId);
+      return row;
     });
 
     const tokens = await this.mintSessionForUser(updated);
@@ -737,16 +864,19 @@ export class AuthService {
       );
 
     const newHash = await bcrypt.hash(newPassword, 10);
-    const updated = await this.prisma.user.update({
-      where: { id: userId },
-      data: { password: newHash, forcePasswordChange: false },
-    });
-
-    // N2 review fix: same invalidation as changePassword — a 72h staff-invite/
-    // admin-reset set-password link must not outlive this mutation either.
-    await this.prisma.passwordResetToken.updateMany({
-      where: { userId, usedAt: null },
-      data: { usedAt: new Date() },
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.user.update({
+        where: { id: userId },
+        data: { password: newHash, forcePasswordChange: false },
+      });
+      // N2 review fix: same invalidation as changePassword — a 72h staff-invite/
+      // admin-reset set-password link must not outlive this mutation either.
+      await tx.passwordResetToken.updateMany({
+        where: { userId, usedAt: null },
+        data: { usedAt: new Date() },
+      });
+      await revokeUserEmailChanges(tx, userId);
+      return row;
     });
 
     const tokens = await this.mintSessionForUser(updated, deviceInfo);

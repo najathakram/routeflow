@@ -3,6 +3,7 @@ import { Document, Page, Text, View, StyleSheet, Image, Link } from "@react-pdf/
 import { carrierLabel, getTrackingUrl } from "../common/shipping";
 import {
   baseUnitSuffix,
+  formatInvoiceLineCounts,
   formatPerBaseUnitPrice,
   invoiceTaxSplit,
   roundMoney,
@@ -110,6 +111,10 @@ export interface InvoicePdfData {
     unitsPerBox?: number | null;
     /** units_v1 (B653): the line's own selling unit ("Case") — see `qtyCellText`. */
     unitLabel?: string | null;
+    /** W-1185: the sale-time unit words (frozen at issue) and the system marker the Items count reads. */
+    packLabel?: string | null;
+    baseLabel?: string | null;
+    systemKind?: string | null;
     /**
      * Suggested retail price snapshot, per PIECE, taken when this line was
      * created — display-only, never re-read from the live product. Null/undefined
@@ -127,7 +132,7 @@ export interface InvoicePdfData {
     priceType?: string | null;
     /** BUY_N_GET_M free units on this line — null/0 renders no note. */
     promoFreeUnits?: number | null;
-    product?: { name: string } | null;
+    product?: { name: string; unit?: string | null } | null;
     /** CQ-03: the levy this line billed and its category: the totals show it as its own named charge, not inside Tax. */
     categoryTaxAmount?: DecimalLike | null;
     trackedCategoryId?: string | null;
@@ -338,6 +343,17 @@ function buildStyles(primary: string, navy: string) {
     totalRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 4 },
     totalLabel: { fontSize: 9, color: GRAY },
     totalValue: { fontSize: 9, color: navy, fontFamily: "Helvetica-Bold" },
+    // W-1185: the count can list several units; it wraps right-aligned inside the box, off its label.
+    itemsLabel: { fontSize: 9, color: GRAY, flexShrink: 0 },
+    itemsValue: {
+      fontSize: 9,
+      color: navy,
+      fontFamily: "Helvetica-Bold",
+      flex: 1,
+      flexShrink: 1,
+      textAlign: "right",
+      marginLeft: 8,
+    },
     totalDivider: { borderTopWidth: 1, borderTopColor: BORDER, marginVertical: 4 },
     totalBigRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 5 },
     totalBigLabel: { fontSize: 11, fontFamily: "Helvetica-Bold", color: navy },
@@ -827,8 +843,27 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
           ) : null}
 
           {/* Totals */}
-          <View style={styles.totalsWrapper}>
+          <View style={styles.totalsWrapper} wrap={false}>
             <View style={styles.totalsBox}>
+              {/* W-1185: the item count opens the totals box. */}
+              <View style={styles.totalRow}>
+                <Text style={styles.itemsLabel}>Items</Text>
+                <Text style={styles.itemsValue}>
+                  {formatInvoiceLineCounts(
+                    invoice.items.map((i) => ({
+                      qty: toNum(i.qty),
+                      boxes: i.boxes,
+                      pieces: i.pieces,
+                      unitsPerBox: i.unitsPerBox,
+                      unitLabel: i.unitLabel,
+                      packLabel: i.packLabel,
+                      baseLabel: i.baseLabel,
+                      unit: i.product?.unit,
+                      systemKind: i.systemKind,
+                    })),
+                  )}
+                </Text>
+              </View>
               <View style={styles.totalRow}>
                 <Text style={styles.totalLabel}>Subtotal</Text>
                 <Text style={styles.totalValue}>{fmt(subtotal)}</Text>

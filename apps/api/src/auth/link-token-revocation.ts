@@ -33,6 +33,22 @@ export async function revokeUserLinkTokens(
   if (list.length === 0) return;
   await db.$executeRaw`UPDATE "PasswordResetToken" SET "usedAt" = now() WHERE "userId" = ANY(${list}::text[]) AND "usedAt" IS NULL`;
   await db.$executeRaw`UPDATE "UserEmailVerificationToken" SET "usedAt" = now() WHERE "userId" = ANY(${list}::text[]) AND "usedAt" IS NULL`;
+  await revokeUserEmailChanges(db, list);
+}
+
+/**
+ * B461 (SA-1116): burn the live pending login-email changes of one or many staff users. `revokeUserLinkTokens` ends
+ * with this call, so every account change that burns links burns a pending change too. The two password-reset writers
+ * call it directly: a reset also revokes sessions, so a pending change requested from a stolen session must die with
+ * them, and a reset must not burn the account's sign-up link (which `revokeUserLinkTokens` would).
+ */
+export async function revokeUserEmailChanges(
+  db: RawDb,
+  userId: string | readonly string[],
+): Promise<void> {
+  const list = idList(userId);
+  if (list.length === 0) return;
+  await db.$executeRaw`UPDATE "UserEmailChange" SET "usedAt" = now() WHERE "userId" = ANY(${list}::text[]) AND "usedAt" IS NULL`;
 }
 
 /** Burn the live reset and verification links of one or many buyer accounts. */

@@ -14,7 +14,7 @@ import type { CounterSaleResponse } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { creditAfterTender } from "../credit-limit-guard";
 import { configuredTaxRatePercent } from "../../common/tax-rate";
-import { tenantTodayDay } from "../../common/calendar-date";
+import { calendarDateFromIso, tenantTodayDay } from "../../common/calendar-date";
 import { tenantTimeZone } from "../../common/tenant-time-zone";
 import { PrismaService } from "../../prisma/prisma.service";
 import { InvoicesService } from "../../invoices/invoices.service";
@@ -166,6 +166,8 @@ export class CounterSaleService {
         items: dto.items.map((i) => toCounterOrderItem(i, packs.get(i.productId) ?? null)),
         notes: dto.notes,
         deliveredNow: true,
+        // W-1188: the till sends nothing for Today, so the default path is byte-identical to before.
+        ...(dto.orderDate ? { orderDate: dto.orderDate } : {}),
         idempotencyKey,
         // Row 510: the till's acknowledgement of a RESTRICTION_WARNING. create() judges the sale at the STORE's state
         // (counterSale -> COUNTER -> sale-fulfilment.ts) and stamps for THIS user; it is not part of the replay's cart.
@@ -200,6 +202,14 @@ export class CounterSaleService {
               code: API_ERROR_CODES.COUNTER_SALE_KEY_CONFLICT,
               message:
                 "This Idempotency-Key already belongs to another order, not a counter sale. Start a new sale.",
+            });
+          }
+          // W-1188: a different business day on the same key is a changed sale, refused before any write.
+          if ((calendarDateFromIso(existing.orderDate) || null) !== (dto.orderDate ?? null)) {
+            throw new ConflictException({
+              code: API_ERROR_CODES.COUNTER_SALE_KEY_CONFLICT,
+              message:
+                "This Idempotency-Key already belongs to a sale with a different date. Start a new sale.",
             });
           }
           // POS-5: a price that differs from the stored sale's is a changed cart, like any other.

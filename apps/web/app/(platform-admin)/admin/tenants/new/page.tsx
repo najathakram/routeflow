@@ -719,7 +719,7 @@ export default function AdminCreateTenantPage() {
                   activationFailed
                     ? "billing"
                     : profileFailed || addonFailures.length
-                      ? "setup"
+                      ? "features"
                       : "overview",
                 )}
                 className="admin-tap rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-indigo-500"
