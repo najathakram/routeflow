@@ -1664,6 +1664,8 @@ export default function OrderDetailPage() {
                 orderStatus={order.status}
                 fulfillPath={order.fulfillPath}
                 total={total}
+                orderId={order.id}
+                updatedAt={order.updatedAt}
               />
             ) : (
               <OrderLineItemsTable
@@ -1671,6 +1673,8 @@ export default function OrderDetailPage() {
                 orderStatus={order.status}
                 fulfillPath={order.fulfillPath}
                 total={total}
+                orderId={order.id}
+                updatedAt={order.updatedAt}
               />
             )}
           </div>
