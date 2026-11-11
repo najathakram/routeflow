@@ -19,10 +19,10 @@ export function SortLinesButton({
   return (
     <button
       type="button"
-      onClick={onSort}
-      disabled={saving}
+      onClick={saving ? undefined : onSort}
+      aria-disabled={saving}
       aria-busy={saving}
-      className="inline-flex h-11 items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-navy/70 hover:bg-surface-raised hover:text-navy focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500 disabled:opacity-60"
+      className="inline-flex h-11 items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-navy/70 hover:bg-surface-raised hover:text-navy focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500 aria-disabled:opacity-60 aria-disabled:cursor-default"
     >
       <ArrowDownAZ className="h-4 w-4" aria-hidden />
       Sort A–Z

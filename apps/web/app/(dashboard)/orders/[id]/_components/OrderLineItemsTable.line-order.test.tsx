@@ -448,7 +448,7 @@ describe("OrderLineItemsTable: #4290 round 1 (one toast, busy, wording)", () => 
     await act(async () => {
       fireEvent.click(b);
     });
-    expect(b).toBeDisabled();
+    expect(b).toHaveAttribute("aria-disabled", "true");
     expect(b).toHaveAttribute("aria-busy", "true");
     await act(async () => {
       fireEvent.click(b);
@@ -457,7 +457,7 @@ describe("OrderLineItemsTable: #4290 round 1 (one toast, busy, wording)", () => 
     await act(async () => {
       release(sorted("2026-11-11T08:00:09.000Z", ["l3", "l2", "l1"]));
     });
-    expect(sortBtn()).not.toBeDisabled();
+    expect(sortBtn()).not.toHaveAttribute("aria-disabled", "true");
     expect(sortBtn()).not.toHaveAttribute("aria-busy", "true");
   });
 
@@ -500,16 +500,108 @@ describe("OrderLineItemsTable: a busy 409 is not a stale order (#4291 readers)",
     expect(names()).toEqual(moved);
   });
 
-  it("busy twice: keeps the user's order, says so once, and does not claim the order changed", async () => {
+  const BUSY_TEXT = "The order is busy. Your change wasn't saved. Try again.";
+  const original = ["Sample Apple", "Sample Pear", "Sample Zucchini"];
+
+  it("busy twice on a drag: ROLLS BACK to the server's order, one toast, no 'changed' claim", async () => {
     mockPut.mockRejectedValueOnce(busy).mockRejectedValueOnce(busy);
     renderTable();
     await act(async () => {
       dragEnd?.({ active: { id: "l3" }, over: { id: "l1" } });
     });
-    expect(await screen.findAllByText("The order is busy. Try again.")).toHaveLength(1);
+    expect(await screen.findAllByText(BUSY_TEXT)).toHaveLength(1);
     expect(mockPut).toHaveBeenCalledTimes(2);
     expect(screen.queryByText(/changed on another screen/)).toBeNull();
+    expect(names()).toEqual(original);
+  });
+
+  it("busy twice on an Undo: the screen stays on the order the server holds (the moved one)", async () => {
+    renderTable();
+    await act(async () => {
+      dragEnd?.({ active: { id: "l3" }, over: { id: "l1" } });
+    });
+    mockPut.mockRejectedValueOnce(busy).mockRejectedValueOnce(busy);
+    await act(async () => {
+      fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
+    });
+    expect(await screen.findAllByText(BUSY_TEXT)).toHaveLength(1);
     expect(names()).toEqual(moved);
+  });
+
+  it("MUST 2: the retry carries the ORIGINAL stamp and ids even when a refetch moved the stamp during the wait", async () => {
+    let view!: ReturnType<typeof renderTable>;
+    mockPut.mockImplementationOnce(async () => {
+      view.rerender(
+        <OrderLineItemsTable
+          lineItems={LINES}
+          orderStatus="CONFIRMED"
+          total={30}
+          orderId="o-1"
+          updatedAt="2026-11-11T08:30:00.000Z"
+        />,
+      );
+      throw busy;
+    });
+    view = renderTable();
+    await act(async () => {
+      dragEnd?.({ active: { id: "l3" }, over: { id: "l1" } });
+    });
+    await waitFor(() => expect(mockPut).toHaveBeenCalledTimes(2));
+    expect(mockPut.mock.calls[1]).toEqual(mockPut.mock.calls[0]);
+    expect(mockPut.mock.calls[1][1].expectedUpdatedAt).toBe(STAMP);
+  });
+
+  it("leaving the page during the wait sends no retry and shows no toast", async () => {
+    jest.useFakeTimers();
+    try {
+      mockPut.mockRejectedValueOnce(busy);
+      const view = renderTable();
+      await act(async () => {
+        dragEnd?.({ active: { id: "l3" }, over: { id: "l1" } });
+      });
+      view.unmount();
+      await act(async () => {
+        jest.advanceTimersByTime(2000);
+      });
+      expect(mockPut).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("only the server's retryable busy reasons are retried (a bare 409 CONCURRENT_UPDATE without them is not)", async () => {
+    mockPut.mockRejectedValueOnce({
+      response: { status: 409, data: { code: "CONCURRENT_UPDATE" } },
+    });
+    renderTable();
+    await act(async () => {
+      dragEnd?.({ active: { id: "l3" }, over: { id: "l1" } });
+    });
+    expect(await screen.findByText(/changed on another screen/)).toBeInTheDocument();
+    expect(mockPut).toHaveBeenCalledTimes(1);
+  });
+
+  it("the Sort button keeps keyboard focus while busy (aria-disabled, not native disabled)", async () => {
+    let release!: (v: unknown) => void;
+    mockPut.mockReturnValueOnce(new Promise((r) => (release = r)));
+    renderTable();
+    const b = screen.getByRole("button", { name: "Sort A–Z" });
+    b.focus();
+    await act(async () => {
+      fireEvent.click(b);
+    });
+    expect(b).toHaveAttribute("aria-disabled", "true");
+    expect(b).not.toBeDisabled();
+    expect(document.activeElement).toBe(b);
+    await act(async () => {
+      fireEvent.click(b);
+    });
+    expect(mockPut).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      release({
+        data: { id: "o-1", updatedAt: "2026-11-11T08:00:09.000Z", lineIds: ["l3", "l2", "l1"] },
+      });
+    });
   });
 
   it("a real stale 409 (ORDER_CHANGED_DURING_EDIT) is not retried", async () => {
