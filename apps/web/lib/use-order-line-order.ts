@@ -100,14 +100,15 @@ export function useOrderLineOrder<L extends { id: string } = OrderItem>({
   );
 
   const send = React.useCallback(
-    async (ids: string[]) => {
+    async (ids: string[] | "name") => {
       const res = await reorder.mutateAsync({
         id: orderId!,
         expectedUpdatedAt: stamp.current!,
-        lineIds: ids,
+        ...(ids === "name" ? { sort: "name" as const } : { lineIds: ids }),
       });
       stamp.current = res.updatedAt;
       void qc.invalidateQueries({ queryKey: orderKey });
+      return res.lineIds;
     },
     [orderId, orderKey, qc, reorder],
   );
@@ -150,6 +151,27 @@ export function useOrderLineOrder<L extends { id: string } = OrderItem>({
   }, [closeToast, fail, lineItems, send, show]);
   undoNow.current = () => void undo();
 
+  /** The "Moved X ... Undo" toast: Undo puts the previous list back, for 6 s (the toast and Ctrl/Cmd+Z share the window). */
+  const offerUndo = React.useCallback(
+    (previous: string[], title: string) => {
+      lastUndo.current = { ids: previous, stamp: stamp.current! };
+      if (undoTimer.current) clearTimeout(undoTimer.current);
+      closeToast(); // a newer move replaces the older toast
+      // The toast pauses its own timer while hovered, so close it with the Undo it offers: a visible Undo always works.
+      undoTimer.current = setTimeout(() => {
+        lastUndo.current = null;
+        closeToast();
+      }, UNDO_MS);
+      toastId.current = toast({
+        title,
+        variant: "success",
+        duration: UNDO_MS,
+        action: { label: "Undo", onClick: () => undoNow.current() },
+      });
+    },
+    [closeToast, toast],
+  );
+
   const onMove = React.useCallback(
     async ({ ids, movedId, toIndex }: LineMove) => {
       if (!canMove || busy.current) return;
@@ -161,29 +183,39 @@ export function useOrderLineOrder<L extends { id: string } = OrderItem>({
       );
       try {
         await send(ids);
-        lastUndo.current = { ids: previous, stamp: stamp.current! };
-        if (undoTimer.current) clearTimeout(undoTimer.current);
-        closeToast(); // a newer move replaces the older toast
-        // The toast pauses its own timer while hovered, so close it with the Undo it offers: a visible Undo always works.
-        undoTimer.current = setTimeout(() => {
-          lastUndo.current = null;
-          closeToast();
-        }, UNDO_MS);
         const name = lines.find((l) => l.id === movedId)?.label ?? "Line";
-        toastId.current = toast({
-          title: `Moved ${name} to line ${toIndex + 1}`,
-          variant: "success",
-          duration: UNDO_MS,
-          action: { label: "Undo", onClick: () => undoNow.current() },
-        });
+        offerUndo(previous, `Moved ${name} to line ${toIndex + 1}`);
       } catch (err) {
         fail(err, previous);
       } finally {
         busy.current = false;
       }
     },
-    [canMove, closeToast, fail, lineItems, lines, send, show, toast],
+    [canMove, fail, lineItems, lines, offerUndo, send, show],
   );
+
+  /** Sort A to Z: the SERVER computes the order (one comparator, @routeflow/pricing), so the list moves when it answers. */
+  const sortByName = React.useCallback(async () => {
+    if (!canMove || busy.current) return;
+    const previous = lines.map((l) => l.id);
+    busy.current = true;
+    try {
+      const sorted = await send("name");
+      if (sorted.some((id, i) => id !== previous[i])) {
+        show(
+          sorted,
+          lineItems.map((l) => l.id),
+        );
+        offerUndo(previous, "Sorted A to Z");
+      } else {
+        toast({ title: "Already in A to Z order", variant: "info" });
+      }
+    } catch (err) {
+      fail(err, previous);
+    } finally {
+      busy.current = false;
+    }
+  }, [canMove, fail, lineItems, lines, offerUndo, send, show, toast]);
 
   React.useEffect(() => {
     if (!canMove) return;
@@ -197,5 +229,5 @@ export function useOrderLineOrder<L extends { id: string } = OrderItem>({
     return () => document.removeEventListener("keydown", onKey);
   }, [canMove, undo]);
 
-  return { shown, lines, onMove, canMove };
+  return { shown, lines, onMove, sortByName, canMove };
 }

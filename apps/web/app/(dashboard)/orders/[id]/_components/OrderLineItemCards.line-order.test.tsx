@@ -79,4 +79,28 @@ describe("OrderLineItemCards: moving a saved line (W-1187)", () => {
     );
     expect(screen.queryByRole("button", { name: /^Move / })).toBeNull();
   });
+
+  it("Sort A–Z (PR-2a2) sends one PUT carrying sort name; a read-only list shows no button", async () => {
+    const { unmount } = renderWithProviders(
+      <OrderLineItemCards
+        lineItems={many(3)}
+        orderStatus="CONFIRMED"
+        total={30}
+        orderId="o-1"
+        updatedAt="2026-11-11T08:00:00.000Z"
+      />,
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Sort A–Z" }));
+    });
+    expect(mockPut).toHaveBeenCalledWith("/orders/o-1/line-order", {
+      expectedUpdatedAt: "2026-11-11T08:00:00.000Z",
+      sort: "name",
+    });
+    unmount();
+    renderWithProviders(
+      <OrderLineItemCards lineItems={many(3)} orderStatus="CONFIRMED" total={30} />,
+    );
+    expect(screen.queryByRole("button", { name: "Sort A–Z" })).toBeNull();
+  });
 });
