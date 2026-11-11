@@ -182,9 +182,11 @@ describe("order date chip on the regular order (W-1188 PR-3)", () => {
     );
   });
 
-  const fillOrder = async (user: ReturnType<typeof userEvent.setup>) => {
+  const fillOrder = async (user: ReturnType<typeof userEvent.setup>, resumeDraftId?: string) => {
     mockProducts = [PLAIN];
-    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    renderWithProviders(
+      <CreateOrderModal isOpen onClose={jest.fn()} resumeDraftId={resumeDraftId} />,
+    );
     await user.type(screen.getByPlaceholderText(/search by business name/i), "acme");
     await user.click((await screen.findByText(/Acme Deli/)).closest("button") as HTMLElement);
     await user.type(screen.getByPlaceholderText(/search by name, sku or scan barcode/i), "cola");
@@ -228,6 +230,31 @@ describe("order date chip on the regular order (W-1188 PR-3)", () => {
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} resumeDraftId="d1" />);
     await waitFor(() => expect(chip()).toHaveAttribute("data-direction", "BACK"));
     expect(chip()).toHaveTextContent("Dated Thu, Oct 1");
+  });
+
+  it("a draft whose stored day is today reads Today and sends no orderDate", async () => {
+    const user = userEvent.setup({ delay: null });
+    mockDraft = {
+      id: "d1",
+      kind: "ORDER",
+      payload: { customer: null, lineItems: [], orderDate: "2026-11-09" },
+    };
+    await fillOrder(user, "d1");
+    await waitFor(() => expect(chip()).toHaveAttribute("data-direction", "TODAY"));
+    expect(screen.queryByRole("button", { name: /Clear the order date/ })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Create Order" }));
+    await waitFor(() => expect(mockCreateMutate).toHaveBeenCalled());
+    expect(mockCreateMutate.mock.calls[0][0].orderDate).toBeUndefined();
+  });
+
+  it("Enter on the clear x clears the date inside the order form", async () => {
+    const user = userEvent.setup({ delay: null });
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await user.click(chipButton());
+    await user.click(screen.getByRole("button", { name: "Yesterday" }));
+    screen.getByRole("button", { name: "Clear the order date, back to today" }).focus();
+    await user.keyboard("{Enter}");
+    expect(chip()).toHaveAttribute("data-direction", "TODAY");
   });
 
   it("reopening the builder puts the chip back on Today", async () => {

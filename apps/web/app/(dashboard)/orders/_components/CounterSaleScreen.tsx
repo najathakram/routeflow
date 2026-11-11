@@ -382,7 +382,7 @@ export function CounterSaleScreen() {
       if (snap.method === "CHECK" || snap.method === "CARD") setTendered(snap.tendered);
       setReference(snap.reference);
       setCheckDate(snap.checkDate ?? "");
-      setOrderDate(snap.orderDate ?? "");
+      setOrderDate(asRestoredOrderDate(snap.orderDate));
     },
     onClearedElsewhere: () => {
       setLines([]);
@@ -564,6 +564,12 @@ export function CounterSaleScreen() {
   const businessToday = () =>
     zoneStatus === "ready" ? calendarDayInZone(zoneRead.zone ?? "UTC") : "";
   const today = businessToday(); // for the Check fields; complete() reads the day again when it is pressed
+  // One rule: a day equal to the business's today IS Today (nothing stored or sent). A sale parked on an explicit earlier day
+  // keeps it when resumed later and reads "Dated ..."; one whose day has become today reads Today.
+  function asRestoredOrderDate(day: string | undefined): string {
+    const d = day ?? "";
+    return d && d === businessToday() ? "" : d;
+  }
   const checkDateValue = checkDate || today;
   // A held (outcome unknown) sale shows the date its attempt SENT, never one re-derived from today.
   const shownCheckDate =
@@ -1145,7 +1151,7 @@ export function CounterSaleScreen() {
     setTendered(p.tendered);
     setReference(p.reference);
     setCheckDate(p.checkDate ?? "");
-    setOrderDate(p.orderDate ?? "");
+    setOrderDate(asRestoredOrderDate(p.orderDate));
     setRepriceEpoch((n) => n + 1);
   }
 

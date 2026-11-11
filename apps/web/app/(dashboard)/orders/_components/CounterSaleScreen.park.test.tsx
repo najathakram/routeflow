@@ -1136,6 +1136,16 @@ describe("order date chip on the till", () => {
     expect(chip()).toHaveAttribute("data-direction", "TODAY");
   });
 
+  it("a parked sale whose stored day has become today resumes as Today", async () => {
+    seed("a", { label: "Hold A" }, parkedPayload({ orderDate: TODAY }));
+    renderScreen();
+    await openList(1);
+    fireEvent.click(resumeBtn("Hold A"));
+    await waitFor(() => expect(itemNames().join(" ")).toContain("Cola"));
+    expect(chip()).toHaveAttribute("data-direction", "TODAY");
+    expect(screen.queryByRole("button", { name: /Clear the order date/ })).toBeNull();
+  });
+
   it("a finished sale does not carry its date to the next one", async () => {
     renderScreen();
     await scan("COLA");

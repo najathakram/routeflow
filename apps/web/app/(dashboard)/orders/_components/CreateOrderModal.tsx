@@ -1560,12 +1560,15 @@ export function CreateOrderModal({
 
   const [requestedDeliveryDate, setRequestedDeliveryDate] = React.useState("");
   // Business date of the order (blank = today).
-  const [orderDate, setOrderDate] = React.useState("");
+  const [orderDateSet, setOrderDate] = React.useState("");
   // W-1188 PR-3: the order date is one chip (CounterDateChip, OFFICE policy, past-only), capped on the tenant's calendar.
   // F13 + row 735a: a requested delivery day before today ON THE BUSINESS'S CALENDAR (the tenant's zone, the day the API judges
   // it on; never the browser's) is refused next to the field. Until the zone has loaded nothing is blocked locally: the
   // server refuses a past day with the tenant's today on the field (below). Derived in the render, never mirrored into state (L-333). POS mode steps the field aside and sends no delivery date, so it never blocks there.
   const tenantToday = useTenantToday(isOpen);
+  // One rule: a chosen day equal to the business's today IS Today, so nothing is stored or sent for it. The chip, the
+  // payload, the draft and the merge prompt all read this one value (a draft saved with today's date resumes as Today).
+  const orderDate = orderDateSet && orderDateSet !== tenantToday ? orderDateSet : "";
   const deliveryDateMin = tenantToday; // undefined until the business's zone is known: no `min`, no local block
   const deliveryDatePast =
     !posMode &&

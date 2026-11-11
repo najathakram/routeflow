@@ -83,6 +83,7 @@ describe("ParkedSalesDialog: row total (row 330e)", () => {
     );
     const dated = await screen.findByTestId("parked-row-p1");
     expect(within(dated).getByTestId("parked-row-dated")).toHaveTextContent("Dated Fri, Nov 6");
+    expect(within(dated).getByTestId("parked-row-dated").className).toContain("whitespace-nowrap");
     expect(
       within(await screen.findByTestId("parked-row-p2")).queryByTestId("parked-row-dated"),
     ).toBeNull();
