@@ -157,7 +157,6 @@ import { useCounterScanFocus } from "./useCounterScanFocus";
 import { CounterReceiptActions } from "./CounterReceiptActions";
 import { CounterTodaysSales } from "./CounterTodaysSales";
 import { ParkedSales } from "./ParkedSales";
-import { DraftDockSlot } from "@/components/DraftDockSlot";
 import { QuickKeysGrid } from "./QuickKeysGrid";
 import { CounterCheckDetails } from "./CounterCheckDetails";
 import {
@@ -912,6 +911,16 @@ export function CounterSaleScreen() {
       setScanText("");
     },
   });
+  // W-1186: an unknown scan opens the New product window straight away, barcode filled in (the regular order does the same);
+  // a buzz on phones that have one. A clerk who cannot set prices keeps the miss line (newItem.open is undefined for them).
+  const missCodeNow = scan.missCode;
+  React.useEffect(() => {
+    if (!missCodeNow || !newItem.open) return;
+    if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function")
+      navigator.vibrate(200);
+    newItem.open(missCodeNow, scan.missCamera ? "camera" : "scanBox");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [missCodeNow]);
   function onScanSubmit(e: React.FormEvent) {
     e.preventDefault();
     lastScanActivityRef.current = performance.now();
@@ -1556,13 +1565,16 @@ export function CounterSaleScreen() {
             reprice.blocked ||
             shipIntent
           }
+          summary={{ items: lines.length, total: totals.total }}
           inFlight={() => saleInFlight() || shipRunningRef.current || scanBusyRef.current}
           canEditPrices={mayEditPrices}
           onBusyChange={onParkBusy}
-          onParked={resetSale}
+          onParked={() => {
+            liveCart.dropStored(); // one copy only: the server has it now, so a sign-out cannot park it twice
+            resetSale();
+          }}
           onRestore={restoreParked}
         />
-        <DraftDockSlot />
         {gate.offerShipInstead ? (
           <WriteButton
             className="min-h-[44px]"
@@ -1761,6 +1773,18 @@ export function CounterSaleScreen() {
                       performance.now() - lastScanActivityRef.current >= EMPTY_ENTER_QUIET_MS
                     )
                       focusPayment(); // the next keys are the payment
+                  }
+                  // W-1184: Esc on an empty scan field moves the cursor to the way out, in one key: "Resume sale" when a
+                  // sale is waiting, else "Exit counter". It only MOVES focus (the next Enter decides), so a stray Esc loses nothing.
+                  if (e.key === "Escape" && !scanText && !e.defaultPrevented) {
+                    const out =
+                      document.querySelector<HTMLElement>(
+                        '[data-testid="counter-resume-bar"] button',
+                      ) ?? document.querySelector<HTMLElement>('button[aria-label="Exit counter"]');
+                    if (out) {
+                      e.preventDefault();
+                      out.focus();
+                    }
                   }
                 }}
                 onBlur={(e) => {

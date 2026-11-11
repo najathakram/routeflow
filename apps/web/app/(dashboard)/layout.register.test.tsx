@@ -500,11 +500,12 @@ describe("every other way to leave is blocked while a sale is being recorded", (
 });
 
 describe("narrow header (390 px)", () => {
-  it("keeps the store name a min width with truncation and a title", () => {
+  it("keeps the store name a min width, two lines below lg and one truncated line from lg up, with a title", () => {
     mount(COUNTER);
     const store = screen.getByTestId("register-store");
     expect(store.className).toMatch(/min-w-\[?\d/);
-    expect(store.className).toContain("truncate");
+    expect(store.className).toContain("line-clamp-2");
+    expect(store.className).toContain("lg:line-clamp-1");
     expect(store).toHaveAttribute("title", "Acme Wholesale");
   });
 
