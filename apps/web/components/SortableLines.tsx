@@ -42,6 +42,27 @@ export interface LineMove {
   toIndex: number;
 }
 
+/**
+ * dnd-kit's PointerSensor answers every pointer type, a finger included, so a touch on the handle started a drag after 4 px
+ * and the 150 ms long-press gated nothing. This one ignores touch: a finger goes through the TouchSensor's long-press only,
+ * and a swipe that has not held still still scrolls the page.
+ */
+export class NonTouchPointerSensor extends PointerSensor {
+  static activators = [
+    {
+      eventName: "onPointerDown" as const,
+      handler: (
+        { nativeEvent: event }: { nativeEvent: PointerEvent },
+        { onActivation }: { onActivation?: (e: { event: Event }) => void },
+      ) => {
+        if (!event.isPrimary || event.button !== 0 || event.pointerType === "touch") return false;
+        onActivation?.({ event });
+        return true;
+      },
+    },
+  ] as unknown as typeof PointerSensor.activators;
+}
+
 const INSTRUCTIONS =
   "Press Space to pick up. Use the arrow keys to move, Space to drop, Escape to cancel. Alt plus Up or Down moves one line.";
 
@@ -72,7 +93,7 @@ export function SortableLines({
   children: React.ReactNode;
 }) {
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(NonTouchPointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
