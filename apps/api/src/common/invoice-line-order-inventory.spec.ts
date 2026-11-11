@@ -3,8 +3,8 @@ import * as path from "path";
 
 /**
  * SA-1058 MUST 2: the inventory of every API file that takes lines off an invoice object. A person sees
- * invoice lines in ONE order (`sortInvoiceLines`), so a file that reads them is either a copy a person
- * sees, which calls the helper, or it has a stated reason. A new file reading `inv.items` turns this
+ * invoice lines in ONE order (`invoiceLinesInOrder`: the stored position, else the SA-1058 A-Z fallback), so a
+ * file that reads them is either a copy a person sees, which calls the helper, or it has a stated reason. A new file reading `inv.items` turns this
  * red until it is placed here on purpose.
  *
  * Source pin, comments ignored. The call sites run for real in invoice-line-order.db.spec.ts.
@@ -58,7 +58,7 @@ function sourceFiles(dir: string): string[] {
 
 const relative = (full: string) => path.relative(SRC, full).split(path.sep).join("/");
 const read = (rel: string) => fs.readFileSync(path.join(SRC, rel), "utf8");
-const calls = (src: string) => (stripComments(src).match(/\bsortInvoiceLines\(/g) ?? []).length;
+const calls = (src: string) => (stripComments(src).match(/\binvoiceLinesInOrder\(/g) ?? []).length;
 
 describe("invoice line order inventory (SA-1058)", () => {
   const readers = sourceFiles(SRC)
@@ -80,6 +80,14 @@ describe("invoice line order inventory (SA-1058)", () => {
     expect(start).toBeGreaterThan(-1);
     const body = src.slice(start, src.indexOf("\n  }\n", start));
     expect(calls(body)).toBe(1);
+  });
+
+  it("P4: the A-Z comparator is called only by the shown-order helper (W-1187), never by a reader directly", () => {
+    const callers = sourceFiles(SRC)
+      .map(relative)
+      .filter((f) => f !== "invoices/invoice-line-order.ts")
+      .filter((f) => /\bsortInvoiceLines\(/.test(stripComments(read(f))));
+    expect(callers).toEqual(["invoices/invoice-line-position.ts"]);
   });
 
   it("nothing sorts an invoice's own items array: the send fingerprint hashes it in array order", () => {

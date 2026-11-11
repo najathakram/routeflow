@@ -5,7 +5,7 @@ import { sendReminder } from "./invoice-reminder-email";
 import { InvoiceStatus } from "@prisma/client";
 import { InvoicesService } from "./invoices.service";
 import { buildManualInvoiceLines } from "./manual-invoice-lines";
-import { sortInvoiceLines } from "./invoice-line-order";
+import { invoiceLinesInOrder } from "./invoice-line-position";
 import { buildEditedLines, matchEditLines, type StoredEditRow } from "./invoice-edit-plan";
 import {
   displayLineDescription,
@@ -105,11 +105,15 @@ describe("the shared rule (invoice-line-name.ts)", () => {
       { id: "3", description: "Acme Family - Zesty", productId: "p-z", product: undefined },
     ];
     // the order a reprint has always shown: by the STORED text ("Acme..." < "Classic" < "Zebra...")
-    const shown = withFamilyNames(sortInvoiceLines(stored));
+    const shown = withFamilyNames(invoiceLinesInOrder(stored));
     expect(shown.map((l) => l.id)).toEqual(["3", "2", "1"]);
     expect(shown.map((l) => l.description)).toEqual(["Acme Family - Zesty", COMPOSED, "Zebra Co"]);
     // sorting the composed text would have moved the variant line first ("Acme Family - Classic" < "Acme Family - Zesty")
-    expect(sortInvoiceLines(withFamilyNames(stored)).map((l) => l.id)).not.toEqual(["3", "2", "1"]);
+    expect(invoiceLinesInOrder(withFamilyNames(stored)).map((l) => l.id)).not.toEqual([
+      "3",
+      "2",
+      "1",
+    ]);
   });
 });
 
