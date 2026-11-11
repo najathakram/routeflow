@@ -5,8 +5,12 @@ import { invoiceLinesInOrder, loadOrderLineRanks, rankInvoiceLines } from "./inv
  * live invoice of that order takes the new order IN THE SAME TRANSACTION, so the printed bill never lags the order.
  * Presentation only: no money, no revision, no email, and `position` stays out of the send fingerprint.
  *
- *  - VOID invoices are left as they were; every other status follows (draft, sent, paid ...).
- *  - A LEGACY invoice (any line without a position) is skipped: it prints A-Z for good, no backfill (owner Q2).
+ *  - VOID and WRITTEN_OFF invoices are closed documents and are left as they were; every other status follows.
+ *  - A LEGACY invoice (a line without a position) of THIS order is stamped by this write: its current shown order is the
+ *    A-Z fallback, which `rankInvoiceLines` then re-ranks by the order. Owner Q2 forbids a mass backfill, not a user's
+ *    explicit reorder ("a legacy invoice leaves the fallback when a reorder of its order re-ranks it", ruling Q2 + D2).
+ *    An invoice of any other order is never read, so it stays NULL and A-Z.
+ *  - Invoices' updatedAt is not bumped (ruling (4), last bullet).
  *  - Lines linked to an order line take that line's new rank; a manual line or the NSF fee keeps its place after them
  *    (`rankInvoiceLines`, the same call every invoice writer uses). Only rows whose position changes are written.
  */
@@ -18,7 +22,7 @@ interface FollowDb {
 
 export async function followOrderLineOrder(db: FollowDb, orderId: string): Promise<void> {
   const invoices = await db.invoice.findMany({
-    where: { orderId, status: { not: "VOID" } },
+    where: { orderId, status: { notIn: ["VOID", "WRITTEN_OFF"] } },
     select: {
       id: true,
       items: { select: { id: true, orderItemId: true, position: true, createdAt: true } },
@@ -28,7 +32,7 @@ export async function followOrderLineOrder(db: FollowDb, orderId: string): Promi
   const ranks = await loadOrderLineRanks(db, orderId);
   for (const inv of invoices) {
     const items: any[] = inv.items ?? [];
-    if (items.length === 0 || items.some((l) => typeof l.position !== "number")) continue;
+    if (items.length === 0) continue;
     const shown = invoiceLinesInOrder(items);
     const next = rankInvoiceLines(shown, ranks);
     for (const [i, line] of shown.entries()) {

@@ -159,7 +159,7 @@ describe("reorderOrderLines: existing invoices follow (W-1187 PR-1e, ruling (4)/
     await reorderOrderLines(deps, "o1", swap as never, staff);
     expect(tx.invoice.findMany.mock.calls[0][0].where).toMatchObject({
       orderId: "o1",
-      status: { not: "VOID" },
+      status: { notIn: ["VOID", "WRITTEN_OFF"] },
     });
     const wrote = Object.fromEntries(
       tx.invoiceItem.update.mock.calls.map(([a]: any) => [a.where.id, a.data.position]),
@@ -167,7 +167,7 @@ describe("reorderOrderLines: existing invoices follow (W-1187 PR-1e, ruling (4)/
     expect(wrote).toEqual({ ib: 0, ia: 1 });
   });
 
-  it("a legacy invoice (any NULL position) is left alone: it prints A-Z for good (owner Q2)", async () => {
+  it("R-legacy: an all-NULL linked invoice is stamped by the reorder, from its A-Z shown order, linked lines by the order's new ranks", async () => {
     const { tx, deps } = withInvoices([
       inv("old", [
         ["ia", "a", null],
@@ -175,7 +175,26 @@ describe("reorderOrderLines: existing invoices follow (W-1187 PR-1e, ruling (4)/
       ]),
     ]);
     await reorderOrderLines(deps, "o1", swap as never, staff);
-    expect(tx.invoiceItem.update).not.toHaveBeenCalled();
+    const wrote = Object.fromEntries(
+      tx.invoiceItem.update.mock.calls.map(([a]: any) => [a.where.id, a.data.position]),
+    );
+    expect(wrote).toEqual({ ib: 0, ia: 1 });
+  });
+
+  it("a pure reorder writes nothing else: no invoice updatedAt, one audit row, no revision or ledger", async () => {
+    const { tx, deps } = withInvoices([
+      inv("i1", [
+        ["ia", "a", 0],
+        ["ib", "b", 1],
+      ]),
+    ]);
+    await reorderOrderLines(deps, "o1", swap as never, staff);
+    for (const [a] of tx.invoiceItem.update.mock.calls)
+      expect(Object.keys(a.data)).toEqual(["position"]);
+    expect((tx as any).invoice.update).toBeUndefined();
+    expect(tx.auditLog.create).toHaveBeenCalledTimes(1);
+    expect(tx.auditLog.create.mock.calls[0][0].data.action).toBe("order.lines.reordered");
+    expect(Object.keys(tx.order.update.mock.calls[0][0].data)).toEqual(["updatedAt"]);
   });
 
   it("an order whose lines did not move touches no invoice", async () => {

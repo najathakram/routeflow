@@ -556,7 +556,7 @@ describeDb("W-1187 PR-1b: reordering an order's lines (real Postgres)", () => {
         (i) => i.description,
       );
 
-    it("R-follow: DRAFT and SENT invoices re-rank in the reorder's transaction; VOID and legacy stay put", async () => {
+    it("R-follow: DRAFT, SENT and legacy invoices follow in the reorder's transaction; VOID and WRITTEN_OFF stay; another order's legacy invoice stays NULL", async () => {
       const o = await abc();
       const rows: Array<[string, number | null]> = [
         ["A", 0],
@@ -567,20 +567,32 @@ describeDb("W-1187 PR-1b: reordering an order's lines (real Postgres)", () => {
       const draft = await invoiceOf(o, "DRAFT", rows);
       const sent = await invoiceOf(o, "SENT", rows);
       const voided = await invoiceOf(o, "VOID", rows);
+      const writtenOff = await invoiceOf(o, "WRITTEN_OFF", rows);
       const legacy = await invoiceOf(o, "SENT", [
         ["A", null],
         ["B", null],
         ["C", null],
       ]);
+      const other = await abc();
+      const elsewhere = await invoiceOf(other, "SENT", [
+        ["A", null],
+        ["B", null],
+      ]);
+      const stamp = (await raw.invoice.findUniqueOrThrow({ where: { id: sent.id } })).updatedAt;
       await reorder(o, [lineId(o, "C"), lineId(o, "A"), lineId(o, "B")]);
       expect(await shown(draft.id)).toEqual(["C", "A", "B", "Delivery fee"]);
       expect(await shown(sent.id)).toEqual(["C", "A", "B", "Delivery fee"]);
+      expect(await shown(legacy.id)).toEqual(["C", "A", "B"]);
       expect(await shown(voided.id)).toEqual(["A", "B", "C", "Delivery fee"]);
+      expect(await shown(writtenOff.id)).toEqual(["A", "B", "C", "Delivery fee"]);
       expect(
-        (await raw.invoiceItem.findMany({ where: { invoiceId: legacy.id } })).map(
+        (await raw.invoiceItem.findMany({ where: { invoiceId: elsewhere.id } })).map(
           (i) => i.position,
         ),
-      ).toEqual([null, null, null]);
+      ).toEqual([null, null]);
+      expect((await raw.invoice.findUniqueOrThrow({ where: { id: sent.id } })).updatedAt).toEqual(
+        stamp,
+      );
     });
   });
 });
