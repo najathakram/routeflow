@@ -35,6 +35,8 @@ interface Props {
   onClose: () => void;
   /** COUNTER takes future days; OFFICE (the regular order) is past-only: a future day is the delivery date. */
   policy?: OrderDatePolicy;
+  /** A scanner run ended in Enter while the picker was open: the picker closes and hands the code here (the till's scan entry). */
+  onScan?: (code: string) => void;
 }
 
 export const OFFICE_FUTURE_HINT = "A future day? Set the delivery date instead.";
@@ -46,6 +48,7 @@ export function CounterDatePicker({
   onApply,
   onClose,
   policy = "COUNTER",
+  onScan,
 }: Props) {
   const range = orderDateRange(today, policy);
   const [text, setText] = React.useState("");
@@ -86,29 +89,64 @@ export function CounterDatePicker({
     if (inRange(next)) setCursor(next);
   };
   const weekdayOfCursor = new Date(`${cursor}T00:00:00Z`).getUTCDay();
-  // Only keys typed ON the grid act here: Enter on a month button pages, and letters never set a date (a barcode
-  // scanner types letters then Enter; the quick picks and the typed field are the ways to say "today" or "yesterday").
-  // A barcode scanner types characters then Enter within a few milliseconds. A character typed on the grid marks the moment;
-  // an Enter right after it is the scanner's, never a clerk choosing a day (a person pressing Enter has not just typed).
-  // The rule is timing, not which keys: a scanner (letters, an Alt-code, or a keypad scanner sending Home/End/arrows) sends its
-  // keys a few milliseconds apart. Three or more keys (before the Enter) under 40 ms apart (modifier keys count, and the time is recorded before
-  // any early return) make a burst, and an Enter inside the burst or up to 600 ms after it is the scanner's, never a clerk
-  // choosing a day. A person (one key, a pause, Enter) is never a burst. A lone typed character also holds Enter for 300 ms.
+  // Only keys typed ON the grid act here: Enter on a month button pages, and letters never set a date.
+  // The scan rule is timing, not which keys: a scanner (letters, an Alt-code, or a keypad scanner sending Home/End/arrows) sends
+  // its keys a few milliseconds apart. Three or more keys under 40 ms apart (modifier keys count; the time is recorded before
+  // any early return; a held key's auto-repeat is not counted) make a burst, and an Enter inside the burst or up to 600 ms after
+  // it is the scanner's, never a clerk choosing a day. A person (one key, a pause, Enter) is never a burst. On the grid a lone
+  // typed character also holds Enter for 300 ms. A scanner run that ends in Enter changes no date: the picker closes and the
+  // code it typed goes to the till's own scan entry (`onScan`), so the scan is kept, never lost.
   const lastTypedAt = React.useRef(0);
   const lastKeyAt = React.useRef(0);
   const burstAt = React.useRef(0);
   const run = React.useRef(0);
+  const runCursor = React.useRef(cursor);
+  const codeBuf = React.useRef("");
+  /** Records one key press; says whether an Enter now would be a scanner's. Auto-repeat is not a press. */
+  const trackKey = (e: React.KeyboardEvent): { burst: boolean; typedJustNow: boolean } => {
+    const now = Date.now();
+    const state = () => ({
+      burst: now - burstAt.current < 600,
+      typedJustNow: now - lastTypedAt.current < 300,
+    });
+    if (e.repeat) return state();
+    if (now - lastKeyAt.current < 40) run.current += 1;
+    else {
+      run.current = 1;
+      runCursor.current = cursor; // where the cursor stood before this run moved it
+      codeBuf.current = "";
+    }
+    const out = state();
+    if (e.key.length === 1) {
+      lastTypedAt.current = now;
+      codeBuf.current += e.key;
+    }
+    if (run.current >= 3 && e.key !== "Enter") burstAt.current = now;
+    lastKeyAt.current = now;
+    return out;
+  };
+  /** A scanner run ended in Enter: nothing is applied; close and hand the typed code to the till. */
+  const finishScan = () => {
+    const code = codeBuf.current.trim();
+    codeBuf.current = "";
+    if (!code) return;
+    setText("");
+    onClose();
+    onScan?.(code);
+  };
   const onGridKey = (e: React.KeyboardEvent) => {
     const k = e.key;
-    const now = Date.now();
-    run.current = now - lastKeyAt.current < 40 ? run.current + 1 : 1;
-    const scanning = now - burstAt.current < 600 || now - lastTypedAt.current < 300;
-    if (run.current >= 3 && k !== "Enter") burstAt.current = now;
-    if (k.length === 1) lastTypedAt.current = now;
-    lastKeyAt.current = now;
+    const seen = trackKey(e);
     if (e.target !== e.currentTarget || e.altKey || e.ctrlKey || e.metaKey) return;
     if (k.length === 1) return;
-    if (k === "Enter" && scanning) {
+    if (k === "Enter" && (seen.burst || seen.typedJustNow)) {
+      e.preventDefault();
+      finishScan();
+      return;
+    }
+    if (k !== "Enter" && !e.repeat && run.current >= 3) {
+      // a nav burst is a scanner's: the cursor goes back to where the run began and the run moves nothing more
+      setCursor(runCursor.current);
       e.preventDefault();
       return;
     }
@@ -168,9 +206,11 @@ export function CounterDatePicker({
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
+              const seen = trackKey(e);
               if (e.key === "Enter") {
                 e.preventDefault();
-                if (typedOk && typed) apply(typed);
+                if (seen.burst || run.current >= 4) finishScan();
+                else if (typedOk && typed) apply(typed);
               }
             }}
             placeholder='Type "yesterday", "fri" or "11/02"'

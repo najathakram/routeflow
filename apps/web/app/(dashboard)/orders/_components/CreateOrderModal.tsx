@@ -49,6 +49,7 @@ import { ResumeUnsentOrderDialog } from "./ResumeUnsentOrderDialog";
 import { DraftConflictDialog } from "./DraftConflictDialog";
 import { apiClient } from "@/lib/api-client";
 import { useTenantToday } from "@/lib/tenant-timezone";
+import { dateIfNotToday } from "@/lib/counter-order-date";
 import { CounterDateChip } from "./CounterDateChip";
 import { LineCountChip } from "./LineCountChip";
 import { ACTION_TOAST_MS, addedLineQty, showOrderCreatedToast } from "./order-created-toast";
@@ -1568,7 +1569,7 @@ export function CreateOrderModal({
   const tenantToday = useTenantToday(isOpen);
   // One rule: a chosen day equal to the business's today IS Today, so nothing is stored or sent for it. The chip, the
   // payload, the draft and the merge prompt all read this one value (a draft saved with today's date resumes as Today).
-  const orderDate = orderDateSet && orderDateSet !== tenantToday ? orderDateSet : "";
+  const orderDate = dateIfNotToday(orderDateSet, tenantToday);
   const deliveryDateMin = tenantToday; // undefined until the business's zone is known: no `min`, no local block
   const deliveryDatePast =
     !posMode &&

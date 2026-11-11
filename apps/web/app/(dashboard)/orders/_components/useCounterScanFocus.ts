@@ -21,7 +21,12 @@ export function useCounterScanFocus(refs: {
   scanRef: React.RefObject<HTMLInputElement | null>;
   customerFindRef: React.RefObject<HTMLInputElement | null>;
   awaitingCustomerRef: React.MutableRefObject<boolean>;
-}): { refocus: () => void; focusCustomerFind: () => void; refocusFromActive: () => void } {
+}): {
+  refocus: () => void;
+  refocusAfterDialog: () => void;
+  focusCustomerFind: () => void;
+  refocusFromActive: () => void;
+} {
   const { scanRef, customerFindRef, awaitingCustomerRef } = refs;
   const armed = React.useMemo<React.RefObject<HTMLInputElement | null>>(
     () => ({
@@ -58,8 +63,15 @@ export function useCounterScanFocus(refs: {
       yieldFrom: [scanRef, { current: document.activeElement as HTMLElement | null }],
     });
   }, [armed, scanRef, keyboardWouldRise]);
+  // W-1188: a dialog (the date picker) just closed. The dialog library hands focus back to whatever it likes on its own tick,
+  // and its text box can still hold focus at tick 0, so the re-arm is tried again a little later (still guarded: it never
+  // takes focus from a field the clerk is typing in).
+  const refocusAfterDialog = React.useCallback(() => {
+    if (keyboardWouldRise() || scanPauseHeld()) return;
+    scheduleScannerRefocus(armed, [0, 120, 350], { yieldFrom: [scanRef] });
+  }, [armed, scanRef, keyboardWouldRise]);
   const focusCustomerFind = React.useCallback(() => {
     scheduleScannerRefocus(customerFindRef, 0, { yieldFrom: [scanRef] });
   }, [customerFindRef, scanRef]);
-  return { refocus, focusCustomerFind, refocusFromActive };
+  return { refocus, refocusAfterDialog, focusCustomerFind, refocusFromActive };
 }

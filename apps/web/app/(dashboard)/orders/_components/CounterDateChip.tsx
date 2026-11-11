@@ -24,6 +24,8 @@ interface Props {
   onDone?: () => void;
   /** default COUNTER; the regular order passes OFFICE (past-only) */
   policy?: OrderDatePolicy;
+  /** the till's scan entry: a scan made while the picker is open is handed here, never lost */
+  onScan?: (code: string) => void;
 }
 
 export function CounterDateChip({
@@ -34,6 +36,7 @@ export function CounterDateChip({
   refused,
   onDone,
   policy = "COUNTER",
+  onScan,
 }: Props) {
   const [open, setOpen] = React.useState(false);
   const mainRef = React.useRef<HTMLButtonElement>(null);
@@ -68,7 +71,7 @@ export function CounterDateChip({
   // chip itself so it never drops to the page behind a dialog.
   const done = () => {
     if (onDone) onDone();
-    else setTimeout(() => mainRef.current?.focus(), 0);
+    else setTimeout(() => (mainRef.current?.disabled ? undefined : mainRef.current?.focus()), 0);
   };
   const close = () => {
     setOpen(false);
@@ -157,6 +160,7 @@ export function CounterDateChip({
           onApply={apply}
           onClose={close}
           policy={policy}
+          onScan={onScan}
         />
       ) : null}
     </>

@@ -99,11 +99,12 @@ describe("Alt+D and the picker", () => {
     const { onChange, onDone } = setup();
     await userEvent.click(screen.getByRole("button", { name: "Order date: today. Change" }));
     const input = await screen.findByTestId("counter-date-input");
-    await userEvent.type(input, "fri");
+    const human = userEvent.setup({ delay: 60 }); // a person types slower than a scanner
+    await human.type(input, "fri");
     expect(screen.getByTestId("counter-date-echo")).toHaveTextContent(
       "Fri, Nov 6, 2026 · 3 days ago",
     );
-    await userEvent.type(input, "{Enter}");
+    await human.type(input, "{Enter}");
     expect(onChange).toHaveBeenCalledWith("2026-11-06");
     expect(onDone).toHaveBeenCalled();
   });
@@ -140,7 +141,7 @@ describe("Alt+D and the picker", () => {
     const { onChange } = setup();
     await userEvent.click(screen.getByRole("button", { name: "Order date: today. Change" }));
     const input = await screen.findByTestId("counter-date-input");
-    await userEvent.type(input, "+400{Enter}");
+    await userEvent.setup({ delay: 60 }).type(input, "+400{Enter}");
     expect(screen.getByTestId("counter-date-echo")).toHaveTextContent(
       "That day is outside the dates this till takes.",
     );
@@ -167,8 +168,8 @@ describe("Alt+D and the picker", () => {
   });
 });
 
-async function openGrid() {
-  const view = setup();
+async function openGrid(over: Partial<React.ComponentProps<typeof CounterDateChip>> = {}) {
+  const view = setup("", over);
   await userEvent.click(screen.getByRole("button", { name: "Order date: today. Change" }));
   const picker = await screen.findByTestId("counter-date-picker");
   const grid = within(picker).getByRole("grid", { name: /^Calendar/ });
@@ -191,18 +192,6 @@ describe("calendar details (reader SHOULDs)", () => {
     const cell = document.getElementById(grid.getAttribute("aria-activedescendant")!);
     expect(cell).not.toBeNull();
     expect(cell).toBeEnabled();
-  });
-
-  it("a scan landing on the grid after arrowing never applies the cursor day", async () => {
-    const { onChange, grid } = await openGrid();
-    grid.focus();
-    await userEvent.keyboard("{ArrowLeft}{ArrowLeft}");
-    await userEvent.keyboard("COLA123{Enter}");
-    expect(onChange).not.toHaveBeenCalled();
-    // a deliberate Enter, with no typing before it, still applies
-    await new Promise((r) => setTimeout(r, 700));
-    await userEvent.keyboard("{Enter}");
-    expect(onChange).toHaveBeenLastCalledWith("2026-11-07");
   });
 
   it("a two-digit year gets the same answer as the four-digit year", async () => {
@@ -343,5 +332,69 @@ describe("clear and focus (browser SHOULDs)", () => {
     await waitFor(() =>
       expect(document.activeElement).toBe(screen.getByRole("button", { name: /Backdated to/ })),
     );
+  });
+});
+
+describe("a scan made while the picker is open is kept (criterion 2d)", () => {
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const typeFast = (el: Element, text: string) => {
+    for (const key of text) fireEvent.keyDown(el, { key });
+  };
+
+  it("a scan landing on the grid applies no day, closes the picker and hands the code to the till", async () => {
+    const onScan = jest.fn();
+    const { onChange, grid } = await openGrid({ onScan });
+    grid.focus();
+    fireEvent.keyDown(grid, { key: "ArrowLeft" });
+    fireEvent.keyDown(grid, { key: "ArrowLeft" });
+    typeFast(grid, "4006381333931");
+    fireEvent.keyDown(grid, { key: "Enter" });
+    expect(onChange).not.toHaveBeenCalled();
+    expect(onScan).toHaveBeenCalledWith("4006381333931");
+    await waitFor(() => expect(screen.queryByTestId("counter-date-picker")).toBeNull());
+  });
+
+  it("a scan landing in the date text box is removed from it, closes the picker and is handed over", async () => {
+    const onScan = jest.fn();
+    const { onChange, picker } = await openGrid({ onScan });
+    const input = within(picker).getByTestId("counter-date-input") as HTMLInputElement;
+    let value = "";
+    for (const key of "COLA123") {
+      fireEvent.keyDown(input, { key });
+      value += key;
+      fireEvent.change(input, { target: { value } });
+    }
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onChange).not.toHaveBeenCalled();
+    expect(onScan).toHaveBeenCalledWith("COLA123");
+    await waitFor(() => expect(screen.queryByTestId("counter-date-picker")).toBeNull());
+  });
+
+  it("a person typing a day into the text box and pressing Enter still applies it (not a scan)", async () => {
+    const onScan = jest.fn();
+    const { onChange, picker } = await openGrid({ onScan });
+    const human = userEvent.setup({ delay: 60 });
+    await human.type(within(picker).getByTestId("counter-date-input"), "fri{Enter}");
+    expect(onChange).toHaveBeenCalledWith("2026-11-06");
+    expect(onScan).not.toHaveBeenCalled();
+  });
+
+  it("a keypad-style nav burst moves the cursor nowhere: a later deliberate Enter applies the day the run began on", async () => {
+    const { onChange, grid } = await openGrid();
+    grid.focus();
+    for (const key of ["Home", "End", "ArrowLeft", "PageUp"]) fireEvent.keyDown(grid, { key });
+    await sleep(700);
+    fireEvent.keyDown(grid, { key: "Enter" });
+    expect(onChange).toHaveBeenCalledWith(""); // the cursor was today when the run began (today is sent as "")
+  });
+
+  it("a held arrow key (auto-repeat) is not a burst: the next Enter still applies", async () => {
+    const { onChange, grid } = await openGrid();
+    grid.focus();
+    fireEvent.keyDown(grid, { key: "ArrowRight" });
+    for (let i = 0; i < 5; i++) fireEvent.keyDown(grid, { key: "ArrowRight", repeat: true });
+    await sleep(100);
+    fireEvent.keyDown(grid, { key: "Enter" });
+    expect(onChange).toHaveBeenCalledWith("2026-11-15");
   });
 });

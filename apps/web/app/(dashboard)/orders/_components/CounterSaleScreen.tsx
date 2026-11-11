@@ -157,7 +157,7 @@ import { useCounterScanFocus } from "./useCounterScanFocus";
 import { CounterReceiptActions } from "./CounterReceiptActions";
 import { CounterTodaysSales } from "./CounterTodaysSales";
 import { CounterDateChip, CounterDateReminder } from "./CounterDateChip";
-import { isOrderDateRefusalCopy } from "@/lib/counter-order-date";
+import { dateIfNotToday, isOrderDateRefusalCopy } from "@/lib/counter-order-date";
 import { ParkedSales } from "./ParkedSales";
 import { QuickKeysGrid } from "./QuickKeysGrid";
 import { CounterCheckDetails } from "./CounterCheckDetails";
@@ -300,7 +300,7 @@ export function CounterSaleScreen() {
   const [tendered, setTendered] = React.useState("");
   const [reference, setReference] = React.useState("");
   const [checkDate, setCheckDate] = React.useState(""); // "" = today (the business's day)
-  const [orderDate, setOrderDate] = React.useState(""); // W-1188: the sale date chip; "" = Today, and Today is never sent
+  const [orderDateSet, setOrderDate] = React.useState(""); // W-1188: the day the clerk chose; read through `orderDate` below
   // SA-1026: "Check not received yet" under Check (named customer): sent as On account + expectedMethod CHECK.
   const [checkNotReceived, setCheckNotReceived] = React.useState(false);
   const [error, setError] = React.useState("");
@@ -341,11 +341,13 @@ export function CounterSaleScreen() {
   }, [heldKey, restoreBuyer, decideTender]);
   // The scan field is ALWAYS focused: after every action, and whenever the sale view is showing.
   // While a walk-in sale waits for the customer to ship to, the customer field keeps focus instead.
-  const { refocus, focusCustomerFind, refocusFromActive } = useCounterScanFocus({
-    scanRef,
-    customerFindRef,
-    awaitingCustomerRef,
-  });
+  const { refocus, refocusAfterDialog, focusCustomerFind, refocusFromActive } = useCounterScanFocus(
+    {
+      scanRef,
+      customerFindRef,
+      awaitingCustomerRef,
+    },
+  );
   // CQ-18: a refusal shown in the checkout bar belongs to the cart that was refused. Any edit to the cart's lines (a scan, a
   // quantity, a removal, a re-price) makes it stale, so it goes. A FINAL message (the sale was voided / changed / saved
   // unpaid) is about a sale that exists and stays. The tender has its own rule just below.
@@ -355,6 +357,23 @@ export function CounterSaleScreen() {
   // Fixing the tender clears the "Enter at least $X" message and ONLY that one (never a server or final-sale error).
   const clearUnderpaidError = () => setError((e) => (isTenderShortCopy(e) ? "" : e));
   const locked = outcomeUnknown; // every cart / payment control is disabled while the outcome is unknown
+  const zoneRead = useTenantTimeZoneQuery();
+  const { data: settings } = useQuery<ReceiptBusinessProfile>({
+    queryKey: ["settings"],
+    queryFn: () => apiClient.get("/settings").then((r) => r.data),
+    staleTime: 60_000,
+  });
+  // A check is dated against the BUSINESS's day. Until /settings has answered that day is unknown: nothing is judged (never
+  // against UTC), a CHECK sale is refused with its own copy, and a failed read offers a retry.
+  const zoneStatus = settings !== undefined ? "ready" : zoneRead.isError ? "failed" : "loading";
+  const businessToday = () =>
+    zoneStatus === "ready" ? calendarDayInZone(zoneRead.zone ?? "UTC") : "";
+  const today = businessToday(); // for the Check fields; complete() reads the day again when it is pressed
+  // W-1188, ONE rule everywhere: a chosen day equal to the business's today IS Today, so nothing is shown as dated, parked,
+  // saved or sent for it. Derived at use from the business day (unknown while /settings loads), never re-run at a restore, so
+  // a cart restored before the day is known still reads Today once it is. Complete, Park, the live-cart snapshot, the receipt
+  // and the chip all read this one value. A sale parked on an earlier day keeps it and reads "Dated ...".
+  const orderDate = dateIfNotToday(orderDateSet, today);
   // SA-748 section 1: the unfinished cart survives a refresh (restored UNLOCKED; a held attempt always wins).
   const liveCart = useCounterLiveCart({
     storeKey: liveKey,
@@ -382,7 +401,7 @@ export function CounterSaleScreen() {
       if (snap.method === "CHECK" || snap.method === "CARD") setTendered(snap.tendered);
       setReference(snap.reference);
       setCheckDate(snap.checkDate ?? "");
-      setOrderDate(asRestoredOrderDate(snap.orderDate));
+      setOrderDate(snap.orderDate ?? "");
     },
     onClearedElsewhere: () => {
       setLines([]);
@@ -552,24 +571,6 @@ export function CounterSaleScreen() {
     setCheckNotReceived(on);
     if (on) setReference("");
   };
-  const zoneRead = useTenantTimeZoneQuery();
-  const { data: settings } = useQuery<ReceiptBusinessProfile>({
-    queryKey: ["settings"],
-    queryFn: () => apiClient.get("/settings").then((r) => r.data),
-    staleTime: 60_000,
-  });
-  // A check is dated against the BUSINESS's day. Until /settings has answered that day is unknown: nothing is judged (never
-  // against UTC), a CHECK sale is refused with its own copy, and a failed read offers a retry.
-  const zoneStatus = settings !== undefined ? "ready" : zoneRead.isError ? "failed" : "loading";
-  const businessToday = () =>
-    zoneStatus === "ready" ? calendarDayInZone(zoneRead.zone ?? "UTC") : "";
-  const today = businessToday(); // for the Check fields; complete() reads the day again when it is pressed
-  // One rule: a day equal to the business's today IS Today (nothing stored or sent). A sale parked on an explicit earlier day
-  // keeps it when resumed later and reads "Dated ..."; one whose day has become today reads Today.
-  function asRestoredOrderDate(day: string | undefined): string {
-    const d = day ?? "";
-    return d && d === businessToday() ? "" : d;
-  }
   const checkDateValue = checkDate || today;
   // A held (outcome unknown) sale shows the date its attempt SENT, never one re-derived from today.
   const shownCheckDate =
@@ -934,18 +935,22 @@ export function CounterSaleScreen() {
     newItem.open(missCodeNow, scan.missCamera ? "camera" : "scanBox");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [missCodeNow]);
-  function onScanSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  // The ONE typed-scan entry: the scan box's Enter and a scan the date picker caught (W-1188: made while it is open, kept) both
+  // come through here.
+  function submitScanText(text: string) {
     lastScanActivityRef.current = performance.now();
     if (lineLocked || saleInFlight()) return; // frozen while the sale POST is in flight: a mid-POST scan would miss the sale
     if (scanPauseHeld()) {
       setScanText(""); // a window has the scan, and the box is cleared so the next scan doesn't join onto this one
       return;
     }
-    const text = scanText;
     setScanText("");
     setCameraOffNote(false);
     scan.submit(text);
+  }
+  function onScanSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    submitScanText(scanText);
   }
   // SA-1059: a code the camera decoded. The same guard as onScanSubmit (a mid-POST scan would miss the sale), and the same
   // activity stamp (a scanner's trailing Enter must not read as a human pause). A receipt is not a sale to add to either.
@@ -1151,7 +1156,7 @@ export function CounterSaleScreen() {
     setTendered(p.tendered);
     setReference(p.reference);
     setCheckDate(p.checkDate ?? "");
-    setOrderDate(asRestoredOrderDate(p.orderDate));
+    setOrderDate(p.orderDate ?? "");
     setRepriceEpoch((n) => n + 1);
   }
 
@@ -1349,7 +1354,7 @@ export function CounterSaleScreen() {
       },
       ...(inlineReturn ? { inlineReturn } : {}),
       // Seen is sent: a day equal to today reads (and sends) as Today; while today is unknown the chip shows the set day
-      ...(orderDate && orderDate !== submitToday ? { orderDate } : {}),
+      ...(dateIfNotToday(orderDateSet, submitToday) ? { orderDate: orderDateSet } : {}),
     } as CounterSaleRequest);
     dropUndo(); // the sale is going out: a removed line can no longer come back
     attemptRef.current = {
@@ -1609,7 +1614,8 @@ export function CounterSaleScreen() {
           }}
           disabled={locked || salePosting || parkBusy}
           refused={isOrderDateRefusalCopy(error)}
-          onDone={refocus}
+          onDone={refocusAfterDialog}
+          onScan={submitScanText}
         />
         {gate.offerShipInstead ? (
           <WriteButton

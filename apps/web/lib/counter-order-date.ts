@@ -55,3 +55,11 @@ export const ORDER_DATE_REFUSAL_CODES = [
   API_ERROR_CODES.ORDER_DATE_OUT_OF_RANGE,
   API_ERROR_CODES.ORDER_DATE_PERIOD_LOCKED,
 ] as const;
+
+/**
+ * W-1188, the ONE "Today means no date" rule: a chosen day equal to the business's today is Today, so it reads as Today and is
+ * never shown as dated, parked, saved or sent. `today` is "" while the business day is unknown (the day then passes through).
+ */
+export function dateIfNotToday(day: string, today: string | undefined): string {
+  return day && day !== today ? day : "";
+}
