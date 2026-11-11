@@ -268,7 +268,7 @@ describe("CounterSaleScreen", () => {
 
   describe("row 112: the scroll area ends below the sticky bar", () => {
     const realDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
-    let roCallbacks: Array<() => void> = [];
+    let roCallbacks: Array<(entries: unknown[]) => void> = [];
     beforeEach(() => {
       roCallbacks = [];
       Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
@@ -278,7 +278,7 @@ describe("CounterSaleScreen", () => {
         },
       });
       (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
-        constructor(cb: () => void) {
+        constructor(cb: (entries: unknown[]) => void) {
           roCallbacks.push(cb);
         }
         observe() {}
@@ -389,7 +389,7 @@ describe("CounterSaleScreen", () => {
           return (this as HTMLElement).dataset.testid === "counter-checkout-bar" ? 232 : 0;
         },
       });
-      act(() => roCallbacks.forEach((cb) => cb()));
+      act(() => roCallbacks.forEach((cb) => cb([])));
       await waitFor(() => expect(root.style.getPropertyValue("--counter-bar-h")).toBe("232px"));
     });
   });
