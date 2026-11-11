@@ -116,9 +116,9 @@ function MovableCards(props: CardsProps & Expand) {
   const open = props.expanded || props.lineItems.length <= COLLAPSE_AFTER;
   return (
     <>
-      {order.canMove && (
+      {order.canMove && open && (
         <div className="flex justify-end pb-2">
-          <SortLinesButton onSort={() => void order.sortByName()} />
+          <SortLinesButton onSort={() => void order.sortByName()} saving={order.saving} />
         </div>
       )}
       <SortableLines lines={order.lines} onMove={order.onMove} enabled={order.canMove && open}>

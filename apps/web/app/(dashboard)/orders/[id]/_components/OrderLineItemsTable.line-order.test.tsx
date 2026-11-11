@@ -1,5 +1,5 @@
 import * as React from "react";
-import { act, fireEvent } from "@testing-library/react";
+import { act, fireEvent, waitFor } from "@testing-library/react";
 import { renderWithProviders, screen, within } from "@/test-utils/render";
 import type { OrderItem } from "@/lib/api/orders";
 import { MutationCache, QueryClient } from "@tanstack/react-query";
@@ -320,7 +320,7 @@ describe("OrderLineItemsTable: Sort A–Z (W-1187 PR-2a2, ruling 7)", () => {
       sort: "name",
     });
     expect(names()).toEqual(["Sample Pear", "Sample Zucchini", "Sample Apple"]);
-    expect(await screen.findByText("Sorted A to Z")).toBeInTheDocument();
+    expect(await screen.findByText("Sorted A–Z")).toBeInTheDocument();
   });
 
   it("Undo after a sort puts the previous list back", async () => {
@@ -347,7 +347,7 @@ describe("OrderLineItemsTable: Sort A–Z (W-1187 PR-2a2, ruling 7)", () => {
     await act(async () => {
       fireEvent.click(sortBtn());
     });
-    expect(await screen.findByText("Already in A to Z order")).toBeInTheDocument();
+    expect(await screen.findByText("Already in A–Z order")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
   });
 
@@ -377,5 +377,150 @@ describe("OrderLineItemsTable: Sort A–Z (W-1187 PR-2a2, ruling 7)", () => {
       />,
     );
     expect(screen.queryByRole("button", { name: "Sort A–Z" })).toBeNull();
+  });
+});
+
+describe("OrderLineItemsTable: #4290 round 1 (one toast, busy, wording)", () => {
+  const sortBtn = () => screen.getByRole("button", { name: "Sort A–Z" });
+  const sorted = (stamp: string, ids: string[]) => ({
+    data: { id: "o-1", updatedAt: stamp, lineIds: ids },
+  });
+  const count = () =>
+    screen.queryAllByText(/^(Sorted A–Z|Already in A–Z order|Moved .* to line \d+)$/).length;
+
+  it("MUST: Sort then Sort again leaves ONE toast (the already-sorted line replaces 'Sorted')", async () => {
+    mockPut
+      .mockResolvedValueOnce(sorted("2026-11-11T08:00:09.000Z", ["l3", "l2", "l1"]))
+      .mockResolvedValueOnce(sorted("2026-11-11T08:00:10.000Z", ["l3", "l2", "l1"]));
+    renderTable();
+    await act(async () => {
+      fireEvent.click(sortBtn());
+    });
+    expect(await screen.findByText("Sorted A–Z")).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(sortBtn());
+    });
+    expect(await screen.findByText("Already in A–Z order")).toBeInTheDocument();
+    expect(count()).toBe(1);
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+  });
+
+  it("MUST: a 'Moved' toast followed by an already-sorted sort leaves ONE toast", async () => {
+    mockPut.mockResolvedValueOnce({
+      data: { id: "o-1", updatedAt: "2026-11-11T08:00:05.000Z", lineIds: ["l3", "l1", "l2"] },
+    });
+    mockPut.mockResolvedValueOnce(sorted("2026-11-11T08:00:06.000Z", ["l3", "l1", "l2"]));
+    renderTable();
+    await act(async () => {
+      dragEnd?.({ active: { id: "l3" }, over: { id: "l1" } });
+    });
+    expect(await screen.findByText("Moved Sample Zucchini to line 1")).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(sortBtn());
+    });
+    expect(await screen.findByText("Already in A–Z order")).toBeInTheDocument();
+    expect(count()).toBe(1);
+  });
+
+  it("MUST: a failure after a 'Sorted' toast replaces it (one toast)", async () => {
+    mockPut.mockResolvedValueOnce(sorted("2026-11-11T08:00:09.000Z", ["l3", "l2", "l1"]));
+    renderTable();
+    await act(async () => {
+      fireEvent.click(sortBtn());
+    });
+    expect(await screen.findByText("Sorted A–Z")).toBeInTheDocument();
+    mockPut.mockRejectedValueOnce({
+      response: { status: 409, data: { code: "ORDER_CHANGED_DURING_EDIT" } },
+    });
+    await act(async () => {
+      fireEvent.click(sortBtn());
+    });
+    expect(await screen.findByText(/changed on another screen/)).toBeInTheDocument();
+    expect(screen.queryByText("Sorted A–Z")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+  });
+
+  it("a double click sends ONE PUT, and the button is disabled and aria-busy while it is in flight", async () => {
+    let release!: (v: unknown) => void;
+    mockPut.mockReturnValueOnce(new Promise((r) => (release = r)));
+    renderTable();
+    const b = sortBtn();
+    await act(async () => {
+      fireEvent.click(b);
+    });
+    expect(b).toBeDisabled();
+    expect(b).toHaveAttribute("aria-busy", "true");
+    await act(async () => {
+      fireEvent.click(b);
+    });
+    expect(mockPut).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      release(sorted("2026-11-11T08:00:09.000Z", ["l3", "l2", "l1"]));
+    });
+    expect(sortBtn()).not.toBeDisabled();
+    expect(sortBtn()).not.toHaveAttribute("aria-busy", "true");
+  });
+
+  it("a failed sort says so in its own words", async () => {
+    mockPut.mockRejectedValueOnce({ response: { status: 500, data: {} } });
+    renderTable();
+    await act(async () => {
+      fireEvent.click(sortBtn());
+    });
+    expect(await screen.findByText("Couldn't sort the lines. Try again.")).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't move the line. Try again.")).toBeNull();
+  });
+
+  it("the button is at least 44 px tall at every width (no md:h-9)", () => {
+    renderTable();
+    expect(sortBtn().className).toContain("h-11");
+    expect(sortBtn().className).not.toMatch(/md:h-9/);
+  });
+});
+
+describe("OrderLineItemsTable: a busy 409 is not a stale order (#4291 readers)", () => {
+  const busy = {
+    response: {
+      status: 409,
+      data: { code: "CONCURRENT_UPDATE", reason: "INVOICE_BUSY", retryable: true },
+    },
+  };
+  const moved = ["Sample Zucchini", "Sample Apple", "Sample Pear"];
+
+  it("retries the same PUT once and the move lands, with no error toast", async () => {
+    mockPut.mockRejectedValueOnce(busy);
+    renderTable();
+    await act(async () => {
+      dragEnd?.({ active: { id: "l3" }, over: { id: "l1" } });
+    });
+    await waitFor(() => expect(mockPut).toHaveBeenCalledTimes(2));
+    expect(mockPut.mock.calls[1]).toEqual(mockPut.mock.calls[0]);
+    expect(await screen.findByText("Moved Sample Zucchini to line 1")).toBeInTheDocument();
+    expect(screen.queryByText(/changed on another screen/)).toBeNull();
+    expect(names()).toEqual(moved);
+  });
+
+  it("busy twice: keeps the user's order, says so once, and does not claim the order changed", async () => {
+    mockPut.mockRejectedValueOnce(busy).mockRejectedValueOnce(busy);
+    renderTable();
+    await act(async () => {
+      dragEnd?.({ active: { id: "l3" }, over: { id: "l1" } });
+    });
+    expect(await screen.findAllByText("The order is busy. Try again.")).toHaveLength(1);
+    expect(mockPut).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText(/changed on another screen/)).toBeNull();
+    expect(names()).toEqual(moved);
+  });
+
+  it("a real stale 409 (ORDER_CHANGED_DURING_EDIT) is not retried", async () => {
+    mockPut.mockRejectedValueOnce({
+      response: { status: 409, data: { code: "ORDER_CHANGED_DURING_EDIT" } },
+    });
+    renderTable();
+    await act(async () => {
+      dragEnd?.({ active: { id: "l3" }, over: { id: "l1" } });
+    });
+    expect(await screen.findByText(/changed on another screen/)).toBeInTheDocument();
+    expect(mockPut).toHaveBeenCalledTimes(1);
   });
 });
