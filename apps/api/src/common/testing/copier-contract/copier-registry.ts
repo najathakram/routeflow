@@ -25,7 +25,7 @@ export interface Copier {
   why?: string; //     required for registry-only
   carried?: string; //  copied from the source line (or the source line's own snapshot)
   reset?: string; //    deliberately set to a default (a wrong VALUE here is not detectable by key presence)
-  rederived?: string; // recomputed from the live product / tier / promo / tax rules
+  rederived?: string; // recomputed from the live product / tier / promo / tax rules, or stamped by a helper after the literal (position)
   /** carried from the SOURCE line through create()'s internal `options.sourceLines` (invisible to the anchored literal): checked structurally, each key must appear in the copier's `sourceLines` literal */
   viaOptions?: string;
   /**
