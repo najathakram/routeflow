@@ -498,3 +498,13 @@ describe("LowStockDigestService (N4)", () => {
     });
   });
 });
+
+describe("B1296-3 (SA-1131): the sweep chain takes only the forSystem callback's client", () => {
+  it("passing the injected this.prisma to sweep is a compile error; the tick's own door call compiles", () => {
+    const { svc } = make();
+    // @ts-expect-error -- B1296: sweep takes a SystemClient; the injected PrismaService is refused
+    const outside = () => svc["sweep"](svc["prisma"], AT_SEVEN_LOCAL);
+    const inside = () => svc.sendLowStockDigest(AT_SEVEN_LOCAL);
+    expect([typeof outside, typeof inside]).toEqual(["function", "function"]);
+  });
+});
