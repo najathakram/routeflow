@@ -2,6 +2,8 @@ import * as React from "react";
 import { act, fireEvent } from "@testing-library/react";
 import { renderWithProviders, screen, within } from "@/test-utils/render";
 import type { OrderItem } from "@/lib/api/orders";
+import { MutationCache, QueryClient } from "@tanstack/react-query";
+import { handleMutationError } from "@/lib/mutation-error-toast";
 import { OrderLineItemsTable } from "./OrderLineItemsTable";
 
 /**
@@ -161,5 +163,103 @@ describe("OrderLineItemsTable: moving a saved line (W-1187 PR-2a)", () => {
     expect(
       within(handle.closest("tr") as HTMLElement).getByText("Sample Apple"),
     ).toBeInTheDocument();
+  });
+});
+
+describe("OrderLineItemsTable: when a save fails (#4284 review)", () => {
+  const moved = ["Sample Zucchini", "Sample Apple", "Sample Pear"];
+
+  it.each([
+    ["a 500", { response: { status: 500, data: {} } }],
+    ["a network error", new Error("Network Error")],
+  ])(
+    "MUST 1: Undo failing with %s leaves the screen showing what the server holds (the moved order)",
+    async (_n, err) => {
+      renderTable();
+      await act(async () => {
+        dragEnd?.({ active: { id: "l3" }, over: { id: "l1" } });
+      });
+      expect(names()).toEqual(moved);
+      mockPut.mockRejectedValueOnce(err);
+      await act(async () => {
+        fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
+      });
+      expect(await screen.findByText("Couldn't move the line. Try again.")).toBeInTheDocument();
+      expect(names()).toEqual(moved);
+    },
+  );
+
+  it.each([
+    [
+      "409",
+      { response: { status: 409, data: { code: "ORDER_CHANGED_DURING_EDIT" } } },
+      /changed on another screen/,
+    ],
+    ["500", { response: { status: 500, data: {} } }, /Couldn't move the line/],
+  ])(
+    "MUST 2: a %s shows exactly one toast, the global handler stays silent",
+    async (_n, err, text) => {
+      const globalToast = jest.fn();
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+        mutationCache: new MutationCache({
+          onError: (e, _v, _c, mutation) =>
+            handleMutationError(e, mutation, globalToast, { push: jest.fn() } as never),
+        }),
+      });
+      mockPut.mockRejectedValueOnce(err);
+      renderWithProviders(
+        <OrderLineItemsTable
+          lineItems={LINES}
+          orderStatus="CONFIRMED"
+          total={30}
+          orderId="o-1"
+          updatedAt={STAMP}
+        />,
+        { queryClient },
+      );
+      await act(async () => {
+        dragEnd?.({ active: { id: "l3" }, over: { id: "l1" } });
+      });
+      expect(await screen.findAllByText(text)).toHaveLength(1);
+      expect(globalToast).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe("OrderLineItemsTable: Ctrl+Z follows the visible Undo (#4284 review)", () => {
+  const ctrlZ = () => fireEvent.keyDown(document.body, { key: "z", ctrlKey: true });
+
+  it("SHOULD a: Ctrl+Z undoes the last move while the toast lives", async () => {
+    renderTable();
+    await act(async () => {
+      dragEnd?.({ active: { id: "l3" }, over: { id: "l1" } });
+    });
+    mockPut.mockClear();
+    await act(async () => {
+      ctrlZ();
+    });
+    expect(mockPut).toHaveBeenCalledTimes(1);
+    expect(mockPut.mock.calls[0][1].lineIds).toEqual(["l1", "l2", "l3"]);
+  });
+
+  it("SHOULD a: after the 6 s the Undo toast lasts, Ctrl+Z sends nothing", async () => {
+    jest.useFakeTimers();
+    try {
+      renderTable();
+      await act(async () => {
+        dragEnd?.({ active: { id: "l3" }, over: { id: "l1" } });
+      });
+      mockPut.mockClear();
+      await act(async () => {
+        jest.advanceTimersByTime(6100);
+      });
+      await act(async () => {
+        ctrlZ();
+      });
+      expect(mockPut).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

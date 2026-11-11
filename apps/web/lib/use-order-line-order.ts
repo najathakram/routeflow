@@ -40,12 +40,32 @@ export function useOrderLineOrder({
   const [local, setLocal] = React.useState<string[] | null>(null);
   const stamp = React.useRef(updatedAt);
   const busy = React.useRef(false);
-  const lastUndo = React.useRef<string[] | null>(null);
+  // What Undo puts back: the ids before the move, the stamp the move returned (Undo is void once another screen moves
+  // it), and the timer that voids it with the toast (the Ctrl/Cmd+Z path must not outlive the visible Undo).
+  const lastUndo = React.useRef<{ ids: string[]; stamp: string } | null>(null);
+  const undoTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The ids on screen right now, read synchronously: a toast's Undo is a closure from the render before the drop.
+  const onScreen = React.useRef<string[]>(lineItems.map((l) => l.id));
+  const undoNow = React.useRef<() => void>(() => undefined);
   const serverKey = `${updatedAt ?? ""}|${lineItems.map((l) => l.id).join(",")}`;
   React.useEffect(() => {
     stamp.current = updatedAt;
+    onScreen.current = lineItems.map((l) => l.id);
     setLocal(null);
+    // another screen moved the order: our Undo would overwrite its work
+    if (lastUndo.current && lastUndo.current.stamp !== updatedAt) lastUndo.current = null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverKey, updatedAt]);
+  React.useEffect(
+    () => () => {
+      if (undoTimer.current) clearTimeout(undoTimer.current);
+    },
+    [],
+  );
+  const show = React.useCallback((ids: string[] | null, server: string[]) => {
+    onScreen.current = ids ?? server;
+    setLocal(ids);
+  }, []);
 
   const shown = React.useMemo(() => {
     if (!local) return lineItems;
@@ -73,47 +93,60 @@ export function useOrderLineOrder({
   const fail = React.useCallback(
     (err: unknown, previous: string[]) => {
       const stale = (err as { response?: { status?: number } })?.response?.status === 409;
-      setLocal(stale ? null : previous);
+      show(
+        stale ? null : previous,
+        lineItems.map((l) => l.id),
+      );
       if (stale) void qc.invalidateQueries({ queryKey: ["orders", orderId] });
       toast({
         title: stale ? LINE_ORDER_CHANGED : "Couldn't move the line. Try again.",
         variant: stale ? "warning" : "error",
       });
     },
-    [orderId, qc, toast],
+    [lineItems, orderId, qc, show, toast],
   );
 
   const undo = React.useCallback(async () => {
     const back = lastUndo.current;
     if (!back || busy.current) return;
+    if (undoTimer.current) clearTimeout(undoTimer.current);
     lastUndo.current = null;
     busy.current = true;
-    const current = local ?? lineItems.map((l) => l.id);
-    setLocal(back);
+    const current = onScreen.current; // the moved order, whatever render this closure came from
+    show(
+      back.ids,
+      lineItems.map((l) => l.id),
+    );
     try {
-      await send(back);
+      await send(back.ids);
     } catch (err) {
       fail(err, current);
     } finally {
       busy.current = false;
     }
-  }, [fail, lineItems, local, send]);
+  }, [fail, lineItems, send, show]);
+  undoNow.current = () => void undo();
 
   const onMove = React.useCallback(
     async ({ ids, movedId, toIndex }: LineMove) => {
       if (!canMove || busy.current) return;
       const previous = lines.map((l) => l.id);
       busy.current = true;
-      setLocal(ids);
+      show(
+        ids,
+        lineItems.map((l) => l.id),
+      );
       try {
         await send(ids);
-        lastUndo.current = previous;
+        lastUndo.current = { ids: previous, stamp: stamp.current! };
+        if (undoTimer.current) clearTimeout(undoTimer.current);
+        undoTimer.current = setTimeout(() => (lastUndo.current = null), UNDO_MS);
         const name = lines.find((l) => l.id === movedId)?.label ?? "Line";
         toast({
           title: `Moved ${name} to line ${toIndex + 1}`,
           variant: "success",
           duration: UNDO_MS,
-          action: { label: "Undo", onClick: () => void undo() },
+          action: { label: "Undo", onClick: () => undoNow.current() },
         });
       } catch (err) {
         fail(err, previous);
@@ -121,7 +154,7 @@ export function useOrderLineOrder({
         busy.current = false;
       }
     },
-    [canMove, fail, lines, send, toast, undo],
+    [canMove, fail, lineItems, lines, send, show, toast],
   );
 
   React.useEffect(() => {
