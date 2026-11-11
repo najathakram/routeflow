@@ -398,6 +398,33 @@ describe("OrderLineItemsTable: the customer-rearranged note (W-1187 BR7)", () =>
       /^Customer rearranged the lines · /,
     );
   });
+  it("#4292: a day other than today shows the date; today shows the time only", () => {
+    const old = renderWithProviders(
+      <OrderLineItemsTable
+        lineItems={LINES}
+        orderStatus="CONFIRMED"
+        total={30}
+        orderId="o-1"
+        updatedAt={STAMP}
+        linesRearranged={{ by: "CUSTOMER", at: "2020-01-02T14:14:00.000Z" }}
+      />,
+    );
+    expect(screen.getByTestId("lines-rearranged-note").textContent).toMatch(/Jan 2/);
+    old.unmount();
+    renderWithProviders(
+      <OrderLineItemsTable
+        lineItems={LINES}
+        orderStatus="CONFIRMED"
+        total={30}
+        orderId="o-1"
+        updatedAt={STAMP}
+        linesRearranged={{ by: "CUSTOMER", at: new Date().toISOString() }}
+      />,
+    );
+    expect(screen.getByTestId("lines-rearranged-note").textContent).not.toMatch(
+      /Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec/,
+    );
+  });
   it("shows nothing when staff arranged them or nobody did", () => {
     const { unmount } = withNote("STAFF");
     expect(screen.queryByTestId("lines-rearranged-note")).toBeNull();

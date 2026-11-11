@@ -161,4 +161,43 @@ describe("buyer order page: arranging your own lines (W-1187 PR-2c)", () => {
     fireEvent.click(screen.getByRole("button", { name: /edit items/i }));
     expect(screen.queryByRole("button", { name: /^Move / })).toBeNull();
   });
+
+  it("#4292 MUST: the handle slot cancels the button's negative margin, so a narrow screen does not clip half of it", () => {
+    renderWithProviders(<BuyerOrderDetailPage />);
+    expect(screen.getAllByTestId("row-handle-slot")[0].className).toContain("[&>button]:ml-0");
+  });
+
+  it("#4292: a 403 after dispatch (the order is no longer movable) says why in plain words, refetches, and drops the unsaved order", async () => {
+    mockPut.mockRejectedValueOnce({
+      response: {
+        status: 403,
+        data: { message: "This order is being prepared and can't be changed." },
+      },
+    });
+    const view = renderWithProviders(<BuyerOrderDetailPage />);
+    const refetch = jest.spyOn(view.queryClient, "invalidateQueries");
+    await act(async () => {
+      fireEvent.keyDown(screen.getByRole("button", { name: /Move Sample Apple, line 1 of 3/ }), {
+        key: "ArrowDown",
+        altKey: true,
+      });
+    });
+    expect(
+      await screen.findByText("This order is being prepared and can't be changed."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't move the line. Try again.")).toBeNull();
+    expect(refetch).toHaveBeenCalledWith({ queryKey: ["buyer", "order", "ord-1"] });
+  });
+
+  it("#4292: a bare 403 falls back to our own sentence", async () => {
+    mockPut.mockRejectedValueOnce({ response: { status: 403, data: { message: "Forbidden" } } });
+    renderWithProviders(<BuyerOrderDetailPage />);
+    await act(async () => {
+      fireEvent.keyDown(screen.getByRole("button", { name: /Move Sample Apple, line 1 of 3/ }), {
+        key: "ArrowDown",
+        altKey: true,
+      });
+    });
+    expect(await screen.findByText("This order can't be rearranged any more.")).toBeInTheDocument();
+  });
 });

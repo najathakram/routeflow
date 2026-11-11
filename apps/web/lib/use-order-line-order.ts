@@ -38,6 +38,7 @@ const isBusy = (err: unknown) => {
 };
 /** Thrown inside send() when the screen was left during the busy wait: no retry, no toast. */
 const LEFT = new Error("line-order: screen left");
+export const LINE_ORDER_CLOSED = "This order can't be rearranged any more.";
 export const LINE_ORDER_CHANGED = "This order changed on another screen. Showing the latest.";
 
 const inTextField = (el: EventTarget | null) =>
@@ -169,20 +170,30 @@ export function useOrderLineOrder<L extends { id: string } = OrderItem>({
     (err: unknown, previous: string[], what = "move the line") => {
       if (err === LEFT) return;
       const busyNow = isBusy(err);
-      const stale =
-        !busyNow && (err as { response?: { status?: number } })?.response?.status === 409;
+      const res = (err as { response?: { status?: number; data?: { message?: unknown } } })
+        ?.response;
+      const stale = !busyNow && res?.status === 409;
+      // 403 after the screen drew its handles: the order stopped being movable (edit window closed, status moved on).
+      // Say the server's own reason in plain words when it sent one, and refetch so the handles go away.
+      const closed = !busyNow && res?.status === 403;
+      const reason =
+        typeof res?.data?.message === "string" && res.data.message !== "Forbidden"
+          ? res.data.message
+          : LINE_ORDER_CLOSED;
       show(
         stale ? null : previous,
         lineItems.map((l) => l.id),
       );
-      if (stale || busyNow) void qc.invalidateQueries({ queryKey: orderKey });
+      if (stale || busyNow || closed) void qc.invalidateQueries({ queryKey: orderKey });
       say({
         title: busyNow
           ? LINE_ORDER_BUSY
-          : stale
-            ? LINE_ORDER_CHANGED
-            : `Couldn't ${what}. Try again.`,
-        variant: stale || busyNow ? "warning" : "error",
+          : closed
+            ? reason
+            : stale
+              ? LINE_ORDER_CHANGED
+              : `Couldn't ${what}. Try again.`,
+        variant: stale || busyNow || closed ? "warning" : "error",
       });
     },
     [lineItems, orderKey, qc, say, show],

@@ -48,13 +48,17 @@ export function LineRow({
   );
 }
 
-/** The row's handle, drawn in the cell's own left padding (24 px wide, full row tall), so the table gains no width. */
+/**
+ * The row's handle, drawn at the cell's left edge (24 px wide, full row tall; the cell reserves that with its own left
+ * padding, so the table grows by that padding only). `ml-0` cancels the handle's `max-md:-ml-3` (made for the staff
+ * layout): inside the table's overflow box that margin pushed half the button out of view below 768 px.
+ */
 export function LineHandle() {
   const handle = React.useContext(HandleSlot);
   if (!handle) return null;
   return (
     <div
-      className="absolute inset-y-0 left-0 flex items-center [&>button]:w-6"
+      className="absolute inset-y-0 left-0 flex items-center [&>button]:ml-0 [&>button]:w-6"
       data-testid="row-handle-slot"
     >
       {handle}
