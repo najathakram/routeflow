@@ -1146,6 +1146,26 @@ describe("order date chip on the till", () => {
     await waitFor(() => expect(chip()).toHaveAttribute("data-direction", "TODAY"));
   });
 
+  it("a reload keeps the chosen day: the chip comes back dated and Complete still sends it", async () => {
+    const view = renderScreen();
+    await scan("COLA");
+    await pickYesterday();
+    const liveKey = () =>
+      Object.keys(window.localStorage).find((k) => k.includes("liveCart")) as string;
+    await waitFor(() => {
+      const saved = window.localStorage.getItem(liveKey());
+      expect(saved && JSON.parse(saved).orderDate).toBe(YESTERDAY);
+    });
+    view.unmount();
+    renderScreen();
+    await screen.findByTestId("counter-cart-restored");
+    await waitFor(() => expect(chip()).toHaveAttribute("data-direction", "BACK"));
+    fireEvent.click(screen.getByRole("button", { name: "Exact" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(mutateAsync.mock.calls[0][0].dto.orderDate).toBe(YESTERDAY);
+  });
+
   it("a refused date shows fixed copy and a red ring, and the date stays for the clerk to fix", async () => {
     renderScreen();
     await scan("COLA");

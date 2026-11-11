@@ -17,6 +17,7 @@ import type {
   ReceiptModel,
   TodaysSaleMethod,
 } from "@routeflow/types";
+import { calendarDayInZone } from "./calendar-date";
 import { displayProductName } from "./product-display";
 
 /**
@@ -213,8 +214,13 @@ export function buildCounterReceipt(input: {
   enteredTender: number | null;
   profile: ReceiptBusinessProfile | null | undefined;
   now: Date;
+  /** W-1188: the chip's day; a day other than the business's today prints as the sale date, the entry time apart */
+  orderDate?: string;
 }): CounterReceiptModel {
   const { receipt, lines, enteredTender, profile, now } = input;
+  const zone = profile?.timezone || "UTC";
+  const datedDay =
+    input.orderDate && input.orderDate !== dayInZoneOrUtc(zone, now) ? input.orderDate : null;
   const method = receipt.method ?? input.fallbackMethod;
   const paymentNotRecorded = receipt.paymentRecorded === false;
   const onAccount = method === "ON_ACCOUNT" && !paymentNotRecorded;
@@ -335,7 +341,8 @@ export function buildCounterReceipt(input: {
     orderNumber: receipt.orderNumber,
     invoiceNumber: receipt.invoiceNumber,
     invoiceId: receipt.invoiceId,
-    dateLabel: formatSaleTime(now, profile?.timezone || "UTC"),
+    dateLabel: datedDay ? formatSaleDay(datedDay) : formatSaleTime(now, zone),
+    ...(datedDay ? { enteredLabel: formatSaleTime(now, zone) } : {}),
     lines: rows,
     cashier: clean(input.cashier) || null,
     subtotal: roundMoney(netSubtotal + discounts),
@@ -424,6 +431,8 @@ export interface ReprintSaleFacts {
   customerName?: string | null;
   /** IANA zone the sale time is read in (the server's `meta.timezone`) */
   timezone?: string;
+  /** W-1188: the Today's sales row's `dated.day`; present: the receipt prints that day and the entry time apart */
+  datedDay?: string | null;
   /**
    * B1262 / SA-838, the server's split of `paid` (the row's `tenderPaid` / `tenderMethods`, `@routeflow/pricing`
    * `counterTenderSplit`): what was TENDERED, without the sale's own return credit. Used as given, never re-derived. Present:
@@ -454,6 +463,26 @@ const REPRINT_METHOD_LABEL = COUNTER_METHOD_LABEL;
  * string: a value Intl does not know would throw a RangeError and break the receipt, so it falls back to UTC.
  * An absent zone is UTC too (never the browser's zone, SA-738).
  */
+/** The business's day; the zone is a free string, so one Intl does not know falls back to UTC (never throws). */
+function dayInZoneOrUtc(zone: string, now: Date): string {
+  try {
+    return calendarDayInZone(zone, now);
+  } catch {
+    return calendarDayInZone("UTC", now);
+  }
+}
+
+/** "Mon, Oct 5, 2026": a chosen sale day (a calendar day, no zone). The API's receipt prints the same. */
+export function formatSaleDay(day: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(`${day}T00:00:00Z`));
+}
+
 export function formatSaleTime(at: string | Date, timeZone: string = "UTC"): string {
   const d = at instanceof Date ? at : new Date(at);
   const format = (zone: string | undefined) =>
@@ -574,7 +603,10 @@ export function receiptModelFromOrder(input: {
     orderNumber: order.orderNumber,
     invoiceNumber: sale.invoiceNumber,
     invoiceId: sale.invoiceId,
-    dateLabel: formatSaleTime(sale.createdAt, sale.timezone),
+    dateLabel: sale.datedDay
+      ? formatSaleDay(sale.datedDay)
+      : formatSaleTime(sale.createdAt, sale.timezone),
+    ...(sale.datedDay ? { enteredLabel: formatSaleTime(sale.createdAt, sale.timezone) } : {}),
     lines: rows,
     cashier: clean(input.cashier) || null,
     subtotal: roundMoney(netSubtotal + discounts),

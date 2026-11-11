@@ -32,6 +32,24 @@ beforeEach(() => {
 
 /** W-1184: signing out used to wipe the stored sale with no copy anywhere (the lost-sale path). */
 describe("parkStoredLiveCarts (sign-out)", () => {
+  it("W-1188: the parked sale keeps the chosen order date", async () => {
+    writeLiveCart(
+      KEY,
+      {
+        lines: [line],
+        customer: null,
+        method: "CASH",
+        tendered: "",
+        reference: "",
+        walkIn: true,
+        orderDate: "2026-11-06",
+      },
+      "tab",
+    );
+    await parkStoredLiveCarts(KEY);
+    expect(post.mock.calls[0][1].payload.orderDate).toBe("2026-11-06");
+  });
+
   it("parks the stored sale on the server before the browser forgets it", async () => {
     save();
     await parkStoredLiveCarts(KEY);

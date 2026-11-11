@@ -77,18 +77,38 @@ export function CounterDatePicker({
     const next = addDays(cursor, by);
     if (inRange(next)) setCursor(next);
   };
+  const moveMonth = (by: number) => {
+    const target = shiftMonth(month, by);
+    const [ty, tm] = target.split("-").map(Number);
+    const last = new Date(Date.UTC(ty, tm, 0)).getUTCDate();
+    const next = `${target}-${String(Math.min(Number(cursor.slice(8)), last)).padStart(2, "0")}`;
+    if (inRange(next)) setCursor(next);
+  };
+  const weekdayOfCursor = new Date(`${cursor}T00:00:00Z`).getUTCDay();
+  // Only keys typed ON the grid act here: Enter on a month button pages, and letters never set a date (a barcode
+  // scanner types letters then Enter; the quick picks and the typed field are the ways to say "today" or "yesterday").
   const onGridKey = (e: React.KeyboardEvent) => {
+    if (e.target !== e.currentTarget || e.altKey || e.ctrlKey || e.metaKey) return;
     const k = e.key;
     if (k === "ArrowLeft") move(-1);
     else if (k === "ArrowRight") move(1);
     else if (k === "ArrowUp") move(-7);
     else if (k === "ArrowDown") move(7);
-    else if (k === "t" || k === "T") apply(today);
-    else if (k === "y" || k === "Y") apply(addDays(today, -1));
+    else if (k === "PageUp") moveMonth(-1);
+    else if (k === "PageDown") moveMonth(1);
+    else if (k === "Home") move(-weekdayOfCursor);
+    else if (k === "End") move(6 - weekdayOfCursor);
     else if (k === "Enter") apply(cursor);
     else return;
     e.preventDefault();
   };
+  const weeks: Array<Array<string | null>> = [];
+  for (let i = 0; i < cells.length; i += 7) {
+    const row = cells.slice(i, i + 7);
+    while (row.length < 7) row.push(null);
+    weeks.push(row);
+  }
+  const cellId = (day: string) => `counter-date-${day}`;
 
   const quick = [today, addDays(today, -1), ...[2, 3, 4, 5, 6].map((n) => addDays(today, -n))];
   const quickLabel = (d: string) =>
@@ -157,13 +177,7 @@ export function CounterDatePicker({
             {OFFICE_FUTURE_HINT}
           </p>
         ) : null}
-        <div
-          role="group"
-          tabIndex={0}
-          aria-label="Calendar"
-          onKeyDown={onGridKey}
-          className="rounded-md border border-navy/15 p-2 outline-none focus-visible:ring-2 focus-visible:ring-navy/40"
-        >
+        <div className="rounded-md border border-navy/15 p-2">
           <div className="mb-1 flex items-center justify-between">
             <Button
               type="button"
@@ -175,7 +189,7 @@ export function CounterDatePicker({
             >
               ‹
             </Button>
-            <span className="text-sm font-semibold">
+            <span className="text-sm font-semibold" aria-live="polite">
               {MONTHS[Number(month.slice(5)) - 1]} {month.slice(0, 4)}
             </span>
             <Button
@@ -189,36 +203,56 @@ export function CounterDatePicker({
               ›
             </Button>
           </div>
-          <div className="grid grid-cols-7 gap-1 text-center text-xs text-navy/60">
-            {HEAD.map((h) => (
-              <span key={h}>{h}</span>
+          <div
+            role="grid"
+            tabIndex={0}
+            aria-label="Calendar"
+            aria-activedescendant={cellId(cursor)}
+            onKeyDown={onGridKey}
+            className="rounded-md outline-none focus-visible:ring-2 focus-visible:ring-navy/40"
+          >
+            <div role="row" className="grid grid-cols-7 gap-1 text-center text-xs text-navy/60">
+              {HEAD.map((h) => (
+                <span key={h} role="columnheader">
+                  {h}
+                </span>
+              ))}
+            </div>
+            {weeks.map((week, w) => (
+              <div key={w} role="row" className="mt-1 grid grid-cols-7 gap-1">
+                {week.map((day, i) =>
+                  day === null ? (
+                    <span key={`b${i}`} role="gridcell" aria-hidden />
+                  ) : (
+                    <div
+                      key={day}
+                      role="gridcell"
+                      aria-selected={day === (value || today)}
+                      aria-disabled={!inRange(day) || undefined}
+                    >
+                      <button
+                        id={cellId(day)}
+                        type="button"
+                        tabIndex={-1}
+                        disabled={!inRange(day)}
+                        aria-label={dayLabel(day, today)}
+                        aria-current={day === today ? "date" : undefined}
+                        data-day={day}
+                        onClick={() => apply(day)}
+                        className={cn(
+                          "min-h-[44px] w-full rounded-md text-sm tabular-nums disabled:text-navy/25",
+                          day === cursor && "ring-2 ring-navy/50",
+                          day === today && "font-bold",
+                          day === (value || today) && "bg-navy text-white",
+                        )}
+                      >
+                        {Number(day.slice(8))}
+                      </button>
+                    </div>
+                  ),
+                )}
+              </div>
             ))}
-          </div>
-          <div className="mt-1 grid grid-cols-7 gap-1">
-            {cells.map((day, i) =>
-              day === null ? (
-                <span key={`b${i}`} />
-              ) : (
-                <button
-                  key={day}
-                  type="button"
-                  tabIndex={-1}
-                  disabled={!inRange(day)}
-                  aria-label={dayLabel(day, today)}
-                  aria-pressed={day === (value || today)}
-                  data-day={day}
-                  onClick={() => apply(day)}
-                  className={cn(
-                    "min-h-[44px] rounded-md text-sm tabular-nums disabled:text-navy/25",
-                    day === cursor && "ring-2 ring-navy/50",
-                    day === today && "font-bold",
-                    day === (value || today) && "bg-navy text-white",
-                  )}
-                >
-                  {Number(day.slice(8))}
-                </button>
-              ),
-            )}
           </div>
         </div>
         <div className="flex justify-end gap-2">

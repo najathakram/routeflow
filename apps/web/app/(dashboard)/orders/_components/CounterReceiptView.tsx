@@ -64,8 +64,16 @@ export function CounterReceiptView({
         {reprintLabel ? (
           <p data-testid="receipt-reprint">{reprintLabel}</p>
         ) : (
-          <p data-testid="receipt-date">{m.dateLabel}</p>
+          <p data-testid="receipt-date">
+            {m.enteredLabel ? "Sale date " : ""}
+            {m.dateLabel}
+          </p>
         )}
+        {m.enteredLabel && !reprintLabel ? (
+          <p className="text-xs" data-testid="receipt-entered">
+            Entered {m.enteredLabel}
+          </p>
+        ) : null}
         {/* owner ruling: who reprinted it and who sold it are staff-facing, on screen only; the printed copy (the customer's) omits both */}
         {reprintedBy ? (
           <p className="print:hidden" data-testid="receipt-reprinted-by">
