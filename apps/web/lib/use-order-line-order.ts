@@ -17,14 +17,27 @@ import type { LineMove, SortableLine } from "@/components/SortableLines";
  */
 const UNDO_MS = 6000;
 const BUSY_RETRY_MS = 400;
-export const LINE_ORDER_BUSY = "The order is busy. Try again.";
+export const LINE_ORDER_BUSY = "The order is busy. Your change wasn't saved. Try again.";
 /** The server's retryable "another update is in progress" 409 (Order or Invoice row held): not a stale order. */
+const BUSY_REASONS = ["ORDER_LINE_ORDER_BUSY", "INVOICE_BUSY"];
 const isBusy = (err: unknown) => {
   const r = (
-    err as { response?: { status?: number; data?: { code?: string; retryable?: boolean } } }
+    err as {
+      response?: {
+        status?: number;
+        data?: { code?: string; reason?: string; retryable?: boolean };
+      };
+    }
   )?.response;
-  return r?.status === 409 && r.data?.code === API_ERROR_CODES.CONCURRENT_UPDATE;
+  return (
+    r?.status === 409 &&
+    r.data?.code === API_ERROR_CODES.CONCURRENT_UPDATE &&
+    r.data.retryable === true &&
+    BUSY_REASONS.includes(r.data.reason ?? "")
+  );
 };
+/** Thrown inside send() when the screen was left during the busy wait: no retry, no toast. */
+const LEFT = new Error("line-order: screen left");
 export const LINE_ORDER_CHANGED = "This order changed on another screen. Showing the latest.";
 
 const inTextField = (el: EventTarget | null) =>
@@ -66,6 +79,8 @@ export function useOrderLineOrder<L extends { id: string } = OrderItem>({
     },
     [closeToast, toast],
   );
+  const gone = React.useRef(false);
+  const retryTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const [saving, setSaving] = React.useState(false);
   const qc = useQueryClient();
   const staffReorder = useReorderOrderLines();
@@ -97,7 +112,9 @@ export function useOrderLineOrder<L extends { id: string } = OrderItem>({
   }, [serverKey, updatedAt]);
   React.useEffect(
     () => () => {
+      gone.current = true;
       if (undoTimer.current) clearTimeout(undoTimer.current);
+      if (retryTimer.current) clearTimeout(retryTimer.current);
     },
     [],
   );
@@ -122,19 +139,23 @@ export function useOrderLineOrder<L extends { id: string } = OrderItem>({
 
   const send = React.useCallback(
     async (ids: string[] | "name") => {
-      const put = () =>
-        reorder.mutateAsync({
-          id: orderId!,
-          expectedUpdatedAt: stamp.current!,
-          ...(ids === "name" ? { sort: "name" as const } : { lineIds: ids }),
-        });
+      // One request, built once: the retry must be the identical call (a refetch in the wait must not re-stamp it).
+      const request = {
+        id: orderId!,
+        expectedUpdatedAt: stamp.current!,
+        ...(ids === "name" ? { sort: "name" as const } : { lineIds: ids }),
+      };
       let res;
       try {
-        res = await put();
+        res = await reorder.mutateAsync(request);
       } catch (err) {
         if (!isBusy(err)) throw err;
-        await new Promise((r) => setTimeout(r, BUSY_RETRY_MS)); // a payment or edit holds a row: once more, then say so
-        res = await put();
+        // a payment or edit holds a row: once more, then say so
+        await new Promise<void>((r) => {
+          retryTimer.current = setTimeout(r, BUSY_RETRY_MS);
+        });
+        if (gone.current) throw LEFT;
+        res = await reorder.mutateAsync(request);
       }
       stamp.current = res.updatedAt;
       void qc.invalidateQueries({ queryKey: orderKey });
@@ -144,12 +165,13 @@ export function useOrderLineOrder<L extends { id: string } = OrderItem>({
   );
 
   const fail = React.useCallback(
-    (err: unknown, previous: string[], attempted?: string[], what = "move the line") => {
+    (err: unknown, previous: string[], what = "move the line") => {
+      if (err === LEFT) return;
       const busyNow = isBusy(err);
       const stale =
         !busyNow && (err as { response?: { status?: number } })?.response?.status === 409;
       show(
-        stale ? null : busyNow ? (attempted ?? previous) : previous,
+        stale ? null : previous,
         lineItems.map((l) => l.id),
       );
       if (stale) void qc.invalidateQueries({ queryKey: orderKey });
@@ -181,7 +203,7 @@ export function useOrderLineOrder<L extends { id: string } = OrderItem>({
     try {
       await send(back.ids);
     } catch (err) {
-      fail(err, current, back.ids);
+      fail(err, current);
     } finally {
       busy.current = false;
       setSaving(false);
@@ -223,7 +245,7 @@ export function useOrderLineOrder<L extends { id: string } = OrderItem>({
         const name = lines.find((l) => l.id === movedId)?.label ?? "Line";
         offerUndo(previous, `Moved ${name} to line ${toIndex + 1}`);
       } catch (err) {
-        fail(err, previous, ids);
+        fail(err, previous);
       } finally {
         busy.current = false;
         setSaving(false);
@@ -250,7 +272,7 @@ export function useOrderLineOrder<L extends { id: string } = OrderItem>({
         say({ title: "Already in A–Z order", variant: "info" });
       }
     } catch (err) {
-      fail(err, previous, undefined, "sort the lines");
+      fail(err, previous, "sort the lines");
     } finally {
       busy.current = false;
       setSaving(false);
