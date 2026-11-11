@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { API_ERROR_CODES } from "@routeflow/types";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@routeflow/ui/web";
 import { useReorderOrderLines, type OrderItem } from "@/lib/api/orders";
@@ -21,7 +22,7 @@ const isBusy = (err: unknown) => {
   const r = (
     err as { response?: { status?: number; data?: { code?: string; retryable?: boolean } } }
   )?.response;
-  return r?.status === 409 && r.data?.code === "CONCURRENT_UPDATE";
+  return r?.status === 409 && r.data?.code === API_ERROR_CODES.CONCURRENT_UPDATE;
 };
 export const LINE_ORDER_CHANGED = "This order changed on another screen. Showing the latest.";
 
