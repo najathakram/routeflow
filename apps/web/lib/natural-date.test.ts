@@ -77,10 +77,12 @@ describe("strict month names and years (reader A1)", () => {
     expect(p("2 march")).toBe("2027-03-02"); // nearest occurrence
   });
   it("a two-digit year resolves inside the window the till takes, or refuses", () => {
-    expect(p("11/02/99")).toBeNull();
+    // read as 20xx like a four-digit year: the picker's range check then answers both the same way
+    expect(p("11/02/99")).toBe("2099-11-02");
+    expect(p("11/02/24")).toBe(p("11/02/2024"));
     expect(p("11/02/25")).toBe("2025-11-02");
     expect(p("11/02/27")).toBe("2027-11-02");
-    expect(p("11/02/40")).toBeNull();
+    expect(p("11/02/40")).toBe("2040-11-02");
   });
   it("month and day with no year is the nearest occurrence, a tie going to the past (ruling section 7)", () => {
     expect(p("11/02", "2026-05-10")).toBe("2026-11-02");

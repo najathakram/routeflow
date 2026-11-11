@@ -1,6 +1,6 @@
 import { counterSaleErrorCopy } from "./counter-sale";
 import { isCounterSaleHandledError } from "./counter-sale";
-import { isOrderDateRefusalCopy } from "./counter-order-date";
+import { futureLimitWords, isOrderDateRefusalCopy } from "./counter-order-date";
 import { ORDER_DATE_MAX_FUTURE_DAYS, ORDER_DATE_MAX_PAST_YEARS } from "@routeflow/pricing";
 
 // W-1188: the server's two date refusals map to fixed plain copy; the server's own message is never shown.
@@ -46,6 +46,14 @@ describe("counter order date refusals", () => {
     expect(counterSaleErrorCopy(err, { orderDate: "2024-01-01" })).toContain(
       `more than ${ORDER_DATE_MAX_PAST_YEARS} years back`,
     );
+  });
+
+  it("the future limit is worded from the days, never rounded into a lie", () => {
+    expect(futureLimitWords(366)).toBe("a year");
+    expect(futureLimitWords(365)).toBe("a year");
+    expect(futureLimitWords(730)).toBe("2 years");
+    expect(futureLimitWords(400)).toBe("400 days");
+    expect(futureLimitWords(540)).toBe("540 days");
   });
 
   it("a locked month names the month and the category", () => {
