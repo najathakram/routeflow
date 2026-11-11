@@ -72,6 +72,7 @@ export function useOrderLineOrder<L extends { id: string } = OrderItem>({
   // The one line-order toast: a new one replaces the old, and a replaced Undo is void (Ctrl/Cmd+Z follows the screen).
   const say = React.useCallback(
     (opts: Parameters<typeof toast>[0]) => {
+      if (gone.current) return; // a save that outlived its page says nothing on the next one
       if (undoTimer.current) clearTimeout(undoTimer.current);
       lastUndo.current = null;
       closeToast();
@@ -110,14 +111,14 @@ export function useOrderLineOrder<L extends { id: string } = OrderItem>({
     if (lastUndo.current && lastUndo.current.stamp !== updatedAt) lastUndo.current = null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverKey, updatedAt]);
-  React.useEffect(
-    () => () => {
+  React.useEffect(() => {
+    gone.current = false; // StrictMode runs mount, cleanup, mount: the second mount is a live screen
+    return () => {
       gone.current = true;
       if (undoTimer.current) clearTimeout(undoTimer.current);
       if (retryTimer.current) clearTimeout(retryTimer.current);
-    },
-    [],
-  );
+    };
+  }, []);
   const show = React.useCallback((ids: string[] | null, server: string[]) => {
     onScreen.current = ids ?? server;
     setLocal(ids);
@@ -174,7 +175,7 @@ export function useOrderLineOrder<L extends { id: string } = OrderItem>({
         stale ? null : previous,
         lineItems.map((l) => l.id),
       );
-      if (stale) void qc.invalidateQueries({ queryKey: orderKey });
+      if (stale || busyNow) void qc.invalidateQueries({ queryKey: orderKey });
       say({
         title: busyNow
           ? LINE_ORDER_BUSY
@@ -214,6 +215,7 @@ export function useOrderLineOrder<L extends { id: string } = OrderItem>({
   /** The "Moved X ... Undo" toast: Undo puts the previous list back, for 6 s (the toast and Ctrl/Cmd+Z share the window). */
   const offerUndo = React.useCallback(
     (previous: string[], title: string) => {
+      if (gone.current) return; // no live Undo on the next page
       say({
         title,
         variant: "success",
