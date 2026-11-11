@@ -156,6 +156,7 @@ export default function OrderDetailPage() {
   const { data: order, isLoading, isError } = useOrder(id);
   // `order_ui_v2` (dark): card-list lines instead of the table.
   const orderUiV2 = useOrderUiV2();
+  const OrderLines = orderUiV2.enabled ? OrderLineItemCards : OrderLineItemsTable;
   const staffFulfilment = useStaffFulfilment();
   // Keep the Fulfillment row rendered once it has been shown for this order: a PICKUP -> SHIP move on a
   // ship-only account would otherwise hide the select the moment the order's path becomes an offered one.
@@ -1658,19 +1659,14 @@ export default function OrderDetailPage() {
                   )}
                 </StickyEditBar>
               </div>
-            ) : orderUiV2.enabled ? (
-              <OrderLineItemCards
-                lineItems={order.lineItems}
-                orderStatus={order.status}
-                fulfillPath={order.fulfillPath}
-                total={total}
-              />
             ) : (
-              <OrderLineItemsTable
+              <OrderLines
                 lineItems={order.lineItems}
                 orderStatus={order.status}
                 fulfillPath={order.fulfillPath}
                 total={total}
+                orderId={order.id}
+                updatedAt={order.updatedAt}
               />
             )}
           </div>

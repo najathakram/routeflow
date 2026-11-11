@@ -3,6 +3,8 @@ import { UserRole } from "@prisma/client";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { lockRowsNoWait } from "../common/db-locks";
 import { reorderOrderLines } from "./order-line-order";
+import { orderLineInvoiceDescription } from "../invoices/invoice-line-name";
+import { sortInvoiceLines } from "../invoices/invoice-line-order";
 
 jest.mock("../common/db-locks", () => ({ lockRowsNoWait: jest.fn().mockResolvedValue(undefined) }));
 
@@ -15,6 +17,7 @@ jest.mock("../common/db-locks", () => ({ lockRowsNoWait: jest.fn().mockResolvedV
 const AT = new Date("2026-11-01T12:00:00.000Z");
 
 function build(opts: {
+  rows?: Array<Record<string, unknown>>;
   tenantId: string | null;
   ownerId?: string | null;
   orderCustomerId?: string;
@@ -36,13 +39,17 @@ function build(opts: {
         .mockResolvedValue(opts.ownerId === null ? null : { id: opts.ownerId ?? "c1" }),
     },
     orderItem: {
-      findMany: jest.fn().mockResolvedValue([
-        { id: "a", position: 0 },
-        { id: "b", position: 1 },
-      ]),
+      findMany: jest.fn().mockResolvedValue(
+        opts.rows ?? [
+          { id: "a", position: 0 },
+          { id: "b", position: 1 },
+        ],
+      ),
       update: jest.fn(),
     },
     auditLog: { create: jest.fn(), findFirst: jest.fn().mockResolvedValue(null) },
+    invoice: { findMany: jest.fn().mockResolvedValue([]) },
+    invoiceItem: { update: jest.fn() },
   };
   const prisma = {
     getTenantId: jest.fn().mockReturnValue(opts.tenantId),
@@ -117,5 +124,239 @@ describe("reorderOrderLines: the buyer ownership check runs before the row lock"
     await reorderOrderLines(deps, "o1", dto, staff);
     expect(tx.customer.findFirst).not.toHaveBeenCalled();
     expect(lock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("reorderOrderLines: sort name (W-1187 ruling 7)", () => {
+  const row = (
+    id: string,
+    position: number,
+    name: string,
+    extra: Record<string, unknown> = {},
+  ) => ({
+    id,
+    position,
+    name: null,
+    productId: `p-${id}`,
+    boxes: null,
+    unitsPerBox: null,
+    product: { name, variantName: null, parentProductId: null, parent: null },
+    ...extra,
+  });
+  const sortDto = { expectedUpdatedAt: AT.toISOString(), sort: "name" as const };
+
+  it("R-sort: lines Zebra@0, Apple@1 come out Apple, Zebra, with both positions written", async () => {
+    const { tx, deps } = build({
+      tenantId: "t1",
+      rows: [row("z", 0, "Zebra Cola"), row("a", 1, "Apple Chips")],
+    });
+    const out = await reorderOrderLines(deps, "o1", sortDto as never, staff);
+    expect(out.lineIds).toEqual(["a", "z"]);
+    expect(tx.orderItem.update).toHaveBeenCalledWith({ where: { id: "a" }, data: { position: 0 } });
+    expect(tx.orderItem.update).toHaveBeenCalledWith({ where: { id: "z" }, data: { position: 1 } });
+  });
+
+  it("G-h: it is the A to Z order the invoice copy would print, for every shuffle (family names, custom lines)", async () => {
+    const lines = [
+      row("v1", 0, "Classic", {
+        product: {
+          name: "Classic",
+          variantName: "Classic",
+          parentProductId: "f",
+          parent: { name: "Cola" },
+          unitsPerBox: null,
+        },
+      }),
+      row("c", 1, "", { productId: null, product: null, name: "Delivery charge" }),
+      row("b", 2, "Brand B"),
+      row("a12", 3, "brand a 12oz"),
+      row("a8", 4, "BRAND A 8OZ"),
+    ];
+    const printed = lines.map((l) => ({
+      id: l.id as string,
+      description: orderLineInvoiceDescription(l as never),
+      productId: l.productId as string | null,
+    }));
+    const expected = sortInvoiceLines(printed).map((l) => l.id);
+    for (const rows of [lines, [...lines].reverse(), [...lines.slice(2), ...lines.slice(0, 2)]]) {
+      const { deps } = build({ tenantId: "t1", rows });
+      const out = await reorderOrderLines(deps, "o1", sortDto as never, staff);
+      expect(out.lineIds).toEqual(expected);
+    }
+  });
+
+  it("a buyer may sort too (same service), and an already sorted order writes nothing", async () => {
+    const { tx, deps } = build({
+      tenantId: "t1",
+      ownerId: "c1",
+      rows: [row("a", 0, "Apple"), row("z", 1, "Zebra")],
+    });
+    const out = await reorderOrderLines(deps, "o1", sortDto as never, buyer);
+    expect(out.lineIds).toEqual(["a", "z"]);
+    expect(tx.orderItem.update).not.toHaveBeenCalled();
+    expect(tx.order.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("reorderOrderLines: existing invoices follow (W-1187 PR-1e, ruling (4)/(6))", () => {
+  const inv = (id: string, rows: Array<[string, string | null, number | null]>) => ({
+    id,
+    items: rows.map(([rid, orderItemId, position]) => ({
+      id: rid,
+      orderItemId,
+      position,
+      createdAt: AT,
+      description: rid,
+      productId: orderItemId,
+    })),
+  });
+  function withInvoices(invoices: unknown[]) {
+    const ctx = build({ tenantId: "t1" });
+    const tx = ctx.tx as Record<string, any>;
+    tx.invoice = { findMany: jest.fn().mockResolvedValue(invoices) };
+    tx.invoiceItem = { update: jest.fn() };
+    // the order's lines AFTER the reorder wrote them: b first, then a
+    tx.order.findUnique = jest.fn().mockResolvedValue({
+      lineItems: [
+        { id: "b", position: 0, createdAt: AT },
+        { id: "a", position: 1, createdAt: AT },
+      ],
+    });
+    return { ...ctx, tx };
+  }
+  const swap = { expectedUpdatedAt: AT.toISOString(), lineIds: ["b", "a"] };
+
+  it("R-follow: a draft/sent invoice billed [a, b] is re-ranked [b, a] in the same call, unlinked lines stay last", async () => {
+    const { tx, deps } = withInvoices([
+      inv("i1", [
+        ["ia", "a", 0],
+        ["ib", "b", 1],
+        ["fee", null, 2],
+      ]),
+    ]);
+    await reorderOrderLines(deps, "o1", swap as never, staff);
+    expect(tx.invoice.findMany.mock.calls[0][0].where).toMatchObject({
+      orderId: "o1",
+      status: { notIn: ["VOID", "WRITTEN_OFF"] },
+    });
+    const wrote = Object.fromEntries(
+      tx.invoiceItem.update.mock.calls.map(([a]: any) => [a.where.id, a.data.position]),
+    );
+    expect(wrote).toEqual({ ib: 0, ia: 1 });
+  });
+
+  it("R-legacy: an all-NULL linked invoice is stamped by the reorder, from its A-Z shown order, linked lines by the order's new ranks", async () => {
+    const { tx, deps } = withInvoices([
+      inv("old", [
+        ["ia", "a", null],
+        ["ib", "b", null],
+      ]),
+    ]);
+    await reorderOrderLines(deps, "o1", swap as never, staff);
+    const wrote = Object.fromEntries(
+      tx.invoiceItem.update.mock.calls.map(([a]: any) => [a.where.id, a.data.position]),
+    );
+    expect(wrote).toEqual({ ib: 0, ia: 1 });
+  });
+
+  it("a pure reorder writes nothing else: no invoice updatedAt, one audit row, no revision or ledger", async () => {
+    const { tx, deps } = withInvoices([
+      inv("i1", [
+        ["ia", "a", 0],
+        ["ib", "b", 1],
+      ]),
+    ]);
+    await reorderOrderLines(deps, "o1", swap as never, staff);
+    for (const [a] of tx.invoiceItem.update.mock.calls)
+      expect(Object.keys(a.data)).toEqual(["position"]);
+    expect((tx as any).invoice.update).toBeUndefined();
+    expect(tx.auditLog.create).toHaveBeenCalledTimes(1);
+    expect(tx.auditLog.create.mock.calls[0][0].data.action).toBe("order.lines.reordered");
+    expect(Object.keys(tx.order.update.mock.calls[0][0].data)).toEqual(["updatedAt"]);
+  });
+
+  it("an order whose lines did not move touches no invoice", async () => {
+    const { tx, deps } = withInvoices([inv("i1", [["ia", "a", 0]])]);
+    await reorderOrderLines(deps, "o1", dto, staff);
+    expect(tx.invoice.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("reorderOrderLines: a name sort re-ranks the invoices too (W-1187 PR-1d + PR-1e)", () => {
+  it("R-sort-follow: Zebra@0, Apple@1 sorted A-Z; the invoice billed [z, a] is re-ranked [a, z] in the same call", async () => {
+    const product = (name: string) => ({
+      name,
+      variantName: null,
+      parentProductId: null,
+      parent: null,
+      unitsPerBox: null,
+    });
+    const { tx, deps } = build({
+      tenantId: "t1",
+      rows: [
+        {
+          id: "z",
+          position: 0,
+          name: null,
+          productId: "pz",
+          boxes: null,
+          unitsPerBox: null,
+          product: product("Zebra Cola"),
+        },
+        {
+          id: "a",
+          position: 1,
+          name: null,
+          productId: "pa",
+          boxes: null,
+          unitsPerBox: null,
+          product: product("Apple Chips"),
+        },
+      ],
+    });
+    const t = tx as Record<string, any>;
+    t.invoice = {
+      findMany: jest.fn().mockResolvedValue([
+        {
+          id: "i1",
+          items: [
+            {
+              id: "iz",
+              orderItemId: "z",
+              position: 0,
+              createdAt: AT,
+              description: "Zebra Cola",
+              productId: "pz",
+            },
+            {
+              id: "ia",
+              orderItemId: "a",
+              position: 1,
+              createdAt: AT,
+              description: "Apple Chips",
+              productId: "pa",
+            },
+          ],
+        },
+      ]),
+    };
+    t.invoiceItem = { update: jest.fn() };
+    t.order.findUnique = jest.fn().mockResolvedValue({
+      lineItems: [
+        { id: "a", position: 0, createdAt: AT },
+        { id: "z", position: 1, createdAt: AT },
+      ],
+    });
+    const out = await reorderOrderLines(
+      deps,
+      "o1",
+      { expectedUpdatedAt: AT.toISOString(), sort: "name" } as never,
+      staff,
+    );
+    expect(out.lineIds).toEqual(["a", "z"]);
+    const wrote = Object.fromEntries(
+      t.invoiceItem.update.mock.calls.map(([x]: any) => [x.where.id, x.data.position]),
+    );
+    expect(wrote).toEqual({ ia: 0, iz: 1 });
   });
 });

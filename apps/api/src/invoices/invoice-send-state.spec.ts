@@ -133,6 +133,13 @@ describe("invoiceFingerprint", () => {
     (withInternal.items![0] as Record<string, unknown>).updatedAt = new Date();
     expect(invoiceFingerprint(withInternal)).toBe(fp());
   });
+
+  it("W-1187 PR-1e: a line's position is not hashed, so an order reorder never flags a sent invoice as changed since sent", () => {
+    const moved = fp((s) => {
+      (s.items![0] as Record<string, unknown>).position = 7;
+    });
+    expect(moved).toBe(fp());
+  });
 });
 
 describe("decideSendState", () => {

@@ -5,7 +5,7 @@ import { buildGlobalValidationPipe } from "../../common/global-validation-pipe";
 import { ROLES_KEY } from "../../auth/decorators/roles.decorator";
 import { OrdersController } from "../orders.controller";
 import { BuyerController } from "../../buyer/buyer.controller";
-import { LINE_ORDER_MAX_IDS, ReorderLinesDto } from "./reorder-lines.dto";
+import { LINE_ORDER_MAX_IDS, LINE_SORT_VALUES, ReorderLinesDto } from "./reorder-lines.dto";
 
 /**
  * W-1187 (D5, D11): the body of the two line-order routes goes through the global pipe. Exactly two fields; nothing a
@@ -62,6 +62,19 @@ describe("ReorderLinesDto through the global validation pipe", () => {
     });
   });
 
+  it("R-sort: accepts sort name in place of a list; refuses both, an unknown mode, a non-string and neither", async () => {
+    const out = (await run({ expectedUpdatedAt: AT, sort: "name" })) as ReorderLinesDto;
+    expect(out.sort).toBe("name");
+    for (const bad of [
+      { expectedUpdatedAt: AT, sort: "name", lineIds: [ID(1)] },
+      { expectedUpdatedAt: AT, sort: "price" },
+      { expectedUpdatedAt: AT, sort: 1 },
+      { expectedUpdatedAt: AT },
+    ]) {
+      await expect(run(bad)).rejects.toMatchObject({ status: 400 });
+    }
+  });
+
   it("bounds the list at LINE_ORDER_MAX_IDS", async () => {
     const ids = (n: number) => Array.from({ length: n }, (_, i) => ID(i + 1));
     await expect(
@@ -70,6 +83,18 @@ describe("ReorderLinesDto through the global validation pipe", () => {
     await expect(
       run({ expectedUpdatedAt: AT, lineIds: ids(LINE_ORDER_MAX_IDS + 1) }),
     ).rejects.toMatchObject({ status: 400 });
+  });
+});
+
+describe("LINE_SORT_VALUES parity (the API never value-imports @routeflow/types)", () => {
+  it("equals the shared list", () => {
+    const shared = fs.readFileSync(
+      path.resolve(__dirname, "../../../../../packages/types/api/line-order.ts"),
+      "utf8",
+    );
+    const m = /LINE_SORT_VALUES = \[([^\]]*)\] as const/.exec(shared);
+    expect(m).not.toBeNull();
+    expect(LINE_SORT_VALUES).toEqual(m![1].split(",").map((v) => v.trim().replace(/"/g, "")));
   });
 });
 
