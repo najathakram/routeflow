@@ -2482,6 +2482,7 @@ export function CounterSaleScreen() {
               today={today || undefined}
               todayFailed={zoneStatus === "failed"}
               onRetry={zoneRead.retry}
+              retrying={zoneRead.isFetching}
             />
             <div className="flex flex-wrap gap-2" data-testid="counter-checkout-actions">
               <Button

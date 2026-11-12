@@ -291,6 +291,30 @@ describe("unknown business day: the reminder and the failed read", () => {
   });
 });
 
+describe("CounterDateReminder Try again while a retry is running", () => {
+  it("is aria-disabled (not disabled), keeps focus, and sends nothing", async () => {
+    const onRetry = jest.fn();
+    const user = userEvent.setup({ delay: null });
+    render(
+      <CounterDateReminder
+        value="2026-11-01"
+        today={undefined}
+        todayFailed
+        onRetry={onRetry}
+        retrying
+      />,
+    );
+    const button = screen.getByRole("button", { name: "Try again" });
+    expect(button).toHaveAttribute("aria-disabled", "true");
+    expect(button).not.toBeDisabled();
+    act(() => button.focus());
+    await user.click(button);
+    await user.keyboard("{Enter}");
+    expect(onRetry).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(button);
+  });
+});
+
 describe("CounterDateReminder", () => {
   it("is silent on Today", () => {
     const { container } = render(<CounterDateReminder value="" today={TODAY} />);
@@ -737,37 +761,20 @@ describe("a scan's first key in the picker acts on nothing (no timing)", () => {
     },
   );
   it.each(SPEEDS)(
-    "C9 office: a scan that lands on the chip after Escape or Cancel never reopens the picker, and its CR+LF is swallowed too (%s)",
+    "C9 a person's Enter on the chip ALWAYS opens the picker, after any earlier key (no input guessing; a scan and a stray key are the same key order) (%s)",
     async (_n, delay) => {
       const user = userAt(delay);
-      for (const closer of ["{Escape}", "Cancel"]) {
-        const view = await openFresh(user, { policy: "OFFICE", onDone: undefined });
-        if (closer === "Cancel")
-          await user.click(within(view.picker).getByRole("button", { name: "Cancel" }));
-        else await user.keyboard(closer);
-        act(() => {
-          jest.advanceTimersByTime(100);
-        });
+      for (const earlier of ["?", "??", "g", "4006381333931", "{ArrowDown}"]) {
+        setup("", { policy: "OFFICE", onDone: undefined });
+        act(() => screen.getByRole("button", { name: "Order date: today. Change" }).focus());
+        await user.keyboard(earlier);
         expect(screen.queryByTestId("counter-date-picker")).toBeNull();
-        const main = screen.getByRole("button", { name: "Order date: today. Change" });
-        expect(document.activeElement).toBe(main);
-        await user.keyboard("4006381333931{Enter}{Enter}");
-        expect(screen.queryByTestId("counter-date-picker")).toBeNull();
-        // a person's Enter on the chip still opens it, after any other key
-        await user.keyboard("{ArrowDown}{Enter}");
+        await user.keyboard("{Enter}");
         expect(screen.getByTestId("counter-date-picker")).toBeInTheDocument();
         cleanup();
       }
     },
   );
-
-  it("C9b a person's Enter on the chip opens the picker (no scan before it)", async () => {
-    const user = userAt(null);
-    setup("", { policy: "OFFICE" });
-    act(() => screen.getByRole("button", { name: "Order date: today. Change" }).focus());
-    await user.keyboard("{Enter}");
-    expect(screen.getByTestId("counter-date-picker")).toBeInTheDocument();
-  });
 
   it("C10 office: Enter on the dialog header X closes the picker, even inside a form that swallows Enter", async () => {
     const user = userAt(null);
