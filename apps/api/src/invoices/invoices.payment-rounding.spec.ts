@@ -255,27 +255,33 @@ describe("InvoicesService — every payment write rounds (#2293)", () => {
 
     it("bankCharges: rounded on every allocation row; an explicit null stays null", async () => {
       seedStandalone();
-      await service.recordStandalonePayment({
-        customerId: "cust-1",
-        totalAmount: 20,
-        method: "CASH",
-        bankCharges: 0.3333,
-        allocations: [
-          { invoiceId: "inv-1", amount: 10 },
-          { invoiceId: "inv-1", amount: 10 },
-        ],
-      } as any);
+      await service.recordStandalonePayment(
+        {
+          customerId: "cust-1",
+          totalAmount: 20,
+          method: "CASH",
+          bankCharges: 0.3333,
+          allocations: [
+            { invoiceId: "inv-1", amount: 10 },
+            { invoiceId: "inv-1", amount: 10 },
+          ],
+        } as any,
+        { source: "STAFF_ALLOCATION" },
+      );
       expect(createdAt(0).bankCharges).toBe(0.33);
       expect(createdAt(1).bankCharges).toBe(0.33);
 
       prisma.invoicePayment.create.mockClear();
-      await service.recordStandalonePayment({
-        customerId: "cust-1",
-        totalAmount: 10,
-        method: "CASH",
-        bankCharges: null,
-        allocations: [{ invoiceId: "inv-1", amount: 10 }],
-      } as any);
+      await service.recordStandalonePayment(
+        {
+          customerId: "cust-1",
+          totalAmount: 10,
+          method: "CASH",
+          bankCharges: null,
+          allocations: [{ invoiceId: "inv-1", amount: 10 }],
+        } as any,
+        { source: "STAFF_ALLOCATION" },
+      );
       expect(createdAt(0).bankCharges).toBeNull();
     });
   });

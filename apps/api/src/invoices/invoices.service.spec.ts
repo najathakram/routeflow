@@ -53,6 +53,9 @@ const mockCompressDocument = compressDocument as jest.Mock;
 const q = new AfterCommit();
 describe("InvoicesService", () => {
   let service: InvoicesService;
+  /** SA-1124 PR-1b: a staff allocation names its payment source (the review gate's required discriminant). */
+  const staffPay = (dto: object) =>
+    service.recordStandalonePayment(dto as any, { source: "STAFF_ALLOCATION" });
   let prisma: ReturnType<typeof createMockPrisma>;
 
   const mockGateway = {
@@ -6397,7 +6400,7 @@ describe("InvoicesService", () => {
       });
       prisma.invoicePayment.findMany.mockResolvedValue([]);
 
-      await service.recordStandalonePayment({
+      await staffPay({
         customerId: "cust-1",
         totalAmount: 60,
         method: "CHECK",
@@ -6480,7 +6483,7 @@ describe("InvoicesService", () => {
             method: "CASH",
             allocations: [{ invoiceId: "inv-1", amount: 80 }],
           } as any,
-          { assertAllocationsWithinBalance: true },
+          { source: "STAFF_ALLOCATION", assertAllocationsWithinBalance: true },
         );
 
       // Two concurrent $80 payments against a $100 invoice. Without the row lock, both read
@@ -8964,7 +8967,7 @@ describe("InvoicesService", () => {
       // behavior — a resolved promise where BadRequestException is expected —
       // not on an unresolved import or a stub.
       await expect(
-        service.recordStandalonePayment({
+        staffPay({
           customerId: "cust-1",
           totalAmount: 40,
           method: "CHECK",
@@ -8978,7 +8981,7 @@ describe("InvoicesService", () => {
       seedValidInvoice("inv-b269-2");
       prisma.paymentCounter.upsert.mockResolvedValue({ id: "qa269ab", next: 2 });
 
-      await service.recordStandalonePayment({
+      await staffPay({
         customerId: "cust-1",
         totalAmount: 40,
         method: "CHECK",
@@ -9014,7 +9017,7 @@ describe("InvoicesService", () => {
         }),
       );
 
-      await service.recordStandalonePayment({
+      await staffPay({
         customerId: "cust-1",
         totalAmount: 40,
         method: "CHECK",
@@ -9039,7 +9042,7 @@ describe("InvoicesService", () => {
       seedValidInvoice("inv-b269-e");
       prisma.paymentCounter.upsert.mockResolvedValue({ id: "qa269e2", next: 2 });
 
-      await service.recordStandalonePayment({
+      await staffPay({
         customerId: "cust-1",
         totalAmount: 40,
         method: "CHECK",

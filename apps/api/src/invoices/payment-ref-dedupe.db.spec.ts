@@ -368,13 +368,16 @@ describeDb("row 498 payment reference dedupe — real Postgres", () => {
       allocations: [{ invoiceId: s.invs[0].id, amount: 100 }],
     });
     await s.asTenant(() =>
-      invoicesA.recordStandalonePayment(manual(" PI_3ABC ") as any, {} as any),
+      invoicesA.recordStandalonePayment(
+        manual(" PI_3ABC ") as any,
+        { source: "STAFF_ALLOCATION" } as any,
+      ),
     );
     const capture = { source: "STRIPE" as const, sourceRef: "pi_3Abc", suspects: [] as any[] };
     const res: any = await s.asTenant(() =>
       invoicesB.recordStandalonePayment(
         { ...manual("pi_3Abc"), allocations: [{ invoiceId: s.invs[1].id, amount: 100 }] } as any,
-        { capturedExternally: capture } as any,
+        { source: "STAFF_ALLOCATION", capturedExternally: capture } as any,
       ),
     );
     expect(res.paymentGroupId).toBeTruthy();
@@ -398,9 +401,13 @@ describeDb("row 498 payment reference dedupe — real Postgres", () => {
     } as any;
     const cap = () =>
       ({ capturedExternally: { source: "STRIPE", sourceRef: "pi_same", suspects: [] } }) as any;
-    const first: any = await s.asTenant(() => invoicesA.recordStandalonePayment(dto, cap()));
+    const first: any = await s.asTenant(() =>
+      invoicesA.recordStandalonePayment(dto, { source: "STAFF_ALLOCATION", ...cap() }),
+    );
     const err: any = await s
-      .asTenant(() => invoicesB.recordStandalonePayment(dto, cap()))
+      .asTenant(() =>
+        invoicesB.recordStandalonePayment(dto, { source: "STAFF_ALLOCATION", ...cap() }),
+      )
       .catch((e) => e);
     expect(err.name).toBe("PaymentAlreadyRecordedError");
     expect(err.paymentGroupId).toBe(first.paymentGroupId);

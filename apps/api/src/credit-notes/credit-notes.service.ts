@@ -21,6 +21,7 @@ import { NumberingService } from "../import/numbering.service";
 import { describeUniqueViolation, uniqueViolationOn } from "../common/prisma-unique";
 import { retryCreditTx, retryOnTxConflict, txConflictState } from "../common/tx-retry";
 import { asReadableConflict, cnBad, cnConflict, type CreditNoteCode } from "./credit-note-errors";
+import { assertOrderReviewed, hasOpenReviewBlock } from "../orders/offline/order-review-gate";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { finiteStoredLevy, finiteStoredMoney } from "../common/money-invariants.util";
 import { creditAutoApplyOnSend, sweepableCredits } from "./auto-apply-candidates";
@@ -882,10 +883,16 @@ export class CreditNotesService {
       total: unknown;
       dueDate: Date | null;
       status: InvoiceStatus;
+      orderId?: string | null;
       payments?: Array<{ amount: unknown; status?: string }>;
     },
     requestedAmount?: number,
-    opts?: { autoApplied?: boolean; tenantId?: string | null },
+    opts?: {
+      autoApplied?: boolean;
+      tenantId?: string | null;
+      /** SA-1124 PR-1b: a SYSTEM caller (the send-time sweep, the order-intent settle) skips a flagged order; absent = a person, refused with 409. */
+      skipWhenUnreviewed?: boolean;
+    },
   ): Promise<{ applied: number; invoiceStatus: InvoiceStatus | null }> {
     // F09/B67: the write is gated here, not at the callers' queries — settle,
     // auto-apply and any future caller all pass through this line. Exclude-list
@@ -906,6 +913,13 @@ export class CreditNotesService {
     );
     // `!(x > 0.001)` (not `x <= 0.001`) so NaN from malformed data also bails out.
     if (!(applyAmount > 0.001)) return { applied: 0, invoiceStatus: null };
+    // SA-1124 PR-1b: stored value is money applied to the invoice: it waits for an open price review. A person is refused
+    // (409); a system caller (it runs inside an order edit or a send) skips, so that edit never fails on a review it did not ask for.
+    if (inv.orderId) {
+      if (!opts?.skipWhenUnreviewed) await assertOrderReviewed(tx, inv.orderId);
+      else if (await hasOpenReviewBlock(tx, inv.orderId))
+        return { applied: 0, invoiceStatus: null };
+    }
 
     // The credit consumes invoice balance as a payment — the ONLY place a credit
     // reduces an invoice, and amountUsed below removes the same dollars from the
@@ -1028,7 +1042,10 @@ export class CreditNotesService {
       if (!(running > 0.001)) break;
       // `running` as the requested amount = a hard clamp; over-applying is
       // impossible even if the invoice re-read were stale.
-      const res = await this.applyCreditInTx(tx, tz, cn, inv, running, { autoApplied: true });
+      const res = await this.applyCreditInTx(tx, tz, cn, inv, running, {
+        autoApplied: true,
+        skipWhenUnreviewed: true,
+      });
       if (res.applied <= 0) break;
       running = roundMoney(running - res.applied);
       totalApplied = roundMoney(totalApplied + res.applied);
@@ -2073,7 +2090,10 @@ export class CreditNotesService {
           include: { payments: true },
         });
         if (!cn || !freshInv) break;
-        const res = await this.applyCreditInTx(tx, tz, cn, freshInv, unmet, { tenantId });
+        const res = await this.applyCreditInTx(tx, tz, cn, freshInv, unmet, {
+          tenantId,
+          skipWhenUnreviewed: true,
+        });
         if (res.applied <= 0) continue;
         unmet = roundMoney(unmet - res.applied);
         result.applied = roundMoney(result.applied + res.applied);

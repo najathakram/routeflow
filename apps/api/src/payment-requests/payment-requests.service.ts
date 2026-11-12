@@ -582,6 +582,7 @@ export class PaymentRequestsService {
           // roll back rather than overpay (carried from the #397 hardening).
         } as any,
         {
+          source: "STAFF_ALLOCATION",
           assertAllocationsWithinBalance: true,
           refDedupe,
           inTx: async (tx, paid) => {
@@ -910,6 +911,7 @@ export class PaymentRequestsService {
           // redelivery recomputes a fresh allocation — converges without overpay.
         } as any,
         {
+          source: "STRIPE_SETTLE",
           assertAllocationsWithinBalance: true,
           capturedExternally: capture,
           onDisplaced: (invoiceId, ids) => displacedBy.push({ invoiceId, displaced: ids }),

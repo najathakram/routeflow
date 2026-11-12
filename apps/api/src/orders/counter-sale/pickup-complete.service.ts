@@ -14,6 +14,7 @@ import { mayCompleteAtCounter, roundMoney, confirmedRemaining } from "@routeflow
 import type { PickupCompleteResponse } from "@routeflow/types";
 import { OrderStatus } from "@prisma/client";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
+import { assertOrderReviewed } from "../offline/order-review-gate";
 import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../../common/db-locks";
 import { PrismaService } from "../../prisma/prisma.service";
 import { InvoicesService } from "../../invoices/invoices.service";
@@ -157,6 +158,9 @@ export class PickupCompleteService {
         message: "This order is not ready for pickup yet, or it was cancelled",
       });
     }
+    // SA-1124 PR-1b: an open price review refuses the hand-over up front (409 ORDER_REVIEW_REQUIRED), before any write: the
+    // later send of the invoice would refuse after the order was already DELIVERED and the cash never recorded.
+    await assertOrderReviewed(this.prisma.forTenant(), id);
     // I-120 R8/R9 (owner 7a, SA-913): a shipped order, an order on a driver's run, a started stop: judged now. `takeOffRun`
     // is not part of the claim's body hash, so the confirm re-sends under the same key.
     if (!alreadyPickedUp) {

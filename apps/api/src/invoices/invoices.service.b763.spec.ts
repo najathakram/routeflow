@@ -146,16 +146,19 @@ describe("InvoicesService — B763", () => {
     const allocatedTotal = 33.33 + 33.33 + 33.33;
     expect(100 - allocatedTotal).not.toBe(0.01); // sanity: proves the drift is real, not assumed
 
-    await service.recordStandalonePayment({
-      customerId: "cust-1",
-      totalAmount: 100,
-      method: "CHECK",
-      allocations: [
-        { invoiceId: "inv-1", amount: 33.33 },
-        { invoiceId: "inv-1", amount: 33.33 },
-        { invoiceId: "inv-1", amount: 33.33 },
-      ],
-    } as any);
+    await service.recordStandalonePayment(
+      {
+        customerId: "cust-1",
+        totalAmount: 100,
+        method: "CHECK",
+        allocations: [
+          { invoiceId: "inv-1", amount: 33.33 },
+          { invoiceId: "inv-1", amount: 33.33 },
+          { invoiceId: "inv-1", amount: 33.33 },
+        ],
+      } as any,
+      { source: "STAFF_ALLOCATION" },
+    );
 
     expect(prisma.advancePayment.create).toHaveBeenCalledWith(
       expect.objectContaining({

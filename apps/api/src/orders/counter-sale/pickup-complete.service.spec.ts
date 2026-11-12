@@ -257,6 +257,33 @@ describe("PickupCompleteService.complete", () => {
         nothingWritten();
       },
     );
+    // SA-1124 PR-1b (review S2): the guard judges BEFORE the claim and the hand-over, never after them
+    it.each(["CONFIRMED", "OUT_FOR_DELIVERY"])(
+      "a %s order with an open price review is 409 ORDER_REVIEW_REQUIRED and nothing is written",
+      async (status) => {
+        order = orderRow(status);
+        prisma.orderReviewFlag.findMany.mockResolvedValue([
+          { kind: "PRICE_CHANGED_OFFLINE" },
+        ] as never);
+        const e = await errorOf(run());
+        expect(e.getStatus()).toBe(409);
+        expect(e.getResponse()).toMatchObject({
+          code: "ORDER_REVIEW_REQUIRED",
+          orderId: "ord-1",
+          openKinds: ["PRICE_CHANGED_OFFLINE"],
+        });
+        nothingWritten();
+        expect(calls).toEqual([]); // no claim, no path switch, no hand-over
+        expect(decrementStockForSale).not.toHaveBeenCalled();
+        expect(order.status).toBe(status);
+      },
+    );
+    it("an order whose price review is resolved hands over as before (master's value)", async () => {
+      order = orderRow("CONFIRMED");
+      prisma.orderReviewFlag.findMany.mockResolvedValue([] as never);
+      await run();
+      expect(changeStatus).toHaveBeenCalledTimes(1);
+    });
     it("an order of another tenant (not found under the tenant scope) is 404", async () => {
       order = null;
       const e = await errorOf(run());
