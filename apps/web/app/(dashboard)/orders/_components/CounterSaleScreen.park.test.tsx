@@ -1349,7 +1349,7 @@ describe("order date chip on the till", () => {
     const retry = screen.getByRole("button", { name: "Try again" });
     fireEvent.click(retry);
     await waitFor(() => expect(settingsReads).toBe(readsBefore + 1));
-    fireEvent.click(retry); // the same node again (a double tap before React re-renders): still one read
+    fireEvent.click(retry); // the same node again, after the re-render: still one read (react-query dedupes the in-flight fetch)
     fireEvent.click(retry);
     expect(settingsReads).toBe(readsBefore + 1);
     expect(screen.getByTestId("counter-date-reminder")).toHaveTextContent("Checking today's date");

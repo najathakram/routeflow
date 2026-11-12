@@ -54,6 +54,8 @@ export function CounterDateChip({
   const [open, setOpen] = React.useState(false);
   const mainRef = React.useRef<HTMLButtonElement>(null);
   const canOpen = !disabled && !!today;
+  // What is seen must be what is sent: a set day is NEVER labelled Today. While the business's day is unknown the day shows
+  // as dated with no past/future word (UNKNOWN), and it can still be cleared.
   const direction: "BACK" | "FORWARD" | "UNKNOWN" | null = !value
     ? null
     : !today
