@@ -55,6 +55,7 @@ describe("MailboxConnectionService", () => {
         store.set(key, val);
         return "OK";
       }),
+      get: jest.fn(async (key: string) => (store.has(key) ? store.get(key)! : null)),
       getdel: jest.fn(async (key: string) => {
         const v = store.has(key) ? store.get(key)! : null;
         store.delete(key);
@@ -165,6 +166,99 @@ describe("MailboxConnectionService", () => {
     );
     expect(storedJson).not.toContain(connectSecret);
     expect(url).not.toContain(connectSecret);
+  });
+
+  describe("WP2A.0: the connect remembers the web address it started on (WEB_ORIGINS)", () => {
+    const saved = { ...process.env };
+    afterEach(() => {
+      for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+      Object.assign(process.env, saved);
+    });
+    const prime = () => {
+      mockOAuthClient.generateCodeVerifierAsync.mockResolvedValue({
+        codeVerifier: "verifier-1",
+        codeChallenge: "challenge-1",
+      });
+      mockOAuthClient.generateAuthUrl.mockImplementation(
+        (opts: any) => `https://accounts.google.com/auth?state=${opts.state}`,
+      );
+    };
+    const storedNonce = (mockRedis: any) => JSON.parse(mockRedis.set.mock.calls[0][1]);
+
+    it("an origin on the WEB_ORIGINS list is stored in the nonce payload", async () => {
+      process.env.WEB_ORIGINS = "https://www.acme-next.test";
+      prime();
+      const { service, mockRedis } = buildService();
+      await service.startConnect("tenant-a", "user-1", "https://www.acme-next.test");
+      expect(storedNonce(mockRedis).returnOrigin).toBe("https://www.acme-next.test");
+    });
+
+    it("a look-alike origin is not stored", async () => {
+      process.env.WEB_ORIGINS = "https://www.acme-next.test";
+      prime();
+      const { service, mockRedis } = buildService();
+      await service.startConnect("tenant-a", "user-1", "https://www.acme-next.test.evil.test");
+      expect("returnOrigin" in storedNonce(mockRedis)).toBe(false);
+    });
+
+    it("with WEB_ORIGINS empty the nonce is exactly today's (no returnOrigin)", async () => {
+      delete process.env.WEB_ORIGINS;
+      prime();
+      const { service, mockRedis } = buildService();
+      await service.startConnect("tenant-a", "user-1", "https://www.acme-next.test");
+      expect(Object.keys(storedNonce(mockRedis)).sort()).toEqual([
+        "provider",
+        "secretHash",
+        "tenantId",
+        "userId",
+        "verifier",
+      ]);
+    });
+
+    describe("peekReturnOrigin", () => {
+      it("reads the stored origin WITHOUT consuming the state", async () => {
+        process.env.WEB_ORIGINS = "https://www.acme-next.test";
+        prime();
+        const { service, mockRedis } = buildService();
+        const { url } = await service.startConnect(
+          "tenant-a",
+          "user-1",
+          "https://www.acme-next.test",
+        );
+        const state = new URL(url).searchParams.get("state")!;
+
+        await expect(service.peekReturnOrigin(state)).resolves.toBe("https://www.acme-next.test");
+        expect(mockRedis.getdel).not.toHaveBeenCalled();
+        // the state is still redeemable: a second peek and the real callback still find it
+        await expect(service.peekReturnOrigin(state)).resolves.toBe("https://www.acme-next.test");
+        expect(mockRedis._store.has(`mailbox:oauth:${state}`)).toBe(true);
+      });
+
+      it("gives undefined for a state with no stored origin, an unknown state and a non-string state (no Redis call)", async () => {
+        delete process.env.WEB_ORIGINS;
+        prime();
+        const { service, mockRedis } = buildService();
+        const { url } = await service.startConnect("tenant-a", "user-1");
+        const state = new URL(url).searchParams.get("state")!;
+        await expect(service.peekReturnOrigin(state)).resolves.toBeUndefined();
+        await expect(service.peekReturnOrigin("never-minted")).resolves.toBeUndefined();
+        mockRedis.get.mockClear();
+        for (const bad of [undefined, null, 42, ["a"], "", {}]) {
+          await expect(service.peekReturnOrigin(bad)).resolves.toBeUndefined();
+        }
+        expect(mockRedis.get).not.toHaveBeenCalled();
+      });
+
+      it("never throws: a Redis error or a corrupt payload is undefined", async () => {
+        const { service, mockRedis } = buildService();
+        mockRedis.get.mockRejectedValueOnce(new Error("redis down"));
+        await expect(service.peekReturnOrigin("s1")).resolves.toBeUndefined();
+        mockRedis._store.set("mailbox:oauth:s2", "{not json");
+        await expect(service.peekReturnOrigin("s2")).resolves.toBeUndefined();
+        mockRedis._store.set("mailbox:oauth:s3", JSON.stringify({ returnOrigin: 7 }));
+        await expect(service.peekReturnOrigin("s3")).resolves.toBeUndefined();
+      });
+    });
   });
 
   it("startConnect 503s when the Google mailbox client isn't configured (NIT)", async () => {

@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   Param,
   Post,
   Query,
@@ -68,6 +69,7 @@ export class BuyerPaymentsController {
     @CurrentBuyer() buyer: BuyerJwtPayload,
     @CurrentBuyerCustomer() ctx: any,
     @Body() dto: StartCardPaymentDto,
+    @Headers("origin") origin?: string,
   ) {
     return this.payments.createCardRequest({
       tenantId: ctx.tenantId,
@@ -76,6 +78,7 @@ export class BuyerPaymentsController {
       buyerAccountId: buyer.sub,
       amount: dto.amount,
       fromInvoiceId: dto.fromInvoiceId ?? null,
+      returnOrigin: origin,
     });
   }
 

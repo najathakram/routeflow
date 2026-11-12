@@ -49,6 +49,7 @@ describe("MailboxConnectionService — Microsoft", () => {
         store.set(key, val);
         return "OK";
       }),
+      get: jest.fn(async (key: string) => (store.has(key) ? store.get(key)! : null)),
       getdel: jest.fn(async (key: string) => {
         const v = store.has(key) ? store.get(key)! : null;
         store.delete(key);
@@ -112,6 +113,47 @@ describe("MailboxConnectionService — Microsoft", () => {
   beforeEach(() => jest.clearAllMocks());
 
   // ── state + PKCE ──────────────────────────────────────────────────────────
+
+  describe("WP2A.0: startConnectMicrosoft remembers the web address it started on (WEB_ORIGINS)", () => {
+    const saved = { ...process.env };
+    afterEach(() => {
+      for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+      Object.assign(process.env, saved);
+    });
+    const storedNonce = (mockRedis: any) => JSON.parse(mockRedis.set.mock.calls[0][1]);
+
+    it("an origin on the WEB_ORIGINS list is stored, and peeked without consuming the state", async () => {
+      process.env.WEB_ORIGINS = "https://www.acme-next.test";
+      const { service, mockRedis } = buildService();
+      const { url } = await service.startConnectMicrosoft(
+        "tenant-a",
+        "user-1",
+        "https://www.acme-next.test",
+      );
+      expect(storedNonce(mockRedis).returnOrigin).toBe("https://www.acme-next.test");
+      const state = new URL(url).searchParams.get("state")!;
+      await expect(service.peekReturnOrigin(state)).resolves.toBe("https://www.acme-next.test");
+      expect(mockRedis.getdel).not.toHaveBeenCalled();
+    });
+
+    it("a look-alike origin is not stored", async () => {
+      process.env.WEB_ORIGINS = "https://www.acme-next.test";
+      const { service, mockRedis } = buildService();
+      await service.startConnectMicrosoft(
+        "tenant-a",
+        "user-1",
+        "https://www.acme-next.test.evil.test",
+      );
+      expect("returnOrigin" in storedNonce(mockRedis)).toBe(false);
+    });
+
+    it("with WEB_ORIGINS empty the nonce is exactly today's (no returnOrigin)", async () => {
+      delete process.env.WEB_ORIGINS;
+      const { service, mockRedis } = buildService();
+      await service.startConnectMicrosoft("tenant-a", "user-1", "https://www.acme-next.test");
+      expect("returnOrigin" in storedNonce(mockRedis)).toBe(false);
+    });
+  });
 
   it("startConnectMicrosoft builds an authorize URL with an S256 code_challenge and persists the verifier under the state nonce", async () => {
     const { service, mockRedis } = buildService();

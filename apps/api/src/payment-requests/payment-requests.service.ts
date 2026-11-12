@@ -15,6 +15,7 @@ import {
   type RefDedupeOpts,
 } from "../invoices/payment-ref-dedupe";
 import { roundMoney } from "@routeflow/pricing";
+import { pickWebOrigin } from "../config/web-origins";
 import {
   PAYMENT_PROVIDER,
   type PaymentProvider,
@@ -266,6 +267,8 @@ export class PaymentRequestsService {
     buyerAccountId: string;
     amount: number;
     fromInvoiceId?: string | null;
+    /** WP2A.0: the buyer's request Origin; used only when it is on the WEB_ORIGINS list */
+    returnOrigin?: string;
   }) {
     this.assertAmount(params.amount);
     await this.assertNoOpenRequest(params.tenantId, params.customerId);
@@ -311,7 +314,10 @@ export class PaymentRequestsService {
       throw err;
     }
 
-    const webUrl = (process.env.WEB_URL ?? "https://www.routeflow.info").replace(/\/$/, "");
+    const webUrl = pickWebOrigin(
+      params.returnOrigin,
+      (process.env.WEB_URL ?? "https://www.routeflow.info").replace(/\/$/, ""),
+    );
     const backTo = `${webUrl}/buyer/portal/${params.tenantSlug}/payments`;
     const sellerName = sellerDisplayName(config, tenant, "your seller");
 

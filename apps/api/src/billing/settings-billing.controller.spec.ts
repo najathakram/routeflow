@@ -147,8 +147,69 @@ describe("SettingsBillingController.createCheckout (WP3c, R2.9)", () => {
   // checkout at any plan other than the tenant's own pinned one. This is a
   // compile-time/structural guarantee (no @Body() param exists on the handler), so
   // the runtime check here is that the handler's arity is exactly 1 (@CurrentUser only).
+  // WP2A.0: the one added param is the browser's Origin header (never a plan, amount or body).
   it("R2.9 takes no request-body param — the tenant's own plan is structural, not client-supplied", () => {
-    expect(SettingsBillingController.prototype.createCheckout.length).toBe(1);
+    expect(SettingsBillingController.prototype.createCheckout.length).toBe(2);
+    const args = Reflect.getMetadata(
+      "__routeArguments__",
+      SettingsBillingController,
+      "createCheckout",
+    ) as Record<string, { index: number; data?: unknown }>;
+    expect(Object.keys(args).filter((k) => k.startsWith("3:"))).toEqual([]); // no @Body
+    expect(args["6:1"]).toEqual({ index: 1, data: "origin", pipes: [] }); // the Origin header only
+  });
+
+  describe("WP2A.0: the checkout returns to the address the request came from (WEB_ORIGINS)", () => {
+    const saved = { ...process.env };
+    afterEach(() => {
+      for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+      Object.assign(process.env, saved);
+    });
+    const setEnv = (origins?: string) => {
+      delete process.env.FRONTEND_URL;
+      process.env.WEB_URL = "https://app.routeflow.test";
+      if (origins === undefined) delete process.env.WEB_ORIGINS;
+      else process.env.WEB_ORIGINS = origins;
+    };
+
+    it("an Origin on the WEB_ORIGINS list is the return base", async () => {
+      setEnv("https://www.acme-next.test");
+      const { controller, billing } = make();
+      await controller.createCheckout(
+        { tenantId: "t1", sub: "u1" } as any,
+        "https://www.acme-next.test",
+      );
+      expect(billing.createCheckoutSession).toHaveBeenCalledWith("t1", {
+        successUrl: "https://www.acme-next.test/settings/billing?checkout=success",
+        cancelUrl: "https://www.acme-next.test/settings/billing?checkout=cancelled",
+      });
+    });
+
+    it("a look-alike Origin falls back to the web base", async () => {
+      setEnv("https://www.acme-next.test");
+      const { controller, billing } = make();
+      await controller.createCheckout(
+        { tenantId: "t1", sub: "u1" } as any,
+        "https://www.acme-next.test.evil.test",
+      );
+      expect(billing.createCheckoutSession).toHaveBeenCalledWith("t1", {
+        successUrl: "https://app.routeflow.test/settings/billing?checkout=success",
+        cancelUrl: "https://app.routeflow.test/settings/billing?checkout=cancelled",
+      });
+    });
+
+    it("with WEB_ORIGINS empty the second address changes nothing (today's base)", async () => {
+      setEnv(undefined);
+      const { controller, billing } = make();
+      await controller.createCheckout(
+        { tenantId: "t1", sub: "u1" } as any,
+        "https://www.acme-next.test",
+      );
+      expect(billing.createCheckoutSession).toHaveBeenCalledWith("t1", {
+        successUrl: "https://app.routeflow.test/settings/billing?checkout=success",
+        cancelUrl: "https://app.routeflow.test/settings/billing?checkout=cancelled",
+      });
+    });
   });
 
   it("REG-6 refuses checkout when the self-serve-checkout kill switch is off, even called directly", async () => {

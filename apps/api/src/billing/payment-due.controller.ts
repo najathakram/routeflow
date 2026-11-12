@@ -3,6 +3,7 @@ import {
   Controller,
   ForbiddenException,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   Post,
@@ -60,8 +61,13 @@ export class PaymentDueController {
     summary:
       "Open (or reuse) the Stripe Checkout for the amount due, or to add the card (admin only)",
   })
-  pay(@CurrentUser() user: AuthUser, @Body() body: PaymentDuePayDto) {
+  pay(
+    @CurrentUser() user: AuthUser,
+    @Body() body: PaymentDuePayDto,
+    @Headers("origin") origin?: string,
+  ) {
     // 542c: the body is only the terms the banner showed (compared, never charged); the tenant id stays the JWT's
-    return this.paymentDue.pay(this.tenantIdOf(user), undefined, body?.shown);
+    // WP2A.0: the Origin header only ever picks among the WEB_ORIGINS list (never an amount, plan or tenant)
+    return this.paymentDue.pay(this.tenantIdOf(user), undefined, body?.shown, origin);
   }
 }

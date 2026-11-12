@@ -420,3 +420,26 @@ describe("MailboxController — real guard chain over HTTP", () => {
     expect(mailboxConnection.confirmConnect).not.toHaveBeenCalled();
   });
 });
+
+describe("MailboxController start routes: the request Origin is handed to the service (WP2A.0)", () => {
+  it("startGoogle / startMicrosoft pass the Origin header as the service's last argument", async () => {
+    const svc = {
+      startConnect: jest.fn().mockResolvedValue({ url: "u", connectSecret: "s" }),
+      startConnectMicrosoft: jest.fn().mockResolvedValue({ url: "u", connectSecret: "s" }),
+    };
+    const controller = new MailboxController(svc as any, { get: () => undefined } as any);
+    const user = { sub: "admin-1", tenantId: "tenant-a" } as any;
+    await controller.startGoogle(user, "https://www.acme-next.test");
+    await controller.startMicrosoft(user, "https://www.acme-next.test");
+    expect(svc.startConnect).toHaveBeenCalledWith(
+      "tenant-a",
+      "admin-1",
+      "https://www.acme-next.test",
+    );
+    expect(svc.startConnectMicrosoft).toHaveBeenCalledWith(
+      "tenant-a",
+      "admin-1",
+      "https://www.acme-next.test",
+    );
+  });
+});

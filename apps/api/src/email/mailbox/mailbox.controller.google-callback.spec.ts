@@ -31,11 +31,19 @@ const SETTINGS = "http://localhost:3001/settings?tab=email";
  */
 describe("MailboxController — GET google/callback", () => {
   let app: INestApplication;
-  let mailboxConnection: { handleCallback: jest.Mock; discardState: jest.Mock };
+  let mailboxConnection: {
+    handleCallback: jest.Mock;
+    discardState: jest.Mock;
+    peekReturnOrigin: jest.Mock;
+  };
   let warn: jest.SpyInstance;
 
   beforeAll(async () => {
-    mailboxConnection = { handleCallback: jest.fn(), discardState: jest.fn() };
+    mailboxConnection = {
+      handleCallback: jest.fn(),
+      discardState: jest.fn(),
+      peekReturnOrigin: jest.fn().mockResolvedValue(undefined),
+    };
 
     // The callback route itself is unguarded, but Nest still resolves every provider the
     // CONTROLLER'S OTHER routes reference via @UseGuards (JwtAuthGuard/RolesGuard/AddonGuard) —
@@ -86,6 +94,7 @@ describe("MailboxController — GET google/callback", () => {
     // another test's (wrongly made) exchange call and hide it.
     mailboxConnection.handleCallback.mockReset();
     mailboxConnection.discardState.mockReset().mockResolvedValue(undefined);
+    mailboxConnection.peekReturnOrigin.mockReset().mockResolvedValue(undefined);
     warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
   });
 
@@ -205,5 +214,104 @@ describe("MailboxController — GET google/callback", () => {
       .expect(302);
 
     expect(res.headers.location).toBe(`${SETTINGS}&mailbox_error=1`);
+  });
+
+  describe("WP2A.0: the Google callback returns to the address the connect started on", () => {
+    const saved = { ...process.env };
+    afterEach(() => {
+      for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+      Object.assign(process.env, saved);
+      mailboxConnection.peekReturnOrigin.mockReset().mockResolvedValue(undefined);
+    });
+
+    it("a peeked extra origin is the base of the success redirect", async () => {
+      process.env.WEB_ORIGINS = "https://www.acme-next.test";
+      mailboxConnection.peekReturnOrigin.mockResolvedValue("https://www.acme-next.test");
+      mailboxConnection.handleCallback.mockResolvedValue({ confirmToken: "tok-123" });
+      const res = await request(app.getHttpServer())
+        .get("/settings/email/mailbox/google/callback")
+        .query({ code: "code-1", state: "state-1" })
+        .expect(302);
+      expect(res.headers.location).toBe(
+        "https://www.acme-next.test/settings?tab=email&mailbox_confirm=tok-123",
+      );
+      expect(mailboxConnection.peekReturnOrigin).toHaveBeenCalledWith("state-1");
+    });
+
+    it("the peek happens BEFORE the state is consumed (the key is gone afterwards)", async () => {
+      process.env.WEB_ORIGINS = "https://www.acme-next.test";
+      const order: string[] = [];
+      mailboxConnection.peekReturnOrigin.mockImplementation(async () => {
+        order.push("peek");
+        return "https://www.acme-next.test";
+      });
+      mailboxConnection.handleCallback.mockImplementation(async () => {
+        order.push("exchange");
+        return { confirmToken: "t" };
+      });
+      mailboxConnection.discardState.mockImplementation(async () => {
+        order.push("discard");
+      });
+      await request(app.getHttpServer())
+        .get("/settings/email/mailbox/google/callback")
+        .query({ error: "access_denied", state: "state-1" })
+        .expect(302);
+      await request(app.getHttpServer())
+        .get("/settings/email/mailbox/google/callback")
+        .query({ code: "code-1", state: "state-1" })
+        .expect(302);
+      expect(order).toEqual(["peek", "discard", "peek", "exchange"]);
+    });
+
+    it("the error redirect also uses the peeked extra origin", async () => {
+      process.env.WEB_ORIGINS = "https://www.acme-next.test";
+      mailboxConnection.peekReturnOrigin.mockResolvedValue("https://www.acme-next.test");
+      const res = await request(app.getHttpServer())
+        .get("/settings/email/mailbox/google/callback")
+        .query({ error: "access_denied", state: "state-1" })
+        .expect(302);
+      expect(res.headers.location).toMatch(
+        /^https:\/\/www\.acme-next\.test\/settings\?tab=email&mailbox_/,
+      );
+    });
+
+    it("a failed exchange redirects to the peeked extra origin too", async () => {
+      process.env.WEB_ORIGINS = "https://www.acme-next.test";
+      mailboxConnection.peekReturnOrigin.mockResolvedValue("https://www.acme-next.test");
+      mailboxConnection.handleCallback.mockRejectedValue(new BadRequestException("state_invalid"));
+      const res = await request(app.getHttpServer())
+        .get("/settings/email/mailbox/google/callback")
+        .query({ code: "code-1", state: "bad" })
+        .expect(302);
+      expect(res.headers.location).toMatch(
+        /^https:\/\/www\.acme-next\.test\/settings\?tab=email&mailbox_error/,
+      );
+    });
+
+    it("a look-alike origin falls back to the configured WEB_URL", async () => {
+      process.env.WEB_ORIGINS = "https://www.acme-next.test";
+      mailboxConnection.peekReturnOrigin.mockResolvedValue("https://www.acme-next.test.evil.test");
+      mailboxConnection.handleCallback.mockResolvedValue({ confirmToken: "tok-123" });
+      const res = await request(app.getHttpServer())
+        .get("/settings/email/mailbox/google/callback")
+        .query({ code: "code-1", state: "state-1" })
+        .expect(302);
+      expect(res.headers.location).toBe(
+        "http://localhost:3001/settings?tab=email&mailbox_confirm=tok-123",
+      );
+    });
+
+    it("with WEB_ORIGINS empty a peeked second address changes nothing", async () => {
+      delete process.env.WEB_ORIGINS;
+      mailboxConnection.peekReturnOrigin.mockResolvedValue("https://www.acme-next.test");
+      mailboxConnection.handleCallback.mockResolvedValue({ confirmToken: "tok-123" });
+      const res = await request(app.getHttpServer())
+        .get("/settings/email/mailbox/google/callback")
+        .query({ code: "code-1", state: "state-1" })
+        .expect(302);
+      expect(res.headers.location).toBe(
+        "http://localhost:3001/settings?tab=email&mailbox_confirm=tok-123",
+      );
+    });
   });
 });

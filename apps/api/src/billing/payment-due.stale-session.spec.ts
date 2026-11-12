@@ -564,6 +564,60 @@ describe("billing-return-url: a session created before the web base was fixed", 
     expect(t.db.subs[0].catchupSessionId).not.toBe(oldId);
   });
 
+  describe("WP2A.0: WEB_ORIGINS keeps sessions that return to a second address", () => {
+    const savedEnv = { ...process.env };
+    afterEach(() => {
+      for (const k of Object.keys(process.env)) if (!(k in savedEnv)) delete process.env[k];
+      Object.assign(process.env, savedEnv);
+    });
+
+    it("a session returning to a WEB_ORIGINS address is kept and reused after WEB_URL flips (no expire)", async () => {
+      process.env.WEB_URL = "https://www.acme-next.test"; // the session was built while this was the web base
+      const t = make([OCT_OPEN]);
+      const first = await t.svc.pay("t1", NOW);
+      goLive(t, NOW, first.checkoutUrl);
+      expect(createCalls(t)[0][0].success_url).toMatch(/^https:\/\/www\.acme-next\.test\//);
+
+      process.env.WEB_URL = "https://app.routeflow.test"; // the flip
+      process.env.WEB_ORIGINS = "https://www.acme-next.test";
+      const again = await t.svc.pay("t1", NOW);
+
+      expect(again.checkoutUrl).toBe(first.checkoutUrl);
+      expect(expireCalls(t)).toEqual([]);
+      expect(createCalls(t)).toHaveLength(1);
+    });
+
+    it("a look-alike host is still off base: expired and replaced on the web base", async () => {
+      process.env.WEB_URL = "https://www.acme-next.test.evil.test";
+      const t = make([OCT_OPEN]);
+      const first = await t.svc.pay("t1", NOW);
+      const oldId = goLive(t, NOW, first.checkoutUrl);
+
+      process.env.WEB_URL = "https://app.routeflow.test";
+      process.env.WEB_ORIGINS = "https://www.acme-next.test";
+      const out = await t.svc.pay("t1", NOW);
+
+      expect(out.checkoutUrl).not.toBe(first.checkoutUrl);
+      expect(expireCalls(t)).toEqual([`expireCheckoutSession:${oldId}`]);
+      expect(createCalls(t)).toHaveLength(2);
+      expect(createCalls(t)[1][0].success_url).toBe(
+        "https://app.routeflow.test/settings/billing?paid=1",
+      );
+    });
+
+    it("a session on the WEB_URL base is kept while WEB_ORIGINS lists another address", async () => {
+      process.env.WEB_URL = "https://app.routeflow.test";
+      process.env.WEB_ORIGINS = "https://www.acme-next.test";
+      const t = make([OCT_OPEN]);
+      const first = await t.svc.pay("t1", NOW);
+      goLive(t, NOW, first.checkoutUrl);
+      const again = await t.svc.pay("t1", NOW);
+      expect(again.checkoutUrl).toBe(first.checkoutUrl);
+      expect(expireCalls(t)).toEqual([]);
+      expect(createCalls(t)).toHaveLength(1);
+    });
+  });
+
   it("guard: a session already on the www base is reused (no expire, no second create)", async () => {
     process.env.WEB_URL = "https://www.routeflow.test";
     const t = make([OCT_OPEN]);

@@ -6,7 +6,7 @@ import { CatchupCheckoutService } from "./catchup-checkout.service";
 import { CATCHUP_META, claimRefusal } from "./catchup-claim";
 import { CatchupClaimService } from "./catchup-claim.service";
 import { chargeNowCents, describeStubPeriod } from "./catchup-plan";
-import { webBaseUrl } from "../config/web-base-url";
+import { isOnAllowedWebBase } from "../config/web-origins";
 import {
   SIGNING_SINCE,
   checkSessionTerms,
@@ -225,6 +225,7 @@ export class PaymentDueService {
     tenantId: string,
     now: Date = new Date(),
     shown?: PaymentDueShownTerms,
+    returnOrigin?: string,
   ): Promise<{ checkoutUrl: string }> {
     const { view, stubCents, terms } = await this.read(tenantId, now);
     // SA-801 / SA-806: a card-needed tenant (nothing charged now) opens the very same catch-up session. The expected
@@ -252,6 +253,8 @@ export class PaymentDueService {
         // paths: open() joins them to its one web base (webBaseUrl)
         successPath: view.cardNeeded ? CARD_RETURN_PATH : PAID_RETURN_PATH,
         cancelPath: "/settings/billing?checkout=cancelled",
+        // WP2A.0: the request's own Origin; open() validates it against WEB_ORIGINS
+        returnOrigin,
       });
       return { checkoutUrl: out.checkoutUrl };
     } catch (err) {
@@ -417,7 +420,7 @@ export class PaymentDueService {
   }
 
   /**
-   * True when the stored session's own success or cancel URL is not on the configured web base (a session created while
+   * True when the stored session's own success or cancel URL is not on the configured web base or a WEB_ORIGINS address (a session created while
    * the API fell back to a localhost default). A URL Stripe did not report is not judged (nothing to compare).
    */
   private returnUrlsOffBase(
@@ -425,10 +428,8 @@ export class PaymentDueService {
     sessionId: string,
     session: { success_url?: string | null; cancel_url?: string | null },
   ): boolean {
-    const base = webBaseUrl();
     const off = [session.success_url, session.cancel_url].filter(
-      (u): u is string =>
-        typeof u === "string" && u !== "" && u !== base && !u.startsWith(`${base}/`),
+      (u): u is string => typeof u === "string" && u !== "" && !isOnAllowedWebBase(u),
     );
     if (off.length === 0) return false;
     this.logger.warn(

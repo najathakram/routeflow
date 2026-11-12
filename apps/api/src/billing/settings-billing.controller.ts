@@ -4,6 +4,7 @@ import {
   Controller,
   ForbiddenException,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   Param,
@@ -27,7 +28,7 @@ import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { BillingService } from "./billing.service";
 import { QuoteDto } from "./dto/quote.dto";
 import { SubscribeDto, UpgradeDto, DowngradeDto, EnableAddonDto } from "./dto/mutation.dto";
-import { webBaseUrl } from "../config/web-base-url";
+import { pickWebOrigin, webReturnBase } from "../config/web-origins";
 import {
   inviteOnlyCheckoutAllowed,
   INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT,
@@ -224,7 +225,7 @@ export class SettingsBillingController {
   @Roles(UserRole.TENANT_ADMIN)
   @NoImpersonation("billing")
   @ApiOperation({ summary: "Start a Stripe Checkout session for the tenant's own pinned plan" })
-  async createCheckout(@CurrentUser() user: AuthUser) {
+  async createCheckout(@CurrentUser() user: AuthUser, @Headers("origin") origin?: string) {
     const tenantId = this.tenantIdOf(user);
     const { planKey } = await this.subscription.getSubscription(tenantId);
     if (!inviteOnlyCheckoutAllowed(planKey, INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT)) {
@@ -232,7 +233,8 @@ export class SettingsBillingController {
         "Self-serve checkout is currently disabled for this plan — contact us to complete your subscription.",
       );
     }
-    const base = webBaseUrl();
+    // WP2A.0: a request from a WEB_ORIGINS address returns there; anything else keeps the one web base
+    const base = webReturnBase(origin);
     return this.billing.createCheckoutSession(tenantId, {
       successUrl: `${base}/settings/billing?checkout=success`,
       cancelUrl: `${base}/settings/billing?checkout=cancelled`,
@@ -249,12 +251,15 @@ export class SettingsBillingController {
   @Roles(UserRole.TENANT_ADMIN)
   @NoImpersonation("billing")
   @ApiOperation({ summary: "Stripe billing portal + the owed invoice's hosted page (admin only)" })
-  async createPortal(@CurrentUser() user: AuthUser) {
+  async createPortal(@CurrentUser() user: AuthUser, @Headers("origin") origin?: string) {
     const tenantId = this.tenantIdOf(user);
+    // WP2A.0: only an extra origin changes the return address; otherwise the service default (webBaseUrl) applies
+    const extra = pickWebOrigin(origin, "");
+    const returnUrl = extra !== "" ? `${extra}/settings/billing` : undefined;
     // allSettled: a failure of one Stripe call must not lose the other (the pay link survives a portal outage and
     // vice versa). Both are capped (#2476) so the route never hangs on Stripe.
     const [portal, pay] = await Promise.allSettled([
-      this.billing.createBillingPortalSession(tenantId, undefined, INTERACTIVE_STRIPE_REQUEST),
+      this.billing.createBillingPortalSession(tenantId, returnUrl, INTERACTIVE_STRIPE_REQUEST),
       this.subscription.openInvoiceUrl(tenantId),
     ]);
     const portalUrl = portal.status === "fulfilled" ? portal.value.portalUrl : null;

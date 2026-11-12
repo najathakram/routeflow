@@ -15,7 +15,7 @@ import { Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
 import { UserRole } from "@prisma/client";
-import { StripeConnectService } from "./stripe-connect.service";
+import { StripeConnectService, peekStripeConnectStateOrigin } from "./stripe-connect.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { CONNECT_OAUTH_PROVIDER } from "./provider/connect-oauth.interface";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -211,6 +211,66 @@ describe("StripeConnectService", () => {
       const params = new URL(url).searchParams;
       expect(params.has("stripe_user[email]")).toBe(false);
       expect(params.has("stripe_user[business_name]")).toBe(false);
+    });
+  });
+
+  // ─── WP2A.0: the connect leg returns to the address it started on ──────────
+
+  describe("buildAuthorizeUrl return origin (WEB_ORIGINS)", () => {
+    const saved = { ...process.env };
+    afterEach(() => {
+      for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+      Object.assign(process.env, saved);
+    });
+    const signedClaims = () => mockJwt.signAsync.mock.calls[0]![0];
+
+    it("an origin on the WEB_ORIGINS list is signed into the state as `ro`", async () => {
+      process.env.WEB_ORIGINS = "https://www.acme-next.test";
+      await service.buildAuthorizeUrl("tenant-1", "user-1", "alice", "https://www.acme-next.test");
+      expect(signedClaims().ro).toBe("https://www.acme-next.test");
+    });
+
+    it("a look-alike origin adds no `ro` claim", async () => {
+      process.env.WEB_ORIGINS = "https://www.acme-next.test";
+      await service.buildAuthorizeUrl(
+        "tenant-1",
+        "user-1",
+        "alice",
+        "https://www.acme-next.test.evil.test",
+      );
+      expect("ro" in signedClaims()).toBe(false);
+    });
+
+    it("with WEB_ORIGINS empty the state is exactly today's (no `ro`)", async () => {
+      delete process.env.WEB_ORIGINS;
+      await service.buildAuthorizeUrl("tenant-1", "user-1", "alice", "https://www.acme-next.test");
+      expect(Object.keys(signedClaims()).sort()).toEqual(["by", "jti", "purpose", "tid"]);
+    });
+  });
+
+  describe("peekStripeConnectStateOrigin", () => {
+    const token = (payload: unknown) =>
+      `h.${Buffer.from(JSON.stringify(payload)).toString("base64url")}.s`;
+
+    it("reads a string `ro` from the (unverified) payload segment", () => {
+      expect(peekStripeConnectStateOrigin(token({ ro: "https://www.acme-next.test" }))).toBe(
+        "https://www.acme-next.test",
+      );
+    });
+
+    it("never throws: garbage, non-JWT, missing or non-string `ro` all give undefined", () => {
+      for (const bad of [
+        undefined,
+        "",
+        "state",
+        "a.b",
+        "a.!!!.c",
+        token({}),
+        token({ ro: 5 }),
+        token("x"),
+      ]) {
+        expect(peekStripeConnectStateOrigin(bad as any)).toBeUndefined();
+      }
     });
   });
 

@@ -12,6 +12,7 @@ import {
   type ConnectOAuthToken,
 } from "./provider/connect-oauth.interface";
 import { AppConfig } from "../config/configuration";
+import { extraWebOrigins } from "../config/web-origins";
 import {
   DERIVED_JWT_AUDIENCES,
   DERIVED_JWT_LABELS,
@@ -143,6 +144,7 @@ export class StripeConnectService {
     tenantId: string,
     startedByUserId?: string | null,
     startedByName?: string | null,
+    returnOrigin?: string,
   ): Promise<string> {
     if (!this.isConfigured) {
       throw new BadRequestException(
@@ -150,8 +152,20 @@ export class StripeConnectService {
       );
     }
     const jti = randomUUID();
+    // WP2A.0: the web address the link started on, kept in the signed state ONLY when it is a WEB_ORIGINS address
+    // (an empty list leaves the state byte-identical to before).
+    const ro =
+      typeof returnOrigin === "string" && extraWebOrigins().includes(returnOrigin)
+        ? returnOrigin
+        : undefined;
     const state = await this.jwt.signAsync(
-      { purpose: "stripe-connect", tid: tenantId, by: startedByName ?? null, jti },
+      {
+        purpose: "stripe-connect",
+        tid: tenantId,
+        by: startedByName ?? null,
+        jti,
+        ...(ro && { ro }),
+      },
       {
         secret: this.stateKey,
         audience: DERIVED_JWT_AUDIENCES.stripeConnectState,
@@ -531,5 +545,24 @@ export class StripeConnectService {
       data: { disconnectedAt: new Date(), chargesEnabled: false },
     });
     return rows.map((r) => r.tenantId);
+  }
+}
+
+/**
+ * WP2A.0: the `ro` (return origin) claim of a Stripe Connect `state` token, read from the payload segment WITHOUT
+ * verifying the signature (the callback needs it before `completeOAuth` consumes the state). Never throws; a missing
+ * or non-string claim is undefined. UNVERIFIED on purpose: the value only ever selects among the WEB_ORIGINS
+ * allow-list (`pickWebOrigin`), so a forged claim can at most pick another allowed address (B825 precedent).
+ */
+export function peekStripeConnectStateOrigin(state: string | undefined): string | undefined {
+  if (typeof state !== "string") return undefined;
+  try {
+    const segment = state.split(".")[1];
+    if (!segment) return undefined;
+    const payload: unknown = JSON.parse(Buffer.from(segment, "base64url").toString("utf8"));
+    const ro = (payload as { ro?: unknown } | null)?.ro;
+    return typeof ro === "string" ? ro : undefined;
+  } catch {
+    return undefined;
   }
 }

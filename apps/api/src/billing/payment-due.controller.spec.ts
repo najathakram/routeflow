@@ -25,15 +25,19 @@ function routeArgs(handler: string): Record<string, { index: number; data?: unkn
 const nestBuiltinParamKeys = (args: Record<string, unknown>) =>
   Object.keys(args).filter((k) => /^\d+:/.test(k));
 const BODY = 3;
+const HEADERS = 6;
 
 describe("PaymentDueController: pay takes only the banner's quote from the request", () => {
-  it("pay declares exactly TWO route arguments: the custom @CurrentUser (0) and ONE @Body (1); no Query, Param, Headers, Req", () => {
+  it("pay declares exactly THREE route arguments: the custom @CurrentUser (0), ONE @Body (1) and the Origin header (2); no Query, Param, Req", () => {
     const args = routeArgs("pay");
-    expect(Object.keys(args)).toHaveLength(2);
-    // the built-in slots are exactly one Body, whole (no `data` key picking), at index 1
-    expect(nestBuiltinParamKeys(args)).toEqual([`${BODY}:1`]);
+    expect(Object.keys(args)).toHaveLength(3);
+    // the built-in slots are exactly one Body, whole (no `data` key picking), at index 1, and the Origin header at 2
+    expect(nestBuiltinParamKeys(args).sort()).toEqual([`${BODY}:1`, `${HEADERS}:2`]);
     expect(args[`${BODY}:1`].index).toBe(1);
     expect(args[`${BODY}:1`].data).toBeUndefined();
+    // WP2A.0: the header is only ever used to pick among WEB_ORIGINS (never an amount, plan or tenant)
+    expect(args[`${HEADERS}:2`].index).toBe(2);
+    expect(args[`${HEADERS}:2`].data).toBe("origin");
     // @CurrentUser is the same decorator the read route uses: the very same custom-arg key, at index 0
     const user = Object.keys(args).find((k) => !/^\d+:/.test(k))!;
     expect(user).toBe(Object.keys(routeArgs("get"))[0]);
@@ -51,9 +55,27 @@ describe("PaymentDueController: pay takes only the banner's quote from the reque
     expect(nestBuiltinParamKeys(args)).toEqual([]);
   });
 
-  it("the handler declares user + body (arity 2), and get declares the user alone", () => {
-    expect((proto.pay as (...a: unknown[]) => unknown).length).toBe(2);
+  it("the handler declares user + body + origin header (arity 3), and get declares the user alone", () => {
+    expect((proto.pay as (...a: unknown[]) => unknown).length).toBe(3);
     expect((proto.get as (...a: unknown[]) => unknown).length).toBe(1);
+  });
+});
+
+describe("PaymentDueController: pay passes the request's Origin down (WP2A.0)", () => {
+  it("hands the Origin header to PaymentDueService.pay as its last argument", async () => {
+    const paymentDue = { pay: jest.fn().mockResolvedValue({ checkoutUrl: "https://x.test/c" }) };
+    const controller = new PaymentDueController(paymentDue as any);
+    await controller.pay(
+      { tenantId: "t1", sub: "u1" } as any,
+      { shown: undefined } as any,
+      "https://www.acme-next.test",
+    );
+    expect(paymentDue.pay).toHaveBeenCalledWith(
+      "t1",
+      undefined,
+      undefined,
+      "https://www.acme-next.test",
+    );
   });
 });
 

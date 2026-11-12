@@ -1,6 +1,7 @@
 import * as crypto from "crypto";
 import { Logger } from "@nestjs/common";
 import { webBaseUrl } from "./web-base-url";
+import { extraWebOrigins } from "./web-origins";
 
 /**
  * F5-001: resolve the storage-URL HMAC signing secret WITHOUT reusing JWT_SECRET
@@ -89,6 +90,8 @@ export interface AppConfig {
   urls: {
     web: string;
     mobileWeb: string;
+    /** WP2A.0: extra web origins the app is also served on (`WEB_ORIGINS`); empty by default. */
+    webOrigins: string[];
   };
   redis: {
     url: string;
@@ -178,6 +181,7 @@ export const configuration = (): AppConfig => ({
   urls: {
     web: webBaseUrl(),
     mobileWeb: process.env.MOBILE_WEB_URL ?? "https://routeflowmobile-production.up.railway.app",
+    webOrigins: extraWebOrigins(),
   },
   redis: {
     url: process.env.REDIS_URL ?? "redis://localhost:6379",

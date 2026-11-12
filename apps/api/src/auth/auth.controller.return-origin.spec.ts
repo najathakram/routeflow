@@ -376,4 +376,234 @@ describe("AuthController — B825 resolveReturnOrigin allow-list", () => {
       );
     });
   });
+
+  // ─── WP2A.0: WEB_ORIGINS — the app is also served on a second address ──────────────────────
+  describe("WP2A.0 WEB_ORIGINS", () => {
+    const SECOND = "https://www.acme-next.test";
+    const LOOKALIKE = "https://www.acme-next.test.evil.test";
+    const withSecond = { WEB_ORIGINS: SECOND };
+
+    describe("resolveReturnOrigin with the second address on the list", () => {
+      it.each([
+        ["the web origin", WEB_URL, WEB_URL],
+        ["the mobile-web origin", MOBILE_WEB_URL, MOBILE_WEB_URL],
+        ["the second address", SECOND, SECOND],
+        ["a look-alike of the second address", LOOKALIKE, WEB_URL],
+        ["the second address with a trailing slash", `${SECOND}/`, WEB_URL],
+        ["an unlisted host", "https://other.acme-next.test", WEB_URL],
+        ["undefined", undefined, WEB_URL],
+      ])("%s resolves to the expected origin", (_label, candidate, expected) => {
+        const { controller } = buildController({}, withSecond);
+        expect((controller as any).resolveReturnOrigin(candidate)).toBe(expected);
+      });
+
+      it("with WEB_ORIGINS empty the second address is rejected (today's behaviour)", () => {
+        const { controller } = buildController({}, { WEB_ORIGINS: "" });
+        expect((controller as any).resolveReturnOrigin(SECOND)).toBe(WEB_URL);
+      });
+    });
+
+    describe("GET /auth/google — the request's own Origin header", () => {
+      const callUrl = (
+        controller: AuthController,
+        returnOrigin: string | undefined,
+        requestOrigin: unknown,
+        mobile?: string,
+      ) =>
+        (controller.googleAuthUrl as any).call(
+          controller,
+          "acme",
+          "staff",
+          undefined,
+          mobile,
+          undefined,
+          returnOrigin,
+          { status: jest.fn() },
+          requestOrigin,
+        );
+
+      it("no return_origin and an Origin on the list: the second address reaches generateAuthUrl", async () => {
+        const { controller, googleOAuth } = buildController({}, withSecond);
+        await callUrl(controller, undefined, SECOND);
+        expect(googleOAuth.generateAuthUrl).toHaveBeenCalledWith(
+          "tenant",
+          "acme",
+          undefined,
+          "staff",
+          false,
+          undefined,
+          SECOND,
+        );
+      });
+
+      it("a look-alike Origin resolves to WEB_URL", async () => {
+        const { controller, googleOAuth } = buildController({}, withSecond);
+        await callUrl(controller, undefined, LOOKALIKE);
+        expect(googleOAuth.generateAuthUrl.mock.calls[0][6]).toBe(WEB_URL);
+      });
+
+      it("an Origin equal to WEB_URL (or none) resolves to WEB_URL", async () => {
+        const { controller, googleOAuth } = buildController({}, withSecond);
+        await callUrl(controller, undefined, WEB_URL);
+        await callUrl(controller, undefined, undefined);
+        expect(googleOAuth.generateAuthUrl.mock.calls[0][6]).toBe(WEB_URL);
+        expect(googleOAuth.generateAuthUrl.mock.calls[1][6]).toBe(WEB_URL);
+      });
+
+      it("WEB_ORIGINS empty: the second address as Origin still resolves to WEB_URL (today)", async () => {
+        const { controller, googleOAuth } = buildController({}, { WEB_ORIGINS: "" });
+        await callUrl(controller, undefined, SECOND);
+        expect(googleOAuth.generateAuthUrl.mock.calls[0][6]).toBe(WEB_URL);
+      });
+
+      it("an explicit return_origin wins over the Origin header", async () => {
+        const { controller, googleOAuth } = buildController({}, withSecond);
+        await callUrl(controller, MOBILE_WEB_URL, SECOND);
+        expect(googleOAuth.generateAuthUrl.mock.calls[0][6]).toBe(MOBILE_WEB_URL);
+      });
+
+      it("the native mobile flow ignores the Origin header", async () => {
+        const { controller, googleOAuth } = buildController({}, withSecond);
+        await callUrl(controller, undefined, SECOND, "1");
+        expect(googleOAuth.generateAuthUrl.mock.calls[0][6]).toBeUndefined();
+      });
+    });
+
+    describe("GET /auth/google/link — the account-link state carries an extra Origin", () => {
+      const callLink = (controller: AuthController, origin: unknown) =>
+        (controller.linkGoogleUrl as any).call(
+          controller,
+          { sub: "u-1" },
+          { status: jest.fn() },
+          origin,
+        );
+
+      it("an Origin on the list is passed to generateLinkUrl as the return origin", async () => {
+        const generateLinkUrl = jest.fn().mockResolvedValue("https://accounts.google.test/link");
+        const { controller } = buildController({ generateLinkUrl }, withSecond);
+        await callLink(controller, SECOND);
+        expect(generateLinkUrl).toHaveBeenCalledWith("tenant", "u-1", SECOND);
+      });
+
+      it.each([
+        ["WEB_URL itself", WEB_URL],
+        ["a look-alike", LOOKALIKE],
+        ["no Origin", undefined],
+      ])("%s: no return origin is stored", async (_label, origin) => {
+        const generateLinkUrl = jest.fn().mockResolvedValue("https://accounts.google.test/link");
+        const { controller } = buildController({ generateLinkUrl }, withSecond);
+        await callLink(controller, origin);
+        expect(generateLinkUrl).toHaveBeenCalledWith("tenant", "u-1", undefined);
+      });
+
+      it("WEB_ORIGINS empty: the second address as Origin stores nothing (today)", async () => {
+        const generateLinkUrl = jest.fn().mockResolvedValue("https://accounts.google.test/link");
+        const { controller } = buildController({ generateLinkUrl }, { WEB_ORIGINS: "" });
+        await callLink(controller, SECOND);
+        expect(generateLinkUrl).toHaveBeenCalledWith("tenant", "u-1", undefined);
+      });
+    });
+
+    describe("GET /auth/google/callback — redirects to the second address", () => {
+      it("success: a verified profile carrying the second address redirects there", async () => {
+        const { controller } = buildController(
+          {
+            verifyCallback: jest.fn().mockResolvedValue({
+              returnOrigin: SECOND,
+              mobile: false,
+              linkUserId: undefined,
+            }),
+            findOrCreateUser: jest.fn().mockResolvedValue({
+              kind: "staff",
+              accessToken: "at",
+              refreshToken: "rt",
+              user: { role: "OPERATOR", tenantSlug: "acme" },
+            }),
+            createExchangeCode: jest.fn().mockResolvedValue("one-time-code"),
+          },
+          withSecond,
+        );
+        const res = { redirect: jest.fn() };
+        await controller.googleCallback(
+          "auth-code",
+          encodeState({ mobile: false, returnOrigin: SECOND }),
+          undefined as any,
+          {} as any,
+          res as any,
+        );
+        expect(res.redirect).toHaveBeenCalledWith(
+          `${SECOND}/auth/google/callback?code=one-time-code`,
+        );
+      });
+
+      it("link: a verified link profile carrying the second address redirects there", async () => {
+        const { controller } = buildController(
+          {
+            verifyCallback: jest.fn().mockResolvedValue({
+              type: "tenant",
+              returnOrigin: SECOND,
+              mobile: false,
+              linkUserId: "u-1",
+            }),
+            linkGoogleAccount: jest.fn().mockResolvedValue(undefined),
+          },
+          withSecond,
+        );
+        const res = { redirect: jest.fn() };
+        await controller.googleCallback(
+          "auth-code",
+          encodeState({ returnOrigin: SECOND, linkUserId: "u-1" }),
+          undefined as any,
+          {} as any,
+          res as any,
+        );
+        expect(res.redirect).toHaveBeenCalledWith(`${SECOND}/auth/google/callback?action=linked`);
+      });
+
+      it("cancelled: a peeked second address bounces there", async () => {
+        const { controller } = buildController({}, withSecond);
+        const res = { redirect: jest.fn() };
+        await controller.googleCallback(
+          undefined as any,
+          encodeState({ returnOrigin: SECOND }),
+          "access_denied",
+          {} as any,
+          res as any,
+        );
+        expect(res.redirect).toHaveBeenCalledWith(
+          `${SECOND}/auth/google/callback?error=oauth_cancelled`,
+        );
+      });
+
+      it("cancelled: a peeked look-alike bounces to WEB_URL", async () => {
+        const { controller } = buildController({}, withSecond);
+        const res = { redirect: jest.fn() };
+        await controller.googleCallback(
+          undefined as any,
+          encodeState({ returnOrigin: LOOKALIKE }),
+          "access_denied",
+          {} as any,
+          res as any,
+        );
+        expect(res.redirect).toHaveBeenCalledWith(
+          `${WEB_URL}/auth/google/callback?error=oauth_cancelled`,
+        );
+      });
+
+      it("cancelled with WEB_ORIGINS empty: a peeked second address bounces to WEB_URL (today)", async () => {
+        const { controller } = buildController({}, { WEB_ORIGINS: "" });
+        const res = { redirect: jest.fn() };
+        await controller.googleCallback(
+          undefined as any,
+          encodeState({ returnOrigin: SECOND }),
+          "access_denied",
+          {} as any,
+          res as any,
+        );
+        expect(res.redirect).toHaveBeenCalledWith(
+          `${WEB_URL}/auth/google/callback?error=oauth_cancelled`,
+        );
+      });
+    });
+  });
 });
