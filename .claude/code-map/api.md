@@ -132,3 +132,4 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 | [api/landing-2026-11-10-w27-w28b.md](api/landing-2026-11-10-w27-w28b.md) | Windows 27 and 28b (415cf84fe0..a64c3774be): InvoiceItem.position, B461 held email change, OrderReviewFlag table, order date reads, order-owned line order, reminder email counts |
 | [api/landing-2026-11-11-w29-w31.md](api/landing-2026-11-11-w29-w31.md) | Windows 29-31 (a64c3774be..6ecd409b16): SystemClient brand (B1296), SA-1118 pack rule, invoices follow the order's line order, Sort A-Z, WP11 feature changes |
 | [api/landing-2026-11-12-w32-w34.md](api/landing-2026-11-12-w32-w34.md) | Windows 32 and 34 (6ecd409b16..c05d8e25f5): ordered tenant-scoped row locks, nested tenant walker (B929), copier registry position inventory |
+| [api/landing-2026-11-12-wp2a0.md](api/landing-2026-11-12-wp2a0.md) | WP2A.0 (#4307): WEB_ORIGINS, one exact web-origin allow-list for sign-in, connect and payment returns |
