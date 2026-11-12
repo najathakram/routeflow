@@ -5,12 +5,17 @@ import { renderWithProviders } from "@/test-utils/render";
 import { CreateOrderModal } from "./CreateOrderModal";
 
 /**
- * Row 100 (owner-approved UX D): the "Order date" field moves behind a "Backdate this order" link. It is the same existing
- * control (same id, same max, same helper text, same payload field) - no new field - and it shows by itself when a parked
- * draft already carries an order date, so nothing is hidden from someone who needs it.
+ * W-1188 PR-3: the regular order's date is one chip (office policy, past-only) in place of the "Backdate this order" link,
+ * the "Order date (optional)" input and "Use today". The cap is the TENANT's today, not the browser's UTC day (R23).
  */
 
 window.HTMLElement.prototype.scrollIntoView = jest.fn();
+
+// 20:00 in Chicago on Mon 2026-11-09 is already Tue 2026-11-10 in UTC: the old UTC cap would let tomorrow through.
+jest.mock("@/lib/tenant-timezone", () => ({
+  ...jest.requireActual("@/lib/tenant-timezone"),
+  useTenantToday: () => "2026-11-09",
+}));
 
 const PLAIN = {
   id: "p-plain",
@@ -135,8 +140,9 @@ jest.mock("@/lib/barcode-resolve", () => ({
   resolveProductByCode: (code: string) => mockResolveProductByCode(code),
 }));
 
-const orderDateInput = () => screen.queryByLabelText(/^Order date/) as HTMLInputElement | null;
-const backdateLink = () => screen.queryByRole("button", { name: "Backdate this order" });
+const chip = () => screen.getByTestId("counter-date-chip");
+const chipButton = () => within(chip()).getAllByRole("button")[0];
+const oldLink = () => screen.queryByRole("button", { name: "Backdate this order" });
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -145,124 +151,142 @@ beforeEach(() => {
   mockCreateError = null;
 });
 
-describe("Backdate this order (row 100)", () => {
-  it("starts with a link, not the date field", () => {
+describe("order date chip on the regular order (W-1188 PR-3)", () => {
+  it("shows the chip on Today and none of the old controls", () => {
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
-    expect(backdateLink()).toBeInTheDocument();
-    expect(orderDateInput()).toBeNull();
+    expect(chip()).toHaveAttribute("data-direction", "TODAY");
+    expect(oldLink()).toBeNull();
+    expect(document.getElementById("order-date")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Use today" })).toBeNull();
   });
 
-  it("the link opens the existing Order date field (same max, same helper text) and focuses it", async () => {
+  it("R23: the calendar stops at the business's today, not the UTC day", async () => {
     const user = userEvent.setup({ delay: null });
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
-    await user.click(backdateLink()!);
-    const field = orderDateInput()!;
-    expect(field).toBeInTheDocument();
-    expect(field).toHaveAttribute("type", "date");
-    expect(field).toHaveAttribute("max");
-    expect(field).toHaveFocus();
-    expect(screen.getByText(/The day the order actually happened/)).toBeInTheDocument();
-    expect(backdateLink()).toBeNull();
+    await user.click(chipButton());
+    const day = (d: string) => document.querySelector(`[data-day="${d}"]`) as HTMLButtonElement;
+    expect(day("2026-11-09")).not.toBeDisabled();
+    expect(day("2026-11-10")).toBeDisabled();
   });
 
-  it("'Use today' clears the date and folds the field back behind the link", async () => {
+  it("tells the clerk a future day is the delivery date", async () => {
     const user = userEvent.setup({ delay: null });
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
-    await user.click(backdateLink()!);
-    fireEvent.change(orderDateInput()!, { target: { value: "2026-10-01" } });
-    expect(orderDateInput()).toHaveValue("2026-10-01");
-    await user.click(screen.getByRole("button", { name: "Use today" }));
-    expect(orderDateInput()).toBeNull();
-    expect(backdateLink()).toBeInTheDocument();
+    await user.click(chipButton());
+    expect(screen.getByTestId("counter-date-office-hint")).toHaveTextContent(
+      "A future day? Set the delivery date instead.",
+    );
+    await user.type(screen.getByTestId("counter-date-input"), "tomorrow");
+    expect(screen.getByTestId("counter-date-echo")).toHaveTextContent(
+      "A future day? Set the delivery date instead.",
+    );
   });
 
-  it("the chosen date still goes out as orderDate on Create Order", async () => {
-    mockProducts = [
-      {
-        id: "p-plain",
-        name: "Sample Cola",
-        sku: "100200300",
-        unit: "each",
-        pricePerUnit: "2.50",
-        isActive: true,
-      },
-    ];
+  it("W-1188 r4: a scan while the picker is open in the order modal is inert: no lookup, no line, the picker stays open with the note", async () => {
     const user = userEvent.setup({ delay: null });
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await user.click(chipButton());
+    const picker = await screen.findByTestId("counter-date-picker");
+    act(() =>
+      within(picker)
+        .getByRole("grid", { name: /^Calendar/ })
+        .focus(),
+    );
+    await user.keyboard("4006381333931{Enter}");
+    expect(mockResolveProductByCode).not.toHaveBeenCalled();
+    expect(screen.getByTestId("counter-date-picker")).toBeInTheDocument();
+    expect(screen.getByTestId("counter-date-scan-note")).toBeInTheDocument();
+    expect(chip()).toHaveAttribute("data-direction", "TODAY");
+    expect(screen.queryByRole("button", { name: /^Remove / })).toBeNull();
+  });
+
+  const fillOrder = async (user: ReturnType<typeof userEvent.setup>, resumeDraftId?: string) => {
+    mockProducts = [PLAIN];
+    renderWithProviders(
+      <CreateOrderModal isOpen onClose={jest.fn()} resumeDraftId={resumeDraftId} />,
+    );
     await user.type(screen.getByPlaceholderText(/search by business name/i), "acme");
     await user.click((await screen.findByText(/Acme Deli/)).closest("button") as HTMLElement);
     await user.type(screen.getByPlaceholderText(/search by name, sku or scan barcode/i), "cola");
     await user.click((await screen.findByText(/Sample Cola/)).closest("button") as HTMLElement);
-    await user.click(backdateLink()!);
-    fireEvent.change(orderDateInput()!, { target: { value: "2026-10-01" } });
+  };
+
+  it("Today sends no orderDate", async () => {
+    const user = userEvent.setup({ delay: null });
+    await fillOrder(user);
     await user.click(screen.getByRole("button", { name: "Create Order" }));
     await waitFor(() => expect(mockCreateMutate).toHaveBeenCalled());
-    expect(mockCreateMutate.mock.calls[0][0].orderDate).toBe("2026-10-01");
+    expect(mockCreateMutate.mock.calls[0][0].orderDate).toBeUndefined();
   });
 
-  it("a resumed draft that already has an order date shows the field straight away", async () => {
-    mockDraft = {
-      id: "d1",
-      kind: "ORDER",
-      payload: { customer: null, lineItems: [], orderDate: "2026-10-01" },
-    };
-    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} resumeDraftId="d1" />);
-    const field = await waitFor(() => {
-      const el = orderDateInput();
-      expect(el).not.toBeNull();
-      return el!;
-    });
-    expect(field).toHaveValue("2026-10-01");
-    expect(backdateLink()).toBeNull();
+  it("a chosen day goes out as orderDate on Create Order", async () => {
+    const user = userEvent.setup({ delay: null });
+    await fillOrder(user);
+    await user.click(chipButton());
+    await user.click(screen.getByRole("button", { name: "Yesterday" }));
+    expect(chip()).toHaveAttribute("data-direction", "BACK");
+    await user.click(screen.getByRole("button", { name: "Create Order" }));
+    await waitFor(() => expect(mockCreateMutate).toHaveBeenCalled());
+    expect(mockCreateMutate.mock.calls[0][0].orderDate).toBe("2026-11-08");
   });
 
-  it("clearing a resumed draft's date from the keyboard keeps the focused field on screen", async () => {
-    mockDraft = {
-      id: "d1",
-      kind: "ORDER",
-      payload: { customer: null, lineItems: [], orderDate: "2026-10-01" },
-    };
-    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} resumeDraftId="d1" />);
-    const field = await waitFor(() => {
-      const el = orderDateInput();
-      expect(el).not.toBeNull();
-      return el!;
-    });
-    field.focus();
-    fireEvent.change(field, { target: { value: "" } });
-    expect(orderDateInput()).toBe(field); // the SAME node: it was not unmounted under the cursor
-    expect(field).toHaveFocus();
-  });
-
-  it("'Use today' hands focus to the Backdate link it folds back to (never <body>)", async () => {
+  it("clearing the chip returns to Today in one tap", async () => {
     const user = userEvent.setup({ delay: null });
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
-    await user.click(backdateLink()!);
-    await user.click(screen.getByRole("button", { name: "Use today" }));
-    await waitFor(() => expect(backdateLink()).toHaveFocus());
+    await user.click(chipButton());
+    await user.click(screen.getByRole("button", { name: "Yesterday" }));
+    await user.click(screen.getByRole("button", { name: "Clear the order date, back to today" }));
+    expect(chip()).toHaveAttribute("data-direction", "TODAY");
   });
 
-  it("reopening the builder folds it back behind the link", async () => {
+  it("a resumed draft that already has an order date shows it on the chip", async () => {
+    mockDraft = {
+      id: "d1",
+      kind: "ORDER",
+      payload: { customer: null, lineItems: [], orderDate: "2026-10-01" },
+    };
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} resumeDraftId="d1" />);
+    await waitFor(() => expect(chip()).toHaveAttribute("data-direction", "BACK"));
+    expect(chip()).toHaveTextContent("Dated Thu, Oct 1");
+  });
+
+  it("a draft whose stored day is today reads Today and sends no orderDate", async () => {
+    const user = userEvent.setup({ delay: null });
+    mockDraft = {
+      id: "d1",
+      kind: "ORDER",
+      payload: { customer: null, lineItems: [], orderDate: "2026-11-09" },
+    };
+    await fillOrder(user, "d1");
+    await waitFor(() => expect(chip()).toHaveAttribute("data-direction", "TODAY"));
+    expect(screen.queryByRole("button", { name: /Clear the order date/ })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Create Order" }));
+    await waitFor(() => expect(mockCreateMutate).toHaveBeenCalled());
+    expect(mockCreateMutate.mock.calls[0][0].orderDate).toBeUndefined();
+  });
+
+  it("Enter on the clear x clears the date inside the order form", async () => {
+    const user = userEvent.setup({ delay: null });
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await user.click(chipButton());
+    await user.click(screen.getByRole("button", { name: "Yesterday" }));
+    screen.getByRole("button", { name: "Clear the order date, back to today" }).focus();
+    await user.keyboard("{Enter}");
+    expect(chip()).toHaveAttribute("data-direction", "TODAY");
+  });
+
+  it("reopening the builder puts the chip back on Today", async () => {
     const user = userEvent.setup({ delay: null });
     const view = renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
-    await user.click(backdateLink()!);
-    expect(orderDateInput()).toBeInTheDocument();
+    await user.click(chipButton());
+    await user.click(screen.getByRole("button", { name: "Yesterday" }));
     view.rerender(<CreateOrderModal isOpen={false} onClose={jest.fn()} />);
     view.rerender(<CreateOrderModal isOpen onClose={jest.fn()} />);
-    expect(orderDateInput()).toBeNull();
-    expect(backdateLink()).toBeInTheDocument();
+    expect(chip()).toHaveAttribute("data-direction", "TODAY");
   });
 });
 
 describe("Counter-path tap targets (row 296): >= 44px hit areas", () => {
-  it("Backdate link and Use today carry the 44px floor", async () => {
-    const user = userEvent.setup({ delay: null });
-    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
-    expect(backdateLink()).toHaveClass("min-h-[44px]");
-    await user.click(backdateLink()!);
-    expect(screen.getByRole("button", { name: "Use today" })).toHaveClass("min-h-[44px]");
-  });
-
   it("the Change customer X is 44px tall and wide", async () => {
     const user = userEvent.setup({ delay: null });
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);

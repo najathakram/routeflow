@@ -1,9 +1,14 @@
 import * as React from "react";
+import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, waitFor, fireEvent, within, act } from "@/test-utils/render";
 import { apiClient } from "@/lib/api-client";
 import { addDays } from "@routeflow/pricing";
 import { calendarDayInZone } from "@/lib/calendar-date";
-import { COUNTER_PRICE_EDIT_NOT_PERMITTED_COPY } from "@/lib/counter-sale";
+import {
+  COUNTER_CHECK_ZONE_LOADING_COPY,
+  COUNTER_ORDER_DATE_ZONE_FAILED_COPY,
+  COUNTER_PRICE_EDIT_NOT_PERMITTED_COPY,
+} from "@/lib/counter-sale";
 import {
   cancelCounterLeave,
   getCounterLeaveRequest,
@@ -13,6 +18,7 @@ import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 import { discardUndo } from "./useParkedSales";
 import { setImpersonation } from "@/lib/impersonation";
+import { dayLabel } from "@/lib/natural-date";
 import { liveCartKey } from "@/lib/counter-live-cart-keys";
 import { parkStoredLiveCarts } from "@/lib/counter-live-cart-park";
 
@@ -1123,6 +1129,7 @@ describe("order date chip on the till", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Resume / }));
     await waitFor(() => expect(chip()).toHaveAttribute("data-direction", "BACK"));
     expect(screen.getByRole("button", { name: /^Backdated to/ })).toBeInTheDocument();
+    expect(chip()).toHaveTextContent(`Dated ${dayLabel(YESTERDAY, TODAY)}`); // the exact day, not only the direction
   });
 
   it("a parked sale without a date resumes on Today", async () => {
@@ -1132,6 +1139,16 @@ describe("order date chip on the till", () => {
     fireEvent.click(resumeBtn("Hold A"));
     await waitFor(() => expect(itemNames().join(" ")).toContain("Cola"));
     expect(chip()).toHaveAttribute("data-direction", "TODAY");
+  });
+
+  it("a parked sale whose stored day has become today resumes as Today", async () => {
+    seed("a", { label: "Hold A" }, parkedPayload({ orderDate: TODAY }));
+    renderScreen();
+    await openList(1);
+    fireEvent.click(resumeBtn("Hold A"));
+    await waitFor(() => expect(itemNames().join(" ")).toContain("Cola"));
+    expect(chip()).toHaveAttribute("data-direction", "TODAY");
+    expect(screen.queryByRole("button", { name: /Clear the order date/ })).toBeNull();
   });
 
   it("a finished sale does not carry its date to the next one", async () => {
@@ -1166,6 +1183,140 @@ describe("order date chip on the till", () => {
     expect(mutateAsync.mock.calls[0][0].dto.orderDate).toBe(YESTERDAY);
   });
 
+  it("a live cart restored with today's date, parked while the business day loads late, stores no orderDate", async () => {
+    const view = renderScreen();
+    await scan("COLA");
+    await pickYesterday();
+    const liveKey = () =>
+      Object.keys(window.localStorage).find((k) => k.includes("liveCart")) as string;
+    await waitFor(() => {
+      const saved = window.localStorage.getItem(liveKey());
+      expect(saved && JSON.parse(saved).orderDate).toBe(YESTERDAY);
+    });
+    const key = liveKey();
+    const saved = JSON.parse(window.localStorage.getItem(key)!);
+    window.localStorage.setItem(key, JSON.stringify({ ...saved, orderDate: TODAY }));
+    view.unmount();
+    // /settings answers only after the till has mounted and restored: the business day is unknown at restore time
+    let release: () => void = () => undefined;
+    const settingsGate = new Promise<void>((r) => (release = r));
+    const original = get.getMockImplementation()!;
+    get.mockImplementation((url: string) =>
+      url === "/settings"
+        ? settingsGate.then(() => ({ data: { taxRate: 0, timezone: "America/New_York" } }))
+        : original(url),
+    );
+    renderScreen();
+    await screen.findByTestId("counter-cart-restored");
+    release();
+    await waitFor(() => expect(chip()).toHaveAttribute("data-direction", "TODAY"));
+    fireEvent.click(parkBtn());
+    await waitFor(() => expect(parkCalls()).toHaveLength(1));
+    expect(parkCalls()[0][1].payload).not.toHaveProperty("orderDate");
+  });
+
+  it("R8: a restored dated cart while the business day is unknown says checking; Park and Complete hold; after it loads, Today and no orderDate", async () => {
+    const view = renderScreen();
+    await scan("COLA");
+    await pickYesterday();
+    const liveKey = () =>
+      Object.keys(window.localStorage).find((k) => k.includes("liveCart")) as string;
+    await waitFor(() => {
+      const saved = window.localStorage.getItem(liveKey());
+      expect(saved && JSON.parse(saved).orderDate).toBe(YESTERDAY);
+    });
+    const key = liveKey();
+    const saved = JSON.parse(window.localStorage.getItem(key)!);
+    window.localStorage.setItem(key, JSON.stringify({ ...saved, orderDate: TODAY }));
+    view.unmount();
+    let release: () => void = () => undefined;
+    const settingsGate = new Promise<void>((r) => (release = r));
+    const original = get.getMockImplementation()!;
+    get.mockImplementation((url: string) =>
+      url === "/settings"
+        ? settingsGate.then(() => ({ data: { taxRate: 0, timezone: "America/New_York" } }))
+        : original(url),
+    );
+    renderScreen();
+    await screen.findByTestId("counter-cart-restored");
+    expect(chip()).toHaveTextContent("checking");
+    expect(chip()).not.toHaveTextContent("Dated");
+    expect(chip()).not.toHaveTextContent("Today");
+    expect(chip().className).not.toContain("amber");
+    expect(parkBtn()).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Exact" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    expect(await screen.findByText(COUNTER_CHECK_ZONE_LOADING_COPY)).toBeInTheDocument();
+    expect(mutateAsync).not.toHaveBeenCalled();
+    release();
+    await waitFor(() => expect(chip()).toHaveAttribute("data-direction", "TODAY"));
+    await waitFor(() => expect(parkBtn()).toBeEnabled());
+    fireEvent.click(parkBtn());
+    await waitFor(() => expect(parkCalls()).toHaveLength(1));
+    expect(parkCalls()[0][1].payload).not.toHaveProperty("orderDate");
+  });
+
+  it("R8: when the business day cannot be read, the chip says couldn't check (not checking for ever) and Complete shows the failed copy", async () => {
+    const view = renderScreen();
+    await scan("COLA");
+    await pickYesterday();
+    const liveKey = () =>
+      Object.keys(window.localStorage).find((k) => k.includes("liveCart")) as string;
+    await waitFor(() => {
+      const saved = window.localStorage.getItem(liveKey());
+      expect(saved && JSON.parse(saved).orderDate).toBe(YESTERDAY);
+    });
+    view.unmount();
+    const original = get.getMockImplementation()!;
+    get.mockImplementation((url: string) =>
+      url === "/settings" ? Promise.reject(new Error("settings down")) : original(url),
+    );
+    renderScreen();
+    await screen.findByTestId("counter-cart-restored");
+    await waitFor(() => expect(chip()).toHaveTextContent("couldn't check"));
+    expect(chip()).not.toHaveTextContent("checking");
+    expect(screen.getByTestId("counter-date-reminder")).toHaveTextContent(
+      COUNTER_ORDER_DATE_ZONE_FAILED_COPY,
+    );
+    expect(parkBtn()).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Exact" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    expect(await screen.findAllByText(COUNTER_ORDER_DATE_ZONE_FAILED_COPY)).not.toHaveLength(0);
+    expect(mutateAsync).not.toHaveBeenCalled();
+    // clearing the date frees the sale
+    fireEvent.click(screen.getByRole("button", { name: "Clear the order date, back to today" }));
+    await waitFor(() => expect(chip()).toHaveAttribute("data-direction", "TODAY"));
+  });
+
+  it("a scan made while the date picker is open is added to the cart, and focus lands in the scan box", async () => {
+    renderScreen();
+    await screen.findByRole("button", { name: "Order date: today. Change" });
+    fireEvent.click(screen.getByRole("button", { name: "Order date: today. Change" }));
+    const grid = await screen.findByRole("grid", { name: /^Calendar/ });
+    grid.focus();
+    // real keys through the document (S0: no pause between keys); S400, LATE and GAP are in CounterSaleScreen.date-scan.test.tsx
+    await userEvent.setup({ delay: null }).keyboard("COLA{Enter}");
+    await waitFor(() => expect(screen.queryByTestId("counter-date-picker")).toBeNull());
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: `Remove ${NAME.COLA}` })).toBeInTheDocument(),
+    );
+    expect(chip()).toHaveAttribute("data-direction", "TODAY");
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByLabelText("Scan or search items")),
+    );
+  });
+
+  it("closing the picker with Escape puts focus back in the scan box", async () => {
+    renderScreen();
+    fireEvent.click(await screen.findByRole("button", { name: "Order date: today. Change" }));
+    await screen.findByTestId("counter-date-picker");
+    fireEvent.keyDown(screen.getByTestId("counter-date-input"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByTestId("counter-date-picker")).toBeNull());
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByLabelText("Scan or search items")),
+    );
+  });
+
   it("a refused date shows fixed copy and a red ring, and the date stays for the clerk to fix", async () => {
     renderScreen();
     await scan("COLA");
@@ -1186,6 +1337,10 @@ describe("order date chip on the till", () => {
     expect(await screen.findByText(/more than 2 years back/)).toBeInTheDocument();
     expect(screen.queryByText(SECRET)).toBeNull();
     expect(chip().className).toContain("ring-red-500");
-    expect(chip()).toHaveAttribute("data-direction", "BACK");
+    // fixing the date clears the refusal and the ring
+    fireEvent.click(screen.getByRole("button", { name: "Clear the order date, back to today" }));
+    await waitFor(() => expect(screen.queryByText(/more than 2 years back/)).toBeNull());
+    expect(chip().className).not.toContain("ring-red-500");
+    expect(chip()).toHaveAttribute("data-direction", "TODAY");
   });
 });

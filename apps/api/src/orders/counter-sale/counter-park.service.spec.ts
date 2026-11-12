@@ -457,6 +457,19 @@ describe("CounterParkService.list", () => {
     for (const r of res.data) expect(r).not.toHaveProperty("payload");
   });
 
+  it("W-1188: a dated parked sale lists its sale day; a Today sale and a corrupt day list none", async () => {
+    const t = setup();
+    await t.park({ id: id(1), payload: payload({ orderDate: "2026-11-06" }) }, OP, NOW);
+    await t.park({ id: id(2), payload: payload() }, OP, new Date(NOW.getTime() + 1000));
+    t.db.rows.find((r) => r.id === id(2))!.payload = { ...payload(), orderDate: "2026-02-31" };
+    await t.park({ id: id(3), payload: payload() }, OP, new Date(NOW.getTime() + 2000));
+    const res = await t.service.list({ page: 1, pageSize: 20 }, NOW);
+    const by = new Map(res.data.map((r) => [r.id, r]));
+    expect(by.get(id(1))).toMatchObject({ orderDate: "2026-11-06" });
+    expect(by.get(id(2))).not.toHaveProperty("orderDate");
+    expect(by.get(id(3))).not.toHaveProperty("orderDate");
+  });
+
   it("row 330e: each row carries the pricing inputs of its lines (and nothing else of them), so the screen can total it", async () => {
     const t = setup();
     await t.park({

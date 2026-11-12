@@ -61,15 +61,15 @@ export function CounterReceiptView({
         <p data-testid="receipt-numbers">
           Order {m.orderNumber} · Invoice {m.invoiceNumber}
         </p>
-        {reprintLabel ? (
-          <p data-testid="receipt-reprint">{reprintLabel}</p>
-        ) : (
+        {reprintLabel ? <p data-testid="receipt-reprint">{reprintLabel}</p> : null}
+        {/* a dated sale shows its sale day and the entry time on the reprint too, like the live receipt */}
+        {!reprintLabel || m.enteredLabel ? (
           <p data-testid="receipt-date">
             {m.enteredLabel ? "Sale date " : ""}
             {m.dateLabel}
           </p>
-        )}
-        {m.enteredLabel && !reprintLabel ? (
+        ) : null}
+        {m.enteredLabel ? (
           <p className="text-xs" data-testid="receipt-entered">
             Entered {m.enteredLabel}
           </p>

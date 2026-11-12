@@ -12,7 +12,13 @@ const yearsWord = (n: number) => (n === 1 ? "a year" : `${n} years`);
 const PAST_YEARS = yearsWord(ORDER_DATE_MAX_PAST_YEARS);
 const PAST_END = new RegExp(`^That date is more than ${PAST_YEARS} back\\. Pick .* or later\\.$`);
 const OUTSIDE = "That date is outside the dates this till takes. Pick another day.";
-const FUTURE = `That date is more than ${yearsWord(Math.round(ORDER_DATE_MAX_FUTURE_DAYS / 365))} ahead. Check the year.`;
+/** The future cap in words: a year (365 or 366 days), whole years, else the plain day count. Never a rounded lie. */
+export function futureLimitWords(days: number): string {
+  if (days === 365 || days === 366) return "a year";
+  if (days % 365 === 0) return `${days / 365} years`;
+  return `${days} days`;
+}
+const FUTURE = `That date is more than ${futureLimitWords(ORDER_DATE_MAX_FUTURE_DAYS)} ahead. Check the year.`;
 const LOCKED_END = " Pick a date in an open month, or use today.";
 
 /** The copy for a date refusal, or null when `err` is not one. */
@@ -49,3 +55,11 @@ export const ORDER_DATE_REFUSAL_CODES = [
   API_ERROR_CODES.ORDER_DATE_OUT_OF_RANGE,
   API_ERROR_CODES.ORDER_DATE_PERIOD_LOCKED,
 ] as const;
+
+/**
+ * W-1188, the ONE "Today means no date" rule: a chosen day equal to the business's today is Today, so it reads as Today and is
+ * never shown as dated, parked, saved or sent. `today` is "" while the business day is unknown (the day then passes through).
+ */
+export function dateIfNotToday(day: string, today: string | undefined): string {
+  return day && day !== today ? day : "";
+}
