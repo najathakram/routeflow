@@ -486,3 +486,33 @@ describe("T11 focus left on BODY while the picker is open (a month button at its
     expect(resolved).toEqual([KNOWN]);
   });
 });
+
+describe("T12 the armed append dismisses a stale scan message, like the scan box's own onChange", () => {
+  it("a 'No product' message goes at the first key of the next scan that came through the picker", async () => {
+    const user = userAt(null);
+    // an unknown code first: its message is up
+    renderTill(<CounterSaleScreen />);
+    await waitFor(() => expect(screen.getByRole("button", { name: CHIP_NAME })).toBeEnabled());
+    act(() => scanBox().focus());
+    await user.keyboard("9999999999994{Enter}");
+    await settle();
+    await screen.findByRole("heading", { name: "New product" });
+    await user.keyboard("{Escape}");
+    await settle();
+    expect(screen.getByText(/No product for '9999999999994'/)).toBeInTheDocument();
+    // now a scan whose first key lands on the open picker
+    await user.click(screen.getByRole("button", { name: CHIP_NAME }));
+    const p = await screen.findByTestId("counter-date-picker");
+    act(() =>
+      within(p)
+        .getByRole("grid", { name: /^Calendar/ })
+        .focus(),
+    );
+    await user.keyboard("40063"); // no Enter yet: the old message must already be gone
+    await settle();
+    expect(screen.queryByText(/No product for '9999999999994'/)).toBeNull();
+    await user.keyboard("81333931{Enter}");
+    await settle();
+    await waitFor(() => expect(itemNames()).toHaveLength(1));
+  });
+});

@@ -1283,9 +1283,12 @@ describe("order date chip on the till", () => {
     fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
     expect(await screen.findAllByText(COUNTER_ORDER_DATE_ZONE_FAILED_COPY)).not.toHaveLength(0);
     expect(mutateAsync).not.toHaveBeenCalled();
-    // clearing the date frees the sale
-    fireEvent.click(screen.getByRole("button", { name: "Clear the order date, back to today" }));
-    await waitFor(() => expect(chip()).toHaveAttribute("data-direction", "TODAY"));
+    // Try again re-runs the read: once the settings answer, the day is known and the sale is free
+    get.mockImplementation(original);
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(chip()).toHaveAttribute("data-direction", "BACK"));
+    expect(chip()).not.toHaveTextContent("couldn't check");
+    expect(parkBtn()).toBeEnabled();
   });
 
   it("a scan made while the date picker is open is added to the cart, and focus lands in the scan box", async () => {

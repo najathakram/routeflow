@@ -49,6 +49,10 @@ export function CounterDateChip({
   const [open, setOpen] = React.useState(false);
   const mainRef = React.useRef<HTMLButtonElement>(null);
   const canOpen = !disabled && !!today;
+  // A scan's keys can land on the chip after the picker closes (Escape, Cancel): its Enter must not open the picker. Same idea
+  // as the picker's inert run, by key order and no clock: a printable key typed with no text field focused starts a run, the
+  // run's Enter (and a CR+LF second Enter) is swallowed when it falls on the chip, and any other key or a pointer ends it.
+  const scanRun = React.useRef<"none" | "run" | "ended">("none");
   // What is seen must be what is sent: a set day is NEVER labelled Today. While the business's day is unknown the day shows
   // as dated with no past/future word (UNKNOWN), and it can still be cleared.
   const direction: "BACK" | "FORWARD" | "UNKNOWN" | null = !value
@@ -60,6 +64,41 @@ export function CounterDateChip({
         : value > today
           ? "FORWARD"
           : null;
+
+  React.useEffect(() => {
+    const person = () => {
+      scanRun.current = "none";
+    };
+    const onRun = (e: KeyboardEvent) => {
+      if (["Shift", "CapsLock", "Alt", "Control", "Meta", "AltGraph"].includes(e.key)) return;
+      const t = e.target;
+      const typing =
+        t instanceof HTMLElement &&
+        (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName));
+      const altGr = e.getModifierState?.("AltGraph") === true;
+      const combo = !altGr && (e.ctrlKey || e.altKey || e.metaKey);
+      if (typing || combo) {
+        scanRun.current = "none";
+      } else if (e.key.length === 1 && e.key !== " ") {
+        scanRun.current = "run";
+      } else if (e.key === "Enter") {
+        const wasScan = scanRun.current !== "none";
+        scanRun.current = scanRun.current === "run" ? "ended" : "none";
+        if (wasScan && t === mainRef.current) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      } else {
+        scanRun.current = "none";
+      }
+    };
+    window.addEventListener("keydown", onRun, true);
+    window.addEventListener("pointerdown", person, true);
+    return () => {
+      window.removeEventListener("keydown", onRun, true);
+      window.removeEventListener("pointerdown", person, true);
+    };
+  }, []);
 
   React.useEffect(() => {
     if (!canOpen) return;
@@ -186,10 +225,13 @@ export function CounterDateReminder({
   value,
   today,
   todayFailed,
+  onRetry,
 }: {
   value: string;
   today: string | undefined;
   todayFailed?: boolean;
+  /** re-runs the read of the business's day; shown beside the failed copy */
+  onRetry?: () => void;
 }) {
   if (!dateIfNotToday(value, today)) return null;
   // While the business's day is unknown the chip says "checking": the reminder must not claim the sale is dated yet
@@ -199,6 +241,14 @@ export function CounterDateReminder({
         {todayFailed
           ? COUNTER_ORDER_DATE_ZONE_FAILED_COPY
           : "Checking today's date. Complete waits for it."}
+        {todayFailed && onRetry ? (
+          <>
+            {" "}
+            <button type="button" className="min-h-[44px] px-2 underline" onClick={onRetry}>
+              Try again
+            </button>
+          </>
+        ) : null}
       </p>
     );
   return (

@@ -736,4 +736,70 @@ describe("a scan's first key in the picker acts on nothing (no timing)", () => {
       expect(onChange).toHaveBeenLastCalledWith("2026-11-08");
     },
   );
+  it.each(SPEEDS)(
+    "C9 office: a scan that lands on the chip after Escape or Cancel never reopens the picker, and its CR+LF is swallowed too (%s)",
+    async (_n, delay) => {
+      const user = userAt(delay);
+      for (const closer of ["{Escape}", "Cancel"]) {
+        const view = await openFresh(user, { policy: "OFFICE", onDone: undefined });
+        if (closer === "Cancel")
+          await user.click(within(view.picker).getByRole("button", { name: "Cancel" }));
+        else await user.keyboard(closer);
+        act(() => {
+          jest.advanceTimersByTime(100);
+        });
+        expect(screen.queryByTestId("counter-date-picker")).toBeNull();
+        const main = screen.getByRole("button", { name: "Order date: today. Change" });
+        expect(document.activeElement).toBe(main);
+        await user.keyboard("4006381333931{Enter}{Enter}");
+        expect(screen.queryByTestId("counter-date-picker")).toBeNull();
+        // a person's Enter on the chip still opens it, after any other key
+        await user.keyboard("{ArrowDown}{Enter}");
+        expect(screen.getByTestId("counter-date-picker")).toBeInTheDocument();
+        cleanup();
+      }
+    },
+  );
+
+  it("C9b a person's Enter on the chip opens the picker (no scan before it)", async () => {
+    const user = userAt(null);
+    setup("", { policy: "OFFICE" });
+    act(() => screen.getByRole("button", { name: "Order date: today. Change" }).focus());
+    await user.keyboard("{Enter}");
+    expect(screen.getByTestId("counter-date-picker")).toBeInTheDocument();
+  });
+
+  it("C10 office: Enter on the dialog header X closes the picker, even inside a form that swallows Enter", async () => {
+    const user = userAt(null);
+    render(
+      <form
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.preventDefault();
+        }}
+      >
+        <CounterDateChip value="" today={TODAY} onChange={jest.fn()} policy="OFFICE" />
+      </form>,
+    );
+    await user.click(screen.getByRole("button", { name: "Order date: today. Change" }));
+    const picker = await screen.findByTestId("counter-date-picker");
+    const x = (picker.closest('[role="dialog"]') as HTMLElement).querySelector(
+      'button[aria-label="Close"]',
+    ) as HTMLElement;
+    act(() => x.focus());
+    await user.keyboard("{Enter}");
+    expect(screen.queryByTestId("counter-date-picker")).toBeNull();
+  });
+
+  it("C11 the failed day read offers Try again, which re-runs the read", async () => {
+    const onRetry = jest.fn();
+    render(
+      <CounterDateReminder value="2026-11-01" today={undefined} todayFailed onRetry={onRetry} />,
+    );
+    expect(screen.getByTestId("counter-date-reminder")).toHaveTextContent("Try again");
+    await userEvent.setup({ delay: null }).click(screen.getByRole("button", { name: "Try again" }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    cleanup();
+    render(<CounterDateReminder value="2026-11-01" today={undefined} onRetry={onRetry} />);
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull(); // only when the read failed
+  });
 });
