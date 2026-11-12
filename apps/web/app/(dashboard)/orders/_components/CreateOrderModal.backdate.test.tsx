@@ -182,6 +182,24 @@ describe("order date chip on the regular order (W-1188 PR-3)", () => {
     );
   });
 
+  it("W-1188 r4: a scan while the picker is open in the order modal is inert: no lookup, no line, the picker stays open with the note", async () => {
+    const user = userEvent.setup({ delay: null });
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await user.click(chipButton());
+    const picker = await screen.findByTestId("counter-date-picker");
+    act(() =>
+      within(picker)
+        .getByRole("grid", { name: /^Calendar/ })
+        .focus(),
+    );
+    await user.keyboard("4006381333931{Enter}");
+    expect(mockResolveProductByCode).not.toHaveBeenCalled();
+    expect(screen.getByTestId("counter-date-picker")).toBeInTheDocument();
+    expect(screen.getByTestId("counter-date-scan-note")).toBeInTheDocument();
+    expect(chip()).toHaveAttribute("data-direction", "TODAY");
+    expect(screen.queryByRole("button", { name: /^Remove / })).toBeNull();
+  });
+
   const fillOrder = async (user: ReturnType<typeof userEvent.setup>, resumeDraftId?: string) => {
     mockProducts = [PLAIN];
     renderWithProviders(

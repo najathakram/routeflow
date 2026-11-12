@@ -1,9 +1,13 @@
 import * as React from "react";
+import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, waitFor, fireEvent, within, act } from "@/test-utils/render";
 import { apiClient } from "@/lib/api-client";
 import { addDays } from "@routeflow/pricing";
 import { calendarDayInZone } from "@/lib/calendar-date";
-import { COUNTER_PRICE_EDIT_NOT_PERMITTED_COPY } from "@/lib/counter-sale";
+import {
+  COUNTER_CHECK_ZONE_LOADING_COPY,
+  COUNTER_PRICE_EDIT_NOT_PERMITTED_COPY,
+} from "@/lib/counter-sale";
 import {
   cancelCounterLeave,
   getCounterLeaveRequest,
@@ -1210,14 +1214,55 @@ describe("order date chip on the till", () => {
     expect(parkCalls()[0][1].payload).not.toHaveProperty("orderDate");
   });
 
+  it("R8: a restored dated cart while the business day is unknown says checking; Park and Complete hold; after it loads, Today and no orderDate", async () => {
+    const view = renderScreen();
+    await scan("COLA");
+    await pickYesterday();
+    const liveKey = () =>
+      Object.keys(window.localStorage).find((k) => k.includes("liveCart")) as string;
+    await waitFor(() => {
+      const saved = window.localStorage.getItem(liveKey());
+      expect(saved && JSON.parse(saved).orderDate).toBe(YESTERDAY);
+    });
+    const key = liveKey();
+    const saved = JSON.parse(window.localStorage.getItem(key)!);
+    window.localStorage.setItem(key, JSON.stringify({ ...saved, orderDate: TODAY }));
+    view.unmount();
+    let release: () => void = () => undefined;
+    const settingsGate = new Promise<void>((r) => (release = r));
+    const original = get.getMockImplementation()!;
+    get.mockImplementation((url: string) =>
+      url === "/settings"
+        ? settingsGate.then(() => ({ data: { taxRate: 0, timezone: "America/New_York" } }))
+        : original(url),
+    );
+    renderScreen();
+    await screen.findByTestId("counter-cart-restored");
+    expect(chip()).toHaveTextContent("checking");
+    expect(chip()).not.toHaveTextContent("Dated");
+    expect(chip()).not.toHaveTextContent("Today");
+    expect(chip().className).not.toContain("amber");
+    expect(parkBtn()).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Exact" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    expect(await screen.findByText(COUNTER_CHECK_ZONE_LOADING_COPY)).toBeInTheDocument();
+    expect(mutateAsync).not.toHaveBeenCalled();
+    release();
+    await waitFor(() => expect(chip()).toHaveAttribute("data-direction", "TODAY"));
+    await waitFor(() => expect(parkBtn()).toBeEnabled());
+    fireEvent.click(parkBtn());
+    await waitFor(() => expect(parkCalls()).toHaveLength(1));
+    expect(parkCalls()[0][1].payload).not.toHaveProperty("orderDate");
+  });
+
   it("a scan made while the date picker is open is added to the cart, and focus lands in the scan box", async () => {
     renderScreen();
     await screen.findByRole("button", { name: "Order date: today. Change" });
     fireEvent.click(screen.getByRole("button", { name: "Order date: today. Change" }));
     const grid = await screen.findByRole("grid", { name: /^Calendar/ });
     grid.focus();
-    for (const key of "COLA") fireEvent.keyDown(grid, { key });
-    fireEvent.keyDown(grid, { key: "Enter" });
+    // real keys through the document (S0: no pause between keys); S400, LATE and GAP are in CounterSaleScreen.date-scan.test.tsx
+    await userEvent.setup({ delay: null }).keyboard("COLA{Enter}");
     await waitFor(() => expect(screen.queryByTestId("counter-date-picker")).toBeNull());
     await waitFor(() =>
       expect(screen.getByRole("button", { name: `Remove ${NAME.COLA}` })).toBeInTheDocument(),

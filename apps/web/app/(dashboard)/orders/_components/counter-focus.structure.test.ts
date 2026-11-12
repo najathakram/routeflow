@@ -170,3 +170,18 @@ describe("the new-customer door's focus return is the counter's alone (SA-1066 F
     for (const o of others) for (const args of o.calls) expect(args.length).toBeLessThan(3);
   });
 });
+
+describe("W-1188 round 4: the date picker has no timing and one Today rule", () => {
+  const read = (f: string) => fs.readFileSync(path.join(DIR, f), "utf8");
+  it("CounterDatePicker.tsx never reads a clock or a key repeat: no scan-vs-person guess by timing", () => {
+    const src = read("CounterDatePicker.tsx").replace(/\/\/.*$/gm, "");
+    for (const banned of ["Date.now", "performance.now", "setTimeout", "timeStamp", ".repeat"]) {
+      expect(src).not.toContain(banned);
+    }
+  });
+  it("neither the chip nor the picker spells the Today rule: it lives only in dateIfNotToday", () => {
+    for (const f of ["CounterDateChip.tsx", "CounterDatePicker.tsx"]) {
+      expect(read(f)).not.toMatch(/=== today \? ""/);
+    }
+  });
+});

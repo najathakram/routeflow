@@ -8,6 +8,7 @@ import { Button, Modal, cn } from "@routeflow/ui/web";
 import {
   dayLabel,
   longDay,
+  looksLikeScanCode,
   parseNaturalDate,
   relativeDaysLabel,
   weekdayShort,
@@ -35,10 +36,16 @@ interface Props {
   onClose: () => void;
   /** COUNTER takes future days; OFFICE (the regular order) is past-only: a future day is the delivery date. */
   policy?: OrderDatePolicy;
-  /** A scanner run ended in Enter while the picker was open: the picker closes and hands the code here (the till's scan entry). */
+  /** Typed text that looks like a scanned code, then Enter: the picker closes and hands the code here (the till's scan entry). */
   onScan?: (code: string) => void;
+  /** The till: the first key of a scan was pressed in the picker. It closes with the date unchanged; the till takes the rest. */
+  onScanKey?: (key: string) => void;
+  /** The till owns focus after the picker closes (refocusAfterDialog), so the dialog library must not hand it to the chip. */
+  ownsFocus?: boolean;
 }
 
+export const SCAN_NOTE =
+  "That looked like a scan, so nothing was picked. Close the date, then scan into Search.";
 export const OFFICE_FUTURE_HINT = "A future day? Set the delivery date instead.";
 
 export function CounterDatePicker({
@@ -49,8 +56,11 @@ export function CounterDatePicker({
   onClose,
   policy = "COUNTER",
   onScan,
+  onScanKey,
+  ownsFocus,
 }: Props) {
   const range = orderDateRange(today, policy);
+  const inputRef = React.useRef<HTMLInputElement>(null);
   const [text, setText] = React.useState("");
   const [cursor, setCursor] = React.useState(value || today);
   React.useEffect(() => {
@@ -89,67 +99,13 @@ export function CounterDatePicker({
     if (inRange(next)) setCursor(next);
   };
   const weekdayOfCursor = new Date(`${cursor}T00:00:00Z`).getUTCDay();
-  // Only keys typed ON the grid act here: Enter on a month button pages, and letters never set a date.
-  // The scan rule is timing, not which keys: a scanner (letters, an Alt-code, or a keypad scanner sending Home/End/arrows) sends
-  // its keys a few milliseconds apart. Three or more keys under 40 ms apart (modifier keys count; the time is recorded before
-  // any early return; a held key's auto-repeat is not counted) make a burst, and an Enter inside the burst or up to 600 ms after
-  // it is the scanner's, never a clerk choosing a day. A person (one key, a pause, Enter) is never a burst. On the grid a lone
-  // typed character also holds Enter for 300 ms. A scanner run that ends in Enter changes no date: the picker closes and the
-  // code it typed goes to the till's own scan entry (`onScan`), so the scan is kept, never lost.
-  const lastTypedAt = React.useRef(0);
-  const lastKeyAt = React.useRef(0);
-  const burstAt = React.useRef(0);
-  const run = React.useRef(0);
-  const runCursor = React.useRef(cursor);
-  const codeBuf = React.useRef("");
-  /** Records one key press; says whether an Enter now would be a scanner's. Auto-repeat is not a press. */
-  const trackKey = (e: React.KeyboardEvent): { burst: boolean; typedJustNow: boolean } => {
-    const now = Date.now();
-    const state = () => ({
-      burst: now - burstAt.current < 600,
-      typedJustNow: now - lastTypedAt.current < 300,
-    });
-    if (e.repeat) return state();
-    if (now - lastKeyAt.current < 40) run.current += 1;
-    else {
-      run.current = 1;
-      runCursor.current = cursor; // where the cursor stood before this run moved it
-      codeBuf.current = "";
-    }
-    const out = state();
-    if (e.key.length === 1) {
-      lastTypedAt.current = now;
-      codeBuf.current += e.key;
-    }
-    if (run.current >= 3 && e.key !== "Enter") burstAt.current = now;
-    lastKeyAt.current = now;
-    return out;
-  };
-  /** A scanner run ended in Enter: nothing is applied; close and hand the typed code to the till. */
-  const finishScan = () => {
-    const code = codeBuf.current.trim();
-    codeBuf.current = "";
-    if (!code) return;
-    setText("");
-    onClose();
-    onScan?.(code);
-  };
+  // Only keys typed ON the grid act here: Enter on a month button pages, and letters never set a date. There is no
+  // scan-vs-person guess by key timing anywhere in this picker: a scan's first key is caught once, at the dialog's content
+  // (onContentKeyDown), and the till's own listener takes the rest.
   const onGridKey = (e: React.KeyboardEvent) => {
     const k = e.key;
-    const seen = trackKey(e);
     if (e.target !== e.currentTarget || e.altKey || e.ctrlKey || e.metaKey) return;
     if (k.length === 1) return;
-    if (k === "Enter" && (seen.burst || seen.typedJustNow)) {
-      e.preventDefault();
-      finishScan();
-      return;
-    }
-    if (k !== "Enter" && !e.repeat && run.current >= 3) {
-      // a nav burst is a scanner's: the cursor goes back to where the run began and the run moves nothing more
-      setCursor(runCursor.current);
-      e.preventDefault();
-      return;
-    }
     if (k === "ArrowLeft") move(-1);
     else if (k === "ArrowRight") move(1);
     else if (k === "ArrowUp") move(-7);
@@ -161,6 +117,55 @@ export function CounterDatePicker({
     else if (k === "Enter") apply(cursor);
     else return;
     e.preventDefault();
+  };
+  // A scan's keys inside the picker (W-1188). The first printable key, from anywhere but the date text box, is a scan's first
+  // key: the picker acts on nothing. On the till it closes with the date unchanged and hands the key on (onScanKey); the
+  // till's one capture listener types the rest and submits. In the office there is no hand-over: the picker stays open and
+  // swallows the run (keys, then its Enter) with a note. An Alt-coded scan (Alt+digits) is never kept: same inert run.
+  const inertRun = React.useRef(false);
+  const [scanNote, setScanNote] = React.useState(false);
+  React.useEffect(() => {
+    if (open) {
+      inertRun.current = false;
+      setScanNote(false);
+    }
+  }, [open]);
+  const startInertRun = () => {
+    inertRun.current = true;
+    setScanNote(true);
+  };
+  const onContentKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const swallow = () => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    if (["Shift", "CapsLock", "Alt", "Control", "Meta"].includes(e.key)) return;
+    if (e.altKey && /^[0-9]$/.test(e.key)) {
+      swallow();
+      startInertRun();
+      return;
+    }
+    if (inertRun.current) {
+      if (e.key === "Enter") {
+        swallow();
+        inertRun.current = false;
+        return;
+      }
+      if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        swallow();
+        return;
+      }
+      inertRun.current = false; // any other key ends the run and acts as usual
+      return;
+    }
+    if (e.target === inputRef.current) return;
+    if (e.ctrlKey || e.altKey || e.metaKey || e.key.length !== 1 || e.key === " ") return;
+    swallow();
+    if (onScanKey) {
+      setText("");
+      onClose();
+      onScanKey(e.key);
+    } else startInertRun();
   };
   const weeks: Array<Array<string | null>> = [];
   for (let i = 0; i < cells.length; i += 7) {
@@ -183,6 +188,8 @@ export function CounterDatePicker({
       open={open}
       onClose={onClose}
       title="Order date"
+      onKeyDownCapture={onContentKeyDown}
+      onCloseAutoFocus={ownsFocus ? (e) => e.preventDefault() : undefined}
       className="max-md:fixed max-md:inset-x-0 max-md:bottom-0 max-md:top-auto max-md:max-w-none max-md:translate-x-0 max-md:translate-y-0 max-md:rounded-b-none"
     >
       <div className="flex flex-col gap-3" data-testid="counter-date-picker">
@@ -201,16 +208,26 @@ export function CounterDatePicker({
         </div>
         <div className="space-y-1">
           <input
+            ref={inputRef}
             autoFocus
             type="text"
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => {
+              setText(e.target.value);
+              setScanNote(false);
+            }}
             onKeyDown={(e) => {
-              const seen = trackKey(e);
-              if (e.key === "Enter") {
-                e.preventDefault();
-                if (seen.burst || run.current >= 4) finishScan();
-                else if (typedOk && typed) apply(typed);
+              if (e.key !== "Enter") return;
+              e.preventDefault();
+              if (typedOk && typed) apply(typed);
+              else if (typed === null && looksLikeScanCode(text)) {
+                // a code, not a date: no day is set. The till takes it; the office has nowhere to send it yet
+                if (onScan) {
+                  const code = text.trim();
+                  setText("");
+                  onClose();
+                  onScan(code);
+                } else setScanNote(true);
               }
             }}
             placeholder='Type "yesterday", "fri" or "11/02"'
@@ -234,6 +251,11 @@ export function CounterDatePicker({
                   : `${weekdayShort(typed)}, ${longDay(typed)} · ${relativeDaysLabel(typed, today)}${typed > today ? " (future)" : ""}`}
           </p>
         </div>
+        {scanNote ? (
+          <p className="text-xs text-navy/70" role="status" data-testid="counter-date-scan-note">
+            {SCAN_NOTE}
+          </p>
+        ) : null}
         {policy === "OFFICE" ? (
           <p className="text-xs text-navy/70" data-testid="counter-date-office-hint">
             {OFFICE_FUTURE_HINT}

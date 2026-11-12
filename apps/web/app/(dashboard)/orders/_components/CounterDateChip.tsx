@@ -9,6 +9,7 @@ import { CalendarArrowUp, Calendar as CalendarIcon, History, X } from "lucide-re
 import type { OrderDatePolicy } from "@routeflow/pricing";
 import { cn } from "@routeflow/ui/web";
 import { dayLabel, fullDayName } from "@/lib/natural-date";
+import { dateIfNotToday } from "@/lib/counter-order-date";
 import { CounterDatePicker } from "./CounterDatePicker";
 
 interface Props {
@@ -26,6 +27,8 @@ interface Props {
   policy?: OrderDatePolicy;
   /** the till's scan entry: a scan made while the picker is open is handed here, never lost */
   onScan?: (code: string) => void;
+  /** the till: a scan's first key was pressed in the picker; it closes with no date change and the till takes the rest */
+  onScanKey?: (key: string) => void;
 }
 
 export function CounterDateChip({
@@ -37,6 +40,7 @@ export function CounterDateChip({
   onDone,
   policy = "COUNTER",
   onScan,
+  onScanKey,
 }: Props) {
   const [open, setOpen] = React.useState(false);
   const mainRef = React.useRef<HTMLButtonElement>(null);
@@ -89,18 +93,23 @@ export function CounterDateChip({
     act();
   };
   const apply = (day: string) => {
-    onChange(day === today ? "" : day);
+    onChange(dateIfNotToday(day, today));
     close();
   };
 
+  // R8: while the business's day is unknown the day is shown as a day being checked: not Today, not Dated, no colour claim.
   const text =
-    direction && value
-      ? `Dated ${dayLabel(value, today ?? value)}${direction === "FORWARD" ? " · future" : ""}`
-      : "Today";
+    direction === "UNKNOWN"
+      ? `${dayLabel(value, value)} · checking`
+      : direction && value
+        ? `Dated ${dayLabel(value, today ?? value)}${direction === "FORWARD" ? " · future" : ""}`
+        : "Today";
   const name =
-    direction && value
-      ? `${direction === "BACK" ? "Backdated to" : direction === "FORWARD" ? "Future-dated to" : "Dated"} ${fullDayName(value)}. Change or clear`
-      : "Order date: today. Change";
+    direction === "UNKNOWN"
+      ? `Order date ${fullDayName(value)}, checking the business's day. Clear`
+      : direction && value
+        ? `${direction === "BACK" ? "Backdated to" : "Future-dated to"} ${fullDayName(value)}. Change or clear`
+        : "Order date: today. Change";
 
   return (
     <>
@@ -109,9 +118,8 @@ export function CounterDateChip({
         data-direction={direction ?? "TODAY"}
         className={cn(
           "inline-flex min-h-[44px] items-center gap-1 rounded-full border px-3 text-sm font-medium",
-          !direction && "border-navy/25 text-navy",
-          (direction === "BACK" || direction === "UNKNOWN") &&
-            "border-amber-400 bg-amber-100 text-amber-900",
+          (!direction || direction === "UNKNOWN") && "border-navy/25 text-navy",
+          direction === "BACK" && "border-amber-400 bg-amber-100 text-amber-900",
           direction === "FORWARD" &&
             "border-dashed border-indigo-500 bg-indigo-100 text-indigo-900",
           refused && "ring-2 ring-red-500",
@@ -161,6 +169,8 @@ export function CounterDateChip({
           onClose={close}
           policy={policy}
           onScan={onScan}
+          onScanKey={onScanKey}
+          ownsFocus={!!onDone}
         />
       ) : null}
     </>
@@ -175,7 +185,7 @@ export function CounterDateReminder({
   value: string;
   today: string | undefined;
 }) {
-  if (!value || value === today) return null;
+  if (!dateIfNotToday(value, today)) return null;
   return (
     <p className="text-xs text-navy/70" data-testid="counter-date-reminder">
       This sale will be dated {dayLabel(value, today ?? value)}

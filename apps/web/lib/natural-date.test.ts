@@ -1,4 +1,4 @@
-import { parseNaturalDate, dayLabel, relativeDaysLabel } from "./natural-date";
+import { parseNaturalDate, dayLabel, relativeDaysLabel, looksLikeScanCode } from "./natural-date";
 
 // W-1188 N1: the counter's typed date. Monday 2026-11-09 is "today" unless a case says otherwise.
 const MON = "2026-11-09";
@@ -100,5 +100,55 @@ describe("labels", () => {
     expect(relativeDaysLabel("2026-11-08", MON)).toBe("yesterday");
     expect(relativeDaysLabel("2026-11-16", MON)).toBe("in 7 days");
     expect(relativeDaysLabel("2026-11-10", MON)).toBe("tomorrow");
+  });
+});
+
+describe("W-1188 r4: scan code vs date text", () => {
+  const TODAY = "2026-11-09";
+  // a small seeded generator: no Math.random, so a failure reproduces
+  const seeded = (seed: number) => () =>
+    (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296;
+
+  it("no string made only of digits, length 1-20, parses as a date", () => {
+    const next = seeded(7);
+    const samples: string[] = ["0", "1", "12", "102", "1102", "20261102", "99999999999999999999"];
+    for (let i = 0; i < 2000; i++) {
+      const len = 1 + Math.floor(next() * 20);
+      samples.push(Array.from({ length: len }, () => Math.floor(next() * 10)).join(""));
+    }
+    for (const s of samples) expect(parseNaturalDate(s, TODAY, { allowFuture: true })).toBeNull();
+  });
+
+  it("EAN-8, UPC-A, EAN-13 and ITF-14 samples are scan codes", () => {
+    for (const code of ["96385074", "036000291452", "4006381333931", "10012345678902"]) {
+      expect(looksLikeScanCode(code)).toBe(true);
+    }
+  });
+
+  it("letters-and-digits codes are scan codes; dates and words are not", () => {
+    for (const s of ["COLA123", "ab-1234", "SKU.9_x"]) expect(looksLikeScanCode(s)).toBe(true);
+    for (const s of [
+      "tomorrow",
+      "fri",
+      "11-02",
+      "12-05",
+      "+3",
+      "yesterday",
+      "nov 5",
+      "102",
+      "1102",
+      "ABC",
+      "1/2",
+      "",
+    ]) {
+      expect(looksLikeScanCode(s)).toBe(false);
+    }
+  });
+
+  it("residual: date-shaped strings that parse stay dates (an honest pin)", () => {
+    for (const s of ["12-05", "11-02", "2026-11-02"]) {
+      expect(looksLikeScanCode(s)).toBe(false);
+      expect(parseNaturalDate(s, TODAY, { allowFuture: true })).not.toBeNull();
+    }
   });
 });

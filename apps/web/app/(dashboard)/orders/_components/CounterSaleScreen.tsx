@@ -81,6 +81,7 @@ import {
   writeHeldAttempt,
   COUNTER_CHECK_POSTDATED_COPY,
   COUNTER_CHECK_ZONE_FAILED_COPY,
+  COUNTER_ORDER_DATE_ZONE_FAILED_COPY,
   COUNTER_CHECK_ZONE_LOADING_COPY,
   isPostdatedCheck,
   isCounterSaleHandledError,
@@ -458,9 +459,54 @@ export function CounterSaleScreen() {
   // One scan-focus owner (row 237): a digit typed while a NON-text control holds focus (a button, a checkbox, <body>)
   // is a scan or the start of one, so it goes to the scan box instead of starting an Enter on "Add note" or a stray shortcut.
   // Text fields, Ctrl/Meta/Alt combos and open dialogs are never redirected.
+  // W-1188 scan hand-over: the date picker saw a scan's FIRST key, took no action and closed. While armed, the rest of the
+  // scan's keys come through this one listener (no timing anywhere): typed into the scan box through state until focus is
+  // there, then by the browser. Enter submits the whole code through the till's one scan entry.
+  const handoverRef = React.useRef(false);
+  const scanTextRef = React.useRef("");
+  const submitScanRef = React.useRef<(text: string) => void>(() => undefined);
+  React.useLayoutEffect(() => {
+    scanTextRef.current = scanText;
+  }, [scanText]);
+  const startScanHandover = (key: string) => {
+    handoverRef.current = true;
+    scanTextRef.current += key;
+    setScanText(scanTextRef.current);
+  };
   React.useEffect(() => {
     if (receipt || locked) return;
+    const disarm = () => {
+      handoverRef.current = false;
+    };
+    window.addEventListener("pointerdown", disarm, true);
+    const onHandover = (e: KeyboardEvent): void => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return; // a combo is not part of a scan: pass through, stay armed
+      if (["Shift", "CapsLock", "Alt", "Control", "Meta"].includes(e.key)) return;
+      const scanEl = scanRef.current;
+      if (scanEl && document.activeElement === scanEl) {
+        if (e.key.length !== 1) disarm(); // Enter (the form submits), Escape, Tab, arrows: the hand-over is over; letters type
+        return;
+      }
+      if (counterDialogOpen() || isTextEntryActive()) return disarm();
+      if (e.key === "Enter") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        disarm();
+        submitScanRef.current(scanTextRef.current);
+        return;
+      }
+      if (e.key.length === 1) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        scanTextRef.current += e.key;
+        setScanText(scanTextRef.current);
+        lastScanActivityRef.current = performance.now();
+        return;
+      }
+      disarm(); // Tab, Escape, arrows, Backspace: the key acts as usual
+    };
     const onKey = (e: KeyboardEvent) => {
+      if (handoverRef.current) return onHandover(e);
       if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
       // digits and CAPITAL letters on a desktop: the g-then-x navigation shortcuts are lowercase and a wedge's code is capitals
       // (SA-1067 M4: a code that starts with a letter lost it, and its digits then matched a different item). While focus is inside the price history panel (a popover over
@@ -487,7 +533,10 @@ export function CounterSaleScreen() {
       e.stopImmediatePropagation();
     };
     window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("pointerdown", disarm, true);
+    };
   }, [receipt, locked]);
   // Row 112: the sticky checkout bar floats over the page below md; the screen reserves its measured height at the bottom so
   // the last cart line and the Cash/Card buttons can always scroll clear of it (the bar grows with an error or a change line).
@@ -948,6 +997,7 @@ export function CounterSaleScreen() {
     setCameraOffNote(false);
     scan.submit(text);
   }
+  submitScanRef.current = submitScanText;
   function onScanSubmit(e: React.FormEvent) {
     e.preventDefault();
     submitScanText(scanText);
@@ -1321,6 +1371,15 @@ export function CounterSaleScreen() {
     // and judges a post-dated one, against the new day.
     const submitToday = businessToday();
     const submitCheckDate = checkDate || submitToday;
+    // R8: a dated sale is judged against the business's day; while that day is unknown Complete waits (clearing the date frees it)
+    if (orderDateSet && zoneStatus !== "ready") {
+      setError(
+        zoneStatus === "loading"
+          ? COUNTER_CHECK_ZONE_LOADING_COPY
+          : COUNTER_ORDER_DATE_ZONE_FAILED_COPY,
+      );
+      return null;
+    }
     if (
       tender.method === "CHECK" &&
       (zoneStatus !== "ready" || isPostdatedCheck(submitCheckDate, submitToday))
@@ -1592,7 +1651,8 @@ export function CounterSaleScreen() {
             createDraft.isPending ||
             scanBusy ||
             reprice.blocked ||
-            shipIntent
+            shipIntent ||
+            (orderDateSet !== "" && zoneStatus !== "ready")
           }
           summary={{ items: lines.length, total: totals.total }}
           inFlight={() => saleInFlight() || shipRunningRef.current || scanBusyRef.current}
@@ -1616,6 +1676,7 @@ export function CounterSaleScreen() {
           refused={isOrderDateRefusalCopy(error)}
           onDone={refocusAfterDialog}
           onScan={submitScanText}
+          onScanKey={startScanHandover}
         />
         {gate.offerShipInstead ? (
           <WriteButton

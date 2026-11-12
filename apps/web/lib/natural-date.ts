@@ -202,3 +202,15 @@ export function fullDayName(day: string): string {
   const [, m, d] = day.split("-").map(Number);
   return `${WEEKDAY_NAMES[weekdayOf(day)].replace(/^./, (c) => c.toUpperCase())}, ${MONTH_FULL[m - 1]} ${d}`;
 }
+
+/**
+ * W-1188: does typed text in the date box look like a scanned code rather than a date? No whitespace and no "/". Then
+ * either only digits, 8 or more (EAN-8 and longer; shorter all-digit text is a typo for a date, never a lookup), or
+ * letters, digits and . _ - only, 4 or more, with at least one letter and one digit. Pure: no clock.
+ */
+export function looksLikeScanCode(text: string): boolean {
+  const t = text.trim();
+  if (!t || /\s/.test(t) || t.includes("/")) return false;
+  if (/^\d+$/.test(t)) return t.length >= 8;
+  return /^[A-Za-z0-9._-]{4,}$/.test(t) && /[A-Za-z]/.test(t) && /\d/.test(t);
+}
