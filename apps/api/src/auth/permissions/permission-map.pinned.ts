@@ -522,6 +522,7 @@ export const PERMISSION_MAP: Readonly<Record<string, string>> = {
   "OrdersController.reopenOrder": "ORDERS",
   "OrdersController.reorderLines": "ORDERS",
   "OrdersController.resolveChangeRequest": "ORDERS",
+  "OrdersController.resolveReviewFlag": "ORDERS",
   "OrdersController.sell": "ORDERS",
   "OrdersController.setCommissionRate": "ORDERS|FINANCE",
   "OrdersController.sweepPending": "ORDERS",

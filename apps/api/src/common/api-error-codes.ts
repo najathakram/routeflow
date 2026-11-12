@@ -593,6 +593,21 @@ export const API_ERROR_CODES = {
    * judged only when promoted, so a buyer-started one is refused outright. Nothing is written.
    */
   ORDER_DRAFT_STAFF_ONLY: "ORDER_DRAFT_STAFF_ONLY",
+  /** 403 from POST /orders: `offline: true` from a CUSTOMER or DRIVER (SA-1124). Staff only; checked before any merge logic. */
+  OFFLINE_STAFF_ONLY: "OFFLINE_STAFF_ONLY",
+  /** 400 from POST /orders: `offline: true` with `appliedCreditNotes` (SA-1124). Credits are applied online only. */
+  OFFLINE_CREDITS_ONLINE_ONLY: "OFFLINE_CREDITS_ONLINE_ONLY",
+  /** 400 from POST /orders: `offline: true` with a field that books money (an inline return credit; SA-1124). */
+  OFFLINE_PAYMENT_ONLINE_ONLY: "OFFLINE_PAYMENT_ONLINE_ONLY",
+  /** 400 from POST /orders: `offline: true` with `immediateDelivery` (SA-1124). Delivered-now is an online step. */
+  OFFLINE_IMMEDIATE_DELIVERY_ONLINE_ONLY: "OFFLINE_IMMEDIATE_DELIVERY_ONLINE_ONLY",
+  /** 400 from POST /orders: `offline: true` without a usable `offlineQuote` (SA-1124). Fails closed, nothing is written. */
+  OFFLINE_QUOTE_REQUIRED: "OFFLINE_QUOTE_REQUIRED",
+  /**
+   * 409 from POST /orders/:id/review-flags/:flagId/resolve: a RESTRICTED, LICENSE_REQUIRED or CREDIT_BLOCKED flag
+   * clears only by passing the draft's promotion, never by hand (SA-1124).
+   */
+  ORDER_REVIEW_FLAG_NOT_MANUAL: "ORDER_REVIEW_FLAG_NOT_MANUAL",
   /**
    * 400 from every order and invoice edit: the same stored line id appears twice in the incoming `items`. Checked on
    * the payload alone before any read or write, so nothing is saved; the client refreshes and resubmits once.

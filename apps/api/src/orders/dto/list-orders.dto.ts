@@ -41,4 +41,12 @@ export class ListOrdersDto {
   @Transform(({ value }) => (value === "true" ? true : value === "false" ? false : undefined))
   @IsBoolean()
   hasTracking?: boolean;
+  /**
+   * SA-1124: `true` = only orders with an open review flag (an offline order that needs a person's look). Staff only:
+   * ignored for a customer. Only the literal "true" filters; any other value (or none) means no filter.
+   */
+  @IsOptional()
+  @Transform(({ value }) => (value === "true" ? true : undefined))
+  @IsBoolean()
+  needsReview?: boolean;
 }

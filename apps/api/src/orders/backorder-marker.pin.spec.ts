@@ -29,6 +29,7 @@ describe("backorderedPieces stays informational", () => {
       "orders/backorder-marker-writes.ts",
       "orders/backorder-marker.ts",
       "orders/merge-line-writes.ts",
+      "orders/offline/offline-create.ts", // informational flag row only: BACKORDERED_OFFLINE reads the column
       "orders/orders.service.ts",
       "orders/packing-slip-data.ts", // display only: the slip's "Backorder" tag
     ]);

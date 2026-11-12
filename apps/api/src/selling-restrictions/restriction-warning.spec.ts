@@ -894,12 +894,14 @@ describe("pins", () => {
         const code = strip(fs.readFileSync(path.join(SRC, rel), "utf8"));
         return /RESTRICTION_WARNING|RESTRICTION_OVERRIDE_CODES\.warning/.test(code);
       })
-      // the code names themselves
+      // the code names themselves (offline-create.ts only NAMES the code in its four-code finding list, it builds no body)
       .filter(
         (rel) =>
-          !["common/api-error-codes.ts", "selling-restrictions/override-constants.ts"].includes(
-            rel,
-          ),
+          ![
+            "common/api-error-codes.ts",
+            "selling-restrictions/override-constants.ts",
+            "orders/offline/offline-create.ts",
+          ].includes(rel),
       );
     expect(offenders).toEqual(["selling-restrictions/restriction-warning.ts"]);
   });
