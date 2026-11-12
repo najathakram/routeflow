@@ -803,3 +803,32 @@ describe("a scan's first key in the picker acts on nothing (no timing)", () => {
     expect(screen.queryByRole("button", { name: "Try again" })).toBeNull(); // only when the read failed
   });
 });
+
+describe("noun='sale' (the New sale invoice) words every control as a sale date", () => {
+  it("chip name, clear, dialog title, unknown-day name and the typed-day refusal", async () => {
+    const user = userEvent.setup({ delay: null });
+    const view = render(
+      <CounterDateChip value="" today={TODAY} onChange={jest.fn()} policy="OFFICE" noun="sale" />,
+    );
+    await user.click(screen.getByRole("button", { name: "Sale date: today. Change" }));
+    const dialog = await screen.findByRole("dialog", { name: "Sale date" });
+    await user.type(within(dialog).getByLabelText("Type a date"), "2026-11-20");
+    expect(within(dialog).getByTestId("counter-date-echo")).toHaveTextContent(OFFICE_FUTURE_HINT);
+    view.unmount();
+    render(<CounterDateChip value="2026-11-01" today={TODAY} onChange={jest.fn()} noun="sale" />);
+    expect(screen.getByRole("button", { name: /^Backdated to/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Clear the sale date, back to today" }),
+    ).toBeInTheDocument();
+    cleanup();
+    render(
+      <CounterDateChip value="2026-11-01" today={undefined} onChange={jest.fn()} noun="sale" />,
+    );
+    expect(
+      screen.getByRole("button", { name: /^Sale date .*checking the business's day\. Clear$/ }),
+    ).toBeInTheDocument();
+    cleanup();
+    render(<CounterDateChip value="" today={TODAY} onChange={jest.fn()} />);
+    expect(screen.getByRole("button", { name: "Order date: today. Change" })).toBeInTheDocument();
+  });
+});

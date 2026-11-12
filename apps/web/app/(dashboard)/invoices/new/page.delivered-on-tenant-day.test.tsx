@@ -188,7 +188,9 @@ describe("row 750 — the delivery date follows the tenant's day", () => {
     mockTenantToday = "2026-10-26";
     await openSale();
     await waitFor(() => expect(allDates()).toContain("2026-11-25"));
-    expect(allDates().filter((d) => d === "2026-10-26").length).toBeGreaterThanOrEqual(2); // delivery + issue
+    expect(allDates().filter((d) => d === "2026-10-26").length).toBeGreaterThanOrEqual(1); // delivery
+    // W-1188: the issue date is the Sale date chip now, on the tenant day too: Today, never a backdate
+    expect(screen.getByTestId("counter-date-chip")).toHaveAttribute("data-direction", "TODAY");
     expect(allDates()).not.toContain("2026-10-25");
     expect(allDates()).not.toContain("2026-11-24");
   });
