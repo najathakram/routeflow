@@ -43,7 +43,7 @@ Ruled by the owner on 2026-11-11 (question box):
 | D3 | **Launch on `www.xrovio.com`** | Phase 2A. Both addresses serve the app for a while, so nobody is signed out; the old address forwards the public pages (R31-R36, E34) |
 | D8 | **Sign-in, sign-up and reset pages switch with the website** | WP2.6 |
 
-Ruled in a second and third box on 2026-11-11 (each is still one line to change):
+Ruled in a second and third box on 2026-11-11 (each is still one line to change; none is open):
 
 | # | Default | Why | Changes if overruled |
 |---|---|---|---|
@@ -218,7 +218,7 @@ from the current price ruling it is a separate ticket. Analytics changes.
 - Class 1, colours: every rule that names a retired colour token. Predicate: `git grep -n -E "var\(--(rf-brand-|rf-sun|rf-coral|rf-mint|rf-ok|rf-tint|rf-ink-2|rf-ink-3|rf-sh-|pc-|fld-|navy|sun|tint)" -- apps/web/public/site apps/web/components/site-frame`; about 125 references at the base sha (E17). One helper: the job tokens. Pin: T14b, zero references; a sweep that reads zero files throws.
 - Class 2, effects: every gradient, blur, glow or shadow. Predicate: the T18a pattern over site CSS, HTML and the wheel script; about 115 at the base sha (E18). Pin: T18a (static) and T18b (canvas spies).
 - Class 3, the public host: every place a public page names its own address. Predicate: `git grep -n "routeflow\.info"` over `apps/web/public/site`, `apps/web/app/(marketing)`, `apps/web/app/layout.tsx` (the root `metadataBase`, review M2), `apps/web/components/site-frame`, `apps/web/lib`, `apps/web/next.config.mjs`, `scripts/sync-site-port.mjs`, plus every return-URL builder in `apps/api/src` that reads `WEB_URL` (review M1, WP2A.0). One helper: `site.origin` for React code and the sync script's `ORIGIN`; static HTML cannot call a helper, so T31 pins it. Allow-list: none on public pages (ruling D4 moves `hello@` too).
-- Class 4, the old name: every visible string. Predicate: `/route\s?flow/i` over the 17 pages' text and tags, plus every `metadata` or `generateMetadata` export in a layout on any of those routes' paths (`git grep -n -E "export (const metadata|async function generateMetadata)" apps/web/app`), so inherited titles, share tags and app titles count (review round 2, N3: `layout.tsx:52-73`, `buyer/layout.tsx:20-31`). Pin: T24 with its allow-list.
+- Class 4, the old name: every visible string. Predicate: `/route\s?flow/i` over the 17 pages' text and tags, plus every `metadata`, `viewport` or `generateMetadata` export in a layout on any of those routes' paths, plus file-based metadata on those paths (`favicon.ico`, `icon.*`, `apple-icon.*`, `opengraph-image.*`: review round 3, N5) (`git grep -n -E "export (const metadata|async function generateMetadata)" apps/web/app`), so inherited titles, share tags and app titles count (review round 2, N3: `layout.tsx:52-73`, `buyer/layout.tsx:20-31`). Pin: T24 with its allow-list.
 - Inventory: the four predicates above, run at the base sha: about 125 retired-token references, about 115 effect declarations, 172 + 82 old-name strings (E19), and the host list from Class 3, recorded in WP0's baseline.
 - One helper: job tokens for colour (`graphics/rf-graphics.css`, pinned to `packages/ui/src/tokens/rovio-palette.json`); `--rf-ring` for edges; `site.origin` and the sync script's `ORIGIN` for the host; the wheel's `OUTER`/`INNER` data for part names.
 - Pin: T14b (retired tokens), T18a and T18b (effects), T31 (host), T24 (name). Each is a sweep that throws when it reads zero files or finds zero candidates (L-202), so nothing fails open.
@@ -260,4 +260,4 @@ from the current price ruling it is a separate ticket. Analytics changes.
 - Review-round signal: round 1 (`review-gate-1.md`, Opus @ high) returned GATE FAIL (G1, G4, G7), REVISE, 9 must-fix. All folded the same day; the model did not change (no fold opened a new boundary), so no re-pick. Round 2 (`review-gate-2.md`): GATE FAIL (G5, G4), REVISE; 14 of 21 round-1 items fixed, 7 partly, 3 new must-fix (N1 was caused by the M6 fold; N2 and N3 were inventory misses). Answer: the host and name classes are now defined by code predicates over every return-URL builder and every metadata export on the route path (G4), not by hand lists. Round 3 checks the fold.
 
 ### G10 Owner questions
-- Asked in one box on 2026-11-11 (rulings D1, D2, D3, D8 in §4). Still open: A9 (does any business use a `name.routeflow.info` address today?). Needed before WP2A.1 only, so it does not block Phases 0 or 1. D4-D7 are stated defaults.
+- Asked in one box on 2026-11-11 (rulings D1, D2, D3, D8 in §4). Still open: A9 (does any business use a `name.routeflow.info` address today?). Needed before WP2A.1 only, so it does not block Phases 0 or 1. D4-D7 were ruled in two more boxes the same day (§4).

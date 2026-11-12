@@ -172,13 +172,21 @@ const box = sideBySide
   ? { l: colR + gap, t: pad, r: W - pad, b: H - pad }                                // right of the words column
   : { l: 8, t: bottomOf(hx[0], hx[0].querySelector(".rfw-sub")) + 12, r: W - 8, b: legend.offsetTop - 12 }; // between heading and legend (bottomOf(h, e) = container, then child: JS:576)
 F.apart = F.burst = F.story = fitTo(openBB, box, Infinity);
-// Phone at rest too (review round 2, N1): the resting wheel and the hint fit the same heading-to-legend box, because
-// "Look inside." and the legend are up from t=0 on a phone.
-if (phone) F.flat = F.end = fitTo(bboxOf(0, 0, 0, 0, 0, 0), box, Infinity);
+// Phone at rest and at the end (review rounds 2 and 3, N1 and N4). "Look inside." and the legend are up from t=0, so the
+// resting wheel fits between hx[0] and the legend, leaving room for the hint, which hintAt() puts 6 px under the wheel
+// (JS:591). The end pose keeps its own box: hx[1] ("One system." plus the moved .sy-go button) is the heading then, and
+// the legend is hidden, so F.end fits from below hx[1]'s last child down to H - 18 (as today, JS:599).
+if (phone) {
+  F.flat = fitTo(bboxOf(0, 0, 0, 0, 0, 0), { ...box, b: legend.offsetTop - 12 - hint.offsetHeight - 6 }, Infinity);
+  F.end = fitTo(bboxOf(0, 0, 0, 0, 0, 0), { l: 8, t: bottomOf(hx[1], hx[1].lastElementChild) + 18, r: W - 8, b: H - 18 }, Infinity);
+}
 // `legend` is the NEW node liveHTML() builds: <div class="rfw-legend" aria-hidden="true">, holding the two .rfw-keys
 // lists made by li(d) (JS:132). It is the `keys` of step 4.
-// Too small to read (ux-spec §6, review S8): decided where live() is entered (the matchMedia branch, JS:226-231), never
-// inside layout(): a stage whose smaller side is under 200 px gets still() instead of live(); a resize re-runs the branch.
+// Too small to read (ux-spec §6, review S8, round 3): a gsap.matchMedia branch re-runs only when one of its conditions
+// toggles, so the floor is a media condition: a NEW key `tiny` matching the window sizes whose stage would be under 200 px
+// on its smaller side (derive the two px values from the header height and the words column once, and write them as
+// constants with that reason), handled like print: mm.add({ tiny }, () => { still(); }); every live key excludes it.
+// A resize across the floor then reverts one branch and builds the other.
 
 /* 4. The words column is never empty (review M6). Exact schedule; replaces JS:688 (desktop hero copy hide at 0.1) and
       JS:708-709 (show/hide hx[0]); keep the stop tweens' own shows; HOLD = STOP / 2. A hand-over is a cross-fade that
@@ -203,6 +211,7 @@ start: () => (phone ? "top " + pinTop + "px" : 0),
       Leaving print reverts that branch and a screen condition matches again: live() rebuilds, and the scroll position comes
       back through inst.keep (JS:900-904, restored by finish() at JS:917-922). */
 ```
+- **Builder notes (review round 4):** measure the hint with the hint shown, or use a fixed constant, because `hint.offsetHeight` reads 0 after an earlier `hintAt(false)`; and delete the old phone assignments to `F.flat` and `F.end` (JS:594, 596) so step 3 is the only writer.
 - **The end-state button (review S5):** `mount` replaces `.rfw`'s inner HTML (JS:279), so `.sy-go` is built by both `liveHTML()` and the still's markup from one constant holding its text and `href`; the static test reads that constant, never a second copy.
 - **Delete, do not hide:** every `fillText` of a part name (outer names JS:416-452, hanging inner labels JS:453-479) and the guards that only served them (`shy`, `drop`, `out`, `late`, JS:441, 465-471, 697). The hover pill and the 15 buttons stay; the pill now shows on every tile.
 - **Legend:** `liveHTML()` builds `<div class="rfw-legend" aria-hidden="true">` holding the existing `.rfw-keys` lists (made by `li(d)` for the still, JS:132), laid out per [ux-spec.md](./ux-spec.md) §6. No new list of names: the same data, the same function. T3 checks phone beats `rest` and `one` explicitly (review round 2, N1).
@@ -255,7 +264,7 @@ start: () => (phone ? "top " + pinTop + "px" : 0),
 - **satisfies:** R26, R24 (React pages), R18 (their CSS) · **provenBy:** T26, T24 · **dependsOn:** WP2.0 · **risk:** medium (sign-in pages: words and pictures only, no logic) · **skills:** `apple-write`, `apple-design`
 - **Files:** `apps/web/app/(marketing)/layout.tsx` (title and icon for its routes), `privacy/page.tsx`, `terms/page.tsx`, `marketing.css`, `glass*.css`, `apps/web/app/not-found.tsx`, `apps/web/app/(auth)/login/layout.tsx` and `page.tsx`, `(auth)/signup/layout.tsx`, `page.tsx` and `check-email/page.tsx`, `(auth)/forgot-password/layout.tsx` and `page.tsx`, `(auth)/reset-password/page.tsx` and NEW `(auth)/reset-password/layout.tsx`, `apps/web/app/buyer/login/page.tsx` and NEW `apps/web/app/buyer/login/layout.tsx` (both pages are `"use client"` with no layout today, review round 2, N3), `apps/web/components/auth/AuthShell.tsx`, and the pins in `seo.test.ts`.
 - **Area sweep (design gate):** B247, B248, B520 and B550 sit in `marketing.css` and `glass*.css`. For each, prove from the shared layout whether its rules are still used (L-199): remove dead rules, or fix live ones; one commit and one test per id; the PR body lists every id it closes.
-- **Do:** every sign-in-side layout listed above sets, so nothing RouteFlow is inherited from the root (`apps/web/app/layout.tsx:52-73`: title template, `openGraph` title, site name and image, `appleWebApp.title`) or from `buyer/layout.tsx:20-31` ("RouteFlow Buyer Portal", icons): `title: { template: "%s · Rovio", default: "Rovio" }` (or `absolute`), `openGraph` (title, `siteName: "Rovio"`, image), `appleWebApp.title`, `icons`, `metadataBase: new URL(site.origin)`. The `manifest` link stays the app's (Program B owns the manifests, E26): T24 reads visible text, titles, meta and alt text, not the manifest file. Leave the root layout and `buyer/layout.tsx` themselves alone (they also serve signed-in pages). Out of scope here: `(auth)/admin-login`, `(auth)/admin/login`, `choose-role` and the callback pages (staff-only or after sign-in: Program B).
+- **Do:** every sign-in-side layout listed above sets, so nothing RouteFlow is inherited from the root (`apps/web/app/layout.tsx:52-73`: title template, `openGraph` title, site name and image, `appleWebApp.title`) or from `buyer/layout.tsx:20-31` ("RouteFlow Buyer Portal", icons): `title: { template: "%s · Rovio", default: "Rovio" }` (or `absolute`), `openGraph` (title, `siteName: "Rovio"`, image), `appleWebApp` restated whole (`title`, `capable: true`, `statusBarStyle`, a Rovio `startupImage`), because Next replaces `appleWebApp` as a unit (review round 3, S-h), `icons`, `metadataBase: new URL(site.origin)`, and `viewport.themeColor` white (the root's `#0E1F36` and `buyer/layout.tsx`'s `#047857` are inherited otherwise). **The root favicon (review round 3, N5):** Next always puts `apps/web/app/favicon.ico` (the RouteFlow mark) first in every route's icons, after the layouts merge, so no layout can override it. Move it out of the file-based slot: `git mv apps/web/app/favicon.ico apps/web/public/favicon.ico` and add it to the root layout's `metadata.icons.icon` list. The app looks the same (Program B swaps the file), and child layouts' `icons` now replace it. The `manifest` link stays the app's (Program B owns the manifests, E26): T24 reads visible text, titles, meta and alt text, not the manifest file. Leave the root layout and `buyer/layout.tsx` otherwise alone (they also serve signed-in pages): the root layout's only change is the favicon line above. Out of scope here: `(auth)/admin-login`, `(auth)/admin/login`, `choose-role` and the callback pages (staff-only or after sign-in: Program B).
 
 ### WP2A.0 · Let the API return to either web address (API code, no brand; review M1)
 - **satisfies:** R34, R35 · **provenBy:** T34 · **dependsOn:** none · **risk:** high (sign-in) · **skills:** none · **pipeline:** its own `dev-pipeline` run, Opus `high` review
@@ -315,7 +324,7 @@ const PUBLIC_PATHS = [...SITE_PAGES.map(routeOf), "/privacy", "/terms"];
 4. Rollback rehearsed on the local stack: revert the merge, run T12 and T24's inverse.
 5. Canonical deploy flow from `CLAUDE.md`: watchdog first, public window, CI green, **merge commit** (one commit to revert), both deployments `SUCCESS`, flip private, read it back.
 6. In ONE settings change on the API: `WEB_URL=https://www.xrovio.com` and `WEB_ORIGINS=https://www.routeflow.info` (so open payment links and sessions on the old host stay valid, review round 2, N2). Read both back.
-7. `npm run post-deploy-check`; read the post-deploy `site-proof` result, including T30b and T33b; if red, `git revert -m 1 <merge>` through the same flow and put `WEB_URL` back.
+7. `npm run post-deploy-check`; read the post-deploy `site-proof` result, including T30b and T33b; if red, `git revert -m 1 <merge>` through the same flow and put both settings back together: `WEB_URL=https://www.routeflow.info` and `WEB_ORIGINS=https://www.xrovio.com`, so sessions on either host are neither sent away nor expired (review round 3, S-g).
 
 ### WP3.2 · After launch
 A weekly run of T24 against production for four weeks; on launch + 7 days, if nothing was rolled back, set `permanent: true` on the redirects and file the change of address in Search Console; a ticket dated launch + 6 months to remove the "formerly" line; code map, lessons and the heavy-files note in `CLAUDE.md` updated (R30, T29); start Program B with its first slice.
@@ -368,7 +377,7 @@ node scripts/local-env.mjs --proof-stack --e2e -- "npm --prefix apps/web run tes
 | P6 Test plan | nothing can fail today | once | R29; T4's oracle noted |
 | P7 Build plan | scope creep / hole / unbuilt | none | every package has `satisfies` and `provenBy`; every `T#` has a package; every `R#` has a package |
 | P8 Critique | pre-mortem failure with no answer | no | six failure modes, each answered |
-| Design gate | `future-proof` | not yet run | first step before Phase 1 |
+| Design gate | `future-proof` | yes, 3 FAIL rounds | round 4 PASS / APPROVE (`review-gate-4.md`), 2026-11-11 |
 
 ## Handoff (P9)
 
