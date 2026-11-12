@@ -799,7 +799,11 @@ function resolveGitRefs(project, branch, pr, run = spawnSync) {
   if (process.env.CLOSEOUT_NO_GIT_REFS === "1" || !project) return out;
   const gitRun = (args) => run("git", ["-C", project, ...args], { encoding: "utf8", timeout: 10000 });
   const git = (args) => { const r = gitRun(args); return r && r.status === 0 ? String(r.stdout || "").trim() : ""; };
-  if (!out.branch) out.branch = git(["rev-parse", "--abbrev-ref", "HEAD"]) || null;
+  if (!out.branch) {
+    // A detached HEAD reads back as the word "HEAD"; that is no branch, so the row keeps branch null.
+    const head = git(["rev-parse", "--abbrev-ref", "HEAD"]);
+    out.branch = head && head !== "HEAD" ? head : null;
+  }
   if (!out.branch || DEFAULT_BRANCHES.has(out.branch)) return out;
   const base = ["origin/HEAD", "origin/master", "origin/main"].find((r) => git(["rev-parse", "--verify", "--quiet", r]));
   if (base) {
@@ -813,8 +817,10 @@ function resolveGitRefs(project, branch, pr, run = spawnSync) {
     if (r && r.status === 0) {
       let list = [];
       try { list = JSON.parse(r.stdout || "[]"); } catch { list = []; }
-      list.sort((a, b) => (a.state === "OPEN" ? 0 : 1) - (b.state === "OPEN" ? 0 : 1));
-      for (const p of list) {
+      // An OPEN PR on this branch is the only candidate: if its head is not an ancestor of HEAD, no PR is
+      // recorded rather than an older closed or merged one from a reused branch name.
+      const open = list.filter((p) => p.state === "OPEN");
+      for (const p of open.length > 0 ? open : list) {
         if (!Number.isInteger(p.number) || !p.headRefOid) continue;
         const anc = gitRun(["merge-base", "--is-ancestor", p.headRefOid, "HEAD"]);
         if (anc && anc.status === 0) { out.pr = p.number; break; }
@@ -2631,6 +2637,74 @@ function runSelftest() {
       gitLedgerRows.some((r) => r.run === "git-worktree-run"),
       "expected a ledger row for the git-worktree-run slug under the main checkout's ledger"
     );
+
+    // --- resolveGitRefs (cost attribution): a stub `run` stands in for git and gh, so these cases need no
+    // repository and no network, and each goes red when resolveGitRefs is reverted -------------------
+    {
+      const savedNoRefs = process.env.CLOSEOUT_NO_GIT_REFS;
+      delete process.env.CLOSEOUT_NO_GIT_REFS;
+      try {
+        // git: { branch, base (an origin ref that exists), trailers (git log output), ancestors (oids that are
+        // ancestors of HEAD) }; gh: null = the call fails, else the JSON list `gh pr list` prints.
+        const stubRun = ({ branch = "feat/x", base = "origin/master", trailers = "", ancestors = [], gh = [] }) => {
+          const calls = [];
+          const run = (cmd, args) => {
+            calls.push([cmd, ...args].join(" "));
+            const ok = (stdout) => ({ status: 0, stdout, stderr: "" });
+            const fail = () => ({ status: 1, stdout: "", stderr: "stub failure" });
+            if (cmd === "gh") return gh === null ? fail() : ok(JSON.stringify(gh));
+            const g = args.slice(2); // drop "-C <project>"
+            if (g[0] === "rev-parse" && g[1] === "--abbrev-ref") return ok(branch + "\n");
+            if (g[0] === "rev-parse" && g[1] === "--verify") return g[g.length - 1] === base ? ok("sha\n") : fail();
+            if (g[0] === "log") return ok(trailers);
+            if (g[0] === "merge-base") return ancestors.includes(g[2]) ? ok("") : fail();
+            return fail();
+          };
+          return { run, calls };
+        };
+        const refs = (cfg, branch = null, pr = null) => {
+          const { run, calls } = stubRun(cfg);
+          return { out: resolveGitRefs("proj", branch, pr, run), calls };
+        };
+        const open = { number: 10, state: "OPEN", headRefOid: "aaa" };
+        const merged = { number: 9, state: "MERGED", headRefOid: "bbb" };
+
+        // 1. an OPEN PR whose head is an ancestor of HEAD, plus the newest own Task: trailer
+        let r = refs({ trailers: "T-2\nT-1\n", ancestors: ["aaa"], gh: [open] });
+        assert(r.out.branch === "feat/x" && r.out.pr === 10 && r.out.taskRef === "T-2", `open PR case: ${JSON.stringify(r.out)}`);
+        assert(
+          r.calls.some((c) => c.includes("--no-merges") && c.includes("origin/master..HEAD")),
+          `trailer scope case: the log must be --no-merges over <base>..HEAD, got ${JSON.stringify(r.calls)}`
+        );
+        // 2. only a MERGED PR, and its head is an ancestor: it is still the branch's PR
+        r = refs({ ancestors: ["bbb"], gh: [merged] });
+        assert(r.out.pr === 9 && r.out.taskRef === null, `merged-only case: ${JSON.stringify(r.out)}`);
+        // 3. no PR at all
+        r = refs({ gh: [] });
+        assert(r.out.branch === "feat/x" && r.out.pr === null && r.out.taskRef === null, `no-PR case: ${JSON.stringify(r.out)}`);
+        // 4. every lookup fails: all three stay null, nothing throws (the branch name still comes from git)
+        r = refs({ base: "none", gh: null });
+        assert(r.out.pr === null && r.out.taskRef === null, `failing-lookup case: ${JSON.stringify(r.out)}`);
+        // 5. an OPEN PR that fails the ancestry check must not fall through to an older MERGED PR
+        r = refs({ ancestors: ["bbb"], gh: [open, merged] });
+        assert(r.out.pr === null, `reused-branch case: expected no PR, got ${r.out.pr}`);
+        // 6. a detached HEAD writes no branch and makes no PR or trailer lookup
+        r = refs({ branch: "HEAD", gh: [open], ancestors: ["aaa"] });
+        assert(r.out.branch === null && r.out.pr === null && !r.calls.some((c) => c.startsWith("gh ")), `detached-HEAD case: ${JSON.stringify(r.out)}`);
+        // 7. a default branch gets no lookup; a caller-passed branch and pr win and gh is not called
+        r = refs({ branch: "master", gh: [open], ancestors: ["aaa"] });
+        assert(r.out.pr === null && !r.calls.some((c) => c.startsWith("gh ")), `default-branch case: ${JSON.stringify(r.out)}`);
+        r = refs({ gh: [open], ancestors: ["aaa"] }, "feat/y", 77);
+        assert(r.out.branch === "feat/y" && r.out.pr === 77 && !r.calls.some((c) => c.startsWith("gh ")), `caller-passed case: ${JSON.stringify(r.out)}`);
+        // 8. CLOSEOUT_NO_GIT_REFS=1 turns every lookup off
+        process.env.CLOSEOUT_NO_GIT_REFS = "1";
+        r = refs({ trailers: "T-2\n", ancestors: ["aaa"], gh: [open] });
+        assert(r.out.branch === null && r.out.pr === null && r.out.taskRef === null && r.calls.length === 0, `opt-out case: ${JSON.stringify(r.out)}`);
+      } finally {
+        if (savedNoRefs === undefined) delete process.env.CLOSEOUT_NO_GIT_REFS;
+        else process.env.CLOSEOUT_NO_GIT_REFS = savedNoRefs;
+      }
+    }
 
     // --- B3: retro advisory -- every close-out summary (dry or real) carries
     // a well-formed 'retro: N/10 ...' line, present even before any ledger
