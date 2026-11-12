@@ -6,7 +6,13 @@ import { TenantContextService, type TenantContextKind } from "../tenant/tenant-c
 import { utcPoolConfig } from "../common/pg-session";
 import { CUSTOMER_IDENTITY_OMIT } from "../customers/customer-identity-fields";
 import { callPlace } from "../common/call-place";
-import { checkTenantRead, checkTenantWrite, type TenantWriteOp } from "./tenant-context-guard";
+import {
+  checkTenantNested,
+  checkTenantRead,
+  checkTenantWrite,
+  type TenantWriteOp,
+} from "./tenant-context-guard";
+import { findNestedTenantGaps, stampNestedTenant } from "./tenant-nested-walker";
 
 /**
  * The exact error Prisma's own `*OrThrow` operations raise when no row matches
@@ -70,21 +76,6 @@ export function assertTenantModelSet(names: ReadonlySet<string>): void {
 }
 assertTenantModelSet(getTenantModelNames());
 
-/** `Parent` + relation key -> the child model, when the child is tenant-owned (one level of nested-create detection). */
-let relationTargets: Map<string, string> | undefined;
-export function tenantRelationTarget(parent: string, key: string): string | undefined {
-  if (!relationTargets) {
-    relationTargets = new Map();
-    for (const m of Prisma.dmmf.datamodel.models) {
-      for (const f of m.fields) {
-        if (f.kind === "object" && isTenantModel(f.type))
-          relationTargets.set(`${m.name}.${f.name}`, f.type);
-      }
-    }
-  }
-  return relationTargets.get(`${parent.charAt(0).toUpperCase()}${parent.slice(1)}.${key}`);
-}
-
 export const FOR_SYSTEM_MIN_REASON = 12;
 
 declare const SYSTEM_CLIENT_BRAND: unique symbol;
@@ -97,8 +88,18 @@ declare const SYSTEM_CLIENT_BRAND: unique symbol;
 export type SystemClient = PrismaService & { readonly [SYSTEM_CLIENT_BRAND]: true };
 
 const CREATE_OPS = new Set<string>(["create", "createMany", "createManyAndReturn", "upsert"]);
+const UPDATE_OPS = new Set<string>(["update", "updateMany", "updateManyAndReturn"]);
 
-/** The one dispatch from a Prisma operation to the guard: a create's payload, an upsert's `create`, else an access. */
+/** SA-1110: every payload of the write that can hold a nested create (an upsert has two), read by the walker at every depth. */
+function nestedGaps(model: string, operation: string, args: any): string[] {
+  const payloads = operation === "upsert" ? [args?.create, args?.update] : [args?.data];
+  return [...new Set(payloads.flatMap((d) => findNestedTenantGaps(model, d)))];
+}
+
+/**
+ * The one dispatch from a Prisma operation to the guard: a create's payload and an upsert's `create`, nested creates
+ * of every write at every depth (SA-1110), else an access (an update is also an access under NONE and ANONYMOUS).
+ */
 function checkTenantOp(
   kind: TenantContextKind,
   delegateOrModel: string,
@@ -111,12 +112,14 @@ function checkTenantOp(
   where ??= callPlace();
   // The tx proxy sees a delegate key (`customer`), the extension a model name (`Customer`): one name in the counter.
   const model = delegateOrModel.charAt(0).toUpperCase() + delegateOrModel.slice(1);
-  if (!CREATE_OPS.has(operation)) {
-    checkTenantRead(kind, model, where);
+  if (CREATE_OPS.has(operation)) {
+    const data = operation === "upsert" ? args?.create : args?.data;
+    const gaps = nestedGaps(model, operation, args);
+    checkTenantWrite(kind, model, operation as TenantWriteOp, data, gaps, where);
     return;
   }
-  const data = operation === "upsert" ? args?.create : args?.data;
-  checkTenantWrite(kind, model, operation as TenantWriteOp, data, tenantRelationTarget, where);
+  checkTenantRead(kind, model, where);
+  if (UPDATE_OPS.has(operation)) checkTenantNested(kind, nestedGaps(model, operation, args), where);
 }
 
 /**
@@ -357,6 +360,8 @@ export class PrismaService
         ) {
           return typeof model === "function" ? model.bind(target) : model;
         }
+        // The walker takes a model name (`VendorBill`); the proxy sees a delegate key (`vendorBill`).
+        const modelClass = modelName.charAt(0).toUpperCase() + modelName.slice(1);
         // Wrap model operations
         return new Proxy(model, {
           get(modelTarget, method) {
@@ -366,7 +371,8 @@ export class PrismaService
             if (WRITE_METHODS.has(method)) {
               return (args: any = {}) => {
                 if (method === "create") {
-                  args = { ...args, data: { ...args.data, tenantId } };
+                  const data = { ...args.data, tenantId };
+                  args = { ...args, data: stampNestedTenant(modelClass, data, tenantId) };
                 } else if (method === "createMany" || method === "createManyAndReturn") {
                   const data = Array.isArray(args.data)
                     ? args.data.map((d: any) => ({ ...d, tenantId }))
@@ -384,7 +390,8 @@ export class PrismaService
                   // tenant id or a compound unique, so the gap is unexploited.
                   args = {
                     ...args,
-                    create: { ...args.create, tenantId },
+                    create: stampNestedTenant(modelClass, { ...args.create, tenantId }, tenantId),
+                    update: stampNestedTenant(modelClass, args.update, tenantId),
                   };
                 }
                 // SA-1105 (Q5): the same check as the extension; belt and braces here, the id was just injected.
@@ -396,6 +403,13 @@ export class PrismaService
             if (SCOPED_METHODS.has(method)) {
               return (args: any = {}) => {
                 args = { ...args, where: { ...args.where, tenantId } };
+                if (UPDATE_OPS.has(method)) {
+                  // SA-1110: a nested create inside an update is stamped like one inside a create, then re-checked.
+                  if (args.data !== undefined) {
+                    args.data = stampNestedTenant(modelClass, args.data, tenantId);
+                  }
+                  checkTenantOp("TENANT", modelName, method, args);
+                }
                 return fn.call(modelTarget, args);
               };
             }
@@ -456,7 +470,7 @@ export class PrismaService
                 });
 
               case "create":
-                args.data = { ...args.data, tenantId };
+                args.data = stampNestedTenant(model, { ...args.data, tenantId }, tenantId);
                 checkTenantOp("TENANT", model, operation, args);
                 return query(args);
 
@@ -470,7 +484,18 @@ export class PrismaService
 
               case "upsert":
                 args.where = { ...args.where, tenantId };
-                args.create = { ...args.create, tenantId };
+                args.create = stampNestedTenant(model, { ...args.create, tenantId }, tenantId);
+                args.update = stampNestedTenant(model, args.update, tenantId);
+                checkTenantOp("TENANT", model, operation, args);
+                return query(args);
+
+              // SA-1110: scoped like every other verb, and a nested create in the data is stamped, then re-checked.
+              case "update":
+              case "updateMany":
+              case "updateManyAndReturn":
+                args.where = { ...args.where, tenantId };
+                if (args.data !== undefined)
+                  args.data = stampNestedTenant(model, args.data, tenantId);
                 checkTenantOp("TENANT", model, operation, args);
                 return query(args);
 
@@ -478,9 +503,6 @@ export class PrismaService
               case "findFirst":
               case "findFirstOrThrow":
               case "count":
-              case "update":
-              case "updateMany":
-              case "updateManyAndReturn":
               case "delete":
               case "deleteMany":
               case "aggregate":
