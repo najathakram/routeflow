@@ -53,6 +53,9 @@ const mockCompressDocument = compressDocument as jest.Mock;
 const q = new AfterCommit();
 describe("InvoicesService", () => {
   let service: InvoicesService;
+  /** SA-1124 PR-1b: a staff allocation names its payment source (the review gate's required discriminant). */
+  const staffPay = (dto: object) =>
+    service.recordStandalonePayment(dto as any, { source: "STAFF_ALLOCATION" });
   let prisma: ReturnType<typeof createMockPrisma>;
 
   const mockGateway = {
@@ -6397,19 +6400,16 @@ describe("InvoicesService", () => {
       });
       prisma.invoicePayment.findMany.mockResolvedValue([]);
 
-      await service.recordStandalonePayment(
-        {
-          customerId: "cust-1",
-          totalAmount: 60,
-          method: "CHECK",
-          settledAt: futureSettlement,
-          allocations: [
-            { invoiceId: "inv-1", amount: 40 },
-            { invoiceId: "inv-2", amount: 20 },
-          ],
-        } as any,
-        { source: "STAFF_ALLOCATION" },
-      );
+      await staffPay({
+        customerId: "cust-1",
+        totalAmount: 60,
+        method: "CHECK",
+        settledAt: futureSettlement,
+        allocations: [
+          { invoiceId: "inv-1", amount: 40 },
+          { invoiceId: "inv-2", amount: 20 },
+        ],
+      } as any);
 
       const calls = prisma.invoicePayment.create.mock.calls;
       expect(calls).toHaveLength(2);
@@ -8967,15 +8967,12 @@ describe("InvoicesService", () => {
       // behavior — a resolved promise where BadRequestException is expected —
       // not on an unresolved import or a stub.
       await expect(
-        service.recordStandalonePayment(
-          {
-            customerId: "cust-1",
-            totalAmount: 40,
-            method: "CHECK",
-            allocations: [{ invoiceId: "inv-b269-1", amount: 40 }],
-          } as any,
-          { source: "STAFF_ALLOCATION" },
-        ),
+        staffPay({
+          customerId: "cust-1",
+          totalAmount: 40,
+          method: "CHECK",
+          allocations: [{ invoiceId: "inv-b269-1", amount: 40 }],
+        } as any),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
@@ -8984,15 +8981,12 @@ describe("InvoicesService", () => {
       seedValidInvoice("inv-b269-2");
       prisma.paymentCounter.upsert.mockResolvedValue({ id: "qa269ab", next: 2 });
 
-      await service.recordStandalonePayment(
-        {
-          customerId: "cust-1",
-          totalAmount: 40,
-          method: "CHECK",
-          allocations: [{ invoiceId: "inv-b269-2", amount: 40 }],
-        } as any,
-        { source: "STAFF_ALLOCATION" },
-      );
+      await staffPay({
+        customerId: "cust-1",
+        totalAmount: 40,
+        method: "CHECK",
+        allocations: [{ invoiceId: "inv-b269-2", amount: 40 }],
+      } as any);
 
       // sites 1/2's algorithm: tenantShort = tenantId.slice(0,6).toUpperCase().
       // TODAY site 3 writes the bare "PAY-0001" (no tenant segment) instead.
@@ -9023,15 +9017,12 @@ describe("InvoicesService", () => {
         }),
       );
 
-      await service.recordStandalonePayment(
-        {
-          customerId: "cust-1",
-          totalAmount: 40,
-          method: "CHECK",
-          allocations: [{ invoiceId: "inv-b269-3", amount: 40 }],
-        } as any,
-        { source: "STAFF_ALLOCATION" },
-      );
+      await staffPay({
+        customerId: "cust-1",
+        totalAmount: 40,
+        method: "CHECK",
+        allocations: [{ invoiceId: "inv-b269-3", amount: 40 }],
+      } as any);
 
       // TODAY: recordStandalonePayment reserves on `tx.paymentCounter.upsert`
       // (the ONE tenantTransaction call wrapping the whole method), so the
@@ -9051,15 +9042,12 @@ describe("InvoicesService", () => {
       seedValidInvoice("inv-b269-e");
       prisma.paymentCounter.upsert.mockResolvedValue({ id: "qa269e2", next: 2 });
 
-      await service.recordStandalonePayment(
-        {
-          customerId: "cust-1",
-          totalAmount: 40,
-          method: "CHECK",
-          allocations: [{ invoiceId: "inv-b269-e", amount: 40 }],
-        } as any,
-        { source: "STAFF_ALLOCATION" },
-      );
+      await staffPay({
+        customerId: "cust-1",
+        totalAmount: 40,
+        method: "CHECK",
+        allocations: [{ invoiceId: "inv-b269-e", amount: 40 }],
+      } as any);
 
       expect(prisma.paymentCounter.upsert).toHaveBeenCalledWith(
         expect.objectContaining({
