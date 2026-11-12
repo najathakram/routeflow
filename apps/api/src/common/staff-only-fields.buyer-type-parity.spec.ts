@@ -109,6 +109,7 @@ const ORDER = {
   },
   changeRequests: { plan: CHANGE_REQUEST, many: true },
   revisionNumber: "keep", // row 380
+  updatedAt: "keep", // W-1187 PR-2c: the CAS token of a buyer line reorder
   editWindow: "keep",
   fulfillPath: "keep",
   shippingCarrier: "keep",

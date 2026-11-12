@@ -19,6 +19,8 @@ jest.mock("@/lib/auth-context", () => ({
 const createDraft = jest.fn();
 let draftPending = false;
 jest.mock("@/lib/api/drafts", () => ({
+  useDrafts: () => ({ data: [] }),
+  useDeleteDraft: () => ({ mutate: jest.fn(), isPending: false }),
   useCreateDraft: () => ({ mutateAsync: createDraft, isPending: draftPending }),
 }));
 const COLA = {

@@ -1,6 +1,6 @@
 {
-  "mappedSha": "ce0ed80a11",
-  "generatedAt": "2026-11-07T01:16:22.985Z",
+  "mappedSha": "6ecd409b16",
+  "generatedAt": "2026-11-11T19:31:23.477Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1146,
-  "notes": "2026-11-06 slipped windows (master ce0ed80a11): api and web landing notes, TOC rows; see CHANGELOG.md."
+  "notes": "2026-11-11 windows 29 to 31 (master 6ecd409b16): api and web landing notes, TOC rows, packages row; see CHANGELOG.md. Windows 13 to 26 (11-07 to 11-09) are not mapped yet."
 }

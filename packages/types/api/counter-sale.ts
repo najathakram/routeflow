@@ -66,6 +66,11 @@ export interface CounterSaleRequest extends RestrictionAck {
   notes?: string;
   /** W-863 (SA-945): Create Order's own inline return, riding the sale. Named customers only: a walk-in's is refused 409. */
   inlineReturn?: InlineReturnLinesRequest;
+  /**
+   * W-1188: the sale's business day (strict YYYY-MM-DD, the tenant's calendar), any day the till's policy accepts (past, or
+   * up to a year ahead). OMIT it for today: the till sends nothing when the chip reads Today. The entry time is always kept.
+   */
+  orderDate?: string;
 }
 
 /**
@@ -320,6 +325,12 @@ export interface TodaysSaleRow extends CounterTenderSplitFields {
   invoiceNumber: string | null;
   /** ISO instant the sale was rung */
   createdAt: string;
+  /**
+   * W-1188: the sale's chosen business day, when it differs from the day it was rung (the tenant's calendar). Server-owned:
+   * null = not dated, or dated to its entry day. The list stays keyed on the ENTRY day; this is only the "Dated Fri" tag.
+   * Omitted by an older server.
+   */
+  dated?: { day: string; direction: "BACK" | "FORWARD" } | null;
   customerId: string;
   customerName: string;
   isWalkIn: boolean;

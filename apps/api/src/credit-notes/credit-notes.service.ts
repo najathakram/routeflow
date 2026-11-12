@@ -1140,7 +1140,12 @@ export class CreditNotesService {
   async cancelStandaloneInTx(
     tx: any,
     creditNoteId: string,
-  ): Promise<{ restored: number; amendedPeriod?: FiledPeriod | null }> {
+  ): Promise<{
+    restored: number;
+    amendedPeriod?: FiledPeriod | null;
+    /** B548: set only when THIS call flipped the note to VOID; the caller emits `creditNote.voided` after its commit. */
+    voided?: { creditNoteId: string; creditNoteNumber: string; customerId: string; amount: number };
+  }> {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: once per call, before any loop
     // scan-ok: draft-payment-not-void — a CREDIT_NOTE-method InvoicePayment is an
     // internal ledger write this service itself creates atomically as CONFIRMED;
@@ -1162,7 +1167,13 @@ export class CreditNotesService {
 
     const cn = await tx.creditNote.findFirst({
       where: { id: creditNoteId },
-      select: { status: true, amountUsed: true },
+      select: {
+        status: true,
+        amountUsed: true,
+        creditNoteNumber: true,
+        customerId: true,
+        amount: true,
+      },
     });
     if (!cn) return { restored };
     if (cn.status === "VOID") return { restored };
@@ -1182,7 +1193,16 @@ export class CreditNotesService {
         kind: "ADJUSTMENT_UNDONE",
         creditNoteId,
       });
-      return { restored, amendedPeriod: settled?.amendedPeriod ?? null };
+      return {
+        restored,
+        amendedPeriod: settled?.amendedPeriod ?? null,
+        voided: {
+          creditNoteId,
+          creditNoteNumber: cn.creditNoteNumber,
+          customerId: cn.customerId,
+          amount: Number(cn.amount),
+        },
+      };
     }
     return { restored };
   }

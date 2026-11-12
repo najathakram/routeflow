@@ -155,6 +155,7 @@ to, never restated: overlap (§6), deploy day and the gate-key table (§7), roll
 - **Future requirement → expected diff size**, for each SEAM NOW and LATER line: **XS** (a registry or config row),
   **S** (about 100 lines or fewer, one area, no migration), **M** (a migration, or two areas) or **L** (rework of a
   shipped model). Aim for S or smaller. An L means the seam is missing: fix the design, not the estimate.
+- **Vocabulary:** `~/.claude/skill-library/pocock-codebase-design/SKILL.md` (deep modules, seams) (machine-local; skip if absent).
 
 ### G9 Cost and stop
 

@@ -1,9 +1,20 @@
 import * as React from "react";
-import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-utils/render";
+import { renderWithProviders, screen, waitFor, fireEvent, within, act } from "@/test-utils/render";
 import { apiClient } from "@/lib/api-client";
+import { addDays } from "@routeflow/pricing";
+import { calendarDayInZone } from "@/lib/calendar-date";
 import { COUNTER_PRICE_EDIT_NOT_PERMITTED_COPY } from "@/lib/counter-sale";
+import {
+  cancelCounterLeave,
+  getCounterLeaveRequest,
+  guardCounterLeave,
+} from "@/lib/counter-cart-signal";
 import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
+import { discardUndo } from "./useParkedSales";
+import { setImpersonation } from "@/lib/impersonation";
+import { liveCartKey } from "@/lib/counter-live-cart-keys";
+import { parkStoredLiveCarts } from "@/lib/counter-live-cart-park";
 
 /**
  * SA-748 PARK / RESUME at the counter. The API client is mocked at the module boundary by URL (a tiny in-memory "server" of
@@ -13,6 +24,14 @@ import { CounterSaleScreen } from "./CounterSaleScreen";
 
 type MockUser = { id: string; tenantSlug: string; role?: string } | null | undefined;
 let mockUser: MockUser;
+const mockToast = jest.fn();
+const mockDismiss = jest.fn();
+let holdToasts = false; // true = the toast stays open (paused by hover, focus or a hidden window)
+const dismissToast = (c: { onDismiss?: () => void }) => c.onDismiss?.();
+jest.mock("@routeflow/ui/web", () => ({
+  ...jest.requireActual("@routeflow/ui/web"),
+  useToast: () => ({ toast: mockToast, dismiss: mockDismiss }),
+}));
 jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
   useOptionalAuth: () => ({ user: mockUser }),
@@ -105,6 +124,7 @@ function seed(id: string, over: Partial<Row>, payload: unknown) {
   });
   payloads[id] = payload;
 }
+let withDraft = false; // only the W-1184 dock test has a paused order draft
 const isResume = (url: unknown) => typeof url === "string" && /\/parked\/.+\/resume$/.test(url);
 const resumeCalls = () => post.mock.calls.filter((c) => isResume(c[0]));
 const parkCalls = () => post.mock.calls.filter((c) => c[0] === PARKED);
@@ -131,6 +151,15 @@ const parkedPayload = (over: Record<string, unknown> = {}) => ({
 });
 
 beforeEach(() => {
+  mockToast.mockReset();
+  mockDismiss.mockReset();
+  holdToasts = false;
+  mockToast.mockImplementation((c: { onDismiss?: () => void }) => {
+    if (!holdToasts) setTimeout(() => dismissToast(c), 0);
+    return "t";
+  });
+  discardUndo.ms = 0; // most tests want the delete at once; the Undo tests set their own window
+  withDraft = false;
   jest.clearAllMocks();
   window.localStorage.clear();
   window.sessionStorage.clear();
@@ -145,6 +174,21 @@ beforeEach(() => {
     if (url === PARKED)
       return Promise.resolve({
         data: { data: [...rows], total: rows.length, page: 1, pageSize: 20 },
+      });
+    if (url === "/drafts")
+      return Promise.resolve({
+        data: !withDraft
+          ? []
+          : [
+              {
+                id: "d1",
+                kind: "ORDER",
+                title: null,
+                customerName: "Acme Cafe",
+                payload: { lineItems: [{ productId: "p1", unitPrice: 4, qty: 2 }] },
+                updatedAt: new Date().toISOString(),
+              },
+            ],
       });
     return Promise.resolve({ data: [] });
   });
@@ -646,15 +690,257 @@ describe("Resume with lines on the cart: the replace prompt comes FIRST", () => 
 });
 
 describe("Discard a parked sale", () => {
+  it("W-1184: Discard hides the row and offers Undo; Undo brings it back and no delete is sent", async () => {
+    holdToasts = true;
+    seed("a", { label: "Hold A" }, parkedPayload());
+    renderScreen();
+    const dialog = await openList(1);
+    fireEvent.click(discardBtn("Hold A"));
+    await waitFor(() => expect(within(dialog).queryByTestId("parked-row-a")).toBeNull());
+    expect(del).not.toHaveBeenCalled();
+    const undo = mockToast.mock.calls.map((c) => c[0]).find((c) => /^Discarded/.test(c.title));
+    expect(undo?.action?.label).toBe("Undo");
+    act(() => undo.action.onClick());
+    expect(await within(dialog).findByTestId("parked-row-a")).toBeInTheDocument();
+    expect(del).not.toHaveBeenCalled();
+  });
+
+  it("an order draft Discard gets the same Undo: row hides, no delete until the window ends, Undo brings it back", async () => {
+    holdToasts = true;
+    withDraft = true;
+    renderScreen();
+    fireEvent.click(await screen.findByRole("button", { name: "Parked (1)" }));
+    const dialog = await screen.findByRole("dialog", { name: "Parked sales" });
+    const row = await within(dialog).findByTestId("draft-row-d1");
+    fireEvent.click(within(row).getByRole("button", { name: /^Discard / }));
+    await waitFor(() => expect(within(dialog).queryByTestId("draft-row-d1")).toBeNull());
+    expect(del).not.toHaveBeenCalled();
+    const undo = mockToast.mock.calls.map((c) => c[0]).find((c) => /^Discarded/.test(c.title));
+    expect(undo?.action?.label).toBe("Undo");
+    act(() => undo.action.onClick());
+    expect(await within(dialog).findByTestId("draft-row-d1")).toBeInTheDocument();
+    expect(del).not.toHaveBeenCalled();
+  });
+
+  it("the parked order draft row pins its line text: 1 line · amount · paused", async () => {
+    withDraft = true;
+    renderScreen();
+    fireEvent.click(await screen.findByRole("button", { name: "Parked (1)" }));
+    const dialog = await screen.findByRole("dialog", { name: "Parked sales" });
+    const row = await within(dialog).findByTestId("draft-row-d1");
+    expect(row).toHaveTextContent("1 line · $8.00 · paused just now");
+  });
+
+  it("an order draft Discard that is not undone sends the delete once the window ends", async () => {
+    withDraft = true;
+    renderScreen();
+    fireEvent.click(await screen.findByRole("button", { name: "Parked (1)" }));
+    const dialog = await screen.findByRole("dialog", { name: "Parked sales" });
+    const row = await within(dialog).findByTestId("draft-row-d1");
+    fireEvent.click(within(row).getByRole("button", { name: /^Discard / }));
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(del).toHaveBeenCalledWith("/drafts/d1"));
+  });
+
+  it("signing out right after a leave-park makes exactly one park request (the stored cart goes with the park)", async () => {
+    renderScreen();
+    await scan("COLA");
+    const key = liveCartKey("acme", "u-o")!;
+    await waitFor(() => expect(window.localStorage.getItem(key)).not.toBeNull());
+    let storedAtProceed: string | null = "unset";
+    const proceed = jest.fn(() => {
+      storedAtProceed = window.localStorage.getItem(key);
+    });
+    expect(guardCounterLeave(proceed)).toBe(true);
+    await waitFor(() => expect(proceed).toHaveBeenCalledTimes(1));
+    expect(storedAtProceed).toBeNull();
+    await parkStoredLiveCarts(key); // what the sign-out runs next
+    expect(parkCalls()).toHaveLength(1);
+  });
+
+  it("a late Undo still works: the delete waits for the toast to close, not for a separate timer", async () => {
+    holdToasts = true; // hover / focus / hidden window keeps the toast open past the old 8 s
+    discardUndo.ms = 20;
+    seed("a", { label: "Hold A" }, parkedPayload());
+    renderScreen();
+    const dialog = await openList(1);
+    fireEvent.click(discardBtn("Hold A"));
+    await waitFor(() => expect(within(dialog).queryByTestId("parked-row-a")).toBeNull());
+    await new Promise((r) => setTimeout(r, 150));
+    expect(del).not.toHaveBeenCalled();
+    const undo = mockToast.mock.calls.map((c) => c[0]).find((c) => /^Discarded/.test(c.title));
+    act(() => undo.action.onClick());
+    expect(await within(dialog).findByTestId("parked-row-a")).toBeInTheDocument();
+    act(() => undo.onDismiss());
+    expect(del).not.toHaveBeenCalled();
+  });
+
+  it("leaving the screen does not delete while the toast is open; closing it then deletes, Undo keeps the sale", async () => {
+    holdToasts = true;
+    seed("a", { label: "Hold A" }, parkedPayload());
+    seed("b", { label: "Hold B" }, parkedPayload());
+    const { unmount } = renderScreen();
+    await openList(2);
+    fireEvent.click(discardBtn("Hold A"));
+    await waitFor(() => expect(mockToast).toHaveBeenCalled());
+    fireEvent.click(discardBtn("Hold B"));
+    await waitFor(() => expect(mockToast.mock.calls.length).toBeGreaterThanOrEqual(2));
+    unmount();
+    expect(del).not.toHaveBeenCalled(); // leaving never commits a delete whose Undo is still on screen
+    const toasts = mockToast.mock.calls.map((c) => c[0]).filter((c) => /^Discarded/.test(c.title));
+    act(() => toasts[0].action.onClick()); // Undo A after leaving: A is kept
+    act(() => toasts[0].onDismiss());
+    act(() => toasts[1].onDismiss()); // B's toast just closed: B goes
+    await waitFor(() => expect(del).toHaveBeenCalledTimes(1));
+    expect(del).toHaveBeenCalledWith(`${PARKED}/b`);
+  });
+
+  it("Undo is inside the open Parked window and takes focus, so a keyboard reaches it (the toast sits outside it)", async () => {
+    holdToasts = true;
+    seed("a", { label: "Hold A" }, parkedPayload());
+    renderScreen();
+    const dialog = await openList(1);
+    fireEvent.click(discardBtn("Hold A"));
+    const undo = await within(dialog).findByRole("button", { name: /^Undo/ });
+    await waitFor(() => expect(undo).toHaveFocus());
+    fireEvent.click(undo);
+    expect(await within(dialog).findByTestId("parked-row-a")).toBeInTheDocument();
+    expect(del).not.toHaveBeenCalled();
+  });
+
+  it("no auto-park during a support session: the leave is held on the old Discard question and nothing is parked", async () => {
+    setImpersonation("tok", "acme", "support");
+    renderScreen();
+    await scan("COLA");
+    const proceed = jest.fn();
+    expect(guardCounterLeave(proceed)).toBe(true);
+    // the shell header owns the question; here the leave is held on it and nothing was parked
+    await waitFor(() => expect(getCounterLeaveRequest()).toBe(true));
+    expect(proceed).not.toHaveBeenCalled();
+    expect(parkCalls()).toHaveLength(0);
+    cancelCounterLeave();
+  });
+
+  it("a stale toast never acts on a later discard: Discard A, Undo in the window, Discard A again, first toast closes", async () => {
+    holdToasts = true;
+    seed("a", { label: "Hold A" }, parkedPayload());
+    renderScreen();
+    const dialog = await openList(1);
+    fireEvent.click(discardBtn("Hold A"));
+    fireEvent.click(await within(dialog).findByRole("button", { name: /^Undo/ })); // the in-window Undo
+    fireEvent.click(await within(dialog).findByRole("button", { name: "Discard Hold A" }));
+    await waitFor(() => expect(within(dialog).queryByTestId("parked-row-a")).toBeNull());
+    const toasts = mockToast.mock.calls.map((c) => c[0]).filter((c) => /^Discarded/.test(c.title));
+    expect(toasts).toHaveLength(2);
+    act(() => toasts[0].onDismiss()); // the FIRST toast finally closes
+    await new Promise((r) => setTimeout(r, 50));
+    expect(del).not.toHaveBeenCalled(); // it must not delete the sale the second discard is still waiting on
+    expect(within(dialog).getAllByRole("button", { name: /^Undo/ })).toHaveLength(1);
+    act(() => toasts[1].action.onClick()); // the second toast's own Undo still works
+    expect(await within(dialog).findByTestId("parked-row-a")).toBeInTheDocument();
+    act(() => toasts[1].onDismiss());
+    expect(del).not.toHaveBeenCalled();
+  });
+
+  it("the same for an order draft: a stale toast never acts on a later discard of the same draft", async () => {
+    holdToasts = true;
+    withDraft = true;
+    renderScreen();
+    fireEvent.click(await screen.findByRole("button", { name: "Parked (1)" }));
+    const dialog = await screen.findByRole("dialog", { name: "Parked sales" });
+    const discardDraft = async () =>
+      fireEvent.click(
+        within(await within(dialog).findByTestId("draft-row-d1")).getByRole("button", {
+          name: /^Discard /,
+        }),
+      );
+    await discardDraft();
+    fireEvent.click(await within(dialog).findByRole("button", { name: /^Undo/ }));
+    await discardDraft();
+    await waitFor(() => expect(within(dialog).queryByTestId("draft-row-d1")).toBeNull());
+    const toasts = mockToast.mock.calls.map((c) => c[0]).filter((c) => /^Discarded/.test(c.title));
+    expect(toasts).toHaveLength(2);
+    act(() => toasts[0].onDismiss());
+    await new Promise((r) => setTimeout(r, 50)); // a delete would leave on the next ticks
+    expect(del).not.toHaveBeenCalled();
+    expect(within(dialog).getAllByRole("button", { name: /^Undo/ })).toHaveLength(1);
+    act(() => toasts[1].action.onClick());
+    expect(await within(dialog).findByTestId("draft-row-d1")).toBeInTheDocument();
+    expect(del).not.toHaveBeenCalled();
+  });
+
+  it("the in-window Undo also closes its own toast", async () => {
+    holdToasts = true;
+    seed("a", { label: "Hold A" }, parkedPayload());
+    renderScreen();
+    const dialog = await openList(1);
+    fireEvent.click(discardBtn("Hold A"));
+    fireEvent.click(await within(dialog).findByRole("button", { name: /^Undo/ }));
+    expect(mockDismiss).toHaveBeenCalledWith("t");
+  });
+
+  it("an early toast close (Escape) while the Parked window shows the Undo sends no delete until the window closes", async () => {
+    holdToasts = true;
+    seed("a", { label: "Hold A" }, parkedPayload());
+    renderScreen();
+    const dialog = await openList(1);
+    fireEvent.click(discardBtn("Hold A"));
+    await within(dialog).findByRole("button", { name: /^Undo/ });
+    const toasts = mockToast.mock.calls.map((c) => c[0]).filter((c) => /^Discarded/.test(c.title));
+    act(() => toasts[0].onDismiss()); // Escape closed the toast first
+    await new Promise((r) => setTimeout(r, 50));
+    expect(del).not.toHaveBeenCalled();
+    expect(within(dialog).getByRole("button", { name: /^Undo/ })).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: /^Undo/ }));
+    expect(await within(dialog).findByTestId("parked-row-a")).toBeInTheDocument();
+    expect(del).not.toHaveBeenCalled();
+  });
+
+  it("the delete of a toast closed early goes out when the Parked window closes", async () => {
+    holdToasts = true;
+    seed("a", { label: "Hold A" }, parkedPayload());
+    renderScreen();
+    const dialog = await openList(1);
+    fireEvent.click(discardBtn("Hold A"));
+    await within(dialog).findByRole("button", { name: /^Undo/ });
+    const toasts = mockToast.mock.calls.map((c) => c[0]).filter((c) => /^Discarded/.test(c.title));
+    act(() => toasts[0].onDismiss());
+    expect(del).not.toHaveBeenCalled();
+    fireEvent.keyDown(dialog, { key: "Escape" }); // the window closes
+    await waitFor(() => expect(del).toHaveBeenCalledWith(`${PARKED}/a`));
+    expect(del).toHaveBeenCalledTimes(1);
+  });
+
+  it("an early toast close for an order draft is held the same way while its Undo is in the window", async () => {
+    holdToasts = true;
+    withDraft = true;
+    renderScreen();
+    fireEvent.click(await screen.findByRole("button", { name: "Parked (1)" }));
+    const dialog = await screen.findByRole("dialog", { name: "Parked sales" });
+    fireEvent.click(
+      within(await within(dialog).findByTestId("draft-row-d1")).getByRole("button", {
+        name: /^Discard /,
+      }),
+    );
+    await within(dialog).findByRole("button", { name: /^Undo/ });
+    const toasts = mockToast.mock.calls.map((c) => c[0]).filter((c) => /^Discarded/.test(c.title));
+    act(() => toasts[0].onDismiss());
+    await new Promise((r) => setTimeout(r, 50));
+    expect(del).not.toHaveBeenCalled();
+    expect(within(dialog).getByRole("button", { name: /^Undo/ })).toBeInTheDocument();
+  });
+
   it("calls DELETE, refreshes the list, and the row goes", async () => {
     seed("a", { label: "Hold A" }, parkedPayload());
     seed("b", { label: "Hold B" }, parkedPayload());
     renderScreen();
     const dialog = await openList(2);
     fireEvent.click(discardBtn("Hold A"));
+    fireEvent.keyDown(dialog, { key: "Escape" }); // the toast closed while the window showed its Undo: the delete leaves with the window
     await waitFor(() => expect(del).toHaveBeenCalledWith(`${PARKED}/a`));
-    await waitFor(() => expect(within(dialog).queryByTestId("parked-row-a")).toBeNull());
-    expect(within(dialog).getByTestId("parked-row-b")).toBeInTheDocument();
+    const again = await openList();
+    await waitFor(() => expect(within(again).queryByTestId("parked-row-a")).toBeNull());
+    expect(within(again).getByTestId("parked-row-b")).toBeInTheDocument();
     expect(
       await screen.findByRole("button", { name: "Parked (1)", hidden: true }),
     ).toBeInTheDocument();
@@ -667,11 +953,14 @@ describe("Discard a parked sale", () => {
     delete payloads.a;
     rows = [];
     fireEvent.click(discardBtn("Hold A"));
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(del).toHaveBeenCalled());
+    const again = await openList();
     expect(
-      await within(dialog).findByText("That parked sale was already taken back or has expired."),
+      await within(again).findByText("That parked sale was already taken back or has expired."),
     ).toBeInTheDocument();
-    expect(within(dialog).queryByText(new RegExp(SECRET))).toBeNull();
-    await waitFor(() => expect(within(dialog).queryByTestId("parked-row-a")).toBeNull());
+    expect(within(again).queryByText(new RegExp(SECRET))).toBeNull();
+    await waitFor(() => expect(within(again).queryByTestId("parked-row-a")).toBeNull());
   });
 });
 
@@ -745,5 +1034,158 @@ describe("price edits on a resumed cart (the existing Complete-time check)", () 
     await waitFor(() => expect(itemNames().join(" ")).toContain("Cola"));
     expect(screen.queryByText(/edited prices and you can't change prices/)).toBeNull();
     expect(screen.getByTestId("line-price-chip")).toBeInTheDocument();
+  });
+});
+
+describe("W-1184: leaving parks the sale", () => {
+  it("every leave parks the open sale, then goes: no Discard question, one park, the sale stored", async () => {
+    renderScreen();
+    await scan("COLA");
+    const proceed = jest.fn();
+    expect(guardCounterLeave(proceed)).toBe(true);
+    await waitFor(() => expect(proceed).toHaveBeenCalledTimes(1));
+    expect(parkCalls()).toHaveLength(1);
+    expect(screen.queryByText("Discard this sale?")).toBeNull();
+  });
+
+  it("one Parked button holds the order drafts too: count, section, Resume (no separate Drafts button)", async () => {
+    withDraft = true;
+    renderScreen();
+    expect(await screen.findByRole("button", { name: "Parked (1)" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Drafts/ })).toBeNull();
+    fireEvent.click(parkedBtn());
+    const dialog = await screen.findByRole("dialog", { name: "Parked sales" });
+    const row = await within(dialog).findByTestId("draft-row-d1");
+    expect(row).toHaveTextContent("Order, Acme Cafe");
+    expect(within(row).getByRole("button", { name: /^Resume / })).toBeInTheDocument();
+  });
+
+  it("an empty till with a parked sale offers one tap back into it", async () => {
+    seed("a", { lineCount: 1 }, parkedPayload());
+    renderScreen();
+    expect(await screen.findByTestId("counter-resume-bar")).toHaveTextContent("Resume sale (");
+  });
+
+  it("Esc on the empty scan field moves the cursor to Resume sale (one key; Enter then decides)", async () => {
+    seed("a", { lineCount: 1 }, parkedPayload());
+    renderScreen();
+    const bar = await screen.findByTestId("counter-resume-bar");
+    const scanField = screen.getByLabelText("Scan or search items");
+    scanField.focus();
+    fireEvent.keyDown(scanField, { key: "Escape" });
+    expect(document.activeElement).toBe(within(bar).getByRole("button", { name: /^Resume sale/ }));
+  });
+});
+
+// W-1188 PR-2 (R24): the order date chip rides the park payload, the sale body, and resets with the sale.
+describe("order date chip on the till", () => {
+  const TODAY = calendarDayInZone("America/New_York");
+  const YESTERDAY = addDays(TODAY, -1);
+  const chip = () => screen.getByTestId("counter-date-chip");
+  async function pickYesterday() {
+    fireEvent.click(await screen.findByRole("button", { name: "Order date: today. Change" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Yesterday" }));
+    await waitFor(() => expect(chip()).toHaveAttribute("data-direction", "BACK"));
+  }
+
+  it("reads Today and sends no orderDate at all", async () => {
+    renderScreen();
+    await scan("COLA");
+    expect(chip()).toHaveAttribute("data-direction", "TODAY");
+    fireEvent.click(screen.getByRole("button", { name: "Exact" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(mutateAsync.mock.calls[0][0].dto).not.toHaveProperty("orderDate");
+  });
+
+  it("a chosen day is sent on the sale and a reminder sits above Complete", async () => {
+    renderScreen();
+    await scan("COLA");
+    await pickYesterday();
+    expect(screen.getByTestId("counter-date-reminder")).toHaveTextContent(
+      "This sale will be dated",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Exact" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(mutateAsync.mock.calls[0][0].dto.orderDate).toBe(YESTERDAY);
+  });
+
+  it("parks with the chosen day, and a resumed cart keeps it", async () => {
+    renderScreen();
+    await scan("COLA");
+    await pickYesterday();
+    fireEvent.click(parkBtn());
+    await waitFor(() => expect(parkCalls()).toHaveLength(1));
+    expect(parkCalls()[0][1].payload.orderDate).toBe(YESTERDAY);
+    await waitFor(() => expect(chip()).toHaveAttribute("data-direction", "TODAY")); // the next sale starts on Today
+    await openList(1);
+    fireEvent.click(screen.getByRole("button", { name: /^Resume / }));
+    await waitFor(() => expect(chip()).toHaveAttribute("data-direction", "BACK"));
+    expect(screen.getByRole("button", { name: /^Backdated to/ })).toBeInTheDocument();
+  });
+
+  it("a parked sale without a date resumes on Today", async () => {
+    seed("a", { label: "Hold A" }, parkedPayload());
+    renderScreen();
+    await openList(1);
+    fireEvent.click(resumeBtn("Hold A"));
+    await waitFor(() => expect(itemNames().join(" ")).toContain("Cola"));
+    expect(chip()).toHaveAttribute("data-direction", "TODAY");
+  });
+
+  it("a finished sale does not carry its date to the next one", async () => {
+    renderScreen();
+    await scan("COLA");
+    await pickYesterday();
+    fireEvent.click(screen.getByRole("button", { name: "Exact" }));
+    fireEvent.click(screen.getByRole("button", { name: /Complete & next sale/ }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    // the mocked server total differs from the screen's, so the receipt shows first; its New sale starts the next one
+    fireEvent.click(await screen.findByRole("button", { name: /New sale/ }));
+    await waitFor(() => expect(chip()).toHaveAttribute("data-direction", "TODAY"));
+  });
+
+  it("a reload keeps the chosen day: the chip comes back dated and Complete still sends it", async () => {
+    const view = renderScreen();
+    await scan("COLA");
+    await pickYesterday();
+    const liveKey = () =>
+      Object.keys(window.localStorage).find((k) => k.includes("liveCart")) as string;
+    await waitFor(() => {
+      const saved = window.localStorage.getItem(liveKey());
+      expect(saved && JSON.parse(saved).orderDate).toBe(YESTERDAY);
+    });
+    view.unmount();
+    renderScreen();
+    await screen.findByTestId("counter-cart-restored");
+    await waitFor(() => expect(chip()).toHaveAttribute("data-direction", "BACK"));
+    fireEvent.click(screen.getByRole("button", { name: "Exact" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(mutateAsync.mock.calls[0][0].dto.orderDate).toBe(YESTERDAY);
+  });
+
+  it("a refused date shows fixed copy and a red ring, and the date stays for the clerk to fix", async () => {
+    renderScreen();
+    await scan("COLA");
+    await pickYesterday();
+    mutateAsync.mockRejectedValueOnce({
+      response: {
+        status: 400,
+        data: {
+          code: "ORDER_DATE_OUT_OF_RANGE",
+          message: SECRET,
+          min: "2024-11-09",
+          max: "2027-11-10",
+        },
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Exact" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    expect(await screen.findByText(/more than 2 years back/)).toBeInTheDocument();
+    expect(screen.queryByText(SECRET)).toBeNull();
+    expect(chip().className).toContain("ring-red-500");
+    expect(chip()).toHaveAttribute("data-direction", "BACK");
   });
 });

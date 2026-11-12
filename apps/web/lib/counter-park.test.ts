@@ -12,7 +12,6 @@ import {
   discardErrorCopy,
   formatParkedTime,
   isStaleParked,
-  lineCountLabel,
   parkErrorCopy,
   parkedRowTitle,
   resumeErrorCopy,
@@ -164,10 +163,6 @@ describe("list helpers", () => {
     expect(formatParkedTime("2026-10-08T18:41:00.000Z", "Not/AZone")).toBe("6:41 PM");
     expect(formatParkedTime("2026-10-08T18:41:00.000Z")).toBe("6:41 PM");
     expect(formatParkedTime("2026-10-08T18:41:00.000Z", null)).toBe("6:41 PM");
-  });
-  it("counts lines", () => {
-    expect(lineCountLabel(1)).toBe("1 line");
-    expect(lineCountLabel(3)).toBe("3 lines");
   });
 });
 

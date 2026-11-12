@@ -44,7 +44,12 @@ export { endSentence, renderBrandedEmail, tenantHeaderHtml };
 // shared with the email too — one formatter, never a second copy of the same
 // boxes/pieces/unitLabel display logic.
 import { showOriginalPrice, qtyCellText } from "../invoices/invoice-pdf-item";
-import { baseUnitSuffix, formatPerBaseUnitPrice, type PerBaseUnitPrice } from "@routeflow/pricing";
+import {
+  baseUnitSuffix,
+  formatInvoiceLineCounts,
+  formatPerBaseUnitPrice,
+  type PerBaseUnitPrice,
+} from "@routeflow/pricing";
 import { sellerDisplayName } from "../common/seller-display-name";
 
 // F6-001: SSRF guard — block private/loopback/metadata IPs as SMTP hosts.
@@ -1102,6 +1107,13 @@ export class EmailService {
       pieces?: number | null;
       /** units_v1 sold-unit noun ("Case") — null/undefined defaults to "box"/"boxes". */
       unitLabel?: string | null;
+      /** W-1185: what the "Items" count reads; the sale-time words and the system marker (NSF fee). */
+      unitsPerBox?: number | null;
+      packLabel?: string | null;
+      baseLabel?: string | null;
+      /** W-1185: the line's selling unit (live product.unit): a plain line counts in it. */
+      unit?: string | null;
+      systemKind?: string | null;
     }[];
     pdfUrl?: string;
     isReminder?: boolean;
@@ -1660,6 +1672,12 @@ export class EmailService {
         pieces?: number | null;
         /** units_v1 sold-unit noun ("Case") — null/undefined defaults to "box"/"boxes". */
         unitLabel?: string | null;
+        /** W-1185: what the "Items" count reads; see sendInvoice's item type. */
+        unitsPerBox?: number | null;
+        packLabel?: string | null;
+        baseLabel?: string | null;
+        unit?: string | null;
+        systemKind?: string | null;
       }[];
       pdfUrl?: string;
       isReminder?: boolean;
@@ -1779,14 +1797,20 @@ export class EmailService {
                 <td style="padding:8px 12px;font-size:14px;font-weight:600;color:#374151;text-align:right;">${fmt(params.advanceApplied)}</td>
               </tr>`
         : "";
+    // W-1185: the item count opens the footer (lines, boxes, named units, pieces; never added together).
+    const itemCount = formatInvoiceLineCounts(params.items);
+    const itemCountRow = `<tr>
+                <td colspan="${footSpan}" style="padding:8px 12px;font-size:13px;font-weight:600;color:#374151;text-align:right;">Items</td>
+                <td style="padding:8px 12px;font-size:14px;font-weight:600;color:#374151;text-align:right;">${escapeHtml(itemCount)}</td>
+              </tr>`;
     const totalsFooter =
       params.balanceDue != null
-        ? `${amountPaidRow}${creditAppliedRow}${advanceAppliedRow}
+        ? `${itemCountRow}${amountPaidRow}${creditAppliedRow}${advanceAppliedRow}
               <tr style="background:#f9fafb;">
                 <td colspan="${footSpan}" style="padding:12px;font-size:14px;font-weight:700;color:#1D2A3D;text-align:right;">Balance Due</td>
                 <td style="padding:12px;font-size:16px;font-weight:700;color:${params.balanceDue > 0 ? "#dc2626" : "#16a34a"};text-align:right;">${fmt(params.balanceDue)}</td>
               </tr>`
-        : `<tr style="background:#f9fafb;">
+        : `${itemCountRow}<tr style="background:#f9fafb;">
                 <td colspan="${footSpan}" style="padding:12px;font-size:14px;font-weight:700;color:#1D2A3D;text-align:right;">Amount Due</td>
                 <td style="padding:12px;font-size:16px;font-weight:700;color:#1D2A3D;text-align:right;">${fmt(params.total)}</td>
               </tr>`;
@@ -1893,6 +1917,7 @@ export class EmailService {
         })
         .join("\n"),
     );
+    bodyText.push(`Items: ${itemCount}`);
     const totalsLines: string[] = [];
     if (params.totalPaid != null && params.totalPaid > 0)
       totalsLines.push(`Amount Paid: ${fmt(params.totalPaid)}`);
@@ -2204,6 +2229,78 @@ export class EmailService {
     });
   }
 
+  /**
+   * B461 (SA-1116): to the NEW address of a held login-email change. The link confirms that this mailbox is the
+   * account's login email; nothing changes until it is used. Platform sender only, never opt-out.
+   */
+  async sendEmailChangeLink(params: {
+    to: string;
+    username: string;
+    confirmUrl: string;
+    expiryHours: number;
+  }) {
+    const body = `<p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi ${escapeHtml(params.username)},</p>
+    <p style="margin:0 0 16px;font-size:15px;color:#374151;">
+      A change was requested to use this address as the login email for your RouteFlow account. Confirm it to finish the change.
+    </p>
+    ${renderBrandButton("Confirm this address", params.confirmUrl)}
+    <p style="margin:24px 0 0;font-size:13px;color:#9ca3af;">
+      This link works once and expires in ${params.expiryHours} hours. If you weren't expecting this, ignore this email and nothing changes.
+    </p>`;
+    const { html, text } = renderBrandedEmail({
+      headerHtml: brandHeaderHtml(),
+      heading: "Confirm your new login email",
+      bodyHtml: body,
+      bodyText: [
+        `Hi ${params.username},`,
+        "A change was requested to use this address as the login email for your RouteFlow account. Confirm it to finish the change:",
+        params.confirmUrl,
+        `This link works once and expires in ${params.expiryHours} hours. If you weren't expecting this, ignore this email and nothing changes.`,
+      ],
+      footerNote: "RouteFlow Platform — this is an automated account email.",
+    });
+    return this.sendPlatform({
+      to: params.to,
+      subject: "Confirm your new RouteFlow login email",
+      html,
+      text,
+    });
+  }
+
+  /**
+   * B461 (SA-1116): to the OLD address when a login-email change is requested. The new address is masked. Nothing has
+   * changed yet; the account keeps this address unless the new one confirms. Platform sender only, never opt-out.
+   */
+  async sendEmailChangeRequestedNotice(params: {
+    to: string;
+    username: string;
+    maskedNewEmail: string;
+  }) {
+    const body = `<p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi ${escapeHtml(params.username)},</p>
+    <p style="margin:0 0 16px;font-size:15px;color:#374151;">
+      A change of your RouteFlow login email to <strong>${escapeHtml(params.maskedNewEmail)}</strong> was requested. Your login email stays this address until the new one confirms.
+    </p>
+    <p style="margin:0;font-size:13px;color:#9ca3af;">
+      If you made or expected this change, you don't need to do anything. If you didn't, contact your administrator.
+    </p>`;
+    const { html, text } = renderBrandedEmail({
+      headerHtml: brandHeaderHtml(),
+      heading: "A login email change was requested",
+      bodyHtml: body,
+      bodyText: [
+        `Hi ${params.username},`,
+        `A change of your RouteFlow login email to ${params.maskedNewEmail} was requested. Your login email stays this address until the new one confirms.`,
+        "If you made or expected this change, you don't need to do anything. If you didn't, contact your administrator.",
+      ],
+      footerNote: "RouteFlow Platform — this is an automated account email.",
+    });
+    return this.sendPlatform({
+      to: params.to,
+      subject: "A change to your RouteFlow login email was requested",
+      html,
+      text,
+    });
+  }
   /** Notice to a user when an operator/admin changes their role — never opt-out. */
   async sendRoleChangedNotice(params: {
     to: string;

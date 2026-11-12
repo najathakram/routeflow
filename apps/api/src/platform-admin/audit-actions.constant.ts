@@ -90,6 +90,9 @@ export const AdminAuditAction = {
   TENANT_CLASS_CHANGED: "TENANT_CLASS_CHANGED",
   FEATURE_OVERRIDE_SET: "FEATURE_OVERRIDE_SET",
   FEATURE_OVERRIDE_REVOKED: "FEATURE_OVERRIDE_REVOKED",
+  // WP11: one saved set of feature changes (meta = the change set as data); and its undo (meta.undoOf = the set's audit id).
+  FEATURE_CHANGE_SET_APPLIED: "FEATURE_CHANGE_SET_APPLIED",
+  FEATURE_CHANGE_SET_UNDONE: "FEATURE_CHANGE_SET_UNDONE",
   BUSINESS_PROFILE_APPLIED: "BUSINESS_PROFILE_APPLIED",
   ENTITLEMENTS_MODE_CHANGED: "ENTITLEMENTS_MODE_CHANGED",
   FEATURE_DIFF_EXPLAINED: "FEATURE_DIFF_EXPLAINED",
@@ -184,6 +187,8 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   TENANT_CLASS_CHANGED: "Class changed",
   FEATURE_OVERRIDE_SET: "Feature override set",
   FEATURE_OVERRIDE_REVOKED: "Feature override revoked",
+  FEATURE_CHANGE_SET_APPLIED: "Feature changes saved",
+  FEATURE_CHANGE_SET_UNDONE: "Feature changes undone",
   BUSINESS_PROFILE_APPLIED: "Business profile applied",
   ENTITLEMENTS_MODE_CHANGED: "Entitlements mode changed",
   FEATURE_DIFF_EXPLAINED: "Feature resolver diff explained",

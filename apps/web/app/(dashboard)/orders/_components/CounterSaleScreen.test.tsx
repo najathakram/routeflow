@@ -9,6 +9,7 @@ import {
   cancelCounterLeave,
   confirmCounterLeave,
   guardCounterLeave,
+  setCounterAutoParkHook,
 } from "@/lib/counter-cart-signal";
 
 /**
@@ -147,7 +148,12 @@ describe("CounterSaleScreen", () => {
     renderTill(<CounterSaleScreen />);
     await scan("WATER");
     await scan("WATER");
-    await waitFor(() => expect(screen.getByText(/2 boxes/)).toBeInTheDocument());
+    // W-1185: the item-count chip also reads "2 boxes", so the line is read inside the Items list.
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("list", { name: "Items" })).getByText(/2 boxes/),
+      ).toBeInTheDocument(),
+    );
     expect(screen.getAllByRole("listitem", { name: "" }).length).toBeGreaterThan(0);
     expect(screen.getByTestId("running-total")).toHaveTextContent("$24.00");
   });
@@ -2406,6 +2412,7 @@ describe("CounterSaleScreen: the live cart survives a refresh (SA-748 section 1)
     renderTill(<CounterSaleScreen />);
     await scan("012345678905");
     await waitFor(() => expect(window.localStorage.getItem(LIVE_KEY)).not.toBeNull());
+    setCounterAutoParkHook(null); // W-1184: with no park available (or a failed park) the old question is the fallback
     const proceed = jest.fn();
     expect(guardCounterLeave(proceed)).toBe(true); // the "Discard this sale?" dialog opens
     expect(window.localStorage.getItem(LIVE_KEY)).not.toBeNull(); // Keep selling would still have it

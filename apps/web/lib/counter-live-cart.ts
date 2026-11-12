@@ -12,6 +12,8 @@ export interface LiveCartSnapshot {
   tendered: string;
   reference: string;
   checkDate?: string;
+  /** W-1188: the chip's day ("" or absent = Today). Kept so a reload or the sign-out park does not lose it. */
+  orderDate?: string;
   /** S5: Walk-in was explicitly chosen (a null customer alone is "not asked yet"). Absent in an older save. */
   walkIn?: boolean;
 }
@@ -72,6 +74,7 @@ export function readLiveCart(storeKey: string | null): LiveCartSnapshot | null {
         tendered: typeof v!.tendered === "string" ? v!.tendered : "",
         reference: typeof v!.reference === "string" ? v!.reference : "",
         ...(isCalendarDay(v!.checkDate) ? { checkDate: v!.checkDate } : {}),
+        ...(isCalendarDay(v!.orderDate) ? { orderDate: v!.orderDate } : {}),
         walkIn: v!.walkIn === true && !v!.customer,
       };
     }

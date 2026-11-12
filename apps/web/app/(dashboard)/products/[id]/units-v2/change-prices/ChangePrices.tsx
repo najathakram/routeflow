@@ -28,12 +28,15 @@ export function ChangePrices({
   onClose,
   openerRef,
   idSuffix = "",
+  onTypeExact,
 }: {
   open: boolean;
   onClose: () => void;
   openerRef: React.RefObject<HTMLElement | null>;
   /** K11-20: the floating price window's instance suffix for the fixed ids; the page's own panel has none. */
   idSuffix?: string;
+  /** F10: "Type an exact price instead": the host opens Edit; this panel closes first. */
+  onTypeExact?: () => void;
 }) {
   useEscapeCloses(open, onClose, openerRef);
   // K11-15: Apply closes the panel and the owner's next step is Save, so focus goes there (Cancel and Escape still go
@@ -64,6 +67,14 @@ export function ChangePrices({
       idSuffix={idSuffix}
       memory={memory.current}
       onRemember={remember}
+      onTypeExact={
+        onTypeExact
+          ? () => {
+              onClose();
+              onTypeExact();
+            }
+          : undefined
+      }
     />
   ) : null;
 }

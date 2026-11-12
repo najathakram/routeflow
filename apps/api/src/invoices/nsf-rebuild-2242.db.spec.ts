@@ -267,6 +267,14 @@ describeDb(
         expect(Number(inv!.subtotal)).toBe(75); // goods 50 + fee 25
         expect(Number(inv!.taxAmount)).toBe(5); // the order's tax on goods only
         expect(Number(inv!.total)).toBe(80);
+        // W-1187: the rebuilt goods line takes 0 and the kept fee row follows it at 1, so the printed bill is
+        // goods, then the fee, whatever the fee row's old slot was.
+        expect(inv!.items.map((it) => [it.id === s.nsfId ? "nsf" : "goods", it.position])).toEqual(
+          expect.arrayContaining([
+            ["goods", 0],
+            ["nsf", 1],
+          ]),
+        );
       },
     );
     /** A throwaway approved tenant with one customer. */
@@ -406,6 +414,7 @@ describeDb(
         });
         expect(inv!.items).toHaveLength(2); // the delivered goods line + the kept NSF line
         const goods = inv!.items.find((it) => it.id !== nsf.id)!;
+        expect([goods.position, kept!.position]).toEqual([0, 1]); // W-1187: goods, then the kept fee
         expect(Number(goods.qty)).toBe(1); // billed from the mutation, not the 0 column
         expect(Number(inv!.subtotal)).toBe(50); // delivered goods 25 + fee 25
         expect(Number(inv!.taxAmount)).toBe(2.5); // the order's tax share on goods only
@@ -533,7 +542,65 @@ describeDb(
         expect(Number(r!.taxAmount)).toBe(0.37); // round(0.375) = 0.38, less the -0.01 remainder
         expect(Number(r!.shippingFee)).toBe(5);
         expect(Number(r!.total)).toBe(35.37);
+        // W-1187: each sibling is dense 0..n-1; the base's kept fee row sits after its goods line.
+        const rows = await prisma.invoiceItem.findMany({
+          where: { invoiceId: { in: [base.id, r1.id] } },
+          orderBy: [{ invoiceId: "asc" }, { position: "asc" }],
+        });
+        const positionsOf = (invoiceId: string) =>
+          rows.filter((x) => x.invoiceId === invoiceId).map((x) => [x.id === nsf.id, x.position]);
+        expect(positionsOf(base.id)).toEqual([
+          [false, 0],
+          [true, 1],
+        ]);
+        expect(positionsOf(r1.id)).toEqual([[false, 0]]);
       },
     );
+
+    it("W-1187: a new NSF fee line lands LAST on an invoice whose lines are positioned", async () => {
+      const { tenantId, customerId } = await newTenant("pos-last");
+      const [pa, pb] = await Promise.all(
+        ["Zebra", "Apple"].map((name) =>
+          prisma.product.create({ data: { tenantId, name, unit: "each", pricePerUnit: 5 } }),
+        ),
+      );
+      const invoice = await prisma.invoice.create({
+        data: {
+          tenantId,
+          customerId,
+          invoiceNumber: `INV-2242-${RUN}-${seq}`,
+          status: "SENT",
+          subtotal: 10,
+          taxAmount: 0,
+          total: 10,
+        },
+      });
+      for (const [i, p] of [pa, pb].entries()) {
+        await prisma.invoiceItem.create({
+          data: {
+            tenantId,
+            invoiceId: invoice.id,
+            productId: p.id,
+            description: p.name,
+            qty: 1,
+            unitPrice: 5,
+            subtotal: 5,
+            position: i,
+          },
+        });
+      }
+      const nsf = await bounceCheck(tenantId, invoice.id, 4, false);
+      expect(nsf.position).toBe(2);
+      // and nothing else moved
+      const lines = await prisma.invoiceItem.findMany({
+        where: { invoiceId: invoice.id },
+        orderBy: { position: "asc" },
+      });
+      expect(lines.map((l) => [l.description, l.position])).toEqual([
+        ["Zebra", 0],
+        ["Apple", 1],
+        [nsf.description, 2],
+      ]);
+    });
   },
 );

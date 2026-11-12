@@ -320,3 +320,22 @@ body {
     animation: none !important;
   }
 }
+
+/* W-1185 — the item-count chip (builder and till) pulses for ~300 ms each time its text changes, so the person
+   scanning sees the count move. transform / opacity only, and only for a person who has not asked for less motion. */
+@media (prefers-reduced-motion: no-preference) {
+  .rf-count-pulse {
+    display: inline-block;
+    animation: rf-count-pulse 300ms ease-out;
+  }
+  @keyframes rf-count-pulse {
+    from {
+      opacity: 0.55;
+      transform: scale(0.94);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+}

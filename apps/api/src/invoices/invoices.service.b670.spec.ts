@@ -626,10 +626,11 @@ describe("InvoicesService — update() line preservation", () => {
       const a = legacy({ id: "a", qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12, subtotal: 22 });
       const b = legacy({ id: "b", qty: 48, boxes: 2, pieces: 0, unitsPerBox: 24, subtotal: 22 });
       arrange([a, b]);
+      // the payload is in the order the (legacy, A-Z) invoice is shown in, so the save writes no position (W-1187)
       await service.update("inv-box", {
         items: [
-          payload({ id: "a", qty: 36, boxes: 3, pieces: 0 }),
           payload({ id: "b", qty: 48, boxes: 2, pieces: 0 }),
+          payload({ id: "a", qty: 36, boxes: 3, pieces: 0 }),
         ],
       } as any);
       expect(prisma.invoiceItem.update).toHaveBeenCalledTimes(1);

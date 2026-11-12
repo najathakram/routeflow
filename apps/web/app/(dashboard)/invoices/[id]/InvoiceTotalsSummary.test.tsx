@@ -118,3 +118,18 @@ describe("InvoiceTotalsSummary Balance due colour (SA-1066 M5)", () => {
     expect(row()).toHaveClass("text-success");
   });
 });
+
+describe("InvoiceTotalsSummary item count (W-1185)", () => {
+  it("shows the count as the first row, label Items, not styled as money", () => {
+    render(<InvoiceTotalsSummary {...BASE} itemCount="3 lines · 2 boxes · 6 pcs" />);
+    const row = screen.getByTestId("invoice-item-count");
+    expect(row).toHaveTextContent("Items3 lines · 2 boxes · 6 pcs");
+    expect(row.querySelector(".money")).toBeNull();
+    expect(row.parentElement!.firstElementChild).toBe(row);
+  });
+
+  it("without a count there is no Items row", () => {
+    render(<InvoiceTotalsSummary {...BASE} />);
+    expect(screen.queryByTestId("invoice-item-count")).not.toBeInTheDocument();
+  });
+});

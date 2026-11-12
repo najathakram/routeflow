@@ -38,6 +38,16 @@ export function useDeniedGroups(): string[] {
   return user?.role === "OPERATOR" ? deniedGroupsOf(perms.data) : [];
 }
 
+/**
+ * W-1170 F6: may the signed-in user save or undo a price on the product page? The server refuses
+ * `POST /products/:id/prices` and `/prices/undo` for an OPERATOR whose PRICING group is off, so every v2 price-edit entry
+ * (Edit, Change prices, a price cell, Undo) reads this one answer. Admins, a pending read and a failed read are
+ * allowed (same rule as `usePriceEditAllowed`: the server still refuses what the screen offered).
+ */
+export function usePriceGridEditAllowed(): boolean {
+  return !useDeniedGroups().includes("PRICING");
+}
+
 /** A till call the server refused because the account's admin has not turned selling on (403 PERMISSION_DENIED). */
 export function isPermissionDenied(err: unknown): boolean {
   return (

@@ -93,3 +93,5 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/landing-2026-11-05-w5.md](web/landing-2026-11-05-w5.md) | Window 5 (b0e0193854..b10bad52a0): Reopen order names the live-return sentence |
 | [web/landing-2026-11-05-w6.md](web/landing-2026-11-05-w6.md) | Windows 6-9 (b10bad52a0..25034e1228): AI paused and key sentences, Reopen order sentences |
 | [web/landing-2026-11-07-slipped.md](web/landing-2026-11-07-slipped.md) | 266095419c..ce0ed80a11: courtesy badge, already-have sentence, home founder-card width, wheel tile removed |
+| [web/landing-2026-11-10-w27-w28b.md](web/landing-2026-11-10-w27-w28b.md) | Windows 27 and 28b (415cf84fe0..a64c3774be): confirm-email-change page, units v2 price card fixes, one line-count chip |
+| [web/landing-2026-11-11-w29-w31.md](web/landing-2026-11-11-w29-w31.md) | Windows 29-31 (a64c3774be..6ecd409b16): counter auto-park, drag and Sort A-Z on order lines, counter date chip, WP11 Features tab |

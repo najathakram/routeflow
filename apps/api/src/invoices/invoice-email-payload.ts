@@ -2,7 +2,7 @@ import { isPaidAtSale, perBaseUnitPrice } from "@routeflow/pricing";
 import { formatDate } from "../messaging/messaging.helpers";
 import { computeDepositFields } from "./deposit-fields";
 import { confirmedBalance } from "./invoice-balance-classify";
-import { sortInvoiceLines } from "./invoice-line-order";
+import { invoiceLinesInOrder } from "./invoice-line-position";
 import { withFamilyNames } from "./invoice-line-name";
 import { invoiceItemQtyFields } from "./invoice-pdf-item";
 import { CREDIT_NOTE_METHOD, splitConfirmed } from "./payment-predicates";
@@ -72,7 +72,7 @@ export function buildInvoiceEmailPayload(
     advanceApplied,
     creditNoteNumbers,
     balanceDue,
-    items: withFamilyNames(sortInvoiceLines(inv.items as any[])).map((it: any) => ({
+    items: withFamilyNames(invoiceLinesInOrder(inv.items as any[])).map((it: any) => ({
       description: it.description,
       qty: Number(it.qty),
       unitPrice: Number(it.unitPrice),
@@ -127,7 +127,7 @@ export function buildReminderEmailPayload(inv: any, x: EmailPayloadParts) {
     advanceApplied,
     creditNoteNumbers,
     balanceDue,
-    items: withFamilyNames(sortInvoiceLines(inv.items as any[])).map((it: any) => ({
+    items: withFamilyNames(invoiceLinesInOrder(inv.items as any[])).map((it: any) => ({
       description: it.description,
       qty: Number(it.qty),
       unitPrice: Number(it.unitPrice),

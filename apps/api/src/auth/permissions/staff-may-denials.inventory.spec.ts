@@ -178,6 +178,7 @@ describe("staffMay call inventory: every call passes deniedGroups (W-870)", () =
         "auth/permissions/price-edit-answer.ts": 2, // roleMayEditPrice ([], the shadow answer) + mayEditPrice
         "orders/counter-sale/till-permission.guard.ts": 2,
         "orders/fulfil-path-resolver.ts": 1,
+        "orders/order-date.ts": 1, // W-1188: SET_ORDER_DATE, the one order-date gate (deniedGroups required)
         "selling-restrictions/restriction-warning.ts": 1,
       },
       mayUseTill: {

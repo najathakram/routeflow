@@ -84,7 +84,11 @@ describeDb(
 
     const anything: any = () =>
       new Proxy({}, { get: () => jest.fn().mockResolvedValue(undefined) });
-    const gateway: any = { emitCreditNoteCreated: jest.fn(), emitInvoiceUpdated: jest.fn() };
+    const gateway: any = {
+      emitCreditNoteCreated: jest.fn(),
+      emitInvoiceUpdated: jest.fn(),
+      emitCreditNoteVoided: jest.fn(), // B548: cancelling a REFUNDED return emits the void after commit
+    };
 
     async function newTenant(pair: string) {
       const slug = assertTestTenant(

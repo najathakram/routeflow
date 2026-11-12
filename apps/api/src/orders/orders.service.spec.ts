@@ -111,6 +111,7 @@ const isoDaysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOStr
 
 const operatorPayload = {
   sub: "user-op",
+  tenantId: "tenant-1",
   username: "operator",
   role: "OPERATOR" as const,
   status: "ACTIVE" as const,
@@ -170,6 +171,7 @@ describe("OrdersService", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    prisma.user.findFirst.mockResolvedValue({ deniedPermissionGroups: [], permissionsVersion: 1 }); // W-870: the operator holds every group (the order-date gate reads it)
     stock = wireStockHelper(prisma, { ample: true });
     prisma.order.updateMany.mockResolvedValue({ count: 1 }); // SA-404f F2: cancel CAS claims
     tenantCtx = { run: jest.fn((_tenantId: string | null, fn: () => unknown) => fn()) };
@@ -2547,7 +2549,7 @@ describe("OrdersService", () => {
           },
           operatorPayload,
         ),
-      ).rejects.toThrow(/future/i);
+      ).rejects.toThrow(/too far ahead/i);
     });
 
     it("rejects an order date more than 2 years old", async () => {
@@ -2669,7 +2671,8 @@ describe("OrdersService", () => {
   });
 
   describe("sweepAllPendingOrders — tenant scoping (B323)", () => {
-    const noMismatches = { packMismatches: 0, livePackFallbacks: 0 }; // SA-124: neither below
+    // SA-124: neither below; B324: no merge failed either.
+    const noMismatches = { packMismatches: 0, livePackFallbacks: 0, failed: 0 };
     it("REG-B323 sweepAllPendingOrders runs each customer group inside its own tenant context and skips null-tenant groups", async () => {
       const mergeSpy = jest
         .spyOn(service, "mergeAllPendingForCustomer")
@@ -9376,7 +9379,11 @@ describe("OrdersService", () => {
         await service.approveChangeRequestAtStop("cr-1", operatorPayload, null);
 
         expect(prisma.orderItem.create).toHaveBeenCalled();
-        expect(prisma.orderItem.update).not.toHaveBeenCalled();
+        // the CANCELLED row is not revived or rewritten: the only write it may get is its display slot (W-1187 densify)
+        for (const [arg] of prisma.orderItem.update.mock.calls) {
+          expect(Object.keys(arg.data)).toEqual(["position"]);
+        }
+        expect(prisma.orderItem.create.mock.calls[0][0].data).toMatchObject({ position: 1 });
       });
 
       it("P4: the at-door approval still aborts before any claim when the un-send throws for recorded payments", async () => {

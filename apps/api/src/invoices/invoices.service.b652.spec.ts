@@ -353,6 +353,7 @@ describe("InvoicesService — B652 unit-line partial billing", () => {
   describe("createInvoiceFromOrder — the remainder of a Case line (SA-178)", () => {
     const txFor = (invoicedQty: number) => {
       const txClient = {
+        tenantConfig: { findUnique: jest.fn().mockResolvedValue(null) }, // W-1188: the numbering year reads the zone on the tx
         order: {
           findFirst: jest.fn().mockResolvedValue({ status: "PENDING" }), // F2b re-judge
           findUnique: jest.fn().mockResolvedValue({

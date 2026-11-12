@@ -1,6 +1,7 @@
 import { ConflictException, ForbiddenException } from "@nestjs/common";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
+import { liveLines } from "./buyer-denomination";
 import { latestEditRevisionNumber } from "./order-revisions";
 
 /**
@@ -39,9 +40,8 @@ type Principal = { role?: string; sub?: string } | undefined;
 const isCancelled = (l: { status?: string | null }): boolean => l.status === "CANCELLED";
 const isStrikeOff = (i: ItemLike): boolean => i.action === "CANCEL" || i.action === "DELETE";
 
-/** SA-422 (3): the live lines — the only ones that may decide a fresh add's denomination. */
-export const liveLines = <T extends { status?: string | null }>(lines: readonly T[]): T[] =>
-  lines.filter((l) => !isCancelled(l));
+/** SA-422 (3): `liveLines` lives in the pure `buyer-denomination` module (SA-1118 MUST-1); re-exported here. */
+export { liveLines };
 
 /** Products with at least one CANCELLED line and no live line on the order. */
 export function sellerCancelledOnly(lines: readonly LineLike[]): Set<string> {

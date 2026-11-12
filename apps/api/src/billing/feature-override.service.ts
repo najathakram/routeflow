@@ -229,7 +229,13 @@ export class FeatureOverrideService {
     });
   }
 
-  async create(params: CreateFeatureOverrideParams) {
+  /**
+   * `tx` (WP11): when a transaction client is passed every write goes through it and the cache is NOT invalidated
+   * here (nothing is visible before commit); the caller invalidates after the commit. Without it, behaviour is
+   * unchanged.
+   */
+  async create(params: CreateFeatureOverrideParams, tx?: Prisma.TransactionClient) {
+    const db = tx ?? this.prisma;
     if (!isRegisteredFeatureKey(params.featureKey)) {
       throw new BadRequestException({
         statusCode: 400,
@@ -261,7 +267,7 @@ export class FeatureOverrideService {
       // row still counts toward it, blocking a re-grant/re-deny of the same key until someone
       // manually revokes the stale row (Opus review of 8130b204, item 5). Auto-close it first;
       // updateMany no-ops (0 rows) in the common case where nothing has expired.
-      await this.prisma.tenantFeatureOverride.updateMany({
+      await db.tenantFeatureOverride.updateMany({
         where: {
           tenantId: params.tenantId,
           featureKey: params.featureKey,
@@ -270,7 +276,7 @@ export class FeatureOverrideService {
         },
         data: { revokedAt: new Date() },
       });
-      const row = await this.prisma.tenantFeatureOverride.create({
+      const row = await db.tenantFeatureOverride.create({
         data: {
           tenantId: params.tenantId,
           featureKey: params.featureKey,
@@ -284,7 +290,7 @@ export class FeatureOverrideService {
           createdById: params.createdById,
         },
       });
-      this.invalidate(params.tenantId);
+      if (!tx) this.invalidate(params.tenantId);
       return row;
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
@@ -296,17 +302,18 @@ export class FeatureOverrideService {
     }
   }
 
-  async revoke(tenantId: string, id: string) {
+  async revoke(tenantId: string, id: string, tx?: Prisma.TransactionClient) {
+    const db = tx ?? this.prisma;
     try {
       // `where: { id, tenantId }` -- not just `{ id }` (Opus review of 8130b204, item 3): id
       // alone would let tenant B revoke tenant A's row by id under tenant B's URL, mis-audited
       // and mis-invalidated (tenant A's own cache never cleared). Prisma enforces both
       // conditions together and throws P2025 when the row doesn't belong to this tenant.
-      const row = await this.prisma.tenantFeatureOverride.update({
+      const row = await db.tenantFeatureOverride.update({
         where: { id, tenantId },
         data: { revokedAt: new Date() },
       });
-      this.invalidate(tenantId);
+      if (!tx) this.invalidate(tenantId);
       return row;
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2025") {

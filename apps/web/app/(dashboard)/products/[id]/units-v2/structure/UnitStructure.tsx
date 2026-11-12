@@ -3,6 +3,7 @@
 import * as React from "react";
 import { priceGrid, validateSetPrice } from "@routeflow/pricing";
 import type { ProductPriceGridDto, ProductPriceGridRowDto } from "@routeflow/types";
+import { usePriceGridEditAllowed } from "@/lib/api/my-permissions";
 import { usePriceGrid } from "@/lib/api/usePriceGrid";
 import { formatMoney } from "@/lib/format";
 import { usePriceDraft } from "../edit/usePriceDraft";
@@ -77,6 +78,7 @@ export function UnitStructureControls({
   // commits it (CAS, audit, undo). If the refetch failed, the row is missing, or the draft is no longer clean, nothing
   // is injected, ever: the price is dropped and the user is told to type it. No write happens here.
   const { startEditing } = draft;
+  const mayEdit = usePriceGridEditAllowed();
   const setText = draft.api.setText;
   const gridFetching = gridQuery.isFetching === true;
   const gridFailed = gridQuery.isError === true;
@@ -88,7 +90,11 @@ export function UnitStructureControls({
       setNote(PRICE_NOT_KEPT);
       return;
     }
-    startEditing({ ref: row.ref, tier: 1, layout: visibleLayout() });
+    // F6: staff without PRICING cannot open an editor; leave no stuck draft behind.
+    if (!startEditing({ ref: row.ref, tier: 1, layout: visibleLayout() })) {
+      setNote(PRICE_NOT_KEPT);
+      return;
+    }
     setText(row.ref, 1, pendingPrice.price, "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingPrice, served, gridFetching, gridFailed]);
@@ -157,7 +163,7 @@ export function UnitStructureControls({
           hintId={hintId}
           pieceMissing={pieceMissing}
           noPack={noPack}
-          validatePrice={cellPriceProblem}
+          validatePrice={mayEdit ? cellPriceProblem : undefined}
           onOpen={() => {
             setNote("");
           }}
@@ -166,13 +172,13 @@ export function UnitStructureControls({
             if (added.price !== "") setPendingPrice(added);
           }}
         />
-        {reset.rows.length > 0 && (
+        {mayEdit && reset.rows.length > 0 && (
           <ResetToAutoPanel
             disabled={draft.dirty}
             onApply={() => {
               if (draft.dirty) return;
               // The draft's reset only fills the draft: open edit mode too, so the save bar is there to Save or Cancel.
-              draft.startEditing();
+              if (!draft.startEditing()) return;
               draft.resetAllToAuto();
               setFocusBar(true);
             }}

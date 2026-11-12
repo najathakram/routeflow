@@ -292,7 +292,11 @@ describe("AuthService", () => {
         sub: "user-1",
         type: "email_verify",
         tenantId: "tenant-1",
+        jti: "link-1",
       });
+      // B448: the account holds one live sign-up link row, and the claim of it wins.
+      (prisma.userEmailVerificationToken.count as jest.Mock).mockResolvedValue(1);
+      prisma.txExecuteRaw.mockResolvedValue(1);
       prisma.tenant.findUnique.mockResolvedValue({ slug: "acme-distribution" } as any);
       prisma.refreshToken.upsert.mockResolvedValue({} as any);
     });

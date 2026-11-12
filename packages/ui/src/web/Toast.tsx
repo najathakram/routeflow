@@ -25,6 +25,8 @@ export interface ToastData {
   action?: ToastAction;
   /** Optional second action beside `action` (e.g. "View limits" next to Undo). */
   secondaryAction?: ToastAction;
+  /** Called once when the toast closes for any reason (expiry, close, swipe, an action, `dismiss`). */
+  onDismiss?: () => void;
 }
 
 // ─── Variant config ───────────────────────────────────────────────────────────
@@ -64,9 +66,14 @@ const ToastContext = React.createContext<ToastContextValue | null>(null);
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = React.useState<ToastData[]>([]);
+  const live = React.useRef<ToastData[]>([]);
 
   const removeToast = React.useCallback((id: string) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
+    const gone = live.current.find((t) => t.id === id);
+    if (!gone) return; // already closed: onDismiss runs once
+    live.current = live.current.filter((t) => t.id !== id);
+    setToasts(live.current);
+    gone.onDismiss?.();
   }, []);
 
   const addToast = React.useCallback((data: Omit<ToastData, "id">): string => {
@@ -74,7 +81,8 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
         ? crypto.randomUUID()
         : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    setToasts((prev) => [...prev, { ...data, id }]);
+    live.current = [...live.current, { ...data, id }];
+    setToasts(live.current);
     return id;
   }, []);
 

@@ -29,6 +29,7 @@ unchanged, in `apps/api/prisma/migrations/`.
 - **Multi-tenant**: new models/columns must carry/relate to `tenantId`; every query stays tenant-scoped.
 - Destructive migrations are blocked in CI by Squawk (`npm run lint:migrations`); whitelist a
   statement with `-- reason:` + `-- squawk-ignore <rule>`.
+- Expand/contract reference for renames and drops: `~/.claude/skill-library/addy-deprecation-and-migration/SKILL.md` (machine-local; skip if absent).
 
 ## Local workflow
 

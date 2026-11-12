@@ -582,7 +582,7 @@ describe("K8 seams", () => {
     expect(draft.toRequest()?.customerMoves).toEqual([]);
   });
 
-  it("W-1: the Piece row with no unit behind it takes a price: its box starts on the Auto figure, and typing keeps the row's barcode dash", async () => {
+  it("W-1: the Piece row with no unit behind it takes a price: its box starts on the Auto figure, and typing never shows the case code (and no dash)", async () => {
     const packRow = {
       ref: "pack",
       label: "Case",
@@ -615,7 +615,8 @@ describe("K8 seams", () => {
     expect(input.getAttribute("placeholder")).toBe("0.46");
     await user.type(input, "0.9");
     expect(input).toHaveValue("0.9");
-    expect(row.getByTestId(T.code("base")).textContent).toBe("—");
+    expect(row.queryByTestId(T.code("base"))).toBeNull();
+    expect(row.queryByText("200000000007")).toBeNull();
   });
 
   it("W-2: a base row the grid marks editable:false shows its figures and its reason, with no input", async () => {

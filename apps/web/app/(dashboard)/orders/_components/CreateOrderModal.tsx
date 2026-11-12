@@ -49,6 +49,7 @@ import { ResumeUnsentOrderDialog } from "./ResumeUnsentOrderDialog";
 import { DraftConflictDialog } from "./DraftConflictDialog";
 import { apiClient } from "@/lib/api-client";
 import { useTenantToday } from "@/lib/tenant-timezone";
+import { LineCountChip } from "./LineCountChip";
 import { ACTION_TOAST_MS, addedLineQty, showOrderCreatedToast } from "./order-created-toast";
 import {
   mergePieceIntoLine,
@@ -1740,7 +1741,7 @@ export function CreateOrderModal({
       const parkedId = autosave.getDraftId();
       toast({
         title: "Draft saved",
-        description: "Find it in the drafts dock to resume.",
+        description: "Tap the parked draft chip, bottom left, to resume.",
         variant: "success",
         ...(parkedId
           ? {
@@ -2564,12 +2565,14 @@ export function CreateOrderModal({
           {lineItems.length > 0 && (
             <div
               data-testid="create-order-footer-total"
-              className="mr-auto flex min-w-0 items-baseline gap-2 tabular-nums text-navy"
+              className="mr-auto flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 tabular-nums text-navy"
             >
               <span className="text-sm text-navy/70">Total</span>
               <span className="min-w-0 break-all text-base font-semibold">
                 {taxPending ? PENDING : formatMoney(total)}
               </span>
+              {/* W-1185: the running item count, to check against the goods before saving. */}
+              <LineCountChip lines={lineItems} />
             </div>
           )}
           {/* Two-tier hierarchy: secondary (alt save) <

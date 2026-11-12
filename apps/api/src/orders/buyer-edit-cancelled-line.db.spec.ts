@@ -320,7 +320,11 @@ describeDb(
       expect((await rows(o.id)).filter((r) => r.status !== "CANCELLED").map(money)).toEqual(
         liveBefore,
       );
-      expect((await rows(o.id)).filter((r) => r.status === "CANCELLED")).toEqual(cancelledBefore);
+      // W-1187: the buyer save may fill a legacy NULL display slot (dense 0..n-1); nothing else on the row moves
+      const stripSlot = ({ position: _p, updatedAt: _u, ...rest }: Record<string, unknown>) => rest;
+      const cancelledAfter = (await rows(o.id)).filter((r) => r.status === "CANCELLED");
+      expect(cancelledAfter.map(stripSlot)).toEqual(cancelledBefore.map(stripSlot));
+      expect(cancelledAfter.map((r) => r.position)).toEqual([0]);
     });
 
     it("diff path (DRIVER): UPDATE on a cancelled id is a 409; CANCEL on it is a 200 no-op", async () => {

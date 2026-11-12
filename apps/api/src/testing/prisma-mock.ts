@@ -222,6 +222,7 @@ export function createMockPrisma(): MockPrisma {
     orderIdempotencyKey: modelProxy(),
     passwordResetToken: modelProxy(),
     userEmailVerificationToken: modelProxy(),
+    userEmailChange: modelProxy(),
     saleDraft: modelProxy(),
     trackedCategory: idEcho(modelProxy()),
     trackedSubcategory: modelProxy(),

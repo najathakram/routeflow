@@ -1080,7 +1080,7 @@ export class OrderTemplatesService {
 
     const tenantId = this.prisma.getTenantId();
     let subtotal = 0;
-    const lineItemsData = allowedItems.map((item) => {
+    const lineItemsData = allowedItems.map((item, index) => {
       const product = productMap.get(item.productId);
       if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
       const tierForProduct = cpTier.get(item.productId) ?? defaultTier;
@@ -1147,6 +1147,8 @@ export class OrderTemplatesService {
         promoFreeUnits: resolved.freeUnits > 0 ? resolved.freeUnits : null,
         subtotal: itemSubtotal,
         notes: item.notes ?? undefined,
+        // W-1187: the standing order's own line order (its template index) is the new order's order
+        position: index,
         // W4/W6b: snapshot the product's regulated category at sale time (unchanged).
         trackedCategoryId: product.trackedCategoryId ?? null,
         categoryTaxAmount,

@@ -129,9 +129,15 @@ interface CellView {
   aria: string;
 }
 
-/** SA-1082: a piece level no unit backs yet has its Auto prices but no barcode (the API serves the pack's code on it). */
-const barcodeText = (row: ProductPriceGridRowDto): string =>
-  row.unbacked ? "—" : (row.code ?? "No barcode");
+/**
+ * SA-1082: a piece level no unit backs yet has its Auto prices but no barcode (the API serves the pack's code on it).
+ * P5/P29: it then shows no barcode text at all (never a lone dash); a unit with none says "No barcode", the one empty form.
+ */
+const barcodeText = (row: ProductPriceGridRowDto): string | null =>
+  row.unbacked ? null : (row.code ?? "No barcode");
+
+/** P29: unit names read with a capital in the grid ("Case", "Piece"), whatever case the unit was typed in. */
+const unitName = (label: string): string => label.charAt(0).toUpperCase() + label.slice(1);
 
 function cellView(
   row: ProductPriceGridRowDto,
@@ -163,6 +169,8 @@ interface EditTarget {
   edit: GridEditApi;
   ref: string;
   name: string;
+  /** The tenant's name for tier 1. */
+  retailName: string;
   unit: string;
   layout: "table" | "card";
   original: string;
@@ -175,10 +183,28 @@ interface EditTarget {
  * "Set" only: an Auto box already shows its value as the grey placeholder, so its "Auto" is left to screen readers
  * (`wordId` is what the input's aria-describedby points at).
  */
-function CellDisplay({ view, dim, wordId }: { view: CellView; dim?: boolean; wordId?: string }) {
+function CellDisplay({
+  view,
+  dim,
+  wordId,
+  leader,
+}: {
+  view: CellView;
+  dim?: boolean;
+  wordId?: string;
+  /** The tenant's name for tier 1, in the "Follows ..." caption of an Auto tier box (P28). */
+  leader?: string;
+}) {
+  // `tier` here is the grid column (1 = Retail), not a customer's tier: the Retail column follows nothing by name.
+  const isRetailColumn = view.tier === 1;
   return (
     <>
       {!dim && <div className="font-medium tabular-nums text-navy">{view.display}</div>}
+      {dim && view.word === "Auto" && !isRetailColumn && leader && (
+        <div aria-hidden="true" className="mt-0.5 text-[11px] text-navy/45">
+          Follows {leader}
+        </div>
+      )}
       {view.word && !(dim && view.word === "Auto") && (
         <div className={`text-[11px] ${dim ? "mt-0.5 text-navy/45" : "text-navy/60"}`}>
           {view.word}
@@ -326,6 +352,7 @@ function PriceCell({
           <CellDisplay
             view={view}
             dim
+            leader={target.retailName}
             wordId={`${T.word(target.layout, target.ref, view.tier)}${target.sfx}`}
           />
         </>
@@ -512,6 +539,7 @@ export function ProductPricesGrid({
       edit,
       ref: row.ref,
       name: names[i],
+      retailName: names[0],
       unit: row.label,
       layout,
       original: originalText(
@@ -565,24 +593,26 @@ export function ProductPricesGrid({
                   className={`align-top ${ROW_RULE} [&:last-child>*]:border-b-0`}
                 >
                   <th scope="row" className={`${UNIT_CELL} py-3 font-medium text-navy`}>
-                    {row.label}
+                    {unitName(row.label)}
                     {compact ? (
                       <div className="mt-0.5 text-xs font-normal text-navy/60">
-                        {containsLines(row, ascending)[0]
+                        {containsLines(row, ascending)[0] && barcodeText(row)
                           ? `${containsLines(row, ascending)[0]} · `
-                          : ""}
-                        <span data-testid={T.code(row.ref)} className="tabular-nums">
-                          {barcodeText(row)}
-                        </span>
+                          : (containsLines(row, ascending)[0] ?? "")}
+                        {barcodeText(row) ? (
+                          <span data-testid={T.code(row.ref)} className="tabular-nums">
+                            {barcodeText(row)}
+                          </span>
+                        ) : null}
                       </div>
-                    ) : (
+                    ) : barcodeText(row) ? (
                       <div
                         data-testid={T.code(row.ref)}
                         className="mt-0.5 text-xs font-normal tabular-nums text-navy/60"
                       >
                         {barcodeText(row)}
                       </div>
-                    )}
+                    ) : null}
                     {/* N7: outside the row header (it would join the header's name); compact has no Contains cell, so there it stays */}
                     {!compact && !showContains && (
                       <div
@@ -638,7 +668,7 @@ export function ProductPricesGrid({
               data-testid={T.card(row.ref)}
               className={`rounded-md border p-3 max-sm:pt-2 ${FRAME_BORDER}`}
             >
-              <div className="font-medium text-navy">{row.label}</div>
+              <div className="font-medium text-navy">{unitName(row.label)}</div>
               <NotEditable row={row} />
               {rowAction?.(row, "card")}
               <div className="text-xs text-navy/70">
@@ -646,9 +676,11 @@ export function ProductPricesGrid({
                   <div key={l}>{l}</div>
                 ))}
               </div>
-              <div className="mb-2 max-sm:mb-1 text-xs text-navy/70">
-                Barcode: <span data-testid={T.code(row.ref)}>{barcodeText(row)}</span>
-              </div>
+              {barcodeText(row) ? (
+                <div className="mb-2 max-sm:mb-1 text-xs text-navy/70">
+                  Barcode: <span data-testid={T.code(row.ref)}>{barcodeText(row)}</span>
+                </div>
+              ) : null}
               <dl className="grid grid-cols-2 gap-2">
                 {TIERS.map((t, i) => {
                   const view = cellView(

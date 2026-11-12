@@ -45,7 +45,16 @@ interface InlineCreateProductModalProps {
   initialCost?: number;
   /** The counter: Save stays off until the price is above $0 (a blank price would sell a $0 line). */
   requirePrice?: boolean;
+  /** Fields to put back after an earlier Cancel (the counter's "Restore" on its "Item not created" toast). */
+  initialForm?: FormDraft;
+  /** Called with what was typed when the window is closed (Cancel, X, Esc) without creating, if anything was typed. */
+  onCancelWithInput?: (typed: FormDraft) => void;
 }
+
+/** The fields a clerk types in this window, kept when it is cancelled so they can be put back. */
+export type FormDraft = Partial<
+  Record<"name" | "sku" | "unit" | "pricePerUnit" | "category" | "unitsPerBox", string>
+>;
 
 /** SA-1071 I4: a new item's price at or above this gets a "check the price" note. A note, never a block. */
 export const NEW_ITEM_PRICE_CHECK = 1000;
@@ -73,6 +82,8 @@ export function InlineCreateProductModal({
   initialPrice,
   initialCost,
   requirePrice = false,
+  initialForm,
+  onCancelWithInput,
 }: InlineCreateProductModalProps) {
   const { toast } = useToast();
   const w = unitWords();
@@ -132,9 +143,36 @@ export function InlineCreateProductModal({
         name: initialName,
         sku: initialSku || "",
         ...(initialPrice != null ? { pricePerUnit: initialPrice.toFixed(2) } : {}),
+        ...(initialForm ?? {}),
       }));
     }
-  }, [isOpen, initialName, initialSku, initialPrice]);
+  }, [isOpen, initialName, initialSku, initialPrice, initialForm]);
+
+  // Cancel, X and Esc all close through here: whatever was typed is handed back first, so the caller can offer it again.
+  const formRef = React.useRef(form);
+  formRef.current = form;
+  const closeRef = React.useRef<() => void>(() => undefined);
+  closeRef.current = () => {
+    const f = formRef.current;
+    const typed =
+      f.unit.trim() !== "" ||
+      f.pricePerUnit.trim() !== "" ||
+      f.category.trim() !== "" ||
+      f.unitsPerBox.trim() !== "" ||
+      f.name.trim() !== (initialName ?? "").trim() ||
+      f.sku.trim() !== (initialSku ?? "").trim();
+    if (typed && onCancelWithInput) {
+      onCancelWithInput({
+        name: f.name,
+        sku: f.sku,
+        unit: f.unit,
+        pricePerUnit: f.pricePerUnit,
+        category: f.category,
+        unitsPerBox: f.unitsPerBox,
+      });
+    }
+    onClose();
+  };
 
   // SA-1066 FL1: Escape closes the window by the same call as Cancel and X (none of the three asks about a discard). Read at the
   // window in the capture phase so it works wherever focus sits, and so an order-builder Modal around us (Radix reads Escape at the
@@ -155,11 +193,11 @@ export function InlineCreateProductModal({
       e.preventDefault();
       if ((e.target as Element | null)?.hasAttribute?.("aria-controls")) return; // the list closes itself
       e.stopPropagation();
-      onClose();
+      closeRef.current();
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [isOpen, onClose]);
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -302,7 +340,7 @@ export function InlineCreateProductModal({
           <h2 className="text-base font-semibold text-navy">New product</h2>
           <button
             type="button"
-            onClick={onClose}
+            onClick={() => closeRef.current()}
             className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy"
           >
             <X size={18} />
@@ -545,7 +583,7 @@ export function InlineCreateProductModal({
           </div>
 
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="secondary" type="button" onClick={onClose}>
+            <Button variant="secondary" type="button" onClick={() => closeRef.current()}>
               Cancel
             </Button>
             <Button
