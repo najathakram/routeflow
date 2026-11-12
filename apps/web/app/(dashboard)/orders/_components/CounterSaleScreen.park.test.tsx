@@ -6,6 +6,7 @@ import { addDays } from "@routeflow/pricing";
 import { calendarDayInZone } from "@/lib/calendar-date";
 import {
   COUNTER_CHECK_ZONE_LOADING_COPY,
+  COUNTER_ORDER_DATE_ZONE_FAILED_COPY,
   COUNTER_PRICE_EDIT_NOT_PERMITTED_COPY,
 } from "@/lib/counter-sale";
 import {
@@ -1253,6 +1254,38 @@ describe("order date chip on the till", () => {
     fireEvent.click(parkBtn());
     await waitFor(() => expect(parkCalls()).toHaveLength(1));
     expect(parkCalls()[0][1].payload).not.toHaveProperty("orderDate");
+  });
+
+  it("R8: when the business day cannot be read, the chip says couldn't check (not checking for ever) and Complete shows the failed copy", async () => {
+    const view = renderScreen();
+    await scan("COLA");
+    await pickYesterday();
+    const liveKey = () =>
+      Object.keys(window.localStorage).find((k) => k.includes("liveCart")) as string;
+    await waitFor(() => {
+      const saved = window.localStorage.getItem(liveKey());
+      expect(saved && JSON.parse(saved).orderDate).toBe(YESTERDAY);
+    });
+    view.unmount();
+    const original = get.getMockImplementation()!;
+    get.mockImplementation((url: string) =>
+      url === "/settings" ? Promise.reject(new Error("settings down")) : original(url),
+    );
+    renderScreen();
+    await screen.findByTestId("counter-cart-restored");
+    await waitFor(() => expect(chip()).toHaveTextContent("couldn't check"));
+    expect(chip()).not.toHaveTextContent("checking");
+    expect(screen.getByTestId("counter-date-reminder")).toHaveTextContent(
+      COUNTER_ORDER_DATE_ZONE_FAILED_COPY,
+    );
+    expect(parkBtn()).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Exact" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    expect(await screen.findAllByText(COUNTER_ORDER_DATE_ZONE_FAILED_COPY)).not.toHaveLength(0);
+    expect(mutateAsync).not.toHaveBeenCalled();
+    // clearing the date frees the sale
+    fireEvent.click(screen.getByRole("button", { name: "Clear the order date, back to today" }));
+    await waitFor(() => expect(chip()).toHaveAttribute("data-direction", "TODAY"));
   });
 
   it("a scan made while the date picker is open is added to the cart, and focus lands in the scan box", async () => {

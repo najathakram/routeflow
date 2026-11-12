@@ -468,8 +468,14 @@ export function CounterSaleScreen() {
   React.useLayoutEffect(() => {
     scanTextRef.current = scanText;
   }, [scanText]);
+  // the scan box's own onChange rules (frozen while a sale or park is in flight; a miss message goes at the next keystroke),
+  // read through refs because the listener below is installed once. Assigned after `scan` exists.
+  const typingFrozenRef = React.useRef<() => boolean>(() => false);
+  const keystrokeRef = React.useRef<() => void>(() => undefined);
   const startScanHandover = (key: string) => {
+    if (typingFrozenRef.current()) return; // a sale or park is in flight: the key is dropped, not queued ahead of the next scan
     handoverRef.current = true;
+    keystrokeRef.current();
     scanTextRef.current += key;
     setScanText(scanTextRef.current);
   };
@@ -480,14 +486,19 @@ export function CounterSaleScreen() {
     };
     window.addEventListener("pointerdown", disarm, true);
     const onHandover = (e: KeyboardEvent): void => {
-      if (e.ctrlKey || e.metaKey || e.altKey) return; // a combo is not part of a scan: pass through, stay armed
+      // AltGr (Ctrl+Alt on non-US layouts) types a character; any other combo is not part of a scan: pass through, stay armed
+      const altGr = e.getModifierState?.("AltGraph") === true;
+      if (!altGr && (e.ctrlKey || e.metaKey || e.altKey)) return;
       if (["Shift", "CapsLock", "Alt", "Control", "Meta"].includes(e.key)) return;
       const scanEl = scanRef.current;
       if (scanEl && document.activeElement === scanEl) {
         if (e.key.length !== 1) disarm(); // Enter (the form submits), Escape, Tab, arrows: the hand-over is over; letters type
         return;
       }
-      if (counterDialogOpen() || isTextEntryActive()) return disarm();
+      // A code is never split: wherever the till's OWN refocus put the cursor (the customer search while a walk-in sale waits
+      // for its buyer, or nowhere on a touch-first till), the keys keep going to the scan text. Only an open window ends it
+      // here; a click, Tab or any other non-character key ends it below.
+      if (counterDialogOpen()) return disarm();
       if (e.key === "Enter") {
         e.preventDefault();
         e.stopImmediatePropagation();
@@ -498,6 +509,8 @@ export function CounterSaleScreen() {
       if (e.key.length === 1) {
         e.preventDefault();
         e.stopImmediatePropagation();
+        if (typingFrozenRef.current()) return;
+        keystrokeRef.current();
         scanTextRef.current += e.key;
         setScanText(scanTextRef.current);
         lastScanActivityRef.current = performance.now();
@@ -998,6 +1011,8 @@ export function CounterSaleScreen() {
     scan.submit(text);
   }
   submitScanRef.current = submitScanText;
+  typingFrozenRef.current = () => lineLocked || saleInFlight();
+  keystrokeRef.current = () => scan.dismissMessage();
   function onScanSubmit(e: React.FormEvent) {
     e.preventDefault();
     submitScanText(scanText);
@@ -1677,6 +1692,7 @@ export function CounterSaleScreen() {
           onDone={refocusAfterDialog}
           onScan={submitScanText}
           onScanKey={startScanHandover}
+          todayFailed={zoneStatus === "failed"}
         />
         {gate.offerShipInstead ? (
           <WriteButton
@@ -2461,7 +2477,11 @@ export function CounterSaleScreen() {
               </p>
             ) : null}
 
-            <CounterDateReminder value={orderDate} today={today || undefined} />
+            <CounterDateReminder
+              value={orderDate}
+              today={today || undefined}
+              todayFailed={zoneStatus === "failed"}
+            />
             <div className="flex flex-wrap gap-2" data-testid="counter-checkout-actions">
               <Button
                 className="min-h-[44px]"

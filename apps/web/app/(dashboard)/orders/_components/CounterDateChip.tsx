@@ -10,6 +10,7 @@ import type { OrderDatePolicy } from "@routeflow/pricing";
 import { cn } from "@routeflow/ui/web";
 import { dayLabel, fullDayName } from "@/lib/natural-date";
 import { dateIfNotToday } from "@/lib/counter-order-date";
+import { COUNTER_ORDER_DATE_ZONE_FAILED_COPY } from "@/lib/counter-sale";
 import { CounterDatePicker } from "./CounterDatePicker";
 
 interface Props {
@@ -29,6 +30,8 @@ interface Props {
   onScan?: (code: string) => void;
   /** the till: a scan's first key was pressed in the picker; it closes with no date change and the till takes the rest */
   onScanKey?: (key: string) => void;
+  /** the business's day could not be read (not just slow): the chip says so instead of "checking" for ever */
+  todayFailed?: boolean;
 }
 
 export function CounterDateChip({
@@ -41,6 +44,7 @@ export function CounterDateChip({
   policy = "COUNTER",
   onScan,
   onScanKey,
+  todayFailed,
 }: Props) {
   const [open, setOpen] = React.useState(false);
   const mainRef = React.useRef<HTMLButtonElement>(null);
@@ -100,13 +104,13 @@ export function CounterDateChip({
   // R8: while the business's day is unknown the day is shown as a day being checked: not Today, not Dated, no colour claim.
   const text =
     direction === "UNKNOWN"
-      ? `${dayLabel(value, value)} · checking`
+      ? `${dayLabel(value, value)} · ${todayFailed ? "couldn't check" : "checking"}`
       : direction && value
         ? `Dated ${dayLabel(value, today ?? value)}${direction === "FORWARD" ? " · future" : ""}`
         : "Today";
   const name =
     direction === "UNKNOWN"
-      ? `Order date ${fullDayName(value)}, checking the business's day. Clear`
+      ? `Order date ${fullDayName(value)}, ${todayFailed ? "could not check the business's day" : "checking the business's day"}. Clear`
       : direction && value
         ? `${direction === "BACK" ? "Backdated to" : "Future-dated to"} ${fullDayName(value)}. Change or clear`
         : "Order date: today. Change";
@@ -181,11 +185,22 @@ export function CounterDateChip({
 export function CounterDateReminder({
   value,
   today,
+  todayFailed,
 }: {
   value: string;
   today: string | undefined;
+  todayFailed?: boolean;
 }) {
   if (!dateIfNotToday(value, today)) return null;
+  // While the business's day is unknown the chip says "checking": the reminder must not claim the sale is dated yet
+  if (!today)
+    return (
+      <p className="text-xs text-navy/70" data-testid="counter-date-reminder">
+        {todayFailed
+          ? COUNTER_ORDER_DATE_ZONE_FAILED_COPY
+          : "Checking today's date. Complete waits for it."}
+      </p>
+    );
   return (
     <p className="text-xs text-navy/70" data-testid="counter-date-reminder">
       This sale will be dated {dayLabel(value, today ?? value)}

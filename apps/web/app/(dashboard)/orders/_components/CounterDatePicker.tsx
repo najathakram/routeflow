@@ -122,13 +122,23 @@ export function CounterDatePicker({
   // key: the picker acts on nothing. On the till it closes with the date unchanged and hands the key on (onScanKey); the
   // till's one capture listener types the rest and submits. In the office there is no hand-over: the picker stays open and
   // swallows the run (keys, then its Enter) with a note. An Alt-coded scan (Alt+digits) is never kept: same inert run.
+  // A scanner may end a read with CR+LF (two Enters): after an inert run is ended by Enter, the NEXT key is swallowed too if it is
+  // Enter (key order, no clock). Any other key, or a pointer action, clears that state (the till's own CR+LF idea, row 237).
   const inertRun = React.useRef(false);
+  const afterRunEnter = React.useRef(false);
   const [scanNote, setScanNote] = React.useState(false);
   React.useEffect(() => {
-    if (open) {
+    if (!open) return;
+    inertRun.current = false;
+    afterRunEnter.current = false;
+    setScanNote(false);
+    // a click or tap is a person: it ends an inert run, so typing a date after a stray letter works
+    const person = () => {
       inertRun.current = false;
-      setScanNote(false);
-    }
+      afterRunEnter.current = false;
+    };
+    document.addEventListener("pointerdown", person, true);
+    return () => document.removeEventListener("pointerdown", person, true);
   }, [open]);
   const startInertRun = () => {
     inertRun.current = true;
@@ -140,26 +150,43 @@ export function CounterDatePicker({
       e.stopPropagation();
     };
     if (["Shift", "CapsLock", "Alt", "Control", "Meta"].includes(e.key)) return;
-    if (e.altKey && /^[0-9]$/.test(e.key)) {
+    // AltGr (Ctrl+Alt on non-US layouts) types a character: it is not an Alt-code and not a shortcut
+    const altGr = e.getModifierState?.("AltGraph") === true;
+    if (e.altKey && !altGr && /^[0-9]$/.test(e.key)) {
       swallow();
+      afterRunEnter.current = false;
       startInertRun();
+      return;
+    }
+    // focus in the text box is a person typing: an inert run ends there, so "fri" after a stray letter works
+    if (e.target === inputRef.current) {
+      inertRun.current = false;
+      afterRunEnter.current = false;
       return;
     }
     if (inertRun.current) {
       if (e.key === "Enter") {
         swallow();
         inertRun.current = false;
+        afterRunEnter.current = true; // a second Enter right after (CR+LF) is the scanner's too
         return;
       }
-      if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      if (e.key.length === 1 && (altGr || (!e.ctrlKey && !e.altKey && !e.metaKey))) {
         swallow();
         return;
       }
       inertRun.current = false; // any other key ends the run and acts as usual
       return;
     }
-    if (e.target === inputRef.current) return;
-    if (e.ctrlKey || e.altKey || e.metaKey || e.key.length !== 1 || e.key === " ") return;
+    if (afterRunEnter.current) {
+      afterRunEnter.current = false;
+      if (e.key === "Enter") {
+        swallow();
+        return;
+      }
+    }
+    if (!altGr && (e.ctrlKey || e.altKey || e.metaKey)) return;
+    if (e.key.length !== 1 || e.key === " ") return;
     swallow();
     if (onScanKey) {
       setText("");
