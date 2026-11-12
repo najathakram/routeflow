@@ -465,3 +465,24 @@ describe("T6b touch-first: a disarm outside the scan box (focus on BODY)", () =>
     },
   );
 });
+
+describe("T11 focus left on BODY while the picker is open (a month button at its limit)", () => {
+  it.each(SPEEDS)("the scan is kept whole at the edge of the range (%s)", async (speed) => {
+    const user = userAt(null);
+    const picker = await openPicker(user);
+    const next = within(picker).getByRole("button", { name: "Next month" });
+    for (let i = 0; i < 20 && next.getAttribute("aria-disabled") !== "true"; i++) {
+      await user.click(next);
+    }
+    expect(document.activeElement).toBe(next); // the limit keeps focus: nothing is thrown out to BODY
+    act(() => (document.activeElement as HTMLElement).blur()); // and if something does leave focus behind
+    expect(document.activeElement).toBe(document.body);
+    resolved.length = 0;
+    await type(speed, KNOWN);
+    await settle();
+    await waitFor(() => expect(itemNames()).toHaveLength(1));
+    expect(chip()).toHaveAttribute("data-direction", "TODAY");
+    expect(screen.queryByTestId("counter-date-picker")).toBeNull();
+    expect(resolved).toEqual([KNOWN]);
+  });
+});

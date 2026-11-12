@@ -650,4 +650,90 @@ describe("a scan's first key in the picker acts on nothing (no timing)", () => {
       expect(view.onChange).toHaveBeenLastCalledWith("2026-11-08");
     },
   );
+  it.each(SPEEDS)(
+    "C6 focus on BODY (nothing inside the picker holds it): a scan's first key is still caught, till and office (%s)",
+    async (_n, delay) => {
+      const user = userAt(delay);
+      const onScanKey = jest.fn();
+      const till = await openFresh(user, { onScanKey });
+      act(() => (document.activeElement as HTMLElement | null)?.blur());
+      expect(document.activeElement).toBe(document.body);
+      await user.keyboard("4006381333931");
+      expect(onScanKey).toHaveBeenCalledTimes(1);
+      expect(onScanKey).toHaveBeenCalledWith("4");
+      expect(till.onChange).not.toHaveBeenCalled();
+      expect(screen.queryByTestId("counter-date-picker")).toBeNull();
+      cleanup();
+
+      const office = await openFresh(user, { policy: "OFFICE" });
+      act(() => (document.activeElement as HTMLElement | null)?.blur());
+      expect(document.activeElement).toBe(document.body);
+      await user.keyboard("4006381333931{Enter}{Enter}");
+      expect(office.onChange).not.toHaveBeenCalled();
+      expect(screen.getByTestId("counter-date-picker")).toBeInTheDocument();
+      expect(screen.getByTestId("counter-date-scan-note")).toBeInTheDocument();
+    },
+  );
+
+  it.each(SPEEDS)(
+    "C7 a month button that reaches its limit keeps focus, and the next scan is kept (till) / inert with the note (office) (%s)",
+    async (_n, delay) => {
+      const user = userAt(delay);
+      const onScanKey = jest.fn();
+      const till = await openFresh(user, { onScanKey });
+      const next = within(till.picker).getByRole("button", { name: "Next month" });
+      for (let i = 0; i < 20 && next.getAttribute("aria-disabled") !== "true"; i++) {
+        await user.click(next);
+      }
+      expect(next).toHaveAttribute("aria-disabled", "true");
+      expect(document.activeElement).toBe(next);
+      await user.click(next); // a no-op at the edge: the month does not change
+      expect(document.activeElement).toBe(next);
+      await user.keyboard("4006381333931");
+      expect(onScanKey).toHaveBeenCalledTimes(1);
+      expect(till.onChange).not.toHaveBeenCalled();
+      cleanup();
+
+      const back = await openFresh(user, { onScanKey: jest.fn() });
+      const prev = within(back.picker).getByRole("button", { name: "Previous month" });
+      for (let i = 0; i < 40 && prev.getAttribute("aria-disabled") !== "true"; i++) {
+        await user.click(prev);
+      }
+      expect(prev).toHaveAttribute("aria-disabled", "true");
+      expect(document.activeElement).toBe(prev);
+      cleanup();
+
+      const office = await openFresh(user, { policy: "OFFICE" });
+      const edge = within(office.picker).getByRole("button", { name: "Next month" });
+      expect(edge).toHaveAttribute("aria-disabled", "true");
+      await user.click(edge);
+      expect(document.activeElement).toBe(edge);
+      await user.keyboard("4006381333931{Enter}");
+      expect(office.onChange).not.toHaveBeenCalled();
+      expect(screen.getByTestId("counter-date-picker")).toBeInTheDocument();
+      expect(screen.getByTestId("counter-date-scan-note")).toBeInTheDocument();
+    },
+  );
+
+  it.each(["COUNTER", "OFFICE"] as const)(
+    "C8 %s: Enter on a focused quick pick applies it, even inside a form that swallows Enter",
+    async (policy) => {
+      const user = userAt(null);
+      const onChange = jest.fn();
+      render(
+        <form
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.preventDefault();
+          }}
+        >
+          <CounterDateChip value="" today={TODAY} onChange={onChange} policy={policy} />
+        </form>,
+      );
+      await user.click(screen.getByRole("button", { name: "Order date: today. Change" }));
+      const picker = await screen.findByTestId("counter-date-picker");
+      act(() => within(picker).getByRole("button", { name: "Yesterday" }).focus());
+      await user.keyboard("{Enter}");
+      expect(onChange).toHaveBeenLastCalledWith("2026-11-08");
+    },
+  );
 });

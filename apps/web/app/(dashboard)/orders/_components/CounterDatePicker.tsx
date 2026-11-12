@@ -48,6 +48,18 @@ export const SCAN_NOTE =
   "That looked like a scan, so nothing was picked. Close the date, then scan into Search.";
 export const OFFICE_FUTURE_HINT = "A future day? Set the delivery date instead.";
 
+/** The part of a keydown the first-key rule reads: a React or a native event both fit. */
+interface KeyEvent {
+  key: string;
+  target: EventTarget | null;
+  altKey: boolean;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  getModifierState?: (k: "AltGraph") => boolean;
+  preventDefault: () => void;
+  stopPropagation: () => void;
+}
+
 export function CounterDatePicker({
   open,
   today,
@@ -124,6 +136,8 @@ export function CounterDatePicker({
   // swallows the run (keys, then its Enter) with a note. An Alt-coded scan (Alt+digits) is never kept: same inert run.
   // A scanner may end a read with CR+LF (two Enters): after an inert run is ended by Enter, the NEXT key is swallowed too if it is
   // Enter (key order, no clock). Any other key, or a pointer action, clears that state (the till's own CR+LF idea, row 237).
+  const rootRef = React.useRef<HTMLDivElement>(null);
+  const keyRuleRef = React.useRef<((e: KeyEvent) => void) | null>(null);
   const inertRun = React.useRef(false);
   const afterRunEnter = React.useRef(false);
   const [scanNote, setScanNote] = React.useState(false);
@@ -138,13 +152,30 @@ export function CounterDatePicker({
       afterRunEnter.current = false;
     };
     document.addEventListener("pointerdown", person, true);
-    return () => document.removeEventListener("pointerdown", person, true);
+    // The same first-key rule where the dialog's own capture cannot see the key: focus on the page or BODY (a control
+    // that left focus behind). Keys inside the dialog are the Content's; a real text field outside it is a person typing.
+    const outside = (e: KeyboardEvent) => {
+      const t = e.target;
+      const dialog = rootRef.current?.closest('[role="dialog"]');
+      if (t instanceof Node && dialog?.contains(t)) return;
+      if (
+        t instanceof HTMLElement &&
+        (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName))
+      )
+        return;
+      keyRuleRef.current?.(e);
+    };
+    document.addEventListener("keydown", outside, true);
+    return () => {
+      document.removeEventListener("pointerdown", person, true);
+      document.removeEventListener("keydown", outside, true);
+    };
   }, [open]);
   const startInertRun = () => {
     inertRun.current = true;
     setScanNote(true);
   };
-  const onContentKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+  const onContentKeyDown = (e: KeyEvent) => {
     const swallow = () => {
       e.preventDefault();
       e.stopPropagation();
@@ -194,6 +225,12 @@ export function CounterDatePicker({
       onScanKey(e.key);
     } else startInertRun();
   };
+  keyRuleRef.current = onContentKeyDown;
+  // A form around the dialog (the regular order) default-prevents Enter before a button's own click, and React events
+  // bubble out of the portal into it: Enter on a picker button stops here so the button presses itself.
+  const keepEnterForButtons = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && e.target instanceof HTMLButtonElement) e.stopPropagation();
+  };
   const weeks: Array<Array<string | null>> = [];
   for (let i = 0; i < cells.length; i += 7) {
     const row = cells.slice(i, i + 7);
@@ -219,7 +256,12 @@ export function CounterDatePicker({
       onCloseAutoFocus={ownsFocus ? (e) => e.preventDefault() : undefined}
       className="max-md:fixed max-md:inset-x-0 max-md:bottom-0 max-md:top-auto max-md:max-w-none max-md:translate-x-0 max-md:translate-y-0 max-md:rounded-b-none"
     >
-      <div className="flex flex-col gap-3" data-testid="counter-date-picker">
+      <div
+        ref={rootRef}
+        className="flex flex-col gap-3"
+        data-testid="counter-date-picker"
+        onKeyDown={keepEnterForButtons}
+      >
         <div className="flex flex-wrap gap-2">
           {quick.map((d) => (
             <Button
@@ -294,9 +336,12 @@ export function CounterDatePicker({
               type="button"
               variant="secondary"
               aria-label="Previous month"
-              className="min-h-[44px]"
-              disabled={shiftMonth(month, -1) < ym(range.min)}
-              onClick={() => setCursor(clampToRange(`${shiftMonth(month, -1)}-01`))}
+              className="min-h-[44px] aria-disabled:opacity-50"
+              aria-disabled={shiftMonth(month, -1) < ym(range.min) || undefined}
+              onClick={() => {
+                if (shiftMonth(month, -1) >= ym(range.min))
+                  setCursor(clampToRange(`${shiftMonth(month, -1)}-01`));
+              }}
             >
               ‹
             </Button>
@@ -307,9 +352,12 @@ export function CounterDatePicker({
               type="button"
               variant="secondary"
               aria-label="Next month"
-              className="min-h-[44px]"
-              disabled={shiftMonth(month, 1) > ym(range.max)}
-              onClick={() => setCursor(clampToRange(`${shiftMonth(month, 1)}-01`))}
+              className="min-h-[44px] aria-disabled:opacity-50"
+              aria-disabled={shiftMonth(month, 1) > ym(range.max) || undefined}
+              onClick={() => {
+                if (shiftMonth(month, 1) <= ym(range.max))
+                  setCursor(clampToRange(`${shiftMonth(month, 1)}-01`));
+              }}
             >
               ›
             </Button>
