@@ -1,5 +1,6 @@
 import { Logger } from "@nestjs/common";
 import type { TenantContextKind } from "../tenant/tenant-context.service";
+import { lacksTenant } from "./tenant-nested-walker";
 
 /**
  * SA-1105 (F05 slice 1, DARK): what happens when a tenant-owned write carries no tenant, or `forTenant()` /
@@ -18,9 +19,11 @@ import type { TenantContextKind } from "../tenant/tenant-context.service";
  * route, a `@LeaderCron` job nor one of those two processors (a gateway timer, the route-hits flush) is unlabelled and
  * shares one gate per kind, model and op.
  *
- * Detection depth (SA-1105 A-1): slice 1 detects one level of nested create under `create` and `upsert.create`. A nested
- * create under `update` or `upsert.update` is reported as a read under NONE and ANONYMOUS and is not seen under SUPER_ADMIN or
- * TENANT: it belongs to SA-620's DMMF walker, which checks the child's tenant at every depth.
+ * Detection depth (SA-1110, B929): the one-level detection of SA-1105 A-1 is SUPERSEDED. A nested create is read at EVERY
+ * depth and under every write payload (`create`, `upsert.create`, `upsert.update`, `update`, `updateMany`) by the DMMF walker
+ * (`tenant-nested-walker.ts`), which also STAMPS the context's tenant under TENANT before the guard looks, so a TENANT gap
+ * that reaches the guard is a walker miss. The guard receives the gaps (relation paths, `Model.relation[.relation]`) and
+ * counts each as op `nested-create`.
  */
 export const TENANT_CONTEXT_ENFORCEMENT_ENV = "TENANT_CONTEXT_ENFORCEMENT";
 
@@ -30,7 +33,7 @@ export function readEnforcementFlag(env: NodeJS.ProcessEnv = process.env): boole
 }
 
 export type TenantWriteOp = "create" | "createMany" | "createManyAndReturn" | "upsert";
-/** What a check reports on: a write op, a one-level nested create under a parent write, or a tenantless access. */
+/** What a check reports on: a write op, a nested create (any depth) under a parent write, or a tenantless access. */
 export type TenantCheckOp = TenantWriteOp | "nested-create" | "read";
 export type TenantCheck = { ok: true } | { ok: false; reason: string; ops: TenantCheckOp[] };
 
@@ -44,39 +47,7 @@ export class TenantContextMissingError extends Error {
   }
 }
 
-/** Names the child model of a relation key when it is tenant-owned, else undefined (the DMMF lives with the caller). */
-export type RelationTarget = (parentModel: string, relationKey: string) => string | undefined;
-
-/**
- * A row names its tenant by a non-empty `tenantId` or by a `tenant` relation. An absent key, `undefined`, `null` and
- * "" all write NULL (the L-124 class), so they are all "missing". Deliberate platform rows are listed for PR-2 from
- * these warns (SA-1105 Q4), not guessed here.
- */
-const lacksTenant = (d: unknown): boolean => {
-  if (!d || typeof d !== "object") return true;
-  const row = d as { tenantId?: unknown; tenant?: unknown };
-  if (row.tenant !== undefined && row.tenant !== null) return false;
-  return row.tenantId === undefined || row.tenantId === null || row.tenantId === "";
-};
-
 const asList = (d: unknown): unknown[] => (Array.isArray(d) ? d : [d]);
-
-/** One level only: a relation key holding `create` / `createMany` whose child is tenant-owned and names no tenant. */
-function nestedCreateGap(parent: string, row: unknown, target: RelationTarget): string | null {
-  if (!row || typeof row !== "object") return null;
-  for (const [key, value] of Object.entries(row as Record<string, unknown>)) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
-    const rel = value as { create?: unknown; createMany?: { data?: unknown } };
-    if (rel.create === undefined && rel.createMany === undefined) continue;
-    if (!target(parent, key)) continue;
-    const children = [
-      ...(rel.create === undefined ? [] : asList(rel.create)),
-      ...(rel.createMany?.data === undefined ? [] : asList(rel.createMany.data)),
-    ];
-    if (children.some(lacksTenant)) return key;
-  }
-  return null;
-}
 
 const CAPTURE_GAP_MS = 1_000;
 const SUMMARY_MS = 10 * 60_000;
@@ -189,27 +160,37 @@ export function createTenantContextGuard(opts: GuardOptions) {
   }
 
   /**
-   * A tenant-owned write. `data` is the payload the op writes (`args.data`, or `args.create` for an upsert). SYSTEM
-   * never reports. Every element of a createMany is read; a nested create is read one level down.
+   * A tenant-owned write. `data` is the payload the op writes (`args.data`, or `args.create` for an upsert); `gaps` are
+   * the nested-create gaps the walker found in it (`findNestedTenantGaps`, relation paths). SYSTEM never reports. Every
+   * element of a createMany is read.
    */
   function checkWrite(
     kind: TenantContextKind,
     model: string,
     op: TenantWriteOp,
     data: unknown,
-    target: RelationTarget = () => undefined,
+    gaps: readonly string[] = [],
     where?: string,
   ): TenantCheck {
     if (kind === "SYSTEM") return { ok: true };
-    const rows = asList(data);
     const ops: TenantCheckOp[] = [];
-    if (rows.some(lacksTenant)) ops.push(op);
-    const nested = rows.map((r) => nestedCreateGap(model, r, target)).find((k) => k !== null);
-    if (nested) ops.push("nested-create");
+    if (asList(data).some(lacksTenant)) ops.push(op);
+    if (gaps.length > 0) ops.push("nested-create");
     if (ops.length === 0) return { ok: true };
-    for (const o of ops)
-      record(kind, o === "nested-create" ? `${model}.${nested}` : model, o, where);
+    if (ops.includes(op)) record(kind, model, op, where);
+    for (const gap of gaps) record(kind, gap, "nested-create", where);
     return { ok: false, reason: "TENANT_CONTEXT_MISSING", ops };
+  }
+
+  /** Nested-create gaps of a write that has no top-level tenant to check (an update's data). SYSTEM never reports. */
+  function checkNested(
+    kind: TenantContextKind,
+    gaps: readonly string[],
+    where?: string,
+  ): TenantCheck {
+    if (kind === "SYSTEM" || gaps.length === 0) return { ok: true };
+    for (const gap of gaps) record(kind, gap, "nested-create", where);
+    return { ok: false, reason: "TENANT_CONTEXT_MISSING", ops: ["nested-create"] };
   }
 
   /**
@@ -224,6 +205,7 @@ export function createTenantContextGuard(opts: GuardOptions) {
 
   return {
     checkWrite,
+    checkNested,
     checkRead,
     counts: () => Object.fromEntries(counts),
     summary,
@@ -240,4 +222,5 @@ const processGuard = createTenantContextGuard({ enforce: TENANT_CONTEXT_ENFORCIN
 
 export const checkTenantWrite = processGuard.checkWrite;
 export const checkTenantRead = processGuard.checkRead;
+export const checkTenantNested = processGuard.checkNested;
 export const tenantContextCounts = processGuard.counts;

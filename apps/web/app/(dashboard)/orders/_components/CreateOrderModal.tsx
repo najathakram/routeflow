@@ -49,6 +49,8 @@ import { ResumeUnsentOrderDialog } from "./ResumeUnsentOrderDialog";
 import { DraftConflictDialog } from "./DraftConflictDialog";
 import { apiClient } from "@/lib/api-client";
 import { useTenantToday } from "@/lib/tenant-timezone";
+import { dateIfNotToday } from "@/lib/counter-order-date";
+import { CounterDateChip } from "./CounterDateChip";
 import { LineCountChip } from "./LineCountChip";
 import { ACTION_TOAST_MS, addedLineQty, showOrderCreatedToast } from "./order-created-toast";
 import {
@@ -771,7 +773,6 @@ export function CreateOrderModal({
     setSelectedCustomer(null);
     customerUndo.dismiss();
     setCustomerListOpen(true);
-    setBackdateOpen(false);
     setCustomerError("");
     setProductSearch("");
     setDebouncedProductSearch("");
@@ -1563,27 +1564,15 @@ export function CreateOrderModal({
 
   const [requestedDeliveryDate, setRequestedDeliveryDate] = React.useState("");
   // Business date of the order (blank = today).
-  const [orderDate, setOrderDate] = React.useState("");
-  // Row 100: the Order date control sits behind a "Backdate this order" link. `backdateOpen` is the one switch (a resumed
-  // draft with a date sets it at hydrate), so clearing the date from the keyboard never unmounts the focused input.
-  const [backdateOpen, setBackdateOpen] = React.useState(false);
-  const showOrderDate = backdateOpen;
-  const orderDateRef = React.useRef<HTMLInputElement>(null);
-  const backdateLinkRef = React.useRef<HTMLButtonElement>(null);
-  const focusAfterToggle = React.useRef<"date" | "link" | null>(null);
-  React.useEffect(() => {
-    // Focus follows the toggle: the date field when it opens, the link when it folds away (the clicked control unmounts).
-    const target = focusAfterToggle.current;
-    focusAfterToggle.current = null;
-    if (target === "date") orderDateRef.current?.focus();
-    if (target === "link") backdateLinkRef.current?.focus();
-  }, [backdateOpen]);
-  // The server's upper bound is the end of the current UTC day (parseOrderDate).
-  const maxOrderDate = new Date().toISOString().slice(0, 10);
+  const [orderDateSet, setOrderDate] = React.useState("");
+  // W-1188 PR-3: the order date is one chip (CounterDateChip, OFFICE policy, past-only), capped on the tenant's calendar.
   // F13 + row 735a: a requested delivery day before today ON THE BUSINESS'S CALENDAR (the tenant's zone, the day the API judges
   // it on; never the browser's) is refused next to the field. Until the zone has loaded nothing is blocked locally: the
   // server refuses a past day with the tenant's today on the field (below). Derived in the render, never mirrored into state (L-333). POS mode steps the field aside and sends no delivery date, so it never blocks there.
   const tenantToday = useTenantToday(isOpen);
+  // One rule: a chosen day equal to the business's today IS Today, so nothing is stored or sent for it. The chip, the
+  // payload, the draft and the merge prompt all read this one value (a draft saved with today's date resumes as Today).
+  const orderDate = dateIfNotToday(orderDateSet, tenantToday);
   const deliveryDateMin = tenantToday; // undefined until the business's zone is known: no `min`, no local block
   const deliveryDatePast =
     !posMode &&
@@ -1774,7 +1763,6 @@ export function CreateOrderModal({
     setShippingFeeInput(p.shippingFee ?? "");
     setRequestedDeliveryDate(p.requestedDeliveryDate ?? "");
     setOrderDate(p.orderDate ?? "");
-    setBackdateOpen(!!p.orderDate);
     setCommissionRatePct(p.commissionRatePct ?? null);
     setFloorAcked(new Set(p.floorAcked ?? []));
     // fulfillPath round-trips from the parked draft itself — NOT re-derived from
@@ -3344,52 +3332,16 @@ export function CreateOrderModal({
           <section className="space-y-3">
             <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">Options</p>
 
-            {/* Dates */}
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {showOrderDate ? (
-                <div className="space-y-1">
-                  <label className="block text-xs font-medium text-navy/70" htmlFor="order-date">
-                    Order date <span className="font-normal text-navy/70">(optional)</span>
-                  </label>
-                  <input
-                    id="order-date"
-                    ref={orderDateRef}
-                    type="date"
-                    max={maxOrderDate}
-                    value={orderDate}
-                    onChange={(e) => setOrderDate(e.target.value)}
-                    className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
-                  <p className="text-[11px] leading-snug text-navy/70">
-                    The day the order actually happened. Leave blank for today.{" "}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setOrderDate("");
-                        focusAfterToggle.current = "link";
-                        setBackdateOpen(false);
-                      }}
-                      className="inline-flex min-h-[44px] items-center font-medium text-brand-500 hover:underline lg:min-h-0"
-                    >
-                      Use today
-                    </button>
-                  </p>
-                </div>
-              ) : (
-                <div className="flex items-end">
-                  <button
-                    type="button"
-                    ref={backdateLinkRef}
-                    onClick={() => {
-                      focusAfterToggle.current = "date";
-                      setBackdateOpen(true);
-                    }}
-                    className="min-h-[44px] text-sm font-medium text-brand-500 hover:underline lg:min-h-10"
-                  >
-                    Backdate this order
-                  </button>
-                </div>
-              )}
+            {/* Dates: one chip, past-only (office policy). A future day is the delivery date below. */}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-medium text-navy/70">Order date</span>
+              <CounterDateChip
+                policy="OFFICE"
+                value={orderDate}
+                today={tenantToday}
+                onChange={setOrderDate}
+                disabled={createOrder.isPending}
+              />
             </div>
 
             {isStaff && hasSalesAgents && (

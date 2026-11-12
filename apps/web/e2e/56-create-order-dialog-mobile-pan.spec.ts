@@ -105,13 +105,13 @@ for (const vp of VIEWPORTS) {
     }) => {
       await openBuilderWithRealisticCart(page);
       await expect(page.locator("#delivery-date")).toBeVisible();
-      await expect(page.locator("#order-date")).toBeVisible();
+      await expect(page.getByTestId("counter-date-chip")).toBeVisible();
 
       const { visited } = await applyIosDateInputAdjustment(page);
       expect(
         visited,
         "the iOS date-input adjustment did not reach the dialog's two date inputs",
-      ).toBeGreaterThanOrEqual(2);
+      ).toBeGreaterThanOrEqual(1);
 
       const overflowPx = await bodyScrollOverflowPx(page);
       expect(

@@ -15,6 +15,7 @@ import { RestrictionOverrideNote } from "@/components/RestrictionOverrideNote";
 import { displayLineStatus } from "./line-status";
 import { lineDisplayPack } from "@/lib/line-own-pack";
 import { ComponentSubLines } from "@/components/ComponentSubLines";
+import { LinesRearrangedNote } from "@/components/LinesRearrangedNote";
 import { SortLinesButton } from "@/components/SortLinesButton";
 import { SortableLines, useSortableLine } from "@/components/SortableLines";
 import { useOrderLineOrder } from "@/lib/use-order-line-order";
@@ -77,6 +78,7 @@ function MovableLines(props: TableProps) {
   });
   return (
     <>
+      <LinesRearrangedNote rearranged={props.linesRearranged} />
       {order.canMove && (
         <div className="flex justify-end pb-2">
           <SortLinesButton onSort={() => void order.sortByName()} saving={order.saving} />
@@ -119,6 +121,8 @@ interface TableProps {
   /** W-1187: with the order's id and `updatedAt` the lines can be dragged into any order; without them the list is read-only. */
   orderId?: string;
   updatedAt?: string;
+  /** BR7: shown under the lines header when the customer arranged them. */
+  linesRearranged?: { by: "CUSTOMER" | "STAFF"; at: string };
 }
 
 function TableBody({

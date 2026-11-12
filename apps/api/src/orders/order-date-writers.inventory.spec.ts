@@ -36,6 +36,10 @@ describe("W-1188: one order-date writer, one gate", () => {
   it("every `orderDate:` key in source is a reviewed read, a pass-through or the stamp; a new one needs a review", () => {
     // Reviewed 2026-11-09 (W-1188 PR-1b). Reads: where/select/orderBy in analytics, suggestions, open lines, product open
     // orders, commissions, receipts. Pass-through of the DTO day: counter-sale.service, orders.service createSale.
+    // Parked list (W-1188 PR-3, reviewed 2026-11-11): counter-park.service.ts (the list maps the parked payload's day onto
+    // the list row, only when isCalendarDay) and counter-park.fixtures.ts (the fake list row). Both are READS of the parked
+    // payload, never a write to Order.orderDate; the day was whitelisted by sanitizeParkedPayload at park and resume, and the
+    // resumed sale still goes through the one writer and its gate (resolveOrderDate) at Complete.
     // order-date.ts holds the gate (resolve/drift/audit meta). A hit outside this list, or one more in a listed file,
     // fails here so a second writer (or an update path) cannot slip in beside the one reviewed writer.
     const reviewed: Record<string, number> = {
@@ -44,6 +48,8 @@ describe("W-1188: one order-date writer, one gate", () => {
       "documents/receipt-model.ts": 1,
       "documents/receipt.fixtures.ts": 1,
       "documents/receipt.service.ts": 1,
+      "orders/counter-sale/counter-park.fixtures.ts": 1,
+      "orders/counter-sale/counter-park.service.ts": 1,
       "orders/counter-sale/counter-sale-today.ts": 1,
       "orders/counter-sale/counter-sale.service.ts": 1,
       "orders/open-order-lines.ts": 4,

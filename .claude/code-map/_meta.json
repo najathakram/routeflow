@@ -1,6 +1,6 @@
 {
-  "mappedSha": "a64c3774be",
-  "generatedAt": "2026-11-11T07:12:58.300Z",
+  "mappedSha": "c05d8e25f5",
+  "generatedAt": "2026-11-12T02:56:19.402Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -9,11 +9,11 @@
     "packages"
   ],
   "partCounts": {
-    "api": 32,
-    "web": 27,
+    "api": 33,
+    "web": 28,
     "mobile": 16,
     "packages": 0
   },
   "fileCount": 1146,
-  "notes": "2026-11-11 windows 27 and 28b (master a64c3774be): api and web landing notes, TOC rows, packages row; see CHANGELOG.md. Windows 13 to 26 (11-07 to 11-09) are not mapped yet."
+  "notes": "2026-11-12 windows 32 and 34 (master c05d8e25f5): api and web landing notes, TOC rows; see CHANGELOG.md. Windows 13 to 26 (11-07 to 11-09) are not mapped yet."
 }

@@ -4663,3 +4663,18 @@ citations, closed-out with its own post-init assertion guard).
   guards; a test asserting every consumer calls the _same_ function reference (not just a
   matching result) is flagged, not yet added.
 
+## Archived 2026-11-12 — zero outside citations, no repo guard; headroom for L-374, L-375 (bookkeeping for windows 32 and 34)
+
+### L-355 · 2026-10-30 · process · a train built on an older master proves carry-over by the old-to-new delta being only master files, byte-identical, not by a patch-id against a moved master
+
+- **Symptom:** a re-pinned train showed a "different" patch-id from the gated sha; the comparison had been run against the wrong master, so a safe update looked like drift.
+- **Root cause:** a patch-id depends on the base; once master moves, the same member diff hashes differently, so the check says nothing about carry-over.
+- **Lesson:** **For a train rebuilt on a newer master, show that every file that changed between the gated and the new head is a master-only file with identical bytes on master, and that the update merge's `git show --remerge-diff` is empty. Use patch-id only against the same base.**
+- **Guard:** none automatic; the train PR body lists the old and new head and the delta file list. Cf. [[L-350]]. Extended 2026-10-31: a PASS read carries over a merge only when the remerge-diff is empty. An empty merge-up of master into a stacked train keeps every gate; any non-empty remerge needs a delta read of its own.
+
+### L-347 · 2026-10-25 · process · a wording or format sweep changes strings only; a behaviour or number-format edit in it goes back out (W-785)
+
+- **Symptom:** the sentence-case text sweep needed five revert commits in review: behaviour changes, money and quantity formatting, and files other lanes were editing.
+- **Root cause:** an author rewriting a screen's text also tidied labels the code branches on, number formats and handlers nearby, and the diff was too wide to show it.
+- **Lesson:** **A text sweep PR edits string literals and CSS casing only. Anything a branch, a test oracle or a formatter reads, and every file another open lane owns, stays out. Review diffs the sweep for non-string hunks first, and splits the sweep by area so each PR is small enough to read.**
+- **Guard:** none yet; propose a check that lists non-literal hunks in a PR titled as a text sweep.

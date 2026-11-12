@@ -83,6 +83,8 @@ jest.mock("@/lib/drive-mode", () => ({
 }));
 jest.mock("@/lib/presence-cookies", () => ({
   setLastPortalCookie: jest.fn(),
+  setOpPresenceCookie: jest.fn(),
+  clearOpPresenceCookie: jest.fn(),
   hasOpPresence: () => true,
   hasBuyerPresence: () => false,
 }));
