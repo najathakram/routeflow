@@ -95,3 +95,4 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/landing-2026-11-07-slipped.md](web/landing-2026-11-07-slipped.md) | 266095419c..ce0ed80a11: courtesy badge, already-have sentence, home founder-card width, wheel tile removed |
 | [web/landing-2026-11-10-w27-w28b.md](web/landing-2026-11-10-w27-w28b.md) | Windows 27 and 28b (415cf84fe0..a64c3774be): confirm-email-change page, units v2 price card fixes, one line-count chip |
 | [web/landing-2026-11-11-w29-w31.md](web/landing-2026-11-11-w29-w31.md) | Windows 29-31 (a64c3774be..6ecd409b16): counter auto-park, drag and Sort A-Z on order lines, counter date chip, WP11 Features tab |
+| [web/landing-2026-11-12-w32-w34.md](web/landing-2026-11-12-w32-w34.md) | Windows 32 and 34: buyer drags own order lines, operator presence cookie on impersonation (B1304) |
