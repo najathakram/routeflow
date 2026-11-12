@@ -63,30 +63,14 @@ export class NonTouchPointerSensor extends PointerSensor {
   ] as unknown as typeof PointerSensor.activators;
 }
 
-/**
- * Scan safety (W-1187 PR-2b). A wedge scanner types at machine speed into whatever holds focus, and a handle that holds
- * focus must not read those keys as a move. Keys closer than this to the one before are a scanner's, not a person's.
- */
-const BURST_MS = 30;
-let lastKeyAt = Number.NEGATIVE_INFINITY;
-let lastKeyEvent: Event | null = null;
-let lastKeyBurst = false;
-/** One answer per key event (the handle and the sensor both see the same press). */
-function isBurst(e: Event): boolean {
-  if (e === lastKeyEvent) return lastKeyBurst;
-  const at = performance.now();
-  lastKeyBurst = at - lastKeyAt < BURST_MS;
-  lastKeyAt = at;
-  lastKeyEvent = e;
-  return lastKeyBurst;
-}
+/** Scan safety (W-1187 PR-2b): no key timing is read here; a scan is told apart by the key it types. */
 const isPrintable = (e: React.KeyboardEvent) =>
   e.key.length === 1 && e.key !== " " && !e.ctrlKey && !e.metaKey && !e.altKey;
 const MOVE_CODES = ["Space", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
 
 /**
  * Space picks up and drops, the arrows move, Escape cancels: Enter does nothing (a scanner ends every code with it), and
- * any other key, or an arrow at scanner speed, cancels the move instead of steering it.
+ * any other key cancels the move instead of steering it.
  */
 export class ScanSafeKeyboardSensor extends KeyboardSensor {
   constructor(props: ConstructorParameters<typeof KeyboardSensor>[0]) {
@@ -101,8 +85,7 @@ export class ScanSafeKeyboardSensor extends KeyboardSensor {
     const inner = self.handleKeyDown;
     self.handleKeyDown = (event: Event) => {
       const e = event as KeyboardEvent;
-      const burst = isBurst(e);
-      if (!MOVE_CODES.includes(e.code) || (burst && e.code !== "Escape")) {
+      if (!MOVE_CODES.includes(e.code)) {
         self.detach();
         self.props.onCancel();
         return; // no preventDefault: the key is the scan's
@@ -245,7 +228,6 @@ export function useSortableLine(id: string) {
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
-    const burst = isBurst(e.nativeEvent);
     if (isPrintable(e)) {
       ctx?.scanTarget?.()?.focus(); // a scan, not a move: the code goes to the scan field
       return;
@@ -253,10 +235,9 @@ export function useSortableLine(id: string) {
     if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
       e.preventDefault();
       e.stopPropagation();
-      if (!burst) ctx?.move(id, index + (e.key === "ArrowUp" ? -1 : 1));
+      ctx?.move(id, index + (e.key === "ArrowUp" ? -1 : 1));
       return;
     }
-    if (burst && !e.nativeEvent.defaultPrevented && e.code === "Space") return; // a scanner's key never picks up
     (
       listeners as { onKeyDown?: (e: React.KeyboardEvent<HTMLElement>) => void } | undefined
     )?.onKeyDown?.(e);

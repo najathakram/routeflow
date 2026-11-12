@@ -24,14 +24,18 @@ function Row({ id }: { id: string }) {
   );
 }
 
-let now = 1000;
+const rows = (n: number) =>
+  Array.from({ length: n }, (_, i) => ({ id: "l" + i, label: "Item " + (i + 1) }));
 function Harness({
   onMove,
   onCode,
+  count,
 }: {
   onMove: (m: LineMove) => void;
   onCode: (c: string) => void;
+  count?: number;
 }) {
+  const lines = count ? rows(count) : LINES;
   const scanRef = React.useRef<HTMLInputElement>(null);
   return (
     <>
@@ -42,9 +46,9 @@ function Harness({
           if (e.key === "Enter") onCode((e.target as HTMLInputElement).value);
         }}
       />
-      <SortableLines lines={LINES} onMove={onMove} scanTarget={() => scanRef.current}>
+      <SortableLines lines={lines} onMove={onMove} scanTarget={() => scanRef.current}>
         <ul>
-          {LINES.map((l) => (
+          {lines.map((l) => (
             <Row key={l.id} id={l.id} />
           ))}
         </ul>
@@ -59,13 +63,7 @@ const settle = () =>
     await new Promise((r) => setTimeout(r, 0));
   });
 const handle = (name: string) => screen.getByRole("button", { name: new RegExp(`^Move ${name},`) });
-/** A human's key rhythm: 120 ms between keys. */
-const human = () => {
-  now += 120;
-};
-
 beforeEach(() => {
-  now += 10_000; // the clock only moves forward, as the guard remembers the last key across tests
   // jsdom has no layout: give each row a 50 px box by its place so dnd-kit can tell which row a key press lands on
   jest.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
     this: Element,
@@ -85,7 +83,6 @@ beforeEach(() => {
       toJSON() {},
     } as DOMRect;
   });
-  jest.spyOn(performance, "now").mockImplementation(() => now);
 });
 afterEach(() => jest.restoreAllMocks());
 
@@ -97,7 +94,6 @@ describe("SortableLines: scan safety", () => {
     h.focus();
     fireEvent.keyDown(h, { key: "Enter", code: "Enter" });
     expect(h).not.toHaveAttribute("aria-pressed", "true");
-    human();
     fireEvent.keyDown(h, { key: " ", code: "Space" });
     expect(h).toHaveAttribute("aria-pressed", "true");
   });
@@ -121,28 +117,9 @@ describe("SortableLines: scan safety", () => {
     h.focus();
     fireEvent.keyDown(h, { key: " ", code: "Space" });
     await settle();
-    human();
     await act(async () => {
       fireEvent.keyDown(document, { key: "5", code: "Digit5" });
     });
-    human();
-    fireEvent.keyDown(document, { key: "Enter", code: "Enter" });
-    expect(onMove).not.toHaveBeenCalled();
-    expect(handle("Banana")).not.toHaveAttribute("aria-pressed", "true");
-  });
-
-  it("a burst of arrow keys + Enter mid-move moves and drops nothing", async () => {
-    const onMove = jest.fn();
-    render(<Harness onMove={onMove} onCode={jest.fn()} />);
-    const h = handle("Banana");
-    h.focus();
-    fireEvent.keyDown(h, { key: " ", code: "Space" });
-    await settle();
-    // machine speed: no human pause between these
-    for (const code of ["ArrowDown", "ArrowDown", "ArrowUp", "ArrowDown"]) {
-      fireEvent.keyDown(document, { key: code, code });
-      now += 2;
-    }
     fireEvent.keyDown(document, { key: "Enter", code: "Enter" });
     expect(onMove).not.toHaveBeenCalled();
     expect(handle("Banana")).not.toHaveAttribute("aria-pressed", "true");
@@ -155,11 +132,9 @@ describe("SortableLines: scan safety", () => {
     h.focus();
     fireEvent.keyDown(h, { key: " ", code: "Space" });
     await settle();
-    human();
     await act(async () => {
       fireEvent.keyDown(document, { key: "ArrowDown", code: "ArrowDown" });
     });
-    human();
     await act(async () => {
       fireEvent.keyDown(document, { key: " ", code: "Space" });
     });
@@ -170,16 +145,38 @@ describe("SortableLines: scan safety", () => {
     expect(onMove.mock.calls[0][0]).toMatchObject({ movedId: "b", toIndex: 2 });
   });
 
-  it("Alt+ArrowDown on the handle moves one place, but not at scanner speed", async () => {
+  it("Alt+ArrowDown on the handle moves one place each press, however fast", async () => {
     const onMove = jest.fn();
     render(<Harness onMove={onMove} onCode={jest.fn()} />);
     const h = handle("Banana");
     h.focus();
-    human();
     fireEvent.keyDown(h, { key: "ArrowDown", code: "ArrowDown", altKey: true });
-    expect(onMove).toHaveBeenCalledTimes(1);
-    now += 2; // the next one is at machine speed after the last key
     fireEvent.keyDown(h, { key: "ArrowDown", code: "ArrowDown", altKey: true });
-    expect(onMove).toHaveBeenCalledTimes(1);
+    expect(onMove).toHaveBeenCalledTimes(2);
   });
+
+  it.each([5, 33])(
+    "a held arrow (10 repeats, %i ms apart) moves the line 10 places and the move stays active",
+    async (gap) => {
+      const onMove = jest.fn();
+      render(<Harness onMove={onMove} onCode={jest.fn()} count={12} />);
+      const h = screen.getByRole("button", { name: /^Move Item 2,/ });
+      h.focus();
+      fireEvent.keyDown(h, { key: " ", code: "Space" });
+      await settle();
+      for (let i = 0; i < 10; i++) {
+        await act(async () => {
+          fireEvent.keyDown(document, { key: "ArrowDown", code: "ArrowDown", repeat: i > 0 });
+          await new Promise((r) => setTimeout(r, gap));
+        });
+      }
+      expect(h).toHaveAttribute("aria-pressed", "true");
+      await act(async () => {
+        fireEvent.keyDown(document, { key: " ", code: "Space" });
+      });
+      await settle();
+      expect(onMove).toHaveBeenCalledTimes(1);
+      expect(onMove.mock.calls[0][0]).toMatchObject({ movedId: "l1", toIndex: 11 });
+    },
+  );
 });
