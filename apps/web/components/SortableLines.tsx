@@ -66,6 +66,7 @@ export class NonTouchPointerSensor extends PointerSensor {
 /** Scan safety (W-1187 PR-2b): no key timing is read here; a scan is told apart by the key it types. */
 const isPrintable = (e: React.KeyboardEvent) =>
   e.key.length === 1 && e.key !== " " && !e.ctrlKey && !e.metaKey && !e.altKey;
+const MODIFIER_KEYS = ["Shift", "Control", "Alt", "Meta", "AltGraph"];
 const MOVE_CODES = ["Space", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
 
 /**
@@ -85,6 +86,7 @@ export class ScanSafeKeyboardSensor extends KeyboardSensor {
     const inner = self.handleKeyDown;
     self.handleKeyDown = (event: Event) => {
       const e = event as KeyboardEvent;
+      if (MODIFIER_KEYS.includes(e.key)) return; // a modifier alone neither steers nor cancels
       if (!MOVE_CODES.includes(e.code)) {
         self.detach();
         self.props.onCancel();
@@ -184,7 +186,11 @@ export function SortableLines({
         sensors={sensors}
         collisionDetection={closestCenter}
         onDragEnd={onDragEnd}
-        accessibility={{ announcements, screenReaderInstructions: { draggable: INSTRUCTIONS } }}
+        accessibility={{
+          announcements,
+          screenReaderInstructions: { draggable: INSTRUCTIONS },
+          restoreFocus: false, // a cancel by a scan key must not pull focus back to the handle mid-scan
+        }}
       >
         <SortableContext items={ids} strategy={verticalListSortingStrategy}>
           {children}
@@ -229,7 +235,20 @@ export function useSortableLine(id: string) {
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
     if (isPrintable(e)) {
-      ctx?.scanTarget?.()?.focus(); // a scan, not a move: the code goes to the scan field
+      const target = ctx?.scanTarget?.(); // a scan, not a move: the code goes to the scan field
+      if (target) {
+        target.focus();
+        // The field's own wedge detector only hears keydowns on the field, and this one was typed on the handle: hand
+        // it key 1 as the field's keydown (the browser still types the character itself).
+        target.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: e.key,
+            code: e.code,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      }
       return;
     }
     if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {

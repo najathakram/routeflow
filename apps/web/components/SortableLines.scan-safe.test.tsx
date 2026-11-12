@@ -179,4 +179,40 @@ describe("SortableLines: scan safety", () => {
       expect(onMove.mock.calls[0][0]).toMatchObject({ movedId: "l1", toIndex: 11 });
     },
   );
+
+  it("a modifier key alone mid-move does nothing; a printable key still cancels", async () => {
+    const onMove = jest.fn();
+    render(<Harness onMove={onMove} onCode={jest.fn()} />);
+    const h = handle("Banana");
+    h.focus();
+    fireEvent.keyDown(h, { key: " ", code: "Space" });
+    await settle();
+    for (const key of ["Shift", "Control", "Alt", "Meta"]) {
+      await act(async () => {
+        fireEvent.keyDown(document, { key, code: key + "Left" });
+      });
+    }
+    expect(h).toHaveAttribute("aria-pressed", "true");
+    await act(async () => {
+      fireEvent.keyDown(document, { key: "5", code: "Digit5" });
+    });
+    expect(h).not.toHaveAttribute("aria-pressed", "true");
+    expect(onMove).not.toHaveBeenCalled();
+  });
+
+  it("a scan key typed on the handle mid-move cancels it and focus is not pulled back to the handle", async () => {
+    render(<Harness onMove={jest.fn()} onCode={jest.fn()} />);
+    const h = handle("Banana");
+    h.focus();
+    fireEvent.keyDown(h, { key: " ", code: "Space" });
+    await settle();
+    await act(async () => {
+      fireEvent.keyDown(h, { key: "5", code: "Digit5" });
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 100));
+    });
+    expect(h).not.toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("Scan")).toHaveFocus();
+  });
 });
