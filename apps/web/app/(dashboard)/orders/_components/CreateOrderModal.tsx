@@ -82,6 +82,9 @@ import { newProductPrefill, type PrefillDoor } from "@/lib/product-prefill";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { LineItemRow } from "@/components/LineItemRow";
+import { CartMovableList } from "@/components/CartMovableList";
+import { useCartLineOrder } from "@/lib/use-cart-line-order";
+import { focusMoveHandle } from "@/lib/cart-line-order";
 import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
 import {
   applyLineUnit,
@@ -2356,13 +2359,27 @@ export function CreateOrderModal({
     );
   })();
 
+  // W-1187 PR-2b: drag a line to any place; the array order is the order the order is sent in.
+  const lineMove = useCartLineOrder<LineItem>({
+    lines: lineItems,
+    setLines: setLineItems,
+    idOf: (l) => l.tempId,
+    labelOf: (l) => l.productName,
+    enabled: !createOrder.isPending,
+    afterMove: focusMoveHandle, // the moved row keeps keyboard focus
+  });
   // SA-1086: the live stock note per line (one read for the draft; a note only, the server decides at save).
   const lineStock = useNewOrderLineStock(lineItems, selectedCustomer?.id);
 
   // The same LineItemRow for the create-order list and the scan screen, so the two can never drift.
   const renderLine = (
     li: LineItem,
-    ctx?: { highlighted?: boolean; onTapPrice?: () => void; priceHistory?: boolean },
+    ctx?: {
+      highlighted?: boolean;
+      onTapPrice?: () => void;
+      priceHistory?: boolean;
+      moveId?: string;
+    },
   ) => (
     <LineItemRow
       key={li.tempId}
@@ -2386,6 +2403,7 @@ export function CreateOrderModal({
           : undefined
       }
       highlighted={ctx?.highlighted}
+      moveId={ctx?.moveId}
       stock={lineStock.get(li.tempId)}
       onTapPrice={ctx?.onTapPrice}
       active={
@@ -3215,16 +3233,23 @@ export function CreateOrderModal({
 
             {/* Line items list */}
             {lineItems.length > 0 ? (
-              <ul className="divide-y divide-surface-border overflow-hidden rounded-lg border border-surface-border">
+              <CartMovableList
+                className="divide-y divide-surface-border overflow-hidden rounded-lg border border-surface-border"
+                sortable={lineMove.sortable}
+                onMove={lineMove.onMove}
+                enabled={lineMove.enabled}
+                scanTarget={() => productSearchRef.current}
+              >
                 {lineItems.map((li) =>
                   renderLine(li, {
+                    moveId: li.tempId,
                     // #2696 (b)/(c): tap the price → the line's price/qty sheet, a SPECIAL-priced line
                     // too — moving off the special price takes a reason there (SA-558).
                     onTapPrice: () => setEditingLineId(li.tempId),
                     priceHistory: true,
                   }),
                 )}
-              </ul>
+              </CartMovableList>
             ) : (
               <div className="rounded-lg border border-dashed border-surface-border bg-surface-raised py-6 text-center">
                 <p className="text-sm text-navy/70">Search for products above to add line items.</p>

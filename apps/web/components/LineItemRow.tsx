@@ -21,6 +21,7 @@ import type { TrackedCategory } from "@/lib/api/tracked-categories";
 import { LineStockNote } from "@/components/LineStockNote";
 import type { LineStockView } from "@/lib/line-stock";
 import type { PriceSummaryResponse } from "@routeflow/types";
+import { useCartRowMove } from "@/components/CartRowMove";
 
 /**
  * A single order line item, as built by `CreateOrderModal` (and, in future, the
@@ -153,6 +154,8 @@ export interface LineItemRowProps {
    *  `CreateOrderModal`'s `rowRefs` map, used to scroll a just-scanned/just-added
    *  row into view). Optional — a consumer with no such need omits it. */
   rowRef?: (el: HTMLLIElement | null) => void;
+  /** W-1187 PR-2b: the row's id inside a `SortableLines` list; absent = no drag handle (the scan screen). */
+  moveId?: string;
 
   // ── Read-only / order-detail variant (order-ui-redesign-spec.md §6.1) ──
   // Reserved, unused: the read-only row shipped as the sibling `LineItemRowReadOnly`
@@ -218,7 +221,17 @@ export function LineItemRow({
   onTapPrice,
   onSetQty,
   rowRef,
+  moveId,
 }: LineItemRowProps) {
+  const mv = useCartRowMove(moveId);
+  const setDragNode = mv.setNodeRef;
+  const rootRef = React.useCallback(
+    (el: HTMLLIElement | null) => {
+      rowRef?.(el);
+      setDragNode?.(el);
+    },
+    [rowRef, setDragNode],
+  );
   const qtyLocked = !!pendingUnit;
   // F08: set when a typed quantity below 1 was raised to 1, so the row says so (cleared by the next valid quantity).
   const [qtyBelowMin, setQtyBelowMin] = React.useState(false);
@@ -244,7 +257,8 @@ export function LineItemRow({
   );
   return (
     <li
-      ref={rowRef}
+      ref={rootRef}
+      style={mv.style}
       onFocusCapture={onActivate}
       onPointerDownCapture={onActivate}
       className={cn(
@@ -257,10 +271,12 @@ export function LineItemRow({
         "scroll-mb-40",
         // Row 731: from `sm` the row is a flex line; while the qty-0 note shows it wraps so the note takes a line of its own.
         showQtyNote ? "sm:flex-wrap" : "",
+        mv.rowClass,
         category ? "border-l-2 border-l-amber-300 bg-amber-50/30" : "",
         highlighted ? "ring-2 ring-brand-500" : "",
       )}
     >
+      {mv.slot}
       {li.isUnlisted ? (
         // ── Unlisted (custom) line — editable name + price, no catalog data ──
         <div className="col-start-1 row-start-1 min-w-0 flex-1 space-y-1">
