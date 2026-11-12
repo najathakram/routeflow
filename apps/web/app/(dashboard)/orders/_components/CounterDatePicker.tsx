@@ -5,6 +5,7 @@
 import * as React from "react";
 import { addDays, orderDateRange, type OrderDatePolicy } from "@routeflow/pricing";
 import { Button, Modal, cn } from "@routeflow/ui/web";
+import { ORDER_DATE_COPY, type OrderDateNoun } from "@/lib/order-date-copy";
 import {
   dayLabel,
   longDay,
@@ -42,6 +43,8 @@ interface Props {
   onScanKey?: (key: string) => void;
   /** The till owns focus after the picker closes (refocusAfterDialog), so the dialog library must not hand it to the chip. */
   ownsFocus?: boolean;
+  /** what the date is called (the copy map): "order" (default) or "sale" */
+  noun?: OrderDateNoun;
 }
 
 export const SCAN_NOTE =
@@ -70,7 +73,9 @@ export function CounterDatePicker({
   onScan,
   onScanKey,
   ownsFocus,
+  noun = "order",
 }: Props) {
+  const words = ORDER_DATE_COPY[noun];
   const range = orderDateRange(today, policy);
   const inputRef = React.useRef<HTMLInputElement>(null);
   const [text, setText] = React.useState("");
@@ -256,7 +261,7 @@ export function CounterDatePicker({
     <Modal
       open={open}
       onClose={onClose}
-      title="Order date"
+      title={words.dialogTitle}
       onKeyDownCapture={onContentKeyDown}
       onCloseAutoFocus={ownsFocus ? (e) => e.preventDefault() : undefined}
       className="max-md:fixed max-md:inset-x-0 max-md:bottom-0 max-md:top-auto max-md:max-w-none max-md:translate-x-0 max-md:translate-y-0 max-md:rounded-b-none"
@@ -316,7 +321,7 @@ export function CounterDatePicker({
                 : !typedOk
                   ? policy === "OFFICE" && typed > today
                     ? OFFICE_FUTURE_HINT
-                    : "That day is outside the dates this till takes."
+                    : words.outsideRange
                   : `${weekdayShort(typed)}, ${longDay(typed)} · ${relativeDaysLabel(typed, today)}${typed > today ? " (future)" : ""}`}
           </p>
         </div>

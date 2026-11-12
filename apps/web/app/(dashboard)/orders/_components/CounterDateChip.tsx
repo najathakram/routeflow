@@ -11,6 +11,7 @@ import { cn } from "@routeflow/ui/web";
 import { dayLabel, fullDayName } from "@/lib/natural-date";
 import { dateIfNotToday } from "@/lib/counter-order-date";
 import { COUNTER_ORDER_DATE_ZONE_FAILED_COPY } from "@/lib/counter-sale";
+import { ORDER_DATE_COPY, type OrderDateNoun } from "@/lib/order-date-copy";
 import { CounterDatePicker } from "./CounterDatePicker";
 
 interface Props {
@@ -32,6 +33,8 @@ interface Props {
   onScanKey?: (key: string) => void;
   /** the business's day could not be read (not just slow): the chip says so instead of "checking" for ever */
   todayFailed?: boolean;
+  /** what the date is called: "order" (default: the till, the regular order) or "sale" (the New sale invoice) */
+  noun?: OrderDateNoun;
 }
 
 export function CounterDateChip({
@@ -45,10 +48,14 @@ export function CounterDateChip({
   onScan,
   onScanKey,
   todayFailed,
+  noun = "order",
 }: Props) {
+  const words = ORDER_DATE_COPY[noun];
   const [open, setOpen] = React.useState(false);
   const mainRef = React.useRef<HTMLButtonElement>(null);
   const canOpen = !disabled && !!today;
+  // What is seen must be what is sent: a set day is NEVER labelled Today. While the business's day is unknown the day shows
+  // as dated with no past/future word (UNKNOWN), and it can still be cleared.
   const direction: "BACK" | "FORWARD" | "UNKNOWN" | null = !value
     ? null
     : !today
@@ -108,10 +115,10 @@ export function CounterDateChip({
         : "Today";
   const name =
     direction === "UNKNOWN"
-      ? `Order date ${fullDayName(value)}, ${todayFailed ? "could not check the business's day" : "checking the business's day"}. Clear`
+      ? words.unknownName(fullDayName(value), !!todayFailed)
       : direction && value
         ? `${direction === "BACK" ? "Backdated to" : "Future-dated to"} ${fullDayName(value)}. Change or clear`
-        : "Order date: today. Change";
+        : words.todayName;
 
   return (
     <>
@@ -153,7 +160,7 @@ export function CounterDateChip({
           <button
             type="button"
             className="inline-flex min-h-[44px] w-8 items-center justify-center bg-transparent"
-            aria-label="Clear the order date, back to today"
+            aria-label={words.clearName}
             disabled={disabled}
             onKeyDown={onEnter(clear)}
             onClick={clear}
@@ -173,6 +180,7 @@ export function CounterDateChip({
           onScan={onScan}
           onScanKey={onScanKey}
           ownsFocus={!!onDone}
+          noun={noun}
         />
       ) : null}
     </>

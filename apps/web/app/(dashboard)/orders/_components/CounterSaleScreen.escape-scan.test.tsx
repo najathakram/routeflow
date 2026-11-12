@@ -29,6 +29,7 @@ const KNOWN = "4006381333931";
 const UNKNOWN = "9999999999994";
 const WATER = { id: "p-water", name: "Water", pricePerUnit: 1, unit: "each", unitsPerBox: null };
 const resolved: string[] = [];
+const mockCreate = jest.fn();
 jest.mock("@/lib/barcode-resolve", () => ({
   ...jest.requireActual("@/lib/barcode-resolve"),
   resolveProductByCode: async (code: string) => {
@@ -58,11 +59,30 @@ jest.mock("@/lib/api/counter-sale", () => ({
     offerShipInstead: false,
     capability: { counter: "always", methods: ["PICKUP"], staffDefault: "PICKUP" },
   }),
-  useCreateCounterSale: () => ({ mutateAsync: jest.fn(), isPending: false }),
+  useCreateCounterSale: () => ({ mutateAsync: mockCreate, isPending: false }),
   useCounterSaleByKey: () => ({ mutateAsync: jest.fn(), isPending: false }),
 }));
 
 const get = apiClient.get as unknown as jest.Mock;
+const warning409 = {
+  response: {
+    status: 409,
+    data: {
+      code: "RESTRICTION_WARNING",
+      message: "Some items are restricted.",
+      warningHash: "rw1:abc",
+      lines: [
+        {
+          lineKey: "n:0",
+          productId: "p-water",
+          displayName: "Water",
+          outcome: "BLOCK",
+          rules: [{ id: "r1", states: ["CA"], legal: true, reasonText: "Restricted in CA." }],
+        },
+      ],
+    },
+  },
+};
 const EXIT_MS = 150;
 const STARTS = [0, 40, 100, 125, 150, 200] as const;
 const ENDINGS = { LF: "{Enter}", CRLF: "{Enter}{Enter}" } as const;
@@ -112,7 +132,14 @@ beforeEach(() => {
   installExitAnimation();
   get.mockImplementation((url: string) => {
     if (url === "/settings")
-      return Promise.resolve({ data: { taxRate: 0, timezone: "America/New_York" } });
+      return Promise.resolve({
+        data: {
+          taxRate: 0,
+          timezone: "America/New_York",
+          quickKeys: { counter: { default: { pinned: [], hidden: [] }, windowDays: 14, cap: 12 } },
+        },
+      });
+    if (url === "/orders/counter-sale/quick-keys") return Promise.resolve({ data: { keys: [] } });
     if (url === "/orders/counter-sale/parked")
       return Promise.resolve({ data: { data: [], total: 0, page: 1, pageSize: 20 } });
     return Promise.resolve({ data: [] });
@@ -181,6 +208,35 @@ const CASES: Case[] = [
     },
   },
   {
+    name: "Quick keys: find a product to pin (search box)",
+    exitWindow: false,
+    open: async () => {
+      const user = userEvent.setup({ delay: null, advanceTimers: jest.advanceTimersByTime });
+      await user.click(await screen.findByRole("button", { name: "Edit keys" }));
+      await settle();
+      const field = await screen.findByLabelText("Find a product to pin");
+      await user.click(field); // nothing autofocuses it: a clerk clicks into it
+      return field;
+    },
+  },
+  {
+    name: "Restricted items warning (reason box)",
+    exitWindow: true,
+    open: async () => {
+      const user = userEvent.setup({ delay: null, advanceTimers: jest.advanceTimersByTime });
+      await user.click(scanBox());
+      await user.keyboard("Zz99yy{Enter}"); // Water, the restricted line
+      await settle();
+      mockCreate.mockRejectedValueOnce(warning409);
+      await user.click(await screen.findByRole("button", { name: "$20" }));
+      await user.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+      const reason = await screen.findByLabelText(/reason/i);
+      await settle();
+      resolved.length = 0;
+      return reason;
+    },
+  },
+  {
     name: "New product (name field)",
     exitWindow: false,
     open: async () => {
@@ -235,8 +291,9 @@ describe("a scan that starts while a dialog is closing is looked up once, whole"
 });
 
 /**
- * THE PIN: every till window that is a Radix Modal or the New product window is accounted for. A new one fails this until it
- * is added to CASES above or given a reason here.
+ * THE PIN: every file that renders a Modal or a *Dialog / *Modal component is accounted for: its cells are in CASES above, or
+ * it has a stated reason (read from the code) why a text field cannot hold focus while its window closes on the till view.
+ * A new window file fails this until it is added to one or the other.
  */
 const NOT_IN_THE_SCAN_TEST: Record<string, string> = {
   "CounterDayClose.tsx":
@@ -245,27 +302,58 @@ const NOT_IN_THE_SCAN_TEST: Record<string, string> = {
   "CounterVoidSaleDialog.tsx":
     "reason box on the receipt view: the receipt has no scan box, the redirect is off",
   "CounterReturnAction.tsx": "receipt view, as above",
+  "CounterReceiptActions.tsx": "receipt view, as above",
+  "ParkedSales.tsx":
+    "mounts ParkedSalesDialog and the Park prompt: lists and buttons, no text field",
   "ParkedSalesDialog.tsx": "a list and a Park prompt, no text field",
   "useNewCustomerDoor.tsx": "CustomerFormModal; same Modal, same predicate",
+  "QuickKeysGrid.tsx": "only mounts QuickKeysEditModal (a CASES row below)",
+  "ZReportView.tsx": "inside Close day, a read-only report",
+  "BatchShipActions.tsx": "the orders list, not the till",
+  "CreateOrderModal.tsx": "the office order builder (its own scan rules), not the till",
+  "DraftConflictDialog.tsx": "office order builder only (imported by CreateOrderModal)",
+  "ResumeUnsentOrderDialog.tsx": "office order builder only (imported by CreateOrderModal)",
+  "LicenseGuardModal.tsx": "office order builder and the order page, not the till",
+  "SplitInvoiceModal.tsx": "invoice and order pages, not the till",
 };
+// covered by a CASES row: CounterDatePicker, CounterLinePriceEdit, CounterNewItem, QuickKeysEditModal, RestrictionWarningDialog
+const IN_CASES = [
+  "CounterDatePicker.tsx",
+  "CounterLinePriceEdit.tsx",
+  "CounterNewItem.tsx",
+  "QuickKeysEditModal.tsx",
+  "RestrictionWarningDialog.tsx",
+];
+// a window component that is not a file in this folder is read from where it lives
+const EXTRA_FILES = [path.join(__dirname, "../../../../components/RestrictionWarningDialog.tsx")];
+const WINDOW = /<\w*(Modal|Dialog)\b/;
+
 describe("the inventory covers every till window", () => {
-  it("every file that renders a Modal or dialog is in CASES or has a stated reason", () => {
+  const listed = () => {
     const dir = __dirname;
     const files = fs
       .readdirSync(dir)
-      .filter((n) => /^(Counter|Parked|useCounter|useNewCustomer).*.tsx$/.test(n))
-      .filter((n) => !/.test.tsx$/.test(n));
-    const withWindow = files.filter((n) =>
-      /<(Modal|RecordInlineReturnDialog|ParkedSalesDialog|CustomerFormModal|InlineCreateProductModal)/.test(
-        fs.readFileSync(path.join(dir, n), "utf8"),
-      ),
-    );
-    const covered = new Set([
-      "CounterDatePicker.tsx",
-      "CounterLinePriceEdit.tsx",
-      "CounterNewItem.tsx",
-      ...Object.keys(NOT_IN_THE_SCAN_TEST),
-    ]);
-    expect(withWindow.filter((n) => !covered.has(n))).toEqual([]);
+      .filter((n) => /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n))
+      .map((n) => path.join(dir, n));
+    return [...files, ...EXTRA_FILES]
+      .filter((p) => WINDOW.test(fs.readFileSync(p, "utf8")))
+      .map((p) => path.basename(p));
+  };
+  it("the word boundary is a real one (no control byte in the pattern)", () => {
+    expect(WINDOW.source).toBe(String.raw`<\w*(Modal|Dialog)\b`);
+    expect(WINDOW.test("<Modal open>")).toBe(true);
+    expect(WINDOW.test("<ModalFooter>")).toBe(false);
+  });
+  it("every file that renders a Modal or dialog is in CASES or has a stated reason", () => {
+    const accounted = new Set([...IN_CASES, ...Object.keys(NOT_IN_THE_SCAN_TEST)]);
+    const found = listed();
+    expect(found.length).toBeGreaterThanOrEqual(IN_CASES.length);
+    expect(found.filter((n) => !accounted.has(n))).toEqual([]);
+  });
+  it("every file named in the pin still renders a window (a stale entry is removed)", () => {
+    const found = new Set(listed());
+    expect(
+      [...IN_CASES, ...Object.keys(NOT_IN_THE_SCAN_TEST)].filter((n) => !found.has(n)),
+    ).toEqual([]);
   });
 });
