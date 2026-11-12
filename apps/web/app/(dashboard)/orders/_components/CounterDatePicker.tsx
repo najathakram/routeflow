@@ -216,6 +216,16 @@ export function CounterDatePicker({
         return;
       }
     }
+    // A form around the dialog (the regular order) default-prevents Enter before a button's own click, and React events
+    // bubble out of the portal into it: Enter on any button inside the dialog (the header X too) stops here so it presses itself.
+    if (
+      e.key === "Enter" &&
+      e.target instanceof HTMLButtonElement &&
+      rootRef.current?.closest('[role="dialog"]')?.contains(e.target)
+    ) {
+      e.stopPropagation();
+      return;
+    }
     if (!altGr && (e.ctrlKey || e.altKey || e.metaKey)) return;
     if (e.key.length !== 1 || e.key === " ") return;
     swallow();
@@ -226,11 +236,6 @@ export function CounterDatePicker({
     } else startInertRun();
   };
   keyRuleRef.current = onContentKeyDown;
-  // A form around the dialog (the regular order) default-prevents Enter before a button's own click, and React events
-  // bubble out of the portal into it: Enter on a picker button stops here so the button presses itself.
-  const keepEnterForButtons = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && e.target instanceof HTMLButtonElement) e.stopPropagation();
-  };
   const weeks: Array<Array<string | null>> = [];
   for (let i = 0; i < cells.length; i += 7) {
     const row = cells.slice(i, i + 7);
@@ -256,12 +261,7 @@ export function CounterDatePicker({
       onCloseAutoFocus={ownsFocus ? (e) => e.preventDefault() : undefined}
       className="max-md:fixed max-md:inset-x-0 max-md:bottom-0 max-md:top-auto max-md:max-w-none max-md:translate-x-0 max-md:translate-y-0 max-md:rounded-b-none"
     >
-      <div
-        ref={rootRef}
-        className="flex flex-col gap-3"
-        data-testid="counter-date-picker"
-        onKeyDown={keepEnterForButtons}
-      >
+      <div ref={rootRef} className="flex flex-col gap-3" data-testid="counter-date-picker">
         <div className="flex flex-wrap gap-2">
           {quick.map((d) => (
             <Button

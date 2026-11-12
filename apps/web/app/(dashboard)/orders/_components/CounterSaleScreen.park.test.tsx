@@ -1283,9 +1283,80 @@ describe("order date chip on the till", () => {
     fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
     expect(await screen.findAllByText(COUNTER_ORDER_DATE_ZONE_FAILED_COPY)).not.toHaveLength(0);
     expect(mutateAsync).not.toHaveBeenCalled();
-    // clearing the date frees the sale
+    // Try again re-runs the read: once the settings answer, the day is known and the sale is free
+    get.mockImplementation(original);
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(chip()).toHaveAttribute("data-direction", "BACK"));
+    expect(chip()).not.toHaveTextContent("couldn't check");
+    expect(parkBtn()).toBeEnabled();
+  });
+
+  it("R8: while the read is failed, clearing the order date frees Park and Complete (the failed copy promises it)", async () => {
+    const view = renderScreen();
+    await scan("COLA");
+    await pickYesterday();
+    const liveKey = () =>
+      Object.keys(window.localStorage).find((k) => k.includes("liveCart")) as string;
+    await waitFor(() => {
+      const saved = window.localStorage.getItem(liveKey());
+      expect(saved && JSON.parse(saved).orderDate).toBe(YESTERDAY);
+    });
+    view.unmount();
+    const original = get.getMockImplementation()!;
+    get.mockImplementation((url: string) =>
+      url === "/settings" ? Promise.reject(new Error("settings down")) : original(url),
+    );
+    renderScreen();
+    await screen.findByTestId("counter-cart-restored");
+    await waitFor(() => expect(chip()).toHaveTextContent("couldn't check"));
+    expect(parkBtn()).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Clear the order date, back to today" }));
     await waitFor(() => expect(chip()).toHaveAttribute("data-direction", "TODAY"));
+    expect(screen.queryByTestId("counter-date-reminder")).toBeNull();
+    expect(parkBtn()).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Exact" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1)); // sent: no date refusal while failed
+  });
+
+  it("R8: Try again re-runs the read once; while it runs there is no second request and the line says it is checking", async () => {
+    const view = renderScreen();
+    await scan("COLA");
+    await pickYesterday();
+    const liveKey = () =>
+      Object.keys(window.localStorage).find((k) => k.includes("liveCart")) as string;
+    await waitFor(() => {
+      const saved = window.localStorage.getItem(liveKey());
+      expect(saved && JSON.parse(saved).orderDate).toBe(YESTERDAY);
+    });
+    view.unmount();
+    const original = get.getMockImplementation()!;
+    let settingsReads = 0;
+    let finish: (() => void) | null = null;
+    get.mockImplementation((url: string) => {
+      if (url !== "/settings") return original(url);
+      settingsReads += 1;
+      return settingsReads === 1
+        ? Promise.reject(new Error("settings down"))
+        : new Promise((resolve) => {
+            finish = () => resolve({ data: { taxRate: 0, timezone: "America/New_York" } });
+          });
+    });
+    renderScreen();
+    await screen.findByTestId("counter-cart-restored");
+    await waitFor(() => expect(chip()).toHaveTextContent("couldn't check"));
+    const readsBefore = settingsReads;
+    const retry = screen.getByRole("button", { name: "Try again" });
+    fireEvent.click(retry);
+    await waitFor(() => expect(settingsReads).toBe(readsBefore + 1));
+    fireEvent.click(retry); // the same node again (a double tap before React re-renders): still one read
+    fireEvent.click(retry);
+    expect(settingsReads).toBe(readsBefore + 1);
+    expect(screen.getByTestId("counter-date-reminder")).toHaveTextContent("Checking today's date");
+    await act(async () => {
+      finish?.();
+    });
+    await waitFor(() => expect(chip()).toHaveAttribute("data-direction", "BACK"));
   });
 
   it("a scan made while the date picker is open is added to the cart, and focus lands in the scan box", async () => {
