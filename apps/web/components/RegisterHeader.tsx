@@ -66,12 +66,13 @@ export function RegisterHeader({
   return (
     <header
       data-testid="register-header"
-      className="relative flex h-16 shrink-0 items-center gap-3 border-b border-surface-border bg-white px-4"
+      className="relative flex h-16 shrink-0 items-center gap-3 border-b border-surface-border bg-white px-3 sm:px-4"
     >
       <button
         type="button"
         ref={exitRef}
         aria-disabled={busy || undefined}
+        aria-label="Exit counter"
         onClick={() => {
           const exit = () => router.push(readExitTarget());
           if (guardCounterLeave(exit)) return;
@@ -84,7 +85,8 @@ export function RegisterHeader({
         )}
       >
         <ArrowLeft className="h-5 w-5" aria-hidden="true" />
-        Exit counter
+        {/* W-1184: icon only below sm and on tablets (md) so the shop name is not cut to "RouteF..." */}
+        <span className="hidden sm:inline md:hidden lg:inline">Exit counter</span>
       </button>
       <button
         type="button"
@@ -100,7 +102,8 @@ export function RegisterHeader({
       <p
         data-testid="register-store"
         title={storeName}
-        className="min-w-[4rem] flex-1 truncate text-base font-semibold text-navy"
+        // Below lg the name may take two lines (the tools beside it leave ~120px at 390 and still little at 768); from lg up it stays one truncated line.
+        className="min-w-[4rem] flex-1 line-clamp-2 break-words text-sm font-semibold leading-tight text-navy lg:line-clamp-1 lg:text-base lg:leading-normal"
       >
         {storeName}
       </p>

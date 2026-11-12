@@ -1,5 +1,7 @@
 import { clearTenantCookie } from "./tenant-cookie";
 import { guardCounterLeave } from "./counter-cart-signal";
+import { OP_KEYS } from "./auth-keys";
+import { clearOpPresenceCookie, setOpPresenceCookie } from "./presence-cookies";
 
 /**
  * Super-admin impersonation state — THE single reader/writer for the
@@ -61,6 +63,10 @@ export function setImpersonation(
   } else {
     localStorage.removeItem(USERNAME_KEY);
   }
+  // B1304: the acting admin works on the operator surfaces, so the browser carries the operator presence cookie the middleware
+  // guard reads, set by the SAME helper a normal operator sign-in uses. The super admin's own session has none: without it a
+  // browser that also holds a buyer session looks buyer-only and /dashboard bounces to /login.
+  setOpPresenceCookie();
   window.dispatchEvent(new Event(CHANGE_EVENT));
 }
 
@@ -110,6 +116,11 @@ export function exitImpersonation(): void {
 function doExitImpersonation(): void {
   // Read BEFORE clearing: clearImpersonation drops the stored source id.
   const target = exitImpersonationTarget();
+  // B1304: the presence cookie was set for the impersonation. Drop it unless the browser holds an operator session of its
+  // own (then that session's tokens still back it, exactly as a sign-out would have left it).
+  if (!localStorage.getItem(OP_KEYS.accessToken) && !localStorage.getItem(OP_KEYS.refreshToken)) {
+    clearOpPresenceCookie();
+  }
   clearTenantCookie();
   clearImpersonation();
   window.location.href = target;

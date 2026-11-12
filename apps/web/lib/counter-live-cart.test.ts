@@ -26,6 +26,14 @@ describe("live cart persistence", () => {
     );
     expect(readLiveCart(KEY)?.checkDate).toBe("2026-10-23");
   });
+  it("W-1188: a refresh round-trip keeps the chosen order date; a bad one is dropped", () => {
+    writeLiveCart(KEY, { ...(snap(null) as object), orderDate: "2026-11-06" } as never, "u-a");
+    expect(readLiveCart(KEY)?.orderDate).toBe("2026-11-06");
+    writeLiveCart(KEY, { ...(snap(null) as object), orderDate: "2026-02-31" } as never, "u-a");
+    expect(readLiveCart(KEY)).not.toHaveProperty("orderDate");
+    writeLiveCart(KEY, snap(null), "u-a");
+    expect(readLiveCart(KEY)).not.toHaveProperty("orderDate");
+  });
   it("a stored date that is not a real day is dropped on read; no date reads as none", () => {
     writeLiveCart(KEY, { ...(snap(null) as object), checkDate: "2026-02-31" } as never, "u-a");
     expect(readLiveCart(KEY)).not.toHaveProperty("checkDate");

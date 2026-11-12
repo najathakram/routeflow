@@ -601,7 +601,8 @@ export class AnalyticsService {
     const totalDays = paidInvoices.reduce((s, inv) => {
       const days =
         inv.paidAt && inv.issueDate
-          ? Math.floor((inv.paidAt.getTime() - inv.issueDate.getTime()) / 86400000)
+          ? // W-1188: an invoice dated AFTER it was paid (a future-dated counter sale) counts 0 days, never a negative
+            Math.max(0, Math.floor((inv.paidAt.getTime() - inv.issueDate.getTime()) / 86400000))
           : 0;
       return s + days;
     }, 0);
@@ -674,7 +675,16 @@ export class AnalyticsService {
     const { fromDate, toDate } = this.dateRange(from, to);
     const excludeTobacco = await this.tobaccoExclusionActive();
     const items = await this.prisma.forTenant().orderItem.findMany({
-      where: { order: { createdAt: { gte: fromDate, lte: toDate }, status: "DELIVERED" } },
+      where: {
+        order: {
+          // W-1188: an order counts on its business date, else the day it was entered
+          OR: [
+            { orderDate: { gte: fromDate, lte: toDate } },
+            { orderDate: null, createdAt: { gte: fromDate, lte: toDate } },
+          ],
+          status: "DELIVERED",
+        },
+      },
       include: { product: { select: { category: true, isTobacco: true } } },
     });
     const map: Record<string, number> = {};

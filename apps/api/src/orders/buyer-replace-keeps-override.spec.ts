@@ -367,6 +367,17 @@ describe("OrdersService.updateOrderItems: a buyer's full-list replace keeps unch
     expect(created()[0].overriddenBy ?? null).toBeNull();
   });
 
+  it("SA-1118: an unnamed bare qty beside a box-split line of the same product is the pack (namesLines wiring)", async () => {
+    prime([line({ qty: 12, boxes: 1, pieces: 0, subtotal: 12 })]);
+    await replace([
+      { productId: "prod-a", qty: 12, orderItemId: "li-1" },
+      { productId: "prod-a", qty: 2 },
+    ]);
+    // hand: 2 packs x $12 = $24.00; read as pieces it would be 2 x ($12 / 12) = $2.00
+    expect(created()).toHaveLength(2);
+    expect(created()[1]).toMatchObject({ productId: "prod-a", qty: 2, subtotal: 24 });
+  });
+
   it("a NEW line beside a kept override prices at the tier and carries no stamp", async () => {
     prime([line(OVERRIDE)]);
     await replace([

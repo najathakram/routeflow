@@ -132,6 +132,7 @@ import {
 import { ensureWriteOffEvent } from "../invoices/invoice-write-off";
 import { lockInvoiceRow } from "../invoices/invoice-send-guard";
 import { columnEntitlementDenied } from "./import-column-entitlement";
+import { stampInvoicePositions } from "../invoices/invoice-line-position";
 import { maskedIdentity } from "../customers/customer-identity-fields";
 
 /**
@@ -1541,6 +1542,7 @@ export class ImportService {
           tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
         });
       }
+      stampInvoicePositions(itemsData); // W-1187: an imported invoice lists its lines in the file's row order
 
       let invoiceNumber = numberFromSource;
       // A fallback row has no number until `reserveNext` returns, so a failure

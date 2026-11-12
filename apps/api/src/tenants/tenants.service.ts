@@ -29,7 +29,7 @@ import { UpdateBrandingDto } from "./dto/update-branding.dto";
 import { compressImage } from "../storage/compress.util";
 import { TRIAL_LENGTH_DAYS, planKeyFromEnum } from "../billing/plan-catalog.constants";
 import { OwnerAlertService } from "../email/owner-alert.service";
-import { mayUseVerificationLink } from "../auth/verification-link-eligibility";
+import { issueSignupLink, mayUseVerificationLink } from "../auth/verification-link-eligibility";
 import { assertSafeTextCell } from "../common/safe-text-cell";
 import { isApprovedTestTenantSlug } from "../common/tenant-class.util";
 import { FALLBACK_ZONE } from "../common/tenant-time-zone";
@@ -190,7 +190,11 @@ export class TenantsService {
         },
       });
 
-      return { tenant, user };
+      // B448: the live sign-up link row, written with the account. Its id rides the emailed JWT; a deactivation,
+      // email change or role change burns it (revokeUserLinkTokens), so a deactivated admin cannot verify back in.
+      const linkId = await issueSignupLink(tx, user.id);
+
+      return { tenant, user, linkId };
     });
 
     // Generate a 24-hour email verification JWT and send it. Registration itself
@@ -206,7 +210,12 @@ export class TenantsService {
     try {
       const webUrl = this.config.get<string>("WEB_URL") ?? "http://localhost:3001";
       const verifyToken = this.jwt.sign(
-        { sub: result.user.id, tenantId: result.tenant.id, type: "email_verify" },
+        {
+          sub: result.user.id,
+          tenantId: result.tenant.id,
+          type: "email_verify",
+          jti: result.linkId,
+        },
         {
           secret: this.emailVerifyKey,
           audience: DERIVED_JWT_AUDIENCES.emailVerify,
@@ -302,11 +311,21 @@ export class TenantsService {
     // The same eligibility test the link itself is checked against; a refused class gets the
     // same silent answer as an unknown address.
     if (!(await mayUseVerificationLink(this.prisma, user))) return false;
+    // B448: a resend rotates the link: the earlier live row is burned and a new one written with its id in the JWT.
+    // The account row is locked and the test re-run inside the transaction: a deactivation writes the same row and
+    // burns the links in its own transaction, so the two serialize and a resend can never mint a row after the burn.
+    const linkId = await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT 1 FROM "User" WHERE id = ${user.id} FOR UPDATE`;
+      const locked = await tx.user.findUnique({ where: { id: user.id } });
+      if (!locked || locked.deletedAt || !(await mayUseVerificationLink(tx, locked))) return null;
+      return issueSignupLink(tx, user.id);
+    });
+    if (!linkId) return false;
 
     try {
       const webUrl = this.config.get<string>("WEB_URL") ?? "http://localhost:3001";
       const verifyToken = this.jwt.sign(
-        { sub: user.id, tenantId: user.tenant.id, type: "email_verify" },
+        { sub: user.id, tenantId: user.tenant.id, type: "email_verify", jti: linkId },
         {
           secret: this.emailVerifyKey,
           audience: DERIVED_JWT_AUDIENCES.emailVerify,

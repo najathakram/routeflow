@@ -27,7 +27,13 @@ import { UpdateUserDto } from "./dto/update-user.dto";
 import { ChangeUserStatusDto } from "./dto/change-user-status.dto";
 import { issueSetPasswordLink } from "./set-password-token";
 import { hasActiveBuyerLink } from "./also-buyer";
-import { revokeUserLinkTokens } from "../auth/link-token-revocation";
+import { revokeUserEmailChanges, revokeUserLinkTokens } from "../auth/link-token-revocation";
+import {
+  EMAIL_CHANGE_LINK_TTL_MS,
+  emailChangeNeedsHold,
+  issueEmailChange,
+  maskEmail,
+} from "./email-change";
 
 @Injectable()
 export class UsersService {
@@ -83,6 +89,24 @@ export class UsersService {
     }
   }
 
+  /**
+   * The ONE N2 #811 rule for a fresh set-password invite: an account still owing a first password
+   * (`forcePasswordChange`) that `mayMintInvite` allows gets one, to its CURRENT address. Best-effort (a delivery
+   * failure is logged, never thrown). The at-once email write, the role change, the admin toggle, the admin reset and
+   * the email-change confirm (`AuthService`) all ask here.
+   */
+  async sendInviteIfOwed(account: {
+    id: string;
+    email: string | null;
+    username: string;
+    status: string;
+    deletedAt?: Date | null;
+    forcePasswordChange?: boolean;
+  }): Promise<void> {
+    if (!account.forcePasswordChange || !account.email || !this.mayMintInvite(account)) return;
+    await this.sendSetPasswordInvite(account.id, account.email, account.username);
+  }
+
   async findByUsername(username: string, tenantId?: string | null): Promise<User | null> {
     // Accept either username or email in the login field. Email match is
     // case-insensitive (N2 review fix, #811) — updateUser now lowercases a
@@ -128,10 +152,26 @@ export class UsersService {
     return matches.length === 1 ? matches[0] : null;
   }
 
+  /**
+   * B461 (SA-1116): the NEW address each of these users is waiting to confirm (a live, unexpired `UserEmailChange`
+   * row), by user id. A user with none is absent from the map. The ids come from a tenant-scoped read the caller did.
+   */
+  private async pendingEmails(userIds: string[]): Promise<Map<string, string>> {
+    if (userIds.length === 0) return new Map();
+    const rows = await this.prisma.userEmailChange.findMany({
+      where: { userId: { in: userIds }, usedAt: null, expiresAt: { gt: new Date() } },
+      orderBy: { createdAt: "asc" },
+      select: { userId: true, toEmail: true },
+    });
+    // oldest first, so a newer row (there is at most one live row per user) wins
+    return new Map(rows.map((r) => [r.userId, r.toEmail]));
+  }
+
   async findById(id: string): Promise<
     | (Omit<User, "password" | "googleId" | "deniedPermissionGroups" | "permissionsVersion"> & {
         googleLinked: boolean;
         hasPassword: boolean;
+        pendingEmail: string | null;
       })
     | null
   > {
@@ -145,7 +185,13 @@ export class UsersService {
       permissionsVersion: _permissionsVersion,
       ...rest
     } = user;
-    return { ...rest, googleLinked: !!googleId, hasPassword: !!password };
+    const pending = await this.pendingEmails([id]);
+    return {
+      ...rest,
+      googleLinked: !!googleId,
+      hasPassword: !!password,
+      pendingEmail: pending.get(id) ?? null,
+    };
   }
 
   /**
@@ -205,7 +251,11 @@ export class UsersService {
       this.prisma.forTenant().user.count({ where }),
     ]);
 
-    return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+    const pending = await this.pendingEmails(data.map((u) => u.id));
+    return {
+      data: data.map((u) => ({ ...u, pendingEmail: pending.get(u.id) ?? null })),
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    };
   }
 
   async createOperator(dto: CreateOperatorDto) {
@@ -308,6 +358,7 @@ export class UsersService {
     changedByUsername: string | undefined,
     callerRole: UserRole,
     impersonatedBy?: string,
+    requestedByUserId?: string,
   ) {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
@@ -368,6 +419,36 @@ export class UsersService {
     const previousEmail = user.email;
     const previousRole = user.role;
     const emailChanged = emailEdit;
+    // B461 (SA-1116): an email edit on an account that has signed in does not write the email. The new address is held
+    // in a `UserEmailChange` row until the NEW mailbox confirms (`AuthService.confirmEmailChange`). A user who has
+    // never signed in is written at once, as before: the set-password invite sent to the corrected address is the proof.
+    const holdEmail = emailChanged && (await emailChangeNeedsHold(this.prisma, user));
+    const emailWritten = emailChanged && !holdEmail;
+    if (holdEmail && (user.status !== "ACTIVE" || user.deletedAt)) {
+      // The confirm needs an ACTIVE account (its CAS), so a link for this one could never be used. Nothing is written.
+      throw new ConflictException({
+        code: API_ERROR_CODES.EMAIL_CHANGE_ACCOUNT_INACTIVE,
+        message: "Reactivate this account, then change its email.",
+      });
+    }
+    if (holdEmail) {
+      // Refuse a taken address now, not a day later when the owner of the new mailbox clicks. The unique index at
+      // confirm time stays the backstop for a race. `insensitive`: the same comparison the N2 normalisation makes. No
+      // `deletedAt` filter: `@@unique([tenantId, email])` covers a soft-deleted row too.
+      const taken = await this.prisma.forTenant().user.findFirst({
+        where: {
+          id: { not: userId },
+          email: { equals: normalizedEmail as string, mode: "insensitive" },
+        },
+        select: { id: true },
+      });
+      if (taken) {
+        throw new ConflictException({
+          code: API_ERROR_CODES.EMAIL_TAKEN,
+          message: "This address is already used by another account.",
+        });
+      }
+    }
     const roleChanged = !!dto.role && dto.role !== previousRole;
 
     // SA-1050 A-5: a row that ENTERS the operator role starts without the groups the owner keeps off by default.
@@ -392,12 +473,16 @@ export class UsersService {
             permissionsVersion: { increment: 1 },
           }
         : {}),
-      ...(emailChanged ? { email: normalizedEmail } : {}),
+      ...(emailWritten ? { email: normalizedEmail } : {}),
       ...(usernameEdit ? { username: normalizedUsername } : {}),
     };
     // F03 slice 2 (SA-1096): the write and the burn of the account's live links are ONE transaction, so a crash
     // between them can never leave a link that outlives the identity or role it was minted for.
-    const updated = await this.prisma.tenantTransaction(async (tx) => {
+    const {
+      row: updated,
+      changeToken,
+      fromEmail,
+    } = await this.prisma.tenantTransaction(async (tx) => {
       const row = await tx.user.update({
         where: { id: userId },
         data,
@@ -412,26 +497,52 @@ export class UsersService {
           forcePasswordChange: true,
         },
       });
-      if (emailChanged || roleChanged) await revokeUserLinkTokens(tx, userId);
-      return row;
+      if (emailWritten || roleChanged) await revokeUserLinkTokens(tx, userId);
+      // The hold's row is written AFTER the burn above, so a role change in the same edit cannot burn it. It burns the
+      // user's older change rows itself: a newer request supersedes an older one.
+      let changeToken: string | null = null;
+      let fromEmail = user.email;
+      if (holdEmail) {
+        // The row records the address as it stands once the User row is locked, not the pre-transaction snapshot.
+        await tx.$executeRaw`SELECT 1 FROM "User" WHERE id = ${userId} FOR UPDATE`;
+        const now = await tx.user.findUnique({ where: { id: userId }, select: { email: true } });
+        fromEmail = now?.email ?? user.email;
+        // A set-password or reset link mailed to the OLD address dies with the hold, as it does on an at-once write: an
+        // admin who corrects a mistyped address must not leave a live link in the wrong inbox. Burn only, never a
+        // write to the sign-up table, so B448 stays closed. It also burns older change rows; the new row comes after.
+        await revokeUserLinkTokens(tx, userId);
+        // Someone already moved it to this very address: nothing to hold (the row's CHECK would refuse from = to).
+        if (fromEmail.trim().toLowerCase() !== normalizedEmail) {
+          changeToken = await issueEmailChange(tx, {
+            userId,
+            fromEmail,
+            toEmail: normalizedEmail as string,
+            requestedByUserId: requestedByUserId ?? userId,
+          });
+        }
+      }
+      return { row, changeToken, fromEmail };
     });
 
     // Best-effort account notices (NOTIFY-SPEC N2) — never let a delivery failure
     // undo or block an update that has already committed.
-    if (emailChanged) {
+    if (holdEmail && changeToken) {
+      await this.notifyEmailChangeRequested(
+        userId,
+        fromEmail,
+        normalizedEmail as string,
+        updated.username,
+        changeToken,
+      );
+    }
+    if (emailWritten) {
       // N2 review fix (#811 merge-session finding): a set-password invite link sent to
       // a mistyped address must not keep working after the admin corrects the email —
       // otherwise the wrong recipient can still set a password and log in. The burn above covers
       // any outstanding token; then — only if the user has never set their own password — mint and
       // send a fresh one to the corrected address so they aren't left with no way in at all.
       await this.notifyEmailChanged(userId, previousEmail, updated.email, updated.username);
-      if (
-        updated.forcePasswordChange &&
-        updated.email &&
-        this.mayMintInvite({ ...updated, deletedAt: user.deletedAt })
-      ) {
-        await this.sendSetPasswordInvite(userId, updated.email, updated.username);
-      }
+      await this.sendInviteIfOwed({ ...updated, deletedAt: user.deletedAt });
     }
     if (roleChanged) {
       // A link minted for the old role does not carry over to the new one (burned above).
@@ -444,23 +555,62 @@ export class UsersService {
         changedByUsername ?? "an administrator",
       );
       // The same rule as the email branch: a person who has never set a password is not left with a dead first mail.
-      if (
-        !emailChanged &&
-        updated.forcePasswordChange &&
-        updated.email &&
-        this.mayMintInvite({ ...updated, deletedAt: user.deletedAt })
-      ) {
-        await this.sendSetPasswordInvite(userId, updated.email, updated.username);
-      }
+      if (!emailWritten) await this.sendInviteIfOwed({ ...updated, deletedAt: user.deletedAt });
     }
 
-    return updated;
+    // The user as it stands, plus the address it is waiting on. A write at once burned any pending row (above).
+    const pendingEmail = changeToken
+      ? (normalizedEmail as string)
+      : emailWritten
+        ? null
+        : ((await this.pendingEmails([userId])).get(userId) ?? null);
+    return { ...updated, pendingEmail };
   }
 
-  /** Notice to the OLD address (always) + confirmation to the NEW address (notice-only —
-   *  see NOTIFY-SPEC N2: real hold-until-verified gating is a follow-up, not this PR;
-   *  tenants.service.ts:155's JWT verification flow is registration-specific and holds
-   *  no pending-email state to reuse for an in-place change without adding that state). */
+  /**
+   * B461 (SA-1116): the mails of a held change. The NEW address gets the confirm link; the OLD address is told a
+   * change was requested, with the new address masked, and that ignoring it keeps the address. Best-effort, like every
+   * account notice: a delivery failure never undoes the committed row.
+   */
+  private async notifyEmailChangeRequested(
+    userId: string,
+    oldEmail: string,
+    newEmail: string,
+    username: string,
+    token: string,
+  ): Promise<void> {
+    try {
+      const urls = this.configService.get<AppConfig["urls"]>("urls")!;
+      const confirmUrl = `${urls.web.replace(/\/+$/, "")}/confirm-email-change?token=${token}`;
+      const link = await this.email.sendEmailChangeLink({
+        to: newEmail,
+        username,
+        confirmUrl,
+        expiryHours: EMAIL_CHANGE_LINK_TTL_MS / (60 * 60 * 1000),
+      });
+      if (!link.delivered) {
+        this.logger.error(`Email-change link NOT delivered to the new address for user ${userId}.`);
+      }
+      const notice = await this.email.sendEmailChangeRequestedNotice({
+        to: oldEmail,
+        username,
+        maskedNewEmail: maskEmail(newEmail),
+      });
+      if (!notice.delivered) {
+        this.logger.error(
+          `Email-change request notice NOT delivered to the old address for user ${userId}.`,
+        );
+      }
+    } catch (err) {
+      this.logger.error(
+        `Failed to send email-change request mails for user ${userId}: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  /** Notice to the OLD address (always) + confirmation to the NEW address, for an email written AT ONCE (a user who
+   *  has never signed in). An email on an account that has signed in is held until the new address confirms
+   *  (B461, `notifyEmailChangeRequested`); the same two notices go out when that confirm lands. */
   private async notifyEmailChanged(
     userId: string,
     previousEmail: string | null,
@@ -550,17 +700,20 @@ export class UsersService {
     await this.assertNotWalkInAccount(userId);
     const tempPassword = `${crypto.randomBytes(3).toString("hex").toUpperCase()}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
     const hashedPassword = await bcrypt.hash(tempPassword, 10);
-    await this.prisma.forTenant().user.update({
-      where: { id: userId },
-      data: { password: hashedPassword, forcePasswordChange: true },
+    // B461: a reset kills a pending login-email change (one requested from a stolen session must not outlive it), in
+    // the same transaction as the write. User row first, then the burn: the lock order of confirm and changeStatus.
+    await this.prisma.tenantTransaction(async (tx) => {
+      await tx.user.update({
+        where: { id: userId },
+        data: { password: hashedPassword, forcePasswordChange: true },
+      });
+      await revokeUserEmailChanges(tx, userId);
     });
 
     // N2 review fix: never email a set-password link for a deactivated/deleted
     // account — an admin resetting a SUSPENDED/INACTIVE user's password (e.g. to
     // lock them out) must not hand them a working way back in.
-    if (user.email && this.mayMintInvite(user)) {
-      await this.sendSetPasswordInvite(userId, user.email, user.username);
-    }
+    await this.sendInviteIfOwed({ ...user, forcePasswordChange: true });
 
     return { tempPassword };
   }
@@ -594,13 +747,11 @@ export class UsersService {
       return row;
     });
     // Same rule as an email or role change: a person who has never set a password is not left with a dead first mail.
-    if (
-      user.forcePasswordChange &&
-      updated.email &&
-      this.mayMintInvite({ ...updated, deletedAt: user.deletedAt })
-    ) {
-      await this.sendSetPasswordInvite(userId, updated.email, updated.username);
-    }
+    await this.sendInviteIfOwed({
+      ...updated,
+      deletedAt: user.deletedAt,
+      forcePasswordChange: user.forcePasswordChange,
+    });
     return updated;
   }
 

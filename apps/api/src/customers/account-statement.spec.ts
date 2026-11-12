@@ -9,7 +9,8 @@ import { NotFoundException } from "@nestjs/common";
 import { roundMoney } from "@routeflow/pricing";
 import { CustomersController } from "./customers.controller";
 import { CustomersService } from "./customers.service";
-import { STATEMENT_RECENT_PAYMENTS, buildAccountStatement, daysLateOn } from "./account-statement";
+import { STATEMENT_RECENT_PAYMENTS, buildAccountStatement } from "./account-statement";
+import { daysLateOn } from "../common/calendar-date";
 import { ROLES_KEY } from "../auth/decorators/roles.decorator";
 import { createMockPrisma } from "../testing/prisma-mock";
 

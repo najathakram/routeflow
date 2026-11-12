@@ -39,7 +39,7 @@ describe("backorderedPieces stays informational", () => {
     const src = readFileSync(join(SRC, "orders/orders.service.ts"), "utf8");
     const lines = src.split("\n").filter((l) => l.includes("backorderedPieces"));
     expect(lines).toHaveLength(3);
-    expect(lines.filter((l) => l.includes("write.data.backorderedPieces"))).toHaveLength(2);
+    expect(lines.filter((l) => l.includes("append.data.backorderedPieces"))).toHaveLength(2);
     expect(
       lines.filter((l) =>
         l.includes("Object.assign(li, { backorderedPieces: markers?.get(li) ?? 0 })"),

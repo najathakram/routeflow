@@ -6,6 +6,11 @@ import {
   TenantContextMissingError,
 } from "./tenant-context-guard";
 import type { TenantContextKind } from "../tenant/tenant-context.service";
+import {
+  buildRelationIndex,
+  findNestedTenantGaps,
+  stampNestedTenant,
+} from "./tenant-nested-walker";
 
 /**
  * SA-1105 rows K-1, K-7, K-8, K-9 (the guard as a pure module). Each row drives `createTenantContextGuard` with an
@@ -173,9 +178,20 @@ describe("B1285 the capture gate is keyed by the call place, with a global budge
   });
 });
 
-describe("K-8 nested-create detection (one level, from the parent's call site)", () => {
-  const target = (parent: string, key: string) =>
-    parent === "Order" && key === "items" ? "OrderItem" : undefined;
+describe("K-8 nested-create detection (from the parent's call site; the walker names the gaps)", () => {
+  // The harness only: Order.items -> OrderItem, tenant-owned. The guard receives the gaps the walker found.
+  const field = (name: string, kind: string, type = "String", from: string[] = []) => ({
+    name,
+    kind,
+    type,
+    isList: kind === "object",
+    relationFromFields: from,
+  });
+  const index = buildRelationIndex([
+    { name: "Order", fields: [field("tenantId", "scalar"), field("items", "object", "OrderItem")] },
+    { name: "OrderItem", fields: [field("tenantId", "scalar")] },
+  ] as any);
+  const target = (model: string, data: unknown) => findNestedTenantGaps(model, data, index);
 
   it("a parent create with a nested create and no child tenantId reports op nested-create", () => {
     const { guard, lines } = make();
@@ -184,7 +200,7 @@ describe("K-8 nested-create detection (one level, from the parent's call site)",
       "Order",
       "create",
       { tenantId: "t1", items: { create: [{ sku: "a" }] } },
-      target,
+      target("Order", { items: { create: [{ sku: "a" }] } }),
     );
     expect(out).toEqual({ ok: false, reason: "TENANT_CONTEXT_MISSING", ops: ["nested-create"] });
     expect(guard.counts()).toEqual({ "TENANT|Order.items|nested-create": 1 });
@@ -199,7 +215,7 @@ describe("K-8 nested-create detection (one level, from the parent's call site)",
         "Order",
         "create",
         { tenantId: "t1", items: { create: { tenantId: "t1" } } },
-        target,
+        target("Order", { items: { create: { tenantId: "t1" } } }),
       ).ok,
     ).toBe(true);
     expect(
@@ -208,7 +224,7 @@ describe("K-8 nested-create detection (one level, from the parent's call site)",
         "Order",
         "create",
         { tenantId: "t1", notes: { create: { x: 1 } } },
-        target,
+        target("Order", { notes: { create: { x: 1 } } }),
       ).ok,
     ).toBe(true);
     expect(
@@ -217,9 +233,85 @@ describe("K-8 nested-create detection (one level, from the parent's call site)",
         "Order",
         "create",
         { tenantId: "t1", items: { createMany: { data: [{ sku: "a" }] } } },
-        target,
+        target("Order", { items: { createMany: { data: [{ sku: "a" }] } } }),
       ).ok,
     ).toBe(false);
+  });
+});
+
+describe("SA-1110 W-0, W-5, W-6, W-8: the guard reads the walker's gaps at every depth", () => {
+  const f = (name: string, kind: string, type = "String", from: string[] = []) => ({
+    name,
+    kind,
+    type,
+    isList: kind === "object",
+    relationFromFields: from,
+  });
+  const deep = buildRelationIndex([
+    { name: "A", fields: [f("tenantId", "scalar"), f("items", "object", "B")] },
+    { name: "B", fields: [f("tenantId", "scalar"), f("sub", "object", "C")] },
+    { name: "C", fields: [f("tenantId", "scalar")] },
+  ] as any);
+  const gapsOf = (data: unknown) => findNestedTenantGaps("A", data, deep);
+
+  it("W-0: TENANT create of a VendorBill with an unstamped item throws when enforced; stamped first, it does not", () => {
+    const on = make({ enforce: true });
+    const data = { tenantId: "t1", items: { create: [{ qty: 1 }] } };
+    const bill = (d: unknown) =>
+      on.guard.checkWrite("TENANT", "VendorBill", "create", d, gapsFor(d));
+    const gapsFor = (d: unknown) => findNestedTenantGaps("VendorBill", d);
+    expect(() => bill(data)).toThrow(TenantContextMissingError);
+    expect(() => bill(stampNestedTenant("VendorBill", data, "t1"))).not.toThrow();
+  });
+
+  it("W-5: a depth-2 gap under NONE is reported as A.items.sub, one counter key", () => {
+    const { guard } = make();
+    const data = { items: { create: [{ tenantId: "t1", sub: { create: [{ q: 1 }] } }] } };
+    const out = guard.checkWrite("NONE", "A", "create", { tenantId: "t1", ...data }, gapsOf(data));
+    expect(out).toEqual({ ok: false, reason: "TENANT_CONTEXT_MISSING", ops: ["nested-create"] });
+    expect(guard.counts()).toEqual({ "NONE|A.items.sub|nested-create": 1 });
+  });
+
+  it("W-6: connectOrCreate and nested upsert create children are reported", () => {
+    for (const items of [
+      { connectOrCreate: [{ where: {}, create: { q: 1 } }] },
+      { upsert: [{ where: {}, create: { q: 1 }, update: {} }] },
+    ]) {
+      const { guard } = make();
+      const out = guard.checkWrite(
+        "NONE",
+        "A",
+        "create",
+        { tenantId: "t1", items },
+        gapsOf({ items }),
+      );
+      expect(out.ok).toBe(false);
+      expect(guard.counts()).toEqual({ "NONE|A.items|nested-create": 1 });
+    }
+  });
+
+  it("W-8: SUPER_ADMIN nested create with no tenant anywhere is reported at every depth, never stamped", () => {
+    const { guard } = make();
+    const data = { items: { create: [{ sub: { create: [{ q: 1 }] } }] } };
+    const out = guard.checkWrite("SUPER_ADMIN", "A", "create", data, gapsOf(data));
+    expect(out.ok).toBe(false);
+    expect(guard.counts()).toEqual({
+      "SUPER_ADMIN|A|create": 1,
+      "SUPER_ADMIN|A.items|nested-create": 1,
+      "SUPER_ADMIN|A.items.sub|nested-create": 1,
+    });
+  });
+
+  it("a gap list that is empty adds nothing, and an update-style report needs no top-level row", () => {
+    const { guard } = make();
+    expect(guard.checkWrite("TENANT", "A", "create", { tenantId: "t1" }, [])).toEqual({ ok: true });
+    expect(guard.checkNested("TENANT", ["A.items.sub"])).toEqual({
+      ok: false,
+      reason: "TENANT_CONTEXT_MISSING",
+      ops: ["nested-create"],
+    });
+    expect(guard.checkNested("SYSTEM", ["A.items.sub"])).toEqual({ ok: true });
+    expect(guard.counts()).toEqual({ "TENANT|A.items.sub|nested-create": 1 });
   });
 });
 

@@ -9,6 +9,7 @@ import {
   getCounterCartHasLines,
   setCounterCartHasLines,
   subscribeCounterCart,
+  setCounterAutoParkHook,
 } from "./counter-cart-signal";
 
 /** POS-7: the one-bit "the counter cart has lines" store the register header reads (no React context). */
@@ -89,5 +90,63 @@ describe("counter cart signal", () => {
     expect(guardCounterLeave(jest.fn())).toBe(true);
     expect(getCounterLeaveRequest()).toBe(false);
     expect(getCounterLeaveNotice()).toBe(true);
+  });
+});
+
+/** W-1184: leaving with lines PARKS the sale, then leaves; the "Discard this sale?" question is only the fallback. */
+describe("guardCounterLeave auto-parks", () => {
+  afterEach(() => setCounterAutoParkHook(null));
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+
+  it("parks first, then runs the leave, and never opens the Discard dialog", async () => {
+    const order: string[] = [];
+    setCounterAutoParkHook(async () => {
+      order.push("park");
+      return true;
+    });
+    setCounterCartHasLines(true);
+    const proceed = jest.fn(() => order.push("leave"));
+    expect(guardCounterLeave(proceed)).toBe(true);
+    expect(getCounterLeaveRequest()).toBe(false);
+    await flush();
+    expect(order).toEqual(["park", "leave"]);
+  });
+
+  it("a failed park keeps the sale and falls back to the Discard question (nothing is lost)", async () => {
+    setCounterAutoParkHook(async () => false);
+    setCounterCartHasLines(true);
+    const proceed = jest.fn();
+    expect(guardCounterLeave(proceed)).toBe(true);
+    await flush();
+    expect(proceed).not.toHaveBeenCalled();
+    expect(getCounterLeaveRequest()).toBe(true);
+    cancelCounterLeave();
+  });
+
+  it("a second leave while the park runs does not park twice", async () => {
+    const hook = jest.fn(async () => {
+      await flush();
+      return true;
+    });
+    setCounterAutoParkHook(hook);
+    setCounterCartHasLines(true);
+    const a = jest.fn();
+    const b = jest.fn();
+    expect(guardCounterLeave(a)).toBe(true);
+    expect(guardCounterLeave(b)).toBe(true);
+    await flush();
+    await flush();
+    expect(hook).toHaveBeenCalledTimes(1);
+    expect(a).toHaveBeenCalledTimes(1);
+    expect(b).not.toHaveBeenCalled();
+  });
+
+  it("busy still wins: no park while a sale is being recorded", () => {
+    const hook = jest.fn(async () => true);
+    setCounterAutoParkHook(hook);
+    setCounterCartHasLines(true);
+    setCounterCartBusy(true);
+    expect(guardCounterLeave(jest.fn())).toBe(true);
+    expect(hook).not.toHaveBeenCalled();
   });
 });

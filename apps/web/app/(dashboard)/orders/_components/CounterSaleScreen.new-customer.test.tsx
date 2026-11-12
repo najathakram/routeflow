@@ -41,6 +41,8 @@ const createCustomer = jest.fn();
 let mockOfferShip = false;
 const mockSaleMutate = jest.fn();
 jest.mock("@/lib/api/drafts", () => ({
+  useDrafts: () => ({ data: [] }),
+  useDeleteDraft: () => ({ mutate: jest.fn(), isPending: false }),
   ...jest.requireActual("@/lib/api/drafts"),
   useCreateDraft: () => ({ mutateAsync: jest.fn(), mutate: jest.fn(), isPending: false }),
 }));

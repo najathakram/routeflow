@@ -518,12 +518,11 @@ describe("OrdersService — F06 guards (TP2)", () => {
       expect(prisma.order.update).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ subtotal: 30 }) }),
       );
-      // R2's "client array order" contract on a MIXED order: the client's own
-      // line takes position 0 and the preserved row is re-stamped AFTER it, so a
-      // survivor can never keep a position that collides with a freshly created
-      // line and silently reorder the invoice.
-      expect(lines.find((l) => l.productId === "prod-x")).toMatchObject({ position: 0 });
-      expect(survivor).toMatchObject({ position: 1 });
+      // W-1187 (D3/D11): a buyer's edit never reorders. The preserved row keeps the slot it
+      // held (0) and the buyer's new line goes after the stored lines (1); before W-1187 the
+      // client's line took 0 and the staff's row was pushed below it (the B51 re-stamp).
+      expect(lines.find((l) => l.productId === "prod-x")).toMatchObject({ position: 1 });
+      expect(survivor).toMatchObject({ position: 0 });
     });
   });
 

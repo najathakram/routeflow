@@ -84,6 +84,8 @@ export interface ParkCartInput {
   tendered: string;
   reference: string;
   checkDate?: string;
+  /** W-1188: the chip's day ("" or absent = Today). */
+  orderDate?: string;
   /** S5: Walk-in was explicitly chosen (only meaningful with no customer). */
   walkIn?: boolean;
 }
@@ -134,5 +136,3 @@ export function parkedRowTitle(
     return { title: `Walk-in · ${formatParkedTime(createdAt, timeZone)}`, timeShown: true };
   return { title: label, timeShown: false };
 }
-
-export const lineCountLabel = (n: number): string => (n === 1 ? "1 line" : `${n} lines`);

@@ -430,6 +430,7 @@ describe("CounterSaleTodayService: query budget (test 12)", () => {
         "customerId",
         "id",
         "invoices",
+        "orderDate", // W-1188: the chosen day, for the "Dated" tag (one date column, no money field)
         "orderNumber",
         "returns",
         "soldBy", // row 317: the cashier's username only (counter-sale-cashier.spec.ts pins the select)

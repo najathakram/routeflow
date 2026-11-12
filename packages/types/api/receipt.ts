@@ -60,6 +60,8 @@ export interface ReceiptModel {
   invoiceNumber: string;
   invoiceId: string;
   dateLabel: string;
+  /** W-1188: a counter sale dated to another day prints that day in `dateLabel`; this is when it was really rung. Absent when not dated. */
+  enteredLabel?: string;
   lines: ReceiptLine[];
   cashier: string | null;
   /** the lines at their system prices: net lines plus `discounts`, so Subtotal - Discounts + Tax + Adjustments = Total */

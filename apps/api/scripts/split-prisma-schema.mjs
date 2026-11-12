@@ -126,6 +126,7 @@ const MODEL_DOMAIN = {
   BuyerPasswordResetToken: "tenancy",
   BuyerEmailVerificationToken: "tenancy",
   UserEmailVerificationToken: "tenancy",
+  UserEmailChange: "tenancy",
   CustomerLink: "tenancy",
   BuyerMergeRequest: "tenancy",
 

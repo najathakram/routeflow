@@ -62,8 +62,11 @@ export function ChangePricesPanel({
   idSuffix = "",
   memory,
   onRemember,
+  onTypeExact,
 }: {
   onClose: () => void;
+  /** F10: a link to Edit for people who want to type a price, not move it. */
+  onTypeExact?: () => void;
   /** Closes the panel after Apply (K11-15: focus goes to Save); without it Apply closes like Cancel. */
   onApplied?: () => void;
   /** K12 F04: the form as left by a Cancel; it opens like this. Apply clears it (the host's job). */
@@ -82,6 +85,7 @@ export function ChangePricesPanel({
       idSuffix={idSuffix}
       memory={memory}
       onRemember={onRemember}
+      onTypeExact={onTypeExact}
     />
   ) : null;
 }
@@ -94,6 +98,7 @@ function ChangePricesForm({
   idSuffix,
   memory,
   onRemember,
+  onTypeExact,
 }: {
   draft: PriceDraft;
   view: LadderView;
@@ -102,6 +107,7 @@ function ChangePricesForm({
   idSuffix: string;
   memory?: PanelMemory | null;
   onRemember?: (m: PanelMemory) => void;
+  onTypeExact?: () => void;
 }) {
   const { grid } = draft;
   const { tierName, customerName, customers, rules, customersTruncated } = usePlanNames();
@@ -227,7 +233,22 @@ function ChangePricesForm({
       <h3 id={`${ids}-title`} className={LBL}>
         Change prices
       </h3>
-      <p className="mt-1 text-sm text-ink-500">Pick a unit and how much to move it.</p>
+      <p className="mt-1 text-sm text-ink-500">
+        Pick a unit and how much to move it.
+        {onTypeExact && (
+          <>
+            {" "}
+            <button
+              type="button"
+              data-testid={T.changeTypeExact}
+              className="font-medium text-brand-600 underline hover:text-brand-700"
+              onClick={onTypeExact}
+            >
+              Type an exact price instead
+            </button>
+          </>
+        )}
+      </p>
       <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {field(
           "unit",

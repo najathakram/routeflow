@@ -395,6 +395,15 @@ describe("AnalyticsService — invoiced-sales readers", () => {
   });
 
   describe("getDso", () => {
+    it("R20 (W-1188): an invoice dated after it was paid counts 0 days, never a negative", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        { issueDate: new Date("2026-11-16"), paidAt: new Date("2026-11-09T18:00:00Z") }, // dated ahead: 0, not -7
+        { issueDate: new Date("2026-11-01"), paidAt: new Date("2026-11-11T00:00:00Z") }, // 10d
+      ]);
+
+      expect(await service.getDso()).toEqual({ dso: 5, count: 2 });
+    });
+
     it("averages days from issue to payment across PAID invoices, unwindowed by default", async () => {
       prisma.invoice.findMany.mockResolvedValue([
         { issueDate: new Date("2026-06-01"), paidAt: new Date("2026-06-11") }, // 10d
@@ -506,6 +515,17 @@ describe("AnalyticsService — invoiced-sales readers", () => {
       expect(result.count).toBe(2);
       expect(result.total).toBe(100); // 110-60 + 50
       expect(result.aov).toBe(50);
+    });
+
+    it("R21 (W-1188): sales-by-category counts an order on its business date, else its entry date", async () => {
+      prisma.orderItem.findMany.mockResolvedValue([]);
+
+      await service.getSalesByCategory("2026-10-01", "2026-10-31");
+
+      const { order } = prisma.orderItem.findMany.mock.calls[0][0].where;
+      const window = { gte: new Date("2026-10-01T00:00:00.000Z"), lte: expect.any(Date) };
+      expect(order.status).toBe("DELIVERED");
+      expect(order.OR).toEqual([{ orderDate: window }, { orderDate: null, createdAt: window }]);
     });
 
     it("skips tobacco categories in sales-by-category", async () => {

@@ -13,12 +13,12 @@ const DIR = __dirname;
 /** file -> the number of direct `.focus()` calls it may have, and why. */
 const ALLOWED: Record<string, { count: number; why: string }> = {
   "CounterSaleScreen.tsx": {
-    count: 3,
-    why: "the receipt heading takes focus when the receipt appears (POS-1); the digit redirect (row 237) focuses the scan box SYNCHRONOUSLY so the very keystroke lands in it (a scheduled refocus would lose it); and focusPaymentControl, the one place the payment area takes focus (Enter in an empty scan box, the tender radiogroup arrows; R7b 1.2)",
+    count: 4,
+    why: "Esc in an EMPTY scan box moves focus to Resume sale, else Exit counter, so the keyboard reaches them in one key (it only moves focus, never presses; the scanner Enter cannot trigger it); the receipt heading takes focus when the receipt appears (POS-1); the digit redirect (row 237) focuses the scan box SYNCHRONOUSLY so the very keystroke lands in it (a scheduled refocus would lose it); and focusPaymentControl, the one place the payment area takes focus (Enter in an empty scan box, the tender radiogroup arrows; R7b 1.2)",
   },
   "CounterNewItem.tsx": {
-    count: 1,
-    why: "SA-1066 F10: the regulated-item question box takes focus (preventScroll) when it opens, so the keyboard lands on the question box, not on Cancel or any answer button, and the page does not jump; it is a dialog's own box, never the scan field",
+    count: 3,
+    why: "SA-1066 F10: the regulated-item question box takes focus (preventScroll) when it opens, and the Tab / Shift+Tab trap wraps focus inside the box (first and last control), so the keyboard lands on the question box, not on Cancel or any answer button, and the page does not jump; it is a dialog's own box, never the scan field",
   },
   "CounterReturnAction.tsx": {
     count: 1,
@@ -39,6 +39,7 @@ const ALLOWED: Record<string, { count: number; why: string }> = {
 const AUTOFOCUS_ALLOWED: Record<string, number> = {
   "CounterSaleScreen.tsx": 1,
   "CounterLineRow.tsx": 1,
+  "CounterDatePicker.tsx": 1, // W-1188: the typed-date field takes the cursor when the picker opens (the dialog's only text field)
   "CounterDayClose.tsx": 1, // R7b 2.3: the Keep button of the "Keep your count for later?" confirm is the default
 };
 

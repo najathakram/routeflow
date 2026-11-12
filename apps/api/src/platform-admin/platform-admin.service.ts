@@ -29,6 +29,7 @@ import {
 import { PlatformPricingService } from "../billing/platform-pricing.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { inclusionCatalogFor, pinPlanVersionTx } from "../billing/plan-version-pin";
+import { revokeUserEmailChanges } from "../auth/link-token-revocation";
 import { ProrationService } from "../billing/proration.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { MeterService } from "../billing/meter.service";
@@ -2852,9 +2853,13 @@ export class PlatformAdminService {
 
     const tempPassword = `${crypto.randomBytes(3).toString("hex").toUpperCase()}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
     const hashedPassword = await bcrypt.hash(tempPassword, 10);
-    await this.prisma.user.update({
-      where: { id: adminUser.id },
-      data: { password: hashedPassword, forcePasswordChange: true },
+    // B461: the reset also kills a pending login-email change, in the same transaction as the password write.
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: adminUser.id },
+        data: { password: hashedPassword, forcePasswordChange: true },
+      });
+      await revokeUserEmailChanges(tx, adminUser.id);
     });
     await this.recordAdminAction(tenantId, adminId, AdminAuditAction.TENANT_ADMIN_PASSWORD_RESET, {
       username: adminUser.username,

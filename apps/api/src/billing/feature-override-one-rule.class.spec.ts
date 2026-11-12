@@ -196,6 +196,7 @@ const OTHER_READS: Record<string, number> = {
   "billing/entitlement-sweep.service.ts": 1, // hash input only
   "billing/feature-override-review.job.ts": 2, // expired page, ending-soon page
   "billing/feature-override.service.ts": 1, // the expiry chunk
+  "platform-admin/feature-change.service.ts": 2, // WP11: the save's hash input, and the live rows of one key it is about to revoke (no served answer)
 };
 
 describe("N-3: each read that feeds the one rule carries OVERRIDE_RULE_ORDER", () => {
@@ -258,7 +259,11 @@ const EFFECT_MAP = /[oO]verrides\.set\(|new Map(?:<[^>]*>)?\([^)]*[eE]ffects/g;
 
 /** file (relative to src) -> [expected live-check hits, expected effect-map hits], with the reason it is a different question. */
 const ALLOWED: Record<string, { live: number; set: number; why: string }> = {
-  "billing/feature-override-rule.ts": { live: 2, set: 0, why: "the rule itself" },
+  "billing/feature-override-rule.ts": {
+    live: 4,
+    set: 0,
+    why: "the rule itself (is the row live; was it closed by its own end date, SA-1133)",
+  },
   "billing/billable-pilot-ending.ts": {
     live: 3,
     set: 0,
@@ -283,6 +288,11 @@ const ALLOWED: Record<string, { live: number; set: number; why: string }> = {
     live: 1,
     set: 0,
     why: "a SAVED snapshot entry's own expiry while the restore plans (is the stored entry already past), not which stored row applies",
+  },
+  "platform-admin/feature-change.service.ts": {
+    live: 3,
+    set: 0,
+    why: "WP11: the save's hash `live:` flag (hash-only, like the sweep), a NEW change's own end date (not in the past), and the no-op check against the live row it is about to replace",
   },
   "billing/feature-preview.service.ts": {
     live: 0,

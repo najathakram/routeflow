@@ -3,8 +3,8 @@ import type { FulfillPath } from "@prisma/client";
 import type { CreateOrderOptions, ReplayedCart, ReplayedOrder } from "./order-create-options";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import type { CreateSaleDto } from "./dto/create-sale.dto";
-import { parseOrderDate } from "./order-parsers";
-import { calendarDateFromIso, startOfCalendarDay } from "../common/calendar-date";
+import { resolveOrderDate, type OrderDatePolicy } from "./order-date";
+import { calendarDateFromIso, startOfCalendarDay, tenantTodayDay } from "../common/calendar-date";
 
 /**
  * INTERNAL options of `OrdersService.createSale` (SA-655): the counter sale threads these through the
@@ -42,11 +42,18 @@ export interface SaleOptions {
 export function resolveSaleDelivery(
   dto: CreateSaleDto,
   user: JwtPayload,
-  zone?: string | null,
-  now: Date = new Date(),
+  zone: string | null | undefined,
+  now: Date,
+  /** W-1188: the gate's required inputs (the caller's denied groups, and COUNTER for the till, else OFFICE). */
+  gate: { deniedGroups: readonly string[]; policy: OrderDatePolicy },
 ) {
   let deliveredNow = dto.deliveredNow;
-  let deliveredAt = parseOrderDate(dto.orderDate, user.role, { zone, now }); // row 751: the tenant's day
+  const resolved = (raw: string | undefined, policy: OrderDatePolicy) =>
+    resolveOrderDate(raw, { role: user.role, deniedGroups: gate.deniedGroups, zone, now, policy });
+  // W-1188: a forward date never stamps a physical hand-over in the future: deliveredAt = min(orderDate, now).
+  const dated = resolved(dto.orderDate, gate.policy);
+  // (a zone ahead of UTC reads its own today as a stamp later than `now`: only a day after the tenant's today is "future")
+  let deliveredAt = dated && calendarDateFromIso(dated) > tenantTodayDay(zone, now) ? now : dated;
   let requestedDeliveryDate = dto.requestedDeliveryDate;
   if (dto.deliveredOn != null) {
     const parsed = new Date(dto.deliveredOn);
@@ -58,7 +65,7 @@ export function resolveSaleDelivery(
       // Past/today: the sale happened on that day, so it goes through the same
       // staff-only gate and 2-year floor backdating has always had.
       deliveredNow = true;
-      deliveredAt = parseOrderDate(dto.deliveredOn, user.role, { zone, now });
+      deliveredAt = resolved(dto.deliveredOn, "OFFICE"); // past or today by construction
     }
   }
   return { deliveredNow, deliveredAt, requestedDeliveryDate };
