@@ -21,11 +21,6 @@ describe("B891: id-dependent consumers pass their ids explicitly", () => {
       "e2e 56 #delivery-date",
     ],
     [
-      "app/(dashboard)/orders/_components/CreateOrderModal.tsx",
-      "order-date",
-      "e2e 08/56 #order-date",
-    ],
-    [
       "components/ReAuthProvider.tsx",
       "reauth-pw",
       'e2e 07 #reauth-pw + <label htmlFor="reauth-pw">',

@@ -18,6 +18,7 @@ import {
   hasReservedParkKey,
   COUNTER_PARK_RETRY_WINDOW_MS,
   COUNTER_PARK_TTL_HOURS,
+  isCalendarDay,
   sanitizeParkedPayload,
   type ParkCartResponse,
   type ParkLimitScope,
@@ -245,7 +246,8 @@ export class CounterParkService {
                CASE WHEN jsonb_typeof("payload"->'lines') = 'array'
                     THEN jsonb_array_length("payload"->'lines') ELSE 0 END AS "lineCount",
                "payload"->'lines' AS "lines",
-               "payload"->'customer'->>'businessName' AS "customerName"
+               "payload"->'customer'->>'businessName' AS "customerName",
+               "payload"->>'orderDate' AS "orderDate"
           FROM "CounterParkedCart"
          WHERE "tenantId" = ${tenantId} AND "registerKey" = ${registerKey}
            AND "resumedAt" IS NULL AND "expiresAt" > ${now}
@@ -268,6 +270,7 @@ export class CounterParkService {
       priceLines: priceLinesOf({ lines: r.lines }),
       ...itemSummaryOf({ lines: r.lines }),
       ...(r.customerName ? { customerName: r.customerName } : {}),
+      ...(isCalendarDay(r.orderDate) ? { orderDate: r.orderDate } : {}),
     }));
     return { data, total: total[0]?.n ?? 0, page, pageSize };
   }

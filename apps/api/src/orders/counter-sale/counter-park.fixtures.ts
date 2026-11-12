@@ -132,7 +132,11 @@ export class FakeParkDb {
         )
         .slice(skip, skip + limit)
         .map((r) => {
-          const p = r.payload as { lines?: unknown[]; customer?: { businessName?: string } | null };
+          const p = r.payload as {
+            lines?: unknown[];
+            customer?: { businessName?: string } | null;
+            orderDate?: string;
+          };
           return {
             id: r.id,
             label: r.label,
@@ -143,6 +147,7 @@ export class FakeParkDb {
             // the SQL's `"payload"->'lines'` (the list projects the pricing inputs of these in JS)
             lines: p.lines ?? [],
             customerName: p.customer?.businessName ?? null,
+            orderDate: p.orderDate ?? null, // the SQL's `"payload"->>'orderDate'`
           };
         });
     }
