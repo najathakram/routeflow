@@ -17,7 +17,7 @@
 - **Symptom:** a hold and a one-case fix order for #4302 went out from an interim reading, before the reader's FAIL (board 6819958479) and the browser evidence (6819958939, which found more than the reader's MUST) were posted. It cost a round.
 - **Root cause:** the order was written from a partial read; nothing required it to name the evidence it rested on.
 - **Lesson:** **An order that holds a PR or tells a lane what to fix names the board comment ids of the verdict and of the browser evidence it rests on, and is not sent until both are posted. A fix scoped from an interim read is re-scoped when the evidence lands.**
-- **Guard:** none automatic; the Lead's fix-order template carries the required comment-id field (lead log, #4302).
+- **Guard:** owed, NOT BUILT YET: a required field in the lead's order template holding the board comment ids of the verdict and of its evidence. No file in the repo carries it today.
 
 ### L-359 · 2026-10-30 · process · a train is pushed only after the CI-equivalent verify; type-checks plus one test file is not a gate, and CI is read by its closing Failed line
 
@@ -81,7 +81,7 @@
 
 ### L-378 · 2026-11-12 · testing · a hand-over test runs the real scan detector with a full-length code; a mocked detector and a short code cannot see a dropped first key (#4302 review)
 
-- **Symptom:** in PR #4302 (merged at 15137041c9 with the fix) the order builder's line handle handed focus to product search, but the first key of a scan had already gone to the handle, so the lookup lost its first character (board 6819958479, confirmed in a browser run on 6819958939: 5/5 runs, no line added). The PR's test passed.
+- **Symptom:** in PR #4302 (merged as 1c22822497, head 15137041c9, with the fix) the order builder's line handle handed focus to product search, but the first key of a scan had already gone to the handle, so the lookup lost its first character (board 6819958479, confirmed in a browser run on 6819958939: 5/5 runs, no line added). The PR's test passed.
 - **Root cause:** the test mocked `BarcodeScannerButton` and scanned "300", which is under the detector's 6-character gate (`sequence.length >= 6`, `BarcodeScannerButton.tsx:110`), so neither the detector nor the dropped key was exercised.
 - **Lesson:** **A test of a focus hand-over during a scan runs the real detector and types a full-length code (13 digits) with the scanner's key gaps, then asserts the lookup got the whole code once. A mock of the component that reads the keys removes the thing under test.**
 - **Guard:** `apps/web/app/(dashboard)/orders/_components/CreateOrderModal.scan-from-handle.test.tsx`: the real detector, a 13-digit code from handles 1 and 2 and from the search box; removing the dispatch in `SortableLines.tsx` turns two cells red. Open: only Enter is sent, a CR+LF ending from a handle is not covered. Cf. [[L-376]].
