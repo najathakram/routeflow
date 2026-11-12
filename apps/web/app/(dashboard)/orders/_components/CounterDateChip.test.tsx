@@ -291,6 +291,30 @@ describe("unknown business day: the reminder and the failed read", () => {
   });
 });
 
+describe("CounterDateReminder Try again while a retry is running", () => {
+  it("is aria-disabled (not disabled), keeps focus, and sends nothing", async () => {
+    const onRetry = jest.fn();
+    const user = userEvent.setup({ delay: null });
+    render(
+      <CounterDateReminder
+        value="2026-11-01"
+        today={undefined}
+        todayFailed
+        onRetry={onRetry}
+        retrying
+      />,
+    );
+    const button = screen.getByRole("button", { name: "Try again" });
+    expect(button).toHaveAttribute("aria-disabled", "true");
+    expect(button).not.toBeDisabled();
+    act(() => button.focus());
+    await user.click(button);
+    await user.keyboard("{Enter}");
+    expect(onRetry).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(button);
+  });
+});
+
 describe("CounterDateReminder", () => {
   it("is silent on Today", () => {
     const { container } = render(<CounterDateReminder value="" today={TODAY} />);

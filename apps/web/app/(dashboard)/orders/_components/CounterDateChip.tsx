@@ -185,12 +185,15 @@ export function CounterDateReminder({
   today,
   todayFailed,
   onRetry,
+  retrying,
 }: {
   value: string;
   today: string | undefined;
   todayFailed?: boolean;
   /** re-runs the read of the business's day; shown beside the failed copy */
   onRetry?: () => void;
+  /** the read is running: Try again stays on screen and keeps focus, but sends nothing */
+  retrying?: boolean;
 }) {
   if (!dateIfNotToday(value, today)) return null;
   // While the business's day is unknown the chip says "checking": the reminder must not claim the sale is dated yet
@@ -203,7 +206,14 @@ export function CounterDateReminder({
         {todayFailed && onRetry ? (
           <>
             {" "}
-            <button type="button" className="min-h-[44px] px-2 underline" onClick={onRetry}>
+            <button
+              type="button"
+              className="min-h-[44px] px-2 underline aria-disabled:opacity-50"
+              aria-disabled={retrying || undefined}
+              onClick={() => {
+                if (!retrying) onRetry();
+              }}
+            >
               Try again
             </button>
           </>
