@@ -43,14 +43,14 @@ Ruled by the owner on 2026-11-11 (question box):
 | D3 | **Launch on `www.xrovio.com`** | Phase 2A. Both addresses serve the app for a while, so nobody is signed out; the old address forwards the public pages (R31-R36, E34) |
 | D8 | **Sign-in, sign-up and reset pages switch with the website** | WP2.6 |
 
-Defaults the owner has not ruled on (each is one line to change):
+Ruled in a second and third box on 2026-11-11 (each is still one line to change):
 
 | # | Default | Why | Changes if overruled |
 |---|---|---|---|
 | D4 | **Ruled 2026-11-11:** every page shows `hello@xrovio.com` from launch; the owner sets up the mailbox before launch day (checklist C2) | owner | - |
-| D5 | The footer says "Rovio, formerly RouteFlow" for six months | the kit says three to six | a date on one ticket |
-| D6 | Geist stays as the font | the site ships Geist; the guide recommends keeping it | none in the repo |
-| D7 | Pictures of the app on the site use the Rovio colours | the site is a complete rebrand; the app follows (A3) | `--app-*` and `--buy-*` values |
+| D5 | **Ruled 2026-11-11:** the footer says "Rovio, formerly RouteFlow" for six months after launch | owner | a ticket dated launch + 6 months |
+| D6 | **Ruled 2026-11-11:** Geist stays; the brand kit's font line is updated to Geist | owner | none in the repo |
+| D7 | **Ruled 2026-11-11:** pictures of the app on the site use the Rovio colours from launch | owner | `--app-*` and `--buy-*` values |
 
 ## 5. Requirements
 
@@ -218,7 +218,7 @@ from the current price ruling it is a separate ticket. Analytics changes.
 - Class 1, colours: every rule that names a retired colour token. Predicate: `git grep -n -E "var\(--(rf-brand-|rf-sun|rf-coral|rf-mint|rf-ok|rf-tint|rf-ink-2|rf-ink-3|rf-sh-|pc-|fld-|navy|sun|tint)" -- apps/web/public/site apps/web/components/site-frame`; about 125 references at the base sha (E17). One helper: the job tokens. Pin: T14b, zero references; a sweep that reads zero files throws.
 - Class 2, effects: every gradient, blur, glow or shadow. Predicate: the T18a pattern over site CSS, HTML and the wheel script; about 115 at the base sha (E18). Pin: T18a (static) and T18b (canvas spies).
 - Class 3, the public host: every place a public page names its own address. Predicate: `git grep -n "routeflow\.info"` over `apps/web/public/site`, `apps/web/app/(marketing)`, `apps/web/app/layout.tsx` (the root `metadataBase`, review M2), `apps/web/components/site-frame`, `apps/web/lib`, `apps/web/next.config.mjs`, `scripts/sync-site-port.mjs`, plus every return-URL builder in `apps/api/src` that reads `WEB_URL` (review M1, WP2A.0). One helper: `site.origin` for React code and the sync script's `ORIGIN`; static HTML cannot call a helper, so T31 pins it. Allow-list: none on public pages (ruling D4 moves `hello@` too).
-- Class 4, the old name: every visible string. Predicate: `/route\s?flow/i` over the 17 pages' text and tags. Pin: T24 with its allow-list.
+- Class 4, the old name: every visible string. Predicate: `/route\s?flow/i` over the 17 pages' text and tags, plus every `metadata` or `generateMetadata` export in a layout on any of those routes' paths (`git grep -n -E "export (const metadata|async function generateMetadata)" apps/web/app`), so inherited titles, share tags and app titles count (review round 2, N3: `layout.tsx:52-73`, `buyer/layout.tsx:20-31`). Pin: T24 with its allow-list.
 - Inventory: the four predicates above, run at the base sha: about 125 retired-token references, about 115 effect declarations, 172 + 82 old-name strings (E19), and the host list from Class 3, recorded in WP0's baseline.
 - One helper: job tokens for colour (`graphics/rf-graphics.css`, pinned to `packages/ui/src/tokens/rovio-palette.json`); `--rf-ring` for edges; `site.origin` and the sync script's `ORIGIN` for the host; the wheel's `OUTER`/`INNER` data for part names.
 - Pin: T14b (retired tokens), T18a and T18b (effects), T31 (host), T24 (name). Each is a sweep that throws when it reads zero files or finds zero candidates (L-202), so nothing fails open.
@@ -228,12 +228,12 @@ from the current price ruling it is a separate ticket. Analytics changes.
 - Schema: none.
 - Snapshot vs live: n/a: no records. The share image is drawn live by its route; pages are files.
 - Authority & time: the server decides redirects (host matcher). Redirects are temporary for 7 days, then permanent, so a week-one rollback is not cached by browsers. Launch-day order: merge, both deployments SUCCESS, then `WEB_URL` (WP3.1 steps 5-6).
-- Old shape → new: sessions on the old host keep working there; old emails and bookmarks pointing at app paths keep working, because app paths are not redirected (T33); cached pages expire within 60 s.
+- Old shape → new: sessions on the old host keep working there; old emails and bookmarks pointing at app paths keep working, because app paths are not redirected (T33); cached pages expire within 60 s. Open catch-up Checkout sessions and payment links issued before launch carry old-host return URLs: `returnUrlsOffBase` (`payment-due.service.ts:422-437`) accepts the whole allow-list (WP2A.0), and launch day sets `WEB_ORIGINS` to the old host in the same change as the `WEB_URL` flip (WP3.1 step 6), so none is expired (review round 2, N2).
 - Money: n/a: no money is computed; displayed prices come from the unchanged `js/prices.js`.
 
 ### G6 Scale
 - Queries: none; static pages.
-- Limits: `public/site` 5 MB (existing house cap, `scripts/push-guard.mjs:45`); wheel script 76,135 bytes (today's size). Both pinned by T13.
+- Limits: `public/site` 5 MB (existing house cap, `scripts/push-guard.mjs:45`); wheel script 80,000 bytes (76,135 at the base plus the WP0 test hook). Both pinned by T13.
 - UI at 10 and 10,000: n/a: no lists. The wheel has a fixed 15 parts; adding one is a data row (G8).
 
 ### G7 UX lens
@@ -257,7 +257,7 @@ from the current price ruling it is a separate ticket. Analytics changes.
 ### G9 Cost & stop
 - Quick fix: re-label the canvas text and swap hex values. Rejected: the wheel bugs come from names drawn inside the canvas and per-breakpoint poses (E6, E7), and a blind hex swap leaves about 125 retired-token references to drift and turns mid-blue fills copper by accident (E17). This shape removes the causes once.
 - YAGNI: considered and cut: replacing the canvas with SVG or WebGL; a token build step; a CMS for copy; per-tenant site colours. None has a named need.
-- Review-round signal: round 1 (`review-gate-1.md`, Opus @ high) returned GATE FAIL (G1, G4, G7), REVISE, 9 must-fix. All folded the same day; the model did not change (no fold opened a new boundary), so no re-pick. Round 2 reviews the folded plan.
+- Review-round signal: round 1 (`review-gate-1.md`, Opus @ high) returned GATE FAIL (G1, G4, G7), REVISE, 9 must-fix. All folded the same day; the model did not change (no fold opened a new boundary), so no re-pick. Round 2 (`review-gate-2.md`): GATE FAIL (G5, G4), REVISE; 14 of 21 round-1 items fixed, 7 partly, 3 new must-fix (N1 was caused by the M6 fold; N2 and N3 were inventory misses). Answer: the host and name classes are now defined by code predicates over every return-URL builder and every metadata export on the route path (G4), not by hand lists. Round 3 checks the fold.
 
 ### G10 Owner questions
 - Asked in one box on 2026-11-11 (rulings D1, D2, D3, D8 in §4). Still open: A9 (does any business use a `name.routeflow.info` address today?). Needed before WP2A.1 only, so it does not block Phases 0 or 1. D4-D7 are stated defaults.

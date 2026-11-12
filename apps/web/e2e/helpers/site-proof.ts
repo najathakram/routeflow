@@ -237,3 +237,200 @@ export function contrast(fg: string, bg: string): number {
   const [a, b] = [lum(fg), lum(bg)].sort((x, y) => y - x);
   return (a + 0.05) / (b + 0.05);
 }
+
+// ─── Added for specs 84 and 85 (WP0) ────────────────────────────────────────
+
+/** The in-page probes `installProbes` defines on `window.__sp`. Every sweep reads rendering from these. */
+export type SiteProbe = {
+  /** The element generates a box (no display:none up the tree). */
+  rendered(el: Element): boolean;
+  /** Product of the opacity of the element and every ancestor. */
+  eff(el: Element): number;
+  /** Rendered, visibility visible, and effective opacity at least `min`. */
+  shown(el: Element, min?: number): boolean;
+  /** A short, stable name for a failure message. */
+  name(el: Element): string;
+};
+
+/**
+ * Defines window.__sp before any page script, on every document this page loads. Call once per
+ * page, before goto.
+ */
+export async function installProbes(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const sp: SiteProbe = {
+      rendered: (el) => el.getClientRects().length > 0,
+      eff: (el) => {
+        let o = 1;
+        for (let n: Element | null = el; n; n = n.parentElement) {
+          o *= parseFloat(getComputedStyle(n).opacity);
+        }
+        return o;
+      },
+      shown: (el, min = 0.99) =>
+        sp.rendered(el) && getComputedStyle(el).visibility === "visible" && sp.eff(el) >= min,
+      name: (el) => {
+        const t = (el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 40);
+        const c =
+          typeof el.className === "string" && el.className ? `.${el.className.split(" ")[0]}` : "";
+        return `${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : ""}${c} "${t}"`;
+      },
+    };
+    (window as unknown as { __sp: SiteProbe }).__sp = sp;
+  });
+}
+
+/** Opens `/` at a window size, with the probes and the draw spy installed, and waits for the live wheel. */
+export async function openHome(
+  page: Page,
+  size: { w: number; h: number },
+  opts: { spy?: boolean } = {},
+): Promise<void> {
+  await installProbes(page);
+  if (opts.spy) await installDrawSpy(page);
+  await page.setViewportSize({ width: size.w, height: size.h });
+  await page.goto("/", { waitUntil: "load" });
+  await waitForWheel(page);
+}
+
+/** Waits n animation frames (no sleeps). */
+export async function frames(page: Page, n = 2): Promise<void> {
+  await page.evaluate(
+    (k) =>
+      new Promise<void>((done) => {
+        const step = (i: number) => (i <= 0 ? done() : requestAnimationFrame(() => step(i - 1)));
+        step(k);
+      }),
+    n,
+  );
+}
+
+type WheelHandle = HTMLElement & {
+  _rfw?: {
+    destroy(): void;
+    live?: boolean;
+    T: { duration(): number; progress(): number };
+    trig: { start: number; end: number; progress: number };
+    at(t: number): number;
+    cam(): { zO: number; zI: number; zH: number; tilt: number; k: number; x: number; y: number };
+  } | null;
+};
+
+/**
+ * Re-mounts the wheel through its public API with snap off (review M7): the page cannot pull a
+ * seek to a beat. Waits until the new instance is live.
+ */
+export async function remountNoSnap(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const el = document.querySelector<WheelHandle>(".rfw");
+    const api = (window as unknown as { RFWheel?: { mount(el: Element, o: object): unknown } })
+      .RFWheel;
+    if (!el?._rfw) throw new Error("remountNoSnap: no live wheel to re-mount");
+    if (!api) throw new Error("remountNoSnap: RFWheel is not on the page");
+    el._rfw.destroy();
+    api.mount(el, { refreshPriority: 0, scrub: 0.7, snap: false, top: null, copy: ".hx-copy" });
+  });
+  await waitForWheel(page);
+}
+
+/**
+ * Waits for the canvas's 1.5 s arrival tween (rotation, scale, opacity on its own layer) to end:
+ * computed opacity 1 and a transform that is none or the identity.
+ */
+export async function waitForArrival(page: Page): Promise<void> {
+  await page.waitForFunction(
+    () => {
+      const cv = document.querySelector("canvas.rfw-cv");
+      if (!cv) return false;
+      const s = getComputedStyle(cv);
+      if (Math.abs(parseFloat(s.opacity) - 1) > 0.001) return false;
+      if (s.transform === "none") return true;
+      const m = s.transform.match(/^matrix(3d)?\(([^)]+)\)$/);
+      if (!m) return false;
+      const v = m[2].split(",").map(Number);
+      const id = m[1] ? [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] : [1, 0, 0, 1, 0, 0];
+      return id.every((x, i) => Math.abs(v[i] - x) < 0.001);
+    },
+    undefined,
+    { timeout: 15_000 },
+  );
+}
+
+/** Open the home page at a size, wheel re-mounted with snap off, arrival finished. */
+export async function openHomeNoSnap(
+  page: Page,
+  size: { w: number; h: number },
+  opts: { spy?: boolean } = {},
+): Promise<void> {
+  await openHome(page, size, opts);
+  await remountNoSnap(page);
+  await waitForArrival(page);
+  await settle(page);
+}
+
+/** The length of the wheel's timeline (END), read from the live instance. */
+export async function wheelEnd(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const el = document.querySelector<WheelHandle>(".rfw");
+    if (!el?._rfw) throw new Error("wheelEnd: no live wheel");
+    return el._rfw.T.duration();
+  });
+}
+
+/** Seeks the wheel to timeline time `t` (0..END): scrolls to `_rfw.at(t)`, then waits to settle. */
+export async function seekWheel(page: Page, t: number): Promise<void> {
+  await page.evaluate((tt) => {
+    const el = document.querySelector<WheelHandle>(".rfw");
+    if (!el?._rfw) throw new Error("seekWheel: no live wheel");
+    window.scrollTo({ top: Math.round(el._rfw.at(tt)), behavior: "instant" as ScrollBehavior });
+  }, t);
+  await settle(page);
+}
+
+/** The wheel's camera snapshot (zO, zI, zH, tilt, ...). */
+export async function wheelCam(
+  page: Page,
+): Promise<{ zO: number; zI: number; zH: number; tilt: number; k: number; x: number; y: number }> {
+  return page.evaluate(() => {
+    const el = document.querySelector<WheelHandle>(".rfw");
+    if (!el?._rfw) throw new Error("wheelCam: no live wheel");
+    return el._rfw.cam();
+  });
+}
+
+/** Window-pixel box of an element, rendered or not hidden by opacity (a layout rect, no visibility test). */
+export async function rectOf(page: Page, selector: string): Promise<Box | null> {
+  return page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { l: r.left, t: r.top, r: r.right, b: r.bottom };
+  }, selector);
+}
+
+/** Boxes of every element matching `selector` that is shown (rendered, visible, effective opacity >= min). */
+export async function shownBoxes(page: Page, selector: string, min = 0.05): Promise<Box[]> {
+  return page.evaluate(
+    ([sel, mn]) => {
+      const sp = (window as unknown as { __sp: SiteProbe }).__sp;
+      return Array.from(document.querySelectorAll(sel as string))
+        .filter((el) => sp.shown(el, mn as number))
+        .map((el) => {
+          const r = el.getBoundingClientRect();
+          return { l: r.left, t: r.top, r: r.right, b: r.bottom };
+        })
+        .filter((b) => b.r > b.l && b.b > b.t);
+    },
+    [selector, min] as const,
+  );
+}
+
+/** Area of `a` clipped to the window, as a share of the window. 0 when it is off screen. */
+export function visibleShare(a: Box, w: number, h: number): number {
+  const iw = Math.max(0, Math.min(a.r, w) - Math.max(a.l, 0));
+  const ih = Math.max(0, Math.min(a.b, h) - Math.max(a.t, 0));
+  return (iw * ih) / (w * h);
+}
+
+/** A plain label for a window size, used in test titles and messages. */
+export const sizeName = (s: { w: number; h: number }): string => `${s.w}x${s.h}`;

@@ -839,6 +839,17 @@ export default defineConfig({
       dependencies: [],
       use: { ...devices["Desktop Chrome"] },
     },
+    // Rovio website rebrand proof suite (specs 84 and 85, test-plan T1-T9 and T12): geometry, pixels,
+    // print media and the parity diff for the public site. Signed out, `dependencies: []`, no storage
+    // state; it blocks the analytics host so visits are never counted. Local stack only until launch
+    // (the harness stays on the rebrand branch, build-plan WP0 S9). Same convention as "marketing":
+    // WITHOUT THIS ENTRY THE SPECS NEVER RUN.
+    {
+      name: "site-proof",
+      testMatch: /8[45]-site-proof-.*\.spec\.ts/,
+      dependencies: [],
+      use: { ...devices["Desktop Chrome"] },
+    },
     // Auth interface redesign (spec 46) — same convention as "marketing":
     // NOT part of the local red gate (test-plan.md "Harness notes") — this
     // project resolving/running is the post-deploy proof.

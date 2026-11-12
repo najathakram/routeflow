@@ -40,7 +40,7 @@ Assumptions are A1-A7 in [discovery.md](./discovery.md) §9 and TA1-TA3 in [test
 
 | Phase | What it builds | Where it lives until launch | Size |
 |---|---|---|---|
-| 0 | proof harness, baselines, bug ids | branch (the harness may also land on `master` alone: it changes nothing visible) | S |
+| 0 | proof harness, baselines, bug ids | branch only: the post-deploy job would run its known-red cells on every `master` deploy (review S9) | S |
 | 1 | print and no-scroll fix, wheel layout fix, wording pass | branch; gate G1 before Phase 2 starts | L |
 | 2 | the Rovio look, logo, name, sign-in pages | branch | XL |
 | 2A | the address: `www.xrovio.com` served and proven weeks early with no brand on it; redirects and `site.origin` on the branch | settings now, code on the branch | M |
@@ -128,10 +128,11 @@ addEventListener("beforeprint", () => paper(true));
 addEventListener("afterprint", () => paper(false));
 
 /* 3. Reveals start from visible. Was: hide at load, show on scroll (home-up.js:150-156; css/site.css:133, which is deleted).
-      Not once:true: matchMedia rebuilds these mid-page after print, and home-up.js:17-21 documents the kill-shift throw of
-      once (review S6). */
-const revealOnce = (els, vars) => ST.batch(els, { start: "top 104%", toggleActions: "play none none none",
-  onEnter: (batch) => g.from(batch, { opacity: 0, y: 16, duration: 0.6, ease: "power2.out", stagger: 0.06, overwrite: true, ...vars }) });
+      Keep revealOnce's signature (items, rp, y, each), its refreshPriority rp and its shown() filter (review round 2, S6);
+      change only the mechanism: no up-front hide, a from() tween on entry, and toggleActions "play none none none"
+      instead of once:true, because matchMedia rebuilds these mid-page after print and home-up.js:17-21 documents the
+      kill-shift throw of once. site.js:95-100 has its own .reveal batch (gsap.set(rev,{autoAlpha:0}) + once:true):
+      the same change there, or T2 stays red on 8 pages. */
 ```
 
 ```css
@@ -166,12 +167,18 @@ cam.zO = OPEN.zO * S.lift; cam.zI = OPEN.zI * S.lift; cam.zH = OPEN.zH * S.lift;
 
 /* 3. One fit from the smaller side of one box. bboxOf takes positional arguments (JS:561) and fitTo needs a width cap or
       it returns NaN (JS:572-574, review M3). */
-const openBB = bboxOf(TILT, OPEN.zO, OPEN.zI, OPEN.zH, EX.o, EX.i);
+const openBB = bboxOf(TILT, OPEN.zO, OPEN.zI, OPEN.zH, EX.o * (1 + DRIFT), EX.i * (1 + DRIFT));   // drift room, as layout() does (JS:590)
 const box = sideBySide
   ? { l: colR + gap, t: pad, r: W - pad, b: H - pad }                                // right of the words column
-  : { l: 8, t: bottomOf(hdr, hx[0]) + 12, r: W - 8, b: keysTop - 12 };               // between the heading and the legend
+  : { l: 8, t: bottomOf(hx[0], hx[0].querySelector(".rfw-sub")) + 12, r: W - 8, b: legend.offsetTop - 12 }; // between heading and legend (bottomOf(h, e) = container, then child: JS:576)
 F.apart = F.burst = F.story = fitTo(openBB, box, Infinity);
-if (Math.min(box.r - box.l, box.b - box.t) < 200) return still();                  // too small to read: the still (ux-spec §6, review S8)
+// Phone at rest too (review round 2, N1): the resting wheel and the hint fit the same heading-to-legend box, because
+// "Look inside." and the legend are up from t=0 on a phone.
+if (phone) F.flat = F.end = fitTo(bboxOf(0, 0, 0, 0, 0, 0), box, Infinity);
+// `legend` is the NEW node liveHTML() builds: <div class="rfw-legend" aria-hidden="true">, holding the two .rfw-keys
+// lists made by li(d) (JS:132). It is the `keys` of step 4.
+// Too small to read (ux-spec §6, review S8): decided where live() is entered (the matchMedia branch, JS:226-231), never
+// inside layout(): a stage whose smaller side is under 200 px gets still() instead of live(); a resize re-runs the branch.
 
 /* 4. The words column is never empty (review M6). Exact schedule; replaces JS:688 (desktop hero copy hide at 0.1) and
       JS:708-709 (show/hide hx[0]); keep the stop tweens' own shows; HOLD = STOP / 2. A hand-over is a cross-fade that
@@ -180,7 +187,8 @@ if (!phone && copy) T.to(copy, { autoAlpha: 0, y: -28, duration: 0.5, ease: IN }
 if (phone) T.set([hx[0], keys], { autoAlpha: 1, y: 0 }, 0);  // phone: "Look inside." is already up when the stage sticks
 else show([hx[0], keys], T_OPEN - 0.4, 0.5);
 hide([hx[0], keys], S0 - HOLD);                            // leaves as the first stop's words arrive at S0 - HOLD (JS:724)
-// in stopTweens: the old stop's words start leaving at L + HOLD - 0.22 (JS:728); the next stop's words start at that same time
+// in stopTweens: MOVE the existing show at JS:724 (do not add a second one, which would re-zero the opacity: review
+// round 2, S-a). The old stop's words start leaving at L + HOLD - 0.22 (JS:728); the next stop's words start at that same time.
 T.fromTo(tx_[i], { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.3, ease: OUT }, i ? stopAt(i - 1) + HOLD - 0.22 : S0 - HOLD);
 show(hx[1], C0 - 0.22, 0.4);                               // was C0 + 2.9 (JS:767); starts as the last stop's words leave
 
@@ -188,13 +196,16 @@ show(hx[1], C0 - 0.22, 0.4);                               // was C0 + 2.9 (JS:7
       (JS:211-217); use pinTop, which layout() reads at JS:579 (review M6d). */
 start: () => (phone ? "top " + pinTop + "px" : 0),
 
-/* 6. Print and other no-match states (review M4). The live() cleanup (JS:938-951) does not put the still back today. When no
-      condition matches, call still() (JS:222), which restores the static markup and height; when a condition matches again,
-      live() rebuilds and the scroll position comes back through inst.keep (JS:900-904). Each condition gains "screen and". */
+/* 6. Print (review M4, round 2). The live() cleanup (JS:938-951) does not put the still back, and a matchMedia callback
+      never runs when nothing matches. So the wheel's gsap.matchMedia in start() (JS:226-231) gains its own print branch,
+      and each existing condition gains "screen and":
+        mm.add("print", () => { still(); });
+      Leaving print reverts that branch and a screen condition matches again: live() rebuilds, and the scroll position comes
+      back through inst.keep (JS:900-904, restored by finish() at JS:917-922). */
 ```
 - **The end-state button (review S5):** `mount` replaces `.rfw`'s inner HTML (JS:279), so `.sy-go` is built by both `liveHTML()` and the still's markup from one constant holding its text and `href`; the static test reads that constant, never a second copy.
 - **Delete, do not hide:** every `fillText` of a part name (outer names JS:416-452, hanging inner labels JS:453-479) and the guards that only served them (`shy`, `drop`, `out`, `late`, JS:441, 465-471, 697). The hover pill and the 15 buttons stay; the pill now shows on every tile.
-- **Legend:** render the existing `.rfw-keys` lists inside the live stage (they are built by `li(d)` for the still, JS:132), `aria-hidden="true"`, laid out per [ux-spec.md](./ux-spec.md) §6. Do not add a new list.
+- **Legend:** `liveHTML()` builds `<div class="rfw-legend" aria-hidden="true">` holding the existing `.rfw-keys` lists (made by `li(d)` for the still, JS:132), laid out per [ux-spec.md](./ux-spec.md) §6. No new list of names: the same data, the same function. T3 checks phone beats `rest` and `one` explicitly (review round 2, N1).
 - **End state:** "Try it with your own orders." and its button move from after the stage into the `h1` group, keeping the `.sy-go` class and the same link (parity).
 - **Pins (R27):** before deleting a pinned literal, find the commit that added the pin (`git log -S`), write one ledger row: the literal, the bug it guarded, the `T#` that now guards that behaviour. A literal whose behaviour still exists is kept and read from the source at test time.
 - **Not in this package:** colours, shadows and the hub mark (WP2.2).
@@ -242,19 +253,19 @@ start: () => (phone ? "top " + pinTop + "px" : 0),
 
 ### WP2.6 · The front door (signed-out React pages)
 - **satisfies:** R26, R24 (React pages), R18 (their CSS) · **provenBy:** T26, T24 · **dependsOn:** WP2.0 · **risk:** medium (sign-in pages: words and pictures only, no logic) · **skills:** `apple-write`, `apple-design`
-- **Files:** `apps/web/app/(marketing)/layout.tsx` (title and icon for its routes), `privacy/page.tsx`, `terms/page.tsx`, `marketing.css`, `glass*.css`, `apps/web/app/not-found.tsx`, `apps/web/app/(auth)/login/layout.tsx` and `page.tsx`, `(auth)/signup/layout.tsx`, `page.tsx` and `check-email/page.tsx`, `(auth)/forgot-password/layout.tsx` and `page.tsx`, `(auth)/reset-password/page.tsx`, `apps/web/app/buyer/login/page.tsx`, `apps/web/components/auth/AuthShell.tsx`, and the pins in `seo.test.ts`.
+- **Files:** `apps/web/app/(marketing)/layout.tsx` (title and icon for its routes), `privacy/page.tsx`, `terms/page.tsx`, `marketing.css`, `glass*.css`, `apps/web/app/not-found.tsx`, `apps/web/app/(auth)/login/layout.tsx` and `page.tsx`, `(auth)/signup/layout.tsx`, `page.tsx` and `check-email/page.tsx`, `(auth)/forgot-password/layout.tsx` and `page.tsx`, `(auth)/reset-password/page.tsx` and NEW `(auth)/reset-password/layout.tsx`, `apps/web/app/buyer/login/page.tsx` and NEW `apps/web/app/buyer/login/layout.tsx` (both pages are `"use client"` with no layout today, review round 2, N3), `apps/web/components/auth/AuthShell.tsx`, and the pins in `seo.test.ts`.
 - **Area sweep (design gate):** B247, B248, B520 and B550 sit in `marketing.css` and `glass*.css`. For each, prove from the shared layout whether its rules are still used (L-199): remove dead rules, or fix live ones; one commit and one test per id; the PR body lists every id it closes.
-- **Do:** set the title and icon for these routes in their own layouts; leave the root layout and `buyer/layout.tsx` alone (they also serve signed-in pages). Out of scope here: `(auth)/admin-login`, `(auth)/admin/login`, `choose-role` and the callback pages (staff-only or after sign-in: Program B).
+- **Do:** every sign-in-side layout listed above sets, so nothing RouteFlow is inherited from the root (`apps/web/app/layout.tsx:52-73`: title template, `openGraph` title, site name and image, `appleWebApp.title`) or from `buyer/layout.tsx:20-31` ("RouteFlow Buyer Portal", icons): `title: { template: "%s · Rovio", default: "Rovio" }` (or `absolute`), `openGraph` (title, `siteName: "Rovio"`, image), `appleWebApp.title`, `icons`, `metadataBase: new URL(site.origin)`. The `manifest` link stays the app's (Program B owns the manifests, E26): T24 reads visible text, titles, meta and alt text, not the manifest file. Leave the root layout and `buyer/layout.tsx` themselves alone (they also serve signed-in pages). Out of scope here: `(auth)/admin-login`, `(auth)/admin/login`, `choose-role` and the callback pages (staff-only or after sign-in: Program B).
 
 ### WP2A.0 · Let the API return to either web address (API code, no brand; review M1)
 - **satisfies:** R34, R35 · **provenBy:** T34 · **dependsOn:** none · **risk:** high (sign-in) · **skills:** none · **pipeline:** its own `dev-pipeline` run, Opus `high` review
-- **Why:** the Google sign-in return is checked against exactly one web address, `WEB_URL`, or the mobile web address (`apps/api/src/auth/auth.controller.ts:83-85,556-570`); anything else falls back to `WEB_URL`. Payment return addresses do the same (`stripe-connect.controller.ts:107`, `payment-requests.service.ts:314`, `billing.service.ts:677-679`). With two addresses, a Google sign-in started on one lands on the other.
-- **Files:** `apps/api/src/auth/auth.controller.ts`, `auth.controller.return-origin.spec.ts`, the API config module, `apps/api/.env.example` (a NEW setting name `WEB_ORIGINS`: a comma-separated list of extra allowed web addresses; empty by default, so today's behaviour is unchanged), and each return-URL builder listed by `git grep -n "WEB_URL\|webUrl" apps/api/src`.
+- **Why:** the Google sign-in return is checked against exactly one web address, `WEB_URL`, or the mobile web address (`apps/api/src/auth/auth.controller.ts:83-85,556-570`); anything else falls back to `WEB_URL`. Payment return addresses do the same (`stripe-connect.controller.ts:107`, `payment-requests.service.ts:314`, `billing.service.ts:665,677-679`, `buyer-merge.service.ts:87`). With two addresses, a Google sign-in started on one lands on the other. **And** `PaymentDueService.returnUrlsOffBase` (`apps/api/src/billing/payment-due.service.ts:422-437`) expires any open catch-up Checkout session whose return URL is not under `webBaseUrl()`: with one base, a session started on the second host, and on launch day every open session pointing at the old host (live payers' links included), would be expired (review round 2, N2).
+- **Files:** `apps/api/src/auth/auth.controller.ts`, `auth.controller.return-origin.spec.ts`, the API config module, `apps/api/.env.example` (a NEW setting name `WEB_ORIGINS`: a comma-separated list of extra allowed web addresses; empty by default, so today's behaviour is unchanged), `apps/api/src/billing/payment-due.service.ts` (`returnUrlsOffBase` accepts the same allow-list, with a spec that goes red on today's single-base check), and each return-URL builder listed by `git grep -n -E "WEB_URL|webUrl|webBaseUrl|FRONTEND_URL|success_url|cancel_url|return_url" apps/api/src`, which includes at least `platform-google-auth.controller.ts:93` and `email/mailbox/mailbox.controller.ts:157-226` (mailbox return to `/settings`).
 - **Do:** keep the exact `===` match; the allow-list is `WEB_URL` + `MOBILE_WEB_URL` + `WEB_ORIGINS`. For each return-URL builder, write down in the PR whether it returns to the request's own allowed origin or to `WEB_URL`, and why. Payments that start in a signed-in app session return to that session's origin.
 - **Where it lands (owner ruling 2026-11-11):** on `master`, early and on its own, as a brand-free API change through the normal deploy flow. It is the one exception to the one-day launch.
 
 ### WP2A.1 · Serve the current app on `www.xrovio.com` (settings only, weeks before launch; checklist C2)
-- **satisfies:** R31 (host up), R34, R36 (settings) · **provenBy:** T32; checklist C2 · **dependsOn:** WP2A.0 live, if Q1 lands it early · **risk:** high (sign-in and payments on a new host) · **skills:** `debug-deploy` if a deploy misbehaves
+- **satisfies:** R31 (host up), R34, R36 (settings) · **provenBy:** T32; checklist C2 · **dependsOn:** WP2A.0 live on production (ruled early, §0c.5) · **risk:** high (sign-in and payments on a new host) · **skills:** `debug-deploy` if a deploy misbehaves
 - **First (A9, owner not sure):** the lead lists the web service's custom domains on Railway and the host names seen by analytics over the last 90 days, read-only. If any business uses `name.routeflow.info`, add a wildcard record and certificate for `xrovio.com` and `xrovio.com` in `CORS_WILDCARD_DOMAINS`.
 - **No code.** Owner and lead, in this order, each read back after it is set:
   1. DNS: `www.xrovio.com` as a custom domain on the Railway web service (CNAME); `xrovio.com` forwarding to `https://www.xrovio.com` at the registrar (Railway needs the CNAME, as with `routeflow.info`).
@@ -303,7 +314,7 @@ const PUBLIC_PATHS = [...SITE_PAGES.map(routeOf), "/privacy", "/terms"];
 3. `git log origin/master -S"Rovio" --oneline -- apps/web/public/site apps/web/components/site-frame` prints nothing.
 4. Rollback rehearsed on the local stack: revert the merge, run T12 and T24's inverse.
 5. Canonical deploy flow from `CLAUDE.md`: watchdog first, public window, CI green, **merge commit** (one commit to revert), both deployments `SUCCESS`, flip private, read it back.
-6. Set the API's `WEB_URL` to `https://www.xrovio.com` (links in platform emails, payment returns). Read it back.
+6. In ONE settings change on the API: `WEB_URL=https://www.xrovio.com` and `WEB_ORIGINS=https://www.routeflow.info` (so open payment links and sessions on the old host stay valid, review round 2, N2). Read both back.
 7. `npm run post-deploy-check`; read the post-deploy `site-proof` result, including T30b and T33b; if red, `git revert -m 1 <merge>` through the same flow and put `WEB_URL` back.
 
 ### WP3.2 · After launch
@@ -397,5 +408,5 @@ Phase 1 invocation (after WP0, from a fresh worktree; Phase 2's is written when 
 }
 ```
 
-Open assumptions the executor must not take as fact: A1-A7, TA1-TA3, and defaults D1-D8 until the owner rules.
+Open assumptions the executor must not take as fact: A1-A9 and TA1. Owner rulings D1-D8 are all settled (spec §4).
 Close out every engine run with `dev-pipeline/scripts/closeout.mjs <runDir>` and one RUN-LOG entry.
