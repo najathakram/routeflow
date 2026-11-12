@@ -76,9 +76,13 @@ export async function assertReplayOfCart(
   customerId: string,
   existing: Parameters<typeof assertReplaySameCart>[0],
   dto: Parameters<typeof assertReplaySameCart>[1] & { items?: ReadonlyArray<any> | null },
-  options?: Pick<CreateOrderOptions, "onReplay">,
+  options?: Pick<CreateOrderOptions, "onReplay" | "offline">,
 ): Promise<void> {
   const cart = await replayCartOf(db, customerId, dto);
-  assertReplaySameCart(existing, cart);
+  // SA-1124: an offline request the server saved as a DRAFT (a conflict became flags) is replayed by its resend, not refused.
+  assertReplaySameCart(
+    existing,
+    options?.offline && existing.status === "DRAFT" ? { ...cart, status: "DRAFT" } : cart,
+  );
   options?.onReplay?.(existing as ReplayedOrder, cart.items ?? null);
 }

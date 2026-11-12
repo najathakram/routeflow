@@ -233,3 +233,32 @@ describe("scheduleScannerRefocus yieldFrom (SA-762r: the register's own fields)"
     expect(document.activeElement).toBe(other);
   });
 });
+
+describe("a text field inside a closing dialog is not a typing target (both guards read this)", () => {
+  const closing = (state: "open" | "closed") =>
+    mount<HTMLInputElement>(`<div role="dialog" data-state="${state}"><input type="text" /></div>`);
+
+  it("isTextEntryActive is false for a field in a dialog that is data-state=closed, true when open", () => {
+    const gone = closing("closed").querySelector("input")!;
+    gone.focus();
+    expect(document.activeElement).toBe(gone);
+    expect(isTextEntryActive()).toBe(false);
+    const open = closing("open").querySelector("input")!;
+    open.focus();
+    expect(isTextEntryActive()).toBe(true);
+  });
+
+  it("the re-arm takes focus from a field in a closing dialog, and still protects one in an open dialog", () => {
+    const { input, ref } = scanTarget();
+    const gone = closing("closed").querySelector("input")!;
+    gone.focus();
+    scheduleScannerRefocus(ref, 0);
+    jest.advanceTimersByTime(1);
+    expect(document.activeElement).toBe(input);
+    const open = closing("open").querySelector("input")!;
+    open.focus();
+    scheduleScannerRefocus(ref, 0);
+    jest.advanceTimersByTime(1);
+    expect(document.activeElement).toBe(open);
+  });
+});
