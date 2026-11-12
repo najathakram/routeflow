@@ -167,3 +167,7 @@
 {"id":"B1307","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1308","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1309","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1310","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1311","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1312","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1313","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
