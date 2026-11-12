@@ -25,7 +25,9 @@ const L3: L[] = [
   { id: "c", name: "Cherry" },
 ];
 
-function setup(opts: { enabled?: boolean; afterMove?: () => void; initial?: L[] } = {}) {
+function setup(
+  opts: { enabled?: boolean; afterMove?: () => void; initial?: L[]; keyboardUndo?: boolean } = {},
+) {
   return renderHook(() => {
     const [lines, setLines] = React.useState<L[]>(opts.initial ?? L3);
     const order = useCartLineOrder<L>({
@@ -35,6 +37,7 @@ function setup(opts: { enabled?: boolean; afterMove?: () => void; initial?: L[] 
       labelOf: (l) => l.name,
       enabled: opts.enabled ?? true,
       afterMove: opts.afterMove,
+      keyboardUndo: opts.keyboardUndo,
     });
     return { lines, setLines, order };
   });
@@ -88,6 +91,22 @@ describe("useCartLineOrder", () => {
       fireEvent.keyDown(document.body, { key: "z", metaKey: true });
     });
     expect(ids(result)).toBe("abc");
+  });
+
+  it("keyboardUndo: false registers NO key listener and Ctrl+Z does nothing (the till keeps its one scan listener)", () => {
+    const add = jest.spyOn(document, "addEventListener");
+    const addWin = jest.spyOn(window, "addEventListener");
+    const { result } = setup({ keyboardUndo: false });
+    act(() => result.current.order.onMove(move(["c", "a", "b"], "c", 0)));
+    act(() => {
+      fireEvent.keyDown(document.body, { key: "z", ctrlKey: true });
+    });
+    expect(ids(result)).toBe("cab");
+    expect([...add.mock.calls, ...addWin.mock.calls].filter((c) => c[0] === "keydown")).toEqual([]);
+    act(() => mockToast.mock.calls[mockToast.mock.calls.length - 1][0].action!.onClick());
+    expect(ids(result)).toBe("abc"); // the toast's Undo button is still the way back
+    add.mockRestore();
+    addWin.mockRestore();
   });
 
   it("Ctrl+Z inside a text field is left to the field", () => {

@@ -465,6 +465,7 @@ export function CounterSaleScreen() {
     labelOf: (l) => l.name,
     enabled: !lineLocked,
     afterMove: refocus,
+    keyboardUndo: false, // the till's ONE key listener is the scan one (#4293): the toast's Undo button is the way back
   });
   // A KEYBOARD activation of a tender / method button (detail 0) keeps focus where it is, so Tab goes on to the next control.
   // One scan-focus owner (row 237): a digit typed while a NON-text control holds focus (a button, a checkbox, <body>)
@@ -2053,7 +2054,6 @@ export function CounterSaleScreen() {
             sortable={lineMove.sortable}
             onMove={lineMove.onMove}
             enabled={lineMove.enabled}
-            scanTarget={() => scanRef.current}
           >
             {lines.length === 0 ? (
               <li className="p-3 text-sm text-navy/60">No items yet.</li>

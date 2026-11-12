@@ -24,6 +24,7 @@ export function useCartLineOrder<T>({
   labelOf,
   enabled,
   afterMove,
+  keyboardUndo = true,
 }: {
   lines: readonly T[];
   setLines: React.Dispatch<React.SetStateAction<T[]>>;
@@ -32,6 +33,8 @@ export function useCartLineOrder<T>({
   enabled: boolean;
   /** Runs after a move and after an Undo, with the id of the line that moved. */
   afterMove?: (movedId: string) => void;
+  /** Ctrl/Cmd+Z undoes the last move. False on the till: its ONE key listener is the scan one, so only the toast's Undo button there. */
+  keyboardUndo?: boolean;
 }) {
   const { toast, dismiss } = useToast();
   const toastId = React.useRef<string | null>(null);
@@ -90,7 +93,7 @@ export function useCartLineOrder<T>({
   );
 
   React.useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || !keyboardUndo) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key.toLowerCase() !== "z" || !(e.ctrlKey || e.metaKey) || e.shiftKey) return;
       if (inTextField(e.target) || !lastUndo.current) return;
@@ -99,7 +102,7 @@ export function useCartLineOrder<T>({
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [enabled]);
+  }, [enabled, keyboardUndo]);
 
   // only on unmount (a re-render may hand back a new `dismiss`, and that must not close a live toast)
   const closeRef = React.useRef(closeToast);
