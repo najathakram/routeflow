@@ -160,7 +160,9 @@ function encodeProjectDir(absPath) {
 function claudeHomeDir(flags) {
   return typeof flags["claude-home"] === "string"
     ? path.resolve(flags["claude-home"])
-    : path.join(os.homedir(), ".claude");
+    : process.env.CLAUDE_CONFIG_DIR
+      ? path.resolve(process.env.CLAUDE_CONFIG_DIR)
+      : path.join(os.homedir(), ".claude");
 }
 
 // P2(a) 2026-09-11: resolves the MAIN checkout root via git plumbing -- the
@@ -248,6 +250,7 @@ const NAME_TO_PREFIX = [
   { test: (name) => name === "Claude Sonnet 5", prefix: "claude-sonnet-5" },
   { test: (name) => name === "Claude Sonnet 5.5", prefix: "claude-sonnet-5-5" },
   { test: (name) => name === "Claude Sonnet 4.6", prefix: "claude-sonnet-4-6" },
+  { test: (name) => name === "Claude Haiku 5.5", prefix: "claude-haiku-5-5" },
   { test: (name) => name === "Claude Haiku 4.5", prefix: "claude-haiku-4-5" },
 ];
 
@@ -971,7 +974,12 @@ function runSelftest() {
       const parsed = parseModelCards(fs.readFileSync(MODEL_CARDS_PATH, "utf8"));
       const r55 = ratesForModel("claude-sonnet-5-5", parsed.table);
       assert(r55 && r55 === parsed.table["claude-sonnet-5-5"], "claude-sonnet-5-5 did not resolve to its own row");
-      assert(r55.in === 2 && r55.out === 10 && r55.cacheRead === 0.2, `Sonnet 5.5 rates wrong: ${JSON.stringify(r55)}`);
+      // Sonnet 5.5 cache read is 0.10 per platform.claude.com pricing (re-read 2026-11-09).
+      assert(r55.in === 2 && r55.out === 10 && r55.cacheRead === 0.1, `Sonnet 5.5 rates wrong: ${JSON.stringify(r55)}`);
+      // Haiku 5.5 must price: it used to make whole agent costs null as "unpriced model".
+      const h55 = ratesForModel("claude-haiku-5-5", parsed.table);
+      assert(h55 && h55 === parsed.table["claude-haiku-5-5"] && h55.in === 0.1 && h55.out === 0.5 && h55.cacheRead === 0.01, `Haiku 5.5 rates wrong: ${JSON.stringify(h55)}`);
+      assert(ratesForModel("claude-haiku-4-5", parsed.table) === parsed.table["claude-haiku-4-5"], "claude-haiku-4-5 no longer resolves to its own row");
       assert(ratesForModel("claude-sonnet-5", parsed.table) === parsed.table["claude-sonnet-5"], "claude-sonnet-5 lost its row");
       assert(ratesForModel("claude-sonnet-5-9", parsed.table) === null, "an unlisted version was priced on a family row");
       assert(ratesForModel("claude-haiku-4-5-20251001", parsed.table) === parsed.table["claude-haiku-4-5"], "a dated id lost its row");
