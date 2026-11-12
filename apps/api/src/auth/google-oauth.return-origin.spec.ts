@@ -1,6 +1,6 @@
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
-import { GoogleOAuthService } from "./google-oauth.service";
+import { GoogleOAuthService, peekOAuthStateReturnOrigin } from "./google-oauth.service";
 
 /**
  * B825: a driver using Google sign-in in the installed (Expo web) driver app
@@ -108,5 +108,38 @@ describe("GoogleOAuthService — B825 returnOrigin travels inside the signed sta
     await expect(service.verifyCallback("auth-code", tamperedState)).rejects.toThrow(
       "state_invalid",
     );
+  });
+
+  // WP2A.0: an account link started on the second web address returns there.
+  it("WP2A.0: a minted link state carries returnOrigin through to the verified profile", async () => {
+    const service = buildService();
+    const state = await service.generateLinkUrl("tenant", "user-1", "https://www.acme-next.test");
+    const profile = await service.verifyCallback("auth-code", state);
+    expect(profile.linkUserId).toBe("user-1");
+    expect(profile.returnOrigin).toBe("https://www.acme-next.test");
+  });
+
+  it("WP2A.0: a link state minted without a return origin carries none (today's state)", async () => {
+    const service = buildService();
+    const state = await service.generateLinkUrl("tenant", "user-1");
+    const payload = JSON.parse(
+      Buffer.from(state.split(".")[0], "base64url").toString("utf-8"),
+    ) as Record<string, unknown>;
+    expect(Object.keys(payload).sort()).toEqual(["linkUserId", "nonce", "type"]);
+    const profile = await service.verifyCallback("auth-code", state);
+    expect(profile.returnOrigin).toBeUndefined();
+  });
+
+  it("WP2A.0: peekOAuthStateReturnOrigin reads the payload segment and never throws", () => {
+    const enc = (o: unknown) =>
+      `${Buffer.from(JSON.stringify(o), "utf-8").toString("base64url")}.mac`;
+    expect(peekOAuthStateReturnOrigin(enc({ returnOrigin: "https://www.acme-next.test" }))).toBe(
+      "https://www.acme-next.test",
+    );
+    expect(peekOAuthStateReturnOrigin(enc({ returnOrigin: 7 }))).toBeUndefined();
+    expect(peekOAuthStateReturnOrigin(enc({}))).toBeUndefined();
+    expect(peekOAuthStateReturnOrigin("not-a-state")).toBeUndefined();
+    expect(peekOAuthStateReturnOrigin("")).toBeUndefined();
+    expect(peekOAuthStateReturnOrigin(undefined)).toBeUndefined();
   });
 });

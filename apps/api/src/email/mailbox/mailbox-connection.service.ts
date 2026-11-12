@@ -16,6 +16,7 @@ import { EncryptionService } from "../../common/encryption.service";
 import { AuditService } from "../../audit/audit.service";
 import { withAdvisoryLock } from "../../common/db-locks";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
+import { extraWebOrigins } from "../../config/web-origins";
 
 /** Scope granted to the mailbox client — send-only, never a read scope (design D1/§3). */
 const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
@@ -45,6 +46,10 @@ interface OAuthNoncePayload {
   /** SHA-256 of the connect secret `start*` handed the initiating browser tab (#2115). The raw
    *  secret is never stored. The callback copies this hash into the pending grant. */
   secretHash: string;
+  /** WP2A.0: the web address the connect started on, kept ONLY when it is a WEB_ORIGINS address (an empty
+   *  list stores nothing, so the payload is byte-identical to before). The callbacks read it with
+   *  `peekReturnOrigin` to send the browser back there. */
+  returnOrigin?: string;
 }
 
 /**
@@ -111,6 +116,16 @@ export interface MailboxStatusView {
  *  this is the full 256 bits a single-use security token warrants). */
 function randomToken(): string {
   return crypto.randomBytes(32).toString("base64url");
+}
+
+/**
+ * WP2A.0: `{ returnOrigin }` when `origin` is EXACTLY one of the WEB_ORIGINS addresses, else `{}` (so an empty
+ * list, or a look-alike, leaves the nonce payload byte-identical to before).
+ */
+function extraReturnOrigin(origin: unknown): { returnOrigin?: string } {
+  return typeof origin === "string" && extraWebOrigins().includes(origin)
+    ? { returnOrigin: origin }
+    : {};
 }
 
 /**
@@ -277,7 +292,11 @@ export class MailboxConnectionService {
    * identity against the confirming JWT before ever writing a row. Also mints the connect secret
    * for the initiating tab (#2115); only its hash goes into the nonce.
    */
-  async startConnect(tenantId: string, userId: string): Promise<MailboxConnectStart> {
+  async startConnect(
+    tenantId: string,
+    userId: string,
+    returnOrigin?: string,
+  ): Promise<MailboxConnectStart> {
     if (!this.isGoogleConfigured()) {
       throw new ServiceUnavailableException(
         "Google mailbox connect is not configured on this server yet.",
@@ -295,6 +314,7 @@ export class MailboxConnectionService {
       provider: "GOOGLE",
       verifier: codeVerifier,
       secretHash: hashConnectSecret(connectSecret),
+      ...extraReturnOrigin(returnOrigin),
     };
     await this.redis.set(
       `${OAUTH_NONCE_PREFIX}${nonce}`,
@@ -312,6 +332,25 @@ export class MailboxConnectionService {
       code_challenge_method: CodeChallengeMethod.S256,
     });
     return { url, connectSecret };
+  }
+
+  /**
+   * WP2A.0: the web address a connect started on, read from its state nonce WITHOUT consuming it (a plain GET, never
+   * GETDEL: the callback still redeems or burns the state). Called FIRST by both callbacks, before `discardState` /
+   * `handleCallback` delete the key. Only ever holds a WEB_ORIGINS address (see `startConnect`). Never throws: a
+   * non-string state, an unknown state, a Redis error or a corrupt payload is simply `undefined` (the redirect then
+   * keeps WEB_URL).
+   */
+  async peekReturnOrigin(state: unknown): Promise<string | undefined> {
+    if (typeof state !== "string" || !state) return undefined;
+    try {
+      const stored = await this.redis.get(`${OAUTH_NONCE_PREFIX}${state}`);
+      if (!stored) return undefined;
+      const returnOrigin = (JSON.parse(stored) as { returnOrigin?: unknown } | null)?.returnOrigin;
+      return typeof returnOrigin === "string" ? returnOrigin : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   /**
@@ -433,7 +472,11 @@ export class MailboxConnectionService {
    * either grant through the identical pending-grant → authenticated-confirm flow, including
    * the connect secret for the initiating tab (#2115).
    */
-  async startConnectMicrosoft(tenantId: string, userId: string): Promise<MailboxConnectStart> {
+  async startConnectMicrosoft(
+    tenantId: string,
+    userId: string,
+    returnOrigin?: string,
+  ): Promise<MailboxConnectStart> {
     if (!this.isMicrosoftConfigured()) {
       throw new ServiceUnavailableException(
         "Microsoft mailbox connect is not configured on this server yet.",
@@ -451,6 +494,7 @@ export class MailboxConnectionService {
       provider: "MICROSOFT",
       verifier: codeVerifier,
       secretHash: hashConnectSecret(connectSecret),
+      ...extraReturnOrigin(returnOrigin),
     };
     await this.redis.set(
       `${OAUTH_NONCE_PREFIX}${nonce}`,

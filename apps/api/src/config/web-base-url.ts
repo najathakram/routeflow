@@ -15,7 +15,7 @@
  */
 const LOCAL_DEFAULT = "http://localhost:3001";
 
-const isLoopbackHost = (host: string): boolean => {
+export const isLoopbackHost = (host: string): boolean => {
   const h = host.toLowerCase().replace(/^\[|\]$/g, "");
   return (
     h === "localhost" ||

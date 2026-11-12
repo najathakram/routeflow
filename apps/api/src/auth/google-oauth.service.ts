@@ -107,6 +107,23 @@ export type GoogleAuthResult =
       inviteOutcome?: InviteOutcome;
     } & TokenPair);
 
+/**
+ * Decode an OAuth `state` param's `returnOrigin` WITHOUT consuming the nonce or verifying the signature (B825), so
+ * the callback can pick the redirect base on its error / cancelled paths. Non-throwing: any parse failure ⇒
+ * `undefined`. The value is UNVERIFIED input — callers must re-validate it against their exact allow-list before
+ * using it as a redirect target. Shared by the tenant and the platform callbacks.
+ */
+export function peekOAuthStateReturnOrigin(state: string | undefined): string | undefined {
+  if (!state) return undefined;
+  try {
+    const payloadPart = state.split(".")[0];
+    const obj = JSON.parse(Buffer.from(payloadPart, "base64url").toString("utf-8"));
+    return typeof obj?.returnOrigin === "string" ? obj.returnOrigin : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // ─── Service ─────────────────────────────────────────────────────────────────
 
 const NONCE_TTL_SECS = 600; // 10 minutes
@@ -257,7 +274,7 @@ export class GoogleOAuthService {
     mobile?: boolean,
     deviceState?: string,
     // B825: already validated by the caller (AuthController.resolveReturnOrigin)
-    // against the exact WEB_URL/MOBILE_WEB_URL allow-list — never re-derived here.
+    // against the exact WEB_URL/MOBILE_WEB_URL/WEB_ORIGINS allow-list — never re-derived here.
     returnOrigin?: string,
   ): Promise<string> {
     const nonce = crypto.randomUUID();
@@ -299,9 +316,20 @@ export class GoogleOAuthService {
    * The `linkUserId` is embedded in the state so the callback knows to link
    * rather than sign in.
    */
-  async generateLinkUrl(type: "platform" | "tenant", userId: string): Promise<string> {
+  async generateLinkUrl(
+    type: "platform" | "tenant",
+    userId: string,
+    // WP2A.0: an EXTRA web origin (WEB_ORIGINS) the link started on, already validated by the
+    // caller; omitted for WEB_URL, so a link state minted on the main address is unchanged.
+    returnOrigin?: string,
+  ): Promise<string> {
     const nonce = crypto.randomUUID();
-    const stateObj: OAuthState = { type, nonce, linkUserId: userId };
+    const stateObj: OAuthState = {
+      type,
+      nonce,
+      linkUserId: userId,
+      ...(returnOrigin && { returnOrigin }),
+    };
     const payloadJson = JSON.stringify(stateObj);
     const state = this.signState(payloadJson);
 

@@ -419,6 +419,52 @@ describe("MF2 -> SA-733r9: paid coverage is one walk over every paid source (act
       }
     });
 
+    describe("WP2A.0: returnOrigin picks the base among WEB_ORIGINS", () => {
+      const savedEnv = { ...process.env };
+      afterEach(() => {
+        for (const k of Object.keys(process.env)) if (!(k in savedEnv)) delete process.env[k];
+        Object.assign(process.env, savedEnv);
+      });
+      const urlsFor = async (returnOrigin: string | undefined) => {
+        delete process.env.FRONTEND_URL;
+        process.env.WEB_URL = "https://app.routeflow.test";
+        const h = make({ invoices: [OCT_OPEN], sub: sub() });
+        await h.svc.open("t1", {
+          now: NOW,
+          expectedStubCents: 31000,
+          successPath: "/settings/billing?paid=1",
+          cancelPath: "/settings/billing?checkout=cancelled",
+          returnOrigin,
+        });
+        const params = h.stripe.client.checkout.sessions.create.mock.calls[0][0];
+        return [params.success_url, params.cancel_url];
+      };
+
+      it("an extra origin is the base of both return URLs", async () => {
+        process.env.WEB_ORIGINS = "https://www.acme-next.test";
+        expect(await urlsFor("https://www.acme-next.test")).toEqual([
+          "https://www.acme-next.test/settings/billing?paid=1",
+          "https://www.acme-next.test/settings/billing?checkout=cancelled",
+        ]);
+      });
+
+      it("a look-alike origin falls back to the web base", async () => {
+        process.env.WEB_ORIGINS = "https://www.acme-next.test";
+        expect(await urlsFor("https://www.acme-next.test.evil.test")).toEqual([
+          "https://app.routeflow.test/settings/billing?paid=1",
+          "https://app.routeflow.test/settings/billing?checkout=cancelled",
+        ]);
+      });
+
+      it("with WEB_ORIGINS empty the second address changes nothing", async () => {
+        delete process.env.WEB_ORIGINS;
+        expect(await urlsFor("https://www.acme-next.test")).toEqual([
+          "https://app.routeflow.test/settings/billing?paid=1",
+          "https://app.routeflow.test/settings/billing?checkout=cancelled",
+        ]);
+      });
+    });
+
     it("with no paths the defaults are unchanged (the super-admin route)", async () => {
       process.env.FRONTEND_URL = "https://app.test";
       const h = make({ invoices: [OCT_OPEN], sub: sub() });

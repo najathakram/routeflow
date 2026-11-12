@@ -61,6 +61,45 @@ describe("SettingsBillingController.createPortal (B4: admin-only portal)", () =>
     expect(subscription.openInvoiceUrl).toHaveBeenCalledWith("t1");
   });
 
+  describe("WP2A.0: the portal returns to the address the request came from (WEB_ORIGINS)", () => {
+    const saved = { ...process.env };
+    afterEach(() => {
+      for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+      Object.assign(process.env, saved);
+    });
+    const setEnv = (origins?: string) => {
+      delete process.env.FRONTEND_URL;
+      process.env.WEB_URL = "https://app.routeflow.test";
+      if (origins === undefined) delete process.env.WEB_ORIGINS;
+      else process.env.WEB_ORIGINS = origins;
+    };
+    const returnUrlOf = (billing: any) => billing.createBillingPortalSession.mock.calls[0][1];
+
+    it("an Origin on the WEB_ORIGINS list is the portal's return address", async () => {
+      setEnv("https://www.acme-next.test");
+      const { controller, billing } = make();
+      await controller.createPortal({ tenantId: "t1" } as any, "https://www.acme-next.test");
+      expect(returnUrlOf(billing)).toBe("https://www.acme-next.test/settings/billing");
+    });
+
+    it("a look-alike Origin keeps the service default (no return URL passed)", async () => {
+      setEnv("https://www.acme-next.test");
+      const { controller, billing } = make();
+      await controller.createPortal(
+        { tenantId: "t1" } as any,
+        "https://www.acme-next.test.evil.test",
+      );
+      expect(returnUrlOf(billing)).toBeUndefined();
+    });
+
+    it("with WEB_ORIGINS empty the second address changes nothing (service default)", async () => {
+      setEnv(undefined);
+      const { controller, billing } = make();
+      await controller.createPortal({ tenantId: "t1" } as any, "https://www.acme-next.test");
+      expect(returnUrlOf(billing)).toBeUndefined();
+    });
+  });
+
   it("a portal failure does NOT lose the pay link", async () => {
     const { controller } = make({ portal: jest.fn().mockRejectedValue(new Error("stripe")) });
     expect(await controller.createPortal({ tenantId: "t1" } as any)).toEqual({

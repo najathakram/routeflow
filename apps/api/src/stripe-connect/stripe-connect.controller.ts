@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   Post,
   Query,
   Res,
@@ -16,7 +17,8 @@ import { Roles } from "../auth/decorators/roles.decorator";
 import { NoImpersonation } from "../auth/decorators/no-impersonation.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
-import { StripeConnectService } from "./stripe-connect.service";
+import { StripeConnectService, peekStripeConnectStateOrigin } from "./stripe-connect.service";
+import { pickWebOrigin } from "../config/web-origins";
 
 import { PermissionBase } from "../auth/permissions/permission.decorators";
 /**
@@ -40,11 +42,12 @@ export class StripeConnectController {
   @Post("link")
   @NoImpersonation("billing")
   @Roles(UserRole.TENANT_ADMIN)
-  async link(@CurrentUser() user: JwtPayload) {
+  async link(@CurrentUser() user: JwtPayload, @Headers("origin") origin?: string) {
     const url = await this.connect.buildAuthorizeUrl(
       user.tenantId!,
       user.sub,
       user.username ?? null,
+      origin,
     );
     return { url };
   }
@@ -104,7 +107,12 @@ export class StripeConnectCallbackController {
     @Query("error") error: string | undefined,
     @Res() res: Response,
   ) {
-    const webUrl = (process.env.WEB_URL ?? "https://www.routeflow.info").replace(/\/$/, "");
+    // WP2A.0: the return origin the link started on. UNVERIFIED claim from the state token; it only ever selects among
+    // the WEB_ORIGINS allow-list (B825 precedent), else WEB_URL as before.
+    const webUrl = pickWebOrigin(
+      peekStripeConnectStateOrigin(state),
+      (process.env.WEB_URL ?? "https://www.routeflow.info").replace(/\/$/, ""),
+    );
     const back = (params: Record<string, string>) =>
       `${webUrl}/settings?${new URLSearchParams(params).toString()}`;
 

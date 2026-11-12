@@ -30,6 +30,7 @@ import { AddonGuard } from "../../billing/addon.guard";
 import { RequireAddon } from "../../billing/require-addon.decorator";
 import { MailboxConnectionService } from "./mailbox-connection.service";
 import { ConfirmMailboxDto } from "./dto/confirm-mailbox.dto";
+import { pickWebOrigin } from "../../config/web-origins";
 
 /**
  * The connect secret `/google/start` or `/microsoft/start` handed the initiating browser tab
@@ -125,10 +126,11 @@ export class MailboxController {
   @RequireAddon("email.connected_mailbox")
   // The body carries the connect secret: no browser, proxy or CDN may keep a copy of it.
   @Header("Cache-Control", "no-store")
-  async startGoogle(@CurrentUser() user: JwtPayload) {
+  async startGoogle(@CurrentUser() user: JwtPayload, @Headers("origin") origin?: string) {
     if (!user.tenantId) throw new ForbiddenException("A tenant context is required.");
     // `{ url, connectSecret }`: the tab keeps the secret for preview/confirm (#2115).
-    return this.mailboxConnection.startConnect(user.tenantId, user.sub);
+    // WP2A.0: the web address this tab is on; the service keeps it only when it is a WEB_ORIGINS address
+    return this.mailboxConnection.startConnect(user.tenantId, user.sub, origin);
   }
 
   // No guards — see class doc. This step never binds a MailboxConnection row; it only mints a
@@ -148,26 +150,36 @@ export class MailboxController {
     @Query("error_description") errorDescription: string | undefined,
     @Res() res: Response,
   ) {
+    // WP2A.0: read the web address the connect started on FIRST: discardState / handleCallback delete the nonce
+    const base = await this.callbackBase(state);
     if (error) {
       await this.mailboxConnection.discardState(state);
       this.logger.warn(
         `Mailbox Google callback denied: ${oauthDenialForLog(error, errorDescription)}`,
       );
       const flag = error === "access_denied" ? "mailbox_cancelled=google" : "mailbox_error=1";
-      return res.redirect(`${this.webUrl}/settings?tab=email&${flag}`);
+      return res.redirect(`${base}/settings?tab=email&${flag}`);
     }
     try {
       const { confirmToken } = await this.mailboxConnection.handleCallback(code, state);
       return res.redirect(
-        `${this.webUrl}/settings?tab=email&mailbox_confirm=${encodeURIComponent(confirmToken)}`,
+        `${base}/settings?tab=email&mailbox_confirm=${encodeURIComponent(confirmToken)}`,
       );
     } catch (err: any) {
       // handleCallback consumes the state itself once it gets that far. This also covers the
       // exits before its GETDEL (a callback naming a state but carrying no code).
       await this.mailboxConnection.discardState(state);
       this.logger.warn(`Mailbox Google callback failed: ${err?.message ?? err}`);
-      return res.redirect(`${this.webUrl}/settings?tab=email&mailbox_error=1`);
+      return res.redirect(`${base}/settings?tab=email&mailbox_error=1`);
     }
+  }
+
+  /**
+   * WP2A.0: the base of every callback redirect: the origin the connect started on when it is a WEB_ORIGINS
+   * address, else WEB_URL.
+   */
+  private async callbackBase(state: unknown): Promise<string> {
+    return pickWebOrigin(await this.mailboxConnection.peekReturnOrigin(state), this.webUrl);
   }
 
   @Get("microsoft/start")
@@ -177,10 +189,10 @@ export class MailboxController {
   @RequireAddon("email.connected_mailbox")
   // Carries the connect secret, like google/start: never cached.
   @Header("Cache-Control", "no-store")
-  async startMicrosoft(@CurrentUser() user: JwtPayload) {
+  async startMicrosoft(@CurrentUser() user: JwtPayload, @Headers("origin") origin?: string) {
     if (!user.tenantId) throw new ForbiddenException("A tenant context is required.");
     // `{ url, connectSecret }`: the tab keeps the secret for preview/confirm (#2115).
-    return this.mailboxConnection.startConnectMicrosoft(user.tenantId, user.sub);
+    return this.mailboxConnection.startConnectMicrosoft(user.tenantId, user.sub, origin);
   }
 
   // No guards — mirrors google/callback exactly (see class doc). Microsoft can also redirect
@@ -197,6 +209,7 @@ export class MailboxController {
     @Query("error_description") errorDescription: string | undefined,
     @Res() res: Response,
   ) {
+    const base = await this.callbackBase(state); // WP2A.0: first, before the state is consumed
     if (error) {
       await this.mailboxConnection.discardState(state);
       // `error_description` is Microsoft/attacker-controlled free text — potentially carrying
@@ -209,12 +222,12 @@ export class MailboxController {
       );
       const flag =
         aadstsCode === "AADSTS65001" ? "mailbox_admin_consent_required" : "mailbox_error";
-      return res.redirect(`${this.webUrl}/settings?tab=email&${flag}=1`);
+      return res.redirect(`${base}/settings?tab=email&${flag}=1`);
     }
     try {
       const { confirmToken } = await this.mailboxConnection.handleMicrosoftCallback(code, state);
       return res.redirect(
-        `${this.webUrl}/settings?tab=email&mailbox_confirm=${encodeURIComponent(confirmToken)}`,
+        `${base}/settings?tab=email&mailbox_confirm=${encodeURIComponent(confirmToken)}`,
       );
     } catch (err: any) {
       await this.mailboxConnection.discardState(state);
@@ -223,7 +236,7 @@ export class MailboxController {
         err?.message === "microsoft_admin_consent_required"
           ? "mailbox_admin_consent_required"
           : "mailbox_error";
-      return res.redirect(`${this.webUrl}/settings?tab=email&${flag}=1`);
+      return res.redirect(`${base}/settings?tab=email&${flag}=1`);
     }
   }
 

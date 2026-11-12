@@ -31,7 +31,7 @@ import { buildCatchupSessionParams } from "./catchup-session-params";
 import { PlatformPricingService } from "./platform-pricing.service";
 import { withCheckoutPolicy } from "./checkout-session-params";
 import { StripeService } from "./stripe.service";
-import { webBaseUrl } from "../config/web-base-url";
+import { webReturnBase } from "../config/web-origins";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 
 /**
@@ -358,7 +358,14 @@ export class CatchupCheckoutService {
    */
   async open(
     tenantId: string,
-    opts: { expectedStubCents: number; now?: Date; successPath?: string; cancelPath?: string },
+    opts: {
+      expectedStubCents: number;
+      now?: Date;
+      successPath?: string;
+      cancelPath?: string;
+      /** WP2A.0: the request's Origin; used only when it is on the WEB_ORIGINS list, else webBaseUrl() */
+      returnOrigin?: string;
+    },
   ): Promise<{ checkoutUrl: string; sessionId: string; stubCents: number; shape: string }> {
     const now = opts.now ?? new Date();
     // validated before anything is claimed or created
@@ -439,7 +446,7 @@ export class CatchupCheckoutService {
         throw new ChangedUnderClaim();
       }
       const customerId = await this.billing.ensureStripeCustomer(tenantId);
-      const base = webBaseUrl();
+      const base = webReturnBase(opts.returnOrigin);
       const params = buildCatchupSessionParams({
         tenantId,
         slug: report.slug,

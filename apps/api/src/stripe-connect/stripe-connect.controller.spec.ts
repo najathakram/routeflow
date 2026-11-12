@@ -18,7 +18,10 @@ import {
   READ_ONLY_SENTENCE,
   SUSPENDED_SENTENCE,
 } from "../../../../packages/types/read-only-copy";
-import { StripeConnectCallbackController } from "./stripe-connect.controller";
+import {
+  StripeConnectCallbackController,
+  StripeConnectController,
+} from "./stripe-connect.controller";
 import { StripeConnectService } from "./stripe-connect.service";
 
 /** Minimal express Response double — records the redirect target only. */
@@ -115,5 +118,76 @@ describe("StripeConnectCallbackController", () => {
         "Could not connect Stripe — try again from Settings.",
       );
     }
+  });
+});
+
+describe("WP2A.0: the Stripe Connect legs return to the address the link started on", () => {
+  const saved = { ...process.env };
+  afterEach(() => {
+    for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+    Object.assign(process.env, saved);
+  });
+  const stateWith = (ro: unknown) =>
+    `h.${Buffer.from(JSON.stringify({ ro })).toString("base64url")}.s`;
+  const redirectFor = async (state: string) => {
+    const mockConnect = {
+      completeOAuth: jest.fn().mockResolvedValue({ chargesEnabled: true }),
+    };
+    const controller = new StripeConnectCallbackController(
+      mockConnect as unknown as StripeConnectService,
+    );
+    const res = mockRes();
+    await controller.callback("code", state, undefined, res);
+    return res.redirectedTo as string;
+  };
+
+  it("link hands the request Origin to buildAuthorizeUrl as its last argument", async () => {
+    const connect = { buildAuthorizeUrl: jest.fn().mockResolvedValue("https://connect.test/x") };
+    const controller = new StripeConnectController(connect as unknown as StripeConnectService);
+    await controller.link(
+      { tenantId: "t1", sub: "u1", username: "alice" } as any,
+      "https://www.acme-next.test",
+    );
+    expect(connect.buildAuthorizeUrl).toHaveBeenCalledWith(
+      "t1",
+      "u1",
+      "alice",
+      "https://www.acme-next.test",
+    );
+  });
+
+  it("a state carrying an extra origin redirects back to that origin", async () => {
+    process.env.WEB_URL = "https://app.routeflow.test";
+    process.env.WEB_ORIGINS = "https://www.acme-next.test";
+    expect(await redirectFor(stateWith("https://www.acme-next.test"))).toBe(
+      "https://www.acme-next.test/settings?stripe=connected&charges=enabled",
+    );
+  });
+
+  it("a look-alike origin in the state falls back to WEB_URL", async () => {
+    process.env.WEB_URL = "https://app.routeflow.test";
+    process.env.WEB_ORIGINS = "https://www.acme-next.test";
+    expect(await redirectFor(stateWith("https://www.acme-next.test.evil.test"))).toBe(
+      "https://app.routeflow.test/settings?stripe=connected&charges=enabled",
+    );
+  });
+
+  it("with WEB_ORIGINS empty the redirect is exactly today's WEB_URL one", async () => {
+    process.env.WEB_URL = "https://app.routeflow.test";
+    delete process.env.WEB_ORIGINS;
+    expect(await redirectFor(stateWith("https://www.acme-next.test"))).toBe(
+      "https://app.routeflow.test/settings?stripe=connected&charges=enabled",
+    );
+  });
+
+  it("the error redirects use the same origin", async () => {
+    process.env.WEB_URL = "https://app.routeflow.test";
+    process.env.WEB_ORIGINS = "https://www.acme-next.test";
+    const controller = new StripeConnectCallbackController({
+      completeOAuth: jest.fn().mockRejectedValue(new BadRequestException("state_replayed")),
+    } as unknown as StripeConnectService);
+    const res = mockRes();
+    await controller.callback("code", stateWith("https://www.acme-next.test"), undefined, res);
+    expect(res.redirectedTo).toMatch(/^https:\/\/www\.acme-next\.test\/settings\?stripe=error/);
   });
 });

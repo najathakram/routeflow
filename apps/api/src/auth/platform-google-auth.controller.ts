@@ -1,6 +1,7 @@
 import {
   Controller,
   Get,
+  Headers,
   Query,
   Req,
   Res,
@@ -10,10 +11,11 @@ import {
 import { ApiOperation, ApiTags, ApiBearerAuth } from "@nestjs/swagger";
 import { ConfigService } from "@nestjs/config";
 import type { Request, Response } from "express";
-import { GoogleOAuthService } from "./google-oauth.service";
+import { GoogleOAuthService, peekOAuthStateReturnOrigin } from "./google-oauth.service";
 import { JwtAuthGuard } from "./guards/jwt-auth.guard";
 import { CurrentUser } from "./decorators/current-user.decorator";
 import { extractDeviceInfo } from "./device-info.util";
+import { parseWebOrigins, pickFromOrigins } from "../config/web-origins";
 
 /**
  * Public Google OAuth endpoints for the Platform Admin (SUPER_ADMIN) flow.
@@ -23,12 +25,18 @@ import { extractDeviceInfo } from "./device-info.util";
 @Controller("platform-admin/auth/google")
 export class PlatformGoogleAuthController {
   private readonly webUrl: string;
+  /** WP2A.0: the EXTRA web origins the app is also served on (`WEB_ORIGINS`, exact match; empty by default). */
+  private readonly webOrigins: string[];
 
   constructor(
     private readonly googleOAuth: GoogleOAuthService,
     private readonly configService: ConfigService,
   ) {
     this.webUrl = configService.get<string>("WEB_URL") ?? "http://localhost:3001";
+    this.webOrigins = parseWebOrigins(
+      configService.get<string>("WEB_ORIGINS"),
+      configService.get<string>("NODE_ENV"),
+    );
 
     if (this.webUrl.includes("localhost") && configService.get("NODE_ENV") !== "development") {
       console.warn(
@@ -43,13 +51,21 @@ export class PlatformGoogleAuthController {
    */
   @Get()
   @ApiOperation({ summary: "Get Google OAuth URL for platform admin sign-in" })
-  async getAuthUrl() {
+  async getAuthUrl(@Headers("origin") origin?: string) {
     if (!this.googleOAuth.isConfigured()) {
       throw new ServiceUnavailableException(
         "Google sign-in is not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.",
       );
     }
-    const url = await this.googleOAuth.generateAuthUrl("platform");
+    const url = await this.googleOAuth.generateAuthUrl(
+      "platform",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      this.extraOrigin(origin),
+    );
     return { url };
   }
 
@@ -66,13 +82,17 @@ export class PlatformGoogleAuthController {
   @ApiOperation({
     summary: "Get Google OAuth URL to link Google account to current platform admin",
   })
-  async getLinkUrl(@CurrentUser() user: { sub: string }) {
+  async getLinkUrl(@CurrentUser() user: { sub: string }, @Headers("origin") origin?: string) {
     if (!this.googleOAuth.isConfigured()) {
       throw new ServiceUnavailableException(
         "Google sign-in is not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.",
       );
     }
-    const url = await this.googleOAuth.generateLinkUrl("platform", user.sub);
+    const url = await this.googleOAuth.generateLinkUrl(
+      "platform",
+      user.sub,
+      this.extraOrigin(origin),
+    );
     return { url };
   }
 
@@ -90,7 +110,9 @@ export class PlatformGoogleAuthController {
     @Req() req: Request,
     @Res() res: Response,
   ) {
-    const base = `${this.webUrl}/platform`;
+    // WP2A.0: the state's returnOrigin is UNVERIFIED here (signature not checked yet) — it only ever
+    // selects among WEB_URL and the WEB_ORIGINS list, so it can never name an arbitrary host.
+    let base = `${this.platformBase(peekOAuthStateReturnOrigin(state))}/platform`;
 
     if (oauthError) {
       return res.redirect(`${base}/auth/callback?error=oauth_cancelled`);
@@ -102,6 +124,9 @@ export class PlatformGoogleAuthController {
 
     try {
       const profile = await this.googleOAuth.verifyCallback(code, state);
+      // Defence in depth: the verified origin (signed into the state at mint time) goes through the
+      // same pick, so an origin removed from WEB_ORIGINS since falls back to WEB_URL.
+      base = `${this.platformBase(profile.returnOrigin)}/platform`;
 
       // Only platform-type states complete here. Turn any other type away before the
       // link or sign-in step, so no account is linked, created or signed in on this path.
@@ -151,6 +176,16 @@ export class PlatformGoogleAuthController {
       this.logError(err);
       return res.redirect(`${base}/auth/callback?error=unknown_error`);
     }
+  }
+
+  /** WP2A.0: the `WEB_ORIGINS` entry `origin` equals exactly, else `undefined` (nothing to store for `WEB_URL`). */
+  private extraOrigin(origin: unknown): string | undefined {
+    return pickFromOrigins(origin, this.webOrigins, "") !== "" ? (origin as string) : undefined;
+  }
+
+  /** WP2A.0: the web base a callback redirects to: an exact `WEB_ORIGINS` match, else `WEB_URL`. */
+  private platformBase(candidate: unknown): string {
+    return pickFromOrigins(candidate, this.webOrigins, this.webUrl);
   }
 
   private logError(err: any) {

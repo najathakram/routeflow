@@ -1153,6 +1153,70 @@ describe("PaymentRequestsService", () => {
     });
   });
 
+  // ─── WP2A.0: the card checkout returns to the address the buyer came from ─────
+
+  describe("createCardRequest return URLs (WEB_ORIGINS)", () => {
+    const saved = { ...process.env };
+    afterEach(() => {
+      for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+      Object.assign(process.env, saved);
+    });
+
+    async function urlsFor(returnOrigin: string | undefined) {
+      process.env.WEB_URL = "https://app.routeflow.test";
+      buyerPaymentRequest.findFirst.mockResolvedValue(null);
+      mockConnect.chargeableAccount.mockResolvedValue("acct_1");
+      prisma.invoice.findMany.mockResolvedValue([
+        invoiceRow({
+          id: "inv-1",
+          invoiceNumber: "INV-0001",
+          issueDate: new Date("2026-01-01"),
+          total: 40,
+        }),
+      ]);
+      prisma.customer.findFirst.mockResolvedValue({ businessName: "Acme Retail", email: null });
+      buyerPaymentRequest.create.mockResolvedValue({ id: "req-1" });
+      mockProvider.createHostedCheckout.mockResolvedValue({
+        sessionId: "cs_1",
+        url: "https://s.test/1",
+      });
+      await service.createCardRequest({
+        tenantId: "tenant-1",
+        tenantSlug: "acme",
+        customerId: "cust-1",
+        buyerAccountId: "buyer-1",
+        amount: 10,
+        returnOrigin,
+      });
+      const call = mockProvider.createHostedCheckout.mock.calls[0][0];
+      return [call.successUrl, call.cancelUrl];
+    }
+
+    it("an origin on the WEB_ORIGINS list is the return base", async () => {
+      process.env.WEB_ORIGINS = "https://www.acme-next.test";
+      expect(await urlsFor("https://www.acme-next.test")).toEqual([
+        "https://www.acme-next.test/buyer/portal/acme/payments?payment=processing",
+        "https://www.acme-next.test/buyer/portal/acme/payments?payment=cancelled",
+      ]);
+    });
+
+    it("a look-alike origin falls back to the web base", async () => {
+      process.env.WEB_ORIGINS = "https://www.acme-next.test";
+      expect(await urlsFor("https://www.acme-next.test.evil.test")).toEqual([
+        "https://app.routeflow.test/buyer/portal/acme/payments?payment=processing",
+        "https://app.routeflow.test/buyer/portal/acme/payments?payment=cancelled",
+      ]);
+    });
+
+    it("with WEB_ORIGINS empty the second address changes nothing", async () => {
+      delete process.env.WEB_ORIGINS;
+      expect(await urlsFor("https://www.acme-next.test")).toEqual([
+        "https://app.routeflow.test/buyer/portal/acme/payments?payment=processing",
+        "https://app.routeflow.test/buyer/portal/acme/payments?payment=cancelled",
+      ]);
+    });
+  });
+
   // ─── fromInvoiceId validation ─────────────────────────────────────────────────
 
   describe("fromInvoiceId validation", () => {

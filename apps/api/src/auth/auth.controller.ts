@@ -5,6 +5,7 @@ import {
   Get,
   GoneException,
   HttpCode,
+  Headers,
   HttpStatus,
   Param,
   Post,
@@ -24,7 +25,7 @@ import { LocalAuthGuard } from "./guards/local-auth.guard";
 import { JwtAuthGuard } from "./guards/jwt-auth.guard";
 import { NoImpersonation } from "./decorators/no-impersonation.decorator";
 import { CurrentUser } from "./decorators/current-user.decorator";
-import { GoogleOAuthService } from "./google-oauth.service";
+import { GoogleOAuthService, peekOAuthStateReturnOrigin } from "./google-oauth.service";
 import { AppleOAuthService } from "./apple-oauth.service";
 import { AppleNonceDto } from "./dto/apple-nonce.dto";
 import { AppleSignInDto } from "./dto/apple-sign-in.dto";
@@ -44,6 +45,7 @@ import { StaffHandoffService } from "./handoff/staff-handoff.service";
 import { HandoffExchangeDto, HandoffMintDto } from "./handoff/handoff.dto";
 import type { JwtPayload } from "./jwt-payload.interface";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { normalizeOrigin, parseWebOrigins, pickFromOrigins } from "../config/web-origins";
 
 // SEC-4 / F11-002: name + scope of the httpOnly refresh cookie. Path is scoped
 // to the auth routes so it is never sent to unrelated API endpoints. Kept in
@@ -72,6 +74,9 @@ export class AuthController {
    *  used for password-reset links): a misconfigured/missing env var must
    *  fail CLOSED to WEB_URL-only, never silently trust a guessed prod origin. */
   private readonly mobileWebUrl: string | undefined;
+  /** WP2A.0: the EXTRA web origins the app is also served on (`WEB_ORIGINS`, exact match; empty by default).
+   *  Third allowed `returnOrigin` value, and the set a request's own `Origin` header may pick from. */
+  private readonly webOrigins: string[];
 
   constructor(
     private readonly authService: AuthService,
@@ -82,6 +87,10 @@ export class AuthController {
   ) {
     this.webUrl = AuthController.normalizeOrigin(
       configService.get<string>("WEB_URL") || "http://localhost:3001",
+    );
+    this.webOrigins = parseWebOrigins(
+      configService.get<string>("WEB_ORIGINS"),
+      configService.get<string>("NODE_ENV"),
     );
     // SA-132: `||` (not `??`) so a blank MOBILE_WEB_URL="" (the .env.example
     // default) is treated the same as unset, not as a configured empty origin.
@@ -116,11 +125,7 @@ export class AuthController {
    * malformed env var can never crash boot.
    */
   private static normalizeOrigin(url: string): string {
-    try {
-      return new URL(url).origin;
-    } catch {
-      return url;
-    }
+    return normalizeOrigin(url);
   }
 
   // ─── Username / password ───────────────────────────────────────────────────
@@ -344,6 +349,9 @@ export class AuthController {
     // app; the Next web client passes nothing, so its own flow is unchanged.
     @Query("return_origin") returnOrigin: string | undefined,
     @Res({ passthrough: true }) res: any,
+    // WP2A.0: the browser's own origin. With no explicit return_origin, a sign-in started on an
+    // extra web origin (WEB_ORIGINS) returns to it. Last parameter so positional callers are unchanged.
+    @Headers("origin") requestOrigin?: string,
   ) {
     if (!this.googleOAuth.isConfigured()) {
       res.status(503);
@@ -357,7 +365,11 @@ export class AuthController {
     const mobile = mobileFlag === "1" || mobileFlag === "true";
     // Only meaningful for the BROWSER flow — the native deep-link flow always
     // uses GOOGLE_MOBILE_SCHEME regardless, never this origin.
-    const resolvedReturnOrigin = mobile ? undefined : this.resolveReturnOrigin(returnOrigin);
+    const resolvedReturnOrigin = mobile
+      ? undefined
+      : returnOrigin !== undefined
+        ? this.resolveReturnOrigin(returnOrigin)
+        : this.requestReturnOrigin(requestOrigin);
     const url = await this.googleOAuth.generateAuthUrl(
       "tenant",
       tenantSlug,
@@ -383,12 +395,23 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: "Get Google OAuth URL to link Google account to current user" })
-  async linkGoogleUrl(@CurrentUser() user: { sub: string }, @Res({ passthrough: true }) res: any) {
+  async linkGoogleUrl(
+    @CurrentUser() user: { sub: string },
+    @Res({ passthrough: true }) res: any,
+    // WP2A.0: a link started on an extra web origin returns there.
+    @Headers("origin") requestOrigin?: string,
+  ) {
     if (!this.googleOAuth.isConfigured()) {
       res.status(503);
       return { message: "Google sign-in is not configured for this environment.", statusCode: 503 };
     }
-    const url = await this.googleOAuth.generateLinkUrl("tenant", user.sub);
+    const returnOrigin = this.requestReturnOrigin(requestOrigin);
+    const url = await this.googleOAuth.generateLinkUrl(
+      "tenant",
+      user.sub,
+      // Stored only for an extra origin, so a link started on WEB_URL mints the same state as before.
+      returnOrigin !== this.webUrl ? returnOrigin : undefined,
+    );
     return { url };
   }
 
@@ -541,7 +564,8 @@ export class AuthController {
   /**
    * B825/SA-132: validate a candidate return origin against the EXACT
    * allow-list (`webUrl`, `mobileWebUrl` — the latter `undefined`, hence
-   * never matchable, whenever MOBILE_WEB_URL isn't configured) — no prefix
+   * never matchable, whenever MOBILE_WEB_URL isn't configured — and the
+   * WP2A.0 `webOrigins` list, empty by default) — no prefix
    * or substring matching, so `https://routeflowmobile-production.up.railway
    * .app.evil.example` is rejected even though it starts with an allowed
    * origin. `candidate` is typed `unknown` because NestJS binds a repeated
@@ -556,7 +580,9 @@ export class AuthController {
   private resolveReturnOrigin(candidate: unknown): string {
     if (
       typeof candidate === "string" &&
-      (candidate === this.webUrl || candidate === this.mobileWebUrl)
+      (candidate === this.webUrl ||
+        candidate === this.mobileWebUrl ||
+        this.webOrigins.includes(candidate))
     ) {
       return candidate;
     }
@@ -569,6 +595,15 @@ export class AuthController {
       );
     }
     return this.webUrl;
+  }
+
+  /**
+   * WP2A.0: the origin a browser flow started on, taken from the request's own `Origin` header — the
+   * `WEB_ORIGINS` entry it equals EXACTLY, else `WEB_URL`. No log: a request from `WEB_URL` itself or from any
+   * other site is normal here (unlike an explicit `return_origin`, which a client chose to send).
+   */
+  private requestReturnOrigin(origin: unknown): string {
+    return pickFromOrigins(origin, this.webOrigins, this.webUrl);
   }
 
   /**
@@ -596,14 +631,7 @@ export class AuthController {
    * been checked yet, so an attacker's crafted state could claim anything.
    */
   private peekReturnOrigin(state: string | undefined): string | undefined {
-    if (!state) return undefined;
-    try {
-      const payloadPart = state.split(".")[0];
-      const obj = JSON.parse(Buffer.from(payloadPart, "base64url").toString("utf-8"));
-      return typeof obj?.returnOrigin === "string" ? obj.returnOrigin : undefined;
-    } catch {
-      return undefined;
-    }
+    return peekOAuthStateReturnOrigin(state);
   }
 
   // ─── Sign in with Apple (#2309, SA-418 — native iOS only) ─────────────────

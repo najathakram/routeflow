@@ -276,6 +276,18 @@ describe("PaymentDueService.pay", () => {
     });
   });
 
+  it("WP2A.0: the request's origin is handed to the catch-up open() as returnOrigin (and absent otherwise)", async () => {
+    const a = make();
+    await a.svc.pay("t1", NOW, undefined, "https://www.acme-next.test");
+    expect(a.catchup.open).toHaveBeenCalledWith(
+      "t1",
+      expect.objectContaining({ returnOrigin: "https://www.acme-next.test" }),
+    );
+    const b = make();
+    await b.svc.pay("t1", NOW);
+    expect(b.catchup.open.mock.calls[0][1].returnOrigin).toBeUndefined();
+  });
+
   it("REUSES an open, unexpired session: no second create", async () => {
     const { svc, catchup, stripe } = make({
       sub: { catchupState: "SESSION_OPEN", catchupSessionId: "cs_open" },
