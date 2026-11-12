@@ -12,6 +12,13 @@
 
 ## process
 
+### L-379 · 2026-11-12 · process · a hold or fix order is issued only after the reviewer's verdict and browser evidence are posted; the order carries their board comment ids (#4302)
+
+- **Symptom:** a hold and a one-case fix order for #4302 went out from an interim reading, before the reader's FAIL (board 6819958479) and the browser evidence (6819958939, which found more than the reader's MUST) were posted. It cost a round.
+- **Root cause:** the order was written from a partial read; nothing required it to name the evidence it rested on.
+- **Lesson:** **An order that holds a PR or tells a lane what to fix names the board comment ids of the verdict and of the browser evidence it rests on, and is not sent until both are posted. A fix scoped from an interim read is re-scoped when the evidence lands.**
+- **Guard:** owed, NOT BUILT YET: a required field in the lead's order template holding the board comment ids of the verdict and of its evidence. No file in the repo carries it today.
+
 ### L-359 · 2026-10-30 · process · a train is pushed only after the CI-equivalent verify; type-checks plus one test file is not a gate, and CI is read by its closing Failed line
 
 - **Symptom:** a 13-member train pushed after clean merges, api and web type-checks and one test file went red in CI in three members (a web suite pinning an older unit rule, an api spec expecting another warning code, a writer-inventory spec). The first read of the log took one lane's "passed" counts for the whole api.
@@ -34,13 +41,6 @@
 - **Guard:** the lead's merge procedure (update-branch, then fresh CI) and the memory note on close/reopen testing a stale merge ref; none automatic. Cf. [[L-323]].
 
 ## tooling
-
-### L-356 · 2026-10-30 · tooling · a failed merge in a tree whose hooks cannot run looks exactly like a conflict; classify by unmerged files first
-
-- **Symptom:** a 14-member train pass reported CONFLICT for every member, though no member overlapped another.
-- **Root cause:** the commit-msg hook (commitlint) needs `node_modules` in the tree; a fresh worktree had none, so every merge commit was refused and the script read the non-zero exit as a conflict.
-- **Lesson:** **Call a merge conflicted only when `git diff --name-only --diff-filter=U` lists files. Any other non-zero exit is a tooling failure: fix the tree (`npm ci --ignore-scripts`) and rerun before telling anyone a member needs work.**
-- **Guard:** the train assembly script splits the two cases. Cf. [[L-354]].
 
 ### L-358 · 2026-10-30 · tooling · api check-types in a tree that did not build the workspace packages drowns in TS2307; build `packages/*` first
 
@@ -81,10 +81,10 @@
 
 ### L-378 · 2026-11-12 · testing · a hand-over test runs the real scan detector with a full-length code; a mocked detector and a short code cannot see a dropped first key (#4302 review)
 
-- **Symptom:** in PR #4302 (open at the time of writing) the order builder's line handle handed focus to product search, but the first key of a scan had already gone to the handle, so the lookup lost its first character (board 6819958479, confirmed in a browser run on 6819958939: 5/5 runs, no line added). The PR's test passed.
+- **Symptom:** in PR #4302 (merged as 1c22822497, head 15137041c9, with the fix) the order builder's line handle handed focus to product search, but the first key of a scan had already gone to the handle, so the lookup lost its first character (board 6819958479, confirmed in a browser run on 6819958939: 5/5 runs, no line added). The PR's test passed.
 - **Root cause:** the test mocked `BarcodeScannerButton` and scanned "300", which is under the detector's 6-character gate (`sequence.length >= 6`, `BarcodeScannerButton.tsx:110`), so neither the detector nor the dropped key was exercised.
 - **Lesson:** **A test of a focus hand-over during a scan runs the real detector and types a full-length code (13 digits) with the scanner's key gaps, then asserts the lookup got the whole code once. A mock of the component that reads the keys removes the thing under test.**
-- **Guard:** none automatic; the reader's probe (the same builder test without the mock, typing `0123456789012{Enter}` from a handle and from search) is the pattern to copy. Cf. [[L-376]].
+- **Guard:** `apps/web/app/(dashboard)/orders/_components/CreateOrderModal.scan-from-handle.test.tsx`: the real detector, a 13-digit code from handles 1 and 2 and from the search box; removing the dispatch in `SortableLines.tsx` turns two cells red. Open: only Enter is sent, a CR+LF ending from a handle is not covered. Cf. [[L-376]].
 
 ### L-374 · 2026-11-12 · testing · a spec that counts log lines across a loop owns its clock when the code under test rate-gates by wall time (B5-5, #4274)
 

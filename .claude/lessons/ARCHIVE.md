@@ -4701,3 +4701,12 @@ citations, closed-out with its own post-init assertion guard).
 - **Root cause:** a scoped jest run in the same tree, started while verify was running, overwrote the gitignored `.campaign/runs/<workspace>.json` with a report of only the specs it ran; `campaign-check` then read that partial report. Grepping the log for the word "Failed" also matches test names.
 - **Lesson:** **Never run jest in a tree while its verify runs: order pre-check items before the verify, or run them in another worktree. If it happened, regenerate the report with that workspace's full suite and re-run `node scripts/campaign-check.mjs` alone; the Lead may accept the verify on that evidence without a full rerun. Judge a verify by Turbo's `Failed:` line at line start, never by grep for the word.**
 - **Guard:** the by-hand train pre-check orders its scoped jest items before the verify and runs none beside it. Cf. [[L-359]].
+
+## Archived 2026-11-12 — zero outside citations, no repo guard; headroom for L-379 (bookkeeping for window 37)
+
+### L-356 · 2026-10-30 · tooling · a failed merge in a tree whose hooks cannot run looks exactly like a conflict; classify by unmerged files first
+
+- **Symptom:** a 14-member train pass reported CONFLICT for every member, though no member overlapped another.
+- **Root cause:** the commit-msg hook (commitlint) needs `node_modules` in the tree; a fresh worktree had none, so every merge commit was refused and the script read the non-zero exit as a conflict.
+- **Lesson:** **Call a merge conflicted only when `git diff --name-only --diff-filter=U` lists files. Any other non-zero exit is a tooling failure: fix the tree (`npm ci --ignore-scripts`) and rerun before telling anyone a member needs work.**
+- **Guard:** the train assembly script splits the two cases. Cf. [[L-354]].
