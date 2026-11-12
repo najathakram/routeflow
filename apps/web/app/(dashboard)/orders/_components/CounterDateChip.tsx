@@ -49,8 +49,6 @@ export function CounterDateChip({
   const [open, setOpen] = React.useState(false);
   const mainRef = React.useRef<HTMLButtonElement>(null);
   const canOpen = !disabled && !!today;
-  // What is seen must be what is sent: a set day is NEVER labelled Today. While the business's day is unknown the day shows
-  // as dated with no past/future word (UNKNOWN), and it can still be cleared.
   const direction: "BACK" | "FORWARD" | "UNKNOWN" | null = !value
     ? null
     : !today
@@ -186,10 +184,16 @@ export function CounterDateReminder({
   value,
   today,
   todayFailed,
+  onRetry,
+  retrying,
 }: {
   value: string;
   today: string | undefined;
   todayFailed?: boolean;
+  /** re-runs the read of the business's day; shown beside the failed copy */
+  onRetry?: () => void;
+  /** the read is running: Try again stays on screen and keeps focus, but sends nothing */
+  retrying?: boolean;
 }) {
   if (!dateIfNotToday(value, today)) return null;
   // While the business's day is unknown the chip says "checking": the reminder must not claim the sale is dated yet
@@ -199,6 +203,21 @@ export function CounterDateReminder({
         {todayFailed
           ? COUNTER_ORDER_DATE_ZONE_FAILED_COPY
           : "Checking today's date. Complete waits for it."}
+        {todayFailed && onRetry ? (
+          <>
+            {" "}
+            <button
+              type="button"
+              className="min-h-[44px] px-2 underline aria-disabled:opacity-50"
+              aria-disabled={retrying || undefined}
+              onClick={() => {
+                if (!retrying) onRetry();
+              }}
+            >
+              Try again
+            </button>
+          </>
+        ) : null}
       </p>
     );
   return (

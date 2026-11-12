@@ -24,10 +24,22 @@ const KNOWN = "4006381333931";
 const WATER = { id: "p-water", name: "Water", pricePerUnit: 1, unit: "each", unitsPerBox: null };
 const PRODUCTS: Record<string, unknown> = { [KNOWN]: COLA, Ab12cd: COLA, Zz99yy: WATER };
 const resolved: string[] = [];
+// a held lookup: "Hold99x" answers (as an archived item: a message with no dialog) only when the test releases it
+let mockReleaseHold: (() => void) | null = null;
 jest.mock("@/lib/barcode-resolve", () => ({
   ...jest.requireActual("@/lib/barcode-resolve"),
   resolveProductByCode: async (code: string) => {
     resolved.push(code);
+    if (code === "Hold99x") {
+      await new Promise<void>((r) => {
+        mockReleaseHold = r;
+      });
+      return {
+        product: { id: "p-old", name: "Old stock", pricePerUnit: 1 },
+        source: "sku",
+        archived: true,
+      };
+    }
     return PRODUCTS[code] ? { product: PRODUCTS[code], source: "sku" } : { notFound: true };
   },
 }));
@@ -484,5 +496,46 @@ describe("T11 focus left on BODY while the picker is open (a month button at its
     expect(chip()).toHaveAttribute("data-direction", "TODAY");
     expect(screen.queryByTestId("counter-date-picker")).toBeNull();
     expect(resolved).toEqual([KNOWN]);
+  });
+});
+
+describe("T12 the armed append dismisses a stale scan message, like the scan box's own onChange", () => {
+  beforeEach(() => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      writable: true,
+      value: (q: string) => ({
+        matches: q === TOUCH_FIRST_QUERY, // no standing focus in the scan box: the hand-over's keys go through state
+        media: q,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+        addListener: () => undefined,
+        removeListener: () => undefined,
+      }),
+    });
+  });
+  it("a message that arrives while the hand-over is armed goes at the NEXT appended key (not only at the first)", async () => {
+    const user = userAt(null);
+    renderTill(<CounterSaleScreen />);
+    await waitFor(() => expect(screen.getByRole("button", { name: CHIP_NAME })).toBeEnabled());
+    await user.click(scanBox());
+    await user.keyboard("Hold99x{Enter}"); // the lookup is held
+    await user.click(screen.getByRole("button", { name: CHIP_NAME }));
+    const p = await screen.findByTestId("counter-date-picker");
+    act(() =>
+      within(p)
+        .getByRole("grid", { name: /^Calendar/ })
+        .focus(),
+    );
+    await user.keyboard("4"); // the first key: the picker closes, the hand-over is armed, no message yet
+    await settle();
+    expect(screen.queryByText(/is archived/)).toBeNull();
+    await act(async () => {
+      mockReleaseHold?.(); // the held lookup answers now: a message appears mid-scan
+    });
+    expect(await screen.findByText(/Old stock is archived/)).toBeInTheDocument();
+    await user.keyboard("0"); // the second key is an armed append: it must dismiss the message
+    await settle();
+    expect(screen.queryByText(/is archived/)).toBeNull();
   });
 });
