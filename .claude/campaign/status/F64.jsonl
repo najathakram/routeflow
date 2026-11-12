@@ -170,4 +170,11 @@
 {"id":"B1310","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1311","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1312","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B1313","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1313","batch":"F64","tier":"T3","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4305: the pin pattern is now /<\\w*(Modal|Dialog)\\b/ with no 0x08 byte left in the file, a test pins the pattern source, and the builder observed two red probes and restored them (a throwaway ZzProbeWindow.tsx with an open Modal fails the pin; deleting the BatchShipActions.tsx reason fails it). The #4305 reader re-ran the probes and grep -c for the 0x08 byte returns 0. (fixed in 5a7623d208b5d0aa9dc4f10c5c119b02ac8a3072)","sha":"5a7623d208b5d0aa9dc4f10c5c119b02ac8a3072"}
+{"id":"B1314","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1315","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1316","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1317","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1318","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1319","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1320","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
