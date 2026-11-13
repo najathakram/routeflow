@@ -76,9 +76,20 @@ describe("mobile.css is arrangement, colour and life, not a claim", () => {
 
   it("T9 R10 the phone rise moves a heading less than the gap to its next line", () => {
     const rise = /@keyframes rf-rise\{from\{transform:translateY\((\d+(?:\.\d+)?)px\)\}/.exec(css);
-    const gap = /h2\+\.sub[^{]*\{margin-top:(\d+(?:\.\d+)?)px\}/.exec(css);
-    if (!rise || !gap) throw new Error("rf-rise offset or h2+.sub gap not found in css/mobile.css");
-    expect(Number(rise[1]) < Number(gap[1])).toBe(true);
+    if (!rise) throw new Error("rf-rise offset not found in css/mobile.css");
+    // the smallest margin-top below an h2, over every rule with an `h2 +` selector (spaces around the + ignored) and the
+    // pricing card's `.pfrom` line, which is the next block after a card's h2
+    const gaps: number[] = [];
+    for (const file of ["css/site.css", "css/mobile.css"]) {
+      for (const m of read(file).matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+        if (!/h2\s*\+|\.pfrom/.test(m[1])) continue;
+        const mt = /(?:^|;)\s*margin-top:\s*(\d+(?:\.\d+)?)px/.exec(m[2]);
+        if (mt) gaps.push(Number(mt[1]));
+      }
+    }
+    if (!gaps.length)
+      throw new Error("no h2 + / .pfrom margin-top rule found in css/site.css or css/mobile.css");
+    expect(Number(rise[1]) < Math.min(...gaps)).toBe(true);
     // screen only: the file is also linked for print at narrow page widths
     const block =
       /@media screen\{[^]*?@supports \(animation-timeline:view\(\)\)\{[^]*?animation:rf-rise/.exec(
