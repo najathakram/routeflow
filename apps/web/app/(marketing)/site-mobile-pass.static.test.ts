@@ -75,8 +75,13 @@ describe("mobile.css is arrangement, colour and life, not a claim", () => {
   });
 
   it("T9 R10 the phone rise moves a heading less than the gap to its next line", () => {
-    const rise = /@keyframes rf-rise\{from\{transform:translateY\((\d+(?:\.\d+)?)px\)\}/.exec(css);
-    if (!rise) throw new Error("rf-rise offset not found in css/mobile.css");
+    const rise =
+      /@keyframes rf-rise\{from\{transform:translateY\((\d+(?:\.\d+)?)px\)\}to\{transform:(\w+)\}\}/.exec(
+        css,
+      );
+    if (!rise) throw new Error("rf-rise keyframes (offset and end) not found in css/mobile.css");
+    // the keyframes end at rest: the heading lands where the layout put it
+    expect(rise[2]).toBe("none");
     // the smallest margin-top below an h2, over every rule with an `h2 +` selector (spaces around the + ignored) and the
     // pricing card's `.pfrom` line, which is the next block after a card's h2
     const gaps: number[] = [];

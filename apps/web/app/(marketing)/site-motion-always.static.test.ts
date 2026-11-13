@@ -206,6 +206,11 @@ describe("the public site's motion does not depend on the visitor's motion setti
     expect(Object.keys(q).concat(Object.keys(mm)).includes("all")).toBe(false);
     expect(Object.values(mm).includes("screen")).toBe(true);
     expect(q.mob.includes("max-height: 599.98px")).toBe(true);
+    // the breakpoints themselves: parsed values, compared exactly
+    expect(q.desk).toBe("screen and (min-width: 900px) and (min-height: 600px)");
+    expect(q.mob).toBe("screen and (max-width: 899.98px), screen and (max-height: 599.98px)");
+    expect(q.pin).toBe("screen and (max-width: 899.98px) and (min-height: 600px)");
+    expect(mm.desk).toBe("screen and (min-width: 900px)");
   });
 
   // B1324: the print toggle is the same code in both scripts (only the variable names differ), so one fix reaches both.
