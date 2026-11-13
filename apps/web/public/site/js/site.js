@@ -53,6 +53,12 @@
   gsap.registerPlugin.apply(gsap, [window.ScrollTrigger, window.SplitText, window.DrawSVGPlugin, window.MotionPathPlugin].filter(Boolean));
   var ST = window.ScrollTrigger, started = performance.now();
   var played = []; // one play per element per page life: a print return replays nothing
+  /* A reveal callback that runs inside a ScrollTrigger refresh (load, an anchor arrival at load, a return from print) or while the
+     sections are being built finds its content already past its start: it stays as it is. A callback from a scroll update plays. */
+  var refreshing = false, building = false;
+  ST.addEventListener("refreshInit", function () { refreshing = true; });
+  ST.addEventListener("refresh", function () { refreshing = false; });
+  var atRest = function () { return refreshing || !!ST.isRefreshing || building; };
   /* Anything that is, holds or sits in an h1/h2 is moved by page motion, never faded. */
   var isHead = function (el) { return el.matches("h1,h2") || !!el.querySelector("h1,h2") || !!el.closest("h1,h2"); };
 
@@ -68,8 +74,12 @@
     return tl;
   };
 
+  /* Reveal tweens that are playing when print starts are reverted at once, from the print handler: GSAP's own revert comes a little later
+     (after the media-change handlers of every section), and a page printed in that gap would show words half faded. */
+  var live = [];
+  var paperStop = function () { live.forEach(function (t) { t.revert(); }); live = []; };
   /* paper:start */
-  /* Print: the page is its own final state. Motion is screen-only (every condition above starts with `screen`), so when print starts
+  /* Print: the page is its own final state. Motion is screen-only (every condition below starts with `screen`), so when print starts
      GSAP reverts every tween and pin; js-motion comes off with it so the CSS hides nothing. Back on screen the sections rebuild and
      js-motion returns. Each ScrollTrigger refresh records the scroll place, scrolls to the top to measure, puts the place back and then
      reports "refresh"; the first refresh after the rebuild recorded the place of the print layout, which has no pins. So for the one
@@ -84,7 +94,7 @@
   var paper = function (on) {
     if (on === paperOn) return;
     paperOn = on;
-    if (on) { paperY = window.scrollY; paperMotion = doc.classList.contains("js-motion"); doc.classList.remove("js-motion"); return; }
+    if (on) { paperY = window.scrollY; paperMotion = doc.classList.contains("js-motion"); doc.classList.remove("js-motion"); paperStop(); return; }
     doc.classList.toggle("js-motion", paperMotion);
     paperBack = true;
     window.requestAnimationFrame(function () { paperBack = false; });
@@ -101,6 +111,7 @@
      the desktop scenes. In print nothing matches and GSAP reverts everything. (Never name a key `all`: GSAP treats that key as always matching.) */
   mm.add({ screen: "screen", desk: "screen and (min-width: 900px)" }, function (ctx) {
     var desk = ctx.conditions.desk, cleanups = [];
+    building = true;
 
     /* Hero: plays once (about 2 s) and ends on the still frame. Headline lines rise, route draws, truck follows, cards settle. */
     var heroScene = $("[data-scene='hero']");
@@ -131,14 +142,20 @@
     if (rev.length) {
       /* Already above the start line when built (a first paint, a return from print): at rest, never blanked and faded back. */
       rev.forEach(function (el) { if (el.getBoundingClientRect().top < window.innerHeight * 1.04 && played.indexOf(el) < 0) played.push(el); });
-      ST.batch(rev, { start: "top 104%", onEnter: function (b) {
-        var fresh = b.filter(function (el) { return played.indexOf(el) < 0; });
-        if (!fresh.length) return;
-        fresh.forEach(function (el) { played.push(el); });
-        fresh = fresh.filter(function (el) { return el.getBoundingClientRect().top >= window.innerHeight * 0.89; }); // reached by a jump: at rest
-        if (!fresh.length) return;
-        ctx.add(function () { gsap.from(fresh, { autoAlpha: function (i, el) { return isHead(el) ? 1 : 0; }, y: 16, duration: 0.7, ease: "power2.out", stagger: 0.09, overwrite: true }); });
-      } });
+      var queue = [], timer = null;
+      var flush = function () {
+        var b = queue; queue = []; timer = null;
+        ctx.add(function () { live.push(gsap.from(b, { autoAlpha: function (i, el) { return isHead(el) ? 1 : 0; }, y: 16, duration: 0.7, ease: "power2.out", stagger: 0.09, overwrite: true })); }); // inside the context: a print revert undoes it
+      };
+      rev.forEach(function (el) {
+        ST.create({ trigger: el, start: "top 104%", onEnter: function () {
+          if (played.indexOf(el) >= 0) return;
+          played.push(el);
+          if (atRest()) return;
+          queue.push(el);
+          if (!timer) timer = ctx.add(function () { return gsap.delayedCall(0.06, flush); });
+        } });
+      });
     }
     doc.classList.remove("js-motion");
 
@@ -173,6 +190,7 @@
       ST.create({ trigger: rdr, start: "top 78%", animation: t, toggleActions: "play none none none" });
     });
 
+    building = false;
     return function () { cleanups.forEach(function (f) { f(); }); };
   });
 })();

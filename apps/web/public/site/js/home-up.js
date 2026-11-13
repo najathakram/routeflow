@@ -106,8 +106,12 @@
   ST.addEventListener("refreshInit", function () { if (!smoothHeld++) { smoothWas = html.style.scrollBehavior; html.style.scrollBehavior = "auto"; } });
   ST.addEventListener("refresh", function () { if (smoothHeld && !--smoothHeld) html.style.scrollBehavior = smoothWas; });
 
+  /* Reveal tweens that are playing when print starts are reverted at once, from the print handler: GSAP's own revert comes a little later
+     (after the media-change handlers of every section), and a page printed in that gap would show words half faded. */
+  var live = [];
+  var paperStop = function () { live.forEach(function (t) { t.revert(); }); live = []; };
   /* paper:start */
-  /* Print: the page is its own final state. Motion is screen-only (every condition above starts with `screen`), so when print starts
+  /* Print: the page is its own final state. Motion is screen-only (every condition below starts with `screen`), so when print starts
      GSAP reverts every tween and pin; js-motion comes off with it so the CSS hides nothing. Back on screen the sections rebuild and
      js-motion returns. Each ScrollTrigger refresh records the scroll place, scrolls to the top to measure, puts the place back and then
      reports "refresh"; the first refresh after the rebuild recorded the place of the print layout, which has no pins. So for the one
@@ -122,7 +126,7 @@
   var paper = function (on) {
     if (on === paperOn) return;
     paperOn = on;
-    if (on) { paperY = W.scrollY; paperMotion = html.classList.contains("js-motion"); html.classList.remove("js-motion"); return; }
+    if (on) { paperY = W.scrollY; paperMotion = html.classList.contains("js-motion"); html.classList.remove("js-motion"); paperStop(); return; }
     html.classList.toggle("js-motion", paperMotion);
     paperBack = true;
     W.requestAnimationFrame(function () { paperBack = false; });
@@ -186,11 +190,15 @@
   /* One play per element per page life (a print return replays nothing). Whatever is already above its start line when a section is
      built is marked played at once, so it stays at rest instead of blanking and fading back on a first paint or a return. */
   var played = [], settled = [];
-  /* A trigger reached by a jump (an anchor, a reload) rather than by scrolling to it has its start well behind the scroll already: the
-     animation never starts and its content stays as it is, instead of blinking out and back. (Jumping a never-started tween to its end
-     would leave it unable to revert, so it is simply not played.) Otherwise the animation plays once, as toggleActions "play" would. */
-  var jumped = function (self) { return self.scroll() - self.start > W.innerHeight * 0.15; };
-  var go = function (self) { if (!jumped(self)) self.animation.play(); };
+  /* A reveal callback that runs inside a ScrollTrigger refresh (the first measuring on load, an anchor arrival at load, a return from
+     print) or while a section is being built finds its content already past its start: the animation never starts and the content stays
+     as it is, instead of blinking out and back. (Jumping a never-started tween to its end would leave it unable to revert, so it is simply
+     not played.) A callback from a scroll update, at any speed, plays. */
+  var refreshing = false;
+  ST.addEventListener("refreshInit", function () { refreshing = true; });
+  ST.addEventListener("refresh", function () { refreshing = false; });
+  var atRest = function () { return refreshing || !!ST.isRefreshing || !!curCtx; };
+  var go = function (self) { if (!atRest()) { live.push(self.animation); self.animation.play(); } };
   var above = function (el, pct) { return el.getBoundingClientRect().top < W.innerHeight * pct / 100; };
   /* A group that rises into place once, on the clock, the first time it comes near the screen. It starts visible: nothing is hidden
      until the batch fires, so a stalled trigger or a print leaves the words as they are. Each element plays one time (a played list,
@@ -199,32 +207,36 @@
   function revealOnce(items, rp, y, each) {
     items = shown(items);
     if (!items.length) return;
-    var cx = curCtx, rise = y == null ? 20 : y;
+    var cx = curCtx, rise = y == null ? 20 : y, queue = [], timer = null;
     items.forEach(function (el) { if (above(el, 104) && played.indexOf(el) < 0) played.push(el); });
-    ST.batch(items, { start: EDGE, interval: 0.06, refreshPriority: rp || 0,
-      onEnter: function (b) {
-        var fresh = b.filter(function (el) { return played.indexOf(el) < 0; });
-        if (!fresh.length) return;
-        fresh.forEach(function (el) { played.push(el); });
-        fresh = fresh.filter(function (el) { return !above(el, 89); }); // reached by a jump, not a scroll: already at rest
-        if (!fresh.length) return;
-        var play = function () {
-          g.from(fresh, { y: rise, opacity: function (i, el) { return isHead(el) ? 1 : 0; }, stagger: { each: each || 0.07 }, overwrite: true });
-        };
-        if (cx) cx.add(play); else play();
+    var flush = function () {
+      var b = queue; queue = []; timer = null;
+      var play = function () { live.push(g.from(b, { y: rise, opacity: function (i, el) { return isHead(el) ? 1 : 0; }, stagger: { each: each || 0.07 }, overwrite: true })); };
+      if (cx) cx.add(play); else play(); // made inside the section's context, so a print revert undoes it
+    };
+    /* One trigger per element (what ST.batch makes), gathered over 0.06 s by hand so each callback can be judged where it runs. */
+    items.forEach(function (el) {
+      ST.create({ trigger: el, start: EDGE, refreshPriority: rp || 0, onEnter: function () {
+        if (played.indexOf(el) >= 0) return;
+        played.push(el);
+        if (atRest()) return;
+        queue.push(el);
+        if (!timer) timer = cx ? cx.add(function () { return g.delayedCall(0.06, flush); }) : g.delayedCall(0.06, flush);
       } });
+    });
   }
   /* A big line that scales down and settles as it arrives. Once, on the clock. It starts as it is (nothing applies before the trigger
      fires) and a heading only scales, never fades. */
   function settle(el, rp, from, start) {
-    var m = /top (\d+)%/.exec(start || "top 96%");
     if (!isShown(el)) return;
-    var done = settled.indexOf(el) >= 0 || above(el, m ? +m[1] : 96); // played, or already past its start: at rest, trigger kept (same trigger count as a fresh load)
-    var a = { scale: from || 1.14, transformOrigin: "50% 60%" }, b = { scale: 1, ease: "power2.out", duration: 1, immediateRender: false, onStart: function () { settled.push(el); } };
-    if (!isHead(el)) { a.opacity = 0; b.opacity = 1; }
-    b.scrollTrigger = { trigger: el, start: start || "top 96%", onEnter: go, toggleActions: "none none none none", refreshPriority: rp || 0 };
-    if (done) { settled.push(el); b.scrollTrigger.onEnter = function () {}; }
-    g.fromTo(el, a, b);
+    var done = settled.indexOf(el) >= 0; // already played in this page life: its trigger stays (same count as a fresh load) and does nothing
+    /* A from tween (end state = the element as it is), so a revert in print puts the element back as it was: a fromTo that never rendered
+       its start state reverts to that start state instead. */
+    var a = { scale: from || 1.14, transformOrigin: "50% 60%", ease: "power2.out", duration: 1, immediateRender: false, onStart: function () { settled.push(el); } };
+    if (!isHead(el)) a.opacity = 0;
+    a.scrollTrigger = { trigger: el, start: start || "top 96%", toggleActions: "none none none none", refreshPriority: rp || 0 };
+    a.scrollTrigger.onEnter = done ? function () {} : function (self) { if (atRest()) settled.push(el); else { live.push(self.animation); self.animation.play(); } };
+    g.from(el, a);
   }
 
   /* ---------- 1. Hero: on load, not scroll. The wheel settles itself. ---------- */
