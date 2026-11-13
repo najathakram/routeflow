@@ -207,4 +207,17 @@ describe("the public site's motion does not depend on the visitor's motion setti
     expect(Object.values(mm).includes("screen")).toBe(true);
     expect(q.mob.includes("max-height: 599.98px")).toBe(true);
   });
+
+  // B1324: the print toggle is the same code in both scripts (only the variable names differ), so one fix reaches both.
+  it("T1 R1 the print toggle block is identical in home-up.js and site.js", () => {
+    const block = (file: string) => {
+      const m = /\/\* paper:start \*\/([^]*?)\/\* paper:end \*\//.exec(read(file));
+      if (!m) throw new Error(`print toggle block not found in ${file}`);
+      return m[1].replace(/\bwindow\b/g, "W").replace(/\bdoc\b/g, "html");
+    };
+    const home = block("js/home-up.js");
+    const site = block("js/site.js");
+    expect(home.trim().length > 0).toBe(true);
+    expect(site).toEqual(home);
+  });
 });
