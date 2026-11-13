@@ -296,6 +296,6 @@ h2+.lede,.section-head h2+.lede{margin-top:18px}
 @media print{
   html,body{overflow-anchor:none}
   *,*::before,*::after{animation:none!important;transition:none!important}
-  .site-header,.hx-over,.jr-pin,.rfw-pin,.rfw--static::before,.js-motion .hx-up .rfw--static::before{position:static!important}
+  .site-header,.hx-over,.jr-pin,.rfw-pin,.rfw--static::before{position:static!important}
   #mobile-menu,.mobile-menu{display:none!important}
 }
