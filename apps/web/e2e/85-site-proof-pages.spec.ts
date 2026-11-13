@@ -418,6 +418,67 @@ test.describe("T2 R2 a section reached through a refresh shows its final figures
   }
 });
 
+// A section reached at rest (a load at its anchor) counts as played: scrolled away from and back to with real scroll steps, its
+// timeline must not play again (the content would blink to opacity 0 and the counted sums would count up from their start).
+// The section is #counter: its counter window (.ct-vis) is driven by a `go` timeline and carries counted sums.
+test("T2 R2 a section reached at rest does not replay @/#counter 1440x900", async ({ page }) => {
+  test.setTimeout(180_000);
+  await installProbes(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/#counter", { waitUntil: "load" });
+  await waitForWheel(page);
+  await frames(page, 30);
+  // everything else is reached once, by a plain jump, and left to settle
+  await page.evaluate(() =>
+    window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "instant" }),
+  );
+  await frames(page, 150);
+  await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+  await frames(page, 60);
+  const served = await page.evaluate(async () => {
+    const html = await (await fetch("/")).text();
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    return Array.from(doc.querySelectorAll(".ct-vis")).map((e) =>
+      (e.textContent || "").replace(/\s+/g, " ").trim(),
+    );
+  });
+  if (!served.length) throw new Error("T2 R2 replay: no .ct-vis in the served page");
+  await page.evaluate((finals) => {
+    const w = window as unknown as { __rp: { minOpacity: number; bad: string[]; frames: number } };
+    w.__rp = { minOpacity: 1, bad: [], frames: 0 };
+    const tick = () => {
+      w.__rp.frames++;
+      Array.from(document.querySelectorAll(".ct-vis")).forEach((e, i) => {
+        let o = 1;
+        for (let n: Element | null = e; n; n = n.parentElement)
+          o *= parseFloat(getComputedStyle(n).opacity);
+        w.__rp.minOpacity = Math.min(w.__rp.minOpacity, o);
+        const text = (e.textContent || "").replace(/\s+/g, " ").trim();
+        if (text !== finals[i] && w.__rp.bad.length < 4)
+          w.__rp.bad.push(`.ct-vis[${i}] reads "${text.slice(0, 50)}"`);
+      });
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }, served);
+  // back down to the section with real scroll steps
+  const target = await page.evaluate(
+    () => document.querySelector("#counter")!.getBoundingClientRect().top + window.scrollY,
+  );
+  for (let y = 0; y < target + 600; y += 400) {
+    await page.mouse.wheel(0, 400);
+    await frames(page, 2);
+  }
+  await frames(page, 90);
+  const got = await page.evaluate(
+    () =>
+      (window as unknown as { __rp: { minOpacity: number; bad: string[]; frames: number } }).__rp,
+  );
+  expect(got.frames, "T2 replay: the probe ran").toBeGreaterThan(30);
+  expect(got.bad, "T2 replay: figures read other than the served page").toEqual([]);
+  expect(got.minOpacity, "T2 replay: the section blinked").toBeGreaterThanOrEqual(0.99);
+});
+
 // ─── T9 — no heading on top of the next block during the rise ───────────────
 // L-377: the WP0 version measured only after the headings settled and only pairs with BOTH boxes
 // in the window, so it passed on master with the bug present (WP0 HF3): the phone rise holds each

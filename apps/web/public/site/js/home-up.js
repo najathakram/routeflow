@@ -6,7 +6,8 @@
    only while a trigger is active. The motion always runs (owner ruling 2026-11-03: no reduced-motion setting, no switch); only no-JS
    and a window under 600 px tall fall back to the HTML, which is the final state.
    Stop scrolling and the screen is finished: anything that is not a pinned object reveals once on enter, on the clock, never
-   on scroll position (ST.batch once, or toggleActions "play none none none"). Scrub is only for the desktop's pinned objects.
+   on scroll position (one trigger per element, played one time per page life, or a timeline that plays once). Content starts as it is: a
+   reveal that is reached inside a refresh (load, anchor, print return) stays at rest, and a scroll update plays it. Scrub is only for the desktop's pinned objects.
    Phones have one pin, the answer card: CSS position:sticky with ScrollTrigger only watching, so it can't jump or fight the
    browser's own scrolling. The wheel is the hero: graphics/rf-wheel-up.js loads first and has mounted by the time this runs, so everything here is made
    top to bottom after it. */
@@ -210,7 +211,13 @@
   ST.addEventListener("refreshInit", function () { refreshing = true; });
   ST.addEventListener("refresh", function () { refreshing = false; });
   var atRest = function () { return refreshing || !!ST.isRefreshing || !!curCtx || paperOn || paperBack; }; // paperOn/paperBack: a print return restores the place first, whichever listener ran first
-  var go = function (self) { if (!atRest()) { track(self.animation); self.animation.play(); } };
+  var gone = []; // trigger elements whose timeline was reached (played, or reached at rest): one play per page life, as revealOnce and settle keep
+  var go = function (self) {
+    var t = self.trigger;
+    if (gone.indexOf(t) >= 0) return;
+    gone.push(t);
+    if (!atRest()) { track(self.animation); self.animation.play(); }
+  };
   var above = function (el, pct) { return el.getBoundingClientRect().top < W.innerHeight * pct / 100; };
   /* A group that rises into place once, on the clock, the first time it comes near the screen. It starts visible: nothing is hidden
      until the batch fires, so a stalled trigger or a print leaves the words as they are. Each element plays one time (a played list,
@@ -385,10 +392,10 @@
       .addLabel("s2", 2);
     var L = ["s0", "s1", "s2"], cur = 0;
     var setStep = function (i) { steps.forEach(function (li, k) { li.classList.toggle("on", k === i); }); };
-    var go = function (i) { if (i === cur) return; cur = i; setStep(i); tl.tweenTo(L[i], { duration: 0.8, ease: "power1.inOut", overwrite: true }); };
+    var goTo = function (i) { if (i === cur) return; cur = i; setStep(i); tl.tweenTo(L[i], { duration: 0.8, ease: "power1.inOut", overwrite: true }); };
     var idx = function (p) { return p < 1 / 3 ? 0 : p < 2 / 3 ? 1 : 2; };
     /* start and end match the CSS sticky range: the section's top at the header, its bottom at the screen's bottom. */
-    ST.create({ trigger: s, start: "top 68px", end: "bottom bottom", onUpdate: function (x) { go(idx(x.progress)); }, onRefresh: function (x) { go(idx(x.progress)); } });
+    ST.create({ trigger: s, start: "top 68px", end: "bottom bottom", onUpdate: function (x) { goTo(idx(x.progress)); }, onRefresh: function (x) { goTo(idx(x.progress)); } });
   }
 
   /* ---------- the real Orders screen: wide screens only, after the pain and the answer ---------- */
