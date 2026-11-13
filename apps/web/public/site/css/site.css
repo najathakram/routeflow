@@ -294,6 +294,7 @@ h2+.lede,.section-head h2+.lede{margin-top:18px}
    and a pinned stage would sit over the text), and a closed phone menu is navigation, not content. GSAP's own pins and inline motion
    are reverted by the screen-only conditions in js/home-up.js and js/site.js; this block covers what CSS alone does. */
 @media print{
+  html,body{overflow-anchor:none}
   *,*::before,*::after{animation:none!important;transition:none!important}
   .site-header,.hx-over,.jr-pin,.rfw-pin,.rfw--static::before,.js-motion .hx-up .rfw--static::before{position:static!important}
   #mobile-menu,.mobile-menu{display:none!important}

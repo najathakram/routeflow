@@ -108,17 +108,34 @@
 
   /* Print: the page is its own final state. Motion is screen-only (every condition below starts with `screen`), so when print starts
      GSAP reverts every tween and pin; js-motion comes off with it so the CSS hides nothing. Back on screen the sections rebuild and
-     js-motion returns. ScrollTrigger's refresh after leaving print scrolls to the top to measure and does not put the page back, so
-     the saved scrollY is restored one frame after that refresh's own event. A real print fires both the media change and beforeprint. */
-  var paperOn = false, paperMotion = false, paperY = 0;
+     js-motion returns. ScrollTrigger's refresh after leaving print scrolls to the top to measure and does not put the page back, and the
+     sections then rebuild one after another, each pin spacer shifting the page again. So the saved place is held after
+     leaving print (every frame and at the end of every refresh, until the visitor touches the page, at most 6 s). Print turns off overflow-anchor (css/site.css), so entering print does not shift the page
+     before the place is read. A real print fires both the media change and beforeprint, hence the idempotent toggle. */
+  var paperOn = false, paperMotion = false, paperY = 0, holdUntil = 0, holdMax = 0;
+  ["wheel", "touchstart", "keydown", "mousedown"].forEach(function (n) { W.addEventListener(n, function () { holdUntil = 0; }, { passive: true }); });
+  var put = function () { if (Math.abs(W.scrollY - paperY) > 1) { W.scrollTo({ top: paperY, behavior: "instant" }); ST.update(); } };
+  var hold = function () {
+    if (W.performance.now() > holdUntil) return;
+    put();
+    W.requestAnimationFrame(hold);
+  };
+  /* Each refresh ends with the page where ScrollTrigger left it (the top, after a rebuild); put it back at once and keep holding while refreshes go on. */
+  ST.addEventListener("refresh", function () {
+    var now = W.performance.now();
+    if (now > holdUntil) return;
+    put();
+    holdUntil = Math.min(holdMax, now + 500);
+    W.requestAnimationFrame(hold);
+  });
   var paper = function (on) {
     if (on === paperOn) return;
     paperOn = on;
-    if (on) { paperY = W.scrollY; paperMotion = html.classList.contains("js-motion"); html.classList.remove("js-motion"); return; }
+    if (on) { paperY = W.scrollY; paperMotion = html.classList.contains("js-motion"); html.classList.remove("js-motion"); holdUntil = 0; return; }
     html.classList.toggle("js-motion", paperMotion);
-    var back = function () { ST.removeEventListener("refresh", back); W.requestAnimationFrame(function () { W.scrollTo({ top: paperY, behavior: "instant" }); ST.update(); }); };
-    ST.addEventListener("refresh", back);
     ST.refresh();
+    holdMax = W.performance.now() + 6000; holdUntil = W.performance.now() + 1200;
+    W.requestAnimationFrame(hold);
   };
   var printQ = W.matchMedia("print");
   var onPrint = function (e) { paper(e.matches); };
