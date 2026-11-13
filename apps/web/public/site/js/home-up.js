@@ -108,8 +108,14 @@
 
   /* Reveal tweens that are playing when print starts are reverted at once, from the print handler: GSAP's own revert comes a little later
      (after the media-change handlers of every section), and a page printed in that gap would show words half faded. */
-  var live = [];
-  var paperStop = function () { live.forEach(function (t) { t.revert(); }); live = []; };
+  var live = [], finals = [];
+  var track = function (t) { live = live.filter(function (x) { return x.progress() < 1; }); live.push(t); return t; }; // finished ones drop out
+  /* Everything keep()ed (a counted figure, a pill) has its final text recorded page-wide: whatever is mid-count when print starts prints final. */
+  var paperStop = function () {
+    live.forEach(function (t) { t.revert(); }); live = [];
+    finals.forEach(function (f) { f[0].textContent = f[1]; });
+    $$("[data-was].was").forEach(function (e) { e.classList.remove("was"); });
+  };
   /* paper:start */
   /* Print: the page is its own final state. Motion is screen-only (every condition below starts with `screen`), so when print starts
      GSAP reverts every tween and pin; js-motion comes off with it so the CSS hides nothing. Back on screen the sections rebuild and
@@ -166,10 +172,16 @@
       var c = ctx.conditions;
       html.classList.add("js-motion");
       var kept = [];
-      var keep = function (el) { if (el) kept.push([el, el.textContent]); return el; };
+      var keep = function (el) {
+        if (el) {
+          kept.push([el, el.textContent]);
+          if (!finals.some(function (f) { return f[0] === el; })) finals.push([el, el.textContent]);
+        }
+        return el;
+      };
+      var done;
       curCtx = ctx;
-      var done = build(c, scope, keep);
-      curCtx = null;
+      try { done = build(c, scope, keep); } finally { curCtx = null; }
       return function () { if (done) done(); kept.forEach(function (k) { k[0].textContent = k[1]; }); };
     }, scope);
     return function () { mm.revert(); };
@@ -197,8 +209,8 @@
   var refreshing = false;
   ST.addEventListener("refreshInit", function () { refreshing = true; });
   ST.addEventListener("refresh", function () { refreshing = false; });
-  var atRest = function () { return refreshing || !!ST.isRefreshing || !!curCtx; };
-  var go = function (self) { if (!atRest()) { live.push(self.animation); self.animation.play(); } };
+  var atRest = function () { return refreshing || !!ST.isRefreshing || !!curCtx || paperOn || paperBack; }; // paperOn/paperBack: a print return restores the place first, whichever listener ran first
+  var go = function (self) { if (!atRest()) { track(self.animation); self.animation.play(); } };
   var above = function (el, pct) { return el.getBoundingClientRect().top < W.innerHeight * pct / 100; };
   /* A group that rises into place once, on the clock, the first time it comes near the screen. It starts visible: nothing is hidden
      until the batch fires, so a stalled trigger or a print leaves the words as they are. Each element plays one time (a played list,
@@ -211,7 +223,8 @@
     items.forEach(function (el) { if (above(el, 104) && played.indexOf(el) < 0) played.push(el); });
     var flush = function () {
       var b = queue; queue = []; timer = null;
-      var play = function () { live.push(g.from(b, { y: rise, opacity: function (i, el) { return isHead(el) ? 1 : 0; }, stagger: { each: each || 0.07 }, overwrite: true })); };
+      if (paperOn) return;
+      var play = function () { track(g.from(b, { y: rise, opacity: function (i, el) { return isHead(el) ? 1 : 0; }, stagger: { each: each || 0.07 }, overwrite: true })); };
       if (cx) cx.add(play); else play(); // made inside the section's context, so a print revert undoes it
     };
     /* One trigger per element (what ST.batch makes), gathered over 0.06 s by hand so each callback can be judged where it runs. */
@@ -235,7 +248,7 @@
     var a = { scale: from || 1.14, transformOrigin: "50% 60%", ease: "power2.out", duration: 1, immediateRender: false, onStart: function () { settled.push(el); } };
     if (!isHead(el)) a.opacity = 0;
     a.scrollTrigger = { trigger: el, start: start || "top 96%", toggleActions: "none none none none", refreshPriority: rp || 0 };
-    a.scrollTrigger.onEnter = done ? function () {} : function (self) { if (atRest()) settled.push(el); else { live.push(self.animation); self.animation.play(); } };
+    a.scrollTrigger.onEnter = done ? function () {} : function (self) { if (atRest()) settled.push(el); else { track(self.animation); self.animation.play(); } };
     g.from(el, a);
   }
 

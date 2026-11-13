@@ -58,7 +58,7 @@
   var refreshing = false, building = false;
   ST.addEventListener("refreshInit", function () { refreshing = true; });
   ST.addEventListener("refresh", function () { refreshing = false; });
-  var atRest = function () { return refreshing || !!ST.isRefreshing || building; };
+  var atRest = function () { return refreshing || !!ST.isRefreshing || building || paperOn || paperBack; }; // paperOn/paperBack: a print return restores the place first, whichever listener ran first
   /* Anything that is, holds or sits in an h1/h2 is moved by page motion, never faded. */
   var isHead = function (el) { return el.matches("h1,h2") || !!el.querySelector("h1,h2") || !!el.closest("h1,h2"); };
 
@@ -77,6 +77,7 @@
   /* Reveal tweens that are playing when print starts are reverted at once, from the print handler: GSAP's own revert comes a little later
      (after the media-change handlers of every section), and a page printed in that gap would show words half faded. */
   var live = [];
+  var track = function (t) { live = live.filter(function (x) { return x.progress() < 1; }); live.push(t); return t; }; // finished ones drop out
   var paperStop = function () { live.forEach(function (t) { t.revert(); }); live = []; };
   /* paper:start */
   /* Print: the page is its own final state. Motion is screen-only (every condition below starts with `screen`), so when print starts
@@ -112,6 +113,7 @@
   mm.add({ screen: "screen", desk: "screen and (min-width: 900px)" }, function (ctx) {
     var desk = ctx.conditions.desk, cleanups = [];
     building = true;
+    try {
 
     /* Hero: plays once (about 2 s) and ends on the still frame. Headline lines rise, route draws, truck follows, cards settle. */
     var heroScene = $("[data-scene='hero']");
@@ -145,7 +147,8 @@
       var queue = [], timer = null;
       var flush = function () {
         var b = queue; queue = []; timer = null;
-        ctx.add(function () { live.push(gsap.from(b, { autoAlpha: function (i, el) { return isHead(el) ? 1 : 0; }, y: 16, duration: 0.7, ease: "power2.out", stagger: 0.09, overwrite: true })); }); // inside the context: a print revert undoes it
+        if (paperOn) return;
+        ctx.add(function () { track(gsap.from(b, { autoAlpha: function (i, el) { return isHead(el) ? 1 : 0; }, y: 16, duration: 0.7, ease: "power2.out", stagger: 0.09, overwrite: true })); }); // inside the context: a print revert undoes it
       };
       rev.forEach(function (el) {
         ST.create({ trigger: el, start: "top 104%", onEnter: function () {
@@ -190,7 +193,7 @@
       ST.create({ trigger: rdr, start: "top 78%", animation: t, toggleActions: "play none none none" });
     });
 
-    building = false;
+    } finally { building = false; }
     return function () { cleanups.forEach(function (f) { f(); }); };
   });
 })();
