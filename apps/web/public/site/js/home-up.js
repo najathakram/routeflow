@@ -7,7 +7,7 @@
    and a window under 600 px tall fall back to the HTML, which is the final state.
    Stop scrolling and the screen is finished: anything that is not a pinned object reveals once on enter, on the clock, never
    on scroll position (one trigger per element, played one time per page life, or a timeline that plays once). Content starts as it is: a
-   reveal that is reached inside a refresh (load, anchor, print return) stays at rest, and a scroll update plays it. Scrub is only for the desktop's pinned objects.
+   reveal first reached by a scroll update plays; one reached at rest (inside a refresh: load, anchor, print return) stays at rest. Scrub is only for the desktop's pinned objects.
    Phones have one pin, the answer card: CSS position:sticky with ScrollTrigger only watching, so it can't jump or fight the
    browser's own scrolling. The wheel is the hero: graphics/rf-wheel-up.js loads first and has mounted by the time this runs, so everything here is made
    top to bottom after it. */

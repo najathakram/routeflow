@@ -428,6 +428,26 @@ test("T2 R2 a section reached at rest does not replay @/#counter 1440x900", asyn
   await page.goto("/#counter", { waitUntil: "load" });
   await waitForWheel(page);
   await frames(page, 30);
+  // Precondition: this cell proves nothing unless #counter was reached AT REST on load. If the anchor landing ever made the
+  // section play, it would be mid-play or already played by a scroll update, and the replay check below would pass for the wrong
+  // reason. So before any scrolling its .ct-vis must be fully opaque and read exactly as the served page does.
+  const atRest = await page.evaluate(async () => {
+    const norm = (t: string | null) => (t || "").replace(/\s+/g, " ").trim();
+    const html = await (await fetch("/")).text();
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const src = doc.querySelector("#counter .ct-vis");
+    const live = document.querySelector("#counter .ct-vis");
+    if (!live || !src) return null;
+    let opacity = 1;
+    for (let n: Element | null = live; n; n = n.parentElement)
+      opacity *= parseFloat(getComputedStyle(n).opacity);
+    return { opacity, live: norm(live.textContent), src: norm(src.textContent) };
+  });
+  if (!atRest) throw new Error("T2 R2 replay: no #counter .ct-vis on load");
+  expect(atRest.opacity, "#counter .ct-vis opacity on load at the anchor").toBeGreaterThanOrEqual(
+    0.99,
+  );
+  expect(atRest.live, "#counter .ct-vis text on load at the anchor").toBe(atRest.src);
   // everything else is reached once, by a plain jump, and left to settle
   await page.evaluate(() =>
     window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "instant" }),
