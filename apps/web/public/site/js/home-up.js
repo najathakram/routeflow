@@ -296,8 +296,9 @@
       scrollTrigger: { trigger: pin, start: "top top", end: function () { return "+=" + dist(); }, pin: true, scrub: SCRUB, invalidateOnRefresh: true, onToggle: wc([track, bar]) } });
     g.fromTo(bar, { x: 0 }, { x: function () { return bar.offsetWidth * 3; }, ease: "none",
       scrollTrigger: { trigger: pin, start: "top top", end: function () { return "+=" + dist(); }, scrub: SCRUB, invalidateOnRefresh: true } });
-    /* Step 1 plays once as the section arrives; steps 2-4 as each one slides in. */
-    step[0](g.timeline({ defaults: { ease: "power2.out", duration: 0.6 }, scrollTrigger: { trigger: s, start: "top 60%", toggleActions: "play none none none" } }));
+    /* No tween that waits on a toggleActions trigger hides its target before the trigger fires (immediateRender false in each timeline's
+     defaults); only the scrubbed scenes, whose progress is the scroll, set their start state. Step 1 plays once as the section arrives; steps 2-4 as each one slides in. */
+    step[0](g.timeline({ defaults: { immediateRender: false, ease: "power2.out", duration: 0.6 }, scrollTrigger: { trigger: s, start: "top 60%", toggleActions: "play none none none" } }));
     for (var i = 1; i < 4; i++) step[i](g.timeline({ defaults: { ease: "power2.out", duration: 0.6 }, scrollTrigger: { trigger: panels[i], containerAnimation: move, start: "left 78%", end: "left 22%", scrub: SCRUB } }));
     /* One step in focus: the panels either side stay dim. Opacity only, riding on the track. */
     panels.forEach(function (p, i) {
@@ -384,7 +385,7 @@
       };
       if (!c.desk) {
         /* Phones: two boxes, then six cans, once, and the one number is already there. */
-        var tlm = g.timeline({ defaults: { ease: "power3.out", duration: 0.45 }, scrollTrigger: { trigger: art, start: EDGE, toggleActions: "play none none none" } });
+        var tlm = g.timeline({ defaults: { immediateRender: false, ease: "power3.out", duration: 0.45 }, scrollTrigger: { trigger: art, start: EDGE, toggleActions: "play none none none" } });
         drop(tlm).fromTo(cans, { y: function (i) { return cy[i] - 44; }, opacity: 0 }, { y: function (i) { return cy[i]; }, opacity: 1, duration: 0.3, stagger: { each: 0.09 } }, 1.1);
         revealOnce($$(".sl-big, .tier, .sl-prod, .sl-line", s), 0, 16);
         return;
@@ -412,7 +413,7 @@
         .fromTo(math, { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.4 }, 2.5)
         .to({}, { duration: 0.35 });
       /* Three stores arrive in order, once. The piece price counts up and the box of 12 follows it exactly. */
-      var tiers = $$(".tier", s), tl2 = g.timeline({ defaults: { ease: "power2.out" }, scrollTrigger: { trigger: $(".sl-tiers", s), start: "top 88%", toggleActions: "play none none none" } });
+      var tiers = $$(".tier", s), tl2 = g.timeline({ defaults: { immediateRender: false, ease: "power2.out" }, scrollTrigger: { trigger: $(".sl-tiers", s), start: "top 88%", toggleActions: "play none none none" } });
       tiers.forEach(function (t, i) {
         var b = $(".tier-p b", t), box = $(".tier-b", t), to = parseFloat(b.dataset.count), o = { v: 0 }, boxText = box.textContent;
         keep(b); keep(box);
@@ -430,7 +431,7 @@
       var vis = $(".st-vis", s), shop = $(".st-shop", s), phone = $(".st-phone", s), tiles = $$(".b-tile", s), rows = $$(".sp-r", s), all = $(".sp-all", s), head = $(".st-head h2", s);
       var wideShop = isShown(shop);
       if (c.desk) settle(head, 0, 1.1, "top 92%"); else revealOnce($$(".st-head h2, .st-head .sub", s), 0, 16);
-      var tl = g.timeline({ defaults: { ease: "power2.out", duration: 0.8 }, scrollTrigger: { trigger: vis, start: c.desk ? "top 88%" : EDGE, toggleActions: "play none none none" } });
+      var tl = g.timeline({ defaults: { immediateRender: false, ease: "power2.out", duration: 0.8 }, scrollTrigger: { trigger: vis, start: c.desk ? "top 88%" : EDGE, toggleActions: "play none none none" } });
       if (wideShop) {
         tl.fromTo(shop, { opacity: 0, y: 80, scale: 0.96 }, { opacity: 1, y: 0, scale: 1, duration: 1 }, 0)
           .fromTo(tiles, { opacity: 0, y: 24 }, { opacity: 1, y: 0, stagger: { each: 0.12 }, duration: 0.5 }, 0.35)
@@ -452,7 +453,7 @@
       var pay = $$(".c-tend, .c-quick, .c-right .c-t:nth-of-type(5), .c-chg", s);
       var wideWin = isShown(win);
       if (!c.desk) revealOnce($$(".ct-copy h2, .ct-copy .sub, .ct-note", s), 0, 16);
-      var tl = g.timeline({ defaults: { ease: "power2.out", duration: 0.6 }, scrollTrigger: { trigger: vis, start: wideWin ? "top 85%" : EDGE, toggleActions: "play none none none" } });
+      var tl = g.timeline({ defaults: { immediateRender: false, ease: "power2.out", duration: 0.6 }, scrollTrigger: { trigger: vis, start: wideWin ? "top 85%" : EDGE, toggleActions: "play none none none" } });
       if (wideWin) {
         tl.fromTo(win, { opacity: 0, y: 60 }, { opacity: 1, y: 0, duration: 0.8 }, 0)
           .fromTo(lines, { opacity: 0, y: 14 }, { opacity: 1, y: 0, stagger: { each: 0.3 }, duration: 0.3 }, 0.35)
@@ -477,7 +478,7 @@
     var marks = [];
     items.forEach(function (it) {
       var card = $(".uc-card", it), ticks = $$(".rfw-tk path", it), pill = $("[data-was]", it), nums = $$("[data-to]", it);
-      var tl = g.timeline({ defaults: { ease: "power2.out", duration: 0.6 }, scrollTrigger: { trigger: it, start: EDGE, toggleActions: "play none none none", refreshPriority: BELOW } });
+      var tl = g.timeline({ defaults: { immediateRender: false, ease: "power2.out", duration: 0.6 }, scrollTrigger: { trigger: it, start: EDGE, toggleActions: "play none none none", refreshPriority: BELOW } });
       tl.fromTo(it, { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.7, ease: "power3.out" }, 0)
         .fromTo(card, { y: 18 }, { y: 0, duration: 0.8, ease: "power3.out" }, 0.08);
       if (ticks.length) tl.fromTo(ticks, { strokeDashoffset: 1 }, { strokeDashoffset: 0, duration: 0.36, ease: "power2.inOut", stagger: 0.14 }, 0.45);
@@ -519,7 +520,7 @@
       var cards = shown($$(".pcard", s));
       if (!cards.length) return;
       /* Each card rises in order, then its bar fills. The customer count never counts up: a contract number reads right at every moment. Once, on the clock. */
-      var tl = g.timeline({ scrollTrigger: { trigger: $(".pgrid", s), start: "top 88%", toggleActions: "play none none none", refreshPriority: BELOW } });
+      var tl = g.timeline({ defaults: { immediateRender: false }, scrollTrigger: { trigger: $(".pgrid", s), start: "top 88%", toggleActions: "play none none none", refreshPriority: BELOW } });
       cards.forEach(function (card, i) {
         var at = i * 0.13, bar = $(".pm-bar i", card);
         tl.fromTo(card, { opacity: 0, y: 44 }, { opacity: 1, y: 0, immediateRender: false, duration: 0.8, ease: "power3.out" }, at);
