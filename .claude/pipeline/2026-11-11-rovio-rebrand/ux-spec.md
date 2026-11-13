@@ -148,6 +148,31 @@ to the part. The legend is `aria-hidden`; screen readers keep `.rfw-list`.
 **Focus look (Phase 2):** the tile in focus is copper with a copper-dark wall and lifts; other tiles keep
 their colour (no dimming). Phase 1 keeps today's focus colours.
 
+### Placement sign-off (WP0 gate, 2026-11-13)
+
+apple-ux (`--quick`, 2 walkers, 1440 keyboard + 393 phone; evidence
+`C:/Users/nakram/apple-ux-evidence/routeflow/2026-11-13-marketing-quick/`) and apple-design (Opus read of
+this section, the code and the WP0 baseline; `local-assets/proofs/2026-11-11-rovio-rebrand/apple-design-signoff.md`)
+each signed the three placements **AGREE-WITH-CHANGE**. The changes do not conflict, so nothing went to the
+owner. They bind WP1.2 (brand-neutral, owner ruling 2026-11-12: it ships to master before the rebrand).
+
+| Placement | apple-ux | apple-design | Binding change |
+|---|---|---|---|
+| Names in a legend, none on the canvas | Canvas names failed at both widths (phone walker could name no part) | Still text where the eye rests | **Pair a 16 px icon with each name in both layouts**, the stacked phone legend and the under-600 px one included (replaces "names as running text joined by ' · '"). Tile clockwise order in every list. Keep the per-stop heading and "What each part does". Accept: on a phone re-walk a person names 3 parts once the wheel opens. |
+| Start free trial in the wheel's end state | Desktop end state is a dead end today (B1323) | Lands where the eye is as the wheel closes | **Move the existing `.sy-go` button, never add a second.** Fade with opacity only (`autoAlpha` drops it from the tab order); on `focusin` call `goTo("one")`. In reading order right after the 15 tile buttons: ≤ 2 Tabs from the last tile. On phone the header pill steps aside while it shows (no viewport with two "Start free trial"). |
+| Focus ring | Today's 3 px `--b500` ring at 3 px offset (~8.4:1) was clear on every control | Copper needs a new brand colour, so it waits | **Phase 1 ships today's ring unchanged** (3 px, 3 px offset, `--b500`) and draws a 3 px `--b500` stroke on the focused tile's top face for `:focus-visible` only (today focus looks like hover). Phase 2 changes only the colour, keeps 3 px / 3 px, and drives the ink-surface ring from the panel token (copper-dark on ink is ~2.8:1), never the hand-kept selector list in `site.css:22`. |
+
+Motion items apple-design asks WP1.2 to take (with the placements, at most these three): the snap starts
+from rest after a flick (`rf-wheel-up.js:671`: use inertia and `power2.out`); phone scrub `.7` trails the
+finger (≤ .3 on touch, keep .7 on desktop); `goTo` runs up to 1.6 s and fights the user's scroll
+(`:777-781`: kill it on wheel/touchstart/keydown, cap near 0.9 s). The trial-button focus jump depends on
+the last one.
+
+apple-ux vital few outside the four filed bugs (report in `local-assets/proofs/2026-11-11-rovio-rebrand/apple-ux-quick/`):
+polish items P03/P04/P06/P07 (393 hero ring clipped, glow and gap after the wheel, active wedge icon swap,
+"Stock value (cost)") belong in WP1.2; pricing-card fit (P01), notes (F03), sign-up lead line (F05, waits on
+the tier launch), header trial on /signup (P09/P10) are outside WP1 and stay in the report.
+
 ## 7. Print and no-scroll
 
 Print uses the static layout the site already has for no scripts. Every GSAP media condition starts
