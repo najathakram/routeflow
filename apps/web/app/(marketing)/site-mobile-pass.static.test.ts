@@ -85,6 +85,15 @@ describe("mobile.css is arrangement, colour and life, not a claim", () => {
         if (!/h2\s*\+|\.pfrom/.test(m[1])) continue;
         const mt = /(?:^|;)\s*margin-top:\s*(\d+(?:\.\d+)?)px/.exec(m[2]);
         if (mt) gaps.push(Number(mt[1]));
+        // the first value of a `margin:` shorthand is the top margin
+        const sh = /(?:^|;)\s*margin:\s*([^;]+)/.exec(m[2]);
+        if (sh) {
+          const top = sh[1].trim().split(/\s+/)[0];
+          const px = /^(\d+(?:\.\d+)?)px$/.exec(top);
+          if (px) gaps.push(Number(px[1]));
+          else if (top === "0") gaps.push(0);
+          else throw new Error(`cannot compare the margin shorthand top value "${top}" in ${file}`);
+        }
       }
     }
     if (!gaps.length)
