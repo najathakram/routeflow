@@ -1,0 +1,712 @@
+{
+  "version": 1,
+  "sha": "dcd6c27615afc502543fdc6115f7aa735b8f0e41",
+  "run": "site-proof-full-20261113-015708.log",
+  "summary": {
+    "failed": 59,
+    "passed": 17
+  },
+  "bugs": {
+    "W": "wheel fit and labels",
+    "L": "layer gaps and missing heading",
+    "E": "empty screen after the wheel",
+    "P": "blank prints / headings hidden until scrolled"
+  },
+  "cells": [
+    {
+      "test": "T3",
+      "title": "T3 R3,R4 wheel fits inside its box @1288x593",
+      "route": "/",
+      "size": "1288x593",
+      "bug": "W",
+      "verdict": "PRODUCT",
+      "expected": "[] (open wheel fills .80-1 of its box)",
+      "received": "1288x593 @0.45: open wheel fills 0.770 of its box on the limiting side (need .80 to 1)"
+    },
+    {
+      "test": "T3",
+      "title": "T3 R3,R4 wheel fits inside its box @768x1024",
+      "route": "/",
+      "size": "768x1024",
+      "bug": "W",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "768x1024 @0.36: wheel crosses the words column (text boxes 6, 7); open wheel fills 1.037 of its box (need .80 to 1)"
+    },
+    {
+      "test": "T3",
+      "title": "T3 R3,R4 wheel fits inside its box @844x390",
+      "route": "/",
+      "size": "844x390",
+      "bug": "W",
+      "verdict": "PRODUCT",
+      "expected": "[] (8px inset from every canvas edge)",
+      "received": "844x390 @0.54/@0.63/@0.72: wheel pixels within 3.0px of the canvas bottom edge; @0.76: 5.0px (need 8)"
+    },
+    {
+      "test": "T3",
+      "title": "T3 R3,R4 wheel fits inside its box @390x844",
+      "route": "/",
+      "size": "390x844",
+      "bug": "W",
+      "verdict": "PRODUCT",
+      "expected": "[] (centring within .06)",
+      "received": "390x844 @0.36: open wheel is off centre by 0.003 across, 0.068 down (limit .06)"
+    },
+    {
+      "test": "T3",
+      "title": "T3 R3,R4 wheel fits inside its box @430x932",
+      "route": "/",
+      "size": "430x932",
+      "bug": "W",
+      "verdict": "PRODUCT",
+      "expected": "[] (centring within .06)",
+      "received": "430x932 @0.36: open wheel is off centre by 0.002 across, 0.063 down (limit .06)"
+    },
+    {
+      "test": "T3",
+      "title": "T3 R3,R4 wheel fits inside its box @360x740",
+      "route": "/",
+      "size": "360x740",
+      "bug": "W",
+      "verdict": "PRODUCT",
+      "expected": "[] (centring within .06)",
+      "received": "360x740 @0.36: open wheel is off centre by 0.000 across, 0.063 down (limit .06)"
+    },
+    {
+      "test": "T3",
+      "title": "T3 R3,R4 wheel fits inside its box @320x568",
+      "route": "/",
+      "size": "320x568",
+      "bug": "W",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "320x568 @0.36: wheel crosses the words column (text box 7); off centre by 0.003 across, 0.103 down (limit .06)"
+    },
+    {
+      "test": "T4",
+      "title": "T4 R5 one pose and one lift weight on every size",
+      "route": "/",
+      "size": "all 12 SIZES",
+      "bug": "W",
+      "verdict": "PRODUCT",
+      "expected": "[] (zI/zO and zH/zO constant within .001; one open pair on every size)",
+      "received": "461 differences: ratios drift through the scroll at every size (e.g. 1440x900 zI/zO -2.188 at .375, -2.294 at .5, -4.035 at .875); open pose 768x1024, 390x844, 430x932, 360x740, 320x568 = (-2.000, -4.000) vs 1440x900 (-2.294, -4.235)"
+    },
+    {
+      "test": "T5",
+      "title": "T5 R6 names are not painted on the canvas @1440x900",
+      "route": "/",
+      "size": "1440x900",
+      "bug": "W",
+      "verdict": "PRODUCT",
+      "expected": "[] (0 text draws; legend of 2 lists; pill on each of 15 buttons)",
+      "received": "1181 fillText/strokeText calls (need 0); legend has 0 lists at @0.36 and @0.45 (need 2); buttons 0-14 do not focus with the name pill (pill is suppressed while the name is painted on the tile, rf-wheel-up.js:784 P[i].nd)"
+    },
+    {
+      "test": "T5",
+      "title": "T5 R6 names are not painted on the canvas @1288x593",
+      "route": "/",
+      "size": "1288x593",
+      "bug": "W",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "1242 fillText/strokeText calls (need 0); legend has 0 lists at @0.36/@0.45; buttons 0-14 show no name pill"
+    },
+    {
+      "test": "T5",
+      "title": "T5 R6 names are not painted on the canvas @390x844",
+      "route": "/",
+      "size": "390x844",
+      "bug": "W",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "1484 fillText/strokeText calls (need 0); legend has 0 lists at @0.36/@0.45; buttons 2,3,4,6,10-14 show no name pill"
+    },
+    {
+      "test": "T5",
+      "title": "T5 R6 names are not painted on the canvas @844x390",
+      "route": "/",
+      "size": "844x390",
+      "bug": "W",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "391 fillText/strokeText calls (need 0); legend has 0 lists at @0.36/@0.45; buttons 3,4,10-14 show no name pill"
+    },
+    {
+      "test": "T6",
+      "title": "T6 R7 a heading is always up in the words column @1440x900",
+      "route": "/",
+      "size": "1440x900",
+      "bug": "L",
+      "verdict": "PRODUCT",
+      "expected": "[] (a heading up at all 120 samples)",
+      "received": "67 of 120 empty: t=0.78-6.72, 8.44-9.22, 10.94, 12.50, 14.07-17.04 of 18.60 (plan predicted 0.8-6.8)"
+    },
+    {
+      "test": "T6",
+      "title": "T6 R7 a heading is always up in the words column @1288x593",
+      "route": "/",
+      "size": "1288x593",
+      "bug": "L",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "67 of 120 timeline samples with no heading up"
+    },
+    {
+      "test": "T6",
+      "title": "T6 R7 a heading is always up in the words column @1920x1080",
+      "route": "/",
+      "size": "1920x1080",
+      "bug": "L",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "67 of 120 timeline samples with no heading up"
+    },
+    {
+      "test": "T6",
+      "title": "T6 R7 a heading is always up in the words column @2560x1440",
+      "route": "/",
+      "size": "2560x1440",
+      "bug": "L",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "67 of 120 timeline samples with no heading up"
+    },
+    {
+      "test": "T6",
+      "title": "T6 R7 a heading is always up in the words column @1024x768",
+      "route": "/",
+      "size": "1024x768",
+      "bug": "L",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "67 of 120 timeline samples with no heading up"
+    },
+    {
+      "test": "T6",
+      "title": "T6 R7 a heading is always up in the words column @900x600",
+      "route": "/",
+      "size": "900x600",
+      "bug": "L",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "66 of 120 timeline samples with no heading up"
+    },
+    {
+      "test": "T6",
+      "title": "T6 R7 a heading is always up in the words column @768x1024",
+      "route": "/",
+      "size": "768x1024",
+      "bug": "L",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "64 of 120 timeline samples with no heading up"
+    },
+    {
+      "test": "T6",
+      "title": "T6 R7 a heading is always up in the words column @844x390",
+      "route": "/",
+      "size": "844x390",
+      "bug": "L",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "68 of 120 timeline samples with no heading up"
+    },
+    {
+      "test": "T6",
+      "title": "T6 R7 a heading is always up in the words column @390x844",
+      "route": "/",
+      "size": "390x844",
+      "bug": "L",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "64 of 120 empty, first at t=0.67 of 19.80"
+    },
+    {
+      "test": "T6",
+      "title": "T6 R7 a heading is always up in the words column @430x932",
+      "route": "/",
+      "size": "430x932",
+      "bug": "L",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "64 of 120 timeline samples with no heading up"
+    },
+    {
+      "test": "T6",
+      "title": "T6 R7 a heading is always up in the words column @360x740",
+      "route": "/",
+      "size": "360x740",
+      "bug": "L",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "64 of 120 timeline samples with no heading up"
+    },
+    {
+      "test": "T6",
+      "title": "T6 R7 a heading is always up in the words column @320x568",
+      "route": "/",
+      "size": "320x568",
+      "bug": "L",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "62 of 120 empty: t=1.00-6.82, 8.49-9.32, 11.31, 13.31, 15.31-18.14 of 19.80"
+    },
+    {
+      "test": "T7",
+      "title": "T7 R8 no empty screen after the wheel @1440x900",
+      "route": "/",
+      "size": "1440x900",
+      "bug": "E",
+      "verdict": "PRODUCT",
+      "expected": "[] (visible Start free trial inside .rfw at share 1; no empty window)",
+      "received": "1440x900 @1: no visible \"Start free trial\" link inside the wheel (the wheel has no link on master); window sweep found no empty window"
+    },
+    {
+      "test": "T7",
+      "title": "T7 R8 no empty screen after the wheel @1288x593",
+      "route": "/",
+      "size": "1288x593",
+      "bug": "E",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "@1: no visible \"Start free trial\" inside the wheel; window 2 (scrollY 2017): wheel 0.127 of the window and no heading with its button; window 6 (scrollY 2493): wheel 0.000, no heading with its button"
+    },
+    {
+      "test": "T7",
+      "title": "T7 R8 no empty screen after the wheel @390x844",
+      "route": "/",
+      "size": "390x844",
+      "bug": "E",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "390x844 @1: no visible \"Start free trial\" link inside the wheel; window sweep found no empty window"
+    },
+    {
+      "test": "T8",
+      "title": "T8 R9 resize leaves the wheel as a fresh load would @share 0.4",
+      "route": "/",
+      "size": "share 0.4",
+      "bug": "W",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "legend has 0 lists at every step (1440x900, 1288x593, 390x844, 844x390, 1440x900); 1288x593 step 1: open wheel fills 0.774 (fresh-load T3 shows 0.770 at the same size, so the same fit defect, not a resize divergence)"
+    },
+    {
+      "test": "T8",
+      "title": "T8 R9 resize leaves the wheel as a fresh load would @share 0.63",
+      "route": "/",
+      "size": "share 0.63",
+      "bug": "W",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "844x390 step 3 @0.63: wheel pixels within 3.0px of the canvas bottom edge (need 8); identical to fresh-load T3 @844x390"
+    },
+    {
+      "test": "T1",
+      "title": "T1 R1 print shows the whole page @/ 1440x900",
+      "route": "/",
+      "size": "1440x900",
+      "bug": "P",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "html still has js-motion in print; 293 elements not at opacity 1 (h1#hx-h, p.hx-lede, a.btn Start free trial…); 18 hidden; 3 sticky/fixed (header.site-header, div.hx-over, div.rfw-pin); .rfw lacks rfw--static; .rfw still shows a canvas"
+    },
+    {
+      "test": "T1",
+      "title": "T1 R1 print shows the whole page @/ 390x844",
+      "route": "/",
+      "size": "390x844",
+      "bug": "P",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "html still has js-motion; 169 not at opacity 1; 35 hidden; 4 sticky/fixed (header, #mobile-menu, div.rfw-pin, div.jr-pin); .rfw lacks rfw--static; canvas shown"
+    },
+    {
+      "test": "T1",
+      "title": "T1 R1 print shows the whole page @/pricing 1440x900",
+      "route": "/pricing",
+      "size": "1440x900",
+      "bug": "P",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "33 not at opacity 1 (h2 Scale, p.pprice…); 3 hidden (h2#cta-h, p, a.btn Start free trial); header.site-header fixed"
+    },
+    {
+      "test": "T1",
+      "title": "T1 R1 print shows the whole page @/pricing 390x844",
+      "route": "/pricing",
+      "size": "390x844",
+      "bug": "P",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "28 not at opacity 1, 15 hidden (led by the closed mobile menu's links); header + #mobile-menu fixed; h2#cta-h sits on its next p"
+    },
+    {
+      "test": "T1",
+      "title": "T1 R1 print shows the whole page @/product 1440x900",
+      "route": "/product",
+      "size": "1440x900",
+      "bug": "P",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "29 not at opacity 1 (li.pd-k, h3, p); 19 hidden (p.pd-sl Sample, h3 Admin…); header fixed"
+    },
+    {
+      "test": "T1",
+      "title": "T1 R1 print shows the whole page @/product 390x844",
+      "route": "/product",
+      "size": "390x844",
+      "bug": "P",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "41 not at opacity 1, 31 hidden; header + #mobile-menu fixed; 4 headings sit on their next sibling (h2#who-h, #grow-h, #deep-h, #cta-h)"
+    },
+    {
+      "test": "T1",
+      "title": "T1 R1 print shows the whole page @/landing 390x844",
+      "route": "/landing",
+      "size": "390x844",
+      "bug": "P",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "1 elements are sticky or fixed in print: div.stick \"Start free trial\" (phone sticky CTA)"
+    },
+    {
+      "test": "T1",
+      "title": "T1 R1 print shows the whole page @/company 1440x900",
+      "route": "/company",
+      "size": "1440x900",
+      "bug": "P",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "1 elements are sticky or fixed in print: header.site-header"
+    },
+    {
+      "test": "T1",
+      "title": "T1 R1 print shows the whole page @/company 390x844",
+      "route": "/company",
+      "size": "390x844",
+      "bug": "P",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "12 not at opacity 1 / 12 hidden (closed mobile menu links); header + #mobile-menu fixed; h2#ask-h sits on its next p.sub"
+    },
+    {
+      "test": "T1",
+      "title": "T1 R1 print shows the whole page @/contact 1440x900",
+      "route": "/contact",
+      "size": "1440x900",
+      "bug": "P",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "1 elements are sticky or fixed in print: header.site-header"
+    },
+    {
+      "test": "T1",
+      "title": "T1 R1 print shows the whole page @/contact 390x844",
+      "route": "/contact",
+      "size": "390x844",
+      "bug": "P",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "12 not at opacity 1 / 12 hidden (closed mobile menu links); header + #mobile-menu fixed"
+    },
+    {
+      "test": "T1",
+      "title": "T1 R1 print shows the whole page @/getting-started 1440x900",
+      "route": "/getting-started",
+      "size": "1440x900",
+      "bug": "P",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "43 not at opacity 1 (li.gs-step, h3 Sign up…); 27 hidden; header fixed"
+    },
+    {
+      "test": "T1",
+      "title": "T1 R1 print shows the whole page @/getting-started 390x844",
+      "route": "/getting-started",
+      "size": "390x844",
+      "bug": "P",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "55 not at opacity 1, 44 hidden; header + #mobile-menu fixed; 3 headings sit on their next sibling (#people-h, #deep-h, #cta-h)"
+    },
+    {
+      "test": "T1",
+      "title": "T1 R1 print shows the whole page @/does-and-doesnt 1440x900",
+      "route": "/does-and-doesnt",
+      "size": "1440x900",
+      "bug": "P",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "12 not at opacity 1 and 12 hidden (li.pd-k, h3 A spreadsheet…); header fixed"
+    },
+    {
+      "test": "T1",
+      "title": "T1 R1 print shows the whole page @/does-and-doesnt 390x844",
+      "route": "/does-and-doesnt",
+      "size": "390x844",
+      "bug": "P",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "24 not at opacity 1, 24 hidden; header + #mobile-menu fixed; 3 headings on their next sibling (#cmp-h, #words-h, #cta-h)"
+    },
+    {
+      "test": "T1",
+      "title": "T1 R1 print shows the whole page @/data-in-and-out 1440x900",
+      "route": "/data-in-and-out",
+      "size": "1440x900",
+      "bug": "P",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "3 not at opacity 1 and hidden (h2#cta-h, p, a.btn Start free trial); header fixed"
+    },
+    {
+      "test": "T1",
+      "title": "T1 R1 print shows the whole page @/data-in-and-out 390x844",
+      "route": "/data-in-and-out",
+      "size": "390x844",
+      "bug": "P",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "15 not at opacity 1, 15 hidden; header + #mobile-menu fixed; h2#cta-h on its next p"
+    },
+    {
+      "test": "T1",
+      "title": "T1 R1 print shows the whole page @/security 1440x900",
+      "route": "/security",
+      "size": "1440x900",
+      "bug": "P",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "24 not at opacity 1 (li.pd-k, h3…); 6 hidden (h3 Store, h2#cta-h, a.btn…); header fixed"
+    },
+    {
+      "test": "T1",
+      "title": "T1 R1 print shows the whole page @/security 390x844",
+      "route": "/security",
+      "size": "390x844",
+      "bug": "P",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "36 not at opacity 1, 30 hidden; header + #mobile-menu fixed; 2 headings on their next sibling (#deep-h, #cta-h)"
+    },
+    {
+      "test": "T1",
+      "title": "T1 R1 print shows the whole page @/privacy 1440x900",
+      "route": "/privacy",
+      "size": "1440x900",
+      "bug": "P",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "2 elements are sticky or fixed in print: header.site-header, ol.fixed \"\" (empty toast viewport); text itself prints"
+    },
+    {
+      "test": "T1",
+      "title": "T1 R1 print shows the whole page @/privacy 390x844",
+      "route": "/privacy",
+      "size": "390x844",
+      "bug": "P",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "12 not at opacity 1 / 12 hidden (closed mobile menu links); 3 sticky/fixed (header, #mobile-menu, ol.fixed \"\")"
+    },
+    {
+      "test": "T1",
+      "title": "T1 R1 print shows the whole page @/terms 1440x900",
+      "route": "/terms",
+      "size": "1440x900",
+      "bug": "P",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "2 elements are sticky or fixed in print: header.site-header, ol.fixed \"\" (empty toast viewport)"
+    },
+    {
+      "test": "T1",
+      "title": "T1 R1 print shows the whole page @/terms 390x844",
+      "route": "/terms",
+      "size": "390x844",
+      "bug": "P",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "12 not at opacity 1 / 12 hidden (closed mobile menu links); 3 sticky/fixed (header, #mobile-menu, ol.fixed \"\")"
+    },
+    {
+      "test": "T2",
+      "title": "T2 R2 headings show without a scroll @/",
+      "route": "/",
+      "size": "1440x900",
+      "bug": "P",
+      "verdict": "PRODUCT",
+      "expected": "[] after a 6 s poll",
+      "received": "h2#jr-h, h2#sl-h, h2#st-h, h2#inc-h, h2#fd-h, h2#cta-h not fully shown"
+    },
+    {
+      "test": "T2",
+      "title": "T2 R2 headings show without a scroll @/pricing",
+      "route": "/pricing",
+      "size": "1440x900",
+      "bug": "P",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "h2.h-md \"Options and add-ons.\", h2#cta-h \"Try RouteFlow free.\" not fully shown"
+    },
+    {
+      "test": "T2",
+      "title": "T2 R2 headings show without a scroll @/product",
+      "route": "/product",
+      "size": "1440x900",
+      "bug": "P",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "h2#cta-h \"Try RouteFlow free.\" not fully shown"
+    },
+    {
+      "test": "T2",
+      "title": "T2 R2 headings show without a scroll @/getting-started",
+      "route": "/getting-started",
+      "size": "1440x900",
+      "bug": "P",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "h2#cta-h \"Try RouteFlow free.\" not fully shown"
+    },
+    {
+      "test": "T2",
+      "title": "T2 R2 headings show without a scroll @/does-and-doesnt",
+      "route": "/does-and-doesnt",
+      "size": "1440x900",
+      "bug": "P",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "h2#cta-h \"Try RouteFlow free.\" not fully shown"
+    },
+    {
+      "test": "T2",
+      "title": "T2 R2 headings show without a scroll @/data-in-and-out",
+      "route": "/data-in-and-out",
+      "size": "1440x900",
+      "bug": "P",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "h2#cta-h \"Try RouteFlow free.\" not fully shown"
+    },
+    {
+      "test": "T2",
+      "title": "T2 R2 headings show without a scroll @/security",
+      "route": "/security",
+      "size": "1440x900",
+      "bug": "P",
+      "verdict": "PRODUCT",
+      "expected": "[]",
+      "received": "h2#cta-h \"Try RouteFlow free.\" not fully shown"
+    }
+  ],
+  "passed": [
+    "T3 R3,R4 wheel fits inside its box @1440x900",
+    "T3 R3,R4 wheel fits inside its box @1920x1080",
+    "T3 R3,R4 wheel fits inside its box @2560x1440",
+    "T3 R3,R4 wheel fits inside its box @1024x768",
+    "T3 R3,R4 wheel fits inside its box @900x600",
+    "T1 R1 print shows the whole page @/landing 1440x900",
+    "T2 R2 headings show without a scroll @/landing",
+    "T2 R2 headings show without a scroll @/company",
+    "T2 R2 headings show without a scroll @/contact",
+    "T2 R2 headings show without a scroll @/privacy",
+    "T2 R2 headings show without a scroll @/terms",
+    "T9 R10 no heading overlaps the next block while rising @/ 390x844",
+    "T9 R10 no heading overlaps the next block while rising @/ 320x568",
+    "T9 R10 no heading overlaps the next block while rising @/product 390x844",
+    "T9 R10 no heading overlaps the next block while rising @/product 320x568",
+    "T12 R12 nothing is lost: parity against the baseline from master",
+    "T8 R9 resize leaves the wheel as a fresh load would @share 1"
+  ],
+  "harnessFlags": [
+    {
+      "id": "HF1",
+      "severity": "blocking",
+      "test": "T8 @share 1",
+      "issue": "ScrollTrigger count compared against a fresh page that is not re-mounted and not scrolled; once:true triggers (home-up.js:154, site.js:99/123/131) remove themselves on enter, so the count tracks scroll position, not the resize.",
+      "fix": "remountNoSnap(fresh) + scrollWheelTo(fresh, share) before triggerCount, then re-run T8."
+    },
+    {
+      "id": "HF2",
+      "severity": "weak-probe",
+      "test": "T3 @1440x900, 1920x1080, 2560x1440, 1024x768, 900x600 (passed)",
+      "issue": "The test plan says T3 fails today at 1440x900 (open wheel across the words column, E9). It passed because shownBoxes() only counts words at opacity >= .05, and T6 shows the words column is empty from t=0.78 to 6.72, which covers the open point. With no obstacle, freeRect is the whole stage, so the wheel cannot cross the words and the fill passes. The desktop defect shows as T6 (L), not T3.",
+      "fix": "Measure the words column's layout box (rectOf on .hx-copy / .rfw-h) whatever its opacity, or assert that the words are up at .36-.45. Also add the plan's `rest` and `one` checkpoints and the hint-vs-legend and wheel-vs-hx[1] checks (review N1/N4), which the spec does not implement yet."
+    },
+    {
+      "id": "HF3",
+      "severity": "weak-probe",
+      "test": "T9 (all 4 passed)",
+      "issue": "The plan expects T9 red today (an h2 held 22 px low over a 12 px gap, E13). The probe waits until headings stop moving before it measures, so it only sees the settled end of the rise. T1 at 390x844 does catch the same overlap (h2#cta-h over its p on 6 pages, plus #who-h, #grow-h, #deep-h, #people-h, #cmp-h, #words-h, #ask-h).",
+      "fix": "Sample during the rise (several frames right after each scroll step, with no settle wait), or check the held offset before the reveal fires."
+    },
+    {
+      "id": "HF4",
+      "severity": "precision",
+      "test": "T1 at 390x844 (all 12 pages)",
+      "issue": "The closed #mobile-menu drawer is counted as 12 or more hidden links, plus a fixed element. WP1.1's print CSS (build-plan lines 139-144) only makes elements static. It never removes the drawer, so these cells cannot go green unless the fix sets #mobile-menu{display:none} in print or the probe excludes a closed menu.",
+      "fix": "Decide which side handles it before WP1.1 and write that into the plan."
+    },
+    {
+      "id": "HF5",
+      "severity": "precision",
+      "test": "T1 /privacy and /terms (both sizes)",
+      "issue": "An empty `ol.fixed` (the React toast viewport, no text) counts as sticky/fixed content. The header in these React pages comes from the site frame, not public/site, and WP1.1's CSS targets public/site.",
+      "fix": "Ignore empty or zero-size fixed elements in the print sweep, and make sure WP1.1's print rule reaches the site-frame header."
+    },
+    {
+      "id": "HF6",
+      "severity": "precision",
+      "test": "T4",
+      "issue": "The reference ratio is the first sample with |zO| > 1e-3, which is near zero lift (-11.841 / -120.599 at 1440x900), so all 460-odd lines are measured against noise. The verdict stands on the clean signals: the ratios drift inside the open plateau (-2.188 to -2.294 to -4.035), and the open pairs differ by size.",
+      "fix": "Use the open (max |zO|) sample as the reference, or ignore samples with |zO| < 5% of the maximum."
+    },
+    {
+      "id": "HF7",
+      "severity": "weak-probe",
+      "test": "T7 @1440x900, @390x844",
+      "issue": "The empty-window sweep found nothing at these sizes. Each cell is red only because the wheel has no 'Start free trial' link at share 1, which is true on master by construction. The 'filled' predicate takes any fully visible h1-h3 and any button anywhere in the window, without pairing them, so it is lenient. E11 (an empty white stage) reproduces only at 1288x593.",
+      "fix": "Require the button to sit in the same section as the heading, and re-check E11 at 1440x900 and 390x844 by eye from the video."
+    },
+    {
+      "id": "HF8",
+      "severity": "note",
+      "test": "T8 @0.4, @0.63",
+      "issue": "Each failure repeats what a fresh load shows (the T3 fit and the T5 legend). No resize-specific divergence is shown yet, so 'resize differs from a fresh load' is not proven by this run. The plan marks it unknown.",
+      "fix": "Once HF1 is fixed, re-read T8. If it is green apart from the T3/T5 predicates, drop the resize claim from bug W's symptom."
+    },
+    {
+      "id": "HF9",
+      "severity": "note",
+      "test": "T3 phones 390x844, 430x932, 360x740",
+      "issue": "These cells are off centre by 0.063-0.068 against a 0.06 limit. They are product-red, but only just over the limit, so they could flip from run to run before any fix.",
+      "fix": "None needed for the baseline. Watch for flips."
+    }
+  ],
+  "consistency": {
+    "T1 /landing 1440x900 passed, 390x844 failed": "Consistent with the bug. /landing has no fixed header and no hidden reveals at desktop. Its only print defect is the phone sticky CTA (div.stick), which shows only at phone width.",
+    "T2 passed on /landing, /company, /contact, /privacy, /terms": "Consistent with the bug. The same pages show no opacity failures in T1 at 1440x900.",
+    "T3 passed at 1440x900/1920/2560/1024/900": "Not consistent with the plan (E9 expected 1440x900 red). This is a weak probe, see HF2.",
+    "T9 all passed": "Not consistent with the plan (E13 expected red). This is a weak probe, see HF3. T1 at 390x844 reproduces the overlap.",
+    "T12 passed": "Expected: the baseline was captured from master."
+  },
+  "bugIds": {
+    "W": "B1321",
+    "L": "B1322",
+    "E": "B1323",
+    "P": "B1324"
+  },
+  "harnessFixed": [
+    {
+      "test": "T8 @share 1",
+      "was": "counted once:true reveal triggers, whose number depends on scroll history",
+      "fix": "count only persistent triggers (!vars.once); fresh page re-mounted and scrolled like the resized one",
+      "rerun": "t8-rerun-20261113-023556.log: @1 passes, @0.4/@0.63 red on W only"
+    }
+  ]
+}

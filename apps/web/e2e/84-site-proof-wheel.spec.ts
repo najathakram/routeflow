@@ -256,11 +256,18 @@ async function headingProblems(page: Page, tag: string): Promise<string[]> {
   return found ? [] : [`${tag}: no heading is up in the words column`];
 }
 
+// Counts the triggers that persist. A `once: true` reveal deletes itself when it is passed, so how
+// many are left depends on how far, and at which window size, the page has scrolled before; a
+// resize that leaks or duplicates triggers shows up in the persistent ones (WP0 baseline, T8 @1).
 const triggerCount = (page: Page): Promise<number> =>
   page.evaluate(() => {
-    const ST = (window as unknown as { ScrollTrigger?: { getAll(): unknown[] } }).ScrollTrigger;
+    const ST = (
+      window as unknown as {
+        ScrollTrigger?: { getAll(): Array<{ vars?: { once?: boolean } }> };
+      }
+    ).ScrollTrigger;
     if (!ST) throw new Error("ScrollTrigger is not on the page");
-    return ST.getAll().length;
+    return ST.getAll().filter((t) => !t.vars?.once).length;
   });
 
 // ─── T3 — the wheel fits inside its box ─────────────────────────────────────
@@ -588,9 +595,11 @@ test.describe("T8 R9 resize leaves the wheel as a fresh load would", () => {
         if (share >= 0.54 && share <= 0.72) problems.push(...(await stopProblems(page, tag)));
         problems.push(...(await headingProblems(page, tag)));
 
-        await fresh.setViewportSize({ width: size.w, height: size.h });
-        await fresh.goto("/", { waitUntil: "load" });
-        await waitForWheel(fresh);
+        // The fresh page goes through the same re-mount and scroll as the resized one: once:true
+        // reveal triggers remove themselves on scroll, so an unscrolled fresh load counts more.
+        await openHomeNoSnap(fresh, size);
+        await scrollWheelTo(fresh, share);
+        await frames(fresh, 2);
         const [after, base] = [await triggerCount(page), await triggerCount(fresh)];
         if (after !== base)
           problems.push(
