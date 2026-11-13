@@ -73,8 +73,9 @@ const PRINT_SIZES: Size[] = [
  * T1's wheel clause (R1: "the wheel as its still picture") is WP1.2's (B1321): the wheel's own
  * matchMedia gains a print branch that puts the still back and shows the words the wheel drives.
  * Until WP1.2 sets this to true, the clause is skipped with that reason in the report: the
- * `.rfw` still/canvas checks, and the opacity, visibility and sticky sweeps over everything inside
- * WHEEL_SCOPE (the wheel and the words column it is mounted with, `copy: ".hx-copy"`).
+ * `.rfw` still/canvas checks, and the effective (ancestor) opacity, visibility and sticky sweeps over
+ * everything inside WHEEL_SCOPE (the wheel and the words column it is mounted with, `copy: ".hx-copy"`).
+ * Inside `.hx-copy` (outside `.rfw`) each element's own computed opacity and visibility stay asserted.
  */
 const WHEEL_PRINT_CLAUSE = false;
 const WHEEL_SCOPE = ".rfw, .hx-copy";
@@ -128,14 +129,9 @@ test.describe("T1 R1 print shows the whole page", () => {
               probs.push("html still has js-motion in print");
             // the gated wheel clause: its elements are left out of the sweeps until WP1.2
             const outOfScope = (e: Element) => skip && !!e.closest(scope);
-            // an empty fixed layer (a toast viewport with nothing in it) prints nothing (WP0 HF5)
-            const holdsContent = (e: Element) => {
-              const r = e.getBoundingClientRect();
-              return (
-                r.width * r.height >= 1 &&
-                (!!(e.textContent || "").trim() || !!e.querySelector("img, svg, canvas, video"))
-              );
-            };
+            // only an empty fixed layer (a toast viewport: no text, no child elements) prints nothing (WP0 HF5)
+            const emptyLayer = (e: Element) =>
+              !(e.textContent || "").trim() && e.children.length === 0;
 
             const text = Array.from(document.querySelectorAll("h1, h2, h3, p, li, a")).filter((e) =>
               sp.rendered(e),
@@ -156,10 +152,24 @@ test.describe("T1 R1 print shows the whole page", () => {
                     sp.rendered(e) &&
                     !outOfScope(e) &&
                     /^(sticky|fixed)$/.test(getComputedStyle(e).position) &&
-                    holdsContent(e),
+                    !emptyLayer(e),
                 )
                 .map(sp.name),
               "elements are sticky or fixed in print",
+            );
+
+            // inside .hx-copy each element's OWN opacity and visibility are still checked (the page's own motion must
+            // not leave a word faded); only the ancestors' effect there, and everything inside .rfw, wait for WP1.2
+            const own = skip
+              ? text.filter((e) => !!e.closest(".hx-copy") && !e.closest(".rfw"))
+              : [];
+            some(
+              own.filter((e) => parseFloat(getComputedStyle(e).opacity) < 0.99).map(sp.name),
+              "elements in .hx-copy have their own opacity under 1 in print",
+            );
+            some(
+              own.filter((e) => getComputedStyle(e).visibility !== "visible").map(sp.name),
+              "elements in .hx-copy are hidden in print",
             );
 
             const wheel = skip ? null : document.querySelector(".rfw");
@@ -324,7 +334,7 @@ test.describe("T2 R2 headings show without a scroll", () => {
 // after the scroll and again once settled, every h2 still to come (rising in the window or held
 // below it) against its next block, wherever that block is.
 
-const T9_PAGES = ["/", "/product"] as const;
+const T9_PAGES = ["/", "/product", "/pricing"] as const;
 const T9_SIZES: Size[] = [
   { w: 390, h: 844 },
   { w: 320, h: 568 },
