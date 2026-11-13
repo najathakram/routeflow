@@ -291,3 +291,13 @@ h2+.lede,.section-head h2+.lede{margin-top:18px}
 
 /* the founder note: "co-founder’s" never breaks at its hyphen, at any width (the phone-only .nb rule in mobile.css does not reach a desktop) */
 .fd-short .nb,.fd-note .nb,.co-body .nb{white-space:nowrap}
+
+/* ---------- print ---------- */
+/* Print is the page at rest: no animation or transition, nothing sticky or fixed (a sticky bar would repeat on every printed page
+   and a pinned stage would sit over the text), and a closed phone menu is navigation, not content. GSAP's own pins and inline motion
+   are reverted by the screen-only conditions in js/home-up.js and js/site.js; this block covers what CSS alone does. */
+@media print{
+  *,*::before,*::after{animation:none!important;transition:none!important}
+  .site-header,.hx-over,.jr-pin,.rfw-pin,.rfw--static::before,.js-motion .hx-up .rfw--static::before{position:static!important}
+  #mobile-menu,.mobile-menu{display:none!important}
+}

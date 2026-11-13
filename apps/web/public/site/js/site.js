@@ -65,9 +65,30 @@
     return tl;
   };
 
+  /* Print: the page is its own final state. Motion is screen-only (every condition below starts with `screen`), so when print starts
+     GSAP reverts every tween and pin; js-motion comes off with it so the CSS hides nothing. Back on screen the sections rebuild and
+     js-motion returns. ScrollTrigger's refresh after leaving print scrolls to the top to measure and does not put the page back, so
+     the saved scrollY is restored one frame after that refresh's own event. A real print fires both the media change and beforeprint. */
+  var paperOn = false, paperMotion = false, paperY = 0;
+  var paper = function (on) {
+    if (on === paperOn) return;
+    paperOn = on;
+    if (on) { paperY = window.scrollY; paperMotion = doc.classList.contains("js-motion"); doc.classList.remove("js-motion"); return; }
+    doc.classList.toggle("js-motion", paperMotion);
+    var back = function () { ST.removeEventListener("refresh", back); window.requestAnimationFrame(function () { window.scrollTo({ top: paperY, behavior: "instant" }); ST.update(); }); };
+    ST.addEventListener("refresh", back);
+    ST.refresh();
+  };
+  var printQ = window.matchMedia("print");
+  var onPrint = function (e) { paper(e.matches); };
+  if (printQ.addEventListener) printQ.addEventListener("change", onPrint); else if (printQ.addListener) printQ.addListener(onPrint);
+  window.addEventListener("beforeprint", function () { paper(true); });
+  window.addEventListener("afterprint", function () { paper(false); });
+
   var mm = gsap.matchMedia();
-  /* `all` always matches, so this runs at every width (it is what takes js-motion off); `desk` only adds the desktop scenes. */
-  mm.add({ all: "all", desk: "(min-width: 900px)" }, function (ctx) {
+  /* `screen` matches every screen width, so on screen this still runs at every width (it is what takes js-motion off); `desk` only adds
+     the desktop scenes. In print nothing matches and GSAP reverts everything. (Never name a key `all`: GSAP treats that key as always matching.) */
+  mm.add({ screen: "screen", desk: "screen and (min-width: 900px)" }, function (ctx) {
     var desk = ctx.conditions.desk, cleanups = [];
 
     /* Hero: plays once (about 2 s) and ends on the still frame. Headline lines rise, route draws, truck follows, cards settle. */

@@ -9,5 +9,20 @@
     "site-motion-always.static.test.ts": 42,
     "site-phone-and-motion.static.test.ts": 11
   },
-  "rows": []
+  "rows": [
+    {
+      "file": "site-motion-always.static.test.ts",
+      "pin": "expect(home).toContain('mob: \"(max-width: 899.98px), (max-height: 599.98px)\"')",
+      "guarded": "the home phone/short-window condition keeps its short-window part; now computed from the source and required screen-only",
+      "bug": "B1324",
+      "replacedBy": "T1"
+    },
+    {
+      "file": "site-motion-always.static.test.ts",
+      "pin": "expect(site).toContain('mm.add({ all: \"all\", desk: \"(min-width: 900px)\" }')",
+      "guarded": "site.js has a condition that matches every screen width, taking js-motion off; now computed and required screen-only",
+      "bug": "B1324",
+      "replacedBy": "T1"
+    }
+  ]
 }

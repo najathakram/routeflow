@@ -15,7 +15,7 @@
   var d = document, html = d.documentElement, W = window;
   var $ = function (s, r) { return (r || d).querySelector(s); };
   var $$ = function (s, r) { return Array.prototype.slice.call((r || d).querySelectorAll(s)); };
-  /* No `once: true` on a trigger that is built after its start has passed (a visitor who arrives already scrolled: an anchor, a reload,
+  /* No `once` option on a trigger that is built after its start has passed (a visitor who arrives already scrolled: an anchor, a reload,
      a scroll before the scripts ran). ScrollTrigger kills a `once` trigger inside its own first refresh, and a later trigger's refresh walks
      the same list by index, so the kill shifts the list under it and it throws on a missing entry (reading 'end'); everything built after
      that stays hidden. "play none none none" plays the same single time and never removes itself. */
@@ -106,12 +106,32 @@
   ST.addEventListener("refreshInit", function () { if (!smoothHeld++) { smoothWas = html.style.scrollBehavior; html.style.scrollBehavior = "auto"; } });
   ST.addEventListener("refresh", function () { if (smoothHeld && !--smoothHeld) html.style.scrollBehavior = smoothWas; });
 
+  /* Print: the page is its own final state. Motion is screen-only (every condition below starts with `screen`), so when print starts
+     GSAP reverts every tween and pin; js-motion comes off with it so the CSS hides nothing. Back on screen the sections rebuild and
+     js-motion returns. ScrollTrigger's refresh after leaving print scrolls to the top to measure and does not put the page back, so
+     the saved scrollY is restored one frame after that refresh's own event. A real print fires both the media change and beforeprint. */
+  var paperOn = false, paperMotion = false, paperY = 0;
+  var paper = function (on) {
+    if (on === paperOn) return;
+    paperOn = on;
+    if (on) { paperY = W.scrollY; paperMotion = html.classList.contains("js-motion"); html.classList.remove("js-motion"); return; }
+    html.classList.toggle("js-motion", paperMotion);
+    var back = function () { ST.removeEventListener("refresh", back); W.requestAnimationFrame(function () { W.scrollTo({ top: paperY, behavior: "instant" }); ST.update(); }); };
+    ST.addEventListener("refresh", back);
+    ST.refresh();
+  };
+  var printQ = W.matchMedia("print");
+  var onPrint = function (e) { paper(e.matches); };
+  if (printQ.addEventListener) printQ.addEventListener("change", onPrint); else if (printQ.addListener) printQ.addListener(onPrint);
+  W.addEventListener("beforeprint", function () { paper(true); });
+  W.addEventListener("afterprint", function () { paper(false); });
+
   /* desk: the pinned scenes, on a screen with room for them. mob: everything else, phones on their side too.
      pin: a phone or tablet held upright, the only place the answer card pins. */
   var Q = {
-    desk: "(min-width: 900px) and (min-height: 600px)",
-    mob: "(max-width: 899.98px), (max-height: 599.98px)",
-    pin: "(max-width: 899.98px) and (min-height: 600px)"
+    desk: "screen and (min-width: 900px) and (min-height: 600px)",
+    mob: "screen and (max-width: 899.98px), screen and (max-height: 599.98px)",
+    pin: "screen and (max-width: 899.98px) and (min-height: 600px)"
   };
   var SCRUB = 0.8, BELOW = -2; // BELOW: refreshPriority for sections under the wheel (everything above it, and the wheel, is 0)
   var EDGE = "top 104%"; // just under the screen, so everything on a stopped screen has already been told to appear

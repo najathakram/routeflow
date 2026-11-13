@@ -173,12 +173,38 @@ describe("the public site's motion does not depend on the visitor's motion setti
 
   it("the home sections build for every visitor, with the short-window fallback kept", () => {
     const home = read("js/home-up.js");
-    expect(home).toContain('mob: "(max-width: 899.98px), (max-height: 599.98px)"');
     expect(home).not.toMatch(/reduce\s*:|c\.reduce|userRM/);
     const site = read("js/site.js");
     // matchMedia runs its handler only when a key matches; the handler is what takes js-motion off. Below 900 px `desk`
-    // is false, so without an always-matching key the words stay hidden (review-a, #4153).
-    expect(site).toContain('mm.add({ all: "all", desk: "(min-width: 900px)" }');
+    // is false, so without a key that matches every screen the words stay hidden (review-a, #4153). The key that does it
+    // is pinned by the screen-only condition test below.
     expect(site).not.toMatch(/ctx\.conditions\.motion|userRM/);
+  });
+
+  // B1324: every motion condition is screen-only, so print matches none and GSAP reverts all motion. The objects are
+  // parsed out of the source at test time (L-206); finding none throws (L-202).
+  const parseConditions = (src: string, open: RegExp, label: string) => {
+    const m = open.exec(src);
+    if (!m) throw new Error(`condition object not found: ${label}`);
+    const pairs = [...m[1].matchAll(/(\w+)\s*:\s*"([^"]*)"/g)].map((x) => [x[1], x[2]] as const);
+    return Object.fromEntries(pairs) as Record<string, string>;
+  };
+  const conditionSets = () => {
+    const q = parseConditions(read("js/home-up.js"), /var Q = \{([^}]*)\}/, "home-up.js Q");
+    const mm = parseConditions(read("js/site.js"), /mm\.add\(\{([^}]*)\}/, "site.js mm.add");
+    return { q, mm };
+  };
+
+  it("T1 R1 every motion condition is screen-only, so print reverts all motion", () => {
+    const { q, mm } = conditionSets();
+    expect(Object.keys(q).length).toBe(3);
+    expect(Object.keys(mm).length).toBe(2);
+    const parts = [...Object.values(q), ...Object.values(mm)].flatMap((v) =>
+      v.split(",").map((x) => x.trim()),
+    );
+    expect(parts.filter((x) => !x.startsWith("screen"))).toEqual([]);
+    expect(Object.keys(q).concat(Object.keys(mm)).includes("all")).toBe(false);
+    expect(Object.values(mm).includes("screen")).toBe(true);
+    expect(q.mob.includes("max-height: 599.98px")).toBe(true);
   });
 });
