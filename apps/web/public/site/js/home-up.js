@@ -148,8 +148,8 @@
   var wc = function (els) {
     return function (self) { var v = self.isActive ? "transform, opacity" : ""; for (var i = 0; i < els.length; i++) if (els[i]) els[i].style.willChange = v; };
   };
-  /* A heading is moved by page motion, never faded: it must read on a screenshot, a print or a stalled trigger. */
-  var isHead = function (el) { return /^H[12]$/.test(el.tagName); };
+  /* Anything that is, holds or sits in an h1/h2 is moved by page motion, never faded: it must read on a screenshot, a print or a stalled trigger. */
+  var isHead = function (el) { return el.matches("h1,h2") || !!el.querySelector("h1,h2") || !!el.closest("h1,h2"); };
   var isShown = function (el) { return !!el && el.getClientRects().length > 0; };
   var shown = function (list) { return list.filter(isShown); };
 

@@ -52,6 +52,8 @@
   if (!window.gsap) { doc.classList.remove("js-motion"); return; }
   gsap.registerPlugin.apply(gsap, [window.ScrollTrigger, window.SplitText, window.DrawSVGPlugin, window.MotionPathPlugin].filter(Boolean));
   var ST = window.ScrollTrigger, started = performance.now();
+  /* Anything that is, holds or sits in an h1/h2 is moved by page motion, never faded. */
+  var isHead = function (el) { return el.matches("h1,h2") || !!el.querySelector("h1,h2") || !!el.closest("h1,h2"); };
 
   /* Route draws and a truck follows. Final state = the static SVG. */
   var routeDraw = function (rd, dur) {
@@ -130,7 +132,7 @@
         var fresh = b.filter(function (el) { return played.indexOf(el) < 0; });
         if (!fresh.length) return;
         played = played.concat(fresh);
-        ctx.add(function () { gsap.from(fresh, { autoAlpha: 0, y: 16, duration: 0.7, ease: "power2.out", stagger: 0.09, overwrite: true }); });
+        ctx.add(function () { gsap.from(fresh, { autoAlpha: function (i, el) { return isHead(el) ? 1 : 0; }, y: 16, duration: 0.7, ease: "power2.out", stagger: 0.09, overwrite: true }); });
       } });
     }
     doc.classList.remove("js-motion");
