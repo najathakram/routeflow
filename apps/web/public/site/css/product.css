@@ -1,6 +1,6 @@
 /* The Product page (product/index.html). Loaded after css/site.css and graphics/rf-wheel-up.css; no other page loads it.
    Colours, type sizes, corners and shadows: graphics/rf-graphics.css. Sample cards: graphics/rf-wheel-up.css. The default here is the final state:
-   no JS shows every word. Motion: js/product.js and .reveal in js/site.js. */
+   no JS shows every word. Motion: js/product.js and the .reveal rise in js/site.js (they start visible). */
 .pd main{display:block}
 .pd main :where(h4){font-weight:650;margin:0}
 .pd .w{width:min(1200px,100% - 48px);margin-inline:auto}

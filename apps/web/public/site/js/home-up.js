@@ -140,11 +140,14 @@
   var wc = function (els) {
     return function (self) { var v = self.isActive ? "transform, opacity" : ""; for (var i = 0; i < els.length; i++) if (els[i]) els[i].style.willChange = v; };
   };
+  /* A heading is moved by page motion, never faded: it must read on a screenshot, a print or a stalled trigger. */
+  var isHead = function (el) { return /^H[12]$/.test(el.tagName); };
   var isShown = function (el) { return !!el && el.getClientRects().length > 0; };
   var shown = function (list) { return list.filter(isShown); };
 
   /* One section: matchMedia branches, scoped.
      build(c, scope, keep) returns its own cleanup; keep(el) restores an element's final text on revert. */
+  var curCtx = null; // the section's GSAP context while build runs; revealOnce keeps it for tweens made later, in trigger callbacks
   function section(scope, build) {
     var mm = g.matchMedia(scope);
     mm.add(Q, function (ctx) {
@@ -152,7 +155,9 @@
       html.classList.add("js-motion");
       var kept = [];
       var keep = function (el) { if (el) kept.push([el, el.textContent]); return el; };
+      curCtx = ctx;
       var done = build(c, scope, keep);
+      curCtx = null;
       return function () { if (done) done(); kept.forEach(function (k) { k[0].textContent = k[1]; }); };
     }, scope);
     return function () { mm.revert(); };
@@ -166,21 +171,33 @@
     write();
     return g.to(o, { i: n, duration: duration, ease: "steps(" + n + ")", onUpdate: write });
   }
-  /* A group that rises into place once, on the clock, the first time it comes near the screen. */
+  /* A group that rises into place once, on the clock, the first time it comes near the screen. It starts visible: nothing is hidden
+     until the batch fires, so a stalled trigger or a print leaves the words as they are. Each element plays one time (a played list,
+     not `once`, which removes the trigger and shifts the list under later refreshes). The tween is made inside the section's context
+     so a print revert undoes it. */
   function revealOnce(items, rp, y, each) {
     items = shown(items);
     if (!items.length) return;
-    g.set(items, { opacity: 0, y: y == null ? 20 : y });
-    ST.batch(items, { start: EDGE, once: true, interval: 0.06, refreshPriority: rp || 0,
-      onEnter: function (b) { g.to(b, { opacity: 1, y: 0, stagger: { each: each || 0.07 }, overwrite: true }); } });
+    var cx = curCtx, played = [], rise = y == null ? 20 : y;
+    ST.batch(items, { start: EDGE, interval: 0.06, refreshPriority: rp || 0,
+      onEnter: function (b) {
+        var fresh = b.filter(function (el) { return played.indexOf(el) < 0; });
+        if (!fresh.length) return;
+        played = played.concat(fresh);
+        var play = function () {
+          g.from(fresh, { y: rise, opacity: function (i, el) { return isHead(el) ? 1 : 0; }, stagger: { each: each || 0.07 }, overwrite: true });
+        };
+        if (cx) cx.add(play); else play();
+      } });
   }
-  /* A big line that scales down and settles as it arrives. Once, on the clock. */
+  /* A big line that scales down and settles as it arrives. Once, on the clock. It starts as it is (nothing applies before the trigger
+     fires) and a heading only scales, never fades. */
   function settle(el, rp, from, start) {
     if (!isShown(el)) return;
-    g.fromTo(el, { scale: from || 1.14, opacity: 0, transformOrigin: "50% 60%" }, {
-      scale: 1, opacity: 1, ease: "power2.out", duration: 1,
-      scrollTrigger: { trigger: el, start: start || "top 96%", toggleActions: "play none none none", refreshPriority: rp || 0 }
-    });
+    var a = { scale: from || 1.14, transformOrigin: "50% 60%" }, b = { scale: 1, ease: "power2.out", duration: 1, immediateRender: false };
+    if (!isHead(el)) { a.opacity = 0; b.opacity = 1; }
+    b.scrollTrigger = { trigger: el, start: start || "top 96%", toggleActions: "play none none none", refreshPriority: rp || 0 };
+    g.fromTo(el, a, b);
   }
 
   /* ---------- 1. Hero: on load, not scroll. The wheel settles itself. ---------- */
@@ -373,9 +390,12 @@
         boxW.textContent = b === 1 ? " box + " : " boxes + "; pcW.textContent = n === 1 ? " pc" : " pcs";
       };
       paint();
+      /* The copy moves as a block; only what is not a heading fades with it. Starts visible: nothing applies before the trigger fires. */
+      var copyKids = Array.prototype.filter.call(copy.children, function (k) { return !isHead(k); });
       g.timeline({ defaults: { ease: "power2.out" }, scrollTrigger: { trigger: s, start: "top 80%", toggleActions: "play none none none" } })
-        .fromTo(copy, { opacity: 0, y: 36 }, { opacity: 1, y: 0 }, 0)
-        .fromTo(line, { opacity: 0, y: 48 }, { opacity: 1, y: 0 }, 0.12);
+        .fromTo(copy, { y: 36 }, { y: 0, immediateRender: false }, 0)
+        .fromTo(copyKids, { opacity: 0 }, { opacity: 1, immediateRender: false }, 0)
+        .fromTo(line, { opacity: 0, y: 48 }, { opacity: 1, y: 0, immediateRender: false }, 0.12);
       /* Pinned: two boxes, then six loose cans, each from above. The count fields and the line total keep up. */
       var tl = g.timeline({ defaults: { ease: "power3.out", duration: 0.5 }, scrollTrigger: { trigger: pin, start: "top top", end: "+=85%", pin: true, scrub: SCRUB, onToggle: wc(boxes.concat(cans, [line])) } });
       drop(tl).to(st, { b: 2, duration: 1, ease: "steps(2)", onUpdate: paint }, 0.3)
@@ -477,7 +497,8 @@
   }
   function initFounder(s) {
     return section(s, function (c, s) {
-      g.fromTo($(".fd-in", s), { opacity: 0, y: 64 }, { opacity: 1, y: 0, duration: 1, ease: "power3.out", scrollTrigger: { trigger: s, start: EDGE, toggleActions: "play none none none", refreshPriority: BELOW } });
+      /* The block only moves (its heading is never faded; the lines under it fade through revealOnce below). Starts visible. */
+      g.fromTo($(".fd-in", s), { y: 64 }, { y: 0, immediateRender: false, duration: 1, ease: "power3.out", scrollTrigger: { trigger: s, start: EDGE, toggleActions: "play none none none", refreshPriority: BELOW } });
       settle($(".fd-q", s), BELOW, c.desk ? 1.08 : 1.05, c.desk ? "top 88%" : EDGE);
       revealOnce($$(".fd .kick, .fd-short p, .fd-more, .fd-note p, .fd-sig", s), BELOW, 18, 0.1);
     });
@@ -490,11 +511,10 @@
       var cards = shown($$(".pcard", s));
       if (!cards.length) return;
       /* Each card rises in order, then its bar fills. The customer count never counts up: a contract number reads right at every moment. Once, on the clock. */
-      g.set(cards, { opacity: 0, y: 44 });
       var tl = g.timeline({ scrollTrigger: { trigger: $(".pgrid", s), start: "top 88%", toggleActions: "play none none none", refreshPriority: BELOW } });
       cards.forEach(function (card, i) {
         var at = i * 0.13, bar = $(".pm-bar i", card);
-        tl.to(card, { opacity: 1, y: 0, duration: 0.8, ease: "power3.out" }, at);
+        tl.fromTo(card, { opacity: 0, y: 44 }, { opacity: 1, y: 0, immediateRender: false, duration: 0.8, ease: "power3.out" }, at);
         tl.fromTo(bar, { scaleX: 0 }, { scaleX: 1, duration: 1.05, ease: "power2.inOut" }, at + 0.3);
       });
     });

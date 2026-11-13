@@ -113,11 +113,17 @@
          .from($(".hchip--invoice", heroScene), { autoAlpha: 0, y: 8, duration: 0.35 }, 1.7);
     }
 
-    /* Reveals, once. Title blocks and cards rise 16px. */
-    var rev = $$(".reveal");
+    /* Reveals, once. Title blocks and cards rise 16px. They start visible: nothing is hidden until the batch fires, and each element plays
+       one time through a played list (not the `once` option, which removes the trigger). The tween is made inside this context so a print
+       revert undoes it. */
+    var rev = $$(".reveal"), played = [];
     if (rev.length) {
-      gsap.set(rev, { autoAlpha: 0, y: 16 });
-      ST.batch(rev, { start: "top 104%", once: true, onEnter: function (b) { gsap.to(b, { autoAlpha: 1, y: 0, duration: 0.7, ease: "power2.out", stagger: 0.09, overwrite: true }); } });
+      ST.batch(rev, { start: "top 104%", onEnter: function (b) {
+        var fresh = b.filter(function (el) { return played.indexOf(el) < 0; });
+        if (!fresh.length) return;
+        played = played.concat(fresh);
+        ctx.add(function () { gsap.from(fresh, { autoAlpha: 0, y: 16, duration: 0.7, ease: "power2.out", stagger: 0.09, overwrite: true }); });
+      } });
     }
     doc.classList.remove("js-motion");
 
@@ -141,7 +147,7 @@
           onUpdate: function (s) { setDots(Math.min(rows.length - 1, Math.floor(s.progress / step))); } });
       } else {
         dots.forEach(function (d) { d.classList.add("on"); });
-        rows.forEach(function (r) { var rdr = $("[data-rd]", r); if (rdr) { var t = routeDraw(rdr, 1.6); t.pause(); ST.create({ trigger: rdr, start: "top 80%", once: true, onEnter: function () { t.play(); } }); } });
+        rows.forEach(function (r) { var rdr = $("[data-rd]", r); if (rdr) { var t = routeDraw(rdr, 1.6); t.pause(); ST.create({ trigger: rdr, start: "top 80%", animation: t, toggleActions: "play none none none" }); } });
       }
     });
 
@@ -149,7 +155,7 @@
     $$("[data-rd]").forEach(function (rdr) {
       if (rdr.closest("[data-journey]") || rdr.closest("[data-scene='hero']")) return;
       var t = routeDraw(rdr, 2.2); t.pause();
-      ST.create({ trigger: rdr, start: "top 78%", once: true, onEnter: function () { t.play(); } });
+      ST.create({ trigger: rdr, start: "top 78%", animation: t, toggleActions: "play none none none" });
     });
 
     return function () { cleanups.forEach(function (f) { f(); }); };
