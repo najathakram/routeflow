@@ -839,6 +839,19 @@ export default defineConfig({
       dependencies: [],
       use: { ...devices["Desktop Chrome"] },
     },
+    // Public site proof suite (spec 85: T1 print, T2 headings without a scroll, T9 phone heading
+    // rise, T12 parity): geometry, print media and the parity diff for the signed-out site. Plan:
+    // .claude/pipeline/2026-11-13-site-wheel-print/README.md. Signed out, `dependencies: []`, no
+    // storage state; it blocks the analytics host so visits are never counted. The post-deploy job
+    // runs every project, so only specs that are green on master match here (review S9): spec 84
+    // (the wheel, T3-T8) joins with WP1.2. Same convention as "marketing": WITHOUT THIS ENTRY THE
+    // SPEC NEVER RUNS.
+    {
+      name: "site-proof",
+      testMatch: /85-site-proof-pages\.spec\.ts/,
+      dependencies: [],
+      use: { ...devices["Desktop Chrome"] },
+    },
     // Auth interface redesign (spec 46) — same convention as "marketing":
     // NOT part of the local red gate (test-plan.md "Harness notes") — this
     // project resolving/running is the post-deploy proof.
