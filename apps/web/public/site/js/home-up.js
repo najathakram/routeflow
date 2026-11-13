@@ -179,6 +179,13 @@
     write();
     return g.to(o, { i: n, duration: duration, ease: "steps(" + n + ")", onUpdate: write });
   }
+  /* One play per element per page life (a print return replays nothing). Whatever is already above its start line when a section is
+     built is marked played at once, so it stays at rest instead of blanking and fading back on a first paint or a return. */
+  var played = [], settled = [];
+  /* A trigger reached by a jump (an anchor, a reload) rather than by scrolling to it: its start is already well behind the scroll, so the
+     content goes straight to its finished state instead of blinking out and back. */
+  var rest = function (self) { if (self.animation && self.scroll() - self.start > W.innerHeight * 0.15) self.animation.progress(1); };
+  var above = function (el, pct) { return el.getBoundingClientRect().top < W.innerHeight * pct / 100; };
   /* A group that rises into place once, on the clock, the first time it comes near the screen. It starts visible: nothing is hidden
      until the batch fires, so a stalled trigger or a print leaves the words as they are. Each element plays one time (a played list,
      not `once`, which removes the trigger and shifts the list under later refreshes). The tween is made inside the section's context
@@ -186,12 +193,15 @@
   function revealOnce(items, rp, y, each) {
     items = shown(items);
     if (!items.length) return;
-    var cx = curCtx, played = [], rise = y == null ? 20 : y;
+    var cx = curCtx, rise = y == null ? 20 : y;
+    items.forEach(function (el) { if (above(el, 104) && played.indexOf(el) < 0) played.push(el); });
     ST.batch(items, { start: EDGE, interval: 0.06, refreshPriority: rp || 0,
       onEnter: function (b) {
         var fresh = b.filter(function (el) { return played.indexOf(el) < 0; });
         if (!fresh.length) return;
-        played = played.concat(fresh);
+        fresh.forEach(function (el) { played.push(el); });
+        fresh = fresh.filter(function (el) { return !above(el, 89); }); // reached by a jump, not a scroll: already at rest
+        if (!fresh.length) return;
         var play = function () {
           g.from(fresh, { y: rise, opacity: function (i, el) { return isHead(el) ? 1 : 0; }, stagger: { each: each || 0.07 }, overwrite: true });
         };
@@ -201,10 +211,12 @@
   /* A big line that scales down and settles as it arrives. Once, on the clock. It starts as it is (nothing applies before the trigger
      fires) and a heading only scales, never fades. */
   function settle(el, rp, from, start) {
-    if (!isShown(el)) return;
-    var a = { scale: from || 1.14, transformOrigin: "50% 60%" }, b = { scale: 1, ease: "power2.out", duration: 1, immediateRender: false };
+    var m = /top (\d+)%/.exec(start || "top 96%");
+    if (!isShown(el) || settled.indexOf(el) >= 0) return;
+    if (above(el, m ? +m[1] : 96)) { settled.push(el); return; }
+    var a = { scale: from || 1.14, transformOrigin: "50% 60%" }, b = { scale: 1, ease: "power2.out", duration: 1, immediateRender: false, onStart: function () { settled.push(el); } };
     if (!isHead(el)) { a.opacity = 0; b.opacity = 1; }
-    b.scrollTrigger = { trigger: el, start: start || "top 96%", toggleActions: "play none none none", refreshPriority: rp || 0 };
+    b.scrollTrigger = { trigger: el, start: start || "top 96%", onEnter: rest, toggleActions: "play none none none", refreshPriority: rp || 0 };
     g.fromTo(el, a, b);
   }
 
@@ -298,7 +310,7 @@
       scrollTrigger: { trigger: pin, start: "top top", end: function () { return "+=" + dist(); }, scrub: SCRUB, invalidateOnRefresh: true } });
     /* No tween that waits on a toggleActions trigger hides its target before the trigger fires (immediateRender false in each timeline's
      defaults); only the scrubbed scenes, whose progress is the scroll, set their start state. Step 1 plays once as the section arrives; steps 2-4 as each one slides in. */
-    step[0](g.timeline({ defaults: { immediateRender: false, ease: "power2.out", duration: 0.6 }, scrollTrigger: { trigger: s, start: "top 60%", toggleActions: "play none none none" } }));
+    step[0](g.timeline({ defaults: { immediateRender: false, ease: "power2.out", duration: 0.6 }, scrollTrigger: { trigger: s, start: "top 60%", onEnter: rest, toggleActions: "play none none none" } }));
     for (var i = 1; i < 4; i++) step[i](g.timeline({ defaults: { ease: "power2.out", duration: 0.6 }, scrollTrigger: { trigger: panels[i], containerAnimation: move, start: "left 78%", end: "left 22%", scrub: SCRUB } }));
     /* One step in focus: the panels either side stay dim. Opacity only, riding on the track. */
     panels.forEach(function (p, i) {
@@ -385,7 +397,7 @@
       };
       if (!c.desk) {
         /* Phones: two boxes, then six cans, once, and the one number is already there. */
-        var tlm = g.timeline({ defaults: { immediateRender: false, ease: "power3.out", duration: 0.45 }, scrollTrigger: { trigger: art, start: EDGE, toggleActions: "play none none none" } });
+        var tlm = g.timeline({ defaults: { immediateRender: false, ease: "power3.out", duration: 0.45 }, scrollTrigger: { trigger: art, start: EDGE, onEnter: rest, toggleActions: "play none none none" } });
         drop(tlm).fromTo(cans, { y: function (i) { return cy[i] - 44; }, opacity: 0 }, { y: function (i) { return cy[i]; }, opacity: 1, duration: 0.3, stagger: { each: 0.09 } }, 1.1);
         revealOnce($$(".sl-big, .tier, .sl-prod, .sl-line", s), 0, 16);
         return;
@@ -401,7 +413,7 @@
       paint();
       /* The copy moves as a block; only what is not a heading fades with it. Starts visible: nothing applies before the trigger fires. */
       var copyKids = Array.prototype.filter.call(copy.children, function (k) { return !isHead(k); });
-      g.timeline({ defaults: { ease: "power2.out" }, scrollTrigger: { trigger: s, start: "top 80%", toggleActions: "play none none none" } })
+      g.timeline({ defaults: { ease: "power2.out" }, scrollTrigger: { trigger: s, start: "top 80%", onEnter: rest, toggleActions: "play none none none" } })
         .fromTo(copy, { y: 36 }, { y: 0, immediateRender: false }, 0)
         .fromTo(copyKids, { opacity: 0 }, { opacity: 1, immediateRender: false }, 0)
         .fromTo(line, { opacity: 0, y: 48 }, { opacity: 1, y: 0, immediateRender: false }, 0.12);
@@ -413,7 +425,7 @@
         .fromTo(math, { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.4 }, 2.5)
         .to({}, { duration: 0.35 });
       /* Three stores arrive in order, once. The piece price counts up and the box of 12 follows it exactly. */
-      var tiers = $$(".tier", s), tl2 = g.timeline({ defaults: { immediateRender: false, ease: "power2.out" }, scrollTrigger: { trigger: $(".sl-tiers", s), start: "top 88%", toggleActions: "play none none none" } });
+      var tiers = $$(".tier", s), tl2 = g.timeline({ defaults: { immediateRender: false, ease: "power2.out" }, scrollTrigger: { trigger: $(".sl-tiers", s), start: "top 88%", onEnter: rest, toggleActions: "play none none none" } });
       tiers.forEach(function (t, i) {
         var b = $(".tier-p b", t), box = $(".tier-b", t), to = parseFloat(b.dataset.count), o = { v: 0 }, boxText = box.textContent;
         keep(b); keep(box);
@@ -431,7 +443,7 @@
       var vis = $(".st-vis", s), shop = $(".st-shop", s), phone = $(".st-phone", s), tiles = $$(".b-tile", s), rows = $$(".sp-r", s), all = $(".sp-all", s), head = $(".st-head h2", s);
       var wideShop = isShown(shop);
       if (c.desk) settle(head, 0, 1.1, "top 92%"); else revealOnce($$(".st-head h2, .st-head .sub", s), 0, 16);
-      var tl = g.timeline({ defaults: { immediateRender: false, ease: "power2.out", duration: 0.8 }, scrollTrigger: { trigger: vis, start: c.desk ? "top 88%" : EDGE, toggleActions: "play none none none" } });
+      var tl = g.timeline({ defaults: { immediateRender: false, ease: "power2.out", duration: 0.8 }, scrollTrigger: { trigger: vis, start: c.desk ? "top 88%" : EDGE, onEnter: rest, toggleActions: "play none none none" } });
       if (wideShop) {
         tl.fromTo(shop, { opacity: 0, y: 80, scale: 0.96 }, { opacity: 1, y: 0, scale: 1, duration: 1 }, 0)
           .fromTo(tiles, { opacity: 0, y: 24 }, { opacity: 1, y: 0, stagger: { each: 0.12 }, duration: 0.5 }, 0.35)
@@ -453,7 +465,7 @@
       var pay = $$(".c-tend, .c-quick, .c-right .c-t:nth-of-type(5), .c-chg", s);
       var wideWin = isShown(win);
       if (!c.desk) revealOnce($$(".ct-copy h2, .ct-copy .sub, .ct-note", s), 0, 16);
-      var tl = g.timeline({ defaults: { immediateRender: false, ease: "power2.out", duration: 0.6 }, scrollTrigger: { trigger: vis, start: wideWin ? "top 85%" : EDGE, toggleActions: "play none none none" } });
+      var tl = g.timeline({ defaults: { immediateRender: false, ease: "power2.out", duration: 0.6 }, scrollTrigger: { trigger: vis, start: wideWin ? "top 85%" : EDGE, onEnter: rest, toggleActions: "play none none none" } });
       if (wideWin) {
         tl.fromTo(win, { opacity: 0, y: 60 }, { opacity: 1, y: 0, duration: 0.8 }, 0)
           .fromTo(lines, { opacity: 0, y: 14 }, { opacity: 1, y: 0, stagger: { each: 0.3 }, duration: 0.3 }, 0.35)
@@ -478,7 +490,7 @@
     var marks = [];
     items.forEach(function (it) {
       var card = $(".uc-card", it), ticks = $$(".rfw-tk path", it), pill = $("[data-was]", it), nums = $$("[data-to]", it);
-      var tl = g.timeline({ defaults: { immediateRender: false, ease: "power2.out", duration: 0.6 }, scrollTrigger: { trigger: it, start: EDGE, toggleActions: "play none none none", refreshPriority: BELOW } });
+      var tl = g.timeline({ defaults: { immediateRender: false, ease: "power2.out", duration: 0.6 }, scrollTrigger: { trigger: it, start: EDGE, onEnter: rest, toggleActions: "play none none none", refreshPriority: BELOW } });
       tl.fromTo(it, { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.7, ease: "power3.out" }, 0)
         .fromTo(card, { y: 18 }, { y: 0, duration: 0.8, ease: "power3.out" }, 0.08);
       if (ticks.length) tl.fromTo(ticks, { strokeDashoffset: 1 }, { strokeDashoffset: 0, duration: 0.36, ease: "power2.inOut", stagger: 0.14 }, 0.45);
@@ -507,7 +519,7 @@
   function initFounder(s) {
     return section(s, function (c, s) {
       /* The block only moves (its heading is never faded; the lines under it fade through revealOnce below). Starts visible. */
-      g.fromTo($(".fd-in", s), { y: 64 }, { y: 0, immediateRender: false, duration: 1, ease: "power3.out", scrollTrigger: { trigger: s, start: EDGE, toggleActions: "play none none none", refreshPriority: BELOW } });
+      g.fromTo($(".fd-in", s), { y: 64 }, { y: 0, immediateRender: false, duration: 1, ease: "power3.out", scrollTrigger: { trigger: s, start: EDGE, onEnter: rest, toggleActions: "play none none none", refreshPriority: BELOW } });
       settle($(".fd-q", s), BELOW, c.desk ? 1.08 : 1.05, c.desk ? "top 88%" : EDGE);
       revealOnce($$(".fd .kick, .fd-short p, .fd-more, .fd-note p, .fd-sig", s), BELOW, 18, 0.1);
     });
@@ -520,7 +532,7 @@
       var cards = shown($$(".pcard", s));
       if (!cards.length) return;
       /* Each card rises in order, then its bar fills. The customer count never counts up: a contract number reads right at every moment. Once, on the clock. */
-      var tl = g.timeline({ defaults: { immediateRender: false }, scrollTrigger: { trigger: $(".pgrid", s), start: "top 88%", toggleActions: "play none none none", refreshPriority: BELOW } });
+      var tl = g.timeline({ defaults: { immediateRender: false }, scrollTrigger: { trigger: $(".pgrid", s), start: "top 88%", onEnter: rest, toggleActions: "play none none none", refreshPriority: BELOW } });
       cards.forEach(function (card, i) {
         var at = i * 0.13, bar = $(".pm-bar i", card);
         tl.fromTo(card, { opacity: 0, y: 44 }, { opacity: 1, y: 0, immediateRender: false, duration: 0.8, ease: "power3.out" }, at);

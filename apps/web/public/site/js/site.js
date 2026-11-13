@@ -52,6 +52,7 @@
   if (!window.gsap) { doc.classList.remove("js-motion"); return; }
   gsap.registerPlugin.apply(gsap, [window.ScrollTrigger, window.SplitText, window.DrawSVGPlugin, window.MotionPathPlugin].filter(Boolean));
   var ST = window.ScrollTrigger, started = performance.now();
+  var played = []; // one play per element per page life: a print return replays nothing
   /* Anything that is, holds or sits in an h1/h2 is moved by page motion, never faded. */
   var isHead = function (el) { return el.matches("h1,h2") || !!el.querySelector("h1,h2") || !!el.closest("h1,h2"); };
 
@@ -126,12 +127,16 @@
     /* Reveals, once. Title blocks and cards rise 16px. They start visible: nothing is hidden until the batch fires, and each element plays
        one time through a played list (not the `once` option, which removes the trigger). The tween is made inside this context so a print
        revert undoes it. */
-    var rev = $$(".reveal"), played = [];
+    var rev = $$(".reveal");
     if (rev.length) {
+      /* Already above the start line when built (a first paint, a return from print): at rest, never blanked and faded back. */
+      rev.forEach(function (el) { if (el.getBoundingClientRect().top < window.innerHeight * 1.04 && played.indexOf(el) < 0) played.push(el); });
       ST.batch(rev, { start: "top 104%", onEnter: function (b) {
         var fresh = b.filter(function (el) { return played.indexOf(el) < 0; });
         if (!fresh.length) return;
-        played = played.concat(fresh);
+        fresh.forEach(function (el) { played.push(el); });
+        fresh = fresh.filter(function (el) { return el.getBoundingClientRect().top >= window.innerHeight * 0.89; }); // reached by a jump: at rest
+        if (!fresh.length) return;
         ctx.add(function () { gsap.from(fresh, { autoAlpha: function (i, el) { return isHead(el) ? 1 : 0; }, y: 16, duration: 0.7, ease: "power2.out", stagger: 0.09, overwrite: true }); });
       } });
     }
