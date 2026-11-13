@@ -1011,14 +1011,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Customer / driver quick-create */}
-      {!isDriver && !isOperator && (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="mr-1 text-sm font-medium text-navy/70">Quick create:</span>
-          <NewOrderButton {...newOrder} />
-          <ReadOnlyHint className="basis-full text-xs text-slate-600" />
-        </div>
-      )}
+      {/* REG-B1 (owner ruling): New order is a staff action, so a customer or driver has no quick-create row. */}
 
       {/* ── KPI stat cards ── */}
       <div

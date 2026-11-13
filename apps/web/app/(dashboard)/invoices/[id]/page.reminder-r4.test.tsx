@@ -1,5 +1,6 @@
 import * as React from "react";
 import { screen, renderWithProviders } from "@/test-utils/render";
+import { seedSession } from "@/test-utils/session";
 import InvoiceDetailPage from "./page";
 
 /**
@@ -68,6 +69,9 @@ function invoice(status: string, balanceDue: string, total = "35.00") {
     payments: [],
   };
 }
+
+beforeEach(() => seedSession("OPERATOR"));
+afterEach(() => seedSession(null));
 
 describe("InvoiceDetailPage — Send Reminder gate (R4)", () => {
   it("shows Send Reminder on a past-due PARTIAL invoice that owes a balance", () => {

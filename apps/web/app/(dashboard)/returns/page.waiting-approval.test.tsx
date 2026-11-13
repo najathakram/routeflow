@@ -1,6 +1,7 @@
 import * as React from "react";
 import { fireEvent, renderWithProviders, screen } from "@/test-utils/render";
 import ReturnsPage from "./page";
+import { seedSession } from "@/test-utils/session";
 
 /**
  * SA-1060 PR-1 (MUST 2): the returns list gets a "Waiting for approval" filter. It asks the API for the INLINE returns that are
@@ -67,3 +68,7 @@ describe("Returns list: Waiting for approval", () => {
     expect(p.holdReason).toBeUndefined();
   });
 });
+
+// REG-B1: the approval queue chip is staff-only on the web, so this suite runs as an operator.
+beforeEach(() => seedSession("OPERATOR"));
+afterEach(() => seedSession(null));

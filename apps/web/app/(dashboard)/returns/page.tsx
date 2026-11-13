@@ -14,6 +14,8 @@ import {
 } from "lucide-react";
 import { PageHeader, Button, cn, Modal, useToast, EmptyState, Badge } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { useAuth } from "@/lib/auth-context";
+import { seesStaffControls } from "@/lib/default-unit-line";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
 import {
@@ -507,6 +509,7 @@ export default function ReturnsPage() {
   const [page, setPage] = useUrlPage();
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
   // B1264: a sale found by its number opens the same inline return flow the receipt and the order page use
+  const { user } = useAuth(); // REG-B1: the inline capture/refund flow is staff-only in the API
   const hasInlineReturns = useHasAddon(ORDERS_INLINE_RETURNS_ADDON);
   const [inlineOrder, setInlineOrder] = React.useState<Order | null>(null);
   const LIMIT = 20;
@@ -642,7 +645,7 @@ export default function ReturnsPage() {
             </button>
           ))}
 
-          {hasInlineReturns && (
+          {hasInlineReturns && seesStaffControls(user?.role) && (
             <button
               type="button"
               aria-pressed={waitingApproval}
@@ -865,7 +868,7 @@ export default function ReturnsPage() {
         isOpen={isCreateOpen}
         onClose={() => setIsCreateOpen(false)}
         onFoundSale={
-          hasInlineReturns
+          hasInlineReturns && seesStaffControls(user?.role)
             ? (order) => {
                 setIsCreateOpen(false);
                 setInlineOrder(order);

@@ -504,7 +504,7 @@ export function CommandPalette({ open, onClose }: Props) {
           "nav-returns",
           "nav-invoices",
           "nav-settings",
-          "act-new-order",
+          // REG-B1: no "act-new-order": starting an order is a staff action (owner ruling).
         ].includes(i.id),
       );
     if (user?.role === "DRIVER")
