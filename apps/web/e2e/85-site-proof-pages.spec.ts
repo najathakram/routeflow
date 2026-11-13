@@ -334,6 +334,64 @@ test.describe("T2 R2 headings show without a scroll", () => {
   }
 });
 
+// A section whose animation never plays (the visitor jumped past it) must not leave changed text behind:
+// whatever it counts or steps through shows the figures of the served page once it is in view.
+const JUMP_SELECTORS = [".sl-tiers", ".ct-vis", ".uc-i"] as const;
+
+test.describe("T2 R2 a section reached by a jump shows its final figures", () => {
+  for (const size of PRINT_SIZES) {
+    test(`T2 R2 a section reached by a jump shows its final figures @/ ${sizeName(size)}`, async ({
+      page,
+    }) => {
+      test.setTimeout(120_000);
+      await openRoute(page, "/", size);
+      await page.evaluate(() =>
+        window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "instant" }),
+      );
+      await frames(page, 30);
+      const norm = (t: string | null) => (t || "").replace(/\s+/g, " ").trim();
+      let checked = 0;
+      const wrong: string[] = [];
+      for (const sel of JUMP_SELECTORS) {
+        const count = await page.locator(sel).count();
+        for (let i = 0; i < count; i++) {
+          const rendered = await page.evaluate(
+            ([q, k]) =>
+              document.querySelectorAll(q as string)[k as number].getClientRects().length > 0,
+            [sel, i],
+          );
+          if (!rendered) continue;
+          await page.evaluate(
+            ([q, k]) =>
+              document
+                .querySelectorAll(q as string)
+                [k as number].scrollIntoView({ block: "center", behavior: "instant" }),
+            [sel, i],
+          );
+          await frames(page, 150);
+          const got = await page.evaluate(
+            async ([q, k]) => {
+              const html = await (await fetch(location.pathname)).text();
+              const served = new DOMParser().parseFromString(html, "text/html");
+              const live = document.querySelectorAll(q as string)[k as number];
+              const src = served.querySelectorAll(q as string)[k as number];
+              return { live: live.textContent, src: src ? src.textContent : null };
+            },
+            [sel, i],
+          );
+          checked++;
+          if (norm(got.live) !== norm(got.src))
+            wrong.push(
+              `${sel}[${i}] shows "${norm(got.live).slice(0, 60)}" not "${norm(got.src).slice(0, 60)}"`,
+            );
+        }
+      }
+      if (!checked) throw new Error("T2 R2 jump: none of .sl-tiers, .ct-vis, .uc-i was rendered");
+      expect(wrong, `T2 ${sizeName(size)}: figures differ from the served page`).toEqual([]);
+    });
+  }
+});
+
 // ─── T9 — no heading on top of the next block during the rise ───────────────
 // L-377: the WP0 version measured only after the headings settled and only pairs with BOTH boxes
 // in the window, so it passed on master with the bug present (WP0 HF3): the phone rise holds each

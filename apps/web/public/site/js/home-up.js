@@ -172,10 +172,14 @@
   }
   /* A running total that steps as lines arrive: every frame shows the sum of the lines on screen, never an in-between
      number. Writes the same value to every element in els (a subtotal and its balance, say). */
-  function stepSum(keep, els, sums, duration) {
+  function stepSum(keep, els, sums, duration, onPlay) {
     els = els.filter(Boolean); els.forEach(keep);
     var o = { i: 0 }, n = sums.length - 1;
     var write = function () { var v = money(sums[Math.round(o.i)]); for (var k = 0; k < els.length; k++) els[k].textContent = v; };
+    /* No text changes before the animation plays: a timeline that never plays (a jump past it) must leave the page's own figures.
+       onPlay: the first write waits for the tween's start (sections that play on a trigger); the scrubbed scenes pass nothing and keep
+       their explicit first write, because their progress is the scroll and they always render. */
+    if (onPlay) return g.to(o, { i: n, duration: duration, ease: "steps(" + n + ")", onStart: write, onUpdate: write });
     write();
     return g.to(o, { i: n, duration: duration, ease: "steps(" + n + ")", onUpdate: write });
   }
@@ -281,7 +285,7 @@
       function (tl) {
         tl.fromTo(figs[0], { opacity: 0, y: 40 }, { opacity: 1, y: 0 }, 0)
           .fromTo(rowsOf(0), { opacity: 0, y: 10 }, { opacity: 1, y: 0, stagger: { each: 0.14 }, duration: 0.3 }, 0.25)
-          .add(stepSum(keep, [ordTot], [0, 45, 81, 111], 0.42), 0.2);
+          .add(stepSum(keep, [ordTot], [0, 45, 81, 111], 0.42, true), 0.2);
       },
       function (tl) {
         tl.fromTo(figs[1], { opacity: 0, y: 40 }, { opacity: 1, y: 0 }, 0)
@@ -433,9 +437,8 @@
         var b = $(".tier-p b", t), box = $(".tier-b", t), to = parseFloat(b.dataset.count), o = { v: 0 }, boxText = box.textContent;
         keep(b); keep(box);
         var write = function () { var cents = Math.round(o.v * 100); b.textContent = money(cents / 100); box.textContent = boxText.replace(/^\$[\d.,]+/, money((cents * 12) / 100)); };
-        write();
         tl2.fromTo(t, { opacity: 0, y: 50 }, { opacity: 1, y: 0, duration: 0.6 }, i * 0.22)
-          .to(o, { v: to, duration: 0.6, onUpdate: write }, i * 0.22);
+          .to(o, { v: to, duration: 0.6, onStart: write, onUpdate: write }, i * 0.22);
       });
     });
   }
@@ -472,7 +475,7 @@
       if (wideWin) {
         tl.fromTo(win, { opacity: 0, y: 60 }, { opacity: 1, y: 0, duration: 0.8 }, 0)
           .fromTo(lines, { opacity: 0, y: 14 }, { opacity: 1, y: 0, stagger: { each: 0.3 }, duration: 0.3 }, 0.35)
-          .add(stepSum(keep, [sub, total], [0, 18, 21], 0.6), 0.2)
+          .add(stepSum(keep, [sub, total], [0, 18, 21], 0.6, true), 0.2)
           .fromTo(pay, { opacity: 0, y: 10 }, { opacity: 1, y: 0, stagger: { each: 0.1 }, duration: 0.3 }, 0.9)
           .fromTo(rc, { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.5 }, 1.25)
           .fromTo(paper, { yPercent: 100 }, { yPercent: 0, duration: 0.9, ease: "power2.out" }, 1.45);
@@ -501,13 +504,12 @@
         keep(e);
         var to = +e.dataset.to, from = +e.dataset.from, o = { v: from }, fin = e.textContent, w = function () { e.textContent = money(o.v); };
         tl.fromTo(o, { v: from }, { v: to, duration: 0.95, ease: "power2.inOut", onStart: w, onUpdate: w, onComplete: function () { e.textContent = fin; } }, 0.4);
-        e.textContent = money(from);
       });
       if (pill) {
         keep(pill); marks.push(pill);
         var fin = pill.textContent;
-        pill.textContent = pill.dataset.was; pill.classList.add("was");
-        tl.call(function () { pill.textContent = fin; pill.classList.remove("was"); }, null, 1.15);
+        tl.call(function () { pill.textContent = pill.dataset.was; pill.classList.add("was"); }, null, 0)
+          .call(function () { pill.textContent = fin; pill.classList.remove("was"); }, null, 1.15);
       }
     });
     return function () { marks.forEach(function (m) { m.classList.remove("was"); }); };
