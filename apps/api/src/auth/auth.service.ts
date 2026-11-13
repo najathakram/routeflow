@@ -42,6 +42,10 @@ export interface DeviceInfo {
   deviceName?: string;
 }
 
+/** jsonwebtoken's expiry error, matched by name so a plain Error("jwt expired") stays on the generic path. */
+const isJwtExpired = (e: unknown): boolean =>
+  typeof e === "object" && e !== null && (e as { name?: unknown }).name === "TokenExpiredError";
+
 /**
  * RF-176 / W-767 (SA-917): a staff session with no business is a PLATFORM session, SUPER_ADMIN only. A null-tenantId JWT
  * bypasses every forTenant() scope and can read across businesses. The ONE check, made before EVERY staff token mint in
@@ -500,14 +504,22 @@ export class AuthService {
         secret: this.emailVerifyKey,
         audience: DERIVED_JWT_AUDIENCES.emailVerify,
       });
-    } catch {
+    } catch (keyErr) {
       // Links issued before per-purpose keys were signed with the session secret and carry no
       // audience; they stay valid for their own 24h and nothing else is accepted that way.
       // remove in PR-4a (token audience required), added 2026-10-07
       try {
         payload = this.jwtService.verify(token, { secret: jwtConfig.secret });
         if (payload.aud !== undefined) throw new Error("audience on a legacy-key token");
-      } catch {
+      } catch (legacyErr) {
+        // B2: a link validly signed by either key but past its 24h is "expired", not "invalid"
+        // (jsonwebtoken checks the signature before exp), so the page can offer a new link.
+        if (isJwtExpired(keyErr) || isJwtExpired(legacyErr)) {
+          throw new BadRequestException({
+            code: API_ERROR_CODES.VERIFICATION_LINK_EXPIRED,
+            message: "This verification link has expired. Request a new one.",
+          });
+        }
         throw new BadRequestException(
           "Verification link is invalid or has expired. Please sign up again or request a new link.",
         );
