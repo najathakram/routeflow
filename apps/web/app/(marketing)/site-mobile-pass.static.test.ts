@@ -71,8 +71,20 @@ describe("mobile.css is arrangement, colour and life, not a claim", () => {
   });
 
   it("the rise moves a heading, it never hides one (transform only, no opacity)", () => {
-    expect(css).toContain("@keyframes rf-rise{from{transform:translateY(22px)}to{transform:none}}");
     expect(css).not.toMatch(/rf-rise[^}]*opacity/);
+  });
+
+  it("T9 R10 the phone rise moves a heading less than the gap to its next line", () => {
+    const rise = /@keyframes rf-rise\{from\{transform:translateY\((\d+(?:\.\d+)?)px\)\}/.exec(css);
+    const gap = /h2\+\.sub[^{]*\{margin-top:(\d+(?:\.\d+)?)px\}/.exec(css);
+    if (!rise || !gap) throw new Error("rf-rise offset or h2+.sub gap not found in css/mobile.css");
+    expect(Number(rise[1]) < Number(gap[1])).toBe(true);
+    // screen only: the file is also linked for print at narrow page widths
+    const block =
+      /@media screen\{[^]*?@supports \(animation-timeline:view\(\)\)\{[^]*?animation:rf-rise/.exec(
+        css,
+      );
+    expect(block !== null).toBe(true);
   });
 
   it("headings balance and paragraphs avoid a stranded last word", () => {

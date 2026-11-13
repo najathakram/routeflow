@@ -23,6 +23,13 @@
       "guarded": "site.js has a condition that matches every screen width, taking js-motion off; now computed and required screen-only",
       "bug": "B1324",
       "replacedBy": "T1"
+    },
+    {
+      "file": "site-mobile-pass.static.test.ts",
+      "pin": "expect(css).toContain(\"@keyframes rf-rise{from{transform:translateY(22px)}to{transform:none}}\")",
+      "guarded": "the phone rise offset; now read from the css and required to stay under the h2+.sub gap, inside @media screen",
+      "bug": "B1324",
+      "replacedBy": "T9"
     }
   ]
 }

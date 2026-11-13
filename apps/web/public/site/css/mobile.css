@@ -46,7 +46,11 @@ body:has(.pg-top) .section.alt:not(.pg-top){background:#e3f5f4}
 a,button,summary{-webkit-tap-highlight-color:rgba(var(--mb-sky),.22)}
 
 /* ---------- life ---------- */
-@supports (animation-timeline:view()){
-  .home .sl h2,.home .st h2,.home .ct h2,.home .inc h2,.home #pricing h2,.home .fq h2,body:not(.home) main h2{animation:rf-rise linear both;animation-timeline:view();animation-range:entry 0% entry 60%}
+/* Screen only (this file is also linked for print at narrow page widths). The rise stays under the smallest gap from a heading to the next
+   block (12px, h2+.sub above), so a heading caught mid-rise never lands on the line under it. */
+@media screen{
+  @supports (animation-timeline:view()){
+    .home .sl h2,.home .st h2,.home .ct h2,.home .inc h2,.home #pricing h2,.home .fq h2,body:not(.home) main h2{animation:rf-rise linear both;animation-timeline:view();animation-range:entry 0% entry 60%}
+  }
+  @keyframes rf-rise{from{transform:translateY(10px)}to{transform:none}}
 }
-@keyframes rf-rise{from{transform:translateY(22px)}to{transform:none}}
