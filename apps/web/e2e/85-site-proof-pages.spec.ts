@@ -353,21 +353,18 @@ test.describe("T2 R2 headings show without a scroll", () => {
   }
 });
 
-// A section whose animation never plays (the visitor jumped past it) must not leave changed text behind:
-// whatever it counts or steps through shows the figures of the served page once it is in view.
-const JUMP_SELECTORS = [".sl-tiers", ".ct-vis", ".uc-i"] as const;
+// A section reached through a ScrollTrigger refresh (a load, an anchor arrival, a print return) does not play: its animation never
+// starts, so nothing may have changed its text or hidden it at build time. It shows the figures of the served page, fully visible,
+// within three frames. (A plain scroll plays the animation and ends right too; only the refresh path leaves the build-time state.)
+const JUMP_SELECTORS = [".sl-tiers .tier", ".ct-vis", ".uc-i"] as const;
 
-test.describe("T2 R2 a section reached by a jump shows its final figures", () => {
+test.describe("T2 R2 a section reached through a refresh shows its final figures", () => {
   for (const size of PRINT_SIZES) {
-    test(`T2 R2 a section reached by a jump shows its final figures @/ ${sizeName(size)}`, async ({
+    test(`T2 R2 a section reached through a refresh shows its final figures @/ ${sizeName(size)}`, async ({
       page,
     }) => {
       test.setTimeout(120_000);
       await openRoute(page, "/", size);
-      await page.evaluate(() =>
-        window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "instant" }),
-      );
-      await frames(page, 30);
       const norm = (t: string | null) => (t || "").replace(/\s+/g, " ").trim();
       let checked = 0;
       const wrong: string[] = [];
@@ -380,21 +377,28 @@ test.describe("T2 R2 a section reached by a jump shows its final figures", () =>
             [sel, i],
           );
           if (!rendered) continue;
+          // one evaluate: the jump and the refresh, so the section's trigger is passed inside the refresh
           await page.evaluate(
-            ([q, k]) =>
-              document
-                .querySelectorAll(q as string)
-                [k as number].scrollIntoView({ block: "center", behavior: "instant" }),
+            ([q, k]) => {
+              const el = document.querySelectorAll(q as string)[k as number];
+              const r = el.getBoundingClientRect();
+              const top = Math.max(0, r.top + window.scrollY - (window.innerHeight - r.height) / 2);
+              window.scrollTo({ top, behavior: "instant" });
+              (window as unknown as { ScrollTrigger: { refresh(): void } }).ScrollTrigger.refresh();
+            },
             [sel, i],
           );
-          await frames(page, 150);
+          await frames(page, 3);
           const got = await page.evaluate(
             async ([q, k]) => {
               const html = await (await fetch(location.pathname)).text();
               const served = new DOMParser().parseFromString(html, "text/html");
               const live = document.querySelectorAll(q as string)[k as number];
               const src = served.querySelectorAll(q as string)[k as number];
-              return { live: live.textContent, src: src ? src.textContent : null };
+              let opacity = 1;
+              for (let n: Element | null = live; n; n = n.parentElement)
+                opacity *= parseFloat(getComputedStyle(n).opacity);
+              return { live: live.textContent, src: src ? src.textContent : null, opacity };
             },
             [sel, i],
           );
@@ -403,9 +407,12 @@ test.describe("T2 R2 a section reached by a jump shows its final figures", () =>
             wrong.push(
               `${sel}[${i}] shows "${norm(got.live).slice(0, 60)}" not "${norm(got.src).slice(0, 60)}"`,
             );
+          if (got.opacity < 0.99)
+            wrong.push(`${sel}[${i}] is at opacity ${got.opacity.toFixed(2)}`);
         }
       }
-      if (!checked) throw new Error("T2 R2 jump: none of .sl-tiers, .ct-vis, .uc-i was rendered");
+      if (!checked)
+        throw new Error("T2 R2 refresh: none of .sl-tiers .tier, .ct-vis, .uc-i was rendered");
       expect(wrong, `T2 ${sizeName(size)}: figures differ from the served page`).toEqual([]);
     });
   }
