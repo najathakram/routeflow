@@ -168,7 +168,15 @@ test.describe("T1 R1 print shows the whole page", () => {
               "elements in .hx-copy have their own opacity under 1 in print",
             );
             some(
-              own.filter((e) => getComputedStyle(e).visibility !== "visible").map(sp.name),
+              own
+                .filter((e) => {
+                  // visibility inherits: only a hidden element whose parent is visible hid itself
+                  const parent = e.parentElement
+                    ? getComputedStyle(e.parentElement).visibility
+                    : "visible";
+                  return getComputedStyle(e).visibility !== "visible" && parent === "visible";
+                })
+                .map(sp.name),
               "elements in .hx-copy are hidden in print",
             );
 
