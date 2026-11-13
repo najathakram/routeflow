@@ -158,24 +158,43 @@ test.describe("T1 R1 print shows the whole page", () => {
               "elements are sticky or fixed in print",
             );
 
-            // inside .hx-copy each element's OWN opacity and visibility are still checked (the page's own motion must
-            // not leave a word faded); only the ancestors' effect there, and everything inside .rfw, wait for WP1.2
-            const own = skip
-              ? text.filter((e) => !!e.closest(".hx-copy") && !e.closest(".rfw"))
-              : [];
+            // inside .hx-copy every element is checked (not only text tags), from the element up to but not including .hx-copy
+            // itself (the wheel hides that column until WP1.2): the page's own motion must not leave anything faded or hidden
+            const copyRoot = document.querySelector(".hx-copy");
+            const inner =
+              skip && copyRoot
+                ? Array.from(copyRoot.querySelectorAll("*")).filter(
+                    (e) => !e.closest(".rfw") && sp.rendered(e),
+                  )
+                : [];
+            const chain = (e: Element) => {
+              const out: Element[] = [];
+              for (let n: Element | null = e; n && n !== copyRoot; n = n.parentElement) out.push(n);
+              return out;
+            };
             some(
-              own.filter((e) => parseFloat(getComputedStyle(e).opacity) < 0.99).map(sp.name),
-              "elements in .hx-copy have their own opacity under 1 in print",
+              inner
+                .filter(
+                  (e) =>
+                    chain(e).reduce((a, n) => a * parseFloat(getComputedStyle(n).opacity), 1) <
+                    0.99,
+                )
+                .map(sp.name),
+              "elements in .hx-copy are not at opacity 1 in print",
             );
             some(
-              own
-                .filter((e) => {
-                  // visibility inherits: only a hidden element whose parent is visible hid itself
-                  const parent = e.parentElement
-                    ? getComputedStyle(e.parentElement).visibility
-                    : "visible";
-                  return getComputedStyle(e).visibility !== "visible" && parent === "visible";
-                })
+              inner
+                .filter((e) =>
+                  chain(e).some((n) => {
+                    // visibility inherits: a node hid itself only if it is hidden while its parent (below .hx-copy) is visible
+                    const up = n.parentElement;
+                    if (!up || up === copyRoot) return false;
+                    return (
+                      getComputedStyle(n).visibility !== "visible" &&
+                      getComputedStyle(up).visibility === "visible"
+                    );
+                  }),
+                )
                 .map(sp.name),
               "elements in .hx-copy are hidden in print",
             );
