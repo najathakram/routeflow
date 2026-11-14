@@ -1,6 +1,6 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen, waitFor } from "@/test-utils/render";
+import { renderWithProviders, screen, waitFor, within } from "@/test-utils/render";
 import SettingsPage from "./page";
 
 // B1188 owner UI rule: never lose or hide a feature. Pins EVERY control of the Settings >
@@ -66,7 +66,6 @@ describe("Settings > Invoicing: control inventory (B1188)", () => {
     expect(await screen.findByText("Invoice numbering")).toBeInTheDocument();
     expect(screen.getByText("Invoice number prefix")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("INV-")).toBeInTheDocument();
-    expect(screen.getByText("Payment due days")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /save numbering/i })).toBeInTheDocument();
     // Neighbours that share the page's save handler / the same terms store
     expect(screen.getByText("Payment terms")).toBeInTheDocument();
@@ -86,23 +85,27 @@ describe("Settings > Invoicing: control inventory (B1188)", () => {
     expect(body).not.toHaveProperty("paymentDueDays");
   });
 
-  it("Payment terms and Payment due days are ONE value: either change shows in both at once", async () => {
+  it("the Payment terms select saves only invoice.defaultTerms, never /settings", async () => {
     renderWithProviders(<SettingsPage />);
-    const days = (await screen.findByLabelText(/payment due days/i)) as HTMLSelectElement;
     const terms = (await screen.findByLabelText("Payment terms")) as HTMLSelectElement;
-    await waitFor(() => expect(days.value).toBe("Net 30"));
-
-    await userEvent.selectOptions(days, "Net 45");
+    await waitFor(() => expect(terms.value).toBe("Net 30"));
+    await userEvent.selectOptions(terms, "Net 45");
     expect(terms.value).toBe("Net 45");
     await waitFor(() =>
       expect(mockPatch).toHaveBeenCalledWith("/settings/invoice", { defaultTerms: "Net 45" }),
     );
-
-    await userEvent.selectOptions(terms, "Net 15");
-    expect(days.value).toBe("Net 15");
-    await waitFor(() =>
-      expect(mockPatch).toHaveBeenCalledWith("/settings/invoice", { defaultTerms: "Net 15" }),
-    );
     expect(mockPatch.mock.calls.filter((c) => c[0] === "/settings")).toHaveLength(0);
+  });
+});
+
+describe("Settings > Invoicing: one payment-terms control (UX guide B9)", () => {
+  it("shows exactly one terms select and says a customer's own terms override it", async () => {
+    renderWithProviders(<SettingsPage />);
+    await screen.findByText("Invoice numbering");
+    const termsSelects = screen
+      .getAllByRole("combobox")
+      .filter((el) => within(el).queryByRole("option", { name: "Net 45" }));
+    expect(termsSelects).toHaveLength(1);
+    expect(screen.getByText(/a customer's own terms override this/i)).toBeInTheDocument();
   });
 });

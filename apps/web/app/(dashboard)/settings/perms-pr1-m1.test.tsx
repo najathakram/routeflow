@@ -141,7 +141,7 @@ describe("T1.3 operator: account-admin controls are not offered", () => {
   it("invoicing: never requests the numbering endpoints, hides the prefix, keeps payment terms", async () => {
     mockTab = "invoicing";
     renderWithProviders(<SettingsPage />);
-    expect(await screen.findByLabelText("Payment due days")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Payment terms")).toBeInTheDocument();
     expect(screen.queryByLabelText("Invoice number prefix")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /save numbering/i })).not.toBeInTheDocument();
     await waitFor(() => expect(urlsRequested()).toContain("/settings/invoice"));
@@ -256,7 +256,7 @@ describe("T1.4 admin: the same controls are all there", () => {
     mockTab = "invoicing";
     renderWithProviders(<SettingsPage />);
     expect(await screen.findByLabelText("Invoice number prefix")).toBeInTheDocument();
-    expect(screen.getByLabelText("Payment due days")).toBeInTheDocument();
+    expect(screen.getByLabelText("Payment terms")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /save numbering/i })).toBeInTheDocument();
     await waitFor(() => expect(urlsRequested()).toContain("/import/numbering"));
   });
