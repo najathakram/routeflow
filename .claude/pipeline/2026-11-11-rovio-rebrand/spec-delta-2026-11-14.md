@@ -1,25 +1,37 @@
-# Spec delta 2026-11-14 (SA lane), rev 2 after gate 5
+# Spec delta 2026-11-14 (SA lane), rev 3 (gate 5 round 2 folded)
 
 Amends the plan; wins where they differ. Branch `00ec11d53`, master `9e774cadb`. Bare paths: `apps/web/public/site/`.
 
 ## Changes after gate 5
 | MF | Change | § |
 |---|---|---|
-| 1 | API reads `brand.json` via `common/brand.ts`, no runtime import (`no-runtime-workspace-imports.spec.ts:43-56`) | 1 |
-| 2 | Seam widened (hub, colours, layouts, legal, frame, og); T22-T26 read `BRAND`; NEW T45 fixture; real swap diff | 1 |
-| 3 | XROV.IO waits for its own kit. **Rejected premise:** the kit is not one PDF. `brand-kit/logo/svg` has 26 path-only SVGs (`grep -c "<text"` = 0), plus `icons/web` (13) and `email/`: copied, not redrawn | 1, 6 |
-| 4, 5, 6 | Master proof path exists (`fix/site-print-and-headings`: `site-proof` = spec 85; 84 with WP1.2); G1 from the real diffs; one owner per file per wave | 5 |
-| 7, 8 | Guards specified; 2 new leaks found; public records wait for D0 | 2b, 2c |
-| 9 | Rebuilt from `git grep` + env names. **Partly rejected:** Stripe wallet domains do not apply (no `@stripe/`/`js.stripe.com` in `apps/web`, `apps/mobile`: hosted Checkout only) | 2a |
-| 10 | Staged ids cited | 3 |
+| 1 | API reads `brand.json` via `common/brand.ts` (no runtime import) | 1 |
+| 2 | Seam widened; `legalEntity` key; exemption table; kit-colour ban; B1 email files in T35/T45; NEW T45 | 1 |
+| 3 | XROV.IO waits for its own kit. **Rejected premise:** the kit is not one PDF (26 path-only SVGs, 13 `icons/web`, 3 `email/`) | 1, 6 |
+| 4-6 | Master proof path; G1 from real diffs; one owner per file per wave | 5 |
+| 7, 8 | G0 fails closed and rides with WP1.2; public records wait for D0 | 2b, 2c |
+| 9 | From `git grep` + env names; Stripe wallet domains rejected (no Stripe.js) | 2a |
+| 10 | Ids cited | 3 |
 
 ## 1. Brand seam
-- **Store:** NEW `packages/types/brand/brand.json`, data only: `name, formerly, origin, oldOrigin, email, securityEmail, titleSeparator, shareLine, logo.*, symbol, icon.*, emailLogo`. Palette in `brand/palette.json`.
-- **Readers:** web `packages/types/brand/index.ts` (typed `BRAND`, `pageTitle()`, `footerLine()`, mockable `loadBrand()`). API `common/brand.ts`: `readFileSync` of `require.resolve("@routeflow/types/package.json")` dir + `/brand/brand.json`, every key validated, throws on a missing one, with a spec. The runner copies `packages/` (`apps/api/Dockerfile:69`) and links `@routeflow/types` to it (:67). `next.config.mjs` and the sync script use `readFileSync`.
+- **Store:** NEW `packages/types/brand/brand.json`, data only: `name, formerly, legalEntity, origin, oldOrigin, email, securityEmail, titleSeparator, shareLine, logo.*, symbol, icon.*, emailLogo`. `legalEntity` (the LLC, `terms:54`, `privacy:68`) is a key, not an allow-list row; only the attorney changes it. Palette in `brand/palette.json`.
+- **Readers:** web `packages/types/brand/index.ts` (typed `BRAND`, `pageTitle()`, `footerLine()`, mockable `loadBrand()`). API `common/brand.ts`: `readFileSync` of `require.resolve("@routeflow/types/package.json")` dir + `/brand/brand.json`, keys validated, throws on a missing one, own spec; the image has it (`apps/api/Dockerfile:67-69`). `next.config.mjs` and the sync script use `readFileSync`.
 - **Static pages:** build-time fill in the `force-static` route (`route.ts:14-19`, `static-site-page.ts:45-52`). `{{brand:key}}` tokens; `renderSitePage()` throws on an unknown key or a leftover token. NEW `readServedSitePage()` is the only way tests read a page; a pin stops new disk reads. Raw `/site/<page>.html` redirects to its clean path (`next.config.mjs:186`).
-- **Everything that names the brand reads the seam:** html title, head, logo `<img>`, JSON-LD, mailto, footer. The wheel hub reads `<template id="brand-symbol">` (filled from the symbol file) into a `Path2D`, and the still at `home.html:114` uses the same token; today both type the old mark (`rf-wheel-up.js:86`). Colours: one injected `<style>` of `--brand-*` (pages, `BrandTokens`), which the wheel reads by `getComputedStyle`; today it types `#10264d`/`#2b4c88`/`#0a1a38` (`:86,120,126,180,406`), with inline hexes in 4 html. Also WP2.6 layouts (title template, `siteName`, `appleWebApp`, icons), privacy/terms (`{BRAND.name}`, `{BRAND.securityEmail}`; 96 hits), frame, `lib/site.ts`, `metadata.ts`, og route (logo SVG + palette).
+- **Everything that names the brand reads the seam:** html title, head, logo `<img>`, JSON-LD, mailto, footer. The wheel hub reads `<template id="brand-symbol">` into a `Path2D`; the still at `home.html:114` uses the same token (today both type the old mark, `rf-wheel-up.js:86`). Colours come from one injected `--brand-*` `<style>`, read by the wheel through `getComputedStyle` (today it types hex at `:86,120,126,180,406`). Also WP2.6 layouts (title template, `siteName`, `appleWebApp`, icons), privacy/terms (`{BRAND.name}`, `{BRAND.securityEmail}`; 96 hits), frame, `lib/site.ts`, `metadata.ts`, og route (logo SVG + palette).
 - **Pins:**
-  - T35 (class): over `public/site/**/*.{html,js,css}`, `site-frame/**`, `(marketing)/**`, `(auth)/**`, `buyer/login/**`, `not-found.tsx`, `verify-email/**` and the og route (non-test). Zero `/route\s?flow|rovio|xrov|routeflow\.info|hello@/i`, zero hex in wheel JS and in html `style`/`fill`, zero typed mark paths. An exact identifier allow-list covers `rf-*`, `RouteFlowShell`, `routeflow-v4` and `/brand/routeflow-mark`. Zero files read throws. Named exemption rows for `home.html` (until S2) and `landing.html` (until 2.4) fail once their lane merges.
+  - T35 (class): over `public/site/**/*.{html,js,css}`, `site-frame/**`, `(marketing)/**`, `(auth)/**`, `buyer/login/**`, `not-found.tsx`, `verify-email/**` and the og route (non-test). Zero `/route\s?flow|rovio|xrov|routeflow\.info|hello@/i`, zero hex in wheel JS and in html `style`/`fill`, zero typed mark paths. An exact identifier allow-list covers `rf-*`, `RouteFlowShell`, `routeflow-v4` and `/brand/routeflow-mark`. Zero files read throws. From W2, B1 adds `apps/api/src/email/{email-layout,routeflow-mail,email.service}.ts` to T35, plus a T45 row that renders the sign-up email via a mocked `common/brand.ts`. The sender `send.routeflow.info` is one allow-list row until B3.
+  - **T35d:** no `palette.json` value in `public/site/**/*.css`, `site-frame.css` or `(marketing)/*.css`; colour only in the injected `<style>`. A guard from 2.0b.
+  - **Exemptions** (one table shared by T35 and T45; a row fails once its lane has merged):
+
+| Exempt | Lifted by (wave) |
+|---|---|
+| `rf-graphics.css` comment | 2.0b (W1) |
+| `landing.html` | 2.4 (W1b) |
+| `home.html`; comments in `home-up.js`, `site.js`, `prices.js` | S2 (W2) |
+| `rf-wheel-up.*` (strings, hub, hex, comment) | 2.2 (W2) |
+| `site.css`, `home.css` comments | 2.1b (W2) |
+| privacy, terms, `(marketing)/layout.tsx`, `marketing.css`, `glass*.css`, `(auth)/**` incl. `admin-login`, `choose-role` (assigned to 2.6), `buyer/login`, `not-found`, `verify-email` | 2.6 (W2) |
+| inline hex: `product`, `security` / `home` | 2.3-inner / 2.3-home (W3) |
   - T22-T26 compare to `BRAND`. **NEW T45** (from wave 0): mocks `loadBrand()` with `{name:"XROV.IO"}`, another palette and other paths; renders ten pages, frame, WP2.6 metadata and og route; expects zero `/rovio/i` outside `xrovio.com` and every name, src and colour from the fixture (also catches a `name`/`formerly` swap).
 - **Logo** sized by height (30/28 px; replaces ux-spec:187). NEW T36: no overflow at 320/390/1440.
 - **Rovio files:** copied from the kit to neutral `img/brand/` names: 4 logo SVGs, 2 symbol SVGs, 6 `icons/web`, 1 email PNG = 13.
@@ -30,14 +42,14 @@ Amends the plan; wins where they differ. Branch `00ec11d53`, master `9e774cadb`.
 ### 2a. Host and email pins (`git grep -i routeflow\.info` origin/master + env names)
 | Where | Rule | Proof |
 |---|---|---|
-| `WEB_URL` fallbacks in API `payment-requests:314`, `stripe-connect.controller:107`, `billing-notification.templates:43,47`, `demo-booking.service:748`, `onboarding-intake:776`, `addon-invariant.job:568` | env flip at launch; returns via #4307 | T34 |
-| Google sign-in and Google/Microsoft mailbox callbacks (API paths, `.env.example:136-170`) | callbacks stay on the API host; the web return goes through #4307 | T34 row per flow |
-| Shell `web.tsx:164`, `eas.json:47,59`, `mobile/redirect/server.js:7`, `mobile app/index.tsx:191` | old host keeps the app; shell exempt by UA; B4 adds the new host | T33b, NEW T40 |
-| `email-layout.ts:14-15`, `email.service.ts:345`, `EMAIL_FROM` | B1: logo/site from `brand.json`, display name `BRAND.name`; sender `send.routeflow.info` stays (no SPF/DKIM change) | B1 test |
-| `admin@` (`demo-booking.config.ts:77`), `security@`, `hello@` in app (`choose-plan:26`, `FirstRunCard:16`) | old Workspace mailboxes stay ≥ 12 months; app strings in B3 | C1 |
+| API `WEB_URL` fallbacks (`payment-requests:314`, `stripe-connect.controller:107`, `billing-notification.templates:43,47`, `demo-booking.service:748`, `onboarding-intake:776`, `addon-invariant.job:568`) | env flip at launch; returns via #4307 | T34 |
+| Google sign-in, Google/Microsoft mailbox callbacks (API paths, `.env.example:136-170`) | stay on the API host; web return via #4307 | T34 per flow |
+| Shell `web.tsx:164`, `eas.json:47,59`, `mobile/redirect/server.js:7`, mobile `index.tsx:191` | old host keeps the app; shell exempt; B4 adds the new host | T33b, T40 |
+| `email-layout.ts:14-15`, `email.service.ts:345`, `EMAIL_FROM` | B1 reads `brand.json`; sender `send.routeflow.info` stays (no SPF/DKIM change) | B1 test |
+| `admin@` (`demo-booking.config.ts:77`), `security@`, app `hello@` (`choose-plan:26`, `FirstRunCard:16`) | old mailboxes stay ≥ 12 months; app strings B3 | C1 |
 | `app/layout.tsx:52`; apex checks `post-deploy-check.mjs:171`, `google-signin-monitor.mjs:57` | B1; 2A.2 checks both apexes | B1, 2A.2 |
 
-Consoles with a web origin, one C2 row each, read back at D0: Railway, registrar, Google OAuth, Maps referrers, Sentry, Umami, Search Console, Stripe public details, Workspace (MX, SPF/DKIM/DMARC), API `CORS_ORIGINS`/`WEB_ORIGINS`/`WEB_URL`/`MOBILE_WEB_URL`. Runbooks (8) and `SECURITY.md`: WP3.2.
+Consoles (one C2 row each, read back at D0): Railway, registrar, Google OAuth, Maps referrers, Sentry, Umami, Search Console, Stripe public details, Workspace, API `CORS_ORIGINS`/`WEB_ORIGINS`/`WEB_URL`/`MOBILE_WEB_URL`. Runbooks and `SECURITY.md`: WP3.2.
 
 **Risks:**
 | # | Harm | Guard | Proof |
@@ -52,12 +64,13 @@ Consoles with a web origin, one C2 row each, read back at D0: Railway, registrar
 | 8 | SEO | 307 → 308 at launch + 7 days; canonical/sitemap/robots from `BRAND`; pre-launch canonical to the old host | T30, T31 |
 
 ### 2b. Leak guards (pattern `rovio|xrov`, case-insensitive)
-- Done by the lead: handoffs git-excluded; `branch.rebrand/rovio-site.pushRemote` set to a dead remote on the PC. Set the same on the Mac mini; lanes get git bundles, never `origin`.
-- **G0 (brand-free master PR):**
-  - `.husky/pre-push` refuses `rebrand/*` refs unless `RF_REBRAND_PUSH=launch`, and scans the outgoing range against the untracked `.git/info/leak-patterns`: diff with new and renamed files (`--text`), commit messages, ref names.
+- **Done by the lead:** pushRemote guards on both brand-named branches; git-excludes for the handoff cards only (the over-broad `.claude/**/*rovio*` patterns are removed, since they hid this branch's plan files); the stale plan copy moved out of the main checkout. Plan files on the branch are committed normally. These local guards stand until G0 lands. The Mac mini gets the same; lanes get bundles, never `origin`.
+- **G0 (brand-neutral):** rides in WP1.2's PR batch, sharing one whole-suite run (API suite ≈ 2 h here); no PR of its own.
+  - `.husky/pre-push` refuses `rebrand/*` refs and scans the outgoing range against the untracked `.git/info/leak-patterns`: diff with new and renamed files (`--text`), commit messages, ref names.
+  - **Fails closed:** a missing pattern file makes the hook and `leak-check.mjs` refuse (CI runs neither). `RF_REBRAND_PUSH=launch` lifts the refusal and the scan, launch day only. The file is installed by hand on every machine (bundles do not carry `.git/info`) and is retired after launch.
   - NEW `scripts/leak-check.mjs` reads the same file and covers the same, plus PR title and body, the squash body, `.claude/pipeline/{cost-ledger,agent-log}.jsonl`, `.claude/skills/*/references/RUN-LOG.md`, `.claude/{lessons,code-map,campaign}/**`. The lead runs it before `gh pr create`, before every merge and in pre-merge-review.
   - Neither names the brand; run slugs and ledger `--project` are neutral.
-- **Open now:** registry branch `docs/rovio-baseline-bugs` has the word in its name and staged rows (`B1321.md:50`, `B1324.md:50`, B1322-3, `bugs.jsonl`): rename, reword before push. The main checkout has an untracked `.claude/pipeline/2026-11-11-rovio-rebrand/`: add it to `.git/info/exclude`.
+- **Open now:** registry branch `docs/rovio-baseline-bugs` has the word in its name and staged rows (`B1321.md:50`, `B1324.md:50`, B1322-3, `bugs.jsonl`): rename, reword before push.
 
 ### 2c. Prep: public records wait for D0
 - **D0:** all DNS (CNAME, MX, TXT, SPF/DKIM/DMARC), the certificate (CT logs), Workspace domain and mailbox, Search Console, Google OAuth origin. Stripe public details change on launch day.
@@ -83,14 +96,14 @@ Ids B1321-B1328: staged in `wt/rovio-registry/.claude/campaign/bugs/` (unmerged 
 | P05 | 2.3-home | NEW T47: "INVOICE" box inside its frame at 1440 |
 | P04 glow, D-4, B1294 | 2.1b | T18a; NEW T42 focus ≥ 3:1; the scan's rows |
 | P06, P07, D-3 | 2.2 | T19; "Stock value (cost)" |
-| P09, P10, F08, #1940 | header lane | NEW T48: one trial button per 390 viewport; none in the header on /signup; menu shows Sign in + trial at 393×740; header steady across loads |
+| P09, P10, F08, #1940 | header lane | NEW T48: one trial button per 390 viewport; none in header on /signup; menu shows Sign in + trial at 393×740; header steady |
 | P11, B249, B247/B248/B520/B550 | 2.6 | rule once (`signup/page.tsx:396`); phone-UA 404; one red test per id |
-| P12-P16 | split from apple-ux `report.md` (W0) | one row + test each |
-| F05+F07, B250 | **held:** tier launch; lead capture is a feature | - |
+| P12-P16 | split in W0 | one row + test each |
+| F05+F07, B250 | **held** (tier launch; a feature) | - |
 Final proof (WP2.7): all suites, full site-proof, T35-T48, `apple-ux --quick` (1440×900, 390×844) on the branded build with the 11-12 Top-10 as PRIOR; an open PRIOR row is red.
 
 ## 4. Speed budget (motion stays on)
-Today (gzip): home 188.7 KB (JS 85.1), product 110.2, pricing 98.5, landing 35.2. Every page but landing animates (`js/site.js:53-99`); GSAP stays, deferred.
+Today (gzip): home 188.7 KB (JS 85.1), product 110.2, pricing 98.5, landing 35.2. All but landing animate (`js/site.js:53-99`): GSAP stays.
 - **NEW T43** (static Jest, zlib over `readServedSitePage` + linked files, no slot): home ≤ 175 KB, inner ≤ 115, landing ≤ 45; html ≤ 20 gz; script home ≤ 90, inner ≤ 57; logo, symbol and end-mark as SVG (drops the 26 KB PNG at `home.html:597`); raster icons ≤ 15 KB; sizes on every `img`; one Geist woff2 ≤ 25 KB, preload, swap; `prices.js` only where `[data-plan]` exists.
 - **NEW T44** (site-proof e2e, median of 3, heavy slot; W0 baseline): 1440: LCP ≤ 1.2 s, CLS ≤ 0.02, TBT ≤ 100 ms. 390 (4× CPU, 10 Mb/s, 40 ms): LCP ≤ 2.5 s, CLS ≤ 0.05, TBT ≤ 300 ms. Menu tap: Event Timing `duration` of the first `.menu-btn` click ≤ 200 ms.
 
@@ -104,12 +117,12 @@ On merge, **master wins** on the harness (85, helpers, ledger, config). `site-ro
 
 | W | Package: files owned | Starts when | Red first |
 |---|---|---|---|
-| 0 | **G0 guards** (`.husky/pre-push`, `scripts/leak-check.mjs`; to master) | now | a `rebrand/x` push is refused |
+| 0 | **G0 guards** (`.husky/pre-push`, `scripts/leak-check.mjs`; in WP1.2's batch) | now | a `rebrand/x` push and a missing pattern file are both refused |
 | 0 | **S1 seam**: `packages/types/brand/{brand.json,index.ts}`, `static-site-page.ts`, route, `(marketing)/lib/site.ts`, `metadata.ts`, og route, `site-frame/*`, `umami-tag.ts`, sync script, `next.config.mjs`, 8 html (not home/landing), tests static-site, seo, site-company-contact, site-truth, site-frame, `static-site-page.test`; NEW T35, T45 | now | T35 (250/77/44 literals); T45 shows "RouteFlow" |
 | 0 | **2.0a** `img/brand/*`, `brand/palette.json` · **1.3a** ledger · **B1 spec** · P12-16 split · T44 baseline | now | T23 |
 | 1 | 2.0b `rf-graphics.css`, injection, `components/brand/BrandTokens.tsx` | WP1.1 in branch; S1 | T14a |
 | 1b | 2.1a `home-color`, `color-deep`, `product`, `company`, `does`, `start` css, `site-frame.css` · 2.4 `landing.html` · 1.3b-pages (8 html text, frame strings) | 2.0b; ledger OK | T14b, T18a, T14c, T11 |
-| 2 | 2.1b `site.css`, `mobile.css`, `home.css`, `home-up.css` (+P01/F04 CSS, D-4, B1294) · 2.2 `rf-wheel-up.*` · S2 `home.html`, e2e 36, JS comments, `prices.js` tags · 2.6 front door + `verify-email` · B1 `common/brand.ts`, `email-layout.ts`, `routeflow-mail.ts`, `email.service.ts`, `app/layout.tsx` | WP1.2 + batch 1 in branch | T14b, T42, T19, T35, T26 |
+| 2 | 2.1b `site.css`, `mobile.css`, `home.css`, `home-up.css` (+P01/F04 CSS, D-4, B1294) · 2.2 `rf-wheel-up.*` · S2 `home.html`, e2e 36, comments in `home-up.js`/`site.js`/`prices.js` (never `rf-wheel-up.*`), `prices.js` tags · 2.6 front door + `verify-email`, `admin-login`, `choose-role` · B1 `common/brand.ts`, `email-layout.ts`, `routeflow-mail.ts`, `email.service.ts` and sole owner of `app/layout.tsx` (2.6's favicon move comes as a brief) | WP1.2 + batch 1 in branch | T14b, T42, T19, T35, T26 |
 | 3 | 2.3-home · 2.3-pricing · 2.3-inner (7 html) · header lane (`SiteFrameHeader.tsx`, `site-frame.css`, `site.css`, `mobile.css`, `js/site.js`) | W2 | T20, T21, T46-T48; **Docker 1** |
 | 4 | 2.5 flip (values, logo markup, icons, JSON-LD, footer), then 2A.2 (redirects, sitemap, `origin`, apex checks) | W3 | T22-T26, T30, T31, T33, T36-T38 |
 | 5 | 2.7 proof, T39, T43, T44, retest, gates, rollback rehearsal | all | **Docker 2** |
