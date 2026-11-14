@@ -42,9 +42,15 @@ Run in order: `npm run local:up` -> `local:seed` -> `local:validate` (the gate) 
 
 Modules: tenancy/identity, domain (customers, orders, routes, products, inventory...), finance (invoices, credit-notes, vendor-bills, estimates, billing...), platform (uploads, notifications, email, audit, import...). Full list: details doc, Architecture section.
 
+## Graph first (design: rf-specs `specs/graphify/DESIGN.md`)
+
+- One code-only graph per machine in the locked graph-only host (PC `C:/ClaudeCode/rf-mobile-release`, Macs `~/code/rf-mobile-release`), refreshed by `scripts/graph-refresh.mjs` on a schedule. Never `graphify update` in a worktree, never `graphify claude install`, never natural-language `graphify query`.
+- "Where is it / who calls it": MCP `mcp__graphify__get_node` / `get_neighbors` / `shortest_path` (ToolSearch `select:` if deferred), else `node scripts/graph.mjs radius|explain|path <Sym...>`. Before editing an exported symbol run `graph.mjs radius <Sym...>` and read its grep-only files first.
+- An empty or short graph answer is UNKNOWN, not "none". Grep for env vars, string constants and URL paths, Prisma models, generic names (`create`), symbols newer than the graph sha, and `@routeflow/*` imports while `graphify-out/BUILT_AT` says `cross-package: blind`; write `graph miss: <why>`. MCP down: use `graph.mjs`. Graph missing or `GRAPHIFY_OFF=1`: grep + code map as before; never wait on a rebuild.
+
 ## Routines
 
-- **Code map** `.claude/code-map/`: read `INDEX.md` -> area file -> only the pointed file. Map updates land in the docs-only follow-up PR; code PR HEAD carries `Bookkeeping-Follow-Up: pending` (Gate 2, `.claude/hooks/stop.mjs`). Trust code over map.
+- **Code map** `.claude/code-map/`: graph first for where and who calls, then read `INDEX.md` -> area file -> only the pointed file. Map updates land in the docs-only follow-up PR; code PR HEAD carries `Bookkeeping-Follow-Up: pending` (Gate 2, `.claude/hooks/stop.mjs`). Trust code over map.
 - **Lessons** `.claude/lessons/LESSONS.md`: read before major tasks/fixes, cite ids (`L-016`). After every bug fix write an entry (Symptom / Root cause / Lesson / Guard) + `_meta.json` bump in the follow-up PR; Gate 3 blocks `fix/*` unless the pending trailer is present. No lesson: bump `updatedAt` only. Caps 52 entries / 81,920 bytes (`_meta.json`); no client identifiers.
 
 ## Money discipline
