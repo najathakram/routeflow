@@ -17,25 +17,23 @@ import { SiteFrame } from "@/components/site-frame/SiteFrame";
 import { SHARE_IMAGE, SHARE_IMAGE_LINES, marketingMetadata } from "./lib/metadata";
 import { demoEmail, routes, site } from "./lib/site";
 import { UMAMI_OWN_DOMAIN, umamiScriptProps } from "@/lib/umami-tag";
-import {
-  CURRENT_BRAND,
-  PLANNED_NAME,
-  isFileExempt,
-} from "@/lib/test-support/site-brand-exemptions";
+import { CURRENT_BRAND, isFileExempt } from "@/lib/test-support/site-brand-exemptions";
 import { GET as ogGet } from "./opengraph-image/route";
 
 jest.mock("@routeflow/types/brand/load", () => {
   const actual = jest.requireActual("@routeflow/types/brand/load");
   const fixture = actual.validateBrand({
-    name: "Fixture Brand Co",
+    name: "XROV.IO",
     formerly: "Fixture Former Name",
     legalEntity: "Fixture Legal Holdings Ltd",
     origin: "https://www.fixture-host.example",
     oldOrigin: "https://old.fixture-host.example",
     email: "writeto@fixture-host.example",
     securityEmail: "safety@fixture-host.example",
-    titleSeparator: " :: ",
-    shareLine: "Fixture share line for the card.",
+    // adversarial on purpose: & ' and " in a text context (the title) must come out escaped
+    titleSeparator: " &'\" ",
+    // adversarial on purpose: & ' and " in an attribute context (og:image:alt)
+    shareLine: 'Orders & delivery, "done" right, it\'s simple.',
     logo: {
       onLight: "/fx/logo-light.svg",
       onDark: "/fx/logo-dark.svg",
@@ -49,8 +47,13 @@ jest.mock("@routeflow/types/brand/load", () => {
       "512": "/fx/i512.png",
     },
     emailLogo: "/fx/email.png",
+    emailLogoWidth: 120,
+    emailLogoHeight: 34,
   });
-  return { ...actual, loadBrand: () => fixture };
+  const palette = actual.validatePalette({
+    color: { ink: "#010203", white: "#fefdfc", bone: "#0a0b0c", "copper-light": "#1a2b3c" },
+  });
+  return { ...actual, loadBrand: () => fixture, loadPalette: () => palette };
 });
 
 let ogElement: unknown;
@@ -72,6 +75,17 @@ const TOKENISED = STATIC_SITE_PAGE_NAMES.filter(
 ) as StaticSitePage[];
 
 const REAL_BRAND = CURRENT_BRAND;
+/** The planned name the fixture build must never show. The fixture itself is named XROV.IO (dotted,
+ *  so the "name ends a sentence" double full stop is exercised), so only "rovio" is forbidden. */
+const PLANNED_NAME = /rovio/i;
+/** What the renderer is expected to do to a value placed in HTML (written out here on purpose). */
+const esc = (v: string) =>
+  v
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 
 /** Everything a visitor or crawler could read from the fixture build, for the global checks. */
 const collected: string[] = [];
@@ -91,16 +105,31 @@ describe("the pages", () => {
     expect(html).toContain(FIXTURE.name);
     // title: "Page :: Name"
     const title = html.match(/<title>([^<]*)<\/title>/)?.[1] ?? "";
-    expect(title.endsWith(`${FIXTURE.titleSeparator}${FIXTURE.name}`)).toBe(true);
+    expect(title.endsWith(`${esc(FIXTURE.titleSeparator)}${esc(FIXTURE.name)}`)).toBe(true);
+    // the raw adversarial separator never reaches the markup
+    expect(title).not.toContain(FIXTURE.titleSeparator);
     expect(html).toContain(`<link rel="canonical" href="${FIXTURE.origin}/`);
     expect(html).toContain(`<meta property="og:site_name" content="${FIXTURE.name}">`);
     expect(html).toContain(`<link rel="icon" href="${FIXTURE.icon.favicon}"`);
     expect(html).toContain(`src="${FIXTURE.logo.onLight}"`);
     expect(html).toContain(`mailto:${FIXTURE.email}`);
     expect(html).toContain(`© 2026 ${FIXTURE.name}`);
-    expect(html).toContain(`content="${FIXTURE.name}. ${FIXTURE.shareLine}"`);
+    expect(html).toContain(`content="${esc(FIXTURE.name)}. ${esc(FIXTURE.shareLine)}"`);
+    expect(html).not.toContain(FIXTURE.shareLine);
     // formerly is a different string from name and appears nowhere while it is unused
     expect(html).not.toContain(FIXTURE.formerly);
+  });
+});
+
+describe("the palette", () => {
+  it("every page is served with the fixture palette and none of the real one", () => {
+    for (const page of TOKENISED) {
+      const html = readServedSitePage(page, { websiteId: undefined });
+      expect(html).toContain(
+        '<style id="brand-tokens">:root{--brand-ink:#010203;--brand-white:#fefdfc;--brand-bone:#0a0b0c;--brand-copper-light:#1a2b3c;}</style>',
+      );
+      expect(html).not.toMatch(/--brand-copper:|#0e1726/i);
+    }
   });
 });
 
@@ -161,7 +190,15 @@ describe("metadata, site and the share image", () => {
     const text = renderToStaticMarkup(ogElement as never);
     collected.push(text);
     expect(text).toContain(FIXTURE.name);
-    expect(text).toContain(FIXTURE.shareLine);
+    // React escapes text children itself: compare with the escaped form of the adversarial line
+    const escapedLine = renderToStaticMarkup(createElement("span", null, FIXTURE.shareLine)).slice(
+      "<span>".length,
+      -"</span>".length,
+    );
+    expect(text).toContain(escapedLine);
+    // colours from the fixture palette, none from the real one
+    for (const hex of ["#010203", "#fefdfc", "#0a0b0c", "#1a2b3c"]) expect(text).toContain(hex);
+    expect(text).not.toMatch(/#0e1726|#b5683a|#d69062/i);
     expect(text).not.toMatch(PLANNED_NAME);
     expect(text).not.toMatch(REAL_BRAND);
   });
@@ -173,7 +210,7 @@ describe("the reader", () => {
     expect(BRAND.formerly).toBe(FIXTURE.formerly);
     expect(footerLine()).toContain(BRAND.name);
     expect(footerLine()).not.toContain(BRAND.formerly);
-    expect(pageTitle("Pricing")).toBe(`Pricing :: ${FIXTURE.name}`);
+    expect(pageTitle("Pricing")).toBe(`Pricing${FIXTURE.titleSeparator}${FIXTURE.name}`);
   });
 
   it("no planned-name and no real-brand string anywhere in what was rendered", () => {

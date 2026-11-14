@@ -17,8 +17,8 @@ import {
 } from "./static-site-page";
 import { UMAMI_SCRIPT_SRC, umamiAllowedPath } from "./umami-tag";
 import { readServedSitePage } from "./read-site-page";
-import { renderSitePage } from "./static-site-page";
-import { BRAND, loadBrand } from "@routeflow/types/brand";
+import { renderSitePage, brandTokensTag } from "./static-site-page";
+import { BRAND, loadBrand, loadPalette, validatePalette } from "@routeflow/types/brand";
 
 // The brand's own host, from the seam: a name or host swap needs no edit here.
 const HOST = new URL(BRAND.origin).hostname;
@@ -265,5 +265,59 @@ describe("renderSitePage", () => {
     for (const page of STATIC_SITE_PAGE_NAMES) {
       expect(readServedSitePage(page, { websiteId: undefined })).not.toContain("{{brand:");
     }
+  });
+});
+
+describe("the brand-tokens style", () => {
+  const palette = validatePalette({ color: { ink: "#010203", "copper-light": "#a0b0c0" } });
+  const FIXTURE_STYLE =
+    '<style id="brand-tokens">:root{--brand-ink:#010203;--brand-copper-light:#a0b0c0;}</style>';
+
+  it("brandTokensTag is one style element with the palette as --brand-<key> custom properties", () => {
+    expect(brandTokensTag(palette)).toBe(FIXTURE_STYLE);
+  });
+
+  it("renderSitePage puts it once at the end of <head>, and nowhere when there is no <head>", () => {
+    const html = "<html><head><title>x</title></head><body>{{brand:name}}</body></html>";
+    const out = renderSitePage(html, loadBrand(), palette);
+    expect(out).toBe(
+      `<html><head><title>x</title>${FIXTURE_STYLE}</head><body>${BRAND.name}</body></html>`,
+    );
+    expect(renderSitePage("<p>no head</p>", loadBrand(), palette)).toBe("<p>no head</p>");
+  });
+
+  it("does not add a second one to a page that already has it", () => {
+    const once = renderSitePage("<head></head>", loadBrand(), palette);
+    expect(renderSitePage(once, loadBrand(), palette)).toBe(once);
+  });
+
+  it("still throws on a leftover token in a page with a head", () => {
+    expect(() => renderSitePage("<head></head>{{brand:nope}}", loadBrand(), palette)).toThrow(
+      'unknown brand key "nope"',
+    );
+  });
+
+  it("every served page carries the real palette once, and the page is otherwise unchanged", () => {
+    for (const page of STATIC_SITE_PAGE_NAMES) {
+      const html = file(page);
+      expect(html.match(/<style id="brand-tokens">/g)).toHaveLength(1);
+      expect(html).toContain(brandTokensTag(loadPalette()));
+    }
+  });
+});
+
+describe("renderSitePage without a palette", () => {
+  it("null leaves the page with the brand filled and no style added", () => {
+    const html = "<head></head>{{brand:name}}";
+    expect(renderSitePage(html, loadBrand(), null)).toBe(`<head></head>${BRAND.name}`);
+  });
+});
+
+describe("renderSitePage escaping", () => {
+  it("escapes & < > \" and ' in a value", () => {
+    const evil = { ...loadBrand(), name: `a&b<c>"d"'e'` } as ReturnType<typeof loadBrand>;
+    expect(renderSitePage("{{brand:name}}", evil, null)).toBe(
+      "a&amp;b&lt;c&gt;&quot;d&quot;&#39;e&#39;",
+    );
   });
 });

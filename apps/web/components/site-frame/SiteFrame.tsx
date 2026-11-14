@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { BRAND, footerLine } from "@routeflow/types/brand";
+import { BrandTokens } from "@/components/brand/BrandTokens";
 import { SiteFrameHeader } from "./SiteFrameHeader";
 import { FOOTER_COLUMNS, SITE_EMAIL } from "./site-frame-nav";
 
@@ -26,6 +27,8 @@ export function SiteFrame({
     <div className="rf-frame">
       {/* Links, not imports: the site stylesheets style body and bare elements, so they must leave
           the page with the frame. They are plain files in public/site, shared with the ready-made pages. */}
+      {/* The palette the stylesheet below points at (--brand-*): the one injected style. */}
+      <BrandTokens />
       {/* eslint-disable-next-line @next/next/no-css-tags */}
       <link rel="stylesheet" href="/site/graphics/rf-graphics.css" />
       {/* eslint-disable-next-line @next/next/no-css-tags */}

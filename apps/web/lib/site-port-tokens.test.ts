@@ -30,7 +30,8 @@ const PAGES = [
 describe("sync-site-port tokenise", () => {
   it.each(PAGES)("%s: the filled page tokenises back to the committed file", (page) => {
     const committed = fs.readFileSync(path.join(SITE, `${page}.html`), "utf8");
-    const typed = renderSitePage(committed, loadBrand());
+    // null: the page filled with the brand only, no injected palette style (what the design source types)
+    const typed = renderSitePage(committed, loadBrand(), null);
     expect(typed).not.toBe(committed);
     expect(tokenise(typed, loadBrand())).toBe(committed);
   });

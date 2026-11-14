@@ -3,7 +3,18 @@
 // runtime imports never pull it in.
 import { loadBrand, type Brand } from "./load";
 
-export { BRAND_KEYS, brandValue, loadBrand, validateBrand, type Brand } from "./load";
+export {
+  BRAND_KEYS,
+  BRAND_NUMBER_KEYS,
+  brandValue,
+  loadBrand,
+  loadPalette,
+  paletteCss,
+  validateBrand,
+  validatePalette,
+  type Brand,
+  type Palette,
+} from "./load";
 
 /** The brand, read once when a consumer module loads (through the mockable loadBrand()). */
 export const BRAND: Brand = loadBrand();

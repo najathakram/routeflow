@@ -20,5 +20,7 @@
     "192": "/brand/routeflow-mark-192.png",
     "512": "/brand/routeflow-mark-512.png"
   },
-  "emailLogo": "/brand/routeflow-mark-192.png"
+  "emailLogo": "/brand/routeflow-mark-192.png",
+  "emailLogoWidth": 24,
+  "emailLogoHeight": 24
 }

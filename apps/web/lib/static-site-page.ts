@@ -2,41 +2,68 @@
 // them by itself. app/site-page reads each file and adds the same two tags UmamiScript renders on
 // the React pages: Umami's own script, then public/site/analytics.js, which sends the one pageview
 // (the tracker is told not to follow the page, as on the React pages).
-import { brandValue, type Brand } from "@routeflow/types/brand";
+import {
+  brandValue,
+  loadPalette,
+  paletteCss,
+  type Brand,
+  type Palette,
+} from "@routeflow/types/brand";
 import { UMAMI_OWN_DOMAIN, STATIC_SITE_PATHS, umamiScriptProps } from "@/lib/umami-tag";
 
-/** File name (public/site/<name>.html) -> the address the page is served at. */
-export const STATIC_SITE_PAGES = {
-  home: "/",
-  pricing: "/pricing",
-  product: "/product",
-  landing: "/landing",
-  "getting-started": "/getting-started",
-  "does-and-doesnt": "/does-and-doesnt",
-  "data-in-and-out": "/data-in-and-out",
-  security: "/security",
-  company: "/company",
-  contact: "/contact",
-} as const satisfies Record<string, (typeof STATIC_SITE_PATHS)[number]>;
+import {
+  STATIC_SITE_PAGES,
+  STATIC_SITE_PAGE_NAMES,
+  type StaticSitePage,
+} from "@/lib/static-site-pages";
 
-export type StaticSitePage = keyof typeof STATIC_SITE_PAGES;
+// The list lives in a leaf module (the middleware reads it); re-exported so importers keep working.
+export { STATIC_SITE_PAGES, STATIC_SITE_PAGE_NAMES, type StaticSitePage };
 
-export const STATIC_SITE_PAGE_NAMES = Object.keys(STATIC_SITE_PAGES) as StaticSitePage[];
+// Every page's address must be a path the visit counter knows.
+STATIC_SITE_PAGES satisfies Record<string, (typeof STATIC_SITE_PATHS)[number]>;
 
 export const ANALYTICS_SRC = "/site/analytics.js";
 
 const BRAND_TOKEN = /\{\{brand:([^{}]*)\}\}/g;
 
 const escapeHtml = (value: string) =>
-  value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+/** The one place the palette's colours reach a page: `<style id="brand-tokens">:root{--brand-*}`.
+ *  The values are validated hex and the keys hyphenated words, so nothing here can carry markup.
+ *  components/brand/BrandTokens.tsx renders the same element for the React pages. */
+export const BRAND_TOKENS_ID = "brand-tokens";
+export const brandTokensTag = (palette: Palette): string =>
+  `<style id="${BRAND_TOKENS_ID}">${paletteCss(palette)}</style>`;
+
+/** The tag at the end of <head>; a page with no <head> (a snippet) or one that has it already is
+ *  returned as it is. */
+function withBrandTokens(html: string, palette: Palette): string {
+  if (html.includes(`id="${BRAND_TOKENS_ID}"`)) return html;
+  const at = html.indexOf("</head>");
+  if (at < 0) return html;
+  return html.slice(0, at) + brandTokensTag(palette) + html.slice(at);
+}
 
 /**
  * Fills the `{{brand:key}}` tokens (dotted keys for the nested ones, e.g. `{{brand:logo.onLight}}`)
  * from the brand. Throws on a key the brand does not have and on any `{{brand:` left behind (a
  * malformed token or one with the wrong case), so a page can never be served with a hole in it.
+ * Then adds the palette's `<style id="brand-tokens">` to <head> (palette: loadPalette(), mockable;
+ * pass `null` for the filled page alone, as the port script's round-trip test needs).
  * Pure: no file access. Values are HTML-escaped; JSON-LD needs a json mode (the home lane, S2).
  */
-export function renderSitePage(html: string, brand: Brand): string {
+export function renderSitePage(
+  html: string,
+  brand: Brand,
+  palette: Palette | null = loadPalette(),
+): string {
   const out = html.replace(BRAND_TOKEN, (_token, key: string) => {
     const value = brandValue(brand, key.trim());
     if (typeof value !== "string") throw new Error(`renderSitePage: unknown brand key "${key}"`);
@@ -46,7 +73,7 @@ export function renderSitePage(html: string, brand: Brand): string {
   if (left >= 0) {
     throw new Error(`renderSitePage: leftover brand token near "${out.slice(left, left + 40)}"`);
   }
-  return out;
+  return palette ? withBrandTokens(out, palette) : out;
 }
 
 const attr = (value: string) =>

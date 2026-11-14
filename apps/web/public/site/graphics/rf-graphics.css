@@ -1,12 +1,32 @@
-/* RouteFlow colour and scene box. This file is the one source of colour, type sizes, corners and shadows for the site and the art.
-   White first. One strong signature navy. Sun, coral and mint are the lively accents, each with a job:
-   sun = money and warmth, coral = people and alerts, mint = done and paid.
-   Text colours come from the product's design system (packages/ui/src/tokens/ledger.ts). tools/build-landing.cjs inlines the marked block. */
+/* Colour and scene box. This file is the one source of type sizes, corners and role names for the site and the art.
+   Palette colours are never typed here: the page head carries one injected style (brand-tokens) that defines every
+   --brand-* colour from the palette file (packages/types/brand/palette.json), and the tokens below point at it.
+   A rule names a job (--rf-text, --rf-btn, --rf-panel, --rf-link, --rf-accent), never a palette colour.
+   tools/build-landing.cjs inlines the marked block. */
 /*tokens:start*/
 :root{
-  --rf-ink:#0f1b2d;--rf-ink-2:#33425b;--rf-ink-3:#5c6b82;--rf-white:#ffffff;--rf-tint:#f5f5f7;--rf-line:#e5e5ea;
+  /* Palette, from the injected style. */
+  --rf-ink:var(--brand-ink);--rf-ink-press:#04070D;--rf-steel:var(--brand-steel);--rf-white:var(--brand-white);--rf-bone:var(--brand-bone);--rf-line:var(--brand-line);
+  --rf-copper:var(--brand-copper);--rf-copper-light:var(--brand-copper-light);--rf-copper-dark:var(--brand-copper-dark);
+  /* Jobs. A rule names a job, never a palette colour. */
+  --rf-text:var(--rf-ink);--rf-text-2:var(--rf-steel);
+  --rf-btn:var(--rf-ink);--rf-btn-press:var(--rf-ink-press);--rf-btn-fg:var(--rf-white);
+  --rf-panel:var(--rf-ink);--rf-on-panel:var(--rf-white);--rf-on-panel-2:var(--rf-bone);
+  --rf-soft:var(--rf-bone);
+  --rf-link:var(--rf-copper-dark);--rf-link-on-panel:var(--rf-copper-light);--rf-focus:var(--rf-copper-dark);
+  --rf-accent:var(--rf-copper);--rf-accent-on-panel:var(--rf-copper-light);
+  /* Status: Paid, Pending, Overdue and nothing else. */
+  --rf-paid-bg:var(--brand-paid-bg);--rf-paid:var(--brand-paid-text);--rf-pending-bg:var(--brand-pending-bg);--rf-pending:var(--brand-pending-text);--rf-overdue-bg:var(--brand-overdue-bg);--rf-overdue:var(--brand-overdue-text);
+  /* Wheel roles. The canvas reads these once at mount with getComputedStyle. */
+  --rf-wh-work:#E9E4DB;--rf-wh-work-2:#DCD6CB;--rf-wh-work-wall:#C2BBAE;
+  --rf-wh-sell:#1B2638;--rf-wh-sell-2:#27364C;--rf-wh-sell-wall:#04070D;
+  --rf-wh-focus:var(--brand-copper);--rf-wh-focus-wall:var(--brand-copper-dark);
+  /* The only edge treatment: a one-pixel line. */
+  --rf-ring:0 0 0 1px var(--rf-line);
+  /* Old names, kept with their old values until the repaint lanes (2.1a, 2.1b) re-point every use and delete them. */
+  --rf-ink-2:#33425b;--rf-ink-3:#5c6b82;--rf-tint:#f5f5f7;
   --rf-brand-900:#0a1a38;--rf-brand-700:#10264d;--rf-brand-500:#2b4c88;--rf-brand-300:#a9bad8;--rf-brand-100:#e9eef7;
-  --rf-link:var(--rf-brand-500);--rf-link-on-navy:var(--rf-brand-300);--rf-on-navy:var(--rf-brand-100);
+  --rf-link-on-navy:#a9bad8;--rf-on-navy:#e9eef7;
   --rf-sun:#ffc933;--rf-sun-soft:#fff3cf;--rf-coral:#ff5e4d;--rf-coral-soft:#ffe6e2;--rf-mint:#14c98f;--rf-mint-soft:#d8f7ec;--rf-ok:#15803d;
   --rf-font:"Geist",system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
   /* One type scale. Tracking tightens and leading closes as type grows. */
@@ -21,13 +41,13 @@
   --rf-sh-win:0 0 0 1px rgba(15,27,45,.06),0 2px 6px rgba(15,27,45,.05),0 28px 60px -24px rgba(15,27,45,.28);
 }
 @media (max-width:899.98px){:root{--rf-h1:clamp(40px,12vw,60px);--rf-h1-tr:-.034em;--rf-h2:clamp(32px,9vw,46px);--rf-h2-lh:1.08;--rf-h2-tr:-.03em;--rf-h3:clamp(28px,8vw,40px);--rf-lede:19px;--rf-lede-lh:1.4;--rf-r-stage:24px;--rf-r-card:20px}}
-@media (prefers-contrast:more){:root{--rf-ink-2:var(--rf-ink);--rf-ink-3:var(--rf-ink);--rf-line:#79859b;--rf-on-navy:#fff;--rf-link-on-navy:#fff}}
+@media (prefers-contrast:more){:root{--rf-ink-2:var(--rf-ink);--rf-ink-3:var(--rf-ink);--rf-text-2:var(--rf-text);--rf-line:var(--brand-steel);--rf-on-navy:var(--rf-white);--rf-link-on-navy:var(--rf-white)}}
 /*tokens:end*/
 /* Art only: cartons, people, and the roles the scenes use. A slot on a colour band changes the roles and the art follows. */
 :root{
   --rf-biscuit:#f6bd7c;--rf-biscuit-deep:#e9a45a;--rf-box-top:#fcd9aa;--rf-box-front:#f3ba76;--rf-box-side:#dd9b57;
   --rf-skin-a:#f7cdac;--rf-skin-b:#dc9f72;--rf-skin-c:#99643f;--rf-hair:#2a2c3f;
-  --rf-text:var(--rf-ink);--rf-road:var(--rf-brand-300);
+  --rf-road:var(--rf-brand-300);
   --rf-disc-a:var(--rf-brand-100);--rf-disc-b:var(--rf-sun-soft);--rf-disc-c:var(--rf-mint-soft);
   --rf-pill-bg:var(--rf-brand-700);--rf-pill-fg:var(--rf-white);
   --rf-cargo:var(--rf-brand-500);--rf-cargo-mark:var(--rf-white);
@@ -43,8 +63,8 @@
   --ios-5:#e5e5ea;--ios-6:#f2f2f7;
 }
 @media (prefers-contrast:more){:root{--app-ink-2:var(--app-ink);--app-ink-3:var(--app-ink);--app-line:#79859b;--app-line-2:#79859b}}
-.rf-on-blue{--rf-text:#fff;--rf-road:rgba(255,255,255,.42);--rf-disc-a:rgba(255,255,255,.13);--rf-disc-b:rgba(255,255,255,.13);--rf-disc-c:rgba(255,255,255,.13);--rf-pill-bg:#fff;--rf-pill-fg:var(--rf-ink);--rf-cargo:#fff;--rf-cargo-mark:var(--rf-brand-700)}
-.rf-on-sun{--rf-road:rgba(15,27,45,.28);--rf-disc-a:#fff;--rf-disc-b:#fff;--rf-disc-c:#fff}
+.rf-on-blue{--rf-text:var(--rf-white);--rf-road:rgba(255,255,255,.42);--rf-disc-a:rgba(255,255,255,.13);--rf-disc-b:rgba(255,255,255,.13);--rf-disc-c:rgba(255,255,255,.13);--rf-pill-bg:var(--rf-white);--rf-pill-fg:var(--rf-ink);--rf-cargo:var(--rf-white);--rf-cargo-mark:var(--rf-brand-700)}
+.rf-on-sun{--rf-road:rgba(15,27,45,.28);--rf-disc-a:var(--rf-white);--rf-disc-b:var(--rf-white);--rf-disc-c:var(--rf-white)}
 .rf-scene{display:block;position:relative;width:100%;font-family:var(--rf-font)}
 .rf-scene>svg,.rf-scene>img{display:block;width:100%;height:auto}
 .rf-scene svg{overflow:visible;-webkit-tap-highlight-color:transparent}

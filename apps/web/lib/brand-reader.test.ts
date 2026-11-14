@@ -9,10 +9,14 @@ import {
   BRAND,
   BRAND_KEYS,
   MAX_TITLE_LENGTH,
+  BRAND_NUMBER_KEYS,
   brandValue,
   footerLine,
+  loadPalette,
   pageTitle,
+  paletteCss,
   validateBrand,
+  validatePalette,
 } from "@routeflow/types/brand";
 
 const JSON_PATH = path.resolve(__dirname, "../../../packages/types/brand/brand.json");
@@ -22,7 +26,7 @@ describe("brand.json", () => {
   it("carries every key the reader needs, and nothing the reader does not know", () => {
     const file = raw();
     for (const key of BRAND_KEYS) expect(typeof brandValue(file, key)).toBe("string");
-    const top = new Set(BRAND_KEYS.map((k) => k.split(".")[0]));
+    const top = new Set([...BRAND_KEYS, ...BRAND_NUMBER_KEYS].map((k) => k.split(".")[0]));
     expect(Object.keys(file).sort()).toEqual([...top].sort());
   });
 
@@ -78,5 +82,61 @@ describe("pageTitle and footerLine", () => {
   it("the footer line is the year and the name", () => {
     expect(footerLine()).toBe(`© 2026 ${BRAND.name}`);
     expect(footerLine(2030)).toBe(`© 2030 ${BRAND.name}`);
+  });
+});
+
+describe("emailLogoWidth and emailLogoHeight", () => {
+  it("are positive integers in brand.json (24 x 24 until the flip) and on BRAND", () => {
+    const file = raw();
+    expect(file.emailLogoWidth).toBe(24);
+    expect(file.emailLogoHeight).toBe(24);
+    expect(BRAND.emailLogoWidth).toBe(24);
+    expect(BRAND.emailLogoHeight).toBe(24);
+  });
+
+  it.each([...BRAND_NUMBER_KEYS])("%s: a missing key throws naming it", (key) => {
+    const broken = raw();
+    delete broken[key];
+    expect(() => validateBrand(broken)).toThrow(`"${key}"`);
+  });
+
+  it.each([...BRAND_NUMBER_KEYS])(
+    "%s: zero, negative, fractional or text throws naming it",
+    (key) => {
+      for (const bad of [0, -3, 2.5, "24", null, Number.NaN]) {
+        expect(() => validateBrand({ ...raw(), [key]: bad })).toThrow(`"${key}"`);
+      }
+    },
+  );
+});
+
+describe("the palette reader", () => {
+  const PALETTE = JSON.parse(
+    fs.readFileSync(path.resolve(__dirname, "../../../packages/types/brand/palette.json"), "utf8"),
+  ) as { color: Record<string, string> };
+
+  it("loadPalette is the validated, frozen palette.json colours", () => {
+    const palette = loadPalette();
+    expect(palette.color).toEqual(PALETTE.color);
+    expect(Object.isFrozen(palette)).toBe(true);
+    expect(Object.isFrozen(palette.color)).toBe(true);
+  });
+
+  it("paletteCss is one :root block with --brand-<key>:<value> per colour, in file order", () => {
+    const css = paletteCss(loadPalette());
+    expect(css.match(/:root\{/g)).toHaveLength(1);
+    expect(css).toBe(
+      `:root{${Object.entries(PALETTE.color)
+        .map(([k, v]) => `--brand-${k}:${v};`)
+        .join("")}}`,
+    );
+  });
+
+  it("refuses a palette with no colours, a bad key or a value that is not a hex colour", () => {
+    expect(() => validatePalette(null)).toThrow(/palette\.json/);
+    expect(() => validatePalette({ color: {} })).toThrow(/palette\.json/);
+    expect(() => validatePalette({ color: { "Bad Key": "#000000" } })).toThrow('"Bad Key"');
+    expect(() => validatePalette({ color: { ink: "red" } })).toThrow('"ink"');
+    expect(() => validatePalette({ color: { ink: "#000;}</style><script>" } })).toThrow('"ink"');
   });
 });

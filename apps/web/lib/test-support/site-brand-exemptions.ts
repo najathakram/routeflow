@@ -12,15 +12,13 @@ const CURRENT_SOURCE = String.raw`route\s?flow|routeflow\.info|hello@`;
 const PLANNED_SOURCE = "rovio|xrov";
 export const BRAND_LITERAL_SOURCE = `${CURRENT_SOURCE}|${PLANNED_SOURCE}`;
 export const brandLiteral = (flags = "gi") => new RegExp(BRAND_LITERAL_SOURCE, flags);
-/** The planned name alone: nothing of it may appear in what a fixture build renders. */
-export const PLANNED_NAME = new RegExp(PLANNED_SOURCE, "i");
 /** The current brand alone (a fixture build must show none of it). */
 export const CURRENT_BRAND = new RegExp(`${CURRENT_SOURCE}|security@`, "i");
 
 export type Scope = "file" | "comments" | "hex";
 
 export interface Exemption {
-  /** A file, or a directory when it ends in "/" (relative to apps/web). */
+  /** One file (relative to apps/web). Never a directory: a row exempts exactly what needs it. */
   path: string;
   /** file: every check is off. comments: the name may appear in comments only. hex: colours only. */
   scope: Scope;
@@ -31,7 +29,6 @@ export interface Exemption {
 }
 
 export const EXEMPT: Exemption[] = [
-  { path: "public/site/graphics/rf-graphics.css", scope: "comments", liftedBy: "W1", lane: "2.0b" },
   { path: "public/site/landing.html", scope: "file", liftedBy: "W1b", lane: "2.4" },
   { path: "public/site/home.html", scope: "file", liftedBy: "W2", lane: "S2" },
   { path: "public/site/js/home-up.js", scope: "comments", liftedBy: "W2", lane: "S2" },
@@ -41,30 +38,35 @@ export const EXEMPT: Exemption[] = [
   { path: "public/site/graphics/rf-wheel-up.css", scope: "file", liftedBy: "W2", lane: "2.2" },
   { path: "public/site/css/site.css", scope: "comments", liftedBy: "W2", lane: "2.1b" },
   { path: "public/site/css/home.css", scope: "comments", liftedBy: "W2", lane: "2.1b" },
-  { path: "app/(marketing)/privacy/", scope: "file", liftedBy: "W2", lane: "2.6" },
-  { path: "app/(marketing)/terms/", scope: "file", liftedBy: "W2", lane: "2.6" },
+  { path: "app/(marketing)/privacy/page.tsx", scope: "file", liftedBy: "W2", lane: "2.6" },
+  { path: "app/(marketing)/terms/page.tsx", scope: "file", liftedBy: "W2", lane: "2.6" },
   { path: "app/(marketing)/marketing.css", scope: "file", liftedBy: "W2", lane: "2.6" },
   { path: "app/(marketing)/glass.css", scope: "file", liftedBy: "W2", lane: "2.6" },
   { path: "app/(marketing)/glass-pages.css", scope: "file", liftedBy: "W2", lane: "2.6" },
   { path: "app/(marketing)/glass-site.css", scope: "file", liftedBy: "W2", lane: "2.6" },
-  { path: "app/(auth)/", scope: "file", liftedBy: "W2", lane: "2.6" },
-  { path: "app/buyer/login/", scope: "file", liftedBy: "W2", lane: "2.6" },
+  { path: "app/(auth)/admin-login/page.tsx", scope: "file", liftedBy: "W2", lane: "2.6" },
+  { path: "app/(auth)/choose-role/page.tsx", scope: "file", liftedBy: "W2", lane: "2.6" },
+  { path: "app/(auth)/forgot-password/layout.tsx", scope: "file", liftedBy: "W2", lane: "2.6" },
+  { path: "app/(auth)/forgot-password/page.tsx", scope: "file", liftedBy: "W2", lane: "2.6" },
+  { path: "app/(auth)/login/layout.tsx", scope: "file", liftedBy: "W2", lane: "2.6" },
+  { path: "app/(auth)/login/page.tsx", scope: "file", liftedBy: "W2", lane: "2.6" },
+  { path: "app/(auth)/reset-password/page.tsx", scope: "file", liftedBy: "W2", lane: "2.6" },
+  { path: "app/(auth)/signup/layout.tsx", scope: "file", liftedBy: "W2", lane: "2.6" },
+  { path: "app/(auth)/signup/page.tsx", scope: "file", liftedBy: "W2", lane: "2.6" },
+  { path: "app/buyer/login/page.tsx", scope: "file", liftedBy: "W2", lane: "2.6" },
   { path: "app/not-found.tsx", scope: "file", liftedBy: "W2", lane: "2.6" },
-  { path: "app/verify-email/", scope: "file", liftedBy: "W2", lane: "2.6" },
+  { path: "app/verify-email/page.tsx", scope: "file", liftedBy: "W2", lane: "2.6" },
   { path: "public/site/product.html", scope: "hex", liftedBy: "W3", lane: "2.3-inner" },
   { path: "public/site/security.html", scope: "hex", liftedBy: "W3", lane: "2.3-inner" },
   // Not in the delta's table: the same lane and the same pattern (--pc/--pi tile colours).
   { path: "public/site/getting-started.html", scope: "hex", liftedBy: "W3", lane: "2.3-inner" },
   { path: "public/site/does-and-doesnt.html", scope: "hex", liftedBy: "W3", lane: "2.3-inner" },
   { path: "public/site/data-in-and-out.html", scope: "hex", liftedBy: "W3", lane: "2.3-inner" },
-  // The share image's colours are the current brand's own and stay typed until BrandTokens (W1,
-  // lane 2.0b) and the flip (2.5) move them; palette.json holds the NEW brand's values, so the
-  // image must not read it yet.
-  { path: "app/(marketing)/opengraph-image/route.tsx", scope: "hex", liftedBy: "W1", lane: "2.0b" },
 ];
 
-export const exemptionFor = (file: string): Exemption[] =>
-  EXEMPT.filter((e) => (e.path.endsWith("/") ? file.startsWith(e.path) : file === e.path));
+/** The rows that cover a file: the one matcher (T35, T45 and the staleness check all use it). */
+export const exemptionFor = (file: string, rows: Exemption[] = EXEMPT): Exemption[] =>
+  rows.filter((e) => file === e.path);
 
 /** True when every check is off for the file (an untokenised page, a screen of a later lane). */
 export const isFileExempt = (file: string): boolean =>

@@ -99,9 +99,7 @@ interface Finding {
 /** What the scan flags in one file, given the exemption rows in force. */
 function scanFile(file: string, rows: Exemption[]): Finding[] {
   const findings: Finding[] = [];
-  const scopes = rows
-    .filter((e) => (e.path.endsWith("/") ? file.startsWith(e.path) : file === e.path))
-    .map((e) => e.scope);
+  const scopes = exemptionFor(file, rows).map((e) => e.scope);
   if (scopes.includes("file")) return findings;
   const text = read(file);
   const nameText = scopes.includes("comments") ? stripComments(file, text) : text;
@@ -124,13 +122,18 @@ function scanFile(file: string, rows: Exemption[]): Finding[] {
 const scan = (rows: Exemption[] = EXEMPT): Finding[] =>
   surfaceFiles().flatMap((file) => scanFile(file, rows));
 
-/** A row is stale when taking it away would add no finding to any file it covers. */
+const HEX_KINDS = new Set(["hex in style/fill", "hex in the share image", "hex in the wheel"]);
+
+/** A row is stale when taking it away leaves the file with nothing it was exempt for: any finding
+ *  for a `file` row except hex alone (a hex-only file needs a `hex` row), a name for `comments`,
+ *  a hex finding for `hex`. Rows name one file each. */
 function isStale(row: Exemption, all: Exemption[] = EXEMPT): boolean {
   const without = all.filter((e) => e !== row);
-  const covered = surfaceFiles().filter((f) =>
-    row.path.endsWith("/") ? f.startsWith(row.path) : f === row.path,
-  );
-  return !covered.some((f) => scanFile(f, without).length > 0);
+  const findings = surfaceFiles().includes(row.path) ? scanFile(row.path, without) : [];
+  const kinds = findings.map((f) => f.what);
+  if (row.scope === "hex") return !kinds.some((k) => HEX_KINDS.has(k));
+  if (row.scope === "comments") return !kinds.includes("brand literal");
+  return !kinds.some((k) => !HEX_KINDS.has(k));
 }
 
 describe("T35: the brand seam", () => {
@@ -160,6 +163,21 @@ describe("T35: the brand seam", () => {
       ).toBe("");
     },
   );
+
+  it("a file-scope row does not stay alive on hex-only findings (that is a hex row)", () => {
+    // product.html has only inline hex: a file row for it exempts nothing but the hex.
+    const wrong: Exemption = {
+      path: "public/site/product.html",
+      scope: "file",
+      liftedBy: "W3",
+      lane: "test",
+    };
+    expect(isStale(wrong, [...EXEMPT.filter((e) => e.path !== wrong.path), wrong])).toBe(true);
+  });
+
+  it("no row names a directory: each exempts files, one by one", () => {
+    expect(EXEMPT.filter((e) => e.path.endsWith("/"))).toEqual([]);
+  });
 
   it("the staleness check goes red on a row that exempts nothing", () => {
     const dead: Exemption = {

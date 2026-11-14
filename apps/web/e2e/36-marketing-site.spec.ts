@@ -892,8 +892,10 @@ test.describe("T19 — ready-made pages are served, linked and clean", () => {
     await page.goto("/");
     await page.waitForFunction(() => Boolean((window as unknown as { gsap?: unknown }).gsap));
     await expect(page.locator("html")).toHaveClass(/\bjs\b/);
-    const direct = await page.request.get("/site/home.html");
-    expect(direct.headers()["x-robots-tag"]).toBe("noindex");
+    // The raw file never serves (its brand tokens are unfilled): middleware answers 307 to "/".
+    const direct = await page.request.get("/site/home.html", { maxRedirects: 0 });
+    expect(direct.status()).toBe(307);
+    expect(new URL(direct.headers()["location"] ?? "", "http://x").pathname).toBe("/");
   });
 
   test("T19 — every internal link on the ready-made pages answers", async ({ page, request }) => {

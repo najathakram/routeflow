@@ -1,5 +1,5 @@
 import { fireEvent, render } from "@testing-library/react";
-import { BRAND } from "@routeflow/types/brand";
+import { BRAND, loadPalette, paletteCss } from "@routeflow/types/brand";
 import { SiteFrame } from "./SiteFrame";
 import { FOOTER_COLUMNS, MENU_LINKS, NAV_LINKS } from "./site-frame-nav";
 import { readServedSitePage } from "@/lib/read-site-page";
@@ -90,5 +90,15 @@ describe("SiteFrame header", () => {
     expect(button.getAttribute("aria-expanded")).toBe("true");
     expect(menu.className).toContain("open");
     expect(document.body.classList.contains("menu-open")).toBe(true);
+  });
+});
+
+describe("SiteFrame carries the palette", () => {
+  it("renders exactly one brand-tokens style, with the real palette, beside the stylesheet links", () => {
+    const { container } = render(<SiteFrame>x</SiteFrame>);
+    const styles = container.querySelectorAll("style#brand-tokens");
+    expect(styles).toHaveLength(1);
+    expect(styles[0]?.textContent).toBe(paletteCss(loadPalette()));
+    expect(container.querySelector('link[href="/site/graphics/rf-graphics.css"]')).not.toBeNull();
   });
 });
