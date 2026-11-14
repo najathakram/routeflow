@@ -215,6 +215,11 @@ export default function PlansPage() {
     }
   };
 
+  const catalogKeys = new Set(plans.map((p) => p.planKey));
+  const hiddenPlans = Object.entries(planBreakdown)
+    .filter(([key, count]) => !catalogKeys.has(key) && count > 0)
+    .sort(([a], [b]) => a.localeCompare(b));
+
   const checkFailedPlan = plans.find((p) => p.planKey === checkFailedKey);
 
   return (
@@ -340,6 +345,30 @@ export default function PlansPage() {
                     </tr>
                   );
                 })}
+                {/* UX guide B11: a plan that has tenants but is not in the public catalog (invite-only, e.g.
+                    Lite) still gets its row so the counts add up to the total. Read-only: it has no public
+                    price to edit and nothing here can save it. */}
+                {hiddenPlans.map(([key, count]) => (
+                  <tr key={key} className="hover:bg-slate-700/20">
+                    <td className="px-5 py-3">
+                      <div className="text-white">{planLabel(key)}</div>
+                      <div className="text-xs text-slate-400">{key}</div>
+                    </td>
+                    <td className="px-5 py-3 text-slate-400">{count}</td>
+                    <td className="px-5 py-3 text-slate-400" colSpan={2}>
+                      Invite-only, no public price
+                    </td>
+                    <td className="px-5 py-3">
+                      <button
+                        type="button"
+                        disabled
+                        className="rounded-lg bg-indigo-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                      >
+                        Save
+                      </button>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>

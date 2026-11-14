@@ -3651,6 +3651,62 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(stats.planBreakdown).toEqual({ STARTER: 2, GROWTH: 1 });
     });
 
+    // UX guide B11: the dashboard's tenant lists named a plan from the legacy `plan` enum (BUSINESS) while the
+    // donut and tenants list name the resolved planKey (SCALE) for the same business.
+    it("recentTenants, trialsExpiringSoon and atRiskTenants carry the resolved planKey beside the legacy plan", async () => {
+      const legacy = { plan: "BUSINESS", subscription: { planKey: "SCALE" } };
+      prisma.tenant.findMany.mockImplementation((args: any) => {
+        if (args?.take === 5)
+          return Promise.resolve([{ id: "t1", slug: "a", name: "A", status: "ACTIVE", ...legacy }]);
+        if (args?.where?.trialEndsAt?.lte)
+          return Promise.resolve([
+            {
+              id: "t2",
+              slug: "b",
+              name: "B",
+              trialEndsAt: new Date(),
+              _count: { users: 1 },
+              ...legacy,
+            },
+          ]);
+        if (args?.where?.OR)
+          return Promise.resolve([
+            { id: "t3", slug: "c", name: "C", status: "SUSPENDED", trialEndsAt: null, ...legacy },
+          ]);
+        return Promise.resolve([]);
+      });
+
+      const stats: any = await service.getStats();
+
+      expect(stats.recentTenants[0].planKey).toBe("SCALE");
+      expect(stats.recentTenants[0].plan).toBe("BUSINESS");
+      expect(stats.trialsExpiringSoon[0].planKey).toBe("SCALE");
+      expect(stats.atRiskTenants[0].planKey).toBe("SCALE");
+      // the nested subscription row is an internal join, not part of the response
+      expect(stats.recentTenants[0]).not.toHaveProperty("subscription");
+    });
+
+    it("a tenant with no subscription row resolves its planKey from the legacy enum", async () => {
+      prisma.tenant.findMany.mockImplementation((args: any) =>
+        Promise.resolve(
+          args?.take === 5
+            ? [
+                {
+                  id: "t1",
+                  slug: "a",
+                  name: "A",
+                  status: "ACTIVE",
+                  plan: "STARTER",
+                  subscription: null,
+                },
+              ]
+            : [],
+        ),
+      );
+      const stats: any = await service.getStats();
+      expect(stats.recentTenants[0].planKey).toBe("STARTER");
+    });
+
     it("scopes every tenant-count query in getStats() by class: PRODUCTION and deletedAt: null", async () => {
       prisma.tenant.findMany.mockResolvedValue([]);
 

@@ -317,3 +317,24 @@ describe("UX guide B4 dirty Save", () => {
     ).toBeInTheDocument();
   });
 });
+
+// UX guide B11: the public catalog omits invite-only plans, but their tenants are in the stats.
+describe("UX guide B11 read-only row for a plan the public catalog omits", () => {
+  it("renders a Lite row with its count, 'Invite-only, no public price', and a disabled Save", async () => {
+    mockStats.mockResolvedValue({ data: { planBreakdown: { LITE: 1, GROWTH: 2 } } });
+    render(<AdminPlansPage />);
+    await screen.findByLabelText("Growth monthly price (USD)");
+    const row = screen.getByText("Lite").closest("tr")!;
+    expect(within(row).getByText("1")).toBeInTheDocument();
+    expect(within(row).getByText("Invite-only, no public price")).toBeInTheDocument();
+    expect(within(row).getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(within(row).queryByRole("spinbutton")).toBeNull();
+  });
+
+  it("adds no row for a plan with no tenants", async () => {
+    mockStats.mockResolvedValue({ data: { planBreakdown: { LITE: 0, GROWTH: 2 } } });
+    render(<AdminPlansPage />);
+    await screen.findByLabelText("Growth monthly price (USD)");
+    expect(screen.queryByText("Lite")).toBeNull();
+  });
+});
