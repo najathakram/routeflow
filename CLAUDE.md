@@ -45,12 +45,12 @@ Modules: tenancy/identity, domain (customers, orders, routes, products, inventor
 ## Graph first (design: rf-specs `specs/graphify/DESIGN.md`)
 
 - One code-only graph per machine in the locked graph-only host (PC `C:/ClaudeCode/rf-mobile-release`, Macs `~/code/rf-mobile-release`), refreshed by `scripts/graph-refresh.mjs` on a schedule. Never `graphify update` in a worktree, never `graphify claude install`, never natural-language `graphify query`.
-- "Where is it / who calls it": MCP `mcp__graphify__get_node` / `get_neighbors` / `shortest_path` (ToolSearch `select:` if deferred), else `node scripts/graph.mjs radius|explain|path <Sym...>`. Before editing an exported symbol run `graph.mjs radius <Sym...>` and read its grep-only files first.
+- "Where is it / who calls it": MCP `mcp__graphify__get_node` / `get_neighbors` / `shortest_path` (ToolSearch `select:` if deferred), else `node scripts/graph.mjs radius|explain|path <Sym...>`. When a graph is present and MCP or `graph.mjs` answers, run `graph.mjs radius <Sym...>` before editing an exported symbol and read its grep-only files first; a missing graph never blocks an edit (fallback in the next bullet).
 - Grep first and skip the graph for: env vars, string constants, URL paths, Prisma models, decorator usages (`@RequireAddon(...)`), generic names (`create`), symbols newer than the graph sha, and `@routeflow/*` imports while `graphify-out/BUILT_AT` says `cross-package: blind`. For anything else an empty or short graph answer is UNKNOWN, not "none": grep, and write `graph miss: <why>`. MCP down: use `graph.mjs`. Graph missing or `GRAPHIFY_OFF=1`: grep + code map as before; never wait on a rebuild.
 
 ## Routines
 
-- **Code map** `.claude/code-map/`: graph first for where and who calls, then read `INDEX.md` -> area file -> only the pointed file. Map updates land in the docs-only follow-up PR; code PR HEAD carries `Bookkeeping-Follow-Up: pending` (Gate 2, `.claude/hooks/stop.mjs`). Trust code over map.
+- **Code map** `.claude/code-map/`: graph first for where and who calls, then read `INDEX.md` -> area file -> only the pointed file. Map updates land in the docs-only follow-up PR; code PR HEAD carries `Bookkeeping-Follow-Up: pending` (Gate 2, `.claude/hooks/stop.mjs`). Trust code over graph and map; a graph answer about a symbol changed after the graph sha is UNKNOWN until grep confirms it.
 - **Lessons** `.claude/lessons/LESSONS.md`: read before major tasks/fixes, cite ids (`L-016`). After every bug fix write an entry (Symptom / Root cause / Lesson / Guard) + `_meta.json` bump in the follow-up PR; Gate 3 blocks `fix/*` unless the pending trailer is present. No lesson: bump `updatedAt` only. Caps 52 entries / 81,920 bytes (`_meta.json`); no client identifiers.
 
 ## Money discipline
