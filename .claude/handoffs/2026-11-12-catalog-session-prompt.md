@@ -5,7 +5,7 @@ Owner asks, 2026-11-10 ~21:50Z, verbatim except the business names: "I received 
 Read first:
 - `local-assets/catalog-research/catalog-check-2026-11-10.md`: the 11-10 diff and findings. The fixes are only in the Catalog sheet (115 -> 97 lines); the Import sheet is stale (38 rows no longer match). No row has a price; the importer skips a new product without a Rate (apps/api/src/import/import.service.ts:3099, :3105).
 - Source: `local-assets/catalog-research/in-2026-11-10/catalog-fixed.xlsx`. Earlier attempt: `catalog-import-2026-11-10.csv` (66) and `-held.csv` (38), built from the stale Import sheet, so rebuild.
-- `local-assets/catalog-research/catalog-check-2026-11-04.md` (the old issues: 3 duplicate-name pairs, Wickd/Wick'd spelling, "Catalog ref" text in descriptions, 24 category strings).
+- `local-assets/catalog-research/catalog-check-2026-11-04.md` (the old issues: 3 duplicate-name pairs, one brand spelled two ways, "Catalog ref" text in descriptions, 24 category strings).
 
 Steps:
 1. Prices: owner 21:59:44Z 11-10 (final): load at $0 now; when the client returns the priced sheet (catalog-clean-2026-11-10.xlsx, Price column), re-import it: the importer matches existing products by barcode then name and updates the price (import.service.ts ~2950-3110; Rate 0 is accepted, :3103). The client may also set prices in the app. Preview first both times. Give the owner the count of $0 items.
