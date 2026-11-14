@@ -55,6 +55,19 @@
       "inputs": ["$TURBO_DEFAULT$"],
       "outputs": ["coverage/**"]
     },
+    // Same task as the generic "test" above (copy it, change nothing else) plus the root push-guard files that
+    // apps/api's leak-check-self-test-script.spec.ts exercises: $TURBO_DEFAULT$ covers only apps/api, so a
+    // guard-only change replayed a cached api pass.
+    "@routeflow/api#test": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/scripts/leak-check*.mjs",
+        "$TURBO_ROOT$/scripts/lib/leak-patterns.mjs",
+        "$TURBO_ROOT$/.husky/pre-push"
+      ],
+      "outputs": ["coverage/**"]
+    },
     // A package's $TURBO_DEFAULT$ only ever covers its OWN directory. @routeflow/pricing's
     // specs reach outside packages/pricing — no-mirrors.spec.ts walks apps/api/src, apps/web
     // and apps/mobile to prove no mirror pricing files exist; package-shape.spec.ts reads the

@@ -68,7 +68,12 @@ export function loadPatterns(cwd = process.cwd()) {
     if (kind) {
       const value = line.slice(kind[0].length).trim();
       const isCommit = kind[1].toLowerCase() === "commit";
-      if (isCommit ? !/^[0-9a-f]{40}([0-9a-f]{24})?$/i.test(value) : !value) {
+      // a path value is normalised first: one that is empty afterwards ("./", "/", ".") would match every file
+      const norm = value
+        .replace(/\\/g, "/")
+        .replace(/^(\.\/|\/)+/, "")
+        .toLowerCase();
+      if (isCommit ? !/^[0-9a-f]{40}([0-9a-f]{24})?$/i.test(value) : !norm || norm === ".") {
         return {
           ok: false,
           reason: "invalid",
@@ -78,13 +83,7 @@ export function loadPatterns(cwd = process.cwd()) {
         };
       }
       if (isCommit) sentinels.push(value.toLowerCase());
-      else
-        paths.push(
-          value
-            .replace(/\\/g, "/")
-            .replace(/^(\.\/|\/)+/, "")
-            .toLowerCase(),
-        );
+      else paths.push(norm);
       continue;
     }
     try {

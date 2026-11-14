@@ -626,6 +626,42 @@ try {
         JSON.stringify(r),
       );
     }
+    for (const v of ["./", "/", ".", "\\"]) {
+      const r = load(`${FIXTURE}\npath:${v}\n`);
+      check(
+        `path: value that is empty once normalised (${JSON.stringify(v)}) refuses to load`,
+        !r.ok && /line 2/.test(r.message),
+        JSON.stringify(r),
+      );
+    }
+    // the older fail-closed loading rules, none of which needs a push
+    rmSync(pf);
+    const missing = loadPatterns(repo);
+    check("missing patterns file fails closed", !missing.ok && missing.reason === "missing");
+    const empty = load("# only a comment\n\n");
+    check("comments-only patterns file fails closed", !empty.ok && empty.reason === "empty");
+    const bad = load(`(${FIXTURE}\n`);
+    check(
+      "invalid regex refuses to load, naming the line",
+      !bad.ok && bad.reason === "invalid" && /line 1/.test(bad.message),
+      JSON.stringify(bad),
+    );
+    const encodings = {
+      "UTF-16 BOM": Buffer.concat([
+        Buffer.from([0xff, 0xfe]),
+        Buffer.from("zzfixture\n", "utf16le"),
+      ]),
+      "NUL bytes": Buffer.from("zz\0fixture\n"),
+      "invalid UTF-8": Buffer.from([0x7a, 0x7a, 0x80, 0x0a]),
+    };
+    for (const [label, buf] of Object.entries(encodings)) {
+      const r = load(buf);
+      check(
+        `patterns file (${label}) refuses to load`,
+        !r.ok && r.reason === "encoding",
+        JSON.stringify(r),
+      );
+    }
     const good = load(`${FIXTURE}\ncommit:${"d".repeat(40)}\npath:./ZZKit\\sub\n`);
     check(
       "well-formed commit: and path: lines load beside a regex",
