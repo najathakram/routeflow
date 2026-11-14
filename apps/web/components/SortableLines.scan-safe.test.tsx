@@ -1,6 +1,7 @@
 import * as React from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { createFieldScanRun } from "@/lib/scan-run";
 import { SortableLines, useSortableLine, type LineMove } from "./SortableLines";
 
 /**
@@ -37,8 +38,10 @@ function Harness({
 }) {
   const lines = count ? rows(count) : LINES;
   const scanRef = React.useRef<HTMLInputElement>(null);
+  // the screen owns the scan destination (SA-1138): its capture hands a scan key to the scan field, like the order builder
+  const run = React.useMemo(() => createFieldScanRun(), []);
   return (
-    <>
+    <div onKeyDownCapture={(e) => run.onKeyDown(e.nativeEvent, scanRef.current)}>
       <input
         ref={scanRef}
         aria-label="Scan"
@@ -46,14 +49,14 @@ function Harness({
           if (e.key === "Enter") onCode((e.target as HTMLInputElement).value);
         }}
       />
-      <SortableLines lines={lines} onMove={onMove} scanTarget={() => scanRef.current}>
+      <SortableLines lines={lines} onMove={onMove}>
         <ul>
           {lines.map((l) => (
             <Row key={l.id} id={l.id} />
           ))}
         </ul>
       </SortableLines>
-    </>
+    </div>
   );
 }
 

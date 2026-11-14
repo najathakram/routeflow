@@ -154,11 +154,15 @@ function mount(path: string) {
   return { ...view, go };
 }
 
-/** POS-7: the REAL CounterSaleScreen under the REAL shell - a g shortcut with lines in the cart opens the same Discard dialog. */
+/**
+ * POS-7 (flipped by SA-1138 A1): the REAL CounterSaleScreen under the REAL shell. On the till a printable key typed while focus
+ * is not in a text field is a scan key, so a g from the page goes to the scan box and the shell's g shortcut never fires: no
+ * Discard dialog and no navigation (the sidebar and Ctrl/Cmd+K still reach every page).
+ */
 describe("g shortcut with the real counter screen", () => {
   const press = (...keys: string[]) => keys.forEach((key) => fireEvent.keyDown(window, { key }));
 
-  it("scanning a line then pressing g c asks 'Discard this sale?' instead of leaving", async () => {
+  it("with lines in the cart, g c from the page goes to the scan box: no Discard dialog, no navigation", async () => {
     mount(COUNTER);
     const field = await screen.findByLabelText("Scan or search items");
     fireEvent.change(field, { target: { value: "COLA" } });
@@ -167,17 +171,18 @@ describe("g shortcut with the real counter screen", () => {
     await waitFor(() => expect(screen.getByText(/Cola/)).toBeInTheDocument());
     (document.activeElement as HTMLElement | null)?.blur();
     press("g", "c");
-    expect(await screen.findByText("Discard this sale?")).toBeInTheDocument();
+    expect(field).toHaveFocus();
+    expect(screen.queryByText("Discard this sale?")).toBeNull();
     expect(mockPush).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
-    expect(mockPush).toHaveBeenCalledWith("/customers");
   });
 
-  it("with an empty cart g c leaves directly", async () => {
+  it("with an empty cart g c does not leave either", async () => {
     mount(COUNTER);
-    await screen.findByLabelText("Scan or search items");
+    const field = await screen.findByLabelText("Scan or search items");
+    (document.activeElement as HTMLElement | null)?.blur();
     press("g", "c");
-    expect(mockPush).toHaveBeenCalledWith("/customers");
+    expect(field).toHaveFocus();
+    expect(mockPush).not.toHaveBeenCalled();
     expect(screen.queryByText("Discard this sale?")).toBeNull();
   });
 });
