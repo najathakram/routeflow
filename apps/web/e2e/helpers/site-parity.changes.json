@@ -1,1 +1,21 @@
-[]
+[
+  {
+    "key": "/pricing|desktop",
+    "row": "details|What is RouteFlow?",
+    "kind": "removed",
+    "req": "R11"
+  },
+  {
+    "key": "/pricing|desktop",
+    "row": "details|What does RouteFlow do?",
+    "kind": "added",
+    "req": "R11"
+  },
+  { "key": "/pricing|phone", "row": "details|What is RouteFlow?", "kind": "removed", "req": "R11" },
+  {
+    "key": "/pricing|phone",
+    "row": "details|What does RouteFlow do?",
+    "kind": "added",
+    "req": "R11"
+  }
+]

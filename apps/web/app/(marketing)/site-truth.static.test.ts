@@ -41,13 +41,21 @@ describe("public site sentences the code backs", () => {
     expect(html).not.toMatch(/stop the order/i);
   });
 
-  // plan-catalog-v11.definitions.ts: logins differ too (3 / 10 / 25), and logins over the limit can be switched off on downgrade.
-  it("home, pricing, product: plans differ by customers and logins, not customers alone", () => {
-    for (const name of ["home", "pricing", "product"]) {
+  // SA-1080 (js/prices.js:5): plans differ by price and number of customers; seats are not enforced.
+  // home still carries the older "customers and logins" line until its own lane (owner ruling D1).
+  it("pricing, product: plans differ by customers only", () => {
+    for (const name of ["pricing", "product"]) {
       const html = page(name);
-      expect(html).toMatch(/The plans differ by how many customers and logins they include\./);
-      expect(html).not.toMatch(/differ by how many customers they include/);
+      expect(html).toMatch(/The plans differ by how many customers they include\./);
+      expect(html).not.toMatch(/customers and logins/);
     }
+  });
+
+  // D1: home is still on the older line; lane S2 / 2.3-home flips this pin to customers only.
+  it("home: still says customers and logins (D1, until lane S2 / 2.3-home)", () => {
+    expect(page("home")).toMatch(
+      /The plans differ by how many customers and logins they include\./,
+    );
   });
 
   // /login offers "Continue with Google" (auth.controller.ts); only company single sign-on is absent (feature-registry.ts).

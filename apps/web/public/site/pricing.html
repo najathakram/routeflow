@@ -100,7 +100,7 @@
     <div class="pcard reveal"><h2>Scale</h2><p class="pfrom">From</p><p class="pprice"><span class="cur">$</span><span data-plan="SCALE" data-field="monthly">499</span><small>a month</small></p><p class="pyear">or $<span data-plan="SCALE" data-field="yearly">4,990</span> a year</p><p class="pfor">For a wholesaler with a long list of stores.</p>
       <ul class="checks"><li class="pc-lead"><span><b>Everything in Growth, plus:</b></span></li><li><svg class="ico"><use href="#i-check"/></svg><span><b data-plan="SCALE" data-field="customers">500</b> customers included</span></li></ul><a class="btn btn-primary pbtn" href="/signup" data-track="trial_start_click" data-where="plan_scale">Start free trial</a></div>
     <div class="pcard reveal"><h2>Enterprise</h2><p class="pfrom">Price</p><p class="pprice pprice--word">Custom</p><p class="pyear">Based on your size.</p><p class="pfor">For wholesalers with the most customers.</p>
-      <ul class="checks"><li class="pc-lead"><span><b>Everything in Scale, plus:</b></span></li><li><svg class="ico"><use href="#i-check"/></svg><span>Unlimited customers</span></li><li><svg class="ico"><use href="#i-check"/></svg><span>A custom price</span></li></ul><a class="btn btn-primary pbtn" href="mailto:{{brand:email}}" data-track="enterprise_click" data-where="plan_enterprise">Email us</a></div>
+      <ul class="checks"><li class="pc-lead"><span><b>Everything in Scale, plus:</b></span></li><li><svg class="ico"><use href="#i-check"/></svg><span>Unlimited customers</span></li></ul><a class="btn btn-primary pbtn" id="contact" href="mailto:{{brand:email}}" data-track="enterprise_click" data-where="plan_enterprise">Email us</a></div>
   </div>
   <div class="pl-wrap reveal"><table class="pl pl--y" aria-label="Plans and prices">
     <thead><tr><th scope="col">Plan</th><th scope="col">Customers</th><th scope="col" class="plp">From, a month</th><th scope="col" class="ply">Each year</th></tr></thead>
@@ -112,10 +112,8 @@
     </tbody>
   </table></div>
   <div class="center small muted pg-notes">
-    <p><b>Every trial starts on Starter, 14 days free. No card needed.</b></p>
-    <p>The plans differ by how many customers and logins they include. Scale and Enterprise also get regulated items at no fee.</p>
-    <p>Includes your team.</p>
-    <p id="contact">Need more than Scale? Email <a href="mailto:{{brand:email}}">{{brand:email}}</a> about Enterprise.</p>
+    <p>Every trial starts on Starter and lasts 14 days. No card needed.</p>
+    <p>The plans differ by how many customers they include. Scale and Enterprise also get regulated items at no fee.</p>
   </div>
   <p class="pl-go"><a class="btn btn-primary btn-lg" href="/signup" data-track="trial_start_click" data-where="pricing_phone">Start free trial</a></p>
   <div class="custom reveal" id="customize">
@@ -136,9 +134,9 @@
 <section class="section alt" aria-labelledby="faq-h"><div class="wrap">
   <div class="section-head center"><h2 id="faq-h">Questions before you start.</h2></div>
   <div class="faq">
-    <details><summary>What is {{brand:name}}?<svg class="ico"><use href="#i-plus"/></svg></summary><p>Software for businesses that sell to stores. Take orders, send invoices, and get paid.</p></details>
+    <details><summary>What does {{brand:name}} do?<svg class="ico"><use href="#i-plus"/></svg></summary><p>Software for businesses that sell to stores. Take orders, send invoices, and get paid.</p></details>
     <details><summary>Who is it for?<svg class="ico"><use href="#i-plus"/></svg></summary><p>Wholesalers and distributors who sell to stores. We built it with a wholesaler who buys from other wholesalers and delivers to retailers.</p></details>
-    <details><summary>How much does it cost?<svg class="ico"><use href="#i-plus"/></svg></summary><p>Starter is $<span data-plan="STARTER" data-field="monthly">99</span> a month, Growth is $<span data-plan="GROWTH" data-field="monthly">249</span>, and Scale is $<span data-plan="SCALE" data-field="monthly">499</span>. The plans differ by how many customers and logins they include. Scale and Enterprise also get regulated items at no fee. Pay for a year and get 2 months free.</p></details>
+    <details><summary>How much does it cost?<svg class="ico"><use href="#i-plus"/></svg></summary><p>Starter is $<span data-plan="STARTER" data-field="monthly">99</span> a month, Growth is $<span data-plan="GROWTH" data-field="monthly">249</span>, and Scale is $<span data-plan="SCALE" data-field="monthly">499</span>. The plans differ by how many customers they include. Scale and Enterprise also get regulated items at no fee. Pay for a year and get 2 months free.</p></details>
     <details><summary>Do I need a card to start?<svg class="ico"><use href="#i-plus"/></svg></summary><p>No. Every trial starts on Starter and runs for 14 days.</p></details>
     <details><summary>Can I bring my data?<svg class="ico"><use href="#i-plus"/></svg></summary><p>Yes. Import customers, products, invoices, payments, and stock from CSV files. You can undo a product import for 24 hours, unless a product is already on an order.</p></details>
     <details><summary>Can I get my data out?<svg class="ico"><use href="#i-plus"/></svg></summary><p>Yes. Download your customers, products, orders, invoices, and payments as CSV files. Orders and invoices download as summaries, without line items, up to 1,000 rows at a time. <a href="/data-in-and-out">See what you can download.</a></p></details>
@@ -149,7 +147,7 @@
   <p class="center small muted" style="margin-top:32px">More questions? Email <a href="mailto:{{brand:email}}">{{brand:email}}</a>.</p>
 </div></section>
 <section class="section" aria-labelledby="cta-h"><div class="wrap">
-  <div class="cta-band reveal"><h2 id="cta-h">Try {{brand:name}} free.</h2><p>14 days free. No card needed.</p>
+  <div class="cta-band reveal"><h2 id="cta-h">Try {{brand:name}} free for 14 days.</h2><p>No card needed.</p>
     <div class="cta-row"><a class="btn btn-light btn-lg" href="/signup" data-track="trial_start_click" data-where="pricing_band">Start free trial <svg class="ico"><use href="#i-arrow"/></svg></a></div></div>
 </div></section>
 </main>
