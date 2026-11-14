@@ -18,7 +18,6 @@ const HELPER_FILE = path.join("billing", "checkout-session-params.ts");
 const WRAPPED: Record<string, number> = {
   "billing/billing.service.ts": 1, // BillingService.createCheckoutSession (inline price_data, anchored)
   "billing/catchup-checkout.service.ts": 1, // CatchupCheckoutService.open (prorated catch-up session)
-  "billing/stripe.service.ts": 1, // StripeService.createCheckoutSession (pre-created price subscription)
 };
 
 /**
