@@ -46,12 +46,56 @@ export async function selectEditRevertedInvoices(
     select: { id: true, invoiceNumber: true, internalNotes: true, depositPercent: true },
   });
   if (!linked.some((inv) => inv.depositPercent != null)) return linked;
+  return (await depositMirrorExempt(db, orderId))
+    ? linked.filter((inv) => inv.depositPercent == null)
+    : linked;
+}
+
+/** The WP-D1 fence, one copy: the order is not DELIVERED/CANCELLED and the deposit mirror is its SOLE non-void invoice. */
+async function depositMirrorExempt(db: RevertSetDb, orderId: string): Promise<boolean> {
   const order = await db.order.findFirst({ where: { id: orderId }, select: { status: true } });
   const nonVoidCount = await db.invoice.count({
     where: { orderId, status: { not: InvoiceStatus.VOID } },
   });
-  const depositMirrorExempt = !!order && !isTerminalOrderStatus(order.status) && nonVoidCount === 1;
-  return depositMirrorExempt ? linked.filter((inv) => inv.depositPercent == null) : linked;
+  return !!order && !isTerminalOrderStatus(order.status) && nonVoidCount === 1;
+}
+
+export interface EditBlockingInvoice extends EditRevertCandidate {
+  status: string;
+}
+
+/**
+ * SA-1144 (W-871 reopened): the order's own non-batch invoices that HOLD money or are closed (PAID, PARTIAL, WRITTEN_OFF), so a
+ * pre-delivery edit of the order must be refused: the edit changes the order total and these invoices cannot follow it. The
+ * sibling of `selectEditRevertedInvoices` (the SENT/VIEWED/OVERDUE set that reverts), with the same fence: a deposit mirror that
+ * is the order's sole non-void invoice stays exempt WHILE PARTIAL (the widened reconcile keeps it in step; that is the deposit
+ * flow), but a fully PAID one is not (nothing re-syncs a settled invoice). One query, plus the fence reads only when a PARTIAL
+ * deposit invoice is in play.
+ */
+export async function selectEditBlockingInvoices(
+  db: RevertSetDb,
+  orderId: string,
+): Promise<EditBlockingInvoice[]> {
+  const held: EditBlockingInvoice[] = await db.invoice.findMany({
+    where: {
+      orderId,
+      deliveryBatchId: null,
+      status: { in: [InvoiceStatus.PAID, InvoiceStatus.PARTIAL, InvoiceStatus.WRITTEN_OFF] },
+    },
+    select: {
+      id: true,
+      invoiceNumber: true,
+      internalNotes: true,
+      depositPercent: true,
+      status: true,
+    },
+  });
+  const partialDeposit = (inv: EditBlockingInvoice) =>
+    inv.status === InvoiceStatus.PARTIAL && inv.depositPercent != null;
+  if (!held.some(partialDeposit)) return held;
+  return (await depositMirrorExempt(db, orderId))
+    ? held.filter((inv) => !partialDeposit(inv))
+    : held;
 }
 
 /**
@@ -131,6 +175,29 @@ export async function revertLinkedInvoicesToDraft(
   // #2178: the ONE selection (incl. the exempt deposit mirror, which stays SENT) — shared with the
   // inline-return preflight, which prices against the matching set as it will be after this revert.
   const linked = await selectEditRevertedInvoices(db, orderId);
+  // SA-1144: a paid, part-paid or written-off invoice cannot follow an edit of its order, so the edit is refused (400),
+  // before anything is written. The same Invoice row lock the payment path takes is held first when the caller asked for it.
+  const blocking = await selectEditBlockingInvoices(db, orderId);
+  if (blocking.length > 0) {
+    if (opts?.lockRows) {
+      await lockRowsNoWait(
+        db,
+        "Invoice",
+        blocking.map((inv) => inv.id),
+        "INVOICE_BUSY",
+      );
+    }
+    const first = blocking[0];
+    throw new BadRequestException({
+      code: API_ERROR_CODES.ORDER_EDIT_INVOICE_HAS_PAYMENTS,
+      message:
+        first.status === InvoiceStatus.WRITTEN_OFF
+          ? `Invoice ${first.invoiceNumber} is written off, so this order's items can't change here. ` +
+            `Put the extra items on a new order.`
+          : `Invoice ${first.invoiceNumber} has payments recorded, so this order's items can't change here. ` +
+            `Remove its payments first, or put the extra items on a new order.`,
+    });
+  }
   const reverted: string[] = [];
   for (const inv of linked) {
     // Under the caller's tx: hold the row before the count, so the payment-block below reads a
@@ -145,10 +212,12 @@ export async function revertLinkedInvoicesToDraft(
       where: { invoiceId: inv.id, status: { not: "VOID" } },
     });
     if (paymentCount > 0) {
-      throw new BadRequestException(
-        `This order can't be edited while invoice ${inv.invoiceNumber} has payments recorded. ` +
+      throw new BadRequestException({
+        code: API_ERROR_CODES.ORDER_EDIT_INVOICE_HAS_PAYMENTS,
+        message:
+          `This order can't be edited while invoice ${inv.invoiceNumber} has payments recorded. ` +
           `Void the invoice or remove its payments first.`,
-      );
+      });
     }
     if (opts?.preflightOnly) continue; // row 586: the read-only pre-tx check; the revert runs in the edit tx
     const auditLine = `[${new Date().toLocaleDateString()} — reverted to Draft: source order edited]`;

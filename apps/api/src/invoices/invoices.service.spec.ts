@@ -2904,6 +2904,11 @@ describe("InvoicesService", () => {
 
   // ── Auto-revert a SENT pending-mirror invoice when its order is edited ──────────
   describe("revertLinkedInvoicesForOrderEdit", () => {
+    // SA-1144: the revert also reads the money-holding set (PAID/PARTIAL/WRITTEN_OFF); these rows are the SENT set only.
+    const sentRows = (rows: any[]) =>
+      prisma.invoice.findMany.mockImplementation(async ({ where }: any) =>
+        where?.status?.in?.includes("PAID") ? [] : rows,
+      );
     // SA-1029 A-2 / B1275: the revert now clears the issue display units (a savepoint + one updateMany)
     beforeEach(() => {
       (prisma.forTenant() as any).$executeRaw = jest.fn().mockResolvedValue(0);
@@ -2911,9 +2916,7 @@ describe("InvoicesService", () => {
     });
 
     it("reverts an unpaid SENT pending-mirror invoice to DRAFT (auto-revert on edit)", async () => {
-      prisma.invoice.findMany.mockResolvedValue([
-        { id: "inv-1", invoiceNumber: "INV-1", internalNotes: null },
-      ]);
+      sentRows([{ id: "inv-1", invoiceNumber: "INV-1", internalNotes: null }]);
       prisma.invoicePayment.count.mockResolvedValue(0);
       prisma.invoice.update.mockResolvedValue({ id: "inv-1", status: "DRAFT" });
 
@@ -2929,9 +2932,7 @@ describe("InvoicesService", () => {
     });
 
     it("blocks the edit (throws) when a linked invoice has payments — money never detaches", async () => {
-      prisma.invoice.findMany.mockResolvedValue([
-        { id: "inv-1", invoiceNumber: "INV-1", internalNotes: null },
-      ]);
+      sentRows([{ id: "inv-1", invoiceNumber: "INV-1", internalNotes: null }]);
       prisma.invoicePayment.count.mockResolvedValue(1);
 
       await expect(service.revertLinkedInvoicesForOrderEdit("ord-1")).rejects.toThrow(
@@ -2941,7 +2942,7 @@ describe("InvoicesService", () => {
     });
 
     it("is a no-op when the order has no SENT pending-mirror invoice", async () => {
-      prisma.invoice.findMany.mockResolvedValue([]);
+      sentRows([]);
       const reverted = await service.revertLinkedInvoicesForOrderEdit("ord-1");
       expect(reverted).toEqual([]);
       expect(prisma.invoice.update).not.toHaveBeenCalled();
@@ -2950,9 +2951,7 @@ describe("InvoicesService", () => {
     // B314: a VOID (bounced) payment carries no money — counting it here permanently blocked
     // the revert with no way out (voiding the invoice doesn't help; it already IS voided-money).
     it("REG-B314 a VOID-only payment history no longer blocks the edit — only LIVE payments do", async () => {
-      prisma.invoice.findMany.mockResolvedValue([
-        { id: "inv-1", invoiceNumber: "INV-1", internalNotes: null },
-      ]);
+      sentRows([{ id: "inv-1", invoiceNumber: "INV-1", internalNotes: null }]);
       // Mock is where-aware: a real DB with status:{not:"VOID"} would exclude the sole VOID
       // row and return 0; without that filter (the bug), it counts the VOID row and returns 1.
       prisma.invoicePayment.count.mockImplementation(async ({ where }: any) =>
@@ -2970,7 +2969,7 @@ describe("InvoicesService", () => {
     // reverting it is IRREVERSIBLE (a pre-delivery order-linked DRAFT can never be
     // re-sent). It is exempt — the widened reconcile keeps it in lockstep instead.
     it("does NOT revert an unpaid issued deposit mirror — it stays SENT and the widened reconcile rebuilds its totals", async () => {
-      prisma.invoice.findMany.mockResolvedValue([
+      sentRows([
         {
           id: "inv-dep",
           invoiceNumber: "INV-DEP",
@@ -3032,7 +3031,7 @@ describe("InvoicesService", () => {
     });
 
     it("still reverts a deposit mirror once the order is DELIVERED (outside the reconcile fence)", async () => {
-      prisma.invoice.findMany.mockResolvedValue([
+      sentRows([
         { id: "inv-dep", invoiceNumber: "INV-DEP", internalNotes: null, depositPercent: 30 },
       ]);
       prisma.order.findFirst.mockResolvedValue({ status: "DELIVERED" });
@@ -3044,7 +3043,7 @@ describe("InvoicesService", () => {
     });
 
     it("still reverts a deposit invoice when the order has OTHER non-void invoices (split/partial — the reconcile can't cover it)", async () => {
-      prisma.invoice.findMany.mockResolvedValue([
+      sentRows([
         { id: "inv-dep", invoiceNumber: "INV-DEP", internalNotes: null, depositPercent: 30 },
       ]);
       prisma.order.findFirst.mockResolvedValue({ status: "PENDING" });
@@ -3099,7 +3098,11 @@ describe("InvoicesService", () => {
       invoice: {
         findMany: jest
           .fn()
-          .mockResolvedValue([{ id: "inv-1", invoiceNumber: "INV-1", internalNotes: null }]),
+          .mockImplementation(async ({ where }: any) =>
+            where?.status?.in?.includes("SENT")
+              ? [{ id: "inv-1", invoiceNumber: "INV-1", internalNotes: null }]
+              : [],
+          ),
         update: jest.fn().mockResolvedValue({ id: "inv-1", status: "DRAFT" }),
         count: jest.fn().mockResolvedValue(1),
       },
