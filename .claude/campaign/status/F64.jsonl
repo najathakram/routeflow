@@ -178,3 +178,11 @@
 {"id":"B1318","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1319","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1320","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B249","batch":"F64","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Re-check 2026-11-12 at master a587d034e: the phone user-agent proxy to the old mobile-web build was removed in #1320 (c5bd03375). apps/web/middleware.ts has no user-agent logic (comment :52-55), lib/marketing-routes.ts:18-24 records the exemptions retired, and middleware.marketing.test.ts:57-121 pins no UA rewrite, so a mistyped path on a phone reaches app/not-found.tsx like desktop. (fixed in c5bd03375a5aa2b47b0178cfde9fe1fb2c50065d)","sha":"c5bd03375a5aa2b47b0178cfde9fe1fb2c50065d"}
+{"id":"B250","batch":"F64","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Not a defect, re-check 2026-11-12 at master a587d034e: the old mailto demo form is gone; /contact is the static public/site/contact.html with plain mailto links by owner decision (spec 36 T1, pinned by e2e/36-marketing-site.spec.ts:122-131 and site-company-contact.static.test.ts:133-136). A lead-capture endpoint would be a new feature, not a bug fix. (fixed in b9dff4df789e34ef4defdac2cd16a2ae32c68e9f)","sha":"b9dff4df789e34ef4defdac2cd16a2ae32c68e9f"}
+{"id":"B1321","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1322","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1323","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1324","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1329","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1327","batch":"F64","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4312: the date-scan spec pins the system date (Wed 2026-06-17 12:00Z) beside useFakeTimers; 48/48 on a real Friday, independent review PASS, Verify green at head 76a08e6ac (fixed in 13fb12fd73c3107d98ca154f6363070fddeb3c9e)","sha":"13fb12fd73c3107d98ca154f6363070fddeb3c9e"}

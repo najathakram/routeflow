@@ -56,13 +56,6 @@
 - **Lesson:** **Every path that creates a tree (worktree, heavy-slot, dispatch, swarm scripts) installs or copies the hooks itself and refuses a hookless tree. Before the first commit or push from a new tree, assert `.husky/_/pre-push` exists and `check-git-hooks` passes; a push that ran no hook is unverified, whatever it printed.**
 - **Guard:** `worktree.mjs` refuses a hookless tree (B642, #3880); heavy-slot, dispatch and bug-swarm trees ensure hooks (#3951); new trees copy hooks (#3956); `scripts/check-git-hooks.mjs`. Cf. archived L-263, L-274.
 
-### L-348 · 2026-10-25 · tooling · pass test patterns to a child process as an argv array with no shell; on Windows a shell re-splits and re-escapes them (726)
-
-- **Symptom:** a DB-lane test pattern with a space, a bracket or a regex escape reached jest changed on Windows, so the wrong specs ran or none did. Two regexes also lost their escaped backslashes in a review edit.
-- **Root cause:** the runner built one command string and let a shell parse it.
-- **Lesson:** **Spawn with an args array and `shell: false`, and treat a jest path argument as a regex. A script that forwards user patterns has a spec that feeds it a pattern with a space and a bracket and reads back the argv it produced.**
-- **Guard:** `run-db-tests.mjs` `serialDbArgs` and the forwarding specs in `apps/api/src/common/`.
-
 ### L-329 · 2026-10-21 · tooling · an Expo web export can reuse a shared Metro cache and bake another build's EXPO_PUBLIC_* values; export with --clear and assert the bundle
 
 - **Symptom:** a phone proof build for #3553 from a fresh worktree, with `EXPO_PUBLIC_API_URL` and `EXPO_PUBLIC_BUILD_SHA` exported, came out pointing at another lane's API (`localhost:3000`) with an empty build sha.
@@ -77,7 +70,7 @@
 - **Symptom:** the inventory pin that was meant to prove every till window is covered or excused could not fail: `CounterSaleScreen.escape-scan.test.tsx:259` holds a literal backspace byte (0x08) where `\b` was meant, so its file list was always empty. Both readers found it; the builder had not seen it fail.
 - **Root cause:** the pin was written and run green once. A green pin proves nothing until it has been seen red on a tree that violates it.
 - **Lesson:** **Every inventory pin or source-scan test ships with a probe the builder observed red (add the violating file, or remove the entry, and run it), and asserts that the scan found at least one file. A control byte in a pattern is read in a hex view of the line, not by eye.**
-- **Guard:** none automatic yet; the corrected pin is owed in the counter lane's next PR (test-only). Cf. [[L-364]], [[L-322]].
+- **Guard:** none automatic yet; the corrected pin is owed in the counter lane's next PR (test-only). Cf. [[L-364]], [[L-322]]. Extended 2026-11-13 (B1324): the first overlap probe on the phone heading rise (spec 85 T9) read only settled pairs with both boxes in the window and passed on master while the bug stood; the strengthened probe reads the first frame after each scroll step and again settled, counts boxes below the window, and on master fails on the bug's own value (10 px: a 22 px hold over a 12 px gap). The replay cell also asserts its precondition (the section really is at rest) before it measures. Rule: a probe waits for nothing and measures at the moment the person sees it.
 
 ### L-378 · 2026-11-12 · testing · a hand-over test runs the real scan detector with a full-length code; a mocked detector and a short code cannot see a dropped first key (#4302 review)
 
@@ -112,7 +105,7 @@
 - **Symptom:** a train push went red on master's own billing spec (5 of 109 cases) although no commit had touched it; the train's members were suspected first.
 - **Root cause:** the code reads `new Date()` for a 72-hour floor while the spec billed a literal future date, so the case flipped once the wall clock passed the floor. Member passes were days old and nobody had run bare master that day.
 - **Lesson:** **When code under test reads the clock, pin it (`jest.useFakeTimers().setSystemTime(NOW)`) or derive every fixture date from that NOW; a literal future date is a failure with a date on it. Before assembling a train, run the gate on bare `origin/master` first, so a red that is master's own is fixed on its own and never charged to a member.**
-- **Guard:** the clock pin on the payment-due specs (5f6b2290b, train W26); the train pre-check of LEAD-LOG 2026-10-29 #3799. Cf. L-290, L-335. Extended 2026-11-01 (train q): two billing specs left the clock real, and the checkout anchor refuses a start within 91 minutes of the 1st at 12:00Z, so every api Verify that reached them between 10:29Z and 12:00Z on that day failed (33 tests, 2 suites) while the code was right; a run before 10:29Z had passed. Pin the clock in each spec whose subject reads it (`apps/api/src/testing/pin-clock.ts`, #4084), and when a month-boundary window exists, expect the red on the 1st and 2nd, not only on the day a commit lands.
+- **Guard:** the clock pin on the payment-due specs (5f6b2290b, train W26); the train pre-check of LEAD-LOG 2026-10-29 #3799. Cf. L-290, L-335. Extended 2026-11-01 (train q): two billing specs left the clock real, and the checkout anchor refuses a start within 91 minutes of the 1st at 12:00Z, so every api Verify that reached them between 10:29Z and 12:00Z on that day failed (33 tests, 2 suites) while the code was right; a run before 10:29Z had passed. Pin the clock in each spec whose subject reads it (`apps/api/src/testing/pin-clock.ts`, #4084), and when a month-boundary window exists, expect the red on the 1st and 2nd, not only on the day a commit lands. Extended 2026-11-13 (B1327): `CounterSaleScreen.date-scan.test.tsx` called `jest.useFakeTimers()` without a system date, and fake timers start at the real now, so its "fri" scan and TODAY/BACK chips failed on one weekday. Now pinned to Wed 2026-06-17 12:00Z in the same `beforeEach`. Put `setSystemTime` next to every `useFakeTimers`; a weekday-relative case is red one day in seven. No automatic scan for a fake-timer spec with no pinned date yet.
 
 ### L-322 · 2026-10-20 · testing · a move-only extraction re-runs the static source-pin specs, and the pin reads the moved files too
 
@@ -242,13 +235,6 @@
 - **Lesson:** **A money event lifts a lock only through ONE predicate with a compare-and-set twin (`paymentReinstatable` / `paymentReinstatableWhere`), so the check and the write are one statement. An idempotent early return still retries the side effect that may have failed on the first delivery.**
 - **Guard:** the dunning-config and billing webhook specs.
 
-### L-343 · 2026-10-24 · domain · an optional money input becomes required, and a merge that cannot carry it refuses (#3700)
-
-- **Symptom:** editing items or applying a change request re-totalled an order and dropped its discount, and merges lost it silently.
-- **Root cause:** `discount` was an optional parameter of the totals helper, so callers that never passed it compiled cleanly and totalled without it.
-- **Lesson:** **Make a money input of a totals helper REQUIRED, so the compiler lists every caller that must decide it. Where an operation cannot carry the value (a merge of two discounted orders), refuse with a code rather than drop it.**
-- **Guard:** `orders/order-totals-one-formula.spec.ts`, `ORDER_MERGE_DISCOUNTED`. Cf. the required pack inputs of `mergeIntoStoredLine` (#3594).
-
 ### L-342 · 2026-10-24 · domain · send `null` to clear a field and omit it to leave it alone; `x || undefined` cannot clear (#3695, #3622)
 
 - **Symptom:** emptying a payment reference, notes, phone or delivery-window field on an edit form kept the old value, and the stale reference still counted in the duplicate-reference check.
@@ -263,13 +249,6 @@
 - **Lesson:** **Declare the row-lock order once as a constant and have a pin classify every lock site against it, so a new site fails until it is classified. Fix an inversion and delete its exception entry; an exception map may only shrink. A retry wrapper is not a deadlock fix.**
 - **Guard:** `ROW_LOCK_ORDER` plus `common/order-lock-callers.guard.spec.ts` (`KNOWN_INVERSE` is `{}`), `returns/refund-claimers.pin.spec.ts`, `restore-credit-lock-order.db.spec.ts`.
 
-### L-339 · 2026-10-24 · domain · a lock-wait bound must be the first statement of the transaction (#3628)
-
-- **Symptom:** a product create waited 8.1 s on an advisory lock, then failed with P2028 and held a pooled connection the whole time.
-- **Root cause:** Prisma's interactive-transaction timeout cannot interrupt a statement already waiting on a lock, so the wait was unbounded until the lock freed.
-- **Lesson:** **Bound lock waits inside Postgres: make `SET LOCAL lock_timeout` the FIRST statement of the transaction. A client-side transaction timeout does not stop a statement blocked on a lock.**
-- **Guard:** `apps/api/src/common/stock-tx.spec.ts`, `products.create-under-load.db.spec.ts`.
-
 ### L-332 · 2026-10-21 · domain · an existing line is shown, edited and previewed in the unit it was sold in, at its own stored pack and price
 
 - **Symptom:** the invoice edit form opened a boxed line as one total-pieces Qty (48) beside the per-box price (21.60), and a boxed line with no product posted a bare qty that re-billed 48 times the box price. Siblings: a repacked product previewed a stored 12-per-box line's Piece at the live size and list price, and a Today's-sales row read "24" for a line sold as 2 cases.
@@ -282,7 +261,7 @@
 - **Symptom:** after the read-only gate shipped (WriteButton/WriteLink, a refusal notice in the shared Modal slot), UX re-runs still found raw write controls, hand-rolled dialogs and a driver shell with no notice; each was a separate P2.
 - **Root cause:** the gate is opt-in per control and the notice rides a component slot, so anything not built on those components is outside it; the API side had a registry plus a route-walk pin (SA-776), the web side had neither.
 - **Lesson:** **When a gate or notice is delivered by wrapper components, enumerate the surfaces by search (raw buttons that post to write routes, `role="dialog"` markup outside the shared Modal) and pin the list in a spec; state plainly which surfaces are knowingly outside it.**
-- **Guard:** none automatic yet; propose a static scan on the web like the API's route-walk pin. Known gaps recorded: hand-rolled dialogs; the driver banner shows only after a refused write (no driver-readable status). Cf. [[L-225]].
+- **Guard:** none automatic yet; propose a static scan on the web like the API's route-walk pin. Known gaps recorded: hand-rolled dialogs; the driver banner shows only after a refused write (no driver-readable status). Cf. [[L-225]]. Extended 2026-11-13 (B1): a staff-control gate for the customer role was added as one helper, `seesStaffControls` (`apps/web/lib/default-unit-line.ts`), and applied by sweeping every entry point the bug did not cite: invoice list and detail, dashboard quick-create, command palette, returns list and detail, the orders bulk bar and inline-return dialogs. Each has a `*.customer-role.test.tsx`; no scan lists every staff-control site yet, so a new entry point is covered only if someone sweeps it.
 
 ### L-300 · 2026-10-12 · domain · an edit screen freezes its diff baseline at edit-open and re-bases only on an explicit reload
 
@@ -357,6 +336,27 @@
 - **Guard:** none yet; propose a lint/review checklist item flagging `token`/`code`/`secret`-named query params on any new route. Restored 2026-11-01 (it was archived on 2026-10-31 for room): this is a rule about RouteFlow's own routes, and the agent privacy rules cover what an agent does with URLs, not what the app puts in them.
 
 ## web
+
+### L-382 · 2026-11-13 · web · a reveal reached at rest is recorded as played at once; one played-list serves every reveal path (B1324)
+
+- **Symptom:** on the marketing pages a section already on screen at load, an anchor arrival, or the return from print blanked its text and faded it back in, or replayed a timeline on the next scroll.
+- **Root cause:** each reveal path (per-element reveal, settle, timelines) kept its own memory of what had played, and a trigger reached inside a ScrollTrigger refresh recorded nothing. `once: true` was tried as the record and abandoned: it removes the trigger, which shifts the trigger list under later refreshes and changes the trigger count against a fresh load.
+- **Lesson:** **Keep ONE played-list for every reveal path. A trigger reached at rest (inside a refresh, from an anchor, on the print return) is pushed to it at once and leaves its content as it is; only a callback from a scroll update plays. Never use `once` as the record.**
+- **Guard:** `apps/web/e2e/85-site-proof-pages.spec.ts` T1 (same trigger count as a fresh load after print) and T2 (no heading waits for a scroll), and its replay cell, which asserts the at-rest precondition before it measures. Cf. [[L-377]].
+
+### L-381 · 2026-11-13 · web · after print, restore the scroll place on the first ScrollTrigger refresh, not at `afterprint` and not on a timer (B1324)
+
+- **Symptom:** leaving print (preview closed, or the print media query ending) put the page back at the wrong place: the reading position was lost.
+- **Root cause:** leaving print rebuilds every trigger. Each refresh records the place, scrolls to the top to measure, puts the place back, then reports. The first refresh after the rebuild recorded the place of the print layout (no pins, a shorter page), so a single restore at `afterprint` was overwritten by the refreshes that run after it.
+- **Lesson:** **Save the place when print starts; for the one frame after print ends, put the saved place back on every `refresh` report, with no timer, then stop. Turn off `overflow-anchor` in print so entering it does not shift the page before the place is read.**
+- **Guard:** spec 85 T1 reads `scrollY` and the trigger count before print and after returning, on 12 pages at 1440x900 and 390x844. The mechanism is commented in `public/site/js/home-up.js` and `js/site.js` (the same toggle in both; `site-motion-always.static.test.ts` pins that).
+
+### L-380 · 2026-11-13 · web · a `gsap.matchMedia` condition whose KEY is `all` always matches, whatever its value says (B1324)
+
+- **Symptom:** a print toggle meant to take page motion off for print never reverted: motion stayed on and pages printed blank bands. Changing the condition's value string to screen-only changed nothing.
+- **Root cause:** GSAP's `matchMedia` treats a condition named `all` as match-everything and never reads its value. `site.js` declared `{ all: "all", desk: "(min-width: 900px)" }`, so the context was live in print.
+- **Lesson:** **Never name a `matchMedia` condition key `all`; name it for what it means (`screen`) and give it the media query. Prove a print branch by emulating print media and reading that the context reverted, not by reading the condition text.**
+- **Guard:** `site-motion-always.static.test.ts` computes the condition from the source and requires it screen-only (ledger row B1324/T1 in `site-pin-ledger.json`); spec 85 T1 asserts no `js-motion` in print.
 
 ### L-376 · 2026-11-12 · web · a text field inside a closing dialog is not a typing target; one predicate decides it for every guard that asks "is a person typing" (#4303)
 
