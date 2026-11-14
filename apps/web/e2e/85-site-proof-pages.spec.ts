@@ -1,15 +1,16 @@
 /**
  * Site proof, the pages (spec 85), project "site-proof".
- * Plan: .claude/pipeline/2026-11-11-rovio-rebrand/test-plan.md, rows T1, T2, T9, T12.
+ * Plan: .claude/pipeline/2026-11-13-site-wheel-print/README.md, rows T1, T2, T9, T12.
  *
  *   T1  R1   print shows the whole page, and screen is restored afterwards
  *   T2  R2   headings below the fold are not waiting for a scroll to appear
  *   T9  R10  no heading sits on top of the next block while the page rises into view
  *   T12 R12  nothing is lost: links, buttons, controls, anchors and the 15 tiles (parity diff)
  *
- * Signed out, local stack only. Known-red cells on master ARE the bug reproduction: nothing is
- * skipped or marked as an expected failure. Each test gathers every problem and asserts once, with
- * the page and size in every line.
+ * Signed out. The post-deploy job runs this project, so every cell here is green on master
+ * (review S9). Nothing is marked as an expected failure; the one clause not yet asserted, T1's
+ * wheel clause, is gated by WHEEL_PRINT_CLAUSE with its owner (WP1.2, B1321) in the report. Each
+ * test gathers every problem and asserts once, with the page and size in every line.
  *
  * T12 baseline: run once against master's build, `SITE_PARITY_WRITE=1`, then commit the JSON.
  */
@@ -68,6 +69,17 @@ const PRINT_SIZES: Size[] = [
   { w: 390, h: 844 },
 ];
 
+/**
+ * T1's wheel clause (R1: "the wheel as its still picture") is WP1.2's (B1321): the wheel's own
+ * matchMedia gains a print branch that puts the still back and shows the words the wheel drives.
+ * Until WP1.2 sets this to true, the clause is skipped with that reason in the report: the
+ * `.rfw` still/canvas checks, and the effective (ancestor) opacity, visibility and sticky sweeps over
+ * everything inside WHEEL_SCOPE (the wheel and the words column it is mounted with, `copy: ".hx-copy"`).
+ * Inside `.hx-copy` (outside `.rfw`) each element's own computed opacity and visibility stay asserted.
+ */
+const WHEEL_PRINT_CLAUSE = false;
+const WHEEL_SCOPE = ".rfw, .hx-copy";
+
 test.describe("T1 R1 print shows the whole page", () => {
   for (const route of PUBLIC_ROUTES) {
     for (const size of PRINT_SIZES) {
@@ -79,6 +91,13 @@ test.describe("T1 R1 print shows the whole page", () => {
         const tag = `${route} ${sizeName(size)}`;
         const problems: string[] = [];
         await openRoute(page, route, size);
+        const skipWheel = !WHEEL_PRINT_CLAUSE && (await page.locator(WHEEL_SCOPE).count()) > 0;
+        if (skipWheel) {
+          test.info().annotations.push({
+            type: "skipped-clause",
+            description: `T1 wheel clause on ${tag}: the wheel's still in print and the words it drives are WP1.2's (B1321)`,
+          });
+        }
 
         // mid-page, so a scroll-driven page has had to move
         const y = await page.evaluate(() => {
@@ -98,98 +117,155 @@ test.describe("T1 R1 print shows the whole page", () => {
         await page.emulateMedia({ media: "print" });
         await frames(page, 3);
 
-        const print = await page.evaluate(() => {
-          const sp = (window as unknown as { __sp: SiteProbe }).__sp;
-          const probs: string[] = [];
-          const some = (list: string[], what: string) => {
-            if (list.length) probs.push(`${list.length} ${what}: ${list.slice(0, 6).join(" | ")}`);
-          };
-          if (document.documentElement.classList.contains("js-motion"))
-            probs.push("html still has js-motion in print");
+        const print = await page.evaluate(
+          ({ skip, scope }) => {
+            const sp = (window as unknown as { __sp: SiteProbe }).__sp;
+            const probs: string[] = [];
+            const some = (list: string[], what: string) => {
+              if (list.length)
+                probs.push(`${list.length} ${what}: ${list.slice(0, 6).join(" | ")}`);
+            };
+            if (document.documentElement.classList.contains("js-motion"))
+              probs.push("html still has js-motion in print");
+            // the gated wheel clause: its elements are left out of the sweeps until WP1.2
+            const outOfScope = (e: Element) => skip && !!e.closest(scope);
+            // only an empty fixed layer (a toast viewport: no text, no child elements) prints nothing (WP0 HF5)
+            const emptyLayer = (e: Element) =>
+              !(e.textContent || "").trim() && e.children.length === 0;
 
-          const text = Array.from(document.querySelectorAll("h1, h2, h3, p, li, a")).filter((e) =>
-            sp.rendered(e),
-          );
-          some(
-            text.filter((e) => sp.eff(e) < 0.99).map(sp.name),
-            "elements are not at opacity 1 in print",
-          );
-          some(
-            text.filter((e) => getComputedStyle(e).visibility !== "visible").map(sp.name),
-            "elements are hidden in print",
-          );
-          some(
-            Array.from(document.querySelectorAll("body *"))
-              .filter(
-                (e) => sp.rendered(e) && /^(sticky|fixed)$/.test(getComputedStyle(e).position),
-              )
-              .map(sp.name),
-            "elements are sticky or fixed in print",
-          );
-
-          const wheel = document.querySelector(".rfw");
-          if (wheel) {
-            if (!wheel.classList.contains("rfw--static"))
-              probs.push(".rfw lacks rfw--static in print");
-            const svg = Array.from(wheel.querySelectorAll("svg")).filter((e) => sp.shown(e, 0.99));
-            if (!svg.length) probs.push(".rfw shows no svg in print");
-            const cv = Array.from(wheel.querySelectorAll("canvas")).filter((e) =>
-              sp.shown(e, 0.05),
+            const text = Array.from(document.querySelectorAll("h1, h2, h3, p, li, a")).filter((e) =>
+              sp.rendered(e),
             );
-            if (cv.length) probs.push(".rfw still shows a canvas in print");
-          }
-
-          // first-screen text: foreground and the first opaque background above it
-          const pairs: { name: string; fg: string; bg: string }[] = [];
-          for (const e of text) {
-            const top = e.getBoundingClientRect().top + window.scrollY;
-            if (top >= window.innerHeight) continue;
-            const own = Array.from(e.childNodes).some(
-              (n) => n.nodeType === 3 && (n.textContent || "").trim(),
+            const swept = text.filter((e) => !outOfScope(e));
+            some(
+              swept.filter((e) => sp.eff(e) < 0.99).map(sp.name),
+              "elements are not at opacity 1 in print",
             );
-            if (!own) continue;
-            let bg = "rgb(255, 255, 255)";
-            let known = true;
-            for (let n: Element | null = e; n; n = n.parentElement) {
-              const s = getComputedStyle(n);
-              if (s.backgroundImage !== "none") {
-                known = false;
-                break;
+            some(
+              swept.filter((e) => getComputedStyle(e).visibility !== "visible").map(sp.name),
+              "elements are hidden in print",
+            );
+            some(
+              Array.from(document.querySelectorAll("body *"))
+                .filter(
+                  (e) =>
+                    sp.rendered(e) &&
+                    !outOfScope(e) &&
+                    /^(sticky|fixed)$/.test(getComputedStyle(e).position) &&
+                    !emptyLayer(e),
+                )
+                .map(sp.name),
+              "elements are sticky or fixed in print",
+            );
+
+            // inside .hx-copy every element is checked (not only text tags), from the element up to but not including .hx-copy
+            // itself (the wheel hides that column until WP1.2): the page's own motion must not leave anything faded or hidden
+            const copyRoot = document.querySelector(".hx-copy");
+            const inner =
+              skip && copyRoot
+                ? Array.from(copyRoot.querySelectorAll("*")).filter(
+                    (e) => !e.closest(".rfw") && sp.rendered(e),
+                  )
+                : [];
+            const chain = (e: Element) => {
+              const out: Element[] = [];
+              for (let n: Element | null = e; n && n !== copyRoot; n = n.parentElement) out.push(n);
+              return out;
+            };
+            some(
+              inner
+                .filter(
+                  (e) =>
+                    chain(e).reduce((a, n) => a * parseFloat(getComputedStyle(n).opacity), 1) <
+                    0.99,
+                )
+                .map(sp.name),
+              "elements in .hx-copy are not at opacity 1 in print",
+            );
+            some(
+              inner
+                .filter((e) =>
+                  chain(e).some((n) => {
+                    // visibility inherits: a node hid itself only if it is hidden while its parent (below .hx-copy) is visible
+                    const up = n.parentElement;
+                    if (!up || up === copyRoot) return false;
+                    return (
+                      getComputedStyle(n).visibility !== "visible" &&
+                      getComputedStyle(up).visibility === "visible"
+                    );
+                  }),
+                )
+                .map(sp.name),
+              "elements in .hx-copy are hidden in print",
+            );
+
+            const wheel = skip ? null : document.querySelector(".rfw");
+            if (wheel) {
+              if (!wheel.classList.contains("rfw--static"))
+                probs.push(".rfw lacks rfw--static in print");
+              const svg = Array.from(wheel.querySelectorAll("svg")).filter((e) =>
+                sp.shown(e, 0.99),
+              );
+              if (!svg.length) probs.push(".rfw shows no svg in print");
+              const cv = Array.from(wheel.querySelectorAll("canvas")).filter((e) =>
+                sp.shown(e, 0.05),
+              );
+              if (cv.length) probs.push(".rfw still shows a canvas in print");
+            }
+
+            // first-screen text: foreground and the first opaque background above it
+            const pairs: { name: string; fg: string; bg: string }[] = [];
+            for (const e of text) {
+              const top = e.getBoundingClientRect().top + window.scrollY;
+              if (top >= window.innerHeight) continue;
+              const own = Array.from(e.childNodes).some(
+                (n) => n.nodeType === 3 && (n.textContent || "").trim(),
+              );
+              if (!own) continue;
+              let bg = "rgb(255, 255, 255)";
+              let known = true;
+              for (let n: Element | null = e; n; n = n.parentElement) {
+                const s = getComputedStyle(n);
+                if (s.backgroundImage !== "none") {
+                  known = false;
+                  break;
+                }
+                const m = s.backgroundColor.match(/[\d.]+/g);
+                if (
+                  m &&
+                  (m.length < 4 || parseFloat(m[3]) > 0.9) &&
+                  s.backgroundColor !== "rgba(0, 0, 0, 0)"
+                ) {
+                  bg = s.backgroundColor;
+                  break;
+                }
               }
-              const m = s.backgroundColor.match(/[\d.]+/g);
+              if (known) pairs.push({ name: sp.name(e), fg: getComputedStyle(e).color, bg });
+            }
+
+            // no heading's box on top of the next sibling's
+            const clash: string[] = [];
+            for (const h of Array.from(document.querySelectorAll("h1, h2, h3")).filter(
+              (e) => sp.rendered(e) && !outOfScope(e),
+            )) {
+              const nx = h.nextElementSibling;
+              if (!nx || !sp.rendered(nx)) continue;
+              const a = h.getBoundingClientRect();
+              const b = nx.getBoundingClientRect();
               if (
-                m &&
-                (m.length < 4 || parseFloat(m[3]) > 0.9) &&
-                s.backgroundColor !== "rgba(0, 0, 0, 0)"
+                a.left < b.right - 1 &&
+                b.left < a.right - 1 &&
+                a.top < b.bottom - 1 &&
+                b.top < a.bottom - 1
               ) {
-                bg = s.backgroundColor;
-                break;
+                clash.push(`${sp.name(h)} over ${sp.name(nx)}`);
               }
             }
-            if (known) pairs.push({ name: sp.name(e), fg: getComputedStyle(e).color, bg });
-          }
-
-          // no heading's box on top of the next sibling's
-          const clash: string[] = [];
-          for (const h of Array.from(document.querySelectorAll("h1, h2, h3")).filter((e) =>
-            sp.rendered(e),
-          )) {
-            const nx = h.nextElementSibling;
-            if (!nx || !sp.rendered(nx)) continue;
-            const a = h.getBoundingClientRect();
-            const b = nx.getBoundingClientRect();
-            if (
-              a.left < b.right - 1 &&
-              b.left < a.right - 1 &&
-              a.top < b.bottom - 1 &&
-              b.top < a.bottom - 1
-            ) {
-              clash.push(`${sp.name(h)} over ${sp.name(nx)}`);
-            }
-          }
-          some(clash, "headings sit on their next sibling in print");
-          return { probs, pairs };
-        });
+            some(clash, "headings sit on their next sibling in print");
+            return { probs, pairs };
+          },
+          { skip: skipWheel, scope: WHEEL_SCOPE },
+        );
         problems.push(...print.probs.map((p) => `${tag}: ${p}`));
         nonEmpty(print.pairs, `first-screen text elements on ${tag}`);
         for (const p of print.pairs) {
@@ -277,9 +353,161 @@ test.describe("T2 R2 headings show without a scroll", () => {
   }
 });
 
-// ─── T9 — no heading on top of the next block during the rise ───────────────
+// A section reached through a ScrollTrigger refresh (a load, an anchor arrival, a print return) does not play: its animation never
+// starts, so nothing may have changed its text or hidden it at build time. It shows the figures of the served page, fully visible,
+// within three frames. (A plain scroll plays the animation and ends right too; only the refresh path leaves the build-time state.)
+const JUMP_SELECTORS = [".sl-tiers .tier", ".ct-vis", ".uc-i"] as const;
 
-const T9_PAGES = ["/", "/product"] as const;
+test.describe("T2 R2 a section reached through a refresh shows its final figures", () => {
+  for (const size of PRINT_SIZES) {
+    test(`T2 R2 a section reached through a refresh shows its final figures @/ ${sizeName(size)}`, async ({
+      page,
+    }) => {
+      test.setTimeout(120_000);
+      await openRoute(page, "/", size);
+      const norm = (t: string | null) => (t || "").replace(/\s+/g, " ").trim();
+      let checked = 0;
+      const wrong: string[] = [];
+      for (const sel of JUMP_SELECTORS) {
+        const count = await page.locator(sel).count();
+        for (let i = 0; i < count; i++) {
+          const rendered = await page.evaluate(
+            ([q, k]) =>
+              document.querySelectorAll(q as string)[k as number].getClientRects().length > 0,
+            [sel, i],
+          );
+          if (!rendered) continue;
+          // one evaluate: the jump and the refresh, so the section's trigger is passed inside the refresh
+          await page.evaluate(
+            ([q, k]) => {
+              const el = document.querySelectorAll(q as string)[k as number];
+              const r = el.getBoundingClientRect();
+              const top = Math.max(0, r.top + window.scrollY - (window.innerHeight - r.height) / 2);
+              window.scrollTo({ top, behavior: "instant" });
+              (window as unknown as { ScrollTrigger: { refresh(): void } }).ScrollTrigger.refresh();
+            },
+            [sel, i],
+          );
+          await frames(page, 3);
+          const got = await page.evaluate(
+            async ([q, k]) => {
+              const html = await (await fetch(location.pathname)).text();
+              const served = new DOMParser().parseFromString(html, "text/html");
+              const live = document.querySelectorAll(q as string)[k as number];
+              const src = served.querySelectorAll(q as string)[k as number];
+              let opacity = 1;
+              for (let n: Element | null = live; n; n = n.parentElement)
+                opacity *= parseFloat(getComputedStyle(n).opacity);
+              return { live: live.textContent, src: src ? src.textContent : null, opacity };
+            },
+            [sel, i],
+          );
+          checked++;
+          if (norm(got.live) !== norm(got.src))
+            wrong.push(
+              `${sel}[${i}] shows "${norm(got.live).slice(0, 60)}" not "${norm(got.src).slice(0, 60)}"`,
+            );
+          if (got.opacity < 0.99)
+            wrong.push(`${sel}[${i}] is at opacity ${got.opacity.toFixed(2)}`);
+        }
+      }
+      if (!checked)
+        throw new Error("T2 R2 refresh: none of .sl-tiers .tier, .ct-vis, .uc-i was rendered");
+      expect(wrong, `T2 ${sizeName(size)}: figures differ from the served page`).toEqual([]);
+    });
+  }
+});
+
+// A section reached at rest (a load at its anchor) counts as played: scrolled away from and back to with real scroll steps, its
+// timeline must not play again (the content would blink to opacity 0 and the counted sums would count up from their start).
+// The section is #counter: its counter window (.ct-vis) is driven by a `go` timeline and carries counted sums.
+test("T2 R2 a section reached at rest does not replay @/#counter 1440x900", async ({ page }) => {
+  test.setTimeout(180_000);
+  await installProbes(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/#counter", { waitUntil: "load" });
+  await waitForWheel(page);
+  await frames(page, 30);
+  // Precondition: this cell proves nothing unless #counter was reached AT REST on load. If the anchor landing ever made the
+  // section play, it would be mid-play or already played by a scroll update, and the replay check below would pass for the wrong
+  // reason. So before any scrolling its .ct-vis must be fully opaque and read exactly as the served page does.
+  const atRest = await page.evaluate(async () => {
+    const norm = (t: string | null) => (t || "").replace(/\s+/g, " ").trim();
+    const html = await (await fetch("/")).text();
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const src = doc.querySelector("#counter .ct-vis");
+    const live = document.querySelector("#counter .ct-vis");
+    if (!live || !src) return null;
+    let opacity = 1;
+    for (let n: Element | null = live; n; n = n.parentElement)
+      opacity *= parseFloat(getComputedStyle(n).opacity);
+    return { opacity, live: norm(live.textContent), src: norm(src.textContent) };
+  });
+  if (!atRest) throw new Error("T2 R2 replay: no #counter .ct-vis on load");
+  expect(atRest.opacity, "#counter .ct-vis opacity on load at the anchor").toBeGreaterThanOrEqual(
+    0.99,
+  );
+  expect(atRest.live, "#counter .ct-vis text on load at the anchor").toBe(atRest.src);
+  // everything else is reached once, by a plain jump, and left to settle
+  await page.evaluate(() =>
+    window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "instant" }),
+  );
+  await frames(page, 150);
+  await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+  await frames(page, 60);
+  const served = await page.evaluate(async () => {
+    const html = await (await fetch("/")).text();
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    return Array.from(doc.querySelectorAll(".ct-vis")).map((e) =>
+      (e.textContent || "").replace(/\s+/g, " ").trim(),
+    );
+  });
+  if (!served.length) throw new Error("T2 R2 replay: no .ct-vis in the served page");
+  await page.evaluate((finals) => {
+    const w = window as unknown as { __rp: { minOpacity: number; bad: string[]; frames: number } };
+    w.__rp = { minOpacity: 1, bad: [], frames: 0 };
+    const tick = () => {
+      w.__rp.frames++;
+      Array.from(document.querySelectorAll(".ct-vis")).forEach((e, i) => {
+        let o = 1;
+        for (let n: Element | null = e; n; n = n.parentElement)
+          o *= parseFloat(getComputedStyle(n).opacity);
+        w.__rp.minOpacity = Math.min(w.__rp.minOpacity, o);
+        const text = (e.textContent || "").replace(/\s+/g, " ").trim();
+        if (text !== finals[i] && w.__rp.bad.length < 4)
+          w.__rp.bad.push(`.ct-vis[${i}] reads "${text.slice(0, 50)}"`);
+      });
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }, served);
+  // back down to the section with real scroll steps
+  const target = await page.evaluate(
+    () => document.querySelector("#counter")!.getBoundingClientRect().top + window.scrollY,
+  );
+  for (let y = 0; y < target + 600; y += 400) {
+    await page.mouse.wheel(0, 400);
+    await frames(page, 2);
+  }
+  await frames(page, 90);
+  const got = await page.evaluate(
+    () =>
+      (window as unknown as { __rp: { minOpacity: number; bad: string[]; frames: number } }).__rp,
+  );
+  expect(got.frames, "T2 replay: the probe ran").toBeGreaterThan(30);
+  expect(got.bad, "T2 replay: figures read other than the served page").toEqual([]);
+  expect(got.minOpacity, "T2 replay: the section blinked").toBeGreaterThanOrEqual(0.99);
+});
+
+// ─── T9 — no heading on top of the next block during the rise ───────────────
+// L-377: the WP0 version measured only after the headings settled and only pairs with BOTH boxes
+// in the window, so it passed on master with the bug present (WP0 HF3): the phone rise holds each
+// unscrolled h2 22 px low over a 12 px gap, and while a heading rises its next block is still
+// below the window. R10 says "at any scroll position", so each step now reads on the first frame
+// after the scroll and again once settled, every h2 still to come (rising in the window or held
+// below it) against its next block, wherever that block is.
+
+const T9_PAGES = ["/", "/product", "/pricing"] as const;
 const T9_SIZES: Size[] = [
   { w: 390, h: 844 },
   { w: 320, h: 568 },
@@ -298,15 +526,54 @@ test.describe("T9 R10 no heading overlaps the next block while rising", () => {
           () => document.documentElement.scrollHeight - window.innerHeight,
         );
         const step = Math.round(size.h * 0.1);
-        const problems: string[] = [];
+        // Worst overlap per heading, so a held heading is reported once with its largest value.
+        const worst = new Map<string, { by: number; y: number; where: string }>();
         let pairs = 0;
+        const measure = async (to: number) => {
+          const r = await page.evaluate(() => {
+            const sp = (window as unknown as { __sp: SiteProbe }).__sp;
+            let n = 0;
+            const bad: { pair: string; by: number; where: string }[] = [];
+            for (const h of Array.from(document.querySelectorAll("h2"))) {
+              const nx = h.nextElementSibling;
+              if (!nx || !sp.shown(h, 0.05) || !sp.shown(nx, 0.05)) continue;
+              const a = h.getBoundingClientRect();
+              const b = nx.getBoundingClientRect();
+              // every heading still to come: in the window (rising) or below it (held before its
+              // rise). The next block may be anywhere; it is below the window while its heading rises.
+              if (a.bottom <= 0) continue;
+              n++;
+              if (
+                a.left < b.right - 1 &&
+                b.left < a.right - 1 &&
+                a.top < b.bottom - 1 &&
+                b.top < a.bottom - 1
+              ) {
+                bad.push({
+                  pair: `${sp.name(h)} over ${sp.name(nx)}`,
+                  by: Math.round(Math.min(a.bottom - b.top, b.bottom - a.top)),
+                  where: a.top < window.innerHeight ? "in the window" : "below the window",
+                });
+              }
+            }
+            return { n, bad };
+          });
+          pairs += r.n;
+          for (const b of r.bad) {
+            const w = worst.get(b.pair);
+            if (!w || b.by > w.by) worst.set(b.pair, { by: b.by, y: to, where: b.where });
+          }
+        };
         for (let y = 0; ; y += step) {
           const to = Math.min(y, max);
           await page.evaluate(
             (v) => window.scrollTo({ top: v, behavior: "instant" as ScrollBehavior }),
             to,
           );
-          // wait until the headings and their neighbours stop moving (equal across two frames), then measure
+          // during the rise: the first frame after the scroll, no settle wait (L-377, WP0 HF3)
+          await frames(page, 1);
+          await measure(to);
+          // and again once the headings and their neighbours stop moving (equal across two frames)
           await page
             .waitForFunction(
               () =>
@@ -327,37 +594,14 @@ test.describe("T9 R10 no heading overlaps the next block while rising", () => {
               { timeout: 4_000, polling: 100 },
             )
             .catch(() => undefined); // still moving after 4 s: measure what is on screen, that is the finding
-          const r = await page.evaluate(() => {
-            const sp = (window as unknown as { __sp: SiteProbe }).__sp;
-            let n = 0;
-            const bad: string[] = [];
-            for (const h of Array.from(document.querySelectorAll("h2"))) {
-              const nx = h.nextElementSibling;
-              if (!nx || !sp.shown(h, 0.05) || !sp.shown(nx, 0.05)) continue;
-              const a = h.getBoundingClientRect();
-              const b = nx.getBoundingClientRect();
-              const inView = (x: DOMRect) => x.bottom > 0 && x.top < window.innerHeight;
-              if (!inView(a) || !inView(b)) continue;
-              n++;
-              if (
-                a.left < b.right - 1 &&
-                b.left < a.right - 1 &&
-                a.top < b.bottom - 1 &&
-                b.top < a.bottom - 1
-              ) {
-                bad.push(
-                  `${sp.name(h)} over ${sp.name(nx)} (by ${Math.min(a.bottom - b.top, b.bottom - a.top).toFixed(0)}px)`,
-                );
-              }
-            }
-            return { n, bad };
-          });
-          pairs += r.n;
-          problems.push(...r.bad.map((b) => `${tag} scrollY ${to}: ${b}`));
+          await measure(to);
           if (to >= max) break;
         }
         if (!pairs) throw new Error(`T9 ${tag}: swept no heading and next-block pairs`);
-        expect(problems, `T9 ${tag}: windows with a heading on its next block`).toEqual([]);
+        const problems = [...worst].map(
+          ([pair, w]) => `${tag}: ${pair} by ${w.by}px (scrollY ${w.y}, heading ${w.where})`,
+        );
+        expect(problems, `T9 ${tag}: headings on their next block during the rise`).toEqual([]);
       });
     }
   }

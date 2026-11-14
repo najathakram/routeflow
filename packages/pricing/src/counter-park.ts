@@ -331,6 +331,8 @@ export interface ParkedCartListItem {
   expiresAt: string;
   lineCount: number;
   customerName?: string;
+  /** W-1188: the sale day of a dated parked sale (the LIST sends it). Absent = a plain Today sale. */
+  orderDate?: string;
   /** Row 330e: the lines' pricing inputs (the LIST sends them; the park answer does not). Absent = no total shown. */
   priceLines?: ParkedPriceLine[];
   /** R7b 2.1: the first few line names and qty, and the line count (the LIST sends them). Absent = no names shown. */

@@ -299,7 +299,7 @@ describe("W-853 the history button on a counter line", () => {
     await pick("Walk-in Record");
     await scan("JUICE");
     expect(historyButtons()).toHaveLength(0);
-    expect(interactiveCount("Cola")).toBe(6); // remove, 2 steppers, qty, Change price, Add note: nothing new
+    expect(interactiveCount("Cola")).toBe(7); // remove, 2 steppers, qty, Change price, Add note + the move handle (two lines): no history button
     expect(historyCalls()).toHaveLength(0);
   });
 

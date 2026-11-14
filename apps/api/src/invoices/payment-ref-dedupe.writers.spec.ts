@@ -580,7 +580,7 @@ describe("row 498: payments dedupe on a normalised reference (no window), on SA-
           paidAt: "2026-10-01",
           allocations: [{ invoiceId: "inv-1", amount: 100 }],
         } as any,
-        {} as any,
+        { source: "STAFF_ALLOCATION" } as any,
       );
       expect(committed().pays).toHaveLength(1);
     });
@@ -614,12 +614,12 @@ describe("row 498: payments dedupe on a normalised reference (no window), on SA-
       committed().audits.filter((a) => String(a.action) === "payment.ref-duplicate-suspect");
 
     it("(E1) a capture that repeats an existing payment's normalised reference + amount is RECORDED, flagged by one audit row and a suspect, never 409", async () => {
-      await invoices.recordStandalonePayment(card(), {} as any); // a manual repeat-able payment
+      await invoices.recordStandalonePayment(card(), { source: "STAFF_ALLOCATION" } as any); // a manual repeat-able payment
       const opts = capture("pi_3Abc"); // the exact-equal check below is by RAW text; this differs in case/spaces
-      const res: any = await invoices.recordStandalonePayment(
-        card({ reference: "pi_3Abc" }),
-        opts as any,
-      );
+      const res: any = await invoices.recordStandalonePayment(card({ reference: "pi_3Abc" }), {
+        source: "STAFF_ALLOCATION",
+        ...(opts as any),
+      });
       expect(res.paymentGroupId).toBeTruthy();
       expect(committed().pays).toHaveLength(2);
       expect(suspectAudits()).toHaveLength(1);
@@ -639,12 +639,15 @@ describe("row 498: payments dedupe on a normalised reference (no window), on SA-
     });
 
     it("(E2) the SAME payment intent already recorded: a PaymentAlreadyRecordedError naming its group, nothing written", async () => {
-      const first: any = await invoices.recordStandalonePayment(
-        card({ reference: "pi_3Abc" }),
-        capture("pi_3Abc") as any,
-      );
+      const first: any = await invoices.recordStandalonePayment(card({ reference: "pi_3Abc" }), {
+        source: "STRIPE_SETTLE",
+        ...(capture("pi_3Abc") as any),
+      });
       const err: any = await invoices
-        .recordStandalonePayment(card({ reference: "pi_3Abc" }), capture("pi_3Abc") as any)
+        .recordStandalonePayment(card({ reference: "pi_3Abc" }), {
+          source: "STRIPE_SETTLE",
+          ...(capture("pi_3Abc") as any),
+        })
         .catch((e) => e);
       expect(err?.name).toBe("PaymentAlreadyRecordedError");
       expect(err.paymentGroupId).toBe(first.paymentGroupId);
@@ -654,17 +657,23 @@ describe("row 498: payments dedupe on a normalised reference (no window), on SA-
 
     it("(E3) a capture with nothing to repeat records quietly: no audit row, no suspect", async () => {
       const opts = capture("pi_new");
-      await invoices.recordStandalonePayment(card({ reference: "pi_new" }), opts as any);
+      await invoices.recordStandalonePayment(card({ reference: "pi_new" }), {
+        source: "STAFF_ALLOCATION",
+        ...(opts as any),
+      });
       expect(committed().pays).toHaveLength(1);
       expect(suspectAudits()).toHaveLength(0);
       expect(opts.capturedExternally.suspects).toHaveLength(0);
     });
 
     it("m1: a rolled-back attempt's suspect never survives a retry: the caller sees exactly the committed one", async () => {
-      await invoices.recordStandalonePayment(card(), {} as any); // the payment the capture repeats
+      await invoices.recordStandalonePayment(card(), { source: "STAFF_ALLOCATION" } as any); // the payment the capture repeats
       mockCommitFailures = 1; // the first attempt flags a suspect, then the commit is aborted by a deadlock
       const opts = capture("pi_3Abc");
-      await invoices.recordStandalonePayment(card({ reference: "pi_3Abc" }), opts as any);
+      await invoices.recordStandalonePayment(card({ reference: "pi_3Abc" }), {
+        source: "STAFF_ALLOCATION",
+        ...(opts as any),
+      });
       expect(committed().pays).toHaveLength(2);
       expect(suspectAudits()).toHaveLength(1);
       expect(opts.capturedExternally.suspects).toHaveLength(1); // not 2: the rolled-back attempt's is gone
@@ -677,7 +686,10 @@ describe("row 498: payments dedupe on a normalised reference (no window), on SA-
         invoiceId: "x",
         duplicateOfPaymentId: "y",
       });
-      await invoices.recordStandalonePayment(card({ reference: "pi_clean" }), opts as any);
+      await invoices.recordStandalonePayment(card({ reference: "pi_clean" }), {
+        source: "STAFF_ALLOCATION",
+        ...(opts as any),
+      });
       expect(opts.capturedExternally.suspects).toHaveLength(0);
     });
 
@@ -693,10 +705,10 @@ describe("row 498: payments dedupe on a normalised reference (no window), on SA-
         balance: 100,
       });
       const err: any = await invoices
-        .recordStandalonePayment(
-          card({ reference: "pi_adv", allocations: [] }),
-          capture("pi_adv") as any,
-        )
+        .recordStandalonePayment(card({ reference: "pi_adv", allocations: [] }), {
+          source: "STRIPE_SETTLE",
+          ...(capture("pi_adv") as any),
+        })
         .catch((e) => e);
       expect(err?.name).toBe("PaymentAlreadyRecordedError");
       expect(committed().advs).toHaveLength(1);
@@ -712,18 +724,18 @@ describe("row 498: payments dedupe on a normalised reference (no window), on SA-
         amount: 100,
         balance: 100,
       });
-      await invoices.recordStandalonePayment(
-        card({ reference: "pi_adv", allocations: [] }),
-        capture("pi_adv") as any,
-      );
+      await invoices.recordStandalonePayment(card({ reference: "pi_adv", allocations: [] }), {
+        source: "STRIPE_SETTLE",
+        ...(capture("pi_adv") as any),
+      });
       expect(committed().advs.length).toBeGreaterThanOrEqual(2);
     });
 
     it("m3: the same charge recorded earlier at a DIFFERENT amount is still the same charge: already recorded, nothing booked", async () => {
-      const first: any = await invoices.recordStandalonePayment(
-        card({ reference: "pi_same" }),
-        capture("pi_same") as any,
-      );
+      const first: any = await invoices.recordStandalonePayment(card({ reference: "pi_same" }), {
+        source: "STRIPE_SETTLE",
+        ...(capture("pi_same") as any),
+      });
       const err: any = await invoices
         .recordStandalonePayment(
           card({
@@ -731,7 +743,7 @@ describe("row 498: payments dedupe on a normalised reference (no window), on SA-
             totalAmount: 150,
             allocations: [{ invoiceId: "inv-1", amount: 100 }],
           }),
-          capture("pi_same") as any,
+          { source: "STRIPE_SETTLE", ...(capture("pi_same") as any) },
         )
         .catch((e) => e);
       expect(err?.name).toBe("PaymentAlreadyRecordedError");
@@ -740,18 +752,23 @@ describe("row 498: payments dedupe on a normalised reference (no window), on SA-
     });
 
     it("m3: ... even when another candidate event is the amount hit", async () => {
-      await invoices.recordStandalonePayment(card({ reference: " PI_SAME " }), {} as any); // a manual 100, normalises equal
+      await invoices.recordStandalonePayment(card({ reference: " PI_SAME " }), {
+        source: "STAFF_ALLOCATION",
+      } as any); // a manual 100, normalises equal
       await invoices.recordStandalonePayment(
         card({
           reference: "pi_same",
           totalAmount: 60,
           allocations: [{ invoiceId: "inv-1", amount: 60 }],
         }),
-        capture("pi_same") as any,
+        { source: "STRIPE_SETTLE", ...(capture("pi_same") as any) },
       );
       const opts = capture("pi_same");
       const err: any = await invoices
-        .recordStandalonePayment(card({ reference: "pi_same" }), opts as any)
+        .recordStandalonePayment(card({ reference: "pi_same" }), {
+          source: "STAFF_ALLOCATION",
+          ...(opts as any),
+        })
         .catch((e) => e);
       // the amount hit is the manual 100 (a suspect), but the exact-reference 60 proves this charge is already on the ledger
       expect(err?.name).toBe("PaymentAlreadyRecordedError");
@@ -759,8 +776,10 @@ describe("row 498: payments dedupe on a normalised reference (no window), on SA-
     });
 
     it("(E4) the exemption is structural: the same repeat from a manual caller (recordAnyway or not) is still 409 without it", async () => {
-      await invoices.recordStandalonePayment(card(), {} as any);
-      const err: any = await invoices.recordStandalonePayment(card(), {} as any).catch((e) => e);
+      await invoices.recordStandalonePayment(card(), { source: "STAFF_ALLOCATION" } as any);
+      const err: any = await invoices
+        .recordStandalonePayment(card(), { source: "STAFF_ALLOCATION" } as any)
+        .catch((e) => e);
       expect(err?.getResponse?.()).toMatchObject({ code: DUP });
     });
   });
@@ -777,7 +796,10 @@ describe("row 498: payments dedupe on a normalised reference (no window), on SA-
         ...over,
       }) as any;
     const recordGroup = (over: Record<string, unknown> = {}, opts: Record<string, unknown> = {}) =>
-      invoices.recordStandalonePayment(standalone(over), as(opts));
+      invoices.recordStandalonePayment(standalone(over), {
+        source: "STAFF_ALLOCATION",
+        ...as(opts),
+      });
 
     it("(1) the same reference and total a day later is 409, naming the first payment group, excess included", async () => {
       await recordGroup({ paidAt: "2026-10-01" }); // 100 to the invoice + 50 on account
@@ -857,9 +879,15 @@ describe("row 498: payments dedupe on a normalised reference (no window), on SA-
     });
 
     it("(8) there is no opt-in: a plain caller (cash approval, Stripe settle) is deduped like any other", async () => {
-      await invoices.recordStandalonePayment(standalone(), { actor: null } as any);
+      await invoices.recordStandalonePayment(standalone(), {
+        source: "STAFF_ALLOCATION",
+        actor: null,
+      } as any);
       const err = await dupOf(
-        invoices.recordStandalonePayment(standalone(), { actor: null } as any),
+        invoices.recordStandalonePayment(standalone(), {
+          source: "STAFF_ALLOCATION",
+          actor: null,
+        } as any),
       );
       expect(err?.getResponse?.()).toMatchObject({ code: DUP });
       expect(committed().pays).toHaveLength(1);

@@ -71,8 +71,45 @@ describe("mobile.css is arrangement, colour and life, not a claim", () => {
   });
 
   it("the rise moves a heading, it never hides one (transform only, no opacity)", () => {
-    expect(css).toContain("@keyframes rf-rise{from{transform:translateY(22px)}to{transform:none}}");
     expect(css).not.toMatch(/rf-rise[^}]*opacity/);
+  });
+
+  it("T9 R10 the phone rise moves a heading less than the gap to its next line", () => {
+    const rise =
+      /@keyframes rf-rise\{from\{transform:translateY\((\d+(?:\.\d+)?)px\)\}to\{transform:(\w+)\}\}/.exec(
+        css,
+      );
+    if (!rise) throw new Error("rf-rise keyframes (offset and end) not found in css/mobile.css");
+    // the keyframes end at rest: the heading lands where the layout put it
+    expect(rise[2]).toBe("none");
+    // the smallest margin-top below an h2, over every rule with an `h2 +` selector (spaces around the + ignored) and the
+    // pricing card's `.pfrom` line, which is the next block after a card's h2
+    const gaps: number[] = [];
+    for (const file of ["css/site.css", "css/mobile.css"]) {
+      for (const m of read(file).matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+        if (!/h2\s*\+|\.pfrom/.test(m[1])) continue;
+        const mt = /(?:^|;)\s*margin-top:\s*(\d+(?:\.\d+)?)px/.exec(m[2]);
+        if (mt) gaps.push(Number(mt[1]));
+        // the first value of a `margin:` shorthand is the top margin
+        const sh = /(?:^|;)\s*margin:\s*([^;]+)/.exec(m[2]);
+        if (sh) {
+          const top = sh[1].trim().split(/\s+/)[0];
+          const px = /^(\d+(?:\.\d+)?)px$/.exec(top);
+          if (px) gaps.push(Number(px[1]));
+          else if (top === "0") gaps.push(0);
+          else throw new Error(`cannot compare the margin shorthand top value "${top}" in ${file}`);
+        }
+      }
+    }
+    if (!gaps.length)
+      throw new Error("no h2 + / .pfrom margin-top rule found in css/site.css or css/mobile.css");
+    expect(Number(rise[1]) < Math.min(...gaps)).toBe(true);
+    // screen only: the file is also linked for print at narrow page widths
+    const block =
+      /@media screen\{[^]*?@supports \(animation-timeline:view\(\)\)\{[^]*?animation:rf-rise/.exec(
+        css,
+      );
+    expect(block !== null).toBe(true);
   });
 
   it("headings balance and paragraphs avoid a stranded last word", () => {

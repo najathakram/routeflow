@@ -36,8 +36,19 @@ const NON_TEXT_INPUT_TYPES = new Set([
   "hidden",
 ]);
 
+/**
+ * A dialog that has been told to close but is still mounted for its exit animation (Radix keeps its content in the tree with
+ * `data-state="closed"` for about 150 ms). A text field inside it is going away: it is not somewhere a person is typing, so
+ * neither the re-arm below nor the till's key redirect may stand down for it (a scan that starts in that window would lose its
+ * leading keys with the unmount). ONE definition, read by both guards through `isTextEntryElement`.
+ */
+export function insideClosingDialog(el: Element | null): boolean {
+  return el?.closest('[role="dialog"][data-state="closed"]') != null;
+}
+
 function isTextEntryElement(el: Element | null): boolean {
   if (!(el instanceof HTMLElement)) return false;
+  if (insideClosingDialog(el)) return false;
   if (el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) return true;
   if (el instanceof HTMLInputElement) return !NON_TEXT_INPUT_TYPES.has(el.type);
   if (el.isContentEditable) return true;

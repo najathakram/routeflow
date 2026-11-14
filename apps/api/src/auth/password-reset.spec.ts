@@ -36,10 +36,68 @@ const ACTIVE_USER = {
   updatedAt: new Date(),
 };
 
+type UserRow = {
+  id: string;
+  tenantId: string;
+  email: string;
+  createdAt: Date;
+  tenant: { name: string } | null;
+  [k: string]: unknown;
+};
+
+const ROW_A: UserRow = {
+  id: "user-a",
+  tenantId: "t-a",
+  email: "alice@example.com",
+  createdAt: new Date("2026-01-01T00:00:00Z"),
+  tenant: { name: "Alpha Supply" },
+};
+const ROW_B: UserRow = {
+  id: "user-b",
+  tenantId: "t-b",
+  email: "alice@example.com",
+  createdAt: new Date("2026-02-01T00:00:00Z"),
+  tenant: { name: "Bravo Foods" },
+};
+
+/** The service is called with an optional third argument (the resolved business). */
+type ResetCall = (
+  email: string,
+  surface?: string,
+  tenantId?: string,
+) => Promise<{ message: string }>;
+
 describe("AuthService — password reset (RF-018)", () => {
   let service: AuthService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let emailService: { send: jest.Mock };
+
+  /** One fixture list drives both user lookups, honouring email, tenant, active/not-deleted, order, take. */
+  const stubUsers = (rows: UserRow[]) => {
+    const match = (where: Record<string, unknown> = {}) =>
+      rows.filter(
+        (r) =>
+          (where.email === undefined || r.email === where.email) &&
+          (where.tenantId === undefined || r.tenantId === where.tenantId) &&
+          (r.deletedAt === undefined || r.deletedAt === null) &&
+          (r.status === undefined || r.status === "ACTIVE"),
+      );
+    (prisma.user.findFirst as jest.Mock).mockImplementation(
+      async (args: { where?: Record<string, unknown> } = {}) => match(args.where)[0] ?? null,
+    );
+    (prisma.user.findMany as jest.Mock).mockImplementation(
+      async (args: { where?: Record<string, unknown>; take?: number } = {}) => {
+        const found = match(args.where);
+        return args.take === undefined ? found : found.slice(0, args.take);
+      },
+    );
+  };
+  const reset = (email: string, surface?: string, tenantId?: string) =>
+    (service.requestPasswordReset as unknown as ResetCall).call(service, email, surface, tenantId);
+  const createdUserIds = () =>
+    (prisma.passwordResetToken.create as jest.Mock).mock.calls.map((c) => c[0].data.userId);
+  const sentMails = () =>
+    emailService.send.mock.calls.map((c) => c[0] as { html: string; text: string; to: string });
 
   beforeEach(async () => {
     prisma = createMockPrisma();
@@ -101,7 +159,7 @@ describe("AuthService — password reset (RF-018)", () => {
 
   describe("requestPasswordReset", () => {
     it("creates a token row and fires email when user exists", async () => {
-      (prisma.user.findFirst as jest.Mock).mockResolvedValue(ACTIVE_USER);
+      stubUsers([{ ...ACTIVE_USER, tenantId: "t-1", tenant: { name: "Alpha Supply" } }]);
       (prisma.passwordResetToken.deleteMany as jest.Mock).mockResolvedValue({ count: 0 });
       (prisma.passwordResetToken.create as jest.Mock).mockResolvedValue({});
 
@@ -109,6 +167,13 @@ describe("AuthService — password reset (RF-018)", () => {
 
       expect(result.message).toContain("If that address is registered");
       expect(prisma.passwordResetToken.create).toHaveBeenCalledTimes(1);
+      expect((prisma.user.findMany as jest.Mock).mock.calls[0]![0].where).toEqual(
+        expect.objectContaining({
+          email: "alice@example.com",
+          deletedAt: null,
+          status: "ACTIVE",
+        }),
+      );
 
       const createArg = (prisma.passwordResetToken.create as jest.Mock).mock.calls[0]![0];
       expect(createArg.data.userId).toBe("user-1");
@@ -127,7 +192,7 @@ describe("AuthService — password reset (RF-018)", () => {
     });
 
     it("returns same message when user does NOT exist (no enumeration)", async () => {
-      (prisma.user.findFirst as jest.Mock).mockResolvedValue(null);
+      stubUsers([]);
 
       const result = await service.requestPasswordReset("nobody@example.com");
 
@@ -136,7 +201,7 @@ describe("AuthService — password reset (RF-018)", () => {
     });
 
     it("links to the current website by default (surface omitted), never the retired mobile-web address", async () => {
-      (prisma.user.findFirst as jest.Mock).mockResolvedValue(ACTIVE_USER);
+      stubUsers([{ ...ACTIVE_USER, tenantId: "t-1", tenant: { name: "Alpha Supply" } }]);
 
       await service.requestPasswordReset("alice@example.com");
       await Promise.resolve();
@@ -151,7 +216,7 @@ describe("AuthService — password reset (RF-018)", () => {
     // W-1163: the reset mail wears the RouteFlow layout, shows a short link text instead of the
     // token URL, and ships a text part that carries the full link.
     it("is the branded layout: a button, no token URL as visible text, and a matching text part", async () => {
-      (prisma.user.findFirst as jest.Mock).mockResolvedValue(ACTIVE_USER);
+      stubUsers([{ ...ACTIVE_USER, tenantId: "t-1", tenant: { name: "Alpha Supply" } }]);
 
       await service.requestPasswordReset("alice@example.com");
       await Promise.resolve();
@@ -166,13 +231,107 @@ describe("AuthService — password reset (RF-018)", () => {
     });
 
     it('links to the web base URL when surface="web"', async () => {
-      (prisma.user.findFirst as jest.Mock).mockResolvedValue(ACTIVE_USER);
+      stubUsers([{ ...ACTIVE_USER, tenantId: "t-1", tenant: { name: "Alpha Supply" } }]);
 
       await service.requestPasswordReset("alice@example.com", "web");
       await Promise.resolve();
 
       const html = emailService.send.mock.calls[0]![0].html as string;
       expect(html).toContain("https://web.test/reset-password?token=");
+    });
+
+    // REG-B15: one address can belong to several businesses.
+    const ORDERS: [string, UserRow[]][] = [
+      ["order A,B", [ROW_A, ROW_B]],
+      ["order B,A", [ROW_B, ROW_A]],
+    ];
+
+    describe("REG-B15 several businesses share one address", () => {
+      it.each(ORDERS)(
+        "REG-B15 reset targets the account in the resolved business (%s)",
+        async (_label, rows) => {
+          stubUsers(rows);
+
+          const result = await reset("alice@example.com", "web", "t-b");
+          await Promise.resolve();
+
+          expect(result.message).toContain("If that address is registered");
+          expect(createdUserIds()).toEqual(["user-b"]);
+          expect(sentMails()).toHaveLength(1);
+          expect(sentMails()[0]!.html).toContain("Bravo Foods");
+          expect(sentMails()[0]!.html).not.toContain("Alpha Supply");
+          expect(sentMails()[0]!.to).toBe("alice@example.com");
+          expect((prisma.user.findMany as jest.Mock).mock.calls[0]![0].where).toEqual(
+            expect.objectContaining({ tenantId: "t-b" }),
+          );
+        },
+      );
+
+      it.each(ORDERS)(
+        "REG-B15 without a resolved business each account gets its own link naming its business (%s)",
+        async (_label, rows) => {
+          stubUsers(rows);
+
+          await reset("alice@example.com", "web");
+          await Promise.resolve();
+
+          expect([...createdUserIds()].sort()).toEqual(["user-a", "user-b"]);
+          expect(prisma.passwordResetToken.create).toHaveBeenCalledTimes(2);
+          const mails = sentMails();
+          expect(mails).toHaveLength(2);
+          expect(mails.filter((m) => m.html.includes("Alpha Supply"))).toHaveLength(1);
+          expect(mails.filter((m) => m.html.includes("Bravo Foods"))).toHaveLength(1);
+          expect(mails.filter((m) => m.text.includes("Alpha Supply"))).toHaveLength(1);
+          expect(mails.filter((m) => m.text.includes("Bravo Foods"))).toHaveLength(1);
+          const arg = (prisma.user.findMany as jest.Mock).mock.calls[0]![0];
+          expect(arg.orderBy).toEqual([{ createdAt: "asc" }, { id: "asc" }]);
+          expect(arg.take).toBe(6);
+          expect(arg.where.tenantId).toBeUndefined();
+        },
+      );
+
+      it("REG-B15 more than five accounts: the first five get a link, the rest none", async () => {
+        const many: UserRow[] = Array.from({ length: 7 }, (_v, i) => ({
+          id: `user-${i + 1}`,
+          tenantId: `t-${i + 1}`,
+          email: "alice@example.com",
+          createdAt: new Date(2026, 0, i + 1),
+          tenant: { name: `Business ${i + 1}` },
+        }));
+        stubUsers(many);
+
+        await reset("alice@example.com", "web");
+        await Promise.resolve();
+
+        expect(createdUserIds()).toEqual(["user-1", "user-2", "user-3", "user-4", "user-5"]);
+        expect(sentMails()).toHaveLength(5);
+      });
+
+      it.each(ORDERS)(
+        "REG-B15 an unmatched business falls back to every account with the address (%s)",
+        async (_label, rows) => {
+          stubUsers(rows);
+
+          await reset("alice@example.com", "web", "t-c");
+          await Promise.resolve();
+
+          expect([...createdUserIds()].sort()).toEqual(["user-a", "user-b"]);
+          expect(prisma.passwordResetToken.create).toHaveBeenCalledTimes(2);
+          expect(sentMails()).toHaveLength(2);
+        },
+      );
+
+      it("REG-B15 no matching account: same response, nothing written or sent", async () => {
+        stubUsers([]);
+
+        const result = await reset("nobody@example.com", "web", "t-b");
+        await Promise.resolve();
+
+        expect(result.message).toContain("If that address is registered");
+        expect(prisma.passwordResetToken.deleteMany).not.toHaveBeenCalled();
+        expect(prisma.passwordResetToken.create).not.toHaveBeenCalled();
+        expect(emailService.send).not.toHaveBeenCalled();
+      });
     });
   });
 

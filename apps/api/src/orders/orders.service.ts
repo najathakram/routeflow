@@ -111,8 +111,6 @@ import {
   ChangeRequestStatus,
   ChangeRequestType,
   FulfillPath,
-  RouteRunStatus,
-  RouteRunStopStatus,
   type Prisma,
 } from "@prisma/client";
 import { ListOrdersDto } from "./dto/list-orders.dto";
@@ -258,6 +256,10 @@ import {
 import { SystemConfigService } from "../system-config/system-config.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
+import { resolveDriverRunLink } from "./driver-run-link";
+import { resolveOwnCustomerForCreate } from "./own-customer-for-create";
+import { offlineCreate } from "./offline/offline-create";
+import * as flags from "./offline/review-flags";
 import { resolveLineUnits } from "../products/line-units";
 import * as unitLines from "./unit-line-build";
 import * as unitEdit from "./unit-line-edit";
@@ -475,6 +477,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // sort LAST (NULLS LAST), with createdAt then id as the final tiebreaks (W-1187: ONE read order).
           orderBy: ORDER_LINE_ORDER_BY,
         },
+        ...(flags.seesReviewFlags(user) ? flags.REVIEW_FLAGS_INCLUDE : {}), // SA-1124: staff only
         // row 342: who handed it over (staff only; `registerKey` is a scalar already on the row)
         ...(seesHandOverStamp(user) ? { soldBy: HANDOVER_SOLD_BY_SELECT } : {}),
         transaction: true,
@@ -1292,71 +1295,11 @@ export class OrdersService implements OnApplicationBootstrap {
       if (customer.deletedAt) throw new BadRequestException("Customer not found");
       customerId = customer.id;
 
-      // B309: a driver may only link a new order to a stop/run that is their own
-      // and currently active — mirrors routes.service.ts's completeWithPayment /
-      // reopenStop driver-isolation guard (B72). This runs BEFORE any order row
-      // is written, so a rejected link never leaves an orphan order.
-      if (dto.routeRunId || dto.routeRunStopId) {
-        const driver = await this.prisma
-          .forTenant()
-          .driver.findFirst({ where: { userId: user.sub } });
-
-        let stop: { id: string; status: RouteRunStopStatus; routeRunId: string } | null = null;
-        let runId = dto.routeRunId ?? null;
-        if (dto.routeRunStopId) {
-          stop = await this.prisma.forTenant().routeRunStop.findFirst({
-            where: { id: dto.routeRunStopId },
-            select: { id: true, status: true, routeRunId: true },
-          });
-          if (!stop) throw new BadRequestException("Stop not found");
-          if (dto.routeRunId && dto.routeRunId !== stop.routeRunId) {
-            throw new BadRequestException("Stop does not belong to the supplied route run");
-          }
-          runId = stop.routeRunId;
-        }
-
-        const run = await this.prisma.forTenant().routeRun.findFirst({
-          where: { id: runId as string },
-          select: { id: true, driverId: true, status: true },
-        });
-        if (!driver || !run || run.driverId !== driver.id) {
-          throw new ForbiddenException("You do not have access to this route run");
-        }
-        if (run.status !== RouteRunStatus.IN_PROGRESS) {
-          throw new BadRequestException("Route run is not in progress");
-        }
-        if (
-          stop &&
-          (stop.status === RouteRunStopStatus.COMPLETED ||
-            stop.status === RouteRunStopStatus.SKIPPED)
-        ) {
-          throw new BadRequestException("Stop is already completed or skipped");
-        }
-        resolvedRouteRunId = runId;
-      }
+      // B309: a driver links only to their own active stop/run (driver-run-link.ts).
+      resolvedRouteRunId = await resolveDriverRunLink(this.prisma, dto, user);
     } else {
-      // Customer creates their own order
-      // B309 (Opus MAJOR): the routeRunId/routeRunStopId link block later in
-      // create() is role-agnostic and the controller admits CUSTOMER — without
-      // this a buyer could POST either field directly and attach their own
-      // order to a driver's manifest, bypassing the DRIVER-only
-      // ownership/in-progress checks in the branch above entirely. Refuse
-      // before any read or write; the OPERATOR/TENANT_ADMIN path is untouched.
-      if (dto.routeRunId || dto.routeRunStopId) {
-        throw new BadRequestException("Route run linkage is not allowed for customer orders");
-      }
-      // REG-B131: `deletedAt: null` here, not a second check below — a removal deactivates the
-      // user but an access token minted just before it stays valid for up to 15 minutes, so a
-      // removed customer's own in-flight session must fall into the existing refusal.
-      const customer = await this.prisma
-        .forTenant()
-        .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
-      if (!customer)
-        throw new ForbiddenException({
-          code: API_ERROR_CODES.CUSTOMER_NOT_LINKED,
-          message: "Customer record not found",
-        });
-      customerId = customer.id;
+      // Customer creates their own order (own-customer-for-create.ts: B309 link refusal, REG-B131 lookup).
+      customerId = await resolveOwnCustomerForCreate(this.prisma, dto, user);
     }
 
     // F30/R8: the replay lookup runs HERE — after the caller's own customer is
@@ -1409,7 +1352,8 @@ export class OrdersService implements OnApplicationBootstrap {
       );
     }
 
-    const isDraft = dto.status === "DRAFT";
+    let isDraft = dto.status === "DRAFT";
+    const off = offlineCreate(options.offline); // SA-1124: inert unless the controller proved an offline staff request
     const items = dto.items ?? [];
 
     // Non-draft orders require at least one item
@@ -1849,17 +1793,22 @@ export class OrdersService implements OnApplicationBootstrap {
     // Tobacco (requiresLicense=false) is never gated — its warn-only flow is intact.
     let restriction: rGate.Decision | undefined; // row 510: the staff override, stamped in the create tx
     let returnCredit = 0; // W-863: the credit the B585 gate netted (a counter sale's server-priced preview)
+    off.judgeDrift(items, lineItemsData, total);
     if (!isDraft) {
-      await this.authGuard.assertAuthorizedOrThrow({
-        customerId,
-        lines: lineItemsData.map((li) => ({ trackedCategoryId: li.trackedCategoryId })),
-      });
+      await off.gate(() =>
+        this.authGuard.assertAuthorizedOrThrow({
+          customerId,
+          lines: lineItemsData.map((li) => ({ trackedCategoryId: li.trackedCategoryId })),
+        }),
+      );
       // Lane R: a banned product warns (staff) or refuses BEFORE the stock tx; a DRAFT is judged at its promotion.
       const tenant = rGate.tenantId(this.prisma, user);
-      restriction = await this.sellingRestrictions.assertLinesSellable({
-        ...rGate.create({ tenant, customerId, user, lineItemsData, fulfillPath, options, dto }),
-        channel: restrictionChannelForPrincipal(user), // judged at ENTRY time, like the license guard
-      });
+      restriction = await off.gate(() =>
+        this.sellingRestrictions.assertLinesSellable({
+          ...rGate.create({ tenant, customerId, user, lineItemsData, fulfillPath, options, dto }),
+          channel: restrictionChannelForPrincipal(user), // judged at ENTRY time, like the license guard
+        }),
+      );
       // S1: net of the till tender. W-863 (SA-945 MUST 6): the COUNTER sale also nets its SERVER-priced return credit
       // (never a client figure); Create Order keeps SA-194 (an unapplied credit never loosens the gate), pinned in
       // orders-inline-return-create.db.spec.ts.
@@ -1867,8 +1816,10 @@ export class OrdersService implements OnApplicationBootstrap {
         ? await inlineReturn.previewInlineReturnCredit(inlineRet, customerId, user)
         : 0;
       const projectedTotal = creditProjectedTotal(total, options, returnCredit);
-      await this.creditGate({ customerId, projectedTotal, principal: user }); // B585: NEW order
+      await off.gate(() => this.creditGate({ customerId, projectedTotal, principal: user })); // B585: NEW order
     }
+    isDraft ||= off.blocked; // SA-1124: an offline order a gate refused is saved as a DRAFT with flags
+    if (isDraft) restriction = undefined; // a draft is never stamped: judged at its promotion
 
     // WS9: the oversell policy is resolved ONCE, here, before the transaction (so before any
     // FOR UPDATE); only the resulting boolean enters the locked stock section below.
@@ -1972,6 +1923,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 sourceRecorded: true, // F1(i): the source above is from the creating principal, not the column default
                 // SA-672e/row 317: only the counter-sale POST passes this; it also stamps the cashier (a replay writes nothing).
                 ...(options.counterSale ? { counterSale: true, soldById: user.sub } : {}),
+                ...off.orderData(), // SA-1124: Order.offlineCreatedAt (device time, display only)
                 lineItems: { create: authorship.withAuthor(lineItemsData, lineAuthor) },
               },
               include: {
@@ -1984,6 +1936,7 @@ export class OrdersService implements OnApplicationBootstrap {
             await this.syncCompositions(tx, created.id);
             await od.recordOrderDated(tx, user, created, { orderDate, zone: orderZone, options });
             await restriction?.stamp(tx, created.id);
+            await off.writeFlags(tx, created, items, lineItemsData); // SA-1124: one createMany, never nested
             inlineMinted = await applyReturn(tx, inlineRet, {
               customerId,
               orderId: created.id,
@@ -2246,6 +2199,7 @@ export class OrdersService implements OnApplicationBootstrap {
         },
         { order, user, tenantId: rGate.tenantId(this.prisma, user, order.tenantId), ack: dto },
       );
+      await flags.assertPromotionCredit(this.prisma, order, (p) => this.creditGate(p), user); // SA-1124
     }
 
     // B585: goods leaving is the enforcement moment (operators only, by the role gates above; before
@@ -2341,6 +2295,7 @@ export class OrdersService implements OnApplicationBootstrap {
               customerFacing: user.role === UserRole.CUSTOMER,
             });
             await stamped?.stamp(tx, id);
+            await flags.resolveGateFlagsAtPromotion(tx, order, user.sub); // SA-1124: passed at promotion
             return tx.order.findUniqueOrThrow({ where: { id } });
           },
           { isolationLevel: "Serializable", timeout: 15_000 },

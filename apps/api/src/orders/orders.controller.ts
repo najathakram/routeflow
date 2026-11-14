@@ -10,6 +10,7 @@ import {
   Param,
   Query,
   Headers,
+  HttpCode,
   UseGuards,
   BadRequestException,
   ConflictException,
@@ -31,6 +32,9 @@ import { OrderStatus, UserRole } from "@prisma/client";
 import { StaffOrderEmailService, type PendingOrderRef } from "../messaging/staff-order-email";
 import { ListOrdersDto } from "./dto/list-orders.dto";
 import { CreateOrderDto } from "./dto/create-order.dto";
+import { ResolveReviewFlagDto } from "./dto/resolve-review-flag.dto";
+import { offlineCreateOptions, resolveOfflineRequest } from "./offline/offline-create";
+import { resolveReviewFlag as resolveFlag } from "./offline/review-flags";
 import { CreateSaleDto } from "./dto/create-sale.dto";
 import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
 import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
@@ -146,6 +150,7 @@ export class OrdersController {
     @Headers("Idempotency-Key") rawIdempotencyKey?: string,
   ) {
     const idempotencyKey = this.normalizeIdempotencyKey(rawIdempotencyKey);
+    const offline = resolveOfflineRequest(dto, user); // SA-1124: role, money and quote checks FIRST, before any merge logic
     const isStaff = user.role === UserRole.OPERATOR || (user.role as string) === "TENANT_ADMIN";
     // Legacy: forceNew=true is treated as an explicit "separate" choice.
     const choice: "merge" | "separate" | undefined =
@@ -153,7 +158,7 @@ export class OrdersController {
 
     // W-762 / SA-918: an order discount on either side never merges — the order is created on its own.
     let separateForDiscount = false;
-    if (isStaff && dto.customerId) {
+    if (isStaff && dto.customerId && !offline) {
       // A merge target must share the incoming order's fulfil path (merge-candidates.ts).
       const mergeAs = {
         explicit: dto.fulfillPath,
@@ -443,7 +448,13 @@ export class OrdersController {
       idempotencyKey ? ({ ...dto, idempotencyKey } as CreateOrderDto) : dto,
       user,
       // SA-923: a discount keeps this order apart ONCE; persisting skipAutoMerge would opt it out of every future merge.
-      { skipAutoMerge: choice === "separate", ...(separateForDiscount && { separateOnce: true }) },
+      // SA-1124: an offline request never asks and never merges; it is created apart and its open order is flagged.
+      offline
+        ? await offlineCreateOptions(this.ordersService, dto, user, offline)
+        : {
+            skipAutoMerge: choice === "separate",
+            ...(separateForDiscount && { separateOnce: true }),
+          },
     );
     // SA-1063 A-1: the customer's pending orders BEFORE the sweep. The sweep keeps the newest order and deletes the
     // folded ones, so this read is how the office email can name them. It never rejects.
@@ -621,6 +632,25 @@ export class OrdersController {
   @Get(":id")
   findOne(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     return this.ordersService.findOne(id, user);
+  }
+
+  /** SA-1124: mark a review flag on an offline order reviewed (price, open order, backorder kinds only). */
+  @Post(":id/review-flags/:flagId/resolve")
+  @HttpCode(200)
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  resolveReviewFlag(
+    @Param("id") id: string,
+    @Param("flagId") flagId: string,
+    @Body() dto: ResolveReviewFlagDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return resolveFlag(this.ordersService.prisma, {
+      orderId: id,
+      flagId,
+      resolution: dto.resolution,
+      user,
+    });
   }
 
   // Staff-only demotions (incl. the DELIVERED → CONFIRMED "Reopen Order" action

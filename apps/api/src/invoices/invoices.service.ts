@@ -32,7 +32,7 @@ import {
 import { randomUUID } from "crypto";
 import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 import { PrismaService } from "../prisma/prisma.service";
-import { overpaidByOf, statusFromPayments } from "./invoice-status";
+import { statusFromPayments } from "./invoice-status";
 import { voidPaymentInTx } from "./payment-void-tx";
 import { TENANT_ZONE_SELECT, configuredZone, tenantTimeZone } from "../common/tenant-time-zone";
 import { givenPaidInstant, paidInstantOf, settledInstantOf } from "../common/paid-instant";
@@ -52,7 +52,6 @@ import {
   normalizeBoxesPieces,
   OVERPAID_EPSILON,
 } from "@routeflow/pricing";
-import { computeDepositFields } from "./deposit-fields";
 import { deriveInvoiceDetailFields, revisedAtByInvoice } from "./invoice-detail-read";
 import * as du from "./invoice-display-unit"; // SA-827 display units
 import {
@@ -76,10 +75,9 @@ import {
 } from "./invoice-edit-plan";
 import { assertCustomPricesAllowed } from "../orders/staff-override";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
-import { customerInvoiceList, invoiceDetailFor } from "../common/staff-only-fields";
+import { invoiceDetailFor } from "../common/staff-only-fields";
 import { CONFIRMED_PAYMENT, splitConfirmed, sumConfirmed } from "./payment-predicates";
 import { PAYABLE } from "./invoice-status-sets";
-import { classifyInvoiceBalance } from "./invoice-balance-classify";
 import { reconcileDeliveredOrdersInTx as reconcileDeliveredOrdersInTxImpl } from "./delivered-reconcile";
 import { packAtSaleByProduct, priorUnitsPerBoxMap, toSaleLedgerLines } from "./pack-at-sale";
 import { regulatedContentChanged } from "./regulated-content-change";
@@ -105,6 +103,7 @@ import { exportPayments, findPaymentById, listAllPayments } from "./payment-list
 import { settledAtShipment } from "../orders/order-status-invoicing";
 import { assertCarrierLinesUnchanged, invoiceOrderWithCarrier } from "./invoice-carrier-lock";
 import { resolvePendingMirror } from "./pending-mirror";
+import { assertOrderReviewed, hasOpenReviewBlock } from "../orders/offline/order-review-gate";
 import {
   guardedEmail,
   invoiceFingerprintOf,
@@ -145,12 +144,7 @@ import { CreatePartialInvoiceDto } from "./dto/create-partial-invoice.dto";
 import type { UpdateInvoiceDto } from "./dto/update-invoice.dto";
 import { ListInvoicesDto } from "./dto/list-invoices.dto";
 import { listRowFlags } from "./invoice-row-flags";
-import {
-  applyInvoiceSearchAndDateFilters,
-  applyInvoiceStatusFilters,
-  applyOverdueBalanceFilter,
-  invoiceListOrderBy,
-} from "./invoice-list-query";
+import { listInvoices } from "./invoice-list";
 import { UpdateShipmentDto } from "../orders/dto/update-shipment.dto";
 import { resolveShipmentText } from "../orders/shipment-text";
 import { JwtPayload } from "../auth/jwt-payload.interface";
@@ -810,7 +804,8 @@ export class InvoicesService {
       created.length === 1 &&
       depositFields.depositPercent != null &&
       !isPostDeliveryOrderStatus(order.status) &&
-      (await this.systemConfig.get("invoice.depositCollectAtOrder")) === "true"
+      (await this.systemConfig.get("invoice.depositCollectAtOrder")) === "true" &&
+      !(await hasOpenReviewBlock(this.prisma.forTenant(), order.id)) // SA-1124 PR-1b: a flagged order stays DRAFT
     ) {
       const issued: any[] = [];
       for (const inv of created) {
@@ -2608,7 +2603,11 @@ export class InvoicesService {
         where: { tenantId, key: "invoice.depositCollectAtOrder" },
         select: { value: true },
       });
-      if (collectRaw?.value === "true" && !isPostDeliveryOrderStatus((order as any).status)) {
+      if (
+        collectRaw?.value === "true" &&
+        !isPostDeliveryOrderStatus((order as any).status) &&
+        !(await hasOpenReviewBlock(this.prisma, order.id, tenantId)) // SA-1124 PR-1b: a flagged order stays DRAFT
+      ) {
         // Update by primary key of the row this method just created for this tenant —
         // safe without a tenant filter (the id came from our own create), and the
         // unscoped client is the same handle the rest of this method uses.
@@ -2882,108 +2881,12 @@ export class InvoicesService {
   }
 
   async findAll(query: ListInvoicesDto, user?: JwtPayload) {
-    const { customerId, sortBy, sortOrder, page = 1, limit = 20 } = query;
-    const skip = (page - 1) * limit;
-    const where: any = {};
-    // SA-488 / row 308: the tenant's zone, read ONCE per request: the isOverdue filter and every row's
-    // isOverdue flag end the due day in it (one cutoff, so the list and its filter always agree).
-    const tz = (await this.resolveTenantInvoiceDefaults()).timezone;
-    applyInvoiceStatusFilters(where, query, tz, user?.role);
-    if (user?.role === UserRole.CUSTOMER) {
-      const customer = await this.prisma
-        .forTenant()
-        .customer.findFirst({ where: { userId: user.sub } });
-      if (!customer) return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
-      where.customerId = customer.id;
-      // Buyers must not see DRAFT invoices (not yet issued to them)
-      if (!where.status) {
-        where.status = { not: "DRAFT" };
-      } else if (where.status?.in) {
-        where.status.in = where.status.in.filter((s: string) => s !== "DRAFT");
-      } else if (where.status === "DRAFT") {
-        return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
-      }
-    } else if (customerId) {
-      where.customerId = customerId;
-    }
-    applyInvoiceSearchAndDateFilters(where, query);
-    // SA-770: overdue = past due AND a balance is owed (the one SQL predicate); no tenant, no list.
-    if (!(await applyOverdueBalanceFilter(where, query, this.prisma, this.prisma.getTenantId())))
-      return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
-    const orderBy = invoiceListOrderBy(sortBy, sortOrder);
-
-    const [data, total] = await Promise.all([
-      this.prisma.forTenant().invoice.findMany({
-        where,
-        include: {
-          customer: { select: { id: true, businessName: true } },
-          payments: { orderBy: { createdAt: "desc" } },
-          // Shipments lists hide the shipped date of an unmarked order (status only, no column).
-          // counterSale: the paid-at-sale flag below (row 401), so a till sale's list row shows no due date.
-          order: { select: { status: true, counterSale: true } },
-        },
-        skip,
-        take: limit,
-        orderBy,
-      }),
-      this.prisma.forTenant().invoice.count({ where }),
-    ]);
-
-    // Compute balanceDue server-side so the client always gets the right value
-    // regardless of whether InvoicePayment records exist (e.g. Zoho-imported invoices)
-    //
-    // RF-202: isOverdue uses ISO date-string comparison (YYYY-MM-DD) so that an
-    // invoice due *today* is NOT considered overdue.  Comparing Date objects
-    // directly would treat a due date of "2026-05-01" (midnight UTC) as overdue
-    // any time after midnight UTC on that date, regardless of local timezone.
-    // Business rule: grace period extends through the end of the due date.
-    const revisedAt = await revisedAtByInvoice(
-      this.prisma.forTenant(),
-      data.map((i) => i.id),
-    );
-    const overdueBy = overdueCutoff(new Date(), tz);
-    const todayIso = overdueBy.toISOString().slice(0, 10); // the tenant's day, like isOverdue (and the deposit check)
-    const computedData = data.map((inv) => {
-      // F03/R1/T-B11s: CONFIRMED (PAID) payments only. An unconfirmed DRAFT
-      // payment (e.g. a bulk bank-reconciliation entry an operator hasn't
-      // confirmed yet) must not be folded into the list's own balance-due number
-      // any more than a VOID (bounced check, P5-12) one is — both must match
-      // findOne's paidAmount/balanceDue.
-      //
-      // B421: paidAmount is now CASH-ONLY (a CREDIT_NOTE application is not
-      // money the tenant received, and rendered/counted as "Paid" it looked
-      // like one) — creditApplied/advanceApplied are separate fields. The
-      // customer's OBLIGATION is still reduced by any confirmed method, so
-      // balanceDue and the deposit check both use the full confirmed total.
-      const { cash: paidAmount, creditApplied, advanceApplied } = splitConfirmed(inv.payments);
-      const totalConfirmed = paidAmount + creditApplied + advanceApplied;
-      // SA-770: balanceDue + isOverdue come from the ONE classifier (B421 F3's roundMoney-before->0 rule and
-      // RF-202's "due today is not overdue" live there), judged on the tenant's day (row 308; UTC when it has no zone).
-      const { balanceDue, isOverdue } = classifyInvoiceBalance(inv, overdueBy);
-      const { depositAmount, depositOverdue } = computeDepositFields(
-        inv as any,
-        totalConfirmed,
-        todayIso,
-      );
-      return {
-        ...inv,
-        balanceDue,
-        overpaidBy: overpaidByOf(inv.total, paidAmount), // SA-763r P-3
-        revisedAt: revisedAt.get(inv.id) ?? null,
-        paidAmount,
-        creditApplied,
-        advanceApplied,
-        isOverdue,
-        depositAmount,
-        depositOverdue,
-        ...listRowFlags(inv),
-      };
-    });
-
-    return {
-      data: customerInvoiceList(computedData, user?.role === UserRole.CUSTOMER),
-      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    // SA-065: the list page lives in invoice-list.ts (size ratchet), like the KPI tiles below.
+    const deps = {
+      prisma: this.prisma,
+      resolveTenantInvoiceDefaults: () => this.resolveTenantInvoiceDefaults(),
     };
+    return listInvoices(deps, query, user);
   }
 
   /** B12: the invoices page's KPI tiles live in invoice-kpi-summary.ts (size ratchet). */
@@ -3505,6 +3408,7 @@ export class InvoicesService {
     const refusal = sendRefusal(inv.status); // #2255: fast pre-tx; markSent re-checks under the lock
     if (refusal) throw new BadRequestException(refusal);
     await this.assertOrderInvoiceUnlocked(inv, opts);
+    if (inv.orderId) await assertOrderReviewed(this.prisma.forTenant(), inv.orderId); // SA-1124 PR-1b
     // P5-13: SENT flip + oldest-first credit auto-apply are ONE atomic operation.
     // Idempotent on re-send. If the tx throws, the send fails — money first.
     const { updated, auto } = await this.markSent(id, inv.orderId);
@@ -3644,6 +3548,7 @@ export class InvoicesService {
     const refusal = sendRefusal(inv.status); // #2255: fast pre-tx; markSent re-checks under the lock
     if (refusal) throw new BadRequestException(refusal);
     await this.assertOrderInvoiceUnlocked(inv);
+    if (inv.orderId) await assertOrderReviewed(this.prisma.forTenant(), inv.orderId); // SA-1124 PR-1b
 
     const recipientEmail = resolveRecipientEmail(overrideEmail, inv.customer?.email);
 
@@ -4314,6 +4219,7 @@ export class InvoicesService {
       if (!inv) throw new NotFoundException("Invoice not found");
       const refusal = paymentRefusal(inv.status); // #2472 (4): VOID and WRITTEN_OFF, like the others
       if (refusal) throw new BadRequestException(`Cannot record payment on ${refusal} invoice`);
+      if (inv.orderId) await assertOrderReviewed(tx, inv.orderId); // SA-1124 PR-1b: staff money waits for the price review
 
       const total = Number(inv.total);
       const alreadyPaid = sumConfirmed(inv.payments);
@@ -5025,14 +4931,14 @@ export class InvoicesService {
 
   // ─── Standalone (bulk-allocation) payment ────────────────────────────────
 
-  async recordStandalonePayment(dto: StandalonePaymentDto, opts?: StandalonePaymentOpts) {
+  async recordStandalonePayment(dto: StandalonePaymentDto, opts: StandalonePaymentOpts) {
     // SA-824: a keyed call claims in the money tx below (its first statement) or replays the stored result.
     return keyedPayment(this.prisma, standalonePaymentKey(dto), opts, (o) =>
-      this.writeStandalonePayment(dto, o),
+      this.writeStandalonePayment(dto, o ?? opts),
     );
   }
 
-  private async writeStandalonePayment(dto: StandalonePaymentDto, opts?: StandalonePaymentOpts) {
+  private async writeStandalonePayment(dto: StandalonePaymentDto, opts: StandalonePaymentOpts) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     const paymentGroupId = randomUUID();
     const paidAt = paidInstantOf(dto.paidAt, tz); // SA-943: tenant-local day, today = now
@@ -5095,6 +5001,9 @@ export class InvoicesService {
             throw new NotFoundException(`Invoice ${alloc.invoiceId} not found for customer`);
           const refused = paymentRefusal(invoice.status); // SA-404f F1: on the LOCKED row
           if (refused) throw new BadRequestException(`Invoice ${alloc.invoiceId} is ${refused}`);
+          // SA-1124 PR-1b: staff money waits for the price review; money that already moved at the processor never does
+          if (opts?.source !== "STRIPE_SETTLE" && invoice.orderId)
+            await assertOrderReviewed(tx, invoice.orderId);
           if (opts?.assertAllocationsWithinBalance) {
             const alreadyPaid = sumConfirmed(invoice.payments);
             const balance = roundMoney(Number(invoice.total) - alreadyPaid);

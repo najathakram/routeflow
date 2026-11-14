@@ -52,6 +52,19 @@
       "runtimeArgs": ["--yes", "serve", "--listen", "4700", "--no-clipboard", "."],
       "cwd": "local-assets/docs",
       "port": 4700
+    },
+    {
+      "name": "website-preview",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["--yes", "serve", "--listen", "4800", "--no-clipboard", "."],
+      "cwd": "local-assets/website-design-2026-11-01",
+      "port": 4800
+    },
+    {
+      "name": "ops-monitor",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["tools/ops-monitor/server.mjs"],
+      "port": 4317
     }
   ]
 }

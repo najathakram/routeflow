@@ -6,6 +6,7 @@ import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button, Modal } from "@routeflow/ui/web";
 import type { ParkedCartListItem } from "@routeflow/pricing";
+import { dayLabel } from "@/lib/natural-date";
 import { apiClient } from "@/lib/api-client";
 import { cartTotals } from "@/lib/counter-sale";
 import { itemNamesLine } from "@/lib/counter-item-names";
@@ -91,6 +92,17 @@ function ParkedRow({
             formatLineWord(row.lineCount)
           )}
           {row.customerName ? ` · ${row.customerName}` : ""}
+          {row.orderDate ? (
+            <>
+              {" · "}
+              <span
+                data-testid="parked-row-dated"
+                className="whitespace-nowrap rounded-full border border-amber-400 bg-amber-100 px-2 py-0.5 font-medium text-amber-900"
+              >
+                {`Dated ${dayLabel(row.orderDate, row.createdAt)}`}
+              </span>
+            </>
+          ) : null}
         </p>
         {total !== null ? (
           <span

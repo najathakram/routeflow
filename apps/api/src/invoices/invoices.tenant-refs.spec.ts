@@ -137,12 +137,15 @@ describe("InvoicesService — tenant refs (681 sites 2, 3, 10)", () => {
 
   describe("site 10 — writeStandalonePayment (dto.customerId)", () => {
     const pay = (customerId: string, allocations: object[] = []) =>
-      service.recordStandalonePayment({
-        customerId,
-        totalAmount: 50,
-        method: "CASH",
-        allocations,
-      } as never);
+      service.recordStandalonePayment(
+        {
+          customerId,
+          totalAmount: 50,
+          method: "CASH",
+          allocations,
+        } as never,
+        { source: "STAFF_ALLOCATION" },
+      );
 
     beforeEach(() => {
       prisma.paymentCounter.upsert.mockResolvedValue({ id: "test-tenant", next: 3 });

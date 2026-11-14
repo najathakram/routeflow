@@ -53,7 +53,7 @@ describe("SA-763r P-3: deliberate standalone overpayment + no dunning on an over
         method: "CASH",
         allocations: [{ invoiceId: "inv-1", amount }],
       } as any,
-      { actor: "op-1" },
+      { source: "STAFF_ALLOCATION", actor: "op-1" },
     );
   const auditCalls = () => (prisma as any).auditLog.create.mock.calls.map((c: any[]) => c[0].data);
   const invoiceStatusWritten = () =>

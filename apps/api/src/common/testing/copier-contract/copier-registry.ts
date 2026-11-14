@@ -25,7 +25,7 @@ export interface Copier {
   why?: string; //     required for registry-only
   carried?: string; //  copied from the source line (or the source line's own snapshot)
   reset?: string; //    deliberately set to a default (a wrong VALUE here is not detectable by key presence)
-  rederived?: string; // recomputed from the live product / tier / promo / tax rules
+  rederived?: string; // recomputed from the live product / tier / promo / tax rules, or stamped by a helper after the literal (position)
   /** carried from the SOURCE line through create()'s internal `options.sourceLines` (invisible to the anchored literal): checked structurally, each key must appear in the copier's `sourceLines` literal */
   viaOptions?: string;
   /**
@@ -64,14 +64,17 @@ const P0A_LABELS: Record<string, GapRef> = { baseLabel: "unfiled", packLabel: "u
 const INVOICE_UNIT_RESET = "invoiceUnitLabel invoiceUnitFactor baseLabel";
 /**
  * The InvoiceItem copiers' gaps: `baseLabel` is reset (SA-1029 A-1), `packLabel` and `lineCode` stay unfiled.
- * W-1187: `position` (the invoice line's slot) exists as a column but no copier writes it yet: the migration lands and
- * deploys first (L-184). PR-1c moves it to `carried` / `rederived` on every copier below, and this entry goes red
- * ("looks fixed") until it does.
+ * W-1187: `position` (the invoice line's slot) is REDERIVED on every copier below, never copied: a helper in
+ * invoices/invoice-line-position.ts stamps it onto the built line objects AFTER the literal (`line.position = n`), so this
+ * checker, which reads literal keys only, cannot see the write (and `carried` would go red). C1 `stampFromOrder` at
+ * invoices.service.ts (the order's order); C2 `copyInvoicePositions` (the source's shown order); C5 `stampInvoicePositions`
+ * (the payload's order; estimate convert too); C14 `stampInvoicePositions` (the file's row order); C6 goes through
+ * InvoicesService.create, so it takes the template rows' read order. The guard that replaces this checker for position is
+ * invoices/invoice-position-writers.inventory.spec.ts (every create site, and the helper calls beside it).
  */
 const P0A_LABELS_LINECODE: Record<string, GapRef> = {
   packLabel: "unfiled",
   lineCode: "unfiled",
-  position: "unfiled",
 };
 
 /**
@@ -145,7 +148,7 @@ export const COPIERS: Copier[] = [
       R510_STAMP, // row 510: order -> invoice carries the staff override (no re-warn), split included
     // #2717 M3: the FIXED stamp and the frozen component rows ride `...invoiceCompositionFields(...)`, an opaque
     // local spread (invoice-line-composition.ts), for exactly the pieces this bill covers.
-    rederived: "description msrp taxRate compositionMode recipeId recipeVersion",
+    rederived: "description msrp taxRate compositionMode recipeId recipeVersion position", // position: stampFromOrder after the literal
     components: "carried",
     reset: "discount " + INVOICE_UNIT_RESET,
     // #2169 (SA-395): built from a request line, never a copy of a system-stamped source line.
@@ -169,6 +172,7 @@ export const COPIERS: Copier[] = [
     // row 510: a duplicate is a new sale, re-judged; the source line's override is never copied.
     // SA-827: the display-unit snapshot is re-frozen at the copy's own first issue.
     reset: R510_STAMP + " " + INVOICE_UNIT_RESET,
+    rederived: "position", // copyInvoicePositions after the literal: the source's shown order
     components: "na",
     gaps: { ...P0A_LABELS_LINECODE },
   },
@@ -200,7 +204,7 @@ export const COPIERS: Copier[] = [
     // B659: the category tax is priced at CONVERT time from the live category (never a quote-date
     // rate), and the B297 trio is stamped beside it (`...categorySnapshot`, an opaque spread).
     rederived:
-      "taxRate msrp trackedCategoryId trackedSubcategoryId categoryTaxAmount categoryTaxType categoryTaxRate categoryPriceIncludesTax",
+      "taxRate msrp trackedCategoryId trackedSubcategoryId categoryTaxAmount categoryTaxType categoryTaxRate categoryPriceIncludesTax position", // position: stampInvoicePositions after the literal
     // row 510: the estimate line has no stamp; a convert is re-judged (a fresh override is a new stamp, not a copy).
     // SA-827: the display-unit snapshot is frozen at the new invoice's own first issue.
     reset: "discount " + R510_STAMP + " " + INVOICE_UNIT_RESET,
@@ -224,7 +228,7 @@ export const COPIERS: Copier[] = [
     carried: "description productId qty unitPrice discount taxRate",
     // InvoicesService.create prices the category tax and stamps the B297 trio from the LIVE category.
     rederived:
-      "subtotal msrp categoryTaxAmount categoryTaxType categoryTaxRate categoryPriceIncludesTax",
+      "subtotal msrp categoryTaxAmount categoryTaxType categoryTaxRate categoryPriceIncludesTax position", // position: stamped inside InvoicesService.create, in the template rows' read order
     // #2169 (SA-395): a template-generated line, never a copy of a system-stamped source line.
     na: "originalPrice priceType promoFreeUnits notes orderItemId systemKind compositionMode recipeId recipeVersion overrideReason overriddenBy", // RecurringInvoiceItem has none of these columns
     // row 510 (#2093): a breached line is skipped, never stamped; an override is never carried forward.
@@ -378,7 +382,7 @@ export const COPIERS: Copier[] = [
     anchor: { via: "push", name: "itemsData" },
     carried: "description productId qty unitPrice subtotal discount",
     reset: "taxRate " + INVOICE_UNIT_RESET, // taxRate forced 0
-    rederived: R510_STAMP, // row 510: the import marker (see R510_STAMP), written after the loop, not in this literal
+    rederived: R510_STAMP + " position", // position: stampInvoicePositions in the file's row order; row 510: the import marker (see R510_STAMP), written after the loop, not in this literal
     // #2169 (SA-395): an imported CSV line, never a copy of a system-stamped source line.
     na: "originalPrice msrp priceType boxes pieces unitsPerBox promoFreeUnits notes orderItemId trackedCategoryId trackedSubcategoryId categoryTaxAmount unitLabel categoryTaxType categoryTaxRate categoryPriceIncludesTax systemKind compositionMode recipeId recipeVersion overrideReason overriddenBy",
     components: "na",

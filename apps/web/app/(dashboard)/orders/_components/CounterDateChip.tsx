@@ -6,8 +6,12 @@
 // the till. The chip never sends Today: an empty value means "no orderDate in the sale".
 import * as React from "react";
 import { CalendarArrowUp, Calendar as CalendarIcon, History, X } from "lucide-react";
+import type { OrderDatePolicy } from "@routeflow/pricing";
 import { cn } from "@routeflow/ui/web";
 import { dayLabel, fullDayName } from "@/lib/natural-date";
+import { dateIfNotToday } from "@/lib/counter-order-date";
+import { COUNTER_ORDER_DATE_ZONE_FAILED_COPY } from "@/lib/counter-sale";
+import { ORDER_DATE_COPY, type OrderDateNoun } from "@/lib/order-date-copy";
 import { CounterDatePicker } from "./CounterDatePicker";
 
 interface Props {
@@ -21,10 +25,34 @@ interface Props {
   refused?: boolean;
   /** called after apply, cancel or clear: the till puts the cursor back in the scan box */
   onDone?: () => void;
+  /** default COUNTER; the regular order passes OFFICE (past-only) */
+  policy?: OrderDatePolicy;
+  /** the till's scan entry: a scan made while the picker is open is handed here, never lost */
+  onScan?: (code: string) => void;
+  /** the till: a scan's first key was pressed in the picker; it closes with no date change and the till takes the rest */
+  onScanKey?: (key: string) => void;
+  /** the business's day could not be read (not just slow): the chip says so instead of "checking" for ever */
+  todayFailed?: boolean;
+  /** what the date is called: "order" (default: the till, the regular order) or "sale" (the New sale invoice) */
+  noun?: OrderDateNoun;
 }
 
-export function CounterDateChip({ value, today, onChange, disabled, refused, onDone }: Props) {
+export function CounterDateChip({
+  value,
+  today,
+  onChange,
+  disabled,
+  refused,
+  onDone,
+  policy = "COUNTER",
+  onScan,
+  onScanKey,
+  todayFailed,
+  noun = "order",
+}: Props) {
+  const words = ORDER_DATE_COPY[noun];
   const [open, setOpen] = React.useState(false);
+  const mainRef = React.useRef<HTMLButtonElement>(null);
   const canOpen = !disabled && !!today;
   // What is seen must be what is sent: a set day is NEVER labelled Today. While the business's day is unknown the day shows
   // as dated with no past/future word (UNKNOWN), and it can still be cleared.
@@ -52,23 +80,45 @@ export function CounterDateChip({ value, today, onChange, disabled, refused, onD
     return () => window.removeEventListener("keydown", onKey, true);
   }, [canOpen]);
 
+  // After apply, cancel or clear: the till puts the cursor back in its scan box (onDone); anywhere else focus returns to the
+  // chip itself so it never drops to the page behind a dialog.
+  const done = () => {
+    if (onDone) onDone();
+    else setTimeout(() => (mainRef.current?.disabled ? undefined : mainRef.current?.focus()), 0);
+  };
   const close = () => {
     setOpen(false);
-    onDone?.();
+    done();
+  };
+  const clear = () => {
+    onChange("");
+    done();
+  };
+  // A form around the chip may swallow Enter (default-prevented) before a button's own click: Enter acts here, once.
+  const onEnter = (act: () => void) => (e: React.KeyboardEvent) => {
+    if (e.key !== "Enter" || e.ctrlKey || e.metaKey || e.altKey) return;
+    e.preventDefault();
+    e.stopPropagation();
+    act();
   };
   const apply = (day: string) => {
-    onChange(day === today ? "" : day);
+    onChange(dateIfNotToday(day, today));
     close();
   };
 
+  // R8: while the business's day is unknown the day is shown as a day being checked: not Today, not Dated, no colour claim.
   const text =
-    direction && value
-      ? `Dated ${dayLabel(value, today ?? value)}${direction === "FORWARD" ? " · future" : ""}`
-      : "Today";
+    direction === "UNKNOWN"
+      ? `${dayLabel(value, value)} · ${todayFailed ? "couldn't check" : "checking"}`
+      : direction && value
+        ? `Dated ${dayLabel(value, today ?? value)}${direction === "FORWARD" ? " · future" : ""}`
+        : "Today";
   const name =
-    direction && value
-      ? `${direction === "BACK" ? "Backdated to" : direction === "FORWARD" ? "Future-dated to" : "Dated"} ${fullDayName(value)}. Change or clear`
-      : "Order date: today. Change";
+    direction === "UNKNOWN"
+      ? words.unknownName(fullDayName(value), !!todayFailed)
+      : direction && value
+        ? `${direction === "BACK" ? "Backdated to" : "Future-dated to"} ${fullDayName(value)}. Change or clear`
+        : words.todayName;
 
   return (
     <>
@@ -77,9 +127,8 @@ export function CounterDateChip({ value, today, onChange, disabled, refused, onD
         data-direction={direction ?? "TODAY"}
         className={cn(
           "inline-flex min-h-[44px] items-center gap-1 rounded-full border px-3 text-sm font-medium",
-          !direction && "border-navy/25 text-navy",
-          (direction === "BACK" || direction === "UNKNOWN") &&
-            "border-amber-400 bg-amber-100 text-amber-900",
+          (!direction || direction === "UNKNOWN") && "border-navy/25 text-navy",
+          direction === "BACK" && "border-amber-400 bg-amber-100 text-amber-900",
           direction === "FORWARD" &&
             "border-dashed border-indigo-500 bg-indigo-100 text-indigo-900",
           refused && "ring-2 ring-red-500",
@@ -87,8 +136,12 @@ export function CounterDateChip({ value, today, onChange, disabled, refused, onD
         )}
       >
         <button
+          ref={mainRef}
           type="button"
           className="inline-flex min-h-[44px] items-center gap-1.5 bg-transparent"
+          onKeyDown={onEnter(() => {
+            if (canOpen) setOpen(true);
+          })}
           aria-label={name}
           aria-haspopup="dialog"
           disabled={!canOpen}
@@ -107,12 +160,10 @@ export function CounterDateChip({ value, today, onChange, disabled, refused, onD
           <button
             type="button"
             className="inline-flex min-h-[44px] w-8 items-center justify-center bg-transparent"
-            aria-label="Clear the order date, back to today"
+            aria-label={words.clearName}
             disabled={disabled}
-            onClick={() => {
-              onChange("");
-              onDone?.();
-            }}
+            onKeyDown={onEnter(clear)}
+            onClick={clear}
           >
             <X className="h-4 w-4" aria-hidden />
           </button>
@@ -125,6 +176,11 @@ export function CounterDateChip({ value, today, onChange, disabled, refused, onD
           value={value}
           onApply={apply}
           onClose={close}
+          policy={policy}
+          onScan={onScan}
+          onScanKey={onScanKey}
+          ownsFocus={!!onDone}
+          noun={noun}
         />
       ) : null}
     </>
@@ -135,11 +191,43 @@ export function CounterDateChip({ value, today, onChange, disabled, refused, onD
 export function CounterDateReminder({
   value,
   today,
+  todayFailed,
+  onRetry,
+  retrying,
 }: {
   value: string;
   today: string | undefined;
+  todayFailed?: boolean;
+  /** re-runs the read of the business's day; shown beside the failed copy */
+  onRetry?: () => void;
+  /** the read is running: Try again stays on screen and keeps focus, but sends nothing */
+  retrying?: boolean;
 }) {
-  if (!value || value === today) return null;
+  if (!dateIfNotToday(value, today)) return null;
+  // While the business's day is unknown the chip says "checking": the reminder must not claim the sale is dated yet
+  if (!today)
+    return (
+      <p className="text-xs text-navy/70" data-testid="counter-date-reminder">
+        {todayFailed
+          ? COUNTER_ORDER_DATE_ZONE_FAILED_COPY
+          : "Checking today's date. Complete waits for it."}
+        {todayFailed && onRetry ? (
+          <>
+            {" "}
+            <button
+              type="button"
+              className="min-h-[44px] px-2 underline aria-disabled:opacity-50"
+              aria-disabled={retrying || undefined}
+              onClick={() => {
+                if (!retrying) onRetry();
+              }}
+            >
+              Try again
+            </button>
+          </>
+        ) : null}
+      </p>
+    );
   return (
     <p className="text-xs text-navy/70" data-testid="counter-date-reminder">
       This sale will be dated {dayLabel(value, today ?? value)}

@@ -593,6 +593,26 @@ export const API_ERROR_CODES = {
    * judged only when promoted, so a buyer-started one is refused outright. Nothing is written.
    */
   ORDER_DRAFT_STAFF_ONLY: "ORDER_DRAFT_STAFF_ONLY",
+  /** 403 from POST /orders: `offline: true` from a CUSTOMER or DRIVER (SA-1124). Staff only; checked before any merge logic. */
+  OFFLINE_STAFF_ONLY: "OFFLINE_STAFF_ONLY",
+  /** 400 from POST /orders: `offline: true` with `appliedCreditNotes` (SA-1124). Credits are applied online only. */
+  OFFLINE_CREDITS_ONLINE_ONLY: "OFFLINE_CREDITS_ONLINE_ONLY",
+  /** 400 from POST /orders: `offline: true` with a field that books money (an inline return credit; SA-1124). */
+  OFFLINE_PAYMENT_ONLINE_ONLY: "OFFLINE_PAYMENT_ONLINE_ONLY",
+  /** 400 from POST /orders: `offline: true` with `immediateDelivery` (SA-1124). Delivered-now is an online step. */
+  OFFLINE_IMMEDIATE_DELIVERY_ONLINE_ONLY: "OFFLINE_IMMEDIATE_DELIVERY_ONLINE_ONLY",
+  /** 400 from POST /orders: `offline: true` without a usable `offlineQuote` (SA-1124). Fails closed, nothing is written. */
+  OFFLINE_QUOTE_REQUIRED: "OFFLINE_QUOTE_REQUIRED",
+  /**
+   * 409 from POST /orders/:id/review-flags/:flagId/resolve: a RESTRICTED, LICENSE_REQUIRED or CREDIT_BLOCKED flag
+   * clears only by passing the draft's promotion, never by hand (SA-1124).
+   */
+  ORDER_REVIEW_FLAG_NOT_MANUAL: "ORDER_REVIEW_FLAG_NOT_MANUAL",
+  /**
+   * 409 from invoice send and every staff payment: the invoice's order carries an open PRICE_CHANGED_OFFLINE flag, so
+   * the price drift must be reviewed first. Body `{ orderId, openKinds }`. Resolve the flag, then retry (SA-1124).
+   */
+  ORDER_REVIEW_REQUIRED: "ORDER_REVIEW_REQUIRED",
   /**
    * 400 from every order and invoice edit: the same stored line id appears twice in the incoming `items`. Checked on
    * the payload alone before any read or write, so nothing is saved; the client refreshes and resubmits once.
@@ -869,6 +889,8 @@ export const API_ERROR_CODES = {
   EMAIL_TAKEN: "EMAIL_TAKEN",
   /** 409 from PATCH /users/:id: a login-email change that must wait for the new address was asked for an account that is not ACTIVE, or is deleted; the confirm could never land. Nothing was written and no mail was sent (B461, SA-1126). */
   EMAIL_CHANGE_ACCOUNT_INACTIVE: "EMAIL_CHANGE_ACCOUNT_INACTIVE",
+  /** 400 from POST /auth/verify-email: the sign-up link is validly signed but past its 24h expiry. Get a new one from POST /public/tenants/resend-verification (B2). */
+  VERIFICATION_LINK_EXPIRED: "VERIFICATION_LINK_EXPIRED",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

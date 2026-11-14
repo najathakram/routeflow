@@ -63,6 +63,41 @@ export class NonTouchPointerSensor extends PointerSensor {
   ] as unknown as typeof PointerSensor.activators;
 }
 
+/** Scan safety (W-1187 PR-2b): no key timing is read here; a scan is told apart by the key it types. */
+const isPrintable = (e: React.KeyboardEvent) =>
+  e.key.length === 1 && e.key !== " " && !e.ctrlKey && !e.metaKey && !e.altKey;
+const MODIFIER_KEYS = ["Shift", "Control", "Alt", "Meta", "AltGraph"];
+const MOVE_CODES = ["Space", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
+
+/**
+ * Space picks up and drops, the arrows move, Escape cancels: Enter does nothing (a scanner ends every code with it), and
+ * any other key cancels the move instead of steering it.
+ */
+export class ScanSafeKeyboardSensor extends KeyboardSensor {
+  constructor(props: ConstructorParameters<typeof KeyboardSensor>[0]) {
+    super(props);
+    // dnd-kit binds its key handler in the base constructor and attaches it one tick later, so a wrapper set here is the
+    // one that listens. (The members are private in its types; the wrapper only uses what the class itself exposes.)
+    const self = this as unknown as {
+      handleKeyDown: (e: Event) => void;
+      detach: () => void;
+      props: { onCancel: () => void };
+    };
+    const inner = self.handleKeyDown;
+    self.handleKeyDown = (event: Event) => {
+      const e = event as KeyboardEvent;
+      if (MODIFIER_KEYS.includes(e.key)) return; // a modifier alone neither steers nor cancels
+      if (!MOVE_CODES.includes(e.code)) {
+        self.detach();
+        self.props.onCancel();
+        return; // no preventDefault: the key is the scan's
+      }
+      inner(event);
+    };
+  }
+}
+const KEYBOARD_CODES = { start: ["Space"], end: ["Space"], cancel: ["Escape"] };
+
 const INSTRUCTIONS =
   "Press Space to pick up. Use the arrow keys to move, Space to drop, Escape to cancel. Alt plus Up or Down moves one line.";
 
@@ -70,6 +105,7 @@ interface Ctx {
   lines: SortableLine[];
   enabled: boolean;
   move: (id: string, toIndex: number) => void;
+  scanTarget?: () => HTMLElement | null;
 }
 const SortableCtx = React.createContext<Ctx | null>(null);
 
@@ -84,18 +120,24 @@ export function SortableLines({
   lines,
   onMove,
   enabled = true,
+  scanTarget,
   children,
 }: {
   lines: SortableLine[];
   onMove: (move: LineMove) => void;
   /** false: no handles, no drag (the order is closed, or a line edit is unsaved). */
   enabled?: boolean;
+  /** The scan field, when the screen has one: a printable key typed on a focused handle is a scan, so focus goes there. */
+  scanTarget?: () => HTMLElement | null;
   children: React.ReactNode;
 }) {
   const sensors = useSensors(
     useSensor(NonTouchPointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 5 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+    useSensor(ScanSafeKeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+      keyboardCodes: KEYBOARD_CODES,
+    }),
   );
   const ids = React.useMemo(() => lines.map((l) => l.id), [lines]);
 
@@ -139,12 +181,16 @@ export function SortableLines({
   };
 
   return (
-    <SortableCtx.Provider value={{ lines, enabled, move }}>
+    <SortableCtx.Provider value={{ lines, enabled, move, scanTarget }}>
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
         onDragEnd={onDragEnd}
-        accessibility={{ announcements, screenReaderInstructions: { draggable: INSTRUCTIONS } }}
+        accessibility={{
+          announcements,
+          screenReaderInstructions: { draggable: INSTRUCTIONS },
+          restoreFocus: false, // a cancel by a scan key must not pull focus back to the handle mid-scan
+        }}
       >
         <SortableContext items={ids} strategy={verticalListSortingStrategy}>
           {children}
@@ -188,6 +234,23 @@ export function useSortableLine(id: string) {
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
+    if (isPrintable(e)) {
+      const target = ctx?.scanTarget?.(); // a scan, not a move: the code goes to the scan field
+      if (target) {
+        target.focus();
+        // The field's own wedge detector only hears keydowns on the field, and this one was typed on the handle: hand
+        // it key 1 as the field's keydown (the browser still types the character itself).
+        target.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: e.key,
+            code: e.code,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      }
+      return;
+    }
     if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
       e.preventDefault();
       e.stopPropagation();
@@ -204,6 +267,7 @@ export function useSortableLine(id: string) {
       <button
         type="button"
         ref={setActivatorNodeRef}
+        data-sortable-handle={id}
         {...attributes}
         {...listeners}
         onKeyDown={onKeyDown}

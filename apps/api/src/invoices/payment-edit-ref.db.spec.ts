@@ -562,7 +562,7 @@ describeDb("row 752 editing a payment into a duplicate — real Postgres", () =>
             paidAt: D0,
             allocations: allocs.map((amount, i) => ({ invoiceId: s.invs[i].id, amount })),
           } as any,
-          opts,
+          { source: "STAFF_ALLOCATION", ...opts },
         ),
       );
       const rows = await prismaA.invoicePayment.findMany({
@@ -702,7 +702,7 @@ describeDb("row 752 editing a payment into a duplicate — real Postgres", () =>
             paidAt: D0,
             allocations: [{ invoiceId: s.invs[1].id, amount: 60 }],
           } as any,
-          s.staffOpts(true), // the repeat, recorded anyway: group 2, its own $40 advance
+          { source: "STAFF_ALLOCATION", ...s.staffOpts(true) }, // the repeat, recorded anyway: group 2, its own $40 advance
         ),
       );
       const g2row = await prismaA.invoicePayment.findFirstOrThrow({

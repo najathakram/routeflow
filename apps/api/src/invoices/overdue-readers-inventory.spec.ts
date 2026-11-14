@@ -39,7 +39,7 @@ const USES_SQL_PREDICATE: Record<string, string> = {
  */
 const USES_CLASSIFIER: Record<string, string> = {
   "invoices/invoice-detail-read.ts": "detail read: balanceDue / isOverdue",
-  "invoices/invoices.service.ts": "list enrichment (findAll)",
+  "invoices/invoice-list.ts": "list enrichment (findAll, moved here from invoices.service.ts)",
   "invoices/invoice-email-payload.ts":
     "the invoice email's and the reminder's balance due: emailPaidBasis (confirmedBalance), the one copy since W-680 (it was inline in sendEmail/sendReminder)",
   "invoices/invoice-kpi-summary.ts": "KPI tiles: per-invoice balance (confirmedBalance)",
@@ -249,7 +249,7 @@ describe("SA-770 — every overdue-cutoff reader is balance-aware or accounted f
   // What each classifier user must actually CALL (an import alone proves nothing).
   const REQUIRED_CALL: Record<string, RegExp> = {
     "invoices/invoice-detail-read.ts": /\bclassifyInvoiceBalance\(/,
-    "invoices/invoices.service.ts": /\bclassifyInvoiceBalance\(/,
+    "invoices/invoice-list.ts": /\bclassifyInvoiceBalance\(/,
     "invoices/invoice-email-payload.ts": /\bconfirmedBalance\(/,
     "invoices/invoice-kpi-summary.ts": /\bclassifyInvoiceBalance\(/,
     "customers/customer-statement.ts": /\bclassifyInvoiceBalance\(/,
@@ -276,9 +276,9 @@ describe("SA-770 — every overdue-cutoff reader is balance-aware or accounted f
     );
   });
 
-  it("InvoicesService.findAll runs the balance stage after the status filter", () => {
+  it("InvoicesService.findAll (invoice-list.ts) runs the balance stage after the status filter", () => {
     const src = stripComments(
-      fs.readFileSync(path.join(SRC_ROOT, "invoices/invoices.service.ts"), "utf8"),
+      fs.readFileSync(path.join(SRC_ROOT, "invoices/invoice-list.ts"), "utf8"),
     );
     const status = src.indexOf("applyInvoiceStatusFilters(where, query, tz, user?.role)");
     const balance = src.indexOf("applyOverdueBalanceFilter(where, query");

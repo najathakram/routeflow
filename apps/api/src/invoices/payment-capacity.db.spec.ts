@@ -279,7 +279,9 @@ describeDb("row 2299 payment capacity — real Postgres", () => {
     const s = await seed("w769-w4");
     const d = await s.row(s.invs[0].id, 100, "DRAFT");
     await s.asTenant(() =>
-      invoices.recordStandalonePayment(standalone(s.customer.id, s.invs[0].id, 100)),
+      invoices.recordStandalonePayment(standalone(s.customer.id, s.invs[0].id, 100), {
+        source: "STAFF_ALLOCATION",
+      }),
     );
     expect(await shape(s.invs[0].id)).toEqual(["DRAFT 100", "PAID 100"]);
     const rows = await overReserved(s.tenant.id);
@@ -348,7 +350,9 @@ describeDb("row 2299 payment capacity — real Postgres", () => {
     const s = await seed("w769-w10");
     await s.row(s.invs[0].id, 100, "DRAFT");
     await s.asTenant(() =>
-      invoices.recordStandalonePayment(standalone(s.customer.id, s.invs[0].id, 150)),
+      invoices.recordStandalonePayment(standalone(s.customer.id, s.invs[0].id, 150), {
+        source: "STAFF_ALLOCATION",
+      }),
     );
     expect(await shape(s.invs[0].id)).toEqual(["DRAFT 100", "PAID 100"]);
     const advance = await prisma.advancePayment.findMany({ where: { tenantId: s.tenant.id } });
@@ -364,7 +368,9 @@ describeDb("row 2299 payment capacity — real Postgres", () => {
   it("W11 [L-O2] with no unconfirmed rows is unchanged: no over-reserved row (a guard, green on master)", async () => {
     const s = await seed("w769-w11");
     await s.asTenant(() =>
-      invoices.recordStandalonePayment(standalone(s.customer.id, s.invs[0].id, 150)),
+      invoices.recordStandalonePayment(standalone(s.customer.id, s.invs[0].id, 150), {
+        source: "STAFF_ALLOCATION",
+      }),
     );
     expect(await shape(s.invs[0].id)).toEqual(["PAID 100"]);
     expect(await overReserved(s.tenant.id)).toHaveLength(0);
@@ -398,6 +404,7 @@ describeDb("row 2299 payment capacity — real Postgres", () => {
       .asTenant(() =>
         invoices.recordStandalonePayment(
           standalone(s.customer.id, s.invs[0].id, 1, { status: "DRAFT" }),
+          { source: "STAFF_ALLOCATION" },
         ),
       )
       .catch((e) => e);

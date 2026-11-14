@@ -483,5 +483,50 @@ promoted: times from date u only (2026-10-27, 12x)
 - candidate: Read a delete path before running it, not only its report
   key: read a delete path before running it not only its report
   first: 2026-10-31
+- candidate: A member with no real Verify gets web tsc on the train head before the push
+  key: tsc on train head before push when a member has no real verify
+  first: 2026-11-03
+- candidate: A fix round that flips an existing pin must cite the commit that added it and the ruling that overrides it
+  key: a fix round that flips an existing pin must cite the commit that added it and the ruling that overrides it
+  first: 2026-11-07
+- candidate: A window pre-flight scans every member for draft-skipped required runs before the flip
+  key: a window pre flight scans every member for draft skipped required runs before the flip
+  first: 2026-11-08
+- candidate: Bugs are minted only from a register at origin/master
+  key: bugs are minted only from a register at origin master
+  first: 2026-11-08
+- candidate: Gate items that only history rewriting can fix go into the build brief, not the review
+  key: gate items that only history rewriting can fix go into the build brief not the review
+  first: 2026-11-08
+- candidate: Size the watchdog to the CI load at arm time
+  key: size the watchdog to the ci load at arm time
+  first: 2026-11-08
+- candidate: Scripts decide local by data, not by host
+  key: scripts decide local by data not by host
+  first: 2026-11-08
+- candidate: Class-not-instance applies to lead fix orders
+  key: class not instance applies to lead fix orders
+  first: 2026-11-08
+- candidate: Window pre-flight facts are computed at arm time, before the owner box
+  key: window pre flight facts are computed at arm time before the owner box
+  first: 2026-11-09
+- candidate: Tier-2 web reviews run the full web jest, not picked specs
+  key: tier 2 web reviews run the full web jest not picked specs
+  first: 2026-11-09
+- candidate: A refused tool write is a stop, never a Bash retry
+  key: a refused tool write is a stop never a bash retry
+  first: 2026-11-09
+- candidate: Resolve a production config value in its target service before switching to it
+  key: resolve a production config value in its target service before switching to it
+  first: 2026-11-10
+- candidate: Two failed rounds on one criterion means a new spec, not a third patch
+  key: two failed rounds on one criterion means a new spec not a third patch
+  first: 2026-11-12
+- candidate: Security weaknesses never enter repo text or PR bodies; neutral placeholder plus private specs entry
+  key: security weaknesses never enter repo text or pr bodies neutral placeholder plus private specs entry
+  first: 2026-11-12
+- candidate: Hold a ruling until the definitive trace returns
+  key: hold a ruling until the definitive trace returns
+  first: 2026-11-12
 promoted: tier 1 money reviews run the module s full db lane not just the pr s spec (2026-11-07, 7x)
 promoted: verify before instructing (2026-11-07, 74x)

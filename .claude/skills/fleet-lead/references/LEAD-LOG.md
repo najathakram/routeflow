@@ -2585,6 +2585,7 @@ Format: `## <date> <anchor>` then `- what:` `- cause:` `- guard:` `- rule:` (opt
 - cause: gate list read reviews and local module lanes, never the PR's own Migration replay conclusion
 - guard: train pre-check script prints each member's latest Migration replay conclusion and fails on red
 
+
 ## 2026-11-01 #4062
 - what: Asked gate-fix to drop a duplicate queued push; it killed the hook tree and the push landed unverified (fe4a3eb0ed)
 - cause: a queued pre-push verify is the push's gate; killing it lets git finish the push (known trap 10-30), and my order didn't say how to drop it
@@ -2594,3 +2595,264 @@ Format: `## <date> <anchor>` then `- what:` `- cause:` `- guard:` `- rule:` (opt
 - what: Row 354 option A was built, reviewed once and DB-laned although the SA had refused it on 10-26; the SA caught it only because the plan said to ask
 - cause: SA-1005's refusal never reached plan section 1a, so the plan still offered option A as live
 - guard: an SA refusal edits the plan it refuses in the same commit; lanes grep decisions/sa for the row id before building
+## 2026-11-07 #4239
+- what: Lead start_session of a builder lane that pushes and opens a PR was refused by the auto-mode classifier
+- cause: Lane push + gh pr create on the lead's own initiative reads as an unapproved outward action; the restart prompt's routing order is not an owner yes for the exact push
+- guard: Lane start briefs that push carry the owner's question-box answer verbatim, naming branch + sha; the lead boxes push approvals before start_session
+
+## 2026-11-07 #4240
+- what: Window 13 aborted with nothing merged: docs-only #4240 never got a CI run, so the CI-wait loop held #4238 (green) until the 12-min margin
+- cause: ci.yml path filters skip docs-only PRs; the window script requires a CI run per member
+- guard: Window script classifies a member as docs-only by its changed paths (gh pr diff --name-only outside apps/ packages/ scripts/ .github/) and skips the CI-run requirement for it
+
+## 2026-11-07 SA-1106
+- what: WP7 builder hit SA-1106 A-2 stop rule: legacy sku-null ocr rows are billed/booked/counted via OCR_PACK_250 readers (subscription-mutation, entitlements v8-v10, manual-activation)
+- cause: A-2 assumed the ocr bill path was dead after v11; pinned catalogs and admin-priced rows still read it
+- guard: WP7 ships behaviour-neutral for billing readers with a pin red on any change to the derived addon map's ocr answer; the cut moves to its own PR gated on census=0 + SA ruling
+
+## 2026-11-07 #4237
+- what: Window 15 reported DEPLOY SUCCESS and flipped private while web was still building at the #4237 merge; web failed 7 s after the flip (snapshot), api survived
+- cause: wait_settled watched only the LAST merge sha; the last member was docs-only, whose Railway statuses read success ('No deployment needed') at once
+- guard: Window script waits on EVERY merged sha's Railway contexts (none pending, none failure) before the private flip; docs-only members merge first, never last
+
+## 2026-11-07 #4242
+- what: Lead ruling 'portal invite is tenant mail' was built as a transport change: invite moved off the platform sender onto the tenant mailbox/SMTP, reversing security pin #824 (bearer account-link token)
+- cause: Ruling named the mail class without separating look from transport; the builder flipped an existing security pin to match it
+- guard: Email rulings name look and transport as two separate fields, and the delta reader runs git log -S on every pin a fix round flips to surface the decision it reverses
+- rule: A fix round that flips an existing pin must cite the commit that added it and the ruling that overrides it
+
+## 2026-11-08 #4243
+- what: Window 16 aborted, nothing merged: #4243 was closed+reopened while still a draft, so the Migration replay (if: draft != true) skipped again and read as a real red
+- cause: Window script ran the close+reopen block before the 'mark ready' block; the replay job's draft guard evaluates at the reopen event
+- guard: Window script marks every member ready FIRST, then closes+reopens any member whose replay was draft-skipped, and asserts isDraft=false before the reopen
+
+## 2026-11-08 #4239
+- what: Window 18 aborted, nothing merged: #4239 had a draft-skipped Migration replay run nobody listed in the window plan
+- cause: The window plan checked only #4243 for a draft-skipped replay; the pre-flight never scanned every member's latest run per workflow for completed/skipped
+- guard: Window script pre-flight (before going public) lists every member whose latest Migration replay run is skipped and refuses to start unless that member is in an owner-approved REOPEN list; reopen runs after mark-ready
+- rule: A window pre-flight scans every member for draft-skipped required runs before the flip
+
+## 2026-11-08 #4242
+- what: Window 19 waited to the watchdog margin: the first merge sha's api context stayed pending forever because Railway superseded that deploy with the next merge's (which succeeded)
+- cause: The every-sha settle check treats a superseded deploy as pending; Railway never resolves a superseded deploy's status
+- guard: Settle check counts a sha's pending context as settled when a LATER merged sha's same context is success (superseded), and still requires the final sha all-success
+
+## 2026-11-08 #4246
+- what: A #4246 reader's mocked bo-web Playwright run fired global setup's e2e-seed.js against the shared compose DB routeflow_dev (approved e2e-routeflow tenant only, additive) because SKIP_E2E_SEED was unset
+- cause: Reader brief said 'run the Playwright specs as the builder did' without naming SKIP_E2E_SEED=true; global setup seeds by default
+- guard: Reader/builder briefs that run Playwright against mocked APIs carry SKIP_E2E_SEED=true; LOCAL-LANE.md documents it (factory or docs follow-up)
+
+## 2026-11-08 #4245
+- what: Lead stamped three lane orders 07:45Z when date -u said 07:37Z (estimated, not read)
+- cause: Message time typed from a guess made before date -u ran, not from command output
+- guard: Lane order template stamps time only from a fresh date -u in the same tool batch; the SendMessage fact-check hook already flags a mismatch
+- rule: Times from date -u only
+
+## 2026-11-08 #4245
+- what: Window 20 settle check let an earlier merge sha's api context in state error ('Deployment cancelled') through without a rule: it only inspects pending contexts
+- cause: settle logic treats any non-pending state as settled; a real failed deploy (error) on an earlier sha would pass the same way
+- guard: Window script settle: an earlier sha's error context counts only when its description is 'Deployment cancelled' AND a later merged sha shows a real success for the same context; any other error fails the window
+
+## 2026-11-08 #3726
+- what: 11-08 item audit moved 632 to planned ('no merged PR, branch absent') although PR #3726 for it merged 10-27; the lead applied it after spot-checking only the live verdicts
+- cause: Matching relied on item links and ids in titles; the PR said 'row 632', the item had no PR link, and a deleted branch was read as never built
+- guard: Item audit: a planned/release verdict needs a negative search of merged PRs by branch name AND 'row <id>' in title/body; the lead spot-checks the planned verdicts too, not only live
+
+## 2026-11-08 #4253
+- what: Census bundle #4253 carried fix/sa1091-census-short-reads, whose own SA ruling (SA-1091 A-2 item 5) said it needs no PR and master's census copy should be deleted; reader B failed it
+- cause: The branch audit classed 'merges clean + tests present' as OPEN PR NOW without reading each branch's governing ruling; the lead bundled from the audit table
+- guard: OPEN-PR-NOW verdicts in branch audits must cite the branch's governing ruling/item text (grep the SA id in rf-specs decisions) and drop any branch the ruling says not to land
+
+## 2026-11-08 #4253
+- what: Reader A of #4253: a failed cd made one command rewrite 3 files in the main checkout (identical bytes; git status clean after)
+- cause: Reviewer chained 'cd <worktree> && <write>' and the cd failed silently in a compound, so the write landed in the shell's default cwd, the main checkout
+- guard: Reviewer briefs: every write-capable command uses absolute worktree paths or git -C <worktree>, never a bare cd chain; reader checks 'git -C C:/ClaudeCode/routeflow status --porcelain' unchanged at the end
+
+## 2026-11-08 B1298
+- what: Lead filed B1292 via rf bug file into the main checkout (41 behind master) and it collided with master's B1292: the same slip as B1291 on 11-07, repeated the same day the audit caught it
+- cause: rf bug file / bugs.mjs mint the next id from the cwd's register; the main checkout's register is stale, and the lead ran it from the main checkout again
+- guard: Lead files bugs only from an up-to-date docs worktree (git -C <wt> pull --ff-only first); rf bug file should refuse when the cwd register's HEAD is behind origin/master (factory item)
+- rule: Bugs are minted only from a register at origin/master
+
+## 2026-11-08 #4254
+- what: Reader A failed #4254 on future-proof PR-stage item 5 (WP8+B1062+M-8 in one commit); the fix is a split, which needs a force push the standing rules forbid
+- cause: Lane briefs never said one logical change per commit, and PR-stage item 5 can only be met after the fact by rewriting history
+- guard: Builder brief template for Tier 1 PRs carries 'one commit per ruling id (WP/B/M), pushed separately', and the lead waives item 5 in writing when only a force push could fix it
+- rule: Gate items that only history rewriting can fix go into the build brief, not the review
+
+## 2026-11-08 #4255
+- what: Lead stamped lane messages 16:24Z and 16:33Z when date -u read 16:23Z and 16:31Z (third estimated stamp on 11-08)
+- cause: Stamp typed from a mental estimate after a gap, not read in the same step as the send
+- guard: Every lane message is composed only after a date -u call in the immediately preceding tool batch; the send hook's FACT-CHECK stamp mismatch is treated as a correction trigger
+- rule: Times from date -u only
+
+## 2026-11-08 #4250
+- what: Window 21 aborted at 16:54Z with 12 min left: 4 concurrent CI runs took 31 min (windows 19/20 took 25-28 with 2), #4249 went green 20 s after the abort
+- cause: Watchdog length is fixed at 45 min whatever the number of code members, so a 4-member window's CI time ate the merge margin
+- guard: Window script pre-flight prints code-member count; with 4+ code members the lead arms the watchdog at 60 min before the flip (set at arm time, never extended)
+- rule: Size the watchdog to the CI load at arm time
+
+## 2026-11-08 #4249
+- what: Window 21b final line said DEPLOY NOT ALL SUCCESS for two superseded api pendings although wait_settled had accepted them (later real api success at 348ea80062)
+- cause: The final summary re-checks raw states and applies only the new cancelled-error rule, not wait_settled's superseded-pending rule
+- guard: One settled() predicate shared by wait_settled and the final DEPLOY line in the window script (factory monitor fix (c) extends to it)
+
+## 2026-11-08 #4252
+- what: #4252 reader B: encrypt-legacy-secrets --apply on a target that looks local skipped every gate; with no ENCRYPTION_KEY it encrypted 7 rows under the dev placeholder key and the real read path returned null (tunnel to prod looks local)
+- cause: Script gates keyed on the DATABASE_URL host instead of on what the target holds, and nothing proved the key before writing
+- guard: Write-capable scripts prove their key against an existing row and decide 'local' by assertTestTenant over every tenant touched, never by host; a factory self-test greps scripts for host-only local checks
+- rule: Scripts decide local by data, not by host
+
+## 2026-11-08 B1298
+- what: Janitor removed C:/ClaudeCode/wt/w1101 while the routeflow compose stack it started was still running, leaving an orphaned stack on fixed ports that later blocked WP10's local:up; a dead agent's next server also held :3000 for 2 days
+- cause: Janitor's live-folder guards check processes with cwd in the folder and dev servers, not compose projects whose working_dir label points at the folder; nothing reaps agent dev servers
+- guard: Janitor refuses (or first runs compose down for) a folder that is any running container's com.docker.compose.project.working_dir; janitor report lists listeners on 3000/3001/5432 whose command line sits under a candidate or agent worktree
+
+## 2026-11-08 #4256
+- what: #4256 failed with the same class #4252 had just been fixed for (dry run not read-only, protected ids printed, gate mutants survive) because the lead's order carried only the local-check fix to the sibling script
+- cause: The class fix was relayed as one item instead of the full finding list; class-not-instance not applied by the lead
+- guard: When a review fails one script for a class, the lead's fix order for every sibling script copies the full finding list, and the sibling's first reviewer gets it as a checklist
+- rule: Class-not-instance applies to lead fix orders
+
+## 2026-11-09 #4252
+- what: Window 23 aborted in pre-flight: #4252 and #4256 had draft-skipped Migration replay runs and REOPEN was empty; the box went to the owner without the close+reopen ask
+- cause: The window generator copies REOPEN from the previous window instead of computing it from each member head's replay conclusion at arm time
+- guard: mkNN generator queries gh run list --workflow 'Migration replay' per member head and fills REOPEN itself; the owner box text lists the reopen members, built from that same query
+- rule: Window pre-flight facts are computed at arm time, before the owner box
+
+## 2026-11-09 #4259
+- what: #4259 reader PASSed on picked specs; window 24 combined head went RED in full web jest on the date-input width ratchet (AiUsageByBusinessCard.tsx:63)
+- cause: Tier 2 reader brief allowed a picked spec list for a web diff; static ratchets that scan all of apps/web only run in the full suite
+- guard: Reader brief template for any PR touching apps/web requires the full web jest exit code in the review file; the lead rejects a web PASS without that line
+- rule: Tier-2 web reviews run the full web jest, not picked specs
+
+## 2026-11-09 #4264
+- what: Five lane messages stamped 17:00Z when date -u said 16:53Z (rounded estimate)
+- cause: Stamp typed from a rounded guess instead of the date -u output just read
+- guard: Lane message template takes the stamp from a date -u call in the same batch; the fact-check hook already flags a mismatch, so a flagged stamp blocks the send next time
+
+## 2026-11-09 #4258
+- what: Window 24 post-deploy-check passed against http://localhost:3000 (the compose stack), not prod
+- cause: npm run post-deploy-check defaults SMOKE_BASE_URL to localhost; the window step ran it bare
+- guard: Window script runs post-deploy-check itself with SMOKE_BASE_URL set to the prod API and fails unless the printed health commit equals the last api-deploying merge sha
+
+## 2026-11-09 #4264
+- what: Lane messages stamped 18:35Z when date -u said 18:33:47Z (second time today)
+- cause: stamp typed from the previous date -u read plus an estimate, not taken in the same call
+- guard: FACT-CHECK hook on SendMessage already warns; lead composes lane batches only after a date -u in the immediately preceding Bash call and copies that value
+
+## 2026-11-09 #4268
+- what: #4268 body said a nullable-column migration PR is safe to merge alone; the generated Prisma client selects every column, so reads 500 until prod-migrate runs
+- cause: nullable/additive was read as deploy-order-free; Prisma 7 client names columns explicitly
+- guard: Window generator refuses a PR that touches apps/api/prisma/migrations unless the ledger shows prod-migrate + schema-drift exit 0 for that migration folder before the merge step
+
+## 2026-11-09 B1059
+- what: bug-swarm D1 builder had a Write refused by the worktree guard (sibling worktree) and continued through Bash sed/heredocs; the lane didn't notice until the lead asked
+- cause: Swarm briefs sent builders into lane-made sibling worktrees instead of Agent isolation:worktree, and no brief said a refused write means stop
+- guard: Swarm builder brief template requires isolation: worktree and a 'refused write = STOP and report' line; the lead asks for git diff --stat plus a stray-write scan before the reader on any branch built in a sibling tree
+- rule: A refused tool write is a stop, never a Bash retry
+
+## 2026-11-09 #4264
+- what: Lane batch stamped ~22:5xZ and owner box ~22:40Z when date -u said 22:38:47Z (third time today)
+- cause: Lead typed stamps from a running estimate during a long routing turn instead of a date -u call in the same step
+- guard: Lane message template has no free-typed time: the lead pastes the date -u output from the same Bash call that logs the ledger row before the batch
+- rule: Times from date -u only
+
+## 2026-11-09 #4265
+- what: Window 25 aborted on the first real CI run of #4265's replay (a 1-of-4349 transaction-timeout flake): the script counts attempt numbers, and attempt 1 was the zero-step private billing block, so the first real run counted as the 'one rerun'
+- cause: train window script treats attempt>=2 as post-rerun regardless of whether attempt 1 ran any steps
+- guard: window generator: count a rerun as used only when the prior attempt had steps>0 (gh run view --attempt N --json jobs steps); a zero-step billing attempt does not consume the rerun
+
+## 2026-11-09 #4264
+- what: Four lane messages stamped 23:34Z when date -u said 23:32:27Z (fourth free-typed stamp today)
+- cause: lead typed the stamp from the previous date -u (23:31:35Z) plus a guess instead of a fresh call in the same step
+- guard: lane batch: one Bash call prints date -u into a STAMP line first; messages paste that string; FACT-CHECK warn becomes a block for stamp mismatches over 60 s
+
+## 2026-11-10 #4269
+- what: Mac mini brief said #4269 stacks on #4268 (bc7afdc6cc); merge-base shows both fork from 27d8125e17 and #4269 has no InvoiceItem.position
+- cause: lead restated the stack from a lane's PR-1c note (PR-1c merges both) instead of running merge-base for #4269 itself
+- guard: reader-brief template requires a 'contains:' line produced by git merge-base --is-ancestor for every claimed base before the brief is sent
+
+## 2026-11-10 B929
+- what: bug-high edited sibling worktrees (sa1118-bare-qty, b461-email-hold) through Bash/node all session; the guard refused only a Write into c1b-optional-models, and the lane asked the lead to OK Bash writes
+- cause: the worktree guard covers Write/Edit only, and lanes that build in several worktrees reach them through Bash
+- guard: lane rule: one worktree per session for file writes, by any tool; a second build line gets its own session; the guard should also match Bash redirects and git -C into foreign worktrees
+
+## 2026-11-10 #4269
+- what: Mac mini readers failed PR-1c on 'no Design Gate' because the gate lives in a PC-only body file (no PR yet), which the lead's brief did not include
+- cause: reader briefs for unopened branches don't carry the body; the readers' machine can't read the PC's local-assets
+- guard: for a branch without a PR, the lead posts the body file as a #3686 comment and the brief cites that comment id before dispatch
+
+## 2026-11-10 #4279
+- what: Sitting head check run 1 stopped at the first merge: husky commit-msg ran npx commitlint with no node_modules in the fresh detached worktree, so the merge was not committed and my loop reported it as a conflict
+- cause: the head-check one-liner merged before npm ci, and its conflict test treated any non-zero merge as a conflict
+- guard: head-check template: npm ci first, then merges; the loop reports a conflict only from git diff --diff-filter=U or MERGE_HEAD, and prints the merge output
+
+## 2026-11-10 SA-1125
+- what: SA-1125 S6 switch took the prod API login down 12 min: DATABASE_URL template refs postgres.PGHOST/PGPORT/PGDATABASE resolved empty (a URL with empty host/port/db parts)
+- cause: Runbook assumed Railway's stock postgres variable names; this postgres service publishes no DATABASE_URL/PG* refs (railway connect postgres had already failed on the same gap) and nobody resolved the new value before the switch
+- guard: Runbook pre-switch step: railway run --service @routeflow/api with the candidate value staged prints host/port/db non-empty (no secrets) and a login self-test as the new role through that exact URL; S6 refused until it prints ok
+- rule: Resolve a production config value in its target service before switching to it
+
+## 2026-11-10 #4280
+- what: Told the Mac mini #4280 (W-1187 PR-1c 7c1dad52cf) was already PASS and opened it as window-ready; the board shows A+B FAIL at 738480f4a1 and only one delta PASS at 7c1dad52cf
+- cause: Ledger line 'delta PASS ... gate-complete pending tier count' was read as gate-complete; the tier count was never done against the board
+- guard: Window candidate list is built by a board query per sha (count PASS comments at the exact head after the last FAIL; Tier 1 needs A and B), not from ledger prose
+- rule: Verify before instructing
+
+## 2026-11-10 #4274
+- what: Window 28 head check passed on the PC but #4274 went red on Linux CI (prisma-call-place B5-5 stack-keyed dedupe); my first DB lane run lacked RUN_DB_SPECS=1 and all 209 suites refused
+- cause: Head check runs only on Windows; stack-trace shape differs on Linux; DB lane env var not in the script
+- guard: train head-check script sets RUN_DB_SPECS=1 (fixed in local-assets/lead-2026-11-10/train28-head-check.sh) and runs the api unit lane in a node:24 Linux container for members touching apps/api/src/prisma
+
+## 2026-11-11 #4290
+- what: Lead told the heavy lane that a twice-busy drag keeps the user's order on screen; Mac mini reader failed #4290 round 2 on it (unsaved order shown as saved, no retry path)
+- cause: Lead wrote UI behaviour for a failure path into a lane order without a ruling or a check against the existing 500 rollback behaviour
+- guard: Lane fix orders that add a failure-path behaviour cite the existing error path at path:line and say 'same as' or name the SA ruling; reader brief lists each lead-specified behaviour as a thing to challenge
+
+## 2026-11-12 B1304
+- what: Lead told the counter lane its B1304 push had ended without landing and started the window 33 head check on top of it; the hook was still running
+- cause: Slot state inferred from one node memory sample taken in the gap between hook steps, not from the lane's release line
+- guard: Heavy slot changes hands only on the holder's 'slot released' line or a check that no git push / verify-turbo process exists (script check: tasklist for git.exe push + turbo), never on a memory sample
+
+## 2026-11-12 #4293
+- what: #4293 failed three review rounds on scan-while-date-picker-open; each round patched an edge of a key-timing burst rule the lead had ruled in
+- cause: Lead ruled a timing heuristic as a MUST without checking the till's existing no-timing scan redirect (capture-phase route by focus, CounterSaleScreen) and without a case list by focus position
+- guard: A lead ruling that adds input classification names the existing mechanism it reuses at path:line and ships a case table (focus position x key kind) that the builder turns into tests; a second failed round on one criterion triggers an Opus spec, not a third patch order
+- rule: Two failed rounds on one criterion means a new spec, not a third patch
+
+## 2026-11-12 #4296
+- what: Window 33 aborted with nothing merged: the window script called #4296's first real CI attempt a REAL RED though the Verify step was cancelled by the runner (graceful turbo SIGINT at 10 min, 0 FAIL lines)
+- cause: train window script counts any failure at attempt>=2 as real; attempt 1 is always the billing block, so the first real run gets no retry and a runner cut-off kills the window
+- guard: train window script: before die, read the failed job's steps; when the failing step's conclusion is 'cancelled' and the log has no FAIL line, rerun that run once more instead of aborting (script change in the next trainNN-window.sh, with a self-test line)
+
+## 2026-11-12 #4298
+- what: Lead ordered the bookkeeping lane to file a security-sensitive follow-up as a register row; #4298 failed review because a security weakness went into repo text and the PR body (repo is public during windows)
+- cause: The lead's follow-up list was copied from reader notes into a docs order without the 10-16 neutral-placeholder rule; the bookkeeping order has no field for security-sensitive follow-ups
+- guard: Bookkeeping order template gets a fixed line: security-sensitive follow-ups are filed as a neutral placeholder plus a private specs entry (pattern B1236/B1281), and the docs reader checklist greps new register rows for weakness wording before PASS
+- rule: Security weaknesses never enter repo text or PR bodies; neutral placeholder plus private specs entry
+
+## 2026-11-12 #4301
+- what: Lead ordered #4301 item 1 (a scanner Enter must not reopen the office date picker) as a key-order rule on the chip; the reader found it swallows a person's Enter after any stray key
+- cause: The order asked for input classification again where the two inputs (scan vs stray key then Enter) have the same key order and timing is banned, so no rule can separate them; the lead's own early warning to the reader named the risk but the order went out anyway
+- guard: Lead order template for input-classification items carries a required line 'what distinguishes the two inputs without timing'; if the line is empty the item is filed as a stated limit instead of built
+- rule: Two failed rounds on one criterion means a new spec, not a third patch
+
+## 2026-11-12 #4302
+- what: Lead ordered a one-case fix on #4302 (key 1 copy from a line handle) from an interim reader verdict, before the browser evidence was posted; the browser then found five more handle-focus cases (scan after a drop, split scan at the till, lost drop, Alt+Arrow once, Enter reaching a till action), so the delta covers 1 of 6 and one builder round plus a delta read were spent on a patch
+- cause: Fix order sent on the reader's interim MUST while its browser check was still running; the order treated the finding as one instance instead of asking which class (who owns keys while a handle has focus) it belongs to
+- guard: Lead fix-order template gets a required field: the board comment id of the posted verdict AND of its browser evidence; an order without both ids is not sent, and a second failed round on one criterion requires a spec file with the case table instead of an order message
+- rule: Two failed rounds on one criterion means a new spec, not a third patch
+
+## 2026-11-12 #4302
+- what: Lead ruled #4302 'does not land this round, whatever the delta read says' on five browser findings before their trace returned; the trace (6821355497) showed the pushed fix closes the MUST class and the other four are a master-identical gap, a machine-speed-only limit, a by-design focus rule and a harmless status line, so the hold was reversed 65 minutes later
+- cause: Hold ruling issued on a list of symptoms without their classification, with no release condition; the reader's table that classifies each item was already booked and due within the hour
+- guard: Lead hold-ruling template gets two required fields: the evidence id the hold waits on and the release condition; a hold message without both is not sent, and the phrase 'whatever the read says' is refused by the fact-check hook word list
+- rule: Hold a ruling until the definitive trace returns
+
+## 2026-11-12 #4308
+- what: Lead relayed a line range (CounterSaleScreen.tsx:520-526 as the till's key routing) from a reviewer's board post into a merged PR body, a lane order, the handoff card and from there into register row B1314 and a code-map note; the range is the hand-over branch, the routing is :541-546; the docs PR #4308 failed review on it
+- cause: A path:line was copied from a second-hand source into four places without one read of the lines at the pinned sha; the lane's check only proved the path resolves, not what the lines do
+- guard: fact-check hook on SendMessage and gh pr edit: every path:line token in an outgoing lead message or body must appear in the session's own Read/cat-file output at the named sha, otherwise the send is flagged MISMATCH unread-line
+- rule: Verify before instructing
+

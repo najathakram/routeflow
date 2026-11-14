@@ -582,6 +582,7 @@ describe("PaymentRequestsService", () => {
       expect(mockInvoices.recordStandalonePayment).toHaveBeenCalledWith(
         expect.objectContaining({ totalAmount: 45 }),
         {
+          source: "STRIPE_SETTLE", // SA-1124 PR-1b: money that already moved at the processor
           assertAllocationsWithinBalance: true,
           onDisplaced: expect.any(Function),
           capturedExternally: expect.objectContaining({ source: "STRIPE" }),
@@ -609,6 +610,7 @@ describe("PaymentRequestsService", () => {
       expect(mockInvoices.recordStandalonePayment).toHaveBeenLastCalledWith(
         expect.objectContaining({ method: "ACH", settledAt: "2026-08-21T12:00:00.000Z" }),
         {
+          source: "STRIPE_SETTLE", // SA-1124 PR-1b: money that already moved at the processor
           assertAllocationsWithinBalance: true,
           onDisplaced: expect.any(Function),
           capturedExternally: expect.objectContaining({ source: "STRIPE" }),
@@ -635,6 +637,7 @@ describe("PaymentRequestsService", () => {
       expect(mockInvoices.recordStandalonePayment).toHaveBeenLastCalledWith(
         expect.objectContaining({ method: "CREDIT_CARD", settledAt: null }),
         {
+          source: "STRIPE_SETTLE", // SA-1124 PR-1b: money that already moved at the processor
           assertAllocationsWithinBalance: true,
           onDisplaced: expect.any(Function),
           capturedExternally: expect.objectContaining({ source: "STRIPE" }),
@@ -920,6 +923,7 @@ describe("PaymentRequestsService", () => {
         expect(dto.reference).toBe("receipt 7");
         expect(dto.method).toBe("CASH");
         expect(opts).toEqual({
+          source: "STAFF_ALLOCATION", // SA-1124 PR-1b: a staff approval is gated
           assertAllocationsWithinBalance: true,
           inTx: expect.any(Function),
         });

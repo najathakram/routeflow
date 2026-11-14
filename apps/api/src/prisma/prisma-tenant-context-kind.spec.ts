@@ -45,6 +45,17 @@ const asKind = (
   fn: () => Promise<unknown>,
 ) => ctx.run(null, fn, kind, "OrdersController.create");
 
+// SA-1110: under TENANT the walker stamps nested creates first, so the signal below is the walker-miss signal. These
+// rows simulate a miss (identity stamp) to keep proving the guard still reports it, with the same keys and labels.
+let mockWalkerMisses = false;
+jest.mock("./tenant-nested-walker", () => {
+  const real = jest.requireActual("./tenant-nested-walker");
+  return {
+    ...real,
+    stampNestedTenant: (...a: any[]) => (mockWalkerMisses ? a[1] : real.stampNestedTenant(...a)),
+  };
+});
+
 describe("K-2 the #2872 scenario: a SUPER_ADMIN create of a tenant-owned model with no tenantId", () => {
   it("is still written exactly as given (dark), reported once, and the log holds no data", async () => {
     const ctx = new TenantContextService();
@@ -373,31 +384,59 @@ describe("forSystem(reason, fn): the deliberate unscoped door, callback shape on
 });
 
 describe("the TENANT-path checks: a nested create whose child names no tenant is the one signal on a tenant request", () => {
+  // the extension assigns args.data, so the stamping row works on its own copy
   const nested = {
     data: { lineItems: { create: [{ productId: "p1", qty: 1 }] } },
   };
+  const fresh = () => structuredClone(nested);
 
-  it("through forTenant(): reported once as TENANT|Order.lineItems|nested-create, and the args still carry the injected id", async () => {
+  it("SA-1110: with the walker working, both layers stamp the child and report nothing", async () => {
     const ctx = new TenantContextService();
-    const q = jest.fn(async (a: any) => a);
     const before = { ...hits() };
     const out = await ctx.run("t1", () =>
-      handler(host(ctx))({ model: "Order", operation: "create", args: nested, query: q }),
+      handler(host(ctx))({
+        model: "Order",
+        operation: "create",
+        args: fresh(),
+        query: async (a: any) => a,
+      }),
     );
-    expect(out.data.tenantId).toBe("t1");
-    expect(delta(before, "TENANT|Order.lineItems|nested-create")).toBe(1);
+    expect(out.data.lineItems.create[0].tenantId).toBe("t1");
+    const create = jest.fn(async (a: any) => a);
+    const h = host(ctx);
+    h.$transaction = (fn: (tx: any) => Promise<any>) =>
+      fn({ order: { create }, $executeRaw: jest.fn(async () => 0) });
+    await ctx.run("t1", () => h.tenantTransaction((tx: any) => tx.order.create(fresh())));
+    expect(create.mock.calls[0][0].data.lineItems.create[0].tenantId).toBe("t1");
+    expect(delta(before, "TENANT|Order.lineItems|nested-create")).toBe(0);
   });
 
-  it("through tenantTransaction(): the same key, so the two layers cannot disagree", async () => {
-    const ctx = new TenantContextService();
-    const create = jest.fn(async (a: any) => a);
-    const rawTx = { order: { create }, $executeRaw: jest.fn(async () => 0) };
-    const h = host(ctx);
-    h.$transaction = (fn: (tx: any) => Promise<any>) => fn(rawTx);
-    const before = { ...hits() };
-    await ctx.run("t1", () => h.tenantTransaction((tx: any) => tx.order.create(nested)));
-    expect(create.mock.calls[0][0].data.tenantId).toBe("t1");
-    expect(delta(before, "TENANT|Order.lineItems|nested-create")).toBe(1);
+  describe("a walker miss (simulated: identity stamp) is still the one signal", () => {
+    beforeEach(() => (mockWalkerMisses = true));
+    afterEach(() => (mockWalkerMisses = false));
+
+    it("through forTenant(): reported once as TENANT|Order.lineItems|nested-create, and the args still carry the injected id", async () => {
+      const ctx = new TenantContextService();
+      const q = jest.fn(async (a: any) => a);
+      const before = { ...hits() };
+      const out = await ctx.run("t1", () =>
+        handler(host(ctx))({ model: "Order", operation: "create", args: nested, query: q }),
+      );
+      expect(out.data.tenantId).toBe("t1");
+      expect(delta(before, "TENANT|Order.lineItems|nested-create")).toBe(1);
+    });
+
+    it("through tenantTransaction(): the same key, so the two layers cannot disagree", async () => {
+      const ctx = new TenantContextService();
+      const create = jest.fn(async (a: any) => a);
+      const rawTx = { order: { create }, $executeRaw: jest.fn(async () => 0) };
+      const h = host(ctx);
+      h.$transaction = (fn: (tx: any) => Promise<any>) => fn(rawTx);
+      const before = { ...hits() };
+      await ctx.run("t1", () => h.tenantTransaction((tx: any) => tx.order.create(nested)));
+      expect(create.mock.calls[0][0].data.tenantId).toBe("t1");
+      expect(delta(before, "TENANT|Order.lineItems|nested-create")).toBe(1);
+    });
   });
 });
 

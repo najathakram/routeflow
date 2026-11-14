@@ -179,12 +179,15 @@ describeDb("681: cross-tenant refs are refused against real rows - real Postgres
     it("tenant B's customer writes no AdvancePayment row, in either tenant", async () => {
       await expect(
         asA(() =>
-          invoices.recordStandalonePayment({
-            customerId: b.customerId,
-            totalAmount: 50,
-            method: "CASH",
-            allocations: [],
-          } as never),
+          invoices.recordStandalonePayment(
+            {
+              customerId: b.customerId,
+              totalAmount: 50,
+              method: "CASH",
+              allocations: [],
+            } as never,
+            { source: "STAFF_ALLOCATION" },
+          ),
         ),
       ).rejects.toThrow(NotFoundException);
       expect(await prisma.advancePayment.count({ where: { customerId: b.customerId } })).toBe(0);

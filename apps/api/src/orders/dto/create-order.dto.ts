@@ -23,6 +23,8 @@ import { InlineReturnLinesDto } from "../../returns/dto/capture-inline-return.dt
 import { RestrictionAckDto } from "../../selling-restrictions/dto/restriction-ack.dto";
 import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 import { MAX_UNIT_PRICE } from "@routeflow/pricing";
+import { CREATE_ORDER_MAX_ITEMS } from "./create-order-limits";
+import { OfflineQuoteDto } from "./offline-quote.dto";
 
 // BUG-B1-6: bound numeric inputs server-side. The audit submitted a
 // $25,664,510.89 order — all line items totalled cleanly through the API
@@ -79,7 +81,7 @@ export class CreateOrderDto extends RestrictionAckDto {
   @IsOptional() @IsEnum(["DRAFT", "PENDING"]) status?: "DRAFT" | "PENDING";
   @IsArray()
   @IsOptional()
-  @ArrayMaxSize(500)
+  @ArrayMaxSize(CREATE_ORDER_MAX_ITEMS)
   @ValidateNested({ each: true })
   @Type(() => OrderItemDto)
   items?: OrderItemDto[];
@@ -142,4 +144,18 @@ export class CreateOrderDto extends RestrictionAckDto {
   @ValidateNested()
   @Type(() => InlineReturnLinesDto)
   inlineReturn?: InlineReturnLinesDto;
+
+  /**
+   * SA-1124: this request is a replay of an order a STAFF device took offline (403 OFFLINE_STAFF_ONLY otherwise). The
+   * controller reads these three fields (offline-create.ts) and hands the service an internal option; the service never
+   * reads them. Needs `offlineQuote` (400 OFFLINE_QUOTE_REQUIRED) and books no money (credits, inline return).
+   */
+  @IsOptional() @IsBoolean() offline?: boolean;
+  /** Device time the order was taken (ISO 8601). Display only: prices and rules are judged at server time. */
+  @IsOptional() @IsDateString() offlineCreatedAt?: string;
+  /** What the device showed: display evidence for the price-drift flag, never a price. */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => OfflineQuoteDto)
+  offlineQuote?: OfflineQuoteDto;
 }

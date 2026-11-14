@@ -19,6 +19,8 @@ export function useTenantTimeZoneQuery(enabled = true) {
   return {
     zone: typeof tz === "string" && tz ? tz : undefined,
     isError: q.isError,
+    /** a (re)read is running: a retry control must not send a second request */
+    isFetching: q.isFetching,
     retry: () => void q.refetch(),
   };
 }

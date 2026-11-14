@@ -4663,3 +4663,73 @@ citations, closed-out with its own post-init assertion guard).
   guards; a test asserting every consumer calls the _same_ function reference (not just a
   matching result) is flagged, not yet added.
 
+## Archived 2026-11-12 — zero outside citations, no repo guard; headroom for L-374, L-375 (bookkeeping for windows 32 and 34)
+
+### L-355 · 2026-10-30 · process · a train built on an older master proves carry-over by the old-to-new delta being only master files, byte-identical, not by a patch-id against a moved master
+
+- **Symptom:** a re-pinned train showed a "different" patch-id from the gated sha; the comparison had been run against the wrong master, so a safe update looked like drift.
+- **Root cause:** a patch-id depends on the base; once master moves, the same member diff hashes differently, so the check says nothing about carry-over.
+- **Lesson:** **For a train rebuilt on a newer master, show that every file that changed between the gated and the new head is a master-only file with identical bytes on master, and that the update merge's `git show --remerge-diff` is empty. Use patch-id only against the same base.**
+- **Guard:** none automatic; the train PR body lists the old and new head and the delta file list. Cf. [[L-350]]. Extended 2026-10-31: a PASS read carries over a merge only when the remerge-diff is empty. An empty merge-up of master into a stacked train keeps every gate; any non-empty remerge needs a delta read of its own.
+
+### L-347 · 2026-10-25 · process · a wording or format sweep changes strings only; a behaviour or number-format edit in it goes back out (W-785)
+
+- **Symptom:** the sentence-case text sweep needed five revert commits in review: behaviour changes, money and quantity formatting, and files other lanes were editing.
+- **Root cause:** an author rewriting a screen's text also tidied labels the code branches on, number formats and handlers nearby, and the diff was too wide to show it.
+- **Lesson:** **A text sweep PR edits string literals and CSS casing only. Anything a branch, a test oracle or a formatter reads, and every file another open lane owns, stays out. Review diffs the sweep for non-string hunks first, and splits the sweep by area so each PR is small enough to read.**
+- **Guard:** none yet; propose a check that lists non-literal hunks in a PR titled as a text sweep.
+
+## Archived 2026-11-12 — zero outside citations, no repo guard; headroom for L-376..L-378 (bookkeeping for windows 35 and 36)
+
+### L-350 · 2026-10-25 · process · a train merge checks the SA merge preconditions of every PR it carries, not only the green checks
+
+- **Symptom:** a money PR in the B297 chain went live in a train on 10-12 without the owner sizing run its SA ruling required before merge, and a later member's same-window condition was skipped too. The after-the-fact sizing run was clean, so no data was wrong, but the gate had not been checked by anyone.
+- **Root cause:** the train checklist covered CI, review passes and the migration order. The conditions an SA ruling attaches to a PR (an owner count first, a same-window partner, a deploy order) lived in the ruling, and nobody read the ruling at assembly time.
+- **Lesson:** **When a train is assembled, read each carried PR's SA ruling for merge preconditions (owner-run counts, same-window partners, deploy order, owner sittings) and write them next to the PR in the train list. A condition not met at the merge sha ejects the PR, however green its checks are.**
+- **Guard:** none automatic; the train list names each PR's SA preconditions and the Lead checks them at the cut (row 428). Cf. [[L-337]].
+
+### L-362 · 2026-10-31 · tooling · a heavy-slot job runs the scripts of the tree it was started from; start it from the tree whose scripts you want
+
+- **Symptom:** a slot waiter started from the main checkout used its stale `scripts/lib/heavy-slot.mjs`, which lacked the capped-label rule, and blocked the queue for jobs that the newer script would have let through.
+- **Root cause:** the slot's queue rules live in the script file of whichever tree launches the waiter; the main checkout was behind master, so an old policy ran beside newer waiters.
+- **Lesson:** **Start a slot job from the tree whose copy of the slot scripts you mean to rely on (a fresh master worktree), and check that copy carries the rule you depend on before queueing. A stale checkout is not a neutral launcher.**
+- **Guard:** none automatic; the dispatch note names the tree the slot job starts from. Cf. [[L-354]].
+
+### L-365 · 2026-10-31 · tooling · a scoped jest run in a tree whose verify is still running overwrites the campaign report with a partial one; run pre-checks first or elsewhere
+
+- **Symptom:** a verify finished with every Turbo task passed (10 of 10, no `Failed:` line at the start of a line) and still exited 1: its trailing `campaign-check` failed.
+- **Root cause:** a scoped jest run in the same tree, started while verify was running, overwrote the gitignored `.campaign/runs/<workspace>.json` with a report of only the specs it ran; `campaign-check` then read that partial report. Grepping the log for the word "Failed" also matches test names.
+- **Lesson:** **Never run jest in a tree while its verify runs: order pre-check items before the verify, or run them in another worktree. If it happened, regenerate the report with that workspace's full suite and re-run `node scripts/campaign-check.mjs` alone; the Lead may accept the verify on that evidence without a full rerun. Judge a verify by Turbo's `Failed:` line at line start, never by grep for the word.**
+- **Guard:** the by-hand train pre-check orders its scoped jest items before the verify and runs none beside it. Cf. [[L-359]].
+
+## Archived 2026-11-12 — zero outside citations, no repo guard; headroom for L-379 (bookkeeping for window 37)
+
+### L-356 · 2026-10-30 · tooling · a failed merge in a tree whose hooks cannot run looks exactly like a conflict; classify by unmerged files first
+
+- **Symptom:** a 14-member train pass reported CONFLICT for every member, though no member overlapped another.
+- **Root cause:** the commit-msg hook (commitlint) needs `node_modules` in the tree; a fresh worktree had none, so every merge commit was refused and the script read the non-zero exit as a conflict.
+- **Lesson:** **Call a merge conflicted only when `git diff --name-only --diff-filter=U` lists files. Any other non-zero exit is a tooling failure: fix the tree (`npm ci --ignore-scripts`) and rerun before telling anyone a member needs work.**
+- **Guard:** the train assembly script splits the two cases. Cf. [[L-354]].
+
+## Archived 2026-11-13 — zero outside citations, real spec guard; headroom for L-380..L-382 (bookkeeping for the ux-eval-batch1, site-print-and-headings and counter-date-scan-clock fixes)
+
+### L-339 · 2026-10-24 · domain · a lock-wait bound must be the first statement of the transaction (#3628)
+
+- **Symptom:** a product create waited 8.1 s on an advisory lock, then failed with P2028 and held a pooled connection the whole time.
+- **Root cause:** Prisma's interactive-transaction timeout cannot interrupt a statement already waiting on a lock, so the wait was unbounded until the lock freed.
+- **Lesson:** **Bound lock waits inside Postgres: make `SET LOCAL lock_timeout` the FIRST statement of the transaction. A client-side transaction timeout does not stop a statement blocked on a lock.**
+- **Guard:** `apps/api/src/common/stock-tx.spec.ts`, `products.create-under-load.db.spec.ts`.
+
+### L-343 · 2026-10-24 · domain · an optional money input becomes required, and a merge that cannot carry it refuses (#3700)
+
+- **Symptom:** editing items or applying a change request re-totalled an order and dropped its discount, and merges lost it silently.
+- **Root cause:** `discount` was an optional parameter of the totals helper, so callers that never passed it compiled cleanly and totalled without it.
+- **Lesson:** **Make a money input of a totals helper REQUIRED, so the compiler lists every caller that must decide it. Where an operation cannot carry the value (a merge of two discounted orders), refuse with a code rather than drop it.**
+- **Guard:** `orders/order-totals-one-formula.spec.ts`, `ORDER_MERGE_DISCOUNTED`. Cf. the required pack inputs of `mergeIntoStoredLine` (#3594).
+
+### L-348 · 2026-10-25 · tooling · pass test patterns to a child process as an argv array with no shell; on Windows a shell re-splits and re-escapes them (726)
+
+- **Symptom:** a DB-lane test pattern with a space, a bracket or a regex escape reached jest changed on Windows, so the wrong specs ran or none did. Two regexes also lost their escaped backslashes in a review edit.
+- **Root cause:** the runner built one command string and let a shell parse it.
+- **Lesson:** **Spawn with an args array and `shell: false`, and treat a jest path argument as a regex. A script that forwards user patterns has a spec that feeds it a pattern with a space and a bracket and reads back the argv it produced.**
+- **Guard:** `run-db-tests.mjs` `serialDbArgs` and the forwarding specs in `apps/api/src/common/`.

@@ -352,6 +352,9 @@ export const COUNTER_CHECK_ZONE_LOADING_COPY =
   "Still loading the business's day. Try again in a moment.";
 export const COUNTER_CHECK_ZONE_FAILED_COPY =
   "Couldn't load the business's day, so a check can't be dated yet.";
+/** W-1188 R8: a dated sale waits for the business's day: the day it is dated against is not known yet. */
+export const COUNTER_ORDER_DATE_ZONE_FAILED_COPY =
+  "Couldn't check today's date. Clear the order date, or try again.";
 
 /** True when `checkDate` names a real YYYY-MM-DD day strictly after `today` (the business's day). Anything else is not post-dated. */
 export function isPostdatedCheck(checkDate: string, today: string): boolean {

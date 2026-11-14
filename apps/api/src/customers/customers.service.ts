@@ -106,6 +106,7 @@ import { recordCreditLimitChange, type CreditLimitActor } from "./credit-limit-a
 import { lockInvoiceRowsInOrder } from "../regulated/ledger-locks";
 import { advancePaymentData } from "./advance-payment-data";
 import { isLicenceExpired, licenceZone } from "../authorizations/licence-validity";
+import { assertOrderReviewed } from "../orders/offline/order-review-gate";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -1214,6 +1215,8 @@ export class CustomersService {
           `Cannot apply advance payment to invoice with status ${inv.status}`,
         );
       }
+
+      if (inv.orderId) await assertOrderReviewed(tx, inv.orderId); // SA-1124 PR-1b: staff money waits for the price review
 
       // Ignore VOID payments (a bounced check reverses to VOID in P5-12); otherwise a
       // reversed payment would understate the balance and under-apply the advance.

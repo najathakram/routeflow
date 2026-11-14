@@ -261,8 +261,14 @@ describe("SA-824 customer money-in writers replay on the Idempotency-Key", () =>
 
   describe("POST /invoices/payments/record (recordStandalonePayment)", () => {
     it("(a) two identical submits with the same key record ONE payment set; the second is replayed with the same paymentGroupId", async () => {
-      const first: any = await invoices.recordStandalonePayment(standalone(), keyed("key-a"));
-      const second: any = await invoices.recordStandalonePayment(standalone(), keyed("key-a"));
+      const first: any = await invoices.recordStandalonePayment(standalone(), {
+        source: "STAFF_ALLOCATION",
+        ...keyed("key-a"),
+      });
+      const second: any = await invoices.recordStandalonePayment(standalone(), {
+        source: "STAFF_ALLOCATION",
+        ...keyed("key-a"),
+      });
 
       const { pays, advs } = committed();
       expect({ payments: pays.length, advances: advs.length }).toEqual({
@@ -284,11 +290,17 @@ describe("SA-824 customer money-in writers replay on the Idempotency-Key", () =>
     });
 
     it("(c) the same key with a different amount is 409 IDEMPOTENCY_KEY_CONFLICT and writes nothing", async () => {
-      await invoices.recordStandalonePayment(standalone(), keyed("key-c"));
+      await invoices.recordStandalonePayment(standalone(), {
+        source: "STAFF_ALLOCATION",
+        ...keyed("key-c"),
+      });
       const before = committed();
 
       const err: any = await invoices
-        .recordStandalonePayment(standalone({ totalAmount: 160 }), keyed("key-c"))
+        .recordStandalonePayment(standalone({ totalAmount: 160 }), {
+          source: "STAFF_ALLOCATION",
+          ...keyed("key-c"),
+        })
         .catch((e) => e);
 
       expect(err?.getStatus?.()).toBe(409);
@@ -298,29 +310,41 @@ describe("SA-824 customer money-in writers replay on the Idempotency-Key", () =>
     });
 
     it("(c) the same key saved as DRAFT then recorded as PAID is 409 IDEMPOTENCY_KEY_CONFLICT and writes nothing", async () => {
-      await invoices.recordStandalonePayment(standalone({ status: "DRAFT" }), keyed("key-status"));
+      await invoices.recordStandalonePayment(standalone({ status: "DRAFT" }), {
+        source: "STAFF_ALLOCATION",
+        ...keyed("key-status"),
+      });
       const before = committed();
 
       const err: any = await invoices
-        .recordStandalonePayment(standalone({ status: "PAID" }), keyed("key-status"))
+        .recordStandalonePayment(standalone({ status: "PAID" }), {
+          source: "STAFF_ALLOCATION",
+          ...keyed("key-status"),
+        })
         .catch((e) => e);
 
       expect(err?.getStatus?.()).toBe(409);
       expect(err.getResponse()).toMatchObject({ code: CONFLICT });
       expect(committed()).toEqual(before);
       // A pure retry of the same status still replays.
-      const again: any = await invoices.recordStandalonePayment(
-        standalone({ status: "DRAFT" }),
-        keyed("key-status"),
-      );
+      const again: any = await invoices.recordStandalonePayment(standalone({ status: "DRAFT" }), {
+        source: "STAFF_ALLOCATION",
+        ...keyed("key-status"),
+      });
       expect(again.replayed).toBe(true);
     });
 
     it("(c) the same key with a different bank date or bank charges is 409 and writes nothing", async () => {
-      await invoices.recordStandalonePayment(standalone(), keyed("key-bank"));
+      await invoices.recordStandalonePayment(standalone(), {
+        source: "STAFF_ALLOCATION",
+        ...keyed("key-bank"),
+      });
       for (const over of [{ settledAt: "2026-10-25" }, { bankCharges: 2.5 }]) {
         const err: any = await invoices
-          .recordStandalonePayment(standalone(over), keyed("key-bank"))
+          .recordStandalonePayment(standalone(over), {
+            source: "STAFF_ALLOCATION",
+            ...keyed("key-bank"),
+          })
           .catch((e) => e);
         expect(err?.getStatus?.()).toBe(409);
       }
@@ -328,7 +352,10 @@ describe("SA-824 customer money-in writers replay on the Idempotency-Key", () =>
     });
 
     it("(c) the same key on a different writer (scope) is 409 IDEMPOTENCY_KEY_CONFLICT and writes nothing", async () => {
-      await invoices.recordStandalonePayment(standalone(), keyed("key-scope"));
+      await invoices.recordStandalonePayment(standalone(), {
+        source: "STAFF_ALLOCATION",
+        ...keyed("key-scope"),
+      });
       const before = committed();
 
       // `as any`: master's createAdvancePayment takes no third argument (and ignores it).
@@ -359,11 +386,11 @@ describe("SA-824 customer money-in writers replay on the Idempotency-Key", () =>
       ];
       await invoices.recordStandalonePayment(
         standalone({ totalAmount: 100, allocations: allocs }),
-        keyed("key-order"),
+        { source: "STAFF_ALLOCATION", ...keyed("key-order") },
       );
       const again: any = await invoices.recordStandalonePayment(
         standalone({ totalAmount: 100.001, allocations: [...allocs].reverse() }),
-        keyed("key-order"),
+        { source: "STAFF_ALLOCATION", ...keyed("key-order") },
       );
       expect(again.replayed).toBe(true);
       expect(committed().pays).toHaveLength(2);
@@ -371,30 +398,42 @@ describe("SA-824 customer money-in writers replay on the Idempotency-Key", () =>
 
     it("(d) a throw after the claim commits NO key; a retry with the same key then records exactly once", async () => {
       failAfterClaim = true;
-      await expect(invoices.recordStandalonePayment(standalone(), keyed("key-d"))).rejects.toThrow(
-        "injected failure after the claim",
-      );
+      await expect(
+        invoices.recordStandalonePayment(standalone(), {
+          source: "STAFF_ALLOCATION",
+          ...keyed("key-d"),
+        }),
+      ).rejects.toThrow("injected failure after the claim");
       expect({ keys: ledger.keys.length, ...committed() }).toEqual({
         keys: 0,
         pays: [],
         advs: [],
       });
 
-      const retry: any = await invoices.recordStandalonePayment(standalone(), keyed("key-d"));
+      const retry: any = await invoices.recordStandalonePayment(standalone(), {
+        source: "STAFF_ALLOCATION",
+        ...keyed("key-d"),
+      });
       expect(retry.replayed).toBeUndefined();
       expect(committed().pays).toHaveLength(1);
       expect(ledger.keys).toHaveLength(1);
     });
 
     it("(e) a replay after the payment was voided returns the stored result with the CURRENT status and writes nothing", async () => {
-      const first: any = await invoices.recordStandalonePayment(standalone(), keyed("key-e"));
+      const first: any = await invoices.recordStandalonePayment(standalone(), {
+        source: "STAFF_ALLOCATION",
+        ...keyed("key-e"),
+      });
       ledger.pays[0].status = "VOID"; // the office voided it after the first response
       const writesBefore = prisma.invoicePayment.create.mock.calls.length;
       const raw = (prisma as any).$rawSpy;
       const claimsBefore = raw.$queryRaw.mock.calls.length;
       const settlesBefore = raw.$executeRaw.mock.calls.length;
 
-      const replay: any = await invoices.recordStandalonePayment(standalone(), keyed("key-e"));
+      const replay: any = await invoices.recordStandalonePayment(standalone(), {
+        source: "STAFF_ALLOCATION",
+        ...keyed("key-e"),
+      });
 
       expect(replay.replayed).toBe(true);
       expect(replay.paymentGroupId).toBe(first.paymentGroupId);
@@ -406,12 +445,18 @@ describe("SA-824 customer money-in writers replay on the Idempotency-Key", () =>
     });
 
     it("(b, unit) a claim lost to a duplicate that committed after the pre-read replays the winner and writes no money", async () => {
-      const winner: any = await invoices.recordStandalonePayment(standalone(), keyed("key-race"));
+      const winner: any = await invoices.recordStandalonePayment(standalone(), {
+        source: "STAFF_ALLOCATION",
+        ...keyed("key-race"),
+      });
       const keyStore = prisma.forTenant().paymentIdempotencyKey;
       keyStore.findFirst.mockResolvedValueOnce(null); // the pre-read ran before the winner committed
       const writesBefore = prisma.invoicePayment.create.mock.calls.length;
 
-      const loser: any = await invoices.recordStandalonePayment(standalone(), keyed("key-race"));
+      const loser: any = await invoices.recordStandalonePayment(standalone(), {
+        source: "STAFF_ALLOCATION",
+        ...keyed("key-race"),
+      });
 
       expect(loser.replayed).toBe(true);
       expect(loser.paymentGroupId).toBe(winner.paymentGroupId);
@@ -420,8 +465,14 @@ describe("SA-824 customer money-in writers replay on the Idempotency-Key", () =>
     });
 
     it("(f) no key: behaviour is identical to today (no claim, no key row, the same response shape)", async () => {
-      const a: any = await invoices.recordStandalonePayment(standalone(), { actor: null });
-      const b: any = await invoices.recordStandalonePayment(standalone(), { actor: null });
+      const a: any = await invoices.recordStandalonePayment(standalone(), {
+        source: "STAFF_ALLOCATION",
+        actor: null,
+      });
+      const b: any = await invoices.recordStandalonePayment(standalone(), {
+        source: "STAFF_ALLOCATION",
+        actor: null,
+      });
 
       expect(committed().pays).toHaveLength(2);
       expect(ledger.keys).toHaveLength(0);
@@ -436,9 +487,15 @@ describe("SA-824 customer money-in writers replay on the Idempotency-Key", () =>
 
     it("(g) the same key in two tenants gives two independent payments", async () => {
       tenant = "tenant-a";
-      const a: any = await invoices.recordStandalonePayment(standalone(), keyed("shared-key"));
+      const a: any = await invoices.recordStandalonePayment(standalone(), {
+        source: "STAFF_ALLOCATION",
+        ...keyed("shared-key"),
+      });
       tenant = "tenant-b";
-      const b: any = await invoices.recordStandalonePayment(standalone(), keyed("shared-key"));
+      const b: any = await invoices.recordStandalonePayment(standalone(), {
+        source: "STAFF_ALLOCATION",
+        ...keyed("shared-key"),
+      });
 
       expect(b.replayed).toBeUndefined();
       expect(b.paymentGroupId).not.toBe(a.paymentGroupId);
@@ -548,7 +605,10 @@ describe("SA-824 customer money-in writers replay on the Idempotency-Key", () =>
         }
         return settle(strings, ...v);
       });
-      await invoices.recordStandalonePayment(standalone(), keyed("key-state"));
+      await invoices.recordStandalonePayment(standalone(), {
+        source: "STAFF_ALLOCATION",
+        ...keyed("key-state"),
+      });
       expect(claimedState).toBe("CLAIMED");
       expect(ledger.keys.map((k) => k.state)).toEqual(["COMPLETED"]);
     });
@@ -556,7 +616,11 @@ describe("SA-824 customer money-in writers replay on the Idempotency-Key", () =>
     it.each([
       [
         "recordStandalonePayment",
-        () => invoices.recordStandalonePayment(standalone(), keyed("k-t")),
+        () =>
+          invoices.recordStandalonePayment(standalone(), {
+            source: "STAFF_ALLOCATION",
+            ...keyed("k-t"),
+          }),
       ],
       [
         "recordPayment",
@@ -595,7 +659,7 @@ describe("SA-824 customer money-in writers replay on the Idempotency-Key", () =>
       const keyStore = prisma.forTenant().paymentIdempotencyKey;
       keyStore.findFirst.mockResolvedValueOnce(null); // the pre-read ran before the resolve committed
       const err: any = await invoices
-        .recordStandalonePayment(standalone(), keyed("k-late"))
+        .recordStandalonePayment(standalone(), { source: "STAFF_ALLOCATION", ...keyed("k-late") })
         .catch((e) => e);
       expect(err.getResponse()).toMatchObject({ code: RESOLVED });
       expect(committed()).toEqual({ pays: [], advs: [] });
@@ -603,20 +667,29 @@ describe("SA-824 customer money-in writers replay on the Idempotency-Key", () =>
 
     it("another tenant's tombstone never refuses this tenant's payment", async () => {
       ledger.keys.push(tombstone("k-x", "tenant-b"));
-      const out: any = await invoices.recordStandalonePayment(standalone(), keyed("k-x"));
+      const out: any = await invoices.recordStandalonePayment(standalone(), {
+        source: "STAFF_ALLOCATION",
+        ...keyed("k-x"),
+      });
       expect(out.replayed).toBeUndefined();
       expect(committed().pays).toHaveLength(1);
     });
 
     it("a committed CLAIMED row: the same request is 409 PAYMENT_KEY_IN_FLIGHT, a different one keeps 409 IDEMPOTENCY_KEY_CONFLICT", async () => {
-      await invoices.recordStandalonePayment(standalone(), keyed("k-c"));
+      await invoices.recordStandalonePayment(standalone(), {
+        source: "STAFF_ALLOCATION",
+        ...keyed("k-c"),
+      });
       ledger.keys[0].state = "CLAIMED"; // never settled (defence in depth: no writer commits this)
       const same: any = await invoices
-        .recordStandalonePayment(standalone(), keyed("k-c"))
+        .recordStandalonePayment(standalone(), { source: "STAFF_ALLOCATION", ...keyed("k-c") })
         .catch((e) => e);
       expect(same.getResponse()).toMatchObject({ code: IN_FLIGHT });
       const other: any = await invoices
-        .recordStandalonePayment(standalone({ totalAmount: 160 }), keyed("k-c"))
+        .recordStandalonePayment(standalone({ totalAmount: 160 }), {
+          source: "STAFF_ALLOCATION",
+          ...keyed("k-c"),
+        })
         .catch((e) => e);
       expect(other.getResponse()).toMatchObject({ code: CONFLICT });
       expect(committed().pays).toHaveLength(1);

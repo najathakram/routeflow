@@ -347,14 +347,17 @@ describeDb("a date-only paid date for a Chicago tenant, real Postgres (SA-943)",
     const today = chicagoToday();
 
     await tenantCtx.run(s.tenantId, () =>
-      invoices.recordStandalonePayment({
-        customerId: s.customerId,
-        totalAmount: 20,
-        method: "ACH",
-        paidAt: today,
-        settledAt: "2026-10-01",
-        allocations: [{ invoiceId: s.invoiceId, amount: 20 }],
-      } as any),
+      invoices.recordStandalonePayment(
+        {
+          customerId: s.customerId,
+          totalAmount: 20,
+          method: "ACH",
+          paidAt: today,
+          settledAt: "2026-10-01",
+          allocations: [{ invoiceId: s.invoiceId, amount: 20 }],
+        } as any,
+        { source: "STAFF_ALLOCATION" },
+      ),
     );
 
     const [row] = await stored(s.invoiceId);

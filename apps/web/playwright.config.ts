@@ -839,14 +839,16 @@ export default defineConfig({
       dependencies: [],
       use: { ...devices["Desktop Chrome"] },
     },
-    // Rovio website rebrand proof suite (specs 84 and 85, test-plan T1-T9 and T12): geometry, pixels,
-    // print media and the parity diff for the public site. Signed out, `dependencies: []`, no storage
-    // state; it blocks the analytics host so visits are never counted. Local stack only until launch
-    // (the harness stays on the rebrand branch, build-plan WP0 S9). Same convention as "marketing":
-    // WITHOUT THIS ENTRY THE SPECS NEVER RUN.
+    // Public site proof suite (spec 85: T1 print, T2 headings without a scroll, T9 phone heading
+    // rise, T12 parity): geometry, print media and the parity diff for the signed-out site. Plan:
+    // .claude/pipeline/2026-11-13-site-wheel-print/README.md. Signed out, `dependencies: []`, no
+    // storage state; it blocks the analytics host so visits are never counted. The post-deploy job
+    // runs every project, so only specs that are green on master match here (review S9): spec 84
+    // (the wheel, T3-T8) joins with WP1.2. Same convention as "marketing": WITHOUT THIS ENTRY THE
+    // SPEC NEVER RUNS.
     {
       name: "site-proof",
-      testMatch: /8[45]-site-proof-.*\.spec\.ts/,
+      testMatch: /85-site-proof-pages\.spec\.ts/,
       dependencies: [],
       use: { ...devices["Desktop Chrome"] },
     },

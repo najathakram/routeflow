@@ -51,6 +51,8 @@ export interface ParkedRow {
   /** The list's `"payload"->'lines'` (only its pricing inputs leave the service: {@link priceLinesOf}). */
   lines?: unknown;
   customerName?: string | null;
+  /** W-1188: the list's `"payload"->>'orderDate'` (a dated sale's day; checked before it leaves the service). */
+  orderDate?: string | null;
 }
 
 export const iso = (d: Date | string): string => new Date(d).toISOString();

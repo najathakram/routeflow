@@ -6,6 +6,7 @@ import type { EmailService } from "../email/email.service";
 import type { SystemConfigService } from "../system-config/system-config.service";
 import type { InvoicePdfService } from "./invoice-pdf.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { assertOrderReviewed } from "../orders/offline/order-review-gate";
 import { isInternalEmail } from "../common/internal-email";
 import { buildInvoiceEmailAttachment, type InvoiceEmailAttachment } from "./invoice-attachment";
 import { buildReminderEmailPayload } from "./invoice-email-payload";
@@ -73,6 +74,8 @@ export async function sendReminder(deps: ReminderEmailDeps, id: string, override
   });
   if (!inv) throw new NotFoundException("Invoice not found");
   assertReminderIssued(inv.status); // row 318a: only SENT / VIEWED / PARTIAL / OVERDUE
+  // SA-1124 PR-1b: driver cash at the door (exempt) can issue a flagged order's invoice; no dunning for the unreviewed price
+  if (inv.orderId) await assertOrderReviewed(deps.prisma.forTenant(), inv.orderId);
   assertReminderOwes(inv.total, inv.payments); // SA-770: an exactly-paid or overpaid SENT invoice owes nothing
 
   const recipientEmail = resolveRecipientEmail(overrideEmail, inv.customer?.email);

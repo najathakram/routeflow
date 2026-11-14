@@ -12,6 +12,13 @@
 
 ## process
 
+### L-379 · 2026-11-12 · process · a hold or fix order is issued only after the reviewer's verdict and browser evidence are posted; the order carries their board comment ids (#4302)
+
+- **Symptom:** a hold and a one-case fix order for #4302 went out from an interim reading, before the reader's FAIL (board 6819958479) and the browser evidence (6819958939, which found more than the reader's MUST) were posted. It cost a round.
+- **Root cause:** the order was written from a partial read; nothing required it to name the evidence it rested on.
+- **Lesson:** **An order that holds a PR or tells a lane what to fix names the board comment ids of the verdict and of the browser evidence it rests on, and is not sent until both are posted. A fix scoped from an interim read is re-scoped when the evidence lands.**
+- **Guard:** owed, NOT BUILT YET: a required field in the lead's order template holding the board comment ids of the verdict and of its evidence. No file in the repo carries it today.
+
 ### L-359 · 2026-10-30 · process · a train is pushed only after the CI-equivalent verify; type-checks plus one test file is not a gate, and CI is read by its closing Failed line
 
 - **Symptom:** a 13-member train pushed after clean merges, api and web type-checks and one test file went red in CI in three members (a web suite pinning an older unit rule, an api spec expecting another warning code, a writer-inventory spec). The first read of the log took one lane's "passed" counts for the whole api.
@@ -19,26 +26,6 @@
 - **Lesson:** **Run the CI Verify equivalent in the train tree (`FULL_VERIFY=1 npm run verify`) through the heavy slot and read it to the end before pushing a train; with a T1 member add the full DB lanes. Read CI by the closing `Failed:` line, never by one lane's counts.**
 - **Guard:** the train PR body states the command and the counts. Cf. [[L-353]]. A DB spec that needs a built artifact (the api dist) ships with the CI step that builds it, and a job that shows 0 steps after a few seconds has failed, not queued. The pre-check also runs `api-error-codes-parity` and `permission-coverage`: a member's bare error-code string in a web file passed every member read and went red only on the merged tree, because that spec scans web and api alike.
 
-### L-355 · 2026-10-30 · process · a train built on an older master proves carry-over by the old-to-new delta being only master files, byte-identical, not by a patch-id against a moved master
-
-- **Symptom:** a re-pinned train showed a "different" patch-id from the gated sha; the comparison had been run against the wrong master, so a safe update looked like drift.
-- **Root cause:** a patch-id depends on the base; once master moves, the same member diff hashes differently, so the check says nothing about carry-over.
-- **Lesson:** **For a train rebuilt on a newer master, show that every file that changed between the gated and the new head is a master-only file with identical bytes on master, and that the update merge's `git show --remerge-diff` is empty. Use patch-id only against the same base.**
-- **Guard:** none automatic; the train PR body lists the old and new head and the delta file list. Cf. [[L-350]]. Extended 2026-10-31: a PASS read carries over a merge only when the remerge-diff is empty. An empty merge-up of master into a stacked train keeps every gate; any non-empty remerge needs a delta read of its own.
-
-### L-347 · 2026-10-25 · process · a wording or format sweep changes strings only; a behaviour or number-format edit in it goes back out (W-785)
-
-- **Symptom:** the sentence-case text sweep needed five revert commits in review: behaviour changes, money and quantity formatting, and files other lanes were editing.
-- **Root cause:** an author rewriting a screen's text also tidied labels the code branches on, number formats and handlers nearby, and the diff was too wide to show it.
-- **Lesson:** **A text sweep PR edits string literals and CSS casing only. Anything a branch, a test oracle or a formatter reads, and every file another open lane owns, stays out. Review diffs the sweep for non-string hunks first, and splits the sweep by area so each PR is small enough to read.**
-- **Guard:** none yet; propose a check that lists non-literal hunks in a PR titled as a text sweep.
-
-### L-350 · 2026-10-25 · process · a train merge checks the SA merge preconditions of every PR it carries, not only the green checks
-
-- **Symptom:** a money PR in the B297 chain went live in a train on 10-12 without the owner sizing run its SA ruling required before merge, and a later member's same-window condition was skipped too. The after-the-fact sizing run was clean, so no data was wrong, but the gate had not been checked by anyone.
-- **Root cause:** the train checklist covered CI, review passes and the migration order. The conditions an SA ruling attaches to a PR (an owner count first, a same-window partner, a deploy order) lived in the ruling, and nobody read the ruling at assembly time.
-- **Lesson:** **When a train is assembled, read each carried PR's SA ruling for merge preconditions (owner-run counts, same-window partners, deploy order, owner sittings) and write them next to the PR in the train list. A condition not met at the merge sha ejects the PR, however green its checks are.**
-- **Guard:** none automatic; the train list names each PR's SA preconditions and the Lead checks them at the cut (row 428). Cf. [[L-337]].
 ### L-337 · 2026-10-22 · process · merge only through a gate that lists EVERY check run at the exact head sha, required or not
 
 - **Symptom:** a merge window merged #3563 and #3585 while the "Replay migrations on a fresh database" check was FAILURE at the merged sha. #3563 carried three red DB specs (two variant-name specs hit the SA-823 R11 `reparentVia` guard in `ProductsService.update`; products-export gained a new last column) plus one from #3574 (a warning became an object). All spec-only; #3589 fixed them.
@@ -55,27 +42,6 @@
 
 ## tooling
 
-### L-365 · 2026-10-31 · tooling · a scoped jest run in a tree whose verify is still running overwrites the campaign report with a partial one; run pre-checks first or elsewhere
-
-- **Symptom:** a verify finished with every Turbo task passed (10 of 10, no `Failed:` line at the start of a line) and still exited 1: its trailing `campaign-check` failed.
-- **Root cause:** a scoped jest run in the same tree, started while verify was running, overwrote the gitignored `.campaign/runs/<workspace>.json` with a report of only the specs it ran; `campaign-check` then read that partial report. Grepping the log for the word "Failed" also matches test names.
-- **Lesson:** **Never run jest in a tree while its verify runs: order pre-check items before the verify, or run them in another worktree. If it happened, regenerate the report with that workspace's full suite and re-run `node scripts/campaign-check.mjs` alone; the Lead may accept the verify on that evidence without a full rerun. Judge a verify by Turbo's `Failed:` line at line start, never by grep for the word.**
-- **Guard:** the by-hand train pre-check orders its scoped jest items before the verify and runs none beside it. Cf. [[L-359]].
-
-### L-362 · 2026-10-31 · tooling · a heavy-slot job runs the scripts of the tree it was started from; start it from the tree whose scripts you want
-
-- **Symptom:** a slot waiter started from the main checkout used its stale `scripts/lib/heavy-slot.mjs`, which lacked the capped-label rule, and blocked the queue for jobs that the newer script would have let through.
-- **Root cause:** the slot's queue rules live in the script file of whichever tree launches the waiter; the main checkout was behind master, so an old policy ran beside newer waiters.
-- **Lesson:** **Start a slot job from the tree whose copy of the slot scripts you mean to rely on (a fresh master worktree), and check that copy carries the rule you depend on before queueing. A stale checkout is not a neutral launcher.**
-- **Guard:** none automatic; the dispatch note names the tree the slot job starts from. Cf. [[L-354]].
-
-### L-356 · 2026-10-30 · tooling · a failed merge in a tree whose hooks cannot run looks exactly like a conflict; classify by unmerged files first
-
-- **Symptom:** a 14-member train pass reported CONFLICT for every member, though no member overlapped another.
-- **Root cause:** the commit-msg hook (commitlint) needs `node_modules` in the tree; a fresh worktree had none, so every merge commit was refused and the script read the non-zero exit as a conflict.
-- **Lesson:** **Call a merge conflicted only when `git diff --name-only --diff-filter=U` lists files. Any other non-zero exit is a tooling failure: fix the tree (`npm ci --ignore-scripts`) and rerun before telling anyone a member needs work.**
-- **Guard:** the train assembly script splits the two cases. Cf. [[L-354]].
-
 ### L-358 · 2026-10-30 · tooling · api check-types in a tree that did not build the workspace packages drowns in TS2307; build `packages/*` first
 
 - **Symptom:** the api type-check on a freshly installed train tree reported 913 diagnostics (baseline 551), nearly all "Cannot find module '@routeflow/pricing'".
@@ -90,13 +56,6 @@
 - **Lesson:** **Every path that creates a tree (worktree, heavy-slot, dispatch, swarm scripts) installs or copies the hooks itself and refuses a hookless tree. Before the first commit or push from a new tree, assert `.husky/_/pre-push` exists and `check-git-hooks` passes; a push that ran no hook is unverified, whatever it printed.**
 - **Guard:** `worktree.mjs` refuses a hookless tree (B642, #3880); heavy-slot, dispatch and bug-swarm trees ensure hooks (#3951); new trees copy hooks (#3956); `scripts/check-git-hooks.mjs`. Cf. archived L-263, L-274.
 
-### L-348 · 2026-10-25 · tooling · pass test patterns to a child process as an argv array with no shell; on Windows a shell re-splits and re-escapes them (726)
-
-- **Symptom:** a DB-lane test pattern with a space, a bracket or a regex escape reached jest changed on Windows, so the wrong specs ran or none did. Two regexes also lost their escaped backslashes in a review edit.
-- **Root cause:** the runner built one command string and let a shell parse it.
-- **Lesson:** **Spawn with an args array and `shell: false`, and treat a jest path argument as a regex. A script that forwards user patterns has a spec that feeds it a pattern with a space and a bracket and reads back the argv it produced.**
-- **Guard:** `run-db-tests.mjs` `serialDbArgs` and the forwarding specs in `apps/api/src/common/`.
-
 ### L-329 · 2026-10-21 · tooling · an Expo web export can reuse a shared Metro cache and bake another build's EXPO_PUBLIC_* values; export with --clear and assert the bundle
 
 - **Symptom:** a phone proof build for #3553 from a fresh worktree, with `EXPO_PUBLIC_API_URL` and `EXPO_PUBLIC_BUILD_SHA` exported, came out pointing at another lane's API (`localhost:3000`) with an empty build sha.
@@ -105,6 +64,27 @@
 - **Guard:** none automatic; the sign-in screen's `build <sha7>` (`lib/build-info.ts`) is the on-screen check. Cf. [[L-265]] (stale build output in a proof).
 
 ## testing
+
+### L-377 · 2026-11-12 · testing · a pin ships with a red probe the builder watched fail; a regex with a stray control byte matches nothing and passes whatever the tree holds (#4303)
+
+- **Symptom:** the inventory pin that was meant to prove every till window is covered or excused could not fail: `CounterSaleScreen.escape-scan.test.tsx:259` holds a literal backspace byte (0x08) where `\b` was meant, so its file list was always empty. Both readers found it; the builder had not seen it fail.
+- **Root cause:** the pin was written and run green once. A green pin proves nothing until it has been seen red on a tree that violates it.
+- **Lesson:** **Every inventory pin or source-scan test ships with a probe the builder observed red (add the violating file, or remove the entry, and run it), and asserts that the scan found at least one file. A control byte in a pattern is read in a hex view of the line, not by eye.**
+- **Guard:** none automatic yet; the corrected pin is owed in the counter lane's next PR (test-only). Cf. [[L-364]], [[L-322]]. Extended 2026-11-13 (B1324): the first overlap probe on the phone heading rise (spec 85 T9) read only settled pairs with both boxes in the window and passed on master while the bug stood; the strengthened probe reads the first frame after each scroll step and again settled, counts boxes below the window, and on master fails on the bug's own value (10 px: a 22 px hold over a 12 px gap). The replay cell also asserts its precondition (the section really is at rest) before it measures. Rule: a probe waits for nothing and measures at the moment the person sees it.
+
+### L-378 · 2026-11-12 · testing · a hand-over test runs the real scan detector with a full-length code; a mocked detector and a short code cannot see a dropped first key (#4302 review)
+
+- **Symptom:** in PR #4302 (merged as 1c22822497, head 15137041c9, with the fix) the order builder's line handle handed focus to product search, but the first key of a scan had already gone to the handle, so the lookup lost its first character (board 6819958479, confirmed in a browser run on 6819958939: 5/5 runs, no line added). The PR's test passed.
+- **Root cause:** the test mocked `BarcodeScannerButton` and scanned "300", which is under the detector's 6-character gate (`sequence.length >= 6`, `BarcodeScannerButton.tsx:110`), so neither the detector nor the dropped key was exercised.
+- **Lesson:** **A test of a focus hand-over during a scan runs the real detector and types a full-length code (13 digits) with the scanner's key gaps, then asserts the lookup got the whole code once. A mock of the component that reads the keys removes the thing under test.**
+- **Guard:** `apps/web/app/(dashboard)/orders/_components/CreateOrderModal.scan-from-handle.test.tsx`: the real detector, a 13-digit code from handles 1 and 2 and from the search box; removing the dispatch in `SortableLines.tsx` turns two cells red. Open: only Enter is sent, a CR+LF ending from a handle is not covered. Cf. [[L-376]].
+
+### L-374 · 2026-11-12 · testing · a spec that counts log lines across a loop owns its clock when the code under test rate-gates by wall time (B5-5, #4274)
+
+- **Symptom:** CI Verify failed `prisma/prisma-call-place.spec.ts` B5-5 with "Expected length: 2, Received length: 3": one call site logged twice. Local runs and the earlier CI runs passed.
+- **Root cause:** `tenant-context-guard.ts` lets one capture key log again after `CAPTURE_GAP_MS` (1000 ms, gate at `:139-140`) and reads time as `opts.now ?? Date.now`, bound once at module load. The spec's 1000-read loop was one line only while it stayed inside that second; a slow runner crossed it. The same unpinned loop sat on master since `8f73cf3880` (the guard itself landed in `9c743285ed`, B1285).
+- **Lesson:** **A test that counts what a time-gated component emits across a loop installs its own clock for the module under test (a `jest.mock` factory that holds `Date.now` while the module loads and restores it in `finally`), and keeps one case that advances the clock past the gap and expects the next emit. Prove the cause by jumping the clock, not by throttling the machine.**
+- **Guard:** `prisma/prisma-call-place.spec.ts` B5-5 (frozen clock) and B5-5b (advance 1001 ms, the same site logs again). Cf. [[L-353]], [[L-370]].
 
 ### L-366 · 2026-10-31 · testing · a wrapper must accept only values its inner guard accepts; a safety guard is never widened to fit the wrapper
 
@@ -125,7 +105,7 @@
 - **Symptom:** a train push went red on master's own billing spec (5 of 109 cases) although no commit had touched it; the train's members were suspected first.
 - **Root cause:** the code reads `new Date()` for a 72-hour floor while the spec billed a literal future date, so the case flipped once the wall clock passed the floor. Member passes were days old and nobody had run bare master that day.
 - **Lesson:** **When code under test reads the clock, pin it (`jest.useFakeTimers().setSystemTime(NOW)`) or derive every fixture date from that NOW; a literal future date is a failure with a date on it. Before assembling a train, run the gate on bare `origin/master` first, so a red that is master's own is fixed on its own and never charged to a member.**
-- **Guard:** the clock pin on the payment-due specs (5f6b2290b, train W26); the train pre-check of LEAD-LOG 2026-10-29 #3799. Cf. L-290, L-335. Extended 2026-11-01 (train q): two billing specs left the clock real, and the checkout anchor refuses a start within 91 minutes of the 1st at 12:00Z, so every api Verify that reached them between 10:29Z and 12:00Z on that day failed (33 tests, 2 suites) while the code was right; a run before 10:29Z had passed. Pin the clock in each spec whose subject reads it (`apps/api/src/testing/pin-clock.ts`, #4084), and when a month-boundary window exists, expect the red on the 1st and 2nd, not only on the day a commit lands.
+- **Guard:** the clock pin on the payment-due specs (5f6b2290b, train W26); the train pre-check of LEAD-LOG 2026-10-29 #3799. Cf. L-290, L-335. Extended 2026-11-01 (train q): two billing specs left the clock real, and the checkout anchor refuses a start within 91 minutes of the 1st at 12:00Z, so every api Verify that reached them between 10:29Z and 12:00Z on that day failed (33 tests, 2 suites) while the code was right; a run before 10:29Z had passed. Pin the clock in each spec whose subject reads it (`apps/api/src/testing/pin-clock.ts`, #4084), and when a month-boundary window exists, expect the red on the 1st and 2nd, not only on the day a commit lands. Extended 2026-11-13 (B1327): `CounterSaleScreen.date-scan.test.tsx` called `jest.useFakeTimers()` without a system date, and fake timers start at the real now, so its "fri" scan and TODAY/BACK chips failed on one weekday. Now pinned to Wed 2026-06-17 12:00Z in the same `beforeEach`. Put `setSystemTime` next to every `useFakeTimers`; a weekday-relative case is red one day in seven. No automatic scan for a fake-timer spec with no pinned date yet.
 
 ### L-322 · 2026-10-20 · testing · a move-only extraction re-runs the static source-pin specs, and the pin reads the moved files too
 
@@ -177,6 +157,13 @@
 - **Guard:** none automatic; the install order in [[L-254]] (`npm ci --ignore-scripts`, `prisma generate`, build `packages/*`), `npm run local:drift` against the compose DB, and the executed-query rule. Cf. archived L-176. Extended 2026-10-21: a DB-backed spec that needs reference data (a published plan catalog) passed on a seeded dev database and failed in CI's fresh replay database. A DB spec seeds the reference data it needs through the shipped idempotent publishers, behind the local-DB guard, and is proved once against an empty migrated database.
 
 ## domain
+
+### L-375 · 2026-11-12 · domain · a flag the middleware reads to route a browser is set by every path that starts a session, impersonation included (B1304)
+
+- **Symptom:** "Sign in as admin" from a browser that also held a buyer session bounced `/dashboard` to `/login`: the guard read the browser as buyer-only.
+- **Root cause:** `resolveOperatorPathGuard` trusts the `rf-op-auth` presence cookie, which a normal operator sign-in sets; `setImpersonation` stored the tokens but never set the cookie.
+- **Lesson:** **Every code path that makes a browser an operator (sign-in, impersonation, any future switch) calls the one helper that sets the presence cookie, and every exit path clears it unless the browser holds operator tokens of its own. Test it through the real guard with no mocks of the helpers.**
+- **Guard:** `lib/impersonation.presence.test.ts` (5 tests, real guard and helpers). Open: the automatic exits in `lib/api-client.ts` clear the tokens but not the cookie (see the register). Cf. [[L-369]].
 
 ### L-371 · 2026-11-06 · domain · a default and a backfill reach rows that exist and rows created; a row moved into a role gets the role's defaults from the code that moves it (SA-1050 A-5)
 
@@ -248,13 +235,6 @@
 - **Lesson:** **A money event lifts a lock only through ONE predicate with a compare-and-set twin (`paymentReinstatable` / `paymentReinstatableWhere`), so the check and the write are one statement. An idempotent early return still retries the side effect that may have failed on the first delivery.**
 - **Guard:** the dunning-config and billing webhook specs.
 
-### L-343 · 2026-10-24 · domain · an optional money input becomes required, and a merge that cannot carry it refuses (#3700)
-
-- **Symptom:** editing items or applying a change request re-totalled an order and dropped its discount, and merges lost it silently.
-- **Root cause:** `discount` was an optional parameter of the totals helper, so callers that never passed it compiled cleanly and totalled without it.
-- **Lesson:** **Make a money input of a totals helper REQUIRED, so the compiler lists every caller that must decide it. Where an operation cannot carry the value (a merge of two discounted orders), refuse with a code rather than drop it.**
-- **Guard:** `orders/order-totals-one-formula.spec.ts`, `ORDER_MERGE_DISCOUNTED`. Cf. the required pack inputs of `mergeIntoStoredLine` (#3594).
-
 ### L-342 · 2026-10-24 · domain · send `null` to clear a field and omit it to leave it alone; `x || undefined` cannot clear (#3695, #3622)
 
 - **Symptom:** emptying a payment reference, notes, phone or delivery-window field on an edit form kept the old value, and the stale reference still counted in the duplicate-reference check.
@@ -269,13 +249,6 @@
 - **Lesson:** **Declare the row-lock order once as a constant and have a pin classify every lock site against it, so a new site fails until it is classified. Fix an inversion and delete its exception entry; an exception map may only shrink. A retry wrapper is not a deadlock fix.**
 - **Guard:** `ROW_LOCK_ORDER` plus `common/order-lock-callers.guard.spec.ts` (`KNOWN_INVERSE` is `{}`), `returns/refund-claimers.pin.spec.ts`, `restore-credit-lock-order.db.spec.ts`.
 
-### L-339 · 2026-10-24 · domain · a lock-wait bound must be the first statement of the transaction (#3628)
-
-- **Symptom:** a product create waited 8.1 s on an advisory lock, then failed with P2028 and held a pooled connection the whole time.
-- **Root cause:** Prisma's interactive-transaction timeout cannot interrupt a statement already waiting on a lock, so the wait was unbounded until the lock freed.
-- **Lesson:** **Bound lock waits inside Postgres: make `SET LOCAL lock_timeout` the FIRST statement of the transaction. A client-side transaction timeout does not stop a statement blocked on a lock.**
-- **Guard:** `apps/api/src/common/stock-tx.spec.ts`, `products.create-under-load.db.spec.ts`.
-
 ### L-332 · 2026-10-21 · domain · an existing line is shown, edited and previewed in the unit it was sold in, at its own stored pack and price
 
 - **Symptom:** the invoice edit form opened a boxed line as one total-pieces Qty (48) beside the per-box price (21.60), and a boxed line with no product posted a bare qty that re-billed 48 times the box price. Siblings: a repacked product previewed a stored 12-per-box line's Piece at the live size and list price, and a Today's-sales row read "24" for a line sold as 2 cases.
@@ -288,7 +261,7 @@
 - **Symptom:** after the read-only gate shipped (WriteButton/WriteLink, a refusal notice in the shared Modal slot), UX re-runs still found raw write controls, hand-rolled dialogs and a driver shell with no notice; each was a separate P2.
 - **Root cause:** the gate is opt-in per control and the notice rides a component slot, so anything not built on those components is outside it; the API side had a registry plus a route-walk pin (SA-776), the web side had neither.
 - **Lesson:** **When a gate or notice is delivered by wrapper components, enumerate the surfaces by search (raw buttons that post to write routes, `role="dialog"` markup outside the shared Modal) and pin the list in a spec; state plainly which surfaces are knowingly outside it.**
-- **Guard:** none automatic yet; propose a static scan on the web like the API's route-walk pin. Known gaps recorded: hand-rolled dialogs; the driver banner shows only after a refused write (no driver-readable status). Cf. [[L-225]].
+- **Guard:** none automatic yet; propose a static scan on the web like the API's route-walk pin. Known gaps recorded: hand-rolled dialogs; the driver banner shows only after a refused write (no driver-readable status). Cf. [[L-225]]. Extended 2026-11-13 (B1): a staff-control gate for the customer role was added as one helper, `seesStaffControls` (`apps/web/lib/default-unit-line.ts`), and applied by sweeping every entry point the bug did not cite: invoice list and detail, dashboard quick-create, command palette, returns list and detail, the orders bulk bar and inline-return dialogs. Each has a `*.customer-role.test.tsx`; no scan lists every staff-control site yet, so a new entry point is covered only if someone sweeps it.
 
 ### L-300 · 2026-10-12 · domain · an edit screen freezes its diff baseline at edit-open and re-bases only on an explicit reload
 
@@ -363,6 +336,34 @@
 - **Guard:** none yet; propose a lint/review checklist item flagging `token`/`code`/`secret`-named query params on any new route. Restored 2026-11-01 (it was archived on 2026-10-31 for room): this is a rule about RouteFlow's own routes, and the agent privacy rules cover what an agent does with URLs, not what the app puts in them.
 
 ## web
+
+### L-382 · 2026-11-13 · web · a reveal reached at rest is recorded as played at once; one played-list serves every reveal path (B1324)
+
+- **Symptom:** on the marketing pages a section already on screen at load, an anchor arrival, or the return from print blanked its text and faded it back in, or replayed a timeline on the next scroll.
+- **Root cause:** each reveal path (per-element reveal, settle, timelines) kept its own memory of what had played, and a trigger reached inside a ScrollTrigger refresh recorded nothing. `once: true` was tried as the record and abandoned: it removes the trigger, which shifts the trigger list under later refreshes and changes the trigger count against a fresh load.
+- **Lesson:** **Keep ONE played-list for every reveal path. A trigger reached at rest (inside a refresh, from an anchor, on the print return) is pushed to it at once and leaves its content as it is; only a callback from a scroll update plays. Never use `once` as the record.**
+- **Guard:** `apps/web/e2e/85-site-proof-pages.spec.ts` T1 (same trigger count as a fresh load after print) and T2 (no heading waits for a scroll), and its replay cell, which asserts the at-rest precondition before it measures. Cf. [[L-377]].
+
+### L-381 · 2026-11-13 · web · after print, restore the scroll place on the first ScrollTrigger refresh, not at `afterprint` and not on a timer (B1324)
+
+- **Symptom:** leaving print (preview closed, or the print media query ending) put the page back at the wrong place: the reading position was lost.
+- **Root cause:** leaving print rebuilds every trigger. Each refresh records the place, scrolls to the top to measure, puts the place back, then reports. The first refresh after the rebuild recorded the place of the print layout (no pins, a shorter page), so a single restore at `afterprint` was overwritten by the refreshes that run after it.
+- **Lesson:** **Save the place when print starts; for the one frame after print ends, put the saved place back on every `refresh` report, with no timer, then stop. Turn off `overflow-anchor` in print so entering it does not shift the page before the place is read.**
+- **Guard:** spec 85 T1 reads `scrollY` and the trigger count before print and after returning, on 12 pages at 1440x900 and 390x844. The mechanism is commented in `public/site/js/home-up.js` and `js/site.js` (the same toggle in both; `site-motion-always.static.test.ts` pins that).
+
+### L-380 · 2026-11-13 · web · a `gsap.matchMedia` condition whose KEY is `all` always matches, whatever its value says (B1324)
+
+- **Symptom:** a print toggle meant to take page motion off for print never reverted: motion stayed on and pages printed blank bands. Changing the condition's value string to screen-only changed nothing.
+- **Root cause:** GSAP's `matchMedia` treats a condition named `all` as match-everything and never reads its value. `site.js` declared `{ all: "all", desk: "(min-width: 900px)" }`, so the context was live in print.
+- **Lesson:** **Never name a `matchMedia` condition key `all`; name it for what it means (`screen`) and give it the media query. Prove a print branch by emulating print media and reading that the context reverted, not by reading the condition text.**
+- **Guard:** `site-motion-always.static.test.ts` computes the condition from the source and requires it screen-only (ledger row B1324/T1 in `site-pin-ledger.json`); spec 85 T1 asserts no `js-motion` in print.
+
+### L-376 · 2026-11-12 · web · a text field inside a closing dialog is not a typing target; one predicate decides it for every guard that asks "is a person typing" (#4303)
+
+- **Symptom:** at the till, a scan that started 100-150 ms after Escape in a dialog's text box lost its leading digits and looked up a suffix. A 1-3 digit suffix is a quantity: the next correct scan could ring up x31.
+- **Root cause:** a Radix dialog stays mounted with `data-state="closed"` for its 150 ms exit animation and keeps focus in its text box. The refocus and the key redirect both read a focused text box as "a person is typing" and stood down, so the keys died with the unmount.
+- **Lesson:** **A guard that asks whether a person is typing asks one shared predicate, and that predicate excludes a field inside a closing dialog. Add no timer, no key timing and no new focus owner for it. Test it with a harness that emulates the exit animation (jsdom has none), at start delays on both sides of the animation, and with both line endings.**
+- **Guard:** `insideClosingDialog` in `lib/refocus-scanner.ts` (read by `isTextEntryElement`); `refocus-scanner.test.ts` and `CounterSaleScreen.escape-scan.test.tsx` (removing the predicate turns 18 tests red). Open: Change the price with a code that starts in lowercase (`CounterLinePriceEdit.tsx:252`). Cf. [[L-353]].
 
 ### L-373 · 2026-11-06 · web · a percentage padding resolves against the parent's width; size a centred box with min(max, 100% - gutter) and fixed padding, and make the source scan read every spelling (#4234)
 

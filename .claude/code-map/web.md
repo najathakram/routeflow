@@ -94,3 +94,8 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/landing-2026-11-05-w6.md](web/landing-2026-11-05-w6.md) | Windows 6-9 (b10bad52a0..25034e1228): AI paused and key sentences, Reopen order sentences |
 | [web/landing-2026-11-07-slipped.md](web/landing-2026-11-07-slipped.md) | 266095419c..ce0ed80a11: courtesy badge, already-have sentence, home founder-card width, wheel tile removed |
 | [web/landing-2026-11-10-w27-w28b.md](web/landing-2026-11-10-w27-w28b.md) | Windows 27 and 28b (415cf84fe0..a64c3774be): confirm-email-change page, units v2 price card fixes, one line-count chip |
+| [web/landing-2026-11-11-w29-w31.md](web/landing-2026-11-11-w29-w31.md) | Windows 29-31 (a64c3774be..6ecd409b16): counter auto-park, drag and Sort A-Z on order lines, counter date chip, WP11 Features tab |
+| [web/landing-2026-11-12-w32-w34.md](web/landing-2026-11-12-w32-w34.md) | Windows 32 and 34: buyer drags own order lines, operator presence cookie on impersonation (B1304) |
+| [web/landing-2026-11-12-w35-w36.md](web/landing-2026-11-12-w35-w36.md) | Windows 35 and 36: order date chip on the regular order, chip follow-ups, scan after a closing dialog |
+| [web/landing-2026-11-12-w37.md](web/landing-2026-11-12-w37.md) | Window 37: drag a line in the order builder and till, New sale date chip |
+| [web/landing-2026-11-13-bk-fixes.md](web/landing-2026-11-13-bk-fixes.md) | Expired verify link + resend, customer-role staff gate (seesStaffControls), site print and motion, spec 85 |

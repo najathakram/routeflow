@@ -267,12 +267,15 @@ describeDb(
       let numberA: string;
       try {
         const resultA = await tenantCtx.run(tenantA.id, () =>
-          invoicesService.recordStandalonePayment({
-            customerId: custA.id,
-            totalAmount: 5,
-            method: "CASH",
-            allocations: [{ invoiceId: invoiceA.id, amount: 5 }],
-          } as any),
+          invoicesService.recordStandalonePayment(
+            {
+              customerId: custA.id,
+              totalAmount: 5,
+              method: "CASH",
+              allocations: [{ invoiceId: invoiceA.id, amount: 5 }],
+            } as any,
+            { source: "STAFF_ALLOCATION" },
+          ),
         );
         numberA = resultA.payments[0].paymentNumber;
       } catch (err: any) {
@@ -282,12 +285,15 @@ describeDb(
       let numberB: string;
       try {
         const resultB = await tenantCtx.run(tenantB.id, () =>
-          invoicesService.recordStandalonePayment({
-            customerId: custB.id,
-            totalAmount: 5,
-            method: "CASH",
-            allocations: [{ invoiceId: invoiceB.id, amount: 5 }],
-          } as any),
+          invoicesService.recordStandalonePayment(
+            {
+              customerId: custB.id,
+              totalAmount: 5,
+              method: "CASH",
+              allocations: [{ invoiceId: invoiceB.id, amount: 5 }],
+            } as any,
+            { source: "STAFF_ALLOCATION" },
+          ),
         );
         numberB = resultB.payments[0].paymentNumber;
       } catch (err: any) {
@@ -309,18 +315,21 @@ describeDb(
       let firstError: any;
       try {
         await tenantCtx.run(tenantA.id, () =>
-          invoicesService.recordStandalonePayment({
-            customerId: custA.id,
-            totalAmount: 10,
-            method: "CASH",
-            // Bogus allocation FIRST: the invoice-lookup guard throws before any
-            // invoicePayment.create() runs, so this failure is never entangled with the
-            // GLOBAL paymentNumber unique other tests in this file also write into.
-            allocations: [
-              { invoiceId: bogusInvoiceId, amount: 5 },
-              { invoiceId: invoiceA.id, amount: 5 },
-            ],
-          } as any),
+          invoicesService.recordStandalonePayment(
+            {
+              customerId: custA.id,
+              totalAmount: 10,
+              method: "CASH",
+              // Bogus allocation FIRST: the invoice-lookup guard throws before any
+              // invoicePayment.create() runs, so this failure is never entangled with the
+              // GLOBAL paymentNumber unique other tests in this file also write into.
+              allocations: [
+                { invoiceId: bogusInvoiceId, amount: 5 },
+                { invoiceId: invoiceA.id, amount: 5 },
+              ],
+            } as any,
+            { source: "STAFF_ALLOCATION" },
+          ),
         );
       } catch (err) {
         firstError = err;
@@ -348,12 +357,15 @@ describeDb(
       // tenant-scoped SHAPE is red today all by itself — site 3 mints a bare
       // `PAY-####` with no tenant segment.
       const retry = await tenantCtx.run(tenantA.id, () =>
-        invoicesService.recordStandalonePayment({
-          customerId: custA.id,
-          totalAmount: 5,
-          method: "CASH",
-          allocations: [{ invoiceId: invoiceA.id, amount: 5 }],
-        } as any),
+        invoicesService.recordStandalonePayment(
+          {
+            customerId: custA.id,
+            totalAmount: 5,
+            method: "CASH",
+            allocations: [{ invoiceId: invoiceA.id, amount: 5 }],
+          } as any,
+          { source: "STAFF_ALLOCATION" },
+        ),
       );
       const retryNumber = retry.payments[0].paymentNumber;
       expect(retryNumber).toMatch(new RegExp(`^PAY-${tenantShort(tenantA.id)}-\\d{4}$`));
@@ -380,12 +392,15 @@ describeDb(
       // No tenantCtx.run() wrapper — genuinely null ambient tenant.
       let outcome: string;
       try {
-        const result = await invoicesService.recordStandalonePayment({
-          customerId: custA.id,
-          totalAmount: 5,
-          method: "CASH",
-          allocations: [{ invoiceId: invoiceA.id, amount: 5 }],
-        } as any);
+        const result = await invoicesService.recordStandalonePayment(
+          {
+            customerId: custA.id,
+            totalAmount: 5,
+            method: "CASH",
+            allocations: [{ invoiceId: invoiceA.id, amount: 5 }],
+          } as any,
+          { source: "STAFF_ALLOCATION" },
+        );
         outcome = result.payments[0].paymentNumber;
       } catch (err: any) {
         outcome = `<threw ${err?.constructor?.name}>`;
