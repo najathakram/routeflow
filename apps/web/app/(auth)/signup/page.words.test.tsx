@@ -70,7 +70,7 @@ describe("SignupPage — hands the Workspace ID on (W2 B1)", () => {
     fireEvent.change(screen.getByPlaceholderText("you@acme.com"), {
       target: { value: "owner@acme.example" },
     });
-    fireEvent.change(screen.getByPlaceholderText("At least 8 characters"), {
+    fireEvent.change(screen.getByLabelText("Password"), {
       target: { value: "Sup3rSecret!x9" },
     });
     fireEvent.submit(document.querySelector("form") as HTMLFormElement);
@@ -93,14 +93,12 @@ describe("SignupPage — password rule under the field (W2 B6)", () => {
   it("shows the rule under the password field from the start", () => {
     render(<SignupPage />);
     expect(rule()).toBeInTheDocument();
-    expect(
-      screen.getByPlaceholderText("At least 8 characters").parentElement?.parentElement,
-    ).toContainElement(rule());
+    expect(screen.getByLabelText("Password").parentElement?.parentElement).toContainElement(rule());
   });
 
   it("keeps the rule while typing", () => {
     render(<SignupPage />);
-    fireEvent.change(screen.getByPlaceholderText("At least 8 characters"), {
+    fireEvent.change(screen.getByLabelText("Password"), {
       target: { value: "abc" },
     });
     expect(rule()).toBeInTheDocument();
@@ -108,11 +106,34 @@ describe("SignupPage — password rule under the field (W2 B6)", () => {
 
   it("keeps the rule next to the error after a failed submit", async () => {
     render(<SignupPage />);
-    fireEvent.change(screen.getByPlaceholderText("At least 8 characters"), {
+    fireEvent.change(screen.getByLabelText("Password"), {
       target: { value: "abc" },
     });
     fireEvent.submit(document.querySelector("form") as HTMLFormElement);
     expect(await screen.findByText("Use at least 8 characters.")).toBeInTheDocument();
     expect(rule()).toBeInTheDocument();
+  });
+});
+
+// P11 (apple-ux quick run 2026-11-13): the password field said "At least 8 characters" as a
+// placeholder and the helper under it said "Use 8 or more characters, ...". The rule is stated once,
+// in the helper that stays while typing (B6 above), so the field itself carries no hint.
+describe("SignupPage — the password rule appears once (P11)", () => {
+  beforeEach(() => mockFetch());
+
+  it("the password field has no placeholder that repeats the rule", () => {
+    render(<SignupPage />);
+    const field = screen.getByLabelText("Password");
+    expect(field).not.toHaveAttribute("placeholder", expect.stringMatching(/8/));
+    expect(field).not.toHaveAttribute("placeholder", expect.stringMatching(/characters/i));
+  });
+
+  it("the 8-character rule is on the page exactly once", () => {
+    const { container } = render(<SignupPage />);
+    const placeholders = Array.from(container.querySelectorAll("[placeholder]")).map((el) =>
+      el.getAttribute("placeholder"),
+    );
+    expect(placeholders.filter((p) => /\b8\b/.test(p ?? ""))).toEqual([]);
+    expect(screen.getAllByText(/\b8 or more characters\b/)).toHaveLength(1);
   });
 });

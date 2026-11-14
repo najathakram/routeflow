@@ -17,7 +17,7 @@ export interface AuthShellProps {
 }
 
 // The sign-in, sign-up and password pages: the site's header and footer around one card. The
-// header's logo and "RouteFlow" already lead home, so the page has no back link of its own.
+// header's logo and name already lead home, so the page has no back link of its own.
 export function AuthShell({
   kicker,
   title,

@@ -115,7 +115,7 @@ describe("SignupPage — four fields and a username line (W2 B8)", () => {
     fireEvent.change(screen.getByPlaceholderText("you@acme.com"), {
       target: { value: "owner@acme.example" },
     });
-    fireEvent.change(screen.getByPlaceholderText("At least 8 characters"), {
+    fireEvent.change(screen.getByLabelText("Password"), {
       target: { value: "Sup3rSecret!x9" },
     });
     fireEvent.submit(document.querySelector("form") as HTMLFormElement);

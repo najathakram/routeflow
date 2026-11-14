@@ -30,6 +30,11 @@ const ALLOWED_IDENTIFIERS = [
   "/brand/routeflow-mark",
   // the workspace package that holds brand.json: the one import every reader needs
   "@routeflow/types/brand",
+  // workspace packages the sign-in pages import (a package name, not a brand string)
+  "@routeflow/ui/web",
+  "@routeflow/types",
+  // the security policy in the public code repository (lib/repo-links.ts): a code location
+  "https://github.com/najathakram/routeflow/blob/master/SECURITY.md",
 ];
 const RF_PREFIX = /\brf-[a-z0-9-]+/gi;
 
@@ -48,6 +53,12 @@ const SURFACE: Array<{ name: string; dir: string; ext: RegExp; topOnly?: boolean
   { name: "not-found", dir: "app", ext: /^not-found\.tsx$/, topOnly: true },
   { name: "verify-email", dir: "app/verify-email", ext: /\.(tsx?|css)$/ },
   { name: "umami-tag", dir: "lib", ext: /^umami-tag\.ts$/, topOnly: true },
+  {
+    name: "front-door libs",
+    dir: "lib",
+    ext: /^(front-door-metadata|brand-domain|repo-links)\.ts$/,
+    topOnly: true,
+  },
 ];
 const IS_TEST = /\.(test|spec)\.[tj]sx?$/;
 

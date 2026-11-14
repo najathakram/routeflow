@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
+import { BRAND } from "@routeflow/types/brand";
+import { BRAND_DOMAIN } from "@/lib/brand-domain";
+import { SECURITY_POLICY_URL } from "@/lib/repo-links";
 import { routes, site } from "../lib/site";
 import { marketingMetadata } from "../lib/metadata";
 import { addLegalDays, formatLegalDate, isBeforeLegalDay } from "../lib/legal-dates";
@@ -28,7 +31,7 @@ export const metadata: Metadata = marketingMetadata({
 export default function PrivacyPage() {
   return (
     <div className="rf-legal">
-      <p className="kick">RouteFlow</p>
+      <p className="kick">{BRAND.name}</p>
       <h1>Privacy Policy</h1>
       <p>
         <strong>Effective date:</strong> {formatLegalDate(LAST_UPDATED)}
@@ -38,65 +41,65 @@ export default function PrivacyPage() {
       {isBeforeLegalDay(addLegalDays(LAST_UPDATED, NOTICE_DAYS)) && (
         <p className="legal-notice" role="note">
           <strong>Updated {formatLegalDate(LAST_UPDATED)}.</strong> We changed what this policy says
-          about how long we keep data and how location is used. It now describes what RouteFlow does
-          today, including that most data, and stored driver location, has no set end date.
+          about how long we keep data and how location is used. It now describes what {BRAND.name}{" "}
+          does today, including that most data, and stored driver location, has no set end date.
         </p>
       )}
 
       <p>
-        RouteFlow (&ldquo;RouteFlow,&rdquo; &ldquo;we,&rdquo; &ldquo;us,&rdquo; or
-        &ldquo;our&rdquo;) operates the RouteFlow platform — a multi-tenant software-as-a-service
+        {BRAND.name} (&ldquo;{BRAND.name},&rdquo; &ldquo;we,&rdquo; &ldquo;us,&rdquo; or
+        &ldquo;our&rdquo;) operates the {BRAND.name} platform — a multi-tenant software-as-a-service
         application for wholesale distributors that manages orders, delivery routes, invoices,
         payments, a buyer portal, and driver/operator mobile apps (collectively, the
         &ldquo;Service&rdquo;). This Privacy Policy explains what personal information we collect,
         how we use it, who we share it with, and the choices available to you.
       </p>
       <p>
-        This policy applies to the RouteFlow marketing website (routeflow.info), the RouteFlow web
-        dashboard and buyer portal, and the RouteFlow mobile app for drivers and operators.
+        This policy applies to the {BRAND.name} marketing website ({BRAND_DOMAIN}), the {BRAND.name}{" "}
+        web dashboard and buyer portal, and the {BRAND.name} mobile app for drivers and operators.
       </p>
       <p>
-        If you are a customer, driver, or other end user of a business that uses RouteFlow (a
+        If you are a customer, driver, or other end user of a business that uses {BRAND.name} (a
         &ldquo;Tenant&rdquo;), please also see{" "}
         <a href="#controller-vs-processor">&ldquo;Our role: controller vs. processor&rdquo;</a>{" "}
-        below — in most cases the Tenant, not RouteFlow, controls how your information is used, and
-        you should direct privacy requests to them first.
+        below — in most cases the Tenant, not {BRAND.name}, controls how your information is used,
+        and you should direct privacy requests to them first.
       </p>
 
       <h2 id="who-we-are">Who we are</h2>
       <p>
-        <strong>Operator:</strong> Routeflow Solutions LLC, a Wyoming limited liability company
-        (&ldquo;RouteFlow&rdquo;), 10701 Corporate Dr Ste 190, Stafford, TX 77477
+        <strong>Operator:</strong> {BRAND.legalEntity}, a Wyoming limited liability company (&ldquo;
+        {BRAND.name}&rdquo;), 10701 Corporate Dr Ste 190, Stafford, TX 77477
         <br />
         <strong>General contact:</strong> <a href={`mailto:${site.email}`}>{site.email}</a>
         <br />
         <strong>Security / vulnerability reports:</strong>{" "}
-        <a href="mailto:security@routeflow.info">security@routeflow.info</a>
+        <a href={`mailto:${BRAND.securityEmail}`}>{BRAND.securityEmail}</a>
         <br />
         <strong>Website:</strong> <a href={site.origin}>{site.origin}</a>
       </p>
 
       <h2 id="controller-vs-processor">Our role: controller vs. processor</h2>
       <p>
-        RouteFlow is a <strong>B2B platform</strong>. Businesses (&ldquo;Tenants&rdquo;) sign up for
-        RouteFlow to run their own distribution operations, and their staff invite or add their own
-        customers (buyers) and drivers into the system.
+        {BRAND.name} is a <strong>B2B platform</strong>. Businesses (&ldquo;Tenants&rdquo;) sign up
+        for {BRAND.name} to run their own distribution operations, and their staff invite or add
+        their own customers (buyers) and drivers into the system.
       </p>
       <p>
-        <strong>Where RouteFlow is a processor.</strong> For data that Tenants put into the Service
-        about their own customers, buyers, drivers, orders, invoices, and deliveries, the{" "}
-        <strong>Tenant is the data controller</strong> and RouteFlow acts only as a{" "}
+        <strong>Where {BRAND.name} is a processor.</strong> For data that Tenants put into the
+        Service about their own customers, buyers, drivers, orders, invoices, and deliveries, the{" "}
+        <strong>Tenant is the data controller</strong> and {BRAND.name} acts only as a{" "}
         <strong>data processor</strong> (or &ldquo;service provider&rdquo;), processing that data
         solely to provide the Service under our agreement with the Tenant. If you are a customer,
-        buyer, or driver of a RouteFlow Tenant and have a question or request about your personal
+        buyer, or driver of a {BRAND.name} Tenant and have a question or request about your personal
         data, please contact that business directly; we will assist them in responding as required
         by applicable law.
       </p>
       <p>
-        <strong>Where RouteFlow is a controller.</strong> For data about the Tenant&rsquo;s own
+        <strong>Where {BRAND.name} is a controller.</strong> For data about the Tenant&rsquo;s own
         account — account holders, billing contacts, staff user accounts, subscription and payment
         records, support communications, and marketing-site visitors —{" "}
-        <strong>RouteFlow is the data controller</strong> and this policy describes our own
+        <strong>{BRAND.name} is the data controller</strong> and this policy describes our own
         practices directly.
       </p>
 
@@ -125,8 +128,8 @@ export default function PrivacyPage() {
         <li>
           <strong>Financial data:</strong> invoices, credit notes, vendor bills, payment records
           (including post-dated check details where a Tenant uses that feature), and billing
-          history. Card payments are processed by <strong>Stripe</strong>; RouteFlow does not store
-          full card numbers.
+          history. Card payments are processed by <strong>Stripe</strong>; {BRAND.name} does not
+          store full card numbers.
         </li>
         <li>
           <strong>Uploaded files:</strong> product images, receipts, supplier statements/invoices,
@@ -135,12 +138,12 @@ export default function PrivacyPage() {
         <li>
           <strong>Support &amp; communications:</strong> messages sent to{" "}
           <a href={`mailto:${site.email}`}>{site.email}</a> or{" "}
-          <a href="mailto:security@routeflow.info">security@routeflow.info</a>, or through in-app
+          <a href={`mailto:${BRAND.securityEmail}`}>{BRAND.securityEmail}</a>, or through in-app
           support/notification features.
         </li>
         <li>
-          <strong>Demo booking requests:</strong> if you book a product walkthrough on
-          routeflow.info, we collect your name, email, company, optional phone number and notes,
+          <strong>Demo booking requests:</strong> if you book a product walkthrough on{" "}
+          {BRAND_DOMAIN}, we collect your name, email, company, optional phone number and notes,
           your selected meeting time and time zone, and your IP address. See{" "}
           <a href="#demo-booking">&ldquo;Demo booking requests&rdquo;</a> below for how this is
           stored and scheduled.
@@ -155,7 +158,7 @@ export default function PrivacyPage() {
           and service-reliability purposes.
         </li>
         <li>
-          <strong>Cookies (web):</strong> RouteFlow&rsquo;s web app uses a small number of{" "}
+          <strong>Cookies (web):</strong> {BRAND.name}&rsquo;s web app uses a small number of{" "}
           <strong>strictly necessary</strong> cookies to keep you signed in and route you to the
           correct portal (e.g., an authentication-presence cookie and a &ldquo;last portal
           used&rdquo; cookie). These cookies do not track you across other websites. We do not
@@ -163,7 +166,7 @@ export default function PrivacyPage() {
           website with Umami, which sets no cookies.
         </li>
         <li>
-          <strong>Location data (mobile):</strong> when a delivery route starts, the RouteFlow
+          <strong>Location data (mobile):</strong> when a delivery route starts, the {BRAND.name}{" "}
           mobile app starts collecting device location, including in the background while the route
           is running, so dispatch/operators can see live route progress. A route keeps running until
           someone ends it. The app is built to stop when the route ends or the user signs out. In
@@ -181,7 +184,7 @@ export default function PrivacyPage() {
           scan product barcodes and to photograph receipts, supplier bills, product images, and
           proof-of-delivery. It requests photo-library access so users can attach existing photos
           (e.g., receipts) instead of taking a new one. Camera/photo access is used only for these
-          in-app features; RouteFlow does not access your device&rsquo;s photo library or camera
+          in-app features; {BRAND.name} does not access your device&rsquo;s photo library or camera
           outside of an explicit in-app action.
         </li>
       </ul>
@@ -190,19 +193,19 @@ export default function PrivacyPage() {
       <ul>
         <li>
           <strong>Google Sign-In:</strong> if you sign in with Google, we receive your name, email
-          address, and Google account ID from Google to create or authenticate your RouteFlow
+          address, and Google account ID from Google to create or authenticate your {BRAND.name}{" "}
           account.
         </li>
         <li>
           <strong>Optional CRM sync (per-Tenant):</strong> a Tenant may connect a third-party CRM —
           currently <strong>GoHighLevel</strong> — to sync contact and opportunity records (name,
-          email, phone, tags, notes, deal/opportunity status) between that CRM and RouteFlow. This
-          is off by default and controlled entirely by the Tenant.
+          email, phone, tags, notes, deal/opportunity status) between that CRM and {BRAND.name}.
+          This is off by default and controlled entirely by the Tenant.
         </li>
         <li>
           <strong>Optional data import (per-Tenant):</strong> a Tenant may import historical
           business data from a source system (for example, <strong>Zoho CRM</strong>) when
-          onboarding onto RouteFlow.
+          onboarding onto {BRAND.name}.
         </li>
       </ul>
 
@@ -227,7 +230,7 @@ export default function PrivacyPage() {
         <li>
           provide customer support and respond to inquiries sent to{" "}
           <a href={`mailto:${site.email}`}>{site.email}</a> or{" "}
-          <a href="mailto:security@routeflow.info">security@routeflow.info</a>;
+          <a href={`mailto:${BRAND.securityEmail}`}>{BRAND.securityEmail}</a>;
         </li>
         <li>detect, investigate, and prevent fraud, abuse, and security incidents;</li>
         <li>comply with legal obligations (e.g., tax and accounting records); and</li>
@@ -242,7 +245,7 @@ export default function PrivacyPage() {
       <p>
         We share information with the following categories of service providers, each of which
         processes data on our behalf and only as needed to provide the Service. This list reflects
-        what the RouteFlow codebase and infrastructure actually use as of this document&rsquo;s
+        what the {BRAND.name} codebase and infrastructure actually use as of this document&rsquo;s
         last-updated date above.
       </p>
       <div className="legal-table-wrap">
@@ -272,22 +275,22 @@ export default function PrivacyPage() {
               <td>
                 Sign-In authentication; Google Maps (route/map display); Firebase Cloud Messaging
                 (push notifications); Google Calendar (internal scheduling of demo-booking meetings,
-                via a RouteFlow-owned service account)
+                via a {BRAND.name}-owned service account)
               </td>
               <td>
                 Name/email/account ID (Sign-In); delivery addresses/coordinates and, when a route is
                 planned from a user&rsquo;s current position, that position (Maps and route
-                planning); device push token (FCM); demo-booking contact details placed on
-                RouteFlow&rsquo;s internal calendar event
+                planning); device push token (FCM); demo-booking contact details placed on{" "}
+                {BRAND.name}&rsquo;s internal calendar event
               </td>
             </tr>
             <tr>
               <td>Google Workspace (primary)</td>
               <td>
-                RouteFlow&rsquo;s primary platform transactional email delivery (order
+                {BRAND.name}&rsquo;s primary platform transactional email delivery (order
                 confirmations, invoices, password resets, demo-booking confirmations, etc.), sent
-                through RouteFlow&rsquo;s own Google Workspace mailbox via SMTP; also hosts
-                RouteFlow&rsquo;s own business inboxes
+                through {BRAND.name}&rsquo;s own Google Workspace mailbox via SMTP; also hosts{" "}
+                {BRAND.name}&rsquo;s own business inboxes
               </td>
               <td>
                 Recipient email address, email content, and the contents of messages sent to our
@@ -297,8 +300,8 @@ export default function PrivacyPage() {
             <tr>
               <td>Resend (fallback)</td>
               <td>
-                Fallback platform transactional email delivery, used automatically only when
-                RouteFlow&rsquo;s Google Workspace SMTP is not configured
+                Fallback platform transactional email delivery, used automatically only when{" "}
+                {BRAND.name}&rsquo;s Google Workspace SMTP is not configured
               </td>
               <td>Recipient email address and email content</td>
             </tr>
@@ -358,24 +361,25 @@ export default function PrivacyPage() {
         Coming soon: connecting your own email account (&ldquo;Connect Gmail/Outlook&rdquo;)
       </h3>
       <p>
-        RouteFlow is building an optional feature that lets a Tenant admin connect their own Gmail
-        or Microsoft 365/Outlook mailbox so that customer-facing emails (like invoices and order
-        notifications) are sent <strong>from the Tenant&rsquo;s own address</strong> instead of
-        RouteFlow&rsquo;s. When this feature is live and a Tenant chooses to use it:
+        {BRAND.name} is building an optional feature that lets a Tenant admin connect their own
+        Gmail or Microsoft 365/Outlook mailbox so that customer-facing emails (like invoices and
+        order notifications) are sent <strong>from the Tenant&rsquo;s own address</strong> instead
+        of {BRAND.name}&rsquo;s. When this feature is live and a Tenant chooses to use it:
       </p>
       <ul>
         <li>
-          RouteFlow requests only a <strong>send-only</strong> permission — Google&rsquo;s{" "}
+          {BRAND.name} requests only a <strong>send-only</strong> permission — Google&rsquo;s{" "}
           <code>gmail.send</code> scope or Microsoft Graph&rsquo;s <code>Mail.Send</code>{" "}
           permission.{" "}
           <strong>
-            RouteFlow cannot read, search, or otherwise access the contents of your mailbox, inbox,
-            or any other email in your account.
+            {BRAND.name} cannot read, search, or otherwise access the contents of your mailbox,
+            inbox, or any other email in your account.
           </strong>
         </li>
         <li>
-          RouteFlow uses this permission only to send the specific transactional emails the
-          Tenant&rsquo;s business generates through RouteFlow (e.g., invoices, order confirmations).
+          {BRAND.name} uses this permission only to send the specific transactional emails the
+          Tenant&rsquo;s business generates through {BRAND.name} (e.g., invoices, order
+          confirmations).
         </li>
         <li>
           The connection&rsquo;s access/refresh tokens are stored <strong>encrypted at rest</strong>{" "}
@@ -383,14 +387,14 @@ export default function PrivacyPage() {
         </li>
         <li>
           <strong>Disconnecting</strong> the mailbox immediately and permanently deletes the stored
-          tokens from RouteFlow&rsquo;s systems.
+          tokens from {BRAND.name}&rsquo;s systems.
         </li>
       </ul>
 
       <h3>Google API Services User Data Policy — Limited Use disclosure</h3>
       <p>
-        RouteFlow&rsquo;s use and transfer to any other app of information received from Google APIs
-        will adhere to the{" "}
+        {BRAND.name}&rsquo;s use and transfer to any other app of information received from Google
+        APIs will adhere to the{" "}
         <a
           href="https://developers.google.com/terms/api-services-user-data-policy"
           target="_blank"
@@ -398,8 +402,8 @@ export default function PrivacyPage() {
         >
           Google API Services User Data Policy
         </a>
-        , including the <strong>Limited Use requirements</strong>. In substance, this means
-        RouteFlow:
+        , including the <strong>Limited Use requirements</strong>. In substance, this means{" "}
+        {BRAND.name}:
       </p>
       <ul>
         <li>
@@ -424,32 +428,32 @@ export default function PrivacyPage() {
 
       <h3 id="demo-booking">Demo booking requests (marketing site)</h3>
       <p>
-        The &ldquo;Request a demo&rdquo; scheduler on routeflow.info lets a visitor book a
+        The &ldquo;Request a demo&rdquo; scheduler on {BRAND_DOMAIN} lets a visitor book a
         walkthrough meeting directly. When you submit a booking, we collect and{" "}
-        <strong>store in RouteFlow&rsquo;s own database</strong>: your name, email address, company
-        name, phone number (optional), notes on what you&rsquo;d like covered (optional), your
-        selected date/time and time zone, the marketing page you booked from, and your IP address
-        (used to prevent abuse of the booking system).
+        <strong>store in {BRAND.name}&rsquo;s own database</strong>: your name, email address,
+        company name, phone number (optional), notes on what you&rsquo;d like covered (optional),
+        your selected date/time and time zone, the marketing page you booked from, and your IP
+        address (used to prevent abuse of the booking system).
       </p>
       <p>
-        To schedule the meeting internally, RouteFlow creates an event on{" "}
-        <strong>RouteFlow&rsquo;s own Google Calendar</strong> (via a RouteFlow-owned service
+        To schedule the meeting internally, {BRAND.name} creates an event on{" "}
+        <strong>{BRAND.name}&rsquo;s own Google Calendar</strong> (via a {BRAND.name}-owned service
         account, not your Google account), containing your name, company, contact email/phone, and
         notes so our team can prepare.{" "}
         <strong>Your email address is not added as a Google Calendar attendee/invitee</strong> —
         Google does not send you a calendar invite, and no Google account of yours is involved. Your
-        booking confirmation, and any reschedule/cancellation link, is emailed to you directly by
-        RouteFlow.
+        booking confirmation, and any reschedule/cancellation link, is emailed to you directly by{" "}
+        {BRAND.name}.
       </p>
       <p>
-        The confirmation email contains a link that lets you reschedule or cancel your own booking;
-        RouteFlow stores only a one-way cryptographic hash of that link&rsquo;s token, not the token
-        itself, so the token cannot be recovered from our database.
+        The confirmation email contains a link that lets you reschedule or cancel your own booking;{" "}
+        {BRAND.name} stores only a one-way cryptographic hash of that link&rsquo;s token, not the
+        token itself, so the token cannot be recovered from our database.
       </p>
       <p>
         We keep demo booking records as described in{" "}
-        <a href="#data-retention">&ldquo;Data retention&rdquo;</a> below. If you become a RouteFlow
-        Tenant, the same section applies to your account data.
+        <a href="#data-retention">&ldquo;Data retention&rdquo;</a> below. If you become a{" "}
+        {BRAND.name} Tenant, the same section applies to your account data.
       </p>
 
       <h2 id="data-retention">Data retention</h2>
@@ -474,8 +478,8 @@ export default function PrivacyPage() {
           <strong>Driver location.</strong> We store the location points the mobile app sends,
           including position, speed, heading, accuracy, and time. We use them to show the
           Tenant&rsquo;s staff live route progress. We have not set an end date, and no automatic
-          process deletes them today. Points are deleted if the Tenant removes that driver from
-          RouteFlow.
+          process deletes them today. Points are deleted if the Tenant removes that driver from{" "}
+          {BRAND.name}.
         </li>
         <li>
           <strong>Messages to us.</strong> We keep messages you send us in our business email. We
@@ -520,7 +524,7 @@ export default function PrivacyPage() {
 
       <h2 id="your-rights">Your rights and choices</h2>
       <p>
-        Depending on your location and relationship to RouteFlow, you may have rights to access,
+        Depending on your location and relationship to {BRAND.name}, you may have rights to access,
         correct, export, or delete your personal information, and to object to or restrict certain
         processing.
       </p>
@@ -533,15 +537,15 @@ export default function PrivacyPage() {
         </li>
         <li>
           <strong>
-            If you are a Tenant account holder, staff user, or website visitor contacting RouteFlow
-            directly:
+            If you are a Tenant account holder, staff user, or website visitor contacting{" "}
+            {BRAND.name} directly:
           </strong>{" "}
           email <a href={`mailto:${site.email}`}>{site.email}</a> with your request. We will respond
           within 30 days and may need to verify your identity before acting on the request.
         </li>
         <li>
-          You can also access and update most of your account information directly within the
-          RouteFlow web dashboard, buyer portal, or mobile app settings.
+          You can also access and update most of your account information directly within the{" "}
+          {BRAND.name} web dashboard, buyer portal, or mobile app settings.
         </li>
       </ul>
       <p>
@@ -549,7 +553,7 @@ export default function PrivacyPage() {
         California, or another jurisdiction with its own data-protection law, you may have
         additional rights under that law — for example, the right to lodge a complaint with your
         local data protection authority, or California&rsquo;s right to know, delete, or opt out of
-        the sale or sharing of personal information. As noted above, RouteFlow does not sell
+        the sale or sharing of personal information. As noted above, {BRAND.name} does not sell
         personal information. To exercise any of these rights, contact{" "}
         <a href={`mailto:${site.email}`}>{site.email}</a>.
       </p>
@@ -560,13 +564,9 @@ export default function PrivacyPage() {
         sensitive data at rest (e.g., stored third-party credentials and connected-mailbox tokens),
         encrypted connections (TLS) in transit, and access controls scoped per Tenant. No method of
         transmission or storage is 100% secure. If you discover a potential security vulnerability,
-        please report it to <a href="mailto:security@routeflow.info">security@routeflow.info</a> —
+        please report it to <a href={`mailto:${BRAND.securityEmail}`}>{BRAND.securityEmail}</a> —
         see our{" "}
-        <a
-          href="https://github.com/najathakram/routeflow/blob/master/SECURITY.md"
-          target="_blank"
-          rel="noreferrer"
-        >
+        <a href={SECURITY_POLICY_URL} target="_blank" rel="noreferrer">
           Security Policy
         </a>{" "}
         for our responsible-disclosure process.
@@ -574,20 +574,21 @@ export default function PrivacyPage() {
 
       <h2 id="international-transfers">International data transfers</h2>
       <p>
-        RouteFlow&rsquo;s infrastructure is hosted in the United States (via Railway). If you access
-        the Service from outside the United States, your information will be transferred to and
-        processed in the United States. Where required, we rely on the European Commission&rsquo;s
-        Standard Contractual Clauses (or an equivalent lawful transfer mechanism) to safeguard
-        personal information transferred from the EEA, UK, or Switzerland to the United States.
+        {BRAND.name}&rsquo;s infrastructure is hosted in the United States (via Railway). If you
+        access the Service from outside the United States, your information will be transferred to
+        and processed in the United States. Where required, we rely on the European
+        Commission&rsquo;s Standard Contractual Clauses (or an equivalent lawful transfer mechanism)
+        to safeguard personal information transferred from the EEA, UK, or Switzerland to the United
+        States.
       </p>
 
       <h2 id="childrens-privacy">Children&rsquo;s privacy</h2>
       <p>
-        The Service is a business tool intended for use by adults acting on behalf of a business.
-        RouteFlow is not directed to children, and we do not knowingly collect personal information
-        from anyone under the age of 18. If you believe a child has provided us with personal
-        information, please contact <a href={`mailto:${site.email}`}>{site.email}</a> so we can
-        delete it.
+        The Service is a business tool intended for use by adults acting on behalf of a business.{" "}
+        {BRAND.name} is not directed to children, and we do not knowingly collect personal
+        information from anyone under the age of 18. If you believe a child has provided us with
+        personal information, please contact <a href={`mailto:${site.email}`}>{site.email}</a> so we
+        can delete it.
       </p>
 
       <h2 id="changes">Changes to this policy</h2>
@@ -614,7 +615,7 @@ export default function PrivacyPage() {
         </li>
         <li>
           <strong>Security reports:</strong>{" "}
-          <a href="mailto:security@routeflow.info">security@routeflow.info</a>
+          <a href={`mailto:${BRAND.securityEmail}`}>{BRAND.securityEmail}</a>
         </li>
         <li>
           <strong>Mail:</strong> 10701 Corporate Dr Ste 190, Stafford, TX 77477
@@ -622,7 +623,7 @@ export default function PrivacyPage() {
       </ul>
 
       <Link href="/" className="link">
-        Return to RouteFlow <ArrowRight size={18} />
+        Return to {BRAND.name} <ArrowRight size={18} />
       </Link>
     </div>
   );
