@@ -44,6 +44,10 @@ export async function writeInvoiceTracking(
     data: { shippingCarrier: carrier, shippingTrackingNumber: tracking, ...clear },
   });
   if (!tracking) return updated;
-  await db.invoice.updateMany({ where: { id, shippedAt: null }, data: { shippedAt: new Date() } });
+  // Fill only while this save's tracking is still the stored one: a clear that raced in keeps its null date.
+  await db.invoice.updateMany({
+    where: { id, shippedAt: null, shippingTrackingNumber: tracking },
+    data: { shippedAt: new Date() },
+  });
   return (await db.invoice.findFirst({ where: { id } })) ?? updated;
 }

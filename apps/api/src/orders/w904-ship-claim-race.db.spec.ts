@@ -327,10 +327,8 @@ describeDb(
       expect(thrown).toBeNull();
       expect(after.shippedAt?.toISOString()).toBe(claimAt.toISOString());
       expect(after.shippingTrackingNumber).toBe("1Z999");
-      // The invoice mirror never carries a null stamp over the claim either.
-      expect(
-        invAfter.shippedAt === null || invAfter.shippedAt.toISOString() === claimAt.toISOString(),
-      ).toBe(true);
+      // The claim committed before the main update, so the mirror carries exactly the claim's stamp.
+      expect(invAfter.shippedAt?.toISOString()).toBe(claimAt.toISOString());
     });
 
     it("5: two concurrent tracking saves on a legacy shipped order (no stamp) stamp it once", async () => {

@@ -2629,7 +2629,7 @@ describe("InvoicesService", () => {
       });
       // W-904: the stamp is a fill-only conditional write, never part of the update's data.
       expect(prisma.invoice.updateMany).toHaveBeenCalledWith({
-        where: { id: "inv-1", shippedAt: null },
+        where: { id: "inv-1", shippedAt: null, shippingTrackingNumber: "123456789012" },
         data: { shippedAt: expect.any(Date) },
       });
     });

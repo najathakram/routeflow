@@ -10,6 +10,8 @@ import * as fs from "fs";
 import * as path from "path";
 
 const SRC = path.resolve(__dirname, "..");
+// Counts `shippedAt: x` keys only. A shorthand `{ shippedAt }` or a spread is NOT seen here (widening it also counts
+// every type, select and reader, ~10 more files); the structural checks below guard the two calls the bug lived in.
 const KEY = /\bshippedAt\s*:(?!\s*true\b)/g;
 
 /** file (relative to apps/api/src) -> number of `shippedAt:` keys that are not `: true` selects, and why. */

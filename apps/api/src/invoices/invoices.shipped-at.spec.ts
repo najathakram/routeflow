@@ -26,6 +26,8 @@ function fake(inv: Row, afterRead?: (row: Row) => void) {
       const w = args.where;
       if (w.id !== inv.id || ("shippedAt" in w && w.shippedAt === null && inv.shippedAt != null))
         return { count: 0 };
+      if ("shippingTrackingNumber" in w && w.shippingTrackingNumber !== inv.shippingTrackingNumber)
+        return { count: 0 };
       Object.assign(inv, args.data);
       return { count: 1 };
     }),
@@ -56,6 +58,24 @@ describe("W-904 InvoicesService.updateInvoiceShipment shippedAt", () => {
     const f = fake(inv);
     await f.save({ shippingTrackingNumber: "1Z999" });
     expect(inv.shippedAt).toEqual(T);
+  });
+
+  it("11: a clear that lands between the update and the fill keeps its null date", async () => {
+    const inv = {
+      id: "inv-1",
+      status: "SENT",
+      shippedAt: null as Date | null,
+      shippingTrackingNumber: null as string | null,
+    };
+    const f = fake(inv);
+    const realUpdate = f.invoice.update.getMockImplementation()!;
+    f.invoice.update.mockImplementation(async (args: any) => {
+      const r = await realUpdate(args);
+      inv.shippingTrackingNumber = null; // the racing clear commits right after our update
+      return r;
+    });
+    await f.save({ shippingCarrier: "UPS", shippingTrackingNumber: "1Z999" });
+    expect(inv.shippedAt).toBeNull();
   });
 
   it("10: CLEAR still clears the date (the stated rule, by design)", async () => {
