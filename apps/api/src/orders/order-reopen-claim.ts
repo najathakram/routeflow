@@ -1,6 +1,8 @@
 import { ConflictException } from "@nestjs/common";
 import { OrderStatus } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
+import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { reopenTarget } from "./offline/reopen-target";
 
 /**
@@ -16,7 +18,12 @@ import { reopenTarget } from "./offline/reopen-target";
  * before the restriction check, outside this lock, so it is read again here under it: a target that moved since
  * (a flag resolved, so a DRAFT target would now be wrong the other way round) is the same 409, never a claim.
  */
-export async function claimReopenInTx(tx: any, id: string, target: OrderStatus): Promise<void> {
+export async function claimReopenInTx(
+  tx: any,
+  id: string,
+  target: OrderStatus,
+  user: JwtPayload | undefined,
+): Promise<void> {
   await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${id} FOR UPDATE`;
   const changed = () =>
     new ConflictException({
@@ -29,4 +36,18 @@ export async function claimReopenInTx(tx: any, id: string, target: OrderStatus):
     data: { status: target },
   });
   if (claimed.count === 0) throw changed();
+  // SA-1136 W-2: the reopen is recorded in the same tx, so the newest cancelled-or-reopened row always describes the
+  // current cancel episode (or says that the episode was not recorded). The loser above wrote nothing.
+  const { tenantId } = await tx.order.findUnique({ where: { id }, select: { tenantId: true } });
+  await tx.auditLog.create({
+    data: {
+      tenantId,
+      userId: user?.sub ?? null,
+      impersonatedBy: user?.impersonatedBy ?? null,
+      action: AUDIT_ACTIONS.ORDER_REOPENED,
+      entityType: "Order",
+      entityId: id,
+      meta: { toStatus: target },
+    },
+  });
 }

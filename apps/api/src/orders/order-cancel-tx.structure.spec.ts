@@ -75,4 +75,32 @@ describe("cancelOrderInTx is the only cancel/restock path (SA-762r)", () => {
     expect(service).not.toMatch(/releaseOrderCreditsInTx\(tx, id\)[\s\S]{0,200}voidInvoiceInTx/);
     expect(service.match(/\bthis\.cancelOrderInTx\(/g) ?? []).toHaveLength(1);
   });
+
+  // SA-1136 (OP-7, shrink-only): the audit rows the reopen reads are each written in exactly one place.
+  it("order.cancelled is written once, by cancelOrderInTx; order.reopened once, by claimReopenInTx", () => {
+    const where = (constant: string) =>
+      files
+        .filter(({ src }) => src.includes(`AUDIT_ACTIONS.${constant}`))
+        .map(({ p }) =>
+          p
+            .slice(SRC.length + 1)
+            .split(sep)
+            .join("/"),
+        );
+    expect(where("ORDER_CANCELLED")).toEqual([
+      "orders/offline/reopen-target.ts",
+      "orders/order-cancel-tx.ts",
+    ]);
+    expect(where("ORDER_REOPENED")).toEqual([
+      "orders/offline/reopen-target.ts",
+      "orders/order-reopen-claim.ts",
+    ]);
+    const count = (file: string, constant: string) =>
+      readFileSync(join(SRC, file), "utf8")
+        .split("auditLog.create(")
+        .slice(1)
+        .filter((chunk) => chunk.slice(0, 300).includes(`AUDIT_ACTIONS.${constant}`)).length;
+    expect(count("orders/order-cancel-tx.ts", "ORDER_CANCELLED")).toBe(1);
+    expect(count("orders/order-reopen-claim.ts", "ORDER_REOPENED")).toBe(1);
+  });
 });

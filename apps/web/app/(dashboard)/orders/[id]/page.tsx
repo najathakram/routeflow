@@ -147,6 +147,7 @@ import {
   CommissionEditModal,
   EditableLineItems,
 } from "./_components/order-line-edit";
+import { REOPEN_CONFIRM_TEXT, statusAfterReopen } from "./order-reopen";
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -1351,10 +1352,10 @@ export default function OrderDetailPage() {
                   size="sm"
                   leftIcon={<RotateCcw className="h-4 w-4" />}
                   onClick={() => {
-                    if (confirm("Reopen this order? It will return to Pending status.")) {
+                    if (confirm(REOPEN_CONFIRM_TEXT)) {
                       const reopen = () =>
                         reopenOrder.mutate(rw.attach(order.id), {
-                          onSuccess: () => setLocalStatus("PENDING"),
+                          onSuccess: (reopened) => setLocalStatus(statusAfterReopen(reopened)),
                           onError: guardError(reopen),
                         });
                       reopen();
