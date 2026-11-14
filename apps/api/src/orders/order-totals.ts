@@ -1,4 +1,9 @@
-import { sumInvoiceTotals, type MoneyLike, type SummedInvoiceTotals } from "@routeflow/pricing";
+import {
+  LEGACY_DISCOUNT_BASE,
+  sumInvoiceTotals,
+  type MoneyLike,
+  type SummedInvoiceTotals,
+} from "@routeflow/pricing";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 
 /**
@@ -23,6 +28,8 @@ export function orderTotalsOf(
       discount: opts.discount,
       shipping: opts.shipping,
       isTaxExempt: opts.isTaxExempt,
+      // SA-1141 PR-2 (R4): the order's own mode, threaded through `opts`; until then every order is LEGACY.
+      discountBase: LEGACY_DISCOUNT_BASE,
       strict: true,
     },
   );

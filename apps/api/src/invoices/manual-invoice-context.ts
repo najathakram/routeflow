@@ -1,5 +1,5 @@
 import { LINE_NAME_PRODUCT_SELECT } from "./invoice-line-name";
-import { roundMoney, type LadderUnit } from "@routeflow/pricing";
+import { LEGACY_DISCOUNT_BASE, roundMoney, type LadderUnit } from "@routeflow/pricing";
 import { sumInvoiceTotalsStrict } from "../common/money-invariants.util";
 import { effectiveTaxRateFromTotals } from "../common/tax-rate";
 import { assertSellableLines } from "../products/sellable-lines";
@@ -138,7 +138,10 @@ export function foldCategoryTax(
   isTaxExempt: boolean,
 ): number {
   zeroExemptCategoryTax(itemsData, isTaxExempt);
-  return sumInvoiceTotalsStrict(itemsData, { isTaxExempt }).categoryTax;
+  return sumInvoiceTotalsStrict(itemsData, {
+    isTaxExempt,
+    discountBase: LEGACY_DISCOUNT_BASE,
+  }).categoryTax;
 }
 
 /**

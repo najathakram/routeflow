@@ -57,6 +57,7 @@ import pg from "pg";
 import {
   NSF_FEE_DESCRIPTION_PREFIX,
   NSF_FEE_SYSTEM_KIND,
+  LEGACY_DISCOUNT_BASE,
   NSF_HAS_TRANSITION_LEG,
   inferredGoodsFlatRate,
   isNsfLine,
@@ -154,7 +155,7 @@ export function classifyInvoice(invoice, lines, fixDate = FIX_DATE, tenantRate =
   // Review MUST-B: the tenant's own rate (read once per tenant) wins when it reproduces the stored tax.
   const inferred = inferredGoodsFlatRate(
     { subtotal: invoice.subtotal, taxAmount: invoice.taxAmount, lines },
-    { preferredRate: tenantRate },
+    { preferredRate: tenantRate, discountBase: LEGACY_DISCOUNT_BASE },
   );
   if (!inferred) return null;
   // #2656 / SA-549: an NSF line ALREADY carrying a rate means the header tax includes tax on the fee,

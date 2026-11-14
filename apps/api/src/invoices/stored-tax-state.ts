@@ -1,6 +1,7 @@
 import { ConflictException } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
 import {
+  LEGACY_DISCOUNT_BASE,
   inferredGoodsFlatRate,
   roundMoney,
   type MoneyLike,
@@ -176,7 +177,13 @@ export function taxStateOf(args: TaxStateArgs): TaxStateVerdict {
     shipping,
     preferredRate,
   } = args;
-  const opts: SumInvoiceTotalsOptions = { discount, shipping, isTaxExempt };
+  // SA-1141 PR-2 (R6): the verdict reads the ROW's mode (`discountTaxBaseOf(invoice)`); until then every row is LEGACY.
+  const opts: SumInvoiceTotalsOptions = {
+    discount,
+    shipping,
+    isTaxExempt,
+    discountBase: LEGACY_DISCOUNT_BASE,
+  };
   const totals = sumInvoiceTotalsStrict(storedLines, opts);
   const exemptWithLevy =
     !!refuseExemptLevy &&
@@ -188,7 +195,7 @@ export function taxStateOf(args: TaxStateArgs): TaxStateVerdict {
   if (!stale || !canRestamp || isTaxExempt) return { totals, stale, restampRate: null };
   const inferred = inferredGoodsFlatRate(
     { subtotal: invoice.subtotal, taxAmount: invoice.taxAmount, lines: storedLines },
-    { preferredRate },
+    { preferredRate, discountBase: LEGACY_DISCOUNT_BASE },
   ); // #2656: goods only
   return { totals, stale, restampRate: inferred?.verified ? inferred.rate : null };
 }
@@ -202,9 +209,12 @@ export function inferredGoodsRateForCopy(
   invoice: { subtotal: unknown; taxAmount: unknown; lines: ReadonlyArray<any> },
   opts?: { preferredRate?: number | null },
 ) {
-  sumInvoiceTotalsStrict(invoice.lines.map((l) => ({ ...l, subtotal: l.subtotal ?? 0 })));
+  sumInvoiceTotalsStrict(
+    invoice.lines.map((l) => ({ ...l, subtotal: l.subtotal ?? 0 })),
+    { discountBase: LEGACY_DISCOUNT_BASE },
+  );
 
-  return inferredGoodsFlatRate(invoice, opts);
+  return inferredGoodsFlatRate(invoice, { ...opts, discountBase: LEGACY_DISCOUNT_BASE });
 }
 
 /**

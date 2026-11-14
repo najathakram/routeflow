@@ -99,6 +99,7 @@ import {
   unitWords,
   type CustomerLayerUnit,
   type SellLevel,
+  LEGACY_DISCOUNT_BASE,
 } from "@routeflow/pricing";
 import { useAuth } from "@/lib/auth-context";
 import { usePriceEditAllowed } from "@/lib/api/my-permissions";
@@ -1409,6 +1410,7 @@ export default function NewInvoicePage() {
     discount: adjustment < 0 ? Math.abs(adjustment) : 0,
     shipping: adjustment > 0 ? adjustment : 0,
     taxRate,
+    discountBase: LEGACY_DISCOUNT_BASE,
   });
   const totalQty = items.reduce((s, it) => s + Number(it.qty), 0);
 

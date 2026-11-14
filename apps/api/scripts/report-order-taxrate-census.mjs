@@ -37,7 +37,7 @@ import { createRequire } from "module";
 import { realpathSync } from "node:fs";
 import { basename } from "node:path";
 import { fileURLToPath } from "node:url";
-import { inferredGoodsFlatRate } from "@routeflow/pricing";
+import { LEGACY_DISCOUNT_BASE, inferredGoodsFlatRate } from "@routeflow/pricing";
 import { resolveReportDbUrl } from "./lib/report-db-url.mjs";
 const require = createRequire(import.meta.url);
 
@@ -111,7 +111,7 @@ export function classifyUnstamped({ subtotal, tax, discount, tenantRatePct }) {
   const prove = (base) =>
     inferredGoodsFlatRate(
       { subtotal: base, taxAmount: tax, lines: [{ taxRate: 0, categoryTaxAmount: 0 }] },
-      { preferredRate: preferred },
+      { preferredRate: preferred, discountBase: LEGACY_DISCOUNT_BASE },
     );
   const onSubtotal = prove(num(subtotal));
   if (onSubtotal?.verified && preferred != null && onSubtotal.rate === preferred) return "verified";

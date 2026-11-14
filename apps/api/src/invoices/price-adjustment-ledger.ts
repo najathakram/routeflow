@@ -7,6 +7,7 @@ import {
   recomputeCategoryTax,
   regulatedUnitBasis,
   roundMoney,
+  LEGACY_DISCOUNT_BASE,
 } from "@routeflow/pricing";
 import type { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
@@ -334,6 +335,7 @@ export function totalsFromLines(
     discount,
     shipping: Number(invoice.shippingFee ?? 0),
     isTaxExempt,
+    discountBase: LEGACY_DISCOUNT_BASE,
   });
   return { subtotal: t.subtotal, taxAmount: t.tax, total: t.total, discount };
 }

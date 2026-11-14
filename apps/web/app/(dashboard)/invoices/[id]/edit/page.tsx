@@ -44,6 +44,7 @@ import {
   customerTierFor,
   isNsfLine,
   TAX_RATE_FRACTION_DECIMALS,
+  LEGACY_DISCOUNT_BASE,
 } from "@routeflow/pricing";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -624,7 +625,11 @@ export default function EditInvoicePage() {
     subtotal,
     tax: taxTotal,
     total,
-  } = computeInvoiceTotals(items.map(toTotalsLine), { discount: invDiscount, shipping });
+  } = computeInvoiceTotals(items.map(toTotalsLine), {
+    discount: invDiscount,
+    shipping,
+    discountBase: LEGACY_DISCOUNT_BASE,
+  });
 
   // ── Item helpers ──────────────────────────────────────────────────────────────
 
