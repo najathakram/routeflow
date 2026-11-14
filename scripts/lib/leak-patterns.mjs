@@ -82,9 +82,19 @@ export function loadPatterns(cwd = process.cwd()) {
   return { ok: true, regexes };
 }
 
-/** True when any pattern matches `text`. */
+/**
+ * True when any pattern matches `text`, as written OR after dropping Unicode format characters
+ * (zero-width joiners and spaces, soft hyphen, BOM...) and NFKC normalisation (full-width forms).
+ */
 export function matches(regexes, text) {
-  return regexes.some((re) => re.test(text));
+  const s = String(text);
+  if (regexes.some((re) => re.test(s))) return true;
+  if (!/[^\x00-\x7f]/.test(s)) return false;
+  const folded = s
+    .replace(/\p{Cf}/gu, "")
+    .normalize("NFKC")
+    .replace(/\p{Cf}/gu, "");
+  return folded !== s && regexes.some((re) => re.test(folded));
 }
 
 /**

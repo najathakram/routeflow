@@ -4,6 +4,7 @@
 // Uses ONLY the neutral fixture pattern below and throwaway git repos in the OS temp dir.
 import { spawnSync } from "node:child_process";
 import {
+  chmodSync,
   cpSync,
   mkdirSync,
   mkdtempSync,
@@ -218,7 +219,11 @@ try {
     const h = hook(repo, line);
     check("hook refuses locally when patterns file missing", h.code === 1, JSON.stringify(h));
     const hc = hook(repo, line, { CI: "true" });
-    check("hook skips under CI", hc.code === 0, JSON.stringify(hc));
+    check(
+      "hook does NOT skip under CI (CI never pushes via the hook)",
+      hc.code === 1,
+      JSON.stringify(hc),
+    );
   }
   {
     const repo = makeRepo({ patterns: "# only a comment\n\n" });
@@ -465,7 +470,7 @@ try {
       JSON.stringify(c16),
     );
   }
-  // CI: rebrand refusal unconditional, content scan skipped
+  // CI=true on the hook: rebrand refusal and content scan both still apply
   {
     const { repo } = baseRepo();
     git(repo, ["update-ref", "refs/remotes/origin/master", git(repo, ["rev-parse", "HEAD"])]);
@@ -477,7 +482,7 @@ try {
       hook(repo, rb, { CI: "true", RF_REBRAND_PUSH: "launch" }).code === 0,
     );
     const nf = `refs/heads/feat/x ${head} refs/heads/feat/x ${ZERO}`;
-    check("CI=true: content scan skipped", hook(repo, nf, { CI: "true" }).code === 0);
+    check("CI=true: hook content scan still runs", hook(repo, nf, { CI: "true" }).code === 1);
   }
   // performance: commits already on origin/master are not rescanned
   {
@@ -563,6 +568,111 @@ try {
     const head = git(repo, ["rev-parse", "HEAD"]);
     const r = cli(repo, ["--range", `${base}..${head}`]);
     check(`${label} match exits 1 without echo`, r.code === 1 && !leaks(r.out), JSON.stringify(r));
+  }
+  // ---- fix round: real pushes against a throwaway bare repo (the hook is wired as a real pre-push) ----
+  {
+    const realRepo = () => {
+      const bare = path.join(tmpRoot, `bare${n++}.git`);
+      mkdirSync(bare);
+      git(bare, ["init", "-q", "--bare"]);
+      const { repo } = baseRepo();
+      git(repo, ["remote", "add", "origin", bare]);
+      git(repo, ["push", "-q", "origin", "master"]); // no hook yet; also creates refs/remotes/origin/master
+      const hookFile = path.join(repo, ".git", "hooks", "pre-push");
+      mkdirSync(path.dirname(hookFile), { recursive: true });
+      writeFileSync(hookFile, "#!/bin/sh\nnode scripts/leak-check.mjs --hook\n");
+      chmodSync(hookFile, 0o755);
+      return repo;
+    };
+    const push = (repo, args, extra) => {
+      const r = spawnSync("git", ["push", ...args], {
+        cwd: repo,
+        env: env(extra),
+        encoding: "utf8",
+      });
+      return { code: r.status, out: `${r.stdout}${r.stderr}` };
+    };
+    const branchWith = (repo, name, files) => {
+      git(repo, ["checkout", "-q", "-b", name, "master"]);
+      return commit(repo, files, "chore: work");
+    };
+
+    let repo = realRepo();
+    branchWith(repo, "feat/leaky", { "b.txt": "x zzfixture y\n" });
+    let r = push(repo, ["origin", "feat/leaky"]);
+    check("real push: plain leak refused", r.code !== 0 && !leaks(r.out), JSON.stringify(r));
+
+    repo = realRepo();
+    // a binary kit image on a private rebrand branch: invisible to the content scan
+    const priv = branchWith(repo, "rebrand/x", { "kit.bin": Buffer.from([0, 1, 2, 3, 255]) });
+    r = push(repo, ["origin", "HEAD:refs/heads/foo"]);
+    check("real push: HEAD:refs/heads/foo from a rebrand branch refused", r.code !== 0, r.out);
+    r = push(repo, ["origin", `${priv}:refs/heads/bar`]);
+    check("real push: sha refspec of a rebrand commit refused", r.code !== 0, r.out);
+    git(repo, ["branch", "copied", "rebrand/x"]);
+    r = push(repo, ["origin", "copied"]);
+    check("real push: branch copied from a rebrand branch refused", r.code !== 0, r.out);
+    git(repo, ["checkout", "-q", "master"]);
+    git(repo, ["checkout", "-q", "-b", "feat/clean"]);
+    commit(repo, { "c.txt": "fine\n" });
+    r = push(repo, ["origin", "feat/clean"]);
+    check("real push: clean branch allowed beside a local rebrand branch", r.code === 0, r.out);
+
+    const noMaster = realRepo();
+    branchWith(noMaster, "rebrand/y", { "k.bin": Buffer.from([9, 0, 9]) });
+    git(noMaster, ["update-ref", "-d", "refs/remotes/origin/master"]);
+    r = push(noMaster, ["origin", "HEAD:refs/heads/foo"]);
+    check(
+      "real push: rebrand overlap with origin/master missing fails closed",
+      r.code !== 0,
+      r.out,
+    );
+
+    // delete-only and missing patterns file
+    r = push(repo, ["origin", "--delete", "feat/clean"]);
+    check("real push: delete with patterns file present allowed", r.code === 0, r.out);
+    git(repo, ["checkout", "-q", "-b", "feat/del", "master"]);
+    commit(repo, { "d.txt": "fine\n" });
+    r = push(repo, ["origin", "feat/del"]);
+    check("real push: setup branch for the delete case pushed", r.code === 0, r.out);
+    git(repo, ["checkout", "-q", "feat/clean"]);
+    rmSync(path.join(repo, ".git", "info", "leak-patterns"));
+    r = push(repo, ["origin", "feat/clean"]);
+    check("real push: missing patterns file refuses a content push", r.code !== 0, r.out);
+    r = push(repo, ["origin", "feat/clean"], { CI: "true" });
+    check("real push: CI=true on a dev machine does not skip the scan", r.code !== 0, r.out);
+    git(repo, ["checkout", "-q", "master"]);
+    r = push(repo, ["origin", "--delete", "feat/del"]);
+    check("real push: delete-only allowed with the patterns file missing", r.code === 0, r.out);
+  }
+  // textconv cannot hide a hit
+  {
+    const { repo, base } = baseRepo();
+    git(repo, ["config", "diff.zz.textconv", "echo harmless"]);
+    const attrs = commit(repo, { ".gitattributes": "*.dat diff=zz\n" }, "chore: attrs");
+    const head = commit(repo, { "x.dat": "zzfixture inside\n" });
+    const r = cli(repo, ["--range", `${attrs}..${head}`]);
+    check("textconv does not hide an added line", r.code === 1, JSON.stringify(r));
+  }
+  // zero-width and full-width variants
+  {
+    const { repo, base } = baseRepo();
+    const zw = commit(repo, { "zw.txt": "zz​fix⁠ture\n" });
+    check("zero-width variant is caught", cli(repo, ["--range", `${base}..${zw}`]).code === 1);
+    const fw = commit(repo, { "fw.txt": "ｚｚＦＩＸＴＵＲＥ\n" });
+    check("full-width variant is caught", cli(repo, ["--range", `${zw}..${fw}`]).code === 1);
+    const st = cli(repo, ["--stdin"], {}, "qq‍secret");
+    check("zero-width variant in --stdin text is caught", st.code === 1, JSON.stringify(st));
+  }
+  // delete-only push needs no patterns file
+  {
+    const repo = makeRepo({ patterns: null });
+    const del = hook(repo, `(delete) ${ZERO} refs/heads/feat/x ${"1".repeat(40)}`);
+    check(
+      "hook: delete-only push passes with no patterns file",
+      del.code === 0,
+      JSON.stringify(del),
+    );
   }
 } finally {
   rmSync(tmpRoot, { recursive: true, force: true });

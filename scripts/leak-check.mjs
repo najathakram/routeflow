@@ -19,9 +19,9 @@
 // lib/leak-patterns.mjs matchesBuf).
 //
 // Exit: 0 clean, 1 hit, 2 usage / patterns file missing, empty or invalid / any failed git call
-// (fail closed on a dev machine; under CI the missing file is a skip, exit 0, and the content scan is
-// skipped but the rebrand/* refusal is not). Output carries commit shas, line counts and file paths
-// ONLY, never matched text; a path that itself matches is withheld.
+// (fail closed on a dev machine; only the non-hook modes treat a missing file under CI as a skip, exit 0;
+// --hook never skips: CI does not push through it). Pushing nothing (deletes only) is exit 0. Output carries
+// commit shas, line counts and file paths ONLY, never matched text; a path that itself matches is withheld.
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -86,8 +86,27 @@ export function scanRevs(cwd, regexes, revArgs, hits, git = gitOut) {
       }
     }
     const diffR = parent
-      ? git(cwd, ["diff", "--text", "-M", "-U0", "--no-color", "--no-ext-diff", parent, sha])
-      : git(cwd, ["show", "--text", "--format=", "-U0", "--no-color", "--no-ext-diff", sha]);
+      ? git(cwd, [
+          "diff",
+          "--text",
+          "-M",
+          "-U0",
+          "--no-color",
+          "--no-ext-diff",
+          "--no-textconv",
+          parent,
+          sha,
+        ])
+      : git(cwd, [
+          "show",
+          "--text",
+          "--format=",
+          "-U0",
+          "--no-color",
+          "--no-ext-diff",
+          "--no-textconv",
+          sha,
+        ]);
     if (!diffR.ok) return false;
     let file = "";
     let count = 0;
@@ -161,6 +180,39 @@ function rangeForRef(cwd, lsha, rsha, notices) {
   return withBase(cwd, [lsha], notices);
 }
 
+/**
+ * Refuse when the commits being pushed overlap the commits only the local rebrand/* branches hold,
+ * whatever the ref is called (HEAD:refs/heads/x, a sha refspec, a copied branch). Returns refusal
+ * lines, or null when there is no overlap. Fails closed when origin/master is missing or a git call fails.
+ */
+function privateOverlap(cwd, pushed) {
+  const refs = gitOut(cwd, ["for-each-ref", "--format=%(refname)", "refs/heads/rebrand/"]);
+  if (!refs.ok) return ["leak-check: cannot list local rebrand/* branches. Fail-closed."];
+  if (!refs.out.trim()) return null; // no private branches exist locally: nothing to overlap
+  if (!gitOut(cwd, ["rev-parse", "--verify", "-q", ORIGIN_MASTER]).ok) {
+    return [
+      "leak-check: local rebrand/* branches exist but refs/remotes/origin/master is missing, so a push cannot be",
+      "leak-check: proven free of private commits. Fail-closed: run git fetch origin master, then push again.",
+    ];
+  }
+  const priv = gitOut(cwd, ["rev-list", "--glob=refs/heads/rebrand/*", "--not", ORIGIN_MASTER]);
+  if (!priv.ok) return ["leak-check: cannot list private commits. Fail-closed."];
+  const privSet = new Set(priv.out.split("\n").filter(Boolean));
+  if (privSet.size === 0) return null;
+  for (const p of pushed) {
+    const out = gitOut(cwd, ["rev-list", p.lsha, "--not", ORIGIN_MASTER]);
+    if (!out.ok)
+      return [`leak-check: cannot list outgoing commits of ${p.lsha.slice(0, 10)}. Fail-closed.`];
+    if (out.out.split("\n").some((c) => c && privSet.has(c))) {
+      return [
+        "leak-check: the push contains commits that belong to a local rebrand/* branch. Refused: they stay local until launch.",
+        "leak-check: launch day only: RF_REBRAND_PUSH=launch git push ...",
+      ];
+    }
+  }
+  return null;
+}
+
 function parseArgs(argv) {
   const o = { refs: [] };
   for (let i = 0; i < argv.length; i++) {
@@ -222,12 +274,19 @@ export function run(argv, { cwd = process.cwd(), env = process.env, input = "" }
         ],
       };
     }
-    if (isCI(env)) return { code: 0, lines: ["leak-check: CI - content scan skipped."] };
+    // CI never pushes through this hook, so CI=true on a developer machine must not skip the scan.
+    if (pushed.length === 0) {
+      return { code: 0, lines: ["leak-check: nothing is being pushed (delete only)."] };
+    }
+    if (env.RF_REBRAND_PUSH !== "launch") {
+      const ov = privateOverlap(cwd, pushed);
+      if (ov) return { code: 1, lines: ov };
+    }
   }
 
   const loaded = loadPatterns(cwd);
   if (!loaded.ok) {
-    if (isCI(env) && loaded.reason === "missing") {
+    if (!o.hook && isCI(env) && loaded.reason === "missing") {
       return { code: 0, lines: ["leak-check: no patterns file under CI - skipped."] };
     }
     return { code: 2, lines: [loaded.message] };
