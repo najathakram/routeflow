@@ -8,11 +8,32 @@
  */
 import * as fs from "fs";
 import * as path from "path";
+import * as ts from "typescript";
 
 const SRC = path.resolve(__dirname, "..");
-// Counts `shippedAt: x` keys only. A shorthand `{ shippedAt }` or a spread is NOT seen here (widening it also counts
-// every type, select and reader, ~10 more files); the structural checks below guard the two calls the bug lived in.
-const KEY = /\bshippedAt\s*:(?!\s*true\b)/g;
+/**
+ * Counts the object-literal properties named `shippedAt` in a source file by walking its AST: `shippedAt: x` and the
+ * shorthand `{ shippedAt }` both count (the shorthand is the form W-904 was written in); `shippedAt: true` selects,
+ * type members, comments and reads (`order.shippedAt`) do not. A spread (`...obj`) is not seen, which is why the
+ * structural checks below also guard the two calls the bug lived in.
+ */
+function countShippedAtKeys(text: string): number {
+  const sf = ts.createSourceFile("f.ts", text, ts.ScriptTarget.Latest, true);
+  let n = 0;
+  const visit = (node: ts.Node): void => {
+    if (ts.isShorthandPropertyAssignment(node) && node.name.text === "shippedAt") n += 1;
+    else if (
+      ts.isPropertyAssignment(node) &&
+      ((ts.isIdentifier(node.name) && node.name.text === "shippedAt") ||
+        (ts.isStringLiteral(node.name) && node.name.text === "shippedAt")) &&
+      node.initializer.kind !== ts.SyntaxKind.TrueKeyword
+    )
+      n += 1;
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return n;
+}
 
 /** file (relative to apps/api/src) -> number of `shippedAt:` keys that are not `: true` selects, and why. */
 const INVENTORY: Record<string, { count: number; why: string }> = {
@@ -60,7 +81,7 @@ describe("W-904 shippedAt writers (SA-1142 R6)", () => {
     const found: Record<string, number> = {};
     for (const f of walk(SRC)) {
       if (f.includes(`${path.sep}testing${path.sep}`)) continue;
-      const n = (fs.readFileSync(f, "utf8").match(KEY) ?? []).length;
+      const n = countShippedAtKeys(fs.readFileSync(f, "utf8"));
       if (n > 0) found[path.relative(SRC, f).split(path.sep).join("/")] = n;
     }
     expect(found).toEqual(
