@@ -852,6 +852,23 @@ export default defineConfig({
       dependencies: [],
       use: { ...devices["Desktop Chrome"] },
     },
+    // Site type/alignment (spec 86, T49-T53) and site speed budget (spec 87, T44): signed out,
+    // `dependencies: []`, no storage state. Same convention as "site-proof": WITHOUT THESE ENTRIES
+    // THE SPECS NEVER RUN. The post-deploy job runs every project, so each spec must be green on
+    // master: T50-T52 turn green only after lanes 2.1b and 2.3-inner land (waves 2-3), so the
+    // rebrand branch must not reach master before then.
+    {
+      name: "site-type-alignment",
+      testMatch: /86-site-type-alignment\.spec\.ts/,
+      dependencies: [],
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "site-speed",
+      testMatch: /87-site-speed\.spec\.ts/,
+      dependencies: [],
+      use: { ...devices["Desktop Chrome"] },
+    },
     // Auth interface redesign (spec 46) — same convention as "marketing":
     // NOT part of the local red gate (test-plan.md "Harness notes") — this
     // project resolving/running is the post-deploy proof.
