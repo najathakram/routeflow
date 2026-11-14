@@ -53,6 +53,7 @@ export class BillingController {
   })
   createCheckout(@Body() dto: CreateCheckoutDto) {
     return this.billingService.createCheckoutSession(dto.tenantId, {
+      surface: "ADMIN_LINK",
       successUrl: dto.successUrl,
       cancelUrl: dto.cancelUrl,
     });

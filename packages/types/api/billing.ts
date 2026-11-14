@@ -221,6 +221,19 @@ export interface PaymentDuePayRequest {
   shown?: PaymentDueShown;
 }
 
+/** SA-1139: how a platform Checkout Session is shown. `hosted` = Stripe's page (a url); `embedded` = our page (a client secret). */
+export const CHECKOUT_UI_MODE_VALUES = ["hosted", "embedded"] as const;
+export type CheckoutUiMode = (typeof CHECKOUT_UI_MODE_VALUES)[number];
+
+/**
+ * SA-1139 R3: what every tenant-self checkout start answers. Exactly one of `checkoutUrl` and `clientSecret` is set,
+ * chosen by `uiMode`: a client branches on `uiMode`, never on which field is null. The secret mounts Stripe's own
+ * card form (card data never reaches us); it is returned only to the admin who asked and is never logged.
+ */
+export type CheckoutStart =
+  | { uiMode: "hosted"; sessionId: string; checkoutUrl: string; clientSecret: null }
+  | { uiMode: "embedded"; sessionId: string; checkoutUrl: null; clientSecret: string };
+
 /** `POST /billing/payment-due/pay` (TENANT_ADMIN): the Stripe Checkout to send the admin to. */
 export interface PaymentDuePayResult {
   checkoutUrl: string;
