@@ -62,27 +62,38 @@ describe("the colour files are linked", () => {
   });
 });
 
-describe("text stays readable on every tint (AA, 4.5:1)", () => {
+describe("text stays readable on every band (AA, 4.5:1)", () => {
   const css = read("css/home-color.css") + read("css/color-deep.css");
+  const PALETTE = JSON.parse(
+    fs.readFileSync(
+      path.resolve(__dirname, "../../../../packages/types/brand/palette.json"),
+      "utf8",
+    ),
+  ).color as Record<string, string>;
 
-  it("every kicker pill ink is AA on its pill", () => {
-    const pairs = [...css.matchAll(/--k-bg:(#[0-9a-f]{6});--k-ink:(#[0-9a-f]{6})/gi)];
-    expect(pairs.length).toBeGreaterThanOrEqual(8);
-    for (const [, bg, ink] of pairs) expect(ratio(bg, ink)).toBeGreaterThanOrEqual(4.5);
-  });
-
-  it("the navy ink and the darker grey are AA on every field tint", () => {
-    const fields = [...css.matchAll(/--fld-[a-z]+:(#[0-9a-f]{6})/gi)].map((m) => m[1]);
-    expect(fields.length).toBeGreaterThanOrEqual(5);
-    for (const f of fields) {
-      expect(ratio("#0f1b2d", f)).toBeGreaterThanOrEqual(4.5);
-      expect(ratio("#44546b", f)).toBeGreaterThanOrEqual(4.5);
+  it("the kicker pill is ink on bone, or ink on white where the band is bone, with a dot", () => {
+    expect(css).toContain("background:var(--rf-soft);color:var(--rf-text)");
+    expect(css).toContain(
+      'content:"";flex:none;width:10px;height:10px;border-radius:50%;background:var(--rf-accent)',
+    );
+    for (const bg of [PALETTE.bone, PALETTE.white]) {
+      expect(ratio(PALETTE.ink, bg)).toBeGreaterThanOrEqual(4.5);
     }
   });
 
-  it("small grey text that sits on a tint is the darker grey, never the old one", () => {
-    expect(read("css/home-color.css")).toMatch(/\.home \.sy-list span[^{]*\{color:#44546b\}/);
-    expect(read("css/color-deep.css")).toMatch(/\.pd \.pd-note\{color:#44546b\}/);
+  it("the ink and the steel grey are AA on every band colour the repaint uses", () => {
+    for (const band of [PALETTE.white, PALETTE.bone]) {
+      expect(ratio(PALETTE.ink, band)).toBeGreaterThanOrEqual(4.5);
+      expect(ratio(PALETTE.steel, band)).toBeGreaterThanOrEqual(4.5);
+    }
+    expect(ratio(PALETTE.white, PALETTE.ink)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("small grey text that sits on a band is the steel job colour, never the old grey", () => {
+    expect(read("css/home-color.css")).toMatch(
+      /\.home \.sy-list span[^{]*\{color:var\(--rf-text-2\)\}/,
+    );
+    expect(read("css/color-deep.css")).toMatch(/\.pd \.pd-note\{color:var\(--rf-text-2\)\}/);
   });
 });
 
@@ -140,13 +151,14 @@ describe("life: the motion runs for everyone", () => {
 describe("the colour is decoration, not a new claim", () => {
   const home = read("home.html");
 
-  it("the use-case kicker is the same pill as the others: a tint, a dot, no bar", () => {
+  it("the use-case kicker is the same pill as the others: a fill, a dot, no bar", () => {
     const css = read("css/home-color.css");
     expect(css).not.toContain(".kick::after");
-    expect(css).toMatch(/#use-cases .kick{--k-bg:#[0-9a-f]{6};--k-ink:#[0-9a-f]{6};--k-dot:/);
+    expect(css).toContain(".home #use-cases .kick{");
+    expect(css).toContain(".home #use-cases .kick::before{");
   });
 
-  it("all twenty-two use-case cards carry their piece colour", () => {
+  it("all twenty-two use-case cards still carry the inline --pc/--pi pair (kept for the 2.3 lanes; the CSS no longer reads it)", () => {
     const cards =
       home.match(/<li class="inc-i" style="--pc:#[0-9a-f]{6};--pi:#[0-9a-f]{3,6}"/gi) ?? [];
     expect(cards).toHaveLength(22);

@@ -194,12 +194,6 @@ describe("T35d: no palette value typed outside the injected style", () => {
    *  logic: the listed values must be EXACTLY what the file holds, so a lane that cleans a file (or
    *  part of it) must edit its row, and a new typed value fails. rf-graphics.css has no row. */
   const EXEMPT_T35D: Array<{ file: string; hexes: string[]; lane: string; wave: string }> = [
-    { file: "public/site/css/home-color.css", hexes: ["#FFFFFF"], lane: "2.1a", wave: "W1b" },
-    { file: "public/site/css/color-deep.css", hexes: ["#FFFFFF"], lane: "2.1a", wave: "W1b" },
-    { file: "public/site/css/product.css", hexes: ["#FFFFFF"], lane: "2.1a", wave: "W1b" },
-    { file: "public/site/css/does.css", hexes: ["#FFFFFF"], lane: "2.1a", wave: "W1b" },
-    { file: "public/site/css/start.css", hexes: ["#FFFFFF"], lane: "2.1a", wave: "W1b" },
-    { file: "components/site-frame/site-frame.css", hexes: ["#FFFFFF"], lane: "2.1a", wave: "W1b" },
     { file: "public/site/css/site.css", hexes: ["#FFFFFF"], lane: "2.1b", wave: "W2" },
     { file: "public/site/css/mobile.css", hexes: ["#FFFFFF"], lane: "2.1b", wave: "W2" },
     { file: "public/site/css/home.css", hexes: ["#FFFFFF"], lane: "2.1b", wave: "W2" },

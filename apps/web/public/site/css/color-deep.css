@@ -1,43 +1,35 @@
 /* Colour and life for the inner pages (Product, Getting started, What it does and doesn't do, Data in and out, Security,
-   Company, Contact). Same system as the home page (css/home-color.css): the wheel's piece colours, soft tints for the
-   fields, navy ink on every tint, no colour as the only carrier of meaning. Loaded after product.css. */
-:root{
-  --pc-orders:#4caed9;--pc-boxpiece:#355695;--pc-counter:#6261af;--pc-routes:#33afb1;--pc-delivery:#44bd92;
-  --pc-invoices:#e7b64a;--pc-payments:#ec9040;--pc-customers:#e56a5d;--pc-reports:#a462b4;
-  --fld-blue:#e8f0fc;--fld-indigo:#eceefb;--fld-gold:#fff5df;--fld-teal:#e3f5f4;--fld-coral:#ffeae6;
-  --top-wash:radial-gradient(52% 90% at 92% 0%,rgba(76,174,217,.30),transparent 70%),radial-gradient(46% 80% at 100% 100%,rgba(255,201,51,.28),transparent 70%),radial-gradient(40% 70% at 0% 100%,rgba(20,201,143,.16),transparent 70%),#f3f6fb;
-}
+   Company, Contact). Same system as the home page (css/home-color.css): white, bone and ink bands, flat fills, a
+   one-pixel line for every edge, ink text, no colour as the only carrier of meaning. Loaded after product.css. */
 
-/* ---------- the top of each page ---------- */
-.pd .pd-top{background:var(--top-wash)}
+/* ---------- the top of each page: white, closed by a line ---------- */
+.pd .pd-top{background:var(--rf-white);border-bottom:1px solid var(--rf-line)}
 
 /* ---------- kicker pills ---------- */
 .pd .kick{display:inline-flex;align-items:center;gap:9px;padding:6px 16px 6px 13px;border-radius:999px;font-size:15px;line-height:1.2;
-  background:var(--k-bg,#dff3fb);color:var(--k-ink,#0b4660)}
-.pd .kick::before{content:"";flex:none;width:10px;height:10px;border-radius:50%;background:var(--k-dot,var(--pc-orders))}
-.pd .pd-all .kick{--k-bg:#d3e2fa;--k-ink:#1b3566;--k-dot:var(--pc-boxpiece)}
-.pd .pd-how .kick,.pd .pd-grow .kick{--k-bg:#c9eeec;--k-ink:#0b4a4c;--k-dot:var(--pc-routes)}
-.pd .pd-who .kick,.pd .co-story .kick{--k-bg:#ffe6ad;--k-ink:#5e3b00;--k-dot:var(--pc-invoices)}
-.pd .pd-deep .kick{--k-bg:rgba(255,255,255,.14);--k-ink:#fff;--k-dot:var(--pc-invoices)}
+  background:var(--rf-soft);color:var(--rf-text)}
+.pd .kick::before{content:"";flex:none;width:10px;height:10px;border-radius:50%;background:var(--rf-accent)}
+/* on a bone band the pill turns white and takes the line */
+.pd .pd-how .kick,.pd .pd-who .kick,.pd .co-ask .kick{background:var(--rf-white);box-shadow:var(--rf-ring)}
 
-/* ---------- colour fields: one colour per band, the same on every page ---------- */
-.pd .pd-all{background:var(--fld-blue)}
-.pd .pd-how{background:var(--fld-teal)}
-.pd .pd-who{background:var(--fld-gold)}
-.pd .pd-grow{background:var(--fld-indigo)}
-.pd .gs-people{background:var(--fld-coral)}
-.pd .co-story{background:var(--fld-gold);border-top:0}
-.pd .co-ask{background:var(--fld-blue);border-top:0}
-/* inner tiles that were grey sit on white against a coloured field */
-.pd .pd-all [class*="-tile"],.pd .pd-all .pd-c,.pd .pd-how .pd-c,.pd .pd-who .pd-c,.pd .pd-grow .pd-c{background:#fff}
+/* ---------- bands: white and bone, the same on every page ---------- */
+.pd .pd-all{background:var(--rf-white)}
+.pd .pd-how{background:var(--rf-soft)}
+.pd .pd-who{background:var(--rf-soft)}
+.pd .pd-grow{background:var(--rf-white)}
+.pd .gs-people{background:var(--rf-white)}
+.pd .co-story{background:var(--rf-white);border-top:0}
+.pd .co-ask{background:var(--rf-soft);border-top:0}
+/* rows that sit on a bone band are white */
+.pd .pd-how .pd-c,.pd .pd-who .pd-c{background:var(--rf-white)}
 
-/* small grey text on a tint goes one step darker (stays above 4.5:1) */
-.pd .pd-t thead th,.pd .pd-note{color:#44546b}
+/* grey text is the steel job colour */
+.pd .pd-t thead th,.pd .pd-note{color:var(--rf-text-2)}
 
-/* ---------- warm glows on the dark bands ---------- */
-.pd .pd-deep{background-image:radial-gradient(520px 320px at 8% 0%,rgba(255,201,51,.18),transparent 70%),radial-gradient(560px 340px at 100% 100%,rgba(255,94,77,.18),transparent 70%),radial-gradient(460px 280px at 70% 0%,rgba(76,174,217,.16),transparent 70%)}
+/* ---------- the dark band stays flat ---------- */
+.pd .pd-deep{background:var(--rf-panel)}
 
 /* ---------- life: press motion ---------- */
-.btn{transition:transform .18s var(--ease),background .2s,box-shadow .25s}
-.btn-primary:hover{box-shadow:0 12px 26px -12px var(--rf-brand-700);transform:translateY(-1px)}
+.btn{transition:transform .18s var(--ease),background .2s}
+.btn-primary:hover{transform:translateY(-1px)}
 .btn:active{transform:scale(.965)}
