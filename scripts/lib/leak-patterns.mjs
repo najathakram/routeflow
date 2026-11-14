@@ -59,13 +59,32 @@ export function loadPatterns(cwd = process.cwd()) {
   }
   const regexes = [];
   const sentinels = [];
+  const paths = [];
   const lines = text.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line || line.startsWith("#")) continue;
-    const sm = /^commit:([0-9a-f]{40,64})$/i.exec(line);
-    if (sm) {
-      sentinels.push(sm[1].toLowerCase());
+    const kind = /^(commit|path):/i.exec(line);
+    if (kind) {
+      const value = line.slice(kind[0].length).trim();
+      const isCommit = kind[1].toLowerCase() === "commit";
+      if (isCommit ? !/^[0-9a-f]{40}([0-9a-f]{24})?$/i.test(value) : !value) {
+        return {
+          ok: false,
+          reason: "invalid",
+          message: `leak-check: ${file} line ${i + 1} is a malformed ${kind[1].toLowerCase()}: line (${
+            isCommit ? "a full 40-hex sha is required" : "a path prefix is required"
+          }). Fail-closed.`,
+        };
+      }
+      if (isCommit) sentinels.push(value.toLowerCase());
+      else
+        paths.push(
+          value
+            .replace(/\\/g, "/")
+            .replace(/^(\.\/|\/)+/, "")
+            .toLowerCase(),
+        );
       continue;
     }
     try {
@@ -78,14 +97,14 @@ export function loadPatterns(cwd = process.cwd()) {
       };
     }
   }
-  if (regexes.length === 0 && sentinels.length === 0) {
+  if (regexes.length === 0) {
     return {
       ok: false,
       reason: "empty",
-      message: `leak-check: ${file} has no patterns. Fail-closed: ${HOWTO}`,
+      message: `leak-check: ${file} must contain at least one regex (commit: and path: lines alone leave the content scan off). Fail-closed: ${HOWTO}`,
     };
   }
-  return { ok: true, regexes, sentinels };
+  return { ok: true, regexes, sentinels, paths };
 }
 
 /**

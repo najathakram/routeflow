@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { IDLE_RUN_MAX_MS, runWithIdleTimeout } from "./testing/run-with-idle-timeout";
 
@@ -9,6 +10,26 @@ import { IDLE_RUN_MAX_MS, runWithIdleTimeout } from "./testing/run-with-idle-tim
 const REPO_ROOT = path.resolve(__dirname, "../../../..");
 const SCRIPT = path.resolve(REPO_ROOT, "scripts/leak-check.self-test.mjs");
 const IDLE_MS = 300_000;
+
+// Two modes (about 8 s fast, about 80 s full): the fast mode runs library and simulated-stdin cases only; the full
+// mode adds real `git push` cases against a throwaway bare repo. Full runs when RF_LEAK_SELFTEST_FULL=1, or when
+// the guard itself differs from origin/master (or that cannot be told: fail toward full).
+const GUARD_FILES = [
+  "scripts/leak-check.mjs",
+  "scripts/leak-check.self-test.mjs",
+  "scripts/lib/leak-patterns.mjs",
+  ".husky/pre-push",
+];
+function wantsFull(): boolean {
+  if (process.env.RF_LEAK_SELFTEST_FULL === "1") return true;
+  const env = { ...process.env };
+  for (const k of Object.keys(env)) if (k.startsWith("GIT_")) delete env[k];
+  const r = spawnSync("git", ["diff", "--quiet", "origin/master", "--", ...GUARD_FILES], {
+    cwd: REPO_ROOT,
+    env,
+  });
+  return r.status !== 0; // 1 = changed, anything else (no origin/master, git missing) = unknown
+}
 
 // The self-test builds its own explicit envs; this only keeps CI / push settings of the host
 // running jest (or a pre-push hook's GIT_* variables) from leaking into its process.
@@ -26,11 +47,15 @@ describe("leak-check self-test contract", () => {
   it(
     "exits 0 with no failures",
     async () => {
-      const res = await runWithIdleTimeout(process.execPath, [SCRIPT], {
-        cwd: REPO_ROOT,
-        idleMs: IDLE_MS,
-        env: scrubbedEnv(),
-      });
+      const res = await runWithIdleTimeout(
+        process.execPath,
+        [SCRIPT, ...(wantsFull() ? [] : ["--fast"])],
+        {
+          cwd: REPO_ROOT,
+          idleMs: IDLE_MS,
+          env: scrubbedEnv(),
+        },
+      );
       expect(res.timedOut).toBeNull();
       expect(res.signal).toBeNull();
       expect(res.stdout).not.toMatch(/\bFAIL\b/);

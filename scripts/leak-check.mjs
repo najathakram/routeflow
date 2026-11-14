@@ -10,6 +10,12 @@
 // sentinel is an ancestor of (or equal to) a pushed commit, whatever the branch is called; a sentinel unknown
 // to the local repository is ignored with a notice. RF_REBRAND_PUSH=launch lifts it like the other private checks.
 //
+// Lines of the form `path:<prefix>` (repo-relative, forward slashes, case-insensitive) list private path
+// prefixes: under --hook a push is refused when any outgoing commit adds or modifies a file under one (binary
+// files included; deletes are fine). Output names the commit and the rule number, never the path. Lifted by
+// RF_REBRAND_PUSH=launch. A `commit:` or `path:` line that does not parse refuses to load, and the file must
+// hold at least one regex (the content scan is never off).
+//
 // Modes (exactly one):
 //   --range <a..b> [--ref <name>]...   diff added lines (incl. new + renamed files, --text), file
 //                                      names, commit messages + author/committer identity of the
@@ -141,6 +147,37 @@ export function scanRevs(cwd, regexes, revArgs, hits, git = gitOut) {
   return true;
 }
 
+/**
+ * Refuse any commit in the range that ADDS or MODIFIES a file under a `path:` prefix (binary files too).
+ * Deletes are allowed. Output names the commit and the rule number, never the path. False on a git failure.
+ */
+function scanPaths(cwd, prefixes, revArgs, hits) {
+  const list = gitOut(cwd, ["rev-list", "--reverse", ...revArgs]);
+  if (!list.ok) return false;
+  for (const sha of list.out.split("\n").filter(Boolean)) {
+    const parR = gitOut(cwd, ["log", "-1", "--format=%P", sha]);
+    if (!parR.ok) return false;
+    const parent = parR.out.trim().split(/\s+/)[0];
+    const nsR = parent
+      ? gitOut(cwd, ["diff-tree", "-r", "--no-renames", "--name-status", "-z", parent, sha])
+      : gitOut(cwd, ["diff-tree", "-r", "--root", "--no-renames", "--name-status", "-z", sha]);
+    if (!nsR.ok) return false;
+    const ns = nsR.out.split("\0");
+    const ruleHits = new Set();
+    for (let i = 0; i < ns.length;) {
+      const st = ns[i++];
+      if (!st) break;
+      const f = ns[i++];
+      if (st === "D" || !f) continue;
+      const low = f.toLowerCase();
+      prefixes.forEach((pre, idx) => low.startsWith(pre) && ruleHits.add(idx + 1));
+    }
+    for (const r of ruleHits)
+      hits.push(`commit ${sha.slice(0, 10)}: file under private path rule #${r}`);
+  }
+  return true;
+}
+
 function scanText(regexes, input, label, hits) {
   const buf = Buffer.isBuffer(input) ? input : Buffer.from(String(input), "utf8");
   const count = countMatchingLines(regexes, buf);
@@ -251,10 +288,12 @@ export function run(argv, { cwd = process.cwd(), env = process.env, input = "" }
 
   // rebrand/* refusal needs no patterns file and applies under CI too, so it runs first.
   let pushed = [];
+  let refLines = 0;
   if (o.hook) {
     const inText = Buffer.isBuffer(input) ? input.toString("utf8") : input;
     for (const l of inText.split("\n")) {
       const [lref, lsha, rref, rsha] = l.trim().split(/\s+/);
+      if (lref && lsha) refLines++;
       if (!lref || !lsha || ZERO.test(lsha)) continue; // blank or a delete: nothing is pushed
       pushed.push({ lref, lsha, rref: rref ?? "", rsha: rsha ?? "0" });
     }
@@ -281,7 +320,14 @@ export function run(argv, { cwd = process.cwd(), env = process.env, input = "" }
     }
     // CI never pushes through this hook, so CI=true on a developer machine must not skip the scan.
     if (pushed.length === 0) {
-      return { code: 0, lines: ["leak-check: nothing is being pushed (delete only)."] };
+      return {
+        code: 0,
+        lines: [
+          refLines === 0
+            ? "leak-check: no refs to push, nothing to scan."
+            : "leak-check: nothing is being pushed (delete only).",
+        ],
+      };
     }
     if (env.RF_REBRAND_PUSH !== "launch") {
       const ov = privateOverlap(cwd, pushed);
@@ -296,12 +342,20 @@ export function run(argv, { cwd = process.cwd(), env = process.env, input = "" }
     }
     return { code: 2, lines: [loaded.message] };
   }
-  const { regexes, sentinels = [] } = loaded;
+  const { regexes, sentinels = [], paths = [] } = loaded;
   if (o.hook && env.RF_REBRAND_PUSH !== "launch") {
     for (const s of sentinels) {
       if (!gitOut(cwd, ["cat-file", "-e", `${s}^{commit}`]).ok) {
         notices.push(`sentinel ${s.slice(0, 10)} is unknown to this repository: ignored`);
         continue;
+      }
+      if (gitOut(cwd, ["merge-base", "--is-ancestor", s, ORIGIN_MASTER]).ok) {
+        return {
+          code: 1,
+          lines: [
+            `leak-check: sentinel ${s.slice(0, 10)} is already on origin/master: remove this commit: line from the patterns file.`,
+          ],
+        };
       }
       for (const p of pushed) {
         if (gitOut(cwd, ["merge-base", "--is-ancestor", s, `${p.lsha}^{commit}`]).ok) {
@@ -375,10 +429,17 @@ export function run(argv, { cwd = process.cwd(), env = process.env, input = "" }
         break;
       }
       if (!tip) continue;
-      if (!scanRevs(cwd, regexes, rangeForRef(cwd, tip, p.rsha, notices), hits)) {
+      const revs = rangeForRef(cwd, tip, p.rsha, notices);
+      if (!scanRevs(cwd, regexes, revs, hits)) {
         return {
           code: 2,
           lines: [`leak-check: cannot resolve outgoing range for ${p.lsha.slice(0, 10)}`],
+        };
+      }
+      if (paths.length && env.RF_REBRAND_PUSH !== "launch" && !scanPaths(cwd, paths, revs, hits)) {
+        return {
+          code: 2,
+          lines: [`leak-check: cannot list files of the outgoing range for ${p.lsha.slice(0, 10)}`],
         };
       }
     }
