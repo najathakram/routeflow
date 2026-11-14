@@ -1,6 +1,7 @@
 import {
   DISCOUNT_PRE_TAX_FROM,
   DISCOUNT_TAX_BASE_VALUES,
+  LEGACY_DISCOUNT_BASE,
   discountTaxBaseOf,
   taxRateBaseOf,
 } from "./discount-tax-base";
@@ -228,6 +229,7 @@ describe("the mode of one document (R3)", () => {
 
   it("the union is exactly the two modes", () => {
     expect([...DISCOUNT_TAX_BASE_VALUES]).toEqual([PRE, LEGACY]);
+    expect(LEGACY_DISCOUNT_BASE).toBe(LEGACY);
   });
 });
 

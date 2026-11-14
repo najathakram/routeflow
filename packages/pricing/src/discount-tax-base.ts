@@ -14,6 +14,13 @@ export const DISCOUNT_TAX_BASE_VALUES = ["PRE_TAX", "LEGACY_POST_TAX"] as const;
 export type DiscountTaxBase = (typeof DISCOUNT_TAX_BASE_VALUES)[number];
 
 /**
+ * What every pre-W-989 caller passes: master's formula, stated explicitly. PR-2 (SA-1141) replaces each use
+ * with the document's own mode (`discountTaxBaseOf`); until then a grep for this name lists every call
+ * site still to thread, and none changes behaviour.
+ */
+export const LEGACY_DISCOUNT_BASE: DiscountTaxBase = "LEGACY_POST_TAX";
+
+/**
  * The cutover instant: a document whose own `createdAt` is at or after it uses PRE_TAX. `null` (dark) means
  * every document keeps master's formula. Flipped only in its own diff after the owner's yes (SA-1141 R10).
  */
