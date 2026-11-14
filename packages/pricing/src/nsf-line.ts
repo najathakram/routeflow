@@ -70,6 +70,7 @@ export function inferredGoodsFlatRate(
   invoice: {
     subtotal: unknown;
     taxAmount: unknown;
+    discount?: unknown;
     lines: ReadonlyArray<
       NsfLineFactsInput & { taxRate?: unknown; categoryTaxAmount?: unknown; subtotal?: unknown }
     >;

@@ -1,4 +1,5 @@
 import { computeCategoryTax, type CategoryTaxType } from "./pricing";
+import type { DiscountTaxBase } from "./discount-tax-base";
 import { regulatedUnitBasis } from "./regulated-unit-basis";
 import { chargeLinesOf, type ChargeLine } from "./charge-lines";
 import {
@@ -44,6 +45,7 @@ export interface SaleTotalsOptions {
   isTaxExempt?: boolean | null;
   discount?: number | null;
   shipping?: number | null;
+  discountBase?: DiscountTaxBase;
 }
 
 export interface SaleTotals extends SummedInvoiceTotals {

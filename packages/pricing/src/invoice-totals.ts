@@ -1,4 +1,5 @@
 import { MoneyInvariantError } from "./money-invariants";
+import type { DiscountTaxBase } from "./discount-tax-base";
 import { computeLineSubtotal, roundMoney, type LineSubtotalInput } from "./pricing";
 
 /**
@@ -42,6 +43,8 @@ export interface InvoiceTotalsOptions {
   taxRate?: number | null;
   /** Tax-exempt customer: $0 of BOTH the regular tax and the category tax. Default false. */
   isTaxExempt?: boolean | null;
+  /** SA-1141: where the invoice discount sits relative to tax (see `discount-tax-base.ts`). */
+  discountBase?: DiscountTaxBase;
 }
 
 export interface InvoiceTotals {
@@ -70,9 +73,12 @@ export interface SummedInvoiceLine {
   taxRate?: MoneyLike | null;
   /** This line's regulated category tax in money. Default 0. */
   categoryTaxAmount?: MoneyLike | null;
+  /** The NSF bounce-fee line: not goods, so outside the PRE_TAX discount split. Default false. */
+  isNsf?: boolean;
 }
 
 export interface SumInvoiceTotalsOptions {
+  discountBase?: DiscountTaxBase;
   discount?: number | null;
   shipping?: number | null;
   isTaxExempt?: boolean | null;

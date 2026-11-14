@@ -1,3 +1,4 @@
+import type { DiscountTaxBase } from "./discount-tax-base";
 import { roundMoney } from "./pricing";
 import { sumInvoiceTotals } from "./invoice-totals";
 import { TAX_PERCENT_DECIMALS, TAX_RATE_FRACTION_DECIMALS } from "./tax-precision";
@@ -34,6 +35,7 @@ export interface InferredFlatRateOptions {
    * Without it the first verified of the 4-dp rate, then the 6-dp rate is returned (else the 6-dp rate, unverified).
    */
   preferredRate?: number | null;
+  discountBase?: DiscountTaxBase;
 }
 
 /**
