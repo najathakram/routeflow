@@ -78,7 +78,7 @@ describe("R24 plan price confirm", () => {
     expect(mockImpact).toHaveBeenCalledWith("GROWTH", 149);
     expect(
       within(dialog).getByText(
-        "This changes the bill for 12 businesses on their next renewal. $100 more each month in total. 3 with their own price are not affected.",
+        "This changes the bill for 12 businesses on their next renewal. $100 more each month in total. 3 with their own price are not affected. Live Stripe subscriptions update from the next billing cycle.",
       ),
     ).toBeInTheDocument();
     expect(
@@ -249,7 +249,7 @@ describe("R24 plan price confirm", () => {
     const dialog = await screen.findByRole("dialog");
     expect(
       within(dialog).getByText(
-        "This changes the bill for 1 business on their next renewal. $49 more each month in total.",
+        "This changes the bill for 1 business on their next renewal. $49 more each month in total. Live Stripe subscriptions update from the next billing cycle.",
       ),
     ).toBeInTheDocument();
     expect(
@@ -278,5 +278,42 @@ describe("R24 plan price confirm", () => {
     await screen.findByRole("dialog", { name: "Change Growth from $100 to $149 a month?" });
     expect(mockImpact).toHaveBeenCalledTimes(2);
     expect(mockPatch).not.toHaveBeenCalled();
+  });
+});
+
+// UX guide B4 (residual): Save stays off until a price really changed; an annual-only change is titled as
+// one; the confirm says what happens to live Stripe subscriptions.
+describe("UX guide B4 dirty Save", () => {
+  it("Save is disabled until a price differs from the stored one", async () => {
+    render(<AdminPlansPage />);
+    const input = await screen.findByLabelText("Growth monthly price (USD)");
+    const save = screen.getByRole("button", { name: "Save" });
+    expect(save).toBeDisabled();
+    fireEvent.change(input, { target: { value: "149" } });
+    expect(save).toBeEnabled();
+    // typing the stored value back (even written differently) is no change
+    fireEvent.change(input, { target: { value: "100.00" } });
+    expect(save).toBeDisabled();
+  });
+
+  it("an annual-only edit enables Save and is titled as an annual change, not 'from $100 to $100'", async () => {
+    mockImpact.mockResolvedValue(impact({ newMonthly: 100, monthlyDelta: 0 }));
+    render(<AdminPlansPage />);
+    const annual = await screen.findByLabelText("Growth annual price (USD)");
+    fireEvent.change(annual, { target: { value: "1200" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(
+      await screen.findByRole("dialog", {
+        name: "Change Growth annual price from $1,000 to $1,200 a year?",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("the confirm tells the admin live Stripe subscriptions update from the next billing cycle", async () => {
+    await editAndSave();
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText(/Live Stripe subscriptions update from the next billing cycle\./),
+    ).toBeInTheDocument();
   });
 });

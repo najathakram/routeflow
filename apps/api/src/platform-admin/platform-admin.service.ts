@@ -2642,6 +2642,28 @@ export class PlatformAdminService {
           ? null
           : dto.annual;
 
+    // UX guide B4: a Save that changes neither price writes nothing, syncs no subscription and leaves no audit
+    // row. After the count re-check above (the 409 contract is unchanged); compared in cents, so 100 and
+    // "100.00" are the same price.
+    const sameCents = (stored: Prisma.Decimal | null | undefined, next: unknown) =>
+      stored == null || next == null
+        ? (stored ?? null) === (next ?? null)
+        : roundMoney(Number(stored)) === roundMoney(Number(next));
+    if (
+      sameCents(definition.monthlyPrice, dto.monthly) &&
+      sameCents(definition.annualPrice, annualPrice)
+    ) {
+      return {
+        planKey,
+        monthlyPrice: Number(definition.monthlyPrice),
+        annualPrice: definition.annualPrice == null ? null : Number(definition.annualPrice),
+        updated: 0,
+        synced: 0,
+        failed: 0,
+        skippedDowngrade: 0,
+      };
+    }
+
     const updated = await this.prisma.planDefinition.update({
       where: { planVersionId_planKey: { planVersionId: version.id, planKey: definition.planKey } },
       data: { monthlyPrice: dto.monthly, annualPrice },

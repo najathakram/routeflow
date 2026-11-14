@@ -58,6 +58,8 @@ function priceConfirmBody(i: PlanPriceImpact, changed = false): string {
         : `${i.ownPrice} with their own price are not affected.`,
     );
   }
+  // UX guide B4: say what happens to live subscriptions (the server syncs them after the save).
+  if (i.affected > 0) parts.push("Live Stripe subscriptions update from the next billing cycle.");
   return parts.join(" ");
 }
 
@@ -82,6 +84,32 @@ function draftFrom(plan: PlanCatalogEntry): RowDraft {
     monthly: plan.monthlyPrice ?? "",
     annual: plan.annualPrice ?? "",
   };
+}
+
+/** Compare two price fields as numbers ("100" and "100.00" are the same price; blank is "none"). */
+function samePrice(a: string, b: string): boolean {
+  const x = a.trim();
+  const y = b.trim();
+  if (x === "" || y === "") return x === y;
+  return Number(x) === Number(y);
+}
+
+/** UX guide B4: a row is dirty only when a price differs from the catalog's stored one. */
+function isDirty(plan: PlanCatalogEntry, draft: RowDraft): boolean {
+  const stored = draftFrom(plan);
+  return !samePrice(draft.monthly, stored.monthly) || !samePrice(draft.annual, stored.annual);
+}
+
+/** The confirm's title: an annual-only change is not "from $100 to $100 a month". */
+function priceConfirmTitle(p: PendingPriceChange): string {
+  const monthlyChanged = p.monthly !== p.impact.currentMonthly;
+  const storedAnnual = p.plan.annualPrice === null ? null : Number(p.plan.annualPrice);
+  if (!monthlyChanged && p.annual !== storedAnnual) {
+    const from = storedAnnual === null ? "none" : priceLabel(storedAnnual);
+    const to = p.annual === null ? "none" : priceLabel(p.annual);
+    return `Change ${p.plan.name} annual price from ${from} to ${to} a year?`;
+  }
+  return `Change ${p.plan.name} from ${priceLabel(p.impact.currentMonthly)} to ${priceLabel(p.monthly)} a month?`;
 }
 
 // ─── Page ──────────────────────────────────────────────────────────────────────
@@ -296,7 +324,8 @@ export default function PlansPage() {
                           disabled={
                             checkingKey !== null ||
                             savingKey !== null ||
-                            draft.monthly.trim() === ""
+                            draft.monthly.trim() === "" ||
+                            !isDirty(plan, draft)
                           }
                           onClick={() => startSave(plan)}
                           className="rounded-lg bg-indigo-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-600 disabled:opacity-50"
@@ -322,11 +351,7 @@ export default function PlansPage() {
         onClose={() => setPending(null)}
         onConfirm={confirmSave}
         variant="danger"
-        title={
-          pending
-            ? `Change ${pending.plan.name} from ${priceLabel(pending.impact.currentMonthly)} to ${priceLabel(pending.monthly)} a month?`
-            : ""
-        }
+        title={pending ? priceConfirmTitle(pending) : ""}
         description={pending ? priceConfirmBody(pending.impact, pending.changed) : undefined}
         confirmLabel={
           pending && pending.impact.affected > 0

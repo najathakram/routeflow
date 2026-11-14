@@ -54,7 +54,7 @@ const FIXTURE: Row[] = [
 ];
 const PUSHED = new Set(["d"]);
 
-function make(currentMonthly = 100) {
+function make(currentMonthly = 100, currentAnnual: number | null = 1000) {
   const findMany = jest.fn(async ({ where }: any) =>
     FIXTURE.filter((r) => !(where.tenant?.deletedAt === null && r.deleted))
       .filter((r) =>
@@ -86,6 +86,7 @@ function make(currentMonthly = 100) {
           id: "def-1",
           planKey: "GROWTH",
           monthlyPrice: new Prisma.Decimal(currentMonthly),
+          annualPrice: currentAnnual === null ? null : new Prisma.Decimal(currentAnnual),
           isCustom: false,
         },
       ],
@@ -264,6 +265,60 @@ describe("SA-1100 §2 plan price edit: the confirmed count is re-checked on the 
     });
     await expect(
       service.updatePlanPrices("GROWTH", { monthly: 149, expectedAffected: 0 } as any, "admin-1"),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+});
+
+// UX guide B4: a Save that changes nothing must not write, sync Stripe for every tenant on the plan, or audit.
+describe("UX guide B4 unchanged plan price", () => {
+  it("monthly and annual equal to the stored values: no write, no Stripe sync, no audit row", async () => {
+    const { service, prisma, billingService, auditService } = make(100, 1000);
+    const impact = await service.getPlanPriceImpact("GROWTH", "100");
+    const out = await service.updatePlanPrices(
+      "GROWTH",
+      { monthly: 100, annual: 1000, expectedAffected: impact.affected } as any,
+      "admin-1",
+    );
+    expect(billingService.syncStripeSubscriptionPrice).not.toHaveBeenCalled();
+    expect(prisma.planDefinition.update).not.toHaveBeenCalled();
+    expect(auditService.log).not.toHaveBeenCalled();
+    expect(out).toMatchObject({ planKey: "GROWTH", monthlyPrice: 100, annualPrice: 1000 });
+    expect(out.updated).toBe(0);
+    expect(out.synced).toBe(0);
+  });
+
+  it("an omitted annual that resolves to the stored 10x value is also unchanged", async () => {
+    const { service, billingService } = make(100, 1000);
+    const impact = await service.getPlanPriceImpact("GROWTH", "100");
+    await service.updatePlanPrices(
+      "GROWTH",
+      { monthly: 100, expectedAffected: impact.affected } as any,
+      "admin-1",
+    );
+    expect(billingService.syncStripeSubscriptionPrice).not.toHaveBeenCalled();
+  });
+
+  it("an annual-only change still writes and syncs", async () => {
+    const { service, prisma, billingService } = make(100, 1000);
+    prisma.planDefinition.update.mockResolvedValue({ monthlyPrice: 100, annualPrice: 1200 });
+    const impact = await service.getPlanPriceImpact("GROWTH", "100");
+    await service.updatePlanPrices(
+      "GROWTH",
+      { monthly: 100, annual: 1200, expectedAffected: impact.affected } as any,
+      "admin-1",
+    );
+    expect(prisma.planDefinition.update).toHaveBeenCalledTimes(1);
+    expect(billingService.syncStripeSubscriptionPrice).toHaveBeenCalled();
+  });
+
+  it("a stale count still answers 409 even when nothing changed", async () => {
+    const { service } = make(100, 1000);
+    await expect(
+      service.updatePlanPrices(
+        "GROWTH",
+        { monthly: 100, annual: 1000, expectedAffected: 9 } as any,
+        "admin-1",
+      ),
     ).rejects.toBeInstanceOf(ConflictException);
   });
 });
