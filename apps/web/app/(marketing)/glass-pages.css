@@ -1,5 +1,0 @@
-/* Retired front-door layer (lane 2.6b). Every rule that lived here was scoped under a class that no
-   page wears any more, so none of it reached a screen. The pages that remain (privacy, terms,
-   sign-in, sign-up, 404, buyer sign-in, verify email) are dressed by the site frame, the
-   ready-made site's own stylesheets and the auth shell stylesheet. The root layout still imports
-   this file; its owner drops the import and the file together. */

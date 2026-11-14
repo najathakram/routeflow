@@ -9,6 +9,7 @@ import { EncryptionService } from "../common/encryption.service";
 import { StorageService } from "../storage/storage.service";
 import { EmailService } from "../email/email.service";
 import { OwnerAlertService } from "../email/owner-alert.service";
+import { BRAND } from "../common/brand";
 
 /**
  * Repro-first coverage for the self-service tenant signup email-honesty bug:
@@ -140,7 +141,7 @@ describe("TenantsService", () => {
       it("uses COPY.md 2m's sentence, drops the Hi {username} line and sentence-cases the button", async () => {
         await service.register(REGISTER_DTO);
         expect(sentText()).toContain(
-          "Thanks for signing up for RouteFlow. Verify your email to open your 14-day free trial for",
+          `Thanks for signing up. Verify your email to open your 14-day ${BRAND.name} free trial for`,
         );
         expect(sentText()).not.toMatch(/Hi \S+,/);
         expect(sentHtml()).toContain(">Verify my email</a>");

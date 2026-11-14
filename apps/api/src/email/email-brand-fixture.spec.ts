@@ -1,0 +1,195 @@
+import { BRAND } from "../common/brand";
+import { renderEmailLayout } from "./email-layout";
+import { renderPlatformMails } from "../testing/render-platform-mail";
+
+/**
+ * T-B5 (the T45 row for mail): with the brand module mocked to a fixture, every platform mail the
+ * B1 files render carries the fixture's name, logo and site and no trace of the real brand. A mail
+ * that still reads a typed literal fails here, whatever the real brand.json holds. A dotted name
+ * ("XROV.IO") also exposes a name that ends a sentence ("XROV.IO.").
+ */
+jest.mock("../common/brand", () => ({
+  // not frozen: the former-name test flips `formerly`
+  BRAND: {
+    name: "XROV.IO",
+    formerly: "Old Fixture",
+    origin: "https://fixture.test",
+    emailLogo: "/x/logo.png",
+    emailLogoWidth: 113,
+    emailLogoHeight: 32,
+  },
+  loadBrand: jest.fn(),
+}));
+jest.mock("nodemailer", () => ({ createTransport: jest.fn() }));
+jest.mock("resend", () => ({ Resend: jest.fn() }));
+
+/** Identifiers and the one host that stay typed (sender domain, until the sender moves). */
+const ALLOWED = /send\.routeflow\.info/gi;
+
+/**
+ * The mailbox-revoked body words come from `email/mailbox/mailbox-alert.copy.ts`, which lane B1b
+ * owns; until it reads the brand those mails keep its typed name in the BODY (header, footer and
+ * subject-free parts are still checked below). Delete this exemption when B1b lands.
+ */
+const COPY_OWNED_BY_B1B = /^svc-mailbox-revoked/;
+
+/** Outputs whose name-ending sentence is deliberately left for the wave-4 flip (see T-B4). */
+const NAME_ENDS_SENTENCE = [
+  "bill-trial-TRIAL_ENDING_7D",
+  "bill-trial-TRIAL_ENDING_1D",
+  "bill-trial-env",
+  "svc-test-email",
+];
+const isNameEnder = (k: string) => NAME_ENDS_SENTENCE.some((p) => k.startsWith(p));
+
+const escaped = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+let out: Record<string, string>;
+beforeAll(async () => {
+  out = await renderPlatformMails();
+});
+
+const own = (label: string) =>
+  /^(verify|reset|signin-linked|new-login|password-set|notice|fragment|layout-own|branded-own|bill-|buyer-|svc-(merge|set-password|welcome|email-change|role-changed|mailbox-revoked))/.test(
+    label,
+  );
+
+describe("T-B5: platform mail under a fixture brand", () => {
+  it("renders the whole set (a vacuous empty render would pass every check below)", () => {
+    expect(Object.keys(out).length).toBeGreaterThan(100);
+    expect(BRAND.name).toBe("XROV.IO");
+  });
+
+  it("no output names the real brand, outside the allow-listed sender domain", () => {
+    const leaks = Object.entries(out)
+      .filter(([k]) => !COPY_OWNED_BY_B1B.test(k))
+      .filter(([, v]) => /route\s?flow/i.test(v.replace(ALLOWED, "")))
+      .map(([k]) => k);
+    expect(leaks).toEqual([]);
+  });
+
+  it("every own-look html header takes src, alt, size and the typed wordmark from the brand", () => {
+    const labels = Object.keys(out).filter((k) => k.endsWith("#html") && own(k));
+    expect(labels.length).toBeGreaterThan(40);
+    for (const label of labels) {
+      const html = out[label];
+      expect(html).toContain(`src="${BRAND.origin}${BRAND.emailLogo}"`);
+      expect(html).toContain(`width="${BRAND.emailLogoWidth}" height="${BRAND.emailLogoHeight}"`);
+      expect(html).toContain(`alt="${BRAND.name}"`);
+      expect(html).toContain(`>${BRAND.name.toLowerCase()}.</span>`);
+    }
+  });
+
+  it("the former-name line shows in the own-look footer when the names differ", () => {
+    expect(out["layout-own#html"]).toContain(`${BRAND.name}, formerly ${BRAND.formerly}`);
+    expect(out["layout-own#text"]).toContain(`${BRAND.name}, formerly ${BRAND.formerly}`);
+    // a tenant's own mail and the neutral look never carry it
+    expect(out["layout-tenant#html"]).not.toContain("formerly");
+    expect(out["layout-neutral#html"]).not.toContain("formerly");
+  });
+
+  it("a tenant's mail keeps the tenant's look and names the platform only in 'Sent with'", () => {
+    const html = out["layout-tenant#html"];
+    expect(html).toContain("Acme Foods");
+    expect(html).toContain(
+      `Sent with <a href="${BRAND.origin}" style="color:#536579;">${BRAND.name}</a>`,
+    );
+    expect(html).not.toContain(`src="${BRAND.origin}${BRAND.emailLogo}"`);
+    expect(out["layout-tenant#text"]).toContain(`\nSent with ${BRAND.name}`);
+    const neutral = out["layout-neutral#html"];
+    expect(neutral).not.toContain(BRAND.name);
+    expect(neutral).not.toContain(BRAND.origin);
+  });
+
+  it("the sender, the 'via' name and the fallback name come from the brand", () => {
+    expect(out["from-env"]).toBe(`${BRAND.name} <invoices@send.routeflow.info>`);
+    expect(out["from-env-bare"]).toBe(`${BRAND.name} <invoices@send.routeflow.info>`);
+    expect(out["from-default"]).toBe(`${BRAND.name} <invoices@send.routeflow.info>`);
+    expect(out["from-smtp-no-env"]).toBe(`${BRAND.name} <u@send.test>`);
+    expect(out["from-via"]).toBe(`Acme Foods via ${BRAND.name} <invoices@send.routeflow.info>`);
+    expect(out["business-name-default"]).toBe(BRAND.name);
+    expect(out["svc-test-message"]).toContain(`via ${BRAND.name}'s mail service`);
+  });
+
+  it("billing links fall back to the brand's site when no WEB_URL is set", () => {
+    expect(out["bill-trial-TRIAL_ENDING_7D#html"]).toContain(`${BRAND.origin}/settings/billing`);
+    expect(out["bill-trial-env#html"]).toContain("https://app.test/settings/billing");
+  });
+
+  it("the platform footers and subjects carry the brand name", () => {
+    expect(out["svc-set-password#html"]).toContain(`${BRAND.name} Platform`);
+    expect(out["svc-merge-verify#subject"]).toBe(`Confirm account merge — ${BRAND.name}`);
+    expect(out["svc-welcome-nopay#subject"]).toContain(`Welcome to ${BRAND.name}`);
+    expect(out["verify#subject"]).toBe(`Verify your email to activate ${BRAND.name}`);
+    expect(out["buyer-0#subject"]).toBe(`Verify your email for ${BRAND.name}`);
+    expect(out["bill-rfinv-d0#subject"]).toContain(`${BRAND.name} invoice`);
+  });
+});
+
+describe("T-B4: the name never ends a sentence in the sign-up mail", () => {
+  const signup = ["verify", "verify-resend", "reset", "reset-tenant"].flatMap((l) => [
+    `${l}#html`,
+    `${l}#text`,
+  ]);
+
+  const stop = () => new RegExp(`${escaped(BRAND.name)}\\.(?![a-z])`);
+
+  it("no non-subject output has the name directly followed by a full stop, bar the named exemptions", () => {
+    const labels = Object.keys(out).filter((k) => !k.endsWith("#subject") && !isNameEnder(k));
+    expect(labels.length).toBeGreaterThan(100);
+    expect(labels.filter((k) => stop().test(out[k]))).toEqual([]);
+    expect(signup.every((k) => k in out)).toBe(true);
+  });
+
+  it("the exempted outputs still end a sentence on the name (red when reworded: delete the exemption)", () => {
+    for (const prefix of NAME_ENDS_SENTENCE) {
+      const labels = Object.keys(out).filter(
+        (k) => k.startsWith(prefix) && !k.endsWith("#subject"),
+      );
+      expect(labels.length).toBeGreaterThan(0);
+      expect({ prefix, still: labels.some((k) => stop().test(out[k])) }).toEqual({
+        prefix,
+        still: true,
+      });
+    }
+  });
+
+  it("no subject ends in a full stop, and the fixed part stays within 60 characters", () => {
+    const subjects = Object.entries(out).filter(([k]) => k.endsWith("#subject"));
+    expect(subjects.length).toBeGreaterThan(30);
+    for (const [k, v] of subjects) {
+      expect({ k, ends: v.endsWith(".") }).toEqual({ k, ends: false });
+      expect({ k, long: v.length > 60 }).toEqual({ k, long: false });
+    }
+  });
+});
+
+describe("the lane B1b exemption", () => {
+  it("the exempted mailbox-revoked outputs still carry the typed name (red when B1b lands: delete COPY_OWNED_BY_B1B)", () => {
+    const labels = Object.keys(out).filter((k) => COPY_OWNED_BY_B1B.test(k));
+    expect(labels.length).toBeGreaterThan(8);
+    expect(labels.some((k) => /route\s?flow/i.test(out[k].replace(ALLOWED, "")))).toBe(true);
+  });
+});
+
+describe("the former-name line", () => {
+  it("is absent when the brand has no former name (both names equal)", () => {
+    const brand = BRAND as { formerly: string };
+    const original = brand.formerly;
+    brand.formerly = BRAND.name;
+    try {
+      const { html, text } = renderEmailLayout({
+        look: { kind: "routeflow" },
+        heading: "H",
+        bodyHtml: "<p>x</p>",
+        bodyText: ["x"],
+        footerNote: "Note.",
+      });
+      expect(html).toContain(BRAND.name);
+      expect(html).not.toContain("formerly");
+      expect(text).not.toContain("formerly");
+    } finally {
+      brand.formerly = original;
+    }
+  });
+});

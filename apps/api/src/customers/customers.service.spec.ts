@@ -22,6 +22,7 @@ import { CreateCustomerDto } from "./dto/create-customer.dto";
 import { UpdateCustomerDto } from "./dto/update-customer.dto";
 import { withAdvisoryLock as mockedWithAdvisoryLock } from "../common/db-locks";
 import { RECEIVED_METHOD_FILTER } from "../invoices/payment-predicates";
+import { BRAND } from "../common/brand";
 
 // B310: a real advisory lock serializes concurrent callers sharing a key on a dedicated
 // Postgres connection (see db-locks.db.spec.ts for that primitive's own coverage). A plain
@@ -3082,8 +3083,8 @@ describe("CustomersService", () => {
       expect(sent.replyTo).toBeUndefined();
       const visible = (sent.html as string).replace(/<[^>]+>/g, "");
       expect(visible).toContain("Acme Distribution");
-      expect(visible).toContain("Sent with RouteFlow");
-      expect(sent.html).not.toContain("routeflow-mark");
+      expect(visible).toContain(`Sent with ${BRAND.name}`);
+      expect(sent.html).not.toContain(BRAND.emailLogo);
       expect(result.emailSent).toBe(true);
       expect(result.message).toMatch(/emailed to buyer@example\.com/i);
     });

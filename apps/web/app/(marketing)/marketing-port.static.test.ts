@@ -196,36 +196,6 @@ describe("redesign-only dependencies stay out — MKT-PIN T5", () => {
   );
 });
 
-const MARKETING_CSS_PATH = path.join(WEB_ROOT, "app", "(marketing)", "marketing.css");
-
-// Present in marketing.css today (line 802 at plan time) — removing it is the
-// requirement.
-const BANNED_CSS_TOKENS = ["color-mix(in oklch"];
-// Never present in marketing.css — standing guards against the port
-// reintroducing Tailwind-4-only syntax. MKT-PIN, so out of the red gate.
-const PINNED_ABSENT_CSS_TOKENS = [
-  "@theme",
-  "@custom-variant",
-  "has-data-",
-  "in-data-",
-  "field-sizing",
-  "data-starting-style",
-];
-
-describe("marketing.css avoids Tailwind-4-only syntax — R-MKT T5", () => {
-  it.each(BANNED_CSS_TOKENS)('marketing.css does not contain "%s" (R-MKT T5)', (token) => {
-    const css = fs.readFileSync(MARKETING_CSS_PATH, "utf8");
-    expect(css).not.toContain(token);
-  });
-});
-
-describe("marketing.css keeps avoiding Tailwind-4-only syntax — MKT-PIN T5", () => {
-  it.each(PINNED_ABSENT_CSS_TOKENS)('marketing.css does not contain "%s" (MKT-PIN T5)', (token) => {
-    const css = fs.readFileSync(MARKETING_CSS_PATH, "utf8");
-    expect(css).not.toContain(token);
-  });
-});
-
 // ---------------------------------------------------------------------------
 // T6 — manifests + root layout point at the new mark; production
 // metadataBase.
@@ -254,56 +224,51 @@ describe("PWA manifests point at the new mark — R-MKT T6", () => {
 });
 
 describe("root layout.tsx — R-MKT T6", () => {
-  it("sets metadataBase to https://www.routeflow.info and drops /logo.svg (R-MKT T6)", () => {
+  it("sets metadataBase from the brand seam (BRAND.origin) and drops /logo.svg (R-MKT T6)", () => {
     const source = fs.readFileSync(path.join(WEB_ROOT, "app", "layout.tsx"), "utf8");
-    expect(source).toContain('metadataBase: new URL("https://www.routeflow.info")');
+    expect(source).toContain("metadataBase: new URL(BRAND.origin)");
+    expect(source).not.toContain("www.routeflow.info");
     expect(source).not.toContain("/logo.svg");
   });
 });
 
-// The App Router drops the `not-found` segment's own CSS chunk on hydration, so
-// marketing.css has to be imported from the root layout for `app/not-found.tsx`
-// to be styled at all. That only stays safe while marketing.css shares no
-// unscoped at-rule name with globals.css.
-describe("marketing.css is delivered from the root layout — R-MKT T6", () => {
-  it("root layout.tsx imports the marketing stylesheet (R-MKT T6)", () => {
+// The four front-door stylesheets (marketing.css, glass.css, glass-pages.css, glass-site.css) were
+// retired by lane 2.6b and deleted with their root imports (wave 1b): the root layout imports none of
+// them, no file imports one, and the files are gone. The same facts are pinned per registry id in
+// site-front-door-css.static.test.ts.
+const FRONT_DOOR_CSS = ["marketing.css", "glass.css", "glass-pages.css", "glass-site.css"];
+
+describe("the front-door stylesheets are not delivered from the root layout — R-MKT T6", () => {
+  it("root layout.tsx imports none of the four front-door stylesheets (R-MKT T6)", () => {
     const source = fs.readFileSync(path.join(WEB_ROOT, "app", "layout.tsx"), "utf8");
-    expect(source).toContain('import "./(marketing)/marketing.css"');
+    for (const name of FRONT_DOOR_CSS) expect(source).not.toContain(name);
   });
 
-  // Exactly once, and only from the root: a second segment-level import would
-  // double-ship a 214,999 B (35,939 B gzip) stylesheet. The root import is a
-  // recorded, accepted deviation — see the `Deviations` section of the run's
-  // ux-spec and the comment above the import in app/layout.tsx.
-  it("marketing.css is imported once, from app/layout.tsx only (R-MKT T6)", () => {
+  it("no file under app/ or components/ imports any of them, and the files are gone (R-MKT T6)", () => {
     const importers: string[] = [];
     for (const dir of [path.join(WEB_ROOT, "app"), path.join(WEB_ROOT, "components")]) {
       for (const file of walkTextFiles(dir)) {
         if (file === __filename) continue;
         const text = fs.readFileSync(file, "utf8");
         for (const line of text.split("\n")) {
-          if (/^\s*import\s+["'][^"']*marketing\.css["']\s*;?\s*$/.test(line)) {
+          if (
+            /^\s*import\s+["'][^"']*(marketing|glass|glass-pages|glass-site)\.css["']/.test(line)
+          ) {
             importers.push(path.relative(WEB_ROOT, file).split(path.sep).join("/"));
           }
         }
       }
     }
-    expect(importers).toEqual(["app/layout.tsx"]);
-  });
-
-  it("marketing.css declares no @keyframes name also declared in globals.css (R-MKT T6)", () => {
-    const names = (css: string) =>
-      (css.match(/@keyframes\s+([A-Za-z0-9_-]+)/g) ?? []).map((m) => m.split(/\s+/)[1]);
-    const marketing = names(fs.readFileSync(MARKETING_CSS_PATH, "utf8"));
-    const globals = names(fs.readFileSync(path.join(WEB_ROOT, "app", "globals.css"), "utf8"));
-    expect(marketing.filter((n) => globals.includes(n))).toEqual([]);
+    expect(importers).toEqual([]);
+    for (const name of FRONT_DOOR_CSS) {
+      expect(fs.existsSync(path.join(WEB_ROOT, "app", "(marketing)", name))).toBe(false);
+    }
   });
 });
 
 // ---------------------------------------------------------------------------
 // T7 — globals.css / tailwind.config.ts pinned byte-identical to the branch
-// baseline (5ddec78e); marketing.css declares no :root and every custom
-// property it declares sits under a .rf-marketing-scoped selector.
+// baseline (5ddec78e).
 // ---------------------------------------------------------------------------
 
 // Hashes computed from this repo at branch base 5ddec78e (`git diff 5ddec78e
@@ -332,44 +297,7 @@ function sha256OfFile(filePath: string): string {
   return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
 }
 
-// Returns one entry per top-level custom-property declaration
-// (`--token: value;`, one per line in this prettier-formatted stylesheet)
-// whose nearest enclosing selector does not mention .rf-marketing.
-function customPropertyScopeViolations(css: string): string[] {
-  const violations: string[] = [];
-  const selectorStack: string[] = [];
-
-  for (const raw of css.split("\n")) {
-    const line = raw.trim();
-    if (!line) continue;
-
-    if (/^--[\w-]+\s*:/.test(line)) {
-      const scope = selectorStack[selectorStack.length - 1] ?? "";
-      if (!scope.includes(".rf-marketing")) {
-        violations.push(`"${line}" declared under "${scope || "(top level)"}"`);
-      }
-      continue;
-    }
-
-    if (line.endsWith("{")) {
-      selectorStack.push(line.slice(0, -1).trim());
-      continue;
-    }
-
-    if (/^}+$/.test(line)) {
-      for (let i = 0; i < line.length; i++) selectorStack.pop();
-    }
-  }
-
-  return violations;
-}
-
-// All three rows are GREEN on the untouched tree: the two sha256 rows are pins
-// by design, and marketing.css already declares no `:root` (verified — the file
-// opens `.rf-marketing {` and every token sits inside it). They therefore carry
-// the MKT-PIN token and stay out of the red gate; they still run in the full
-// `npx jest` suite, which is where they earn their keep — the port must not
-// break the containment they record.
+// Both rows are pins by design (MKT-PIN, out of the red gate); they run in the full suite.
 describe("pinned global styles — MKT-PIN T7", () => {
   it("app/globals.css is byte-identical to the branch baseline (MKT-PIN T7)", () => {
     expect(sha256OfFile(path.join(WEB_ROOT, "app", "globals.css"))).toBe(GLOBALS_CSS_SHA256);
@@ -380,36 +308,16 @@ describe("pinned global styles — MKT-PIN T7", () => {
       TAILWIND_CONFIG_SHA256,
     );
   });
-
-  it("marketing.css declares no :root and scopes every custom property under .rf-marketing (MKT-PIN T7)", () => {
-    const css = fs.readFileSync(MARKETING_CSS_PATH, "utf8");
-    expect(css).not.toMatch(/:root\s*\{/);
-    expect(customPropertyScopeViolations(css)).toEqual([]);
-  });
 });
 
 // One focus ring for the whole front door. The port once arrived with two competing global rings;
 // since lane 2.6b the four front-door stylesheets are empty (every rule was scoped under a class no
 // page wears, see site-front-door-css.static.test.ts), so the one ring is the ready-made site's own
 // global :focus-visible rule in public/site/css/site.css, which the SiteFrame pages load.
-describe("the front door has one focus ring and it is not typed in marketing.css — R-MKT T7", () => {
-  it("the four front-door stylesheets declare no outline and no :focus-visible rule (R-MKT T7)", () => {
-    for (const name of ["marketing.css", "glass.css", "glass-pages.css", "glass-site.css"]) {
-      const css = fs.readFileSync(path.join(WEB_ROOT, "app", "(marketing)", name), "utf8");
-      const code = css.replace(/\/\*[\s\S]*?\*\//g, "");
-      expect({ name, hit: /outline|focus-visible/.test(code) }).toEqual({ name, hit: false });
-    }
-  });
-
+describe("the front door has one focus ring and the site stylesheet owns it — R-MKT T7", () => {
   it("the ready-made site's global :focus-visible rule draws the ring the frame pages use (R-MKT T7)", () => {
     const css = fs.readFileSync(path.join(WEB_ROOT, "public", "site", "css", "site.css"), "utf8");
     expect(css).toMatch(/(^|\n)\s*:focus-visible\s*\{[^}]*outline:\s*3px solid/);
-  });
-
-  it("no outline declaration hardcodes the two ported ring colours (R-MKT T7)", () => {
-    const css = fs.readFileSync(MARKETING_CSS_PATH, "utf8");
-    expect(css).not.toMatch(/outline[^;{}]*#245be8/i);
-    expect(css).not.toMatch(/outline[^;{}]*#91809f/i);
   });
 });
 
@@ -417,15 +325,11 @@ describe("the front door has one focus ring and it is not typed in marketing.css
 // Sign-in menu items. The rules for the old marketing header's `.signin-menu` (one flex row, one
 // focus ring, owner screenshot 2026-09-08) left with that header: the header is now the SiteFrame
 // header, which has no such menu. The pin keeps its place and now holds the other half: nothing
-// emits the class and no front-door stylesheet carries a rule for it.
+// emits the class and the stylesheets that carried a rule for it are deleted.
 // ---------------------------------------------------------------------------
 
 describe("the old sign-in menu is gone with its stylesheet rules — R-MKT signin-menu", () => {
-  it("no front-door stylesheet styles .signin-menu and no source emits it (R-MKT signin-menu)", () => {
-    for (const name of ["marketing.css", "glass.css", "glass-pages.css", "glass-site.css"]) {
-      const css = fs.readFileSync(path.join(WEB_ROOT, "app", "(marketing)", name), "utf8");
-      expect(css).not.toContain("signin-menu");
-    }
+  it("no source emits .signin-menu (R-MKT signin-menu)", () => {
     const emitters = findSourceReferences(SCAN_DIRS, "signin-menu").filter(
       (h) => !/\.(css|test\.tsx?)$/.test(h.file),
     );

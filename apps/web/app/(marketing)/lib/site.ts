@@ -69,8 +69,8 @@ export const routes: MarketingRoute[] = [
 ];
 
 /**
- * The primary-nav routes, in header order. Contact sits before Company on purpose: the desktop nav
- * hides its LAST link from 901 to 1100 px (marketing.css), and that must stay Company, not Contact.
+ * The primary-nav routes, in header order (Contact sits before Company: the retired marketing
+ * stylesheet hid the LAST link from 901 to 1100 px and that had to stay Company; the order is kept).
  */
 export const NAV_SLUGS = ["product", "pricing", "company", "contact"] as const;
 

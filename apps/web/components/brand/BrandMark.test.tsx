@@ -171,13 +171,12 @@ describe("BrandMark module graph — R-MKT T4", () => {
 // BrandMark and the marketing stylesheets are empty (nothing wears `.rf-marketing`), so nothing
 // overrides the size attributes any more. jsdom loads no stylesheet, so this reads the sources.
 describe("marketing-scoped mark sizing — R-MKT T4", () => {
-  it("the 404 draws no brand mark and no front-door stylesheet carries a rule for one (R-MKT T4)", () => {
+  it("the 404 draws no brand mark and the front-door stylesheets that sized one are gone (R-MKT T4)", () => {
     const app = path.join(__dirname, "..", "..", "app");
     const notFound = fs.readFileSync(path.join(app, "not-found.tsx"), "utf8");
     expect(notFound).not.toMatch(/BrandMark|BrandSignature|not-found-brand/);
     for (const name of ["marketing.css", "glass.css", "glass-pages.css", "glass-site.css"]) {
-      const css = fs.readFileSync(path.join(app, "(marketing)", name), "utf8");
-      expect(css).not.toMatch(/not-found-brand|\.brand-mark/);
+      expect(fs.existsSync(path.join(app, "(marketing)", name))).toBe(false);
     }
   });
 });

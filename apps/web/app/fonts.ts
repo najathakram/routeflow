@@ -1,8 +1,8 @@
 import localFont from "next/font/local";
 
 // Marketing site typeface — Geist / Geist Mono, self-hosted (redesign
-// portability §Fonts). Scoped to `.rf-marketing` in marketing.css; nothing
-// outside the marketing surface reads these variables. Loaded once at the
+// portability §Fonts). The ready-made site loads its own Geist face through its own @font-face;
+// nothing reads these two variables (the `.rf-marketing` stylesheet that did is deleted). Loaded once at the
 // root per Next's font-optimization contract (next/font/local throws if
 // used outside a module scope reached from the root layout).
 export const geistSans = localFont({

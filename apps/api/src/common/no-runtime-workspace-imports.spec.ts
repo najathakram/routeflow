@@ -40,21 +40,22 @@ function stripComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
 }
 
-// Every shape that emits a literal runtime reference to "@routeflow/types" into `dist/` —
+// Every shape that emits a literal runtime reference to "@routeflow/types" (or a subpath of it, e.g.
+// "@routeflow/types/brand": the package has no built entry, so a subpath crashes boot too) into `dist/` —
 // `import type ...` / `export type ...` are erased at compile time and deliberately excluded;
 // everything below survives into the compiled output and crashes `node dist/main.js` at boot.
 const RUNTIME_TYPES_IMPORT_PATTERNS = [
   // import Foo from "@routeflow/types"; / import { Foo } from "..."; / import * as Foo from "...";
-  /(^|\n)\s*import\s+(?!type\b)[^;]*from\s+["']@routeflow\/types["']/,
+  /(^|\n)\s*import\s+(?!type\b)[^;]*from\s+["']@routeflow\/types(?:\/[^"']*)?["']/,
   // import "@routeflow/types"; — bare side-effect import, no `from` clause.
-  /(^|\n)\s*import\s*["']@routeflow\/types["']/,
+  /(^|\n)\s*import\s*["']@routeflow\/types(?:\/[^"']*)?["']/,
   // export { Foo } from "..."; / export * from "..."; / export * as ns from "...";
-  /(^|\n)\s*export\s+(?!type\b)[^;]*from\s+["']@routeflow\/types["']/,
+  /(^|\n)\s*export\s+(?!type\b)[^;]*from\s+["']@routeflow\/types(?:\/[^"']*)?["']/,
   // require("@routeflow/types") / require('@routeflow/types')
-  /require\s*\(\s*["']@routeflow\/types["']\s*\)/,
+  /require\s*\(\s*["']@routeflow\/types(?:\/[^"']*)?["']\s*\)/,
   // import("@routeflow/types") / await import('@routeflow/types') — a dynamic import, which the
   // compiled CommonJS output turns into a runtime require() just like the static forms above.
-  /\bimport\s*\(\s*["']@routeflow\/types["']\s*\)/,
+  /\bimport\s*\(\s*["']@routeflow\/types(?:\/[^"']*)?["']\s*\)/,
 ];
 
 describe("API runtime imports", () => {
@@ -105,6 +106,20 @@ describe("RUNTIME_TYPES_IMPORT_PATTERNS — offender-detection coverage", () => 
     expect(isOffender(`import type { Foo } from "@routeflow/types";`)).toBe(false);
     expect(isOffender(`export type { Foo } from "@routeflow/types";`)).toBe(false);
     expect(isOffender(`export type * from "@routeflow/types";`)).toBe(false);
+  });
+
+  it("catches a subpath import, require, dynamic import and re-export of the package", () => {
+    expect(isOffender(`import { BRAND } from "@routeflow/types/brand";`)).toBe(true);
+    expect(isOffender(`import "@routeflow/types/brand/load";`)).toBe(true);
+    expect(isOffender(`const b = require("@routeflow/types/brand");`)).toBe(true);
+    expect(isOffender(`const b = await import("@routeflow/types/brand");`)).toBe(true);
+    expect(isOffender(`export { BRAND } from "@routeflow/types/brand";`)).toBe(true);
+  });
+
+  it("never flags a subpath type-only import, or a require.resolve of the package file", () => {
+    expect(isOffender(`import type { Brand } from "@routeflow/types/brand";`)).toBe(false);
+    expect(isOffender(`export type { Brand } from "@routeflow/types/brand";`)).toBe(false);
+    expect(isOffender(`const p = require.resolve("@routeflow/types/package.json");`)).toBe(false);
   });
 
   it("never flags an unrelated import", () => {

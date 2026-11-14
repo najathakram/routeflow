@@ -17,6 +17,7 @@ import {
   creditNoteReadWhere,
   orderReturnSelect,
 } from "../orders/counter-sale/counter-sale-today";
+import { BRAND } from "../common/brand";
 
 const T = "test-tenant";
 const NOW = new Date("2026-10-07T16:00:00.000Z");
@@ -110,7 +111,7 @@ describe("ReceiptService.send (POST /orders/:id/receipt)", () => {
     // W-1163: the receipt is dressed in the look EmailService.tenantLook() returned (the mock's
     // "Acme Foods"), not rebuilt from the branding row alone.
     expect(arg.html).toContain("Acme Foods");
-    expect(arg.html.replace(/<[^>]+>/g, "")).toContain("Sent with RouteFlow");
+    expect(arg.html.replace(/<[^>]+>/g, "")).toContain(`Sent with ${BRAND.name}`);
     expect(arg.delivery).toEqual({
       tenantId: T,
       kind: "RECEIPT",

@@ -17,8 +17,8 @@ const REPO = path.resolve(WEB, "../..");
 const FOUR = ["marketing.css", "glass.css", "glass-pages.css", "glass-site.css"].map(
   (f) => `app/(marketing)/${f}`,
 );
-const read = (rel: string) => fs.readFileSync(path.join(WEB, rel), "utf8");
 const stripCss = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, "");
+const exists = (rel: string) => fs.existsSync(path.join(WEB, rel));
 
 // Everything that can put a class on a page: app code, shared components, libs, public files and the
 // shared UI package. Tests, e2e specs and the test-support folder only read the page, they do not emit.
@@ -88,40 +88,57 @@ describe("front-door stylesheets: the consumer scan", () => {
 });
 
 describe("B247: the front door ships no token or utility layer of its own beside globals.css", () => {
-  it("the four stylesheets hold no rule, no at-rule and no custom property", () => {
-    for (const f of FOUR) {
-      const css = stripCss(read(f)).trim();
-      expect({ f, css: css.slice(0, 80) }).toEqual({ f, css: "" });
-    }
-  });
-
-  it("no other stylesheet sits in app/(marketing)", () => {
+  it("the four stylesheets are deleted, and no other stylesheet sits in app/(marketing)", () => {
+    for (const f of FOUR) expect({ f, exists: exists(f) }).toEqual({ f, exists: false });
     const here = fs
       .readdirSync(path.join(WEB, "app/(marketing)"))
-      .filter((n) => n.endsWith(".css"))
-      .map((n) => `app/(marketing)/${n}`)
-      .sort();
-    expect(here).toEqual([...FOUR].sort());
+      .filter((n) => n.endsWith(".css"));
+    expect(here).toEqual([]);
   });
 
-  it("an imported stylesheet exists; a file that is not imported is deleted (the root layout owns the import)", () => {
-    const layout = read("app/layout.tsx");
-    for (const f of FOUR) {
-      const name = path.basename(f);
-      const imported = new RegExp(`import\\s+["'][^"']*${name.replace(".", "\\.")}["']`).test(
-        layout,
-      );
-      if (imported) expect(fs.existsSync(path.join(WEB, f))).toBe(true);
-      else expect({ f, exists: fs.existsSync(path.join(WEB, f)) }).toEqual({ f, exists: false });
-    }
+  it("nothing imports one of them (the root layout owns no front-door import)", () => {
+    const names = FOUR.map((f) => path.basename(f).replace(".", "\\."));
+    const importRe = new RegExp("import\\s+[\"'][^\"']*(" + names.join("|") + ")[\"']");
+    const withComments = (rel: string) => fs.readFileSync(path.join(WEB, rel), "utf8");
+    expect(withComments("app/layout.tsx")).not.toMatch(importRe);
+    expect(sources.filter((s) => importRe.test(s.text)).map((s) => s.file)).toEqual([]);
   });
 });
 
+// The stylesheets are gone, so the B248 / B520 / B550 facts are now absence in everything that is
+// left: every source file scanned above plus every stylesheet under app/ and components/ (the
+// site stylesheets in public/ are scanned for the same text below).
+const cssFiles: Array<{ file: string; text: string }> = [];
+const walkCss = (dir: string) => {
+  if (!fs.existsSync(dir)) return;
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (SKIP_DIR.has(e.name)) continue;
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) walkCss(full);
+    else if (e.name.endsWith(".css"))
+      cssFiles.push({
+        file: path.relative(REPO, full).split(path.sep).join("/"),
+        text: stripCss(fs.readFileSync(full, "utf8")),
+      });
+  }
+};
+[path.join(WEB, "app"), path.join(WEB, "components"), path.join(WEB, "public", "site")].forEach(
+  walkCss,
+);
+const stylesheetsMatching = (re: RegExp): string[] =>
+  cssFiles.filter((s) => re.test(s.text)).map((s) => s.file);
+
 describe("B248: no typed purple and no --plum token in the front door", () => {
-  it("none of the purple values or the token appears in the four stylesheets", () => {
-    const text = FOUR.map(read).join("\n");
-    expect(text.match(/#7b49ab|#623691|#dcc1ef|#6d369e|#c7a2e1|#714a8b/gi) ?? []).toEqual([]);
-    expect(text.match(/--plum/g) ?? []).toEqual([]);
+  const PURPLE = /#7b49ab|#623691|#dcc1ef|#6d369e|#c7a2e1|#714a8b/i;
+  it("the stylesheets scan finds the app, component and site stylesheets", () => {
+    expect(cssFiles.some((s) => s.file === "apps/web/app/globals.css")).toBe(true);
+    expect(cssFiles.some((s) => s.file === "apps/web/public/site/css/site.css")).toBe(true);
+  });
+
+  it("none of the purple values or the token appears in any stylesheet or source", () => {
+    expect(stylesheetsMatching(PURPLE)).toEqual([]);
+    expect(stylesheetsMatching(/--plum/)).toEqual([]);
+    expect(consumersOf(PURPLE)).toEqual([]);
   });
 
   it("no source reads the token", () => {
@@ -130,23 +147,19 @@ describe("B248: no typed purple and no --plum token in the front door", () => {
 });
 
 describe("B520: no scroll-reveal that starts at opacity 0", () => {
-  it("the reveal rules are gone from the four stylesheets", () => {
-    const text = FOUR.map(read).join("\n");
-    expect(text.match(/editorial-reveal|reveal-pending/g) ?? []).toEqual([]);
+  it("the reveal rules are in no stylesheet", () => {
+    expect(stylesheetsMatching(/editorial-reveal|reveal-pending/)).toEqual([]);
   });
 
   it("the observer module is gone and nothing emits or imports the reveal names", () => {
-    expect(fs.existsSync(path.join(WEB, "app/(marketing)/components/editorial-motion.tsx"))).toBe(
-      false,
-    );
+    expect(exists("app/(marketing)/components/editorial-motion.tsx")).toBe(false);
     expect(consumersOf(/editorial-reveal|reveal-pending|editorial-motion/)).toEqual([]);
   });
 });
 
 describe("B550: no company-page grid that can overflow at 761-950px", () => {
-  it("the grid selectors are gone from the four stylesheets", () => {
-    const text = stripCss(FOUR.map(read).join("\n"));
-    expect(text.match(/\.company-principles|\.feature-grid/g) ?? []).toEqual([]);
+  it("the grid selectors are in no stylesheet", () => {
+    expect(stylesheetsMatching(/\.company-principles|\.feature-grid/)).toEqual([]);
   });
 
   it("no page or component uses those classes (the company page is a ready-made page with its own css)", () => {

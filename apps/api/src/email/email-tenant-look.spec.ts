@@ -1,6 +1,7 @@
 import { Logger } from "@nestjs/common";
 import { isLayoutHtml, renderBrandedEmail } from "./email-layout";
 import { EmailService } from "./email.service";
+import { BRAND } from "../common/brand";
 
 jest.mock("nodemailer", () => ({ createTransport: jest.fn() }));
 
@@ -102,8 +103,8 @@ describe("a body fragment with a `layout` spec (EmailService.composeLayout)", ()
     expect(out.html).toContain("https://api.test/api/v1/public/tenants/acme/logo");
     expect(out.html).toContain("#1D4E89");
     expect(visible(out.html)).toContain("Your statement");
-    expect(visible(out.html)).toContain("Sent with RouteFlow");
-    expect(out.html).not.toMatch(/alt="RouteFlow"/);
+    expect(visible(out.html)).toContain(`Sent with ${BRAND.name}`);
+    expect(out.html).not.toContain(`alt="${BRAND.name}"`);
     expect(out.text).toContain("Your statement");
     expect(out.text).toContain("Hello.");
     expect(out.text).toContain("You are getting this because Acme sent it.");
@@ -126,7 +127,9 @@ describe("a body fragment with a `layout` spec (EmailService.composeLayout)", ()
       html: "<p>Hello.</p>",
       layout,
     });
-    expect(out.html).not.toMatch(/alt="RouteFlow"|routeflow-mark|Sent by RouteFlow/);
+    expect(out.html).not.toContain(`alt="${BRAND.name}"`);
+    expect(out.html).not.toContain(BRAND.emailLogo);
+    expect(out.html).not.toContain(`Sent by ${BRAND.name}`);
     expect(visible(out.html)).not.toContain("Sent with");
   });
 
@@ -188,9 +191,9 @@ describe("renderBrandedEmail with a tenant look (the invoice shell)", () => {
     });
     expect(html).toContain('alt="Acme Foods"');
     expect(html).toContain("#1D4E89");
-    expect(visible(html)).toContain("Sent with RouteFlow");
-    expect(html).not.toMatch(/alt="RouteFlow"/);
-    expect(text).toContain("Sent with RouteFlow");
+    expect(visible(html)).toContain(`Sent with ${BRAND.name}`);
+    expect(html).not.toContain(`alt="${BRAND.name}"`);
+    expect(text).toContain(`Sent with ${BRAND.name}`);
   });
 
   it("without a look it keeps the caller's own header and says nothing about RouteFlow", () => {

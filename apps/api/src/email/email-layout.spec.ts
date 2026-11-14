@@ -23,6 +23,7 @@ import {
 } from "./routeflow-mail";
 import { paragraphsMissingFromText } from "../testing/email-text-parity";
 import { EmailService } from "./email.service";
+import { BRAND } from "../common/brand";
 
 jest.mock("nodemailer", () => ({ createTransport: jest.fn() }));
 
@@ -53,8 +54,8 @@ describe("renderEmailLayout — the one layout (W-1163)", () => {
     expect(isLayoutHtml(html)).toBe(true);
     expect(html).toContain('width="600"');
     expect(html).toContain('<meta name="color-scheme" content="light dark">');
-    expect(html).toMatch(/<img [^>]*alt="RouteFlow"/);
-    expect(html).toContain("https://www.routeflow.info/brand/routeflow-mark-192.png");
+    expect(html).toContain(`alt="${BRAND.name}"`);
+    expect(html).toContain(`src="${BRAND.origin}${BRAND.emailLogo}"`);
     expect(html).not.toMatch(/<style|<link|@import|<script/i);
   });
 
@@ -122,7 +123,7 @@ describe("renderEmailLayout — the one layout (W-1163)", () => {
     );
   });
 
-  it("a RouteFlow-look email has no 'Sent with RouteFlow' line (it IS RouteFlow's)", () => {
+  it("the platform's own look has no 'Sent with' line (it IS the platform)", () => {
     expect(visible(layout().html)).not.toContain("Sent with");
   });
 });
@@ -138,10 +139,10 @@ describe("tenant look", () => {
       /<img src="https:\/\/api\.test\/api\/v1\/public\/tenants\/acme\/logo"[^>]*alt="Acme Foods"/,
     );
     expect(visible(html)).toContain("Acme Foods");
-    expect(visible(html)).toContain("Sent with RouteFlow");
-    expect(html).not.toMatch(/alt="RouteFlow"/);
-    expect(html).not.toContain("routeflow-mark");
-    expect(text).toContain("Sent with RouteFlow");
+    expect(visible(html)).toContain(`Sent with ${BRAND.name}`);
+    expect(html).not.toContain(`alt="${BRAND.name}"`);
+    expect(html).not.toContain(BRAND.emailLogo);
+    expect(text).toContain(`Sent with ${BRAND.name}`);
   });
 
   it("a dark colour keeps white text and colours the button; a light one gets dark text and a navy button", () => {
@@ -196,7 +197,7 @@ describe("neutral look", () => {
   it("claims nobody: no RouteFlow mark, wordmark or 'Sent with' line", () => {
     const { html, text } = layout({ look: { kind: "neutral" } });
     expect(html).toContain(EMAIL_LAYOUT_MARKER);
-    expect(html).not.toContain("routeflow-mark");
+    expect(html).not.toContain(BRAND.emailLogo);
     expect(html).not.toMatch(/routeflow\.<\/span>/);
     expect(visible(html)).not.toContain("Sent with");
     expect(text).not.toContain("Sent with");
@@ -281,7 +282,7 @@ describe("RouteFlow's own mail", () => {
     (_i, _s, m) => {
       expect(isLayoutHtml(m.html)).toBe(true);
       expect(m.text.length).toBeGreaterThan(5);
-      expect(m.html).toMatch(/alt="RouteFlow"/);
+      expect(m.html).toContain(`alt="${BRAND.name}"`);
       expect(visible(m.html)).not.toMatch(/token=|eyJ/);
     },
   );
@@ -290,7 +291,7 @@ describe("RouteFlow's own mail", () => {
     const m = all()[0];
     expect(m.html).toContain(">Verify my email</a>");
     expect(visible(m.html)).toContain(
-      "Verify your email to open your 14-day free trial for Acme Foods.",
+      `Thanks for signing up. Verify your email to open your 14-day ${BRAND.name} free trial for Acme Foods.`,
     );
     expect(visible(m.html)).toContain("enter your Workspace ID: acme");
     expect(m.text).toContain(`Verify my email: ${TOKEN_URL}`);
@@ -383,8 +384,8 @@ describe("the layout guard in EmailService (never RouteFlow's name on a tenant's
     const out = await (service("t1") as any).ensureLayout(bare, true);
     expect(isLayoutHtml(out.html)).toBe(true);
     expect(out.html).toContain("<p>bare body</p>");
-    expect(visible(out.html)).toContain("Sent with RouteFlow");
-    expect(out.html).not.toMatch(/alt="RouteFlow"/);
+    expect(visible(out.html)).toContain(`Sent with ${BRAND.name}`);
+    expect(out.html).not.toContain(`alt="${BRAND.name}"`);
     expect(err).toHaveBeenCalledWith(expect.stringContaining("outside the shared layout"));
     jest.restoreAllMocks();
   });
@@ -397,7 +398,7 @@ describe("the layout guard in EmailService (never RouteFlow's name on a tenant's
     ] as const) {
       const out = await (service(tenantId) as any).ensureLayout(bare, scoped);
       expect(isLayoutHtml(out.html)).toBe(true);
-      expect(out.html).not.toContain("routeflow-mark");
+      expect(out.html).not.toContain(BRAND.emailLogo);
       expect(out.html).not.toMatch(/routeflow\.<\/span>/);
       expect(visible(out.html)).not.toContain("Sent with");
     }
@@ -408,7 +409,9 @@ describe("the layout guard in EmailService (never RouteFlow's name on a tenant's
     jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
     const out = await (service("t1", null) as any).ensureLayout(bare, true);
     expect(isLayoutHtml(out.html)).toBe(true);
-    expect(out.html).not.toMatch(/alt="RouteFlow"|Sent by RouteFlow|routeflow-mark/);
+    expect(out.html).not.toContain(`alt="${BRAND.name}"`);
+    expect(out.html).not.toContain(`Sent by ${BRAND.name}`);
+    expect(out.html).not.toContain(BRAND.emailLogo);
     expect(visible(out.html)).not.toContain("Sent with");
     jest.restoreAllMocks();
   });
@@ -457,7 +460,7 @@ describe("the layout guard in EmailService (never RouteFlow's name on a tenant's
       expect(isLayoutHtml(sent.html)).toBe(true);
       expect(sent.html).toContain("<p>bare body</p>");
       expect(visible(sent.html)).toContain("Sent by Acme Foods");
-      expect(visible(sent.html)).toContain("Sent with RouteFlow");
+      expect(visible(sent.html)).toContain(`Sent with ${BRAND.name}`);
     });
 
     it("sendPlatform() with bare html inside a tenant context hands the transport neutral marked html", async () => {

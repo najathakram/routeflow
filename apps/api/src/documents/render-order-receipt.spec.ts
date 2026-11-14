@@ -3,6 +3,7 @@ import { RECEIPT_FOOTER_MAX_CHARS } from "../system-config/receipt-footer";
 import { buildReceiptModel } from "./receipt-model";
 import { renderOrderReceipt } from "./render-order-receipt";
 import { BRANDING, INVOICE, orderFixture, paymentsFixture } from "./receipt.fixtures";
+import { BRAND } from "../common/brand";
 
 const ZONE = "America/New_York";
 const render = (
@@ -471,9 +472,10 @@ describe("renderOrderReceipt (email)", () => {
     );
     expect(r.html).toContain('alt="Acme Foods"');
     expect(r.html).toContain("#1D4E89");
-    expect(r.html.replace(/<[^>]+>/g, "")).toContain("Sent with RouteFlow");
-    expect(r.html).not.toMatch(/alt="RouteFlow"|routeflow-mark/);
-    expect(r.text).toContain("Sent with RouteFlow");
+    expect(r.html.replace(/<[^>]+>/g, "")).toContain(`Sent with ${BRAND.name}`);
+    expect(r.html).not.toContain(`alt="${BRAND.name}"`);
+    expect(r.html).not.toContain(BRAND.emailLogo);
+    expect(r.text).toContain(`Sent with ${BRAND.name}`);
   });
 
   it("signs the email 'Sent by <business name>.' (row 345), never 'Receipt sent by'", () => {

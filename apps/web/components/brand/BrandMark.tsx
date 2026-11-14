@@ -43,9 +43,8 @@ export function BrandMark({ size = 34, className, tone = "dark" }: BrandMarkProp
         // brightness(0) collapses the navy ink to black, invert(1) lifts it to
         // white; the alpha channel is untouched, so the mark still composites.
         // `brand-mark--light` carries NO styles of its own — it exists purely as
-        // a selector hook for marketing.css's
-        // `.rf-marketing .brand-mark:not(.brand-mark--light)` multiply scoping
-        // (globals.css stays byte-identical to the branch base — MKT-PIN T7).
+        // a selector hook (the marketing stylesheet that scoped a multiply blend to the dark
+        // variant is deleted; globals.css stays byte-identical — MKT-PIN T7).
         tone === "light" && "brand-mark--light brightness-0 invert",
         className,
       )}
@@ -59,19 +58,16 @@ interface BrandSignatureProps {
   markClassName?: string;
   /**
    * Accent color for the trailing period. Left unset by default so the
-   * stylesheet owns it — inside `.rf-marketing` that is the ported
-   * `.brand-period` cascade (ux-spec §2), elsewhere the period simply
+   * stylesheet owns it — the period simply
    * inherits its wrapper's color. Pass an explicit color only where no rule
    * covers the surface and the inherited one would have low contrast
    * (e.g. the login page's teal/navy panel).
    */
   periodColor?: string;
   /**
-   * Opt in to the marketing header's type metrics on surfaces that do NOT
-   * load the `.rf-marketing` cascade (login, signup, 404, platform admin…),
-   * so the signature is self-contained there. Left off inside
-   * `.rf-marketing`, where the stylesheet's own `.brand` / `.passport-brand`
-   * sizes must keep winning by inheritance (ux-spec §2).
+   * Opt in to the header's type metrics (login, signup, 404, platform
+   * admin…), so the signature is self-contained there. Left off where a
+   * surrounding stylesheet sizes the signature by inheritance.
    */
   standalone?: boolean;
   /**
@@ -93,8 +89,7 @@ export function BrandSignature({
   return (
     <span
       className={cn(
-        // Layout is unconditional and value-identical to
-        // `.rf-marketing .brand-signature`, so marketing surfaces are unchanged.
+        // Layout is unconditional.
         "brand-signature inline-flex items-center gap-[9px]",
         standalone && "text-[1.48rem] font-[650] leading-none tracking-[-0.065em]",
         className,
@@ -117,9 +112,8 @@ interface BrandProps {
   /** Forwarded to `BrandSignature` — `"light"` for dark surfaces (ruling B2). */
   tone?: BrandTone;
   /**
-   * Forwarded to `BrandSignature`. Off by default so marketing call sites keep
-   * inheriting the `.rf-marketing` metrics; pass it on surfaces that do not
-   * load that cascade (the auth shell).
+   * Forwarded to `BrandSignature`. Off by default so call sites inherit their surrounding metrics;
+   * pass it where nothing does (the auth shell).
    */
   standalone?: boolean;
   /** Forwarded to `BrandSignature` — accent for the trailing period. */

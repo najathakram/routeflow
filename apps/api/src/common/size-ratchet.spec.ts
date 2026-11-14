@@ -1,5 +1,5 @@
 /**
- * Size ratchet — the 15 largest source files may not grow past baseline + a small headroom.
+ * Size ratchet — the 14 largest source files may not grow past baseline + a small headroom.
  *
  * Source: local-assets/handoff/2026-09-19/repo-hygiene-audit.md §3 (the busiest AND biggest files —
  * orders/invoices services and their specs are touched 27-38 times a month, so every PR near them
@@ -53,7 +53,6 @@ const BASELINE: Record<string, number> = {
   "apps/mobile/app/(operator)/(tabs)/orders/[id]/edit-items.tsx": 1405, // #2340 prefactor (re-derived after #2444 moved StepperRow to components/EditItemsStepperRow): DraftItemCard, PriceOverrideModal, the unlisted card+modal, CreateCreditNoteModal, ProductPicker and the StyleSheet moved verbatim to components/edit-items/*; marginFloorPrice -> lib/margin-floor-price.ts (master was 3205 after #2444). Measured, not rounded.
   "apps/mobile/components/NewOrderScreen.tsx": 2560, // #2339: styles, CartModal (+ its sections, UnlistedCartRow), LinePriceModal, UnlistedItemModal, CreateCreditNoteSheet, CustomerPickerView and the shared types -> components/new-order/ (was 4056; measured 2560 on 8fa135c2 + this change); SA-085: lineUnitFor + the total/totalItems memo -> lib/cart-order-total.ts (executable pin for the order-total fix) (was 4078)
   "apps/web/app/(dashboard)/inventory/page.tsx": 3303,
-  "apps/web/app/(marketing)/marketing.css": 9941,
   "apps/web/components/ScanInvoiceModal.tsx": 3134,
 };
 
@@ -63,9 +62,11 @@ function lineCount(abs: string): number {
   return text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
 }
 
-describe("size ratchet — the 15 largest source files never grow past baseline + headroom", () => {
-  it("tracks exactly 15 files", () => {
-    expect(Object.keys(BASELINE)).toHaveLength(15);
+describe("size ratchet — the 14 tracked largest source files never grow past baseline + headroom", () => {
+  // 14, not 15: the 15th row was the front door's marketing stylesheet (9941 lines), deleted with the
+  // rest of the retired front-door CSS (wave 1b). A ratchet row leaves only when its file does.
+  it("tracks exactly 14 files", () => {
+    expect(Object.keys(BASELINE)).toHaveLength(14);
   });
 
   it.each(Object.entries(BASELINE))("%s stays within %i + HEADROOM lines", (rel, baseline) => {

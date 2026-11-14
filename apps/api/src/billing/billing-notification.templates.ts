@@ -1,4 +1,5 @@
 import { fromCents, roundMoney } from "@routeflow/pricing";
+import { BRAND } from "../common/brand";
 import { escapeHtml, safeLinkHref } from "../common/html-escape";
 import { webBaseUrl } from "../config/web-base-url";
 import { brandHeaderHtml, renderBrandButton, renderBrandedEmail } from "../email/email-layout";
@@ -13,10 +14,10 @@ export { escapeHtml };
 //
 // Fix round (Opus review of 1dba2bca, finding 4): these are PLATFORM emails (sent via
 // EmailService.sendPlatform, never the tenant's own SMTP/branding) — the layout BRAND is
-// always "RouteFlow", never the tenant's business name. The tenant's business name still
+// always the platform's name, never the tenant's business name. The tenant's business name still
 // appears in the body copy, where it belongs.
 
-const PLATFORM_BRAND = "RouteFlow";
+const PLATFORM_BRAND = BRAND.name;
 
 const fmtMoney = (n: number): string =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -40,11 +41,11 @@ function ctaButtonHtml(url: string, label: string): string {
 // not localhost.
 function emailWebBase(): string {
   const configured = `${process.env.WEB_URL ?? process.env.FRONTEND_URL ?? ""}`.trim();
-  if (!configured) return "https://www.routeflow.info";
+  if (!configured) return BRAND.origin;
   try {
     return webBaseUrl();
   } catch {
-    return "https://www.routeflow.info";
+    return BRAND.origin;
   }
 }
 
@@ -77,8 +78,8 @@ export function trialEndingTemplate(params: {
         : "Your trial has ended";
   const bodyLine =
     params.milestone === "TRIAL_ENDING_EXPIRY"
-      ? `Your RouteFlow trial for <strong>${escapeHtml(params.businessName)}</strong> ended on ${escapeHtml(params.trialEndsAt)}. Your account is now read-only until you choose a plan.`
-      : `Your RouteFlow trial for <strong>${escapeHtml(params.businessName)}</strong> ends on ${escapeHtml(params.trialEndsAt)}. Choose a plan by then to keep using RouteFlow.`;
+      ? `Your ${escapeHtml(BRAND.name)} trial for <strong>${escapeHtml(params.businessName)}</strong> ended on ${escapeHtml(params.trialEndsAt)}. Your account is now read-only until you choose a plan.`
+      : `Your ${escapeHtml(BRAND.name)} trial for <strong>${escapeHtml(params.businessName)}</strong> ends on ${escapeHtml(params.trialEndsAt)}. Choose a plan by then to keep using ${escapeHtml(BRAND.name)}.`;
   const html = baseLayout({
     tagline: "Trial",
     bodyHtml: `
@@ -196,7 +197,7 @@ export function cancelledTemplate(params: {
     bodyHtml: `
       <p style="margin:0 0 8px;font-size:15px;color:#6b7280;">Hi ${escapeHtml(params.adminName)},</p>
       <p style="margin:0 0 16px;font-size:15px;color:#374151;">
-        Your RouteFlow subscription for <strong>${escapeHtml(params.businessName)}</strong> has been cancelled.
+        Your ${escapeHtml(BRAND.name)} subscription for <strong>${escapeHtml(params.businessName)}</strong> has been cancelled.
         Your account will move to read-only access at the end of your current billing period.
       </p>
       <p style="margin:0 0 16px;font-size:14px;color:#6b7280;">
@@ -205,7 +206,7 @@ export function cancelledTemplate(params: {
       ${ctaButtonHtml(manageUrl, "Resubscribe")}
     `,
   });
-  const text = `Hi ${params.adminName},\n\nYour RouteFlow subscription for ${params.businessName} has been cancelled. Your account will move to read-only access at the end of your current billing period.\n\nChanged your mind? You can resubscribe any time.\n\nResubscribe: ${manageUrl}`;
+  const text = `Hi ${params.adminName},\n\nYour ${BRAND.name} subscription for ${params.businessName} has been cancelled. Your account will move to read-only access at the end of your current billing period.\n\nChanged your mind? You can resubscribe any time.\n\nResubscribe: ${manageUrl}`;
   return {
     subject: `Subscription cancelled — ${params.businessName}`,
     html,
@@ -232,7 +233,7 @@ export function suspendedTemplate(params: {
       ? `
       <p style="margin:0 0 8px;font-size:15px;color:#6b7280;">Hi ${escapeHtml(params.adminName)},</p>
       <p style="margin:0 0 16px;font-size:15px;color:#374151;">
-        Your RouteFlow account for <strong>${escapeHtml(params.businessName)}</strong> has been suspended.
+        Your ${escapeHtml(BRAND.name)} account for <strong>${escapeHtml(params.businessName)}</strong> has been suspended.
         ${canceledSentence}
       </p>
       ${ctaButtonHtml(manageUrl, "Choose a plan")}
@@ -240,7 +241,7 @@ export function suspendedTemplate(params: {
       : `
       <p style="margin:0 0 8px;font-size:15px;color:#6b7280;">Hi ${escapeHtml(params.adminName)},</p>
       <p style="margin:0 0 16px;font-size:15px;color:#374151;">
-        Your RouteFlow account for <strong>${escapeHtml(params.businessName)}</strong> has been suspended
+        Your ${escapeHtml(BRAND.name)} account for <strong>${escapeHtml(params.businessName)}</strong> has been suspended
         (${escapeHtml(params.reason)}). Please update your payment details to restore access.
       </p>
       ${ctaButtonHtml(manageUrl, "Update payment details")}
@@ -249,12 +250,12 @@ export function suspendedTemplate(params: {
   const text = canceled
     ? `Hi ${params.adminName},
 
-Your RouteFlow account for ${params.businessName} has been suspended. ${canceledSentence}
+Your ${BRAND.name} account for ${params.businessName} has been suspended. ${canceledSentence}
 
 Choose a plan: ${manageUrl}`
     : `Hi ${params.adminName},
 
-Your RouteFlow account for ${params.businessName} has been suspended (${params.reason}). Please update your payment details to restore access.
+Your ${BRAND.name} account for ${params.businessName} has been suspended (${params.reason}). Please update your payment details to restore access.
 
 Update payment details: ${manageUrl}`;
   return {
@@ -291,7 +292,7 @@ export function checkoutPlanNotAppliedTemplate(params: {
   };
 }
 
-// ─── RouteFlow's own invoice to a manual-pay tenant (manual invoices due, PR3) ─────────────────────────
+// ─── The platform's own invoice to a manual-pay tenant (manual invoices due, PR3) ─────────────────────────
 
 /** Why the email goes out: the issue email, a d0/d7/d14 reminder, or a super-admin resend. */
 export type RfInvoiceEmailKind = "manual" | "issue" | "d0" | "d7" | "d14";
@@ -368,10 +369,10 @@ export function rfInvoiceEmail(
   const due = rfDate(inv.dueDate, false);
   const subject =
     kind === "d0"
-      ? `Reminder: RouteFlow invoice ${inv.number} is due today`
+      ? `Reminder: ${BRAND.name} invoice ${inv.number} is due today`
       : overdue > 0
-        ? `Reminder: RouteFlow invoice ${inv.number} is ${overdue} ${overdue === 1 ? "day" : "days"} overdue`
-        : `RouteFlow invoice ${inv.number}: ${total} due ${due}`;
+        ? `Reminder: ${BRAND.name} invoice ${inv.number} is ${overdue} ${overdue === 1 ? "day" : "days"} overdue`
+        : `${BRAND.name} invoice ${inv.number}: ${total} due ${due}`;
 
   const period = `${rfDate(inv.periodStart, true)} to ${rfDate(inv.periodEnd, true)}`;
   const lines = rfLines(inv.lines);

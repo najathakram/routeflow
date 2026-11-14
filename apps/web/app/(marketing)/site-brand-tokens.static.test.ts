@@ -212,11 +212,7 @@ describe("T35d: no palette value typed outside the injected style", () => {
     }
     return out;
   };
-  const FILES = [
-    ...cssFiles("public/site", true),
-    "components/site-frame/site-frame.css",
-    ...cssFiles("app/(marketing)", false),
-  ];
+  const FILES = [...cssFiles("public/site", true), "components/site-frame/site-frame.css"];
 
   const PALETTE_RGB = new Map(
     COLORS.map(([, v]) => [v.slice(1, 7).toLowerCase(), v.toUpperCase()]),
@@ -255,10 +251,10 @@ describe("T35d: no palette value typed outside the injected style", () => {
     expect(paletteHexesIn("a{color:#112233}#main{}")).toEqual([]);
   });
 
-  it("the scan covers the site css, the frame css and the marketing css", () => {
+  it("the scan covers the site css and the frame css (app/(marketing) holds no stylesheet any more)", () => {
     expect(FILES).toContain("public/site/graphics/rf-graphics.css");
     expect(FILES).toContain("components/site-frame/site-frame.css");
-    expect(FILES.some((f) => f.startsWith("app/(marketing)/"))).toBe(true);
+    expect(cssFiles("app/(marketing)", false)).toEqual([]);
     expect(FILES.length).toBeGreaterThan(10);
   });
 

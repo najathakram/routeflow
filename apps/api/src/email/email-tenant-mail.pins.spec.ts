@@ -4,6 +4,7 @@ import { portalInviteEmail } from "../customers/portal-invite-email";
 import { paragraphsMissingFromText } from "../testing/email-text-parity";
 import { isLayoutHtml } from "./email-layout";
 import { EmailService } from "./email.service";
+import { BRAND } from "../common/brand";
 
 jest.mock("nodemailer", () => ({ createTransport: jest.fn() }));
 
@@ -85,9 +86,10 @@ describe("the buyer-portal invite: tenant look, platform transport (#824)", () =
     });
     const sent = sendMail.mock.calls[0][0];
     expect(isLayoutHtml(sent.html)).toBe(true);
-    expect(sent.html).not.toMatch(/alt="RouteFlow"|routeflow-mark/);
+    expect(sent.html).not.toContain(`alt="${BRAND.name}"`);
+    expect(sent.html).not.toContain(BRAND.emailLogo);
     expect(visible(sent.html)).toContain("Acme Foods");
-    expect(visible(sent.html)).toContain("Sent with RouteFlow");
+    expect(visible(sent.html)).toContain(`Sent with ${BRAND.name}`);
     expect(visible(sent.html)).toContain("This link expires in 7 days.");
     // the token is the button's target, never visible text
     expect(sent.html).toContain(`href="${INVITE_URL}"`);
@@ -179,8 +181,9 @@ describe("the low-stock digest wears the tenant's look", () => {
     const sent = send.mock.calls[0][0];
     expect(isLayoutHtml(sent.html)).toBe(true);
     expect(visible(sent.html)).toContain("Acme Foods");
-    expect(visible(sent.html)).toContain("Sent with RouteFlow");
-    expect(sent.html).not.toMatch(/alt="RouteFlow"|routeflow-mark/);
+    expect(visible(sent.html)).toContain(`Sent with ${BRAND.name}`);
+    expect(sent.html).not.toContain(`alt="${BRAND.name}"`);
+    expect(sent.html).not.toContain(BRAND.emailLogo);
     expect(`${sent.html} ${sent.text}`).not.toContain("RouteFlow Platform");
     expect(sent.text).toContain("Acme Widget");
   });
@@ -195,10 +198,11 @@ describe("the low-stock digest wears the tenant's look", () => {
       await svc.sendLowStockDigest({ to: "a@acme.example", businessName: name, items });
       const sent = send.mock.calls[0][0];
       expect(isLayoutHtml(sent.html)).toBe(true);
-      expect(sent.html).not.toMatch(/alt="RouteFlow"|routeflow-mark/);
+      expect(sent.html).not.toContain(`alt="${BRAND.name}"`);
+      expect(sent.html).not.toContain(BRAND.emailLogo);
       expect(visible(sent.html)).not.toContain("Sent with");
-      expect(visible(sent.html)).not.toMatch(/RouteFlow/);
-      expect(sent.text).not.toMatch(/RouteFlow/);
+      expect(visible(sent.html)).not.toContain(BRAND.name);
+      expect(sent.text).not.toContain(BRAND.name);
     },
   );
 });

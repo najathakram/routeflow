@@ -16,6 +16,7 @@ jest.mock("resend", () => ({
   })),
 }));
 import * as nodemailer from "nodemailer";
+import { BRAND } from "../common/brand";
 
 /**
  * R5 — the email layer must be HONEST: `send()` returns `{delivered:false}` (never a
@@ -2051,7 +2052,7 @@ describe("EmailService.sendLowStockDigest (N4)", () => {
  * and every send carries a non-empty plain-text alternative alongside the HTML.
  */
 describe("EmailService — brand restyle (2026-09-17): shared layout invariants", () => {
-  const BRAND_LOGO_URL = "https://www.routeflow.info/brand/routeflow-mark-192.png";
+  const BRAND_LOGO_URL = `${BRAND.origin}${BRAND.emailLogo}`;
 
   it("sendSetPasswordEmail (platform-branded): logo is an absolute https URL with alt text, brand colors present, Arial stack, non-empty text part", async () => {
     const svc = makeService();
