@@ -108,10 +108,15 @@ export default function BillingPage() {
     );
   if (!data) return null;
 
+  // UX guide B19: the share of businesses that ever started on a trial and now PAY. It comes from the
+  // server's paying count (the same figure as the Active Subscriptions card), never from "not in trial":
+  // a free pilot, a suspended or a cancelled business is not a conversion. A dash while that count is
+  // unknown or there is nobody to divide by - never an invented number (REG-743).
+  const conversionBase = mrrData ? mrrData.payingTenants + data.trialTenants : 0;
   const conversionRate =
-    data.totalTenants > 0
-      ? Math.round(((data.totalTenants - data.trialTenants) / data.totalTenants) * 100)
-      : 0;
+    mrrData && conversionBase > 0
+      ? `${Math.round((mrrData.payingTenants / conversionBase) * 100)}%`
+      : "—";
 
   // ─── Derived view state (filters + past-due) ────────────────────────────────
   const now = Date.now();
@@ -225,8 +230,12 @@ export default function BillingPage() {
         />
         <AdminStatCard
           label="Trial Conversion"
-          value={`${conversionRate}%`}
-          sub={`${data.trialTenants} still in trial`}
+          value={conversionRate}
+          sub={
+            mrrData
+              ? `${mrrData.payingTenants} paying · ${data.trialTenants} in trial`
+              : `${data.trialTenants} still in trial`
+          }
           icon={<Users className="h-5 w-5" />}
         />
       </div>
