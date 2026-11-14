@@ -70,3 +70,32 @@ describe("displayLineStatus on a pickup order", () => {
     },
   );
 });
+
+/** UX guide B20: a line still at its PENDING/CONFIRMED default on an order that is out for delivery is not "Pending". */
+describe("displayLineStatus on an out-for-delivery order (UX guide B20)", () => {
+  const li = (over: Record<string, unknown> = {}) => ({
+    status: "PENDING",
+    deliveredQty: 0,
+    qty: 4,
+    ...over,
+  });
+
+  it.each(["PENDING", "CONFIRMED"])(
+    "a %s line reads OUT_FOR_DELIVERY, not its stored status",
+    (status) => {
+      expect(displayLineStatus(li({ status }), "OUT_FOR_DELIVERY")).toBe("OUT_FOR_DELIVERY");
+    },
+  );
+
+  it("real outcomes still win: delivered qty, a stored PARTIAL/CANCELLED line", () => {
+    expect(displayLineStatus(li({ deliveredQty: 4 }), "OUT_FOR_DELIVERY")).toBe("DELIVERED");
+    expect(displayLineStatus(li({ deliveredQty: 1 }), "OUT_FOR_DELIVERY")).toBe("PARTIAL");
+    expect(displayLineStatus(li({ status: "CANCELLED" }), "OUT_FOR_DELIVERY")).toBe("CANCELLED");
+    expect(displayLineStatus(li({ status: "PARTIAL" }), "OUT_FOR_DELIVERY")).toBe("PARTIAL");
+  });
+
+  it("other order states are unchanged", () => {
+    expect(displayLineStatus(li(), "CONFIRMED")).toBe("PENDING");
+    expect(displayLineStatus(li(), "PARTIALLY_DELIVERED")).toBe("PENDING");
+  });
+});

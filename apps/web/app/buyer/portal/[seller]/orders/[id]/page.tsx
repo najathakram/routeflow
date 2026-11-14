@@ -215,7 +215,10 @@ function OrderTimeline({ order, view }: { order: BuyerOrder; view: BuyerOrderTra
     <div data-testid="order-timeline" className="flex items-center justify-between gap-0">
       {icons.map((step, i) => {
         const Icon = step.icon;
-        const isComplete = !isCancelled && !isRefused && i <= currentIdx;
+        // UX guide B20: "Partial delivery" ticks only for a partially delivered order; a full DELIVERED one skips it.
+        const skipped =
+          icons[i].label === "Partial delivery" && order.status !== "PARTIALLY_DELIVERED";
+        const isComplete = !isCancelled && !isRefused && i <= currentIdx && !skipped;
         const isCurrent = !isCancelled && !isRefused && i === currentIdx;
 
         return (

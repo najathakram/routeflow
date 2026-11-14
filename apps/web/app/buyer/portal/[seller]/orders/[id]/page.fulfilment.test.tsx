@@ -335,3 +335,22 @@ describe("before == after: unset sellers and an unreadable capability see today'
     expect(screen.queryByTestId("order-timeline")).toBeNull();
   });
 });
+
+describe("route timeline: Partial delivery is complete only for a partial order (UX guide B20)", () => {
+  const states = () =>
+    screen.getAllByTestId("timeline-step").map((s) => s.getAttribute("data-state"));
+
+  it("a fully DELIVERED order skips the Partial delivery step (upcoming), the rest complete", () => {
+    mockCaps = ready(UNSET);
+    mockOrder = order({ status: "DELIVERED" });
+    renderWithProviders(<BuyerOrderDetailPage />);
+    expect(states()).toEqual(["complete", "complete", "complete", "upcoming", "current"]);
+  });
+
+  it("a PARTIALLY_DELIVERED order shows that step as current", () => {
+    mockCaps = ready(UNSET);
+    mockOrder = order({ status: "PARTIALLY_DELIVERED" });
+    renderWithProviders(<BuyerOrderDetailPage />);
+    expect(states()).toEqual(["complete", "complete", "complete", "current", "upcoming"]);
+  });
+});
