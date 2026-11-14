@@ -50,6 +50,7 @@ export const EXEMPT: Exemption[] = [
   { path: "app/(auth)/", scope: "file", liftedBy: "W2", lane: "2.6" },
   { path: "app/buyer/login/", scope: "file", liftedBy: "W2", lane: "2.6" },
   { path: "app/not-found.tsx", scope: "file", liftedBy: "W2", lane: "2.6" },
+  { path: "app/verify-email/", scope: "file", liftedBy: "W2", lane: "2.6" },
   { path: "public/site/product.html", scope: "hex", liftedBy: "W3", lane: "2.3-inner" },
   { path: "public/site/security.html", scope: "hex", liftedBy: "W3", lane: "2.3-inner" },
   // Not in the delta's table: the same lane and the same pattern (--pc/--pi tile colours).
