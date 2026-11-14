@@ -19,6 +19,7 @@ import {
   type InferredFlatRate,
   type InferredFlatRateOptions,
 } from "./inferred-flat-rate";
+import { assertDiscountTaxBase } from "./discount-tax-base";
 import { roundMoney } from "./pricing";
 
 /** The InvoiceItem.systemKind value that stamps the NSF fee line (Prisma `InvoiceItemSystemKind`). */
@@ -75,8 +76,9 @@ export function inferredGoodsFlatRate(
       NsfLineFactsInput & { taxRate?: unknown; categoryTaxAmount?: unknown; subtotal?: unknown }
     >;
   },
-  opts: InferredFlatRateOptions = {},
+  opts: InferredFlatRateOptions,
 ): InferredFlatRate | null {
+  assertDiscountTaxBase(opts?.discountBase);
   const lines = invoice.lines ?? [];
   const nsf = lines.map((l) => isNsfLine(l));
   const fees = lines.reduce((s, l, i) => (nsf[i] ? s + (Number(l.subtotal) || 0) : s), 0);
@@ -84,6 +86,7 @@ export function inferredGoodsFlatRate(
     {
       subtotal: roundMoney((Number(invoice.subtotal) || 0) - fees),
       taxAmount: invoice.taxAmount,
+      discount: invoice.discount,
       lines: lines.filter((_, i) => !nsf[i]),
     },
     opts,

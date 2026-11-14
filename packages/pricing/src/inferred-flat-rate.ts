@@ -1,4 +1,4 @@
-import type { DiscountTaxBase } from "./discount-tax-base";
+import { assertDiscountTaxBase, taxRateBaseOf, type DiscountTaxBase } from "./discount-tax-base";
 import { roundMoney } from "./pricing";
 import { sumInvoiceTotals } from "./invoice-totals";
 import { TAX_PERCENT_DECIMALS, TAX_RATE_FRACTION_DECIMALS } from "./tax-precision";
@@ -35,7 +35,7 @@ export interface InferredFlatRateOptions {
    * Without it the first verified of the 4-dp rate, then the 6-dp rate is returned (else the 6-dp rate, unverified).
    */
   preferredRate?: number | null;
-  discountBase?: DiscountTaxBase;
+  discountBase: DiscountTaxBase;
 }
 
 /**
@@ -51,25 +51,33 @@ export function inferredFlatRate(
   invoice: {
     subtotal: unknown;
     taxAmount: unknown;
+    /** The document's invoice-level discount; read only in PRE_TAX (the tax was levied on subtotal - discount). */
+    discount?: unknown;
     lines: ReadonlyArray<{ taxRate?: unknown; categoryTaxAmount?: unknown }>;
   },
-  opts: InferredFlatRateOptions = {},
+  opts: InferredFlatRateOptions,
 ): InferredFlatRate | null {
+  assertDiscountTaxBase(opts?.discountBase);
   if (invoice.lines.length === 0) return null;
   if (invoice.lines.some((l) => Number(l.taxRate ?? 0) !== 0)) return null;
   const categoryTax = invoice.lines.reduce((s, l) => s + Number(l.categoryTaxAmount ?? 0), 0);
   const regularTax = roundMoney(Number(invoice.taxAmount ?? 0) - categoryTax);
   const subtotal = Number(invoice.subtotal) || 0;
   if (!(regularTax > 0) || !(subtotal > 0)) return null;
+  // SA-1141 R5: the rate is tax / the base the mode taxed (LEGACY: the subtotal, as ever; PRE_TAX: subtotal - discount).
+  const discount = Number(invoice.discount ?? 0) || 0;
+  const base = taxRateBaseOf(subtotal, discount, opts.discountBase);
+  if (!(base > 0)) return null;
   const scale = 10 ** TAX_RATE_FRACTION_DECIMALS; // 6 dp: a percent to 4 dp (8.875% = 0.08875)
   // "Reproduces" = the ONE invoice-totals builder gives this regular tax to the cent (review MUST-1, SA).
   const reproduces = (r: number) =>
-    sumInvoiceTotals([{ subtotal, taxRate: r }]).regularTax === regularTax;
+    sumInvoiceTotals([{ subtotal, taxRate: r }], { discount, discountBase: opts.discountBase })
+      .regularTax === regularTax;
   // The tenant's own rate wins when it reproduces the stored tax: it is the rate the invoice was most likely taxed at.
   const preferred = Number(opts.preferredRate ?? 0);
   if (preferred > 0 && reproduces(preferred))
     return { rate: preferred, regularTax, verified: true };
-  const raw = flatRateFromTotals(regularTax, subtotal);
+  const raw = flatRateFromTotals(regularTax, base);
   // First VERIFIED of: the legacy 4-dp rate (the round tenant-style one: 0.0825), then the 6-dp rate (0.08875).
   const legacyScale = 10 ** TAX_PERCENT_DECIMALS;
   const legacy = Math.round(raw * legacyScale) / legacyScale;
