@@ -1,0 +1,6 @@
+# Api landing, fixes of 2026-11-13 (master `13fb12fd73c3107d98ca154f6363070fddeb3c9e`; #4313 ux-eval-batch1)
+
+Paths under `apps/api/src/` unless they start with another root.
+
+- **Expired verification link (B2).** `auth/auth.service.ts` `verifyEmail`: a token validly signed by either key but past its 24 h now throws 400 `VERIFICATION_LINK_EXPIRED` (module helper `isJwtExpired`, matched by error name); every other failure keeps the old generic 400. Code added to `common/api-error-codes.ts` and `packages/types/api/error-codes.ts` (and the mobile mock), pinned equal by the parity spec. Spec: `auth/email-verify-token.spec.ts`.
+- **Password reset names the business and targets its account (B15).** `auth/auth.controller.ts` `requestPasswordReset(dto, req)` passes `req.resolvedTenantId`; `auth/auth.service.ts` `requestPasswordReset(email, surface, tenantId?)` takes the account in that business when there is one, else every account with the address up to `PASSWORD_RESET_MAX_ACCOUNTS` (5, oldest first, warn on overflow); every token write is awaited before any mail leaves, then one mail per account; the response body is unchanged. `email/routeflow-mail.ts` `passwordResetMessage({ resetUrl, tenantName? })` names the business when given. Specs: `auth/password-reset.spec.ts`, `email/email-layout.spec.ts`.
