@@ -582,6 +582,29 @@ describe("PaymentDueService.pay", () => {
     });
 
     it.each(lostRace)(
+      "SA-1139 review: %s: an EMBEDDED raced winner (no url) is 409 to the loser; the winner's fresh session is never expired or released",
+      async (_l, mk) => {
+        const embedded = {
+          ...raced,
+          url: null,
+          client_secret: "cs_raced_secret_test",
+        };
+        const h = make({ session: embedded });
+        h.prisma.tenantSubscription.findUnique
+          .mockResolvedValueOnce({ catchupState: null, catchupSessionId: null })
+          .mockResolvedValue({ catchupState: "SESSION_OPEN", catchupSessionId: "cs_raced" });
+        h.catchup.open.mockRejectedValueOnce(mk());
+        const err: any = await h.svc.pay("t1", NOW).catch((e) => e);
+        expect(err).toBeInstanceOf(ConflictException);
+        expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.CATCHUP_SESSION_OPEN });
+        expect(JSON.stringify(err.getResponse())).not.toContain("secret");
+        expect(h.stripe.expireCheckoutSession).not.toHaveBeenCalled();
+        expect(h.claim.onSessionExpired).not.toHaveBeenCalled();
+        expect(h.catchup.open).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it.each(lostRace)(
       "%s: a raced session that cannot be read is a retryable 503, never the operator wording",
       async (_l, mk) => {
         const h = make({ session: raced });

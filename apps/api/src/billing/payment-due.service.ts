@@ -334,6 +334,11 @@ export class PaymentDueService {
 
     let staleWinner = false; // a raced session that still mismatches the fresh plan, about to be expired
     const expiresMs = Number(session.expires_at ?? 0) * 1000;
+    // SA-1139: an EMBEDDED winner has no url (its secret is the winner's alone, never handed to a second click), so
+    // the reuse block below cannot see it. On the raced path it must still never be expired: the loser gets the
+    // claim's own 409 and retries, as with a hosted winner that could not be reused. Only a live one is protected:
+    // a past-time session falls through to the expire path as before.
+    if (raced && !session.url && expiresMs > now.getTime()) throw claimRefusal("SESSION_OPEN")!;
     if (session.url && expiresMs > now.getTime()) {
       const verdict = this.termsVerdict(tenantId, session.metadata, terms);
       // A session built before the web base was fixed carries a localhost (or other-origin) return URL for up to 23 h:
