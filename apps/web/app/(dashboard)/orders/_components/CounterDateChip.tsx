@@ -71,6 +71,10 @@ export function CounterDateChip({
     const onKey = (e: KeyboardEvent) => {
       // matched on the physical key: Option+D on a Mac types a symbol, not "d"
       if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === "KeyD") {
+        // B1319: Alt+D belongs to the topmost window. A dialog above the chip (one the chip is not inside) keeps the key.
+        const dialogs = document.querySelectorAll('[role="dialog"]');
+        const top = dialogs[dialogs.length - 1];
+        if (top && !top.contains(mainRef.current)) return;
         e.preventDefault();
         e.stopPropagation();
         setOpen(true);
