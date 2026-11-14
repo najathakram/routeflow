@@ -4,7 +4,7 @@
 // umami-tag and the share image. Every name, src, host and mailbox must come from the fixture and
 // nothing of the real brand may be left. The share image's colours are the current brand's own and
 // stay typed until wave 1 (BrandTokens), so no palette fixture is applied to it here; T35 holds that
-// as a hex-only exemption row. home and landing are exempt until their own waves (T35's
+// as a hex-only exemption row. home is exempt until its own wave (T35's
 // table) and are not asserted here. A name/formerly swap fails the last block.
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -69,7 +69,7 @@ const FIXTURE = loadBrand();
 const FIXTURE_HOST = new URL(FIXTURE.origin).hostname;
 
 // The pages tokenised so far: every page T35's shared exemption table does not exempt as a file
-// (home and landing until their own waves). Nothing is hard-coded here.
+// (home until its own wave). Nothing is hard-coded here.
 const TOKENISED = STATIC_SITE_PAGE_NAMES.filter(
   (p) => !isFileExempt(`public/site/${p}.html`),
 ) as StaticSitePage[];
@@ -91,10 +91,10 @@ const esc = (v: string) =>
 const collected: string[] = [];
 
 describe("the pages", () => {
-  it("covers the eight tokenised pages and nothing else is asserted", () => {
-    expect(TOKENISED).toHaveLength(8);
+  it("covers the nine tokenised pages (landing joined in wave 1b) and nothing else is asserted", () => {
+    expect(TOKENISED).toHaveLength(9);
     expect(TOKENISED).not.toContain("home");
-    expect(TOKENISED).not.toContain("landing");
+    expect(TOKENISED).toContain("landing");
   });
 
   it.each(TOKENISED)("%s carries the fixture brand and none of the real one", (page) => {
@@ -103,9 +103,13 @@ describe("the pages", () => {
     expect(html).not.toMatch(PLANNED_NAME);
     expect(html).not.toMatch(REAL_BRAND);
     expect(html).toContain(FIXTURE.name);
-    // title: "Page :: Name"
+    // title: "Page :: Name"; landing is "Name :: Tagline" (its served title has always led with the name)
     const title = html.match(/<title>([^<]*)<\/title>/)?.[1] ?? "";
-    expect(title.endsWith(`${esc(FIXTURE.titleSeparator)}${esc(FIXTURE.name)}`)).toBe(true);
+    if (page === "landing") {
+      expect(title.startsWith(`${esc(FIXTURE.name)}${esc(FIXTURE.titleSeparator)}`)).toBe(true);
+    } else {
+      expect(title.endsWith(`${esc(FIXTURE.titleSeparator)}${esc(FIXTURE.name)}`)).toBe(true);
+    }
     // the raw adversarial separator never reaches the markup
     expect(title).not.toContain(FIXTURE.titleSeparator);
     expect(html).toContain(`<link rel="canonical" href="${FIXTURE.origin}/`);

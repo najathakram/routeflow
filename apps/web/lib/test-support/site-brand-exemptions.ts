@@ -29,7 +29,6 @@ export interface Exemption {
 }
 
 export const EXEMPT: Exemption[] = [
-  { path: "public/site/landing.html", scope: "file", liftedBy: "W1b", lane: "2.4" },
   { path: "public/site/home.html", scope: "file", liftedBy: "W2", lane: "S2" },
   { path: "public/site/js/home-up.js", scope: "comments", liftedBy: "W2", lane: "S2" },
   { path: "public/site/js/site.js", scope: "comments", liftedBy: "W2", lane: "S2" },

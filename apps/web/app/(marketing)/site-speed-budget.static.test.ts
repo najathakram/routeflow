@@ -39,10 +39,6 @@ const PENDING_WAVE: Record<string, { wave: string; reason: string }> = {
       },
     ]),
   ),
-  "font-swap:landing": {
-    wave: "W1b 2.4",
-    reason: "landing.html's inline @font-face is font-display:optional; the delta says swap",
-  },
   "raster-icons:home": {
     wave: "W4 2.5",
     reason: "home.html end-mark is a 25 KB gzip png (limit 15); the SVG end-mark removes it",
