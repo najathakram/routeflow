@@ -4,12 +4,13 @@
 // the canonical path can't be left out on one page. Words stay with each caller.
 
 import type { Metadata } from "next";
+import { BRAND } from "@routeflow/types/brand";
 import { site } from "./site";
 
 /** The two lines on the share image. Words are from COPY.md section 8. */
 export const SHARE_IMAGE_LINES = {
-  name: "RouteFlow",
-  line: "Wholesale software for orders and delivery.",
+  name: BRAND.name,
+  line: BRAND.shareLine,
 } as const;
 
 /**
@@ -29,7 +30,7 @@ export const SHARE_IMAGE = {
 export interface MarketingMetadataInput {
   /** Route path, e.g. "/pricing". Used for the canonical link and the share URL. */
   path: string;
-  /** The tab title. `{ absolute }` skips the root "%s · RouteFlow" template (home only). */
+  /** The tab title. `{ absolute }` skips the root layout's title template (home only). */
   title?: string | { absolute: string };
   /** Search description. Leave out to inherit the root layout's. */
   description?: string;

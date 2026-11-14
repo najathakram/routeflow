@@ -6,11 +6,16 @@
 //
 //   node scripts/sync-site-port.mjs --from <design source dir>
 //
+// NOTE: the pages are written with {{brand:key}} tokens (scripts/lib/site-port-tokens.cjs), never the
+// brand typed. The design source is machine-local and was not available when this was changed, so
+// the script itself has not been re-run end to end; apps/web/lib/site-port-tokens.test.ts proves the
+// mapping reproduces the committed pages byte for byte.
 // The source is the machine-local design package (local-assets/website-design-...). Wording,
 // layout, styles and scripts are copied as they are: edit the source, never public/site. The
 // subset font in public/site/fonts is left alone. Afterwards run the pin:
 //   npm test -w apps/web -- static-site
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -27,7 +32,21 @@ if (!fs.existsSync(path.join(SRC, "index.html"))) {
   console.error(`not a design source (no index.html): ${SRC}`);
   process.exit(2);
 }
-const ORIGIN = "https://www.routeflow.info";
+// Name, host, mailbox and logo files come from the brand seam (packages/types/brand/brand.json,
+// read as plain JSON: this script is not TypeScript). The ported pages carry {{brand:key}} tokens
+// that app/site-page fills when the page is served, so a brand change never touches a page.
+const BRAND = JSON.parse(
+  fs.readFileSync(path.join(ROOT, "packages/types/brand/brand.json"), "utf8"),
+);
+const ORIGIN = BRAND.origin;
+// The brand mapping lives in its own file so a Jest test can run it: apps/web/lib/site-port-tokens.test.ts
+// proves a re-run of this script reproduces the committed pages byte for byte (the design source is
+// machine-local, so that test runs the mapping on the committed pages, filled with the brand).
+const { escapeRe, tokenise } = createRequire(import.meta.url)("./lib/site-port-tokens.cjs");
+// home and landing are tokenised in later waves (T35 exemption table); until then they are
+// written with the design source's own typed name.
+const UNTOKENISED = new Set(["/", "/landing"]);
+const SITE_PREFIX = "/site/";
 
 const copy = (rel) => {
   const to = path.join(DST, rel);
@@ -57,8 +76,9 @@ for (const rel of [
   "graphics/rf-graphics.css",
   "graphics/rf-wheel-up.css",
   "graphics/rf-wheel-up.js",
-  "img/routeflow-mark-64.png",
-  "img/routeflow-mark-192.png",
+  BRAND.logo.onLight.slice(SITE_PREFIX.length),
+  // home.html's still: its own row, lifted with the home lane (spec delta, exemption table)
+  BRAND.logo.onLight.slice(SITE_PREFIX.length).replace(/-\d+\.png$/, "-192.png"),
 ]) {
   copy(rel);
 }
@@ -93,14 +113,14 @@ function port(html, route, indexable) {
   h = h.replace(/<!--[\s\S]*?-->/g, "");
   // real auth and legal routes instead of the preview's absolute address
   h = h.replace(
-    /https:\/\/www\.routeflow\.info\/(signup|login|buyer\/login|terms|privacy)\b/g,
+    new RegExp(`${escapeRe(BRAND.oldOrigin)}/(signup|login|buyer/login|terms|privacy)\\b`, "g"),
     "/$1",
   );
   // The Enterprise button opens an email to the contact address (the source jumps to a line on
   // the same page).
   h = h.replace(
     /href="#contact"( data-track="enterprise_click")/g,
-    'href="mailto:hello@routeflow.info"$1',
+    `href="mailto:${BRAND.email}"$1`,
   );
   // page-to-page links
   h = h.replace(
@@ -131,11 +151,11 @@ function port(html, route, indexable) {
   const title = (h.match(/<title>([^<]*)<\/title>/) ?? [])[1];
   const desc = (h.match(/<meta name="description" content="([^"]*)">/) ?? [])[1];
   const img = `${ORIGIN}/opengraph-image`;
-  const alt = "RouteFlow. Wholesale software for orders and delivery.";
+  const alt = `${BRAND.name}. ${BRAND.shareLine}`;
   let extra =
     `<link rel="canonical" href="${ORIGIN}${route}">
 ` +
-    `<meta property="og:site_name" content="RouteFlow">
+    `<meta property="og:site_name" content="${BRAND.name}">
 <meta property="og:type" content="website">
 ` +
     `<meta property="og:url" content="${ORIGIN}${route}">
@@ -164,17 +184,17 @@ function port(html, route, indexable) {
         {
           "@type": "Organization",
           "@id": `${ORIGIN}/#organization`,
-          name: "RouteFlow",
+          name: BRAND.name,
           url: ORIGIN,
-          logo: `${ORIGIN}/brand/routeflow-mark-512.png`,
-          email: "hello@routeflow.info",
+          logo: `${ORIGIN}${BRAND.icon["512"]}`,
+          email: BRAND.email,
         },
         {
           "@type": "SoftwareApplication",
           "@id": `${ORIGIN}/#software`,
-          name: "RouteFlow",
+          name: BRAND.name,
           url: ORIGIN,
-          description: "Wholesale software for orders and delivery.",
+          description: BRAND.shareLine,
           applicationCategory: "BusinessApplication",
           operatingSystem: "Web",
           publisher: { "@id": `${ORIGIN}/#organization` },
@@ -185,14 +205,15 @@ function port(html, route, indexable) {
 `;
   }
   h = h.replace(/(<meta name="description" content="[^"]*">\n)/, `$1${extra}`);
-  return h;
+  return UNTOKENISED.has(route) ? h : tokenise(h, BRAND);
 }
 
 for (const [from, to, route, indexable] of pages) {
   const html = fs.readFileSync(path.join(SRC, from), "utf8");
   const out = port(html, route, indexable);
   fs.writeFileSync(path.join(DST, to), out);
-  const left = out.match(/(?:href|src)="(?!#|\/|mailto:|data:)[^"]*"/g) ?? [];
+  // a {{brand:key}} token is not a relative reference
+  const left = out.match(/(?:href|src)="(?!#|\/|mailto:|data:|\{\{brand:)[^"]*"/g) ?? [];
   console.log(
     to,
     out.length,

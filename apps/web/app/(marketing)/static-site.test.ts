@@ -13,6 +13,8 @@ import { execFileSync } from "child_process";
 import { pathToFileURL } from "url";
 import { buildContentSecurityPolicy } from "../../csp.mjs";
 import { site } from "./lib/site";
+import { readServedSitePage } from "@/lib/read-site-page";
+import type { StaticSitePage } from "@/lib/static-site-page";
 
 const WEB_ROOT = path.resolve(__dirname, "../..");
 const PUBLIC_ROOT = path.join(WEB_ROOT, "public");
@@ -47,7 +49,10 @@ function loadConfig<T>(call: "redirects" | "rewrites" | "headers"): T {
   ) as T;
 }
 
-const html = (file: string) => fs.readFileSync(path.join(SITE_ROOT, file), "utf8");
+const html = (file: string) =>
+  file.endsWith(".html")
+    ? readServedSitePage(file.slice(0, -".html".length) as StaticSitePage, { websiteId: undefined })
+    : fs.readFileSync(path.join(SITE_ROOT, file), "utf8");
 
 // Every URL path the app answers with a page or a route handler, from the app folder. A segment
 // in [brackets] matches anything; (groups) are not part of the address.

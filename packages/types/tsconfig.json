@@ -3,6 +3,6 @@
   "compilerOptions": {
     "noEmit": true
   },
-  "include": ["index.ts"],
+  "include": ["index.ts", "brand/**/*.ts"],
   "exclude": ["node_modules"]
 }

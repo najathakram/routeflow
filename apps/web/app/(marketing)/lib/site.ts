@@ -8,11 +8,14 @@
 // pages' own copy instead of the redesign's preview-only text.
 
 import { Package, Route, Warehouse, type LucideIcon } from "lucide-react";
+import { BRAND } from "@routeflow/types/brand";
 
+// Name, host and mailbox come from packages/types/brand/brand.json (the brand seam, T35): nothing
+// in this file types them.
 export const site = {
-  name: "RouteFlow",
-  origin: "https://www.routeflow.info",
-  email: "hello@routeflow.info",
+  name: BRAND.name,
+  origin: BRAND.origin,
+  email: BRAND.email,
 };
 
 // The one label for the call button, on every page (COPY.md section 0 and 4: "video call", never "demo").
@@ -31,39 +34,37 @@ export const routes: MarketingRoute[] = [
     slug: "product",
     label: "Product",
     title: "Product",
-    description:
-      "What RouteFlow does for businesses that sell to stores: orders, bills, payments, stock, delivery, and counter sales. 14 days free, no card needed.",
+    description: `What ${site.name} does for businesses that sell to stores: orders, bills, payments, stock, delivery, and counter sales. 14 days free, no card needed.`,
   },
   {
     slug: "pricing",
     label: "Pricing",
     title: "Pricing",
-    description:
-      "RouteFlow plans from $99 a month. Starter, Growth, Scale, and Enterprise. 14 days free, no card needed. Pay for a year and get 2 months free.",
+    description: `${site.name} plans from $99 a month. Starter, Growth, Scale, and Enterprise. 14 days free, no card needed. Pay for a year and get 2 months free.`,
   },
   {
     slug: "company",
     label: "Company",
     title: "Company",
-    description: "We make wholesalers’ lives easier. Why we built RouteFlow, and who to write to.",
+    description: `We make wholesalers’ lives easier. Why we built ${site.name}, and who to write to.`,
   },
   {
     slug: "contact",
     label: "Contact",
     title: "Contact",
-    description: "Write to hello@routeflow.info and we reply within one business day.",
+    description: `Write to ${site.email} and we reply within one business day.`,
   },
   {
     slug: "privacy",
     label: "Privacy",
     title: "Privacy Policy",
-    description: "How RouteFlow collects, uses, and protects the information you share with us.",
+    description: `How ${site.name} collects, uses, and protects the information you share with us.`,
   },
   {
     slug: "terms",
     label: "Terms",
     title: "Terms of Service",
-    description: "The terms that apply to accessing and using the RouteFlow platform.",
+    description: `The terms that apply to accessing and using the ${site.name} platform.`,
   },
 ];
 
@@ -132,10 +133,10 @@ export interface DemoFormValues {
 
 /** Builds the `mailto:` draft the DemoForm hands off to the visitor's mail app. */
 export function demoEmail(values: DemoFormValues): string {
-  const body = `Hello RouteFlow,\n\nI'd like a demo for ${values.company}.\n\nName: ${values.name}\nWork email: ${values.email}\nCompany: ${values.company}\n\nWorkflow to discuss:\n${
+  const body = `Hello ${site.name},\n\nI'd like a demo for ${values.company}.\n\nName: ${values.name}\nWork email: ${values.email}\nCompany: ${values.company}\n\nWorkflow to discuss:\n${
     values.notes || "Orders, delivery routes, and customer accounts."
   }\n\nPlease get in touch to arrange a walkthrough.`;
   return `mailto:${site.email}?subject=${encodeURIComponent(
-    "RouteFlow demo request — " + values.company,
+    `${site.name} demo request — ` + values.company,
   )}&body=${encodeURIComponent(body)}`;
 }

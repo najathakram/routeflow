@@ -16,10 +16,17 @@ import {
   type StaticSitePage,
 } from "./static-site-page";
 import { UMAMI_SCRIPT_SRC, umamiAllowedPath } from "./umami-tag";
+import { readServedSitePage } from "./read-site-page";
+import { renderSitePage } from "./static-site-page";
+import { BRAND, loadBrand } from "@routeflow/types/brand";
 
+// The brand's own host, from the seam: a name or host swap needs no edit here.
+const HOST = new URL(BRAND.origin).hostname;
+const APEX = HOST.replace(/^www\./, "");
 const SITE_ROOT = path.resolve(__dirname, "../public/site");
 const FAKE_ID = "00000000-0000-4000-8000-000000000000";
-const file = (page: string) => fs.readFileSync(path.join(SITE_ROOT, `${page}.html`), "utf8");
+// The page as the route serves it before the visit-count tags: file, brand tokens filled.
+const file = (page: string) => readServedSitePage(page as StaticSitePage, { websiteId: undefined });
 const PAGES = Object.entries(STATIC_SITE_PAGES) as Array<[StaticSitePage, string]>;
 
 const ID_VAR = "NEXT_PUBLIC_UMAMI_WEBSITE_ID";
@@ -71,7 +78,7 @@ describe.each(PAGES)("%s (%s) served with a site ID", (page, route) => {
     expect(tags[0]).toContain(`src="${UMAMI_SCRIPT_SRC}"`);
     expect(tags[0]).toContain("defer");
     expect(tags[0]).toContain(`data-website-id="${FAKE_ID}"`);
-    expect(tags[0]).toContain('data-domains="www.routeflow.info"');
+    expect(tags[0]).toContain(`data-domains="${HOST}"`);
     expect(tags[0]).toContain('data-auto-track="false"');
     expect(tags[0]).toContain('data-exclude-search="true"');
   });
@@ -135,7 +142,7 @@ describe("public/site/analytics.js", () => {
     const listeners: Array<() => void> = [];
     const tracker = {
       website: FAKE_ID,
-      hostname: "www.routeflow.info",
+      hostname: HOST,
       screen: "390x844",
       referrer: opts.referrer ?? "",
       title: "must not be sent",
@@ -147,12 +154,12 @@ describe("public/site/analytics.js", () => {
         : (build: (t: typeof tracker) => Sent) => void sent.push(build(tracker));
     const attrs: Record<string, string> = {
       "data-path": opts.dataPath ?? "/pricing",
-      "data-own-domain": "routeflow.info",
+      "data-own-domain": APEX,
     };
     const window: { umami?: unknown } = opts.late ? {} : { umami: { track } };
     const context = {
       window,
-      location: { origin: "https://www.routeflow.info" },
+      location: { origin: BRAND.origin },
       URL,
       document: {
         currentScript: { getAttribute: (k: string) => attrs[k] ?? null },
@@ -170,7 +177,7 @@ describe("public/site/analytics.js", () => {
     expect(sent).toEqual([
       {
         website: FAKE_ID,
-        hostname: "www.routeflow.info",
+        hostname: HOST,
         screen: "390x844",
         url: "/pricing",
         referrer: "https://www.google.com",
@@ -187,9 +194,9 @@ describe("public/site/analytics.js", () => {
 
   it.each([
     ["", ""],
-    ["https://www.routeflow.info/login?email=a@b.c", ""],
-    ["https://acme.routeflow.info/dashboard", ""],
-    ["https://routeflow.info.evil.example/x", "https://routeflow.info.evil.example"],
+    [`${BRAND.origin}/login?email=a@b.c`, ""],
+    [`https://acme.${APEX}/dashboard`, ""],
+    [`https://${APEX}.evil.example/x`, `https://${APEX}.evil.example`],
     ["android-app://com.example", ""],
     ["not a url at all", ""],
   ])("A2: referrer %j is sent as %j", (referrer, expected) => {
@@ -215,5 +222,48 @@ describe("public/site/analytics.js", () => {
     listeners[0]();
     listeners[0]();
     expect(sent).toHaveLength(1);
+  });
+});
+
+describe("renderSitePage", () => {
+  const brand = loadBrand();
+
+  it("B1: fills plain and dotted tokens, as many times as they appear", () => {
+    const html = '<a>{{brand:name}}</a><img src="{{brand:logo.onLight}}"><b>{{brand:name}}</b>';
+    expect(renderSitePage(html, brand)).toBe(
+      `<a>${brand.name}</a><img src="${brand.logo.onLight}"><b>${brand.name}</b>`,
+    );
+  });
+
+  it("B2: throws on a key the brand does not have, naming it", () => {
+    expect(() => renderSitePage("{{brand:nope}}", brand)).toThrow('unknown brand key "nope"');
+    expect(() => renderSitePage("{{brand:logo}}", brand)).toThrow('unknown brand key "logo"');
+  });
+
+  it("B3: throws on a leftover or malformed token", () => {
+    expect(() => renderSitePage("x {{brand:name", brand)).toThrow(/leftover brand token/);
+    expect(() => renderSitePage("{{brand:{{brand:name}}}}", brand)).toThrow(/leftover|unknown/);
+  });
+
+  it("B3b: a token with the wrong case is a leftover, not served", () => {
+    expect(() => renderSitePage("{{Brand:name}}", brand)).toThrow(/leftover brand token/);
+    expect(() => renderSitePage("{{BRAND:name}}", brand)).toThrow(/leftover brand token/);
+  });
+
+  it("B3c: whitespace inside the braces is a leftover too", () => {
+    expect(() => renderSitePage("{{ brand:name}}", brand)).toThrow(/leftover brand token/);
+    expect(() => renderSitePage("{{brand :name}}", brand)).toThrow(/leftover brand token/);
+  });
+
+  it("B4: a page with no token is returned untouched, and a value is escaped, not injected", () => {
+    expect(renderSitePage("<p>no tokens</p>", brand)).toBe("<p>no tokens</p>");
+    const evil = { ...brand, name: 'A"<b>&' };
+    expect(renderSitePage("{{brand:name}}", evil)).toBe("A&quot;&lt;b&gt;&amp;");
+  });
+
+  it("B5: every served page has no token left, with the real brand", () => {
+    for (const page of STATIC_SITE_PAGE_NAMES) {
+      expect(readServedSitePage(page, { websiteId: undefined })).not.toContain("{{brand:");
+    }
   });
 });

@@ -1,0 +1,24 @@
+{
+  "name": "RouteFlow",
+  "formerly": "RouteFlow",
+  "legalEntity": "Routeflow Solutions LLC",
+  "origin": "https://www.routeflow.info",
+  "oldOrigin": "https://www.routeflow.info",
+  "email": "hello@routeflow.info",
+  "securityEmail": "security@routeflow.info",
+  "titleSeparator": " | ",
+  "shareLine": "Wholesale software for orders and delivery.",
+  "logo": {
+    "onLight": "/site/img/routeflow-mark-64.png",
+    "onDark": "/site/img/routeflow-mark-64.png",
+    "small": "/site/img/routeflow-mark-64.png"
+  },
+  "symbol": "/site/img/routeflow-mark-64.png",
+  "icon": {
+    "favicon": "/site/img/routeflow-mark-64.png",
+    "apple": "/brand/routeflow-mark-180.png",
+    "192": "/brand/routeflow-mark-192.png",
+    "512": "/brand/routeflow-mark-512.png"
+  },
+  "emailLogo": "/brand/routeflow-mark-192.png"
+}

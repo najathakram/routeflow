@@ -7,9 +7,16 @@
 // its credit, Contact by email only (no video call), and the old About page gone.
 import * as fs from "fs";
 import * as path from "path";
+import { BRAND } from "@routeflow/types/brand";
+import { readServedSitePage } from "@/lib/read-site-page";
+import type { StaticSitePage } from "@/lib/static-site-page";
 
 const SITE = path.resolve(__dirname, "../../public/site");
-const read = (file: string) => fs.readFileSync(path.join(SITE, file), "utf8");
+// Pages are read as the route serves them (brand tokens filled): the seam's one reader.
+const read = (file: string) =>
+  file.endsWith(".html")
+    ? readServedSitePage(file.slice(0, -".html".length) as StaticSitePage, { websiteId: undefined })
+    : fs.readFileSync(path.join(SITE, file), "utf8");
 const company = read("company.html");
 const contact = read("contact.html");
 const home = read("home.html");
@@ -40,7 +47,7 @@ describe("Company page", () => {
 
   it("every claim in the note is one the site and the code back (the links go to real pages)", () => {
     const note = paragraphs(home, 'id="fd-note"', "</div>").join(" ");
-    for (const href of ["/does-and-doesnt", "/pricing", "mailto:hello@routeflow.info"]) {
+    for (const href of ["/does-and-doesnt", "/pricing", `mailto:${BRAND.email}`]) {
       expect(note).toContain(`href="${href}"`);
     }
     expect(fs.existsSync(path.join(SITE, "does-and-doesnt.html"))).toBe(true);
@@ -52,8 +59,8 @@ describe("Company page", () => {
     );
     for (const plan of ["Starter", "Growth", "Scale"])
       expect(read("pricing.html")).toContain(`<h2>${plan}</h2>`);
-    // what RouteFlow does: each is on the product page or in the pricing package
-    expect(note).toContain("RouteFlow runs your selling, from order to payment.");
+    // what the product does: each is on the product page or in the pricing package
+    expect(note).toContain(`${BRAND.name} runs your selling, from order to payment.`);
     expect(note).toContain("Stores can order for themselves, each at its own price.");
     expect(note).toContain("It also covers buying, simple stock, and delivery routes.");
     expect(note).toContain("When a line has 2 boxes and 3 pieces, the bill adds up right.");
@@ -71,8 +78,8 @@ describe("Company page", () => {
     for (const owner of [
       "We’ll customize it for your business at no cost, and we’ll tell you up front what we can do and when.",
       "We worked on every feature with the people who use it every day, until it was the quickest way we could find to do the job.",
-      "We also looked at most of the products on the market: what they do, why they’re hard to use, and what they leave out. RouteFlow is built to fill that gap.",
-      "Many software teams have to imagine a wholesaler’s day. We live it with the people who use RouteFlow, so we know what you need.",
+      `We also looked at most of the products on the market: what they do, why they’re hard to use, and what they leave out. ${BRAND.name} is built to fill that gap.`,
+      `Many software teams have to imagine a wholesaler’s day. We live it with the people who use ${BRAND.name}, so we know what you need.`,
     ])
       expect(note).toContain(owner);
     // the short version on a phone opens on the same first sentence and the same ask for help
@@ -86,7 +93,7 @@ describe("Company page", () => {
     );
     expect(short[0]).toBe(paragraphs(home, 'id="fd-note"', "</div>")[0]);
     expect(short[1]).toBe(
-      'We built RouteFlow with wholesalers who use it every day, starting with my <span class="nb">co-founder’s</span> father. Many software teams have to imagine a wholesaler’s day. We live it with them.',
+      `We built ${BRAND.name} with wholesalers who use it every day, starting with my <span class="nb">co-founder’s</span> father. Many software teams have to imagine a wholesaler’s day. We live it with them.`,
     );
     expect(short[2]).toBe(
       "It takes you from order to payment. If we don’t have something you need, tell us. We’ll customize it for your business at no cost.",
@@ -122,7 +129,7 @@ describe("Company page", () => {
   });
 
   it("points a question to the email address and the contact page", () => {
-    expect(company).toContain('href="mailto:hello@routeflow.info"');
+    expect(company).toContain(`href="mailto:${BRAND.email}"`);
     expect(company).toContain('href="/contact"');
   });
 });
@@ -131,7 +138,7 @@ describe("Contact page", () => {
   const main = contact.slice(contact.indexOf("<main"), contact.indexOf("</main>"));
 
   it("is by email only: no video call, booking, calendar, phone or form", () => {
-    expect(main).toContain('href="mailto:hello@routeflow.info"');
+    expect(main).toContain(`href="mailto:${BRAND.email}"`);
     expect(contact).not.toMatch(/video call|book a|schedule|calendar|demo/i);
     expect(main).not.toMatch(/<form\b|<input\b|<textarea\b|tel:/i);
   });

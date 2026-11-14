@@ -1,3 +1,4 @@
+import { BRAND } from "@routeflow/types/brand";
 import type { Metadata } from "next";
 import sitemap from "../sitemap";
 import robots from "../robots";
@@ -13,11 +14,11 @@ import { metadata as termsMetadata } from "./terms/page";
 const EXPECTED_ROUTE_METADATA: Record<string, { title: string; description: string }> = {
   privacy: {
     title: "Privacy Policy",
-    description: "How RouteFlow collects, uses, and protects the information you share with us.",
+    description: `How ${BRAND.name} collects, uses, and protects the information you share with us.`,
   },
   terms: {
     title: "Terms of Service",
-    description: "The terms that apply to accessing and using the RouteFlow platform.",
+    description: `The terms that apply to accessing and using the ${BRAND.name} platform.`,
   },
 };
 
@@ -54,17 +55,17 @@ describe("marketing SEO", () => {
       .map((entry) => entry.url)
       .sort();
     const expected = [
-      "https://www.routeflow.info/",
-      "https://www.routeflow.info/product",
-      "https://www.routeflow.info/pricing",
-      "https://www.routeflow.info/company",
-      "https://www.routeflow.info/contact",
-      "https://www.routeflow.info/privacy",
-      "https://www.routeflow.info/terms",
-      "https://www.routeflow.info/getting-started",
-      "https://www.routeflow.info/does-and-doesnt",
-      "https://www.routeflow.info/data-in-and-out",
-      "https://www.routeflow.info/security",
+      `${BRAND.origin}/`,
+      `${BRAND.origin}/product`,
+      `${BRAND.origin}/pricing`,
+      `${BRAND.origin}/company`,
+      `${BRAND.origin}/contact`,
+      `${BRAND.origin}/privacy`,
+      `${BRAND.origin}/terms`,
+      `${BRAND.origin}/getting-started`,
+      `${BRAND.origin}/does-and-doesnt`,
+      `${BRAND.origin}/data-in-and-out`,
+      `${BRAND.origin}/security`,
     ].sort();
     expect(urls).toEqual(expected);
   });
@@ -72,14 +73,14 @@ describe("marketing SEO", () => {
   it("the sitemap lists none of the old addresses", () => {
     const urls = sitemap().map((entry) => entry.url);
     for (const gone of ["wholesalers", "retailers", "book-a-demo", "sign-in", "about", "demo"]) {
-      expect(urls).not.toContain(`https://www.routeflow.info/${gone}`);
+      expect(urls).not.toContain(`${BRAND.origin}/${gone}`);
     }
   });
 
   it("robots.ts allows everything and points at the sitemap", () => {
     const result = robots();
     expect(result.rules).toEqual({ userAgent: "*", allow: "/" });
-    expect(result.sitemap).toBe("https://www.routeflow.info/sitemap.xml");
+    expect(result.sitemap).toBe(`${BRAND.origin}/sitemap.xml`);
   });
 
   it.each(Object.keys(EXPECTED_ROUTE_METADATA))(

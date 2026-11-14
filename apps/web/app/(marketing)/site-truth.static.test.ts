@@ -5,9 +5,12 @@
 // what the code says, so a wording pass cannot bring the false version back. Evidence is in the comment above each.
 import * as fs from "fs";
 import * as path from "path";
+import { BRAND } from "@routeflow/types/brand";
+import { readServedSitePage } from "@/lib/read-site-page";
+import type { StaticSitePage } from "@/lib/static-site-page";
 
 const SITE = path.resolve(__dirname, "../../public/site");
-const page = (name: string) => fs.readFileSync(path.join(SITE, `${name}.html`), "utf8");
+const page = (name: string) => readServedSitePage(name as StaticSitePage, { websiteId: undefined });
 // The wheel on the home page paints its own copy at run time from this file, so the .html pins above cannot see it.
 const wheel = () => fs.readFileSync(path.join(SITE, "graphics/rf-wheel-up.js"), "utf8");
 
@@ -32,7 +35,9 @@ describe("public site sentences the code backs", () => {
   // change requests always block. The counter shows the overage for information only.
   it("product: credit limits stop a change to an order, not a new order", () => {
     const html = page("product");
-    expect(html).toContain("RouteFlow stops a change to an order that takes the store over it.");
+    expect(html).toContain(
+      `${BRAND.name} stops a change to an order that takes the store over it.`,
+    );
     expect(html).not.toMatch(/stop the order/i);
   });
 
@@ -50,7 +55,7 @@ describe("public site sentences the code backs", () => {
     const html = page("does-and-doesnt");
     expect(html).toMatch(/You sign in with a password or a Google account/);
     expect(html).toContain("company single sign-on");
-    expect(html).not.toMatch(/None of these are in RouteFlow\.<\/td>/);
+    expect(html).not.toMatch(new RegExp(`None of these are in ${BRAND.name}\\.</td>`));
   });
 
   // inventory.service.ts: weighted average by default; settings offers Last cost. The screen label is not "Give back as".

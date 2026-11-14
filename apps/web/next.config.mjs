@@ -1,8 +1,33 @@
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildContentSecurityPolicy } from "./csp.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// The ready-made pages (public/site/<page>.html) and the address each is served at: the one list the
+// rewrites and the raw-path redirects below read. lib/static-site-page.ts keeps the same list for
+// the route (static-site.test.ts pins that the two agree).
+const SITE_PAGES = {
+  home: "/",
+  pricing: "/pricing",
+  product: "/product",
+  landing: "/landing",
+  "getting-started": "/getting-started",
+  "does-and-doesnt": "/does-and-doesnt",
+  "data-in-and-out": "/data-in-and-out",
+  security: "/security",
+  company: "/company",
+  contact: "/contact",
+};
+
+// A page that carries {{brand:key}} tokens is complete only after app/site-page has filled them, so
+// its raw file address must not serve it: it redirects to the clean address (307, like the other
+// temporary redirects here). site-raw-path-redirect.static.test.ts fails when a page gains tokens
+// without being listed, which is derived here from the file itself.
+const tokenisedPages = Object.keys(SITE_PAGES).filter((page) =>
+  /\{\{brand:/i.test(readFileSync(path.join(__dirname, "public", "site", `${page}.html`), "utf8")),
+);
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -73,6 +98,12 @@ const nextConfig = {
       { source: "/faq", destination: "/#faq", permanent: false },
       { source: "/integrations", destination: "/#faq", permanent: false },
       { source: "/quickbooks", destination: "/#faq", permanent: false },
+      // The raw file address of a tokenised page (see tokenisedPages).
+      ...tokenisedPages.map((page) => ({
+        source: `/site/${page}.html`,
+        destination: SITE_PAGES[page],
+        permanent: false,
+      })),
     ];
   },
 
@@ -83,18 +114,10 @@ const nextConfig = {
   // route behind it (app/site-page) is the file plus the Umami tags when the build has a site ID.
   async rewrites() {
     return {
-      beforeFiles: [
-        { source: "/", destination: "/site-page/home" },
-        { source: "/pricing", destination: "/site-page/pricing" },
-        { source: "/product", destination: "/site-page/product" },
-        { source: "/landing", destination: "/site-page/landing" },
-        { source: "/getting-started", destination: "/site-page/getting-started" },
-        { source: "/does-and-doesnt", destination: "/site-page/does-and-doesnt" },
-        { source: "/data-in-and-out", destination: "/site-page/data-in-and-out" },
-        { source: "/security", destination: "/site-page/security" },
-        { source: "/company", destination: "/site-page/company" },
-        { source: "/contact", destination: "/site-page/contact" },
-      ],
+      beforeFiles: Object.entries(SITE_PAGES).map(([page, source]) => ({
+        source,
+        destination: `/site-page/${page}`,
+      })),
     };
   },
 

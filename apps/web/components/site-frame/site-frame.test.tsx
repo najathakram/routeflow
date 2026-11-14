@@ -1,16 +1,15 @@
-import * as fs from "fs";
-import * as path from "path";
 import { fireEvent, render } from "@testing-library/react";
+import { BRAND } from "@routeflow/types/brand";
 import { SiteFrame } from "./SiteFrame";
 import { FOOTER_COLUMNS, MENU_LINKS, NAV_LINKS } from "./site-frame-nav";
+import { readServedSitePage } from "@/lib/read-site-page";
 import { BUYER_PRESENCE_COOKIE, OP_PRESENCE_COOKIE } from "@/lib/presence-cookies";
 
 // The React pages that wear the site frame (Privacy, Terms, sign-in, sign-up, 404) must say the
 // same thing as the ready-made pages about where things are: same header links, same phone menu,
 // same footer columns. The ready-made page is the reference; this fails when either side moves.
 
-const SITE = path.resolve(__dirname, "../../public/site");
-const reference = fs.readFileSync(path.join(SITE, "contact.html"), "utf8");
+const reference = readServedSitePage("contact", { websiteId: undefined });
 
 const pairs = (html: string) =>
   [...html.matchAll(/<a\b[^>]*href="([^"]*)"[^>]*>([^<]*)<\/a>/g)].map(
@@ -54,7 +53,7 @@ describe("SiteFrame matches the ready-made pages", () => {
       expect(hrefs).toContain(href);
       expect(reference).toContain(`href="${href}"`);
     }
-    expect(hrefs).toContain("mailto:hello@routeflow.info");
+    expect(hrefs).toContain(`mailto:${BRAND.email}`);
   });
 });
 

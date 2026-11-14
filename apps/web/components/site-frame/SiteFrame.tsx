@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
+import { BRAND, footerLine } from "@routeflow/types/brand";
 import { SiteFrameHeader } from "./SiteFrameHeader";
 import { FOOTER_COLUMNS, SITE_EMAIL } from "./site-frame-nav";
 
@@ -42,8 +43,8 @@ export function SiteFrame({
             <div>
               <Link className="brand" href="/">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src="/site/img/routeflow-mark-64.png" width={28} height={28} alt="" />
-                <span>RouteFlow</span>
+                <img src={BRAND.logo.onLight} width={28} height={28} alt="" />
+                <span>{BRAND.name}</span>
               </Link>
               <p className="foot-about">We make wholesalers’ lives easier.</p>
               <p className="foot-mail">
@@ -80,7 +81,7 @@ export function SiteFrame({
             </div>
           </div>
           <div className="foot-bottom">
-            <span>© 2026 RouteFlow</span>
+            <span>{footerLine()}</span>
             <span>
               <Link href="/privacy">Privacy Policy</Link> ·{" "}
               <Link href="/terms">Terms of Service</Link>

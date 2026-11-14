@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { BRAND } from "@routeflow/types/brand";
 import { hasBuyerPresence, hasOpPresence, readLastPortalCookie } from "@/lib/presence-cookies";
 import { resolveLandingTarget } from "@/lib/portal-routing";
 import { MENU_LINKS, NAV_LINKS } from "./site-frame-nav";
@@ -51,10 +52,10 @@ export function SiteFrameHeader({ current }: { current?: string }) {
     <>
       <header className="site-header hero-btn-in">
         <div className="wrap nav">
-          <Link className="brand" href="/" aria-label="RouteFlow home">
+          <Link className="brand" href="/" aria-label={`${BRAND.name} home`}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/site/img/routeflow-mark-64.png" width={30} height={30} alt="" />
-            <span>RouteFlow</span>
+            <img src={BRAND.logo.onLight} width={30} height={30} alt="" />
+            <span>{BRAND.name}</span>
           </Link>
           <nav aria-label="Main">
             <ul className="nav-links">
