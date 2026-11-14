@@ -1,0 +1,571 @@
+#!/usr/bin/env node
+// Self-test for scripts/leak-check.mjs, scripts/lib/leak-patterns.mjs and the leak-guard block of
+// .husky/pre-push. Plain node (repo convention for root scripts); exit 0 when every check passes.
+// Uses ONLY the neutral fixture pattern below and throwaway git repos in the OS temp dir.
+import { spawnSync } from "node:child_process";
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
+import { scanRevs } from "./leak-check.mjs";
+import { symlinkSync } from "node:fs";
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.resolve(HERE, "..");
+const CLI = path.join(HERE, "leak-check.mjs");
+const LIB = path.join(HERE, "lib", "leak-patterns.mjs");
+const HOOK = path.join(ROOT, ".husky", "pre-push");
+const FIXTURE = "zzfixture|qqsecret";
+const WORDS = ["zzfixture", "qqsecret"];
+const ZERO = "0".repeat(40);
+
+let passed = 0;
+let failed = 0;
+function check(name, ok, detail = "") {
+  console.log(`${ok ? "  ok  " : "  FAIL"} ${name}${ok ? "" : ` ${detail}`}`);
+  if (ok) passed++;
+  else failed++;
+}
+const leaks = (s) => WORDS.some((w) => s.toLowerCase().includes(w));
+
+const tmpRoot = realpathSync(mkdtempSync(path.join(tmpdir(), "leak-check-")));
+let n = 0;
+function env(extra = {}) {
+  const e = { ...scrubbedGitEnv(), ...extra };
+  delete e.CI;
+  delete e.GITHUB_ACTIONS;
+  if (extra.CI !== undefined) e.CI = extra.CI;
+  if (extra.GITHUB_ACTIONS !== undefined) e.GITHUB_ACTIONS = extra.GITHUB_ACTIONS;
+  return e;
+}
+function git(repo, args, extra) {
+  const r = spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], {
+    cwd: repo,
+    env: env(extra),
+    encoding: "utf8",
+  });
+  if (r.status !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr}`);
+  return r.stdout.trim();
+}
+function installScripts(repo) {
+  mkdirSync(path.join(repo, "scripts", "lib"), { recursive: true });
+  try {
+    cpSync(CLI, path.join(repo, "scripts", "leak-check.mjs"));
+    cpSync(LIB, path.join(repo, "scripts", "lib", "leak-patterns.mjs"));
+  } catch {
+    // red phase: the modules do not exist yet; the checks below fail for that reason
+  }
+}
+function makeRepo({ patterns = FIXTURE } = {}) {
+  const repo = path.join(tmpRoot, `r${n++}`);
+  mkdirSync(repo);
+  git(repo, ["init", "-q", "-b", "master"]);
+  installScripts(repo);
+  if (patterns !== null) {
+    mkdirSync(path.join(repo, ".git", "info"), { recursive: true });
+    writeFileSync(path.join(repo, ".git", "info", "leak-patterns"), patterns);
+  }
+  return repo;
+}
+function commit(repo, files, msg = "chore: x") {
+  for (const [f, c] of Object.entries(files)) {
+    mkdirSync(path.dirname(path.join(repo, f)), { recursive: true });
+    writeFileSync(path.join(repo, f), c);
+  }
+  git(repo, ["add", "-f", "--", ...Object.keys(files)]);
+  git(repo, ["commit", "-q", "-m", msg]);
+  return git(repo, ["rev-parse", "HEAD"]);
+}
+function cli(repo, args, extra, input) {
+  const r = spawnSync("node", [path.join(repo, "scripts", "leak-check.mjs"), ...args], {
+    cwd: repo,
+    env: env(extra),
+    encoding: "utf8",
+    input,
+  });
+  return { code: r.status, out: `${r.stdout}${r.stderr}` };
+}
+function baseRepo() {
+  const repo = makeRepo();
+  const base = commit(repo, { "a.txt": "hello\n" }, "chore: base");
+  return { repo, base };
+}
+function hookBlock() {
+  const t = readFileSync(HOOK, "utf8");
+  const a = t.indexOf("# >>> leak-guard");
+  const b = t.indexOf("# <<< leak-guard");
+  return a >= 0 && b > a ? t.slice(a, b) : null;
+}
+// Runs the REAL leak-guard block of .husky/pre-push (extracted between its markers) in a temp repo.
+function hook(repo, refsLine, extra) {
+  const block = hookBlock();
+  if (block === null) return { code: 99, out: "hook has no leak-guard block" };
+  const stub = path.join(repo, "stub-pre-push");
+  writeFileSync(stub, `refs="$(cat)"\n${block}\nexit 0\n`);
+  const r = spawnSync("sh", [stub], {
+    cwd: repo,
+    env: env(extra),
+    encoding: "utf8",
+    input: `${refsLine}\n`,
+  });
+  return { code: r.status, out: `${r.stdout}${r.stderr}` };
+}
+
+try {
+  // 1. clean range passes
+  {
+    const { repo, base } = baseRepo();
+    const head = commit(repo, { "b.txt": "fine\n" });
+    const r = cli(repo, ["--range", `${base}..${head}`]);
+    check("clean range exits 0", r.code === 0, JSON.stringify(r));
+  }
+  // 2. added line
+  {
+    const { repo, base } = baseRepo();
+    const head = commit(repo, { "b.txt": "x ZZFixture y\n" });
+    const r = cli(repo, ["--range", `${base}..${head}`]);
+    check("added line with pattern exits 1", r.code === 1, JSON.stringify(r));
+    check("added-line hit names the commit", r.out.includes(head.slice(0, 8)), r.out);
+    check("added-line hit never echoes matched text", !leaks(r.out), r.out);
+  }
+  // 3. new file name + rename
+  {
+    const { repo, base } = baseRepo();
+    const head = commit(repo, { "qqsecret-notes.txt": "innocent\n" });
+    const r = cli(repo, ["--range", `${base}..${head}`]);
+    check("new file whose NAME matches exits 1", r.code === 1 && !leaks(r.out), JSON.stringify(r));
+  }
+  {
+    const { repo, base } = baseRepo();
+    git(repo, ["mv", "a.txt", "zzfixture.txt"]);
+    git(repo, ["commit", "-q", "-m", "chore: rename"]);
+    const head = git(repo, ["rev-parse", "HEAD"]);
+    const r = cli(repo, ["--range", `${base}..${head}`]);
+    check("renamed-to matching name exits 1", r.code === 1 && !leaks(r.out), JSON.stringify(r));
+  }
+  // 4. commit message
+  {
+    const { repo, base } = baseRepo();
+    const head = commit(repo, { "b.txt": "fine\n" }, "feat: add qqSecret thing");
+    const r = cli(repo, ["--range", `${base}..${head}`]);
+    check("commit message match exits 1", r.code === 1 && !leaks(r.out), JSON.stringify(r));
+  }
+  // 5. ref name
+  {
+    const { repo, base } = baseRepo();
+    const head = commit(repo, { "b.txt": "fine\n" });
+    const r = cli(repo, ["--range", `${base}..${head}`, "--ref", "feat/zzfixture-x"]);
+    check("ref name match exits 1", r.code === 1 && !leaks(r.out), JSON.stringify(r));
+    const ok = cli(repo, ["--range", `${base}..${head}`, "--ref", "feat/clean"]);
+    check("clean ref name exits 0", ok.code === 0, JSON.stringify(ok));
+  }
+  // 6. hook: rebrand/* refusal
+  {
+    const { repo } = baseRepo();
+    const head = commit(repo, { "b.txt": "fine\n" });
+    git(repo, ["update-ref", "refs/remotes/origin/master", git(repo, ["rev-parse", "HEAD~1"])]);
+    const line = `refs/heads/rebrand/x ${head} refs/heads/rebrand/x ${ZERO}`;
+    const r = hook(repo, line);
+    check("rebrand/x push refused without env", r.code === 1 && !leaks(r.out), JSON.stringify(r));
+    const ok = hook(repo, line, { RF_REBRAND_PUSH: "launch" });
+    check("rebrand/x push allowed with RF_REBRAND_PUSH=launch", ok.code === 0, JSON.stringify(ok));
+    const other = hook(repo, line, { RF_REBRAND_PUSH: "1" });
+    check("rebrand/x refused for a wrong env value", other.code === 1, JSON.stringify(other));
+    const lref = hook(repo, `refs/heads/rebrand/x ${head} refs/heads/feat/y ${ZERO}`);
+    check("rebrand/* LOCAL ref name refused too", lref.code === 1, JSON.stringify(lref));
+    const clean = hook(repo, `refs/heads/feat/x ${head} refs/heads/feat/x ${ZERO}`);
+    check("hook passes a clean new-branch push", clean.code === 0, JSON.stringify(clean));
+  }
+  // 7. hook: leaking range, SKIP_VERIFY does not bypass
+  {
+    const { repo } = baseRepo();
+    git(repo, ["update-ref", "refs/remotes/origin/master", git(repo, ["rev-parse", "HEAD"])]);
+    const head = commit(repo, { "b.txt": "has zzfixture\n" });
+    const line = `refs/heads/feat/x ${head} refs/heads/feat/x ${ZERO}`;
+    const r = hook(repo, line);
+    check(
+      "hook refuses a leaking new-branch push",
+      r.code === 1 && !leaks(r.out),
+      JSON.stringify(r),
+    );
+    const s = hook(repo, line, { SKIP_VERIFY: "1", SKIP_VERIFY_REASON: "x" });
+    check("SKIP_VERIFY does not bypass the guard", s.code === 1, JSON.stringify(s));
+    const upd = commit(repo, { "c.txt": "fine\n" });
+    const u = hook(repo, `refs/heads/feat/x ${upd} refs/heads/feat/x ${head}`);
+    check("update push scans only remote..local", u.code === 0, JSON.stringify(u));
+  }
+  // 8. missing / empty patterns
+  {
+    const repo = makeRepo({ patterns: null });
+    const head = commit(repo, { "b.txt": "fine\n" });
+    const r = cli(repo, ["--range", `${head}..${head}`]);
+    check("missing patterns file fails closed (exit 2)", r.code === 2, JSON.stringify(r));
+    check("missing-file message says how to create it", /leak-patterns/.test(r.out), r.out);
+    const ci = cli(repo, ["--range", `${head}..${head}`], { CI: "true" });
+    check("missing patterns file skipped under CI", ci.code === 0, JSON.stringify(ci));
+    const gh = cli(repo, ["--range", `${head}..${head}`], { GITHUB_ACTIONS: "true" });
+    check("missing patterns file skipped under GITHUB_ACTIONS", gh.code === 0, JSON.stringify(gh));
+    const line = `refs/heads/feat/x ${head} refs/heads/feat/x ${head}`;
+    const h = hook(repo, line);
+    check("hook refuses locally when patterns file missing", h.code === 1, JSON.stringify(h));
+    const hc = hook(repo, line, { CI: "true" });
+    check("hook skips under CI", hc.code === 0, JSON.stringify(hc));
+  }
+  {
+    const repo = makeRepo({ patterns: "# only a comment\n\n" });
+    const r = cli(repo, ["--stdin"], {}, "hi");
+    check("empty (comments-only) patterns file fails closed", r.code === 2, JSON.stringify(r));
+  }
+  // 9. text + tree
+  {
+    const { repo } = baseRepo();
+    const bad = cli(repo, ["--stdin"], {}, "PR title ZZFIXTURE\n");
+    check(
+      "stdin text hit exits 1 without echo",
+      bad.code === 1 && !leaks(bad.out),
+      JSON.stringify(bad),
+    );
+    const good = cli(repo, ["--stdin"], {}, "PR title ok\n");
+    check("stdin clean text exits 0", good.code === 0, JSON.stringify(good));
+    writeFileSync(path.join(repo, "body.md"), "body qqsecret\n");
+    const f = cli(repo, ["--text-file", "body.md"]);
+    check("--text-file hit exits 1 without echo", f.code === 1 && !leaks(f.out), JSON.stringify(f));
+    commit(repo, { ".claude/lessons/L.md": "fine\n", "other/z.md": "zzfixture ok here\n" });
+    const t0 = cli(repo, ["--tree"]);
+    check("tree: out-of-scope file with pattern is ignored", t0.code === 0, JSON.stringify(t0));
+    commit(repo, { ".claude/pipeline/cost-ledger.jsonl": '{"a":"qqSecret"}\n' });
+    const t1 = cli(repo, ["--tree"]);
+    check(
+      "tree: ledger hit exits 1 without echo",
+      t1.code === 1 && !leaks(t1.out),
+      JSON.stringify(t1),
+    );
+    check("tree: hit names the path", t1.out.includes("cost-ledger.jsonl"), t1.out);
+  }
+  {
+    const { repo } = baseRepo();
+    commit(repo, { ".claude/skills/s/references/RUN-LOG.md": "zzfixture\n" });
+    check("tree: RUN-LOG hit exits 1", cli(repo, ["--tree"]).code === 1);
+  }
+  {
+    const { repo } = baseRepo();
+    commit(repo, { ".claude/campaign/bugs/B1.md": "zzfixture\n" });
+    check("tree: campaign/** hit exits 1", cli(repo, ["--tree"]).code === 1);
+  }
+  // 10. usage + worktree
+  {
+    const { repo } = baseRepo();
+    check("no mode is a usage error (exit 2)", cli(repo, []).code === 2);
+    const wt = path.join(tmpRoot, "wt-extra");
+    git(repo, ["worktree", "add", "-q", wt, "-b", "side"]);
+    installScripts(wt);
+    const r = cli(wt, ["--stdin"], {}, "zzfixture");
+    check("linked worktree shares the common-dir patterns file", r.code === 1, JSON.stringify(r));
+  }
+  // 11. review round: merges (B1)
+  for (const [label, file, body] of [
+    ["content", "m-new.txt", "evil zzfixture\n"],
+    ["file name", "qqsecret-merge.txt", "innocent\n"],
+  ]) {
+    const { repo } = baseRepo();
+    git(repo, ["checkout", "-q", "-b", "side"]);
+    commit(repo, { "side.txt": "clean\n" });
+    git(repo, ["checkout", "-q", "master"]);
+    const tip = commit(repo, { "m.txt": "clean\n" });
+    git(repo, ["merge", "--no-commit", "--no-ff", "side"]);
+    writeFileSync(path.join(repo, file), body);
+    git(repo, ["add", "-f", file]);
+    git(repo, ["commit", "-q", "-m", "chore: merge side"]);
+    const r = cli(repo, ["--range", `${tip}..HEAD`]);
+    check(
+      `merge commit ${label} hit exits 1 without echo`,
+      r.code === 1 && !leaks(r.out),
+      JSON.stringify(r),
+    );
+  }
+  // B2: unreadable / non-UTF-8 patterns files refuse
+  {
+    const variants = {
+      "UTF-16 BOM": Buffer.concat([
+        Buffer.from([0xff, 0xfe]),
+        Buffer.from("zzfixture\n", "utf16le"),
+      ]),
+      "NUL bytes": Buffer.from("zz\0fixture\n"),
+      "invalid UTF-8": Buffer.from([0x7a, 0x7a, 0x80, 0x0a]),
+    };
+    for (const [label, buf] of Object.entries(variants)) {
+      const repo = makeRepo({ patterns: null });
+      mkdirSync(path.join(repo, ".git", "info"), { recursive: true });
+      writeFileSync(path.join(repo, ".git", "info", "leak-patterns"), buf);
+      const r = cli(repo, ["--stdin"], {}, "zzfixture");
+      check(
+        `patterns file (${label}) refused with exit 2`,
+        r.code === 2 && /encoding|UTF-8/i.test(r.out),
+        JSON.stringify(r),
+      );
+    }
+  }
+  // B3: any failed git call fails closed
+  {
+    const { repo, base } = baseRepo();
+    const head = commit(repo, { "b.txt": "fine\n" });
+    const real = (cwd, args) => {
+      const r = spawnSync("git", args, { cwd, env: env(), encoding: "utf8" });
+      return { ok: r.status === 0, out: r.stdout ?? "" };
+    };
+    for (const sub of ["log", "diff-tree", "diff", "show"]) {
+      const fake = (cwd, args) => (args[0] === sub ? { ok: false, out: "" } : real(cwd, args));
+      let res;
+      try {
+        // `show` is only used for root commits, so that case scans the whole history.
+        const revs = sub === "show" ? [head] : [`${base}..${head}`];
+        res = scanRevs(repo, [/zzfixture/i], revs, [], fake);
+      } catch {
+        res = "threw";
+      }
+      check(`failed git ${sub} call makes scanRevs return false`, res === false, String(res));
+    }
+  }
+  // S1: RF_REBRAND_PUSH=launch lifts the refusal AND the scan for rebrand refs
+  {
+    const { repo } = baseRepo();
+    git(repo, ["update-ref", "refs/remotes/origin/master", git(repo, ["rev-parse", "HEAD"])]);
+    const head = commit(repo, { "b.txt": "has zzfixture\n" });
+    const line = `refs/heads/rebrand/x ${head} refs/heads/rebrand/x ${ZERO}`;
+    check(
+      "launch push of a rebrand ref skips the content scan",
+      hook(repo, line, { RF_REBRAND_PUSH: "launch" }).code === 0,
+    );
+    check("non-launch rebrand push still refused", hook(repo, line).code === 1);
+    const nf = `refs/heads/feat/x ${head} refs/heads/feat/x ${ZERO}`;
+    check(
+      "launch env does not unscan a non-rebrand ref",
+      hook(repo, nf, { RF_REBRAND_PUSH: "launch" }).code === 1,
+    );
+    const repo2 = makeRepo({ patterns: null });
+    const h2 = commit(repo2, { "b.txt": "fine\n" });
+    const l2 = `refs/heads/rebrand/x ${h2} refs/heads/rebrand/x ${ZERO}`;
+    check(
+      "launch rebrand push needs no patterns file",
+      hook(repo2, l2, { RF_REBRAND_PUSH: "launch" }).code === 0,
+    );
+    check(
+      "non-launch push still fails closed without patterns",
+      hook(repo2, `refs/heads/feat/x ${h2} refs/heads/feat/x ${ZERO}`).code === 1,
+    );
+    const clean = baseRepo().repo;
+    const ch = commit(clean, { "b.txt": "fine\n" });
+    const upper = `refs/heads/REBRAND/x ${ch} refs/heads/REBRAND/x ${ZERO}`;
+    const ur = hook(clean, upper);
+    check(
+      "REBRAND/x (case) refused even when clean",
+      ur.code === 1 && /rebrand/i.test(ur.out),
+      ur.out,
+    );
+  }
+  // S3: guard sits before the delete-only exit and the SKIP_VERIFY exit
+  {
+    const t = readFileSync(HOOK, "utf8");
+    const g = t.indexOf("# >>> leak-guard");
+    const d = t.indexOf("branch delete only");
+    const s = t.indexOf('if [ "$SKIP_VERIFY" = "1" ]');
+    check(
+      "leak-guard block precedes delete-only exit and SKIP_VERIFY exit",
+      g >= 0 && d > g && s > g,
+      `${g} ${d} ${s}`,
+    );
+  }
+  // S4: annotated tag message scanned
+  {
+    const { repo } = baseRepo();
+    git(repo, ["update-ref", "refs/remotes/origin/master", git(repo, ["rev-parse", "HEAD"])]);
+    const head = commit(repo, { "b.txt": "fine\n" });
+    git(repo, ["tag", "-a", "v1", "-m", "release qqsecret notes"]);
+    const tagsha = git(repo, ["rev-parse", "v1"]);
+    const r = hook(repo, `refs/tags/v1 ${tagsha} refs/tags/v1 ${ZERO}`);
+    check(
+      "annotated tag message hit refused without echo",
+      r.code === 1 && !leaks(r.out),
+      JSON.stringify(r),
+    );
+    git(repo, ["tag", "-a", "v2", "-m", "fine notes", head]);
+    const t2 = git(repo, ["rev-parse", "v2"]);
+    check(
+      "clean annotated tag passes",
+      hook(repo, `refs/tags/v2 ${t2} refs/tags/v2 ${ZERO}`).code === 0,
+    );
+  }
+  // N2: removed `-- a` then added `++ x` must not be dropped
+  {
+    const { repo } = baseRepo();
+    const b1 = commit(repo, { "p.txt": "-- a\n" });
+    const head = commit(repo, { "p.txt": "++ zzfixture\n" });
+    const r = cli(repo, ["--range", `${b1}..${head}`]);
+    check(
+      "added '++ x' line after removed '-- a' is still scanned",
+      r.code === 1 && !leaks(r.out),
+      JSON.stringify(r),
+    );
+  }
+  // ---- round 3 ----
+  // UTF-16 content (PowerShell 5.1 `echo x > f` writes FF FE + NULs)
+  {
+    const le = Buffer.concat([
+      Buffer.from([0xff, 0xfe]),
+      Buffer.from("has zzfixture\r\n", "utf16le"),
+    ]);
+    const be = Buffer.from("qqsecret\n", "utf16le").swap16();
+    const { repo } = baseRepo();
+    git(repo, ["update-ref", "refs/remotes/origin/master", git(repo, ["rev-parse", "HEAD"])]);
+    const base = git(repo, ["rev-parse", "HEAD"]);
+    const head = commit(repo, { "u16.txt": le });
+    const r = cli(repo, ["--range", `${base}..${head}`]);
+    check(
+      "UTF-16LE+BOM committed file is caught by --range",
+      r.code === 1 && !leaks(r.out),
+      JSON.stringify(r),
+    );
+    const h = hook(repo, `refs/heads/feat/u ${head} refs/heads/feat/u ${ZERO}`);
+    check(
+      "UTF-16LE+BOM committed file is refused by the hook",
+      h.code === 1 && !leaks(h.out),
+      JSON.stringify(h),
+    );
+    const t = cli(repo, ["--stdin"], {}, le);
+    check("UTF-16LE+BOM stdin text is caught", t.code === 1 && !leaks(t.out), JSON.stringify(t));
+    writeFileSync(path.join(repo, "body.txt"), le);
+    const tf = cli(repo, ["--text-file", "body.txt"]);
+    check(
+      "UTF-16LE+BOM --text-file is caught",
+      tf.code === 1 && !leaks(tf.out),
+      JSON.stringify(tf),
+    );
+    const h2 = commit(repo, { "u16be.txt": be });
+    const rb = cli(repo, ["--range", `${head}..${h2}`]);
+    check("UTF-16BE (no BOM) committed file is caught", rb.code === 1, JSON.stringify(rb));
+    const clean16 = Buffer.concat([
+      Buffer.from([0xff, 0xfe]),
+      Buffer.from("all fine\r\n", "utf16le"),
+    ]);
+    const h3 = commit(repo, { "ok16.txt": clean16 });
+    check("clean UTF-16 file passes", cli(repo, ["--range", `${h2}..${h3}`]).code === 0);
+    const c16 = cli(repo, ["--text-file", "body.txt"], { CI: "true" });
+    check(
+      "(sanity) text-file hit under CI still scans when patterns exist",
+      c16.code === 1,
+      JSON.stringify(c16),
+    );
+  }
+  // CI: rebrand refusal unconditional, content scan skipped
+  {
+    const { repo } = baseRepo();
+    git(repo, ["update-ref", "refs/remotes/origin/master", git(repo, ["rev-parse", "HEAD"])]);
+    const head = commit(repo, { "b.txt": "has zzfixture\n" });
+    const rb = `refs/heads/rebrand/x ${head} refs/heads/rebrand/x ${ZERO}`;
+    check("CI=true: rebrand/* still refused", hook(repo, rb, { CI: "true" }).code === 1);
+    check(
+      "CI=true + launch: rebrand allowed",
+      hook(repo, rb, { CI: "true", RF_REBRAND_PUSH: "launch" }).code === 0,
+    );
+    const nf = `refs/heads/feat/x ${head} refs/heads/feat/x ${ZERO}`;
+    check("CI=true: content scan skipped", hook(repo, nf, { CI: "true" }).code === 0);
+  }
+  // performance: commits already on origin/master are not rescanned
+  {
+    const { repo, base } = baseRepo();
+    const leak = commit(repo, { "l.txt": "zzfixture\n" });
+    git(repo, ["update-ref", "refs/remotes/origin/master", leak]);
+    const clean = commit(repo, { "c.txt": "fine\n" });
+    const line = `refs/heads/feat/x ${clean} refs/heads/feat/x ${base}`;
+    check("commit already on origin/master is not rescanned", hook(repo, line).code === 0, "");
+    const bad = commit(repo, { "d.txt": "zzfixture again\n" });
+    check(
+      "a new commit above origin/master is still scanned",
+      hook(repo, `refs/heads/feat/x ${bad} refs/heads/feat/x ${base}`).code === 1,
+    );
+    const r = cli(repo, ["--range", `${base}..${clean}`]);
+    check("--range also skips what origin/master carries", r.code === 0, JSON.stringify(r));
+  }
+  // junction / symlink invocation must still run the guard
+  {
+    const { repo } = baseRepo();
+    const link = path.join(tmpRoot, "scripts-link");
+    let made = true;
+    try {
+      symlinkSync(path.join(repo, "scripts"), link, "junction");
+    } catch {
+      made = false;
+    }
+    if (made) {
+      const r = spawnSync("node", [path.join(link, "leak-check.mjs"), "--stdin"], {
+        cwd: repo,
+        env: env(),
+        encoding: "utf8",
+        input: "zzfixture",
+      });
+      check(
+        "guard runs when invoked through a junction path",
+        r.status === 1,
+        `${r.status} ${r.stdout}${r.stderr}`,
+      );
+    } else {
+      console.log("  skip junction test (cannot create junction here)");
+    }
+  }
+  // pushed objects that are not commits, nested tags
+  {
+    const { repo } = baseRepo();
+    git(repo, ["update-ref", "refs/remotes/origin/master", git(repo, ["rev-parse", "HEAD"])]);
+    const head = commit(repo, { "b.txt": "fine\n" });
+    const blob = git(repo, ["rev-parse", `${head}:b.txt`]);
+    const tree = git(repo, ["rev-parse", `${head}^{tree}`]);
+    const rb = hook(repo, `refs/heads/odd ${blob} refs/heads/odd ${ZERO}`);
+    check("ref pointing at a blob is refused", rb.code === 1 && !leaks(rb.out), JSON.stringify(rb));
+    const rt = hook(repo, `refs/heads/odd ${tree} refs/heads/odd ${ZERO}`);
+    check("ref pointing at a tree is refused", rt.code === 1, JSON.stringify(rt));
+    git(repo, ["tag", "-a", "inner", "-m", "innocent", head]);
+    git(repo, ["tag", "-a", "outer", "-m", "also innocent", "inner"]);
+    const outer = git(repo, ["rev-parse", "outer"]);
+    check(
+      "clean nested tag chain ending at a commit passes",
+      hook(repo, `refs/tags/outer ${outer} refs/tags/outer ${ZERO}`).code === 0,
+    );
+    git(repo, ["tag", "-a", "inner2", "-m", "notes zzfixture", head]);
+    git(repo, ["tag", "-a", "outer2", "-m", "clean outer", "inner2"]);
+    const o2 = git(repo, ["rev-parse", "outer2"]);
+    const rn = hook(repo, `refs/tags/outer2 ${o2} refs/tags/outer2 ${ZERO}`);
+    check(
+      "hit in the INNER tag of a nested chain is refused",
+      rn.code === 1 && !leaks(rn.out),
+      JSON.stringify(rn),
+    );
+  }
+  // author / committer identity
+  for (const [label, extra] of [
+    ["author name", { GIT_AUTHOR_NAME: "qqSecret Person" }],
+    ["author email", { GIT_AUTHOR_EMAIL: "x@zzfixture.example" }],
+    ["committer name", { GIT_COMMITTER_NAME: "zzFixture Co" }],
+    ["committer email", { GIT_COMMITTER_EMAIL: "a@qqsecret.example" }],
+  ]) {
+    const { repo, base } = baseRepo();
+    writeFileSync(path.join(repo, "i.txt"), "fine\n");
+    git(repo, ["add", "i.txt"]);
+    git(repo, ["commit", "-q", "-m", "chore: id"], extra);
+    const head = git(repo, ["rev-parse", "HEAD"]);
+    const r = cli(repo, ["--range", `${base}..${head}`]);
+    check(`${label} match exits 1 without echo`, r.code === 1 && !leaks(r.out), JSON.stringify(r));
+  }
+} finally {
+  rmSync(tmpRoot, { recursive: true, force: true });
+}
+console.log(`\nleak-check self-test: ${passed} passed, ${failed} failed`);
+process.exit(failed === 0 ? 0 : 1);

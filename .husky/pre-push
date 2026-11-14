@@ -55,6 +55,16 @@
 # here at the top; nothing else in this hook reads stdin (a second read yields "").
 refs="$(cat)"
 
+# G0 push leak guard: refuses a private, not-yet-public name (patterns in the untracked
+# <git-common-dir>/info/leak-patterns, never in git) in the pushed diff, commit messages, file and ref
+# names, and any rebrand/* ref (lifted only by RF_REBRAND_PUSH=launch). Runs FIRST, before the trunk
+# check, the SKIP_VERIFY hatch and verify, so SKIP_VERIFY cannot bypass it. Fail-closed on a dev machine
+# when the patterns file is missing or empty; under CI only the content scan is skipped (the rebrand/* refusal is not).
+# Prints identifiers only, never the matched text. See docs/runbooks/push-leak-guards.md.
+# >>> leak-guard
+printf '%s\n' "$refs" | node scripts/leak-check.mjs --hook || exit 1
+# <<< leak-guard
+
 # B1298: judge the refs being PUSHED, not only the checked-out branch. (a) Any remote ref that is
 # master/main is refused, from any branch (covers `HEAD:master` and `--delete master`). (b) A push
 # whose every line is a delete (local sha all zeros) has nothing to verify, so a feature-branch
