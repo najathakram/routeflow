@@ -2666,32 +2666,26 @@ export class PlatformAdminService {
           ? null
           : dto.annual;
 
-    // UX guide B4: a Save that changes neither price writes nothing, syncs no subscription and leaves no audit
-    // row. After the count re-check above (the 409 contract is unchanged); compared in cents, so 100 and
-    // "100.00" are the same price.
+    // UX guide B4 / UXG-R4: compared in cents (100 and "100.00" are the same price). When neither price differs
+    // from the stored one, only the catalog write is skipped: the fan-out and the audit row still run, because a
+    // re-save is the retry for tenants whose Stripe sync failed. A tenant already at the price is a no-op at Stripe.
     const sameCents = (stored: Prisma.Decimal | null | undefined, next: unknown) =>
       stored == null || next == null
         ? (stored ?? null) === (next ?? null)
         : roundMoney(Number(stored)) === roundMoney(Number(next));
-    if (
+    const pricesChanged = !(
       sameCents(definition.monthlyPrice, dto.monthly) &&
       sameCents(definition.annualPrice, annualPrice)
-    ) {
-      return {
-        planKey,
-        monthlyPrice: Number(definition.monthlyPrice),
-        annualPrice: definition.annualPrice == null ? null : Number(definition.annualPrice),
-        updated: 0,
-        synced: 0,
-        failed: 0,
-        skippedDowngrade: 0,
-      };
-    }
+    );
 
-    const updated = await this.prisma.planDefinition.update({
-      where: { planVersionId_planKey: { planVersionId: version.id, planKey: definition.planKey } },
-      data: { monthlyPrice: dto.monthly, annualPrice },
-    });
+    const updated = pricesChanged
+      ? await this.prisma.planDefinition.update({
+          where: {
+            planVersionId_planKey: { planVersionId: version.id, planKey: definition.planKey },
+          },
+          data: { monthlyPrice: dto.monthly, annualPrice },
+        })
+      : definition;
 
     // Fan-out targets: `onPlan`, the selection counted above (see selectPlanPriceTargets, shared with the R24 read).
     // N3 (R1 Option B): a tenant whose scheduled DOWNGRADE price has ALREADY been pushed onto its Stripe base item
@@ -2703,6 +2697,7 @@ export class PlatformAdminService {
     let skippedDowngrade = 0;
 
     let synced = 0;
+    let unchanged = 0;
     let failed = 0;
     for (const target of targets) {
       try {
@@ -2727,7 +2722,10 @@ export class PlatformAdminService {
           return this.billingService.syncStripeSubscriptionPrice(target.tenantId);
         });
         if (result === "skipped") skippedDowngrade++;
-        else if (result?.synced) synced++;
+        else if (result?.synced) {
+          synced++;
+          if (result.unchanged) unchanged++;
+        }
       } catch (e) {
         failed++;
         this.logger.warn(
@@ -2745,6 +2743,7 @@ export class PlatformAdminService {
       meta: {
         platformAdmin: true,
         planKey,
+        pricesChanged,
         monthlyPrice: dto.monthly,
         annualPrice: annualPrice === null ? null : Number(annualPrice),
         updated: targets.length - skippedDowngrade,
@@ -2760,6 +2759,7 @@ export class PlatformAdminService {
       annualPrice: updated.annualPrice === null ? null : Number(updated.annualPrice),
       updated: targets.length - skippedDowngrade,
       synced,
+      unchanged,
       failed,
       skippedDowngrade,
     };

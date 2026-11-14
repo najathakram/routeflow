@@ -22,6 +22,8 @@ export interface ConfirmDialogProps {
    *  (reversible actions such as Deactivate), "secondary" = neutral button */
   variant?: "danger" | "secondary" | "warning";
   loading?: boolean;
+  /** Only the confirm button (for a notice whose single action is "Close"). */
+  hideCancel?: boolean;
 }
 
 export function ConfirmDialog({
@@ -34,6 +36,7 @@ export function ConfirmDialog({
   cancelLabel = "Cancel",
   variant = "danger",
   loading = false,
+  hideCancel = false,
 }: ConfirmDialogProps) {
   const cancelRef = React.useRef<HTMLButtonElement>(null);
   return (
@@ -53,15 +56,17 @@ export function ConfirmDialog({
       }
       footer={
         <>
-          <Button
-            ref={cancelRef}
-            variant="secondary"
-            className={DIALOG_FOOTER_BUTTON}
-            onClick={onClose}
-            disabled={loading}
-          >
-            {cancelLabel}
-          </Button>
+          {!hideCancel && (
+            <Button
+              ref={cancelRef}
+              variant="secondary"
+              className={DIALOG_FOOTER_BUTTON}
+              onClick={onClose}
+              disabled={loading}
+            >
+              {cancelLabel}
+            </Button>
+          )}
           <Button
             variant={variant === "warning" ? "primary" : variant}
             className={DIALOG_FOOTER_BUTTON}

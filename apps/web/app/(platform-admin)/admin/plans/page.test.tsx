@@ -338,3 +338,87 @@ describe("UX guide B11 read-only row for a plan the public catalog omits", () =>
     expect(screen.queryByText("Lite")).toBeNull();
   });
 });
+
+// UXG-R4: Save stays off on a clean row, but the retry that an unchanged Save used to be is kept as a named
+// control, "Sync to Stripe", which reuses the same count check, confirm and 409 loop.
+describe("UXG-R4 Sync to Stripe (retry a failed plan sync)", () => {
+  const stored = () => ({
+    monthly: 100,
+    annual: 1000,
+  });
+
+  it("WEB-1: a clean row has Save disabled and a Sync to Stripe button", async () => {
+    render(<AdminPlansPage />);
+    await screen.findByLabelText("Growth monthly price (USD)");
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Sync to Stripe" })).toBeEnabled();
+  });
+
+  it("WEB-2: a dirty row hides Sync to Stripe and enables Save", async () => {
+    render(<AdminPlansPage />);
+    fireEvent.change(await screen.findByLabelText("Growth monthly price (USD)"), {
+      target: { value: "149" },
+    });
+    expect(screen.queryByRole("button", { name: "Sync to Stripe" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  });
+
+  it("WEB-3: Sync -> confirm -> PATCH with the stored prices and the confirmed count; the toast shows unchanged and failed", async () => {
+    mockImpact.mockResolvedValue(impact({ newMonthly: 100, monthlyDelta: 0 }));
+    mockPatch.mockResolvedValue({
+      planKey: "GROWTH",
+      monthlyPrice: 100,
+      annualPrice: 1000,
+      updated: 12,
+      synced: 11,
+      unchanged: 10,
+      failed: 1,
+    });
+    render(<AdminPlansPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Sync to Stripe" }));
+    const dialog = await screen.findByRole("dialog", { name: "Sync Growth to Stripe?" });
+    expect(mockImpact).toHaveBeenCalledWith("GROWTH", 100);
+    expect(
+      within(dialog).getByText(
+        "Re-applies $100 a month to 12 live subscriptions. Subscriptions already at this price are not changed.",
+      ),
+    ).toBeInTheDocument();
+    expect(mockPatch).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Sync 12 subscriptions" }));
+    await waitFor(() => expect(mockPatch).toHaveBeenCalledTimes(1));
+    expect(mockPatch).toHaveBeenCalledWith("GROWTH", { ...stored(), expectedAffected: 12 });
+    expect(
+      await screen.findByText("Synced Growth: 1 updated, 10 already current, 1 failed."),
+    ).toBeInTheDocument();
+  });
+
+  it("with no live subscriptions the confirm says nothing will change and only offers Close (no PATCH)", async () => {
+    mockImpact.mockResolvedValue(impact({ affected: 0, ownPrice: 0, monthlyDelta: 0 }));
+    render(<AdminPlansPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Sync to Stripe" }));
+    const dialog = await screen.findByRole("dialog", { name: "Sync Growth to Stripe?" });
+    expect(within(dialog).getByText(/Nothing will change/)).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Cancel" })).toBeNull();
+    // the dialog's X is also named Close; the footer button is the last one
+    fireEvent.click(within(dialog).getAllByRole("button", { name: "Close" }).at(-1)!);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(mockPatch).not.toHaveBeenCalled();
+  });
+
+  it("a 409 on a sync fetches the count again and keeps the dialog on the new number", async () => {
+    mockImpact
+      .mockResolvedValueOnce(impact({ newMonthly: 100, monthlyDelta: 0 }))
+      .mockResolvedValueOnce(impact({ newMonthly: 100, monthlyDelta: 0, affected: 13 }));
+    mockPatch.mockRejectedValueOnce({
+      response: { status: 409, data: { code: "PLAN_PRICE_IMPACT_CHANGED", affected: 13 } },
+    });
+    render(<AdminPlansPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Sync to Stripe" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Sync 12 subscriptions" }));
+    expect(
+      await screen.findByRole("button", { name: "Sync 13 subscriptions" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toHaveTextContent("Sync Growth to Stripe?");
+  });
+});
