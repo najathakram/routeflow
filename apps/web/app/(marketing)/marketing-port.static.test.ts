@@ -388,16 +388,22 @@ describe("pinned global styles — MKT-PIN T7", () => {
   });
 });
 
-// One focus ring for the whole marketing surface, on the `--ring` token at the
-// ux-spec §5 width/offset. The port arrived with two competing global rules
-// (a blue `a|button|input|textarea|summary:focus-visible` ring and a mauve
-// `:focus-visible` one), so a `[tabindex]` element got a different ring than a
-// button on the same page and neither used `--ring`.
-describe("marketing.css ships one tokenised focus ring — R-MKT T7", () => {
-  it("the global focus ring uses var(--ring) at 2px/2px (R-MKT T7)", () => {
-    const css = fs.readFileSync(MARKETING_CSS_PATH, "utf8");
-    expect(css).toContain("outline: 2px solid var(--ring)");
-    expect(css).toContain("outline-offset: 2px");
+// One focus ring for the whole front door. The port once arrived with two competing global rings;
+// since lane 2.6b the four front-door stylesheets are empty (every rule was scoped under a class no
+// page wears, see site-front-door-css.static.test.ts), so the one ring is the ready-made site's own
+// global :focus-visible rule in public/site/css/site.css, which the SiteFrame pages load.
+describe("the front door has one focus ring and it is not typed in marketing.css — R-MKT T7", () => {
+  it("the four front-door stylesheets declare no outline and no :focus-visible rule (R-MKT T7)", () => {
+    for (const name of ["marketing.css", "glass.css", "glass-pages.css", "glass-site.css"]) {
+      const css = fs.readFileSync(path.join(WEB_ROOT, "app", "(marketing)", name), "utf8");
+      const code = css.replace(/\/\*[\s\S]*?\*\//g, "");
+      expect({ name, hit: /outline|focus-visible/.test(code) }).toEqual({ name, hit: false });
+    }
+  });
+
+  it("the ready-made site's global :focus-visible rule draws the ring the frame pages use (R-MKT T7)", () => {
+    const css = fs.readFileSync(path.join(WEB_ROOT, "public", "site", "css", "site.css"), "utf8");
+    expect(css).toMatch(/(^|\n)\s*:focus-visible\s*\{[^}]*outline:\s*3px solid/);
   });
 
   it("no outline declaration hardcodes the two ported ring colours (R-MKT T7)", () => {
@@ -408,101 +414,21 @@ describe("marketing.css ships one tokenised focus ring — R-MKT T7", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Sign-in menu items — owner screenshot 2026-09-08: the item was an inline
-// `<a>` whose icon/label/arrow sat in different line boxes, so :focus-visible
-// painted one outline rectangle per wrapped fragment instead of one ring
-// around the row. Fix: the item is a `display: flex` row (`white-space:
-// nowrap` keeps it to one line at the panel's own min-width) so the anchor
-// generates a single box, plus a dedicated :focus-visible ring on the anchor
-// and an explicit `outline: none` on its children so a ring can never
-// re-fragment across the icon/label/arrow.
+// Sign-in menu items. The rules for the old marketing header's `.signin-menu` (one flex row, one
+// focus ring, owner screenshot 2026-09-08) left with that header: the header is now the SiteFrame
+// header, which has no such menu. The pin keeps its place and now holds the other half: nothing
+// emits the class and no front-door stylesheet carries a rule for it.
 // ---------------------------------------------------------------------------
 
-type CssRule = { selector: string; body: string };
-
-// Line-based rule walker, same technique as customPropertyScopeViolations
-// above: the stylesheet is prettier-formatted with one selector/declaration
-// per line, so tracking brace depth finds each TOP-LEVEL rule's own body
-// without tripping over nested @media blocks or the same selector text
-// repeated elsewhere in this ~10k-line, multi-file-ported stylesheet (this
-// file legitimately declares `.signin-menu [role="menuitem"]` more than
-// once — a structural layer and a separate visual layer — so a plain
-// `.indexOf`/`.match` would silently grab the wrong one).
-function parseTopLevelRules(css: string): CssRule[] {
-  const rules: CssRule[] = [];
-  let depth = 0;
-  let pendingSelector: string | null = null;
-  let bodyLines: string[] = [];
-  for (const raw of css.split("\n")) {
-    const line = raw.trim();
-    if (!line) continue;
-    if (line.endsWith("{")) {
-      if (depth === 0) {
-        pendingSelector = line.slice(0, -1).trim();
-        bodyLines = [];
-      }
-      depth++;
-      continue;
+describe("the old sign-in menu is gone with its stylesheet rules — R-MKT signin-menu", () => {
+  it("no front-door stylesheet styles .signin-menu and no source emits it (R-MKT signin-menu)", () => {
+    for (const name of ["marketing.css", "glass.css", "glass-pages.css", "glass-site.css"]) {
+      const css = fs.readFileSync(path.join(WEB_ROOT, "app", "(marketing)", name), "utf8");
+      expect(css).not.toContain("signin-menu");
     }
-    if (/^}+$/.test(line)) {
-      for (let i = 0; i < line.length; i++) {
-        depth--;
-        if (depth === 0 && pendingSelector !== null) {
-          rules.push({ selector: pendingSelector, body: bodyLines.join("\n") });
-          pendingSelector = null;
-        }
-      }
-      continue;
-    }
-    if (depth === 1 && pendingSelector !== null) {
-      bodyLines.push(line);
-    }
-  }
-  return rules;
-}
-
-const SIGNIN_ITEM_SELECTOR = '.rf-marketing .signin-menu [role="menuitem"]';
-const SIGNIN_ITEM_FOCUS_VISIBLE_SELECTOR = `${SIGNIN_ITEM_SELECTOR}:focus-visible`;
-const SIGNIN_ITEM_BARE_SELECTORS = new Set([
-  SIGNIN_ITEM_SELECTOR,
-  `${SIGNIN_ITEM_SELECTOR}:hover`,
-  `${SIGNIN_ITEM_SELECTOR}:focus`,
-  SIGNIN_ITEM_FOCUS_VISIBLE_SELECTOR,
-]);
-
-describe("sign-in menu items are one flex row with a single focus ring — R-MKT signin-menu", () => {
-  it("the menu item's structural rule sets display: flex and white-space: nowrap (R-MKT signin-menu)", () => {
-    const rules = parseTopLevelRules(fs.readFileSync(MARKETING_CSS_PATH, "utf8"));
-    const structural = rules.find(
-      (r) => r.selector === SIGNIN_ITEM_SELECTOR && r.body.includes("display: flex"),
+    const emitters = findSourceReferences(SCAN_DIRS, "signin-menu").filter(
+      (h) => !/\.(css|test\.tsx?)$/.test(h.file),
     );
-    expect(structural).toBeDefined();
-    expect(structural!.body).toContain("white-space: nowrap");
-  });
-
-  it("the menu item carries its own :focus-visible ring with an outline-offset (R-MKT signin-menu)", () => {
-    const rules = parseTopLevelRules(fs.readFileSync(MARKETING_CSS_PATH, "utf8"));
-    const ownRing = rules.find(
-      (r) => r.selector === SIGNIN_ITEM_FOCUS_VISIBLE_SELECTOR && r.body.includes("outline:"),
-    );
-    expect(ownRing).toBeDefined();
-    expect(ownRing!.body).toContain("outline-offset");
-  });
-
-  it("no rule paints a visible outline on the item's inner icon/label/arrow (R-MKT signin-menu)", () => {
-    const rules = parseTopLevelRules(fs.readFileSync(MARKETING_CSS_PATH, "utf8"));
-    const innerRules = rules.filter(
-      (r) =>
-        r.selector.includes(".signin-menu") &&
-        r.selector.includes('[role="menuitem"]') &&
-        !SIGNIN_ITEM_BARE_SELECTORS.has(r.selector),
-    );
-    // The item's children must be explicitly neutralised (`> * { outline:
-    // none }`) — that rule not existing yet is exactly the pre-fix state.
-    expect(innerRules.length).toBeGreaterThan(0);
-    for (const rule of innerRules) {
-      expect(rule.body).not.toMatch(/outline\s*:\s*(?!none\b)\S/);
-    }
-    expect(innerRules.some((r) => /outline\s*:\s*none\b/.test(r.body))).toBe(true);
+    expect(emitters).toEqual([]);
   });
 });

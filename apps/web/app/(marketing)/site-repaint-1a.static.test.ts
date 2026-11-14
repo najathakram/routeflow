@@ -33,6 +33,10 @@ const allSiteCss = (): string[] => {
   };
   walk("public/site");
   out.push("components/site-frame/site-frame.css");
+  // Lane 2.6b: the front door's four stylesheets are scanned too, and carry no row.
+  for (const n of ["marketing", "glass", "glass-pages", "glass-site"]) {
+    out.push(`app/(marketing)/${n}.css`);
+  }
   return out;
 };
 

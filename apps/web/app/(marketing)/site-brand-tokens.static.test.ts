@@ -199,10 +199,6 @@ describe("T35d: no palette value typed outside the injected style", () => {
     { file: "public/site/css/home.css", hexes: ["#FFFFFF"], lane: "2.1b", wave: "W2" },
     { file: "public/site/css/home-up.css", hexes: ["#FFFFFF"], lane: "2.1b", wave: "W2" },
     { file: "public/site/graphics/rf-wheel-up.css", hexes: ["#FFFFFF"], lane: "2.2", wave: "W2" },
-    { file: "app/(marketing)/marketing.css", hexes: ["#FFFFFF"], lane: "2.6", wave: "W2" },
-    { file: "app/(marketing)/glass.css", hexes: ["#FFFFFF"], lane: "2.6", wave: "W2" },
-    { file: "app/(marketing)/glass-pages.css", hexes: ["#FFFFFF"], lane: "2.6", wave: "W2" },
-    { file: "app/(marketing)/glass-site.css", hexes: ["#FFFFFF"], lane: "2.6", wave: "W2" },
   ];
 
   const cssFiles = (dir: string, deep: boolean): string[] => {

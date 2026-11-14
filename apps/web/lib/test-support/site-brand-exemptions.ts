@@ -38,10 +38,6 @@ export const EXEMPT: Exemption[] = [
   { path: "public/site/graphics/rf-wheel-up.css", scope: "file", liftedBy: "W2", lane: "2.2" },
   { path: "public/site/css/site.css", scope: "comments", liftedBy: "W2", lane: "2.1b" },
   { path: "public/site/css/home.css", scope: "comments", liftedBy: "W2", lane: "2.1b" },
-  { path: "app/(marketing)/marketing.css", scope: "file", liftedBy: "W2", lane: "2.6" },
-  { path: "app/(marketing)/glass.css", scope: "file", liftedBy: "W2", lane: "2.6" },
-  { path: "app/(marketing)/glass-pages.css", scope: "file", liftedBy: "W2", lane: "2.6" },
-  { path: "app/(marketing)/glass-site.css", scope: "file", liftedBy: "W2", lane: "2.6" },
   { path: "public/site/product.html", scope: "hex", liftedBy: "W3", lane: "2.3-inner" },
   { path: "public/site/security.html", scope: "hex", liftedBy: "W3", lane: "2.3-inner" },
   // Not in the delta's table: the same lane and the same pattern (--pc/--pi tile colours).

@@ -165,18 +165,19 @@ describe("BrandMark module graph — R-MKT T4", () => {
   });
 });
 
-// `size` only becomes the image's width/height attributes, which lose to the
-// `.rf-marketing .brand-mark` box rules inside the marketing scope. The 404's
-// 40px mark therefore needs its own rule, keyed on the class the page passes.
-// jsdom loads no stylesheet, so this is asserted against the CSS source.
+// `size` only becomes the image's width/height attributes, which lost to the
+// `.rf-marketing .brand-mark` box rules inside the marketing scope, so the old 404 needed its own
+// 40px rule (keyed on `.not-found-brand`). Lane 2.6b: the 404 is now a SiteFrame page that draws no
+// BrandMark and the marketing stylesheets are empty (nothing wears `.rf-marketing`), so nothing
+// overrides the size attributes any more. jsdom loads no stylesheet, so this reads the sources.
 describe("marketing-scoped mark sizing — R-MKT T4", () => {
-  it("marketing.css sizes the 404 mark at 40px (R-MKT T4)", () => {
-    const css = fs.readFileSync(
-      path.join(__dirname, "..", "..", "app", "(marketing)", "marketing.css"),
-      "utf8",
-    );
-    expect(css).toMatch(
-      /\.rf-marketing \.not-found-brand \.brand-mark \{\s*width: 40px;\s*height: 40px;\s*\}/,
-    );
+  it("the 404 draws no brand mark and no front-door stylesheet carries a rule for one (R-MKT T4)", () => {
+    const app = path.join(__dirname, "..", "..", "app");
+    const notFound = fs.readFileSync(path.join(app, "not-found.tsx"), "utf8");
+    expect(notFound).not.toMatch(/BrandMark|BrandSignature|not-found-brand/);
+    for (const name of ["marketing.css", "glass.css", "glass-pages.css", "glass-site.css"]) {
+      const css = fs.readFileSync(path.join(app, "(marketing)", name), "utf8");
+      expect(css).not.toMatch(/not-found-brand|\.brand-mark/);
+    }
   });
 });
