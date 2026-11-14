@@ -161,6 +161,7 @@ function mount(path: string) {
  */
 describe("g shortcut with the real counter screen", () => {
   const press = (...keys: string[]) => keys.forEach((key) => fireEvent.keyDown(window, { key }));
+  beforeEach(() => mockPush.mockClear());
 
   it("with lines in the cart, g c from the page goes to the scan box: no Discard dialog, no navigation", async () => {
     mount(COUNTER);
@@ -174,6 +175,24 @@ describe("g shortcut with the real counter screen", () => {
     expect(field).toHaveFocus();
     expect(screen.queryByText("Discard this sale?")).toBeNull();
     expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  /**
+   * SA-1138 Q3: the leave-with-lines coverage the g c flip gave up, re-homed on the path master still has: a sidebar link click
+   * with lines in the REAL screen's cart asks "Discard this sale?", and only Discard navigates.
+   */
+  it("with lines in the cart a sidebar link click asks 'Discard this sale?'; Discard leaves", async () => {
+    mount(COUNTER);
+    const field = await screen.findByLabelText("Scan or search items");
+    fireEvent.change(field, { target: { value: "COLA" } });
+    fireEvent.submit(field.closest("form")!);
+    await waitFor(() => expect((field as HTMLInputElement).value).toBe(""));
+    await waitFor(() => expect(screen.getByText(/Cola/)).toBeInTheDocument());
+    fireEvent.click(screen.getAllByTestId("sidebar-nav-link")[0]);
+    expect(await screen.findByText("Discard this sale?")).toBeInTheDocument();
+    expect(mockPush).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(mockPush).toHaveBeenCalledTimes(1);
   });
 
   it("with an empty cart g c does not leave either", async () => {
