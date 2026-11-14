@@ -264,19 +264,20 @@ describe("D5 no feature lost: per-role cards, links and gates (loaded)", () => {
     );
     expect(link?.getAttribute("href")).toBe("/finance/reports?report=ar-aging");
   });
-  it("New order offers the menu for operator and customer only when the gate says so", () => {
+  it("New order offers the menu for an operator only when the gate says so (REG-B1: never for a customer)", () => {
     counterButton = true;
     const a = renderWithProviders(<DashboardPage />);
     expect(a.queryByTestId("new-order-open")).not.toBeNull();
     a.unmount();
     authUser = { id: "u1", role: "CUSTOMER", tenantSlug: "acme" };
     const b = renderWithProviders(<DashboardPage />);
-    expect(b.queryByTestId("new-order-open")).not.toBeNull();
+    // Owner ruling (B1): New order is hidden for customers, so the customer dashboard has no quick-create.
+    expect(b.queryByTestId("new-order-open")).toBeNull();
     b.unmount();
     counterButton = false;
     const c = renderWithProviders(<DashboardPage />);
     expect(c.queryByTestId("new-order-open")).toBeNull();
-    expect(hrefs(c.container)).toContain("/orders?action=new&builder=1");
+    expect(hrefs(c.container)).not.toContain("/orders?action=new&builder=1"); // still the customer session (REG-B1)
   });
   it("tenant admin renders the same as operator", () => {
     authUser = { id: "u1", role: "TENANT_ADMIN", tenantSlug: "acme" };
@@ -304,7 +305,8 @@ describe("D5 no feature lost: per-role cards, links and gates (loaded)", () => {
     const { container } = renderWithProviders(<DashboardPage />);
     expect(labelsShown()).toEqual(["Overdue invoices", "Active orders"]);
     const h = hrefs(container);
-    expect(h).toContain("/orders?action=new&builder=1");
+    // Owner ruling (B1): a customer gets no New order link (it was a dead link into the staff builder).
+    expect(h).not.toContain("/orders?action=new&builder=1");
     expect(h).toContain("/orders");
     expect(screen.getByText("Recent orders")).toBeTruthy();
   });

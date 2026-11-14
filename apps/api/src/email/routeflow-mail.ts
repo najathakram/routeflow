@@ -49,16 +49,23 @@ export function verifyEmailMessage(p: {
 }
 
 /** The password-reset message. The link works for 15 minutes (the token's own expiry). */
-export function passwordResetMessage(p: { resetUrl: string }): BuiltEmail {
+export function passwordResetMessage(p: {
+  resetUrl: string;
+  tenantName?: string | null;
+}): BuiltEmail {
+  const generic = "We received a request to reset the password for your RouteFlow account.";
+  const introHtml = p.tenantName
+    ? `We received a request to reset the password for your RouteFlow account at <strong>${escapeHtml(p.tenantName)}</strong>.`
+    : generic;
+  const introText = p.tenantName
+    ? `We received a request to reset the password for your RouteFlow account at ${p.tenantName}.`
+    : generic;
   const { html, text } = renderEmailLayout({
     look: { kind: "routeflow" },
     heading: "Reset your password",
     preheader: "Choose a new password for your RouteFlow account.",
-    bodyHtml: `${emailParagraph("We received a request to reset the password for your RouteFlow account.")}${emailParagraph("The link works for 15 minutes.")}`,
-    bodyText: [
-      "We received a request to reset the password for your RouteFlow account.",
-      "The link works for 15 minutes.",
-    ],
+    bodyHtml: `${emailParagraph(introHtml)}${emailParagraph("The link works for 15 minutes.")}`,
+    bodyText: [introText, "The link works for 15 minutes."],
     cta: { label: "Choose a new password", url: p.resetUrl },
     footerNote:
       "You are getting this because a password reset was requested for this address. If it was not you, ignore this email and your password will not change.",

@@ -4710,3 +4710,26 @@ citations, closed-out with its own post-init assertion guard).
 - **Root cause:** the commit-msg hook (commitlint) needs `node_modules` in the tree; a fresh worktree had none, so every merge commit was refused and the script read the non-zero exit as a conflict.
 - **Lesson:** **Call a merge conflicted only when `git diff --name-only --diff-filter=U` lists files. Any other non-zero exit is a tooling failure: fix the tree (`npm ci --ignore-scripts`) and rerun before telling anyone a member needs work.**
 - **Guard:** the train assembly script splits the two cases. Cf. [[L-354]].
+
+## Archived 2026-11-13 — zero outside citations, real spec guard; headroom for L-380..L-382 (bookkeeping for the ux-eval-batch1, site-print-and-headings and counter-date-scan-clock fixes)
+
+### L-339 · 2026-10-24 · domain · a lock-wait bound must be the first statement of the transaction (#3628)
+
+- **Symptom:** a product create waited 8.1 s on an advisory lock, then failed with P2028 and held a pooled connection the whole time.
+- **Root cause:** Prisma's interactive-transaction timeout cannot interrupt a statement already waiting on a lock, so the wait was unbounded until the lock freed.
+- **Lesson:** **Bound lock waits inside Postgres: make `SET LOCAL lock_timeout` the FIRST statement of the transaction. A client-side transaction timeout does not stop a statement blocked on a lock.**
+- **Guard:** `apps/api/src/common/stock-tx.spec.ts`, `products.create-under-load.db.spec.ts`.
+
+### L-343 · 2026-10-24 · domain · an optional money input becomes required, and a merge that cannot carry it refuses (#3700)
+
+- **Symptom:** editing items or applying a change request re-totalled an order and dropped its discount, and merges lost it silently.
+- **Root cause:** `discount` was an optional parameter of the totals helper, so callers that never passed it compiled cleanly and totalled without it.
+- **Lesson:** **Make a money input of a totals helper REQUIRED, so the compiler lists every caller that must decide it. Where an operation cannot carry the value (a merge of two discounted orders), refuse with a code rather than drop it.**
+- **Guard:** `orders/order-totals-one-formula.spec.ts`, `ORDER_MERGE_DISCOUNTED`. Cf. the required pack inputs of `mergeIntoStoredLine` (#3594).
+
+### L-348 · 2026-10-25 · tooling · pass test patterns to a child process as an argv array with no shell; on Windows a shell re-splits and re-escapes them (726)
+
+- **Symptom:** a DB-lane test pattern with a space, a bracket or a regex escape reached jest changed on Windows, so the wrong specs ran or none did. Two regexes also lost their escaped backslashes in a review edit.
+- **Root cause:** the runner built one command string and let a shell parse it.
+- **Lesson:** **Spawn with an args array and `shell: false`, and treat a jest path argument as a regex. A script that forwards user patterns has a spec that feeds it a pattern with a space and a bracket and reads back the argv it produced.**
+- **Guard:** `run-db-tests.mjs` `serialDbArgs` and the forwarding specs in `apps/api/src/common/`.

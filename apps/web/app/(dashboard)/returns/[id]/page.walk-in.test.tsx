@@ -1,6 +1,7 @@
 import * as React from "react";
 import { fireEvent, renderWithProviders, screen, within } from "@/test-utils/render";
 import ReturnDetailPage from "./page";
+import { seedSession } from "@/test-utils/session";
 import type { Return } from "@/lib/api/returns";
 
 /**
@@ -82,3 +83,7 @@ describe("Resolve Return on a named customer's sale is unchanged", () => {
     expect(within(dialog).getByRole("radio", { name: /refund \(cash/i })).not.toBeChecked();
   });
 });
+
+// REG-B1: the return actions are staff-only on the web, so these suites run as an operator.
+beforeEach(() => seedSession("OPERATOR"));
+afterEach(() => seedSession(null));

@@ -1,6 +1,7 @@
 import * as React from "react";
 import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import ReturnsPage from "./page";
+import { seedSession } from "@/test-utils/session";
 
 /**
  * B1264: New Return can start from the number a customer holds. An order number (ORD-…) or invoice number (INV-…) finds the
@@ -197,3 +198,7 @@ describe("New Return without the inline-returns add-on (M2, M3)", () => {
     expect(await screen.findByText("Select an order.")).toBeInTheDocument();
   });
 });
+
+// REG-B1: the return actions are staff-only on the web, so these suites run as an operator.
+beforeEach(() => seedSession("OPERATOR"));
+afterEach(() => seedSession(null));

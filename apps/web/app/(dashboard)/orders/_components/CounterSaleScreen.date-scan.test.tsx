@@ -76,6 +76,9 @@ type Speed = (typeof SPEEDS)[number];
 
 beforeEach(() => {
   jest.useFakeTimers();
+  // B1327: pin the clock to a mid-week day (Wed 2026-06-17 12:00 UTC: not a Friday, not a month or
+  // year edge, far from any DST change) so "fri" and the TODAY/BACK chips never depend on the real day.
+  jest.setSystemTime(new Date("2026-06-17T12:00:00Z"));
   jest.clearAllMocks();
   resolved.length = 0;
   mockOfferShip = false;
