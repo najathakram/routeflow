@@ -224,16 +224,9 @@ describe("W-965 is unreachable while FILING_LOCK_READY is false (pin)", () => {
 
   it("a writeSaleEntries call without lockedPeriod does not compile (case 12; enforced by check-types)", () => {
     const svc = new RegulatedLedgerService({} as any);
+    const args = { tenantId: null, orderId: null, invoiceId: "i", soldAt: NOW, lines: [], db: {} };
     // @ts-expect-error lockedPeriod is a required parameter: no default, the compiler finds every caller
-    const bad = () =>
-      svc.writeSaleEntries({
-        tenantId: null,
-        orderId: null,
-        invoiceId: "i",
-        soldAt: NOW,
-        lines: [],
-        db: {},
-      });
+    const bad = () => svc.writeSaleEntries(args);
     expect(typeof bad).toBe("function");
   });
 });

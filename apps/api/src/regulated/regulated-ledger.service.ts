@@ -11,7 +11,12 @@ import {
 } from "@routeflow/pricing";
 import { periodBucketOf } from "./period";
 import { findFiledPeriod as findFiledPeriodIn, type FiledPeriod } from "./filed-periods";
-import { assertLedgerRowsNotLocked } from "./filing-lock";
+import {
+  assertLedgerRowsNotLocked,
+  recordLateSaleRouting,
+  routeSaleRowsIfLocked,
+  type RoutedPeriod,
+} from "./filing-lock";
 import { resolveSaleLines, type ResolvedSaleLine } from "./sale-line-resolver";
 import { unbookedReversalMeta } from "./unbooked-reversals";
 import { creditItemRoom, loadCreditReversalRoom } from "./credit-reversal-room";
@@ -410,11 +415,17 @@ export class RegulatedLedgerService {
     soldAt: Date;
     lines: SaleLedgerLine[];
     db: any;
+    /**
+     * W-965 (SA-1137), REQUIRED so the compiler finds every caller. "BOOK_CURRENT": `soldAt` was inherited (an invoice
+     * made from a backdated order), so a row in a LOCKED month books into the current one with `originalSoldAt`.
+     * "REFUSE": `soldAt` is now or chosen at this request, so a locked month is refused (LEDGER_PERIOD_LOCKED).
+     */
+    lockedPeriod: "REFUSE" | "BOOK_CURRENT";
   }): Promise<number> {
-    const { tenantId, orderId, invoiceId, soldAt, lines, db } = params;
+    const { tenantId, orderId, invoiceId, soldAt, lines, db, lockedPeriod } = params;
     if (!tenantId) return 0;
     const bucket = periodBucketOf(soldAt);
-    const rows = lines
+    let rows: Array<Record<string, any>> = lines
       .filter((l) => l.trackedCategoryId)
       .map((l) => {
         // B661: the ONE place a SALE row's unitBasisQty is derived — from the line's own
@@ -444,8 +455,13 @@ export class RegulatedLedgerService {
         };
       });
     if (rows.length === 0) return 0;
-    await assertLedgerRowsNotLocked(db, rows); // B297 PR5: the last-line guard, before any row is written
+    let routed: RoutedPeriod[] = [];
+    if (lockedPeriod === "BOOK_CURRENT") {
+      ({ rows, routed } = await routeSaleRowsIfLocked(db, tenantId, rows as any[], new Date()));
+    }
+    await assertLedgerRowsNotLocked(db, rows as any[]); // B297 PR5: the last-line guard, before any row is written
     await db.regulatedSalesLedger.createMany({ data: rows });
+    await recordLateSaleRouting(db, { tenantId, invoiceId, routed }); // W-965: one audit row per routed group
     return rows.length;
   }
 
@@ -828,7 +844,15 @@ export class RegulatedLedgerService {
     }
     const booked =
       toWrite.length > 0
-        ? await this.writeSaleEntries({ tenantId, orderId, invoiceId, soldAt, lines: toWrite, db })
+        ? await this.writeSaleEntries({
+            tenantId,
+            orderId,
+            invoiceId,
+            soldAt,
+            lines: toWrite,
+            db,
+            lockedPeriod: "REFUSE", // the sync books "now": a locked month is not the current one
+          })
         : 0;
     return reversals.length + booked;
   }
