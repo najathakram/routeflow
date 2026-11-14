@@ -868,7 +868,7 @@ describe("W-853 SA-1062 A-4: a scan with the price panel open goes to the scan b
     expect(mockLookups).toEqual([]);
   });
 
-  it("R13o: panel shut, focus on a line button, g: not routed to the scan box", async () => {
+  it("R13o: panel shut, focus on a line button, g: routed to the scan box like every printable key (SA-1138)", async () => {
     const user = userEvent.setup();
     renderTill(<CounterSaleScreen />);
     await scan("COLA");
@@ -877,8 +877,8 @@ describe("W-853 SA-1062 A-4: a scan with the price panel open goes to the scan b
     button.focus();
     expect(button).toHaveFocus();
     await user.keyboard("g");
-    expect(scanBox()).not.toHaveFocus();
-    expect(scanBox()).toHaveValue("");
+    expect(scanBox()).toHaveFocus();
+    expect(scanBox()).toHaveValue("g");
   });
 });
 

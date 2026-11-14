@@ -1,4 +1,5 @@
 import * as React from "react";
+import { act } from "@testing-library/react";
 import { screen, waitFor, fireEvent } from "@/test-utils/render";
 import userEvent from "@testing-library/user-event";
 import { createNavShortcutHandler } from "@/lib/nav-shortcuts";
@@ -18,11 +19,16 @@ jest.mock("@/lib/auth-context", () => ({
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
 }));
+const mockLookups: string[] = [];
+// SA-1138: codes a wedge types that start with a lowercase letter, punctuation, or AltGr @, all mapped to the one product
+const MOCK_CASE_CODES = ["CASE", "cola12345678", "-ab12cd34", "@AB1234"];
 const CASE = { id: "p-case", name: "Case", pricePerUnit: 12.5, unit: "each", unitsPerBox: null };
 jest.mock("@/lib/barcode-resolve", () => ({
   ...jest.requireActual("@/lib/barcode-resolve"),
-  resolveProductByCode: async (code: string) =>
-    code === "CASE" ? { product: CASE, source: "sku" } : { notFound: true },
+  resolveProductByCode: async (code: string) => {
+    mockLookups.push(code);
+    return MOCK_CASE_CODES.includes(code) ? { product: CASE, source: "sku" } : { notFound: true };
+  },
 }));
 jest.mock("@/lib/api/customers", () => ({
   useCustomers: () => ({
@@ -250,14 +256,50 @@ describe("SA-1067 M4: a capital letter at a desktop till goes to the scan box", 
     expect(scanField()).toHaveFocus();
   });
 
-  it.each(["g", "a", "?"])(
-    "a lowercase %s is left alone (the g-then-x shortcuts stay)",
-    async (key) => {
-      const btn = await withButtonFocused();
-      fireEvent.keyDown(btn, { key });
-      expect(scanField()).not.toHaveFocus();
-    },
-  );
+  // SA-1138 A1 (was: a lowercase g, a, ? is left alone): every printable key is a scan key on the till, whatever its case.
+  it.each(["g", "a", "?"])("a lowercase %s goes to the scan box, not a shortcut", async (key) => {
+    const btn = await withButtonFocused();
+    fireEvent.keyDown(btn, { key });
+    expect(scanField()).toHaveFocus();
+  });
+
+  it.each([
+    ["SD-T1", "a line button", "cola12345678"],
+    ["SD-T2", "a tender button", "-ab12cd34"],
+  ])("%s: from %s, %s{Enter} is looked up once, whole, as one line", async (_row, where, code) => {
+    const user = userEvent.setup({ delay: 5 });
+    const btn = await withButtonFocused();
+    if (where === "a tender button") screen.getByRole("button", { name: "$20" }).focus();
+    else expect(btn).toHaveFocus();
+    mockLookups.length = 0;
+    await user.keyboard(`${code}{Enter}`);
+    await waitFor(() => expect(mockLookups.length).toBeGreaterThan(0));
+    expect(mockLookups).toEqual([code]);
+    await waitFor(() => expect(screen.getByLabelText("Set quantity of Case")).toHaveValue(2));
+    expect(scanField()).toHaveValue("");
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("SD-T7: AltGr @ then AB1234{Enter} from a line button is looked up once, whole", async () => {
+    const user = userEvent.setup({ delay: 5 });
+    const btn = await withButtonFocused();
+    mockLookups.length = 0;
+    const altGr = new KeyboardEvent("keydown", {
+      key: "@",
+      code: "Digit2",
+      ctrlKey: true,
+      altKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    altGr.getModifierState = (m: string) => m === "AltGraph";
+    act(() => {
+      btn.dispatchEvent(altGr);
+    });
+    expect(scanField()).toHaveFocus(); // the AltGr character started the run (jsdom does not type a synthetic key itself)
+    await user.keyboard("@AB1234{Enter}");
+    await waitFor(() => expect(mockLookups).toEqual(["@AB1234"]));
+  });
 
   it("L1: focus on a line button, the whole wedge code AB12345 reaches the scan box, and its Enter submits all of it", async () => {
     const user = userEvent.setup();
