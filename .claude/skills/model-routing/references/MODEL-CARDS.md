@@ -3,7 +3,7 @@
 > **Owner ruling 2026-10-15: the Fable model is not used.** Every Fable role below is held by Opus (generic alias `opus`, always the latest). Rows, prices and measurements of the retired Fable are kept only as history.
 
 Prices are Anthropic first-party API list prices per million tokens, from the `claude-api` skill's
-"Current Models" table (**cached 2026-06-24**). Refresh: invoke `/claude-api`, read that table, update
+"Current Models" table (**cached 2026-06-24**; Sonnet 5.5 cache read and Haiku 5.5 re-read from platform.claude.com pricing 2026-11-09). Refresh: invoke `/claude-api`, read that table, update
 here and in `dev-pipeline/pipeline.js → CFG.prices`, and bump both dates. Capability statements come from
 Anthropic's model-migration guidance and published cost-optimization runs; "measured" means a number
 from this owner's own runs.
@@ -14,9 +14,12 @@ from this owner's own runs.
 | Claude Opus 5     | `claude-opus-5`     | 1M / 128K         | 5 / 25              | ~10% of input |
 | Claude Opus 5.5   | `claude-opus-5-5`   | 1M / 128K         | 4 / 20              | 0.20          |
 | Claude Sonnet 5   | `claude-sonnet-5`   | 1M / 128K         | 2 / 10              | ~10% of input |
-| Claude Sonnet 5.5 | `claude-sonnet-5-5` | 1M / 128K         | 2 / 10              | 0.20          |
+| Claude Sonnet 5.5 | `claude-sonnet-5-5` | 1M / 128K         | 2 / 10              | 0.10          |
 | Claude Sonnet 4.6 | `claude-sonnet-4-6` | 1M                | 3 / 15              | ~10% of input |
+| Claude Haiku 5.5  | `claude-haiku-5-5`  | 1M                | 0.10 / 0.50         | 0.01          |
 | Claude Haiku 4.5  | `claude-haiku-4-5`  | 200K              | 1 / 5               | ~10% of input |
+
+Haiku 5.5 is tiered by prompt length: its row is the ≤100k-token rate. Requests over 100k tokens bill at 0.50 / 2.50 with 0.05 cache read, which session-usage.mjs does not yet split out, so Haiku 5.5 cost is a lower bound when prompts exceed 100k.
 
 Ratios that matter: retired Fable = 2× Opus = 5× Sonnet 5 = 10× Haiku per token. Output (thinking included)
 dominates agent cost, so effort — which sets thinking depth — moves the bill more than input hygiene.

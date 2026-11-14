@@ -14,10 +14,12 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { PrismaService } from "../prisma/prisma.service";
 import {
   calendarDayRange,
+  daysLateOn,
   isOverdue,
   overdueCutoff,
   startOfCalendarDay,
   tenantPeriod,
+  tenantTodayDay,
   type PeriodRange,
   type TenantPeriod,
 } from "../common/calendar-date";
@@ -77,6 +79,7 @@ import {
 import { overdueInvoiceCount } from "../invoices/invoice-balance-sql";
 import { confirmedBalance, signedBalance } from "../invoices/invoice-balance-classify";
 import { paidInstantOf } from "../common/paid-instant";
+import { assertOrderReviewed } from "../orders/offline/order-review-gate";
 
 @Injectable()
 export class BookkeepingService implements OnModuleInit {
@@ -272,6 +275,8 @@ export class BookkeepingService implements OnModuleInit {
           `Cannot record a payment on a ${inv.status === InvoiceStatus.VOID ? "voided" : "written-off"} invoice.`,
         );
       }
+
+      if (inv.orderId) await assertOrderReviewed(tx, inv.orderId); // SA-1124 PR-1b: staff money waits for the price review
 
       // B812: round every monetary write — summing already-rounded payments can
       // still land off-cent in float (0.70 + 0.10 === 0.7999999999999999), which
@@ -1488,7 +1493,8 @@ export class BookkeepingService implements OnModuleInit {
         arCurrent += bal;
         continue;
       }
-      const daysPast = Math.floor((now.getTime() - inv.dueDate.getTime()) / 86400000);
+      // B331: whole TENANT calendar days past due, the same day that decides "overdue" above
+      const daysPast = daysLateOn(tenantTodayDay(tz, now), inv.dueDate);
       if (daysPast <= 15) ar1_15 += bal;
       else if (daysPast <= 30) ar16_30 += bal;
       else if (daysPast <= 45) ar31_45 += bal;
@@ -1725,7 +1731,8 @@ export class BookkeepingService implements OnModuleInit {
         buckets[bucketKeys[0]].push(entry);
         continue;
       }
-      const daysPast = Math.floor((now.getTime() - inv.dueDate.getTime()) / 86400000);
+      // B331: whole TENANT calendar days past due, the same day that decides "overdue" above
+      const daysPast = daysLateOn(tenantTodayDay(tz, now), inv.dueDate);
       if (daysPast <= interval) buckets[bucketKeys[1]].push(entry);
       else if (daysPast <= interval * 2) buckets[bucketKeys[2]].push(entry);
       else if (daysPast <= interval * 3) buckets[bucketKeys[3]].push(entry);
@@ -2261,6 +2268,7 @@ export class BookkeepingService implements OnModuleInit {
   // ── AR Aging Details Report ──
   async getArAgingDetails(from?: string, to?: string, customerId?: string) {
     const now = new Date();
+    const tz = await tenantTimeZone(this.prisma); // B331: age on the tenant's calendar day
     const where: any = {
       status: { in: [InvoiceStatus.SENT, InvoiceStatus.PARTIAL, InvoiceStatus.OVERDUE] },
     };
@@ -2282,7 +2290,7 @@ export class BookkeepingService implements OnModuleInit {
       .map((inv) => {
         const balance = confirmedBalance(inv.total, inv.payments);
         const refDate = inv.dueDate ?? inv.issueDate;
-        const ageDays = Math.max(0, Math.floor((now.getTime() - refDate.getTime()) / 86400000));
+        const ageDays = daysLateOn(tenantTodayDay(tz, now), refDate);
         return {
           id: inv.id,
           date: inv.issueDate,

@@ -158,7 +158,7 @@ export function editPlan(
       counterSale?: boolean | null;
     };
     user: User;
-    dto: { items?: readonly any[]; replaceAll?: boolean } & NonNullable<Ack>;
+    dto: { items?: readonly any[]; replaceAll?: boolean; namesLines?: boolean } & NonNullable<Ack>;
     isDiffPayload: boolean;
   },
 ): Promise<EditPlan | null> {
@@ -174,6 +174,7 @@ export function editPlan(
       fulfillPath: a.order.fulfillPath,
     }),
     ack: a.dto,
+    namesLines: !!a.dto.namesLines,
   });
 }
 

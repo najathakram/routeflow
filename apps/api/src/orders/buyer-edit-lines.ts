@@ -3,6 +3,8 @@ import { normalizeBoxesPieces, round4, withinStaffOverrideTolerance } from "@rou
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { carriedLineFor } from "./carry-line-category";
 import { foldTarget, liveTrioFor, type FoldTrio } from "./fold-target";
+// SA-1118 MUST-1: the pack-or-pieces decision lives in the pure `buyer-denomination` module (shared with the selling-limit mirror).
+export { denominationGate, piecesDenominated } from "./buyer-denomination";
 
 /**
  * B297 row 352 (SA-734r2 r-note 4): the buyer's PATCH /buyer/orders/:id/items names each existing line it
@@ -343,43 +345,6 @@ export function applyBuyerEditLines<T extends BuyerEditEntry>(
   });
   // The resolver only adds `sourceLineId` and splits an entry in two copies of itself: same shape as `T`.
   items.splice(0, items.length, ...(resolved as unknown as T[]));
-}
-
-/**
- * B297 row 355 (SA-734r2 r-note 5): is this entry's `qty` written in PIECES (re-split by the pack and
- * prorated by the BOX price), or in selling units (the pack, never re-split)? Decided per LINE from the
- * line's own stored unit fields, never per product: a product can hold a pack line and a box-split line at
- * once (row 340 splits), and reading the pack line as pieces under-charges it by `unitsPerBox`.
- *  - an entry carrying an explicit boxes/pieces split is in pieces (the split is a signal, re-derived server-side);
- *  - an entry naming a line of this product (`sourceLineId`) reads like that line: box-split => pieces;
- *  - an entry naming none reads like the product's live lines WHEN THEY AGREE (every one box-split => pieces:
- *    the legacy plain qty of a box-split line); with a pack line among them, or none at all, it is a plain
- *    buyer qty = the default selling unit. A DRIVER entry keeps the product-wide gate.
- */
-export function piecesDenominated(
-  lineItems:
-    | ReadonlyArray<{
-        id?: string | null;
-        productId?: string | null;
-        status?: string | null;
-        boxes?: unknown;
-        pieces?: unknown;
-      }>
-    | null
-    | undefined,
-  item: { productId?: string | null; boxes?: unknown; pieces?: unknown; sourceLineId?: string },
-  productPieceDenominated: ReadonlySet<string>,
-  isBuyerEdit: boolean,
-): boolean {
-  if (isBuyerEdit && (item.boxes != null || item.pieces != null)) return true;
-  const lines = lineItems ?? [];
-  const own = item.sourceLineId
-    ? lines.find((l) => l.id === item.sourceLineId && l.productId === item.productId)
-    : undefined;
-  if (own) return own.boxes != null || own.pieces != null;
-  if (!isBuyerEdit) return !!item.productId && productPieceDenominated.has(item.productId);
-  const live = lines.filter((l) => l.productId === item.productId && l.status !== "CANCELLED");
-  return live.length > 0 && live.every((l) => l.boxes != null || l.pieces != null);
 }
 
 /** Who is editing: the three replace paths share ONE pairing (row 373b). */

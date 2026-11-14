@@ -6,7 +6,8 @@
 import * as fs from "fs";
 import * as path from "path";
 import { Prisma } from "@prisma/client";
-import { isTenantModel, tenantRelationTarget } from "./prisma.service";
+import { isTenantModel } from "./prisma.service";
+import { buildRelationIndex } from "./tenant-nested-walker";
 
 const SCHEMA = path.join(__dirname, "..", "..", "prisma", "schema");
 
@@ -34,18 +35,20 @@ describe("the guard covers every nullable-tenantId model", () => {
     expect(nullable.filter((m) => !isTenantModel(m))).toEqual([]);
   });
 
-  it("nested-create detection resolves a relation to its tenant-owned child, one level", () => {
-    expect(tenantRelationTarget("Order", "invoices")).toBe("Invoice");
-    expect(tenantRelationTarget("Order", "lineItems")).toBe("OrderItem");
+  it("nested-create detection resolves a relation to its tenant-owned child", () => {
+    const index = buildRelationIndex();
+    const childOf = (parent: string, key: string) => {
+      const info = index.get(parent)?.get(key);
+      return info?.childIsTenantOwned ? info.child : undefined;
+    };
+    expect(childOf("Order", "invoices")).toBe("Invoice");
+    expect(childOf("Order", "lineItems")).toBe("OrderItem");
     // a relation to a model with no tenantId is not a tenant-owned child: nothing to check there
     const plain = Prisma.dmmf.datamodel.models
       .flatMap((m) => m.fields.map((f) => ({ parent: m.name, f })))
       .find(({ f }) => f.kind === "object" && !isTenantModel(f.type));
     expect(plain).toBeDefined();
-    expect(tenantRelationTarget(plain!.parent, plain!.f.name)).toBeUndefined();
-    expect(tenantRelationTarget("order", "invoices")).toBe(
-      tenantRelationTarget("Order", "invoices"),
-    );
-    expect(tenantRelationTarget("Order", "noSuchRelation")).toBeUndefined();
+    expect(childOf(plain!.parent, plain!.f.name)).toBeUndefined();
+    expect(childOf("Order", "noSuchRelation")).toBeUndefined();
   });
 });

@@ -9,6 +9,7 @@ import {
   cancelCounterLeave,
   confirmCounterLeave,
   guardCounterLeave,
+  setCounterAutoParkHook,
 } from "@/lib/counter-cart-signal";
 
 /**
@@ -147,7 +148,12 @@ describe("CounterSaleScreen", () => {
     renderTill(<CounterSaleScreen />);
     await scan("WATER");
     await scan("WATER");
-    await waitFor(() => expect(screen.getByText(/2 boxes/)).toBeInTheDocument());
+    // W-1185: the item-count chip also reads "2 boxes", so the line is read inside the Items list.
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("list", { name: "Items" })).getByText(/2 boxes/),
+      ).toBeInTheDocument(),
+    );
     expect(screen.getAllByRole("listitem", { name: "" }).length).toBeGreaterThan(0);
     expect(screen.getByTestId("running-total")).toHaveTextContent("$24.00");
   });
@@ -262,7 +268,7 @@ describe("CounterSaleScreen", () => {
 
   describe("row 112: the scroll area ends below the sticky bar", () => {
     const realDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
-    let roCallbacks: Array<() => void> = [];
+    let roCallbacks: Array<(entries: unknown[]) => void> = [];
     beforeEach(() => {
       roCallbacks = [];
       Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
@@ -272,7 +278,7 @@ describe("CounterSaleScreen", () => {
         },
       });
       (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
-        constructor(cb: () => void) {
+        constructor(cb: (entries: unknown[]) => void) {
           roCallbacks.push(cb);
         }
         observe() {}
@@ -383,7 +389,7 @@ describe("CounterSaleScreen", () => {
           return (this as HTMLElement).dataset.testid === "counter-checkout-bar" ? 232 : 0;
         },
       });
-      act(() => roCallbacks.forEach((cb) => cb()));
+      act(() => roCallbacks.forEach((cb) => cb([])));
       await waitFor(() => expect(root.style.getPropertyValue("--counter-bar-h")).toBe("232px"));
     });
   });
@@ -2406,6 +2412,7 @@ describe("CounterSaleScreen: the live cart survives a refresh (SA-748 section 1)
     renderTill(<CounterSaleScreen />);
     await scan("012345678905");
     await waitFor(() => expect(window.localStorage.getItem(LIVE_KEY)).not.toBeNull());
+    setCounterAutoParkHook(null); // W-1184: with no park available (or a failed park) the old question is the fallback
     const proceed = jest.fn();
     expect(guardCounterLeave(proceed)).toBe(true); // the "Discard this sale?" dialog opens
     expect(window.localStorage.getItem(LIVE_KEY)).not.toBeNull(); // Keep selling would still have it

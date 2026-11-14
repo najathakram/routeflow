@@ -7,6 +7,7 @@ import * as path from "path";
 import { ConflictException } from "@nestjs/common";
 import { InvoiceStatus, ItemStatus, OrderStatus } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { ORDER_LINE_ORDER_BY } from "./line-position";
 import { isMergeContention, mapLockError } from "./merge-contention";
 import {
   deleteLoserGuarded,
@@ -112,7 +113,7 @@ describe("mergeEligibleWhere — one predicate per path", () => {
     const args = (db.order.findMany.mock.calls[0] as any[])[0];
     expect(args.where).toEqual({ customerId: "c-1", ...mergeEligibleWhere("force") });
     expect(args.orderBy).toEqual({ updatedAt: "desc" });
-    expect(args.include.lineItems.orderBy).toEqual({ position: "asc" });
+    expect(args.include.lineItems.orderBy).toEqual(ORDER_LINE_ORDER_BY);
   });
 });
 

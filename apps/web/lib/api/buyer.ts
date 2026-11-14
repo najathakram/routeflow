@@ -6,7 +6,12 @@ import { getStoredActiveSeller, getStoredBuyerId } from "@/lib/buyer-auth";
 import { buyerSubmitKeyFor, clearBuyerSubmitKey } from "./buyer-submit-key";
 import type { ExpiringAuthorization } from "./authorizations";
 import type { PromotionRule } from "@routeflow/pricing";
-import type { AccountStatement, BuyerOrderItemEdit } from "@routeflow/types";
+import type {
+  AccountStatement,
+  BuyerOrderItemEdit,
+  ReorderLinesRequest,
+  ReorderLinesResponse,
+} from "@routeflow/types";
 import type { ChangeRequest } from "@/lib/change-requests";
 import { buyerOrderConflict } from "@/lib/buyer-order-conflict";
 import { isSellerUnavailableRefusal } from "@/lib/seller-unavailable";
@@ -431,6 +436,18 @@ export function useBuyerCreateOrder() {
       qc.invalidateQueries({ queryKey: ["buyer", "dashboard"] });
       qc.invalidateQueries({ queryKey: ["buyer", "activeOrder"] });
     },
+  });
+}
+
+/** W-1187 PR-2c: put your own order's lines in the order you arranged them (the edit window must be open). */
+export function useBuyerReorderOrderLines() {
+  return useMutation<ReorderLinesResponse, Error, { id: string } & ReorderLinesRequest>({
+    // The order page words every outcome itself (409 "changed", other errors "Couldn't move the line").
+    meta: { localErrorToast: true },
+    mutationFn: ({ id, ...body }) =>
+      buyerApiClient
+        .put<ReorderLinesResponse>(`/buyer/orders/${id}/line-order`, body)
+        .then((r) => r.data),
   });
 }
 

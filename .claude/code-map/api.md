@@ -129,3 +129,8 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 | [api/landing-2026-11-05-w10.md](api/landing-2026-11-05-w10.md) | Windows 10-11 (25034e1228..9bafe62758): one override rule (B1282), run and stop ids tenant-proven on four writers (B1106) |
 | [api/landing-2026-11-05-w12.md](api/landing-2026-11-05-w12.md) | Window 12 (9bafe62758..266095419c): tenant-context kind and dark guard (F05 PR A), planRestore on the one override rule |
 | [api/landing-2026-11-07-slipped.md](api/landing-2026-11-07-slipped.md) | 266095419c..ce0ed80a11: WP2, WP5, F05 door, route templates, write-off schema, invite census, 15 forSystem jobs |
+| [api/landing-2026-11-10-w27-w28b.md](api/landing-2026-11-10-w27-w28b.md) | Windows 27 and 28b (415cf84fe0..a64c3774be): InvoiceItem.position, B461 held email change, OrderReviewFlag table, order date reads, order-owned line order, reminder email counts |
+| [api/landing-2026-11-11-w29-w31.md](api/landing-2026-11-11-w29-w31.md) | Windows 29-31 (a64c3774be..6ecd409b16): SystemClient brand (B1296), SA-1118 pack rule, invoices follow the order's line order, Sort A-Z, WP11 feature changes |
+| [api/landing-2026-11-12-w32-w34.md](api/landing-2026-11-12-w32-w34.md) | Windows 32 and 34 (6ecd409b16..c05d8e25f5): ordered tenant-scoped row locks, nested tenant walker (B929), copier registry position inventory |
+| [api/landing-2026-11-12-w35-w36.md](api/landing-2026-11-12-w35-w36.md) | Windows 35 and 36 (c05d8e25f5..a2208ae4f1): offline staff order create (SA-1124 PR-1a), parked list sale day |
+| [api/landing-2026-11-12-w37.md](api/landing-2026-11-12-w37.md) | Window 37 (a2208ae4f1..495ea1cb18): invoice review gate for offline price drift (SA-1124 PR-1b) |

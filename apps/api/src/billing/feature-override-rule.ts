@@ -23,6 +23,15 @@ export const OVERRIDE_RULE_ORDER = [{ createdAt: "desc" as const }, { id: "desc"
 export const isLiveOverride = (row: { expiresAt?: Date | null }, nowMs: number): boolean =>
   row.expiresAt == null || row.expiresAt.getTime() > nowMs;
 
+/** True when the row was closed by its own end date: revoked (by the expiry job) at or after the date it was to end. */
+export const closedByItsEndDate = (row: {
+  expiresAt?: Date | null;
+  revokedAt?: Date | null;
+}): boolean =>
+  row.revokedAt != null &&
+  row.expiresAt != null &&
+  row.expiresAt.getTime() <= row.revokedAt.getTime();
+
 /** The row that applies to `featureKey`, or null. */
 export function pickLiveRow<R extends OverrideRuleRow>(
   rows: readonly R[],

@@ -99,3 +99,23 @@ describe("useRealtimeUpdates — creditNote.created / creditNote.voided (B343)",
     expect(spy).toHaveBeenCalledWith({ queryKey: ["credit-notes", "cn-1"] });
   });
 });
+
+describe("useRealtimeUpdates — invoice.updated (B76)", () => {
+  it("REG-B76: invoice.updated refreshes the invoice keys AND the orders that show the invoice badge", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const spy = jest.spyOn(client, "invalidateQueries");
+
+    renderHook(() => useRealtimeUpdates(), { wrapper: makeWrapper(client) });
+    await waitFor(() => expect(fakeSocket.hasListener("invoice.updated")).toBe(true));
+
+    fakeSocket.emit("invoice.updated", {
+      invoiceId: "inv-1",
+      invoiceNumber: "INV-2026-0001",
+      status: "PAID",
+    });
+
+    await waitFor(() => expect(spy).toHaveBeenCalledWith({ queryKey: ["orders"] }));
+    expect(spy).toHaveBeenCalledWith({ queryKey: ["invoices"] });
+    expect(spy).toHaveBeenCalledWith({ queryKey: ["invoices", "inv-1"] });
+  });
+});

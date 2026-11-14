@@ -18,6 +18,8 @@ export interface InvoiceTotalsSummaryProps {
   balanceDue: number;
   /** A DRAFT is not owed yet: its Balance due is neutral, never danger red or success green (SA-1066 M5). */
   isDraft?: boolean;
+  /** W-1185: the lines/units count, already formatted ("12 lines · 30 boxes · 6 pcs"). Not money. */
+  itemCount?: string;
 }
 
 /**
@@ -40,9 +42,16 @@ export function InvoiceTotalsSummary({
   advanceApplied,
   balanceDue,
   isDraft = false,
+  itemCount,
 }: InvoiceTotalsSummaryProps) {
   return (
     <div className="w-72 space-y-1.5 text-sm">
+      {itemCount !== undefined && (
+        <div className="flex justify-between gap-3 py-0.5" data-testid="invoice-item-count">
+          <span className="text-navy/70">Items</span>
+          <span className="text-right tabular-nums text-navy">{itemCount}</span>
+        </div>
+      )}
       <div className="flex justify-between py-0.5">
         <span className="text-navy/70">Subtotal</span>
         <span className="money text-navy">{fmt(subtotal)}</span>

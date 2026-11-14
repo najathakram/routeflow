@@ -15,6 +15,6 @@
 {"id":"B1223","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1225","batch":"F65","tier":"T1","state":"already-fixed","pr":3268,"proof":null,"evidence":"duplicate of B1188; the B1188 fix commit 20385500b (#3268 content) is an ancestor of master"}
 {"id":"B1226","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B1227","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1227","batch":"F65","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Re-check 2026-11-09 at 27d8125e17: apps/web/app/(dashboard)/orders/_components/CounterLineRow.tsx:445 (autoFocus), CounterLineRow.note-focus.test.tsx:10. fixed in d3c470bc4c (fixed in d3c470bc4c3307c04531e542a84093b37692a46e)","sha":"d3c470bc4c3307c04531e542a84093b37692a46e"}
 {"id":"B1228","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1205","batch":"F65","tier":"T3","state":"already-fixed","pr":3287,"proof":null,"evidence":"fixed by #3287, landed on master in the W21a squash 1bf58be42541d212c4de9f2a114a391ca2f3896a (#3328): mobile treats ORDER_SAVED_CREDITS_PENDING as saved"}

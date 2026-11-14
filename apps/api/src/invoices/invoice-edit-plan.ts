@@ -595,7 +595,7 @@ export function inPlacePatch(line: EditedLine, row: StoredEditRow): Record<strin
   } = line.data as any;
   if (!line.untouched) return data;
   const patch: Record<string, any> = {};
-  for (const k of ["description", "notes", "orderItemId"] as const) {
+  for (const k of ["description", "notes", "orderItemId", "position"] as const) {
     if ((data[k] ?? null) !== (row[k] ?? null)) patch[k] = data[k] ?? null;
   }
   if (!same(data.categoryTaxAmount ?? 0, row.categoryTaxAmount ?? 0))

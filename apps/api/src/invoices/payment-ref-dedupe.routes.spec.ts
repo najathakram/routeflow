@@ -61,6 +61,7 @@ describe("the staff payment routes pass the staff flag to the service", () => {
     const dto = { customerId: "c1", totalAmount: 10, recordAnyway: true } as never;
     await c.recordStandalonePayment(dto, user, "key-2");
     expect(service.recordStandalonePayment).toHaveBeenCalledWith(dto, {
+      source: "STAFF_ALLOCATION",
       actor: "user-1",
       idempotencyKey: "key-2",
       refDedupe: { actor: "user-1", role: "OPERATOR", recordAnyway: true },

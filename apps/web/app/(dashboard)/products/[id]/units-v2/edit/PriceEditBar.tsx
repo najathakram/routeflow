@@ -13,6 +13,10 @@ export const BTN =
   "h-9 rounded-md border bg-white px-3 text-sm font-medium text-navy hover:bg-surface-muted " +
   "border-line-strong";
 
+/** F10: the primary entry on the price card (Edit types exact prices); Change prices stays the outline secondary. */
+export const BTN_PRIMARY =
+  "h-9 rounded-md bg-brand-600 px-3 text-sm font-semibold text-white hover:bg-brand-700";
+
 /**
  * F22: the dashboard's `#main-content` is the scroller; the scroller's scroll-padding-bottom is the bar's measured
  * height, so a price box that takes focus (Tab, a click) scrolls clear of the bar. Let go when the bar goes (the same

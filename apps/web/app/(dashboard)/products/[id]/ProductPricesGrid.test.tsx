@@ -220,12 +220,13 @@ describe("SA-1082: the Piece row with no unit behind it yet", () => {
     expect(cell.getAttribute("aria-label")).toBe("Wholesale Piece price, $1.40");
   });
 
-  it("W-1: its barcode shows a dash, never the case code", () => {
+  it("W-1 / P5: it shows no barcode text (no lone dash), never the case code", () => {
     withRow();
     render(<ProductPricesGrid product={product} />);
     for (const id of SURFACES) {
       const scope = within(screen.getByTestId(id));
-      expect(scope.getByTestId(T.code("base")).textContent).toBe("—");
+      expect(scope.queryByTestId(T.code("base"))).toBeNull();
+      expect(scope.queryByText("—")).toBeNull();
       expect(scope.queryByText(CASE_CODE)).toBeNull();
       expect(scope.queryByText("No barcode")).toBeNull();
     }
@@ -235,8 +236,9 @@ describe("SA-1082: the Piece row with no unit behind it yet", () => {
     withRow();
     render(<ProductPricesGrid product={product} layout="table" density="compact" />);
     const row = within(screen.getByTestId(T.row("base")));
-    expect(row.getByTestId(T.code("base")).textContent).toBe("—");
+    expect(row.queryByTestId(T.code("base"))).toBeNull();
     expect(row.getByRole("rowheader").textContent).toContain("Smallest unit");
+    expect(row.getByRole("rowheader").textContent).not.toContain("·");
   });
 
   it("W-2: units flag off: figures and the sentence, and nothing to click", () => {

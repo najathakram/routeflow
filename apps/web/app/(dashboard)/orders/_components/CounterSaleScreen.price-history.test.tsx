@@ -299,7 +299,7 @@ describe("W-853 the history button on a counter line", () => {
     await pick("Walk-in Record");
     await scan("JUICE");
     expect(historyButtons()).toHaveLength(0);
-    expect(interactiveCount("Cola")).toBe(6); // remove, 2 steppers, qty, Change price, Add note: nothing new
+    expect(interactiveCount("Cola")).toBe(7); // remove, 2 steppers, qty, Change price, Add note + the move handle (two lines): no history button
     expect(historyCalls()).toHaveLength(0);
   });
 
@@ -792,6 +792,7 @@ describe("W-853 SA-1062 A-4: a scan with the price panel open goes to the scan b
     const user = userEvent.setup();
     await openPanel();
     await user.keyboard("ABCDEF{Enter}");
+    await user.keyboard("{Escape}"); // W-1186: the unknown code opens New product; Esc skips it, the next scan is a fresh one
     await user.keyboard("123456789012{Enter}");
     expect(await observed()).toEqual(SCANNED("ABCDEF", "123456789012"));
   });

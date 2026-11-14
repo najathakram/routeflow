@@ -44,15 +44,22 @@ describe("UsersService", () => {
     sendSetPasswordEmail: jest.Mock;
     sendEmailChangedNotice: jest.Mock;
     sendEmailChangeConfirmation: jest.Mock;
+    sendEmailChangeLink: jest.Mock;
+    sendEmailChangeRequestedNotice: jest.Mock;
     sendRoleChangedNotice: jest.Mock;
   };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    prisma.refreshToken.count.mockResolvedValue(0); // B461: no session row unless a row says so
     email = {
       sendSetPasswordEmail: jest.fn().mockResolvedValue({ delivered: true, transport: "smtp" }),
       sendEmailChangedNotice: jest.fn().mockResolvedValue({ delivered: true, transport: "smtp" }),
       sendEmailChangeConfirmation: jest
+        .fn()
+        .mockResolvedValue({ delivered: true, transport: "smtp" }),
+      sendEmailChangeLink: jest.fn().mockResolvedValue({ delivered: true, transport: "smtp" }),
+      sendEmailChangeRequestedNotice: jest
         .fn()
         .mockResolvedValue({ delivered: true, transport: "smtp" }),
       sendRoleChangedNotice: jest.fn().mockResolvedValue({ delivered: true, transport: "smtp" }),
@@ -321,6 +328,8 @@ describe("UsersService", () => {
         username: "acme_op",
         email: "old@acme.example",
         role: "OPERATOR",
+        lastLoginAt: null, // B461: never signed in, so the email is written at once
+        createdAt: new Date("2026-10-01T00:00:00Z"),
       } as any);
       prisma.user.update.mockResolvedValue({
         id: "u1",
@@ -353,6 +362,8 @@ describe("UsersService", () => {
         username: "acme_op",
         email: "same@acme.example",
         role: "OPERATOR",
+        lastLoginAt: null, // B461: never signed in, so the email is written at once
+        createdAt: new Date("2026-10-01T00:00:00Z"),
       } as any);
       prisma.user.update.mockResolvedValue({
         id: "u1",
@@ -378,6 +389,8 @@ describe("UsersService", () => {
         username: "acme_op",
         email: "old@acme.example",
         role: "OPERATOR",
+        lastLoginAt: null, // B461: never signed in, so the email is written at once
+        createdAt: new Date("2026-10-01T00:00:00Z"),
       } as any);
       prisma.user.update.mockResolvedValue({
         id: "u1",
@@ -403,6 +416,8 @@ describe("UsersService", () => {
         username: "acme_op",
         email: "typo@acme.example",
         role: "OPERATOR",
+        lastLoginAt: null, // B461: never signed in, so the email is written at once
+        createdAt: new Date("2026-10-01T00:00:00Z"),
       } as any);
       prisma.user.update.mockResolvedValue({
         id: "u1",
@@ -421,9 +436,11 @@ describe("UsersService", () => {
 
       // burned with the write, in the same transaction (raw SQL: reset + verification tables)
       expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
-      expect(prisma.txExecuteRaw).toHaveBeenCalledTimes(2);
+      expect(prisma.txExecuteRaw).toHaveBeenCalledTimes(3);
       for (const call of prisma.txExecuteRaw.mock.calls) expect(call.slice(1)).toEqual([["u1"]]);
       expect(String(prisma.txExecuteRaw.mock.calls[0][0])).toContain("PasswordResetToken");
+      // B461: a write at once also burns a pending change of the same user
+      expect(String(prisma.txExecuteRaw.mock.calls[2][0])).toContain("UserEmailChange");
     });
 
     it("N2 review fix (#811): sends a fresh set-password invite to the corrected address when the user never set their own password", async () => {
@@ -432,6 +449,8 @@ describe("UsersService", () => {
         username: "acme_op",
         email: "typo@acme.example",
         role: "OPERATOR",
+        lastLoginAt: null, // B461: never signed in, so the email is written at once
+        createdAt: new Date("2026-10-01T00:00:00Z"),
       } as any);
       prisma.user.update.mockResolvedValue({
         id: "u1",
@@ -460,6 +479,8 @@ describe("UsersService", () => {
         username: "acme_op",
         email: "old@acme.example",
         role: "OPERATOR",
+        lastLoginAt: null, // B461: never signed in, so the email is written at once
+        createdAt: new Date("2026-10-01T00:00:00Z"),
       } as any);
       prisma.user.update.mockResolvedValue({
         id: "u1",
@@ -477,6 +498,345 @@ describe("UsersService", () => {
       );
 
       expect(email.sendSetPasswordEmail).not.toHaveBeenCalled();
+    });
+  });
+
+  // B461 (SA-1116): an email edit on an account that has signed in waits for the new address. The rows that prove it
+  // against a real database are in email-change-b461.db.spec.ts; these pin the branch itself.
+  describe("updateUser — held email change (B461)", () => {
+    const signedIn = {
+      id: "u1",
+      username: "acme_op",
+      email: "old@acme.example",
+      role: "OPERATOR",
+      status: "ACTIVE",
+      lastLoginAt: new Date("2026-11-01T00:00:00Z"),
+      createdAt: new Date("2026-10-01T00:00:00Z"),
+    };
+    const afterUpdate = {
+      ...signedIn,
+      isAdmin: false,
+      canActAsDriver: false,
+      forcePasswordChange: false,
+    };
+
+    it("does not write the email, writes one pending row, mails the link to the NEW address and a masked notice to the OLD one", async () => {
+      prisma.user.findUnique.mockResolvedValue(signedIn as any);
+      prisma.user.update.mockResolvedValue(afterUpdate as any);
+
+      const res = await service.updateUser(
+        "u1",
+        { email: "New@Acme.example" } as any,
+        "ad",
+        "TENANT_ADMIN" as any,
+        undefined,
+        "admin-1",
+      );
+
+      expect(prisma.user.update.mock.calls[0][0].data).toEqual({});
+      expect(res.email).toBe("old@acme.example");
+      expect(res.pendingEmail).toBe("new@acme.example");
+      // the User row lock, one burn of the older rows, one insert; none is the typed client (no tenantId on the table)
+      const sql = prisma.txExecuteRaw.mock.calls.map((c: any[]) => String(c[0]));
+      expect(sql[0]).toContain('FROM "User"');
+      expect(sql[0]).toContain("FOR UPDATE");
+      expect(sql.filter((q: string) => q.includes('INSERT INTO "UserEmailChange"'))).toHaveLength(
+        1,
+      );
+      expect(sql.at(-1)).toContain('INSERT INTO "UserEmailChange"');
+      expect(sql.at(-2)).toContain('UPDATE "UserEmailChange"');
+      expect(prisma.txExecuteRaw.mock.calls.at(-1)).toEqual(
+        expect.arrayContaining(["u1", "old@acme.example", "new@acme.example", "admin-1"]),
+      );
+      expect(email.sendEmailChangeLink).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: "new@acme.example",
+          confirmUrl: expect.stringMatching(
+            /^https:\/\/app\.example\.com\/confirm-email-change\?token=[0-9a-f]{64}$/,
+          ),
+          expiryHours: 24,
+        }),
+      );
+      expect(email.sendEmailChangeRequestedNotice).toHaveBeenCalledWith({
+        to: "old@acme.example",
+        username: "acme_op",
+        maskedNewEmail: "n***@a***.example",
+      });
+      // the at-once notices are for an email that was written; this one was not
+      expect(email.sendEmailChangedNotice).not.toHaveBeenCalled();
+      expect(email.sendEmailChangeConfirmation).not.toHaveBeenCalled();
+    });
+
+    it("a username edit in the same request still applies at once", async () => {
+      prisma.user.findUnique.mockResolvedValue(signedIn as any);
+      prisma.user.update.mockResolvedValue(afterUpdate as any);
+
+      await service.updateUser(
+        "u1",
+        { email: "new@acme.example", username: "renamed" } as any,
+        "ad",
+        "TENANT_ADMIN" as any,
+      );
+
+      expect(prisma.user.update.mock.calls[0][0].data).toEqual({ username: "renamed" });
+    });
+
+    it("a role change in the same request burns the account's links BEFORE the pending row is written", async () => {
+      prisma.user.findUnique.mockResolvedValue(signedIn as any);
+      prisma.user.update.mockResolvedValue(afterUpdate as any);
+
+      await service.updateUser(
+        "u1",
+        { email: "new@acme.example", role: "DRIVER" } as any,
+        "ad",
+        "TENANT_ADMIN" as any,
+      );
+
+      const sql = prisma.txExecuteRaw.mock.calls.map((c: any[]) => String(c[0]));
+      const insertAt = sql.findIndex((q: string) => q.includes('INSERT INTO "UserEmailChange"'));
+      expect(insertAt).toBe(sql.length - 1);
+      expect(sql.slice(0, insertAt).some((q: string) => q.includes("PasswordResetToken"))).toBe(
+        true,
+      );
+    });
+
+    it("an account that never logged a sign-in but is older than the reliable stamp holds (B461 reader M1)", async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        ...signedIn,
+        lastLoginAt: null,
+        createdAt: new Date("2026-09-01T00:00:00Z"),
+      } as any);
+      prisma.user.update.mockResolvedValue(afterUpdate as any);
+
+      const res = await service.updateUser(
+        "u1",
+        { email: "new@acme.example" } as any,
+        "ad",
+        "TENANT_ADMIN" as any,
+      );
+
+      expect(prisma.user.update.mock.calls[0][0].data).toEqual({});
+      expect(res.pendingEmail).toBe("new@acme.example");
+    });
+
+    it("an account with no sign-in stamp but a refresh-token row holds: refresh() never stamps it", async () => {
+      prisma.user.findUnique.mockResolvedValue({ ...signedIn, lastLoginAt: null } as any);
+      prisma.refreshToken.count.mockResolvedValue(1);
+      prisma.user.update.mockResolvedValue(afterUpdate as any);
+
+      const res = await service.updateUser(
+        "u1",
+        { email: "new@acme.example" } as any,
+        "ad",
+        "TENANT_ADMIN" as any,
+      );
+
+      expect(prisma.refreshToken.count).toHaveBeenCalledWith({ where: { userId: "u1" } });
+      expect(prisma.user.update.mock.calls[0][0].data).toEqual({});
+      expect(res.pendingEmail).toBe("new@acme.example");
+    });
+
+    it("a new address another user already holds is refused at the request, nothing written or mailed", async () => {
+      prisma.user.findUnique.mockResolvedValue(signedIn as any);
+      prisma.forTenant().user.findFirst.mockResolvedValue({ id: "u9" } as any);
+
+      await expect(
+        service.updateUser(
+          "u1",
+          { email: "Taken@Acme.example" } as any,
+          "ad",
+          "TENANT_ADMIN" as any,
+        ),
+      ).rejects.toMatchObject({ response: { code: "EMAIL_TAKEN" } });
+
+      expect(prisma.forTenant().user.findFirst).toHaveBeenCalledWith({
+        where: {
+          id: { not: "u1" },
+          email: { equals: "taken@acme.example", mode: "insensitive" },
+        },
+        select: { id: true },
+      });
+      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(prisma.txExecuteRaw).not.toHaveBeenCalled();
+      expect(email.sendEmailChangeLink).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["INACTIVE", { status: "INACTIVE" }],
+      ["soft-deleted", { deletedAt: new Date("2026-10-01T00:00:00Z") }],
+    ])(
+      "a held change on a %s account is refused before anything is written: 409 EMAIL_CHANGE_ACCOUNT_INACTIVE",
+      async (_n, off) => {
+        prisma.user.findUnique.mockResolvedValue({ ...signedIn, ...off } as any);
+
+        await expect(
+          service.updateUser(
+            "u1",
+            { email: "new@acme.example" } as any,
+            "ad",
+            "TENANT_ADMIN" as any,
+          ),
+        ).rejects.toMatchObject({
+          response: {
+            code: "EMAIL_CHANGE_ACCOUNT_INACTIVE",
+            message: "Reactivate this account, then change its email.",
+          },
+        });
+
+        expect(prisma.user.update).not.toHaveBeenCalled();
+        expect(prisma.txExecuteRaw).not.toHaveBeenCalled();
+        expect(email.sendEmailChangeLink).not.toHaveBeenCalled();
+      },
+    );
+
+    it("a SOFT-DELETED holder of the address refuses it too: the unique index covers deleted rows (no deletedAt filter)", async () => {
+      prisma.user.findUnique.mockResolvedValue(signedIn as any);
+      prisma.forTenant().user.findFirst.mockResolvedValue({
+        id: "u9",
+        deletedAt: new Date("2026-10-01T00:00:00Z"),
+      } as any);
+
+      await expect(
+        service.updateUser(
+          "u1",
+          { email: "gone@acme.example" } as any,
+          "ad",
+          "TENANT_ADMIN" as any,
+        ),
+      ).rejects.toMatchObject({ response: { code: "EMAIL_TAKEN" } });
+
+      const where = (prisma.forTenant().user.findFirst as jest.Mock).mock.calls[0][0].where;
+      expect(where).not.toHaveProperty("deletedAt");
+      expect(prisma.txExecuteRaw).not.toHaveBeenCalled();
+    });
+
+    it("the account is already at the new address under the lock: no change row, no mail, no CHECK error", async () => {
+      prisma.user.findUnique
+        .mockResolvedValueOnce(signedIn as any)
+        .mockResolvedValueOnce({ email: "New@Acme.example" } as any);
+      prisma.user.update.mockResolvedValue(afterUpdate as any);
+
+      const res = await service.updateUser(
+        "u1",
+        { email: "new@acme.example" } as any,
+        "ad",
+        "TENANT_ADMIN" as any,
+      );
+
+      const sql = prisma.txExecuteRaw.mock.calls.map((c: any[]) => String(c[0]));
+      expect(sql.some((q: string) => q.includes('INSERT INTO "UserEmailChange"'))).toBe(false);
+      expect(email.sendEmailChangeLink).not.toHaveBeenCalled();
+      expect(email.sendEmailChangeRequestedNotice).not.toHaveBeenCalled();
+      expect(res.pendingEmail).toBeNull();
+    });
+
+    it("the hold burns the account's older links first (a set-password link to the old address dies), then writes its row", async () => {
+      prisma.user.findUnique.mockResolvedValue(signedIn as any);
+      prisma.user.update.mockResolvedValue(afterUpdate as any);
+
+      await service.updateUser(
+        "u1",
+        { email: "new@acme.example" } as any,
+        "ad",
+        "TENANT_ADMIN" as any,
+      );
+
+      const sql = prisma.txExecuteRaw.mock.calls.map((c: any[]) => String(c[0]));
+      const reset = sql.findIndex((q: string) => q.includes("PasswordResetToken"));
+      const insert = sql.findIndex((q: string) => q.includes('INSERT INTO "UserEmailChange"'));
+      expect(reset).toBeGreaterThan(-1);
+      expect(insert).toBeGreaterThan(reset);
+    });
+
+    it("the row records the address as it stands under the lock, not the pre-transaction read", async () => {
+      prisma.user.findUnique
+        .mockResolvedValueOnce(signedIn as any)
+        .mockResolvedValueOnce({ email: "moved@acme.example" } as any);
+      prisma.user.update.mockResolvedValue(afterUpdate as any);
+
+      await service.updateUser(
+        "u1",
+        { email: "new@acme.example" } as any,
+        "ad",
+        "TENANT_ADMIN" as any,
+      );
+
+      const insert = prisma.txExecuteRaw.mock.calls.find((c: any[]) =>
+        String(c[0]).includes('INSERT INTO "UserEmailChange"'),
+      );
+      expect(insert).toEqual(expect.arrayContaining(["moved@acme.example", "new@acme.example"]));
+      expect(insert).not.toContain("old@acme.example");
+    });
+
+    it("a user nobody has a login time for (unknown) holds, never writes", async () => {
+      prisma.user.findUnique.mockResolvedValue({ ...signedIn, lastLoginAt: undefined } as any);
+      prisma.user.update.mockResolvedValue(afterUpdate as any);
+
+      const res = await service.updateUser(
+        "u1",
+        { email: "new@acme.example" } as any,
+        "ad",
+        "TENANT_ADMIN" as any,
+      );
+
+      expect(prisma.user.update.mock.calls[0][0].data).toEqual({});
+      expect(res.pendingEmail).toBe("new@acme.example");
+    });
+
+    it("the update still succeeds when the mails fail to send, and the row stays", async () => {
+      prisma.user.findUnique.mockResolvedValue(signedIn as any);
+      prisma.user.update.mockResolvedValue(afterUpdate as any);
+      email.sendEmailChangeLink.mockRejectedValue(new Error("smtp down"));
+
+      const res = await service.updateUser(
+        "u1",
+        { email: "new@acme.example" } as any,
+        "ad",
+        "TENANT_ADMIN" as any,
+      );
+
+      expect(res.pendingEmail).toBe("new@acme.example");
+    });
+
+    it("a case-only edit is not a change: no row, no mail (N2)", async () => {
+      prisma.user.findUnique.mockResolvedValue(signedIn as any);
+      prisma.user.update.mockResolvedValue(afterUpdate as any);
+
+      await service.updateUser(
+        "u1",
+        { email: "OLD@acme.example", username: "renamed" } as any,
+        "ad",
+        "TENANT_ADMIN" as any,
+      );
+
+      expect(email.sendEmailChangeLink).not.toHaveBeenCalled();
+      expect(email.sendEmailChangeRequestedNotice).not.toHaveBeenCalled();
+      expect(prisma.txExecuteRaw).not.toHaveBeenCalled();
+    });
+
+    it("the user read and the list carry the pending address from a live row", async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        ...signedIn,
+        password: null,
+        googleId: null,
+      } as any);
+      prisma.userEmailChange.findMany.mockResolvedValue([
+        { userId: "u1", toEmail: "new@acme.example" },
+      ] as any);
+
+      const one = await service.findById("u1");
+      expect(one?.pendingEmail).toBe("new@acme.example");
+      const where = prisma.userEmailChange.findMany.mock.calls[0][0].where;
+      expect(where).toMatchObject({ userId: { in: ["u1"] }, usedAt: null });
+      expect(where.expiresAt.gt).toBeInstanceOf(Date);
+
+      prisma.forTenant().user.findMany.mockResolvedValue([{ id: "u1" }, { id: "u2" }] as any);
+      prisma.forTenant().user.count.mockResolvedValue(2);
+      const list = await service.findAll({});
+      expect(list.data.map((u: any) => [u.id, u.pendingEmail])).toEqual([
+        ["u1", "new@acme.example"],
+        ["u2", null],
+      ]);
     });
   });
 

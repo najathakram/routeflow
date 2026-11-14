@@ -42,6 +42,11 @@ export interface ModalProps {
   onOpenAutoFocus?: (event: Event) => void;
   onCloseAutoFocus?: (event: Event) => void;
   /**
+   * Opt-in: a key pressed anywhere inside the dialog (the header X included), seen in the capture phase before the
+   * focused control's own handler. The counter's date picker uses it to hand a scanner's first key to the till.
+   */
+  onKeyDownCapture?: React.KeyboardEventHandler<HTMLDivElement>;
+  /**
    * Opt-in: cap the dialog at 92vh, pin the header (with its X) and the footer, and scroll only the
    * body. Without it the dialog is centred with `-translate-y-1/2` and no max height, so one taller
    * than the viewport spills off BOTH edges and its X and footer buttons become unreachable (body
@@ -79,6 +84,7 @@ export const Modal = ({
   onInteractOutside,
   onOpenAutoFocus,
   onCloseAutoFocus,
+  onKeyDownCapture,
   scroll = false,
   closeClassName,
   headerActions,
@@ -123,6 +129,7 @@ export const Modal = ({
           }}
           onOpenAutoFocus={onOpenAutoFocus}
           onCloseAutoFocus={onCloseAutoFocus}
+          onKeyDownCapture={onKeyDownCapture}
           className={cn(
             "fixed left-1/2 z-50 w-full max-w-lg -translate-x-1/2 rounded-xl bg-white p-6 shadow-modal",
             anchor === "top" ? "top-[4vh] translate-y-0" : "top-1/2 -translate-y-1/2",

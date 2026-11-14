@@ -30,6 +30,11 @@ import {
 } from "./mode-utils";
 import { PreviewDrawer } from "./PreviewDrawer";
 import { EnableAddonModal } from "./EnableAddonModal";
+import { fetchFeatureInputsHash, undoFeatureChanges } from "@/lib/platform-admin/feature-changes";
+import type { FeatureChangeAction, FeatureChangesApplyResponse } from "@routeflow/types";
+import { FeatureChangeBar, SavedToast } from "./FeatureChangeBar";
+import { FeatureChangeSheet } from "./FeatureChangeSheet";
+import { useFeatureStage } from "./useFeatureStage";
 import { currentRoleIsSuperAdmin } from "./super-admin";
 import type {
   EffectiveFeature,
@@ -187,6 +192,21 @@ export function FeatureConsole({
   );
   const [applying, setApplying] = React.useState(false);
 
+  // WP11: changes are staged here and written together from the review sheet, in one request.
+  const staged = useFeatureStage();
+  const [reviewing, setReviewing] = React.useState(false);
+  const [stageError, setStageError] = React.useState<string | null>(null);
+  const [saved, setSaved] = React.useState<{ id: string; count: number } | null>(null);
+  const [undoing, setUndoing] = React.useState(false);
+  const [undoError, setUndoError] = React.useState<string | null>(null);
+  const hashRead = React.useRef<Promise<string> | null>(null);
+  // The reason and end date typed in the sheet survive a Reload after a stale save; Discard and a save clear them.
+  const draft = React.useRef({ reason: "", endDate: "" });
+  // An empty stage forgets the hash it was staged against: the next change reads a fresh one.
+  React.useEffect(() => {
+    if (staged.count === 0) hashRead.current = null;
+  }, [staged.count]);
+
   const load = React.useCallback(() => {
     setLoading(true);
     setLoadError(null);
@@ -324,6 +344,45 @@ export function FeatureConsole({
     }
   }
 
+  async function stageRow(key: string, action: FeatureChangeAction) {
+    setStageError(null);
+    try {
+      // The hash is read once, before the first staged change; a save sends it back (409 if the business moved).
+      // One read serves quick successive clicks: they share the in-flight promise.
+      hashRead.current ??= staged.stage.baseHash
+        ? Promise.resolve(staged.stage.baseHash)
+        : fetchFeatureInputsHash(tenant.id);
+      const hash = await hashRead.current;
+      staged.stageOne({ type: "override", key, action }, hash);
+    } catch {
+      hashRead.current = null;
+      setStageError("Couldn't start a change just now. Try again.");
+    }
+  }
+
+  function onSaved(result: FeatureChangesApplyResponse, count: number) {
+    setReviewing(false);
+    draft.current = { reason: "", endDate: "" };
+    staged.discard();
+    setUndoError(null);
+    setSaved({ id: result.changeSetId, count });
+    load();
+  }
+
+  async function undoSaved() {
+    if (!saved) return;
+    setUndoing(true);
+    try {
+      await undoFeatureChanges(tenant.id, saved.id, "Undone right after saving.");
+      setSaved(null);
+      load();
+    } catch {
+      setUndoError("Couldn't undo. Something changed after you saved.");
+    } finally {
+      setUndoing(false);
+    }
+  }
+
   if (loading) {
     return <div className="py-8 text-center text-slate-400">Loading feature console…</div>;
   }
@@ -409,6 +468,20 @@ export function FeatureConsole({
         </div>
       </div>
 
+      {stageError && (
+        <p role="alert" className="mb-2 text-sm text-amber-300">
+          {stageError}
+        </p>
+      )}
+      <FeatureChangeBar
+        count={staged.count}
+        onReview={() => setReviewing(true)}
+        onDiscard={() => {
+          draft.current = { reason: "", endDate: "" };
+          staged.discard();
+        }}
+      />
+
       {/* Body: registry rows grouped by area */}
       {groups.map(([area, rows]) => (
         <div key={area} className="mb-6">
@@ -474,6 +547,18 @@ export function FeatureConsole({
                         <span className="text-xs text-slate-400" data-testid="no-override">
                           An override has no effect on this feature.
                         </span>
+                      )}
+                      {row.gate.via !== "none" && grantOf(row).override && (
+                        <StageControls
+                          label={row.label}
+                          staged={staged.actionOf(row.key)}
+                          hasOverride={
+                            feature?.source === "OVERRIDE_GRANT" ||
+                            feature?.source === "OVERRIDE_DENY"
+                          }
+                          onStage={(a) => stageRow(row.key, a)}
+                          onTakeBack={() => staged.unstageOne(row.key)}
+                        />
                       )}
                       {row.gate.via !== "none" && grantOf(row).override && (
                         <button
@@ -586,7 +671,110 @@ export function FeatureConsole({
         onCustomise={onCustomise}
         onEnabled={load}
       />
+
+      {reviewing && staged.stage.baseHash && (
+        <FeatureChangeSheet
+          open
+          tenantId={tenant.id}
+          expected={staged.stage.baseHash}
+          changes={staged.stage.changes}
+          labelOf={(key) => registryByKey[key]?.label ?? key}
+          planOnOf={(key) => {
+            const f = effectiveByKey[key];
+            // With an override in force, `serving` is the override's doing, not the plan's.
+            return f && !f.source.startsWith("OVERRIDE") ? f.serving : undefined;
+          }}
+          initialReason={draft.current.reason}
+          initialEndDate={draft.current.endDate}
+          onDraftChange={(d) => {
+            draft.current = d;
+          }}
+          onClose={() => setReviewing(false)}
+          onSaved={onSaved}
+          onStale={() => {
+            // The stage stays; the page re-reads, and the next review starts from the hash read then.
+            const kept = staged.stage.changes;
+            staged.discard();
+            load();
+            setReviewing(false);
+            fetchFeatureInputsHash(tenant.id)
+              .then((hash) => kept.forEach((c) => staged.stageOne(c, hash)))
+              .catch(() => setStageError("Couldn't reload your changes. Stage them again."));
+          }}
+        />
+      )}
+      {saved && (
+        <SavedToast
+          savedCount={saved.count}
+          undoing={undoing}
+          error={undoError}
+          onUndo={undoSaved}
+          onDone={() => setSaved(null)}
+        />
+      )}
     </div>
+  );
+}
+
+/** On / Off / Clear for one row: stages the change (nothing is written until the review sheet saves). */
+function StageControls({
+  label,
+  staged,
+  hasOverride,
+  onStage,
+  onTakeBack,
+}: {
+  label: string;
+  staged: FeatureChangeAction | null;
+  hasOverride: boolean;
+  onStage: (a: FeatureChangeAction) => void;
+  onTakeBack: () => void;
+}) {
+  if (staged) {
+    const word = staged === "GRANT" ? "on" : staged === "DENY" ? "off" : "back to the plan default";
+    return (
+      <span className="flex items-center gap-1 text-xs text-indigo-200" data-testid="staged-chip">
+        Will be {word}
+        <button
+          type="button"
+          onClick={onTakeBack}
+          className={QUIET_ACTION}
+          aria-label={`Take back the change to ${label}`}
+        >
+          Take back
+        </button>
+      </span>
+    );
+  }
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => onStage("GRANT")}
+        className={QUIET_ACTION}
+        aria-label={`Turn on ${label} for this business`}
+      >
+        Turn on
+      </button>
+      <button
+        type="button"
+        onClick={() => onStage("DENY")}
+        className={QUIET_ACTION}
+        aria-label={`Turn off ${label} for this business`}
+      >
+        Turn off
+      </button>
+      {hasOverride && (
+        <button
+          type="button"
+          onClick={() => onStage("CLEAR")}
+          className={QUIET_ACTION}
+          aria-label={`Clear the override on ${label}`}
+        >
+          Clear override
+        </button>
+      )}
+    </>
   );
 }
 

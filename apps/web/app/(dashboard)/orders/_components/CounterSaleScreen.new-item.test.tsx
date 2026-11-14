@@ -1,6 +1,6 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-utils/render";
+import { renderWithProviders, screen, waitFor, fireEvent, within, act } from "@/test-utils/render";
 import { apiClient } from "@/lib/api-client";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
@@ -11,6 +11,11 @@ import { CounterSaleScreen } from "./CounterSaleScreen";
  * The API is mocked at apiClient; the scan ladder, the product create hook and the modal are the real ones.
  */
 
+const mockToast = jest.fn();
+jest.mock("@routeflow/ui/web", () => ({
+  ...jest.requireActual("@routeflow/ui/web"),
+  useToast: () => ({ toast: mockToast }),
+}));
 let mockRole = "TENANT_ADMIN";
 let mockDenied: string[] = [];
 jest.mock("@/lib/auth-context", () => ({
@@ -138,14 +143,17 @@ describe("W-1042 the miss line", () => {
     expect(createItem()).not.toBeNull();
   });
 
-  it("R6 guard: the window never opens by itself and the cursor stays in the scan field", async () => {
+  it("W-1186: an unknown scan opens New product by itself with the code in SKU; Esc skips and the cursor returns to the scan field", async () => {
     renderWithProviders(<CounterSaleScreen />);
     field().focus();
     submitScan(MISS);
-    await screen.findByText(`No product for '${MISS}'`);
+    await screen.findByRole("heading", { name: "New product" });
+    expect(skuInput().value).toBe(MISS);
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "New product" })).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(field()));
-    expect(openDialog()).toBeNull();
-    expect(screen.queryByText("New product")).toBeNull();
+    // skipped: the inline miss line and its Create item are what is left (the message shows only on cancel)
+    expect(screen.getByText(`No product for '${MISS}'`)).toBeInTheDocument();
   });
 
   it("R6: Create item opens the window with the scanned code in SKU", async () => {
@@ -500,5 +508,47 @@ describe("SA-1066 F14: Open Products reads white on a darker teal", () => {
     const link = screen.getByRole("link", { name: /open products/i });
     expect(link.className).toMatch(/(^|\s)bg-brand-600(\s|$)/);
     expect(link.className).not.toMatch(/bg-brand-500/);
+  });
+});
+
+describe("W-1184 round 5: a cancelled New product keeps what was typed; the regulated question is a trap", () => {
+  it("Cancel after typing offers Restore, and Restore puts the typed fields back", async () => {
+    await missThenCreate();
+    await screen.findByRole("heading", { name: "New product" });
+    fireEvent.change(nameInput(), { target: { value: "Fresh Pie" } });
+    fireEvent.change(unitInput(), { target: { value: "case" } });
+    fireEvent.change(priceInput(), { target: { value: "4.5" } });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "New product" })).toBeNull());
+    const kept = mockToast.mock.calls.map((c) => c[0]).find((c) => c.title === "Item not created");
+    expect(kept?.action?.label).toBe("Restore");
+    act(() => kept.action.onClick());
+    await screen.findByRole("heading", { name: "New product" });
+    expect(nameInput().value).toBe("Fresh Pie");
+    expect(unitInput().value).toBe("case");
+    expect(priceInput().value).toBe("4.5");
+  });
+
+  it("Cancel with nothing typed offers nothing to restore", async () => {
+    await missThenCreate();
+    await screen.findByRole("heading", { name: "New product" });
+    fireEvent.change(skuInput(), { target: { value: MISS } }); // the prefilled code is not "typed"
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "New product" })).toBeNull());
+    expect(mockToast.mock.calls.some((c) => c[0].title === "Item not created")).toBe(false);
+  });
+
+  it("Tab and Shift+Tab stay inside the regulated question", async () => {
+    tracked = [{ id: "tc-1", name: "Tobacco", active: true }];
+    await missThenCreate();
+    const heading = await screen.findByText("Is this a licensed or regulated item?");
+    const box = heading.closest("[role='dialog']") as HTMLElement;
+    const yes = within(box).getByRole("button", { name: "Yes" });
+    const cancel = within(box).getByRole("button", { name: "Cancel" });
+    yes.focus();
+    fireEvent.keyDown(window, { key: "Tab" });
+    expect(document.activeElement).toBe(cancel);
+    fireEvent.keyDown(window, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(yes);
   });
 });

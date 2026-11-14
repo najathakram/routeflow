@@ -4,14 +4,15 @@ import * as React from "react";
 import Link from "next/link";
 import type { SellLevel } from "@routeflow/pricing";
 import { Button } from "@routeflow/ui/web";
-import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
+import { useToast } from "@routeflow/ui/web";
+import { InlineCreateProductModal, type FormDraft } from "@/components/InlineCreateProductModal";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { newProductPrefill, type PrefillDoor } from "@/lib/product-prefill";
 import { scanLevelForHit } from "./scan/useScanCodeHandler";
 
 /**
- * W-1042 (SA-1062): a new item at the counter. Nothing here opens by itself: the miss line's Create item and the live
- * list's Create "<typed>" call `open`. A business with tracked categories is asked one required question first, and Yes
+ * W-1042 (SA-1062): a new item at the counter. W-1186: an unknown scan opens it by itself (the screen calls `open` on a miss,
+ * as the regular order does); the live list's Create "<typed>" and the miss line's Create item call it too. A business with tracked categories is asked one required question first, and Yes
  * stops (a licensed or regulated item is added from Products, so its category and tax are set). Save adds ONE line of 1
  * through the counter's own add path, the same one a scan takes, then hands the cursor back to the scan box.
  */
@@ -47,6 +48,8 @@ export function useCounterNewItem({ allowed, add, refocus, onAdded }: Options) {
   // Unknown (still loading, or the read failed) asks: regulated goods must not slip through on a slow read.
   const asks =
     !isSuccess || (Array.isArray(categoryRows) && categoryRows.some((c) => c.active !== false));
+  const { toast } = useToast();
+  const [restore, setRestore] = React.useState<FormDraft | undefined>(undefined);
   const [request, setRequest] = React.useState<{
     text: string;
     from: PrefillDoor;
@@ -57,7 +60,27 @@ export function useCounterNewItem({ allowed, add, refocus, onAdded }: Options) {
 
   const open = (text: string, from: PrefillDoor = "typed") =>
     setRequest({ text, from, step: asks ? "ask" : "form" });
-  const close = () => setRequest(null);
+  const close = () => {
+    setRequest(null); // Esc = Skip: the miss line and its Create item stay
+    setRestore(undefined);
+  };
+  // Cancel after typing keeps what was typed: a toast offers it back (one tap), so a slip never costs the form.
+  const keepTyped = (typed: FormDraft) => {
+    const from = request?.from ?? "typed";
+    const text = request?.text ?? "";
+    toast({
+      title: "Item not created",
+      description: "What you typed is kept for a moment.",
+      duration: 8000,
+      action: {
+        label: "Restore",
+        onClick: () => {
+          setRestore(typed);
+          setRequest({ text, from, step: "form" });
+        },
+      },
+    });
+  };
   // The cursor goes back once the window is really gone: `refocus` waits while a scan pause is held.
   const wasOpenRef = React.useRef(false);
   React.useEffect(() => {
@@ -81,6 +104,8 @@ export function useCounterNewItem({ allowed, add, refocus, onAdded }: Options) {
         requirePrice
         initialName={prefill?.name}
         initialSku={prefill?.sku}
+        initialForm={restore}
+        onCancelWithInput={keepTyped}
         onClose={close}
         onCreated={created}
       />
@@ -122,6 +147,24 @@ function RegulatedQuestion({
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
+      if (e.key !== "Tab") return;
+      // Tab stays inside the window (it is modal): cycle its own buttons, never the till behind it.
+      const box = boxRef.current;
+      if (!box) return;
+      const items = Array.from(
+        box.querySelectorAll<HTMLElement>("button:not([disabled]), a[href]"),
+      );
+      if (items.length === 0) return;
+      const first = items[0]!;
+      const last = items[items.length - 1]!;
+      const at = document.activeElement;
+      if (e.shiftKey && (at === first || at === box || !box.contains(at))) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (at === last || !box.contains(at))) {
+        e.preventDefault();
+        first.focus();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -139,7 +182,7 @@ function RegulatedQuestion({
       <div
         ref={boxRef}
         tabIndex={-1}
-        className="w-full max-w-md space-y-4 rounded-xl bg-white p-6 shadow-xl outline-none"
+        className="w-full max-w-md space-y-4 rounded-xl bg-white p-6 shadow-xl outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
       >
         {stopped ? (
           <>

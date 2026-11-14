@@ -76,6 +76,7 @@ export function useCounterLiveCart({
   beginSend: () => void;
   endSend: () => void;
   discard: () => void;
+  dropStored: () => void;
 } {
   const [notice, setNotice] = React.useState<LiveCartNotice>(null);
   const [owner, setOwner] = React.useState(false); // this tab may write the stored cart
@@ -124,7 +125,7 @@ export function useCounterLiveCart({
   const canRestoreRef = React.useRef(canRestore);
   canRestoreRef.current = canRestore;
 
-  const { lines, customer, method, tendered, reference, checkDate, walkIn } = snapshot;
+  const { lines, customer, method, tendered, reference, checkDate, orderDate, walkIn } = snapshot;
   React.useEffect(() => {
     if (!storeKey || !owner) return;
     if (suspended || sending || latest.current.lines.length === 0) {
@@ -147,6 +148,7 @@ export function useCounterLiveCart({
     tendered,
     reference,
     checkDate,
+    orderDate,
     walkIn,
   ]);
 
@@ -184,6 +186,10 @@ export function useCounterLiveCart({
   return {
     notice,
     dismissNotice: () => setNotice(null),
+    /** The cart is stored on the server now (parked): drop the stored copy at once, writes stay allowed for the next sale. */
+    dropStored: () => {
+      if (storeKey && ownerRef.current) clearLiveCart(storeKey);
+    },
     beginSend: () => {
       sendingRef.current = true; // blocks every write NOW, not on the next render
       // Only the owner tab drops the stored cart: a second tab's sale must never delete the owner's cart.

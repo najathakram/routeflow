@@ -10,6 +10,8 @@ export interface ReplayedOrder {
   id: string;
   status?: string;
   counterSale?: boolean;
+  /** W-1188: the stored business day (midnight UTC), null when the sale was not dated. */
+  orderDate?: Date | string | null;
   lineItems?: ReadonlyArray<{
     productId?: string | null;
     position?: number | null;

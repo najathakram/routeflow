@@ -40,6 +40,17 @@ const CONTROLLER_FILE = path.resolve(
   "platform-admin.controller.ts",
 );
 
+/**
+ * The reviewed second writers, by EXACT path (no glob), each with the reason it may call `.create(`.
+ * WP11: the feature change set saves a whole reviewed set in one transaction. It is validated whole first
+ * (registered key, overridable, `requires` counted across the set, future end date, reason, cap) before its first
+ * write, and every write goes through this service with the transaction client. Adding a path here needs a reason.
+ */
+const REVIEWED_SECOND_WRITERS: Readonly<Record<string, string>> = {
+  "src/platform-admin/feature-change.service.ts":
+    "WP11 change set: validated whole first, one transaction, writes through FeatureOverrideService with tx",
+};
+
 // A real ES import naming FeatureOverrideService among its named imports — not a bare
 // word-boundary match, so a comment or docstring mentioning the class name doesn't count.
 const IMPORT_STATEMENT = /import\s*\{[^}]*\bFeatureOverrideService\b[^}]*\}\s*from/;
@@ -92,6 +103,19 @@ describe("B524 — FeatureOverrideService.create has exactly one call site", () 
     expect(callsCreateOnAnInjectedInstance(text)).toBe(true);
   });
 
+  it("the reviewed second writers are named by exact path, each with a reason, and each really calls .create(", () => {
+    for (const [rel, reason] of Object.entries(REVIEWED_SECOND_WRITERS)) {
+      expect(rel).not.toMatch(/[*?]/);
+      expect(reason.length).toBeGreaterThan(20);
+      const full = path.join(API_ROOT, rel);
+      expect(fs.existsSync(full)).toBe(true);
+      expect(callsCreateOnAnInjectedInstance(fs.readFileSync(full, "utf8"))).toBe(true);
+    }
+    expect(Object.keys(REVIEWED_SECOND_WRITERS)).toEqual([
+      "src/platform-admin/feature-change.service.ts",
+    ]);
+  });
+
   it("a file that only mentions the class name in a comment/docstring is NOT a false positive", () => {
     const fixture = `
       /** See FeatureOverrideService.create() for the auto-close behavior. */
@@ -116,7 +140,8 @@ describe("B524 — FeatureOverrideService.create has exactly one call site", () 
   it("has zero OTHER files that both import FeatureOverrideService AND call .create( on the bound instance", () => {
     const offenders = files
       .filter((f) => callsCreateOnAnInjectedInstance(fs.readFileSync(f, "utf8")))
-      .map((f) => path.relative(API_ROOT, f));
+      .map((f) => path.relative(API_ROOT, f).split(path.sep).join("/"))
+      .filter((f) => !(f in REVIEWED_SECOND_WRITERS));
     // Any hit here means a file OTHER than the one reviewed, DI-aware controller both holds a
     // FeatureOverrideService and calls .create() on it — B524's requires check no longer covers
     // every real write path, and belongs at (or additionally at) the new site.

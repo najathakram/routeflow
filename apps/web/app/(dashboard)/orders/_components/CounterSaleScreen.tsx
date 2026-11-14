@@ -81,6 +81,7 @@ import {
   writeHeldAttempt,
   COUNTER_CHECK_POSTDATED_COPY,
   COUNTER_CHECK_ZONE_FAILED_COPY,
+  COUNTER_ORDER_DATE_ZONE_FAILED_COPY,
   COUNTER_CHECK_ZONE_LOADING_COPY,
   isPostdatedCheck,
   isCounterSaleHandledError,
@@ -116,6 +117,8 @@ import { repriceLines } from "./counter-sale-reprice";
 import { QTY_TOO_LARGE_COPY } from "./counter-qty-refusal";
 import { PRICE_LAYER_TOO_MANY_COPY } from "@/components/PriceLayerNotice";
 import { isTextEntryActive } from "@/lib/refocus-scanner";
+import { CartMovableList } from "@/components/CartMovableList";
+import { useCartLineOrder } from "@/lib/use-cart-line-order";
 import { unlockScanCue } from "@/lib/scan-cue";
 import { isTouchFirst } from "@/lib/touch-first";
 import { cameraFrameBlocked, counterDialogOpen, scanPauseHeld } from "./counter-scan-guard";
@@ -148,6 +151,7 @@ import { CounterScanFeedback } from "./CounterScanFeedback";
 import { useCounterNewItem } from "./CounterNewItem";
 import { CounterBuyerChoice } from "./CounterBuyerChoice";
 import { CounterRunningTotal } from "./CounterRunningTotal";
+import { LineCountChip } from "./LineCountChip";
 import { BUYER_REASON_COPY, kindOfPick } from "./counter-buyer-choice";
 import { useCounterBuyerChoice } from "./useCounterBuyerChoice";
 import { useCounterLineStock } from "./counter-line-stock";
@@ -155,8 +159,9 @@ import { useNewCustomerDoor } from "./useNewCustomerDoor";
 import { useCounterScanFocus } from "./useCounterScanFocus";
 import { CounterReceiptActions } from "./CounterReceiptActions";
 import { CounterTodaysSales } from "./CounterTodaysSales";
+import { CounterDateChip, CounterDateReminder } from "./CounterDateChip";
+import { dateIfNotToday, isOrderDateRefusalCopy } from "@/lib/counter-order-date";
 import { ParkedSales } from "./ParkedSales";
-import { DraftDockSlot } from "@/components/DraftDockSlot";
 import { QuickKeysGrid } from "./QuickKeysGrid";
 import { CounterCheckDetails } from "./CounterCheckDetails";
 import {
@@ -298,6 +303,7 @@ export function CounterSaleScreen() {
   const [tendered, setTendered] = React.useState("");
   const [reference, setReference] = React.useState("");
   const [checkDate, setCheckDate] = React.useState(""); // "" = today (the business's day)
+  const [orderDateSet, setOrderDate] = React.useState(""); // W-1188: the day the clerk chose; read through `orderDate` below
   // SA-1026: "Check not received yet" under Check (named customer): sent as On account + expectedMethod CHECK.
   const [checkNotReceived, setCheckNotReceived] = React.useState(false);
   const [error, setError] = React.useState("");
@@ -333,15 +339,18 @@ export function CounterSaleScreen() {
     setTendered(held.tendered ?? "");
     setReference(held.reference ?? "");
     setCheckDate(isCalendarDay(held.checkDate) ? held.checkDate : "");
+    setOrderDate((held.dto as CounterSaleRequest).orderDate ?? ""); // the attempt's own date, never re-derived
     setOutcomeUnknown(true);
   }, [heldKey, restoreBuyer, decideTender]);
   // The scan field is ALWAYS focused: after every action, and whenever the sale view is showing.
   // While a walk-in sale waits for the customer to ship to, the customer field keeps focus instead.
-  const { refocus, focusCustomerFind, refocusFromActive } = useCounterScanFocus({
-    scanRef,
-    customerFindRef,
-    awaitingCustomerRef,
-  });
+  const { refocus, refocusAfterDialog, focusCustomerFind, refocusFromActive } = useCounterScanFocus(
+    {
+      scanRef,
+      customerFindRef,
+      awaitingCustomerRef,
+    },
+  );
   // CQ-18: a refusal shown in the checkout bar belongs to the cart that was refused. Any edit to the cart's lines (a scan, a
   // quantity, a removal, a re-price) makes it stale, so it goes. A FINAL message (the sale was voided / changed / saved
   // unpaid) is about a sale that exists and stays. The tender has its own rule just below.
@@ -351,6 +360,23 @@ export function CounterSaleScreen() {
   // Fixing the tender clears the "Enter at least $X" message and ONLY that one (never a server or final-sale error).
   const clearUnderpaidError = () => setError((e) => (isTenderShortCopy(e) ? "" : e));
   const locked = outcomeUnknown; // every cart / payment control is disabled while the outcome is unknown
+  const zoneRead = useTenantTimeZoneQuery();
+  const { data: settings } = useQuery<ReceiptBusinessProfile>({
+    queryKey: ["settings"],
+    queryFn: () => apiClient.get("/settings").then((r) => r.data),
+    staleTime: 60_000,
+  });
+  // A check is dated against the BUSINESS's day. Until /settings has answered that day is unknown: nothing is judged (never
+  // against UTC), a CHECK sale is refused with its own copy, and a failed read offers a retry.
+  const zoneStatus = settings !== undefined ? "ready" : zoneRead.isError ? "failed" : "loading";
+  const businessToday = () =>
+    zoneStatus === "ready" ? calendarDayInZone(zoneRead.zone ?? "UTC") : "";
+  const today = businessToday(); // for the Check fields; complete() reads the day again when it is pressed
+  // W-1188, ONE rule everywhere: a chosen day equal to the business's today IS Today, so nothing is shown as dated, parked,
+  // saved or sent for it. Derived at use from the business day (unknown while /settings loads), never re-run at a restore, so
+  // a cart restored before the day is known still reads Today once it is. Complete, Park, the live-cart snapshot, the receipt
+  // and the chip all read this one value. A sale parked on an earlier day keeps it and reads "Dated ...".
+  const orderDate = dateIfNotToday(orderDateSet, today);
   // SA-748 section 1: the unfinished cart survives a refresh (restored UNLOCKED; a held attempt always wins).
   const liveCart = useCounterLiveCart({
     storeKey: liveKey,
@@ -362,6 +388,7 @@ export function CounterSaleScreen() {
       tendered,
       reference,
       checkDate,
+      orderDate,
       walkIn: buyerChoice.kind === "walk-in",
     },
     suspended: createSale.isPending || outcomeUnknown || receipt !== null,
@@ -377,6 +404,7 @@ export function CounterSaleScreen() {
       if (snap.method === "CHECK" || snap.method === "CARD") setTendered(snap.tendered);
       setReference(snap.reference);
       setCheckDate(snap.checkDate ?? "");
+      setOrderDate(snap.orderDate ?? "");
     },
     onClearedElsewhere: () => {
       setLines([]);
@@ -384,6 +412,7 @@ export function CounterSaleScreen() {
       buyerChoice.reset();
       setReference("");
       setCheckDate("");
+      setOrderDate("");
     },
   });
   const hasLines = lines.length > 0; // POS-7: the register header's Exit asks before discarding a cart with lines
@@ -428,13 +457,81 @@ export function CounterSaleScreen() {
     setParkBusy(busy);
   };
   const lineLocked = locked || salePosting || parkBusy;
+  // W-1187 PR-2b: drag a line to any place; the array order is the order the sale is sent in. Focus goes back to the scan box.
+  const lineMove = useCartLineOrder<SaleLine>({
+    lines,
+    setLines,
+    idOf: (l) => l.tempId,
+    labelOf: (l) => l.name,
+    enabled: !lineLocked,
+    afterMove: refocus,
+    keyboardUndo: false, // the till's ONE key listener is the scan one (#4293): the toast's Undo button is the way back
+  });
   // A KEYBOARD activation of a tender / method button (detail 0) keeps focus where it is, so Tab goes on to the next control.
   // One scan-focus owner (row 237): a digit typed while a NON-text control holds focus (a button, a checkbox, <body>)
   // is a scan or the start of one, so it goes to the scan box instead of starting an Enter on "Add note" or a stray shortcut.
   // Text fields, Ctrl/Meta/Alt combos and open dialogs are never redirected.
+  // W-1188 scan hand-over: the date picker saw a scan's FIRST key, took no action and closed. While armed, the rest of the
+  // scan's keys come through this one listener (no timing anywhere): typed into the scan box through state until focus is
+  // there, then by the browser. Enter submits the whole code through the till's one scan entry.
+  const handoverRef = React.useRef(false);
+  const scanTextRef = React.useRef("");
+  const submitScanRef = React.useRef<(text: string) => void>(() => undefined);
+  React.useLayoutEffect(() => {
+    scanTextRef.current = scanText;
+  }, [scanText]);
+  // the scan box's own onChange rules (frozen while a sale or park is in flight; a miss message goes at the next keystroke),
+  // read through refs because the listener below is installed once. Assigned after `scan` exists.
+  const typingFrozenRef = React.useRef<() => boolean>(() => false);
+  const keystrokeRef = React.useRef<() => void>(() => undefined);
+  const startScanHandover = (key: string) => {
+    if (typingFrozenRef.current()) return; // a sale or park is in flight: the key is dropped, not queued ahead of the next scan
+    handoverRef.current = true;
+    keystrokeRef.current();
+    scanTextRef.current += key;
+    setScanText(scanTextRef.current);
+  };
   React.useEffect(() => {
     if (receipt || locked) return;
+    const disarm = () => {
+      handoverRef.current = false;
+    };
+    window.addEventListener("pointerdown", disarm, true);
+    const onHandover = (e: KeyboardEvent): void => {
+      // AltGr (Ctrl+Alt on non-US layouts) types a character; any other combo is not part of a scan: pass through, stay armed
+      const altGr = e.getModifierState?.("AltGraph") === true;
+      if (!altGr && (e.ctrlKey || e.metaKey || e.altKey)) return;
+      if (["Shift", "CapsLock", "Alt", "Control", "Meta"].includes(e.key)) return;
+      const scanEl = scanRef.current;
+      if (scanEl && document.activeElement === scanEl) {
+        if (e.key.length !== 1) disarm(); // Enter (the form submits), Escape, Tab, arrows: the hand-over is over; letters type
+        return;
+      }
+      // A code is never split: wherever the till's OWN refocus put the cursor (the customer search while a walk-in sale waits
+      // for its buyer, or nowhere on a touch-first till), the keys keep going to the scan text. Only an open window ends it
+      // here; a click, Tab or any other non-character key ends it below.
+      if (counterDialogOpen()) return disarm();
+      if (e.key === "Enter") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        disarm();
+        submitScanRef.current(scanTextRef.current);
+        return;
+      }
+      if (e.key.length === 1) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (typingFrozenRef.current()) return;
+        keystrokeRef.current();
+        scanTextRef.current += e.key;
+        setScanText(scanTextRef.current);
+        lastScanActivityRef.current = performance.now();
+        return;
+      }
+      disarm(); // Tab, Escape, arrows, Backspace: the key acts as usual
+    };
     const onKey = (e: KeyboardEvent) => {
+      if (handoverRef.current) return onHandover(e);
       if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
       // digits and CAPITAL letters on a desktop: the g-then-x navigation shortcuts are lowercase and a wedge's code is capitals
       // (SA-1067 M4: a code that starts with a letter lost it, and its digits then matched a different item). While focus is inside the price history panel (a popover over
@@ -461,7 +558,10 @@ export function CounterSaleScreen() {
       e.stopImmediatePropagation();
     };
     window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("pointerdown", disarm, true);
+    };
   }, [receipt, locked]);
   // Row 112: the sticky checkout bar floats over the page below md; the screen reserves its measured height at the bottom so
   // the last cart line and the Cash/Card buttons can always scroll clear of it (the bar grows with an error or a change line).
@@ -545,18 +645,6 @@ export function CounterSaleScreen() {
     setCheckNotReceived(on);
     if (on) setReference("");
   };
-  const zoneRead = useTenantTimeZoneQuery();
-  const { data: settings } = useQuery<ReceiptBusinessProfile>({
-    queryKey: ["settings"],
-    queryFn: () => apiClient.get("/settings").then((r) => r.data),
-    staleTime: 60_000,
-  });
-  // A check is dated against the BUSINESS's day. Until /settings has answered that day is unknown: nothing is judged (never
-  // against UTC), a CHECK sale is refused with its own copy, and a failed read offers a retry.
-  const zoneStatus = settings !== undefined ? "ready" : zoneRead.isError ? "failed" : "loading";
-  const businessToday = () =>
-    zoneStatus === "ready" ? calendarDayInZone(zoneRead.zone ?? "UTC") : "";
-  const today = businessToday(); // for the Check fields; complete() reads the day again when it is pressed
   const checkDateValue = checkDate || today;
   // A held (outcome unknown) sale shows the date its attempt SENT, never one re-derived from today.
   const shownCheckDate =
@@ -911,18 +999,35 @@ export function CounterSaleScreen() {
       setScanText("");
     },
   });
-  function onScanSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  // W-1186: an unknown scan opens the New product window straight away, barcode filled in (the regular order does the same);
+  // a buzz on phones that have one. A clerk who cannot set prices keeps the miss line (newItem.open is undefined for them).
+  const missCodeNow = scan.missCode;
+  React.useEffect(() => {
+    if (!missCodeNow || !newItem.open) return;
+    if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function")
+      navigator.vibrate(200);
+    newItem.open(missCodeNow, scan.missCamera ? "camera" : "scanBox");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [missCodeNow]);
+  // The ONE typed-scan entry: the scan box's Enter and a scan the date picker caught (W-1188: made while it is open, kept) both
+  // come through here.
+  function submitScanText(text: string) {
     lastScanActivityRef.current = performance.now();
     if (lineLocked || saleInFlight()) return; // frozen while the sale POST is in flight: a mid-POST scan would miss the sale
     if (scanPauseHeld()) {
       setScanText(""); // a window has the scan, and the box is cleared so the next scan doesn't join onto this one
       return;
     }
-    const text = scanText;
     setScanText("");
     setCameraOffNote(false);
     scan.submit(text);
+  }
+  submitScanRef.current = submitScanText;
+  typingFrozenRef.current = () => lineLocked || saleInFlight();
+  keystrokeRef.current = () => scan.dismissMessage();
+  function onScanSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    submitScanText(scanText);
   }
   // SA-1059: a code the camera decoded. The same guard as onScanSubmit (a mid-POST scan would miss the sale), and the same
   // activity stamp (a scanner's trailing Enter must not read as a human pause). A receipt is not a sale to add to either.
@@ -1099,6 +1204,7 @@ export function CounterSaleScreen() {
     setTendered("");
     setReference("");
     setCheckDate("");
+    setOrderDate("");
     setError("");
     setReceipt(null);
     setEnteredTender(null);
@@ -1127,6 +1233,7 @@ export function CounterSaleScreen() {
     setTendered(p.tendered);
     setReference(p.reference);
     setCheckDate(p.checkDate ?? "");
+    setOrderDate(p.orderDate ?? "");
     setRepriceEpoch((n) => n + 1);
   }
 
@@ -1187,7 +1294,12 @@ export function CounterSaleScreen() {
         clearHeldAttempt(heldKey);
         setOutcomeUnknown(false);
         // FIXED copy, never the server message; a walk-in sale has no customer record to fix a license on
-        setError(counterSaleErrorCopy(err, { walkIn: attempt.dto.walkIn === true }));
+        setError(
+          counterSaleErrorCopy(err, {
+            walkIn: attempt.dto.walkIn === true,
+            orderDate: attempt.dto.orderDate,
+          }),
+        );
         liveCart.endSend();
       } else {
         attempt.unknown = true;
@@ -1207,7 +1319,7 @@ export function CounterSaleScreen() {
         // A refusal the till owns (its global toast is silenced) says its own copy too, or the clerk would see nothing.
         setError(
           isCounterSaleDayClosed(err) || isCounterSaleHandledError(err)
-            ? counterSaleErrorCopy(err)
+            ? counterSaleErrorCopy(err, { orderDate: attempt.dto.orderDate })
             : "",
         );
         setRecordedHref(keptSaleHref(err));
@@ -1286,6 +1398,15 @@ export function CounterSaleScreen() {
     // and judges a post-dated one, against the new day.
     const submitToday = businessToday();
     const submitCheckDate = checkDate || submitToday;
+    // R8: a dated sale is judged against the business's day; while that day is unknown Complete waits (clearing the date frees it)
+    if (orderDateSet && zoneStatus !== "ready") {
+      setError(
+        zoneStatus === "loading"
+          ? COUNTER_CHECK_ZONE_LOADING_COPY
+          : COUNTER_ORDER_DATE_ZONE_FAILED_COPY,
+      );
+      return null;
+    }
     if (
       tender.method === "CHECK" &&
       (zoneStatus !== "ready" || isPostdatedCheck(submitCheckDate, submitToday))
@@ -1318,6 +1439,8 @@ export function CounterSaleScreen() {
         ...(tender.method === "CHECK" && submitCheckDate ? { checkDate: submitCheckDate } : {}),
       },
       ...(inlineReturn ? { inlineReturn } : {}),
+      // Seen is sent: a day equal to today reads (and sends) as Today; while today is unknown the chip shows the set day
+      ...(dateIfNotToday(orderDateSet, submitToday) ? { orderDate: orderDateSet } : {}),
     } as CounterSaleRequest);
     dropUndo(); // the sale is going out: a removed line can no longer come back
     attemptRef.current = {
@@ -1508,6 +1631,7 @@ export function CounterSaleScreen() {
           profile={settings}
           fallbackMethod={method}
           customerName={receiptCustomerName(customer)}
+          orderDate={orderDate || undefined}
           headingRef={receiptHeadingRef}
         />
         <CounterPaymentNotRecorded receipt={receipt} onReceipt={setReceipt} />
@@ -1545,6 +1669,7 @@ export function CounterSaleScreen() {
             tendered,
             reference,
             checkDate,
+            orderDate,
             walkIn: buyerChoice.kind === "walk-in",
           }}
           blocked={
@@ -1553,15 +1678,34 @@ export function CounterSaleScreen() {
             createDraft.isPending ||
             scanBusy ||
             reprice.blocked ||
-            shipIntent
+            shipIntent ||
+            (orderDateSet !== "" && zoneStatus !== "ready")
           }
+          summary={{ items: lines.length, total: totals.total }}
           inFlight={() => saleInFlight() || shipRunningRef.current || scanBusyRef.current}
           canEditPrices={mayEditPrices}
           onBusyChange={onParkBusy}
-          onParked={resetSale}
+          onParked={() => {
+            liveCart.dropStored(); // one copy only: the server has it now, so a sign-out cannot park it twice
+            resetSale();
+          }}
           onRestore={restoreParked}
         />
-        <DraftDockSlot />
+        <CounterDateChip
+          value={orderDate}
+          today={today || undefined}
+          onChange={(d) => {
+            setOrderDate(d);
+            // fixing the date answers a date refusal: its message and the red ring go (any other message stays)
+            setError((e) => (isOrderDateRefusalCopy(e) ? "" : e));
+          }}
+          disabled={locked || salePosting || parkBusy}
+          refused={isOrderDateRefusalCopy(error)}
+          onDone={refocusAfterDialog}
+          onScan={submitScanText}
+          onScanKey={startScanHandover}
+          todayFailed={zoneStatus === "failed"}
+        />
         {gate.offerShipInstead ? (
           <WriteButton
             className="min-h-[44px]"
@@ -1761,6 +1905,18 @@ export function CounterSaleScreen() {
                     )
                       focusPayment(); // the next keys are the payment
                   }
+                  // W-1184: Esc on an empty scan field moves the cursor to the way out, in one key: "Resume sale" when a
+                  // sale is waiting, else "Exit counter". It only MOVES focus (the next Enter decides), so a stray Esc loses nothing.
+                  if (e.key === "Escape" && !scanText && !e.defaultPrevented) {
+                    const out =
+                      document.querySelector<HTMLElement>(
+                        '[data-testid="counter-resume-bar"] button',
+                      ) ?? document.querySelector<HTMLElement>('button[aria-label="Exit counter"]');
+                    if (out) {
+                      e.preventDefault();
+                      out.focus();
+                    }
+                  }
                 }}
                 onBlur={(e) => {
                   // only when focus is LOST (a click on blank space); Tab/click to another control keeps it there
@@ -1892,7 +2048,13 @@ export function CounterSaleScreen() {
               </Button>
             </div>
           ) : null}
-          <ul className="divide-y rounded border" aria-label="Items">
+          <CartMovableList
+            className="divide-y rounded border"
+            aria-label="Items"
+            sortable={lineMove.sortable}
+            onMove={lineMove.onMove}
+            enabled={lineMove.enabled}
+          >
             {lines.length === 0 ? (
               <li className="p-3 text-sm text-navy/60">No items yet.</li>
             ) : null}
@@ -1917,9 +2079,10 @@ export function CounterSaleScreen() {
                 onNoteClosed={refocus}
                 onQtyEnter={refocusFromActive}
                 hideOriginalPrice={settings?.hideOriginalPrice === true}
+                moveId={l.tempId}
               />
             ))}
-          </ul>
+          </CartMovableList>
 
           <div
             role="status"
@@ -2278,6 +2441,8 @@ export function CounterSaleScreen() {
                 <span>{money(c.amount)}</span>
               </div>
             ))}
+            {/* W-1185: the item count to check against the goods; in the sticky bar it stays on screen while scanning. */}
+            <LineCountChip lines={lines} />
             <CounterRunningTotal
               total={totals.total}
               cash={method === "CASH"}
@@ -2331,6 +2496,13 @@ export function CounterSaleScreen() {
               </p>
             ) : null}
 
+            <CounterDateReminder
+              value={orderDate}
+              today={today || undefined}
+              todayFailed={zoneStatus === "failed"}
+              onRetry={zoneRead.retry}
+              retrying={zoneRead.isFetching}
+            />
             <div className="flex flex-wrap gap-2" data-testid="counter-checkout-actions">
               <Button
                 className="min-h-[44px]"

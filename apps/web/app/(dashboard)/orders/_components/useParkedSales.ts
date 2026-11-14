@@ -4,6 +4,7 @@
 // (through `cart`), asks the server to keep or hand back a parked copy, and tells the screen to clear (`onParked`) or restore
 // (`onRestore`). Nothing here prices anything or reserves stock, and no sale key is minted: that happens at Complete.
 import * as React from "react";
+import { useWaitingDiscards } from "@/lib/use-waiting-discards";
 import type { ParkedCartPayload } from "@routeflow/pricing";
 import { useDiscard, useParkedCarts, usePark, useResume } from "@/lib/api/counter-park";
 import {
@@ -19,6 +20,8 @@ import {
 export interface ParkedSalesDeps {
   /** the live cart, read when a button is pressed */
   cart: ParkCartInput;
+  /** what the cart holds right now, for the "Sale parked" toast: line count and the amount due */
+  summary?: { items: number; total: number };
   /** the screen is busy or locked (sale in flight, scan waiting, a price lookup, an unknown outcome, a ship hand-off) */
   blocked: boolean;
   /** the handler-side truth for a sale POST in flight (a render may not have caught up yet) */
@@ -29,7 +32,18 @@ export interface ParkedSalesDeps {
   onParked: () => void;
   /** called with the server-rebuilt payload after a resume: the screen restores its state from it */
   onRestore: (payload: ParkedCartPayload) => void;
+  /**
+   * Discard with Undo: when given, a Discard hides the row at once and sends the delete after `discardUndo.ms`
+   * (or when the screen goes away); calling `undo` inside that window cancels it and the row is back. Absent = delete now.
+   */
+  onDiscarded?: (
+    undo: () => void,
+    row: { id: string; token: string; label: string; commit: () => void },
+  ) => void;
 }
+
+/** How long the Undo toast stays up (an object so a test can shorten it). The delete leaves when that toast CLOSES, not on a timer of its own. */
+export const discardUndo = { ms: 8000 };
 
 export type ParkWork = { kind: "park" | "resume" | "discard"; id?: string } | null;
 export type ParkMessage = { scope: "header" | "dialog"; text: string } | null;
@@ -43,6 +57,9 @@ export function useParkedSales(deps: ParkedSalesDeps) {
   const d = React.useRef(deps);
   d.current = deps;
   const workRef = React.useRef(false);
+  // the sale parked last (W-1184): its server id and what it held, so the toast and its Undo can name it after the cart cleared
+  type ParkedNote = { id: string; items: number; total: number };
+  const lastParked = React.useRef<ParkedNote | null>(null as ParkedNote | null);
   const [work, setWork] = React.useState<ParkWork>(null);
   const [open, setOpenState] = React.useState(false);
   // the parked sale the clerk asked to resume while the current cart still has lines
@@ -73,7 +90,8 @@ export function useParkedSales(deps: ParkedSalesDeps) {
     begin({ kind: "park" });
     try {
       const posted = JSON.stringify(built.value);
-      await parkM.mutateAsync(built.value);
+      const sum = d.current.summary;
+      const saved = await parkM.mutateAsync(built.value);
       // Only now, and only if the cart is still exactly what was parked: a changed cart (or a sale that started meanwhile)
       // is NEVER cleared. The parked copy stays in the list as it was.
       const now = buildParkPayload(d.current.cart);
@@ -81,6 +99,7 @@ export function useParkedSales(deps: ParkedSalesDeps) {
         setMessage({ scope, text: PARK_CHANGED_COPY });
         return false;
       }
+      lastParked.current = sum && saved?.id ? { id: saved.id, ...sum } : null;
       d.current.onParked(); // a failed park leaves the cart untouched
       return true;
     } catch (err) {
@@ -123,8 +142,36 @@ export function useParkedSales(deps: ParkedSalesDeps) {
     await doResume(id);
   };
 
+  // Discards waiting for their Undo toast to close: the row is hidden, the delete has not left yet. One token per discard.
+  const waiting = useWaitingDiscards();
+  const hidden = waiting.hidden;
+  const commitDiscard = async (token: string) => {
+    const id = waiting.commit(token);
+    if (id === null) return; // taken back (Undo) or already sent
+    try {
+      await discardM.mutateAsync(id);
+    } catch (err) {
+      waiting.failed(id);
+      setMessage({ scope: "dialog", text: discardErrorCopy(err) });
+    }
+  };
+  // Leaving the screen sends nothing: the Undo toast outlives this screen, and the delete waits for that toast to close.
+
   const discard = async (id: string) => {
     if (!canAct()) return;
+    const notify = d.current.onDiscarded;
+    if (notify) {
+      const row = (list.data?.data ?? []).find((r) => r.id === id);
+      setMessage(null);
+      const token = waiting.begin(id);
+      notify(() => void waiting.undo(token), {
+        id,
+        token,
+        label: row?.label ?? "Sale",
+        commit: () => void commitDiscard(token),
+      });
+      return;
+    }
     begin({ kind: "discard", id });
     try {
       await discardM.mutateAsync(id);
@@ -145,9 +192,11 @@ export function useParkedSales(deps: ParkedSalesDeps) {
   };
 
   const total = list.data?.total;
+  const allRows = Array.isArray(list.data?.data) ? list.data.data : [];
+  const shown = allRows.filter((r) => !hidden.has(r.id));
   return {
-    count: typeof total === "number" ? total : 0,
-    rows: Array.isArray(list.data?.data) ? list.data.data : [],
+    count: typeof total === "number" ? Math.max(0, total - (allRows.length - shown.length)) : 0,
+    rows: shown,
     listLoading: list.isLoading,
     listFailed: list.isError,
     retryList: () => void list.refetch(),
@@ -159,6 +208,12 @@ export function useParkedSales(deps: ParkedSalesDeps) {
     canPark: !deps.blocked && !work && deps.cart.lines.length > 0,
     canResume: !deps.blocked && !work,
     park: () => void parkNow("header"),
+    /** W-1184: a leave parks the open sale; `ok` is true only when the server stored it. */
+    parkForLeave: async () => {
+      lastParked.current = null;
+      const ok = await parkNow("header");
+      return { ok, parked: ok ? (lastParked.current as ParkedNote | null) : null };
+    },
     startResume,
     choose: (c: ParkChoice) => void choose(c),
     discard: (id: string) => void discard(id),

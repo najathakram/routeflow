@@ -127,13 +127,14 @@ describe("InvoicesService — row 615 standalone payment hook", () => {
     });
 
     it("(e) a call with no hook writes the same rows, with the buyer's reference as entered", async () => {
-      const plain = await service.recordStandalonePayment(dto());
+      const plain = await service.recordStandalonePayment(dto(), { source: "STAFF_ALLOCATION" });
       const plainRows = prisma.invoicePayment.create.mock.calls.map(([a]: any) => a.data);
       const plainAdvance = prisma.advancePayment.create.mock.calls.map(([a]: any) => a.data);
       prisma.invoicePayment.create.mockClear();
       prisma.advancePayment.create.mockClear();
 
       const hooked = await service.recordStandalonePayment(dto(), {
+        source: "STAFF_ALLOCATION",
         inTx: async () => undefined,
       });
       const hookedRows = prisma.invoicePayment.create.mock.calls.map(([a]: any) => a.data);
@@ -155,7 +156,10 @@ describe("InvoicesService — row 615 standalone payment hook", () => {
     it("runs the hook inside the transaction, after the payment rows and the excess advance, with the result", async () => {
       const inTx = jest.fn().mockResolvedValue(undefined);
 
-      const result = await service.recordStandalonePayment(dto(), { inTx });
+      const result = await service.recordStandalonePayment(dto(), {
+        source: "STAFF_ALLOCATION",
+        inTx,
+      });
 
       expect(inTx).toHaveBeenCalledTimes(1);
       const [txArg, resArg] = inTx.mock.calls[0];
@@ -170,6 +174,7 @@ describe("InvoicesService — row 615 standalone payment hook", () => {
     it("a hook that throws rejects the call with its error (the transaction rolls back)", async () => {
       await expect(
         service.recordStandalonePayment(dto(), {
+          source: "STAFF_ALLOCATION",
           inTx: async () => {
             throw new Error("claim lost");
           },

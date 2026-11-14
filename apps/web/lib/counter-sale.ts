@@ -16,6 +16,7 @@ import {
   isDefinitiveSaleRefusal,
   mintSaleKey,
 } from "@routeflow/types/sale-attempt";
+import { ORDER_DATE_REFUSAL_CODES, orderDateRefusalCopy } from "./counter-order-date";
 import {
   API_ERROR_CODES,
   COMPLETE_MODE_ERROR_COPY,
@@ -351,6 +352,9 @@ export const COUNTER_CHECK_ZONE_LOADING_COPY =
   "Still loading the business's day. Try again in a moment.";
 export const COUNTER_CHECK_ZONE_FAILED_COPY =
   "Couldn't load the business's day, so a check can't be dated yet.";
+/** W-1188 R8: a dated sale waits for the business's day: the day it is dated against is not known yet. */
+export const COUNTER_ORDER_DATE_ZONE_FAILED_COPY =
+  "Couldn't check today's date. Clear the order date, or try again.";
 
 /** True when `checkDate` names a real YYYY-MM-DD day strictly after `today` (the business's day). Anything else is not post-dated. */
 export function isPostdatedCheck(checkDate: string, today: string): boolean {
@@ -495,7 +499,10 @@ export const COUNTER_PRICE_EDIT_NOT_PERMITTED_COPY =
  * FIXED copy by status (and the one named 403 code); the server's own message is never shown. "Nothing was charged" is
  * said ONLY for a refusal that proves nothing was written; a 5xx / network error / timeout is an unknown outcome.
  */
-export function counterSaleErrorCopy(err: unknown, opts: { walkIn?: boolean } = {}): string {
+export function counterSaleErrorCopy(
+  err: unknown,
+  opts: { walkIn?: boolean; orderDate?: string } = {},
+): string {
   const res = (
     err as
       | {
@@ -519,6 +526,8 @@ export function counterSaleErrorCopy(err: unknown, opts: { walkIn?: boolean } = 
     return "You don't have permission to complete a counter sale.";
   const final = finalCounterSaleCopy(err);
   if (final) return final;
+  const dated = orderDateRefusalCopy(err, opts.orderDate); // W-1188: the date chip's two refusals, nothing written
+  if (dated) return dated;
   if (status === 409 && res?.data?.code === API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED)
     return COUNTER_SALE_DAY_CLOSED_TILL_COPY;
   if (status === 409 && ORDER_EXISTS_CODES.has(res?.data?.code))
@@ -784,6 +793,7 @@ export const COMPLETE_HARD_REFUSAL_CODES: ReadonlySet<string> = new Set([
 ]);
 /** Counter-sale codes the till answers with its own fixed copy (counterSaleErrorCopy): the global error toast stays quiet. */
 const COUNTER_SALE_HANDLED_CODES: ReadonlySet<string> = new Set([
+  ...ORDER_DATE_REFUSAL_CODES,
   API_ERROR_CODES.COUNTER_CHECK_POSTDATED,
   API_ERROR_CODES.COUNTER_TENDER_SHORT,
 ]);

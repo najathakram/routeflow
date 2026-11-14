@@ -60,6 +60,17 @@ export function setCounterDiscardHook(fn: (() => void) | null): void {
   discardHook = fn;
 }
 
+let autoParkHook: (() => Promise<boolean>) | null = null;
+let parking = false;
+
+/**
+ * W-1184: the counter screen registers how to PARK the open sale (server-side, with the toast + Undo). While a hook is
+ * registered a leave parks first and the "Discard this sale?" question is only the fallback when the park fails.
+ */
+export function setCounterAutoParkHook(fn: (() => Promise<boolean>) | null): void {
+  autoParkHook = fn;
+}
+
 /** Discard: drop the cart's stored copy, then run the parked leave once. */
 export function confirmCounterLeave(): void {
   const go = leaveRequest;
@@ -81,7 +92,8 @@ export function cancelCounterLeave(): void {
  * THE shared leave guard. Every shell way out of the counter (Exit, rail/drawer links, g shortcuts, the palette, the user menu,
  * browser Back, leaving an impersonation) asks this first. Returns true when the leave must NOT happen right now:
  *  - a sale is being recorded (leaving would drop the attempt and invite a second ring-up): raises the notice the header shows;
- *  - the cart has lines and the caller passed `proceed`: the leave is parked and the "Discard this sale?" dialog opens;
+ *  - the cart has lines, the caller passed `proceed` and a park hook is registered: the sale is parked, then `proceed` runs;
+ *  - the cart has lines and the caller passed `proceed` (no hook, or the park failed): the leave is parked and the "Discard this sale?" dialog opens;
  *    Discard runs `proceed` (the caller's own navigation), Keep selling drops it.
  * Returns false when the caller may go on itself. Off the counter nothing is busy and the cart has no lines.
  */
@@ -91,6 +103,21 @@ export function guardCounterLeave(proceed?: () => void): boolean {
       leaveNotice = true;
       listeners.forEach((fn) => fn());
     }
+    return true;
+  }
+  if (hasLines && proceed && autoParkHook) {
+    if (parking) return true; // a park is already running: one leave wins, never two parks of the same cart
+    parking = true;
+    void autoParkHook()
+      .catch(() => false)
+      .then((ok) => {
+        parking = false;
+        if (ok) proceed();
+        else {
+          leaveRequest = proceed; // nothing is lost: ask the old question instead
+          listeners.forEach((fn) => fn());
+        }
+      });
     return true;
   }
   if (hasLines && proceed) {

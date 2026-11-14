@@ -1,6 +1,7 @@
 import type { PreferencePatch } from "@routeflow/types";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import { emailEditRefusalCopy } from "../email-change-copy";
 
 export interface AppUser {
   id: string;
@@ -12,6 +13,8 @@ export interface AppUser {
   isAdmin?: boolean;
   canActAsDriver?: boolean;
   createdAt: string;
+  /** B461: the new login email this user is waiting to confirm, else null. */
+  pendingEmail?: string | null;
 }
 
 interface PaginatedResponse<T> {
@@ -48,6 +51,8 @@ export function useUpdateUser() {
   >({
     mutationFn: ({ id, ...data }) => apiClient.patch(`/users/${id}`, data).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
+    // B461: the edit sheet toasts the taken-address refusal itself, so the app-wide handler stays quiet for it.
+    meta: { localErrorToast: (e: unknown) => emailEditRefusalCopy(e) !== null },
   });
 }
 

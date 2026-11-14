@@ -385,6 +385,8 @@ export interface BuyerOrder extends BuyerOrderListItem {
   changeRequests: ChangeRequest[];
   /** Row 380: the latest edit revision; a buyer edit sends it back as `expectedRevisionNumber`. */
   revisionNumber?: number;
+  /** W-1187 PR-2c: the order's last-write stamp, the token a line reorder (`PUT /buyer/orders/:id/line-order`) sends back. */
+  updatedAt?: string;
   editWindow: BuyerOrderEditWindow;
   /** Run state backing the edit window (null until the order is on a run). */
   routeRun: { status: RouteRunStatusValue; startedAt: string | null } | null;

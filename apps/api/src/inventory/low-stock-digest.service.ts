@@ -2,7 +2,7 @@ import { RECORD_KEEPING_EXCLUDED_STATUSES } from "../tenant/tenant-automation";
 import { Injectable, Logger } from "@nestjs/common";
 import { CronExpression } from "@nestjs/schedule";
 import { LeaderCron } from "../common/cron-lock";
-import { PrismaService } from "../prisma/prisma.service";
+import { PrismaService, type SystemClient } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { TENANT_ZONE_SELECT, zoneFromConfig } from "../common/tenant-time-zone";
 import { sellerDisplayName } from "../common/seller-display-name";
@@ -93,7 +93,7 @@ export class LowStockDigestService {
     await this.prisma.forSystem("low-stock digest: cross-tenant scan", (db) => this.sweep(db, now));
   }
 
-  private async sweep(db: PrismaService, now: Date): Promise<void> {
+  private async sweep(db: SystemClient, now: Date): Promise<void> {
     const tenants = await db.tenant.findMany({
       where: { deletedAt: null, status: { notIn: [...RECORD_KEEPING_EXCLUDED_STATUSES] } },
       select: {
@@ -118,7 +118,7 @@ export class LowStockDigestService {
   }
 
   private async processTenant(
-    db: PrismaService,
+    db: SystemClient,
     tenantId: string,
     config: {
       timezone?: string | null;
@@ -175,7 +175,7 @@ export class LowStockDigestService {
   /** Same predicate as `inventory.service.ts#getForecasting`'s `needsReorder` — one rule for
    * "below threshold", never re-derived. `reorderPoint` unset (null) means the tenant never
    * opted this product into alerting at all, not "always alert". */
-  private async getLowStockItems(db: PrismaService, tenantId: string): Promise<LowStockItem[]> {
+  private async getLowStockItems(db: SystemClient, tenantId: string): Promise<LowStockItem[]> {
     const products = await db.product.findMany({
       where: lowStockProductWhere(tenantId),
       select: { name: true, sku: true, currentStock: true, reorderPoint: true },
@@ -193,7 +193,7 @@ export class LowStockDigestService {
    * opt-out convention, not a new mechanism. Exposed via the existing generic
    * `GET/PATCH /users/me/preferences` endpoints (users.controller.ts) — N4 adds no new API. */
   private async getDigestRecipients(
-    db: PrismaService,
+    db: SystemClient,
     tenantId: string,
   ): Promise<{ email: string }[]> {
     const admins = await db.user.findMany({

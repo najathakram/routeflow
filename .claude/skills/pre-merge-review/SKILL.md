@@ -90,6 +90,8 @@ re-finds what the lane already found. Always include:
 
 Template: [reviewer-brief.md](reviewer-brief.md).
 
+Optional extra lenses (machine-local; skip if absent), never a substitute for the Tier gate: `~/.claude/skill-library/pocock-code-review/`, `addy-doubt-driven-development/`, `ponytail-review/` (every line needed?), `addy-security-and-hardening/` for auth or tenancy diffs.
+
 ### 3. Dispatch
 
 One `Agent` call, `model: opus`, `effort: high`, `subagent_type: general-purpose`, the brief

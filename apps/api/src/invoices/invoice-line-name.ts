@@ -72,3 +72,15 @@ export function withFamilyNames<T>(items: readonly T[]): T[] {
     return composed === description ? line : { ...line, description: composed };
   });
 }
+
+/**
+ * The description a NEW invoice line stores for an order line: a catalogue line uses the product's display name
+ * ("<Family> - <Variant>"), an unlisted line its free-text `name`. `buildInvoiceItemData` writes it and the order's Sort A to Z
+ * sorts on it, so "A to Z on the order" and "the A to Z its invoice would print" cannot differ (W-1187 ruling 7).
+ */
+export function orderLineInvoiceDescription(li: {
+  product?: LineNameProduct | null;
+  name?: string | null;
+}): string {
+  return li.product ? lineProductName(li.product) : (li.name ?? `Product`);
+}

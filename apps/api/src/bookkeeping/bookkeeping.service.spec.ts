@@ -494,6 +494,7 @@ describe("BookkeepingService", () => {
             log.push("db clock");
             return [{ now: opts.dbNow ?? DB_NOW }];
           }),
+          orderReviewFlag: { findMany: jest.fn(async () => []) }, // SA-1124 PR-1b: no open price review
           counterDayClose: {
             // The latest-standing-close read answers with its windowEnd; the closed-window question (assertOpen: is this
             // instant inside a window?) is answered from the same close, whose window ends at closeEnd.

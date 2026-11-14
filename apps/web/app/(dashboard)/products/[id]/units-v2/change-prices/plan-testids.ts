@@ -13,4 +13,5 @@ export const PLAN_TESTIDS = {
   changePanel: "units-v2-change-panel",
   changePreview: "units-v2-ch-preview",
   changeFooter: "units-v2-change-footer",
+  changeTypeExact: "units-v2-change-type-exact",
 } as const;

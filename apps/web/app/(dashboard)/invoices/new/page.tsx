@@ -80,6 +80,8 @@ import { bumpInvoiceLine, scanLevelForHit, seedLineQty } from "../invoice-scan-l
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { fmt, fmtCalendarDate } from "@/lib/formatting";
 import { useTenantToday } from "@/lib/tenant-timezone";
+import { dateIfNotToday } from "@/lib/counter-order-date";
+import { CounterDateChip } from "../../orders/_components/CounterDateChip";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
 import {
   computeInvoiceLineTotal,
@@ -2322,16 +2324,29 @@ export default function NewInvoicePage() {
                     <label className="mb-1.5 block text-sm font-medium text-navy/80">
                       {isSale ? "Sale date" : "Issue Date *"}
                     </label>
-                    <input
-                      type="date"
-                      value={issueDate}
-                      max={isSale ? saleToday : undefined}
-                      onChange={(e) => handleIssueDateChange(e.target.value)}
-                      className={cn(
-                        "h-10 w-full rounded-lg border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
-                        errors.issueDate ? "border-danger" : "border-surface-border",
-                      )}
-                    />
+                    {isSale ? (
+                      // W-1188: the New sale's date is the same chip as the order's, past-only (OFFICE). The form keeps a
+                      // concrete day (Today = the tenant's day), so the chip's "" (Today) maps to saleToday; the single
+                      // onChange path stays handleIssueDateChange, which re-anchors the due date.
+                      <CounterDateChip
+                        noun="sale"
+                        policy="OFFICE"
+                        today={saleToday}
+                        value={dateIfNotToday(issueDate, saleToday)}
+                        onChange={(d) => handleIssueDateChange(d || saleToday || "")}
+                        refused={!!errors.issueDate}
+                      />
+                    ) : (
+                      <input
+                        type="date"
+                        value={issueDate}
+                        onChange={(e) => handleIssueDateChange(e.target.value)}
+                        className={cn(
+                          "h-10 w-full rounded-lg border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
+                          errors.issueDate ? "border-danger" : "border-surface-border",
+                        )}
+                      />
+                    )}
                     {errors.issueDate && (
                       <p className="mt-1 text-xs text-danger">{errors.issueDate}</p>
                     )}

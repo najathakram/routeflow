@@ -240,7 +240,8 @@ test.describe("Operator — order date survives a parked draft (WP-4)", () => {
     await mockDraft(page, BACKDATE);
     test.skip(!(await resumeDraft(page)), SKIP_REASON);
 
-    await expect(page.locator("#order-date")).toHaveValue(BACKDATE);
+    // W-1188 PR-3: the order date is one chip; a parked past day shows as BACK.
+    await expect(page.getByTestId("counter-date-chip")).toHaveAttribute("data-direction", "BACK");
   });
 
   test("DRAFT-02 typing an order date autosaves it into the draft payload", async ({ page }) => {
@@ -249,12 +250,12 @@ test.describe("Operator — order date survives a parked draft (WP-4)", () => {
     const patched = await mockDraft(page, "");
     test.skip(!(await resumeDraft(page)), SKIP_REASON);
 
-    // Row 100: with no parked date the Order date input is hidden behind a "Backdate this order"
-    // control (CreateOrderModal.tsx `showOrderDate = backdateOpen`); open it first.
-    await page.getByRole("button", { name: "Backdate this order" }).click();
-    const orderDateInput = page.locator("#order-date");
-    await expect(orderDateInput).toHaveValue("");
-    await orderDateInput.fill(BACKDATE);
+    // W-1188 PR-3: open the chip's picker, type the day, apply.
+    const chip = page.getByTestId("counter-date-chip");
+    await expect(chip).toHaveAttribute("data-direction", "TODAY");
+    await chip.getByRole("button").first().click();
+    await page.getByTestId("counter-date-input").fill(BACKDATE);
+    await page.getByTestId("counter-date-input").press("Enter");
 
     await expect
       .poll(
@@ -281,7 +282,7 @@ test.describe("Operator — order date survives a parked draft (WP-4)", () => {
       }),
     );
     test.skip(!(await resumeDraft(page)), SKIP_REASON);
-    await expect(page.locator("#order-date")).toHaveValue(BACKDATE);
+    await expect(page.getByTestId("counter-date-chip")).toHaveAttribute("data-direction", "BACK");
 
     await page.getByRole("button", { name: "Create Order", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Open order exists" })).toBeVisible();

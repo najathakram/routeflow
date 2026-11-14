@@ -212,6 +212,7 @@ describe("OrdersService.create — orderDate on the tenant day (row 751)", () =>
   });
 
   const seed = () => {
+    prisma.user.findFirst.mockResolvedValue({ deniedPermissionGroups: [], permissionsVersion: 1 }); // W-870: the operator holds every group
     prisma.customer.findUnique.mockResolvedValue({
       id: "cust-1",
       pricingTier: 1,
@@ -227,7 +228,7 @@ describe("OrdersService.create — orderDate on the tenant day (row 751)", () =>
       ...operatorPayload,
       tenantId: "test-tenant",
     } as never);
-  const FUTURE = /Order date cannot be in the future/;
+  const FUTURE = /too far ahead/; // W-1188: the office policy's refusal (ORDER_DATE_OUT_OF_RANGE)
 
   afterEach(() => jest.useRealTimers());
 
@@ -237,6 +238,7 @@ describe("OrdersService.create — orderDate on the tenant day (row 751)", () =>
     seed();
     const err = await create("2026-10-26").catch((e) => e);
     expect(String(err?.message ?? "")).not.toMatch(FUTURE);
+    expect(String(err?.message ?? "")).not.toMatch(/Only staff/);
   });
 
   it("control: a UTC tenant still cannot post-date past its own today", async () => {

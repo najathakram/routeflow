@@ -24,6 +24,7 @@ import { cartStrikesList, editedLineFigures, priceEditLineOf } from "./counter-s
 import { PriceHistoryButton } from "@/components/PriceHistory";
 import { LineStockNote } from "@/components/LineStockNote";
 import type { LineStockView } from "@/lib/line-stock";
+import { useCartRowMove } from "@/components/CartRowMove";
 
 // SA-934 A-1: the words are the builder's call, per line (LineItemRow): the product's own pack and base words when the line
 // carries them, else the defaults (a line held before this has neither and prints Box / pcs). A plain line prints its own unit (row 298).
@@ -259,6 +260,7 @@ export function CounterLineRow({
   onNoteClosed,
   onQtyEnter,
   hideOriginalPrice = false,
+  moveId,
   stock,
 }: {
   line: SaleLine;
@@ -287,6 +289,8 @@ export function CounterLineRow({
   hideOriginalPrice?: boolean;
   /** SA-1086 PR-2: the live stock note for this line (one read for the cart, see `useCounterLineStock`); a note, never a gate. */
   stock?: LineStockView;
+  /** W-1187 PR-2b: the row's id inside the till's `SortableLines`; absent = no drag handle. */
+  moveId?: string;
 }) {
   const [editing, setEditing] = React.useState(false);
   const [historyPick, setHistoryPick] = React.useState<{ value: number } | null>(null);
@@ -295,10 +299,16 @@ export function CounterLineRow({
     setEditing(false);
     onNoteClosed?.();
   };
+  const mv = useCartRowMove(moveId);
   const hasNote = !!l.note?.trim();
   const edited = editedLineFigures(l, hideOriginalPrice);
   return (
-    <li className="flex flex-col gap-2 p-3 text-sm">
+    <li
+      ref={mv.setNodeRef}
+      style={mv.style}
+      className={cn("flex flex-col gap-2 p-3 text-sm", mv.rowClass)}
+    >
+      {mv.slot}
       <div className="flex items-start justify-between gap-2">
         <span className="min-w-0 break-words">
           {l.name} · {registerQtyLabel(l, wordsOf(l))}
