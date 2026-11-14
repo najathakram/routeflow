@@ -1,0 +1,17 @@
+# Handoff — 2026-11-04 · factory-janitor-status
+- Task: Fix janitor gaps so merged factory trees can be removed; report how ready the software factory is.
+- State: blocked on the lead's call to open the PR for fix 2. #4072 (fix 1) merged 11-01. Open PRs: 10 (rule: none above 10; lead said under 10, lead calls it).
+- Branch/tree: fix/janitor-merged-no-origin @ 7addf478bb (pushed, not in master, no PR) in wt/factory-jgap · uncommitted: none there; main checkout has 79 entries from other lanes, not ours · worktrees: 27 factory-* left, 603 in all
+- Run: none
+- Decided:
+  - A tip already in origin/master counts as pushed (trains delete origin refs). Squash-landed tips stay refused: hooks-a, hooks-b, jan.
+  - Self-test 238/0 on Windows and Linux; report went 4 to 14 removable on 11-02. Pre-push was fast verify only; no CI yet.
+  - No --apply from this lane: the coordinator owns removal, per the lead 11-02.
+- Next:
+  - When the lead calls it: open the PR with a Lite gate (shape: #4072 body), trailer `Bookkeeping-Follow-Up: pending`, link W-990 via `rf.mjs event link`, then `mcp__ccd_pr__get_status`.
+  - Fix only what CI or review returns.
+  - If yes to the owner question: stop `scripts/factory-scoreboard.mjs` relying on `gh --search merged:`, which returned 0 on 11-02 with 200+ merged (cause unknown), and make 0 fail loudly.
+- Open for owner: scoreboard fix, yes or not now? B1-c also waits on the owner's control-token action (Q2; not re-checked since 11-01).
+- Do not: hand-delete factory trees (junctions reach m75, L-180) · remove m75 or jgap · delete the 7 local-only branches without backup (list sent to the lead 11-02) · trust 14 as current: re-run report-only first · open a PR above 10.
+- Areas touched: api (root tooling: `scripts/janitor.mjs`)
+- Factory status: R0-R7 merged, R3/R4/R5 warn only. B1 unfinished (bug detail still tracked), B3 reads wrong, B2 install unconfirmed. Roadmap: `local-assets/reports/AI software factory roadmap v2.md`.
