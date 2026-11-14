@@ -839,16 +839,16 @@ export default defineConfig({
       dependencies: [],
       use: { ...devices["Desktop Chrome"] },
     },
-    // Public site proof suite (spec 85: T1 print, T2 headings without a scroll, T9 phone heading
+    // Public site proof suite (specs 84 and 85: T3-T8 wheel, T1 print, T2 headings without a scroll, T9 phone heading
     // rise, T12 parity): geometry, print media and the parity diff for the signed-out site. Plan:
     // .claude/pipeline/2026-11-13-site-wheel-print/README.md. Signed out, `dependencies: []`, no
     // storage state; it blocks the analytics host so visits are never counted. The post-deploy job
     // runs every project, so only specs that are green on master match here (review S9): spec 84
-    // (the wheel, T3-T8) joins with WP1.2. Same convention as "marketing": WITHOUT THIS ENTRY THE
+    // (the wheel, T3-T8) joined with the wheel fix. Same convention as "marketing": WITHOUT THIS ENTRY THE
     // SPEC NEVER RUNS.
     {
       name: "site-proof",
-      testMatch: /85-site-proof-pages\.spec\.ts/,
+      testMatch: /8[45]-site-proof-.*\.spec\.ts/,
       dependencies: [],
       use: { ...devices["Desktop Chrome"] },
     },

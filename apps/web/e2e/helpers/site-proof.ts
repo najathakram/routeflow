@@ -1,5 +1,5 @@
 /**
- * Shared probes for the "site-proof" project (spec 85 now; the wheel spec 84 joins with WP1.2):
+ * Shared probes for the "site-proof" project (specs 84 and 85):
  * the public site, signed out. Plan: .claude/pipeline/2026-11-13-site-wheel-print/README.md.
  *
  * House rules these helpers enforce:

@@ -924,7 +924,7 @@
         put(); Promise.resolve().then(put); root.requestAnimationFrame(put);
       }
       inst.rebuilt = true;
-      Object.assign(inst, { live: true, built: true, T, trig, S, P, Sp, at: (t) => trig.start + ((trig.end - trig.start) * t) / END, redraw: () => { force = true; whole = true; draw(); } });
+      Object.assign(inst, { live: true, built: true, T, trig, S, P, Sp, cam: () => ({ ...cam }), at: (t) => trig.start + ((trig.end - trig.start) * t) / END, redraw: () => { force = true; whole = true; draw(); } });
       settled();
       warmId = idle(warm);
     };
@@ -945,7 +945,7 @@
       if (goTw) goTw.kill();
       html.style.scrollBehavior = "";
       if (!pageTop) el.style.removeProperty("--rfw-top");
-      ["T", "trig", "S", "P", "Sp", "at", "redraw", "flush"].forEach((k) => { delete inst[k]; });
+      ["T", "trig", "S", "P", "Sp", "cam", "at", "redraw", "flush"].forEach((k) => { delete inst[k]; });
       inst.live = false;
     };
   }
