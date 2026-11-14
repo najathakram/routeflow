@@ -22,6 +22,11 @@ import { PlanGateBoundary } from "./PlanGateBoundary";
 const CUSTOMER_ALLOWED: string[] = ["/dashboard", "/orders", "/returns", "/invoices"];
 /** Paths that DRIVER users may access (prefix-matched) */
 const DRIVER_ALLOWED: string[] = ["/dashboard", "/routes"];
+/** REG-B1: staff-only invoice sub-pages a CUSTOMER (who may read /invoices) is bounced from like any disallowed path. */
+const CUSTOMER_BLOCKED: RegExp[] = [
+  /^\/invoices\/(new|payments|recurring)(\/|$)/,
+  /^\/invoices\/[^/]+\/edit(\/|$)/,
+];
 /**
  * REG-B1013: `/settings` is a CUSTOMER/DRIVER's own account page (password, sessions, Google sign-in),
  * matched EXACTLY — every business sub-page under it (billing, restrictions, imports, migration,
@@ -118,7 +123,8 @@ export function RouteGuard({ children }: { children: React.ReactNode }) {
     let allowed: string[] | null = null;
     if (role === "CUSTOMER") allowed = CUSTOMER_ALLOWED;
     if (role === "DRIVER") allowed = DRIVER_ALLOWED;
-    if (allowed && !isPathAllowed(pathname, allowed)) {
+    const blocked = role === "CUSTOMER" && CUSTOMER_BLOCKED.some((re) => re.test(pathname));
+    if (allowed && (blocked || !isPathAllowed(pathname, allowed))) {
       router.replace("/dashboard");
       return;
     }

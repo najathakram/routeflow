@@ -2,6 +2,7 @@ import * as React from "react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, within } from "@/test-utils/render";
 import ReturnDetailPage from "./page";
+import { seedSession } from "@/test-utils/session";
 import type { Return } from "@/lib/api/returns";
 
 // #2406 (SA-484c): an INLINE return renders on this page, but never with the STANDARD
@@ -131,3 +132,7 @@ describe("ReturnDetailPage (#2406)", () => {
     ).toBeInTheDocument();
   });
 });
+
+// REG-B1: the return actions are staff-only on the web, so these suites run as an operator.
+beforeEach(() => seedSession("OPERATOR"));
+afterEach(() => seedSession(null));

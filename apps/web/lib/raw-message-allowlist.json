@@ -308,10 +308,6 @@
     "count": 1,
     "why": "B986-4 buyer portal: per-surface raw message read, pending"
   },
-  "app/verify-email/page.tsx": {
-    "count": 1,
-    "why": "B986-3 settings + auth: per-surface raw message read, pending"
-  },
   "components/PackSizeUnknownModal.tsx": {
     "count": 1,
     "why": "B986-6 invoices + bills + finance: the modal description reads the 409 payload message (a live read the first scanner missed), pending"

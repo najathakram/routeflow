@@ -1,5 +1,6 @@
 import * as React from "react";
 import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-utils/render";
+import { seedSession } from "@/test-utils/session";
 import InvoicesPage from "./page";
 
 /**
@@ -64,6 +65,46 @@ beforeEach(() => {
   mockReplace.mockClear();
   mockQuery = "toCollect=true&customerId=c1";
   mockRows = [];
+});
+afterEach(() => seedSession(null));
+
+describe("REG-B1 InvoicesPage write surfaces by role", () => {
+  // A seeded session makes the i18n provider fetch /users/me/preferences through this file's apiClient mock.
+  beforeEach(() => mockGet.mockResolvedValue({ data: {} }));
+
+  it("REG-B1 a CUSTOMER gets no row Print invoice button", () => {
+    seedSession("CUSTOMER");
+    mockQuery = "";
+    mockRows = [row("a")];
+    renderWithProviders(<InvoicesPage />);
+    const n = screen.queryAllByRole("button", { name: /^Print invoice/ }).length;
+    expect({ label: "Print invoice", count: n }).toEqual({ label: "Print invoice", count: 0 });
+  });
+
+  it("REG-B1 a CUSTOMER's empty state has no New invoice button", () => {
+    seedSession("CUSTOMER");
+    mockQuery = "";
+    mockRows = [];
+    renderWithProviders(<InvoicesPage />);
+    const n = screen.queryAllByRole("button", { name: /^New invoice$/ }).length;
+    expect({ label: "New invoice", count: n }).toEqual({ label: "New invoice", count: 0 });
+  });
+
+  it("REG-B1 an OPERATOR twin keeps the row Print invoice button and the empty-state New invoice", () => {
+    seedSession("OPERATOR");
+    mockQuery = "";
+    mockRows = [row("a")];
+    const first = renderWithProviders(<InvoicesPage />);
+    expect(
+      screen.queryAllByRole("button", { name: /^Print invoice/ }).length,
+    ).toBeGreaterThanOrEqual(1);
+    first.unmount();
+    mockRows = [];
+    renderWithProviders(<InvoicesPage />);
+    expect(
+      screen.queryAllByRole("button", { name: /^New invoice$/ }).length,
+    ).toBeGreaterThanOrEqual(1);
+  });
 });
 
 describe("InvoicesPage: To collect (SA-1026)", () => {

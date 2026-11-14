@@ -278,8 +278,8 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { ttl: 900_000, limit: 5 } }) // 5 per 15 min per IP
   @ApiOperation({ summary: "Request a password reset link (RF-018)" })
-  requestPasswordReset(@Body() dto: RequestPasswordResetDto) {
-    return this.authService.requestPasswordReset(dto.email, dto.surface);
+  requestPasswordReset(@Body() dto: RequestPasswordResetDto, @Req() req: any) {
+    return this.authService.requestPasswordReset(dto.email, dto.surface, req.resolvedTenantId);
   }
 
   @Post("reset-password")

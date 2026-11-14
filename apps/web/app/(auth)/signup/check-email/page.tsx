@@ -6,6 +6,11 @@ import { Mail, RefreshCw, XCircle } from "lucide-react";
 import { AuthShell } from "@/components/auth";
 import { isWorkspaceId } from "@/lib/last-workspace";
 import { site } from "@/app/(marketing)/lib/site";
+import {
+  RESEND_FAILED_COPY,
+  RESEND_SENT_COPY,
+  requestVerificationResend,
+} from "@/lib/resend-verification";
 
 // ─── Inner page ───────────────────────────────────────────────────────────────
 
@@ -20,9 +25,6 @@ function CheckEmailInner() {
   // shaped like one (a crafted link) is dropped, never shown.
   const rawWorkspace = params.get("workspace") ?? "";
   const workspaceId = isWorkspaceId(rawWorkspace) ? rawWorkspace : null;
-
-  const apiUrl =
-    process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ?? "http://localhost:3000/api/v1";
 
   const [resending, setResending] = React.useState(false);
   const [resendMsg, setResendMsg] = React.useState<string | null>(null);
@@ -39,30 +41,12 @@ function CheckEmailInner() {
     setResending(true);
     setResendMsg(null);
     setResendFailed(false);
-    try {
-      // The endpoint is deliberately enumeration-safe: it always returns 200
-      // with the same body whether or not the address is registered, so a
-      // 2xx here does NOT prove delivery for a real account — but a non-2xx
-      // or a network failure DOES prove something went wrong, and previously
-      // this branch was never checked at all (the button always claimed
-      // success even when the request itself failed).
-      const res = await fetch(`${apiUrl}/public/tenants/resend-verification`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
-      });
-      if (!res.ok) {
-        setResendFailed(true);
-        setResendMsg("Something went wrong. Please try again in a moment.");
-        return;
-      }
-      setResendMsg("If that address has a pending account, a new link is on its way.");
-    } catch {
-      setResendFailed(true);
-      setResendMsg("Something went wrong. Please try again in a moment.");
-    } finally {
-      setResending(false);
-    }
+    // The endpoint is enumeration-safe (see lib/resend-verification): a non-2xx or a network
+    // failure proves something went wrong; a 2xx does not prove delivery.
+    const r = await requestVerificationResend(email);
+    setResendFailed(r === "failed");
+    setResendMsg(r === "sent" ? RESEND_SENT_COPY : RESEND_FAILED_COPY);
+    setResending(false);
   };
 
   return (

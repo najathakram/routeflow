@@ -17,6 +17,8 @@ import {
 } from "lucide-react";
 import { Button, Card, Modal, Select, cn, useToast, Badge } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { useAuth } from "@/lib/auth-context";
+import { seesStaffControls } from "@/lib/default-unit-line";
 import type { InlineRefundTender } from "@routeflow/types";
 import { undoAmendedPeriodNote } from "@routeflow/types";
 import { refundSuccessToast } from "@/lib/refund-toast";
@@ -378,6 +380,7 @@ export default function ReturnDetailPage() {
   const id = params.id as string;
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
+  const { user } = useAuth();
 
   const { data: ret, isLoading, isError } = useReturn(id);
   const approveReturn = useApproveReturn();
@@ -419,6 +422,9 @@ export default function ReturnDetailPage() {
   // #2406: an INLINE return (captured inside an order write) takes none of the standard-path
   // actions — the server refuses them all (INLINE_RETURN_USE_INLINE_ENDPOINTS).
   const isInline = ret.kind === "INLINE";
+  // REG-B1: approve, reject, in transit, receive and resolve are staff-only in the API; one guard for the whole group.
+  // A customer keeps Cancel (the API lets the owner of a return cancel it).
+  const staffActions = !isInline && seesStaffControls(user?.role);
   const canCancel =
     !isInline &&
     (["PENDING", "APPROVED", "IN_TRANSIT", "RECEIVED"] as ReturnStatus[]).includes(status);
@@ -586,7 +592,7 @@ export default function ReturnDetailPage() {
         <div className="flex flex-wrap items-center gap-2">
           {/* #2406: an INLINE return has its own capture/approve flow (PR-1c/1d) — never
               the STANDARD approve/reject actions, even if it were ever PENDING. */}
-          {status === "PENDING" && !isInline && (
+          {status === "PENDING" && staffActions && (
             <>
               <Button
                 size="sm"
@@ -607,7 +613,7 @@ export default function ReturnDetailPage() {
             </>
           )}
 
-          {status === "APPROVED" && !isInline && (
+          {status === "APPROVED" && staffActions && (
             <>
               <Button
                 size="sm"
@@ -629,7 +635,7 @@ export default function ReturnDetailPage() {
             </>
           )}
 
-          {status === "IN_TRANSIT" && !isInline && (
+          {status === "IN_TRANSIT" && staffActions && (
             <>
               <Button
                 size="sm"
@@ -651,7 +657,7 @@ export default function ReturnDetailPage() {
             </>
           )}
 
-          {status === "RECEIVED" && !isInline && (
+          {status === "RECEIVED" && staffActions && (
             <Button
               size="sm"
               leftIcon={<RefreshCw className="h-4 w-4" />}
@@ -691,7 +697,7 @@ export default function ReturnDetailPage() {
 
       {/* SA-1060 PR-1: a held INLINE return waits here for staff to approve or reject it (renders nothing for any other return) */}
       <div className="space-y-3">
-        <HeldReturnActions ret={ret} />
+        {seesStaffControls(user?.role) && <HeldReturnActions ret={ret} />}
       </div>
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">

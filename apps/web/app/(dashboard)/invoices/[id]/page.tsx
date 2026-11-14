@@ -75,6 +75,7 @@ import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
 import { useCustomerAdvancePayments } from "@/lib/api/customers";
 import { fmt, fmtCalendarDate, fmtDate, isInternalEmail } from "@/lib/formatting";
+import { seesStaffControls } from "@/lib/default-unit-line";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
 import {
   basePriceText,
@@ -1538,6 +1539,9 @@ export default function InvoiceDetailPage() {
   const setCheckStatus = useSetCheckStatus();
   const unapplyCreditNote = useUnapplyCreditNote();
   const { user } = useAuth();
+  // REG-B1: the API refuses every invoice write for a non-staff role; the web renders none of the controls.
+  // SUPER_ADMIN satisfies OPERATOR in RolesGuard, so a raw platform session keeps the staff controls.
+  const isStaff = seesStaffControls(user?.role);
   const stampZone = useTenantTimeZone(seesHandOverStamp(user?.role)); // row 342: the hand-over time
   // The draft's wording follows the ORDER first (a PICKUP order is handed over at a mixed business too), then a
   // store-only business, which is POS-forced and never delivers. null = not known yet: neither moment is claimed.
@@ -1726,6 +1730,20 @@ export default function InvoiceDetailPage() {
   const canRecordPayment = isOpenInvoiceStatus(status);
   const canWriteOff = isOpenInvoiceStatus(status);
   const canVoid = status !== "PAID" && status !== "VOID" && status !== "WRITTEN_OFF";
+
+  // REG-B1: what a non-staff (customer) session reads instead of the staff "What's next" banner.
+  const customerDueLine: string | null =
+    status === "OVERDUE"
+      ? `Overdue · balance ${fmt(balanceDue)}${
+          invoice.dueDate ? ` · was due ${fmtCalendarDate(invoice.dueDate)}` : ""
+        }`
+      : canRecordPayment
+        ? invoice.dueDate
+          ? `Due ${fmtCalendarDate(invoice.dueDate)} · balance ${fmt(balanceDue)}`
+          : `Balance ${fmt(balanceDue)}`
+        : status === "PAID"
+          ? "Paid in full"
+          : null;
 
   // ── Action handlers ─────────────────────────────────────────────────────────
 
@@ -2228,244 +2246,246 @@ export default function InvoiceDetailPage() {
         </div>
 
         {/* Zoho-style action toolbar */}
-        <div className="flex flex-wrap items-center gap-1.5">
-          {/* Pending mirror: this draft tracks an order not yet handed over or delivered. Edit is hidden
+        {isStaff && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {/* Pending mirror: this draft tracks an order not yet handed over or delivered. Edit is hidden
               and Send is locked with its reason beside it; the note below explains (edit the order). */}
-          {/* Edit — only for a draft that isn't a pending mirror */}
-          {status === "DRAFT" && !isPendingMirror && (
-            <Button
-              size="sm"
-              variant="secondary"
-              leftIcon={<Pencil className="h-3.5 w-3.5" />}
-              href={`/invoices/${invoice.id}/edit`}
-            >
-              Edit
-            </Button>
-          )}
-
-          {/* #2088: Send (DRAFT) / Email again (SENT/VIEWED/OVERDUE/PARTIAL/PAID), with the tracked state in the
-              confirmation; a locked draft says why instead of hiding the action. Send reminder stays separate. */}
-          {((status === "DRAFT" && !isPendingMirror) ||
-            canEmailAgain(status) ||
-            invoice.sendLocked) && (
-            <EmailInvoiceAction
-              sendState={invoice.sendState}
-              sendLocked={invoice.sendLocked}
-              lockedLabel={sendsAfterLabel(orderStoreOnly)}
-              loading={sendInvoiceEmail.isPending || sendInvoice.isPending}
-              onSend={handleSend}
-            />
-          )}
-          {canSendReminder({ status, balanceDue }) && (
-            <Button
-              size="sm"
-              variant="secondary"
-              leftIcon={<Send className="h-3.5 w-3.5" />}
-              onClick={handleReminder}
-              loading={sendInvoiceReminder.isPending}
-            >
-              Send reminder
-            </Button>
-          )}
-
-          {/* Draft/Final version toggle — controls which stage the printed,
-              downloaded, or emailed PDF renders as (both available anytime). */}
-          <div
-            className="inline-flex items-center rounded-lg border border-surface-border p-0.5"
-            role="group"
-            aria-label="Invoice PDF version"
-          >
-            {(["draft", "final"] as const).map((v) => (
-              <button
-                key={v}
-                type="button"
-                onClick={() => setPdfVariant(v)}
-                className={cn(
-                  "rounded-md px-2.5 py-1 text-xs font-medium capitalize transition-colors",
-                  pdfVariant === v
-                    ? "bg-brand-500 text-white"
-                    : "text-navy/70 hover:bg-surface-raised",
-                )}
+            {/* Edit — only for a draft that isn't a pending mirror */}
+            {status === "DRAFT" && !isPendingMirror && (
+              <Button
+                size="sm"
+                variant="secondary"
+                leftIcon={<Pencil className="h-3.5 w-3.5" />}
+                href={`/invoices/${invoice.id}/edit`}
               >
-                {v}
-              </button>
-            ))}
-          </div>
+                Edit
+              </Button>
+            )}
 
-          {/* Print — always available */}
-          <Button
-            size="sm"
-            variant="secondary"
-            leftIcon={<Printer className="h-3.5 w-3.5" />}
-            onClick={handlePrint}
-            loading={printInvoice.printing}
-          >
-            Print
-          </Button>
+            {/* #2088: Send (DRAFT) / Email again (SENT/VIEWED/OVERDUE/PARTIAL/PAID), with the tracked state in the
+              confirmation; a locked draft says why instead of hiding the action. Send reminder stays separate. */}
+            {((status === "DRAFT" && !isPendingMirror) ||
+              canEmailAgain(status) ||
+              invoice.sendLocked) && (
+              <EmailInvoiceAction
+                sendState={invoice.sendState}
+                sendLocked={invoice.sendLocked}
+                lockedLabel={sendsAfterLabel(orderStoreOnly)}
+                loading={sendInvoiceEmail.isPending || sendInvoice.isPending}
+                onSend={handleSend}
+              />
+            )}
+            {canSendReminder({ status, balanceDue }) && (
+              <Button
+                size="sm"
+                variant="secondary"
+                leftIcon={<Send className="h-3.5 w-3.5" />}
+                onClick={handleReminder}
+                loading={sendInvoiceReminder.isPending}
+              >
+                Send reminder
+              </Button>
+            )}
 
-          {/* PDF Download — always available */}
-          <Button
-            size="sm"
-            variant="secondary"
-            leftIcon={<Download className="h-3.5 w-3.5" />}
-            onClick={handleDownloadPdf}
-            loading={downloadPdf.isPending}
-          >
-            PDF
-          </Button>
+            {/* Draft/Final version toggle — controls which stage the printed,
+              downloaded, or emailed PDF renders as (both available anytime). */}
+            <div
+              className="inline-flex items-center rounded-lg border border-surface-border p-0.5"
+              role="group"
+              aria-label="Invoice PDF version"
+            >
+              {(["draft", "final"] as const).map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setPdfVariant(v)}
+                  className={cn(
+                    "rounded-md px-2.5 py-1 text-xs font-medium capitalize transition-colors",
+                    pdfVariant === v
+                      ? "bg-brand-500 text-white"
+                      : "text-navy/70 hover:bg-surface-raised",
+                  )}
+                >
+                  {v}
+                </button>
+              ))}
+            </div>
 
-          {/* Revert to draft — SENT/VIEWED/OVERDUE with no payment ROWS at all:
+            {/* Print — always available */}
+            <Button
+              size="sm"
+              variant="secondary"
+              leftIcon={<Printer className="h-3.5 w-3.5" />}
+              onClick={handlePrint}
+              loading={printInvoice.printing}
+            >
+              Print
+            </Button>
+
+            {/* PDF Download — always available */}
+            <Button
+              size="sm"
+              variant="secondary"
+              leftIcon={<Download className="h-3.5 w-3.5" />}
+              onClick={handleDownloadPdf}
+              loading={downloadPdf.isPending}
+            >
+              PDF
+            </Button>
+
+            {/* Revert to draft — SENT/VIEWED/OVERDUE with no payment ROWS at all:
               revertInvoiceToDraft refuses on `invoicePayment.count > 0`, which
               counts DRAFT and VOID rows too. Gating on amountPaid (a CONFIRMED
               sum) would offer a button the server always rejects. */}
-          {(status === "SENT" || status === "VIEWED" || status === "OVERDUE") &&
-            payments.length === 0 && (
+            {(status === "SENT" || status === "VIEWED" || status === "OVERDUE") &&
+              payments.length === 0 && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  leftIcon={<RotateCcw className="h-4 w-4" />}
+                  onClick={() => setIsRevertToDraftOpen(true)}
+                  loading={revertToDraft.isPending}
+                >
+                  Revert to draft
+                </Button>
+              )}
+
+            {/* Unvoid — VOID invoices */}
+            {status === "VOID" && (
               <Button
                 size="sm"
                 variant="secondary"
                 leftIcon={<RotateCcw className="h-4 w-4" />}
-                onClick={() => setIsRevertToDraftOpen(true)}
-                loading={revertToDraft.isPending}
+                onClick={() => setIsUnvoidOpen(true)}
+                loading={unvoid.isPending}
               >
-                Revert to draft
+                Unvoid
               </Button>
             )}
 
-          {/* Unvoid — VOID invoices */}
-          {status === "VOID" && (
-            <Button
-              size="sm"
-              variant="secondary"
-              leftIcon={<RotateCcw className="h-4 w-4" />}
-              onClick={() => setIsUnvoidOpen(true)}
-              loading={unvoid.isPending}
-            >
-              Unvoid
-            </Button>
-          )}
-
-          {/* Record payment dropdown */}
-          {canRecordPayment && readOnlyGate.readOnly && (
-            <div>
-              <button
-                type="button"
-                disabled
-                aria-describedby={readOnlyGate.hintId}
-                data-testid="record-payment-trigger"
-                className="flex items-center gap-1.5 rounded-lg border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy shadow-card opacity-50"
-              >
-                <CreditCard className="h-3.5 w-3.5" />
-                Record payment
-              </button>
-              <ReadOnlyHint />
-            </div>
-          )}
-          {canRecordPayment && !readOnlyGate.readOnly && (
-            <DropdownMenu
-              trigger={
+            {/* Record payment dropdown */}
+            {canRecordPayment && readOnlyGate.readOnly && (
+              <div>
                 <button
+                  type="button"
+                  disabled
+                  aria-describedby={readOnlyGate.hintId}
                   data-testid="record-payment-trigger"
-                  className="flex items-center gap-1.5 rounded-lg border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy shadow-card transition-colors hover:bg-surface-raised"
+                  className="flex items-center gap-1.5 rounded-lg border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy shadow-card opacity-50"
                 >
                   <CreditCard className="h-3.5 w-3.5" />
                   Record payment
-                  <ChevronDown className="h-3.5 w-3.5" />
+                </button>
+                <ReadOnlyHint />
+              </div>
+            )}
+            {canRecordPayment && !readOnlyGate.readOnly && (
+              <DropdownMenu
+                trigger={
+                  <button
+                    data-testid="record-payment-trigger"
+                    className="flex items-center gap-1.5 rounded-lg border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy shadow-card transition-colors hover:bg-surface-raised"
+                  >
+                    <CreditCard className="h-3.5 w-3.5" />
+                    Record payment
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  </button>
+                }
+                items={[
+                  {
+                    label: "Record payment",
+                    onClick: () => setIsPaymentOpen(true),
+                    disabled: readOnlyGate.readOnly,
+                  },
+                  // B13: web had no way to apply a customer's advance-payment wallet balance —
+                  // only mobile could. Same gate as Record payment; the server also refuses a
+                  // settled/dead/forgiven invoice (CREDIT_NOT_APPLICABLE) regardless.
+                  ...(invoice.customerId
+                    ? [
+                        {
+                          label: "Apply advance",
+                          onClick: () => setIsAdvanceOpen(true),
+                          disabled: readOnlyGate.readOnly,
+                        },
+                      ]
+                    : []),
+                ]}
+              />
+            )}
+
+            {/* Adjust prices — operator-only. Match backend gate exactly:
+              PAID/VOID/WRITTEN_OFF reject with "Cannot adjust prices on a
+              ${status} invoice. Issue a credit note instead." Hiding the
+              button avoids the dead-click + invisible-toast UX where the
+              panel opens, the user clicks Apply, and the success/error
+              toast gets covered by the install prompt or other corner UI. */}
+            {status !== "VOID" &&
+              status !== "WRITTEN_OFF" &&
+              status !== "PAID" &&
+              !isPendingMirror && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  leftIcon={<SlidersHorizontal className="h-3.5 w-3.5" />}
+                  onClick={() => setShowAdjustPanel((v) => !v)}
+                >
+                  Adjust prices
+                </Button>
+              )}
+
+            {/* More actions (...) */}
+            <DropdownMenu
+              trigger={
+                <button
+                  title="More actions"
+                  className={cn(
+                    TAP_TARGET,
+                    "rounded-lg border border-surface-border bg-white shadow-card transition-colors hover:bg-surface-raised",
+                  )}
+                >
+                  <MoreHorizontal className="h-4 w-4 text-navy/70" />
                 </button>
               }
               items={[
+                { label: "Duplicate", onClick: handleDuplicate },
                 {
-                  label: "Record payment",
-                  onClick: () => setIsPaymentOpen(true),
-                  disabled: readOnlyGate.readOnly,
+                  // WP3: narrow post-issue correction of dueDate/paymentTermsLabel/
+                  // reference/subject only — blocked exactly where the API blocks it.
+                  label: "Edit terms",
+                  onClick: () => setIsEditTermsOpen(true),
+                  disabled: status === "VOID" || status === "WRITTEN_OFF",
                 },
-                // B13: web had no way to apply a customer's advance-payment wallet balance —
-                // only mobile could. Same gate as Record payment; the server also refuses a
-                // settled/dead/forgiven invoice (CREDIT_NOT_APPLICABLE) regardless.
-                ...(invoice.customerId
+                {
+                  label: "Reopen invoice",
+                  onClick: () => setIsReopenOpen(true),
+                  disabled: status !== "PAID",
+                },
+                {
+                  label: "Void invoice",
+                  onClick: () => setIsVoidOpen(true),
+                  danger: true,
+                  disabled: !canVoid || readOnlyGate.readOnly,
+                },
+                // SA-1050: moved here from the Record payment dropdown (a loss is not a way to be paid). Offered on
+                // an open invoice; read-only keeps it in the menu but disabled, like the other writes. The server
+                // still refuses anything that is not an open invoice.
+                ...(canRecordPayment
                   ? [
                       {
-                        label: "Apply advance",
-                        onClick: () => setIsAdvanceOpen(true),
+                        label: "Write off",
+                        onClick: () => setIsWriteOffOpen(true),
+                        danger: true,
                         disabled: readOnlyGate.readOnly,
                       },
                     ]
                   : []),
               ]}
             />
-          )}
-
-          {/* Adjust prices — operator-only. Match backend gate exactly:
-              PAID/VOID/WRITTEN_OFF reject with "Cannot adjust prices on a
-              ${status} invoice. Issue a credit note instead." Hiding the
-              button avoids the dead-click + invisible-toast UX where the
-              panel opens, the user clicks Apply, and the success/error
-              toast gets covered by the install prompt or other corner UI. */}
-          {status !== "VOID" &&
-            status !== "WRITTEN_OFF" &&
-            status !== "PAID" &&
-            !isPendingMirror && (
-              <Button
-                size="sm"
-                variant="secondary"
-                leftIcon={<SlidersHorizontal className="h-3.5 w-3.5" />}
-                onClick={() => setShowAdjustPanel((v) => !v)}
-              >
-                Adjust prices
-              </Button>
-            )}
-
-          {/* More actions (...) */}
-          <DropdownMenu
-            trigger={
-              <button
-                title="More actions"
-                className={cn(
-                  TAP_TARGET,
-                  "rounded-lg border border-surface-border bg-white shadow-card transition-colors hover:bg-surface-raised",
-                )}
-              >
-                <MoreHorizontal className="h-4 w-4 text-navy/70" />
-              </button>
-            }
-            items={[
-              { label: "Duplicate", onClick: handleDuplicate },
-              {
-                // WP3: narrow post-issue correction of dueDate/paymentTermsLabel/
-                // reference/subject only — blocked exactly where the API blocks it.
-                label: "Edit terms",
-                onClick: () => setIsEditTermsOpen(true),
-                disabled: status === "VOID" || status === "WRITTEN_OFF",
-              },
-              {
-                label: "Reopen invoice",
-                onClick: () => setIsReopenOpen(true),
-                disabled: status !== "PAID",
-              },
-              {
-                label: "Void invoice",
-                onClick: () => setIsVoidOpen(true),
-                danger: true,
-                disabled: !canVoid || readOnlyGate.readOnly,
-              },
-              // SA-1050: moved here from the Record payment dropdown (a loss is not a way to be paid). Offered on
-              // an open invoice; read-only keeps it in the menu but disabled, like the other writes. The server
-              // still refuses anything that is not an open invoice.
-              ...(canRecordPayment
-                ? [
-                    {
-                      label: "Write off",
-                      onClick: () => setIsWriteOffOpen(true),
-                      danger: true,
-                      disabled: readOnlyGate.readOnly,
-                    },
-                  ]
-                : []),
-            ]}
-          />
-        </div>
+          </div>
+        )}
       </div>
 
-      {sendStateLine && (
+      {isStaff && sendStateLine && (
         <p data-testid="invoice-send-state-line" className="text-xs font-medium text-navy/60">
           {sendStateLine}
         </p>
@@ -2486,7 +2506,13 @@ export default function InvoiceDetailPage() {
       <ReviewFlagNotice notes={invoice.internalNotes} role={user?.role} />
 
       {/* What's Next guidance banner */}
-      <WhatsNextBanner status={status} onRecordPayment={() => setIsPaymentOpen(true)} />
+      {isStaff ? (
+        <WhatsNextBanner status={status} onRecordPayment={() => setIsPaymentOpen(true)} />
+      ) : user?.role === "CUSTOMER" && customerDueLine ? (
+        <p className="text-sm text-muted-foreground" data-testid="customer-due-line">
+          {customerDueLine}
+        </p>
+      ) : null}
 
       {/* Pending mirror: explain that the invoice tracks the order until delivery. */}
       {isPendingMirror && (
@@ -2809,7 +2835,7 @@ export default function InvoiceDetailPage() {
               shippedAt={invoice.shippedAt}
               orderStatus={invoice.order?.status}
               isSaving={updateShipment.isPending}
-              readOnly={status === "VOID" || status === "WRITTEN_OFF"}
+              readOnly={status === "VOID" || status === "WRITTEN_OFF" || !isStaff}
               onSave={(values) => updateShipment.mutateAsync({ id: invoice.id, ...values })}
             />
           )}
@@ -2822,9 +2848,11 @@ export default function InvoiceDetailPage() {
                   <CreditCard className="h-5 w-5 text-navy/30" />
                 </div>
                 <p className="font-display text-base text-navy">No payments yet</p>
-                <p className="max-w-[240px] text-xs text-navy/70">
-                  Record a payment to apply it against this balance.
-                </p>
+                {isStaff && (
+                  <p className="max-w-[240px] text-xs text-navy/70">
+                    Record a payment to apply it against this balance.
+                  </p>
+                )}
               </div>
             ) : (
               <ul className="-mx-6 -mb-6 divide-y divide-surface-border">
@@ -2875,7 +2903,7 @@ export default function InvoiceDetailPage() {
                                 </span>
                               )}
                             </span>
-                            {pmt.noLongerFits && !isVoided && (
+                            {isStaff && pmt.noLongerFits && !isVoided && (
                               <button
                                 onClick={() => handleVoidPayment(pmt)}
                                 className={cn(
@@ -2887,7 +2915,7 @@ export default function InvoiceDetailPage() {
                                 <XCircle className="h-3.5 w-3.5" />
                               </button>
                             )}
-                            {isEditable && (
+                            {isStaff && isEditable && (
                               <>
                                 <button
                                   onClick={() => setEditingPayment(pmt)}
@@ -2965,7 +2993,7 @@ export default function InvoiceDetailPage() {
                               </div>
                             );
                           })()}
-                        {canSetCheckStatus && (
+                        {isStaff && canSetCheckStatus && (
                           <div className="mt-1.5">
                             <DropdownMenu
                               trigger={
@@ -3013,7 +3041,7 @@ export default function InvoiceDetailPage() {
                 })}
               </ul>
             )}
-            {canRecordPayment && (
+            {isStaff && canRecordPayment && (
               <div className="mt-4">
                 <WriteButton
                   variant="secondary"

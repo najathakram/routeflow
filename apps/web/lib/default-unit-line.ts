@@ -187,6 +187,11 @@ export function isStaffRole(role?: string | null): boolean {
   return role === "OPERATOR" || role === "TENANT_ADMIN";
 }
 
+/** Who sees staff write controls on the web: staff plus SUPER_ADMIN, which satisfies OPERATOR in the API RolesGuard. */
+export function seesStaffControls(role?: string | null): boolean {
+  return isStaffRole(role) || role === "SUPER_ADMIN";
+}
+
 export interface DefaultUnitDeps {
   /** Non-staff never start on a default unit and make NO read (N9). */
   isStaff: boolean;
