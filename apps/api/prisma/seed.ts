@@ -734,6 +734,7 @@ async function main() {
         routeStopId: r1Stops[0].id,
         stopNumber: 1,
         arrivedAt: runStarted,
+        status: "COMPLETED",
         completedAt: stop1Completed,
       },
     }),
