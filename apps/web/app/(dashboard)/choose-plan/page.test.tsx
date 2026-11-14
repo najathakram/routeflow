@@ -87,7 +87,11 @@ describe("UX guide B10 choose-plan current plan", () => {
   it("keeps the own-plan button live when it still does something: a scheduled change to cancel", () => {
     mockSub = { ...mockSub, downgradeToPlanKey: "GROWTH" };
     render(<ChoosePlanPage />);
-    const button = within(card("Scale")).getByRole("button", { name: "Choose" });
+    // the label says what it does: it undoes the scheduled change
+    expect(
+      within(card("Scale")).getByText("Current plan", { selector: "span,div" }),
+    ).toBeInTheDocument();
+    const button = within(card("Scale")).getByRole("button", { name: "Keep this plan" });
     expect(button).toBeEnabled();
     fireEvent.click(button);
     expect(mockQuote).toHaveBeenCalledWith(
@@ -99,7 +103,10 @@ describe("UX guide B10 choose-plan current plan", () => {
   it("keeps the own-plan button live on the other billing cycle (a cycle switch)", () => {
     render(<ChoosePlanPage />);
     fireEvent.click(screen.getByRole("button", { name: /Annual/ }));
-    expect(within(card("Scale")).getByRole("button", { name: "Choose" })).toBeEnabled();
+    expect(
+      within(card("Scale")).getByRole("button", { name: "Switch to annual billing" }),
+    ).toBeEnabled();
+    expect(within(card("Scale")).queryByRole("button", { name: "Choose" })).toBeNull();
     expect(
       within(card("Scale")).getByText("Current plan", { selector: "span,div" }),
     ).toBeInTheDocument();

@@ -102,6 +102,13 @@ export default function ChoosePlanPage() {
   // to call that off, and on the other billing cycle it is the cycle switch. Only when the subscription is
   // loaded and on this very cycle with nothing scheduled does the button read "Current plan" and stop.
   const sub = subscription.data;
+  // When it stays live, the label says what pressing it does (never a bare "Choose" on your own plan).
+  const ownPlanLiveLabel =
+    sub && (sub.cancelAtPeriodEnd || sub.downgradeToPlanKey != null)
+      ? "Keep this plan"
+      : cycle === "ANNUAL"
+        ? "Switch to annual billing"
+        : "Switch to monthly billing";
   const ownPlanIsNoChange =
     sub != null && sub.cycle === cycle && !sub.cancelAtPeriodEnd && sub.downgradeToPlanKey == null;
   // A DOWNGRADE that the server flagged as over-cap deactivates staff accounts at period end —
@@ -270,7 +277,9 @@ export default function ChoosePlanPage() {
                       ? "Current plan"
                       : isSel
                         ? "Selected"
-                        : "Choose"}
+                        : isCurrent
+                          ? ownPlanLiveLabel
+                          : "Choose"}
                 </Button>
               </Card>
             );
