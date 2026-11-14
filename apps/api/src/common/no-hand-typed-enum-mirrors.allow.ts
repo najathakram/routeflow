@@ -177,7 +177,6 @@ apps/api/src/common/barcode-bcid.ts | BarcodeSymbology | 2 | pending:B7 | object
 apps/api/src/messaging/messaging-config.service.ts | MessageChannel | 1 | pending:B4 | object {EMAIL,WHATSAPP,SMS,PORTAL}
 apps/api/src/orders/counter-sale/counter-sale-void-handback.ts | PaymentMethod | 1 | pending:B7 | object {CASH,CREDIT_CARD,CHECK}
 apps/api/src/settings-fulfilment/settings-fulfilment.service.ts | FulfillPath | 1 | pending:B7 | object {ROUTE,SHIP,PICKUP}
-apps/web/app/(dashboard)/bookkeeping/[transactionId]/page.tsx | TxnStatus | 1 | pending:B5 | union {UNPAID,PARTIAL,PAID}
 apps/web/app/(dashboard)/customers/[id]/invoice-status-badge.tsx | InvoiceStatus | 2 | pending:B5 | object {SENT,VIEWED,PARTIAL,OVERDUE}
 apps/web/app/(dashboard)/customers/[id]/page.tsx | CustomerLinkStatus | 1 | pending:B5 | chain {ACTIVE,INVITED,PENDING_SELLER_APPROVAL}
 apps/web/app/(dashboard)/customers/_components/walk-in-protection.tsx | UserStatus | 1 | pending:B5 | array {ACTIVE,INACTIVE,SUSPENDED}

@@ -7,6 +7,8 @@ import type { LocalErrorToastOption } from "@/lib/local-error-toast";
 export interface Transaction {
   id: string;
   orderId: string;
+  /** The invoice's own number (this "transaction" is an Invoice row). */
+  invoiceNumber?: string;
   customerId: string;
   customer?: { id: string; businessName: string; contactName?: string };
   order?: { id: string; orderNumber: string };
@@ -60,14 +62,6 @@ export function useTransactions(params?: {
   });
 }
 
-export function useTransaction(id: string) {
-  return useQuery<Transaction>({
-    queryKey: ["bookkeeping", "transactions", id],
-    queryFn: () => apiClient.get(`/bookkeeping/transactions/${id}`).then((r) => r.data),
-    enabled: !!id,
-  });
-}
-
 /**
  * Record a payment against a bookkeeping transaction. A caller that toasts the failure itself (the Ledger report)
  * passes `localErrorToast`; the invoice page keeps the global toast as its only one.
@@ -99,25 +93,6 @@ export function useRecordPayment(options?: LocalErrorToastOption) {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["bookkeeping"] });
-    },
-  });
-}
-
-export function useDownloadInvoice(options?: LocalErrorToastOption) {
-  return useMutation<{ url: string } | null, Error, string>({
-    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
-    mutationFn: async (id: string) => {
-      // NestJS returns 202 when the PDF is still generating. Axios treats all
-      // 2xx as successes so we check the status code in the response, not in
-      // the catch block.
-      const response = await apiClient.get<{ url?: string; message?: string }>(
-        `/bookkeeping/transactions/${id}/pdf`,
-        { validateStatus: (s) => s >= 200 && s < 300 },
-      );
-
-      if (response.status === 202 || !response.data?.url) return null;
-
-      return { url: response.data.url };
     },
   });
 }

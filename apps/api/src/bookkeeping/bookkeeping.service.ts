@@ -172,6 +172,7 @@ export class BookkeepingService implements OnModuleInit {
         creditApplied,
         advanceApplied,
         customer: inv.customer,
+        invoiceNumber: inv.invoiceNumber,
         order: inv.order ?? { orderNumber: inv.invoiceNumber },
         payments: inv.payments,
       };
@@ -210,6 +211,7 @@ export class BookkeepingService implements OnModuleInit {
       creditApplied,
       advanceApplied,
       customer: inv.customer,
+      invoiceNumber: inv.invoiceNumber,
       order: inv.order ?? { orderNumber: inv.invoiceNumber },
       payments: inv.payments,
       items: [],
@@ -379,6 +381,7 @@ export class BookkeepingService implements OnModuleInit {
         creditApplied: creditApplied2,
         advanceApplied: advanceApplied2,
         customer: updated.customer,
+        invoiceNumber: updated.invoiceNumber,
         order: updated.order ?? { orderNumber: updated.invoiceNumber },
         payments: updated.payments,
       };
