@@ -2616,22 +2616,22 @@ describe("InvoicesService", () => {
     it("sets carrier + tracking + shippedAt on a non-void invoice", async () => {
       prisma.invoice.findFirst.mockResolvedValue({ id: "inv-1", status: "SENT", shippedAt: null });
       prisma.invoice.update.mockResolvedValue({ id: "inv-1" });
+      prisma.invoice.updateMany.mockResolvedValue({ count: 1 });
 
       await service.updateInvoiceShipment("inv-1", {
         shippingCarrier: "FedEx",
         shippingTrackingNumber: "123456789012",
       });
 
-      expect(prisma.invoice.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: "inv-1" },
-          data: expect.objectContaining({
-            shippingCarrier: "FedEx",
-            shippingTrackingNumber: "123456789012",
-            shippedAt: expect.any(Date),
-          }),
-        }),
-      );
+      expect(prisma.invoice.update).toHaveBeenCalledWith({
+        where: { id: "inv-1" },
+        data: { shippingCarrier: "FedEx", shippingTrackingNumber: "123456789012" },
+      });
+      // W-904: the stamp is a fill-only conditional write, never part of the update's data.
+      expect(prisma.invoice.updateMany).toHaveBeenCalledWith({
+        where: { id: "inv-1", shippedAt: null },
+        data: { shippedAt: expect.any(Date) },
+      });
     });
 
     it("refuses to update a voided invoice", async () => {

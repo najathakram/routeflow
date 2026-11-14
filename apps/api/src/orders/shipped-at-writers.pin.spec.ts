@@ -19,7 +19,10 @@ const INVENTORY: Record<string, { count: number; why: string }> = {
     count: 1,
     why: "standalone invoice create stamps `now` with a tracking number",
   },
-  "invoices/order-shipment-fields.ts": { count: 1, why: "copy of the order's stamp at creation" },
+  "invoices/order-shipment-fields.ts": {
+    count: 4,
+    why: "copy of the order's stamp at creation (1); writeInvoiceTracking: CLEAR null, fill-only where + data (3)",
+  },
   "orders/carrier-in-transit-guard.ts": { count: 1, why: "where-filter (read)" },
   "orders/merge-candidates.ts": { count: 1, why: "where-filter (read)" },
   "orders/order-lifecycle.ts": {
@@ -80,5 +83,24 @@ describe("W-904 shippedAt writers (SA-1142 R6)", () => {
       fn.indexOf("db.invoice.updateMany(") + 10,
     );
     expect(mirror).toMatch(/where:[^]*shippedAt:\s*null/);
+  });
+});
+
+describe("W-904 invoice tracking save (SA-1142 R4)", () => {
+  const src = fs.readFileSync(path.join(SRC, "invoices/order-shipment-fields.ts"), "utf8");
+  const fn = src.slice(src.indexOf("export async function writeInvoiceTracking"));
+
+  it("the update's data writes the date only through the CLEAR spread; the SET stamp is where shippedAt is null", () => {
+    expect(callText(fn, "db.invoice.update(")).not.toMatch(/shippedAt/);
+    expect(fn).toContain("const clear = tracking ? {} : { shippedAt: null }");
+    expect(callText(fn, "db.invoice.updateMany(")).toMatch(/where:[^]*shippedAt:\s*null/);
+  });
+
+  it("updateInvoiceShipment delegates to it and writes no shippedAt itself", () => {
+    const svc = fs.readFileSync(path.join(SRC, "invoices/invoices.service.ts"), "utf8");
+    const body = svc.slice(svc.indexOf("async updateInvoiceShipment("));
+    const method = body.slice(0, body.indexOf("\n  }\n"));
+    expect(method).toContain("writeInvoiceTracking(");
+    expect(method).not.toMatch(/shippedAt/);
   });
 });
