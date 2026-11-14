@@ -644,6 +644,32 @@ try {
     git(repo, ["checkout", "-q", "master"]);
     r = push(repo, ["origin", "--delete", "feat/del"]);
     check("real push: delete-only allowed with the patterns file missing", r.code === 0, r.out);
+    // private sentinel commits: `commit:<sha>` lines in the patterns file hold whatever the branch is called
+    {
+      const sr = realRepo();
+      const sentinel = branchWith(sr, "work", { "kit.bin": Buffer.from([7, 0, 7]) });
+      commit(sr, { "more.txt": "fine\n" });
+      git(sr, ["branch", "-m", "work", "innocuous"]); // a rename: no local rebrand/* ref remains
+      const pf = path.join(sr, ".git", "info", "leak-patterns");
+      writeFileSync(pf, `${FIXTURE}\ncommit:${sentinel}\n`);
+      let q = push(sr, ["origin", "innocuous"]);
+      check("sentinel: renamed branch holding a sentinel ancestor refused", q.code !== 0, q.out);
+      q = push(sr, ["origin", "innocuous"], { RF_REBRAND_PUSH: "launch" });
+      check("sentinel: RF_REBRAND_PUSH=launch lifts it", q.code === 0, q.out);
+      git(sr, ["push", "-q", "origin", "--delete", "innocuous"]);
+      git(sr, ["checkout", "-q", "-b", "feat/other", "master"]);
+      commit(sr, { "o.txt": "fine\n" });
+      q = push(sr, ["origin", "feat/other"]);
+      check("sentinel: unrelated branch allowed", q.code === 0, q.out);
+      writeFileSync(pf, `${FIXTURE}\ncommit:${"a".repeat(40)}\n`);
+      commit(sr, { "p.txt": "fine\n" });
+      q = push(sr, ["origin", "feat/other"]);
+      check(
+        "sentinel: unknown sentinel ignored with a notice",
+        q.code === 0 && /sentinel/.test(q.out),
+        q.out,
+      );
+    }
   }
   // textconv cannot hide a hit
   {

@@ -5,6 +5,11 @@
 // <git-common-dir>/info/leak-patterns (one case-insensitive regex per line, `#` comments allowed;
 // every worktree of a clone shares it). See docs/runbooks/push-leak-guards.md.
 //
+// Besides regexes, the patterns file may hold lines of the form `commit:<full sha, 40+ hex>`: sentinel
+// commits (the first commit(s) unique to a private line of work). Under --hook a push is refused when any
+// sentinel is an ancestor of (or equal to) a pushed commit, whatever the branch is called; a sentinel unknown
+// to the local repository is ignored with a notice. RF_REBRAND_PUSH=launch lifts it like the other private checks.
+//
 // Modes (exactly one):
 //   --range <a..b> [--ref <name>]...   diff added lines (incl. new + renamed files, --text), file
 //                                      names, commit messages + author/committer identity of the
@@ -291,7 +296,26 @@ export function run(argv, { cwd = process.cwd(), env = process.env, input = "" }
     }
     return { code: 2, lines: [loaded.message] };
   }
-  const { regexes } = loaded;
+  const { regexes, sentinels = [] } = loaded;
+  if (o.hook && env.RF_REBRAND_PUSH !== "launch") {
+    for (const s of sentinels) {
+      if (!gitOut(cwd, ["cat-file", "-e", `${s}^{commit}`]).ok) {
+        notices.push(`sentinel ${s.slice(0, 10)} is unknown to this repository: ignored`);
+        continue;
+      }
+      for (const p of pushed) {
+        if (gitOut(cwd, ["merge-base", "--is-ancestor", s, `${p.lsha}^{commit}`]).ok) {
+          return {
+            code: 1,
+            lines: [
+              "leak-check: the push contains a private sentinel commit. Refused: it stays local until launch.",
+              "leak-check: launch day only: RF_REBRAND_PUSH=launch git push ...",
+            ],
+          };
+        }
+      }
+    }
+  }
   const hits = [];
 
   if (o.range) {

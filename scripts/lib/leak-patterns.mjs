@@ -58,10 +58,16 @@ export function loadPatterns(cwd = process.cwd()) {
     };
   }
   const regexes = [];
+  const sentinels = [];
   const lines = text.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line || line.startsWith("#")) continue;
+    const sm = /^commit:([0-9a-f]{40,64})$/i.exec(line);
+    if (sm) {
+      sentinels.push(sm[1].toLowerCase());
+      continue;
+    }
     try {
       regexes.push(new RegExp(line, "i"));
     } catch {
@@ -72,14 +78,14 @@ export function loadPatterns(cwd = process.cwd()) {
       };
     }
   }
-  if (regexes.length === 0) {
+  if (regexes.length === 0 && sentinels.length === 0) {
     return {
       ok: false,
       reason: "empty",
       message: `leak-check: ${file} has no patterns. Fail-closed: ${HOWTO}`,
     };
   }
-  return { ok: true, regexes };
+  return { ok: true, regexes, sentinels };
 }
 
 /**
