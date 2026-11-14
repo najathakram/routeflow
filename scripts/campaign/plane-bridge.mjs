@@ -3,8 +3,15 @@
 //   node scripts/campaign/plane-bridge.mjs <status|push|regen> [flags]   (npm run plane:bridge)
 // Built on plane-client.mjs (the one HTTP client: denylist, budget, ledger). Every conversion
 // between a registry row and a Plane work item lives in plane-bridge-codec.mjs. Dry by default.
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { join, relative, resolve, isAbsolute } from "node:path";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, dirname, join, relative, resolve, isAbsolute } from "node:path";
 import { pathToFileURL } from "node:url";
 import { appendRun, createClient, loadDenylist, scanForbidden } from "./plane-client.mjs";
 import { registryRoot } from "../lib/registry-root.mjs";
@@ -353,8 +360,18 @@ async function doPush({ client, reg, g, flags, out }) {
 
 // F1: --out must be a fresh or empty directory outside the registry.
 function outDirRefusal(dir, registryDir) {
-  const target = resolve(dir);
-  const rel = relative(resolve(registryDir), target);
+  // M2: compare real paths; a not-yet-existing out dir resolves via its nearest existing parent.
+  const real = (p) => {
+    const tail = [];
+    let cur = resolve(p);
+    while (!existsSync(cur) && dirname(cur) !== cur) {
+      tail.unshift(basename(cur));
+      cur = dirname(cur);
+    }
+    return join(realpathSync.native(cur), ...tail);
+  };
+  const target = real(dir);
+  const rel = relative(real(registryDir), target);
   if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))) {
     return "--out is the registry or inside it";
   }
@@ -419,6 +436,19 @@ async function doRegen({ g, flags, registryDir, out }) {
   if (g.held.size) refusals.push(`${g.held.size} held row(s)`);
   if (cmp.missing.length && !flags["accept-removals"]) {
     refusals.push(`${cmp.missing.length} row(s) missing from Plane (--accept-removals)`);
+  }
+  if (!flags["accept-removals"]) {
+    // M1: compare the tracked bytes with Plane's output as if no Plane edit existed, so only a
+    // dropped, duplicated or non-canonical tracked line trips it (a Plane edit is meant to land).
+    const base = new Map();
+    for (const [id, { dec }] of g.linked) {
+      if (dec.problem) continue;
+      base.set(id, dec.edits.length ? (g.records.get(id) ?? dec.record) : dec.record);
+    }
+    const t = compareTracked(registryDir, base, { excludeIds: new Set(g.held.keys()) });
+    if (t.catDiffers || t.shardsDiffer > 0) {
+      refusals.push("tracked lines would be dropped or changed (--accept-removals)");
+    }
   }
   if (refusals.length) {
     out.stderr(`Plane bridge regen: refused — ${refusals.join("; ")}\n`);

@@ -12,6 +12,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -445,6 +446,73 @@ async function f1() {
     report(
       "F1 --out non-empty directory refused, file kept",
       c.code === 2 && readdirSync(full).join() === "keep.txt",
+      `${c.code} ${c.all}`,
+    );
+    // M2: a junction/symlink pointing into the registry
+    mkdirSync(join(reg, "emptydir"));
+    const before2 = JSON.stringify(readTree(reg));
+    const link = join(mk("link"), "out-link");
+    symlinkSync(join(reg, "emptydir"), link, "junction");
+    const d = await runCli(["regen", "--out", link], { registryDir: reg, server });
+    report(
+      "M2 --out through a junction into the registry refused, registry unchanged",
+      d.code === 2 && JSON.stringify(readTree(reg)) === before2,
+      `${d.code} ${d.all}`,
+    );
+    const link2 = join(mk("link"), "out-link");
+    symlinkSync(reg, link2, "junction");
+    const e = await runCli(["regen", "--out", join(link2, "new-sub")], {
+      registryDir: reg,
+      server,
+    });
+    report(
+      "M2 --out under a not-yet-existing child of a linked parent refused",
+      e.code === 2 && !existsSync(join(reg, "new-sub")),
+      `${e.code} ${e.all}`,
+    );
+  } finally {
+    await server.close();
+  }
+}
+
+async function m1() {
+  const reg = makeRegistry({ withHeld: false });
+  const { server } = await seeded(reg);
+  try {
+    const f01 = join(reg, "status", "F01.jsonl");
+    const orig = readFileSync(f01, "utf8");
+    const extra = orig.split("\n").filter(Boolean)[1] + "\n";
+    writeFileSync(f01, orig + extra);
+    const before = JSON.stringify(readTree(reg));
+    const a = await runCli(["regen"], { registryDir: reg, server, config: CFG_PLANE });
+    report(
+      "M1 in-place regen refuses when a tracked line would be dropped (exit 1, files unchanged)",
+      a.code === 1 && /refused/.test(a.all) && JSON.stringify(readTree(reg)) === before,
+      `${a.code} ${a.all}`,
+    );
+    const b = await runCli(["regen", "--accept-removals"], {
+      registryDir: reg,
+      server,
+      config: CFG_PLANE,
+    });
+    report(
+      "M1 --accept-removals writes the canonical shard",
+      b.code === 0 && readFileSync(f01, "utf8") === orig,
+      `${b.code} ${b.all}`,
+    );
+    const lines = orig.split("\n").filter(Boolean);
+    writeFileSync(
+      f01,
+      lines
+        .slice()
+        .reverse()
+        .map((l) => l + "\n")
+        .join(""),
+    );
+    const c = await runCli(["regen"], { registryDir: reg, server, config: CFG_PLANE });
+    report(
+      "M1 order-only difference is still written, sorted",
+      c.code === 0 && readFileSync(f01, "utf8") === orig,
       `${c.code} ${c.all}`,
     );
   } finally {
@@ -1034,6 +1102,7 @@ async function t15() {
 
 const CASES = [
   ["F1", f1],
+  ["M1", m1],
   ["F2", f2],
   ["F3", f3],
   ["F4", f4],

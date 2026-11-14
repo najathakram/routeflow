@@ -1,6 +1,6 @@
 # Spec — RouteFlow ↔ Plane bridge (AI OS plan step 2.2)
 
-Status: DRAFT for SA review · 2026-11-14 · base `a587d034e7` · branch `claude/aios-2-2-plane-bridge-89534b`
+Status: IMPLEMENTED at c7de5569f2 (SA-AIOS-04 approved; live seed 2026-11-14 under SA-AIOS-16 + lead go: 1,209 items, 17 held, regen --check clean) · 2026-11-14 · base `a587d034e7` · branch `claude/aios-2-2-plane-bridge-89534b`
 Lane: light-loop (standard) via dev-pipeline:lean. Opus plans and reviews; Sonnet builds.
 
 ## 1. Why
@@ -43,8 +43,9 @@ Live local Plane CE (read-only GETs, 2026-11-14, token read from `%USERPROFILE%\
 - The CE list response carries `description_html` and **no `description_stripped`** (keys measured). `plane-sync.mjs`'s
   diff reads `registry-hash` out of `description_stripped`, so plane-sync pointed at CE would rewrite every item every
   run. The bridge reads `description_html` only.
-- Denylist census (`plane-client.mjs` `scanForbidden` over each row's catalogue line + status line): **19 of 1,226 rows
-  trip a pattern** (email 5, tenant-uuid 3 catalogue + 6 status, invoice-number 2, connection-string 1). Those rows
+- Denylist census (`plane-client.mjs` `scanForbidden` over each row's catalogue line + status line): **17 of 1,226 rows
+  trip a pattern** (live dry run: tenant-uuid 9, email 5, invoice-number 2, connection-string 1; an earlier census that
+  also scanned `bugs/*.md` prose counted 19). Those rows
   cannot be stored in Plane losslessly.
 - Longest title 310 chars; Plane's `name` limit is 255.
 
@@ -75,8 +76,8 @@ fleet sees no behaviour change on merge.
   - `priority` = `PRIORITY_BY_SEVERITY` (imported from `plane-sync.mjs:93`).
   - `stateName` = `cfg.stateByLedger[status.state]`, or `cfg.noStatusState` when `status` is null.
   - `external_source` = `EXTERNAL_SOURCE` (`plane-client.mjs:100`), `external_id` = id.
-  - `description_html` = a short human summary (`<p>` lines: id · severity · state · batch · PR; location) followed by
-    `<pre><code>routeflow-bridge/v1 sha256=<64 hex>` + newline + `JSON.stringify({catalogue, status})`
+  - `description_html` = the payload block only (amended, review round 1: no bridge-written summary, it would go
+    stale): `<pre><code>routeflow-bridge/v1 sha256=<64 hex>` + newline + `JSON.stringify({catalogue, status})`
     `</code></pre>`, the JSON HTML-escaped (`& < > " '`).
 - `decodeItem(item, stateNameById, cfg)` → `{ record, edits[], problem }`:
   - Payload found by a tolerant regex (`<pre[^>]*>\s*<code[^>]*>`, header, then whitespace or `<br>`), entities
@@ -204,7 +205,7 @@ Rollback: revert the commit; Plane items created by a seed are archived in the U
 - Program / train: AI OS plan step 2.2 (`AI_OS/IMPLEMENTATION_PLAN.md:67`), ADR-022; RouteFlow side has no WORK-PLAN train for it (an AI OS step run in a RouteFlow worktree, owner yes 2026-11-14).
 - Exists today: `plane-client.mjs:459` `createClient` (HTTP, retry, 50/min ceiling, denylist, budget, ledger); `plane-sync.mjs:78` `STATE_BY_LEDGER`, `:93` `PRIORITY_BY_SEVERITY`, `:128-153` registry readers; `plane-fake-server.mjs` (test Plane); `registry-root.mjs` `registryRoot()`.
 - Decision: extend — the bridge imports the client, the maps and the fake server; one new pure codec and one CLI. One source of truth per registry, chosen by `plane-bridge.json` `owner`.
-- Facts: every writer of the registry fields the codec carries is `bugs.mjs` (commands at `bugs.mjs:338-9266`) plus `plane-intake.mjs --apply` (spawns `bugs.mjs file`); CE list shape measured live (no `description_stripped`); 19/1,226 denylist rows measured; title max 310 measured; shards compacted (max 1 row per id) measured.
+- Facts: every writer of the registry fields the codec carries is `bugs.mjs` (commands at `bugs.mjs:338-9266`) plus `plane-intake.mjs --apply` (spawns `bugs.mjs file`); CE list shape measured live (no `description_stripped`); 17/1,226 denylist rows measured (live dry run); title max 310 measured; shards compacted (max 1 row per id) measured.
 
 ### Area sweep
 | Source | Query run | Open ids in this area | Fixed here (own commit + red test) | Deferred (row + reason) |
@@ -251,7 +252,7 @@ Rollback: revert the commit; Plane items created by a seed are archived in the U
 - Schema: none (no Prisma change).
 - Snapshot vs live: the payload is a snapshot of the row as last pushed; Plane natives are live and win on decode.
 - Authority & time: Plane is read once per run; `push` decides per row from that one read; a concurrent Plane edit between read and PATCH is the only race (single owner + agent; accepted, and the next `regen --check` shows it). Re-runs are idempotent by `external_id`.
-- Old shape → new: existing rows as-is (canonical JSON, measured); 19 held rows block the flip until redacted or ruled on (Q2); Plane items without a payload are conflicts, never overwritten.
+- Old shape → new: existing rows as-is (canonical JSON, measured); 17 held rows block the flip until redacted or ruled on (Q2); Plane items without a payload are conflicts, never overwritten.
 - Money: n/a: no money math.
 
 ### G6 Scale
@@ -282,5 +283,5 @@ Rollback: revert the commit; Plane items created by a seed are archived in the U
 
 ### G10 Owner questions
 - Q1 (SA): fix B933 (stricter `api-key-ish` pattern + `whsec_`) in the shared denylist now, own commit and red test? Recommend yes, but only with the RouteFlow SA's clearance since it changes the fleet's mirror; otherwise defer.
-- Q2 (SA): the 19 held rows (registry text carries emails, uuids, an invoice number, a connection-string prefix). Recommend: they stay registry-owned and block the flip; redacting them is a separate registry chore before the flip.
+- Q2 (SA): the 17 held rows (19 in the first census, which also scanned record prose) (registry text carries emails, uuids, an invoice number, a connection-string prefix). Recommend: they stay registry-owned and block the flip; redacting them is a separate registry chore before the flip.
 - Q3 (SA): project for bugs on local CE: a new `BUGS` project (recommended: matches the house identifiers and keeps the demo `ROUTE` project apart) vs items in `ROUTE`.
