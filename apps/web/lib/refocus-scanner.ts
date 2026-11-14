@@ -46,7 +46,7 @@ export function insideClosingDialog(el: Element | null): boolean {
   return el?.closest('[role="dialog"][data-state="closed"]') != null;
 }
 
-function isTextEntryElement(el: Element | null): boolean {
+export function isTextEntryElement(el: Element | null): boolean {
   if (!(el instanceof HTMLElement)) return false;
   if (insideClosingDialog(el)) return false;
   if (el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) return true;
