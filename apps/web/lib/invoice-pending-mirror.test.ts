@@ -63,4 +63,23 @@ describe("paidInAdvance (UX guide B6)", () => {
     expect(paidInAdvance({ status: "DRAFT", total: 0, balanceDue: 0 })).toBe("none");
     expect(paidInAdvance({ status: "DRAFT", total: 100 })).toBe("none");
   });
+  // SA ruling (b): the chip claims money received, so a credit note never earns it.
+  it("none: a DRAFT settled only by a credit note", () => {
+    expect(paidInAdvance({ status: "DRAFT", total: 50, balanceDue: 0, creditApplied: 50 })).toBe(
+      "none",
+    );
+  });
+  it("part: credit 20 plus 30 paid is only part paid in advance", () => {
+    expect(paidInAdvance({ status: "DRAFT", total: 50, balanceDue: 0, creditApplied: 20 })).toBe(
+      "part",
+    );
+  });
+  it("credit never counts: full only when cash settles the whole total; credit 60 plus 0 paid is none", () => {
+    expect(paidInAdvance({ status: "DRAFT", total: 100, balanceDue: 0, creditApplied: 0 })).toBe(
+      "full",
+    );
+    expect(paidInAdvance({ status: "DRAFT", total: 100, balanceDue: 40, creditApplied: 60 })).toBe(
+      "none",
+    );
+  });
 });

@@ -97,6 +97,15 @@ describe("PaymentDetailPage — UX guide B6 paid-in-advance chip", () => {
     expect(screen.queryByText("Paid in advance")).not.toBeInTheDocument();
   });
 
+  it("says nothing for a DRAFT invoice settled only by a credit note", async () => {
+    useInvoiceMock.mockReturnValue({
+      data: { status: "DRAFT", total: 50, balanceDue: 0, creditApplied: 50 },
+    });
+    renderWithProviders(<PaymentDetailPage />);
+    await screen.findByText("PAY-000009");
+    expect(screen.queryByText(/paid in advance/i)).not.toBeInTheDocument();
+  });
+
   it("says nothing for a settled SENT invoice (guard)", async () => {
     useInvoiceMock.mockReturnValue({ data: { status: "SENT", total: 89.77, balanceDue: 0 } });
     renderWithProviders(<PaymentDetailPage />);
