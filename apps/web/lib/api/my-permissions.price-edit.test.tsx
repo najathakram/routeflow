@@ -18,7 +18,7 @@ const wrapper = ({ children }: { children: React.ReactNode }) => (
 );
 
 /**
- * SA-1034 rule 10: "Add custom item" follows the SERVER's mode-applied `priceEditAllowed`; a pending, failed or
+ * SA-1034 rule 10: "Add custom item" follows the SERVER's `priceEditAllowed` (the live deny list); a pending, failed or
  * missing answer reads as allowed (the server refuses with the same sentence), and only an OPERATOR is asked.
  */
 describe("usePriceEditAllowed", () => {

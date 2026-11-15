@@ -8,6 +8,7 @@
  * mock (a mock accepts any `where`, so the values are never trusted here). A sold-before chunk is a product whose read finds a
  * line; a matched chunk is unchanged.
  */
+import { operatorWithRights } from "../common/testing/operator-with-rights";
 import { Test } from "@nestjs/testing";
 import { InlineReturnsQuoteService } from "./inline-returns-quote.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -53,6 +54,7 @@ describe("SA-1060 PR-2: a never-sold chunk carries no sales tax and is flagged",
 
   const setup = async (tenantTaxRatePercent = "8") => {
     const prisma = createMockPrisma();
+    operatorWithRights(prisma, OPERATOR);
     db = prisma.forTenant();
     const mod = await Test.createTestingModule({
       providers: [
