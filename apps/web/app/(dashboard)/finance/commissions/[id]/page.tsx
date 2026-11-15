@@ -213,7 +213,7 @@ function StatementDetailBody({ statement }: { statement: CommissionStatementDeta
               <Button size="sm" loading={approve.isPending} onClick={handleApprove}>
                 Approve
               </Button>
-              <Button size="sm" variant="danger" onClick={() => setIsVoidOpen(true)}>
+              <Button size="sm" variant="danger-outline" onClick={() => setIsVoidOpen(true)}>
                 Void
               </Button>
             </>
