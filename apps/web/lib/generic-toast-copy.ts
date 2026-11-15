@@ -511,6 +511,9 @@ function taxStateStaleCopy(data: Record<string, unknown>): string {
     : INVOICE_TAX_STATE_STALE_COPY.ISSUED;
 }
 
+/** On-screen time for a toast whose message is two sentences (for example the optimize refusal); the default is 4 s. */
+export const LONG_TOAST_MS = 10_000;
+
 export function codedToastCopy(err: unknown): string | null {
   const refusal = safeTextErrorCopy(err);
   if (refusal) return refusal;

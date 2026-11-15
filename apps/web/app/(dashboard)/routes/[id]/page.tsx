@@ -75,7 +75,7 @@ import {
 import { RouteVariantsPanel } from "@/components/RouteVariantsPanel";
 import { RunSettlementForm } from "@/components/RunSettlementForm";
 import { officeSettlementControls } from "@/lib/run-settlement-controls";
-import { codedToastCopy, genericToastCopy } from "@/lib/generic-toast-copy";
+import { LONG_TOAST_MS, codedToastCopy, genericToastCopy } from "@/lib/generic-toast-copy";
 import { buildGoogleMapsLegs, type GmapsPoint } from "@/lib/gmaps-export";
 import { EditRunModal } from "../_components/EditRunModal";
 import { RouteMap, type VariantOverlay } from "./RouteMap";
@@ -619,6 +619,7 @@ export default function RouteRunDetailPage() {
         toast({
           title: "Optimization failed",
           description: codedToastCopy(err) ?? genericToastCopy(err),
+          duration: LONG_TOAST_MS,
           variant: "error",
         }),
     });

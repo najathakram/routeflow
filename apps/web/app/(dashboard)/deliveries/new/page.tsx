@@ -49,7 +49,7 @@ import {
 } from "@/components/RoutePlanningControls";
 import { RouteVariantsPanel } from "@/components/RouteVariantsPanel";
 import { fmtCalendarDate } from "@/lib/formatting";
-import { codedToastCopy, genericToastCopy } from "@/lib/generic-toast-copy";
+import { LONG_TOAST_MS, codedToastCopy, genericToastCopy } from "@/lib/generic-toast-copy";
 import { TripStopList } from "../_components/TripStopList";
 import { TripSkippedPanel, type TripSkippedRow } from "../_components/TripSkippedPanel";
 import { OrderPickerPanel } from "../_components/OrderPickerPanel";
@@ -443,6 +443,7 @@ export default function NewTripPage() {
               toast({
                 title: "Delivery created; optimization unavailable — stops in selection order",
                 description: codedToastCopy(err) ?? genericToastCopy(err),
+                duration: LONG_TOAST_MS,
                 variant: "warning",
               }),
           });
@@ -500,6 +501,7 @@ export default function NewTripPage() {
         toast({
           title: "Optimization unavailable — stops kept in current order",
           description: codedToastCopy(err) ?? genericToastCopy(err),
+          duration: LONG_TOAST_MS,
           variant: "warning",
         }),
     });

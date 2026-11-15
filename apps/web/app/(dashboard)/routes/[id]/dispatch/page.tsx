@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 import { Badge, Button, cn, useToast, badgeStatusLabel } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
-import { codedToastCopy, genericToastCopy } from "@/lib/generic-toast-copy";
+import { LONG_TOAST_MS, codedToastCopy, genericToastCopy } from "@/lib/generic-toast-copy";
 import { useAuth } from "@/lib/auth-context";
 import {
   useRouteRun,
@@ -504,6 +504,7 @@ export default function DispatchPage() {
         toast({
           title: "Optimization failed",
           description: codedToastCopy(err) ?? genericToastCopy(err),
+          duration: LONG_TOAST_MS,
           variant: "error",
         }),
     });

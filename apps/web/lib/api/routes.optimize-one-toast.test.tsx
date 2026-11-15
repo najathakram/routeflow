@@ -87,6 +87,8 @@ describe("every caller of the optimize hooks toasts the coded copy", () => {
         const handler = tail.slice(at, at + 400);
         expect(handler).toContain("codedToastCopy(err)");
         expect(handler).not.toMatch(/description:\s*err\??\.message/);
+        // The two-sentence refusal needs time to read: ten seconds, not the 4 s default.
+        expect(handler).toContain("duration: LONG_TOAST_MS");
       }
     },
   );
