@@ -1,11 +1,9 @@
 "use client";
 
-import { driverNavItemVisible } from "@/lib/portal-routing";
 import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  MapPin,
   Truck,
   Users,
   Package,
@@ -25,10 +23,7 @@ import {
   X,
   Check,
   Languages,
-  ShieldCheck,
   ShieldAlert,
-  Handshake,
-  BadgePercent,
   Store,
   Smartphone,
 } from "lucide-react";
@@ -72,117 +67,19 @@ import { useCounterLanding, useOpenCounterPref } from "@/lib/use-counter-device-
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useI18n, LOCALES, LOCALE_LABELS } from "@/lib/i18n";
 import { useDriveMode } from "@/lib/drive-mode";
-import { matchPlanGatedRoute, modeGatedVisible, planFlagVisible } from "@/lib/plan-gated-nav";
 import { useTenantFeatures } from "@/lib/tenant-features";
 import { SkipToContentLink } from "@/components/SkipToContentLink";
 import { useNoShellScroll } from "@/lib/use-no-shell-scroll";
 import { RouteGuard } from "./_components/gates/RouteGuard";
 import { activeLeafHref } from "./_components/nav-active";
+import { buildOperatorNav } from "./_components/build-operator-nav";
 
 import {
-  OPERATOR_NAV,
-  CUSTOMER_NAV,
-  DRIVER_NAV,
   defaultOpenGroup,
   type NavEntry,
   type NavGroup,
   type NavLeaf,
 } from "./_components/nav-config";
-
-function getNavForRole(
-  role: string | undefined,
-  canActAsDriver: boolean | undefined,
-  access: { routesAccess: boolean; deliveryAccess: boolean },
-): NavEntry[] {
-  const { routesAccess, deliveryAccess } = access;
-  if (role === "CUSTOMER") return CUSTOMER_NAV;
-  if (role === "DRIVER") {
-    // Drivers run both recurring routes and ad-hoc delivery trips, so "My
-    // Routes"/"Today's route" need either surface unlocked — not just
-    // recurring routes. GET /route-runs/my-runs is gated the same way
-    // server-side (RouteRunsController's own @RequireAddon).
-    return DRIVER_NAV.filter((e) => e.kind !== "leaf" || driverNavItemVisible(e.href, access));
-  }
-
-  // Tenants without either addon never see the Dispatch group — it's gated
-  // on having at least one of the two features.
-  const showDispatchGroup = routesAccess || deliveryAccess;
-  let baseNav = OPERATOR_NAV.filter(
-    (entry) => !(entry.kind === "group" && entry.label === "Dispatch" && !showDispatchGroup),
-  ).map((entry): NavEntry => {
-    if (entry.kind !== "group" || entry.label !== "Dispatch") return entry;
-    // Inside a visible Dispatch group, the routes/delivery leaves are each
-    // gated on their own feature; Overview and Drivers are shared by both
-    // and always render once the group itself is showing.
-    return {
-      ...entry,
-      children: entry.children.filter((c) => {
-        if (c.href === "/routes") return routesAccess;
-        if (c.href === "/deliveries") return deliveryAccess;
-        return true;
-      }),
-    };
-  });
-
-  // Operators who can also act as drivers get "My Routes" inside the
-  // Dispatch group instead of as a stand-alone top-level item.
-  if (canActAsDriver && showDispatchGroup) {
-    baseNav = baseNav.map((entry): NavEntry => {
-      if (entry.kind === "group" && entry.label === "Dispatch") {
-        const alreadyHasMyRoutes = entry.children.some((c) => c.href === "/routes/my-runs");
-        if (alreadyHasMyRoutes) return entry;
-        return {
-          ...entry,
-          children: [
-            ...entry.children,
-            { kind: "leaf", label: "My Routes", href: "/routes/my-runs", icon: MapPin },
-          ],
-        };
-      }
-      return entry;
-    });
-  }
-
-  return baseNav; // OPERATOR, SUPER_ADMIN, TENANT_ADMIN, unknown
-}
-
-/**
- * Lite-L2 (WP8): drop every nav leaf whose href is a plan-gated route
- * (`PLAN_GATED_NAV`) the current plan doesn't grant — `planFlagVisible` gives the
- * three-valued rule (hidden while loading, shown on a fetch failure). A leaf not in
- * PLAN_GATED_NAV is always kept. A group left with zero children after filtering is
- * dropped entirely (same precedent as the Dispatch-group filter above).
- */
-function filterPlanGatedNav(
-  entries: NavEntry[],
-  planState: { flags: readonly string[] | undefined; resolved: boolean; failed: boolean },
-  modes?: Readonly<Record<string, string>>,
-): NavEntry[] {
-  const isVisible = (href: string): boolean => {
-    // SA-1032: a back-office config mode (e.g. promotions off) hides its page's entry.
-    if (!modeGatedVisible(href, modes)) return false;
-    const key = matchPlanGatedRoute(href);
-    if (!key) return true;
-    return planFlagVisible({
-      enabled: planState.flags === undefined || planState.flags.includes(key),
-      resolved: planState.resolved,
-      failed: planState.failed,
-    });
-  };
-  return entries.reduce<NavEntry[]>((acc, entry) => {
-    if (entry.kind === "leaf") {
-      if (isVisible(entry.href)) acc.push(entry);
-      return acc;
-    }
-    if (entry.kind === "group") {
-      const children = entry.children.filter((c) => isVisible(c.href));
-      if (children.length > 0) acc.push({ ...entry, children });
-      return acc;
-    }
-    acc.push(entry); // skeleton
-    return acc;
-  }, []);
-}
 
 // ─── Auth guard ───────────────────────────────────────────────────────────────
 // Role-based route/plan gating lives in ./_components/gates/RouteGuard.tsx (and
@@ -1057,139 +954,40 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     { active: true },
     { enabled: isStaff },
   );
-  const navStructure = React.useMemo(() => {
-    const nav = getNavForRole(user?.role, (user as any)?.canActAsDriver, {
+  const navStructure = React.useMemo(
+    () =>
+      buildOperatorNav({
+        role: user?.role,
+        canActAsDriver: (user as any)?.canActAsDriver,
+        routesAccess,
+        deliveryAccess,
+        addonsLoading,
+        hasSalesAgents,
+        counterEnabled,
+        regulatedLoading,
+        regulatedSections,
+        plan: {
+          flags: subscriptionStatus?.flags,
+          resolved: subscriptionResolved,
+          failed: subscriptionFailed,
+        },
+        modes: tenantModes,
+      }),
+    [
+      user,
+      hasSalesAgents,
+      regulatedSections,
+      regulatedLoading,
       routesAccess,
       deliveryAccess,
-    });
-
-    // CUSTOMER/DRIVER nav has neither a Dispatch nor a Sales Agents entry, so
-    // the skeleton splicing below only applies to the operator-ish (isStaff)
-    // branch. While the shared addons fetch is in flight, `enabled` defaults
-    // false and getNavForRole already omitted Dispatch — hold a skeleton at
-    // its position (right before Customers) so the rail doesn't grow once the
-    // real answer resolves.
-    let base = nav;
-    if (isStaff && addonsLoading) {
-      const idx = base.findIndex((e) => e.kind === "leaf" && e.href === "/customers");
-      const skeleton: NavEntry = { kind: "skeleton", key: "dispatch-skeleton" };
-      base =
-        idx === -1 ? [...base, skeleton] : [...base.slice(0, idx), skeleton, ...base.slice(idx)];
-    }
-
-    if (!isStaff) return base;
-
-    // POS-7a: "Counter" is the FIRST child of the Orders group (above All Orders): the single-active
-    // matcher then lights only Counter on /orders/counter-sale; nothing else moves.
-    if (counterEnabled) {
-      base = base.map((entry): NavEntry =>
-        entry.kind === "group" && entry.label === "Orders"
-          ? {
-              ...entry,
-              children: [
-                { kind: "leaf", label: "Counter", href: "/orders/counter-sale", icon: Store },
-                ...entry.children,
-              ],
-            }
-          : entry,
-      );
-    }
-
-    // "Regulated Items" nav group — one child per active regulated section, each
-    // opening that section's dashboard. Shown whenever the tenant has ≥1 section
-    // (an empty group is never spliced); a skeleton holds its place while the
-    // tracked-categories fetch is still in flight.
-    const inject: NavEntry[] = [];
-    const sections = regulatedSections ?? [];
-    if (regulatedLoading) {
-      inject.push({ kind: "skeleton", key: "regulated-skeleton" });
-    } else if (sections.length > 0) {
-      inject.push({
-        kind: "group",
-        label: "Regulated items",
-        icon: ShieldCheck,
-        children: sections.map((s) => ({
-          kind: "leaf" as const,
-          label: s.name,
-          href: `/compliance/${s.id}`,
-          icon: ShieldCheck,
-        })),
-      });
-    }
-
-    if (addonsLoading) {
-      // Sales Agents (+ its Commissions child inside Finance) pops in off the
-      // same addons fetch as Dispatch — hold a skeleton at the leaf's position
-      // (right after Customers) meanwhile.
-      const idx = base.findIndex((e) => e.kind === "leaf" && e.href === "/customers");
-      const skeleton: NavEntry = { kind: "skeleton", key: "sales-agents-skeleton" };
-      base =
-        idx === -1
-          ? [...base, skeleton]
-          : [...base.slice(0, idx + 1), skeleton, ...base.slice(idx + 1)];
-    } else if (hasSalesAgents) {
-      // "Sales Agents" as a top-level leaf right after Customers; "Commissions"
-      // inside the Finance group after Supplier Statements. Same splice style as
-      // the canActAsDriver Dispatch rewrite above — never mutate OPERATOR_NAV.
-      base = base.flatMap((entry): NavEntry[] => {
-        if (entry.kind === "leaf" && entry.href === "/customers") {
-          return [
-            entry,
-            { kind: "leaf", label: "Sales agents", href: "/sales-agents", icon: Handshake },
-          ];
-        }
-        if (entry.kind === "group" && entry.label === "Finance") {
-          const idx = entry.children.findIndex((c) => c.href === "/finance/statements");
-          const child: NavLeaf = {
-            kind: "leaf",
-            label: "Commissions",
-            href: "/finance/commissions",
-            icon: BadgePercent,
-          };
-          const children =
-            idx === -1
-              ? [...entry.children, child]
-              : [...entry.children.slice(0, idx + 1), child, ...entry.children.slice(idx + 1)];
-          return [{ ...entry, children }];
-        }
-        return [entry];
-      });
-    }
-
-    // Lite-L2 (WP8/R4.3): hide gated leaves before the Analytics-relative inject index
-    // is computed, so Regulated Items/Sales Agents still land in the right spot even
-    // when Analytics itself is hidden (analytics is also in PLAN_GATED_NAV).
-    base = filterPlanGatedNav(
-      base,
-      {
-        flags: subscriptionStatus?.flags,
-        resolved: subscriptionResolved,
-        failed: subscriptionFailed,
-      },
+      addonsLoading,
+      subscriptionStatus,
+      subscriptionResolved,
+      subscriptionFailed,
+      counterEnabled,
       tenantModes,
-    );
-
-    if (inject.length === 0) return base;
-
-    const idx = base.findIndex((e) => e.kind === "leaf" && e.href === "/analytics");
-    return idx === -1
-      ? [...base, ...inject]
-      : [...base.slice(0, idx + 1), ...inject, ...base.slice(idx + 1)];
-  }, [
-    user,
-    isStaff,
-    hasSalesAgents,
-    regulatedSections,
-    regulatedLoading,
-    routesAccess,
-    deliveryAccess,
-    addonsLoading,
-    subscriptionStatus,
-    subscriptionResolved,
-    subscriptionFailed,
-    counterEnabled,
-    tenantModes,
-  ]);
+    ],
+  );
   const [collapsed, setCollapsed] = React.useState(() => {
     if (typeof window !== "undefined") {
       // Auto-collapse on small screens, otherwise respect saved preference
