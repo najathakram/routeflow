@@ -15,7 +15,7 @@ import {
   Download,
   Printer,
 } from "lucide-react";
-import { PageHeader, Button, cn, useToast, EmptyState } from "@routeflow/ui/web";
+import { PageHeader, Button, cn, useToast, EmptyState, Select } from "@routeflow/ui/web";
 import { resolveConfirmedAmounts } from "@routeflow/pricing";
 import { OPEN_INVOICE_STATUS_LIST } from "@/lib/open-invoice-status";
 import { ToCollectChip } from "@/components/ToCollectChip";
@@ -820,6 +820,35 @@ export default function InvoicesPage() {
           the same row actions as the table. While loading, on error or when empty, the table's own
           state rows show at every width. */}
       {!isLoading && !isError && invoices.length > 0 && (
+        <div className="flex items-center gap-1.5 md:hidden">
+          <div className="min-w-0 flex-1">
+            <Select
+              aria-label="Sort invoices by"
+              options={[
+                { value: "issueDate", label: "Date" },
+                { value: "invoiceNumber", label: "Invoice #" },
+                { value: "status", label: "Status" },
+                { value: "dueDate", label: "Due Date" },
+                { value: "total", label: "Amount" },
+              ]}
+              value={sortBy}
+              onChange={(e) => {
+                if (e.target.value !== sortBy) toggleSort(e.target.value);
+              }}
+              className="h-10"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => toggleSort(sortBy)}
+            aria-label={sortOrder === "asc" ? "Sort ascending" : "Sort descending"}
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-ctl border border-surface-border bg-white text-navy/70 hover:bg-surface-raised"
+          >
+            <SortIcon col={sortBy} />
+          </button>
+        </div>
+      )}
+      {!isLoading && !isError && invoices.length > 0 && (
         <RecordCardList>
           {invoices.map((inv: Invoice) => (
             <RecordCard
@@ -835,10 +864,11 @@ export default function InvoicesPage() {
                 </>
               }
               meta={
-                <>
-                  {fmtCalendarDate((inv as any).issueDate ?? inv.createdAt)} · Due{" "}
-                  {fmtCalendarDate(inv.dueDate)} · Total {fmt(Number(inv.total))}
-                </>
+                <span className="flex flex-wrap gap-x-2 gap-y-0.5">
+                  <span>{fmtCalendarDate((inv as any).issueDate ?? inv.createdAt)}</span>
+                  <span>Due {fmtCalendarDate(inv.dueDate)}</span>
+                  <span>Total {fmt(Number(inv.total))}</span>
+                </span>
               }
               actions={renderRowActions(inv)}
             />

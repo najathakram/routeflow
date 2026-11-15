@@ -1,4 +1,5 @@
 import * as React from "react";
+import userEvent from "@testing-library/user-event";
 import { screen, within, renderWithProviders } from "@/test-utils/render";
 import InvoicesPage from "./page";
 
@@ -39,6 +40,7 @@ function makeInvoice(overrides: Record<string, unknown>) {
   };
 }
 
+const mockUseInvoices = jest.fn();
 const INVOICES = [
   makeInvoice({ id: "inv-a", invoiceNumber: "INV-A", balanceDue: 40 }),
   makeInvoice({
@@ -53,11 +55,7 @@ const INVOICES = [
 
 jest.mock("@/lib/api/invoices", () => ({
   ...jest.requireActual("@/lib/api/invoices"),
-  useInvoices: () => ({
-    data: { data: INVOICES, meta: { total: 2, page: 1, limit: 20, totalPages: 1 } },
-    isLoading: false,
-    isError: false,
-  }),
+  useInvoices: (...args: unknown[]) => mockUseInvoices(...args),
   useInvoiceKpiSummary: () => ({ data: undefined }),
   useDeleteInvoice: () => ({ mutate: jest.fn(), mutateAsync: jest.fn(), isPending: false }),
 }));
@@ -68,6 +66,15 @@ jest.mock("@/lib/api/bookkeeping", () => ({
 }));
 
 describe("InvoicesPage — phone cards", () => {
+  beforeEach(() => {
+    mockUseInvoices.mockReset();
+    mockUseInvoices.mockReturnValue({
+      data: { data: INVOICES, meta: { total: 2, page: 1, limit: 20, totalPages: 1 } },
+      isLoading: false,
+      isError: false,
+    });
+  });
+
   it("renders one card per invoice with its balance due and status", () => {
     const { container } = renderWithProviders(<InvoicesPage />);
     const list = container.querySelector("ul.md\\:hidden") as HTMLElement;
@@ -113,5 +120,39 @@ describe("InvoicesPage — phone cards", () => {
     const grid = tile.closest("div.grid") as HTMLElement;
     expect(grid.className).toContain("grid-cols-2");
     expect(grid.className).not.toContain("grid-cols-1");
+  });
+
+  it("has a phone sort control above the card list, outside the filters", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<InvoicesPage />);
+    const select = screen.getByLabelText("Sort invoices by") as HTMLSelectElement;
+    expect(Array.from(select.options).map((o) => [o.value, o.textContent])).toEqual([
+      ["issueDate", "Date"],
+      ["invoiceNumber", "Invoice #"],
+      ["status", "Status"],
+      ["dueDate", "Due Date"],
+      ["total", "Amount"],
+    ]);
+    const control = select.closest("div.md\\:hidden") as HTMLElement;
+    expect(control).not.toBeNull();
+    expect(control.nextElementSibling).toBe(container.querySelector("ul.md\\:hidden"));
+    expect(screen.getByRole("button", { name: "Filters" })).toBeInTheDocument();
+
+    await user.selectOptions(select, "dueDate");
+    const last = () => mockUseInvoices.mock.calls.at(-1)![0];
+    expect(last()).toMatchObject({ sortBy: "dueDate", sortOrder: "asc" });
+    await user.click(screen.getByRole("button", { name: "Sort ascending" }));
+    expect(last()).toMatchObject({ sortBy: "dueDate", sortOrder: "desc" });
+    expect(screen.getByRole("button", { name: "Sort descending" })).toBeInTheDocument();
+  });
+
+  it("does not render the sort control when there are no cards", () => {
+    mockUseInvoices.mockReturnValue({
+      data: { data: [], meta: { total: 0, page: 1, limit: 20, totalPages: 1 } },
+      isLoading: false,
+      isError: false,
+    });
+    renderWithProviders(<InvoicesPage />);
+    expect(screen.queryByLabelText("Sort invoices by")).toBeNull();
   });
 });
