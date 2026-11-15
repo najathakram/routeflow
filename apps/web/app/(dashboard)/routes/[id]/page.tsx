@@ -389,7 +389,13 @@ function StopItem({
               )}
             </div>
             {addressLine && <p className="mt-0.5 truncate text-xs text-navy/70">{addressLine}</p>}
-            {completionLine && <p className="mt-0.5 text-xs text-success/80">{completionLine}</p>}
+            {completionLine && (
+              <p
+                className={`mt-0.5 text-xs ${completionLine.tone === "success" ? "text-success/80" : "text-navy/70"}`}
+              >
+                {completionLine.text}
+              </p>
+            )}
           </div>
           {expanded ? (
             <ChevronDown className="h-4 w-4 shrink-0 text-navy/30" />

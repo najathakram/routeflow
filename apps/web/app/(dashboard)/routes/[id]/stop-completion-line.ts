@@ -5,7 +5,7 @@
 export function stopCompletionLine(stop: {
   status: string;
   completedAt?: string | null;
-}): string | null {
+}): { text: string; tone: "success" | "muted" } | null {
   if (!stop.completedAt) return null;
   const word =
     stop.status === "COMPLETED" ? "Completed" : stop.status === "SKIPPED" ? "Skipped" : null;
@@ -14,5 +14,6 @@ export function stopCompletionLine(stop: {
     hour: "numeric",
     minute: "2-digit",
   });
-  return `${word} ${at}`;
+  // Only a completed stop reads green; a skipped stop stays neutral so its red icon is the one colour signal.
+  return { text: `${word} ${at}`, tone: stop.status === "COMPLETED" ? "success" : "muted" };
 }
