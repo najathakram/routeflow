@@ -141,6 +141,19 @@ export function SortableLines({
   );
   const ids = React.useMemo(() => lines.map((l) => l.id), [lines]);
 
+  // B1315: while a line is held, the Escape that cancels the move must not also reach a dialog around the lines (Radix
+  // listens on the document in the capture phase). A window capture listener runs first and marks the key as taken
+  // (defaultPrevented, which Radix and the order modal both honour); dnd-kit's own handler still cancels the move.
+  const [holding, setHolding] = React.useState(false);
+  React.useEffect(() => {
+    if (!holding) return;
+    const onEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") e.preventDefault();
+    };
+    window.addEventListener("keydown", onEscape, true);
+    return () => window.removeEventListener("keydown", onEscape, true);
+  }, [holding]);
+
   const move = React.useCallback(
     (id: string, toIndex: number) => {
       const from = ids.indexOf(id);
@@ -176,6 +189,7 @@ export function SortableLines({
   };
 
   const onDragEnd = ({ active, over }: DragEndEvent) => {
+    setHolding(false);
     if (!over || active.id === over.id) return;
     move(String(active.id), ids.indexOf(String(over.id)));
   };
@@ -185,7 +199,9 @@ export function SortableLines({
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
+        onDragStart={() => setHolding(true)}
         onDragEnd={onDragEnd}
+        onDragCancel={() => setHolding(false)}
         accessibility={{
           announcements,
           screenReaderInstructions: { draggable: INSTRUCTIONS },

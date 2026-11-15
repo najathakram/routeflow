@@ -232,12 +232,7 @@ import {
 } from "./invoice-partition";
 import { loadResyncInputs } from "./resync-plan";
 import { loadReopenableInvoice } from "./invoice-reopen-guard";
-import {
-  issueDateStamp,
-  overdueCutoff,
-  addCalendarDays,
-  startOfCalendarDay,
-} from "../common/calendar-date";
+import { issueDateStamp, addCalendarDays, startOfCalendarDay } from "../common/calendar-date";
 import { calendarFieldStamp, dueDateStamps, dueStamp, numberYear } from "./invoice-due-dates";
 import { counterPay, type CounterPayOpts, type TillUser } from "./counter-payment-guard";
 import { API_ERROR_CODES } from "../common/api-error-codes";

@@ -98,6 +98,35 @@ describe("Alt+D and the picker", () => {
     expect(scan.value).toBe("");
   });
 
+  // B1319: Alt+D belongs to the topmost window. Another dialog on top (New product) must not get a picker opened under it.
+  it("Alt+D does nothing while another dialog is open on top of the chip", () => {
+    render(
+      <div>
+        <CounterDateChip value="" today={TODAY} onChange={jest.fn()} />
+        <div role="dialog" aria-label="New product">
+          <input aria-label="product name" />
+        </div>
+      </div>,
+    );
+    const field = screen.getByLabelText("product name");
+    field.focus();
+    fireEvent.keyDown(field, { key: "∂", code: "KeyD", altKey: true });
+    expect(screen.queryByTestId("counter-date-picker")).toBeNull();
+  });
+
+  it("Alt+D still opens the picker when the chip sits in the topmost dialog (Create Order)", async () => {
+    render(
+      <div role="dialog" aria-label="Create Order">
+        <input aria-label="scan" />
+        <CounterDateChip value="" today={TODAY} onChange={jest.fn()} />
+      </div>,
+    );
+    const scan = screen.getByLabelText("scan");
+    scan.focus();
+    fireEvent.keyDown(scan, { key: "∂", code: "KeyD", altKey: true });
+    expect(await screen.findByTestId("counter-date-picker")).toBeInTheDocument();
+  });
+
   it("a typed day applies on Enter, with a live echo", async () => {
     const { onChange, onDone } = setup();
     await userEvent.click(screen.getByRole("button", { name: "Order date: today. Change" }));
