@@ -51,6 +51,19 @@ describe("discountModeOf (SA-1141 R3/R4, SA-1153 row 28 and guard G)", () => {
     );
   });
 
+  it("refusal 1b (N4): an order-linked invoice whose order came back without its date, or null, is refused too", () => {
+    const noDate = { createdAt: BEFORE, orderId: "o1", order: {}, estimate: null };
+    expect(() => discountModeOf(noDate)).toThrow(MoneyInvariantError);
+    expect(() => discountModeOf(noDate)).toThrow(/without its order/);
+    const dangling = { createdAt: BEFORE, orderId: "o1", order: null, estimate: null };
+    expect(() => discountModeOf(dangling)).toThrow(/without its order/);
+  });
+
+  it("guard (N4): an order-linked invoice whose order carries its date resolves from the order, as before", () => {
+    const inv = { createdAt: AFTER, orderId: "o1", order: { createdAt: BEFORE }, estimate: null };
+    expect(discountModeOf(inv)).toBe("LEGACY_POST_TAX");
+  });
+
   it("refusal 2: a document with nothing to read", () => {
     expect(() => discountModeOf({})).toThrow(/no createdAt/);
     expect(() => discountModeOf(null)).toThrow(MoneyInvariantError);
@@ -63,8 +76,14 @@ describe("discountModeOf (SA-1141 R3/R4, SA-1153 row 28 and guard G)", () => {
       expect(() => discountModeOf(inv)).toThrow(/without its estimate/);
     });
 
-    it("is refused when the order relation is absent too, and when order is null on a manual invoice", () => {
+    it("is refused when the order relation is absent too", () => {
       expect(() => discountModeOf({ createdAt: BEFORE, orderId: null })).toThrow(
+        /without its estimate/,
+      );
+    });
+
+    it("is refused when order is null on a manual invoice (N6)", () => {
+      expect(() => discountModeOf({ createdAt: BEFORE, orderId: null, order: null })).toThrow(
         /without its estimate/,
       );
     });

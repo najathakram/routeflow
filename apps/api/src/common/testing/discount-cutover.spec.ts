@@ -6,7 +6,6 @@ import {
   FIXTURE,
   expectFixtureDiscriminates,
   fixtureTotals,
-  setDiscountCutover,
   underCutover,
   withDiscountCutover,
 } from "./discount-cutover";
@@ -48,7 +47,6 @@ describe("withDiscountCutover (SA-1153)", () => {
 
   describe("without the harness's beforeEach, dark answers LEGACY everywhere (why two rounds failed)", () => {
     it("is restored to null after each test of the describe above", () => {
-      setDiscountCutover(null);
       expect(DISCOUNT_PRE_TAX_FROM).toBeNull();
       expect(newDocumentDiscountMode()).toBe("LEGACY_POST_TAX");
       expect(discountModeOf({ createdAt: AFTER })).toBe("LEGACY_POST_TAX");
