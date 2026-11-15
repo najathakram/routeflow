@@ -12,6 +12,7 @@ import { PlanAdminController } from "./plan-admin.controller";
 import { SettingsBillingController } from "./settings-billing.controller";
 import { PaymentDueController } from "./payment-due.controller";
 import { PaymentDueService } from "./payment-due.service";
+import { BillingStatusController } from "./billing-status.controller";
 import { ProrationService } from "./proration.service";
 import { TenantConfigSnapshotService } from "./tenant-config-snapshot.service";
 import { ConfigSnapshotFlagService } from "./config-snapshot-flag.service";
@@ -53,6 +54,7 @@ import { PlanFlagBootAlert } from "./plan-flag-boot-alert";
     PlanAdminController,
     SettingsBillingController,
     PaymentDueController,
+    BillingStatusController,
   ],
   providers: [
     StripeService,

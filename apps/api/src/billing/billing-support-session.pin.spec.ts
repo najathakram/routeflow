@@ -192,6 +192,7 @@ describe("every controller in billing/ is classified (a new one cannot dodge the
     "billing-webhook.controller.ts":
       "provider webhook, authenticated by the signed payload, no user session",
     "plan-catalog.controller.ts": "public read of the plan catalog, GET only",
+    "billing-status.controller.ts": "SA-1146 B-5: the one billing status, GET only, no mutation",
   };
 
   it("each file is tenant-facing (pinned), super-admin only, or a listed exception", () => {
