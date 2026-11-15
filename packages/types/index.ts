@@ -152,6 +152,7 @@ export * from "./piece-synonyms";
 export * from "./api/enums";
 export * from "./api/product-count";
 export * from "./api/billing";
+export * from "./api/billing-status";
 export * from "./api/platform-admin-activation";
 export * from "./api/orders";
 export * from "./api/payment-key";

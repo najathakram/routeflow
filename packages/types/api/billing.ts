@@ -117,6 +117,8 @@ export interface SubscriptionView<TDate = string> {
   paymentProcessing?: boolean;
   /** "Oct 15": when the oldest owed invoice fell due / went overdue, formatted by the SERVER in the tenant's zone. */
   openInvoiceDueLabel?: string;
+  /** The same moment as `openInvoiceDueLabel`, an ISO instant (a date, not money: staff keep it). SA-1150 S9. */
+  openInvoiceDueAt?: string;
   /** The OLDEST owed invoice's hosted page (admins only; omitted while a payment is processing). */
   payNowUrl?: string;
   /** What `payNowUrl` collects (that one invoice's amount remaining, dollars): the Pay button's own figure. */

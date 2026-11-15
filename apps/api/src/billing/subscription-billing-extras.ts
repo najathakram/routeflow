@@ -62,6 +62,8 @@ export interface BillingViewExtras {
   paymentProcessing?: boolean;
   /** "Oct 15", formatted in the TENANT's zone: when the oldest owed invoice fell due / went overdue. */
   openInvoiceDueLabel?: string;
+  /** SA-1150 S9: the same moment as the label, an ISO instant (a date, not money). */
+  openInvoiceDueAt?: string;
   payNowUrl?: string;
   /** What `payNowUrl` collects (that one invoice's amount remaining, dollars): the Pay button's own figure. */
   payNowAmount?: number;
@@ -89,12 +91,20 @@ export const EMPTY_BILLING_VIEW_EXTRAS: BillingViewExtras = {
   graceEndsLabel: null,
 };
 
-/** The role trim (S3): only a workspace admin sees the card, the next charge and the amount. */
+/**
+ * The ONE predicate for "this role sees Stripe money" (SA-1150 1a): a TENANT_ADMIN, or a SUPER_ADMIN acting in a tenant.
+ * The role trim below and the billing status (GET /billing/status) both call it.
+ */
+export function seesBillingMoney(role: string | null | undefined): boolean {
+  return role === "TENANT_ADMIN" || role === "SUPER_ADMIN";
+}
+
+/** The role trim (S3): only a role that `seesBillingMoney` sees the card, the next charge and the amount. */
 export function trimBillingViewForRole<T extends Partial<BillingViewExtras>>(
   view: T,
   role: string | null | undefined,
 ): T {
-  if (role === "TENANT_ADMIN" || role === "SUPER_ADMIN") return view;
+  if (seesBillingMoney(role)) return view;
   // SA-777: an operator keeps the state and the date label (no money) and loses the amount and the pay link.
   const {
     outstandingTotal: _amount,
@@ -114,6 +124,7 @@ export function pickStateFacts(e: Partial<BillingViewExtras>): Partial<BillingVi
   if (e.outstandingTotal !== undefined) out.outstandingTotal = e.outstandingTotal;
   if (e.paymentProcessing !== undefined) out.paymentProcessing = e.paymentProcessing;
   if (e.openInvoiceDueLabel !== undefined) out.openInvoiceDueLabel = e.openInvoiceDueLabel;
+  if (e.openInvoiceDueAt !== undefined) out.openInvoiceDueAt = e.openInvoiceDueAt;
   if (e.payNowUrl !== undefined) out.payNowUrl = e.payNowUrl;
   if (e.payNowAmount !== undefined) out.payNowAmount = e.payNowAmount;
   if (e.openInvoiceCount !== undefined) out.openInvoiceCount = e.openInvoiceCount;
@@ -291,6 +302,7 @@ export class SubscriptionBillingExtras {
     | "billingState"
     | "paymentProcessing"
     | "openInvoiceDueLabel"
+    | "openInvoiceDueAt"
     | "payNowUrl"
     | "payNowAmount"
     | "openInvoiceCount"
@@ -318,7 +330,7 @@ export class SubscriptionBillingExtras {
       billingState,
       paymentProcessing: billingState === "processing",
       ...(oldest && dueAt && dueAt.getTime() > 0
-        ? { openInvoiceDueLabel: dayLabel(dueAt, zone) }
+        ? { openInvoiceDueLabel: dayLabel(dueAt, zone), openInvoiceDueAt: dueAt.toISOString() }
         : {}),
       ...(target?.hostedInvoiceUrl ? { payNowUrl: target.hostedInvoiceUrl } : {}),
       ...(target ? { payNowAmount: fromCents(target.amountRemainingCents) } : {}),
