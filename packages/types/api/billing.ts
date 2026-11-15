@@ -249,8 +249,13 @@ export interface BillingPaymentRow {
   id: string;
   source: "stripe" | "routeflow";
   date: string;
-  amount: number;
+  /** Dollars (the currency's major unit), rounded by the API. Null when the currency is unknown: never a wrong figure. */
+  amount: number | null;
   currency: string;
+  /** When it was paid: an ISO instant, or null when the source did not say. The order key stays `date`. */
+  paidAt: string | null;
+  /** "Paid {day}" day, formatted by the API in the tenant's zone (e.g. "Nov 1"); null with `paidAt`. */
+  paidDayLabel: string | null;
   /** Stripe invoice number or the RouteFlow invoice number (`RF-YYYY-NNNN`); null when Stripe has none. */
   number: string | null;
   receiptUrl: string | null;

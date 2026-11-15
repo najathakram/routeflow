@@ -13,12 +13,14 @@ type RfRow = {
   currency: string;
   status: string;
   issuedAt: Date;
+  paidAt: Date | null;
 };
 type StripeInv = {
   id: string;
   customer: string;
   created: number;
   amount_paid: number;
+  status_transitions?: { paid_at: number | null };
   currency: string;
   number: string | null;
   hosted_invoice_url: string | null;
@@ -31,6 +33,7 @@ function build(opts: {
   rf: RfRow[];
   stripe: StripeInv[];
   stripeFails?: boolean;
+  stripeConfigured?: boolean;
 }) {
   const listPaid = jest.fn(
     async (customerId: string, o: { limit: number; startingAfter?: string }) => {
@@ -68,7 +71,10 @@ function build(opts: {
     },
     rfInvoice: { findMany: rfFindMany },
   };
-  const stripe = { isConfigured: true, listPaidCustomerInvoices: listPaid };
+  const stripe = {
+    isConfigured: opts.stripeConfigured ?? true,
+    listPaidCustomerInvoices: listPaid,
+  };
   return { prisma, stripe, listPaid, rfFindMany };
 }
 
@@ -100,6 +106,7 @@ const rf = (n: number, iso: string, tenantId = "t1"): RfRow => ({
   currency: "USD",
   status: "PAID",
   issuedAt: new Date(iso),
+  paidAt: new Date("2026-11-03T12:00:00Z"),
 });
 
 describe("BillingPaymentsService (SA-1146 B-4)", () => {
@@ -220,6 +227,87 @@ describe("BillingPaymentsService (SA-1146 B-4)", () => {
     const h = build({ subs: { t1: null }, rf: [rf(1, "2026-10-01T00:00:00Z")], stripe: [] });
     const page = await (await make(h)).list("t1", null);
     expect(page.stripeUnavailable).toBe(false);
+    expect(page.rows).toHaveLength(1);
+    expect(h.listPaid).not.toHaveBeenCalled();
+  });
+
+  it("lists only PAID RouteFlow invoices: OPEN and VOID are never rows", async () => {
+    const h = build({
+      subs: { t1: null },
+      rf: [
+        { ...rf(1, "2026-10-01T00:00:00Z"), status: "PAID" },
+        { ...rf(2, "2026-10-02T00:00:00Z"), status: "OPEN", paidAt: null },
+        { ...rf(3, "2026-10-03T00:00:00Z"), status: "VOID", paidAt: null },
+      ],
+      stripe: [],
+    });
+    const page = await (await make(h)).list("t1", null);
+    expect(page.rows.map((r) => r.id)).toEqual(["rf_001"]);
+  });
+
+  it("each row carries the paid date: an instant and a day label in the tenant zone", async () => {
+    const h = build({
+      subs: { t1: "cus_a" },
+      rf: [rf(1, "2026-10-01T00:00:00Z")],
+      stripe: [
+        {
+          ...inv(1, "2026-10-20T00:00:00Z"),
+          status_transitions: { paid_at: sec("2026-11-01T15:00:00Z") },
+        },
+        inv(2, "2026-10-10T00:00:00Z"),
+      ],
+    });
+    const rows = (await (await make(h)).list("t1", null)).rows;
+    const byId = Object.fromEntries(rows.map((r) => [r.id, r]));
+    expect(byId["in_1"]).toMatchObject({
+      paidAt: "2026-11-01T15:00:00.000Z",
+      paidDayLabel: "Nov 1",
+    });
+    expect(byId["in_2"]).toMatchObject({ paidAt: null, paidDayLabel: null });
+    expect(byId["rf_001"]).toMatchObject({
+      paidAt: "2026-11-03T12:00:00.000Z",
+      paidDayLabel: "Nov 3",
+    });
+  });
+
+  it("converts Stripe minor units by the currency exponent: USD /100, JPY as is", async () => {
+    const h = build({
+      subs: { t1: "cus_a" },
+      rf: [],
+      stripe: [
+        { ...inv(1, "2026-10-01T00:00:00Z"), amount_paid: 12_345, currency: "usd" },
+        { ...inv(2, "2026-10-02T00:00:00Z"), amount_paid: 5_000, currency: "jpy" },
+      ],
+    });
+    const rows = (await (await make(h)).list("t1", null)).rows;
+    const byId = Object.fromEntries(rows.map((r) => [r.id, r]));
+    expect(byId["in_1"]).toMatchObject({ amount: 123.45, currency: "USD" });
+    expect(byId["in_2"]).toMatchObject({ amount: 5000, currency: "JPY" });
+  });
+
+  it("an unknown currency gives that row no amount (never a wrong one) and the rest still show", async () => {
+    const h = build({
+      subs: { t1: "cus_a" },
+      rf: [],
+      stripe: [
+        { ...inv(1, "2026-10-01T00:00:00Z"), currency: "zzz" },
+        inv(2, "2026-10-02T00:00:00Z"),
+      ],
+    });
+    const rows = (await (await make(h)).list("t1", null)).rows;
+    expect(rows.find((r) => r.id === "in_1")?.amount).toBeNull();
+    expect(rows.find((r) => r.id === "in_2")?.amount).toBe(123.45);
+  });
+
+  it("Stripe not configured (no key) answers stripeUnavailable true with the RouteFlow rows", async () => {
+    const h = build({
+      subs: { t1: "cus_a" },
+      rf: [rf(1, "2026-10-01T00:00:00Z")],
+      stripe: [],
+      stripeConfigured: false,
+    });
+    const page = await (await make(h)).list("t1", null);
+    expect(page.stripeUnavailable).toBe(true);
     expect(page.rows).toHaveLength(1);
     expect(h.listPaid).not.toHaveBeenCalled();
   });

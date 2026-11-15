@@ -1,8 +1,9 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { fromCents, roundMoney } from "@routeflow/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import type { BillingPaymentRow, BillingPaymentsPage } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
-import { INTERACTIVE_STRIPE_REQUEST } from "./subscription-billing-extras";
+import { dunningZone } from "./dunning-zone";
+import { formatInZone, INTERACTIVE_STRIPE_REQUEST } from "./subscription-billing-extras";
 import { StripeService } from "./stripe.service";
 
 /** SA-1146 B-4: rows per page, and how many each source is asked for. */
@@ -43,6 +44,24 @@ function decodeCursor(raw: string | null | undefined): PaymentsCursor {
   }
 }
 
+let knownCurrencies: Set<string> | null = null;
+const loggedUnknown = new Set<string>();
+
+/**
+ * A Stripe amount in the currency's MAJOR unit: the smallest-unit count divided by 10^exponent, the exponent being the
+ * currency's own (USD 2, JPY 0), never a bare /100. Null for a currency this runtime does not know, or a non-whole
+ * amount: that row then shows no amount rather than a wrong one.
+ */
+export function stripeMinorToMajor(minor: number, currency: string): number | null {
+  const code = currency.toUpperCase();
+  knownCurrencies ??= new Set(Intl.supportedValuesOf("currency"));
+  if (!knownCurrencies.has(code) || !Number.isInteger(minor)) return null;
+  const digits =
+    new Intl.NumberFormat("en-US", { style: "currency", currency: code }).resolvedOptions()
+      .maximumFractionDigits ?? 2;
+  return roundMoney(minor / 10 ** digits);
+}
+
 interface Candidate {
   row: BillingPaymentRow;
   at: number;
@@ -78,9 +97,10 @@ export class BillingPaymentsService {
     });
     const customerId = sub?.stripeCustomerId ?? null;
 
-    const [stripeSide, rfSide] = await Promise.all([
+    const [stripeSide, rfSide, zone] = await Promise.all([
       this.readStripe(tenantId, customerId, pos.stripeAfter),
       this.readRouteFlow(tenantId, pos.rfBefore),
+      dunningZone(this.prisma, tenantId),
     ]);
 
     const candidates: Candidate[] = [...stripeSide.rows, ...rfSide.rows].sort(
@@ -97,10 +117,24 @@ export class BillingPaymentsService {
     const more = candidates.length > PAYMENTS_PAGE_SIZE || stripeSide.hasMore || rfSide.hasMore;
 
     return {
-      rows: page.map((c) => c.row),
+      rows: page.map((c) => ({
+        ...c.row,
+        paidDayLabel: c.row.paidAt
+          ? formatInZone(new Date(c.row.paidAt), zone, { month: "short", day: "numeric" })
+          : null,
+      })),
       nextCursor: more ? encodeCursor(next) : null,
       stripeUnavailable: stripeSide.unavailable,
     };
+  }
+
+  private stripeAmount(minor: number, currency: string): number | null {
+    const amount = stripeMinorToMajor(minor, currency);
+    if (amount === null && !loggedUnknown.has(currency)) {
+      loggedUnknown.add(currency);
+      this.logger.warn(`payments list: no amount for unknown Stripe currency ${currency}`);
+    }
+    return amount;
   }
 
   private async readStripe(
@@ -125,8 +159,12 @@ export class BillingPaymentsService {
             id: i.id,
             source: "stripe" as const,
             date: new Date((Number(i.created) || 0) * 1000).toISOString(),
-            amount: roundMoney(fromCents(Number(i.amount_paid) || 0)),
+            amount: this.stripeAmount(Number(i.amount_paid) || 0, String(i.currency ?? "usd")),
             currency: String(i.currency ?? "usd").toUpperCase(),
+            paidAt: Number(i.status_transitions?.paid_at)
+              ? new Date(Number(i.status_transitions.paid_at) * 1000).toISOString()
+              : null,
+            paidDayLabel: null,
             number: typeof i.number === "string" ? i.number : null,
             receiptUrl: typeof i.hosted_invoice_url === "string" ? i.hosted_invoice_url : null,
           },
@@ -156,7 +194,14 @@ export class BillingPaymentsService {
       orderBy: [{ issuedAt: "desc" }, { id: "desc" }],
       // One extra row only tells us whether another page exists.
       take: PAYMENTS_PAGE_SIZE + 1,
-      select: { id: true, number: true, amount: true, currency: true, issuedAt: true },
+      select: {
+        id: true,
+        number: true,
+        amount: true,
+        currency: true,
+        issuedAt: true,
+        paidAt: true,
+      },
     });
     const rows: Candidate[] = found.slice(0, PAYMENTS_PAGE_SIZE).map((r) => ({
       source: "routeflow" as const,
@@ -167,6 +212,8 @@ export class BillingPaymentsService {
         date: new Date(r.issuedAt).toISOString(),
         amount: roundMoney(Number(r.amount)),
         currency: String(r.currency ?? "USD").toUpperCase(),
+        paidAt: r.paidAt ? new Date(r.paidAt).toISOString() : null,
+        paidDayLabel: null,
         number: r.number ?? null,
         receiptUrl: null,
       },
