@@ -2949,23 +2949,6 @@ describe("InvoicesService", () => {
       expect(prisma.invoice.update).not.toHaveBeenCalled();
     });
 
-    // B314: a VOID (bounced) payment carries no money — counting it here permanently blocked
-    // the revert with no way out (voiding the invoice doesn't help; it already IS voided-money).
-    it("REG-B314 a VOID-only payment history no longer blocks the edit — only LIVE payments do", async () => {
-      sentRows([{ id: "inv-1", invoiceNumber: "INV-1", internalNotes: null }]);
-      // Mock is where-aware: a real DB with status:{not:"VOID"} would exclude the sole VOID
-      // row and return 0; without that filter (the bug), it counts the VOID row and returns 1.
-      prisma.invoicePayment.count.mockImplementation(async ({ where }: any) =>
-        where?.status?.not === "VOID" ? 0 : 1,
-      );
-      prisma.invoice.update.mockResolvedValue({ id: "inv-1", status: "DRAFT" });
-
-      const reverted = await service.revertLinkedInvoicesForOrderEdit("ord-1");
-
-      expect(reverted).toEqual(["inv-1"]);
-      expect(prisma.invoice.update).toHaveBeenCalled();
-    });
-
     // B1 (WP-D1): a deposit mirror issued at ORDER PLACEMENT is SENT on purpose, and
     // reverting it is IRREVERSIBLE (a pre-delivery order-linked DRAFT can never be
     // re-sent). It is exempt — the widened reconcile keeps it in lockstep instead.

@@ -80,10 +80,12 @@ export const EDIT_BLOCKING_INVOICE_WHERE = {
   OR: [
     { status: { in: EDIT_BLOCKING_STATUSES } },
     // SA-1156: any live payment locks a non-DRAFT invoice; on a DRAFT only money the post-edit settle does NOT re-adjust does
+    // scan-ok: draft-payment-not-void: this is a lock selection (any live payment), never a summed paid figure
     {
       status: { not: InvoiceStatus.DRAFT },
       payments: { some: { status: { not: "VOID" as const } } },
     },
+    // scan-ok: draft-payment-not-void: a lock selection; the settle's own filter is the one predicate (SA-1156)
     {
       status: InvoiceStatus.DRAFT,
       payments: {

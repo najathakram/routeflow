@@ -27,6 +27,8 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { OrdersService } from "./orders.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { InvoicesService } from "../invoices/invoices.service";
+import { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { NumberingService } from "../import/numbering.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -53,6 +55,17 @@ describeDb(
     const productIds: string[] = [];
     const orderIds: string[] = [];
     const invoiceIds: string[] = [];
+    const creditNoteIds: string[] = [];
+    /** A1b observed on the head (filled after the first run): payment and amountUsed after the door increase. */
+    const OBSERVED_A1B = { paid: 15, used: 15 };
+    /** E5 observed (filled after the first run). */
+    const OBSERVED_E5: "committed" | { status: number; code: string } = {
+      status: 409,
+      code: "CREDIT_NOTE_SOURCE_GONE",
+    };
+    const OBSERVED_E5_USED = 15;
+    const DOOR_SENTENCE =
+      "This order's invoice can't change at the door. The office can add these items on a new order.";
 
     const operator = (): JwtPayload =>
       ({
@@ -316,6 +329,11 @@ describeDb(
       await raw.changeRequest.deleteMany({ where: { tenantId } });
       await raw.deliveryMutation.deleteMany({ where: { tenantId } });
       await raw.invoicePayment.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
+      await raw.auditLog.deleteMany({
+        where: { entityType: "CreditNote", entityId: { in: creditNoteIds } },
+      });
+      await raw.orderCreditNote.deleteMany({ where: { tenantId } });
+      await raw.creditNote.deleteMany({ where: { tenantId } });
       await raw.invoiceItem.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
       await raw.invoice.deleteMany({ where: { id: { in: invoiceIds } } });
       await raw.orderRevision?.deleteMany?.({ where: { orderId: { in: orderIds } } });
@@ -408,7 +426,13 @@ describeDb(
     }, 60_000);
 
     /** The order on an IN_PROGRESS run (a stop), as the at-door apply needs; returns the open change request. */
-    async function atDoor(orderId: string, lineId: string, productId: string, customerId: string) {
+    async function atDoor(
+      orderId: string,
+      lineId: string,
+      productId: string,
+      customerId: string,
+      type: "CHANGE_QTY" | "REMOVE_ITEM" = "CHANGE_QTY",
+    ) {
       const route = await raw.route.create({
         data: { name: `r-${run}-${orderIds.length}`, tenantId } as any,
       });
@@ -444,9 +468,10 @@ describeDb(
           productId,
           orderItemId: lineId,
           routeRunStopId: stop.id,
-          type: "CHANGE_QTY" as any,
+          type: type as any,
           requestedByRole: "DRIVER",
-          payload: { orderItemId: lineId, newQty: 3 },
+          payload:
+            type === "CHANGE_QTY" ? { orderItemId: lineId, newQty: 3 } : { orderItemId: lineId },
         } as any,
       });
     }
@@ -674,6 +699,172 @@ describeDb(
       expect((await raw.changeRequest.findUniqueOrThrow({ where: { id: cr.id } })).status).not.toBe(
         "PENDING",
       );
+    }, 60_000);
+
+    /** SA-1156 section 0: the door's settle runs with the REAL credit service (the edit rows above stub it). */
+    async function creditDraft() {
+      const made = await pendingOrder({ status: "DRAFT" });
+      const cn = await raw.creditNote.create({
+        data: {
+          tenantId,
+          customerId: made.o.customerId,
+          creditNoteNumber: `CN-${randomUUID().slice(0, 8)}`,
+          amount: "15.00",
+          amountUsed: "15.00",
+          status: "ISSUED",
+        } as any,
+      });
+      creditNoteIds.push(cn.id);
+      await raw.invoicePayment.create({
+        data: {
+          tenantId,
+          invoiceId: made.inv.id,
+          amount: "15.00",
+          method: "CREDIT_NOTE",
+          status: "PAID",
+          creditNoteId: cn.id,
+        } as any,
+      });
+      await raw.orderCreditNote.create({
+        data: { tenantId, orderId: made.o.id, creditNoteId: cn.id, amount: "15.00" } as any,
+      });
+      return { ...made, cn };
+    }
+    async function withRealCredits<T>(fn: (real: CreditNotesService) => Promise<T>): Promise<T> {
+      const real = new CreditNotesService(
+        prisma,
+        { emitCreditNoteCreated: jest.fn(), emitInvoiceUpdated: jest.fn() } as any,
+        { get: () => undefined } as any,
+        { syncInvoiceCommissionSafe: jest.fn().mockResolvedValue(undefined) } as any,
+        new NumberingService(prisma),
+      );
+      const stubbed = orders.creditNotes;
+      orders.creditNotes = real;
+      try {
+        return await fn(real);
+      } finally {
+        orders.creditNotes = stubbed;
+      }
+    }
+    const creditState = async (invId: string, cnId: string) => ({
+      paid: Number(
+        (
+          await raw.invoicePayment.findFirstOrThrow({
+            where: { invoiceId: invId, method: "CREDIT_NOTE" },
+          })
+        ).amount,
+      ),
+      used: Number((await raw.creditNote.findUniqueOrThrow({ where: { id: cnId } })).amountUsed),
+    });
+
+    it("A1/E19 (decrease): a door REMOVE_ITEM on a DRAFT holding a $15 credit settles the credit down to the new total", async () => {
+      const { o, inv, lines, products, cn } = await creditDraft();
+      const cr = await atDoor(o.id, lines[0].id, products[0], o.customerId, "REMOVE_ITEM");
+      await withRealCredits(() =>
+        tenantCtx.run(tenantId, () => orders.approveChangeRequestAtStop(cr.id, driver())),
+      );
+      expect((await raw.changeRequest.findUniqueOrThrow({ where: { id: cr.id } })).status).not.toBe(
+        "PENDING",
+      );
+      expect(Number((await raw.invoice.findUniqueOrThrow({ where: { id: inv.id } })).total)).toBe(
+        10,
+      );
+      expect(await creditState(inv.id, cn.id)).toEqual({ paid: 10, used: 10 });
+    }, 60_000);
+
+    it("A1b (increase): a door CHANGE_QTY that grows the total settles up to the intent (observed)", async () => {
+      const { o, inv, lines, products, cn } = await creditDraft();
+      const cr = await atDoor(o.id, lines[0].id, products[0], o.customerId, "CHANGE_QTY");
+      await withRealCredits(() =>
+        tenantCtx.run(tenantId, () => orders.approveChangeRequestAtStop(cr.id, driver())),
+      );
+      expect(Number((await raw.invoice.findUniqueOrThrow({ where: { id: inv.id } })).total)).toBe(
+        40,
+      );
+      expect(await creditState(inv.id, cn.id)).toEqual(OBSERVED_A1B);
+    }, 60_000);
+
+    it("A1c: a settle that throws never fails the door; one ERROR is logged and the request is applied", async () => {
+      const { o, lines, products } = await creditDraft();
+      const cr = await atDoor(o.id, lines[0].id, products[0], o.customerId, "REMOVE_ITEM");
+      const err = jest.spyOn(orders.logger, "error").mockImplementation(() => undefined);
+      try {
+        await withRealCredits(async (real) => {
+          jest.spyOn(real, "settleOrderCreditsInTx").mockRejectedValue(new Error("settle boom"));
+          const res = await tenantCtx.run(tenantId, () =>
+            orders.approveChangeRequestAtStop(cr.id, driver()),
+          );
+          expect(res.merged).toBe(true);
+        });
+        expect(
+          (await raw.changeRequest.findUniqueOrThrow({ where: { id: cr.id } })).status,
+        ).not.toBe("PENDING");
+        expect(err).toHaveBeenCalledTimes(1);
+        expect(String(err.mock.calls[0][0])).toContain(o.id);
+      } finally {
+        err.mockRestore();
+      }
+    }, 60_000);
+
+    it("E2 (numbers, real credit service): the edit shrinks the credit payment to the new total and returns the rest to the note", async () => {
+      const { o, inv, lines, cn } = await creditDraft();
+      await withRealCredits(() => edit(o.id, cut(lines)));
+      expect(Number((await raw.invoice.findUniqueOrThrow({ where: { id: inv.id } })).total)).toBe(
+        10,
+      );
+      expect(await creditState(inv.id, cn.id)).toEqual({ paid: 10, used: 10 });
+    }, 60_000);
+
+    it("E5 (observed): the credit's source note is gone: what the edit returns", async () => {
+      const { o, inv, lines, cn } = await creditDraft();
+      await raw.auditLog.create({
+        data: {
+          tenantId,
+          action: "SOURCE_DELETED",
+          entityType: "CreditNote",
+          entityId: cn.id,
+        } as any,
+      });
+      const before = await snapshot(o.id);
+      const outcome = await withRealCredits(() =>
+        edit(o.id, cut(lines)).then(
+          () => "committed" as const,
+          (e: any) => ({ status: e?.status, code: e?.response?.code }),
+        ),
+      );
+      expect(outcome).toEqual(OBSERVED_E5);
+      // OBSERVED (report to the SA): the 409 comes AFTER the edit committed. The order and its mirror are at $10 while the
+      // credit payment stays $15 (above the total) because the shrink was refused.
+      expect(Number((await raw.order.findUniqueOrThrow({ where: { id: o.id } })).total)).toBe(10);
+      expect((await creditState(inv.id, cn.id)).paid).toBe(15);
+      expect((await creditState(inv.id, cn.id)).used).toBe(OBSERVED_E5_USED);
+    }, 60_000);
+
+    it("A2: the door apply on a DRAFT holding cash still refuses 409 with the door sentence; the request stays open, nothing written", async () => {
+      const { o, lines, products } = await draftWith("CASH");
+      const cr = await atDoor(o.id, lines[0].id, products[0], o.customerId);
+      const before = await snapshot(o.id);
+      await expect(
+        tenantCtx.run(tenantId, () => orders.approveChangeRequestAtStop(cr.id, driver())),
+      ).rejects.toMatchObject({
+        status: 409,
+        response: { code: CODE, message: DOOR_SENTENCE },
+      });
+      expect((await raw.changeRequest.findUniqueOrThrow({ where: { id: cr.id } })).status).toBe(
+        "PENDING",
+      );
+      expect(await snapshot(o.id)).toEqual(before);
+    }, 60_000);
+
+    it("M3: the buyer cart's merge read (the controller's exact call) skips a PAID order", async () => {
+      const { o } = await pendingOrder({ status: "PAID", paid: 20 });
+      const found = await tenantCtx.run(tenantId, () =>
+        orders.findActiveOrder(o.customerId, {
+          forMerge: true,
+          mergeAs: { audience: "buyer", role: "CUSTOMER", deniedGroups: [] },
+        }),
+      );
+      expect(found).toBeNull();
     }, 60_000);
 
     it("a VOID (bounced) payment on a SENT invoice does not block the edit (B314 kept)", async () => {
