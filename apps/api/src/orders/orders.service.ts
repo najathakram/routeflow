@@ -4964,6 +4964,17 @@ export class OrdersService implements OnApplicationBootstrap {
     // Post-commit: mirror the draft invoice in lockstep. Never a new money formula.
     await this.invoicesService.reconcileOrderDraftInvoice(order.id, { basis: "order" });
 
+    // SA-1156 section 0: the door apply re-synced the DRAFT above, so run the same credit settle the office edit runs
+    // (Order lock first, Serializable, retried). The change request is already committed: a settle failure is logged at
+    // ERROR and never fails the door; the issuing send's settle catches up at delivery.
+    try {
+      await this.syncAndSettleOrderCredits(order.id, order.customerId, undefined);
+    } catch (err) {
+      this.logger.error(
+        `Credit settle after a door change request failed for order ${order.id}: ${err}`,
+      );
+    }
+
     return { merged: true, subtotal, tax, total };
   }
 
