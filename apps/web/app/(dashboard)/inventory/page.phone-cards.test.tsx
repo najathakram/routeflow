@@ -171,6 +171,8 @@ describe("InventoryPage: phone cards", () => {
     expect(sku.className).toContain("text-xs");
     expect(sku.className).toContain("text-navy/70");
     expect(title.className).toContain("text-sm");
+    // The category beside the SKU is the same size, so the line reads as one quiet line.
+    expect(within(cards[0]).getByText(/·/).className).toContain("text-xs");
   });
 
   it("shows at most two text actions plus one More actions button, with every action reachable", async () => {

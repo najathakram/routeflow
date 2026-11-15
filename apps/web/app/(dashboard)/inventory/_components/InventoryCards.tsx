@@ -106,7 +106,9 @@ export function InventoryCards({
             subtitle={
               <>
                 <span className="font-mono text-xs text-navy/70">{item.sku ?? "—"}</span>
-                {item.category ? <span className="text-navy/60"> · {item.category}</span> : null}
+                {item.category ? (
+                  <span className="text-xs text-navy/60"> · {item.category}</span>
+                ) : null}
               </>
             }
             badges={
