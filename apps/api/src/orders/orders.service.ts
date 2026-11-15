@@ -21,6 +21,7 @@ import { attachPaymentCreditNotes, ORDER_INVOICES_SELECT } from "./order-payment
 import { attachInvoicesNeedReview } from "./order-invoices-review";
 import { attachOrderToCollect } from "./order-to-collect";
 import { customerIsTaxExempt, editedOrderTotals, orderTotalsOf } from "./order-totals";
+import { discountModeOf, newDocumentDiscountMode } from "../common/discount-tax-mode";
 import { prepareInlineReturn, replayAfterCheck } from "./order-inline-return";
 import { reserveInlineReturnNumber as reserveReturnNo } from "./order-inline-return";
 import { applyInlineReturnInTx as applyReturn } from "./order-inline-return";
@@ -556,6 +557,7 @@ export class OrdersService implements OnApplicationBootstrap {
       fulfillPathLocked: fulfillPathLocked(order), // row 673: the PATCH's own predicate
       editItemsLocked: await walkInSaleLocked(this.prisma.forTenant(), order), // W-861: the edit's own predicate
     } satisfies OrderReadGateFields);
+    Object.assign(order, { discountTaxBase: discountModeOf(order) }); // SA-1141 R7: the footers read the mode, never the clock
     await attachInvoiceStages(this.featureConfig, order); // fold 4: each invoice's pdfVariant
     attachRevisionNumber(order); // row 372
     order.lineItems = withComponentViews(order.lineItems) as typeof order.lineItems; // #2717 M3
@@ -849,6 +851,7 @@ export class OrdersService implements OnApplicationBootstrap {
               isTaxExempt,
               shipping: Number(winner.shippingFee ?? 0),
               discount: 0, // SA-918: no participant carries one (readMergeGroup refuses or skips)
+              discountBase: discountModeOf(winner),
             });
             await tx.order.update({
               where: { id: winner.id },
@@ -1079,6 +1082,7 @@ export class OrdersService implements OnApplicationBootstrap {
               isTaxExempt,
               shipping: Number(winner.shippingFee ?? 0),
               discount: 0, // SA-918: no participant carries one (readMergeGroup refuses or skips)
+              discountBase: discountModeOf(winner),
             });
             const routeUpdate = routeAssignment
               ? {
@@ -1776,6 +1780,7 @@ export class OrdersService implements OnApplicationBootstrap {
       isTaxExempt,
       discount: orderDiscount,
       shipping: orderShippingFee,
+      discountBase: newDocumentDiscountMode(), // SA-1141 R3: a new order is stamped 'now'
     });
 
     // B451 gap 4: reject an oversized discountAmount (negative total) before any stock lock or tx.
@@ -4481,6 +4486,7 @@ export class OrdersService implements OnApplicationBootstrap {
         const live = await tx.order.findUnique({
           where: { id: order.id },
           select: {
+            createdAt: true, // SA-1141 R3: the order's own discount mode
             tenantId: true,
             status: true,
             // Money input to the total below — read here, under the Order FOR UPDATE lock, so a

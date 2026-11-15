@@ -32,6 +32,8 @@ export interface InvoiceTotalsLine extends LineSubtotalInput {
   taxRate?: number | null;
   /** This line's regulated CATEGORY (levy) tax in money. Folded into `tax` unless exempt. Default 0. */
   categoryTaxAmount?: number | null;
+  /** The NSF bounce-fee line (`isNsfLine`): not goods, so a PRE_TAX invoice discount is never spread onto it (SA-1141 R1). */
+  isNsf?: boolean | null;
 }
 
 export interface InvoiceTotalsOptions {
@@ -211,6 +213,7 @@ export function computeInvoiceTotals(
       taxRate:
         line.taxRate != null ? finite(line.taxRate) : line.taxable === false ? 0 : defaultRate,
       categoryTaxAmount: line.categoryTaxAmount,
+      isNsf: line.isNsf === true,
     })),
     {
       discount: opts.discount,

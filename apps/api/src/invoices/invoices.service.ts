@@ -51,8 +51,12 @@ import {
   roundMoney,
   normalizeBoxesPieces,
   OVERPAID_EPSILON,
-  LEGACY_DISCOUNT_BASE,
 } from "@routeflow/pricing";
+import {
+  DISCOUNT_SOURCE_SELECT,
+  discountModeOf,
+  newDocumentDiscountMode,
+} from "../common/discount-tax-mode";
 import { deriveInvoiceDetailFields, revisedAtByInvoice } from "./invoice-detail-read";
 import * as du from "./invoice-display-unit"; // SA-827 display units
 import {
@@ -541,7 +545,7 @@ export class InvoicesService {
       discount: invDiscount,
       shipping,
       isTaxExempt,
-      discountBase: LEGACY_DISCOUNT_BASE,
+      discountBase: newDocumentDiscountMode(), // SA-1141 R3: a new invoice is stamped 'now'
     });
 
     // Validate invoice-level discount doesn't exceed subtotal and total is non-negative — B1030:
@@ -1170,7 +1174,7 @@ export class InvoicesService {
       // B294: stamp the order's effective regular-tax rate onto every line so a
       // later applyPriceAdjustment recompute (Σ li.subtotal * li.taxRate) reproduces
       // this group's regular tax instead of the previous hardcoded 0.
-      applyOrderDerivedTaxRate(itemsData, order, isTaxExempt);
+      applyOrderDerivedTaxRate(itemsData, order, isTaxExempt, discountModeOf(order)); // SA-1141 R4: the ORDER's mode
       const subtotal = roundMoney(itemsData.reduce((s: number, it: any) => s + it.subtotal, 0));
       // RF-4: Σ the per-line category tax for this group (0 when the customer is
       // tax-exempt — foldCategoryTax also zeroes the per-line snapshots then).
@@ -1471,7 +1475,7 @@ export class InvoicesService {
   private followDeps(): FollowDeps {
     return {
       buildItem: (li, qty, tenantId, o) => this.buildInvoiceItemData(li, qty, tenantId, o),
-      taxRateOf: (order, exempt) => orderDerivedTaxRate(order, exempt),
+      taxRateOf: (order, exempt, base) => orderDerivedTaxRate(order, exempt, base),
       applyMsrp: (db, customerId, items) => this.applyMsrpSnapshots(db, customerId, items),
       tenantId: this.prisma.getTenantId(),
     };
@@ -1637,7 +1641,7 @@ export class InvoicesService {
     const regularTax = regularTaxShare(order, subtotal, isTaxExempt);
     // B294: stamp the order's effective regular-tax rate onto every line so a
     // later applyPriceAdjustment recompute reproduces `regularTax` instead of 0.
-    applyOrderDerivedTaxRate(itemsData, order, isTaxExempt);
+    applyOrderDerivedTaxRate(itemsData, order, isTaxExempt, discountModeOf(order)); // SA-1141 R4: the ORDER's mode
     // RF-4: fold the per-line category tax into the draft's tax (exempt → 0 for both).
     const categoryTax = foldCategoryTax(itemsData, isTaxExempt);
     const taxAmount = roundMoney(regularTax + categoryTax);
@@ -2026,7 +2030,7 @@ export class InvoicesService {
       stampFromOrder(itemsData, order.lineItems); // W-1187: the order's order, per draft
       // B294: stamp the order's effective regular-tax rate onto every line so a
       // later applyPriceAdjustment recompute reproduces this draft's regular tax.
-      applyOrderDerivedTaxRate(itemsData, order, isTaxExempt);
+      applyOrderDerivedTaxRate(itemsData, order, isTaxExempt, discountModeOf(order)); // SA-1141 R4: the ORDER's mode
       const subtotal = roundMoney(itemsData.reduce((s: number, it: any) => s + it.subtotal, 0));
       // RF-4: per-draft category tax (0 + zeroed snapshots when the customer is exempt).
       const categoryTax = foldCategoryTax(itemsData, isTaxExempt);
@@ -2712,7 +2716,7 @@ export class InvoicesService {
     const regularTax = regularTaxShare(order, subtotal, isTaxExempt);
     // B294: stamp the order's effective regular-tax rate onto every line so a
     // later applyPriceAdjustment recompute reproduces this partial's regular tax.
-    applyOrderDerivedTaxRate(itemsData, order, isTaxExempt);
+    applyOrderDerivedTaxRate(itemsData, order, isTaxExempt, discountModeOf(order)); // SA-1141 R4: the ORDER's mode
     // RF-4: fold each partial's share of the per-line category tax (exempt → 0 both).
     const categoryTax = foldCategoryTax(itemsData, isTaxExempt);
     const taxAmount = roundMoney(regularTax + categoryTax);
@@ -2951,11 +2955,13 @@ export class InvoicesService {
             // row 342: "Handed over by Pat · main · 11:14 AM" (the cashier relation is staff only)
             registerKey: true,
             deliveredAt: true,
+            createdAt: true, // SA-1141: the order is the source of an order-linked invoice's discount mode
             // CQ-26: a counter sale paid at the till shows no terms / due date (the web decides; nothing is stored differently)
             counterSale: true,
             ...(seesHandOverStamp(user) ? { soldBy: HANDOVER_SOLD_BY_SELECT } : {}),
           },
         },
+        estimate: { select: { createdAt: true } },
       },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
@@ -2978,6 +2984,7 @@ export class InvoicesService {
     const db = this.prisma.forTenant();
     return invoiceDetailFor(user, {
       ...inv,
+      discountTaxBase: discountModeOf(inv), // SA-1141 R7: the footers read the mode, never the clock
       ...deriveInvoiceDetailFields(
         inv,
         new Date(),
@@ -3140,7 +3147,7 @@ export class InvoicesService {
           discount: invDiscount,
           shipping,
           isTaxExempt,
-          discountBase: LEGACY_DISCOUNT_BASE,
+          discountBase: discountModeOf(locked.invoice), // SA-1141 R6: the row's own mode (its source's createdAt)
         });
         assertInvoiceTotalsSane(
           { discount: invDiscount, subtotal, total },
@@ -3986,7 +3993,10 @@ export class InvoicesService {
   async duplicate(id: string, actor?: JwtPayload, ack?: iGate.Ack) {
     const inv = await this.prisma.forTenant().invoice.findUnique({
       where: { id },
-      include: { items: { include: { product: { select: LINE_NAME_PRODUCT_SELECT } } } },
+      include: {
+        items: { include: { product: { select: LINE_NAME_PRODUCT_SELECT } } },
+        ...DISCOUNT_SOURCE_SELECT, // SA-1141 R5: the source's mode, for the rate its stored tax implies
+      },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
     // RF-011: order-linked invoices must not be duplicated — the order is the
@@ -4054,7 +4064,13 @@ export class InvoicesService {
     const isTaxExempt = !!(customer as any)?.isTaxExempt; // the CURRENT customer: a duplicate is a new invoice
     copyInvoicePositions(inv.items as any[], itemsData); // W-1187: a copy keeps the source's SHOWN order
     // Row 588: a legacy 0 / 4-dp-rounded rate is re-taken (verified inference, else the tenant rate), never copied.
-    const src = { subtotal: inv.subtotal, taxAmount: inv.taxAmount, isTaxExempt };
+    const src = {
+      subtotal: inv.subtotal,
+      taxAmount: inv.taxAmount,
+      discount: inv.discount,
+      discountBase: discountModeOf(inv),
+      isTaxExempt,
+    };
     await retakeDuplicateTaxRates(src, inv.items, itemsData, () =>
       configuredTaxRateFraction(this.prisma),
     );
@@ -4070,7 +4086,7 @@ export class InvoicesService {
       discount: invDiscount,
       shipping,
       isTaxExempt,
-      discountBase: LEGACY_DISCOUNT_BASE,
+      discountBase: newDocumentDiscountMode(), // SA-1141 R4: a duplicate is a NEW document (its own createdAt)
     });
     // B89/L-047: stamp issueDate explicitly as UTC-midnight of today (tenant
     // calendar day) — every other issueDate write in this file holds this
@@ -5340,7 +5356,7 @@ export class InvoicesService {
     const invoice = await this.prisma.forTenant().invoice.findUnique({
       where: { id },
       // F03/R4: CONFIRMED (PAID) payments only — feeds the status recompute below.
-      include: { items: true, payments: { where: CONFIRMED_PAYMENT } },
+      include: { items: true, payments: { where: CONFIRMED_PAYMENT }, ...DISCOUNT_SOURCE_SELECT },
     });
     if (!invoice) throw new NotFoundException("Invoice not found");
 
@@ -5478,7 +5494,7 @@ export class InvoicesService {
           },
         },
         // F03/R4: CONFIRMED (PAID) payments only — feeds the status recompute below.
-        include: { items: true, payments: { where: CONFIRMED_PAYMENT } },
+        include: { items: true, payments: { where: CONFIRMED_PAYMENT }, ...DISCOUNT_SOURCE_SELECT },
         orderBy: [{ createdAt: "asc" }, { id: "asc" }], // B1058: applied / skipped follow a stable order
       });
 

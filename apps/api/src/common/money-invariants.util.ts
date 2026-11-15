@@ -9,6 +9,7 @@ import {
   type SumInvoiceTotalsOptions,
 } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "./api-error-codes";
+import { withNsfFlag } from "./discount-tax-mode";
 
 /**
  * HTTP-layer wrapper around `@routeflow/pricing`'s `assertMoneyInvariants`
@@ -132,7 +133,9 @@ export function sumInvoiceTotalsStrict(
   opts: SumInvoiceTotalsOptions,
 ): ReturnType<typeof sumInvoiceTotals> {
   try {
-    return sumInvoiceTotals(lines, { ...opts, strict: true });
+    // SA-1141 R1: PRE_TAX spreads the discount over GOODS lines only, so a stored NSF fee line is flagged (LEGACY: untouched).
+    const rows = opts.discountBase === "PRE_TAX" ? withNsfFlag(lines as readonly any[]) : lines;
+    return sumInvoiceTotals(rows, { ...opts, strict: true });
   } catch (err) {
     if (err instanceof MoneyInvariantError) {
       throw new BadRequestException({
