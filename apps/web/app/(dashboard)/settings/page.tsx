@@ -3134,7 +3134,7 @@ function SettingsPageInner() {
     },
     invoicing: { title: "Invoicing", node: <InvoicingTab />, width: "max-w-3xl" },
     costing: { title: "Costing", node: <CostingTab />, width: "max-w-3xl" },
-    remittance: { title: "How to pay", node: <RemittanceTab />, width: "max-w-3xl" },
+    remittance: { title: "How customers pay you", node: <RemittanceTab />, width: "max-w-3xl" },
     integrations: {
       title: "Integrations",
       node: isAdmin ? <AIIntegrationsTab /> : <AdminOnlyNotice />,

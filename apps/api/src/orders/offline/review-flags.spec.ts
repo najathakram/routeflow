@@ -1,4 +1,3 @@
-import { OrderReviewFlagKind } from "@prisma/client";
 import { ORDER_REVIEW_FLAG_KIND_VALUES } from "@routeflow/types";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
 import {
@@ -62,20 +61,12 @@ describe("needsReviewWhere", () => {
   });
 });
 
-describe("assertPromotionCredit (SA-1124 item 6)", () => {
+describe("assertPromotionCredit (SA-1124 item 6; every draft since SA-1345 Q2)", () => {
   const order = { id: "o1", customerId: "c1", total: "22.004" };
-  const prismaWith = (count: jest.Mock) =>
-    ({ forTenant: () => ({ orderReviewFlag: { count } }) }) as never;
 
-  it("a plain draft (no open CREDIT_BLOCKED flag) never runs the credit gate", async () => {
-    const gate = jest.fn();
-    await assertPromotionCredit(prismaWith(jest.fn().mockResolvedValue(0)), order, gate, staff);
-    expect(gate).not.toHaveBeenCalled();
-  });
-
-  it("a draft carrying one runs it with the order's total, excluding the order itself", async () => {
+  it("a plain draft (no flag at all) runs the credit gate with the order's total, excluding the order itself", async () => {
     const gate = jest.fn().mockResolvedValue(undefined);
-    await assertPromotionCredit(prismaWith(jest.fn().mockResolvedValue(1)), order, gate, staff);
+    await assertPromotionCredit(order, gate, staff);
     expect(gate).toHaveBeenCalledWith({
       customerId: "c1",
       projectedTotal: 22,
@@ -84,23 +75,16 @@ describe("assertPromotionCredit (SA-1124 item 6)", () => {
     });
   });
 
-  it("the gate's refusal propagates", async () => {
-    const gate = jest.fn().mockRejectedValue(new Error("over limit"));
-    const run = assertPromotionCredit(
-      prismaWith(jest.fn().mockResolvedValue(1)),
-      order,
-      gate,
-      staff,
-    );
-    await expect(run).rejects.toThrow("over limit");
+  it("runs it exactly once, and never reads a review flag to decide whether to", async () => {
+    const gate = jest.fn().mockResolvedValue(undefined);
+    await assertPromotionCredit(order, gate, staff);
+    expect(gate).toHaveBeenCalledTimes(1);
+    expect(assertPromotionCredit.length).toBe(3); // (order, gate, principal): no prisma client to read flags with
   });
 
-  it("reads only the open CREDIT_BLOCKED flags of this order", async () => {
-    const count = jest.fn().mockResolvedValue(0);
-    await assertPromotionCredit(prismaWith(count), order, jest.fn(), staff);
-    expect(count).toHaveBeenCalledWith({
-      where: { orderId: "o1", kind: OrderReviewFlagKind.CREDIT_BLOCKED, resolvedAt: null },
-    });
+  it("the gate's refusal propagates", async () => {
+    const gate = jest.fn().mockRejectedValue(new Error("over limit"));
+    await expect(assertPromotionCredit(order, gate, staff)).rejects.toThrow("over limit");
   });
 });
 

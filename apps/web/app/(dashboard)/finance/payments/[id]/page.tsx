@@ -15,6 +15,7 @@ import { Badge, Button, Card, useToast } from "@routeflow/ui/web";
 import { dayClosedCopy } from "@/lib/day-closed-copy";
 import { fmt, fmtDate } from "@/lib/formatting";
 import { paymentMethodLabel } from "@/lib/payment-methods";
+import { paidInAdvance } from "@/lib/invoice-pending-mirror";
 
 const BANK_DATE_HELP =
   "When the funds actually landed in your account — e.g. a post-dated check's clearing date. Leave blank if unknown.";
@@ -265,6 +266,13 @@ export default function PaymentDetailPage() {
                     <dt className="text-navy/70">Invoice status</dt>
                     <dd>
                       <Badge status={invoice.status} />
+                      {paidInAdvance(invoice) !== "none" && (
+                        <span className="ml-2 inline-flex items-center rounded-full bg-surface-raised px-2 text-[11px] font-medium text-navy/70">
+                          {paidInAdvance(invoice) === "full"
+                            ? "Paid in advance"
+                            : "Part paid in advance"}
+                        </span>
+                      )}
                     </dd>
                   </div>
                 </>

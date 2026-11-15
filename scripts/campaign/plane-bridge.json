@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "target": {
+    "baseUrl": "http://localhost:7090",
+    "workspace": "routeflow",
+    "tokenFile": "~/.aios/plane-token-routeflow"
+  },
+  "registries": {
+    "bugs": {
+      "owner": "registry",
+      "project": { "identifier": "BUGS", "name": "Bugs" },
+      "states": [
+        { "name": "Backlog", "group": "backlog", "color": "#A3A3A3" },
+        { "name": "Todo", "group": "unstarted", "color": "#3A3A3A" },
+        { "name": "Ready for agent", "group": "unstarted", "color": "#4F46E5" },
+        { "name": "In Progress", "group": "started", "color": "#F59E0B" },
+        { "name": "Agent working", "group": "started", "color": "#0EA5E9" },
+        { "name": "Needs approval", "group": "started", "color": "#A855F7" },
+        { "name": "Blocked", "group": "started", "color": "#EF4444" },
+        { "name": "Done", "group": "completed", "color": "#16A34A" },
+        { "name": "Cancelled", "group": "cancelled", "color": "#9CA3AF" }
+      ],
+      "stateByLedger": {
+        "queued": "Backlog",
+        "regressed": "Todo",
+        "in-flight": "In Progress",
+        "proven": "Needs approval",
+        "proven-pending-deploy": "Needs approval",
+        "done": "Done",
+        "refuted": "Cancelled",
+        "already-fixed": "Cancelled",
+        "cancelled": "Cancelled"
+      },
+      "noStatusState": "Backlog",
+      "ledgerByState": {
+        "Backlog": "queued",
+        "Todo": "queued",
+        "Ready for agent": "queued",
+        "In Progress": "in-flight",
+        "Agent working": "in-flight",
+        "Needs approval": "proven",
+        "Done": "done",
+        "Cancelled": "cancelled",
+        "Blocked": null
+      }
+    }
+  }
+}

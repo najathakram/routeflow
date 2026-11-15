@@ -138,7 +138,7 @@ function lostTheClaimRace(err: unknown): boolean {
 
 /** A reused stored session is always a HOSTED one (an embedded session has no url, so it is expired and recreated, never reused). */
 function hostedStart(sessionId: string, url: string): CheckoutStart {
-  return { uiMode: "hosted", sessionId, checkoutUrl: url, clientSecret: null };
+  return { uiMode: "hosted", sessionId, checkoutUrl: url, clientSecret: null, returnPath: null };
 }
 
 @Injectable()
@@ -261,8 +261,11 @@ export class PaymentDueService {
         // SA-1139: the tenant pays on its own page, so the BILLING_CHECKOUT_UI switch applies
         surface: "TENANT_SELF",
       });
-      const { uiMode, sessionId, checkoutUrl, clientSecret } = out;
-      return { uiMode, sessionId, checkoutUrl, clientSecret } as CheckoutStart;
+      // the start as built from the session (returnPath included); the catch-up's own bookkeeping stays inside
+      const { stubCents: _stub, shape: _shape, ...start } = out;
+      void _stub;
+      void _shape;
+      return start;
     } catch (err) {
       // A parallel click won the claim between our read and our create: hand back its session, never a second one
       // (and never the operator-facing "not eligible" wording).

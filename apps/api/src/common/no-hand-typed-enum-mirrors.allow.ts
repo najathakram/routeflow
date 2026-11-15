@@ -53,7 +53,7 @@ apps/api/src/bookkeeping/bookkeeping.service.ts | ExpenseStatus | 1 | pending:B7
 apps/api/src/bookkeeping/dto/create-expense.dto.ts | ExpenseStatus | 2 | pending:B7 | array+union {PENDING,RECEIVED,PAID,VOID}
 apps/api/src/buyer/buyer-admin.controller.ts | BuyerAccountStatus | 1 | pending:B7 | union {ACTIVE,SUSPENDED,DELETED}
 apps/api/src/buyer/buyer-admin.service.ts | BuyerAccountStatus | 1 | pending:B7 | union {ACTIVE,SUSPENDED,DELETED}
-apps/api/src/buyer/buyer-dashboard.service.ts | OrderStatus | 2 | pending:B7 | array {PENDING,CONFIRMED,OUT_FOR_DELIVERY,PARTIALLY_D…
+apps/api/src/buyer/buyer-dashboard.service.ts | OrderStatus | 1 | pending:B7 | array {CONFIRMED,OUT_FOR_DELIVERY,PARTIALLY_DELIVERED}
 apps/api/src/buyer/buyer.service.ts | CustomerLinkStatus | 1 | pending:B7 | array {ACTIVE,INVITED,PENDING_SELLER_APPROVAL}
 apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts | CrmHandoffStatus | 4 | pending:B7 | array+object {CREATED,LINKED,SKIPPED,DRY_RUN,NEEDS_REVIEW,FA…
 apps/api/src/documents/receipt-model.ts | PaymentMethod | 2 | pending:B7 | array+object {CASH,CARD,CHECK,OTHER,STORE_CREDIT}

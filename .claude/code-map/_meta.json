@@ -1,6 +1,6 @@
 {
-  "mappedSha": "13fb12fd73",
-  "generatedAt": "2026-11-14T09:57:29.446Z",
+  "mappedSha": "efb69a5ca4",
+  "generatedAt": "2026-11-15T15:26:58.887Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -9,11 +9,11 @@
     "packages"
   ],
   "partCounts": {
-    "api": 36,
-    "web": 31,
+    "api": 37,
+    "web": 32,
     "mobile": 16,
     "packages": 0
   },
   "fileCount": 1160,
-  "notes": "2026-11-13 (master 13fb12fd73): api and web landing notes for the ux-eval, site print and counter clock fixes, TOC rows, one INDEX row; see CHANGELOG.md. Windows 13 to 26 (11-07 to 11-09) are not mapped yet."
+  "notes": "2026-11-15 (master efb69a5ca4): api and web landing notes for windows 40 to 42, TOC rows; see CHANGELOG.md. Windows 13 to 26 (11-07 to 11-09) are not mapped yet."
 }

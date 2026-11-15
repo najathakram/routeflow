@@ -117,6 +117,8 @@ export interface SubscriptionView<TDate = string> {
   paymentProcessing?: boolean;
   /** "Oct 15": when the oldest owed invoice fell due / went overdue, formatted by the SERVER in the tenant's zone. */
   openInvoiceDueLabel?: string;
+  /** The same moment as `openInvoiceDueLabel`, an ISO instant (a date, not money: staff keep it). SA-1150 S9. */
+  openInvoiceDueAt?: string;
   /** The OLDEST owed invoice's hosted page (admins only; omitted while a payment is processing). */
   payNowUrl?: string;
   /** What `payNowUrl` collects (that one invoice's amount remaining, dollars): the Pay button's own figure. */
@@ -231,8 +233,37 @@ export type CheckoutUiMode = (typeof CHECKOUT_UI_MODE_VALUES)[number];
  * card form (card data never reaches us); it is returned only to the admin who asked and is never logged.
  */
 export type CheckoutStart =
-  | { uiMode: "hosted"; sessionId: string; checkoutUrl: string; clientSecret: null }
-  | { uiMode: "embedded"; sessionId: string; checkoutUrl: null; clientSecret: string };
+  | {
+      uiMode: "hosted";
+      sessionId: string;
+      checkoutUrl: string;
+      clientSecret: null;
+      /** Hosted returns through Stripe's own `success_url` redirect, so there is nothing for the web to push. */
+      returnPath: null;
+    }
+  | {
+      uiMode: "embedded";
+      sessionId: string;
+      checkoutUrl: null;
+      clientSecret: string;
+      /**
+       * SA-1154: where the web goes when the form completes, read by the server from the Stripe session it created
+       * (its own `return_url` without `session_id`). The web pushes it only when it is one of
+       * {@link BILLING_RETURN_PATHS}, and never works it out from the request.
+       */
+      returnPath: string;
+    };
+
+/**
+ * SA-1154: the one allowlist of billing return addresses (a tenant lands on its billing page): a plan checkout, a
+ * payment, and a card add (nothing was charged, so it must never land on the payment path). The web refuses an
+ * embedded start whose `returnPath` is not an exact member.
+ */
+export const BILLING_RETURN_PATHS = {
+  plan: "/settings/billing?checkout=success",
+  pay: "/settings/billing?paid=1",
+  cardAdd: "/settings/billing?paid=1&card=1",
+} as const;
 
 /** `POST /billing/payment-due/pay` (TENANT_ADMIN): the Stripe Checkout to send the admin to. */
 export interface PaymentDuePayResult {

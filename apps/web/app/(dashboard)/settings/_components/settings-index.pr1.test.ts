@@ -63,7 +63,7 @@ describe("PR1 groups (direction 2b)", () => {
     listGroup(full, key, o).map((e) => e.id);
 
   it("places each row exactly where direction 2b says (nothing dropped)", () => {
-    expect(rows("business")).toEqual(["business-profile", "user-management"]);
+    expect(rows("business")).toEqual(["business-profile", "plan-billing", "user-management"]);
     expect(rows("payments")).toEqual(["invoicing", "how-to-pay", "card-payments"]);
     // Units is flag-gated (flag.units_settings_v1): its place, third, is pinned in the Units block below.
     expect(rows("selling")).toEqual(["tier-names", "costing", "product-labels"]);
@@ -84,12 +84,15 @@ describe("PR1 groups (direction 2b)", () => {
     ]);
   });
 
-  it("Plan & billing is no list row (the Business card holds it) but stays an index entry", () => {
+  it("Billing is one list row, in the Business group only (SA-1151 §2)", () => {
     expect(full.find((x) => x.id === "plan-billing")).toMatchObject({
-      label: "Plan & billing",
+      label: "Billing",
       href: "/settings/billing",
     });
-    for (const g of GROUP_META) expect(rows(g.key)).not.toContain("plan-billing");
+    for (const g of GROUP_META) {
+      if (g.key === "business") expect(rows(g.key)).toContain("plan-billing");
+      else expect(rows(g.key)).not.toContain("plan-billing");
+    }
   });
 
   it("Orders & delivery: Route defaults leads for fleet tenants; the Counter has its own group", () => {

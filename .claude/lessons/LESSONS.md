@@ -156,6 +156,13 @@
 - **Lesson:** **In the tree under test run `npx prisma generate` from `apps/api` after the install, and prove any changed `select`/`include`/`where` with an executed query against a database migrated from THAT tree's `prisma/migrations` (`npm run local:migrate`, then the DB lane). A link to another tree's `node_modules` is fine for docs-only work and never for code that touches the schema.**
 - **Guard:** none automatic; the install order in [[L-254]] (`npm ci --ignore-scripts`, `prisma generate`, build `packages/*`), `npm run local:drift` against the compose DB, and the executed-query rule. Cf. archived L-176. Extended 2026-10-21: a DB-backed spec that needs reference data (a published plan catalog) passed on a seeded dev database and failed in CI's fresh replay database. A DB spec seeds the reference data it needs through the shipped idempotent publishers, behind the local-DB guard, and is proved once against an empty migrated database.
 
+### L-383 · 2026-11-15 · testing · a probe's entry condition names the branch it passes through; "nothing changed" from a skipped branch proves nothing about the branch you meant to test (W-946r)
+
+- **Symptom:** a probe of a delivered line's quantity floor sent `qty: 0`, saw the save succeed with stock, delivered count and invoice unchanged, and read it as "the floor holds, close with a pin". A re-probe at `qty: 3` showed the opposite: the stored qty dropped below the delivered count, the line flipped to Pending, stock got no return, and the invoice billed the lower quantity (B1330).
+- **Root cause:** the per-line update branch of `updateOrderItems` skips any non-positive quantity for every existing line (`if (qty <= 0) continue`), so `qty: 0` never reached a quantity write. The brief named the input, not the branch it takes.
+- **Lesson:** **Before a probe's result is read as a verdict, read the code path the entry condition takes at the base and name the branch; a "no change" outcome is evidence only if that branch contains the write under test. Probe a value the generic skip lets through (a positive one), and say which branch each value reaches.**
+- **Guard:** none automatic. SA-E111 records the miss; the red pin for the floor (B1330) lands with F-1, and B1336 tracks the silent `qty: 0` skip itself.
+
 ## domain
 
 ### L-375 · 2026-11-12 · domain · a flag the middleware reads to route a browser is set by every path that starts a session, impersonation included (B1304)
@@ -214,33 +221,12 @@
 - **Lesson:** **A create or update that takes ids of other rows calls one helper (`assertRefsInTenant`) on the outer client before it opens a transaction. It checks existence and tenant only; archived or deleted state stays a separate policy. Roll it out behind a read-only, counts-only census so existing cross-tenant links reach the architect before the proof starts refusing.**
 - **Guard:** `assert-refs-in-tenant.ts` plus per-service specs; `report-cross-tenant-refs.mjs` census run by the owner.
 
-### L-346 · 2026-10-25 · domain · a payment capacity check judges real money on the confirmed basis; an unconfirmed row it displaces is flagged, never allowed to refuse it (W-769)
-
-- **Symptom:** a staff member could not record a real payment because a draft or pending row on the same invoice already used up the balance.
-- **Root cause:** the capacity check counted unconfirmed rows as if they were money received, and each writer applied its own version of the check.
-- **Lesson:** **Capacity for a PAID write is the confirmed total; DRAFT and PENDING rows count only for writes that are themselves unconfirmed. A paid write that displaces an unconfirmed row flags it for review instead of refusing. The policy and predicate live in `@routeflow/pricing`, and one api file (`confirmed-basis.ts`) applies them for every writer.**
-- **Guard:** `payment-confirmation` specs in `packages/pricing` and the writer specs that reach `confirmed-basis.ts`.
-
-### L-345 · 2026-10-25 · domain · every recurring Stripe price names a product we own, with a deterministic id; inline `product_data` is for one-time lines only (W-810)
-
-- **Symptom:** a later price push on a subscription born in Checkout failed, and the redelivery that followed never cleared.
-- **Root cause:** Checkout's inline `product_data` creates the product inactive, and an inactive product cannot take a new recurring price.
-- **Lesson:** **Create one product per plan code and per add-on SKU (`rf_plan_<code>`, `rf_addon_<sku>`), retrieve it first and reactivate it if inactive, and point every recurring `price_data` at it. Read and preview paths make no Stripe write. Test fakes need `products.retrieve`, not just `create`.**
-- **Guard:** `stripe-product.ts` with the stateful `fakeStripeProducts` used by the billing specs.
-
 ### L-344 · 2026-10-24 · domain · an idempotent early return still retries the side effect; a status lift is a predicate with a CAS twin (#3599)
 
 - **Symptom:** a card payment reinstated a tenant an admin had locked, and a redelivered checkout webhook skipped the price push its first delivery had failed to make.
 - **Root cause:** the payment handlers lifted any non-ACTIVE status, and the "already applied" early return also skipped a non-idempotent side effect that could have failed the first time.
 - **Lesson:** **A money event lifts a lock only through ONE predicate with a compare-and-set twin (`paymentReinstatable` / `paymentReinstatableWhere`), so the check and the write are one statement. An idempotent early return still retries the side effect that may have failed on the first delivery.**
 - **Guard:** the dunning-config and billing webhook specs.
-
-### L-342 · 2026-10-24 · domain · send `null` to clear a field and omit it to leave it alone; `x || undefined` cannot clear (#3695, #3622)
-
-- **Symptom:** emptying a payment reference, notes, phone or delivery-window field on an edit form kept the old value, and the stale reference still counted in the duplicate-reference check.
-- **Root cause:** clients sent `x.trim() || undefined`. JSON drops `undefined`, and the server reads an absent key as "no change", so a clear looked exactly like leaving the field alone.
-- **Lesson:** **An update contract needs three states: a value sets, `null` clears, an absent key leaves alone. Type update DTOs as `string | null` and convert an emptied input to `null`. A cleared identifier carries no dedupe identity.**
-- **Guard:** `apps/mobile/lib/clearable-field.ts`, `UpdateInvoicePaymentDto` `reference`/`notes: string | null`, `payment-edit-ref.db.spec.ts`.
 
 ### L-340 · 2026-10-24 · domain · one declared row-lock order, a pin that classifies every lock site, and no exception map that grows (#3680, #3697)
 
@@ -312,6 +298,13 @@
 - **Lesson:** **Before declaring one writer for a ledger or event stream, grep the whole tree for every emit of those events and every `amountDelta:` site, not only the call sites the brief named. Route each one through the writer or exempt it explicitly.**
 - **Guard:** #2186: `subscribe()` (`subscription-mutation.service.ts` :395-421 at review) was the writer the sweep missed and now calls `emitAddonDelta`. On master, `ADDON_ENABLED/DISABLED` is emitted only in `billing/addon-ledger.ts`. No structural pin yet; propose one beside `mrr-paying-predicate.parity.spec.ts`.
 
+### L-384 · 2026-11-15 · domain · a rule that is about to become a per-document mode is a REQUIRED parameter that throws when omitted, and every legacy caller states the old mode by name (#4323, W-989)
+
+- **Symptom:** an invoice-level discount must start lowering the sales-tax base for new documents only, while every stored document keeps today's formula. An optional mode would let any caller that forgot it silently total on one formula and re-derive a stored tax rate on the other.
+- **Root cause:** the totals and rate-inference helpers had no notion of a mode, and a default would hide the callers that still need a decision (the cutover constant stays null until the owner flips it).
+- **Lesson:** **Add the mode as a REQUIRED union on every totals and rate-inference helper, assert it at runtime (a JS caller or a mock gets an error, never a default), have each existing caller pass an exported legacy constant by name so a grep lists the sites still to thread, and derive a document's mode from its immutable creation time so a stored document keeps its formula for life.**
+- **Guard:** `packages/pricing/src/discount-tax-base.spec.ts` (an omitted mode throws in `computeInvoiceTotals`, `saleTotals`, `sumInvoiceTotals` and the rate inference; PRE_TAX 8 / 88 against LEGACY 10 / 90); the compiler for every typed caller. Cf. archived L-347.
+
 ## security
 
 ### L-372 · 2026-11-06 · security · a rotation resets every stored copy of the secret, a derived hash included, and an output scan covers every exit that holds the secret in scope (#4232)
@@ -371,6 +364,13 @@
 - **Root cause:** the side padding was a percentage half-gap, `(100% - 1200px)/2`, and a percentage padding resolves against the parent's width, not the box's own width.
 - **Lesson:** **A centred box on a page grid is `width: min(<grid>, 100% - <gutter>)` with a centring margin and a fixed clamp padding, never a percentage half-gap. A static scan for the bad shape normalises whitespace, covers the equivalent spellings (`calc(50% - N)`, a custom property holding the half-gap) and walks the whole stylesheet tree.**
 - **Guard:** `site-founder-card-width.static.test.ts` (card width; a scan of `css/` and `graphics/` for one spelling). Open: B1294 (the other spellings). Cf. [[L-364]].
+
+### L-385 · 2026-11-15 · web · one exported predicate says whether a key starts a scan run; each screen decides only where the scan goes (#4320, B1310, B1314)
+
+- **Symptom:** a scan whose code began with a lowercase letter or punctuation, typed while a button, a drag handle or the page held focus, lost its leading keys; on the order builder its ending Enter reopened the date picker; on the till a leading `g` was taken by the g-then-x shortcut.
+- **Root cause:** the date picker, the line drag handle and the till each spelled "this key starts a scan" for themselves, with different case, focus and modifier rules.
+- **Lesson:** **Keep the run-start rule in one module (printable character, not Space, no Ctrl, Meta or Alt, focus not in a text field or a typeahead owner) and let each surface own only its destination field; the capture hands the key over and never stops a scan key, so a keyboard line move can still cancel. A rule about key order reads no clock.**
+- **Guard:** `apps/web/lib/scan-run.test.ts`, `scan-run.structure.test.ts` (the module reads no clock, no second spelling of the rule), `CreateOrderModal.scan-destination.test.tsx`, `CounterSaleScreen.sa1067.test.tsx`.
 
 ## deploy
 

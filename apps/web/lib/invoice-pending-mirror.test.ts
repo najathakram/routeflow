@@ -1,4 +1,4 @@
-import { isPendingMirrorInvoice, pendingMirrorCopy } from "./invoice-pending-mirror";
+import { isPendingMirrorInvoice, paidInAdvance, pendingMirrorCopy } from "./invoice-pending-mirror";
 
 const draft = {
   orderId: "o1",
@@ -47,5 +47,39 @@ describe("pendingMirrorCopy: no delivery on a store-only order", () => {
   });
   it("R4: the pill's words are gone; only the note remains", () => {
     expect(Object.keys(pendingMirrorCopy(true))).toEqual(["note"]);
+  });
+});
+
+describe("paidInAdvance (UX guide B6)", () => {
+  it("full: a DRAFT with nothing left to pay", () => {
+    expect(paidInAdvance({ status: "DRAFT", total: 89.77, balanceDue: 0 })).toBe("full");
+  });
+  it("part: a DRAFT with some paid and some due", () => {
+    expect(paidInAdvance({ status: "DRAFT", total: 100, balanceDue: 40 })).toBe("part");
+  });
+  it("none: a SENT invoice, an unpaid DRAFT, a $0 DRAFT, or a missing balance", () => {
+    expect(paidInAdvance({ status: "SENT", total: 100, balanceDue: 0 })).toBe("none");
+    expect(paidInAdvance({ status: "DRAFT", total: 100, balanceDue: 100 })).toBe("none");
+    expect(paidInAdvance({ status: "DRAFT", total: 0, balanceDue: 0 })).toBe("none");
+    expect(paidInAdvance({ status: "DRAFT", total: 100 })).toBe("none");
+  });
+  // SA ruling (b): the chip claims money received, so a credit note never earns it.
+  it("none: a DRAFT settled only by a credit note", () => {
+    expect(paidInAdvance({ status: "DRAFT", total: 50, balanceDue: 0, creditApplied: 50 })).toBe(
+      "none",
+    );
+  });
+  it("part: credit 20 plus 30 paid is only part paid in advance", () => {
+    expect(paidInAdvance({ status: "DRAFT", total: 50, balanceDue: 0, creditApplied: 20 })).toBe(
+      "part",
+    );
+  });
+  it("credit never counts: full only when cash settles the whole total; credit 60 plus 0 paid is none", () => {
+    expect(paidInAdvance({ status: "DRAFT", total: 100, balanceDue: 0, creditApplied: 0 })).toBe(
+      "full",
+    );
+    expect(paidInAdvance({ status: "DRAFT", total: 100, balanceDue: 40, creditApplied: 60 })).toBe(
+      "none",
+    );
   });
 });

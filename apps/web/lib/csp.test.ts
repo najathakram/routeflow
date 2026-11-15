@@ -11,7 +11,7 @@ import { apiConnectSources, buildContentSecurityPolicy } from "../csp.mjs";
 // connect-src is untouched: its `https:` already lets the script report back.
 const PROD_CSP_ORACLE =
   "default-src 'self'; " +
-  "script-src 'self' 'unsafe-inline' https://maps.googleapis.com https://maps.gstatic.com https://cloud.umami.is; " +
+  "script-src 'self' 'unsafe-inline' https://maps.googleapis.com https://maps.gstatic.com https://cloud.umami.is https://js.stripe.com; " +
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
   "font-src 'self' https://fonts.gstatic.com data:; " +
   "img-src 'self' data: blob: https:; " +
@@ -83,5 +83,20 @@ describe("apiConnectSources", () => {
     expect(apiConnectSources(undefined)).toBe("");
     expect(apiConnectSources("")).toBe("");
     expect(apiConnectSources("not-a-url")).toBe("");
+  });
+});
+
+// SA-1139 PR-2 case 19: Stripe's embedded form needs its script host, and nothing wider.
+describe("Stripe embedded checkout (SA-1139)", () => {
+  it("allows js.stripe.com in script-src only; frame-src and connect-src already admit https", () => {
+    const csp = buildContentSecurityPolicy({
+      isDev: false,
+      apiUrl: "https://api.example.com/api/v1",
+    });
+    const dir = (name: string) => csp.split("; ").find((d) => d.startsWith(`${name} `)) ?? "";
+    expect(dir("script-src").split(" ")).toContain("https://js.stripe.com");
+    expect(dir("script-src")).not.toMatch(/\*\.stripe|https:(\s|$)/);
+    expect(dir("frame-src")).toBe("frame-src 'self' blob: https:");
+    expect(dir("connect-src")).toBe("connect-src 'self' https: wss:");
   });
 });

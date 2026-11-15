@@ -3,9 +3,10 @@
 import * as React from "react";
 import { Info, X } from "lucide-react";
 import type { PaymentDueView } from "@routeflow/types";
-import { Button, cn } from "@routeflow/ui/web";
+import { Button, cn, useToast } from "@routeflow/ui/web";
 import { useBillingPortal } from "@/lib/api/billing";
-import { usePayPaymentDue } from "@/lib/api/payment-due";
+import { isCheckoutAlreadyOpen, usePayPaymentDue } from "@/lib/api/payment-due";
+import { getEmbeddedCheckoutSecret } from "@/lib/checkout-embedded";
 import { dismissBanner, isBannerDismissed } from "@/lib/banner-dismiss";
 import {
   cardReminderCopy,
@@ -43,6 +44,7 @@ export function PaymentDueBanner({
   hideBillingLink?: boolean;
 }) {
   const pay = usePayPaymentDue();
+  const { toast } = useToast();
   const portal = useBillingPortal();
   const router = useGuardedRouter();
   const [tick, setTick] = React.useState(0);
@@ -99,9 +101,17 @@ export function PaymentDueBanner({
             variant="secondary"
             className={cn(HIT, "min-w-0 flex-1 sm:flex-none")}
             loading={primary.intent === "pay" ? pay.isPending : portal.isPending}
+            disabled={primary.intent === "pay" ? pay.isPending : portal.isPending}
             onClick={() =>
               primary.intent === "pay"
-                ? pay.mutate(due ? shownTermsOf(due) : undefined)
+                ? pay.mutate(due ? shownTermsOf(due) : undefined, {
+                    // A second Pay while the form is open: the form is the answer, not an error. If it is already
+                    // showing, say nothing; otherwise one plain line (never the shared "wait for it" copy).
+                    onError: (err) => {
+                      if (isCheckoutAlreadyOpen(err) && !getEmbeddedCheckoutSecret())
+                        toast({ title: "Your payment form is already open." });
+                    },
+                  })
                 : portal.mutate({ intent: "update-payment" })
             }
           >
