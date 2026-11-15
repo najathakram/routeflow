@@ -1,13 +1,15 @@
 "use client";
 
 import * as React from "react";
-import { loadStripe } from "@stripe/stripe-js";
+import { loadStripe } from "@stripe/stripe-js/pure";
 import { EmbeddedCheckout, EmbeddedCheckoutProvider } from "@stripe/react-stripe-js";
 import { stripePublishableKey } from "@/lib/checkout-embedded";
 
 /**
  * SA-1139 R4: Stripe's own card form, shown in place as a full-width sheet. Card data lives only in
  * Stripe's frame; this component never sees it. Never nest it inside another iframe.
+ * Loaded lazily by the host, and the only file that imports Stripe (the `/pure` entry, which injects nothing
+ * until loadStripe is called here).
  */
 export function EmbeddedCheckoutPanel({
   clientSecret,
@@ -21,6 +23,18 @@ export function EmbeddedCheckoutPanel({
   // loadStripe injects Stripe's script from js.stripe.com; memoised so a re-render never reloads it.
   const stripePromise = React.useMemo(() => loadStripe(stripePublishableKey()), []);
   const options = React.useMemo(() => ({ clientSecret, onComplete }), [clientSecret, onComplete]);
+  // One state for every way the form can fail to load (script blocked, key missing): one calm line.
+  const [status, setStatus] = React.useState<"loading" | "ready" | "failed">("loading");
+  React.useEffect(() => {
+    let live = true;
+    stripePromise.then(
+      (stripe) => live && setStatus(stripe ? "ready" : "failed"),
+      () => live && setStatus("failed"),
+    );
+    return () => {
+      live = false;
+    };
+  }, [stripePromise]);
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-white" role="dialog" aria-label="Payment">
@@ -32,9 +46,20 @@ export function EmbeddedCheckoutPanel({
         >
           Back
         </button>
-        <EmbeddedCheckoutProvider stripe={stripePromise} options={options}>
-          <EmbeddedCheckout />
-        </EmbeddedCheckoutProvider>
+        {status === "loading" && (
+          <p role="status" className="text-sm text-slate-600">
+            Loading the payment form.
+          </p>
+        )}
+        {status === "failed" ? (
+          <p role="alert" className="text-sm text-slate-700">
+            The payment form didn&apos;t load. Go back and try again.
+          </p>
+        ) : (
+          <EmbeddedCheckoutProvider stripe={stripePromise} options={options}>
+            <EmbeddedCheckout />
+          </EmbeddedCheckoutProvider>
+        )}
       </div>
     </div>
   );

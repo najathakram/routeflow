@@ -6,7 +6,11 @@ import {
   type PaymentDueView,
 } from "@routeflow/types";
 import { isStripeReturn } from "../checkout-return";
-import { assertCheckoutStartable, followCheckout } from "../checkout-embedded";
+import {
+  assertCheckoutStartable,
+  CHECKOUT_RETURN_PATHS,
+  followCheckout,
+} from "../checkout-embedded";
 import { apiClient } from "../api-client";
 import { guardCounterLeave } from "../counter-cart-signal";
 
@@ -75,13 +79,19 @@ export function usePayPaymentDue() {
       void qc.invalidateQueries({ queryKey: ["billing", "payment-due"] });
     },
     // SA-1139: embedded opens the panel in place (no leave, so no cart guard); hosted is today's redirect.
-    onSuccess: (r) =>
-      followCheckout(r, (checkoutUrl) => {
-        const url = safeCheckoutUrl(checkoutUrl);
-        if (!url) return;
-        const go = () => window.location.assign(url);
-        if (guardCounterLeave(go)) return;
-        go();
-      }),
+    // The banner sends the shown terms only for a payment; a card add (nothing charged) sends none and returns
+    // to the card path, exactly as the hosted flow does (payment-due.service PAID/CARD_RETURN_PATH).
+    onSuccess: (r, shown) =>
+      followCheckout(
+        r,
+        (checkoutUrl) => {
+          const url = safeCheckoutUrl(checkoutUrl);
+          if (!url) return;
+          const go = () => window.location.assign(url);
+          if (guardCounterLeave(go)) return;
+          go();
+        },
+        shown ? CHECKOUT_RETURN_PATHS.pay : CHECKOUT_RETURN_PATHS.cardAdd,
+      ),
   });
 }

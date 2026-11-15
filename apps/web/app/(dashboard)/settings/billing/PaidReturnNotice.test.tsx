@@ -12,9 +12,6 @@ jest.mock("@/lib/api/billing", () => ({
     return { data: mockSub };
   },
 }));
-jest.mock("@/lib/tenant-timezone", () => ({
-  useTenantTimeZoneQuery: () => ({ zone: "America/Chicago", isError: false }),
-}));
 jest.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(mockQuery),
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
@@ -36,21 +33,19 @@ describe("PaidReturnNotice", () => {
     expect(lastOpts.refetchInterval?.({ state: { data: mockSub } })).toBe(15_000);
   });
 
-  it("a return that charged nothing today (future trialEndsAt) never says Payment received", () => {
-    mockQuery = "checkout=success";
-    mockSub = { billingState: "current", trialEndsAt: "2099-11-01T05:00:00.000Z" };
-    renderWithProviders(<PaidReturnNotice />);
-    const note = screen.getByRole("status");
-    expect(note).toHaveTextContent("You're all set. Your first payment is on November 1, 2099.");
-    expect(note).not.toHaveTextContent("Payment received");
-  });
-
-  it("a past trialEndsAt does not change the wording", () => {
-    mockQuery = "paid=1";
-    mockSub = { billingState: "current", trialEndsAt: "2020-01-01T00:00:00.000Z" };
-    renderWithProviders(<PaidReturnNotice />);
-    expect(screen.getByRole("status")).toHaveTextContent("Payment received.");
-  });
+  // SA-1139 fix round 1: trialEndsAt is the app sign-up trial and is never cleared on activation, so the web
+  // must not guess "first payment on <date>" from it. The wording comes from the outcome and the card flag only.
+  it.each(["checkout=success", "paid=1"])(
+    "%s with a future trialEndsAt and a paid outcome still says Payment received",
+    (query) => {
+      mockQuery = query;
+      mockSub = { billingState: "current", trialEndsAt: "2099-11-01T05:00:00.000Z" };
+      renderWithProviders(<PaidReturnNotice />);
+      const note = screen.getByRole("status");
+      expect(note).toHaveTextContent("Payment received.");
+      expect(note).not.toHaveTextContent("first payment");
+    },
+  );
 
   it("?checkout=cancelled is dismissible", async () => {
     mockQuery = "checkout=cancelled";

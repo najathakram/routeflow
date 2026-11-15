@@ -4,7 +4,11 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import type { CheckoutStart } from "@routeflow/types";
 import { useCreateCheckout } from "./billing";
 import { usePayPaymentDue } from "./payment-due";
-import { closeEmbeddedCheckout, getEmbeddedCheckoutSecret } from "../checkout-embedded";
+import {
+  closeEmbeddedCheckout,
+  getEmbeddedCheckoutReturnPath,
+  getEmbeddedCheckoutSecret,
+} from "../checkout-embedded";
 
 // SA-1139 PR-2 cases 11, 12 and 20: the mutations branch on `uiMode`, never on a null field.
 const mockPost = jest.fn();
@@ -60,6 +64,33 @@ describe("embedded checkout from the tenant mutations", () => {
     act(() => result.current.mutate(SHOWN));
     await waitFor(() => expect(getEmbeddedCheckoutSecret()).toBe("cs_secret_b"));
     expect(mockGuard).not.toHaveBeenCalled();
+  });
+
+  // SA-1139 fix round 1 MUST 2: each caller opens with the return path its hosted twin uses.
+  it("return path: plan checkout opens with the checkout success path", async () => {
+    mockPost.mockResolvedValue({ data: embedded("cs_secret_p") });
+    const { result } = renderHook(() => useCreateCheckout(), { wrapper });
+    act(() => result.current.mutate());
+    await waitFor(() => expect(getEmbeddedCheckoutSecret()).toBe("cs_secret_p"));
+    expect(getEmbeddedCheckoutReturnPath()).toBe("/settings/billing?checkout=success");
+  });
+
+  it("return path: payment-due pay opens with ?paid=1", async () => {
+    mockPost.mockResolvedValue({ data: embedded("cs_secret_q") });
+    const { result } = renderHook(() => usePayPaymentDue(), { wrapper });
+    act(() => result.current.mutate(SHOWN));
+    await waitFor(() => expect(getEmbeddedCheckoutSecret()).toBe("cs_secret_q"));
+    expect(getEmbeddedCheckoutReturnPath()).toBe("/settings/billing?paid=1");
+  });
+
+  it("return path: payment-due card add (no shown terms) opens with ?paid=1&card=1, never a payment path", async () => {
+    mockPost.mockResolvedValue({ data: embedded("cs_secret_r") });
+    const { result } = renderHook(() => usePayPaymentDue(), { wrapper });
+    act(() => result.current.mutate(undefined));
+    await waitFor(() => expect(getEmbeddedCheckoutSecret()).toBe("cs_secret_r"));
+    const path = getEmbeddedCheckoutReturnPath() ?? "";
+    expect(path).toBe("/settings/billing?paid=1&card=1");
+    expect(new URLSearchParams(path.split("?")[1]).get("card")).toBe("1");
   });
 
   it("12: no publishable key fails the mutation, logs once and opens nothing", async () => {

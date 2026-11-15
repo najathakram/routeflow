@@ -8,25 +8,46 @@ import type { CheckoutStart } from "@routeflow/types";
  * and it is dropped on Back and on completion so a stale one is never reused.
  */
 
-let secret: string | null = null;
+/**
+ * Where each flow returns on completion: the same address its hosted twin uses, so the billing page's existing
+ * handling runs unchanged. A card add must never land on a payment path (it would read "Payment received").
+ */
+export const CHECKOUT_RETURN_PATHS = {
+  plan: "/settings/billing?checkout=success",
+  pay: "/settings/billing?paid=1",
+  cardAdd: "/settings/billing?paid=1&card=1",
+} as const;
+
+export type EmbeddedCheckoutOpen = { clientSecret: string; returnPath: string };
+
+let current: EmbeddedCheckoutOpen | null = null;
 const listeners = new Set<() => void>();
 
 function emit() {
   listeners.forEach((l) => l());
 }
 
-export function getEmbeddedCheckoutSecret(): string | null {
-  return secret;
+export function getEmbeddedCheckout(): EmbeddedCheckoutOpen | null {
+  return current;
 }
 
-export function openEmbeddedCheckout(clientSecret: string): void {
-  secret = clientSecret;
+export function getEmbeddedCheckoutSecret(): string | null {
+  return current?.clientSecret ?? null;
+}
+
+export function getEmbeddedCheckoutReturnPath(): string | null {
+  return current?.returnPath ?? null;
+}
+
+/** Each caller passes its own return path; there is no shared default. */
+export function openEmbeddedCheckout(clientSecret: string, returnPath: string): void {
+  current = { clientSecret, returnPath };
   emit();
 }
 
 export function closeEmbeddedCheckout(): void {
-  if (secret === null) return;
-  secret = null;
+  if (current === null) return;
+  current = null;
   emit();
 }
 
@@ -37,8 +58,8 @@ function subscribe(l: () => void) {
   };
 }
 
-export function useEmbeddedCheckoutSecret(): string | null {
-  return useSyncExternalStore(subscribe, getEmbeddedCheckoutSecret, () => null);
+export function useEmbeddedCheckout(): EmbeddedCheckoutOpen | null {
+  return useSyncExternalStore(subscribe, getEmbeddedCheckout, () => null);
 }
 
 /** The publishable key, baked at web build time. Empty when it was not set. */
@@ -61,11 +82,15 @@ export function assertCheckoutStartable(start: CheckoutStart): CheckoutStart {
 
 /**
  * Follows a started checkout: embedded opens the panel in place; hosted hands the url to `leave`
- * (today's redirect, behind each caller's own guards).
+ * (today's redirect, behind each caller's own guards). `returnPath` is where an embedded completion goes.
  */
-export function followCheckout(start: CheckoutStart, leave: (url: string) => void): void {
+export function followCheckout(
+  start: CheckoutStart,
+  leave: (url: string) => void,
+  returnPath: string,
+): void {
   if (start.uiMode === "embedded") {
-    openEmbeddedCheckout(start.clientSecret);
+    openEmbeddedCheckout(start.clientSecret, returnPath);
     return;
   }
   leave(start.checkoutUrl);
