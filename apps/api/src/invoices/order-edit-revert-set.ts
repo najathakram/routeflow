@@ -60,28 +60,45 @@ async function depositMirrorExempt(db: RevertSetDb, orderId: string): Promise<bo
   return !!order && !isTerminalOrderStatus(order.status) && nonVoidCount === 1;
 }
 
+/** SA-1144: the invoice statuses that hold money or are closed. ONE list, read by `selectEditBlockingInvoices` and by `EDIT_BLOCKING_INVOICE_WHERE`. */
+export const EDIT_BLOCKING_STATUSES: InvoiceStatus[] = [
+  InvoiceStatus.PAID,
+  InvoiceStatus.PARTIAL,
+  InvoiceStatus.WRITTEN_OFF,
+];
+
+/**
+ * SA-1144 Decisions 6 and 7: the Prisma where-fragment for an ORDER'S invoices (`invoices: { none: EDIT_BLOCKING_INVOICE_WHERE }`): a non-VOID,
+ * non-batch invoice that is PAID, PARTIAL or WRITTEN_OFF, or that carries a live (non-VOID) payment. The customer-level auto-merge reads it
+ * so a paid order is never a merge target (the new order is created on its own, never refused at placement). Broader than the edit refusal
+ * on purpose: a PARTIAL deposit mirror and a SENT invoice with a payment are also not merge targets.
+ */
+export const EDIT_BLOCKING_INVOICE_WHERE = {
+  deliveryBatchId: null,
+  status: { not: InvoiceStatus.VOID },
+  OR: [
+    { status: { in: EDIT_BLOCKING_STATUSES } },
+    { payments: { some: { status: { not: "VOID" as const } } } },
+  ],
+};
+
 export interface EditBlockingInvoice extends EditRevertCandidate {
   status: string;
 }
 
 /**
- * SA-1144 (W-871 reopened): the order's own non-batch invoices that HOLD money or are closed (PAID, PARTIAL, WRITTEN_OFF), so a
- * pre-delivery edit of the order must be refused: the edit changes the order total and these invoices cannot follow it. The
- * sibling of `selectEditRevertedInvoices` (the SENT/VIEWED/OVERDUE set that reverts), with the same fence: a deposit mirror that
- * is the order's sole non-void invoice stays exempt WHILE PARTIAL (the widened reconcile keeps it in step; that is the deposit
- * flow), but a fully PAID one is not (nothing re-syncs a settled invoice). One query, plus the fence reads only when a PARTIAL
- * deposit invoice is in play.
+ * SA-1144 (W-871 reopened, Decision 7): the order's own invoices a pre-delivery edit must refuse on: the SAME where-fragment the merge
+ * filter reads (`EDIT_BLOCKING_INVOICE_WHERE`: non-VOID, non-batch, PAID / PARTIAL / WRITTEN_OFF, or carrying a live payment), minus the
+ * WP-D1 fence: a deposit mirror that is the order's sole non-void invoice stays exempt while it is neither PAID nor WRITTEN_OFF (the
+ * widened reconcile keeps it in step; the deposit flow), but a fully PAID one is not (nothing re-syncs a settled invoice). One query,
+ * plus the fence reads only when such a deposit invoice is in play.
  */
 export async function selectEditBlockingInvoices(
   db: RevertSetDb,
   orderId: string,
 ): Promise<EditBlockingInvoice[]> {
   const held: EditBlockingInvoice[] = await db.invoice.findMany({
-    where: {
-      orderId,
-      deliveryBatchId: null,
-      status: { in: [InvoiceStatus.PAID, InvoiceStatus.PARTIAL, InvoiceStatus.WRITTEN_OFF] },
-    },
+    where: { orderId, ...EDIT_BLOCKING_INVOICE_WHERE },
     select: {
       id: true,
       invoiceNumber: true,
@@ -90,11 +107,13 @@ export async function selectEditBlockingInvoices(
       status: true,
     },
   });
-  const partialDeposit = (inv: EditBlockingInvoice) =>
-    inv.status === InvoiceStatus.PARTIAL && inv.depositPercent != null;
-  if (!held.some(partialDeposit)) return held;
+  const fenceCandidate = (inv: EditBlockingInvoice) =>
+    inv.depositPercent != null &&
+    inv.status !== InvoiceStatus.PAID &&
+    inv.status !== InvoiceStatus.WRITTEN_OFF;
+  if (!held.some(fenceCandidate)) return held;
   return (await depositMirrorExempt(db, orderId))
-    ? held.filter((inv) => !partialDeposit(inv))
+    ? held.filter((inv) => !fenceCandidate(inv))
     : held;
 }
 
@@ -172,26 +191,35 @@ export async function revertLinkedInvoicesToDraft(
   orderId: string,
   opts?: { lockRows?: boolean; preflightOnly?: boolean },
 ): Promise<string[]> {
+  // SA-1144 (Decision 1): under the caller's tx the order's invoices are locked FIRST (the lock `recordPayment` takes), and both
+  // sets are read from the locked rows, so a final payment cannot land between the read and the commit.
+  if (opts?.lockRows) {
+    const open: Array<{ id: string }> = await db.invoice.findMany({
+      where: { orderId, deliveryBatchId: null, status: { not: InvoiceStatus.VOID } },
+      select: { id: true },
+    });
+    await lockRowsNoWait(
+      db,
+      "Invoice",
+      open.map((inv) => inv.id),
+      "INVOICE_BUSY",
+    );
+  }
   // #2178: the ONE selection (incl. the exempt deposit mirror, which stays SENT) — shared with the
   // inline-return preflight, which prices against the matching set as it will be after this revert.
   const linked = await selectEditRevertedInvoices(db, orderId);
-  // SA-1144: a paid, part-paid or written-off invoice cannot follow an edit of its order, so the edit is refused (400),
-  // before anything is written. The same Invoice row lock the payment path takes is held first when the caller asked for it.
+  // SA-1144: a paid, part-paid or written-off invoice (or one holding a live payment) cannot follow an edit of its order, so the
+  // edit is refused (400) before anything is written.
   const blocking = await selectEditBlockingInvoices(db, orderId);
   if (blocking.length > 0) {
-    if (opts?.lockRows) {
-      await lockRowsNoWait(
-        db,
-        "Invoice",
-        blocking.map((inv) => inv.id),
-        "INVOICE_BUSY",
-      );
-    }
     const first = blocking[0];
+    const closed = EDIT_BLOCKING_STATUSES.includes(first.status as InvoiceStatus);
     throw new BadRequestException({
       code: API_ERROR_CODES.ORDER_EDIT_INVOICE_HAS_PAYMENTS,
-      message:
-        first.status === InvoiceStatus.WRITTEN_OFF
+      message: !closed
+        ? `This order can't be edited while invoice ${first.invoiceNumber} has payments recorded. ` +
+          `Void the invoice or remove its payments first.`
+        : first.status === InvoiceStatus.WRITTEN_OFF
           ? `Invoice ${first.invoiceNumber} is written off, so this order's items can't change here. ` +
             `Put the extra items on a new order.`
           : `Invoice ${first.invoiceNumber} has payments recorded, so this order's items can't change here. ` +
@@ -200,9 +228,7 @@ export async function revertLinkedInvoicesToDraft(
   }
   const reverted: string[] = [];
   for (const inv of linked) {
-    // Under the caller's tx: hold the row before the count, so the payment-block below reads a
-    // state no concurrent recordPayment can change until this tx commits or rolls back.
-    if (opts?.lockRows) await lockRowsNoWait(db, "Invoice", [inv.id], "INVOICE_BUSY");
+    // (under `lockRows` the row is already held: the lock above covers every non-void invoice of the order)
     // B314: same live-payments filter as revertInvoiceToDraft — a VOID (bounced) payment
     // carries no money and must never block an edit that would otherwise revert cleanly.
     // Existence check, not a money sum — see the identical note on revertInvoiceToDraft

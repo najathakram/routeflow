@@ -68,6 +68,7 @@ import { assertNoDuplicateLineIds } from "../common/duplicate-line-ids";
 import {
   atStopConflict,
   CHANGE_WINDOW_ORDER_STATUS,
+  paidOrderAtStop,
   CHANGE_WINDOW_RUN_NOT_ACTIVE,
 } from "./at-stop-conflicts";
 import { sourceLineFor } from "./source-line";
@@ -4503,9 +4504,9 @@ export class OrdersService implements OnApplicationBootstrap {
         // before any mutation. Throws if it carries payments (money never detaches).
         // `lockRows`: the un-send's payment count is read under the same Invoice row lock
         // recordPayment takes, so a payment can't land between that count and the DRAFT flip.
-        await this.invoicesService.revertLinkedInvoicesForOrderEdit(order.id, tx, {
-          lockRows: true,
-        });
+        await this.invoicesService
+          .revertLinkedInvoicesForOrderEdit(order.id, tx, { lockRows: true })
+          .catch(paidOrderAtStop); // SA-1144 D6: the paid-order refusal, in the at-stop shape
 
         const heldItems = await tx.orderItem.findMany({
           where: { orderId: order.id },
