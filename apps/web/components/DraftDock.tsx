@@ -259,7 +259,7 @@ function DraftDockInner() {
               aria-expanded={!collapsed}
               aria-controls={chipsId}
               onClick={() => setCollapsed((c) => !c)}
-              className="pointer-events-auto flex items-center gap-2 self-start rounded-full bg-navy px-3 py-1.5 text-[11.5px] font-semibold text-white shadow-modal transition-colors hover:bg-navy/90"
+              className="pointer-events-auto flex items-center gap-2 self-start rounded-full bg-navy px-3 py-1.5 max-lg:min-h-11 text-[11.5px] font-semibold text-white shadow-modal transition-colors hover:bg-navy/90"
             >
               <Layers className="h-3.5 w-3.5 text-brand-300" />
               {list.length} parked draft{list.length === 1 ? "" : "s"}

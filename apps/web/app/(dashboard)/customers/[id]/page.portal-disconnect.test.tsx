@@ -89,4 +89,30 @@ describe("customers/[id] Disconnect Portal confirmation (UX guide improvement 6)
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(disconnectCalls()).toHaveLength(0);
   });
+
+  it("while the request runs the dialog stays open and Disconnect is busy", async () => {
+    mockPost.mockImplementation(() => new Promise(() => {}));
+    renderWithProviders(<CustomerDetailPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Disconnect Portal" }));
+    const dlg = await screen.findByRole("dialog");
+    fireEvent.click(within(dlg).getByRole("button", { name: "Disconnect" }));
+    await waitFor(() => expect(disconnectCalls()).toHaveLength(1));
+    const open = screen.getByRole("dialog");
+    expect(
+      (within(open).getByRole("button", { name: /Disconnect/ }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
+  it("when the request fails the person is told, instead of nothing happening", async () => {
+    mockPost.mockImplementation((url: string) =>
+      String(url).includes("/portal-disconnect")
+        ? Promise.reject(new Error("boom"))
+        : Promise.resolve({ data: {} }),
+    );
+    renderWithProviders(<CustomerDetailPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Disconnect Portal" }));
+    const dlg = await screen.findByRole("dialog");
+    fireEvent.click(within(dlg).getByRole("button", { name: "Disconnect" }));
+    expect(await screen.findByText("Couldn't disconnect the portal")).toBeTruthy();
+  });
 });

@@ -61,4 +61,10 @@ describe("DraftDock: collapsed pill on desktop", () => {
     expect(screen.getAllByRole("button", { name: "Resume" })).toHaveLength(2);
     expect(screen.getAllByRole("button", { name: "Discard draft" })).toHaveLength(2);
   });
+
+  it("the pill is a 44px tap target below lg", () => {
+    render(ui());
+    const pill = screen.getByRole("button", { name: /2 parked drafts/ });
+    expect(pill.className.split(" ")).toContain("max-lg:min-h-11");
+  });
 });

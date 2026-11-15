@@ -4070,10 +4070,20 @@ function CustomerDetailPageInner({ id }: { id: string }) {
         open={disconnectConfirmOpen}
         onClose={() => setDisconnectConfirmOpen(false)}
         onConfirm={() => {
-          setDisconnectConfirmOpen(false);
           disconnectPortal.mutate(id, {
-            onSuccess: () => setPortalMsg("Portal disconnected."),
-            onError: () => setPortalMsg(null),
+            onSuccess: () => {
+              setDisconnectConfirmOpen(false);
+              setPortalMsg("Portal disconnected.");
+            },
+            onError: (err: unknown) => {
+              setDisconnectConfirmOpen(false);
+              setPortalMsg(null);
+              toast({
+                title: "Couldn't disconnect the portal",
+                description: safeTextErrorCopy(err) ?? "Please try again.",
+                variant: "error",
+              });
+            },
           });
         }}
         title="Disconnect this customer's portal?"
@@ -4081,6 +4091,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
         confirmLabel="Disconnect"
         cancelLabel="Keep connected"
         variant="danger"
+        loading={disconnectPortal.isPending}
       />
 
       <ConfirmDialog
