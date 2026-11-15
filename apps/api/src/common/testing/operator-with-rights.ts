@@ -20,7 +20,7 @@ interface UserFindFirstMock {
  * other `user.findFirst` call falls through to whatever the suite already mocked. The principal comes back with
  * a tenant (the one it had, else `t-1`) and is otherwise unchanged, so the suite's own assertions still hold.
  */
-export function operatorWithRights<P extends { tenantId?: string | null }>(
+export function operatorWithRights<P extends object>(
   prisma: UserFindFirstMock,
   principal: P,
   denied: OperatorPermissionGroup[] = DEFAULT_DENIED_GROUPS,
