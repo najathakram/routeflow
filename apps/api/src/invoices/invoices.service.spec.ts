@@ -2930,8 +2930,11 @@ describe("InvoicesService", () => {
     });
 
     it("blocks the edit (throws) when a linked invoice has payments — money never detaches", async () => {
-      sentRows([{ id: "inv-1", invoiceNumber: "INV-1", internalNotes: null }]);
-      prisma.invoicePayment.count.mockResolvedValue(1);
+      // SA-1156 S3: the "has payments" read is the one blocking selection (the old per-invoice count is gone)
+      const row = { id: "inv-1", invoiceNumber: "INV-1", internalNotes: null };
+      prisma.invoice.findMany.mockImplementation(async ({ where }: any) =>
+        where?.OR ? [{ ...row, status: "SENT", depositPercent: null }] : [row],
+      );
 
       await expect(service.revertLinkedInvoicesForOrderEdit("ord-1")).rejects.toThrow(
         BadRequestException,
@@ -3108,7 +3111,7 @@ describe("InvoicesService", () => {
       $executeRaw: jest.fn().mockResolvedValue(0),
     });
 
-    it("P15: locks the Invoice row (NOWAIT) BEFORE counting its payments", async () => {
+    it("P15: locks the Invoice row (NOWAIT) BEFORE reading its payments (the blocking selection)", async () => {
       const tx = revertTx();
 
       await service.revertLinkedInvoicesForOrderEdit("ord-1", tx, { lockRows: true });
@@ -3116,8 +3119,9 @@ describe("InvoicesService", () => {
       const sql = tx.$executeRaw.mock.calls[0][0].join("?");
       expect(sql).toContain('"Invoice"');
       expect(sql).toContain("FOR NO KEY UPDATE NOWAIT");
+      const blockingRead = tx.invoice.findMany.mock.calls.findIndex((c: any[]) => c[0]?.where?.OR);
       expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
-        tx.invoicePayment.count.mock.invocationCallOrder[0],
+        tx.invoice.findMany.mock.invocationCallOrder[blockingRead],
       );
     });
 

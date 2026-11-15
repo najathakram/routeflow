@@ -24,7 +24,7 @@ export const AT_STOP_CONFLICT_MESSAGES = {
     "This stop is already completed or skipped. Approve the request for the next delivery, or decline it.",
   // SA-1144 D6: the order's invoice holds payments or is closed, so goods added at the door would be delivered unbilled.
   [API_ERROR_CODES.ORDER_EDIT_INVOICE_HAS_PAYMENTS]:
-    "This order is already paid. The office can add these items on a new order.",
+    "This order's invoice can't change at the door. The office can add these items on a new order.",
 } as const;
 
 export type AtStopConflict = keyof typeof AT_STOP_CONFLICT_MESSAGES;

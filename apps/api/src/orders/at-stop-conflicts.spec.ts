@@ -34,7 +34,7 @@ describe("B796 — at-stop refusals carry a human message (REG-B796)", () => {
       STOP_ALREADY_COMPLETED:
         "This stop is already completed or skipped. Approve the request for the next delivery, or decline it.",
       ORDER_EDIT_INVOICE_HAS_PAYMENTS:
-        "This order is already paid. The office can add these items on a new order.",
+        "This order's invoice can't change at the door. The office can add these items on a new order.",
     });
   });
 
@@ -53,7 +53,8 @@ describe("B796 — at-stop refusals carry a human message (REG-B796)", () => {
     expect(out).toBeInstanceOf(ConflictException);
     expect(out.getResponse()).toEqual({
       code: "ORDER_EDIT_INVOICE_HAS_PAYMENTS",
-      message: "This order is already paid. The office can add these items on a new order.",
+      message:
+        "This order's invoice can't change at the door. The office can add these items on a new order.",
     });
     const other = new Error("boom");
     expect(() => paidOrderAtStop(other)).toThrow(other);

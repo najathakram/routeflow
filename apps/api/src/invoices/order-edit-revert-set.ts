@@ -1,4 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
+import { SETTLE_ADJUSTED_PAYMENT_WHERE } from "./settle-adjusted-payment";
 import { InvoiceStatus } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { lockRowsNoWait } from "../common/db-locks";
@@ -78,7 +79,17 @@ export const EDIT_BLOCKING_INVOICE_WHERE = {
   status: { not: InvoiceStatus.VOID },
   OR: [
     { status: { in: EDIT_BLOCKING_STATUSES } },
-    { payments: { some: { status: { not: "VOID" as const } } } },
+    // SA-1156: any live payment locks a non-DRAFT invoice; on a DRAFT only money the post-edit settle does NOT re-adjust does
+    {
+      status: { not: InvoiceStatus.DRAFT },
+      payments: { some: { status: { not: "VOID" as const } } },
+    },
+    {
+      status: InvoiceStatus.DRAFT,
+      payments: {
+        some: { status: { not: "VOID" as const }, NOT: SETTLE_ADJUSTED_PAYMENT_WHERE },
+      },
+    },
   ],
 };
 
@@ -229,22 +240,6 @@ export async function revertLinkedInvoicesToDraft(
   const reverted: string[] = [];
   for (const inv of linked) {
     // (under `lockRows` the row is already held: the lock above covers every non-void invoice of the order)
-    // B314: same live-payments filter as revertInvoiceToDraft — a VOID (bounced) payment
-    // carries no money and must never block an edit that would otherwise revert cleanly.
-    // Existence check, not a money sum — see the identical note on revertInvoiceToDraft
-    // in invoices.service.ts; a DRAFT payment must still block this edit.
-    // scan-ok: draft-payment-not-void — see comment above.
-    const paymentCount = await db.invoicePayment.count({
-      where: { invoiceId: inv.id, status: { not: "VOID" } },
-    });
-    if (paymentCount > 0) {
-      throw new BadRequestException({
-        code: API_ERROR_CODES.ORDER_EDIT_INVOICE_HAS_PAYMENTS,
-        message:
-          `This order can't be edited while invoice ${inv.invoiceNumber} has payments recorded. ` +
-          `Void the invoice or remove its payments first.`,
-      });
-    }
     if (opts?.preflightOnly) continue; // row 586: the read-only pre-tx check; the revert runs in the edit tx
     const auditLine = `[${new Date().toLocaleDateString()} — reverted to Draft: source order edited]`;
     await db.invoice.update({

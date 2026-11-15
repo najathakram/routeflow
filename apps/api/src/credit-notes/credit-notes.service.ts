@@ -1,4 +1,5 @@
 import { computeCreditNoteSummary } from "./credit-note-summary";
+import { isSettleAdjustedPayment } from "../invoices/settle-adjusted-payment";
 import {
   BadRequestException,
   ConflictException,
@@ -2014,7 +2015,7 @@ export class CreditNotesService {
       let excess = roundMoney(paid - Number(inv.total));
       if (!(excess > 0.001)) continue;
       const creditPays = nonVoid
-        .filter((p: any) => p.method === "CREDIT_NOTE" && p.creditNoteId)
+        .filter((p: any) => isSettleAdjustedPayment(p))
         .sort(
           (a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
         );

@@ -140,7 +140,7 @@ export async function findActiveOrderImpl(
       shippedAt: null, // an already-shipped order is never a merge target (see `unshipped`)
       // SA-1144 Decision 6: a paid, part-paid or written-off order (or one holding a live payment) is never a merge target:
       // the edit refuses it, so the new order is created on its own, never refused at placement.
-      invoices: { none: EDIT_BLOCKING_INVOICE_WHERE },
+      ...(opts.forMerge ? { invoices: { none: EDIT_BLOCKING_INVOICE_WHERE } } : {}),
       ...mergeCandidateWhere(fulfillPath),
     },
     include: {

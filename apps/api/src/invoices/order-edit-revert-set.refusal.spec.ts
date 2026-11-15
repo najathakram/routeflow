@@ -4,6 +4,7 @@ import {
   EDIT_BLOCKING_STATUSES,
   revertLinkedInvoicesToDraft,
 } from "./order-edit-revert-set";
+import { SETTLE_ADJUSTED_PAYMENT_WHERE } from "./settle-adjusted-payment";
 
 /** SA-1144 case 21: the unit lane catches the refusal going missing (the DB spec is the only other net). */
 describe("revertLinkedInvoicesToDraft refusal (SA-1144)", () => {
@@ -92,7 +93,11 @@ describe("revertLinkedInvoicesToDraft refusal (SA-1144)", () => {
       status: { not: "VOID" },
       OR: [
         { status: { in: EDIT_BLOCKING_STATUSES } },
-        { payments: { some: { status: { not: "VOID" } } } },
+        { status: { not: "DRAFT" }, payments: { some: { status: { not: "VOID" } } } },
+        {
+          status: "DRAFT",
+          payments: { some: { status: { not: "VOID" }, NOT: SETTLE_ADJUSTED_PAYMENT_WHERE } },
+        },
       ],
     });
   });
