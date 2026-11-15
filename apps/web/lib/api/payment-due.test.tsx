@@ -123,7 +123,13 @@ describe("usePayPaymentDue error path", () => {
     expect(spy).toHaveBeenCalledWith({ queryKey: ["billing", "payment-due"] });
     const meta = client.getMutationCache().getAll()[0]?.options.meta as
       Record<string, unknown> | undefined;
-    expect(meta?.localErrorToast).toBeUndefined();
+    // Only the "already open" 409 opts out (SA-1139); this one keeps the app-wide toast.
+    const opt = meta?.localErrorToast as ((e: unknown) => boolean) | undefined;
+    expect(
+      opt?.(
+        Object.assign(new Error("x"), { response: { data: { code: "PAYMENT_TERMS_CHANGED" } } }),
+      ),
+    ).toBe(false);
   });
 });
 
@@ -139,6 +145,10 @@ describe("safeCheckoutUrl", () => {
 });
 
 describe("paymentDuePollMs", () => {
+  it("SA-1139: a card reminder polls fast on ?checkout=success like ?paid=1", () => {
+    expect(paymentDuePollMs(view({ cardNeeded: true }), "?checkout=success")).toBe(30_000);
+  });
+
   const view = (o: Record<string, unknown>) => ({ due: false, cardNeeded: false, ...o }) as never;
   it("a payment that is due polls every 30 s (another tab may pay it)", () => {
     expect(paymentDuePollMs(view({ due: true }), "")).toBe(30_000);

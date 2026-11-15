@@ -41,6 +41,8 @@ interface Buyer {
   mobile: string | null;
   status: "ACTIVE" | "SUSPENDED" | "DELETED";
   emailVerified: boolean;
+  /** Whether a Google account is linked. A flag only: the provider's id never reaches the browser. */
+  googleLinked: boolean;
   createdAt: string;
   updatedAt: string;
   customerLinks: CustomerLink[];
@@ -526,7 +528,7 @@ export default function BuyerDetailPage() {
                 { label: "Email verified", value: buyer.emailVerified ? "Yes" : "No" },
                 { label: "Joined", value: new Date(buyer.createdAt).toLocaleString() },
                 { label: "Last updated", value: new Date(buyer.updatedAt).toLocaleString() },
-                { label: "Google account", value: "Check DB" },
+                { label: "Google account", value: buyer.googleLinked ? "Linked" : "Not linked" },
               ].map((item) => (
                 <div key={item.label}>
                   <dt className="text-xs text-slate-400">{item.label}</dt>

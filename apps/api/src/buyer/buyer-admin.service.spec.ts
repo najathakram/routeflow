@@ -108,3 +108,49 @@ describe("BuyerAdminService.updateBuyer", () => {
     expect(prisma.buyerRefreshToken.deleteMany).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * UX guide B21: the super-admin buyer page said "Google account: Check DB". The read now says whether a
+ * Google account is linked, and only that: the provider's id never leaves the server.
+ */
+describe("BuyerAdminService.getBuyer googleLinked", () => {
+  let service: BuyerAdminService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        BuyerAdminService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: JwtService, useValue: { sign: jest.fn().mockReturnValue("tok") } },
+        { provide: ConfigService, useValue: { get: () => ({ secret: "s" }) } },
+      ],
+    }).compile();
+    service = module.get(BuyerAdminService);
+  });
+
+  const row = (googleId: string | null) => ({ ...EXISTING_BUYER, googleId, customerLinks: [] });
+
+  it("a buyer with a Google id reads googleLinked true and carries no googleId", async () => {
+    prisma.buyerAccount.findUnique.mockResolvedValueOnce(row("sub-117") as any);
+    const out = (await service.getBuyer("b1")) as Record<string, unknown>;
+    expect(out.googleLinked).toBe(true);
+    expect(out).not.toHaveProperty("googleId");
+    expect(JSON.stringify(out)).not.toContain("sub-117");
+  });
+
+  it("a buyer without one reads googleLinked false", async () => {
+    prisma.buyerAccount.findUnique.mockResolvedValueOnce(row(null) as any);
+    const out = (await service.getBuyer("b1")) as Record<string, unknown>;
+    expect(out.googleLinked).toBe(false);
+    expect(out).not.toHaveProperty("googleId");
+  });
+
+  it("selects googleId only to derive the boolean", async () => {
+    prisma.buyerAccount.findUnique.mockResolvedValueOnce(row(null) as any);
+    await service.getBuyer("b1");
+    const arg = prisma.buyerAccount.findUnique.mock.calls[0][0] as any;
+    expect(arg.select.googleId).toBe(true);
+  });
+});

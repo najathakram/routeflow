@@ -4733,3 +4733,26 @@ citations, closed-out with its own post-init assertion guard).
 - **Root cause:** the runner built one command string and let a shell parse it.
 - **Lesson:** **Spawn with an args array and `shell: false`, and treat a jest path argument as a regex. A script that forwards user patterns has a spec that feeds it a pattern with a space and a bracket and reads back the argv it produced.**
 - **Guard:** `run-db-tests.mjs` `serialDbArgs` and the forwarding specs in `apps/api/src/common/`.
+
+## Archived 2026-11-15 — zero outside citations, real spec guard; headroom for L-383..L-385 (bookkeeping for windows 40 to 42)
+
+### L-342 · 2026-10-24 · domain · send `null` to clear a field and omit it to leave it alone; `x || undefined` cannot clear (#3695, #3622)
+
+- **Symptom:** emptying a payment reference, notes, phone or delivery-window field on an edit form kept the old value, and the stale reference still counted in the duplicate-reference check.
+- **Root cause:** clients sent `x.trim() || undefined`. JSON drops `undefined`, and the server reads an absent key as "no change", so a clear looked exactly like leaving the field alone.
+- **Lesson:** **An update contract needs three states: a value sets, `null` clears, an absent key leaves alone. Type update DTOs as `string | null` and convert an emptied input to `null`. A cleared identifier carries no dedupe identity.**
+- **Guard:** `apps/mobile/lib/clearable-field.ts`, `UpdateInvoicePaymentDto` `reference`/`notes: string | null`, `payment-edit-ref.db.spec.ts`.
+
+### L-345 · 2026-10-25 · domain · every recurring Stripe price names a product we own, with a deterministic id; inline `product_data` is for one-time lines only (W-810)
+
+- **Symptom:** a later price push on a subscription born in Checkout failed, and the redelivery that followed never cleared.
+- **Root cause:** Checkout's inline `product_data` creates the product inactive, and an inactive product cannot take a new recurring price.
+- **Lesson:** **Create one product per plan code and per add-on SKU (`rf_plan_<code>`, `rf_addon_<sku>`), retrieve it first and reactivate it if inactive, and point every recurring `price_data` at it. Read and preview paths make no Stripe write. Test fakes need `products.retrieve`, not just `create`.**
+- **Guard:** `stripe-product.ts` with the stateful `fakeStripeProducts` used by the billing specs.
+
+### L-346 · 2026-10-25 · domain · a payment capacity check judges real money on the confirmed basis; an unconfirmed row it displaces is flagged, never allowed to refuse it (W-769)
+
+- **Symptom:** a staff member could not record a real payment because a draft or pending row on the same invoice already used up the balance.
+- **Root cause:** the capacity check counted unconfirmed rows as if they were money received, and each writer applied its own version of the check.
+- **Lesson:** **Capacity for a PAID write is the confirmed total; DRAFT and PENDING rows count only for writes that are themselves unconfirmed. A paid write that displaces an unconfirmed row flags it for review instead of refusing. The policy and predicate live in `@routeflow/pricing`, and one api file (`confirmed-basis.ts`) applies them for every writer.**
+- **Guard:** `payment-confirmation` specs in `packages/pricing` and the writer specs that reach `confirmed-basis.ts`.

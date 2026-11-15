@@ -268,6 +268,7 @@ describeDb(
       if (regulated) {
         const book = (invoiceId: string, item: typeof iA, orderItemId: string) =>
           ledger.writeSaleEntries({
+            lockedPeriod: "REFUSE",
             tenantId,
             orderId: order.id,
             invoiceId,

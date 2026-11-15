@@ -71,6 +71,7 @@ export const PERMISSION_MAP: Readonly<Record<string, string>> = {
   "BillingController.ensureCustomer": "UNGUARDED",
   "BillingController.getMrr": "UNGUARDED",
   "BillingController.getTenantBilling": "UNGUARDED",
+  "BillingStatusController.get": "BASE",
   "BillingWebhookController.handleWebhook": "UNGUARDED",
   "BookkeepingController.batchUpdateExpenseStatus": "FINANCE",
   "BookkeepingController.bulkCreateExpenses": "FINANCE",

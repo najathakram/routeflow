@@ -13,6 +13,8 @@ import { SettingsBillingController } from "./settings-billing.controller";
 import { PaymentDueController } from "./payment-due.controller";
 import { PaymentDueService } from "./payment-due.service";
 import { BillingPaymentsService } from "./billing-payments.service";
+import { BillingStatusController } from "./billing-status.controller";
+import { BillingStatusService } from "./billing-status.service";
 import { ProrationService } from "./proration.service";
 import { TenantConfigSnapshotService } from "./tenant-config-snapshot.service";
 import { ConfigSnapshotFlagService } from "./config-snapshot-flag.service";
@@ -54,6 +56,7 @@ import { PlanFlagBootAlert } from "./plan-flag-boot-alert";
     PlanAdminController,
     SettingsBillingController,
     PaymentDueController,
+    BillingStatusController,
   ],
   providers: [
     StripeService,
@@ -81,6 +84,8 @@ import { PlanFlagBootAlert } from "./plan-flag-boot-alert";
     PaymentDueService,
     // SA-1146 B-4: the Billing payments list (Stripe paid invoices + RouteFlow invoices). Route wired after #4322.
     BillingPaymentsService,
+    // SA-1146 B-5: assembles the one billing status (BillingStatusController now, the platform-admin read in B-6).
+    BillingStatusService,
     // SA-733r7 PR-B3: dunning (clock stamp, hourly pause sweep, invoice.paid resume, pause_collection reconciler).
     DunningService,
     // SA-775 (row 381): the rollout pause on AUTOMATIC locks - the switch, and the super-admin preview over it.
@@ -114,6 +119,8 @@ import { PlanFlagBootAlert } from "./plan-flag-boot-alert";
     PlanFlagBootAlert,
   ],
   exports: [
+    // SA-1146 B-6 (platform-admin billing status) reuses the one assembly.
+    BillingStatusService,
     EntitlementSweepService,
     StripeService,
     ScheduledPriceChangeService,

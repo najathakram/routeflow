@@ -9,6 +9,8 @@ import {
   type FilingsDb,
 } from "./filed-periods";
 import { editReplacesLines } from "../orders/order-edit-payload";
+import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
+import { periodBucketOf } from "./period";
 
 /**
  * B297 PR5 (SA-088 D4, SA-734r2 B6): what a LOCKED `RegulatedFiling` means for writes.
@@ -22,7 +24,9 @@ import { editReplacesLines } from "../orders/order-edit-payload";
  *      A sale row books into its invoice's issueDate bucket (`writeSaleEntries`), and an issueDate can be in the
  *      past: a manual past `issueDate` on an invoice, or an invoice made from a backdated order. When that date
  *      is in a locked month this guard refuses it on EVERY retry (a permanent cause, not only a race across a
- *      bucket boundary), so the user-facing copy asks for a date in the current period.
+ *      bucket boundary), so the user-facing copy asks for a date in the current period. W-965: the order bill (an
+ *      INHERITED date) no longer reaches this refusal: `writeSaleEntries` with `lockedPeriod: "BOOK_CURRENT"` routes
+ *      its rows first (`routeSaleRowsForLockedPeriods`). A date chosen at the request ("REFUSE") still does.
  * Returns and credit notes against a locked-period sale are NOT blocked at the edit guard: a return is a new
  * event booked today, and the locked period's SUM is untouched.
  */
@@ -45,6 +49,96 @@ export async function assertLedgerRowsNotLocked(db: LockDb, rows: BucketRef[]): 
     filingId: hit.filing.id,
     periodKey: hit.filing.periodKey,
   });
+}
+
+/** A late sale routed forward: one (category, original month) group of rows moved to the current month. */
+export type RoutedPeriod = {
+  trackedCategoryId: string;
+  originalPeriod: string;
+  bookedPeriod: string;
+  rows: number;
+};
+
+/**
+ * W-965 / SA-1137 (A5): the ONE routing step, pure. A SALE row whose date was inherited (an invoice made from a
+ * backdated order) and whose (category, month) is covered by a LOCKED filing books into the CURRENT month instead:
+ * `soldAt = now`, `periodBucket` = now's, `originalSoldAt` = the row's own date. The decision is per row, so on a
+ * mixed invoice only the locked category's rows move, and it reads `isLockedFiling` (LOCKED only, never a status
+ * literal): a GENERATED month books as before and `lockFiling`'s FILING_STALE rebuild catches it (SA-1137 A4).
+ * `covering` is what `lockFilingRowsCovering` read under FOR SHARE on the writer's own transaction.
+ */
+export function routeSaleRowsForLockedPeriods<
+  R extends { trackedCategoryId: string; periodBucket: string; soldAt: Date },
+>(
+  rows: R[],
+  covering: Array<{ filing: { status: string }; trackedCategoryId: string; periodBucket: string }>,
+  now: Date,
+): { rows: Array<R & { originalSoldAt?: Date }>; routed: RoutedPeriod[] } {
+  const locked = new Set(
+    covering
+      .filter((c) => isLockedFiling(c.filing))
+      .map((c) => `${c.trackedCategoryId}|${c.periodBucket}`),
+  );
+  const bookedPeriod = periodBucketOf(now);
+  const groups = new Map<string, RoutedPeriod>();
+  const out = rows.map((r) => {
+    if (!locked.has(`${r.trackedCategoryId}|${r.periodBucket}`)) return r;
+    const key = `${r.trackedCategoryId}|${r.periodBucket}`;
+    const g = groups.get(key) ?? {
+      trackedCategoryId: r.trackedCategoryId,
+      originalPeriod: r.periodBucket,
+      bookedPeriod,
+      rows: 0,
+    };
+    g.rows += 1;
+    groups.set(key, g);
+    return { ...r, soldAt: now, periodBucket: bookedPeriod, originalSoldAt: r.soldAt };
+  });
+  return { rows: out, routed: [...groups.values()] };
+}
+
+/**
+ * The writer's side of `routeSaleRowsForLockedPeriods`: read the covering filings under FOR SHARE on the writer's
+ * own transaction `db` (so a lock cannot land between this decision and the insert), then route. It always takes
+ * the read (no `anyLockedFiling` exit first): the read is the share lock the lock's claim waits on, and a plain
+ * read before it could miss a lock committing in between and refuse the bill (SA-1137 case 6).
+ */
+export async function routeSaleRowsIfLocked<
+  R extends { trackedCategoryId: string; periodBucket: string; soldAt: Date },
+>(db: LockDb, tenantId: string, rows: R[], now: Date) {
+  const unique = [
+    ...new Map(rows.map((r) => [`${r.trackedCategoryId}|${r.periodBucket}`, r])).values(),
+  ];
+  return routeSaleRowsForLockedPeriods(
+    rows,
+    await lockFilingRowsCovering(db, unique, tenantId),
+    now,
+  );
+}
+
+/** One `regulated.sale_booked_late` audit row per routed group, in the writer's own transaction. */
+export async function recordLateSaleRouting(
+  db: { auditLog: { create(args: any): Promise<unknown> } },
+  params: { tenantId: string; invoiceId: string; routed: RoutedPeriod[] },
+): Promise<void> {
+  for (const g of params.routed) {
+    await db.auditLog.create({
+      data: {
+        tenantId: params.tenantId,
+        userId: null,
+        action: AUDIT_ACTIONS.REGULATED_SALE_BOOKED_LATE,
+        entityType: "Invoice",
+        entityId: params.invoiceId,
+        meta: {
+          invoiceId: params.invoiceId,
+          categoryId: g.trackedCategoryId,
+          originalPeriod: g.originalPeriod,
+          bookedPeriod: g.bookedPeriod,
+          rows: g.rows,
+        },
+      },
+    });
+  }
 }
 
 /**

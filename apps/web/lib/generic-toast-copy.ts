@@ -282,7 +282,7 @@ const CODE_COPY: Record<string, string> = {
   [API_ERROR_CODES.CHOOSE_PLAN_AT_CHECKOUT]:
     "Choose your plan at checkout. Your plan starts once your payment clears.",
   [API_ERROR_CODES.CATCHUP_SESSION_OPEN]:
-    "A card checkout is open for this account (October catch-up), so this change isn't available yet. Wait for it to complete or expire, then try again.",
+    "Your payment page is already open. Finish it there, or try again in a moment.",
   [API_ERROR_CODES.CATCHUP_PENDING]:
     "This account's card payment is being confirmed (October catch-up). This change is available once it clears.",
   // SA-733r5 r-note: a catch-up the plan refuses because card billing would lose or change a charge. The account

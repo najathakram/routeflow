@@ -1336,6 +1336,7 @@ export class InvoicesService {
           soldAt: inv.issueDate ?? new Date(),
           lines: toSaleLedgerLines(inv.items ?? [], packMap),
           db: tx,
+          lockedPeriod: "BOOK_CURRENT", // W-965: the date is the order's (inherited), a locked month books now
         });
       }
       // Bump invoicedQty once per order item (each belongs to exactly one group). #2612 / SA-523:
@@ -1940,6 +1941,7 @@ export class InvoicesService {
       soldAt: created.issueDate ?? new Date(),
       lines: toSaleLedgerLines(created.items ?? [], packMap),
       db: tx,
+      lockedPeriod: "REFUSE", // W-965: a date chosen at this request is refused, never rerouted
     });
   }
 

@@ -252,10 +252,10 @@ export default function BuyerInvoiceDetailPage() {
                   )}`,
                 )
               }
-              className="flex items-center gap-1.5 rounded-lg bg-buyer-500 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-buyer-600"
+              className="flex items-center gap-1.5 whitespace-nowrap rounded-lg bg-buyer-500 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-buyer-600"
             >
               <CreditCard className="h-4 w-4" />
-              Pay this invoice
+              Pay {fmt(balanceDue)}
             </button>
           )}
           {invoice.pdfUrl && (

@@ -64,6 +64,14 @@ import {
   repoRoot,
   stateDir,
 } from "./plane-client.mjs";
+// Dynamic + guarded: a copy of this file planted without its sibling (the self-tests do that) or a
+// broken bridge module must never stop plane-sync; it then simply claims nothing.
+let bridgeClaimsTarget = () => false;
+try {
+  ({ bridgeClaimsTarget } = await import("./plane-bridge-config.mjs"));
+} catch {
+  // keep the never-claims default
+}
 
 // Resolved from this file's own location, independent of cwd — the same
 // convention bugs.mjs uses for REPO_ROOT, so `node scripts/campaign/plane-sync.mjs`
@@ -780,7 +788,15 @@ export async function runSync({
     // already emitted (orphans/skipped) plus the would-adopt count folded into
     // the skip line itself, it just makes zero POST/PATCH.
     const branch = currentBranch();
-    if (!allowBranch && !isWriteAllowedBranch(branch)) {
+    // AI OS bridge: a target plane-bridge.json claims is owned by plane-bridge, so this
+    // mirror takes the same zero-write path as an off-branch run (never throws: the
+    // helper returns false on any config error) plus one `warn` line, so Gate 5's
+    // /^Plane mirror:/ relay is untouched. Unclaimed targets behave exactly as before.
+    const bridgeOwned = bridgeClaimsTarget(baseUrl, slug);
+    if (bridgeOwned) {
+      console.error("Plane mirror warn: target is owned by plane-bridge — no writes");
+    }
+    if (bridgeOwned || (!allowBranch && !isWriteAllowedBranch(branch))) {
       // stdout, not emit()/stderr: ruling-s4-s5.md T16 (the R14 oracle) reads
       // this exact line off stdout. Every other summary/skip/failed line in
       // this file stays stderr-only (the emit() comment's "one line, one
@@ -789,8 +805,10 @@ export async function runSync({
       // "; would adopt N" suffix is appended only when there is one, so the
       // original (pre-F1) exact-match line is unchanged when there is none.
       process.stdout.write(
-        `Plane mirror: skipped writes (branch ${branch} is not master; ` +
-          `pass --allow-branch to override)` +
+        (bridgeOwned
+          ? `Plane mirror: skipped (target owned by plane-bridge)`
+          : `Plane mirror: skipped writes (branch ${branch} is not master; ` +
+            `pass --allow-branch to override)`) +
           (wouldAdopt > 0 ? `; would adopt ${wouldAdopt}` : "") +
           `\n`,
       );

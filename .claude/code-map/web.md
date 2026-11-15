@@ -99,3 +99,4 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/landing-2026-11-12-w35-w36.md](web/landing-2026-11-12-w35-w36.md) | Windows 35 and 36: order date chip on the regular order, chip follow-ups, scan after a closing dialog |
 | [web/landing-2026-11-12-w37.md](web/landing-2026-11-12-w37.md) | Window 37: drag a line in the order builder and till, New sale date chip |
 | [web/landing-2026-11-13-bk-fixes.md](web/landing-2026-11-13-bk-fixes.md) | Expired verify link + resend, customer-role staff gate (seesStaffControls), site print and motion, spec 85 |
+| [web/landing-2026-11-15-w40-42.md](web/landing-2026-11-15-w40-42.md) | Windows 40 to 42: Reopen confirm copy, one scan run-start rule (lib/scan-run.ts), counter Escape and Alt+D fixes, staff app polish (B9, B13, B20, B22) |
