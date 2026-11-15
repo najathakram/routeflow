@@ -10,6 +10,7 @@ export const API_BILLING_RETURN_PATHS = {
   plan: "/settings/billing?checkout=success",
   pay: "/settings/billing?paid=1",
   cardAdd: "/settings/billing?paid=1&card=1",
+  portal: "/settings/billing",
 } as const;
 
 export const API_BILLING_CANCEL_PATH = "/settings/billing?checkout=cancelled";

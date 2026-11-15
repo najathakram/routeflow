@@ -260,7 +260,7 @@ export class SettingsBillingController {
     // allSettled: a failure of one Stripe call must not lose the other (the pay link survives a portal outage and
     // vice versa). Both are capped (#2476) so the route never hangs on Stripe.
     const [portal, pay] = await Promise.allSettled([
-      this.billing.createBillingPortalSession(tenantId, undefined, INTERACTIVE_STRIPE_REQUEST),
+      this.billing.createBillingPortalSession(tenantId, INTERACTIVE_STRIPE_REQUEST),
       this.subscription.openInvoiceUrl(tenantId),
     ]);
     const portalUrl = portal.status === "fulfilled" ? portal.value.portalUrl : null;

@@ -261,6 +261,8 @@ export const BILLING_RETURN_PATHS = {
   plan: "/settings/billing?checkout=success",
   pay: "/settings/billing?paid=1",
   cardAdd: "/settings/billing?paid=1&card=1",
+  /** The Stripe billing portal's way back: the Billing page itself, no notice. */
+  portal: "/settings/billing",
 } as const;
 
 /** SA-1146 B-1: where a cancelled Checkout lands (nothing was charged). Not a return path: the web never pushes it. */

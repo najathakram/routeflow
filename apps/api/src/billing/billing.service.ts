@@ -1042,7 +1042,6 @@ export class BillingService {
 
   async createBillingPortalSession(
     tenantId: string,
-    returnUrl?: string,
     request?: { timeoutMs: number; maxNetworkRetries: number },
   ): Promise<{ portalUrl: string }> {
     const sub = await this.prisma.tenantSubscription.findUnique({
@@ -1059,7 +1058,7 @@ export class BillingService {
     const portalSession = await this.stripe.createBillingPortalSession(
       {
         customerId: sub.stripeCustomerId,
-        returnUrl: returnUrl ?? `${baseUrl}/settings/billing`,
+        returnUrl: billingReturnUrl(baseUrl, API_BILLING_RETURN_PATHS.portal),
       },
       request,
     );
@@ -3181,9 +3180,8 @@ export class BillingService {
   private async portalUrlOrEmpty(tenantId: string): Promise<string> {
     try {
       // #2476: capped - this runs inside the webhook's claim lease, and the link is best-effort.
-      return (
-        await this.createBillingPortalSession(tenantId, undefined, PAYMENT_FAILED_PORTAL_REQUEST)
-      ).portalUrl;
+      return (await this.createBillingPortalSession(tenantId, PAYMENT_FAILED_PORTAL_REQUEST))
+        .portalUrl;
     } catch (e) {
       this.logger.warn(
         `Billing portal link unavailable for tenant ${tenantId}: ${(e as Error).message}`,
