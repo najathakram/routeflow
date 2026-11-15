@@ -166,4 +166,50 @@ describe("PaidReturnNotice", () => {
       expect(poll({ billingState: "processing" })).toBe(false);
     });
   });
+
+  // SA-1154: the embedded form returns with a same-route push, so the notice is NOT remounted by navigation. It is keyed
+  // on the return query so each return starts fresh (its 5-minute window and its dismissal).
+  describe("a new return on a page that stayed open starts fresh (SA-1154)", () => {
+    const poll = (data: unknown) => lastOpts.refetchInterval?.({ state: { data } });
+
+    it("a page open for more than 5 minutes polls again when ?checkout=success arrives", () => {
+      mockQuery = "";
+      const now = jest.spyOn(Date, "now");
+      try {
+        now.mockReturnValue(1_000_000);
+        const { rerender } = renderWithProviders(<PaidReturnNotice />);
+        now.mockReturnValue(1_000_000 + 6 * 60_000); // the Billing page sat open for six minutes
+        mockQuery = "checkout=success"; // the embedded form completes: router.push on the same route
+        rerender(<PaidReturnNotice />);
+        expect(poll(undefined)).toBe(15_000);
+      } finally {
+        now.mockRestore();
+      }
+    });
+
+    it("a notice that was dismissed shows again for the next return", async () => {
+      mockQuery = "paid=1";
+      mockSub = { billingState: "current" };
+      const { rerender } = renderWithProviders(<PaidReturnNotice />);
+      await userEvent.click(screen.getByRole("button", { name: "OK" }));
+      expect(screen.queryByRole("status")).toBeNull();
+      mockQuery = "checkout=success";
+      rerender(<PaidReturnNotice />);
+      expect(screen.getByRole("status")).toHaveTextContent("Payment received.");
+    });
+
+    it("the same query re-rendered is the same return: the clock is not reset", () => {
+      mockQuery = "paid=1";
+      const now = jest.spyOn(Date, "now");
+      try {
+        now.mockReturnValue(1_000_000);
+        const { rerender } = renderWithProviders(<PaidReturnNotice />);
+        now.mockReturnValue(1_000_000 + 6 * 60_000);
+        rerender(<PaidReturnNotice />);
+        expect(poll(undefined)).toBe(false);
+      } finally {
+        now.mockRestore();
+      }
+    });
+  });
 });

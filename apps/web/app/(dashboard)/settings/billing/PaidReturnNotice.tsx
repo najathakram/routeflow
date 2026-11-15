@@ -38,8 +38,18 @@ const COPY: Record<Outcome, string> = {
  * SA-801: a card add (nothing charged) returns with `&card=1` and must never say "Payment received".
  * B1256 / Row 623: the wording follows the subscription's server-derived billing state (processing, received, failed,
  * or neutral while it loads), re-read every 15 s until it settles, for at most 5 minutes.
+ * SA-1154: the embedded form returns with a same-route push, so navigation does not remount the notice. It is keyed on
+ * the return query, so each return starts fresh: its own 5-minute window and a dismissal that does not carry over.
  */
 export function PaidReturnNotice() {
+  const params = useSearchParams();
+  const returnKey = ["paid", "card", "checkout"]
+    .map((k) => `${k}=${params?.get(k) ?? ""}`)
+    .join("&");
+  return <PaidReturnNoticeBody key={returnKey} />;
+}
+
+function PaidReturnNoticeBody() {
   const params = useSearchParams();
   const [hidden, setHidden] = React.useState(false);
   const paid = isStripeReturn(params);

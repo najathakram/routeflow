@@ -20,17 +20,20 @@ export function EmbeddedCheckoutPanel({
   onBack: () => void;
   onComplete: () => void;
 }) {
-  // loadStripe injects Stripe's script from js.stripe.com; memoised so a re-render never reloads it.
-  const stripePromise = React.useMemo(() => loadStripe(stripePublishableKey()), []);
+  // loadStripe injects Stripe's script from js.stripe.com; memoised so a re-render never reloads it. A rejection is
+  // caught here (it becomes "no Stripe", the failed state below), so Stripe's own provider never holds an unhandled one.
+  const stripePromise = React.useMemo(
+    () => loadStripe(stripePublishableKey()).catch(() => null),
+    [],
+  );
   const options = React.useMemo(() => ({ clientSecret, onComplete }), [clientSecret, onComplete]);
   // One state for every way the form can fail to load (script blocked, key missing): one calm line.
   const [status, setStatus] = React.useState<"loading" | "ready" | "failed">("loading");
   React.useEffect(() => {
     let live = true;
-    stripePromise.then(
-      (stripe) => live && setStatus(stripe ? "ready" : "failed"),
-      () => live && setStatus("failed"),
-    );
+    void stripePromise.then((stripe) => {
+      if (live) setStatus(stripe ? "ready" : "failed");
+    });
     return () => {
       live = false;
     };
@@ -48,12 +51,12 @@ export function EmbeddedCheckoutPanel({
         </button>
         {status === "loading" && (
           <p role="status" className="text-sm text-slate-600">
-            Loading the payment form.
+            Loading the payment form…
           </p>
         )}
         {status === "failed" ? (
           <p role="alert" className="text-sm text-slate-700">
-            The payment form didn&apos;t load. Go back and try again.
+            The payment form didn&apos;t load. Nothing was charged.
           </p>
         ) : (
           <EmbeddedCheckoutProvider stripe={stripePromise} options={options}>
