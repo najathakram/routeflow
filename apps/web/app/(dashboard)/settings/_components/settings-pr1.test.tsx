@@ -604,6 +604,35 @@ describe("shell", () => {
     expect(screen.getByTestId("business-card-rail")).toHaveAttribute("href", "/settings/billing");
   });
 
+  it("a rail search keeps the one Business card (it is not hidden by a typed query)", () => {
+    mockDesktop = true;
+    renderWithProviders(
+      <SettingsShell>
+        <SettingsHub isAdmin />
+      </SettingsShell>,
+    );
+    const nav = screen.getByRole("navigation", { name: "Settings" });
+    fireEvent.change(within(nav).getByLabelText("Search settings"), {
+      target: { value: "counter" },
+    });
+    expect(screen.getAllByTestId("business-card-rail")).toHaveLength(1);
+    expect(screen.queryAllByTestId("business-card")).toHaveLength(0);
+    expect(within(nav).getByRole("list", { name: "Search results" })).toBeInTheDocument();
+  });
+
+  it("at xl the rail card is the Pay entry: payment due shows Pay with its amount", async () => {
+    mockDesktop = true;
+    seedApi({ "/billing/subscription": SUB_DUE });
+    renderWithProviders(
+      <SettingsShell>
+        <SettingsHub isAdmin />
+      </SettingsShell>,
+    );
+    const pay = await screen.findByRole("button", { name: "Pay $149.00" });
+    expect(screen.getAllByRole("button", { name: /^Pay/ })).toHaveLength(1);
+    expect(screen.getByTestId("business-card-rail").parentElement).toContainElement(pay);
+  });
+
   it("staff at xl get the rail beside the page; below xl the page alone", () => {
     mockDesktop = true;
     const { unmount } = renderWithProviders(
