@@ -144,6 +144,27 @@ describe("InvoicesPage — phone cards", () => {
     expect(scroller.querySelectorAll("[data-kpi-cell]")).toHaveLength(6);
   });
 
+  it("a tile with a hint is wider below md than one without; the rows keep py-1 below md only", () => {
+    renderWithProviders(<InvoicesPage />);
+    const withHint = screen
+      .getByText("Awaiting confirmation")
+      .closest("[data-kpi-cell]") as HTMLElement;
+    const without = screen.getByText("Total outstanding").closest("[data-kpi-cell]") as HTMLElement;
+    expect(withHint.className).toContain("w-[78%]");
+    expect(withHint.className).not.toContain("w-[46%]");
+    expect(without.className).toContain("w-[46%]");
+    const row = without.closest("[data-kpi-row]") as HTMLElement;
+    expect(row.className).toContain("items-start");
+    expect(row.className).toContain("py-1");
+    expect(row.className).toContain("md:py-0");
+    const chips = screen.getByRole("button", { name: "Due today" }).parentElement as HTMLElement;
+    expect(chips.className).toContain("py-1");
+    expect(chips.className).toContain("md:py-0");
+    expect(screen.getByText("Draft payments not yet counted as paid").className).toContain(
+      "line-clamp-2",
+    );
+  });
+
   it("status tabs and due chips are one sideways-scrolling row each below md", () => {
     renderWithProviders(<InvoicesPage />);
     const tab = screen

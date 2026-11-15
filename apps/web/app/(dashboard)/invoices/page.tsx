@@ -251,7 +251,11 @@ function StatTile({
       >
         {value}
       </span>
-      {hint && <span className="mt-1 block text-xs text-navy/70">{hint}</span>}
+      {hint && (
+        <span className="mt-1 block text-xs text-navy/70 line-clamp-2 md:line-clamp-none">
+          {hint}
+        </span>
+      )}
     </>
   );
 
@@ -375,13 +379,16 @@ function PaymentSummaryBar({
   return (
     <div
       data-kpi-row
-      className="flex snap-x gap-3 overflow-x-auto py-1 scrollbar-hide md:grid md:grid-cols-2 md:gap-4 md:overflow-visible lg:grid-cols-6"
+      className="flex snap-x items-start gap-3 overflow-x-auto py-1 scrollbar-hide md:grid md:items-stretch md:py-0 md:grid-cols-2 md:gap-4 md:overflow-visible lg:grid-cols-6"
     >
       {items.map((item) => (
         <div
           key={item.label}
           data-kpi-cell
-          className="flex w-[46%] shrink-0 snap-start flex-col md:w-auto md:shrink [&>*]:flex-1"
+          className={cn(
+            "flex shrink-0 snap-start flex-col md:w-auto md:shrink [&>*]:flex-1",
+            item.hint ? "w-[78%]" : "w-[46%]",
+          )}
         >
           <StatTile
             label={item.label}
@@ -795,7 +802,7 @@ export default function InvoicesPage() {
       </div>
 
       {/* Due-soon chips */}
-      <div className="flex snap-x items-center gap-2 overflow-x-auto py-1 scrollbar-hide">
+      <div className="flex snap-x items-center gap-2 overflow-x-auto py-1 scrollbar-hide md:py-0">
         {!isCustomer && (
           <button
             type="button"
