@@ -12,8 +12,8 @@ const DIR = __dirname;
 const PINS: Array<[file: string, dialogConfirms: number, which: string]> = [
   [
     "customers/[id]/page.tsx",
-    6,
-    "delete price override, delete standing order, delete contact, decline request, delete customer, disconnect portal",
+    7,
+    'delete price override, suspend/deactivate (:4021, ternary form: variant={x ? "danger" : "secondary"}, the dialog confirm), delete standing order, delete contact, decline request, delete customer, disconnect portal',
   ],
   ["credit-notes/[id]/page.tsx", 0, "none"],
   ["estimates/[id]/page.tsx", 1, "the void dialog's own confirm"],
@@ -21,9 +21,12 @@ const PINS: Array<[file: string, dialogConfirms: number, which: string]> = [
   ["returns/[id]/page.tsx", 2, "reject return, cancel return"],
 ];
 
-const solidDanger = (src: string) =>
-  src.split("\n").filter((line) => /variant="danger"/.test(line) && !line.includes("<Badge"))
-    .length;
+// Catches variant="danger", variant={"danger"} and a ternary such as variant={x ? "danger" : "secondary"}
+// (one line each; a Badge's variant is a colour, not a button).
+const DANGER = /variant=(?:"danger"|\{[^}]*"danger"[^}]*\})/;
+const matches = (src: string) =>
+  src.split(/\r?\n/).filter((line) => DANGER.test(line) && !line.includes("<Badge"));
+const solidDanger = (src: string) => matches(src).length;
 
 describe("solid red buttons are dialog confirms only", () => {
   it.each(PINS)("%s", (file, expected) => {

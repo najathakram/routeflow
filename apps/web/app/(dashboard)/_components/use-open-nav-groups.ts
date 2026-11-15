@@ -66,11 +66,14 @@ export function useOpenNavGroups({
   const [open, setOpen] = React.useState<string[]>(initial);
 
   // A different person on the same device: load their set.
+  // The effect reads the latest closure through a ref, so its only dependency is the key.
+  const initialRef = React.useRef(initial);
+  initialRef.current = initial;
   const lastKey = React.useRef(storageKey);
   React.useEffect(() => {
     if (lastKey.current === storageKey) return;
     lastKey.current = storageKey;
-    setOpen(initial());
+    setOpen(initialRef.current());
   }, [storageKey]);
 
   // Navigating into a group opens it (single mode: and closes the rest, as the accordion did).

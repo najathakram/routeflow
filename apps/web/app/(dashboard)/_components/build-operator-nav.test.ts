@@ -1,4 +1,32 @@
 import { buildOperatorNav, type OperatorNavContext } from "./build-operator-nav";
+import {
+  BadgePercent,
+  BarChart2,
+  BarChart3,
+  Building2,
+  ClipboardList,
+  CreditCard,
+  DollarSign,
+  FileCheck,
+  FileSpreadsheet,
+  FileText,
+  Handshake,
+  Layers,
+  LayoutDashboard,
+  MapPin,
+  Megaphone,
+  Package,
+  PackageCheck,
+  Receipt,
+  RotateCcw,
+  Settings,
+  ShieldCheck,
+  ShoppingCart,
+  Store,
+  Truck,
+  Users,
+  Wallet,
+} from "lucide-react";
 import type { NavEntry } from "./nav-config";
 
 const ctx = (over: Partial<OperatorNavContext> = {}): OperatorNavContext => ({
@@ -203,3 +231,144 @@ const ALL_HREFS = [
   "/analytics",
   "/settings",
 ];
+
+// ─── Widened pin (expected values read from master's inline layout code, not from the builder) ───
+
+const children = (nav: NavEntry[], label: string) =>
+  group(nav, label)?.children.map((c) => c.label);
+const lastEntry = (nav: NavEntry[]) => shape(nav)[nav.length - 1];
+
+describe("buildOperatorNav: add-ons, modes, plan states (master's gating rules)", () => {
+  it("routes add-on only: Dispatch has Overview, Routes and Drivers, no Order delivery", () => {
+    const nav = buildOperatorNav(ctx({ routesAccess: true, deliveryAccess: false }));
+    expect(children(nav, "Dispatch")).toEqual(["Overview", "Routes", "Shipments", "Drivers"]);
+  });
+
+  it("delivery add-on only: Dispatch has Overview, Order delivery and Drivers, no Routes", () => {
+    const nav = buildOperatorNav(ctx({ routesAccess: false, deliveryAccess: true }));
+    expect(children(nav, "Dispatch")).toEqual([
+      "Overview",
+      "Order delivery",
+      "Shipments",
+      "Drivers",
+    ]);
+  });
+
+  it("modes: promotions off hides Promotions; any other value keeps it", () => {
+    const off = buildOperatorNav(ctx({ modes: { promotions: "off" } }));
+    expect(children(off, "Warehouse")).not.toContain("Promotions");
+    for (const mode of ["on", "unset"]) {
+      const nav = buildOperatorNav(ctx({ modes: { promotions: mode } }));
+      expect(children(nav, "Warehouse")).toContain("Promotions");
+    }
+  });
+
+  it("plan still loading hides every plan-gated leaf (and the group they leave empty)", () => {
+    const nav = buildOperatorNav(
+      ctx({ plan: { flags: undefined, resolved: false, failed: false } }),
+    );
+    expect(shape(nav)).toEqual(SHAPE_LITE);
+  });
+
+  it("plan fetch failed shows every plan-gated leaf (fails open)", () => {
+    const nav = buildOperatorNav(
+      ctx({ plan: { flags: undefined, resolved: false, failed: true } }),
+    );
+    expect(shape(nav)).toEqual(SHAPE_FULL);
+  });
+
+  it("regulated still loading: a skeleton follows Reports & analytics", () => {
+    const nav = buildOperatorNav(ctx({ regulatedLoading: true }));
+    const labels = shape(nav);
+    expect(labels[labels.indexOf(ANALYTICS_ENTRY) + 1]).toBe("~regulated-skeleton");
+  });
+
+  it("Regulated items on LITE sits after Settings, as on master", () => {
+    const nav = buildOperatorNav(
+      ctx({
+        plan: { flags: [], resolved: true, failed: false },
+        regulatedSections: [{ id: "s1", name: "Alpha" }],
+      }),
+    );
+    expect(lastEntry(nav)).toBe("Regulated items > Alpha");
+    expect(shape(nav)[nav.length - 2]).toBe("Settings");
+  });
+
+  it("regulated loading on LITE puts the skeleton last", () => {
+    const nav = buildOperatorNav(
+      ctx({ plan: { flags: [], resolved: true, failed: false }, regulatedLoading: true }),
+    );
+    expect(lastEntry(nav)).toBe("~regulated-skeleton");
+  });
+
+  it("sales agents on LITE: Sales agents after Customers, Commissions ends Finance", () => {
+    const nav = buildOperatorNav(
+      ctx({ plan: { flags: [], resolved: true, failed: false }, hasSalesAgents: true }),
+    );
+    const labels = shape(nav);
+    expect(labels[labels.indexOf("Customers") + 1]).toBe("Sales agents");
+    const fin = children(nav, "Finance") ?? [];
+    expect(fin[fin.length - 1]).toBe("Commissions");
+  });
+});
+
+describe("buildOperatorNav: every entry keeps its icon (master's nav-config and splices)", () => {
+  const ICON = new Map<string, unknown>([
+    ["Dashboard", LayoutDashboard],
+    ["Orders", ShoppingCart],
+    ["Counter", Store],
+    ["All Orders", ShoppingCart],
+    ["Estimates", FileCheck],
+    ["Returns", RotateCcw],
+    ["Dispatch", Truck],
+    ["Overview", LayoutDashboard],
+    ["Routes", MapPin],
+    ["Order delivery", Package],
+    ["Shipments", Truck],
+    ["Drivers", Truck],
+    ["My Routes", MapPin],
+    ["Customers", Users],
+    ["Sales agents", Handshake],
+    ["Warehouse", Package],
+    ["Inventory", Layers],
+    ["Purchase orders", PackageCheck],
+    ["Products", Package],
+    ["Promotions", Megaphone],
+    ["Suppliers", Building2],
+    ["Supplier bills", ClipboardList],
+    ["Supplier statements", FileSpreadsheet],
+    ["Finance", Wallet],
+    ["Invoices", FileText],
+    ["Payments", CreditCard],
+    ["Payment requests", DollarSign],
+    ["Credit notes", Receipt],
+    ["Commissions", BadgePercent],
+    ["Reports & analytics", BarChart3],
+    ["Reports", BarChart3],
+    ["Analytics", BarChart2],
+    ["Settings", Settings],
+    ["Regulated items", ShieldCheck],
+    ["Alpha", ShieldCheck],
+  ]);
+
+  it("each group and leaf carries the icon it has on master", () => {
+    const nav = buildOperatorNav(
+      ctx({
+        canActAsDriver: true,
+        counterEnabled: true,
+        hasSalesAgents: true,
+        regulatedSections: [{ id: "s1", name: "Alpha" }],
+      }),
+    );
+    const seen: Array<[string, unknown]> = [];
+    for (const e of nav) {
+      if (e.kind === "skeleton") continue;
+      seen.push([e.label, e.icon]);
+      if (e.kind === "group") for (const c of e.children) seen.push([c.label, c.icon]);
+    }
+    // "Overview" appears under Dispatch and Finance with the same icon, so a Map by label is exact.
+    for (const [label, icon] of seen)
+      expect([label, icon === ICON.get(label)]).toEqual([label, true]);
+    expect(seen.map(([l]) => l)).toEqual(expect.arrayContaining([...ICON.keys()]));
+  });
+});
