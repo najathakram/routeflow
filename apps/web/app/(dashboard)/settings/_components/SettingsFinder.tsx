@@ -299,7 +299,7 @@ export function SettingsFinder({
 
       {!searching && (
         <>
-          <BusinessCard variant={variant} active={active.includes("plan-billing")} />
+          <BusinessCard variant={variant} />
           {afterCard}
           <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--ink-500)]">
             <span>Frequently used:</span>

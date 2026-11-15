@@ -420,7 +420,8 @@ const ENTRIES: IndexEntry[] = [
     desc: "What you owe, autopay and the card on file",
     href: "/settings/billing",
     groupKey: "business",
-    page: "Plan & billing",
+    page: "Billing",
+    show: "admin",
     keywords: [
       "past due",
       "overdue",
@@ -439,7 +440,8 @@ const ENTRIES: IndexEntry[] = [
     desc: "Pay what you owe for your RouteFlow plan",
     href: "/settings/billing",
     groupKey: "business",
-    page: "Plan & billing",
+    page: "Billing",
+    show: "admin",
     keywords: ["pay", "pay now", "owed", "balance"],
   },
   // ── My account (footer) ──────────────────────────────────────────────────────────────────

@@ -37,6 +37,25 @@ describe("Settings index: the Billing row (F09)", () => {
     },
   );
 
+  it.each(["billing", "pay", "plan"])(
+    "an operator's and a driver's search for %s returns none of the three billing entries",
+    (q) => {
+      for (const entries of [operator, driver]) {
+        const ids = searchSettings(q, entries).map((e) => e.id);
+        for (const id of ["plan-billing", "billing-status", "pay-bill"])
+          expect(ids).not.toContain(id);
+      }
+    },
+  );
+
+  it("the two billing cards' breadcrumb says Billing, like the row, and they are admin-only", () => {
+    for (const id of ["billing-status", "pay-bill"]) {
+      expect(admin.find((e) => e.id === id)?.page).toBe("Billing");
+      expect(operator.map((e) => e.id)).not.toContain(id);
+    }
+    expect(admin.filter((e) => e.page === "Plan & billing")).toEqual([]);
+  });
+
   it("the hub lists exactly one row to /settings/billing (the status card is a search card, not a row)", () => {
     const rows = admin.filter(
       (e) => e.kind === "item" && e.listed !== false && e.href === "/settings/billing",
