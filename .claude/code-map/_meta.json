@@ -1,6 +1,6 @@
 {
-  "mappedSha": "4599e18437",
-  "generatedAt": "2026-11-15T20:01:56.613Z",
+  "mappedSha": "542341f20d",
+  "generatedAt": "2026-11-15T20:48:09.182Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1160,
-  "notes": "2026-11-15 (master 4599e18437): api and web landing notes for windows 43 to 46, TOC rows; see CHANGELOG.md. Windows 13 to 26 (11-07 to 11-09) are not mapped yet."
+  "notes": "2026-11-15 (master 542341f20d): api and web landing notes for window 47, TOC rows; see CHANGELOG.md. Windows 13 to 26 (11-07 to 11-09) are not mapped yet."
 }
