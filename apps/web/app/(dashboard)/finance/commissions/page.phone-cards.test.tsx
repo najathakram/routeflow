@@ -135,4 +135,16 @@ describe("CommissionStatementsPage — phone cards", () => {
       "min-h-[44px]",
     );
   });
+
+  it("uses the block filter panel layout (a real box from md up)", () => {
+    renderWithProviders(<CommissionStatementsPage />);
+    const button = screen.getByRole("button", { name: /^Filters/ });
+    const root = button.parentElement!.parentElement as HTMLElement;
+    const panel = document.getElementById(button.getAttribute("aria-controls")!) as HTMLElement;
+    expect(panel.parentElement).toBe(root);
+    expect(root.className.split(" ")).not.toContain("md:contents");
+    expect(panel.className.split(" ")).toContain("md:block");
+    // The element that is a direct child of the space-y-5 column is a real box from md up.
+    expect((root.parentElement as HTMLElement).className).toContain("space-y-5");
+  });
 });

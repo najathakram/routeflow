@@ -359,4 +359,13 @@ describe("Supplier bills list — phone cards", () => {
     expect(container.querySelector("ul.md\\:hidden")).toBeNull();
     expect(screen.queryByLabelText("Sort bills by")).toBeNull();
   });
+
+  it("uses the contents filter panel layout (its controls stay direct items of the bar)", () => {
+    renderWithProviders(<ExpensesPage />);
+    const button = screen.getByRole("button", { name: /^Filters/ });
+    const root = button.parentElement!.parentElement as HTMLElement;
+    const panel = document.getElementById(button.getAttribute("aria-controls")!) as HTMLElement;
+    expect(panel.parentElement).toBe(root);
+    expect(root.className.split(" ")).toContain("md:contents");
+  });
 });

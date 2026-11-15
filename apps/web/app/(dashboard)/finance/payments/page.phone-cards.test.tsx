@@ -1,3 +1,5 @@
+import * as fs from "fs";
+import * as path from "path";
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
 import { screen, within, renderWithProviders } from "@/test-utils/render";
@@ -243,7 +245,6 @@ describe("FinancePaymentsPage — phone cards", () => {
       ["paidAt", "Date"],
       ["settledAt", "Bank date"],
       ["paymentNumber", "Payment #"],
-      ["method", "Method"],
       ["amount", "Amount"],
     ]);
     const filters = screen.getByRole("button", { name: "Filters" });
@@ -285,5 +286,46 @@ describe("FinancePaymentsPage — phone cards", () => {
     const { container } = renderWithProviders(<FinancePaymentsPage />);
     expect(container.querySelector("ul.md\\:hidden")).toBeNull();
     expect(screen.queryByLabelText("Sort payments by")).toBeNull();
+  });
+
+  it("uses the contents filter panel layout (its controls stay direct items of the bar)", () => {
+    renderWithProviders(<FinancePaymentsPage />);
+    const button = screen.getByRole("button", { name: /^Filters/ });
+    const root = button.parentElement!.parentElement as HTMLElement;
+    const panel = document.getElementById(button.getAttribute("aria-controls")!) as HTMLElement;
+    expect(panel.parentElement).toBe(root);
+    expect(root.className.split(" ")).toContain("md:contents");
+  });
+
+  it("offers only sort values the payments list endpoint really sorts by (class pin against the query allowlist)", () => {
+    const source = fs.readFileSync(
+      path.resolve(__dirname, "../../../../../api/src/invoices/payment-list-query.ts"),
+      "utf8",
+    );
+    const block = /const validSortFields[^=]*=\s*\{([\s\S]*?)\n  \};/.exec(source);
+    expect(block).not.toBeNull();
+    const allowed = Array.from(block![1].matchAll(/^\s*(\w+)\s*:/gm)).map((m) => m[1]);
+    expect(allowed.length).toBeGreaterThan(3);
+    renderWithProviders(<FinancePaymentsPage />);
+    const select = screen.getByLabelText("Sort payments by") as HTMLSelectElement;
+    for (const o of Array.from(select.options)) expect(allowed).toContain(o.value);
+  });
+
+  it("shows the receipt paperclip on a card whenever the payment has an image, with or without a reference", () => {
+    mockUsePayments.mockReturnValue({
+      data: {
+        data: [
+          makePayment({ id: "pay-d", paymentNumber: "PAY-D", amount: 5, imageKey: "k1" }),
+          makePayment({ id: "pay-e", paymentNumber: "PAY-E", amount: 6 }),
+        ],
+        meta: { total: 2, page: 1, limit: 25, totalPages: 1 },
+        summary: SUMMARY,
+      },
+      isLoading: false,
+    });
+    const { container } = renderWithProviders(<FinancePaymentsPage />);
+    const list = cardList(container);
+    expect(within(list[0]).getByTitle("Has receipt image")).toBeInTheDocument();
+    expect(within(list[1]).queryByTitle("Has receipt image")).toBeNull();
   });
 });

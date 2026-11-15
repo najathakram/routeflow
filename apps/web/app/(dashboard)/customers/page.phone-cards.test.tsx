@@ -1,3 +1,5 @@
+import * as fs from "fs";
+import * as path from "path";
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
 import { screen, within, renderWithProviders } from "@/test-utils/render";
@@ -274,7 +276,6 @@ describe("CustomersPage — phone cards", () => {
       ["", "Newest"],
       ["contactName", "Name"],
       ["businessName", "Business name"],
-      ["receivables", "Open balance"],
     ]);
     expect(select.value).toBe("");
     const dir = screen.getByRole("button", { name: /^Sort (ascending|descending)$/ });
@@ -288,13 +289,13 @@ describe("CustomersPage — phone cards", () => {
     const user = userEvent.setup();
     renderWithProviders(<CustomersPage />);
     const select = screen.getByLabelText("Sort customers by") as HTMLSelectElement;
-    await user.selectOptions(select, "receivables");
-    expect(lastListParams).toMatchObject({ sortBy: "receivables", sortDir: "asc" });
-    expect(select.value).toBe("receivables");
+    await user.selectOptions(select, "businessName");
+    expect(lastListParams).toMatchObject({ sortBy: "businessName", sortDir: "asc" });
+    expect(select.value).toBe("businessName");
     const dir = screen.getByRole("button", { name: "Sort descending" });
     expect(dir).toBeEnabled();
     await user.click(dir);
-    expect(lastListParams).toMatchObject({ sortBy: "receivables", sortDir: "desc" });
+    expect(lastListParams).toMatchObject({ sortBy: "businessName", sortDir: "desc" });
     expect(screen.getByRole("button", { name: "Sort ascending" })).toBeInTheDocument();
   });
 
@@ -399,5 +400,31 @@ describe("CustomersPage — phone cards", () => {
     expect(screen.getByText("1 customer selected")).toBeInTheDocument();
     await user.click(screen.getByRole("checkbox", { name: "Select all customers on this page" }));
     expect(screen.getByText("2 customers selected")).toBeInTheDocument();
+  });
+
+  it("uses the contents filter panel layout (its controls stay direct items of the bar)", () => {
+    mockTags = [{ id: "t1", name: "VIP", color: "#123456" }];
+    renderWithProviders(<CustomersPage />);
+    const button = screen.getByRole("button", { name: /^Filters/ });
+    const root = button.parentElement!.parentElement as HTMLElement;
+    const panel = document.getElementById(button.getAttribute("aria-controls")!) as HTMLElement;
+    expect(panel.parentElement).toBe(root);
+    expect(root.className.split(" ")).toContain("md:contents");
+  });
+
+  it("offers only sort values the customers list endpoint really sorts by (class pin against the service allowlist)", () => {
+    const service = fs.readFileSync(
+      path.resolve(__dirname, "../../../../api/src/customers/customers.service.ts"),
+      "utf8",
+    );
+    const block = /const validSortFields[^=]*=\s*\{([\s\S]*?)\};/.exec(service);
+    expect(block).not.toBeNull();
+    const allowed = Array.from(block![1].matchAll(/^\s*(\w+)\s*:/gm)).map((m) => m[1]);
+    expect(allowed.length).toBeGreaterThan(3);
+    renderWithProviders(<CustomersPage />);
+    const select = screen.getByLabelText("Sort customers by") as HTMLSelectElement;
+    const values = Array.from(select.options).map((o) => o.value);
+    expect(values).toContain("");
+    for (const v of values.filter(Boolean)) expect(allowed).toContain(v);
   });
 });

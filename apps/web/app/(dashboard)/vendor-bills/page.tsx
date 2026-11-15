@@ -1252,6 +1252,7 @@ function InventoryPurchasesTab() {
           className="h-11 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500 md:h-10 md:w-64"
         />
         <FiltersDisclosure
+          layout="contents"
           count={activeFilterCount({ statusFilter, dateFrom, dateTo })}
           toolbar={
             !isLoading && !isError && bills.length > 0 ? (

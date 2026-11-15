@@ -48,8 +48,20 @@ describe("FiltersDisclosure", () => {
     expect(screen.getByRole("button", { name: "Filters" })).toBeInTheDocument();
   });
 
-  it("takes no box from md up: root and panel are md:contents, so the controls are direct items of the page bar", () => {
+  it("by default is a plain block from md up: root has no md:contents, panel is md:block", () => {
     setup(0);
+    const panel = screen.getByLabelText("Search").parentElement as HTMLElement;
+    expect(panel.className.split(" ")).toContain("md:block");
+    expect(panel.className.split(" ")).not.toContain("md:contents");
+    expect((panel.parentElement as HTMLElement).className.split(" ")).not.toContain("md:contents");
+  });
+
+  it('layout="contents" takes no box from md up: root and panel are md:contents', () => {
+    render(
+      <FiltersDisclosure count={0} layout="contents">
+        <input aria-label="Search" />
+      </FiltersDisclosure>,
+    );
     const panel = screen.getByLabelText("Search").parentElement as HTMLElement;
     expect(panel.className.split(" ")).toContain("md:contents");
     expect(panel.className.split(" ")).not.toContain("md:block");

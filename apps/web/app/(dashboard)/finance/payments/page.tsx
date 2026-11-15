@@ -734,6 +734,7 @@ export default function FinancePaymentsPage() {
           className="h-11 w-full rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 md:h-auto md:w-64"
         />
         <FiltersDisclosure
+          layout="contents"
           count={activeFilterCount({ dateFrom, dateTo, method, status, customerId })}
           toolbar={
             !isLoading && payments.length > 0 ? (
@@ -745,7 +746,6 @@ export default function FinancePaymentsPage() {
                       { value: "paidAt", label: "Date" },
                       { value: "settledAt", label: "Bank date" },
                       { value: "paymentNumber", label: "Payment #" },
-                      { value: "method", label: "Method" },
                       { value: "amount", label: "Amount" },
                     ]}
                     value={sortBy}
@@ -917,9 +917,13 @@ export default function FinancePaymentsPage() {
               meta={
                 <span className="flex flex-wrap gap-x-2 gap-y-0.5">
                   <span>{fmtDate(p.paidAt ?? p.createdAt)}</span>
-                  {p.reference && (p.paymentNumber || p.imageKey) && (
+                  {((p.reference && p.paymentNumber) || p.imageKey) && (
                     <span className="inline-flex items-center gap-1">
-                      {p.imageKey && <Paperclip className="h-3 w-3 text-navy/50" aria-hidden />}
+                      {p.imageKey && (
+                        <span title="Has receipt image" className="inline-flex shrink-0">
+                          <Paperclip className="h-3 w-3 text-navy/50" />
+                        </span>
+                      )}
                       {p.paymentNumber && p.reference}
                     </span>
                   )}

@@ -809,7 +809,6 @@ export default function CustomersPage() {
               { value: "", label: "Newest" },
               { value: "contactName", label: "Name" },
               { value: "businessName", label: "Business name" },
-              { value: "receivables", label: "Open balance" },
             ]}
             value={sortBy}
             onChange={(e) => handlePhoneSortChange(e.target.value)}
@@ -1152,6 +1151,7 @@ export default function CustomersPage() {
           <div className="order-3 md:contents">
             {tags && tags.length > 0 ? (
               <FiltersDisclosure
+                layout="contents"
                 count={activeFilterCount({ typeFilter, tagFilter })}
                 toolbar={phoneSort}
               >
