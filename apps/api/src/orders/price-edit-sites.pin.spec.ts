@@ -6,7 +6,7 @@ import type { SaleOptions } from "./sale-options";
 /**
  * SA-1034: the price-edit capability is checked at every override site, through the ONE helper
  * `assertPriceEditAllowed` (staff-override.ts), with a required boolean that every compute site gets from the ONE
- * helper `priceEditAllowedFor` (auth/permissions/price-edit.ts: the deny list and the permissions mode read once).
+ * helper `priceEditAllowedFor` (auth/permissions/price-edit.ts: the live deny list, read once per request).
  *
  *  - `decideTierOverride(` has exactly the callers listed below; a new one is reviewed and added here.
  *  - each override-site file has EXACTLY its count of `assertPriceEditAllowed(` and `priceEditAllowedFor(` calls: a

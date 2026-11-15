@@ -1255,7 +1255,7 @@ export class OrdersService implements OnApplicationBootstrap {
     const commissionRatePct = parseCommissionRatePct(dto.commissionRatePct, user.role);
 
     const isStaffRole = user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
-    // SA-1034 (POS-5): the counter's own live answer (W-870), else the office's mode-aware one, once per request before any
+    // SA-1034 (POS-5): the counter's own answer (W-870), else the office's, both over the live denied groups, once per request before any
     // lock. A real staff price override (judged against the server's tier price) is refused 403 before anything is written.
     const priceEditAllowed =
       options.priceEditAllowed ??
