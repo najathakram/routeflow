@@ -1,4 +1,5 @@
 import { MoneyInvariantError } from "./money-invariants";
+import { assertDiscountTaxBase, type DiscountTaxBase } from "./discount-tax-base";
 import { computeLineSubtotal, roundMoney, type LineSubtotalInput } from "./pricing";
 
 /**
@@ -42,6 +43,8 @@ export interface InvoiceTotalsOptions {
   taxRate?: number | null;
   /** Tax-exempt customer: $0 of BOTH the regular tax and the category tax. Default false. */
   isTaxExempt?: boolean | null;
+  /** SA-1141: where the invoice discount sits relative to tax (see `discount-tax-base.ts`). */
+  discountBase: DiscountTaxBase;
 }
 
 export interface InvoiceTotals {
@@ -70,9 +73,12 @@ export interface SummedInvoiceLine {
   taxRate?: MoneyLike | null;
   /** This line's regulated category tax in money. Default 0. */
   categoryTaxAmount?: MoneyLike | null;
+  /** The NSF bounce-fee line: not goods, so outside the PRE_TAX discount split. Default false. */
+  isNsf?: boolean;
 }
 
 export interface SumInvoiceTotalsOptions {
+  discountBase: DiscountTaxBase;
   discount?: number | null;
   shipping?: number | null;
   isTaxExempt?: boolean | null;
@@ -134,6 +140,25 @@ function assertFiniteTotalsInput(
   check("the shipping fee", opts.shipping);
 }
 
+/** PRE_TAX regular tax: one pro-rata factor over every goods line, summed unrounded, rounded once. */
+function preTaxRegularTax(lines: readonly SummedInvoiceLine[], discount: number): number {
+  let goodsBase = 0;
+  let goodsTax = 0;
+  let otherTax = 0;
+  for (const l of lines) {
+    const s = finite(l.subtotal);
+    const tax = s * finite(l.taxRate);
+    if (l.isNsf === true) {
+      otherTax += tax;
+    } else {
+      goodsBase += s;
+      goodsTax += tax;
+    }
+  }
+  const factor = goodsBase > 0 ? Math.min(Math.max((goodsBase - discount) / goodsBase, 0), 1) : 1;
+  return roundMoney(goodsTax * factor + otherTax);
+}
+
 /**
  * B1043: THE invoice-totals formula, over lines whose subtotals are already priced (stored rows, or
  * `computeInvoiceLineTotal` outputs). Every writer and the client footer call this; none re-derives it.
@@ -144,18 +169,27 @@ function assertFiniteTotalsInput(
  *   tax         = round(regularTax + categoryTax)
  *   total       = round(subtotal - discount + shipping + tax)
  *
+ * SA-1141 / W-989: `opts.discountBase` is REQUIRED. LEGACY_POST_TAX is the formula above, unchanged.
+ * PRE_TAX lowers the sales-tax base by the invoice discount, spread pro-rata over ALL goods lines by
+ * subtotal (taxable or not; an NSF fee line is not goods): `f = S > 0 ? clamp((S - discount) / S, 0, 1) : 1`
+ * and `regularTax = exempt ? 0 : round(sum_goods s*r*f + sum_nsf s*r)`. The levy is never reduced by a
+ * discount; `total` is unchanged in form.
+ *
  * Pure: never mutates `lines`. Each line carries its own `taxRate` (mixed rates). Sums run in row order.
  */
 export function sumInvoiceTotals(
   lines: readonly SummedInvoiceLine[],
-  opts: SumInvoiceTotalsOptions = {},
+  opts: SumInvoiceTotalsOptions,
 ): SummedInvoiceTotals {
+  assertDiscountTaxBase(opts?.discountBase);
   if (opts.strict) assertFiniteTotalsInput(lines, opts);
   const exempt = opts.isTaxExempt === true;
   const subtotal = roundMoney(lines.reduce((s, l) => s + finite(l.subtotal), 0));
   const regularTax = exempt
     ? 0
-    : roundMoney(lines.reduce((s, l) => s + finite(l.subtotal) * finite(l.taxRate), 0));
+    : opts.discountBase === "PRE_TAX"
+      ? preTaxRegularTax(lines, finite(opts.discount))
+      : roundMoney(lines.reduce((s, l) => s + finite(l.subtotal) * finite(l.taxRate), 0));
   const categoryTax = exempt
     ? 0
     : roundMoney(lines.reduce((s, l) => s + finite(l.categoryTaxAmount), 0));
@@ -166,8 +200,9 @@ export function sumInvoiceTotals(
 
 export function computeInvoiceTotals(
   lines: readonly InvoiceTotalsLine[],
-  opts: InvoiceTotalsOptions = {},
+  opts: InvoiceTotalsOptions,
 ): InvoiceTotals {
+  assertDiscountTaxBase(opts?.discountBase);
   const lineTotals = lines.map(computeInvoiceLineTotal);
   const defaultRate = finite(opts.taxRate);
   const summed = sumInvoiceTotals(
@@ -177,7 +212,12 @@ export function computeInvoiceTotals(
         line.taxRate != null ? finite(line.taxRate) : line.taxable === false ? 0 : defaultRate,
       categoryTaxAmount: line.categoryTaxAmount,
     })),
-    { discount: opts.discount, shipping: opts.shipping, isTaxExempt: opts.isTaxExempt },
+    {
+      discount: opts.discount,
+      shipping: opts.shipping,
+      isTaxExempt: opts.isTaxExempt,
+      discountBase: opts.discountBase,
+    },
   );
   return {
     lineTotals,

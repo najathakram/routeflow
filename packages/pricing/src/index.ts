@@ -39,6 +39,7 @@ export * from "./unit-chain";
 export * from "./unit-price-convert";
 export * from "./unit-options";
 export * from "./count-pieces";
+export * from "./discount-tax-base";
 export * from "./sale-totals";
 export * from "./charge-lines";
 export * from "./receipt-figures";

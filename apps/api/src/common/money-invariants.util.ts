@@ -129,7 +129,7 @@ export function storedInvoiceTotals(
  */
 export function sumInvoiceTotalsStrict(
   lines: readonly SummedInvoiceLine[],
-  opts: SumInvoiceTotalsOptions = {},
+  opts: SumInvoiceTotalsOptions,
 ): ReturnType<typeof sumInvoiceTotals> {
   try {
     return sumInvoiceTotals(lines, { ...opts, strict: true });

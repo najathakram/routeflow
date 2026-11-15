@@ -79,7 +79,7 @@ describe("#2656 the three goods-rate call sites agree with @routeflow/pricing", 
 
   it.each(FIXTURES.map((f, i) => [f.name, i] as const))("%s", (_name, i) => {
     const f = FIXTURES[i];
-    const shared = inferredGoodsFlatRate(f);
+    const shared = inferredGoodsFlatRate(f, { discountBase: "LEGACY_POST_TAX" });
     expect(shared).not.toBeNull();
     // b294 plans exactly the shared rate.
     expect(b294[i]?.rate).toBe(shared!.rate);

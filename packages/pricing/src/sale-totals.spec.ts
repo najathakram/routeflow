@@ -1,5 +1,15 @@
-import { saleTotals } from "./sale-totals";
-import { sumInvoiceTotals } from "./invoice-totals";
+import { saleTotals as saleTotalsMode, type SaleTotalsOptions } from "./sale-totals";
+import { sumInvoiceTotals as sumInvoiceTotalsMode } from "./invoice-totals";
+
+/** SA-1141: these cases pin master's behaviour, so every call states the LEGACY mode. */
+const saleTotals = (
+  lines: Parameters<typeof saleTotalsMode>[0],
+  opts: Omit<SaleTotalsOptions, "discountBase"> = {},
+) => saleTotalsMode(lines, { ...opts, discountBase: "LEGACY_POST_TAX" });
+const sumInvoiceTotals = (
+  lines: Parameters<typeof sumInvoiceTotalsMode>[0],
+  opts: Omit<Parameters<typeof sumInvoiceTotalsMode>[1], "discountBase"> = {},
+) => sumInvoiceTotalsMode(lines, { ...opts, discountBase: "LEGACY_POST_TAX" });
 
 const cola = { unitPrice: 10, qty: 4 };
 const excise = {

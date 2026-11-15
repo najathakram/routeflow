@@ -1,4 +1,10 @@
-import { flatRateFromTotals, inferredFlatRate } from "./inferred-flat-rate";
+import { flatRateFromTotals, inferredFlatRate as inferredFlatRateMode } from "./inferred-flat-rate";
+
+/** SA-1141: these cases pin master's behaviour, so every call states the LEGACY mode (pre-tax twins: discount-tax-base.spec.ts). */
+const inferredFlatRate = (
+  invoice: Parameters<typeof inferredFlatRateMode>[0],
+  opts: { preferredRate?: number | null } = {},
+) => inferredFlatRateMode(invoice, { ...opts, discountBase: "LEGACY_POST_TAX" });
 
 /** B294 (SA-141): the shared inferred-flat-rate rule. */
 describe("B294 — inferredFlatRate", () => {

@@ -1,5 +1,19 @@
-import { inferredFlatRate } from "./inferred-flat-rate";
-import { inferredGoodsFlatRate, NSF_FEE_DESCRIPTION_PREFIX, NSF_FEE_SYSTEM_KIND } from "./nsf-line";
+import { inferredFlatRate as inferredFlatRateMode } from "./inferred-flat-rate";
+import {
+  inferredGoodsFlatRate as inferredGoodsFlatRateMode,
+  NSF_FEE_DESCRIPTION_PREFIX,
+  NSF_FEE_SYSTEM_KIND,
+} from "./nsf-line";
+
+/** SA-1141: these cases pin master's behaviour, so every call states the LEGACY mode. */
+const inferredFlatRate = (
+  invoice: Parameters<typeof inferredFlatRateMode>[0],
+  opts: { preferredRate?: number | null } = {},
+) => inferredFlatRateMode(invoice, { ...opts, discountBase: "LEGACY_POST_TAX" });
+const inferredGoodsFlatRate = (
+  invoice: Parameters<typeof inferredGoodsFlatRateMode>[0],
+  opts: { preferredRate?: number | null } = {},
+) => inferredGoodsFlatRateMode(invoice, { ...opts, discountBase: "LEGACY_POST_TAX" });
 
 /**
  * #2656 / SA-549: ONE goods-only inferred flat rate. The NSF bounce-fee line is untaxed and sits in

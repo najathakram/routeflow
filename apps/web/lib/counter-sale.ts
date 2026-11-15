@@ -6,6 +6,7 @@ import {
   type ChargeLine,
   validCustomer,
   validLine,
+  LEGACY_DISCOUNT_BASE,
 } from "@routeflow/pricing";
 import { formatReceiptMoney } from "./counter-receipt";
 import { saleLinesOf, type CartCategory, type CartLine } from "./sale-lines";
@@ -188,6 +189,7 @@ export function cartTotals(
   const t = saleTotals(saleLinesOf(lines, ctx.categories), {
     taxRate,
     isTaxExempt: ctx.isTaxExempt === true,
+    discountBase: LEGACY_DISCOUNT_BASE,
   });
   return {
     subtotal: t.subtotal,

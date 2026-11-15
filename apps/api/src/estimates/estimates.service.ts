@@ -14,6 +14,7 @@ import {
   getTierPrice,
   isSpecialPrice,
   round4,
+  LEGACY_DISCOUNT_BASE,
   roundMoney,
 } from "@routeflow/pricing";
 import { loadMsrpMap } from "../common/msrp";
@@ -287,7 +288,7 @@ export class EstimatesService {
     // H5: the invoice rule - each line's subtotal x the rate, summed unrounded, rounded once; $0 when exempt.
     const taxed = sumInvoiceTotalsStrict(
       itemsData.map((it) => ({ subtotal: it.subtotal, taxRate })),
-      { discount, isTaxExempt },
+      { discount, isTaxExempt, discountBase: LEGACY_DISCOUNT_BASE },
     );
     const tax = taxed.regularTax;
     const total = roundMoney(subtotal - discount + tax);
@@ -578,7 +579,11 @@ export class EstimatesService {
         total,
         regularTax: currentTax,
         categoryTax: currentLevy,
-      } = sumInvoiceTotalsStrict(itemsData, { discount, isTaxExempt });
+      } = sumInvoiceTotalsStrict(itemsData, {
+        discount,
+        isTaxExempt,
+        discountBase: LEGACY_DISCOUNT_BASE,
+      });
       // H5: the quote's regular tax against today's, so the operator is told when the rate (or the exempt flag) moved.
       const quotedTax = roundMoney(Number(est.taxAmount ?? 0));
       const quotedSubtotal = Number(est.subtotal ?? 0);

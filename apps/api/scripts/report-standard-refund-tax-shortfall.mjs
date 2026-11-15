@@ -36,6 +36,7 @@ import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  LEGACY_DISCOUNT_BASE,
   isNsfLine,
   refundableProductPoolShare,
   roundMoney,
@@ -181,7 +182,7 @@ export function taxDiffersFromPools(inv) {
       taxRate: num(l.taxRate),
       categoryTaxAmount: num(l.categoryTaxAmount),
     })),
-    { discount: num(inv.discount) },
+    { discount: num(inv.discount), discountBase: LEGACY_DISCOUNT_BASE },
   );
   return Math.abs(pools.tax - stored) > 0.005;
 }

@@ -480,7 +480,7 @@ describe("InvoicesService.update() — B1043 the header-only PATCH on the one bu
 
     it.each(fixtures)("%s", async (_name, lines) => {
       // The fixture only counts when its stored totals ARE the builder's totals (F1).
-      const t = sumInvoiceTotals(lines as any[], {});
+      const t = sumInvoiceTotals(lines as any[], { discountBase: "LEGACY_POST_TAX" });
       const stored = { subtotal: t.subtotal, taxAmount: t.tax, total: t.total };
       arrange(stored, lines);
       await service.update("inv-1", { discount: 2, shippingFee: 3 });

@@ -1,4 +1,4 @@
-import { roundMoney, saleTotals, type ChargeLine } from "@routeflow/pricing";
+import { LEGACY_DISCOUNT_BASE, roundMoney, saleTotals, type ChargeLine } from "@routeflow/pricing";
 import { saleLinesOf, type CartCategory } from "./sale-lines";
 
 /**
@@ -48,6 +48,7 @@ export function orderBuilderTotals(
     taxRate: (Number(ctx.taxRatePct ?? 0) || 0) / 100,
     isTaxExempt: ctx.isTaxExempt === true,
     discount,
+    discountBase: LEGACY_DISCOUNT_BASE,
     shipping: ctx.shipping,
   });
   return {

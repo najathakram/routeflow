@@ -4,6 +4,7 @@ import { InvoiceStatus } from "@prisma/client";
 import { draftBillsLessThanOrder } from "./invoice-partition";
 import { isNsfLine } from "./nsf-line";
 import { applyComposedLineEdits } from "./invoice-composed-edit";
+import { LEGACY_DISCOUNT_BASE } from "@routeflow/pricing";
 import { sumInvoiceTotalsStrict } from "../common/money-invariants.util";
 import { UnitLineSplitError } from "../orders/unit-line-split";
 
@@ -197,6 +198,7 @@ export async function planPartialPriceFollow(
           discount: Number(inv.discount ?? 0),
           shipping: Number(inv.shippingFee ?? 0),
           isTaxExempt,
+          discountBase: LEGACY_DISCOUNT_BASE,
         });
         plan.drafts.push({
           invoiceId: inv.id,

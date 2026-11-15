@@ -51,6 +51,7 @@ import {
   roundMoney,
   normalizeBoxesPieces,
   OVERPAID_EPSILON,
+  LEGACY_DISCOUNT_BASE,
 } from "@routeflow/pricing";
 import { deriveInvoiceDetailFields, revisedAtByInvoice } from "./invoice-detail-read";
 import * as du from "./invoice-display-unit"; // SA-827 display units
@@ -545,6 +546,7 @@ export class InvoicesService {
       discount: invDiscount,
       shipping,
       isTaxExempt,
+      discountBase: LEGACY_DISCOUNT_BASE,
     });
 
     // Validate invoice-level discount doesn't exceed subtotal and total is non-negative — B1030:
@@ -3141,6 +3143,7 @@ export class InvoicesService {
           discount: invDiscount,
           shipping,
           isTaxExempt,
+          discountBase: LEGACY_DISCOUNT_BASE,
         });
         assertInvoiceTotalsSane(
           { discount: invDiscount, subtotal, total },
@@ -4071,7 +4074,12 @@ export class InvoicesService {
       subtotal,
       tax: taxTotal,
       total,
-    } = sumInvoiceTotalsStrict(itemsData, { discount: invDiscount, shipping, isTaxExempt });
+    } = sumInvoiceTotalsStrict(itemsData, {
+      discount: invDiscount,
+      shipping,
+      isTaxExempt,
+      discountBase: LEGACY_DISCOUNT_BASE,
+    });
     // B89/L-047: stamp issueDate explicitly as UTC-midnight of today (tenant
     // calendar day) — every other issueDate write in this file holds this
     // invariant; omitting it here left it to whatever the schema default
