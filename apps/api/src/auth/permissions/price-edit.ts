@@ -11,7 +11,9 @@ const logger = new Logger("PriceEdit");
  * May this principal type a line price other than the system's (SA-1034, W-870)? The ONE answer every site that
  * accepts a staff-typed price uses: `staffMay(role, "EDIT_LINE_PRICE", denied)`, with the denied groups read live and
  * enforced at every site, whatever the global permissions mode (the mode is not read here). A failed deny-list read
- * throws (fails closed), as `RolesGuard` and the till guard do. Every refusal (an operator the deny list or a missing row refuses, or a role that may not edit prices) logs one line (group, site, tenant; never a name or a price).
+ * throws (fails closed), as `RolesGuard` and the till guard do. An OPERATOR the deny list or a missing row refuses logs
+ * one line (group, site, tenant; never a name or a price). A role that never edits prices logs nothing: a buyer's
+ * order or a driver's edit asks this answer on every request and nothing is refused to anyone.
  *
  * A role that may not edit prices at all (DRIVER, CUSTOMER, SUPER_ADMIN, no principal) is `false` with no read.
  * TENANT_ADMIN passes with no read. `site` names the caller for the log only.
@@ -26,7 +28,7 @@ export async function priceEditAllowedFor(
 ): Promise<boolean> {
   if (!user) return false;
   const allowed = mayEditPrice(user.role, await operatorDeniedGroups(prisma, user));
-  if (!allowed) {
+  if (!allowed && user.role === "OPERATOR") {
     logger.warn(
       `denied groups=${STAFF_CAPABILITY_RULES.EDIT_LINE_PRICE.group} handler=${site} tenant=${user.tenantId ?? "-"}`,
     );

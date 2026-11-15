@@ -58,6 +58,15 @@ describe("priceEditAllowedFor (one capability, enforced at every site)", () => {
     expect(warn).toHaveBeenCalledTimes(1);
   });
 
+  it.each([UserRole.CUSTOMER, UserRole.DRIVER, UserRole.SUPER_ADMIN])(
+    "a %s is answered false with no read and no deny line: nothing was refused to anyone",
+    async (role) => {
+      const { prisma } = setup(DENY_PRICING);
+      await expect(priceEditAllowedFor(prisma, principal(role), "Site.edit")).resolves.toBe(false);
+      expect(warn).not.toHaveBeenCalled();
+    },
+  );
+
   it("a failed deny-list read throws and writes no allow log (fails closed)", async () => {
     const { prisma } = setup(new Error("db down"));
     await expect(priceEditAllowedFor(prisma, principal(UserRole.OPERATOR), "s")).rejects.toThrow(

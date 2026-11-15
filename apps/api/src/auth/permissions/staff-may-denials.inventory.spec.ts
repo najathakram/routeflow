@@ -154,6 +154,28 @@ describe("staffMay call inventory: every call passes deniedGroups (W-870)", () =
     );
   });
 
+  // `mayEditPrice(role, denied)` is the price answer's own form of the same call: its denied groups are the SECOND argument.
+  const emptyPriceDenials = (a: string[]) => /^(\[\s*\]|undefined|null)$/.test(a[1] ?? "");
+
+  it("no mayEditPrice call hands in an empty denials literal (the same rule, the price answer's call form)", () => {
+    const offenders = Object.entries(sources()).flatMap(([file, src]) =>
+      callArgs(src, "mayEditPrice")
+        .filter(emptyPriceDenials)
+        .map(() => file),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it("the pin bites: a planted mayEditPrice(role, []) is found, and a real read is not", () => {
+    const planted = `const ok = (await priceEditAllowedFor(p, u, "S")) || mayEditPrice(user.role, []);`;
+    expect(callArgs(planted, "mayEditPrice").filter(emptyPriceDenials)).toHaveLength(1);
+    expect(
+      callArgs(`mayEditPrice(user.role, await operatorDeniedGroups(p, u))`, "mayEditPrice").filter(
+        emptyPriceDenials,
+      ),
+    ).toHaveLength(0);
+  });
+
   it("the call-site inventory is exact PER CALL: a second call in a listed file is a reviewed change", () => {
     const files = sources();
     const callsOf = (name: string) =>
