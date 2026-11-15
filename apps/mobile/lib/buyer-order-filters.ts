@@ -2,6 +2,8 @@
  * UX guide B12: the buyer Orders chips -> /buyer/orders query params. "Active" is a status GROUP the server
  * resolves from the one shared list (`ACTIVE_ORDER_STATUSES`); every other chip is one status.
  */
+import type { OrderStatusGroupValue } from "@routeflow/types";
+
 export const BUYER_ORDER_FILTERS = [
   { id: "ALL", label: "All" },
   { id: "ACTIVE", label: "Active" },
@@ -17,7 +19,7 @@ export type BuyerOrderFilterId = (typeof BUYER_ORDER_FILTERS)[number]["id"];
 
 export function buyerOrderQuery(filter: BuyerOrderFilterId): {
   status?: string;
-  statusGroup?: "ACTIVE";
+  statusGroup?: OrderStatusGroupValue;
 } {
   if (filter === "ALL") return {};
   if (filter === "ACTIVE") return { statusGroup: "ACTIVE" };

@@ -8,7 +8,7 @@ import {
 import { buyerApiClient, getBuyerSubmitScope, type BuyerSeller } from "../buyer-auth";
 import { trackingRefetchInterval } from "../order-tracking-logic";
 import { buyerSubmitKeyFor, clearBuyerSubmitKey } from "../buyer-submit-key";
-import type { BuyerOrderItemEdit } from "@routeflow/types";
+import type { BuyerOrderItemEdit, OrderStatusGroupValue } from "@routeflow/types";
 import type {
   ChangeRequestResolution,
   ChangeRequestStatus,
@@ -457,7 +457,7 @@ export function useAddAllLow() {
 export function useBuyerOrders(params?: {
   status?: string;
   /** UX guide B12: a status group ("ACTIVE" = in progress); an explicit `status` wins. */
-  statusGroup?: "ACTIVE";
+  statusGroup?: OrderStatusGroupValue;
   page?: number;
   limit?: number;
 }) {
