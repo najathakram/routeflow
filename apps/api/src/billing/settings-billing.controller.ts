@@ -25,6 +25,7 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import { ProrationService } from "./proration.service";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { BillingService } from "./billing.service";
+import { BillingPaymentsService } from "./billing-payments.service";
 import { QuoteDto } from "./dto/quote.dto";
 import { SubscribeDto, UpgradeDto, DowngradeDto, EnableAddonDto } from "./dto/mutation.dto";
 import { webBaseUrl } from "../config/web-base-url";
@@ -59,6 +60,7 @@ export class SettingsBillingController {
     private readonly proration: ProrationService,
     private readonly mutations: SubscriptionMutationService,
     private readonly billing: BillingService,
+    private readonly payments: BillingPaymentsService,
   ) {}
 
   /**
@@ -158,6 +160,17 @@ export class SettingsBillingController {
   @ApiOperation({ summary: "Export billing data (works while READ_ONLY)" })
   export(@CurrentUser() user: AuthUser) {
     return this.subscription.getExport(this.tenantIdOf(user));
+  }
+
+  /**
+   * SA-1146 B-4: the Payments list (paid card invoices + RouteFlow invoices, newest first, 12 a page). The tenant is
+   * the token's; `cursor` is only a position the service decodes. A read, so a support session may see it.
+   */
+  @Get("payments")
+  @Roles(UserRole.TENANT_ADMIN)
+  @ApiOperation({ summary: "Payments list: paid card and RouteFlow invoices, newest first" })
+  listPayments(@CurrentUser() user: AuthUser, @Query("cursor") cursor?: string) {
+    return this.payments.list(this.tenantIdOf(user), cursor ?? null);
   }
 
   // ─── Mutations (money-moving — TENANT_ADMIN only, not plain OPERATOR) ────────

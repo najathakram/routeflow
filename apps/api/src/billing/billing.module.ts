@@ -12,6 +12,7 @@ import { PlanAdminController } from "./plan-admin.controller";
 import { SettingsBillingController } from "./settings-billing.controller";
 import { PaymentDueController } from "./payment-due.controller";
 import { PaymentDueService } from "./payment-due.service";
+import { BillingPaymentsService } from "./billing-payments.service";
 import { BillingStatusController } from "./billing-status.controller";
 import { BillingStatusService } from "./billing-status.service";
 import { ProrationService } from "./proration.service";
@@ -81,6 +82,8 @@ import { PlanFlagBootAlert } from "./plan-flag-boot-alert";
     CatchupCheckoutService,
     // The tenant's own "payment due" read + self-serve pay over the catch-up planner (PaymentDueController).
     PaymentDueService,
+    // SA-1146 B-4: the Billing payments list (Stripe paid invoices + RouteFlow invoices). Route wired after #4322.
+    BillingPaymentsService,
     // SA-1146 B-5: assembles the one billing status (BillingStatusController now, the platform-admin read in B-6).
     BillingStatusService,
     // SA-733r7 PR-B3: dunning (clock stamp, hourly pause sweep, invoice.paid resume, pause_collection reconciler).

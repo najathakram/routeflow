@@ -53,7 +53,13 @@ function make(
         opts.checkoutResult ?? { checkoutUrl: "https://checkout.stripe.com/x", sessionId: "cs_1" },
       ),
   } as any;
-  const controller = new SettingsBillingController(subscription, proration, mutations, billing);
+  const controller = new SettingsBillingController(
+    subscription,
+    proration,
+    mutations,
+    billing,
+    {} as any,
+  );
   return { controller, subscription, proration, mutations, billing };
 }
 

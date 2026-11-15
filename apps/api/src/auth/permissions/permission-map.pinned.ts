@@ -814,6 +814,7 @@ export const PERMISSION_MAP: Readonly<Record<string, string>> = {
   "SettingsBillingController.getRecommendation": "BASE",
   "SettingsBillingController.getSubscription": "BASE",
   "SettingsBillingController.getUsage": "BASE",
+  "SettingsBillingController.listPayments": "ADMIN",
   "SettingsBillingController.prorationPreview": "BASE",
   "SettingsBillingController.quote": "BASE",
   "SettingsBillingController.resume": "ADMIN",
