@@ -123,7 +123,7 @@ export function attentionItems(o: {
   stripe?: { connected?: boolean; configured?: boolean } | null;
   /** The customers-without-a-state card's totals (GET .../unknown-state-customers); null/undefined while loading. */
   unknownState?: { customersTotal?: number; truncated?: boolean } | null;
-  /** The selling-restrictions master switch is known to be OFF (never true while loading or failed). */
+  /** The selling-restrictions master switch is known to be OFF (never true while loading, and never while the read is in error, even if old data is cached). */
   restrictionsOff?: boolean;
 }): AttentionItem[] {
   const items: AttentionItem[] = [];
@@ -148,13 +148,14 @@ export function attentionItems(o: {
       o.isAdmin
         ? {
             id: "restrictions-off",
-            label: "Selling restrictions are off for staff orders and invoices",
+            label:
+              "Selling restrictions are off for staff orders and invoices. Portal limits still apply.",
             href: "/settings/restrictions",
           }
         : {
             id: "restrictions-off",
             label:
-              "Selling restrictions are off for staff orders and invoices. Ask an admin to turn them on",
+              "Selling restrictions are off for staff orders and invoices. Portal limits still apply. Ask an admin to turn on the staff check.",
           },
     );
   }

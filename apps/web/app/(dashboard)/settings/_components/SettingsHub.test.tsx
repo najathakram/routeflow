@@ -381,11 +381,12 @@ describe("SettingsHub: restrictions off is one Needs-attention row", () => {
     expect(within(list()).queryByRole("button")).toBeNull();
   });
 
-  it("no row when the switch is on, loading, or errored", () => {
+  it("no row when the switch is on, loading, or errored (also a failed refetch with old data)", () => {
     for (const r of [
       { data: { enabled: true }, isLoading: false, isError: false },
       { data: undefined, isLoading: true, isError: false },
       { data: undefined, isLoading: false, isError: true },
+      { data: { enabled: false }, isLoading: false, isError: true },
     ]) {
       restrictions.mockReturnValue(r);
       const { unmount } = renderWithProviders(<SettingsHub isAdmin />);

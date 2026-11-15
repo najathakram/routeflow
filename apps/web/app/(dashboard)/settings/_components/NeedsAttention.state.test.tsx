@@ -14,14 +14,20 @@ jest.mock("@/lib/api/stripe-connect", () => ({
   useStripeConnectStatus: () => ({ data: { connected: true } }),
 }));
 let mockRestrictions: unknown = { enabled: true };
+let mockRestrictionsError = false;
 jest.mock("@/lib/api/restrictions-settings", () => ({
-  useRestrictionsSettings: () => ({ data: mockRestrictions, isLoading: false, isError: false }),
+  useRestrictionsSettings: () => ({
+    data: mockRestrictions,
+    isLoading: false,
+    isError: mockRestrictionsError,
+  }),
 }));
 jest.mock("./BusinessCard", () => ({ useBusinessStatus: () => null }));
 
 beforeEach(() => {
   mockUnknown = { customersTotal: 8, truncated: false };
   mockRestrictions = { enabled: true };
+  mockRestrictionsError = false;
 });
 
 it.each([true, false])("isAdmin=%s: '8 customers need a state' links to the card", (isAdmin) => {
@@ -60,11 +66,24 @@ describe("selling restrictions off", () => {
     expect(screen.getByRole("link", { name: /8 customers need a state/ })).toBeInTheDocument();
   });
 
-  it("switch on: no row; switch off alone still shows the heading", () => {
+  it("switch on and nothing else to fix: no row and no heading", () => {
     mockRestrictions = { enabled: true };
     mockUnknown = { customersTotal: 0, truncated: false };
     renderWithProviders(<NeedsAttention isAdmin />);
     expect(screen.queryByText(/selling restrictions are off/i)).toBeNull();
     expect(screen.queryByText("Needs attention")).toBeNull();
+  });
+
+  it("switch off alone (nothing else to fix): the heading and the one row", () => {
+    mockUnknown = { customersTotal: 0, truncated: false };
+    renderWithProviders(<NeedsAttention isAdmin />);
+    expect(screen.getByText("Needs attention")).toBeInTheDocument();
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
+  });
+
+  it.each([true, false])("isAdmin=%s: a failed refetch with old data hides the row", (isAdmin) => {
+    mockRestrictionsError = true;
+    renderWithProviders(<NeedsAttention isAdmin={isAdmin} />);
+    expect(screen.queryByText(/selling restrictions are off/i)).toBeNull();
   });
 });

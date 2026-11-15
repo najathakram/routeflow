@@ -33,7 +33,7 @@ function OperatorAttention() {
         isAdmin: false,
         status: null,
         unknownState: unknown.data,
-        restrictionsOff: restrictions.data?.enabled === false,
+        restrictionsOff: !restrictions.isError && restrictions.data?.enabled === false,
       })}
     />
   );
@@ -51,7 +51,7 @@ function AdminAttention() {
     remittance: remittance.data,
     stripe: stripe.data,
     unknownState: unknown.data,
-    restrictionsOff: restrictions.data?.enabled === false,
+    restrictionsOff: !restrictions.isError && restrictions.data?.enabled === false,
   });
   return <AttentionList items={items} />;
 }

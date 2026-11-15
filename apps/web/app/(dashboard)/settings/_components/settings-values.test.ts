@@ -179,11 +179,13 @@ describe("Needs attention", () => {
     expect(admin).toHaveLength(1);
     expect(admin[0]).toMatchObject({ id: "restrictions-off", href: "/settings/restrictions" });
     expect(admin[0].label).toMatch(/selling restrictions are off/i);
+    expect(admin[0].label).toMatch(/portal limits still apply/i);
     const op = attentionItems({ ...base, isAdmin: false, restrictionsOff: true });
     expect(op).toHaveLength(1);
     expect(op[0].id).toBe("restrictions-off");
     expect(op[0].href).toBeUndefined();
-    expect(op[0].label).toMatch(/ask an admin/i);
+    expect(op[0].label).toMatch(/portal limits still apply/i);
+    expect(op[0].label).toMatch(/ask an admin to turn on the staff/i);
     expect(attentionItems({ ...base, restrictionsOff: false })).toEqual([]);
   });
 
