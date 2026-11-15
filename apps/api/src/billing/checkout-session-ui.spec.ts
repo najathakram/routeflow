@@ -29,11 +29,15 @@ const HOSTED_OUT = { ...WITH_RETURN, managed_payments: { enabled: false } };
 describe("withCheckoutPolicy x BILLING_CHECKOUT_UI (SA-1139 R1)", () => {
   const prior = process.env[CHECKOUT_UI_ENV];
   const priorPm = process.env[CHECKOUT_PAYMENT_METHODS_ENV];
+  const savedWebUi = process.env.WEB_URL;
   beforeEach(() => {
+    process.env.WEB_URL = "https://app.test";
     delete process.env[CHECKOUT_UI_ENV];
     delete process.env[CHECKOUT_PAYMENT_METHODS_ENV];
   });
   afterEach(() => {
+    if (savedWebUi === undefined) delete process.env.WEB_URL;
+    else process.env.WEB_URL = savedWebUi;
     if (prior === undefined) delete process.env[CHECKOUT_UI_ENV];
     else process.env[CHECKOUT_UI_ENV] = prior;
     if (priorPm === undefined) delete process.env[CHECKOUT_PAYMENT_METHODS_ENV];
@@ -65,21 +69,25 @@ describe("withCheckoutPolicy x BILLING_CHECKOUT_UI (SA-1139 R1)", () => {
     expect(checkoutUiMode("TENANT_SELF")).toBe("embedded");
   });
 
-  it("case 2: a success_url that already carries session_id gets no second one; no query string gets ?", () => {
+  it("case 2: a success_url that already carries session_id gets no second one; a plain Billing address gets &session_id", () => {
     process.env[CHECKOUT_UI_ENV] = "embedded";
     const has = withCheckoutPolicy(
-      { ...BASE, success_url: "https://app.test/billing/success?session_id={CHECKOUT_SESSION_ID}" },
+      {
+        ...BASE,
+        success_url:
+          "https://app.test/settings/billing?checkout=success&session_id={CHECKOUT_SESSION_ID}",
+      },
       { surface: "TENANT_SELF" },
     );
     expect(has.return_url).toBe(
-      "https://app.test/billing/success?session_id={CHECKOUT_SESSION_ID}",
+      "https://app.test/settings/billing?checkout=success&session_id={CHECKOUT_SESSION_ID}",
     );
     const bare = withCheckoutPolicy(
-      { ...BASE, success_url: "https://app.test/billing/success" },
+      { ...BASE, success_url: "https://app.test/settings/billing?checkout=success" },
       { surface: "TENANT_SELF" },
     );
     expect(bare.return_url).toBe(
-      "https://app.test/billing/success?session_id={CHECKOUT_SESSION_ID}",
+      "https://app.test/settings/billing?checkout=success&session_id={CHECKOUT_SESSION_ID}",
     );
   });
 

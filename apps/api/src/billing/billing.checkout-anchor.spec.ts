@@ -114,6 +114,18 @@ describe("SA-733 D6 / M6 — createCheckoutSession anchors every new subscriptio
     });
   });
 
+  it("B-1: with no caller URLs the session returns to the Billing page, never to a /billing/success page", async () => {
+    jest.useFakeTimers({ now: new Date("2026-10-15T09:00:00Z"), doNotFake: ONLY_DATE });
+    const h = make();
+    await h.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" });
+    expect(new URL(sent(h).success_url).pathname + new URL(sent(h).success_url).search).toBe(
+      "/settings/billing?checkout=success",
+    );
+    expect(new URL(sent(h).cancel_url).pathname + new URL(sent(h).cancel_url).search).toBe(
+      "/settings/billing?checkout=cancelled",
+    );
+  });
+
   it("Oct 31 23:00Z: the session expires BEFORE the anchor (<= 11:00Z), so it cannot complete after it", async () => {
     jest.useFakeTimers({ now: new Date("2026-10-31T23:00:00Z"), doNotFake: ONLY_DATE });
     const h = make();
@@ -298,7 +310,8 @@ describe("SA-832 / 453: checkout creation refuses an admin-locked tenant", () =>
 describe("SA-1139 PR-1: the tenant's own subscription checkout x BILLING_CHECKOUT_UI", () => {
   const UI = "BILLING_CHECKOUT_UI";
   const prior = process.env[UI];
-  const RETURNS = {
+  // What the service builds on its own (it takes no caller URLs); only used as the expected values.
+  const EXPECTED_RETURNS = {
     successUrl: "https://app.test/settings/billing?checkout=success",
     cancelUrl: "https://app.test/settings/billing?checkout=cancelled",
   };
@@ -327,19 +340,18 @@ describe("SA-1139 PR-1: the tenant's own subscription checkout x BILLING_CHECKOU
   /** Today's params, key for key (the guard of case 1; also the hosted reference of case 7). */
   async function hostedParams(addonSkus: string[] = []) {
     const h = make({ addonSkus });
-    await h.billing.createCheckoutSession("t1", { ...RETURNS, surface: "TENANT_SELF" });
+    await h.billing.createCheckoutSession("t1", { surface: "TENANT_SELF" });
     return sent(h);
   }
 
   it("case 1: switch unset -> hosted params exactly as today, and a hosted start", async () => {
     const h = make();
     const out = await h.billing.createCheckoutSession("t1", {
-      ...RETURNS,
       surface: "TENANT_SELF",
     });
     const p = sent(h);
-    expect(p.success_url).toBe(RETURNS.successUrl);
-    expect(p.cancel_url).toBe(RETURNS.cancelUrl);
+    expect(p.success_url).toBe(EXPECTED_RETURNS.successUrl);
+    expect(p.cancel_url).toBe(EXPECTED_RETURNS.cancelUrl);
     expect(p.mode).toBe("subscription");
     for (const k of ["ui_mode", "return_url", "redirect_on_completion"]) {
       expect(p).not.toHaveProperty(k);
@@ -358,13 +370,12 @@ describe("SA-1139 PR-1: the tenant's own subscription checkout x BILLING_CHECKOU
     const h = make();
     echoEmbedded(h);
     const out = await h.billing.createCheckoutSession("t1", {
-      ...RETURNS,
       surface: "TENANT_SELF",
     });
     const p = sent(h);
     expect(p.ui_mode).toBe("embedded_page");
     expect(p.redirect_on_completion).toBe("if_required");
-    expect(p.return_url).toBe(`${RETURNS.successUrl}&session_id={CHECKOUT_SESSION_ID}`);
+    expect(p.return_url).toBe(`${EXPECTED_RETURNS.successUrl}&session_id={CHECKOUT_SESSION_ID}`);
     expect(p).not.toHaveProperty("success_url");
     expect(p).not.toHaveProperty("cancel_url");
     expect(out).toEqual({
@@ -384,14 +395,14 @@ describe("SA-1139 PR-1: the tenant's own subscription checkout x BILLING_CHECKOU
     const spies = (["log", "warn", "error", "debug", "verbose"] as const).map((m) =>
       jest.spyOn((h.billing as any).logger, m).mockImplementation(() => undefined),
     );
-    await h.billing.createCheckoutSession("t1", { ...RETURNS, surface: "TENANT_SELF" });
+    await h.billing.createCheckoutSession("t1", { surface: "TENANT_SELF" });
     for (const s of spies) expect(JSON.stringify(s.mock.calls)).not.toContain("secret");
   });
 
   it("case 5: switch embedded, the platform admin's link (ADMIN_LINK) -> hosted with a url", async () => {
     process.env[UI] = "embedded";
     const h = make();
-    const out = await h.billing.createCheckoutSession("t1", { ...RETURNS, surface: "ADMIN_LINK" });
+    const out = await h.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" });
     expect(sent(h)).not.toHaveProperty("ui_mode");
     expect(out).toMatchObject({
       uiMode: "hosted",
@@ -403,7 +414,7 @@ describe("SA-1139 PR-1: the tenant's own subscription checkout x BILLING_CHECKOU
 
   it("case 9: no surface (a JS caller) -> throws before any Stripe create; surface is never defaulted", async () => {
     process.env[UI] = "embedded";
-    for (const arg of [undefined, "month", { ...RETURNS }]) {
+    for (const arg of [undefined, "month", {}]) {
       const h = make();
       await expect(
         (h.billing.createCheckoutSession as (t: string, o?: unknown) => Promise<unknown>).call(
@@ -422,7 +433,7 @@ describe("SA-1139 PR-1: the tenant's own subscription checkout x BILLING_CHECKOU
     try {
       const h = make();
       echoEmbedded(h, "cs_e", "s");
-      await h.billing.createCheckoutSession("t1", { ...RETURNS, surface: "TENANT_SELF" });
+      await h.billing.createCheckoutSession("t1", { surface: "TENANT_SELF" });
       expect(sent(h).managed_payments).toEqual({ enabled: false });
       expect(sent(h).payment_method_types).toEqual(["card", "us_bank_account"]);
     } finally {
@@ -435,7 +446,7 @@ describe("SA-1139 PR-1: the tenant's own subscription checkout x BILLING_CHECKOU
     process.env[UI] = "embedded";
     const h = make({ addonSkus: ["FORECASTING"] });
     echoEmbedded(h, "cs_e", "s");
-    await h.billing.createCheckoutSession("t1", { ...RETURNS, surface: "TENANT_SELF" });
+    await h.billing.createCheckoutSession("t1", { surface: "TENANT_SELF" });
     const emb = sent(h);
     expect(emb.ui_mode).toBe("embedded_page");
     for (const k of [

@@ -53,6 +53,19 @@ const nextConfig = {
         destination: "/routes/:id/dispatch",
         permanent: true,
       },
+      // SA-1146 B-1 (B446): Checkout used to return to these two addresses, which are not pages. A link already
+      // out (a Stripe session lives 23 h) lands on Billing with the return notice. Temporary on purpose; remove
+      // both 7 days after deploy (register row). Pinned by lib/billing-return-redirects.static.test.ts.
+      {
+        source: "/billing/success",
+        destination: "/settings/billing?checkout=success",
+        permanent: false,
+      },
+      {
+        source: "/billing/cancel",
+        destination: "/settings/billing?checkout=cancelled",
+        permanent: false,
+      },
       // The old marketing site's pages, sent to the closest page of the new site (owner order,
       // "no old look left anywhere"). Permanent, so search engines move the old
       // addresses across. A next.config redirect is evaluated before middleware and always carries

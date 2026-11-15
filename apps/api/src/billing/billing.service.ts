@@ -105,6 +105,12 @@ import {
 import type { CheckoutStart } from "@routeflow/types";
 import { webBaseUrl } from "../config/web-base-url";
 import {
+  API_BILLING_CANCEL_PATH,
+  API_BILLING_PORTAL_RETURN_PATH,
+  API_BILLING_RETURN_PATHS,
+  billingReturnUrl,
+} from "./billing-return-paths";
+import {
   STRIPE_CHECKOUT_APPLIED_ACTION,
   STRIPE_CHECKOUT_ASYNC_FAILED_ACTION,
   STRIPE_CHECKOUT_ENTITY,
@@ -554,8 +560,6 @@ export class BillingService {
     // SA-1139: `surface` is REQUIRED and never defaulted (the admin link is hosted, a tenant's own checkout follows the switch).
     opts: {
       interval?: "month" | "year";
-      successUrl?: string;
-      cancelUrl?: string;
       surface: CheckoutSurface;
     },
   ): Promise<CheckoutStart> {
@@ -684,9 +688,8 @@ export class BillingService {
           customer: customerId,
           mode: "subscription",
           line_items: [{ price_data: priceData, quantity: 1 }, ...addons.lineItems],
-          success_url:
-            opts?.successUrl ?? `${baseUrl}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
-          cancel_url: opts?.cancelUrl ?? `${baseUrl}/billing/cancel`,
+          success_url: billingReturnUrl(baseUrl, API_BILLING_RETURN_PATHS.plan),
+          cancel_url: billingReturnUrl(baseUrl, API_BILLING_CANCEL_PATH),
           metadata: {
             tenantId,
             slug: tenant.slug,
@@ -1038,7 +1041,6 @@ export class BillingService {
 
   async createBillingPortalSession(
     tenantId: string,
-    returnUrl?: string,
     request?: { timeoutMs: number; maxNetworkRetries: number },
   ): Promise<{ portalUrl: string }> {
     const sub = await this.prisma.tenantSubscription.findUnique({
@@ -1055,7 +1057,8 @@ export class BillingService {
     const portalSession = await this.stripe.createBillingPortalSession(
       {
         customerId: sub.stripeCustomerId,
-        returnUrl: returnUrl ?? `${baseUrl}/settings/billing`,
+        tenantId,
+        returnUrl: billingReturnUrl(baseUrl, API_BILLING_PORTAL_RETURN_PATH),
       },
       request,
     );
@@ -3177,9 +3180,8 @@ export class BillingService {
   private async portalUrlOrEmpty(tenantId: string): Promise<string> {
     try {
       // #2476: capped - this runs inside the webhook's claim lease, and the link is best-effort.
-      return (
-        await this.createBillingPortalSession(tenantId, undefined, PAYMENT_FAILED_PORTAL_REQUEST)
-      ).portalUrl;
+      return (await this.createBillingPortalSession(tenantId, PAYMENT_FAILED_PORTAL_REQUEST))
+        .portalUrl;
     } catch (e) {
       this.logger.warn(
         `Billing portal link unavailable for tenant ${tenantId}: ${(e as Error).message}`,

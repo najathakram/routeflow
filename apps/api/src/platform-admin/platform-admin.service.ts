@@ -146,6 +146,7 @@ import {
 import { underTenantPriceLock } from "../billing/price-lock";
 import { clearNeedsReconcile } from "../billing/needs-reconcile";
 import { activationClaimRefusal } from "../billing/catchup-claim";
+import { API_BILLING_PORTAL_RETURN_PATH } from "../billing/billing-return-paths";
 import { issueSetPasswordLink } from "../users/set-password-token";
 import { assertSafeTextCell } from "../common/safe-text-cell";
 import { assertValidTenantTimeZone } from "../system-config/tenant-timezone.writer";
@@ -543,8 +544,8 @@ export class PlatformAdminService {
     });
 
     // #2439: the welcome email — a single-use 72h set-password link (never a password), the
-    // login URL, and a STABLE "Pay now" link (login → /settings/billing, whose checkout button
-    // mints a fresh Stripe session via POST /settings/billing/subscription/checkout) when this
+    // login URL, and a STABLE "Pay now" link (login → the Billing page, whose checkout button
+    // mints a fresh Stripe session via the tenant subscription-checkout route) when this
     // plan allows self-serve checkout (R2.7). No checkout session is created here any more: its
     // URL expired in 24h. Delivery is recorded on the audit row and returned.
     const webBase = (
@@ -555,7 +556,7 @@ export class PlatformAdminService {
     // email must not offer a card payment or say a trial is running.
     const payUrl =
       dto.startMode !== "active" && inviteOnlyCheckoutAllowed(planKey)
-        ? `${webBase}/login?redirect=${encodeURIComponent("/settings/billing")}`
+        ? `${webBase}/login?redirect=${encodeURIComponent(API_BILLING_PORTAL_RETURN_PATH)}`
         : null;
     const welcomeEmail = await this.sendWelcomeEmail({
       userId: result.user.id,

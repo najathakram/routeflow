@@ -30,6 +30,11 @@ import { QuoteDto } from "./dto/quote.dto";
 import { SubscribeDto, UpgradeDto, DowngradeDto, EnableAddonDto } from "./dto/mutation.dto";
 import { webBaseUrl } from "../config/web-base-url";
 import {
+  API_BILLING_CANCEL_PATH,
+  API_BILLING_RETURN_PATHS,
+  billingReturnUrl,
+} from "./billing-return-paths";
+import {
   inviteOnlyCheckoutAllowed,
   INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT,
 } from "./plan-catalog.constants";
@@ -245,12 +250,7 @@ export class SettingsBillingController {
         "Self-serve checkout is currently disabled for this plan — contact us to complete your subscription.",
       );
     }
-    const base = webBaseUrl();
-    return this.billing.createCheckoutSession(tenantId, {
-      successUrl: `${base}/settings/billing?checkout=success`,
-      cancelUrl: `${base}/settings/billing?checkout=cancelled`,
-      surface: "TENANT_SELF",
-    });
+    return this.billing.createCheckoutSession(tenantId, { surface: "TENANT_SELF" });
   }
 
   /**
@@ -268,7 +268,7 @@ export class SettingsBillingController {
     // allSettled: a failure of one Stripe call must not lose the other (the pay link survives a portal outage and
     // vice versa). Both are capped (#2476) so the route never hangs on Stripe.
     const [portal, pay] = await Promise.allSettled([
-      this.billing.createBillingPortalSession(tenantId, undefined, INTERACTIVE_STRIPE_REQUEST),
+      this.billing.createBillingPortalSession(tenantId, INTERACTIVE_STRIPE_REQUEST),
       this.subscription.openInvoiceUrl(tenantId),
     ]);
     const portalUrl = portal.status === "fulfilled" ? portal.value.portalUrl : null;

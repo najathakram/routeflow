@@ -8,6 +8,11 @@ import {
 import { fromCents, toCents } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { addonCatalogInvalidException } from "./addon-catalog-invalid";
+import {
+  API_BILLING_CANCEL_PATH,
+  API_BILLING_RETURN_PATHS,
+  billingReturnUrl,
+} from "./billing-return-paths";
 import { ADMIN_AUDIT_ENTITY } from "../platform-admin/audit-actions.constant";
 import { PrismaService } from "../prisma/prisma.service";
 import { billableAddonWhere } from "./addon-row";
@@ -376,8 +381,8 @@ export class CatchupCheckoutService {
     assertCheckoutSurface(opts?.surface); // before anything is claimed or created
     const now = opts.now ?? new Date();
     // validated before anything is claimed or created
-    const successPath = safePath(opts.successPath, "/settings/billing?checkout=success");
-    const cancelPath = safePath(opts.cancelPath, "/settings/billing?checkout=cancelled");
+    const successPath = safePath(opts.successPath, API_BILLING_RETURN_PATHS.plan);
+    const cancelPath = safePath(opts.cancelPath, API_BILLING_CANCEL_PATH);
     if (!this.stripe.isConfigured) {
       throw new ServiceUnavailableException("Stripe is not configured.");
     }
@@ -465,9 +470,9 @@ export class CatchupCheckoutService {
         addonSkus: addonLines.skus,
         plan: fresh.plan,
         now,
-        // PATHS ("/settings/billing?..."), joined to the one web base (webBaseUrl) here
-        successUrl: `${base}${successPath}`,
-        cancelUrl: `${base}${cancelPath}`,
+        // PATHS (billing-return-paths.ts), joined to the one web base (webBaseUrl) by the one helper
+        successUrl: billingReturnUrl(base, successPath),
+        cancelUrl: billingReturnUrl(base, cancelPath),
       });
       session = await this.stripe.client.checkout.sessions.create(
         withCheckoutPolicy(params, { surface: opts.surface }),

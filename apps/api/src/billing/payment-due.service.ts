@@ -3,6 +3,7 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import { resolveZone } from "../common/tenant-time-zone";
 import { PrismaService } from "../prisma/prisma.service";
 import { CatchupCheckoutService } from "./catchup-checkout.service";
+import { API_BILLING_CANCEL_PATH, API_BILLING_RETURN_PATHS } from "./billing-return-paths";
 import { CATCHUP_META, claimRefusal } from "./catchup-claim";
 import { CatchupClaimService } from "./catchup-claim.service";
 import { chargeNowCents, describeStubPeriod } from "./catchup-plan";
@@ -99,8 +100,8 @@ const NOT_DUE: PaymentDueView = {
 };
 
 /** Where Stripe sends the admin back: a real payment, or a card add (nothing was charged: never "Payment received"). */
-const PAID_RETURN_PATH = "/settings/billing?paid=1";
-const CARD_RETURN_PATH = "/settings/billing?paid=1&card=1";
+const PAID_RETURN_PATH = API_BILLING_RETURN_PATHS.pay;
+const CARD_RETURN_PATH = API_BILLING_RETURN_PATHS.cardAdd;
 
 /** A held claim is the very state "a payment session is open"; it is not a reason to hide the bill. */
 const HIDES_THE_BILL = (reason: string) => reason !== "claim_held";
@@ -257,7 +258,7 @@ export class PaymentDueService {
         now,
         // paths: open() joins them to its one web base (webBaseUrl)
         successPath: view.cardNeeded ? CARD_RETURN_PATH : PAID_RETURN_PATH,
-        cancelPath: "/settings/billing?checkout=cancelled",
+        cancelPath: API_BILLING_CANCEL_PATH,
         // SA-1139: the tenant pays on its own page, so the BILLING_CHECKOUT_UI switch applies
         surface: "TENANT_SELF",
       });
