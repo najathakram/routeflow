@@ -145,6 +145,28 @@ describe("BookkeepingService.getReceivableSummary: credit notes (UX guide B7)", 
     ]);
   });
 
+  it("a VOID note with amountUsed > 0 counts 0, never its remainder", async () => {
+    prisma.creditNote.findMany.mockResolvedValue([
+      note("cn-void-used", { status: "VOID", amount: 20, amountUsed: 5 }),
+    ]);
+    const res: any = await service.getReceivableSummary("2026-09-01", "2026-09-30");
+    expect(res.data[0].balance).toBe(0);
+  });
+
+  it("a note expiring exactly now counts 0 (expired at the instant)", async () => {
+    prisma.creditNote.findMany.mockResolvedValue([note("cn-edge", { expiresAt: NOW })]);
+    const res: any = await service.getReceivableSummary("2026-09-01", "2026-09-30");
+    expect(res.data[0].balance).toBe(0);
+  });
+
+  it("a fully used note counts 0", async () => {
+    prisma.creditNote.findMany.mockResolvedValue([
+      note("cn-used", { amount: 12.5, amountUsed: 12.5 }),
+    ]);
+    const res: any = await service.getReceivableSummary("2026-09-01", "2026-09-30");
+    expect(res.data[0].balance).toBe(0);
+  });
+
   it("guard: a part-used open note reports the rounded remainder", async () => {
     prisma.creditNote.findMany.mockResolvedValue([
       note("cn-part", { amount: 10, amountUsed: 3.3 }),

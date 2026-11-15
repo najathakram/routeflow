@@ -1300,6 +1300,15 @@ function ReceivableSummaryReport({ from, to }: { from?: string; to?: string }) {
             <td />
             <td className="px-4 py-2 text-right text-navy">{fmt(breakdown.openInvoices)}</td>
           </tr>
+          {breakdown.writtenOff > 0 && (
+            <tr className="bg-surface-raised">
+              <td colSpan={5} className="px-4 py-2 text-navy">
+                Written-off invoices
+              </td>
+              <td />
+              <td className="px-4 py-2 text-right text-navy">{fmt(breakdown.writtenOff)}</td>
+            </tr>
+          )}
           <tr className="bg-surface-raised">
             <td colSpan={5} className="px-4 py-2 text-navy">
               Unused credit notes
