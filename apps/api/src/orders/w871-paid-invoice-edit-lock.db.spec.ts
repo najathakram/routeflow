@@ -4,16 +4,12 @@
  * edit is accepted: the order shrinks (or grows) and the invoice keeps the old total (the counter lane's probe,
  * `local-assets/lead-2026-11-14/bugs/W-871-probe.md`: order 20 -> 10, invoice PAID 20).
  *
- * Builds a REAL OrdersService via `Object.create` (no Nest DI), like w871-paid-sale-edits.db.spec.ts, but wires the
- * invoice revert to the REAL `revertLinkedInvoicesToDraft` (the one site SA-1144 changes), so the refusal is what the
- * production code does. `resyncOrderInvoicesForEdit` and `reconcileOrderDraftInvoice` are no-op stubs: before delivery the
- * real reconcile never restates a non-deposit PAID invoice (SA-1144 F3), so the stub hides no refusal.
+ * Builds a REAL OrdersService and a REAL InvoicesService via `Object.create` (no Nest DI; the harness of
+ * counter-sale-void.db.spec.ts), so the revert, its refusal, the resync and the reconcile are all production's own: no stubs
+ * on the invoice side (SA-1144 fix round, item 5).
  *
  * Collected only by jest.db.config.js. SAFETY: one throwaway `qa-w871b-<run>` tenant approved by `assertTestTenant`.
  */
-jest.mock("../invoices/invoices.service", () => ({
-  InvoicesService: jest.fn().mockImplementation(() => ({})),
-}));
 jest.mock("../notifications/notifications.service", () => ({
   NotificationsService: jest.fn().mockImplementation(() => ({})),
 }));
@@ -30,8 +26,7 @@ import { EncryptionService } from "../common/encryption.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { OrdersService } from "./orders.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
-import { INVOICE_EDIT_STUBS } from "./testing/invoice-edit-stubs";
-import { revertLinkedInvoicesToDraft } from "../invoices/order-edit-revert-set";
+import { InvoicesService } from "../invoices/invoices.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -46,6 +41,7 @@ describeDb(
     let prisma: PrismaService;
     let tenantCtx: TenantContextService;
     let orders: any;
+    let afterFirstInvoiceRead: null | (() => Promise<void>) = null;
     const run = randomUUID().slice(0, 8);
     const slug = assertTestTenant(`qa-w871b-${run}`, "w871-paid-invoice-edit-lock.db.spec.ts");
     let tenantId = "";
@@ -212,6 +208,53 @@ describeDb(
         prisma,
         new EncryptionService({ get: () => undefined } as any),
       );
+      const anyMethod = new Proxy(
+        {},
+        {
+          get: (_t, prop) => (prop === "then" || typeof prop === "symbol" ? undefined : jest.fn()),
+        },
+      );
+      const invoices: any = Object.assign(Object.create(InvoicesService.prototype), {
+        prisma,
+        creditNotes: { settleOrderCreditsInTx: async () => ({ applied: 0, unapplied: 0 }) },
+        authority: { can: async () => false },
+        ledger: anyMethod,
+        gateway: anyMethod,
+        commissionEngine: { syncInvoiceCommissionSafe: async () => undefined },
+        logger: new Logger("w871b-invoices"),
+      });
+      // case 20: a hook that fires once, right after the revert's first invoice read, on the edit's own tx
+      const realRevert = invoices.revertLinkedInvoicesForOrderEdit.bind(invoices);
+      invoices.revertLinkedInvoicesForOrderEdit = (orderId: string, tx?: any, opts?: any) => {
+        if (!tx || !afterFirstInvoiceRead) return realRevert(orderId, tx, opts);
+        const fire = afterFirstInvoiceRead;
+        afterFirstInvoiceRead = null;
+        let fired = false;
+        const wrap = (obj: any): any =>
+          new Proxy(obj, {
+            get(t, prop) {
+              const v = Reflect.get(t, prop, t);
+              if (prop === "invoice") {
+                return new Proxy(v, {
+                  get(it, q) {
+                    const fn = Reflect.get(it, q, it);
+                    if (q !== "findMany") return typeof fn === "function" ? fn.bind(it) : fn;
+                    return async (...args: unknown[]) => {
+                      const rows = await fn.apply(it, args);
+                      if (!fired) {
+                        fired = true;
+                        await fire();
+                      }
+                      return rows;
+                    };
+                  },
+                });
+              }
+              return typeof v === "function" ? v.bind(t) : v;
+            },
+          });
+        return realRevert(orderId, wrap(tx), opts);
+      };
       orders = Object.assign(Object.create(OrdersService.prototype), {
         prisma,
         gateway: { emitOrderStatusChanged: jest.fn(), emitOrderCreated: jest.fn() },
@@ -224,17 +267,7 @@ describeDb(
         authGuard: { assertAuthorizedOrThrow: async () => undefined },
         promotionsService: { activeForCatalog: async () => [] },
         tenantCtx,
-        // the one real piece: the revert (and its refusal) is production's own function, on the caller's db handle
-        invoicesService: {
-          revertLinkedInvoicesForOrderEdit: async (orderId: string, tx?: any, opts?: any) =>
-            revertLinkedInvoicesToDraft(tx ?? prisma.forTenant(), orderId, opts),
-          resyncOrderInvoicesForEdit: async () => [],
-          ...INVOICE_EDIT_STUBS,
-          reconcileOrderDraftInvoice: async () => undefined,
-          findOpenOrderDraft: async () => null,
-          releaseWalletPaymentsInTx: async () => undefined,
-          voidInvoiceInTx: async () => undefined,
-        },
+        invoicesService: invoices,
         logger: new Logger(OrdersService.name),
         inlineReturns: {},
         creditNotes: {
@@ -339,7 +372,11 @@ describeDb(
       await edit(o.id, { items: [{ id: lines[0].id, action: "UPDATE", qty: 3 }] });
       const line = await raw.orderItem.findUniqueOrThrow({ where: { id: lines[0].id } });
       expect(Number(line.qty)).toBe(3);
-      expect((await snapshot(o.id)).invoices[0].status).toBe("PARTIAL"); // the mirror is not reverted
+      const after = await snapshot(o.id);
+      expect(after.invoices[0].status).toBe("PARTIAL"); // the mirror is not reverted
+      // and the widened reconcile restated it: the mirror's total follows the new order total (no stub)
+      expect(Number(after.invoices[0].total)).toBe(Number(after.header.total));
+      expect(Number(after.header.total)).toBe(40);
     }, 60_000);
 
     it("case 8 (guard): the deposit mirror fully PAID: a quantity increase is refused", async () => {
@@ -424,14 +461,14 @@ describeDb(
         tenantSlug: slug,
       }) as JwtPayload;
 
-    it("case 15: the at-door change-request apply on a PAID order is 400 with the door copy; the request stays open, nothing written", async () => {
+    it("cases 15 and 22: the at-door change-request apply on a PAID order is 409 in the at-stop shape (same code, the driver's sentence); the request stays open, nothing written", async () => {
       const { o, lines, products } = await pendingOrder({ status: "PAID", paid: 20 });
       const cr = await atDoor(o.id, lines[0].id, products[0], o.customerId);
       const before = await snapshot(o.id);
       await expect(
         tenantCtx.run(tenantId, () => orders.approveChangeRequestAtStop(cr.id, driver())),
       ).rejects.toMatchObject({
-        status: 400,
+        status: 409,
         response: {
           code: CODE,
           message: "This order is already paid. The office can add these items on a new order.",
@@ -473,6 +510,39 @@ describeDb(
         orders.findActiveOrder(o.customerId, { forMerge: true }),
       );
       expect(found?.id).toBe(o.id);
+    }, 60_000);
+
+    // Writer search for case 19 (a DRAFT invoice holding a live payment): `completeWithPayment` finalizes DRAFT to SENT before it
+    // applies a payment (invoices.service.ts, the at-stop path), so that writer leaves none behind. The other InvoicePayment writers
+    // (import.service.ts x3, customers.service.ts:1231, credit-notes.service.ts:933, bookkeeping.service.ts:309) were NOT shown to
+    // finalize first, so a DRAFT invoice with a payment is reachable by data; this case runs it as a refusal, via the shared fragment.
+    it("case 19: a DRAFT invoice holding a live payment, PENDING order: a per-line cut is 400 with the code", async () => {
+      const { o, lines } = await pendingOrder({ status: "SENT", paid: 10 });
+      await raw.invoice.updateMany({ where: { orderId: o.id }, data: { status: "DRAFT" } });
+      await expectLocked(o.id, { items: [{ id: lines[0].id, action: "CANCEL" }] });
+    }, 60_000);
+
+    it("case 20: the exempt deposit mirror takes its final payment right after the edit's first invoice read: the edit refuses 400, nothing written", async () => {
+      const { o, lines, inv } = await pendingOrder({ status: "PARTIAL", paid: 10, deposit: true });
+      afterFirstInvoiceRead = async () => {
+        await raw.invoicePayment.create({
+          data: {
+            tenantId,
+            invoiceId: inv.id,
+            amount: "10.00",
+            method: "CASH",
+            status: "PAID",
+          } as any,
+        });
+        await raw.invoice.update({ where: { id: inv.id }, data: { status: "PAID" } });
+      };
+      const dto = { items: [{ id: lines[0].id, action: "UPDATE", qty: 3 }] };
+      await expect(edit(o.id, dto)).rejects.toMatchObject({
+        status: 400,
+        response: { code: CODE },
+      });
+      const line = await raw.orderItem.findUniqueOrThrow({ where: { id: lines[0].id } });
+      expect(Number(line.qty)).toBe(1);
     }, 60_000);
 
     it("a VOID (bounced) payment on a SENT invoice does not block the edit (B314 kept)", async () => {

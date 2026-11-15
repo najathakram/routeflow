@@ -2906,9 +2906,7 @@ describe("InvoicesService", () => {
   describe("revertLinkedInvoicesForOrderEdit", () => {
     // SA-1144: the revert also reads the money-holding set (PAID/PARTIAL/WRITTEN_OFF); these rows are the SENT set only.
     const sentRows = (rows: any[]) =>
-      prisma.invoice.findMany.mockImplementation(async ({ where }: any) =>
-        where?.status?.in?.includes("PAID") ? [] : rows,
-      );
+      prisma.invoice.findMany.mockImplementation(async ({ where }: any) => (where?.OR ? [] : rows));
     // SA-1029 A-2 / B1275: the revert now clears the issue display units (a savepoint + one updateMany)
     beforeEach(() => {
       (prisma.forTenant() as any).$executeRaw = jest.fn().mockResolvedValue(0);
@@ -3099,9 +3097,7 @@ describe("InvoicesService", () => {
         findMany: jest
           .fn()
           .mockImplementation(async ({ where }: any) =>
-            where?.status?.in?.includes("SENT")
-              ? [{ id: "inv-1", invoiceNumber: "INV-1", internalNotes: null }]
-              : [],
+            where?.OR ? [] : [{ id: "inv-1", invoiceNumber: "INV-1", internalNotes: null }],
           ),
         update: jest.fn().mockResolvedValue({ id: "inv-1", status: "DRAFT" }),
         count: jest.fn().mockResolvedValue(1),

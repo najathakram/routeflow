@@ -36,20 +36,20 @@ describe("selectEditBlockingInvoices (SA-1144)", () => {
     expect(body).toMatch(/await selectEditBlockingInvoices\(/);
   });
 
-  it("the money-holding statuses are one list (PAID, PARTIAL, WRITTEN_OFF), read by the helper and the merge fragment", () => {
+  it("the money-holding statuses are one list (PAID, PARTIAL, WRITTEN_OFF), read by the fragment; the helper reads the fragment", () => {
     const fn = src.slice(src.indexOf("export async function selectEditBlockingInvoices("));
-    expect(fn).toMatch(/status: \{ in: EDIT_BLOCKING_STATUSES \}/);
+    expect(fn).toMatch(/\.\.\.EDIT_BLOCKING_INVOICE_WHERE/);
     expect(src).toMatch(
       /EDIT_BLOCKING_STATUSES: InvoiceStatus\[\] = \[\s*InvoiceStatus\.PAID,\s*InvoiceStatus\.PARTIAL,\s*InvoiceStatus\.WRITTEN_OFF,\s*\]/,
     );
-    expect(src.match(/EDIT_BLOCKING_STATUSES/g)).toHaveLength(4); // declaration + helper + fragment + the `in`
   });
 
-  it("EDIT_BLOCKING_INVOICE_WHERE is read by merge-candidates.ts and by nothing else (SA-1144 D6)", () => {
+  it("EDIT_BLOCKING_INVOICE_WHERE has two readers: the edit refusal (this file) and merge-candidates.ts (SA-1144 D7)", () => {
     const readers = walk(SRC).filter(
       (f) => f !== home && /EDIT_BLOCKING_INVOICE_WHERE/.test(readFileSync(f, "utf8")),
     );
     expect(readers.map((f) => f.split(/[\\/]/).pop())).toEqual(["merge-candidates.ts"]);
+    expect(src.match(/\.\.\.EDIT_BLOCKING_INVOICE_WHERE/g)).toHaveLength(1);
     expect(
       readFileSync(join(SRC, "orders", "merge-candidates.ts"), "utf8").match(
         /invoices: \{ none: EDIT_BLOCKING_INVOICE_WHERE \}/g,
