@@ -610,15 +610,31 @@ describeDb("SA-1124 PR-1a: offline create mode - real Postgres", () => {
   });
 
   describe("B10 (discriminating): promoting a draft", () => {
-    it("a plain staff DRAFT over the limit still promotes (master); an offline DRAFT carrying CREDIT_BLOCKED is refused while still over, then promotes and resolves its gate flags", async () => {
+    it("a plain staff DRAFT over the limit is refused at promotion like a new order (SA-1345 Q2; master promoted it), then promotes once the limit allows; an offline DRAFT carrying CREDIT_BLOCKED behaves the same and resolves its gate flags", async () => {
       const plain = await customer("b10p", 5);
       const plainDraft: any = await create({
         customerId: plain,
         status: "DRAFT",
         items: [{ productId: w.clean, qty: 2 }],
       });
+      const plainStock = await stockOf(w.clean);
+      const plainRefused = await errOf(promote(plainDraft.id));
+      expect(bodyOf(plainRefused).code).toBe("CREDIT_LIMIT_EXCEEDED"); // master observed: PENDING, promotion had no credit gate
+      expect(await statusOf(plainDraft.id)).toBe("DRAFT");
+      expect(await stockOf(w.clean)).toBe(plainStock); // nothing written by the refusal
+      expect(await flagsOf(plainDraft.id)).toHaveLength(0);
+      await raw.customer.update({ where: { id: plain }, data: { creditLimit: "1000.00" } });
       await promote(plainDraft.id);
-      expect(await statusOf(plainDraft.id)).toBe("PENDING"); // master observed: promotion has no credit gate
+      expect(await statusOf(plainDraft.id)).toBe("PENDING");
+
+      const noLimit = await customer("b10n");
+      const unlimited: any = await create({
+        customerId: noLimit,
+        status: "DRAFT",
+        items: [{ productId: w.clean, qty: 2 }],
+      });
+      await promote(unlimited.id); // a customer with no limit is never gated, draft or not
+      expect(await statusOf(unlimited.id)).toBe("PENDING");
 
       const tight = await customer("b10o", 5);
       const cart = { customerId: tight, items: [{ productId: w.clean, qty: 2 }] };
@@ -1083,8 +1099,9 @@ describeDb("SA-1124 PR-1a: offline create mode - real Postgres", () => {
     }, 60_000);
 
     it("O1-3: a cancelled draft of a restricted product reopens as a DRAFT (no restriction judgment at the reopen) and is judged at its promotion", async () => {
-      // SA-1136 named the credit gate here, but promotion runs it only for an open CREDIT_BLOCKED flag (review-flags.ts
-      // assertPromotionCredit); a plain draft is judged by the restriction check and the license guard. This pins what runs.
+      // SA-1136 named the credit gate here; since SA-1345 Q2 promotion runs it for every draft (review-flags.ts
+      // assertPromotionCredit), after the restriction check and the license guard. This customer has no limit, so only the
+      // restriction judgment can refuse.
       const cust = await customer("o13", undefined, "CA");
       const order: any = await create(
         { customerId: cust, status: "DRAFT", items: [{ productId: w.banned, qty: 1 }] },

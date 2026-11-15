@@ -2200,7 +2200,7 @@ export class OrdersService implements OnApplicationBootstrap {
         },
         { order, user, tenantId: rGate.tenantId(this.prisma, user, order.tenantId), ack: dto },
       );
-      await flags.assertPromotionCredit(this.prisma, order, (p) => this.creditGate(p), user); // SA-1124
+      await flags.assertPromotionCredit(order, (p) => this.creditGate(p), user); // SA-1345 Q2: every draft
     }
 
     // B585: goods leaving is the enforcement moment (operators only, by the role gates above; before
