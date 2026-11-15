@@ -19,6 +19,8 @@ import { PageHeader, Button, cn, useToast, EmptyState } from "@routeflow/ui/web"
 import { resolveConfirmedAmounts } from "@routeflow/pricing";
 import { OPEN_INVOICE_STATUS_LIST } from "@/lib/open-invoice-status";
 import { ToCollectChip } from "@/components/ToCollectChip";
+import { RecordCard, RecordCardList } from "@/components/RecordCard";
+import { FiltersDisclosure, activeFilterCount } from "@/components/FiltersDisclosure";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
@@ -350,7 +352,7 @@ function PaymentSummaryBar({
   ];
 
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-6">
+    <div className="grid grid-cols-2 gap-4 sm:grid-cols-2 lg:grid-cols-6">
       {items.map((item) => (
         <StatTile
           key={item.label}
@@ -399,6 +401,94 @@ export default function InvoicesPage() {
   const [confirmDeleteId, setConfirmDeleteId] = React.useState<string | null>(null);
   const printInvoice = usePrintInvoice();
   const [printingIds, setPrintingIds] = React.useState<ReadonlySet<string>>(() => new Set());
+
+  /** The row actions (view, print, delete with its confirm), shared by the table row and the phone card. */
+  const renderRowActions = (inv: Invoice) => (
+    <>
+      {!isCustomer && confirmDeleteId === inv.id ? (
+        <div className="flex items-center gap-1">
+          <button
+            title="Confirm delete"
+            disabled={deleteInvoice.isPending}
+            onClick={async () => {
+              try {
+                await deleteInvoice.mutateAsync(inv.id);
+                setConfirmDeleteId(null);
+                toast({ title: "Invoice deleted", variant: "success" });
+              } catch (err: any) {
+                setConfirmDeleteId(null);
+                toast({
+                  title: "Delete failed",
+                  description: err?.response?.data?.message ?? err?.message ?? "Unknown error",
+                  variant: "error",
+                });
+              }
+            }}
+            className="rounded px-2 py-1 text-xs font-semibold text-white bg-danger hover:bg-danger/80 disabled:opacity-50 transition-colors"
+          >
+            {deleteInvoice.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : "Delete"}
+          </button>
+          <button
+            title="Cancel"
+            onClick={() => setConfirmDeleteId(null)}
+            className="rounded p-1 text-navy/70 hover:text-navy transition-colors"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-0.5">
+          <button
+            title="View invoice"
+            aria-label={`View invoice ${inv.invoiceNumber}`}
+            onClick={() => router.push(`/invoices/${inv.id}`)}
+            className="rounded p-1.5 text-navy/70 hover:bg-white hover:text-navy transition-colors"
+          >
+            <Eye className="h-4 w-4" />
+          </button>
+          {!isCustomer && (
+            <button
+              title="Print invoice"
+              aria-label={`Print invoice ${inv.invoiceNumber}`}
+              disabled={printingIds.has(inv.id)}
+              onClick={async () => {
+                if (printingIds.has(inv.id)) return;
+                setPrintingIds((prev) => new Set(prev).add(inv.id));
+                try {
+                  // The one shared print path; it never throws and tells the user when it could not. Each row
+                  // keeps its own spinner, and concurrent rows print independently (review finding F1).
+                  await printInvoice.print(inv.id);
+                } finally {
+                  setPrintingIds((prev) => {
+                    const next = new Set(prev);
+                    next.delete(inv.id);
+                    return next;
+                  });
+                }
+              }}
+              className="rounded p-1.5 text-navy/70 hover:bg-white hover:text-navy transition-colors disabled:opacity-50"
+            >
+              {printingIds.has(inv.id) ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Printer className="h-4 w-4" />
+              )}
+            </button>
+          )}
+          {!isCustomer && inv.status === "DRAFT" && (
+            <button
+              title="Delete invoice"
+              aria-label={`Delete invoice ${inv.invoiceNumber}`}
+              onClick={() => setConfirmDeleteId(inv.id)}
+              className="rounded p-1.5 text-navy/70 hover:bg-white hover:text-danger transition-colors"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+      )}
+    </>
+  );
 
   const [urlFilters, setFilter, , setFilters] = useUrlFilters({
     status: "",
@@ -684,50 +774,87 @@ export default function InvoicesPage() {
         ))}
       </div>
 
-      {/* Filter bar */}
-      <div className="flex flex-wrap items-center gap-2">
-        <input
-          type="search"
-          placeholder="Search by invoice # or customer…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="h-9 w-56 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-        />
-        <div className="flex items-center gap-1.5">
-          <Calendar className="h-4 w-4 text-navy/70" />
+      {/* Filter bar — below md it opens from a "Filters (n)" button */}
+      <FiltersDisclosure count={activeFilterCount({ search, dateFrom, dateTo })}>
+        <div className="flex flex-wrap items-center gap-2">
           <input
-            type="date"
-            value={dateFrom}
-            onChange={(e) => setFilter("dateFrom", e.target.value)}
-            max={dateTo || undefined}
-            className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-            title="Issue date from"
+            type="search"
+            placeholder="Search by invoice # or customer…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="h-9 w-56 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
-          <span className="text-navy/70">–</span>
-          <input
-            type="date"
-            value={dateTo}
-            min={dateFrom || undefined}
-            onChange={(e) => setFilter("dateTo", e.target.value)}
-            className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-            title="Issue date to"
-          />
-          {(dateFrom || dateTo) && (
-            <button
-              onClick={() => setFilters({ dateFrom: "", dateTo: "" })}
-              className="rounded p-1 text-navy/70 hover:text-danger transition-colors"
-              title="Clear dates"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          )}
+          <div className="flex items-center gap-1.5">
+            <Calendar className="h-4 w-4 text-navy/70" />
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setFilter("dateFrom", e.target.value)}
+              max={dateTo || undefined}
+              className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              title="Issue date from"
+            />
+            <span className="text-navy/70">–</span>
+            <input
+              type="date"
+              value={dateTo}
+              min={dateFrom || undefined}
+              onChange={(e) => setFilter("dateTo", e.target.value)}
+              className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              title="Issue date to"
+            />
+            {(dateFrom || dateTo) && (
+              <button
+                onClick={() => setFilters({ dateFrom: "", dateTo: "" })}
+                className="rounded p-1 text-navy/70 hover:text-danger transition-colors"
+                title="Clear dates"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      </FiltersDisclosure>
+
+      {/* Phone cards — below md; the table below takes over from md up. Same balance helper and
+          the same row actions as the table. While loading, on error or when empty, the table's own
+          state rows show at every width. */}
+      {!isLoading && !isError && invoices.length > 0 && (
+        <RecordCardList>
+          {invoices.map((inv: Invoice) => (
+            <RecordCard
+              key={inv.id}
+              href={`/invoices/${inv.id}`}
+              title={inv.invoiceNumber}
+              amount={fmt(resolveInvoiceListBalance(inv))}
+              subtitle={inv.customer?.businessName ?? "—"}
+              badges={
+                <>
+                  {renderStatus(inv.status, inv.dueDate)}
+                  {!isCustomer && <ToCollectChip state={inv.toCollect} />}
+                </>
+              }
+              meta={
+                <>
+                  {fmtCalendarDate((inv as any).issueDate ?? inv.createdAt)} · Due{" "}
+                  {fmtCalendarDate(inv.dueDate)} · Total {fmt(Number(inv.total))}
+                </>
+              }
+              actions={renderRowActions(inv)}
+            />
+          ))}
+        </RecordCardList>
+      )}
 
       {/* Table — B750: the bare table clipped (overflow-hidden) instead of scrolling at 390px;
           an inner overflow-x-auto lets it scroll horizontally while the outer div keeps the
           rounded-corner clip, same pattern as the orders list table. */}
-      <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
+      <div
+        className={cn(
+          "overflow-hidden rounded-lg border border-surface-border bg-white",
+          !isLoading && !isError && invoices.length > 0 && "hidden md:block",
+        )}
+      >
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="border-b border-surface-border bg-gray-50">
@@ -891,93 +1018,7 @@ export default function InvoicesPage() {
                         </span>
                       </td>
                       <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
-                        {!isCustomer && confirmDeleteId === inv.id ? (
-                          <div className="flex items-center gap-1">
-                            <button
-                              title="Confirm delete"
-                              disabled={deleteInvoice.isPending}
-                              onClick={async () => {
-                                try {
-                                  await deleteInvoice.mutateAsync(inv.id);
-                                  setConfirmDeleteId(null);
-                                  toast({ title: "Invoice deleted", variant: "success" });
-                                } catch (err: any) {
-                                  setConfirmDeleteId(null);
-                                  toast({
-                                    title: "Delete failed",
-                                    description:
-                                      err?.response?.data?.message ??
-                                      err?.message ??
-                                      "Unknown error",
-                                    variant: "error",
-                                  });
-                                }
-                              }}
-                              className="rounded px-2 py-1 text-xs font-semibold text-white bg-danger hover:bg-danger/80 disabled:opacity-50 transition-colors"
-                            >
-                              {deleteInvoice.isPending ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                              ) : (
-                                "Delete"
-                              )}
-                            </button>
-                            <button
-                              title="Cancel"
-                              onClick={() => setConfirmDeleteId(null)}
-                              className="rounded p-1 text-navy/70 hover:text-navy transition-colors"
-                            >
-                              <X className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-0.5">
-                            <button
-                              title="View invoice"
-                              onClick={() => router.push(`/invoices/${inv.id}`)}
-                              className="rounded p-1.5 text-navy/70 hover:bg-white hover:text-navy transition-colors"
-                            >
-                              <Eye className="h-4 w-4" />
-                            </button>
-                            {!isCustomer && (
-                              <button
-                                title="Print invoice"
-                                aria-label={`Print invoice ${inv.invoiceNumber}`}
-                                disabled={printingIds.has(inv.id)}
-                                onClick={async () => {
-                                  if (printingIds.has(inv.id)) return;
-                                  setPrintingIds((prev) => new Set(prev).add(inv.id));
-                                  try {
-                                    // The one shared print path; it never throws and tells the user when it could not. Each row
-                                    // keeps its own spinner, and concurrent rows print independently (review finding F1).
-                                    await printInvoice.print(inv.id);
-                                  } finally {
-                                    setPrintingIds((prev) => {
-                                      const next = new Set(prev);
-                                      next.delete(inv.id);
-                                      return next;
-                                    });
-                                  }
-                                }}
-                                className="rounded p-1.5 text-navy/70 hover:bg-white hover:text-navy transition-colors disabled:opacity-50"
-                              >
-                                {printingIds.has(inv.id) ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <Printer className="h-4 w-4" />
-                                )}
-                              </button>
-                            )}
-                            {!isCustomer && inv.status === "DRAFT" && (
-                              <button
-                                title="Delete invoice"
-                                onClick={() => setConfirmDeleteId(inv.id)}
-                                className="rounded p-1.5 text-navy/70 hover:bg-white hover:text-danger transition-colors"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
-                            )}
-                          </div>
-                        )}
+                        {renderRowActions(inv)}
                       </td>
                     </tr>
                   );
