@@ -41,6 +41,12 @@ export interface RecordCardProps {
    *  `onSelectedChange` is given. */
   selected?: boolean;
   onSelectedChange?: (selected: boolean) => void;
+  /** A record the bulk actions must skip: the checkbox shows disabled, with the reason as its title. */
+  selectDisabled?: boolean;
+  selectDisabledReason?: string;
+  /** For a page whose table toggles the selection on a row tap while selecting: tapping the card
+   *  toggles it instead of opening the record (a disabled card still opens). */
+  tapToSelect?: boolean;
 }
 
 export function RecordCard({
@@ -55,11 +61,22 @@ export function RecordCard({
   actions,
   selected,
   onSelectedChange,
+  selectDisabled,
+  selectDisabledReason,
+  tapToSelect,
 }: RecordCardProps) {
   const titleLink = (
     <Link
       href={href}
       title={title}
+      onClick={
+        onSelectedChange && tapToSelect && !selectDisabled
+          ? (e) => {
+              e.preventDefault();
+              onSelectedChange(!selected);
+            }
+          : undefined
+      }
       className="min-w-0 truncate font-mono text-xs font-semibold text-ink-900 after:absolute after:inset-0 after:rounded-xl focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-inset focus-visible:after:ring-brand-500"
     >
       {title}
@@ -83,6 +100,8 @@ export function RecordCard({
                   type="checkbox"
                   aria-label={`Select ${title}`}
                   checked={selected ?? false}
+                  disabled={selectDisabled}
+                  title={selectDisabled ? selectDisabledReason : undefined}
                   onChange={(e) => onSelectedChange(e.target.checked)}
                   className="h-5 w-5 rounded border-surface-border text-brand-500 accent-brand-500"
                 />

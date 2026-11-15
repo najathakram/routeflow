@@ -1,6 +1,6 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { RecordCard, RecordCardList } from "./RecordCard";
 
 const push = jest.fn();
@@ -137,6 +137,47 @@ describe("RecordCard", () => {
       expect(container.querySelector("[data-record-card]")!.className).toContain("bg-brand-50");
       await user.click(box);
       expect(onSelectedChange).toHaveBeenCalledWith(false);
+    });
+
+    it("can show the checkbox disabled, with the reason as its title", async () => {
+      const user = userEvent.setup();
+      const onSelectedChange = jest.fn();
+      renderCard({
+        selected: false,
+        onSelectedChange,
+        selectDisabled: true,
+        selectDisabledReason: "Protected record",
+      });
+      const box = screen.getByRole("checkbox", { name: "Select INV-1001" });
+      expect(box).toBeDisabled();
+      expect(box).toHaveAttribute("title", "Protected record");
+      await user.click(box);
+      expect(onSelectedChange).not.toHaveBeenCalled();
+    });
+
+    it("with tapToSelect, tapping the card toggles the selection instead of opening it", async () => {
+      const user = userEvent.setup();
+      const onSelectedChange = jest.fn();
+      renderCard({ selected: false, onSelectedChange, tapToSelect: true });
+      const link = screen.getByRole("link", { name: "INV-1001" });
+      expect(fireEvent.click(link)).toBe(false); // navigation prevented
+      expect(onSelectedChange).toHaveBeenCalledWith(true);
+      await user.click(screen.getByRole("checkbox", { name: "Select INV-1001" }));
+      expect(onSelectedChange).toHaveBeenCalledTimes(2);
+    });
+
+    it("with tapToSelect, a disabled card still opens", () => {
+      const onSelectedChange = jest.fn();
+      renderCard({ onSelectedChange, tapToSelect: true, selectDisabled: true });
+      expect(fireEvent.click(screen.getByRole("link", { name: "INV-1001" }))).toBe(true);
+      expect(onSelectedChange).not.toHaveBeenCalled();
+    });
+
+    it("without tapToSelect, tapping the card opens it and does not select", () => {
+      const onSelectedChange = jest.fn();
+      renderCard({ selected: false, onSelectedChange });
+      fireEvent.click(screen.getByRole("link", { name: "INV-1001" }));
+      expect(onSelectedChange).not.toHaveBeenCalled();
     });
 
     it("keeps the title the only link", () => {

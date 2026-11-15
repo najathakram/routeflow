@@ -1,5 +1,5 @@
 import * as React from "react";
-import { screen, renderWithProviders, fireEvent } from "@/test-utils/render";
+import { screen, within, renderWithProviders, fireEvent } from "@/test-utils/render";
 import CustomersPage from "./page";
 
 /**
@@ -56,20 +56,22 @@ describe("CustomersPage — the walk-in customer is protected", () => {
   it("an ordinary row offers Deactivate, the walk-in row does not", () => {
     renderWithProviders(<CustomersPage />);
     // One Deactivate (Acme); the walk-in's control is gone.
-    expect(screen.getAllByRole("button", { name: /deactivate customer/i })).toHaveLength(1);
-    expect(screen.getByText("Walk-in customer")).toBeInTheDocument();
+    // The table: the phone card list below md has its own Deactivate (see page.phone-cards.test.tsx).
+    const table = within(screen.getByRole("table"));
+    expect(table.getAllByRole("button", { name: /deactivate customer/i })).toHaveLength(1);
+    expect(table.getByText("Walk-in customer")).toBeInTheDocument();
   });
 
   it("the walk-in row's checkbox is disabled in select mode and select-all skips it", () => {
     renderWithProviders(<CustomersPage />);
     fireEvent.click(screen.getByRole("button", { name: /^select$/i }));
-    const boxes = screen.getAllByRole("checkbox");
+    const boxes = within(screen.getByRole("table")).getAllByRole("checkbox");
     // header, walk-in, Acme
     expect(boxes).toHaveLength(3);
     expect(boxes[1]).toBeDisabled();
     expect(boxes[2]).not.toBeDisabled();
     fireEvent.click(boxes[0]); // select all
-    const after = screen.getAllByRole("checkbox"); // re-query: the columns re-render on select
+    const after = within(screen.getByRole("table")).getAllByRole("checkbox"); // re-query: the columns re-render on select
     expect(after[1]).not.toBeChecked();
     expect(after[2]).toBeChecked();
   });
