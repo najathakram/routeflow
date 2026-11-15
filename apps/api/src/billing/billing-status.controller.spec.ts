@@ -65,10 +65,10 @@ async function make(subscription: unknown = FAILED_SUBSCRIPTION, paymentDue: unk
 }
 
 describe("GET /billing/status: the role rule", () => {
-  it("an OPERATOR gets the sentence state and amount with action null", async () => {
+  it("an OPERATOR gets the sentence state and the day, no Stripe amount, action null", async () => {
     const { controller } = await make();
     const view = await controller.get({ tenantId: "t1", role: UserRole.OPERATOR });
-    expect(view).toEqual({ state: "failed", amount: 59.5, dueOn: "2026-11-24", action: null });
+    expect(view).toEqual({ state: "failed", amount: null, dueOn: "2026-11-24", action: null });
   });
 
   it("a TENANT_ADMIN gets the same state with the Pay action to the hosted invoice", async () => {

@@ -1,8 +1,9 @@
 import type { BillingStatusAction, BillingStatusState, BillingStatusView } from "@routeflow/types";
+import { TRIAL_NOTICE_DAYS } from "@routeflow/types";
 import {
   BILLING_STATUS_STATES,
-  TRIAL_NOTICE_DAYS,
   billingStatusOf,
+  hasStaleDunningMarker,
   hasTwoPaySources,
   type BillingStatusInput,
 } from "./billing-status";
@@ -70,6 +71,8 @@ interface Row {
   name: string;
   input: BillingStatusInput;
   want: BillingStatusView;
+  /** SA-1150 1a: true only for the catch-up bill, the one amount staff see today. */
+  staffAmount?: boolean;
 }
 
 const ROWS: Row[] = [
@@ -101,6 +104,7 @@ const ROWS: Row[] = [
       dueOn: "2026-11-01",
       action: { kind: "pay", target: "checkout" },
     },
+    staffAmount: true,
   },
   {
     name: "due (both sources present): the Stripe invoice wins, the one Stripe will charge",
@@ -122,7 +126,7 @@ const ROWS: Row[] = [
     ),
     want: {
       state: "due",
-      amount: 0,
+      amount: null,
       dueOn: "2026-11-19",
       action: { kind: "add_card", target: "checkout" },
     },
@@ -272,6 +276,51 @@ const ROWS: Row[] = [
     want: { state: "processing", amount: 150, dueOn: null, action: null },
   },
   {
+    name: "S9: Stripe due, invoice due 2026-11-20 05:00Z: dueOn is the tenant-local day (11-19)",
+    input: input({
+      billingState: "due",
+      outstandingTotal: 149,
+      payNowAmount: 149,
+      openInvoiceDueAt: "2026-11-20T05:00:00.000Z",
+    }),
+    want: { state: "due", amount: 149, dueOn: "2026-11-19", action: PAY_INVOICE },
+  },
+  {
+    name: "S12: active, current, a card on file, but no next charge (no subscription, or a $0 next invoice): none",
+    input: input({ nextCharge: null }),
+    want: { state: "none", amount: null, dueOn: null, action: null },
+  },
+  {
+    name: "S11: dunning marker lags while Stripe already says current: none, never failed with $0, never paid_up",
+    input: input({
+      billingState: "current",
+      pastDueInvoiceId: "in_1",
+      pastDueSince: "2026-11-10T20:00:00.000Z",
+      nextCharge: { amount: 49.5, date: "2026-12-01T03:00:00.000Z" },
+    }),
+    want: { state: "none", amount: null, dueOn: null, action: null },
+  },
+  {
+    // 23:30 Chicago on Nov 22 is 05:30Z Nov 23: seven tenant calendar days after Nov 15 (06:00 Chicago), though
+    // more than 7 x 24 h away. Master counted milliseconds and said none.
+    name: "S13: trial ends 7 tenant-local days ahead at 23:30 local: trial (calendar days, not 24 h blocks)",
+    input: input({
+      status: "TRIAL",
+      trialEndsAt: "2026-11-23T05:30:00.000Z",
+      billingState: undefined,
+    }),
+    want: { state: "trial", amount: null, dueOn: "2026-11-22", action: PICK_PLAN },
+  },
+  {
+    name: "S13: trial ends 8 tenant-local days ahead at 23:30 local: none",
+    input: input({
+      status: "TRIAL",
+      trialEndsAt: "2026-11-24T05:30:00.000Z",
+      billingState: undefined,
+    }),
+    want: { state: "none", amount: null, dueOn: null, action: null },
+  },
+  {
     name: "SHOULD d (OBSERVE, pending SA): locked, no reason, dunning marker, Stripe unreachable: today's result is failed",
     // Pending SA: a locked tenant arguably reads read_only. This row documents the CURRENT result only; do not
     // "fix" it here. If the SA rules, change the expected state in the same diff as the code.
@@ -321,20 +370,28 @@ describe("BillingStatusAction: the kind union is exactly the SA-1146 B-5 shape",
       case "choose_plan":
         return "Choose a plan";
       default: {
-        const unreachable: never = a.kind;
-        return unreachable;
+        const unreachable: never = a;
+        return String(unreachable);
       }
     }
   };
 
   it("names the four kinds in the words C7 uses", () => {
-    const kinds: BillingStatusAction["kind"][] = ["pay", "add_card", "change_card", "choose_plan"];
-    expect(kinds.map((kind) => label({ kind, target: "checkout" }))).toEqual([
-      "Pay",
-      "Add card",
-      "Change card",
-      "Choose a plan",
-    ]);
+    const actions: BillingStatusAction[] = [
+      { kind: "pay", target: "hosted_invoice" },
+      { kind: "add_card", target: "checkout" },
+      { kind: "change_card", target: "portal" },
+      { kind: "choose_plan", target: "choose_plan" },
+    ];
+    expect(actions.map(label)).toEqual(["Pay", "Add card", "Change card", "Choose a plan"]);
+  });
+
+  it("S15: the pair is discriminated (a nonsense pair does not compile)", () => {
+    // @ts-expect-error add_card goes only to the checkout
+    const bad: BillingStatusAction = { kind: "add_card", target: "portal" };
+    // @ts-expect-error choose_plan has one target
+    const bad2: BillingStatusAction = { kind: "choose_plan", target: "hosted_invoice" };
+    expect([bad.kind, bad2.kind]).toEqual(["add_card", "choose_plan"]);
   });
 
   it("a business with no card gets add_card; no state of the table hands out change_card", () => {
@@ -345,9 +402,63 @@ describe("BillingStatusAction: the kind union is exactly the SA-1146 B-5 shape",
 });
 
 describe("billingStatusOf: the role rule (staff see the sentence, never a button)", () => {
-  it.each(ROWS.map((r) => [r.name, r] as const))("%s: staff get action null", (_n, row) => {
-    const staff = billingStatusOf({ ...row.input, isAdmin: false });
-    expect(staff).toEqual({ ...row.want, action: null });
+  // SA-1150 1a: staff see exactly the money they see today: the catch-up bill (amount kept), never a Stripe figure,
+  // and never the next-charge day on paid_up (the SA-777 trim hides it). Every other day is a label staff already see.
+  const staffWant = (row: Row): BillingStatusView => ({
+    ...row.want,
+    action: null,
+    amount: row.staffAmount ? row.want.amount : null,
+    dueOn: row.want.state === "paid_up" ? null : row.want.dueOn,
+  });
+
+  it.each(ROWS.map((r) => [r.name, r] as const))("%s: staff projection", (_n, row) => {
+    expect(billingStatusOf({ ...row.input, isAdmin: false })).toEqual(staffWant(row));
+  });
+
+  it("S1: an OPERATOR on a Stripe due with payNowAmount 149 gets due, amount null, action null", () => {
+    const view = billingStatusOf(
+      input({ billingState: "due", outstandingTotal: 149, payNowAmount: 149 }, {}, false),
+    );
+    expect(view).toEqual({ state: "due", amount: null, dueOn: null, action: null });
+  });
+
+  it("S2: an OPERATOR on paid_up (next charge 49.50 on Dec 1) gets no amount and no day", () => {
+    const view = billingStatusOf(
+      input({ nextCharge: { amount: 49.5, date: "2026-12-01T03:00:00.000Z" } }, {}, false),
+    );
+    expect(view).toEqual({ state: "paid_up", amount: null, dueOn: null, action: null });
+  });
+
+  it("S3: an OPERATOR on a catch-up due 49.99 keeps the amount (today's pinned line), no action", () => {
+    const view = billingStatusOf(
+      input(
+        { billingState: undefined },
+        { due: true, amountCents: 4999, periodStart: "2026-11-01T05:00:00.000Z" },
+        false,
+      ),
+    );
+    expect(view).toEqual({ state: "due", amount: 49.99, dueOn: "2026-11-01", action: null });
+  });
+
+  it("with both sources the Stripe invoice wins, so staff get no amount (the catch-up one is not shown)", () => {
+    const view = billingStatusOf(
+      input(
+        { billingState: "due", outstandingTotal: 120 },
+        { due: true, amountCents: 4999, periodStart: "2026-11-01T05:00:00.000Z" },
+        false,
+      ),
+    );
+    expect(view.amount).toBeNull();
+  });
+});
+
+describe("hasStaleDunningMarker (S11: logged once per tenant by the service)", () => {
+  it("is true only when a marker is set while Stripe answered current", () => {
+    const marker = { pastDueInvoiceId: "in_1", pastDueSince: "2026-11-10T20:00:00.000Z" };
+    expect(hasStaleDunningMarker(input({ ...marker, billingState: "current" }))).toBe(true);
+    expect(hasStaleDunningMarker(input({ ...marker, billingState: "overdue" }))).toBe(false);
+    expect(hasStaleDunningMarker(input({ ...marker, billingState: undefined }))).toBe(false);
+    expect(hasStaleDunningMarker(input({ billingState: "current" }))).toBe(false);
   });
 });
 

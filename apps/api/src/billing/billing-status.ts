@@ -14,20 +14,26 @@
  *   trial        trial ends within TRIAL_NOTICE_DAYS  -> Choose a plan
  *   paid_up      nothing owed, automatic payment on (a card on file), Stripe answered
  *   none         anything else (Stripe could not answer, no card, a trial far from its end): say nothing
- * `action` is set only for a TENANT_ADMIN; staff get the same state and amount with `action: null`.
+ * `action` is set only for a role that `seesBillingMoney`; staff get the same state with `action: null`, and an amount
+ * only for the catch-up bill (the one amount they see today, SA-1150 1a); never a Stripe figure, never the next-charge day.
  */
 import { fromCents, roundMoney } from "@routeflow/pricing";
-import type {
-  BillingStatusAction,
-  BillingStatusState,
-  BillingStatusView,
-  SubscriptionView,
+import {
+  TRIAL_NOTICE_DAYS,
+  type BillingStatusAction,
+  type BillingStatusState,
+  type BillingStatusView,
+  type SubscriptionView,
+  type TenantStatusValue,
 } from "@routeflow/types";
 import { DUNNING_PAUSE_HOURS, HOUR_MS } from "./dunning-config";
 import type { PaymentDueView } from "./payment-due.service";
 
-/** One constant for the trial notice (the same 7 days as the 7-day trial email). */
-export const TRIAL_NOTICE_DAYS = 7;
+/** Typed against the shared enum (a typo or a renamed status fails to compile), never a bare string. */
+const tenantStatus = <T extends TenantStatusValue>(v: T): T => v;
+const TRIAL = tenantStatus("TRIAL");
+const ACTIVE = tenantStatus("ACTIVE");
+const READ_ONLY = tenantStatus("READ_ONLY");
 
 const DAY_MS = 24 * HOUR_MS;
 
@@ -59,6 +65,7 @@ export type BillingStatusSubscription = Pick<
   | "outstandingTotal"
   | "payNowAmount"
   | "openInvoiceAmount"
+  | "openInvoiceDueAt"
 >;
 
 export interface BillingStatusInput {
@@ -67,7 +74,7 @@ export interface BillingStatusInput {
   now: Date;
   /** The tenant's IANA zone (`resolveZone`): every day in the view is a day on THIS clock. */
   timeZone: string;
-  /** Decided by the server from the JWT role; only a TENANT_ADMIN is handed an action. */
+  /** `seesBillingMoney(role)`: only such a role is handed an action and the Stripe money (SA-1150 1a). */
   isAdmin: boolean;
 }
 
@@ -114,6 +121,17 @@ function stripeAmount(s: BillingStatusSubscription, oneInvoice: boolean): number
 const stripeOwes = (s: BillingStatusSubscription) =>
   s.billingState === "due" || s.billingState === "overdue";
 
+/** True when a dunning marker is set but Stripe already answered `current` (the marker lags `invoice.paid`); the caller logs once. */
+export function hasStaleDunningMarker(i: BillingStatusInput): boolean {
+  return Boolean(i.subscription.pastDueInvoiceId) && i.subscription.billingState === "current";
+}
+
+/** Whole tenant-calendar days from `from` to `to` (both on the tenant's clock; DST cannot skew a calendar count). */
+function calendarDaysBetween(from: Date, to: Date, timeZone: string): number {
+  const utc = (day: string) => Date.parse(`${day}T00:00:00Z`);
+  return Math.round((utc(dayIn(to, timeZone)) - utc(dayIn(from, timeZone))) / DAY_MS);
+}
+
 /** True when BOTH pay sources exist (they are mutually exclusive by construction); the caller logs once. */
 export function hasTwoPaySources(i: BillingStatusInput): boolean {
   return stripeOwes(i.subscription) && i.paymentDue.due;
@@ -122,24 +140,41 @@ export function hasTwoPaySources(i: BillingStatusInput): boolean {
 const NONE: BillingStatusView = { state: "none", amount: null, dueOn: null, action: null };
 
 export function billingStatusOf(i: BillingStatusInput): BillingStatusView {
-  const view = decide(i);
-  return i.isAdmin ? view : { ...view, action: null };
+  const { view, staffAmount } = decide(i);
+  if (i.isAdmin) return view;
+  // Staff: exactly the money they see today, per source. The catch-up bill stays (`staffAmount`); every Stripe figure
+  // is hidden (SA-777); the next-charge day is hidden too. Every other day is a label staff already see.
+  return {
+    ...view,
+    action: null,
+    amount: staffAmount ? view.amount : null,
+    dueOn: view.state === "paid_up" ? null : view.dueOn,
+  };
 }
 
-function decide({ subscription: s, paymentDue: d, now, timeZone }: BillingStatusInput) {
+interface Decision {
+  view: BillingStatusView;
+  /** True only on the catch-up `due` branch: the one amount a non-admin sees. */
+  staffAmount: boolean;
+}
+
+function decide(i: BillingStatusInput): Decision {
+  const { subscription: s, paymentDue: d, now, timeZone } = i;
   const owed = stripeAmount(s, false);
   const payAmount = stripeAmount(s, true); // every hosted_invoice state below
   const make = (
     state: BillingStatusState,
     over: Partial<BillingStatusView>,
-  ): BillingStatusView => ({ ...NONE, state, ...over });
+    staffAmount = false,
+  ): Decision => ({ view: { ...NONE, state, ...over }, staffAmount });
+  const none: Decision = { view: NONE, staffAmount: false };
 
   // A settling payment with nothing else payable: just say so (the server already ruled a sibling unpaid invoice out).
   if (s.billingState === "processing") {
     return make("processing", { amount: owed });
   }
 
-  const locked = s.status === "READ_ONLY";
+  const locked = s.status === READ_ONLY;
   const reason = s.readOnlyReason ?? null;
   const trialReason = reason === "trial_expired" || reason === "trial_cancelled";
   const trialEnd = s.trialEndsAt ? new Date(s.trialEndsAt) : null;
@@ -152,10 +187,12 @@ function decide({ subscription: s, paymentDue: d, now, timeZone }: BillingStatus
   ) {
     return make("read_only", { amount: payAmount, action: PAY_INVOICE });
   }
-  if (s.status === "TRIAL" && trialEnd && trialEnd.getTime() <= now.getTime()) {
+  if (s.status === TRIAL && trialEnd && trialEnd.getTime() <= now.getTime()) {
     return make("trial_ended", { action: CHOOSE_PLAN });
   }
 
+  // A marker that lags `invoice.paid` while Stripe already says current is NOT dunning (S11): say nothing (not failed, and not paid_up while a marker is set).
+  if (hasStaleDunningMarker(i)) return none;
   if (s.pastDueInvoiceId) {
     const since = s.pastDueSince ? new Date(s.pastDueSince) : null;
     return make("failed", {
@@ -168,35 +205,52 @@ function decide({ subscription: s, paymentDue: d, now, timeZone }: BillingStatus
   }
 
   // Both sources present: the Stripe invoice is the one Stripe will actually charge.
-  if (stripeOwes(s)) return make("due", { amount: payAmount, action: PAY_INVOICE });
-  if (d.due) {
+  if (stripeOwes(s)) {
     return make("due", {
-      amount: fromCents(d.amountCents),
-      dueOn: d.periodStart ? dayIn(d.periodStart, timeZone) : null,
-      action: PAY_CHECKOUT,
+      amount: payAmount,
+      dueOn: s.openInvoiceDueAt ? dayIn(s.openInvoiceDueAt, timeZone) : null,
+      action: PAY_INVOICE,
     });
+  }
+  if (d.due) {
+    return make(
+      "due",
+      {
+        amount: fromCents(d.amountCents),
+        dueOn: d.periodStart ? dayIn(d.periodStart, timeZone) : null,
+        action: PAY_CHECKOUT,
+      },
+      true, // the catch-up bill is the one amount staff see today (payment-due.test.ts), so it stays
+    );
   }
   if (d.cardNeeded) {
     return make("due", {
-      amount: 0,
+      amount: null, // nothing is charged now: no figure, never $0 (SA-1150 S6)
       dueOn: d.cardBy ? dayIn(d.cardBy, timeZone) : null,
       action: ADD_CARD,
     });
   }
 
-  if (s.status === "TRIAL" && trialEnd) {
-    if (trialEnd.getTime() - now.getTime() <= TRIAL_NOTICE_DAYS * DAY_MS) {
+  if (s.status === TRIAL && trialEnd) {
+    // Tenant CALENDAR days, not 24 h blocks (S13): a trial ending at 23:30 local, seven days ahead, is inside the window.
+    if (calendarDaysBetween(now, trialEnd, timeZone) <= TRIAL_NOTICE_DAYS) {
       return make("trial", { dueOn: dayIn(trialEnd, timeZone), action: CHOOSE_PLAN });
     }
-    return NONE;
+    return none;
   }
 
-  // Never "paid up" on a guess: Stripe must have answered (`billingState === "current"`) and a card must be on file.
-  if (s.status === "ACTIVE" && s.billingState === "current" && s.paymentMethodSummary) {
+  // Never "paid up" on a guess: Stripe must have answered (`billingState === "current"`), a card must be on file, and
+  // a next charge must exist (it proves a subscription; the sentence needs both figures, S12).
+  if (
+    s.status === ACTIVE &&
+    s.billingState === "current" &&
+    s.paymentMethodSummary &&
+    s.nextCharge
+  ) {
     return make("paid_up", {
-      amount: s.nextCharge ? roundMoney(s.nextCharge.amount) : null,
-      dueOn: s.nextCharge ? dayIn(s.nextCharge.date, timeZone) : null,
+      amount: roundMoney(s.nextCharge.amount),
+      dueOn: dayIn(s.nextCharge.date, timeZone),
     });
   }
-  return NONE;
+  return none;
 }
