@@ -432,7 +432,11 @@ describe("OrdersService — units_v1 fail-closed guard on rewrite paths", () => 
       await service.findActiveOrder("cust-1", { forMerge: true });
       expect(prisma.order.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ ...ORDER_HAS_NO_UNIT_AWARE_LINE, customerId: "cust-1" }),
+          // SA-1149: both fragments sit in an AND (they share the lineItems key); the unit-aware guard is still one of them
+          where: expect.objectContaining({
+            AND: expect.arrayContaining([ORDER_HAS_NO_UNIT_AWARE_LINE]),
+            customerId: "cust-1",
+          }),
         }),
       );
     });

@@ -24,7 +24,7 @@
  * goods left, so cancel-impact keeps refusing a cancel (use a Return).
  */
 import { ConflictException } from "@nestjs/common";
-import { assertQtyNotBelowDelivered } from "./delivered-line-lock";
+import { assertQtyNotBelowDelivered, isLiveDeliveredLine } from "./delivered-line-lock";
 import { OrderStatus, type Prisma } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { deliveredBasisByLine, type DeliveredBasis } from "../invoices/delivered-basis-by-line";
@@ -177,7 +177,9 @@ function recreatedTargets(
     const v = sumOf(keyOf(li.productId));
     v.next += Number(li.qty);
   }
-  // SA-1149 D2: a delivered product with no recreated row counts as next = 0, so the floor refuses the omission too
+  // SA-1149 D2: a net only. On every request path W-871 (`assertNoReplaceAfterDelivery`, replace-after-delivery.ts)
+  // refuses a replace on a DELIVERED order first. Removed with the carry by the LATER cleanup.
+  // A delivered product with no recreated row counts as next = 0, so the floor refuses the omission too.
   for (const v of sums.values()) assertQtyNotBelowDelivered(v.delivered, v.held, v.next);
   const lastOfKey = new Map<string, string>();
   for (const li of fresh) lastOfKey.set(keyOf(li.productId), li.id);
@@ -222,9 +224,7 @@ export async function captureRecreatedCarry(
   // SA-1149 D2 (17:23Z): off the carry (not DELIVERED, or a route order) a replace-all deletes every line, and the
   // recreated rows would start at deliveredQty 0: refused outright when any live line was delivered. The per-line
   // edit keeps line ids, the stamp and the floor.
-  const deliveredLive = held.some(
-    (h) => h.status !== "CANCELLED" && Number(h.deliveredQty ?? 0) > EPS,
-  );
+  const deliveredLive = held.some(isLiveDeliveredLine);
   if (head.status !== OrderStatus.DELIVERED) {
     if (deliveredLive) throw deliveredLinesReplaced();
     return null;

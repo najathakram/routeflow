@@ -273,6 +273,7 @@ describeDb("W-946r quantity floor (SA-1149 D2), real Postgres", () => {
   }, 120_000);
 
   afterAll(async () => {
+    await raw.deliveryMutation.deleteMany({ where: { tenantId } });
     await raw.invoice.deleteMany({ where: { id: { in: invoiceIds } } });
     await raw.orderRevision?.deleteMany?.({ where: { orderId: { in: orderIds } } });
     await raw.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
@@ -347,7 +348,7 @@ describeDb("W-946r quantity floor (SA-1149 D2), real Postgres", () => {
     expect(await snapshot(o.id)).toEqual(before);
   }, 120_000);
 
-  it("D2-3 (observe): PARTIALLY_DELIVERED 5 ordered / 3 delivered, cut to 2: refused, nothing written", async () => {
+  it("D2-3 (guard): PARTIALLY_DELIVERED 5 ordered / 3 delivered, cut to 2: 409 LINE_ALREADY_DELIVERED, nothing written", async () => {
     const p = await product("d23");
     const o = await delivered(p, 5, 3, "PARTIALLY_DELIVERED");
     const before = await snapshot(o.id);
@@ -355,9 +356,10 @@ describeDb("W-946r quantity floor (SA-1149 D2), real Postgres", () => {
     await edit(o.id, { items: [{ id: o.lineItems[0].id, qty: 2 }] }).catch((e) => {
       outcome = { status: e?.status, code: e?.response?.code };
     });
-    // D2-3 observed on master: PARTIALLY_DELIVERED is already refused (409 LINE_ALREADY_DELIVERED), so this row is a guard.
-    expect(outcome).toMatchObject({ status: 409 });
+    // Observed on master: PARTIALLY_DELIVERED is already refused with this code, so the row is a guard.
+    expect(outcome).toEqual({ status: 409, code: "LINE_ALREADY_DELIVERED" });
     expect(await snapshot(o.id)).toEqual(before);
+    expect(await stock(p)).toBe(90);
   }, 120_000);
 
   it("D2-4 guard: qty 5 (equal) and 7 (increase) are accepted on the delivered line", async () => {
@@ -469,7 +471,7 @@ describeDb("W-946r quantity floor (SA-1149 D2), real Postgres", () => {
     expect(await stock(p)).toBe(90);
   }, 120_000);
 
-  it("D2-14 (B1167 re-pin b): DELIVERED, non-route, no records, {10, d10}, staff replace-all to [12]: refused 409 LINES_REPLACE_AFTER_DELIVERY before the carry (observed), nothing written", async () => {
+  it("D2-14 (guard): DELIVERED, non-route, no records, {10, d10}, staff replace-all to [12]: 409 LINES_REPLACE_AFTER_DELIVERY (W-871 refuses first), nothing written", async () => {
     const p = await product("d214");
     const o = await delivered(p, 10, 10);
     let outcome: unknown = "resolved";
@@ -481,7 +483,11 @@ describeDb("W-946r quantity floor (SA-1149 D2), real Postgres", () => {
       outcome,
       lines: lines.map((l) => [Number(l.qty), Number(l.deliveredQty)]),
       stock: await stock(p),
-    }).toEqual(OBSERVED_D2_14);
+    }).toEqual({
+      outcome: { status: 409, code: "LINES_REPLACE_AFTER_DELIVERY" },
+      lines: [[10, 10]],
+      stock: 90,
+    });
   }, 120_000);
 
   it("D2-15: a PENDING (reopened) route order with a delivered line, the driver's full list is 409 ORDER_EDIT_DELIVERED_LINES", async () => {
@@ -515,9 +521,25 @@ describeDb("W-946r quantity floor (SA-1149 D2), real Postgres", () => {
       where: { id: o.id },
       data: { routeRunId: rr.id, routeRunStopId: stop.id },
     });
+    // The evidence a route delivery writes: a DeliveryMutation for the line with quantityDelivered 4 (the column
+    // without its rows is a shape no writer produces).
+    const evidence = await raw.deliveryMutation.create({
+      data: {
+        tenantId,
+        orderId: o.id,
+        orderItemId: o.lineItems[0].id,
+        productId: p,
+        routeRunStopId: stop.id,
+        type: "DELIVERED",
+        qty: "4",
+        quantityDelivered: "4",
+      } as any,
+    });
     const before = await snapshot(o.id);
     await expect(replace(o.id, [full(p, 10)], driver())).rejects.toMatchObject(DELIVERED_LINES);
     expect(await snapshot(o.id)).toEqual(before);
+    const after = await raw.deliveryMutation.findMany({ where: { orderId: o.id } });
+    expect(after.map((m) => [m.id, m.orderItemId])).toEqual([[evidence.id, o.lineItems[0].id]]);
   }, 120_000);
 
   it("D2-16 guard: a PENDING order whose lines all have d 0: staff replace-all is accepted as today", async () => {
@@ -538,7 +560,7 @@ describeDb("W-946r quantity floor (SA-1149 D2), real Postgres", () => {
     expect((await rows(o.id)).some((l) => Number(l.qty) === 4)).toBe(true);
   }, 120_000);
 
-  it("D2-18: DELIVERED, non-route, no records, x (d5) and y: a replace-all to [y] only (x omitted) is refused 409 by LINES_REPLACE_AFTER_DELIVERY (guard: the refuser, observed)", async () => {
+  it("D2-18: DELIVERED, non-route, no records, x (d5) and y: a replace-all to [y] only (x omitted) is 409 LINES_REPLACE_AFTER_DELIVERY (guard: W-871 is the refuser)", async () => {
     const x = await product("d218x");
     const y = await product("d218y");
     const o = await order([plain(x, 5, 5), plain(y, 5, 0)], "DELIVERED");
@@ -547,8 +569,8 @@ describeDb("W-946r quantity floor (SA-1149 D2), real Postgres", () => {
     await replace(o.id, [full(y, 5)]).catch((e) => {
       outcome = { status: e?.status, code: e?.response?.code };
     });
-    expect(outcome).toEqual(OBSERVED_D2_18);
-    if (outcome !== "resolved") expect(await snapshot(o.id)).toEqual(before);
+    expect(outcome).toEqual({ status: 409, code: "LINES_REPLACE_AFTER_DELIVERY" });
+    expect(await snapshot(o.id)).toEqual(before);
   }, 120_000);
 
   it("D2-19 guard: PARTIALLY_DELIVERED with a d3 line: a staff replace-all is 409 as before (B1234)", async () => {
@@ -569,11 +591,3 @@ describeDb("W-946r quantity floor (SA-1149 D2), real Postgres", () => {
     expect([line.id, Number(line.qty), Number(line.deliveredQty)]).toEqual([id, 12, 10]);
   }, 120_000);
 });
-
-/** Observed on d8473e8d1c + D2 (SA-1149: observe and report): staff replace-all on a DELIVERED order is refused before the carry. */
-const OBSERVED_D2_14 = {
-  outcome: { status: 409, code: "LINES_REPLACE_AFTER_DELIVERY" },
-  lines: [[10, 10]],
-  stock: 90,
-};
-const OBSERVED_D2_18 = { status: 409, code: "LINES_REPLACE_AFTER_DELIVERY" };

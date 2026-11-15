@@ -141,11 +141,16 @@ describe("SA-763r: an edit of a DELIVERED order keeps the delivered quantities",
     expect(h.prisma.product.update).not.toHaveBeenCalled();
   });
 
-  it("a legacy line (d 0, qty 12) cut to 10 puts NOTHING back on the shelf and ends at d 12", async () => {
+  // SA-1149 20:55Z (a): the legacy shape {q12, d0} is real (B1050); F1 reads its booked floor as 12, so the cut is
+  // refused. The goods were handed over; the way to take them back is a Return.
+  it("a legacy line (d 0, qty 12) cut to 10 is refused: the booked floor is 12", async () => {
     seed([lineA({ qty: 12, deliveredQty: 0 })]);
-    await edit([{ id: "li-A", productId: "prod-A", qty: 10 }]);
+    await expect(edit([{ id: "li-A", productId: "prod-A", qty: 10 }])).rejects.toMatchObject({
+      status: 409,
+      response: { code: "LINE_ALREADY_DELIVERED" },
+    });
     expect(h.prisma.product.update).not.toHaveBeenCalled(); // red on base: increment 2, then d set to 12
-    expect(d("li-A")).toBe(12);
+    expect(d("li-A")).toBe(0);
   });
 
   it("W-871: the same legacy line cut through a replace-all is refused 409 (was: no restock, d 12)", async () => {
@@ -185,10 +190,14 @@ describe("SA-763r: an edit of a DELIVERED order keeps the delivered quantities",
     });
   });
 
-  // SA-1149 D2: seeded {q10,d8}: the cut to 8 lands at the delivered floor; the stamp lifts d back to the old 10.
-  it("a cut books nothing (d stays, the goods are gone)", async () => {
-    seed([lineA({ deliveredQty: 8 })]);
-    await edit([{ id: "li-A", productId: "prod-A", qty: 8 }]);
+  // SA-1149 20:55Z (a): the real stamped shape is {q10, d10} (every writer leaves d >= qty on a no-evidence line).
+  it("a cut on a stamped no-evidence line is refused, nothing booked", async () => {
+    seed([lineA({ deliveredQty: 10 })]);
+    await expect(edit([{ id: "li-A", productId: "prod-A", qty: 8 }])).rejects.toMatchObject({
+      status: 409,
+      response: { code: "LINE_ALREADY_DELIVERED" },
+    });
+    expect(h.prisma.product.update).not.toHaveBeenCalled();
     expect(d("li-A")).toBe(10);
   });
 

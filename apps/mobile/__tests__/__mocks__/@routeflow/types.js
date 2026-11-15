@@ -22,6 +22,10 @@
 // API_ERROR_CODES (#2163): must stay equal to `packages/types/api/error-codes.ts`; pinned by
 // apps/api/src/common/api-error-codes-parity.spec.ts, which `require`s THIS file.
 module.exports = {
+  // Hand copy of packages/types/api/buyer-order-edit.ts BUYER_EDIT_DELIVERED_LINES_COPY (SA-1149); pinned equal by
+  // apps/api/src/orders/buyer-edit-delivered-copy.spec.ts (which `require`s THIS file).
+  BUYER_EDIT_DELIVERED_LINES_COPY:
+    "Part of this order was already delivered, so it can't be changed here. Contact the seller to change it.",
   // Hand copy of packages/types/api/orders.ts CREDITS_PENDING_COPY (B1205); byte-identical.
   CREDITS_PENDING_COPY:
     "The order was saved, but the credit notes weren't applied yet. Someone in the office needs to apply them on the order.",

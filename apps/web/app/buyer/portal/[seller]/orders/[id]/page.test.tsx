@@ -230,6 +230,25 @@ describe("BuyerOrderDetailPage — order with a custom line (B586)", () => {
     expect(await screen.findByText(/Refresh and try again/)).toBeInTheDocument();
   });
 
+  it("M1-5 (SA-1149): a 409 ORDER_EDIT_DELIVERED_LINES shows the buyer copy, never the server sentence", async () => {
+    mockUpdateItems.mockRejectedValueOnce({
+      response: {
+        status: 409,
+        data: { code: "ORDER_EDIT_DELIVERED_LINES", message: "Change each line instead" },
+      },
+    });
+    mockOrder = order([LISTED]);
+    renderWithProviders(<BuyerOrderDetailPage />);
+    fireEvent.click(screen.getByRole("button", { name: /edit items/i }));
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    expect(
+      await screen.findByText(
+        "Part of this order was already delivered, so it can't be changed here. Contact the seller to change it.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Change each line instead/)).toBeNull();
+  });
+
   it("a custom line does not get a 'Special' pill (its MANUAL price type is not a customer special)", () => {
     mockOrder = order([CUSTOM]);
     renderWithProviders(<BuyerOrderDetailPage />);

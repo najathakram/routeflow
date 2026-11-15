@@ -1,4 +1,4 @@
-import { readFileSync } from "fs";
+import { readdirSync, readFileSync, statSync } from "fs";
 import { join } from "path";
 
 /**
@@ -30,22 +30,105 @@ describe("quantity floor call sites (SA-1149 D2-8)", () => {
   });
 });
 
-/** SA-1149 D2-21: the replace-all refusal is thrown once, in captureRecreatedCarry; both replace sites mark before they delete. */
-describe("replace-all refusal sites (SA-1149 D2-21)", () => {
-  it("ORDER_EDIT_DELIVERED_LINES is thrown from one helper, called at both exits of captureRecreatedCarry", () => {
-    const src = read("delivered-stamp.ts");
-    expect(src.match(/code: API_ERROR_CODES\.ORDER_EDIT_DELIVERED_LINES/g)).toHaveLength(1);
-    expect(src.match(/throw deliveredLinesReplaced\(\)/g)).toHaveLength(2);
+/**
+ * SA-1149 round 2, pins P-a to P-e (they replace the D2-21 body, which any later deleteMany satisfied).
+ * The replace-all refusal is thrown once; both replace sites mark and delete as ADJACENT statements; every
+ * `orderItem.deleteMany(` in the api is known; the merge predicate is one fragment read by every merge path.
+ */
+const SRC = join(__dirname, "..");
+function walk(dir: string, out: string[] = []): string[] {
+  for (const name of readdirSync(dir)) {
+    const full = join(dir, name);
+    if (statSync(full).isDirectory()) walk(full, out);
+    else if (name.endsWith(".ts") && !name.endsWith(".spec.ts")) out.push(full);
+  }
+  return out;
+}
+const FILES = walk(SRC);
+const rel = (f: string) => f.slice(SRC.length + 1).replace(/\\/g, "/");
+const text = (f: string) => readFileSync(join(SRC, f), "utf8");
+/** Identifier uses outside import statements and comment lines. */
+const uses = (src: string, ident: string) =>
+  src
+    .replace(/import[\s\S]*?from "[^"]+";/g, "")
+    .split("\n")
+    .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+    .join("\n")
+    .match(new RegExp(ident.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"))?.length ?? 0;
+const countAcross = (ident: string) =>
+  Object.fromEntries(
+    FILES.map((f): [string, number] => [rel(f), uses(readFileSync(f, "utf8"), ident)]).filter(
+      ([, n]) => n > 0,
+    ),
+  );
+
+describe("replace-all refusal and line-delete pins (SA-1149 P-a..P-e)", () => {
+  it("P-a: at each replace site the delete is the very next statement after markLinesRecreated (exactly 2)", () => {
+    const src = text("orders/orders.service.ts");
+    const sites = src.match(
+      /lineIdentity = await markLinesRecreated\(tx, orderId, heldItems\);[^\n]*\n\s*await tx\.orderItem\.deleteMany\(/g,
+    );
+    expect(sites).toHaveLength(2);
   });
 
-  it("both replace sites call markLinesRecreated before their deleteMany (count 2)", () => {
-    const src = read("orders.service.ts");
-    expect(src.match(/markLinesRecreated\(tx, orderId, heldItems\)/g)).toHaveLength(2);
-    const sites = [...src.matchAll(/markLinesRecreated\(tx, orderId, heldItems\)/g)].map(
-      (m) => m.index!,
-    );
-    for (const at of sites) {
-      expect(src.slice(at).indexOf("deleteMany")).toBeGreaterThan(0);
-    }
+  it("P-b: every orderItem.deleteMany( in non-spec api source is a known site", () => {
+    expect(countAcross("orderItem.deleteMany(")).toEqual({
+      "customers/customers.service.ts": 3, // customer delete and merge cleanups (no order is merged here)
+      "inventory/testing/order-stock-world.ts": 1, // test harness teardown
+      "orders/merge-lock-recheck.ts": 1, // the guarded loser delete (never a delivered line, P-d)
+      "orders/order-line-removal.ts": 1, // a removal of a non-delivered line
+      "orders/orders.service.ts": 3, // the two marked replace sites and the order hard delete
+      "orders/testing/merge-recheck.ts": 1, // test harness
+      "orders/testing/units-fold-db-harness.ts": 1, // test harness
+    });
+  });
+
+  it("markLinesRecreated is defined once, in delivered-stamp.ts, and called twice, both in orders.service.ts", () => {
+    expect(
+      text("orders/delivered-stamp.ts").match(/export async function markLinesRecreated\(/g),
+    ).toHaveLength(1);
+    expect(countAcross("markLinesRecreated(")).toEqual({
+      "orders/delivered-stamp.ts": 1,
+      "orders/orders.service.ts": 2,
+    });
+  });
+
+  it("P-c: the code is thrown from delivered-stamp.ts only, keyed once, two throw sites", () => {
+    expect(countAcross("API_ERROR_CODES.ORDER_EDIT_DELIVERED_LINES")).toEqual({
+      "orders/delivered-stamp.ts": 1,
+    });
+    expect(text("common/api-error-codes.ts").match(/ORDER_EDIT_DELIVERED_LINES:/g)).toHaveLength(1);
+    expect(
+      text("orders/delivered-stamp.ts").match(/throw deliveredLinesReplaced\(\)/g),
+    ).toHaveLength(2);
+  });
+
+  it("P-d: the merge fragment is defined once and used once in orders.service, twice in merge-lock-recheck", () => {
+    expect(countAcross("ORDER_HAS_NO_LIVE_DELIVERED_LINE")).toEqual({
+      "orders/delivered-line-lock.ts": 1,
+      "orders/orders.service.ts": 1,
+      "orders/merge-lock-recheck.ts": 2,
+    });
+    expect(countAcross("isLiveDeliveredLine")).toEqual({
+      "orders/delivered-line-lock.ts": 1,
+      "orders/delivered-stamp.ts": 1,
+    });
+  });
+
+  it("P-e: the sweep's candidate where is mergeEligibleWhere, never a local copy", () => {
+    const src = text("orders/order-sweep.ts");
+    expect(src.match(/mergeEligibleWhere\(/g)).toHaveLength(1);
+    expect(src).not.toMatch(/status: OrderStatus\.PENDING/);
+  });
+});
+
+/** SA-1149 20:55Z: round 1's `delivered` seed (a DELIVERED line with d below qty and no evidence) must not come back. */
+describe("a2 delivered-line spec seed", () => {
+  it("has no delivered: seed key and no SeedShape.delivered", () => {
+    const src = readFileSync(join(__dirname, "a2-delivered-line-live-pack.db.spec.ts"), "utf8");
+    expect(src).not.toMatch(/\{[^}]*\bdelivered: \d+/);
+    expect(src).not.toMatch(/shape\.delivered/);
+    expect(src).not.toMatch(/^\s*delivered\?: number/m);
+    expect(src.match(/shortRouteDrop\(await seed\(/g)?.length).toBe(7);
   });
 });

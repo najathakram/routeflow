@@ -413,18 +413,32 @@ describe("stampDeliveredInFull — recreated (replace-all, M2)", () => {
     expect(db.line("n2").deliveredQty).toBe(5); // the last row takes the rest: 3 + 5 = 8 carried
   });
 
-  it("a product that is new in the edit is delivered in full; an unlisted line too", async () => {
+  it("U-2 (SA-1149): a delivered product restated in a new row keeps its carry; new products are delivered in full; an unlisted line too", async () => {
     const db = makeStampDb({
       status: "DELIVERED",
       lines: [
-        { id: "n1", productId: "p9", qty: 3, deliveredQty: 0 },
+        { id: "n1", productId: "p1", qty: 10, deliveredQty: 0 },
+        { id: "n2", productId: "p2", qty: 3, deliveredQty: 0 },
+        { id: "n3", productId: "p3", qty: 2, deliveredQty: 0 },
         { id: "u1", productId: null, qty: 2, deliveredQty: 0 },
       ],
     });
-    // SA-1149 D2: the old p1 row is not carried here (omitting a delivered product is refused, D2-18): only new products
-    await recreate(db, held([]));
-    expect(db.line("n1").deliveredQty).toBe(3);
+    // held p1 {q10, d10}; recreated p1 x10 (a new id), p2 x3, p3 x2: no refusal
+    await recreate(db, held([["old1", "p1", 10, 10]]));
+    expect(db.line("n1").deliveredQty).toBe(10); // carried
+    expect(db.line("n2").deliveredQty).toBe(3); // the entry rule
+    expect(db.line("n3").deliveredQty).toBe(2);
     expect(db.line("u1").deliveredQty).toBe(2);
+  });
+
+  it("U-3 (SA-1149): a CANCELLED delivered line is skipped by the floor: recreating only p2 resolves, no 409", async () => {
+    const db = makeStampDb({
+      status: "DELIVERED",
+      lines: [{ id: "n2", productId: "p2", qty: 3, deliveredQty: 0 }],
+    });
+    // held CANCELLED p1 {q10, d10}; recreated [p2 x3]. Red when the `|| h.cancelled` skip in recreatedTargets is dropped.
+    await recreate(db, [{ ...held([["old1", "p1", 10, 10]])[0], status: "CANCELLED" }] as never);
+    expect(db.line("n2").deliveredQty).toBe(3);
   });
 
   it("captures nothing for an order that is not DELIVERED", async () => {

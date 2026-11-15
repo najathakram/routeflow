@@ -110,7 +110,7 @@ describeDb("W-861 + W-871 — paid walk-in edits and post-delivery replaces, rea
   }
 
   /** A DELIVERED sale of 2 x 1.00, billed by a PAID invoice paid 2.00 in CASH (`paid: false`: a SENT invoice, no payment). */
-  async function paidSale(customerId: string, opts: { paid?: boolean; delivered?: number } = {}) {
+  async function paidSale(customerId: string, opts: { paid?: boolean; shortDrop?: number } = {}) {
     const paid = opts.paid !== false;
     const productId = await product();
     const o = await raw.order.create({
@@ -126,7 +126,7 @@ describeDb("W-861 + W-871 — paid walk-in edits and post-delivery replaces, rea
               tenantId,
               productId,
               qty: 2,
-              deliveredQty: opts.delivered ?? 2,
+              deliveredQty: opts.shortDrop ?? 2,
               invoicedQty: 2,
               unitPrice: "1.00",
               subtotal: "2.00",
@@ -173,7 +173,73 @@ describeDb("W-861 + W-871 — paid walk-in edits and post-delivery replaces, rea
           } as any,
         })
       : (undefined as never);
+    if (opts.shortDrop !== undefined)
+      await shortRouteDrop(o.id, o.lineItems[0].id, productId, customerId, opts.shortDrop);
     return { o, inv, pay, productId };
+  }
+
+  /**
+   * SA-1149 20:55Z: the one producible shape of a delivered line that can be cut down to what was delivered, a route
+   * SHORT DROP: the order rides a COMPLETED run stop and one PARTIAL DeliveryMutation (quantityDelivered = d, the
+   * stop's id, the driver) is the evidence a route delivery writes. (d below qty with no evidence is a shape no writer
+   * produces.)
+   */
+  async function shortRouteDrop(
+    orderId: string,
+    lineId: string,
+    productId: string,
+    customerId: string,
+    delivered: number,
+  ) {
+    const driverUser = await raw.user.create({
+      data: {
+        email: `drv-${userIds.length}-${run}@example.test`,
+        username: `drv-${userIds.length}-${run}`,
+        role: "DRIVER",
+        tenantId,
+      },
+    });
+    userIds.push(driverUser.id);
+    const driver = await raw.driver.create({ data: { userId: driverUser.id, tenantId } as any });
+    const route = await raw.route.create({ data: { name: `w871 ${run}`, tenantId } as any });
+    const routeStop = await raw.routeStop.create({
+      data: { tenantId, routeId: route.id, stopNumber: 1, customerId } as any,
+    });
+    const rr = await raw.routeRun.create({
+      data: {
+        tenantId,
+        routeId: route.id,
+        scheduledDate: new Date("2026-11-15T00:00:00.000Z"),
+        status: "COMPLETED" as any,
+        driverId: driver.id,
+      },
+    });
+    const stop = await raw.routeRunStop.create({
+      data: {
+        tenantId,
+        routeRunId: rr.id,
+        routeStopId: routeStop.id,
+        stopNumber: 1,
+        status: "COMPLETED" as any,
+      } as any,
+    });
+    await raw.order.update({
+      where: { id: orderId },
+      data: { routeRunId: rr.id, routeRunStopId: stop.id },
+    });
+    await raw.deliveryMutation.create({
+      data: {
+        tenantId,
+        orderId,
+        orderItemId: lineId,
+        productId,
+        routeRunStopId: stop.id,
+        driverId: driver.id,
+        type: "PARTIAL",
+        qty: String(delivered),
+        quantityDelivered: String(delivered),
+      } as any,
+    });
   }
 
   /**
@@ -271,12 +337,18 @@ describeDb("W-861 + W-871 — paid walk-in edits and post-delivery replaces, rea
   }, 120_000);
 
   afterAll(async () => {
+    await raw.deliveryMutation.deleteMany({ where: { tenantId } });
     await raw.invoicePayment.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
     await raw.invoiceItem.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
     await raw.invoice.deleteMany({ where: { id: { in: invoiceIds } } });
     await raw.orderRevision?.deleteMany?.({ where: { orderId: { in: orderIds } } });
     await raw.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
     await raw.order.deleteMany({ where: { id: { in: orderIds } } });
+    await raw.routeRunStop.deleteMany({ where: { tenantId } });
+    await raw.routeRun.deleteMany({ where: { tenantId } });
+    await raw.routeStop.deleteMany({ where: { tenantId } });
+    await raw.route.deleteMany({ where: { tenantId } });
+    await raw.driver.deleteMany({ where: { tenantId } });
     await raw.stockMovement.deleteMany({ where: { productId: { in: productIds } } });
     await raw.product.deleteMany({ where: { id: { in: productIds } } });
     await raw.customer.deleteMany({ where: { id: { in: customerIds } } });
@@ -391,8 +463,9 @@ describeDb("W-861 + W-871 — paid walk-in edits and post-delivery replaces, rea
   });
 
   it("SA-956 (c): a cut on that same order is still 409, with nothing written", async () => {
-    // SA-1149 D2: delivered 1 of 2, so the cut to 1 stays at the delivered floor and reaches the overpay guard
-    const { o, inv, pay, productId: pid } = await paidSale(await customer(false), { delivered: 1 });
+    // SA-1149 20:55Z (b): a route short drop, delivered 1 of 2 from evidence, so the cut to 1 passes the floor (1 >= 1)
+    // and the overpay guard is the refuser
+    const { o, inv, pay, productId: pid } = await paidSale(await customer(false), { shortDrop: 1 });
     await raw.invoiceItem.create({
       data: {
         tenantId,
@@ -412,7 +485,7 @@ describeDb("W-861 + W-871 — paid walk-in edits and post-delivery replaces, rea
     expect(await snapshot(o.id)).toEqual(before);
   });
 
-  it("SA-956 (c2): a cut below the delivered qty is 409 LINE_ALREADY_DELIVERED, nothing written", async () => {
+  it("SA-956 (c2) = F1-o: on the stamped shape {q2, d2} a cut to 1 is 409 LINE_ALREADY_DELIVERED, not the overpay refusal (the floor runs first), nothing written", async () => {
     // the same manual-charge state as (c), so the floor is shown answering BEFORE the overpay check on one state
     const { o, inv, pay, productId: pid } = await paidSale(await customer(false));
     await raw.invoiceItem.create({

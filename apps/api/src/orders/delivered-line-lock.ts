@@ -226,3 +226,18 @@ export function assertQtyNotBelowDelivered(
     });
   }
 }
+
+/**
+ * SA-1149 (round 2): an order holding a live delivered line is never a merge target and never a merge loser (a merge
+ * folds by replace and deletes the loser's lines, so the delivered stamp would be lost, B1167). One fragment, read by
+ * every `forMerge` search and by both branches of `mergeEligibleWhere`; `isLiveDeliveredLine` is its JS twin (a unit row
+ * checks the two agree). Use inside an `AND`, never spread: it shares the `lineItems` key with the unit-aware guard.
+ */
+export const ORDER_HAS_NO_LIVE_DELIVERED_LINE = {
+  lineItems: { none: { deliveredQty: { gt: 0 }, status: { not: "CANCELLED" } } },
+} as const;
+
+/** The JS twin of `ORDER_HAS_NO_LIVE_DELIVERED_LINE`: a line that is not CANCELLED and has delivered something. */
+export function isLiveDeliveredLine(line: { status?: unknown; deliveredQty?: unknown }): boolean {
+  return line.status !== "CANCELLED" && Number(line.deliveredQty ?? 0) > 0;
+}
