@@ -36,7 +36,7 @@ export function discountModeOf(
   from: Date | null = DISCOUNT_PRE_TAX_FROM,
 ): DiscountTaxBase {
   if (from == null) return "LEGACY_POST_TAX";
-  if (doc?.orderId && doc.order === undefined) {
+  if (doc?.orderId && doc.order?.createdAt == null) {
     throw new MoneyInvariantError(
       "Discount tax base: an order-linked invoice was loaded without its order.",
     );

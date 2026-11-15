@@ -24,7 +24,7 @@ const ROOT = path.resolve(__dirname, "../../../..");
 const SCOPE_ROOTS = ["apps", "scripts"];
 const SKIP_DIRS = new Set(["node_modules", "dist", "__tests__"]);
 const SOURCE = /\.(ts|tsx|mjs|cjs|js)$/;
-const TEST_FILE = /\.(spec|test)\.(ts|tsx|mjs|cjs|js)$/;
+const TEST_FILE = /\.(spec|test|e2e-spec)\.(ts|tsx|mjs|cjs|js)$/;
 const TOKENS = [
   "discountModeOf(",
   "newDocumentDiscountMode(",
@@ -128,6 +128,13 @@ function modeCallsIn(src: string): string[] {
       let depth = 1;
       let i = m.index + m[0].length;
       for (; i < code.length && depth > 0; i++) {
+        const q = code[i];
+        if (q === '"' || q === "'" || q === "`") {
+          // a string literal's own parentheses are not the call's (N7)
+          i++;
+          while (i < code.length && code[i] !== q) i += code[i] === "\\" ? 2 : 1;
+          continue;
+        }
         if (code[i] === "(") depth++;
         else if (code[i] === ")") depth--;
       }
@@ -270,6 +277,18 @@ describe("SA-1153: the ordered table of every discount-mode call (replaces pin 1
       expect(got).toHaveLength(TABLE.length);
       expect([...got].sort()).toEqual([...TABLE].sort()); // a count (or a set) pin would pass this
       expect(got).not.toEqual(TABLE);
+    });
+
+    it("N7: a parenthesis inside a string literal does not end the call early", () => {
+      expect(
+        modeCallsIn('const a = discountModeOf(fn(")")); const b = newDocumentDiscountMode();'),
+      ).toEqual(['discountModeOf(fn(")"))', "newDocumentDiscountMode()"]);
+    });
+
+    it("N8: an e2e spec file is a test file, a service file is not", () => {
+      expect(TEST_FILE.test("orders.e2e-spec.ts")).toBe(true);
+      expect(TEST_FILE.test("orders.spec.ts")).toBe(true);
+      expect(TEST_FILE.test("orders.service.ts")).toBe(false);
     });
 
     it("a bare read of the constant is its own entry, and string / regex literals are not mangled", () => {

@@ -65,7 +65,9 @@ describe("SA-1153 behavioural rows (cutover set)", () => {
   // Fixture note: the recompute's tax (`t.tax`) is computed on the row's OWN mode by stored-tax-state.ts:189, so a swap at :281
   // alone moves nothing while stored tax equals the line sum (both modes then skip `taxAmount`). It becomes observable where the
   // stored tax is an ORDER ALLOCATION share (one of two invoices of the order): within the allocation tolerance, a cent off the
-  // line sum, so `differs(t.tax, stored)` is true and a PRE_TAX reading writes `taxAmount: t.tax`. That is the fixture below.
+  // line sum, so `differs(t.tax, stored)` is true and the plan is sensitive to the mode there. That is the fixture below (N2:
+  // on the plain fixture the swap is an equivalent mutant, so it cannot discriminate). The expected value is that the written
+  // figures equal the cutover-null run on this fixture, which `expectSiteKeepsLegacy` compares.
   describe("row 14: a header discount PATCH writes no tax on a LEGACY invoice (master's shape)", () => {
     const patched = (createdAt: Date, over: Record<string, unknown> = {}) =>
       planHeaderOnlyTotals(
