@@ -105,7 +105,7 @@ export function InventoryCards({
             amountTone={state === "out" ? "danger" : "default"}
             subtitle={
               <>
-                <span className="font-mono">{item.sku ?? "—"}</span>
+                <span className="font-mono text-xs text-navy/70">{item.sku ?? "—"}</span>
                 {item.category ? <span className="text-navy/60"> · {item.category}</span> : null}
               </>
             }

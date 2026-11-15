@@ -165,8 +165,12 @@ describe("InventoryPage: phone cards", () => {
     const cards = within(cardList(container)).getAllByRole("listitem");
     const title = within(cards[0]).getByRole("link", { name: "Acme Boxed Gadget" });
     expect(title.className).not.toContain("font-mono");
-    // The SKU under it is the code, and keeps the mono face.
-    expect(within(cards[0]).getByText("AG-1", { exact: false }).className).toContain("font-mono");
+    // The SKU under it is the code: mono face, one step smaller and quieter than the name.
+    const sku = within(cards[0]).getByText("AG-1", { exact: false });
+    expect(sku.className).toContain("font-mono");
+    expect(sku.className).toContain("text-xs");
+    expect(sku.className).toContain("text-navy/70");
+    expect(title.className).toContain("text-sm");
   });
 
   it("shows at most two text actions plus one More actions button, with every action reachable", async () => {
