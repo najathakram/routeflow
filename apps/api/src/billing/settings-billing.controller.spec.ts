@@ -98,7 +98,7 @@ describe("SettingsBillingController.createCheckout (WP3c, R2.9)", () => {
     process.env.FRONTEND_URL = ORIGINAL_FRONTEND_URL;
   });
 
-  it("starts a checkout session for the tenant's own pinned plan with success/cancel URLs, no body", async () => {
+  it("starts a checkout session for the tenant's own pinned plan with no body and no return URLs (billing.service owns them)", async () => {
     process.env.FRONTEND_URL = "https://app.example.com";
     const { controller, billing } = make();
     const user: AuthUser = { tenantId: "t1", sub: "u1" };
@@ -106,44 +106,9 @@ describe("SettingsBillingController.createCheckout (WP3c, R2.9)", () => {
     const result = await controller.createCheckout(user as any);
 
     expect(billing.createCheckoutSession).toHaveBeenCalledWith("t1", {
-      successUrl: "https://app.example.com/settings/billing?checkout=success",
-      cancelUrl: "https://app.example.com/settings/billing?checkout=cancelled",
       surface: "TENANT_SELF",
     });
     expect(result).toEqual({ checkoutUrl: "https://checkout.stripe.com/x", sessionId: "cs_1" });
-  });
-
-  it("uses the WEB_URL when FRONTEND_URL is unset (plan pick must never return to localhost)", async () => {
-    const savedWeb = process.env.WEB_URL;
-    delete process.env.FRONTEND_URL;
-    process.env.WEB_URL = "https://www.routeflow.test";
-    try {
-      const { controller, billing } = make();
-      await controller.createCheckout({ tenantId: "t1", sub: "u1" } as any);
-      expect(billing.createCheckoutSession).toHaveBeenCalledWith("t1", {
-        successUrl: "https://www.routeflow.test/settings/billing?checkout=success",
-        cancelUrl: "https://www.routeflow.test/settings/billing?checkout=cancelled",
-        surface: "TENANT_SELF",
-      });
-    } finally {
-      if (savedWeb === undefined) delete process.env.WEB_URL;
-      else process.env.WEB_URL = savedWeb;
-    }
-  });
-
-  it("falls back to localhost:3001 when neither WEB_URL nor FRONTEND_URL is set (non-production only)", async () => {
-    delete process.env.FRONTEND_URL;
-    delete process.env.WEB_URL;
-    const { controller, billing } = make();
-    const user: AuthUser = { tenantId: "t1", sub: "u1" };
-
-    await controller.createCheckout(user as any);
-
-    expect(billing.createCheckoutSession).toHaveBeenCalledWith("t1", {
-      successUrl: "http://localhost:3001/settings/billing?checkout=success",
-      cancelUrl: "http://localhost:3001/settings/billing?checkout=cancelled",
-      surface: "TENANT_SELF",
-    });
   });
 
   // R2.9: the endpoint accepts no request body at all — a caller cannot direct

@@ -8,7 +8,7 @@
 import * as path from "path";
 import { execFileSync } from "child_process";
 import { pathToFileURL } from "url";
-import { BILLING_RETURN_PATHS } from "@routeflow/types";
+import { BILLING_CANCEL_PATH, BILLING_RETURN_PATHS } from "@routeflow/types";
 
 const WEB_ROOT = path.resolve(__dirname, "..");
 
@@ -41,7 +41,7 @@ describe("old Checkout return addresses redirect to the Billing page", () => {
   it("/billing/cancel lands on the cancelled notice, temporarily", () => {
     expect(redirects.find((r) => r.source === "/billing/cancel")).toEqual({
       source: "/billing/cancel",
-      destination: "/settings/billing?checkout=cancelled",
+      destination: BILLING_CANCEL_PATH,
       permanent: false,
     });
   });

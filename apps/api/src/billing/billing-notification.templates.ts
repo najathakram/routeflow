@@ -1,6 +1,7 @@
 import { fromCents, roundMoney } from "@routeflow/pricing";
 import { escapeHtml, safeLinkHref } from "../common/html-escape";
 import { webBaseUrl } from "../config/web-base-url";
+import { API_BILLING_PORTAL_RETURN_PATH, billingReturnUrl } from "./billing-return-paths";
 import { brandHeaderHtml, renderBrandButton, renderBrandedEmail } from "../email/email-layout";
 export { escapeHtml };
 // N3 (2026-09-16): billing-lifecycle email templates to the tenant admin — trial ending,
@@ -49,7 +50,7 @@ function emailWebBase(): string {
 }
 
 export function billingSettingsUrl(): string {
-  return `${emailWebBase()}/settings/billing`;
+  return billingReturnUrl(emailWebBase(), API_BILLING_PORTAL_RETURN_PATH);
 }
 
 export interface BillingEmailTemplate {

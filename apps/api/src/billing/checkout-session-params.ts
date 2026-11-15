@@ -2,6 +2,7 @@ import { Logger } from "@nestjs/common";
 import type Stripe from "stripe";
 import type { CheckoutStart, CheckoutUiMode } from "@routeflow/types";
 import { webBaseUrl } from "../config/web-base-url";
+import { assertBillingReturnUrl } from "./billing-return-paths";
 
 /**
  * The ONE place a platform Checkout Session's tax / Managed Payments policy is applied (owner ruling
@@ -126,6 +127,12 @@ export type WithCheckoutPolicy<T> = T & { managed_payments: { enabled: false } }
  * `success_url` becomes `return_url` (plus `session_id={CHECKOUT_SESSION_ID}`) and `success_url` / `cancel_url` are dropped
  * (Stripe refuses them). The caller's success_url is the ONE return guard: each caller builds it from its own safe base/path.
  */
+/** The tenant the session is for (its metadata), for the mismatch log line only. */
+function tenantOf(params: { metadata?: unknown }): string | undefined {
+  const t = (params.metadata as { tenantId?: unknown } | null | undefined)?.tenantId;
+  return typeof t === "string" ? t : undefined;
+}
+
 export function withCheckoutPolicy<T extends Stripe.Checkout.SessionCreateParams>(
   params: T,
   opts: { surface: CheckoutSurface },
@@ -146,7 +153,14 @@ export function withCheckoutPolicy<T extends Stripe.Checkout.SessionCreateParams
     ...(paymentMethodTypes ? { payment_method_types: paymentMethodTypes } : {}),
     managed_payments: { ...params.managed_payments, enabled: false as const },
   };
-  if (checkoutUiMode(opts.surface) !== "embedded") return { ...params, ...policy };
+  if (checkoutUiMode(opts.surface) !== "embedded") {
+    // SA-1146 B-1 pin (b): the hosted addresses, as they will be sent, are checked here (when a caller names them).
+    if (params.success_url)
+      assertBillingReturnUrl("success", params.success_url, undefined, tenantOf(params));
+    if (params.cancel_url)
+      assertBillingReturnUrl("cancel", params.cancel_url, undefined, tenantOf(params));
+    return { ...params, ...policy };
+  }
 
   const { success_url, cancel_url: _cancel, ...rest } = params;
   void _cancel;
@@ -156,14 +170,16 @@ export function withCheckoutPolicy<T extends Stripe.Checkout.SessionCreateParams
     );
   }
   const sessionParam = "session_id={CHECKOUT_SESSION_ID}";
+  const returnUrl = success_url.includes("session_id=")
+    ? success_url
+    : `${success_url}${success_url.includes("?") ? "&" : "?"}${sessionParam}`;
+  assertBillingReturnUrl("embedded_return", returnUrl, undefined, tenantOf(params)); // the OUTPUT of the conversion, as Stripe will receive it
   return {
     ...rest,
     ...policy,
     ui_mode: "embedded_page",
     redirect_on_completion: "if_required",
-    return_url: success_url.includes("session_id=")
-      ? success_url
-      : `${success_url}${success_url.includes("?") ? "&" : "?"}${sessionParam}`,
+    return_url: returnUrl,
   } as unknown as WithCheckoutPolicy<T>;
 }
 

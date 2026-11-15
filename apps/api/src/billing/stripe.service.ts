@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { AppConfig } from "../config/configuration";
 import { STRIPE_API_VERSION, stripeInvoiceSubscriptionId } from "./stripe-period";
+import { assertBillingReturnUrl } from "./billing-return-paths";
 import type { InvoiceFacts } from "./catchup-claim";
 import { COUPON_SYNC_EXPAND, COUPON_SYNC_REQUEST, isInvoiceUpcomingNone } from "./coupon-unbilled";
 
@@ -359,9 +360,10 @@ export class StripeService implements OnModuleInit {
   /** #2476: `request` caps this one call (stripe-node's `timeout` / `maxNetworkRetries`); omit it for
    *  Stripe's defaults. */
   async createBillingPortalSession(
-    params: { customerId: string; returnUrl: string },
+    params: { customerId: string; returnUrl: string; tenantId?: string },
     request?: { timeoutMs: number; maxNetworkRetries: number },
   ): Promise<{ url: string }> {
+    assertBillingReturnUrl("portal", params.returnUrl, undefined, params.tenantId); // SA-1146 B-1 pin (b): the one portal create site
     return this.client.billingPortal.sessions.create(
       { customer: params.customerId, return_url: params.returnUrl },
       request

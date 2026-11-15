@@ -1,31 +1,12 @@
-import { IsString, IsOptional } from "class-validator";
-import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
-import {
-  API_BILLING_CANCEL_PATH,
-  API_BILLING_RETURN_PATHS,
-  billingReturnUrl,
-} from "../billing-return-paths";
+import { IsString } from "class-validator";
+import { ApiProperty } from "@nestjs/swagger";
 
-const EXAMPLE_BASE = "https://app.routeflow.io";
-
+/**
+ * The super-admin checkout link. SA-1146 B-1: no success or cancel override; the service always returns to the Billing
+ * page (billing-return-paths.ts), and no first-party client ever sent one.
+ */
 export class CreateCheckoutDto {
   @ApiProperty({ description: "Tenant ID to create checkout for" })
   @IsString()
   tenantId: string;
-
-  @ApiPropertyOptional({
-    description: "Override the default success URL",
-    example: billingReturnUrl(EXAMPLE_BASE, API_BILLING_RETURN_PATHS.plan),
-  })
-  @IsOptional()
-  @IsString()
-  successUrl?: string;
-
-  @ApiPropertyOptional({
-    description: "Override the default cancel URL",
-    example: billingReturnUrl(EXAMPLE_BASE, API_BILLING_CANCEL_PATH),
-  })
-  @IsOptional()
-  @IsString()
-  cancelUrl?: string;
 }

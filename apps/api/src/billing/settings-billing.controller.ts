@@ -237,12 +237,7 @@ export class SettingsBillingController {
         "Self-serve checkout is currently disabled for this plan — contact us to complete your subscription.",
       );
     }
-    const base = webBaseUrl();
-    return this.billing.createCheckoutSession(tenantId, {
-      successUrl: billingReturnUrl(base, API_BILLING_RETURN_PATHS.plan),
-      cancelUrl: billingReturnUrl(base, API_BILLING_CANCEL_PATH),
-      surface: "TENANT_SELF",
-    });
+    return this.billing.createCheckoutSession(tenantId, { surface: "TENANT_SELF" });
   }
 
   /**

@@ -560,8 +560,6 @@ export class BillingService {
     // SA-1139: `surface` is REQUIRED and never defaulted (the admin link is hosted, a tenant's own checkout follows the switch).
     opts: {
       interval?: "month" | "year";
-      successUrl?: string;
-      cancelUrl?: string;
       surface: CheckoutSurface;
     },
   ): Promise<CheckoutStart> {
@@ -690,8 +688,8 @@ export class BillingService {
           customer: customerId,
           mode: "subscription",
           line_items: [{ price_data: priceData, quantity: 1 }, ...addons.lineItems],
-          success_url: opts?.successUrl ?? billingReturnUrl(baseUrl, API_BILLING_RETURN_PATHS.plan),
-          cancel_url: opts?.cancelUrl ?? billingReturnUrl(baseUrl, API_BILLING_CANCEL_PATH),
+          success_url: billingReturnUrl(baseUrl, API_BILLING_RETURN_PATHS.plan),
+          cancel_url: billingReturnUrl(baseUrl, API_BILLING_CANCEL_PATH),
           metadata: {
             tenantId,
             slug: tenant.slug,
@@ -1059,6 +1057,7 @@ export class BillingService {
     const portalSession = await this.stripe.createBillingPortalSession(
       {
         customerId: sub.stripeCustomerId,
+        tenantId,
         returnUrl: billingReturnUrl(baseUrl, API_BILLING_PORTAL_RETURN_PATH),
       },
       request,
