@@ -24,6 +24,7 @@ import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import { EXTERNAL_SOURCE, gitEnv } from "./plane-client.mjs";
 import { startFakePlane, DEFAULT_STATES } from "./plane-fake-server.mjs";
+import { scrubbedGitEnv } from "../lib/check-git-hooks.mjs";
 
 // Bump ONLY with an SA ruling that allows a plane-* output change (SA-AIOS-01).
 const GOLDEN_BASE = "a587d034e7";
@@ -74,7 +75,7 @@ const makeTmp = (label) => {
 };
 
 function git(cwd, args) {
-  const r = spawnSync("git", args, { cwd, env: gitEnv(), encoding: "utf8" });
+  const r = spawnSync("git", args, { cwd, env: scrubbedGitEnv(), encoding: "utf8" });
   if (r.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${r.stderr}`);
   return r;
 }
@@ -83,7 +84,7 @@ function git(cwd, args) {
 function baseShaPresent() {
   const r = spawnSync("git", ["cat-file", "-e", `${GOLDEN_BASE}^{commit}`], {
     cwd: REPO,
-    env: gitEnv(),
+    env: scrubbedGitEnv(),
   });
   return r.status === 0;
 }
@@ -112,7 +113,7 @@ function buildTrees() {
   const arc = spawnSync(
     "git",
     ["archive", "--format=tar", GOLDEN_BASE, "scripts/campaign", "scripts/lib", ...BASE_ROOT_FILES],
-    { cwd: REPO, env: gitEnv(), maxBuffer: 512 * 1024 * 1024 },
+    { cwd: REPO, env: scrubbedGitEnv(), maxBuffer: 512 * 1024 * 1024 },
   );
   if (arc.status !== 0) throw new Error(`git archive failed: ${arc.stderr}`);
   const tar = spawnSync("tar", ["-x"], { cwd: baseDir, input: arc.stdout, encoding: "utf8" });
