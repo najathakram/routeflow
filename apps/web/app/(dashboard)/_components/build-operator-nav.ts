@@ -1,4 +1,4 @@
-import { BadgePercent, Handshake, MapPin, ShieldCheck, Store } from "lucide-react";
+import { BadgePercent, Handshake, MapPin, ShieldCheck, Store, Truck } from "lucide-react";
 import { driverNavItemVisible } from "@/lib/portal-routing";
 import { matchPlanGatedRoute, modeGatedVisible, planFlagVisible } from "@/lib/plan-gated-nav";
 import { CUSTOMER_NAV, DRIVER_NAV, OPERATOR_NAV, type NavEntry, type NavLeaf } from "./nav-config";
@@ -26,6 +26,7 @@ function getNavForRole(
   role: string | undefined,
   canActAsDriver: boolean | undefined,
   access: { routesAccess: boolean; deliveryAccess: boolean },
+  addonsLoading = false,
 ): NavEntry[] {
   const { routesAccess, deliveryAccess } = access;
   if (role === "CUSTOMER") return CUSTOMER_NAV;
@@ -56,6 +57,22 @@ function getNavForRole(
       }),
     };
   });
+
+  // Shipments lives in Dispatch; a tenant without that group keeps it at the end of Orders so the page
+  // is still one click away. While the addons query is in flight Dispatch is absent only because it is
+  // unresolved, so Shipments waits for the answer instead of hopping groups.
+  if (!showDispatchGroup && !addonsLoading) {
+    baseNav = baseNav.map((entry): NavEntry => {
+      if (entry.kind !== "group" || entry.label !== "Orders") return entry;
+      return {
+        ...entry,
+        children: [
+          ...entry.children,
+          { kind: "leaf", label: "Shipments", href: "/shipments", icon: Truck },
+        ],
+      };
+    });
+  }
 
   // Operators who can also act as drivers get "My Routes" inside the
   // Dispatch group instead of as a stand-alone top-level item.
@@ -120,10 +137,12 @@ function filterPlanGatedNav(
 export function buildOperatorNav(ctx: OperatorNavContext): NavEntry[] {
   const { role, counterEnabled, addonsLoading, hasSalesAgents, regulatedLoading } = ctx;
   const isStaff = role !== "CUSTOMER" && role !== "DRIVER";
-  const nav = getNavForRole(role, ctx.canActAsDriver, {
-    routesAccess: ctx.routesAccess,
-    deliveryAccess: ctx.deliveryAccess,
-  });
+  const nav = getNavForRole(
+    role,
+    ctx.canActAsDriver,
+    { routesAccess: ctx.routesAccess, deliveryAccess: ctx.deliveryAccess },
+    addonsLoading,
+  );
 
   // CUSTOMER/DRIVER nav has neither a Dispatch nor a Sales Agents entry, so
   // the skeleton splicing below only applies to the operator-ish (isStaff)
@@ -190,7 +209,7 @@ export function buildOperatorNav(ctx: OperatorNavContext): NavEntry[] {
         : [...base.slice(0, idx + 1), skeleton, ...base.slice(idx + 1)];
   } else if (hasSalesAgents) {
     // "Sales Agents" as a top-level leaf right after Customers; "Commissions"
-    // inside the Finance group after Supplier Statements. Same splice style as
+    // at the end of the Finance group. Same splice style as
     // the canActAsDriver Dispatch rewrite above — never mutate OPERATOR_NAV.
     base = base.flatMap((entry): NavEntry[] => {
       if (entry.kind === "leaf" && entry.href === "/customers") {
@@ -200,31 +219,26 @@ export function buildOperatorNav(ctx: OperatorNavContext): NavEntry[] {
         ];
       }
       if (entry.kind === "group" && entry.label === "Finance") {
-        const idx = entry.children.findIndex((c) => c.href === "/finance/statements");
         const child: NavLeaf = {
           kind: "leaf",
           label: "Commissions",
           href: "/finance/commissions",
           icon: BadgePercent,
         };
-        const children =
-          idx === -1
-            ? [...entry.children, child]
-            : [...entry.children.slice(0, idx + 1), child, ...entry.children.slice(idx + 1)];
-        return [{ ...entry, children }];
+        return [{ ...entry, children: [...entry.children, child] }];
       }
       return [entry];
     });
   }
 
-  // Lite-L2 (WP8/R4.3): hide gated leaves before the Analytics-relative inject index
-  // is computed, so Regulated Items/Sales Agents still land in the right spot even
-  // when Analytics itself is hidden (analytics is also in PLAN_GATED_NAV).
+  // Lite-L2 (WP8/R4.3): hide gated leaves before the Reports & analytics-relative inject index
+  // is computed, so Regulated Items still lands in the right spot even when that group is hidden
+  // (reports and analytics are both in PLAN_GATED_NAV).
   base = filterPlanGatedNav(base, ctx.plan, ctx.modes);
 
   if (inject.length === 0) return base;
 
-  const idx = base.findIndex((e) => e.kind === "leaf" && e.href === "/analytics");
+  const idx = base.findIndex((e) => e.kind === "group" && e.label === "Reports & analytics");
   return idx === -1
     ? [...base, ...inject]
     : [...base.slice(0, idx + 1), ...inject, ...base.slice(idx + 1)];

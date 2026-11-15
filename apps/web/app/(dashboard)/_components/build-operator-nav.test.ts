@@ -60,6 +60,7 @@ describe("buildOperatorNav", () => {
       "Overview",
       "Routes",
       "Order delivery",
+      "Shipments",
       "Drivers",
       "My Routes",
     ]);
@@ -98,6 +99,37 @@ describe("buildOperatorNav", () => {
     expect(labels.indexOf("~dispatch-skeleton")).toBe(labels.indexOf("Customers") - 1);
   });
 
+  it("Estimates is in Orders and Finance has five children", () => {
+    const nav = buildOperatorNav(ctx());
+    expect(group(nav, "Orders")?.children.map((c) => c.label)).toContain("Estimates");
+    expect(group(nav, "Finance")?.children.map((c) => c.label)).toEqual([
+      "Overview",
+      "Invoices",
+      "Payments",
+      "Payment requests",
+      "Credit notes",
+    ]);
+  });
+
+  it("no Dispatch access: Shipments is the last child of Orders", () => {
+    const nav = buildOperatorNav(ctx({ routesAccess: false, deliveryAccess: false }));
+    const orders = group(nav, "Orders")?.children.map((c) => c.label);
+    expect(orders?.[orders.length - 1]).toBe("Shipments");
+    expect(hrefs(nav)).toContain("/shipments");
+  });
+
+  it("Commissions ends the Finance group", () => {
+    const nav = buildOperatorNav(ctx({ hasSalesAgents: true }));
+    const fin = group(nav, "Finance")?.children.map((c) => c.label) ?? [];
+    expect(fin[fin.length - 1]).toBe("Commissions");
+  });
+
+  it("LITE: no Reports & analytics entry and Supplier statements sits under Warehouse", () => {
+    const nav = buildOperatorNav(ctx({ plan: { flags: [], resolved: true, failed: false } }));
+    expect(group(nav, "Reports & analytics")).toBeUndefined();
+    expect(group(nav, "Warehouse")?.children.map((c) => c.label)).toContain("Supplier statements");
+  });
+
   it("customer and driver menus come from their own lists", () => {
     expect(shape(buildOperatorNav(ctx({ role: "CUSTOMER" })))).toEqual([
       "Dashboard",
@@ -117,26 +149,27 @@ describe("buildOperatorNav", () => {
   });
 });
 
-const ANALYTICS_ENTRY = "Analytics";
+const ANALYTICS_ENTRY = "Reports & analytics > Reports, Analytics";
 
+// UX guide improvement 3: pages MOVE to the group people look in; no label or href changes.
 const SHAPE_FULL = [
   "Dashboard",
-  "Orders > All Orders, Returns",
-  "Dispatch > Overview, Routes, Order delivery, Drivers",
+  "Orders > All Orders, Estimates, Returns",
+  "Dispatch > Overview, Routes, Order delivery, Shipments, Drivers",
   "Customers",
-  "Warehouse > Inventory, Purchase orders, Products, Promotions, Suppliers, Supplier bills",
-  "Finance > Overview, Invoices, Shipments, Estimates, Credit notes, Payments, Payment requests, Supplier statements, Reports",
-  "Analytics",
+  "Warehouse > Inventory, Purchase orders, Products, Promotions, Suppliers, Supplier bills, Supplier statements",
+  "Finance > Overview, Invoices, Payments, Payment requests, Credit notes",
+  "Reports & analytics > Reports, Analytics",
   "Settings",
 ];
 
 const SHAPE_LITE = [
   "Dashboard",
   "Orders > All Orders",
-  "Dispatch > Overview, Routes, Order delivery, Drivers",
+  "Dispatch > Overview, Routes, Order delivery, Shipments, Drivers",
   "Customers",
-  "Warehouse > Inventory, Purchase orders, Products, Promotions",
-  "Finance > Overview, Invoices, Shipments, Payments, Payment requests, Supplier statements",
+  "Warehouse > Inventory, Purchase orders, Products, Promotions, Supplier statements",
+  "Finance > Overview, Invoices, Payments, Payment requests",
   "Settings",
 ];
 
