@@ -1,14 +1,21 @@
 import type { BillingStatusAction, BillingStatusState, BillingStatusView } from "@routeflow/types";
-import { TRIAL_NOTICE_DAYS } from "@routeflow/types";
+import { TRIAL_NOTICE_DAYS as SHARED_TRIAL_NOTICE_DAYS } from "@routeflow/types";
 import {
   BILLING_STATUS_STATES,
   billingStatusOf,
   hasStaleDunningMarker,
   hasTwoPaySources,
+  TRIAL_NOTICE_DAYS,
   type BillingStatusInput,
 } from "./billing-status";
 
 /** SA-1146 B-5: every state of the section 1 table, and the role rule, each case red on the WRONG value. */
+
+describe("TRIAL_NOTICE_DAYS pin", () => {
+  it("the local copy equals the shared constant", () => {
+    expect(TRIAL_NOTICE_DAYS).toBe(SHARED_TRIAL_NOTICE_DAYS);
+  });
+});
 
 const NOW = new Date("2026-11-15T12:00:00.000Z");
 const ZONE = "America/Chicago";

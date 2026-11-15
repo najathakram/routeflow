@@ -18,22 +18,27 @@
  * only for the catch-up bill (the one amount they see today, SA-1150 1a); never a Stripe figure, never the next-charge day.
  */
 import { fromCents, roundMoney } from "@routeflow/pricing";
-import {
-  TRIAL_NOTICE_DAYS,
-  type BillingStatusAction,
-  type BillingStatusState,
-  type BillingStatusView,
-  type SubscriptionView,
-  type TenantStatusValue,
+import type {
+  BillingStatusAction,
+  BillingStatusState,
+  BillingStatusView,
+  SubscriptionView,
+  TenantStatusValue,
 } from "@routeflow/types";
-import { DUNNING_PAUSE_HOURS, HOUR_MS } from "./dunning-config";
+import { DUNNING_PAUSE_HOURS, HOUR_MS, READ_ONLY_STATUS } from "./dunning-config";
 import type { PaymentDueView } from "./payment-due.service";
 
 /** Typed against the shared enum (a typo or a renamed status fails to compile), never a bare string. */
 const tenantStatus = <T extends TenantStatusValue>(v: T): T => v;
 const TRIAL = tenantStatus("TRIAL");
 const ACTIVE = tenantStatus("ACTIVE");
-const READ_ONLY = tenantStatus("READ_ONLY");
+const READ_ONLY = READ_ONLY_STATUS;
+
+/**
+ * A runtime value cannot be imported from `@routeflow/types` into compiled API code (no-runtime-types-import.spec), so this
+ * is a local copy of the shared `TRIAL_NOTICE_DAYS`, pinned equal to it in billing-status.spec.ts.
+ */
+export const TRIAL_NOTICE_DAYS = 7;
 
 const DAY_MS = 24 * HOUR_MS;
 
