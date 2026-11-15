@@ -495,10 +495,17 @@ describeDb("W-946r merge and floor (SA-1149 round 2), real Postgres", () => {
 
   it("M1-k (KNOWN, the LOW row): a buyer save whose only delivered line is unlisted, the product lines d 0", async () => {
     const cust = await newCustomer();
-    const x = await product("mk");
     const z = await product("mkz");
-    const o = await orderFor(cust, [plain(x, 12, 12), plain(z, 2, 0)], "PENDING");
-    const zLine = o.lineItems.find((l) => l.productId === z)!;
+    // the ONLY delivered line is UNLISTED (no product, a description) {q12, d12}; product z is {q2, d0}
+    const unlisted = {
+      productId: null,
+      name: "unlisted delivered item",
+      qty: 12,
+      deliveredQty: 12,
+      unitPrice: "1.00",
+      subtotal: "12",
+    };
+    const o = await orderFor(cust, [unlisted, plain(z, 2, 0)], "PENDING");
     const before = await snapshot(o.id);
     const buyerUser = {
       ...principal("OPERATOR", await userOf(cust)),
@@ -515,7 +522,6 @@ describeDb("W-946r merge and floor (SA-1149 round 2), real Postgres", () => {
       .catch((e: any) => ({ status: e?.status, code: e?.response?.code }));
     expect(outcome).toEqual(OBSERVED_MK); // KNOWN (the LOW row): the unlisted delivered line is refused, not preserved
     expect(await snapshot(o.id)).toEqual(before);
-    expect(zLine.qty).toBeDefined();
   }, 120_000);
 
   it("M1-3: a display read (no forMerge) still shows the order; the merge searches agree with checkout", async () => {
