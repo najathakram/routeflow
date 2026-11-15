@@ -390,6 +390,34 @@ describe("UXG-R4 Sync to Stripe (retry a failed plan sync)", () => {
     expect(
       await screen.findByText("Synced Growth: 1 updated, 10 already current, 1 failed."),
     ).toBeInTheDocument();
+    // a result with failures is not shown in the success style
+    expect(screen.getByText(/1 failed/)).toHaveAttribute("data-tone", "error");
+  });
+
+  it("a save that reports failed syncs shows the error tone; a clean save shows the success tone", async () => {
+    mockPatch.mockResolvedValueOnce({
+      planKey: "GROWTH",
+      monthlyPrice: 149,
+      annualPrice: 1000,
+      updated: 12,
+      synced: 11,
+      failed: 1,
+    });
+    await editAndSave();
+    const dialog = await screen.findByRole("dialog", {
+      name: "Change Growth from $100 to $149 a month?",
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Change price for 12 businesses" }));
+    expect(await screen.findByText(/Saved Growth.*1 failed/)).toHaveAttribute("data-tone", "error");
+  });
+
+  it("a clean save toast carries the success tone", async () => {
+    await editAndSave();
+    const dialog = await screen.findByRole("dialog", {
+      name: "Change Growth from $100 to $149 a month?",
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Change price for 12 businesses" }));
+    expect(await screen.findByText(/Saved Growth/)).toHaveAttribute("data-tone", "success");
   });
 
   it("with no live subscriptions the confirm says nothing will change and only offers Close (no PATCH)", async () => {

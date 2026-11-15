@@ -216,7 +216,7 @@ export default function PlansPage() {
       });
       const already = result.unchanged ?? 0;
       setToast({
-        type: "success",
+        type: result.failed ? "error" : "success",
         text: sync
           ? `Synced ${plan.name}: ${result.synced - already} updated, ${already} already current${result.failed ? `, ${result.failed} failed` : ""}.`
           : `Saved ${plan.name} — ${result.updated} tenant${result.updated === 1 ? "" : "s"} updated, ${result.synced} synced to Stripe${result.failed ? `, ${result.failed} failed` : ""}.`,
@@ -284,6 +284,7 @@ export default function PlansPage() {
 
       {toast && (
         <div
+          data-tone={toast.type}
           className={`rounded-lg px-4 py-3 text-sm ring-1 break-words ${
             toast.type === "success"
               ? "bg-green-900/30 text-green-300 ring-green-700/50"
@@ -356,7 +357,7 @@ export default function PlansPage() {
                           className="h-9 w-40 rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
                         />
                       </td>
-                      <td className="px-5 py-3">
+                      <td className="px-5 py-3 whitespace-nowrap">
                         <button
                           type="button"
                           disabled={
