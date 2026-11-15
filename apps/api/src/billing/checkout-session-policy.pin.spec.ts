@@ -203,3 +203,40 @@ describe("SA-1139 R6 - ui_mode / return_url / redirect_on_completion live only i
     expect(strayEmbeddedKeys(PORTAL_RETURN_URL_FILE, "x({ return_url: u })")).toEqual([]);
   });
 });
+
+/**
+ * SA-1154 O11: an EMBEDDED `CheckoutStart` (the one that carries a `returnPath` the web pushes) is built in exactly one
+ * place, `checkoutStartFromSession`, from the Stripe session itself. A second builder could invent a path the session
+ * never returned to.
+ */
+const EMBEDDED_START_LITERAL = /\buiMode\s*:\s*["']embedded["']/g;
+
+function embeddedStartBuilders(files: { file: string; text: string }[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const f of files) {
+    const n = (f.text.match(EMBEDDED_START_LITERAL) ?? []).length;
+    if (n > 0) out[f.file] = n;
+  }
+  return out;
+}
+
+describe("SA-1154 O11 - an embedded CheckoutStart is built only by checkoutStartFromSession", () => {
+  it("exactly one production site writes uiMode: 'embedded', in the helper", () => {
+    const files = collect(SRC_ROOT).map((f) => ({
+      file: rel(f),
+      text: fs.readFileSync(f, "utf8"),
+    }));
+    expect(embeddedStartBuilders(files)).toEqual({
+      [HELPER_FILE.split(path.sep).join("/")]: 1,
+    });
+  });
+
+  it("self-control: a second builder is counted", () => {
+    expect(
+      embeddedStartBuilders([
+        { file: "billing/x.ts", text: 'return { uiMode: "embedded", returnPath: p };' },
+        { file: "billing/y.ts", text: "return { uiMode: 'hosted' };" },
+      ]),
+    ).toEqual({ "billing/x.ts": 1 });
+  });
+});

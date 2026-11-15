@@ -302,11 +302,27 @@ describe("SA-1139 PR-1: the tenant's own subscription checkout x BILLING_CHECKOU
     successUrl: "https://app.test/settings/billing?checkout=success",
     cancelUrl: "https://app.test/settings/billing?checkout=cancelled",
   };
-  beforeEach(() => delete process.env[UI]);
+  const priorWeb = process.env.WEB_URL;
+  beforeEach(() => {
+    delete process.env[UI];
+    process.env.WEB_URL = "https://app.test"; // the web base an embedded return_url must sit on (SA-1154)
+  });
   afterEach(() => {
     if (prior === undefined) delete process.env[UI];
     else process.env[UI] = prior;
+    if (priorWeb === undefined) delete process.env.WEB_URL;
+    else process.env.WEB_URL = priorWeb;
   });
+
+  /** Like Stripe's own embedded Session: it echoes the return_url it was created with. */
+  const echoEmbedded = (h: ReturnType<typeof make>, id = "cs_e", secret = "cs_e_secret_test") =>
+    h.create.mockImplementation(async (p: { return_url?: string }) => ({
+      id,
+      url: null,
+      ui_mode: "embedded_page",
+      client_secret: secret,
+      return_url: p.return_url,
+    }));
 
   /** Today's params, key for key (the guard of case 1; also the hosted reference of case 7). */
   async function hostedParams(addonSkus: string[] = []) {
@@ -333,18 +349,14 @@ describe("SA-1139 PR-1: the tenant's own subscription checkout x BILLING_CHECKOU
       sessionId: "cs_1",
       checkoutUrl: "https://pay.test",
       clientSecret: null,
+      returnPath: null,
     });
   });
 
   it("case 2: switch embedded, TENANT_SELF -> embedded params, a client secret, no checkoutUrl", async () => {
     process.env[UI] = "embedded";
     const h = make();
-    h.create.mockResolvedValue({
-      id: "cs_e",
-      url: null,
-      ui_mode: "embedded_page",
-      client_secret: "cs_e_secret_test",
-    });
+    echoEmbedded(h);
     const out = await h.billing.createCheckoutSession("t1", {
       ...RETURNS,
       surface: "TENANT_SELF",
@@ -360,18 +372,15 @@ describe("SA-1139 PR-1: the tenant's own subscription checkout x BILLING_CHECKOU
       sessionId: "cs_e",
       checkoutUrl: null,
       clientSecret: "cs_e_secret_test",
+      // O1: the plan checkout's own session says where it returns (SA-1154); no web caller names a path
+      returnPath: "/settings/billing?checkout=success",
     });
   });
 
   it("case 2: the clientSecret is never written to a log line", async () => {
     process.env[UI] = "embedded";
     const h = make();
-    h.create.mockResolvedValue({
-      id: "cs_e",
-      url: null,
-      ui_mode: "embedded_page",
-      client_secret: "cs_e_secret_test",
-    });
+    echoEmbedded(h);
     const spies = (["log", "warn", "error", "debug", "verbose"] as const).map((m) =>
       jest.spyOn((h.billing as any).logger, m).mockImplementation(() => undefined),
     );
@@ -388,6 +397,7 @@ describe("SA-1139 PR-1: the tenant's own subscription checkout x BILLING_CHECKOU
       uiMode: "hosted",
       checkoutUrl: "https://pay.test",
       clientSecret: null,
+      returnPath: null, // O8: never an embedded start, so nothing for the web to push
     });
   });
 
@@ -411,12 +421,7 @@ describe("SA-1139 PR-1: the tenant's own subscription checkout x BILLING_CHECKOU
     process.env.BILLING_CHECKOUT_PAYMENT_METHODS = "card_and_bank";
     try {
       const h = make();
-      h.create.mockResolvedValue({
-        id: "cs_e",
-        url: null,
-        ui_mode: "embedded_page",
-        client_secret: "s",
-      });
+      echoEmbedded(h, "cs_e", "s");
       await h.billing.createCheckoutSession("t1", { ...RETURNS, surface: "TENANT_SELF" });
       expect(sent(h).managed_payments).toEqual({ enabled: false });
       expect(sent(h).payment_method_types).toEqual(["card", "us_bank_account"]);
@@ -429,12 +434,7 @@ describe("SA-1139 PR-1: the tenant's own subscription checkout x BILLING_CHECKOU
     const hosted = await hostedParams(["FORECASTING"]);
     process.env[UI] = "embedded";
     const h = make({ addonSkus: ["FORECASTING"] });
-    h.create.mockResolvedValue({
-      id: "cs_e",
-      url: null,
-      ui_mode: "embedded_page",
-      client_secret: "s",
-    });
+    echoEmbedded(h, "cs_e", "s");
     await h.billing.createCheckoutSession("t1", { ...RETURNS, surface: "TENANT_SELF" });
     const emb = sent(h);
     expect(emb.ui_mode).toBe("embedded_page");

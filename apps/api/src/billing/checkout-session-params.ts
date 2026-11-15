@@ -1,6 +1,7 @@
 import { Logger } from "@nestjs/common";
 import type Stripe from "stripe";
 import type { CheckoutStart, CheckoutUiMode } from "@routeflow/types";
+import { webBaseUrl } from "../config/web-base-url";
 
 /**
  * The ONE place a platform Checkout Session's tax / Managed Payments policy is applied (owner ruling
@@ -167,15 +168,39 @@ export function withCheckoutPolicy<T extends Stripe.Checkout.SessionCreateParams
 }
 
 /**
+ * SA-1154: the web path an EMBEDDED session returns to, read from the session's own `return_url` (the one Stripe
+ * itself navigates to for a redirect-required method) with `session_id` removed. Throws when the session has no
+ * `return_url` or it is not on the web base: the same rule as the off-base expiry of a stored session
+ * (`payment-due.service` returnUrlsOffBase), so a path the web would push can never leave the web.
+ */
+function returnPathOf(session: { id: string; return_url?: string | null }): string {
+  const url = session.return_url;
+  if (typeof url !== "string" || url === "") {
+    throw new Error(`embedded Checkout session ${session.id} returned no return_url`);
+  }
+  const base = webBaseUrl();
+  if (!url.startsWith(`${base}/`)) {
+    throw new Error(
+      `embedded Checkout session ${session.id} has a return_url that is not on the web base`,
+    );
+  }
+  const rest = new URL(url.slice(base.length), "http://web.invalid");
+  rest.searchParams.delete("session_id");
+  return `${rest.pathname}${rest.search}`;
+}
+
+/**
  * The shared answer of a tenant-self checkout start (SA-1139 R3), read from the session Stripe returned: its own
  * `ui_mode` is the truth of what was created, so the answer can never disagree with it. Never logs or echoes the
- * secret; a missing url (hosted) or secret (embedded) throws.
+ * secret; a missing url (hosted) or secret (embedded) throws. SA-1154: an embedded answer also carries the
+ * `returnPath` the session itself returns to (the only place that path is built); hosted answers `null`.
  */
 export function checkoutStartFromSession(session: {
   id: string;
   url?: string | null;
   client_secret?: string | null;
   ui_mode?: string | null;
+  return_url?: string | null;
 }): CheckoutStart {
   if (session.ui_mode === "embedded_page") {
     if (!session.client_secret) {
@@ -186,8 +211,15 @@ export function checkoutStartFromSession(session: {
       sessionId: session.id,
       checkoutUrl: null,
       clientSecret: session.client_secret,
+      returnPath: returnPathOf(session),
     };
   }
   if (!session.url) throw new Error(`hosted Checkout session ${session.id} returned no url`);
-  return { uiMode: "hosted", sessionId: session.id, checkoutUrl: session.url, clientSecret: null };
+  return {
+    uiMode: "hosted",
+    sessionId: session.id,
+    checkoutUrl: session.url,
+    clientSecret: null,
+    returnPath: null,
+  };
 }

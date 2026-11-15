@@ -115,6 +115,7 @@ function make(
       uiMode: "hosted",
       checkoutUrl: "https://checkout.stripe.test/new",
       clientSecret: null,
+      returnPath: null,
       sessionId: "cs_new",
       stubCents: 31000,
       shape: "trial_one_time",
@@ -290,15 +291,18 @@ describe("PaymentDueService.pay", () => {
       sessionId: "cs_emb",
       checkoutUrl: null,
       clientSecret: "cs_emb_secret_test",
+      returnPath: "/settings/billing?paid=1",
       stubCents: 31000,
       shape: "trial_one_time",
     });
     const out = await svc.pay("t1", NOW);
+    // SA-1154: the opener hands the web exactly the start the session produced (path included), no more fields
     expect(out).toEqual({
       uiMode: "embedded",
       sessionId: "cs_emb",
       checkoutUrl: null,
       clientSecret: "cs_emb_secret_test",
+      returnPath: "/settings/billing?paid=1",
     });
     expect(catchup.open).toHaveBeenCalledWith(
       "t1",
@@ -344,6 +348,7 @@ describe("PaymentDueService.pay", () => {
       uiMode: "hosted",
       checkoutUrl: "https://checkout.stripe.test/open",
       clientSecret: null,
+      returnPath: null, // O5: a reused session is hosted; Stripe's own success_url (chosen at its creation) returns
     });
     expect(stripe.getCheckoutSession).toHaveBeenCalledWith("cs_open");
     expect(catchup.open).not.toHaveBeenCalled();

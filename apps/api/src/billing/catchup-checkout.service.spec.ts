@@ -890,7 +890,8 @@ describe("SA-1139 PR-1: the catch-up session x BILLING_CHECKOUT_UI", () => {
       cancel_url: "https://app.test/settings/billing?checkout=cancelled",
     });
     expect(sent(h)).not.toHaveProperty("ui_mode");
-    expect(out).toMatchObject({ uiMode: "hosted", clientSecret: null });
+    // O8: an admin link is never embedded, so its start has nothing for the web to push
+    expect(out).toMatchObject({ uiMode: "hosted", clientSecret: null, returnPath: null });
     expect(out.checkoutUrl).toMatch(/^https:\/\/pay\.test\/cs_catchup/);
   });
 
@@ -915,6 +916,23 @@ describe("SA-1139 PR-1: the catch-up session x BILLING_CHECKOUT_UI", () => {
     expect(out).toMatchObject({ uiMode: "embedded", checkoutUrl: null });
     expect(out.clientSecret).toMatch(/^cs_catchup\d+_secret_test$/);
     expect(h.sub().catchupSessionId).toBe(out.sessionId);
+    // O2: the start carries the path its own session returns to (SA-1154), without the session_id
+    expect(out.returnPath).toBe("/settings/billing?paid=1");
+  });
+
+  it("O3: switch embedded, a card add (successPath paid=1&card=1) -> returnPath is the card path, from the session", async () => {
+    process.env[UI] = "embedded";
+    const h = ready();
+    const out = await h.svc.open("t1", {
+      now: NOW,
+      expectedStubCents: 31000,
+      successPath: "/settings/billing?paid=1&card=1",
+      surface: "TENANT_SELF",
+    });
+    expect(sent(h).return_url).toBe(
+      "https://app.test/settings/billing?paid=1&card=1&session_id={CHECKOUT_SESSION_ID}",
+    );
+    expect(out.returnPath).toBe("/settings/billing?paid=1&card=1");
   });
 
   it("case 5: switch embedded, ADMIN_LINK (the back-office link) -> hosted, a url", async () => {
