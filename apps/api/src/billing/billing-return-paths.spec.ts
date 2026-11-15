@@ -45,13 +45,13 @@ describe("billing return paths: the API copy equals the shared allowlist", () =>
   });
 });
 
-/** Every non-spec .ts under `dir`, recursively. */
+/** Every non-spec .ts and .tsx under `dir`, recursively. */
 function scan(dir: string): { f: string; text: string }[] {
   const out: { f: string; text: string }[] = [];
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, e.name);
     if (e.isDirectory()) out.push(...scan(full));
-    else if (e.name.endsWith(".ts") && !e.name.endsWith(".spec.ts"))
+    else if (/.tsx?$/.test(e.name) && !/.(spec|test).tsx?$/.test(e.name))
       out.push({
         f: path.relative(SRC, full).split(path.sep).join("/"),
         text: fs.readFileSync(full, "utf8"),
@@ -79,6 +79,7 @@ describe("billing return paths: no literal Checkout return address outside the o
 
 // P4 above scans the raw text of every non-spec source under apps/api/src (testing/ included), nothing stripped.
 // The ONE named exclusion: an allow-list KEY that is the path of a web file, not an address (count-pinned).
+const P4_OCCURRENCE_COUNT = 1;
 const P4_EXCLUSIONS: { file: string; reason: string }[] = [
   {
     file: "common/no-hand-typed-enum-mirrors.allow.ts",
@@ -86,14 +87,21 @@ const P4_EXCLUSIONS: { file: string; reason: string }[] = [
   },
 ];
 
-describe("P4: the literal scan (raw text, all non-spec apps/api/src)", () => {
-  it("no `/settings/billing` text outside the home, except the named, count-pinned exclusion", () => {
-    const hits = sources
-      .filter((s) => s.f !== HOME && s.text.includes("/settings/billing"))
-      .map((s) => s.f)
-      .sort();
-    expect(hits).toEqual(P4_EXCLUSIONS.map((e) => e.file).sort());
-    expect(P4_EXCLUSIONS).toHaveLength(1);
+describe("P4: the literal scan (raw text, all non-spec apps/api/src, .ts and .tsx)", () => {
+  it("the walk reaches the .tsx sources too", () => {
+    expect(sources.filter((x) => x.f.endsWith(".tsx")).length).toBeGreaterThanOrEqual(7);
+  });
+  it("one `/settings/billing` occurrence outside the home, the named exclusion (pinned by COUNT, not by file)", () => {
+    const occurrences = sources
+      .filter((s) => s.f !== HOME)
+      .flatMap((s) =>
+        s.text
+          .split("/settings/billing")
+          .slice(1)
+          .map(() => s.f),
+      );
+    expect(occurrences).toEqual(P4_EXCLUSIONS.map((e) => e.file));
+    expect(occurrences).toHaveLength(P4_OCCURRENCE_COUNT);
   });
 });
 
@@ -203,7 +211,7 @@ describe("assertBillingReturnUrl: the runtime check at the Stripe boundary (SA-1
     const line = String(logged.mock.calls[0][0]);
     expect(line).toContain("BILLING_RETURN_URL_MISMATCH");
     expect(line).toContain("kind=success");
-    expect(line).toContain("received=https://evil.test/");
+    expect(line).toContain('received="https://evil.test/"');
     expect(line).toContain("tenant=tenant_9");
     for (const ok of okSuccess) expect(line).toContain(ok);
     expect(line.includes(String.fromCharCode(10))).toBe(false);
@@ -218,7 +226,7 @@ describe("assertBillingReturnUrl: the runtime check at the Stripe boundary (SA-1
     ).toThrow();
     const line = String(logged.mock.calls[0][0]);
     expect(line).toContain(
-      "received=https://app.test/settings/billing?checkout=success&session_id=<redacted>&x=1",
+      'received="https://app.test/settings/billing?checkout=success&session_id=<redacted>&x=1"',
     );
     expect(line).not.toContain("cs_live_SECRET");
     // the allowed list still shows the literal template
@@ -228,8 +236,16 @@ describe("assertBillingReturnUrl: the runtime check at the Stripe boundary (SA-1
       assertBillingReturnUrl("success", U(API_BILLING_RETURN_PATHS.plan) + SID + "&x=1", BASE),
     ).toThrow();
     expect(String(logged.mock.calls[0][0])).toContain(
-      "received=https://app.test/settings/billing?checkout=success&session_id={CHECKOUT_SESSION_ID}&x=1",
+      'received="https://app.test/settings/billing?checkout=success&session_id={CHECKOUT_SESSION_ID}&x=1"',
     );
+  });
+  it("a newline or quote in the received address cannot split the one log line: it is JSON-quoted", () => {
+    const hostile = 'https://evil.test/x\nBILLING_RETURN_URL_MISMATCH kind=portal "y"';
+    expect(() => assertBillingReturnUrl("success", hostile, BASE, "t1")).toThrow();
+    expect(logged).toHaveBeenCalledTimes(1);
+    const line = String(logged.mock.calls[0][0]);
+    expect(line.includes(String.fromCharCode(10))).toBe(false);
+    expect(line).toContain("received=" + JSON.stringify(hostile));
   });
   it("the line carries no customer id and no payment value", () => {
     expect(() => assertBillingReturnUrl("portal", "https://evil.test/", BASE, "t1")).toThrow();
@@ -308,6 +324,65 @@ describe("per-site rows: the real withCheckoutPolicy and StripeService, a fake c
     ).toThrow(InternalServerErrorException);
   });
 
+  // S3b / S4b: a wrong return_url spelled as a quoted key, or set by bracket assignment, in hosted AND embedded mode.
+  describe.each([
+    ["hosted", undefined, "ADMIN_LINK" as const],
+    ["embedded", "embedded", "TENANT_SELF" as const],
+  ])("S3b and S4b through the real withCheckoutPolicy, %s", (_m, ui, surface) => {
+    let logged: jest.SpyInstance;
+    beforeEach(() => {
+      if (ui) process.env.BILLING_CHECKOUT_UI = ui;
+      logged = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+    });
+    afterEach(() => logged.mockRestore());
+    const good = () => billingReturnUrl(base(), API_BILLING_RETURN_PATHS.plan);
+    const evilUrl = "https://evil.test/settings/billing?checkout=success";
+
+    it("S3b: a single-quoted 'return_url' key throws and logs the one line", () => {
+      const p = { ...params(good(), cancel()), return_url: evilUrl };
+      expect(() => withCheckoutPolicy(p as any, { surface })).toThrow(InternalServerErrorException);
+      expect(logged).toHaveBeenCalledTimes(1);
+      expect(String(logged.mock.calls[0][0])).toContain(
+        "BILLING_RETURN_URL_MISMATCH kind=embedded_return",
+      );
+    });
+    it('S4b: p["return_url"] = x (bracket assignment) throws and logs the one line', () => {
+      const p: Record<string, unknown> = params(good(), cancel());
+      p["return_url"] = evilUrl;
+      expect(() => withCheckoutPolicy(p as any, { surface })).toThrow(InternalServerErrorException);
+      expect(logged).toHaveBeenCalledTimes(1);
+      expect(String(logged.mock.calls[0][0])).toContain("BILLING_RETURN_URL_MISMATCH");
+    });
+    it("a right return_url is not refused", () => {
+      const p = { ...params(good(), cancel()), return_url: good() };
+      expect(() => withCheckoutPolicy(p as any, { surface })).not.toThrow();
+    });
+  });
+
+  // The DEFAULT base (webBaseUrl()): the right path on another origin throws at each wrapper.
+  it("withCheckoutPolicy, default base: the right path on another origin throws (hosted and embedded)", () => {
+    const other = (p: string) => billingReturnUrl("https://evil.test", p);
+    for (const ui of [undefined, "embedded"]) {
+      if (ui) process.env.BILLING_CHECKOUT_UI = ui;
+      else delete process.env.BILLING_CHECKOUT_UI;
+      expect(() =>
+        withCheckoutPolicy(params(other(API_BILLING_RETURN_PATHS.plan), cancel()), {
+          surface: ui ? "TENANT_SELF" : "ADMIN_LINK",
+        }),
+      ).toThrow(InternalServerErrorException);
+    }
+    delete process.env.BILLING_CHECKOUT_UI;
+    expect(() =>
+      withCheckoutPolicy(
+        params(
+          billingReturnUrl(base(), API_BILLING_RETURN_PATHS.plan),
+          other(API_BILLING_CANCEL_PATH),
+        ),
+        { surface: "ADMIN_LINK" },
+      ),
+    ).toThrow(InternalServerErrorException);
+  });
+
   function stripeWithFake() {
     const create = jest.fn(async () => ({ url: "https://billing.stripe.test/p/s" }));
     const svc = new StripeService({ get: () => undefined } as never);
@@ -321,6 +396,16 @@ describe("per-site rows: the real withCheckoutPolicy and StripeService, a fake c
       returnUrl: billingReturnUrl(base(), API_BILLING_PORTAL_RETURN_PATH),
     });
     expect((create.mock.calls[0] as any[])[0].return_url).toBe("https://app.test/settings/billing");
+  });
+  it("portal wrapper, default base: the right path on another origin throws, client not called", async () => {
+    const { svc, create } = stripeWithFake();
+    await expect(
+      svc.createBillingPortalSession({
+        customerId: "cus_1",
+        returnUrl: billingReturnUrl("https://evil.test", API_BILLING_PORTAL_RETURN_PATH),
+      }),
+    ).rejects.toThrow(InternalServerErrorException);
+    expect(create).not.toHaveBeenCalled();
   });
   it("portal: a planted address is refused BEFORE the client is called", async () => {
     const { svc, create } = stripeWithFake();

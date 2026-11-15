@@ -61,7 +61,7 @@ export function assertBillingReturnUrl(
   // ONE line: the code, the kind, the address received (a concrete session_id redacted), the allowed list, the tenant.
   // Never a customer id or any card or payment value. The client gets a plain 500 with no address in it.
   logger.error(
-    `BILLING_RETURN_URL_MISMATCH kind=${kind} received=${redactSessionId(url)} allowed=${JSON.stringify(allowed)} tenant=${tenantId ?? "unknown"}`,
+    `BILLING_RETURN_URL_MISMATCH kind=${kind} received=${JSON.stringify(redactSessionId(url))} allowed=${JSON.stringify(allowed)} tenant=${tenantId ?? "unknown"}`,
   );
   throw new InternalServerErrorException("Billing return address is not allowed.");
 }

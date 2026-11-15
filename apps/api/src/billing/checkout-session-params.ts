@@ -148,6 +148,11 @@ export function withCheckoutPolicy<T extends Stripe.Checkout.SessionCreateParams
       "managed_payments.enabled=true is not allowed on a Checkout Session (owner ruling: Managed Payments off)",
     );
   }
+  // SA-1146 B-1 (S3b, S4b): a return_url the caller already put on the params, however it was spelled (a quoted key, a
+  // bracket assignment, a spread), is judged in BOTH modes: a hosted session carries none, and an embedded one overwrites it.
+  if (params.return_url) {
+    assertBillingReturnUrl("embedded_return", params.return_url, undefined, tenantOf(params));
+  }
   const paymentMethodTypes = params.payment_method_types ?? checkoutPaymentMethodTypes();
   const policy = {
     ...(paymentMethodTypes ? { payment_method_types: paymentMethodTypes } : {}),
