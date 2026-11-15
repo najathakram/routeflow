@@ -1,7 +1,7 @@
 /**
  * SA-1034: the price-edit capability is checked at every override site (staff-override.ts
  * `assertPriceEditAllowed`, sites pinned in price-edit-sites.pin.spec.ts). Each site's value comes from
- * `staffMay(role, "EDIT_LINE_PRICE", [])`; this spec drives that value both ways at the module boundary:
+ * `staffMay(role, "EDIT_LINE_PRICE", expect.any(Array))`; this spec drives that value both ways at the module boundary:
  *  - `false`: a line that becomes a NEW override is refused 403 PRICE_EDIT_NOT_PERMITTED before the write;
  *  - `true` (both staff roles today): the override is written unchanged.
  * Sites: create (pack line), updateOrderItems (substitute, add, existing-line edit), a unit line, an
@@ -100,7 +100,11 @@ describe("SA-1034 price-edit capability — create (pack line)", () => {
   it("capability false: an override is refused 403 before any write", async () => {
     capability(false);
     await refused(create(6));
-    expect(staffMayMock).toHaveBeenCalledWith(operatorPayload.role, "EDIT_LINE_PRICE", []);
+    expect(staffMayMock).toHaveBeenCalledWith(
+      operatorPayload.role,
+      "EDIT_LINE_PRICE",
+      expect.any(Array),
+    );
     expect(h.prisma.order.create).not.toHaveBeenCalled();
     expect(h.prisma.$transaction).not.toHaveBeenCalled();
   });
@@ -178,7 +182,11 @@ describe("SA-1034 price-edit capability — updateOrderItems", () => {
     it("capability false: an override is refused 403 before the line is written", async () => {
       capability(false);
       await refused(sub(6));
-      expect(staffMayMock).toHaveBeenCalledWith(operatorPayload.role, "EDIT_LINE_PRICE", []);
+      expect(staffMayMock).toHaveBeenCalledWith(
+        operatorPayload.role,
+        "EDIT_LINE_PRICE",
+        expect.any(Array),
+      );
       expect(h.prisma.orderItem.update).not.toHaveBeenCalled();
     });
 

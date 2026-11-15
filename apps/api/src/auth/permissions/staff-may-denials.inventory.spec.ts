@@ -122,24 +122,19 @@ describe("staffMay call inventory: every call passes deniedGroups (W-870)", () =
     expect(offenders).toEqual([]);
   });
 
-  // The ONE exemption: price-edit-answer.ts's roleMayEditPrice, the role-only (shadow) answer of the office sites; they
-  // stay dark until the owner's perms flip (SA-1034 r8). Everything else reads the caller's groups.
-  const DARK_OFFICE_PRICE_SITES = { "auth/permissions/price-edit-answer.ts": 1 };
+  // No exemption remains (W-870): the office price-edit sites enforce the deny list like every other site.
   const emptyDenials = (a: string[]) => /^(\[\s*\]|undefined|null)$/.test(a[2] ?? "");
 
   it("no staffMay call hands in an empty denials literal: a request path reads the caller's real groups", () => {
     const offenders = Object.entries(sources()).flatMap(([file, src]) =>
       callArgs(src, "staffMay")
-        .filter(
-          (a) =>
-            emptyDenials(a) && !(a[1] === '"EDIT_LINE_PRICE"' && file in DARK_OFFICE_PRICE_SITES),
-        )
+        .filter(emptyDenials)
         .map(() => file),
     );
     expect(offenders).toEqual([]);
   });
 
-  it("the exemption is exact: EDIT_LINE_PRICE only, and only the shadow branch", () => {
+  it("no empty-denials staffMay call exists anywhere (the dark price exemption is gone)", () => {
     const found = Object.fromEntries(
       Object.entries(sources())
         .map(
@@ -148,7 +143,7 @@ describe("staffMay call inventory: every call passes deniedGroups (W-870)", () =
         .filter(([, n]) => n > 0)
         .sort(([x], [y]) => x.localeCompare(y)),
     );
-    expect(found).toEqual(DARK_OFFICE_PRICE_SITES);
+    expect(found).toEqual({});
   });
 
   it("the pin bites: a planted empty-denials call has [] as its third argument", () => {
@@ -175,7 +170,7 @@ describe("staffMay call inventory: every call passes deniedGroups (W-870)", () =
       decideStaffWrite: callsOf("decideStaffWrite"),
     }).toEqual({
       staffMay: {
-        "auth/permissions/price-edit-answer.ts": 2, // roleMayEditPrice ([], the shadow answer) + mayEditPrice
+        "auth/permissions/price-edit-answer.ts": 1, // mayEditPrice, the one price answer
         "orders/counter-sale/till-permission.guard.ts": 2,
         "orders/fulfil-path-resolver.ts": 1,
         "orders/order-date.ts": 1, // W-1188: SET_ORDER_DATE, the one order-date gate (deniedGroups required)
@@ -191,6 +186,16 @@ describe("staffMay call inventory: every call passes deniedGroups (W-870)", () =
       },
       decideStaffWrite: { "selling-restrictions/selling-restrictions.service.ts": 1 },
     });
+  });
+});
+
+describe("the price-edit answer never reads the global permissions mode (W-870, SA-1145)", () => {
+  it("price-edit.ts neither calls .mode( nor names OperatorPermissionsService", () => {
+    const src = stripComments(
+      fs.readFileSync(path.join(SRC, "auth/permissions/price-edit.ts"), "utf8"),
+    );
+    expect(src.includes(".mode(")).toBe(false);
+    expect(src.includes("OperatorPermissionsService")).toBe(false);
   });
 });
 

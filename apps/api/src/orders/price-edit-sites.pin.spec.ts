@@ -214,11 +214,8 @@ describe("SA-1034: price-edit capability is checked at every override site", () 
         if (m[1].includes('"EDIT_LINE_PRICE"')) where.push(f.split("\\").join("/"));
       }
     }
-    // price-edit-answer.ts holds the two (role-only and enforced), shared by price-edit.ts and /me/permissions; the capability tables define the row, they do not call it.
-    expect(where).toEqual([
-      "auth/permissions/price-edit-answer.ts",
-      "auth/permissions/price-edit-answer.ts",
-    ]);
+    // price-edit-answer.ts holds the one enforced answer (mayEditPrice), shared by price-edit.ts and /me/permissions; the capability tables define the row, they do not call it.
+    expect(where).toEqual(["auth/permissions/price-edit-answer.ts"]);
   });
 
   it("priceEditAllowed rides both options, and only the counter sets it, over the live denied groups (SA-1034 r8)", () => {
@@ -230,9 +227,7 @@ describe("SA-1034: price-edit capability is checked at every override site", () 
     expect([create, sale]).toHaveLength(2);
     // the setters: one, in the counter, from `mayEditPrice` over `operatorDeniedGroups`; never a literal or a role-only answer
     const setters = files.filter((f) =>
-      /\bpriceEditAllowed:\s*(?:mayEditPrice|roleMayEditPrice|true|false|staffMay)\b/.test(
-        code(read(f)),
-      ),
+      /\bpriceEditAllowed:\s*(?:mayEditPrice|true|false|staffMay)\b/.test(code(read(f))),
     );
     expect(setters.map((f) => f.split("\\").join("/"))).toEqual([
       "orders/counter-sale/counter-sale.service.ts",

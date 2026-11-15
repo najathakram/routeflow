@@ -9,10 +9,9 @@
  *  T-G1 a refused edit is an HttpException 403 (never a 500), moves no orderItem / stockMovement / return
  *       row, and a second call with the same idempotency key meets the same 403 (no key is recorded).
  *  PR7  an OPERATOR whose deny list holds PRICING (written by the fixture: no API writes it yet): with the
- *       permissions mode forced `live` (a test-only spy on OperatorPermissionsService.mode) the order create,
+ *       no permissions-mode input (W-870: the price edit enforces on the deny list itself) the order create,
  *       the order line edit and the invoice line edit are refused 403 PRICE_EDIT_NOT_PERMITTED and the inline
- *       return credit price 400 RETURN_CREDIT_OVERRIDE_FORBIDDEN, nothing written (M-R1, RC-R1); in `shadow`
- *       the same edit is written with one would-deny log line (M-G1). R1b: a real platform principal
+ *       return credit price 400 RETURN_CREDIT_OVERRIDE_FORBIDDEN, nothing written (M-R1, RC-R1, M-R2). R1b: a real platform principal
  *       (tenantId null, tenantSlug null) is refused with no row written.
  *
  * Builds a REAL OrdersService via `Object.create` (no Nest DI), as b1050-delivered-edit.db.spec.ts does, and a
@@ -67,7 +66,6 @@ import { NotificationsService } from "../notifications/notifications.service";
 import { NumberingService } from "../import/numbering.service";
 import { ProductLabelsService } from "../product-labels/product-labels.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
-import { OperatorPermissionsService } from "../auth/permissions/operator-permissions.service";
 import {
   InlineReturnsQuoteService,
   RETURN_CREDIT_OVERRIDE_ERROR_CODES,
@@ -510,11 +508,8 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
     afterEach(() => jest.restoreAllMocks());
     const wouldDeny = () =>
       warn.mock.calls.filter((c) => String(c[0]).includes("would-deny groups=PRICING"));
-    const live = () =>
-      jest.spyOn(OperatorPermissionsService.prototype, "mode").mockReturnValue("live");
 
     it("M-R1 live: the denied operator's order line edit is a 403 PRICE_EDIT_NOT_PERMITTED; the line is unchanged", async () => {
-      live();
       const o = await order();
       const err = await caught(editOrder(o.id, belowTierEdit(o.lineItems[0]), denied()));
       expectPriceEditRefused(err);
@@ -524,7 +519,6 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
     });
 
     it("M-R1 live: the denied operator's invoice line edit is a 403; the line is unchanged", async () => {
-      live();
       const inv = await draftInvoice();
       const err = await caught(
         editInvoice(
@@ -539,7 +533,6 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
     });
 
     it("M-R1 live: the denied operator's order create with a below-tier price is a 403; no order row", async () => {
-      live();
       const before = await raw.order.count({ where: { tenantId } });
       const err = await caught(
         inTenant(() =>
@@ -553,16 +546,20 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
       expect(await raw.order.count({ where: { tenantId } })).toBe(before);
     });
 
-    it("M-G1 shadow: the same denied operator's edit is written as on master, with one would-deny line", async () => {
+    it("M-R2: the denied operator's edit is refused with no permissions-mode input, and logs one denied line", async () => {
       const o = await order();
-      await editOrder(o.id, belowTierEdit(o.lineItems[0]), denied());
+      const err = await caught(editOrder(o.id, belowTierEdit(o.lineItems[0]), denied()));
+      expectPriceEditRefused(err);
       const after = await lineOf(o.lineItems[0].id);
-      expect(Number(after.unitPrice)).toBe(6);
-      expect(after).toMatchObject({ priceType: "DISCOUNTED", overriddenBy: deniedOperatorId });
-      expect(wouldDeny()).toHaveLength(1);
+      expect(Number(after.unitPrice)).toBe(10);
+      expect(after.overriddenBy).toBeNull();
+      expect(wouldDeny()).toHaveLength(0);
+      expect(
+        warn.mock.calls.filter((c) => String(c[0]).includes("denied groups=PRICING")),
+      ).toHaveLength(1);
     });
 
-    it("RC-R1 live / RC-G1 shadow: the inline return credit price is a 400 FORBIDDEN only when enforced", async () => {
+    it("RC-R1: the inline return credit price is a 400 FORBIDDEN for the denied operator", async () => {
       const quoteService = new InlineReturnsQuoteService(prisma, {
         get: async () => null,
       } as unknown as SystemConfigService);
@@ -571,11 +568,6 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
         items: [{ productId, boxes: 0, pieces: 1, creditUnitPrice: 1, overrideReason: "sa1034" }],
       };
       const attempt = () => caught(inTenant(() => quoteService.quote(dto, denied())));
-      const shadowErr: any = await attempt(); // shadow: the price half passes; any later refusal is not this code
-      expect(shadowErr?.getResponse?.()?.code).not.toBe(
-        RETURN_CREDIT_OVERRIDE_ERROR_CODES.FORBIDDEN,
-      );
-      live();
       const liveErr: any = await attempt();
       expect(liveErr).toBeInstanceOf(HttpException);
       expect(liveErr.getStatus()).toBe(400);
@@ -602,8 +594,6 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
   describe("PR7b — custom (unlisted) priced lines need price rights (rule 4)", () => {
     const denied = () => principal("OPERATOR", deniedOperatorId);
     const admin = () => principal("TENANT_ADMIN", adminUserId);
-    const live = () =>
-      jest.spyOn(OperatorPermissionsService.prototype, "mode").mockReturnValue("live");
     const custom = { name: "Pallet fee", qty: 1, unitPrice: 5 };
     const weekly = () => ({
       customerId,
@@ -647,7 +637,6 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
     const lineCount = (orderId: string) => raw.orderItem.count({ where: { orderId } });
 
     it("Q1-R1 live: the denied operator's order create with a custom item is a 403; no order row", async () => {
-      live();
       const before = await raw.order.count({ where: { tenantId } });
       const err = await caught(
         inTenant(() => orders.create({ customerId, items: [custom] }, denied())),
@@ -657,7 +646,6 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
     });
 
     it("Q1-R3 live: the denied operator's diff that adds a new custom item is a 403; the lines are unchanged", async () => {
-      live();
       const o = await order();
       const before = await lineCount(o.id);
       const err = await caught(editOrder(o.id, { replaceAll: false, items: [custom] }, denied()));
@@ -666,7 +654,6 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
     });
 
     it("Q1-R3b live: the denied operator's full replace that adds a new custom item is a 403; nothing is deleted", async () => {
-      live();
       const o = await order();
       const err = await caught(
         editOrder(
@@ -680,7 +667,6 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
     });
 
     it("Q1-G1 live: the denied operator saves an order that already holds the custom item, unchanged (full replace)", async () => {
-      live();
       const o = await orderWithCustomLine();
       const held = o.lineItems[0];
       await editOrder(
@@ -694,7 +680,6 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
     });
 
     it("Q1-R3c live: re-sending the held custom item at another price is a 403 (delete and re-add is closed)", async () => {
-      live();
       const o = await orderWithCustomLine();
       const err = await caught(
         editOrder(
@@ -711,7 +696,6 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
     });
 
     it("Q1-R4 live: the denied operator's direct invoice with a custom charge is a 403; no invoice row", async () => {
-      live();
       const before = await raw.invoice.count({ where: { tenantId } });
       const err = await caught(
         inTenant(() =>
@@ -726,7 +710,6 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
     });
 
     it("Q1-R4b live: the denied operator's invoice edit that adds a custom charge is a 403; the lines are unchanged", async () => {
-      live();
       const inv = await draftInvoice();
       const err = await caught(
         editInvoice(
@@ -745,7 +728,6 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
     });
 
     it("Q1-R5 live: the denied operator's estimate with a custom line is a 403; no estimate row", async () => {
-      live();
       const before = await raw.estimate.count({ where: { tenantId } });
       const err = await caught(
         inTenant(() =>
@@ -760,7 +742,6 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
     });
 
     it("Q1-R5b live: the denied operator's recurring template with a custom line is a 403; no template row", async () => {
-      live();
       const before = await raw.recurringInvoice.count({ where: { tenantId } });
       const err = await caught(
         inTenant(() =>
@@ -778,7 +759,6 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
     });
 
     it("M-R1 live (rule 5): the denied operator's estimate with a catalog price typed under list is a 403; no estimate row", async () => {
-      live();
       const before = await raw.estimate.count({ where: { tenantId } });
       const err = await caught(
         inTenant(() =>
@@ -792,8 +772,7 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
       expect(await raw.estimate.count({ where: { tenantId } })).toBe(before);
     });
 
-    it("M-G1 / Q1-G3 (rule 5): the denied operator's estimate at list price, or with no typed price, is written; shadow writes the discount", async () => {
-      live();
+    it("M-G1 / Q1-G3 (rule 5): the denied operator's estimate at list price, or with no typed price, is written; a typed price under list is refused", async () => {
       const plain: any = await inTenant(() =>
         estimatesService.create({ customerId, items: [{ productId, qty: 1 }] } as any, denied()),
       );
@@ -804,20 +783,18 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
         ),
       );
       expect([plain.id, atList.id].every(Boolean)).toBe(true);
-      jest.restoreAllMocks(); // back to shadow: the capability is only reported
-      jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
-      const shadow: any = await inTenant(() =>
-        estimatesService.create(
-          { customerId, items: [{ productId, qty: 1, unitPrice: 6 }] } as any,
-          denied(),
+      const below = await caught(
+        inTenant(() =>
+          estimatesService.create(
+            { customerId, items: [{ productId, qty: 1, unitPrice: 6 }] } as any,
+            denied(),
+          ),
         ),
       );
-      const [row] = await raw.estimateItem.findMany({ where: { estimateId: shadow.id } });
-      expect(Number(row.unitPrice)).toBe(6);
+      expectPriceEditRefused(below);
     });
 
     it("C-G1 live (rule 6): the denied operator's Run now bills a template an admin authored below tier, with a custom line", async () => {
-      live();
       const tpl: any = await inTenant(() =>
         recurring.create(
           {
@@ -840,7 +817,6 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
     });
 
     it("C-G1 live (rule 6): the same operator typing that below-tier catalog price or a custom charge on a request is still refused", async () => {
-      live();
       for (const line of [
         { description: "Cola", productId, qty: 1, unitPrice: 6, overrideReason: "sa1034" },
         { description: "Service fee", qty: 1, unitPrice: 20 },
@@ -857,7 +833,6 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
     });
 
     it("C-G1 live (P15): the denied operator converts an accepted estimate that carries both; the invoice is created", async () => {
-      live();
       const est: any = await inTenant(() =>
         estimatesService.create(
           {
@@ -894,7 +869,6 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
       );
 
     it("R6-1 live (rule 6): the denied operator's template with a catalog line typed 1.00 under the tier price is a 403; no template row", async () => {
-      live();
       const before = await raw.recurringInvoice.count({ where: { tenantId } });
       const err = await caught(
         inTenant(() => recurring.create({ ...weekly(), items: [cola(9)] } as any, denied())),
@@ -904,7 +878,6 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
     });
 
     it("R6-2 live (rule 6): the denied operator re-pricing a held template line below the tier price is a 403; the held line is unchanged", async () => {
-      live();
       const tpl: any = await inTenant(() =>
         recurring.create({ ...weekly(), items: [cola(10)] } as any, admin()),
       );
@@ -915,23 +888,15 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
       expect((await templateRows(tpl.id)).map((r) => Number(r.unitPrice))).toEqual([10]);
     });
 
-    it("G6-1 live + shadow (rule 6): the denied operator's template line at the tier price is written, and reads no capability (no would-deny log)", async () => {
-      live();
+    it("G6-1 (rule 6): the denied operator's template line at the tier price is written, and reads no capability (no would-deny log)", async () => {
       const tpl: any = await inTenant(() =>
         recurring.create({ ...weekly(), items: [cola(10)] } as any, denied()),
       );
       expect(tpl.id).toBeTruthy();
-      jest.restoreAllMocks(); // back to shadow
-      jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
-      const shadow: any = await inTenant(() =>
-        recurring.create({ ...weekly(), items: [cola(10)] } as any, denied()),
-      );
-      expect(shadow.id).toBeTruthy();
       expect(wouldDenyLogged()).toBe(false);
     });
 
     it("G6-2 live (rule 6): a held template line re-sent unchanged after the tier price moved is not authoring; the denied operator's edit is a 200", async () => {
-      live();
       const tpl: any = await inTenant(() =>
         recurring.create({ ...weekly(), items: [cola(10)] } as any, admin()),
       );
@@ -956,7 +921,6 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
     });
 
     it("Q1-G4 live (rule 5): the denied operator's re-price of a held custom order line is the same 403 by full replace and by the diff; the line is unchanged", async () => {
-      live();
       const o = await orderWithCustomLine();
       const line = o.lineItems[0];
       const viaReplace = await caught(
@@ -979,7 +943,6 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
     });
 
     it("Q1-G2: a TENANT_ADMIN makes the same calls as on master (order, invoice, estimate, template)", async () => {
-      live();
       const o: any = await inTenant(() => orders.create({ customerId, items: [custom] }, admin()));
       orderIds.push(o.id);
       expect(await lineCount(o.id)).toBe(1);
@@ -1006,10 +969,13 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
       expect(tpl.id).toBeTruthy();
     });
 
-    it("M-G1 shadow: the denied operator's custom item is written as on master", async () => {
-      const o: any = await inTenant(() => orders.create({ customerId, items: [custom] }, denied()));
-      orderIds.push(o.id);
-      expect(await lineCount(o.id)).toBe(1);
+    it("M-R3: the denied operator's custom item is refused (no mode input); no order row", async () => {
+      const before = await raw.order.count({ where: { tenantId } });
+      const err = await caught(
+        inTenant(() => orders.create({ customerId, items: [custom] }, denied())),
+      );
+      expectPriceEditRefused(err);
+      expect(await raw.order.count({ where: { tenantId } })).toBe(before);
     });
   });
 });

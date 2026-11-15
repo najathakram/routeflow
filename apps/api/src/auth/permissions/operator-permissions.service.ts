@@ -96,12 +96,7 @@ export class OperatorPermissionsService {
       groups,
       version,
       mode: PERMISSIONS_MODE,
-      priceEditAllowed: priceEditReported(
-        user.role,
-        groups,
-        ALL_PERMISSION_GROUPS,
-        PERMISSIONS_MODE,
-      ),
+      priceEditAllowed: priceEditReported(user.role, groups, ALL_PERMISSION_GROUPS),
     };
   }
 }

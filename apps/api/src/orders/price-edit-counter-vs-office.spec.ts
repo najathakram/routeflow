@@ -1,10 +1,10 @@
 /**
- * T-R1 (SA-1034 r8, SA-1056 A-1): the same OPERATOR with PRICING switched off, in the shipped `shadow` mode.
- * The counter is live by an owner-ruled slice, so it hands create() `priceEditAllowed = false` and create() refuses a
- * real price override 403 PRICE_EDIT_NOT_PERMITTED. The office POST /orders hands create() no option, so create() asks
- * `priceEditAllowedFor`, which in shadow answers by the role: the same price is accepted, and one `would-deny` line is
- * logged (group, site, tenant; never a name or a price). The counter half through the real CounterSaleService is in
- * counter-sale/counter-sale.service.spec.ts.
+ * T-R1 (SA-1034 r8, SA-1056 A-1, W-870): the same OPERATOR with PRICING switched off, with the global permissions mode
+ * still "shadow". The counter hands create() `priceEditAllowed = false` and create() refuses a real price override 403
+ * PRICE_EDIT_NOT_PERMITTED. The office POST /orders hands create() no option, so create() asks `priceEditAllowedFor`,
+ * which enforces the deny list at every site: the same price is refused the same way, one deny line is logged (group,
+ * site, tenant; never a name or a price), and nothing is written. The counter half through the real CounterSaleService
+ * is in counter-sale/counter-sale.service.spec.ts.
  */
 jest.mock("../common/db-locks", () => ({
   ...jest.requireActual("../common/db-locks"),
@@ -32,7 +32,7 @@ const PLAIN = {
   isActive: true,
 };
 
-describe("T-R1: a PRICING-denied OPERATOR in shadow, counter vs office", () => {
+describe("T-R1: a PRICING-denied OPERATOR, counter vs office (mode shadow)", () => {
   let h: Awaited<ReturnType<typeof buildOrdersService>>;
   let warn: jest.SpyInstance;
   beforeEach(async () => {
@@ -88,12 +88,21 @@ describe("T-R1: a PRICING-denied OPERATOR in shadow, counter vs office", () => {
     expect(h.prisma.order.create).not.toHaveBeenCalled();
   });
 
-  it("the same POST /orders from the office (no option) is accepted, with one would-deny log", async () => {
-    await create();
-    expect(h.prisma.order.create).toHaveBeenCalled();
+  it("the same POST /orders from the office (no option) is refused the same way, with one deny log and no write", async () => {
+    let err: unknown;
+    try {
+      await create();
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(ForbiddenException);
+    expect((err as ForbiddenException).getResponse()).toMatchObject({
+      code: API_ERROR_CODES.PRICE_EDIT_NOT_PERMITTED,
+    });
+    expect(h.prisma.order.create).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledWith(
-      "would-deny groups=PRICING handler=OrdersService.create tenant=t-1",
+      "denied groups=PRICING handler=OrdersService.create tenant=t-1",
     );
   });
 });
