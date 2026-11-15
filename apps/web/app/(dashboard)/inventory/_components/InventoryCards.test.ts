@@ -1,4 +1,4 @@
-import { stockState } from "./InventoryCards";
+import { stockState, type StockState } from "./InventoryCards";
 
 describe("stockState (the one rule the table colour and the card status share)", () => {
   it("is out at zero or below, whatever the reorder point", () => {
@@ -15,5 +15,20 @@ describe("stockState (the one rule the table colour and the card status share)",
   it("is ok above the threshold", () => {
     expect(stockState({ currentStock: 7, reorderPoint: 6 })).toBe("ok");
     expect(stockState({ currentStock: 6, reorderPoint: null })).toBe("ok");
+  });
+
+  const cases: [string, number, number | null | undefined, StockState][] = [
+    ["zero stock, no reorder point", 0, null, "out"],
+    ["zero stock, reorder point 0", 0, 0, "out"],
+    ["negative stock", -1, 4, "out"],
+    ["null reorder point, at the default (5)", 5, null, "low"],
+    ["null reorder point, above the default", 5.5, null, "ok"],
+    ["reorder point 0, stock 1", 1, 0, "ok"],
+    ["stock equals reorder point", 10, 10, "low"],
+    ["stock above reorder point", 11, 10, "ok"],
+    ["fractional stock below point", 0.5, 2, "low"],
+  ];
+  it.each(cases)("%s", (_label, currentStock, reorderPoint, expected) => {
+    expect(stockState({ currentStock, reorderPoint })).toBe(expected);
   });
 });

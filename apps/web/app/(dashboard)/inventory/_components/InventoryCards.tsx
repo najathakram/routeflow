@@ -1,13 +1,13 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
 import { ArrowDown, ArrowUp } from "lucide-react";
 import { Badge, Select } from "@routeflow/ui/web";
 import { lowStockThreshold } from "@routeflow/types";
 import { RecordCard, RecordCardList } from "@/components/RecordCard";
 import { formatMoney } from "@/lib/format";
 import { unitsLabel } from "@/lib/stock-label";
+import { InventoryCardMenu, type InventoryCardMenuItem } from "./InventoryCardMenu";
 
 /** The fields of a stock row the phone card reads (the page's StockItem satisfies this). */
 export interface InventoryCardItem {
@@ -61,7 +61,9 @@ const ACTION =
 /**
  * The phone stock list (below md): one card per product. Every value is the one the table cell
  * renders; the card does no math. The card opens the product page (the table's "Open product"),
- * and Set cost, Adjust, Assign to variants and Movements stay on its last row.
+ * and its last row holds at most two text actions (Adjust always; Set cost while no cost is set)
+ * plus one "More actions" menu with the rest (Set cost when a cost exists, Movements, Assign to
+ * variants where the table shows it), so the row never runs past the card.
  */
 export function InventoryCards({
   items,
@@ -84,6 +86,14 @@ export function InventoryCards({
         const state = stockState(item);
         const info = variantInfoById.get(item.id);
         const canSplit = !!info && !info.parentProductId && info.hasVariants;
+        const noCost = item.averageCost == null;
+        const menu: InventoryCardMenuItem[] = [
+          ...(noCost ? [] : [{ label: "Set cost", onSelect: () => onSetCost(item) }]),
+          { label: "Movements", href: `/inventory/movements?product=${item.id}` },
+          ...(canSplit
+            ? [{ label: "Assign to variants", onSelect: () => onAssignToVariants(item) }]
+            : []),
+        ];
         return (
           <RecordCard
             key={item.id}
@@ -107,33 +117,30 @@ export function InventoryCards({
                   </span>
                 )}
                 {item.averageCost != null ? (
-                  <span className="text-xs text-navy/60">Cost {formatMoney(item.averageCost)}</span>
+                  <span className="text-xs text-navy/60">
+                    Unit cost {formatMoney(item.averageCost)}
+                  </span>
                 ) : (
                   <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800">
                     No cost set
                   </span>
                 )}
                 <span className="text-xs text-navy/60">
-                  Value {item.totalValue != null ? formatMoney(item.totalValue) : "—"}
+                  Total value {item.totalValue != null ? formatMoney(item.totalValue) : "—"}
                 </span>
               </>
             }
             actions={
               <>
-                <button type="button" onClick={() => onSetCost(item)} className={ACTION}>
-                  Set cost
-                </button>
+                {noCost && (
+                  <button type="button" onClick={() => onSetCost(item)} className={ACTION}>
+                    Set cost
+                  </button>
+                )}
                 <button type="button" onClick={() => onAdjust(item.id)} className={ACTION}>
                   Adjust
                 </button>
-                {canSplit && (
-                  <button type="button" onClick={() => onAssignToVariants(item)} className={ACTION}>
-                    Assign to variants
-                  </button>
-                )}
-                <Link href={`/inventory/movements?product=${item.id}`} className={ACTION}>
-                  Movements
-                </Link>
+                <InventoryCardMenu name={item.name} items={menu} />
               </>
             }
           />
@@ -169,7 +176,6 @@ export function InventorySortControl({
         <Select
           aria-label="Sort products by"
           options={SORT_OPTIONS}
-          placeholder="Unsorted"
           value={sortKey ?? ""}
           onChange={(e) => {
             if (e.target.value && e.target.value !== sortKey) onSort(e.target.value, "asc");

@@ -43,7 +43,6 @@ import { INVENTORY_TABS } from "./_components/inventory-tabs";
 import { useInventoryTab } from "./_components/use-inventory-tab";
 import { CreatePOModal } from "./_components/PurchaseOrdersCreateModal";
 import type { Supplier } from "./_components/purchase-orders-shared";
-import { lowStockThreshold } from "@routeflow/types";
 import { QuickRestockModal } from "./_components/QuickRestockModal";
 import {
   InventoryCards,
@@ -1537,7 +1536,7 @@ export default function InventoryPage() {
               </span>
             )}
           </div>
-          <p className="mt-1.5 font-mono text-2xl font-semibold tabular-nums tracking-[-0.01em] text-navy">
+          <p className="mt-1.5 font-mono text-lg font-semibold tabular-nums tracking-[-0.01em] text-navy md:text-2xl">
             {formatMoney(totalInventoryValue)}
           </p>
           {missingCostCount > 0 ? (
@@ -1709,12 +1708,9 @@ export default function InventoryPage() {
                   ) : (
                     <ul role="listbox" className="py-1">
                       {stockSuggestions.map((s, idx) => {
+                        const state = stockState(s);
                         const stockColor =
-                          s.currentStock <= 0
-                            ? "text-danger"
-                            : s.currentStock <= lowStockThreshold(s.reorderPoint)
-                              ? "text-warning"
-                              : "text-navy/70";
+                          state === "ok" ? "text-navy/70" : STOCK_TEXT_CLASS[state];
                         const stockLabel =
                           Number(s.currentStock) % 1 === 0
                             ? Number(s.currentStock).toFixed(0)

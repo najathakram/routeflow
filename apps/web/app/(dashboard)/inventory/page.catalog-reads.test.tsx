@@ -129,8 +129,8 @@ describe("InventoryPage catalog reads", () => {
     fireEvent.click(screen.getByRole("button", { name: /^adjust stock$/i }));
     const input = screen.getByPlaceholderText(/type name or sku/i);
     fireEvent.change(input, { target: { value: "g" } });
-    expect(screen.getByRole("button", { name: /boxed gadget/i })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /retired gizmo/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^boxed gadget/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^retired gizmo/i })).not.toBeInTheDocument();
   });
 
   it("Adjust Stock needs a reason and sends it (SA-828)", () => {
@@ -138,7 +138,7 @@ describe("InventoryPage catalog reads", () => {
     render(<InventoryPage />);
     fireEvent.click(screen.getByRole("button", { name: /^adjust stock$/i }));
     fireEvent.change(screen.getByPlaceholderText(/type name or sku/i), { target: { value: "g" } });
-    fireEvent.click(screen.getByRole("button", { name: /boxed gadget/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^boxed gadget/i }));
     fireEvent.change(screen.getByRole("spinbutton"), { target: { value: "-2" } });
     const save = screen.getByRole("button", { name: /save adjustment/i });
     expect(save).toBeDisabled();
