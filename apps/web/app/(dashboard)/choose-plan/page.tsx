@@ -98,19 +98,27 @@ export default function ChoosePlanPage() {
   // UX guide B10: the server's own answer (the recommendation read) is known on load; the quote's
   // `fromPlanKey` only exists after a pick, so it is the fallback, not the source.
   const currentPlanKey = rec.data?.currentPlanKey ?? preview?.change?.fromPlanKey ?? null;
-  // Picking your own plan is NOT always a no-op: with a scheduled downgrade or cancellation it is the way
-  // to call that off, and on the other billing cycle it is the cycle switch. Only when the subscription is
-  // loaded and on this very cycle with nothing scheduled does the button read "Current plan" and stop.
+  // Picking your own plan is NOT always a no-op. The server treats it as a real SUBSCRIBE (a conversion to paid)
+  // unless the business is ACTIVE with a period end, so only then do the other cases apply: with a scheduled
+  // downgrade or cancellation it is the way to call that off, and on the other billing cycle it is the cycle
+  // switch. Everywhere else (a trial, an expired trial, no period end, or the read not loaded yet) the button
+  // is the plain "Choose". It stops, as "Current plan", only for an ACTIVE business on this very cycle with
+  // nothing scheduled.
   const sub = subscription.data;
-  // When it stays live, the label says what pressing it does (never a bare "Choose" on your own plan).
-  const ownPlanLiveLabel =
-    sub && (sub.cancelAtPeriodEnd || sub.downgradeToPlanKey != null)
+  const ownPlanActive = sub != null && sub.status === "ACTIVE" && sub.renewalAt != null;
+  // When it stays live, the label says what pressing it does.
+  const ownPlanLiveLabel = !ownPlanActive
+    ? "Choose"
+    : sub.cancelAtPeriodEnd || sub.downgradeToPlanKey != null
       ? "Keep this plan"
       : cycle === "ANNUAL"
         ? "Switch to annual billing"
         : "Switch to monthly billing";
   const ownPlanIsNoChange =
-    sub != null && sub.cycle === cycle && !sub.cancelAtPeriodEnd && sub.downgradeToPlanKey == null;
+    ownPlanActive &&
+    sub.cycle === cycle &&
+    !sub.cancelAtPeriodEnd &&
+    sub.downgradeToPlanKey == null;
   // A DOWNGRADE that the server flagged as over-cap deactivates staff accounts at period end —
   // it is only committable once the tenant has acknowledged that. Keyed on the server's own
   // seat signal, never on `warning` being non-empty: that field also carries unrelated copy

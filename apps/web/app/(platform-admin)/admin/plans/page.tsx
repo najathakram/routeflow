@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { roundMoney } from "@routeflow/pricing";
 import { superAdminClient } from "@/lib/admin-api";
 import { AdminCard } from "../../_components/AdminCard";
 import { planLabel } from "../../_components/AdminBadge";
@@ -101,12 +102,18 @@ function draftFrom(plan: PlanCatalogEntry): RowDraft {
   };
 }
 
+/** Two optional prices are the same when both are none or equal to the cent. */
+function sameMoney(a: number | null, b: number | null): boolean {
+  if (a === null || b === null) return a === b;
+  return roundMoney(a) === roundMoney(b);
+}
+
 /** Compare two price fields as numbers ("100" and "100.00" are the same price; blank is "none"). */
 function samePrice(a: string, b: string): boolean {
   const x = a.trim();
   const y = b.trim();
   if (x === "" || y === "") return x === y;
-  return Number(x) === Number(y);
+  return roundMoney(Number(x)) === roundMoney(Number(y));
 }
 
 /** UX guide B4: a row is dirty only when a price differs from the catalog's stored one. */
@@ -117,9 +124,9 @@ function isDirty(plan: PlanCatalogEntry, draft: RowDraft): boolean {
 
 /** The confirm's title: an annual-only change is not "from $100 to $100 a month". */
 function priceConfirmTitle(p: PendingPriceChange): string {
-  const monthlyChanged = p.monthly !== p.impact.currentMonthly;
+  const monthlyChanged = roundMoney(p.monthly) !== roundMoney(p.impact.currentMonthly);
   const storedAnnual = p.plan.annualPrice === null ? null : Number(p.plan.annualPrice);
-  if (!monthlyChanged && p.annual !== storedAnnual) {
+  if (!monthlyChanged && !sameMoney(p.annual, storedAnnual)) {
     const from = storedAnnual === null ? "none" : priceLabel(storedAnnual);
     const to = p.annual === null ? "none" : priceLabel(p.annual);
     return `Change ${p.plan.name} annual price from ${from} to ${to} a year?`;

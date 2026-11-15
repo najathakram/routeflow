@@ -108,7 +108,7 @@ export default function BillingPage() {
     );
   if (!data) return null;
 
-  // UX guide B19: the share of businesses that ever started on a trial and now PAY. It comes from the
+  // UX guide B19: paying / (paying + in trial). It comes from the
   // server's paying count (the same figure as the Active Subscriptions card), never from "not in trial":
   // a free pilot, a suspended or a cancelled business is not a conversion. A dash while that count is
   // unknown or there is nobody to divide by - never an invented number (REG-743).

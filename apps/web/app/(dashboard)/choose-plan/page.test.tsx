@@ -59,6 +59,8 @@ beforeEach(() => {
   mockRec = { currentPlanKey: "SCALE", recommendedPlanKey: "GROWTH" };
   mockSub = {
     planKey: "SCALE",
+    status: "ACTIVE",
+    renewalAt: "2026-12-01T00:00:00Z",
     cycle: "MONTHLY",
     cancelAtPeriodEnd: false,
     downgradeToPlanKey: null,
@@ -110,5 +112,34 @@ describe("UX guide B10 choose-plan current plan", () => {
     expect(
       within(card("Scale")).getByText("Current plan", { selector: "span,div" }),
     ).toBeInTheDocument();
+  });
+
+  // A trial or expired-trial business re-picking its own plan is a real conversion (the server answers SUBSCRIBE
+  // unless the tenant is ACTIVE with a period end), so the button must stay live and say "Choose".
+  it.each(["TRIAL", "READ_ONLY"])(
+    "a %s business can still pick the plan it is on: live button, 'Choose'",
+    (status) => {
+      mockSub = { ...mockSub, status };
+      render(<ChoosePlanPage />);
+      const button = within(card("Scale")).getByRole("button", { name: "Choose" });
+      expect(button).toBeEnabled();
+      expect(
+        within(card("Scale")).getByText("Current plan", { selector: "span,div" }),
+      ).toBeInTheDocument();
+    },
+  );
+
+  it("an ACTIVE business with no period end can still pick its own plan (the server answers SUBSCRIBE)", () => {
+    mockSub = { ...mockSub, renewalAt: null };
+    render(<ChoosePlanPage />);
+    expect(within(card("Scale")).getByRole("button", { name: "Choose" })).toBeEnabled();
+  });
+
+  it("while the subscription read is loading or failed the own-plan button reads Choose, never a switch", () => {
+    mockSub = undefined;
+    render(<ChoosePlanPage />);
+    const button = within(card("Scale")).getByRole("button", { name: "Choose" });
+    expect(button).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /Switch to/ })).toBeNull();
   });
 });
