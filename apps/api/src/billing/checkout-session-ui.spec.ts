@@ -172,12 +172,22 @@ describe("withCheckoutPolicy x BILLING_CHECKOUT_UI (SA-1139 R1)", () => {
 });
 
 describe("checkoutStartFromSession (SA-1139 R3)", () => {
+  const savedWeb = process.env.WEB_URL;
+  beforeEach(() => {
+    process.env.WEB_URL = "https://app.test";
+  });
+  afterEach(() => {
+    if (savedWeb === undefined) delete process.env.WEB_URL;
+    else process.env.WEB_URL = savedWeb;
+  });
+
   it("a hosted session -> uiMode hosted, checkoutUrl set, clientSecret null", () => {
     expect(checkoutStartFromSession({ id: "cs_1", url: "https://pay.test/cs_1" })).toEqual({
       uiMode: "hosted",
       sessionId: "cs_1",
       checkoutUrl: "https://pay.test/cs_1",
       clientSecret: null,
+      returnPath: null,
     });
   });
 
@@ -188,12 +198,14 @@ describe("checkoutStartFromSession (SA-1139 R3)", () => {
         url: null,
         ui_mode: "embedded_page",
         client_secret: "cs_2_secret_test",
+        return_url: "https://app.test/settings/billing?paid=1&session_id={CHECKOUT_SESSION_ID}",
       }),
     ).toEqual({
       uiMode: "embedded",
       sessionId: "cs_2",
       checkoutUrl: null,
       clientSecret: "cs_2_secret_test",
+      returnPath: "/settings/billing?paid=1",
     });
   });
 
@@ -210,5 +222,86 @@ describe("checkoutStartFromSession (SA-1139 R3)", () => {
 
   it("a hosted session that came back without a url throws", () => {
     expect(() => checkoutStartFromSession({ id: "cs_4", url: null })).toThrow(/url/);
+  });
+});
+
+describe("checkoutStartFromSession x returnPath (SA-1154)", () => {
+  const saved = { web: process.env.WEB_URL, front: process.env.FRONTEND_URL };
+  beforeEach(() => {
+    process.env.WEB_URL = "https://app.test";
+    delete process.env.FRONTEND_URL;
+  });
+  afterEach(() => {
+    if (saved.web === undefined) delete process.env.WEB_URL;
+    else process.env.WEB_URL = saved.web;
+    if (saved.front === undefined) delete process.env.FRONTEND_URL;
+    else process.env.FRONTEND_URL = saved.front;
+  });
+
+  const embedded = (returnUrl: unknown) => ({
+    id: "cs_r",
+    url: null,
+    ui_mode: "embedded_page",
+    client_secret: "cs_r_secret_test",
+    return_url: returnUrl as string | null | undefined,
+  });
+
+  it.each([
+    ["plan", "https://app.test/settings/billing?checkout=success&session_id={CHECKOUT_SESSION_ID}"],
+    ["pay", "https://app.test/settings/billing?paid=1&session_id={CHECKOUT_SESSION_ID}"],
+    [
+      "card add",
+      "https://app.test/settings/billing?paid=1&card=1&session_id={CHECKOUT_SESSION_ID}",
+    ],
+  ])("an embedded %s session -> its own return_url without session_id", (name, url) => {
+    const out = checkoutStartFromSession(embedded(url));
+    const expected = {
+      plan: "/settings/billing?checkout=success",
+      pay: "/settings/billing?paid=1",
+      "card add": "/settings/billing?paid=1&card=1",
+    }[name];
+    expect(out).toMatchObject({ uiMode: "embedded", returnPath: expected });
+  });
+
+  it("a session_id that Stripe already filled in is removed too", () => {
+    const out = checkoutStartFromSession(
+      embedded("https://app.test/settings/billing?paid=1&card=1&session_id=cs_r"),
+    );
+    expect(out).toMatchObject({ returnPath: "/settings/billing?paid=1&card=1" });
+  });
+
+  it("a hosted session answers returnPath null (Stripe's own redirect carries the return)", () => {
+    const out = checkoutStartFromSession({
+      id: "cs_h",
+      url: "https://pay.test/cs_h",
+      success_url: "https://app.test/settings/billing?paid=1",
+    } as Parameters<typeof checkoutStartFromSession>[0]);
+    expect(out).toMatchObject({ uiMode: "hosted", returnPath: null });
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["null", null],
+    ["empty", ""],
+    [
+      "another origin",
+      "https://evil.example/settings/billing?paid=1&session_id={CHECKOUT_SESSION_ID}",
+    ],
+    [
+      "a look-alike origin",
+      "https://app.test.evil.example/settings/billing?paid=1&session_id={CHECKOUT_SESSION_ID}",
+    ],
+    ["a scheme-relative address", "//evil.example/x"],
+  ])("O9: an embedded session whose return_url is %s throws", (_label, url) => {
+    expect(() => checkoutStartFromSession(embedded(url))).toThrow(/return_url/);
+  });
+
+  it("O9: the refusal never echoes the client secret", () => {
+    try {
+      checkoutStartFromSession(embedded(undefined));
+      throw new Error("expected a throw");
+    } catch (err) {
+      expect((err as Error).message).not.toContain("secret_test");
+    }
   });
 });

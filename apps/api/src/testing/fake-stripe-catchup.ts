@@ -164,6 +164,8 @@ export function fakeStripeCatchup(
                 url: null,
                 ui_mode: "embedded_page",
                 client_secret: `${id}_secret_test`,
+                // like Stripe's own Session object, the embedded return address is echoed back (SA-1154)
+                return_url: params.return_url,
               };
             }
             return { id, url: `https://pay.test/${id}` };

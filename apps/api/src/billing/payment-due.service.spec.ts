@@ -115,6 +115,7 @@ function make(
       uiMode: "hosted",
       checkoutUrl: "https://checkout.stripe.test/new",
       clientSecret: null,
+      returnPath: null,
       sessionId: "cs_new",
       stubCents: 31000,
       shape: "trial_one_time",
@@ -290,15 +291,18 @@ describe("PaymentDueService.pay", () => {
       sessionId: "cs_emb",
       checkoutUrl: null,
       clientSecret: "cs_emb_secret_test",
+      returnPath: "/settings/billing?paid=1",
       stubCents: 31000,
       shape: "trial_one_time",
     });
     const out = await svc.pay("t1", NOW);
+    // SA-1154: the opener hands the web exactly the start the session produced (path included), no more fields
     expect(out).toEqual({
       uiMode: "embedded",
       sessionId: "cs_emb",
       checkoutUrl: null,
       clientSecret: "cs_emb_secret_test",
+      returnPath: "/settings/billing?paid=1",
     });
     expect(catchup.open).toHaveBeenCalledWith(
       "t1",
@@ -344,6 +348,7 @@ describe("PaymentDueService.pay", () => {
       uiMode: "hosted",
       checkoutUrl: "https://checkout.stripe.test/open",
       clientSecret: null,
+      returnPath: null, // O5: a reused session is hosted; Stripe's own success_url (chosen at its creation) returns
     });
     expect(stripe.getCheckoutSession).toHaveBeenCalledWith("cs_open");
     expect(catchup.open).not.toHaveBeenCalled();
@@ -601,6 +606,51 @@ describe("PaymentDueService.pay", () => {
         expect(h.stripe.expireCheckoutSession).not.toHaveBeenCalled();
         expect(h.claim.onSessionExpired).not.toHaveBeenCalled();
         expect(h.catchup.open).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it.each(lostRace)(
+      "SA-1139 review NIT: %s: a raced EMBEDDED session past its time is not protected, it falls through to expire",
+      async (_l, mk) => {
+        const past = {
+          ...raced,
+          url: null,
+          client_secret: "cs_raced_secret_test",
+          expires_at: Math.floor(NOW.getTime() / 1000) - 60,
+        };
+        const h = make({
+          session: past,
+          expired: { id: "cs_raced", status: "expired", url: null, metadata: TERMS_META },
+        });
+        h.prisma.tenantSubscription.findUnique
+          .mockResolvedValueOnce({ catchupState: null, catchupSessionId: null })
+          .mockResolvedValue({ catchupState: "SESSION_OPEN", catchupSessionId: "cs_raced" });
+        h.catchup.open.mockRejectedValueOnce(mk());
+        const out: any = await h.svc.pay("t1", NOW).catch((e) => e);
+        expect(out).not.toBeInstanceOf(ConflictException);
+        expect(h.stripe.expireCheckoutSession).toHaveBeenCalledWith("cs_raced");
+      },
+    );
+
+    it.each(lostRace)(
+      "SA-1139 review NIT: %s: a live raced EMBEDDED winner whose terms mismatch stays open and answers 409 CATCHUP_SESSION_OPEN",
+      async (_l, mk) => {
+        const stale = {
+          ...raced,
+          url: null,
+          client_secret: "cs_raced_secret_test",
+          metadata: TRIAL_TERMS_META, // not this plan's terms: a hosted winner would be re-planned and expired
+        };
+        const h = make({ session: stale });
+        h.prisma.tenantSubscription.findUnique
+          .mockResolvedValueOnce({ catchupState: null, catchupSessionId: null })
+          .mockResolvedValue({ catchupState: "SESSION_OPEN", catchupSessionId: "cs_raced" });
+        h.catchup.open.mockRejectedValueOnce(mk());
+        const err: any = await h.svc.pay("t1", NOW).catch((e) => e);
+        expect(err).toBeInstanceOf(ConflictException);
+        expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.CATCHUP_SESSION_OPEN });
+        expect(h.stripe.expireCheckoutSession).not.toHaveBeenCalled();
+        expect(h.claim.onSessionExpired).not.toHaveBeenCalled();
       },
     );
 

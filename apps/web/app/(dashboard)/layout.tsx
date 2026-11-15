@@ -35,6 +35,7 @@ import {
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { cn, Avatar, ToastProvider } from "@routeflow/ui/web";
 import { TenantLogo } from "@/components/TenantLogo";
+import { EmbeddedCheckoutHost } from "@/components/billing/EmbeddedCheckoutHost";
 import { PortalSwitchLink } from "@/components/PortalSwitchLink";
 import { setLastPortalCookie } from "@/lib/presence-cookies";
 import { createNavShortcutHandler } from "@/lib/nav-shortcuts";
@@ -1399,6 +1400,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
           control; below lg the rail is a drawer so it becomes the viewport corner. */}
       <div ref={shellColumnRef} className="relative flex flex-1 flex-col overflow-hidden">
         <ImpersonationBanner />
+        <EmbeddedCheckoutHost />
         {subscriptionStatus ? (
           // useSearchParams() (the ?paid=1 return) needs a Suspense boundary for the static prerender
           <React.Suspense fallback={null}>
