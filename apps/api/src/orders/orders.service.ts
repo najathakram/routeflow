@@ -3152,6 +3152,7 @@ export class OrdersService implements OnApplicationBootstrap {
             overriddenBy: user?.sub ?? null,
             priceEditAllowed, // SA-1034: read once, before the transaction (top of this method)
             held: heldById,
+            flooredDelivered,
             repriceTierOnQtyOnly: user?.role === UserRole.CUSTOMER,
             categoryMap: await loadCategoryMapForProducts(tx, unitCtx.products), // B297
             authorOf, // SA ruling #3418: a unit line's author marker

@@ -317,6 +317,8 @@ export interface UnitWriteContext {
   priceEditAllowed: boolean;
   /** H3: the order's lines as held under the edit's row lock, by id: the stored side of a re-sent price. */
   held?: ReadonlyMap<string, unknown>;
+  /** SA-1149 F1: the delivered floor per line id, from the one `heldAtBookedFloor` read in updateOrderItems (required: no second read, no second rule). */
+  flooredDelivered: ReadonlyMap<string, unknown>;
   /** H3: the buyer's count diff re-prices a tier line at the current tier on a qty-only edit (SA-507b). */
   repriceTierOnQtyOnly?: boolean;
   /** trackedCategoryId -> TrackedCategory row, for the products this edit touches (B297). */
@@ -472,7 +474,11 @@ export async function updateUnitLine(
   });
   if (!isSubstitute) {
     const held = ctx.held?.get(lineId) as any;
-    assertQtyNotBelowDelivered(held?.deliveredQty, held?.qty, rest.qty); // SA-1149 D2
+    assertQtyNotBelowDelivered(
+      ctx.flooredDelivered.get(lineId) ?? held?.deliveredQty,
+      held?.qty,
+      rest.qty,
+    ); // SA-1149 D2 / F1
   }
   const data = isSubstitute
     ? {

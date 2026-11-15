@@ -281,7 +281,13 @@ describeDb("W-946r merge and floor (SA-1149 round 2), real Postgres", () => {
   }, 120_000);
 
   afterAll(async () => {
-    await raw.invoice.deleteMany({ where: { id: { in: invoiceIds } } });
+    // orders made through the real controllers (checkout, staff create) are not in orderIds: sweep the whole test tenant
+    orderIds.push(
+      ...(await raw.order.findMany({ where: { tenantId }, select: { id: true } })).map((o) => o.id),
+    );
+    await raw.invoice.deleteMany({
+      where: { OR: [{ id: { in: invoiceIds } }, { orderId: { in: orderIds } }] },
+    });
     await raw.orderRevision?.deleteMany?.({ where: { orderId: { in: orderIds } } });
     await raw.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
     await raw.order.deleteMany({ where: { id: { in: orderIds } } });
@@ -316,9 +322,9 @@ describeDb("W-946r merge and floor (SA-1149 round 2), real Postgres", () => {
   const OBSERVED_M11_STOCK_Y = [90, 88];
   const OBSERVED_M12B = { created: true };
   const OBSERVED_MK = { status: 409, code: "ORDER_EDIT_DELIVERED_LINES" };
-  const OBSERVED_F1_G1 = { q: 13, d: 13 };
-  const OBSERVED_F1_G2 = { q: 12, d: 12 };
-  const OBSERVED_F1_G3 = { q: 10, d: 0 };
+  const F1_G1_RULED = { q: 13, d: 13 };
+  const F1_G2_RULED = { q: 12, d: 12 };
+  const F1_G3_RULED = { q: 10, d: 0 };
 
   const extraCustomerIds: string[] = [];
   const extraUserIds: string[] = [];
@@ -528,9 +534,15 @@ describeDb("W-946r merge and floor (SA-1149 round 2), real Postgres", () => {
     const before = await snapshot(r.o.id);
     const lineIds = await ids(r.o.id);
     await tenantCtx.run(tenantId, () => orders.mergeAllPendingForCustomer(cust));
-    await tenantCtx
+    const forced = await tenantCtx
       .run(tenantId, () => orders.forceConsolidateCustomer(cust))
-      .catch(() => undefined);
+      .then(
+        (v) => ({ ok: v as unknown }),
+        (e: any) => ({ refused: (e?.response?.code ?? e?.message) as string }),
+      );
+    // observed: the force pass resolves (no refusal) with the lone eligible order b; the delivered order is not its target
+    expect(forced).toHaveProperty("ok");
+    expect((forced as { ok: { id: string } }).ok.id).toBe(b.id);
     expect(await snapshot(r.o.id)).toEqual(before);
     expect(await ids(r.o.id)).toEqual(lineIds);
     expect(await raw.order.count({ where: { id: b.id } })).toBe(1);
@@ -597,7 +609,9 @@ describeDb("W-946r merge and floor (SA-1149 round 2), real Postgres", () => {
     const beforeA = await snapshot(r.o.id);
     const beforeB = await snapshot(b.id);
     const stock0 = await stock(r.x);
-    await tenantCtx.run(tenantId, () => orders.sweepAllPendingOrders());
+    // the sweep is global (it re-enters each tenant itself); the spec DB is a throwaway with only this tenant, so merged is exactly this tenant's
+    const swept = await tenantCtx.run(tenantId, () => orders.sweepAllPendingOrders());
+    expect(swept.merged).toBe(0);
     expect(await snapshot(r.o.id)).toEqual(beforeA);
     expect(await snapshot(b.id)).toEqual(beforeB);
     expect(await stock(r.x)).toBe(stock0);
@@ -679,25 +693,96 @@ describeDb("W-946r merge and floor (SA-1149 round 2), real Postgres", () => {
     const f = await legacy();
     await edit(f.o.id, { items: [{ id: f.line.id, qty: 13 }] });
     const [l] = await rows(f.o.id);
-    expect({ q: Number(l.qty), d: Number(l.deliveredQty) }).toEqual(OBSERVED_F1_G1);
+    expect({ q: Number(l.qty), d: Number(l.deliveredQty) }).toEqual(F1_G1_RULED);
   }, 60_000);
 
   it("F1-g2 (guard): restated at 12: 200, d 12 (the first-edit normalisation)", async () => {
     const f = await legacy();
     await edit(f.o.id, { items: [{ id: f.line.id, qty: 12 }] });
     const [l] = await rows(f.o.id);
-    expect({ q: Number(l.qty), d: Number(l.deliveredQty) }).toEqual(OBSERVED_F1_G2);
+    expect({ q: Number(l.qty), d: Number(l.deliveredQty) }).toEqual(F1_G2_RULED);
   }, 60_000);
 
   it("F1-g3 (guard): a DELIVERED route order {q12, d0} cut to 10 is accepted as today (route columns stay)", async () => {
     const f = await legacy(true);
-    await edit(f.o.id, { items: [{ id: f.line.id, qty: 10 }] }).then(
-      () => undefined,
-      (e: any) => {
-        throw e;
-      },
-    );
+    await edit(f.o.id, { items: [{ id: f.line.id, qty: 10 }] });
     const [l] = await rows(f.o.id);
-    expect({ q: Number(l.qty), d: Number(l.deliveredQty) }).toEqual(OBSERVED_F1_G3);
+    expect({ q: Number(l.qty), d: Number(l.deliveredQty) }).toEqual(F1_G3_RULED);
+  }, 60_000);
+
+  /** F1-u: the same legacy shape on a unit-aware line (unitLabel set), cut through the unit-line edit path. */
+  async function legacyUnit(route = false) {
+    const x = await product("f1u");
+    await raw.productUnit.create({
+      data: { tenantId, productId: x, label: "Pack", factorToBase: 1, price: "1.00" },
+    });
+    const cust = await newCustomer();
+    const o = await orderFor(
+      cust,
+      [{ ...plain(x, 12, 0), unitLabel: "Pack", unitsPerBox: 1, boxes: 12, pieces: 0 }],
+      "DELIVERED",
+      route ? await routeStop() : {},
+    );
+    return { o, x, line: o.lineItems[0] };
+  }
+  const unitEdit = (f: { o: { id: string }; line: { id: string } }, qty: number) =>
+    edit(f.o.id, { replaceAll: false, items: [{ id: f.line.id, unitLabel: "Pack", qty }] });
+  const ledgerOf = async (productId: string) =>
+    (await raw.stockMovement.findMany({ where: { productId }, orderBy: { createdAt: "asc" } })).map(
+      (m) => ({ type: m.type, qty: Number(m.quantity) }),
+    );
+  const OBSERVED_F1U = { status: 409, code: "LINE_ALREADY_DELIVERED" };
+  const OBSERVED_F1U_G1 = { q: 13, d: 13, stock: 89, ledger: [{ type: "SALE", qty: -1 }] };
+  const OBSERVED_F1U_G2 = { q: 12, d: 12, stock: 90, ledger: [] as unknown[] };
+  const OBSERVED_F1U_G3 = { q: 10, d: 0, stock: 92, ledger: [{ type: "SALE", qty: 2 }] };
+
+  it("F1-u: a unit-aware legacy {q12, d0} on a DELIVERED non-route order cut to 10 is 409 LINE_ALREADY_DELIVERED, nothing written, stock and ledger unchanged", async () => {
+    const f = await legacyUnit();
+    const before = await snapshot(f.o.id);
+    const ledger0 = await ledgerOf(f.x);
+    const got = await unitEdit(f, 10).then(
+      () => ({ status: 200, code: undefined as string | undefined }),
+      (e: any) => ({ status: e.status as number, code: e.response?.code as string | undefined }),
+    );
+    expect(got).toEqual(OBSERVED_F1U);
+    expect(await snapshot(f.o.id)).toEqual(before);
+    expect(await stock(f.x)).toBe(90);
+    expect(await ledgerOf(f.x)).toEqual(ledger0);
+  }, 60_000);
+
+  it("F1-u-g1 (guard): the unit-aware order raised to 13: 200, d 13, one booked SALE row of -1", async () => {
+    const f = await legacyUnit();
+    await unitEdit(f, 13);
+    const [l] = await rows(f.o.id);
+    expect({
+      q: Number(l.qty),
+      d: Number(l.deliveredQty),
+      stock: await stock(f.x),
+      ledger: await ledgerOf(f.x),
+    }).toEqual(OBSERVED_F1U_G1);
+  }, 60_000);
+
+  it("F1-u-g2 (guard): restated at 12: 200, d 12, no stock row", async () => {
+    const f = await legacyUnit();
+    await unitEdit(f, 12);
+    const [l] = await rows(f.o.id);
+    expect({
+      q: Number(l.qty),
+      d: Number(l.deliveredQty),
+      stock: await stock(f.x),
+      ledger: await ledgerOf(f.x),
+    }).toEqual(OBSERVED_F1U_G2);
+  }, 60_000);
+
+  it("F1-u-g3 (guard): a DELIVERED route order, unit-aware {q12, d0}, cut to 10: 200 as today, one SALE row of +2", async () => {
+    const f = await legacyUnit(true);
+    await unitEdit(f, 10);
+    const [l] = await rows(f.o.id);
+    expect({
+      q: Number(l.qty),
+      d: Number(l.deliveredQty),
+      stock: await stock(f.x),
+      ledger: await ledgerOf(f.x),
+    }).toEqual(OBSERVED_F1U_G3);
   }, 60_000);
 });

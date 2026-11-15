@@ -478,11 +478,15 @@ describeDb("W-861 + W-871 — paid walk-in edits and post-delivery replaces, rea
     });
     await raw.invoice.update({ where: { id: inv.id }, data: { subtotal: "5.00", total: "5.00" } });
     await raw.invoicePayment.update({ where: { id: pay.id }, data: { amount: "5.00" } });
+    const stockOf = async () =>
+      Number((await raw.product.findUniqueOrThrow({ where: { id: pid } })).currentStock);
     const before = await snapshot(o.id);
+    const stockBefore = await stockOf();
     await expect(
       edit(o.id, { items: [{ id: o.lineItems[0].id, productId: pid, qty: 1 }], replaceAll: false }),
     ).rejects.toMatchObject({ status: 409, response: { code: "ORDER_EDIT_WOULD_OVERPAY" } });
     expect(await snapshot(o.id)).toEqual(before);
+    expect(await stockOf()).toBe(stockBefore); // the refused cut moved no stock
   });
 
   it("SA-956 (c2) = F1-o: on the stamped shape {q2, d2} a cut to 1 is 409 LINE_ALREADY_DELIVERED, not the overpay refusal (the floor runs first), nothing written", async () => {

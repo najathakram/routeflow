@@ -120,6 +120,19 @@ describe("replace-all refusal and line-delete pins (SA-1149 P-a..P-e)", () => {
     expect(src.match(/mergeEligibleWhere\(/g)).toHaveLength(1);
     expect(src).not.toMatch(/status: OrderStatus\.PENDING/);
   });
+
+  it("P-f: heldAtBookedFloor( is called once in orders.service.ts, and both edit-site floors read flooredDelivered", () => {
+    const svc = text("orders/orders.service.ts");
+    const unit = text("orders/unit-line-edit.ts");
+    expect(uses(svc, "heldAtBookedFloor(")).toBe(1);
+    // the each-unit floor and the unit-line floor: the delivered argument is the floored row
+    expect(svc).toMatch(/assertQtyNotBelowDelivered\(\s*flooredDelivered\.get\(li\.id\)/);
+    expect(unit).toMatch(/assertQtyNotBelowDelivered\(\s*ctx\.flooredDelivered\.get\(lineId\)/);
+    // the two edit sites; the carry net in delivered-stamp.ts is outside the count
+    expect(
+      uses(svc, "assertQtyNotBelowDelivered(") + uses(unit, "assertQtyNotBelowDelivered("),
+    ).toBe(2);
+  });
 });
 
 /** SA-1149 20:55Z: round 1's `delivered` seed (a DELIVERED line with d below qty and no evidence) must not come back. */
