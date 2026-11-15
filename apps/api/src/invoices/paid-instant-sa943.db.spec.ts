@@ -258,6 +258,78 @@ describeDb("a date-only paid date for a Chicago tenant, real Postgres (SA-943)",
     expect(row.paidAt.getTime()).toBeGreaterThan(windowEnd.getTime()); // after the cutoff: the open day
   });
 
+  /** A close covering `windowEnd`, for the standing till register of seed(..., true). */
+  const closeUntil = (tenantId: string, windowEnd: Date) =>
+    prisma.counterDayClose.create({
+      data: {
+        tenantId,
+        registerKey: "main",
+        day: windowEnd,
+        zone: CHI,
+        windowStart: new Date(windowEnd.getTime() - 600 * MIN),
+        windowEnd,
+        closedAt: windowEnd,
+        expectedCash: 0,
+        countedCash: 0,
+        variance: 0,
+        denominations: [],
+        totals: {},
+      },
+    });
+
+  it("W-859 L-1: at 2026-11-14T03:00Z (UTC 11-14, Chicago 11-13 21:00) a CASH payment dated the Chicago day is NOT refused after the 02:30Z close", async () => {
+    const s = await seed("utc-split", true);
+    const windowEnd = new Date("2026-11-14T02:30:00.000Z");
+    await closeUntil(s.tenantId, windowEnd);
+    // Only Date is faked: the DB clock and every timer stay real. If the seam judged "today" by the UTC date, 2026-11-13 would
+    // be a past day (local start 11-13T06:00Z, before the cutoff) and the till would refuse it.
+    jest.useFakeTimers({
+      now: new Date("2026-11-14T03:00:00.000Z"),
+      doNotFake: [
+        "hrtime",
+        "nextTick",
+        "performance",
+        "queueMicrotask",
+        "requestAnimationFrame",
+        "cancelAnimationFrame",
+        "requestIdleCallback",
+        "cancelIdleCallback",
+        "setImmediate",
+        "clearImmediate",
+        "setInterval",
+        "clearInterval",
+        "setTimeout",
+        "clearTimeout",
+      ],
+    });
+    let res: any;
+    try {
+      res = await record(s.tenantId, s.invoiceId, "CASH", "2026-11-13").catch(
+        (e: any) => e?.getResponse?.() ?? e,
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+    expect(res?.code).not.toBe("DAY_CLOSED_FOR_PAYMENT_DATE");
+    const [row] = await stored(s.invoiceId);
+    expect(row).toBeDefined();
+    expect(row.paidAt.getTime()).toBeGreaterThan(windowEnd.getTime()); // the database "now", not 11-13T06:00Z
+  });
+
+  it("W-859 L-2 (SA-1143): a form held open across midnight (dated YESTERDAY, whose evening is closed) is refused 409 DAY_CLOSED_FOR_PAYMENT_DATE with the fixed sentence the web maps", async () => {
+    const s = await seed("held-open", true);
+    await closeUntil(s.tenantId, new Date(Date.now() - 30 * MIN));
+    const yesterday = tenantTodayDay(CHI, new Date(Date.now() - 24 * 60 * MIN));
+
+    const res: any = await record(s.tenantId, s.invoiceId, "CASH", yesterday).catch((e: any) => e);
+
+    expect(res?.getStatus?.()).toBe(409);
+    expect(res?.getResponse?.()?.code).toBe("DAY_CLOSED_FOR_PAYMENT_DATE");
+    // The web never reads this message: `dayClosedCopy` (day-closed-copy.test.ts) shows the same fixed sentence by code.
+    expect(res?.getResponse?.()?.message).toBe("That day is closed. Record it with today's date.");
+    expect(await stored(s.invoiceId)).toHaveLength(0);
+  });
+
   it("a PAST day 2026-10-01 stores the Chicago start of that day, 2026-10-01T05:00Z (master: T00:00Z)", async () => {
     const s = await seed("past", false);
 
