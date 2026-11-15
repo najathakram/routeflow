@@ -231,7 +231,7 @@ export function assertQtyNotBelowDelivered(
  * SA-1149 (round 2): an order holding a live delivered line is never a merge target and never a merge loser (a merge
  * folds by replace and deletes the loser's lines, so the delivered stamp would be lost, B1167). One fragment, read by
  * every `forMerge` search and by both branches of `mergeEligibleWhere`; `isLiveDeliveredLine` is its JS twin (a unit row
- * checks the two agree). Use inside an `AND`, never spread: it shares the `lineItems` key with the unit-aware guard.
+ * checks the two agree). Spread only inside a where that has no other `lineItems` key; otherwise use an `AND` (it shares the `lineItems` key with the unit-aware guard).
  */
 export const ORDER_HAS_NO_LIVE_DELIVERED_LINE = {
   lineItems: { none: { deliveredQty: { gt: 0 }, status: { not: "CANCELLED" } } },

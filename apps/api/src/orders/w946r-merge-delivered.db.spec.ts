@@ -16,6 +16,8 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { Logger } from "@nestjs/common";
+import { BuyerController } from "../buyer/buyer.controller";
+import { OrdersController } from "./orders.controller";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
@@ -310,6 +312,10 @@ describeDb("W-946r merge and floor (SA-1149 round 2), real Postgres", () => {
   });
   /** Observed at 0e86ebb299 / the fix (filled after the first runs). */
   const OBSERVED_M10_PATH = "writers";
+  /** M1-1: y's stock 90 less its 2 sold; M1-2b: a stale merge choice with no target creates a new order; M1-k: the KNOWN 409. */
+  const OBSERVED_M11_STOCK_Y = [90, 88];
+  const OBSERVED_M12B = { created: true };
+  const OBSERVED_MK = { status: 409, code: "ORDER_EDIT_DELIVERED_LINES" };
   const OBSERVED_F1_G1 = { q: 13, d: 13 };
   const OBSERVED_F1_G2 = { q: 12, d: 12 };
   const OBSERVED_F1_G3 = { q: 10, d: 0 };
@@ -401,16 +407,110 @@ describeDb("W-946r merge and floor (SA-1149 round 2), real Postgres", () => {
     expect(await raw.deliveryMutation.count({ where: { orderId: r.o.id } })).toBe(0);
   }, 60_000);
 
-  it("M1-1/M1-2: the buyer checkout and the staff create search (forMerge) find no target; the cart makes a new order", async () => {
+  /** The real controllers, as the tests of the staff create and the discount lane build them (positional stubs). */
+  const buyerController = () => {
+    const stubs: any[] = Array.from({ length: 19 }, () => ({}));
+    stubs[7] = orders; // ordersService
+    stubs[16] = prisma; // prisma
+    return new (BuyerController as any)(...stubs) as BuyerController;
+  };
+  const staffController = () =>
+    new OrdersController(orders, {} as any, {} as any, {} as any, {} as any);
+  const userOf = async (cust: string) =>
+    (await raw.customer.findUniqueOrThrow({ where: { id: cust } })).userId as string;
+  const checkout = async (cust: string, items: any[]) => {
+    const userId = await userOf(cust);
+    return tenantCtx.run(tenantId, () =>
+      buyerController().createOrder(
+        { items } as any,
+        { tenantId, tenantSlug: slug, customerId: cust, userId, role: "CUSTOMER" } as any,
+      ),
+    );
+  };
+  const sameLines = async (orderId: string) =>
+    (await rows(orderId)).map((l) => [l.id, Number(l.qty), Number(l.deliveredQty)]);
+
+  it("M1-1 (red-first): the buyer's cart [y x2] beside the M1-0 order: checkout makes a NEW order, the M1-0 order is untouched", async () => {
     const cust = await newCustomer();
     const r = await reopened(cust);
+    const y = await product("m11");
     const before = await snapshot(r.o.id);
-    const stock0 = await stock(r.x);
-    expect(await mergeSearch(cust, BUYER_MERGE)).toBeNull();
-    expect(await mergeSearch(cust)).toBeNull();
+    const lines0 = await sameLines(r.o.id);
+    const stockX = await stock(r.x);
+    const stockY = await stock(y);
+    const created: any = await checkout(cust, [{ productId: y, qty: 2 }]);
+    expect(created.id).toBeDefined();
+    expect(created.id).not.toBe(r.o.id);
+    expect(await raw.order.count({ where: { customerId: cust } })).toBe(2);
+    const made = await raw.orderItem.findMany({ where: { orderId: created.id } });
+    expect(made.map((l) => [l.productId, Number(l.qty)])).toEqual([[y, 2]]);
     expect(await snapshot(r.o.id)).toEqual(before);
-    expect(await stock(r.x)).toBe(stock0);
-  }, 60_000);
+    expect(await sameLines(r.o.id)).toEqual(lines0); // line ids, x {q13, d12}
+    expect(lines0.map((l) => [l[1], l[2]])).toEqual([[13, 12]]);
+    expect(await stock(r.x)).toBe(stockX);
+    expect([stockY, await stock(y)]).toEqual(OBSERVED_M11_STOCK_Y); // y moves, x does not
+  }, 120_000);
+
+  it("M1-2a (red-first): staff create [y x2] with no merge choice: 201 a new order, no merge prompt", async () => {
+    const cust = await newCustomer();
+    const r = await reopened(cust);
+    const y = await product("m12a");
+    const before = await snapshot(r.o.id);
+    const created: any = await tenantCtx.run(tenantId, () =>
+      staffController().create(
+        { customerId: cust, items: [{ productId: y, qty: 2 }] } as any,
+        operator(),
+      ),
+    );
+    expect(created.id).not.toBe(r.o.id);
+    expect(await raw.order.count({ where: { customerId: cust } })).toBe(2);
+    expect(await snapshot(r.o.id)).toEqual(before);
+  }, 120_000);
+
+  it("M1-2b (red-first): staff create [y x2] with the merge choice (a stale client): a new order, the M1-0 order untouched", async () => {
+    const cust = await newCustomer();
+    const r = await reopened(cust);
+    const y = await product("m12b");
+    const before = await snapshot(r.o.id);
+    const lines0 = await sameLines(r.o.id);
+    const outcome = await tenantCtx
+      .run(tenantId, () =>
+        staffController().create(
+          { customerId: cust, items: [{ productId: y, qty: 2 }], mergeChoice: "merge" } as any,
+          operator(),
+        ),
+      )
+      .then((o: any) => ({ created: o.id !== r.o.id }))
+      .catch((e: any) => ({ status: e?.status, code: e?.response?.code }));
+    expect(outcome).toEqual(OBSERVED_M12B);
+    expect(await snapshot(r.o.id)).toEqual(before);
+    expect(await sameLines(r.o.id)).toEqual(lines0);
+  }, 120_000);
+
+  it("M1-k (KNOWN, the LOW row): a buyer save whose only delivered line is unlisted, the product lines d 0", async () => {
+    const cust = await newCustomer();
+    const x = await product("mk");
+    const z = await product("mkz");
+    const o = await orderFor(cust, [plain(x, 12, 12), plain(z, 2, 0)], "PENDING");
+    const zLine = o.lineItems.find((l) => l.productId === z)!;
+    const before = await snapshot(o.id);
+    const buyerUser = {
+      ...principal("OPERATOR", await userOf(cust)),
+      role: "CUSTOMER",
+      type: "BUYER",
+    } as JwtPayload;
+    const outcome = await tenantCtx
+      .run(tenantId, () =>
+        orders.updateOrderItems(o.id, { items: [{ productId: z, qty: 3 }] }, buyerUser, {
+          buyerLineIds: true,
+        }),
+      )
+      .then(() => "resolved")
+      .catch((e: any) => ({ status: e?.status, code: e?.response?.code }));
+    expect(outcome).toEqual(OBSERVED_MK); // KNOWN (the LOW row): the unlisted delivered line is refused, not preserved
+    expect(await snapshot(o.id)).toEqual(before);
+    expect(zLine.qty).toBeDefined();
+  }, 120_000);
 
   it("M1-3: a display read (no forMerge) still shows the order; the merge searches agree with checkout", async () => {
     const cust = await newCustomer();
