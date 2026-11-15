@@ -560,7 +560,7 @@ export default function FinancePaymentsPage() {
     sortDir,
   };
 
-  const { data, isLoading, isError, refetch } = useInvoicePayments(params);
+  const { data, isLoading, isError, isFetching, error, refetch } = useInvoicePayments(params);
   const { data: customersData } = useCustomers({ limit: 200 });
   const voidPayment = useVoidPayment();
   const exportPayments = useExportPayments();
@@ -1025,11 +1025,14 @@ export default function FinancePaymentsPage() {
             <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand-500 border-t-transparent" />
           </div>
         ) : payments.length === 0 && isError ? (
-          <div className="flex flex-col items-center gap-3 px-4 py-12 text-center">
+          <div role="alert" className="flex flex-col items-center gap-3 px-4 py-12 text-center">
             <p className="text-sm text-danger">Couldn&apos;t load payments.</p>
-            <Button variant="secondary" size="sm" onClick={() => refetch()}>
-              Try again
-            </Button>
+            {/* A 403 is a decision, not a hiccup (the app's retry treats it as final): no Try again. */}
+            {(error as { response?: { status?: number } } | null)?.response?.status !== 403 && (
+              <Button variant="secondary" size="sm" disabled={isFetching} onClick={() => refetch()}>
+                {isFetching ? "Trying again…" : "Try again"}
+              </Button>
+            )}
           </div>
         ) : payments.length === 0 ? (
           emptyState

@@ -157,6 +157,41 @@ describe("Payments received: loading, error and a search from the URL", () => {
     expect(refetch).toHaveBeenCalledTimes(1);
   });
 
+  it("the error line is an alert; Try again is disabled and says so while it refetches", () => {
+    mockUsePayments.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      isFetching: true,
+      refetch: jest.fn(),
+    });
+    renderWithProviders(<FinancePaymentsPage />);
+    expect(screen.getByRole("alert")).toHaveTextContent("Couldn't load payments.");
+    const retry = screen.getByRole("button", { name: "Trying again…" });
+    expect(retry).toBeDisabled();
+  });
+
+  it("a 403 is final: the error line alone, no Try again", () => {
+    mockUsePayments.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: { response: { status: 403 } },
+      refetch: jest.fn(),
+    });
+    renderWithProviders(<FinancePaymentsPage />);
+    expect(screen.getByRole("alert")).toHaveTextContent("Couldn't load payments.");
+    expect(screen.queryByRole("button", { name: /try(ing)? again/i })).toBeNull();
+  });
+
+  it("a failed refetch with cached rows keeps the rows and shows no error line", () => {
+    mockUsePayments.mockReturnValue({ ...ONE, isError: true, refetch: jest.fn() });
+    renderWithProviders(<FinancePaymentsPage />);
+    expect(screen.getAllByText("PAY-A").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Couldn't load payments.")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("a ?search= that matches nothing: filters stay and it says no payments match", () => {
     mockUrlSearch = "zzz";
     mockUsePayments.mockReturnValue(EMPTY);
