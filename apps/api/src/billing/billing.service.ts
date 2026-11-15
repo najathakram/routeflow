@@ -106,6 +106,7 @@ import type { CheckoutStart } from "@routeflow/types";
 import { webBaseUrl } from "../config/web-base-url";
 import {
   API_BILLING_CANCEL_PATH,
+  API_BILLING_PORTAL_RETURN_PATH,
   API_BILLING_RETURN_PATHS,
   billingReturnUrl,
 } from "./billing-return-paths";
@@ -1058,7 +1059,7 @@ export class BillingService {
     const portalSession = await this.stripe.createBillingPortalSession(
       {
         customerId: sub.stripeCustomerId,
-        returnUrl: billingReturnUrl(baseUrl, API_BILLING_RETURN_PATHS.portal),
+        returnUrl: billingReturnUrl(baseUrl, API_BILLING_PORTAL_RETURN_PATH),
       },
       request,
     );

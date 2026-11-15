@@ -3,15 +3,17 @@
  * on the web base (`webBaseUrl()`), a page that exists: the Billing page, with a query the return notice reads.
  *
  * Compiled API code cannot value-import `@routeflow/types` (no-runtime-types-import.spec), so these are a local copy of
- * the shared `BILLING_RETURN_PATHS` / `BILLING_CANCEL_PATH`, pinned equal to them in billing-return-paths.spec.ts,
+ * the shared `BILLING_RETURN_PATHS` / `BILLING_CANCEL_PATH` / `BILLING_PORTAL_RETURN_PATH`, pinned equal to them in billing-return-paths.spec.ts,
  * which also fails on any other `/settings/billing?...` literal in the API.
  */
 export const API_BILLING_RETURN_PATHS = {
   plan: "/settings/billing?checkout=success",
   pay: "/settings/billing?paid=1",
   cardAdd: "/settings/billing?paid=1&card=1",
-  portal: "/settings/billing",
 } as const;
+
+/** Where the Stripe billing portal returns to (own constant: not a Checkout return path). */
+export const API_BILLING_PORTAL_RETURN_PATH = "/settings/billing";
 
 export const API_BILLING_CANCEL_PATH = "/settings/billing?checkout=cancelled";
 

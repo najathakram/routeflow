@@ -1,8 +1,13 @@
 import * as fs from "fs";
 import * as path from "path";
-import { BILLING_CANCEL_PATH, BILLING_RETURN_PATHS } from "@routeflow/types";
+import {
+  BILLING_CANCEL_PATH,
+  BILLING_PORTAL_RETURN_PATH,
+  BILLING_RETURN_PATHS,
+} from "@routeflow/types";
 import {
   API_BILLING_CANCEL_PATH,
+  API_BILLING_PORTAL_RETURN_PATH,
   API_BILLING_RETURN_PATHS,
   billingReturnUrl,
 } from "./billing-return-paths";
@@ -15,9 +20,11 @@ describe("billing return paths: the API copy equals the shared allowlist", () =>
   it("the three return paths are the shared ones, key for key", () => {
     expect(API_BILLING_RETURN_PATHS).toEqual(BILLING_RETURN_PATHS);
   });
-  it("the Billing-page portal return is a member, in both copies", () => {
-    expect(API_BILLING_RETURN_PATHS.portal).toBe("/settings/billing");
-    expect(BILLING_RETURN_PATHS.portal).toBe("/settings/billing");
+  it("the portal return is its own constant in both copies, and NOT a Checkout return path", () => {
+    expect(API_BILLING_PORTAL_RETURN_PATH).toBe(BILLING_PORTAL_RETURN_PATH);
+    expect(API_BILLING_PORTAL_RETURN_PATH).toBe("/settings/billing");
+    expect(Object.values(BILLING_RETURN_PATHS)).not.toContain(BILLING_PORTAL_RETURN_PATH);
+    expect(Object.values(API_BILLING_RETURN_PATHS)).not.toContain(API_BILLING_PORTAL_RETURN_PATH);
   });
   it("the cancel path is the shared one", () => {
     expect(API_BILLING_CANCEL_PATH).toBe(BILLING_CANCEL_PATH);

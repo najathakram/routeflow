@@ -135,6 +135,7 @@ describe("embedded checkout from the tenant mutations", () => {
     ["a known path with a suffix", "/settings/billing?paid=1&card=1&x=1"],
     ["a script address", "javascript:alert(1)"],
     ["an empty path", ""],
+    ["the billing portal's own return (not a Checkout return)", "/settings/billing"],
   ])(
     "O10: an embedded start whose returnPath is %s is refused before anything mounts (plan checkout)",
     async (_name, bad) => {
