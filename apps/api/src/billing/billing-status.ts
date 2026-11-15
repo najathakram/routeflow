@@ -16,7 +16,7 @@
  *   none         anything else (Stripe could not answer, no card, a trial far from its end): say nothing
  * `action` is set only for a TENANT_ADMIN; staff get the same state and amount with `action: null`.
  */
-import { roundMoney } from "@routeflow/pricing";
+import { fromCents, roundMoney } from "@routeflow/pricing";
 import type {
   BillingStatusAction,
   BillingStatusState,
@@ -73,7 +73,9 @@ export interface BillingStatusInput {
 
 const PAY_INVOICE: BillingStatusAction = { kind: "pay", target: "hosted_invoice" };
 const PAY_CHECKOUT: BillingStatusAction = { kind: "pay", target: "checkout" };
-const ADD_CARD: BillingStatusAction = { kind: "change_card", target: "checkout" };
+// A business with NO card on file adds one (SA-1146 C7). `change_card` (replace the card on file) is never a state's
+// primary action: it is a secondary link the web owns.
+const ADD_CARD: BillingStatusAction = { kind: "add_card", target: "checkout" };
 const CHOOSE_PLAN: BillingStatusAction = { kind: "choose_plan", target: "choose_plan" };
 
 /** A calendar day, "YYYY-MM-DD", on the tenant's clock (en-CA formats year-month-day, which sorts as a string). */
@@ -86,10 +88,27 @@ function dayIn(iso: string | Date, timeZone: string): string {
   }).format(typeof iso === "string" ? new Date(iso) : iso);
 }
 
-/** The owed Stripe amount in dollars, rounded once; null when the view carries none. */
-function stripeAmount(s: BillingStatusSubscription): number | null {
-  const raw = s.outstandingTotal ?? s.payNowAmount ?? s.openInvoiceAmount ?? null;
-  return raw === null ? null : roundMoney(raw);
+/** A figure worth printing: rounded once, and strictly positive (a zero or negative is "no figure", never "Pay $0"). */
+function positive(n: number | null | undefined): number | null {
+  if (typeof n !== "number" || !Number.isFinite(n)) return null;
+  const rounded = roundMoney(n);
+  return rounded > 0 ? rounded : null;
+}
+
+/**
+ * The Stripe amount a state shows, in dollars, rounded once; null when nothing positive is owed.
+ *
+ * - `oneInvoice` (the state's button is `hosted_invoice`: due, failed, read_only): the figure is what that button
+ *   COLLECTS, the ONE payable invoice's `payNowAmount` (the house rule, `payAmountOf` in the web's
+ *   subscription-banner-state). Only when that is not a positive figure does it fall back to what is owed.
+ * - otherwise (`processing`: no button): everything owed or settling (`outstandingTotal` first), because the sentence
+ *   says what is in flight, not what a link would collect.
+ * Fallback order, after the pay-now figure: outstandingTotal, then openInvoiceAmount.
+ */
+function stripeAmount(s: BillingStatusSubscription, oneInvoice: boolean): number | null {
+  const owed =
+    positive(s.outstandingTotal) ?? positive(s.payNowAmount) ?? positive(s.openInvoiceAmount);
+  return oneInvoice ? (positive(s.payNowAmount) ?? owed) : owed;
 }
 
 const stripeOwes = (s: BillingStatusSubscription) =>
@@ -108,7 +127,8 @@ export function billingStatusOf(i: BillingStatusInput): BillingStatusView {
 }
 
 function decide({ subscription: s, paymentDue: d, now, timeZone }: BillingStatusInput) {
-  const amount = stripeAmount(s);
+  const owed = stripeAmount(s, false);
+  const payAmount = stripeAmount(s, true); // every hosted_invoice state below
   const make = (
     state: BillingStatusState,
     over: Partial<BillingStatusView>,
@@ -116,7 +136,7 @@ function decide({ subscription: s, paymentDue: d, now, timeZone }: BillingStatus
 
   // A settling payment with nothing else payable: just say so (the server already ruled a sibling unpaid invoice out).
   if (s.billingState === "processing") {
-    return make("processing", { amount });
+    return make("processing", { amount: owed });
   }
 
   const locked = s.status === "READ_ONLY";
@@ -130,7 +150,7 @@ function decide({ subscription: s, paymentDue: d, now, timeZone }: BillingStatus
     reason !== "subscription_cancelled" &&
     (reason === "payment_overdue" || stripeOwes(s))
   ) {
-    return make("read_only", { amount, action: PAY_INVOICE });
+    return make("read_only", { amount: payAmount, action: PAY_INVOICE });
   }
   if (s.status === "TRIAL" && trialEnd && trialEnd.getTime() <= now.getTime()) {
     return make("trial_ended", { action: CHOOSE_PLAN });
@@ -139,7 +159,7 @@ function decide({ subscription: s, paymentDue: d, now, timeZone }: BillingStatus
   if (s.pastDueInvoiceId) {
     const since = s.pastDueSince ? new Date(s.pastDueSince) : null;
     return make("failed", {
-      amount,
+      amount: payAmount,
       dueOn: since
         ? dayIn(new Date(since.getTime() + DUNNING_PAUSE_HOURS * HOUR_MS), timeZone)
         : null,
@@ -148,10 +168,10 @@ function decide({ subscription: s, paymentDue: d, now, timeZone }: BillingStatus
   }
 
   // Both sources present: the Stripe invoice is the one Stripe will actually charge.
-  if (stripeOwes(s)) return make("due", { amount, action: PAY_INVOICE });
+  if (stripeOwes(s)) return make("due", { amount: payAmount, action: PAY_INVOICE });
   if (d.due) {
     return make("due", {
-      amount: roundMoney(d.amountCents / 100),
+      amount: fromCents(d.amountCents),
       dueOn: d.periodStart ? dayIn(d.periodStart, timeZone) : null,
       action: PAY_CHECKOUT,
     });

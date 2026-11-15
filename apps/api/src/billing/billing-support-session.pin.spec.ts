@@ -12,6 +12,7 @@ import {
 } from "../stripe-connect/stripe-connect.controller";
 import { SettingsBillingController } from "./settings-billing.controller";
 import { PaymentDueController } from "./payment-due.controller";
+import { BillingStatusController } from "./billing-status.controller";
 
 /**
  * SA-778 pin: every mutating (non-GET) handler of the tenant billing controllers carries
@@ -62,6 +63,11 @@ function mutatingHandlers(ctrl: Ctor): string[] {
 const ALLOWED = ["quote"] as const;
 
 describe("tenant billing mutations carry @NoImpersonation (SA-778 pin)", () => {
+  it("BillingStatusController (SA-1146 B-5): read-only, so no handler mutates; a later POST must carry @NoImpersonation", () => {
+    expect(mutatingHandlers(BillingStatusController)).toEqual([]);
+    expect(unprotectedMutations(BillingStatusController)).toEqual([]);
+  });
+
   it("PaymentDueController: its one mutation (pay) is marked and guarded", () => {
     expect(mutatingHandlers(PaymentDueController)).toEqual(["pay"]);
     expect(unprotectedMutations(PaymentDueController)).toEqual([]);
@@ -181,7 +187,11 @@ describe("every controller in billing/ is classified (a new one cannot dodge the
     .sort();
 
   /** Tenant-facing: pinned above. */
-  const TENANT = ["settings-billing.controller.ts", "payment-due.controller.ts"];
+  const TENANT = [
+    "settings-billing.controller.ts",
+    "payment-due.controller.ts",
+    "billing-status.controller.ts",
+  ];
   /** Not tenant-facing, with why. */
   const SUPER_ADMIN_ONLY = [
     "billing.controller.ts",
@@ -192,13 +202,28 @@ describe("every controller in billing/ is classified (a new one cannot dodge the
     "billing-webhook.controller.ts":
       "provider webhook, authenticated by the signed payload, no user session",
     "plan-catalog.controller.ts": "public read of the plan catalog, GET only",
-    "billing-status.controller.ts": "SA-1146 B-5: the one billing status, GET only, no mutation",
   };
 
   it("each file is tenant-facing (pinned), super-admin only, or a listed exception", () => {
     const known = new Set([...TENANT, ...SUPER_ADMIN_ONLY, ...Object.keys(OTHER)]);
     expect(controllers.filter((f) => !known.has(f))).toEqual([]);
     for (const f of known) expect(controllers).toContain(f);
+  });
+
+  it("billing-status.controller.ts is classified tenant-facing (pinned), never under the exceptions", () => {
+    expect(TENANT).toContain("billing-status.controller.ts");
+    expect(Object.keys(OTHER)).not.toContain("billing-status.controller.ts");
+  });
+
+  it("every tenant-facing controller is named by a pin in this spec (a listed file cannot go unpinned)", () => {
+    const spec = fs.readFileSync(__filename, "utf8");
+    const named = (f: string) =>
+      f
+        .replace(/.controller.ts$/, "")
+        .split("-")
+        .map((w) => w[0].toUpperCase() + w.slice(1))
+        .join("") + "Controller";
+    for (const f of TENANT) expect(spec).toContain(`mutatingHandlers(${named(f)})`);
   });
 
   it.each(SUPER_ADMIN_ONLY)("%s is behind SuperAdminGuard", (file) => {

@@ -1,4 +1,4 @@
-import type { BillingStatusState, BillingStatusView } from "@routeflow/types";
+import type { BillingStatusAction, BillingStatusState, BillingStatusView } from "@routeflow/types";
 import {
   BILLING_STATUS_STATES,
   TRIAL_NOTICE_DAYS,
@@ -111,7 +111,7 @@ const ROWS: Row[] = [
     want: { state: "due", amount: 120, dueOn: null, action: PAY_INVOICE },
   },
   {
-    name: "due (card needed, nothing charged now): Change card to the checkout, by the card deadline",
+    name: "due (card needed, no card on file, nothing charged now): Add card to the checkout, by the card deadline",
     input: input(
       { billingState: undefined, paymentMethodSummary: null },
       {
@@ -124,7 +124,7 @@ const ROWS: Row[] = [
       state: "due",
       amount: 0,
       dueOn: "2026-11-19",
-      action: { kind: "change_card", target: "checkout" },
+      action: { kind: "add_card", target: "checkout" },
     },
   },
   {
@@ -230,6 +230,60 @@ const ROWS: Row[] = [
     input: input({ billingState: "due", payNowAmount: 41.255, openInvoiceAmount: 99 }),
     want: { state: "due", amount: 41.26, dueOn: null, action: PAY_INVOICE },
   },
+  {
+    name: "MUST 2: two invoices owed (150) but the hosted invoice collects the one payable (50): Pay $50",
+    input: input({ billingState: "due", outstandingTotal: 150, payNowAmount: 50 }),
+    want: { state: "due", amount: 50, dueOn: null, action: PAY_INVOICE },
+  },
+  {
+    name: "MUST 2: the same one-invoice figure in failed",
+    input: input({ ...IN_DUNNING, outstandingTotal: 150, payNowAmount: 50 }),
+    want: { state: "failed", amount: 50, dueOn: "2026-11-24", action: PAY_INVOICE },
+  },
+  {
+    name: "MUST 2: the same one-invoice figure in read_only",
+    input: input({
+      ...IN_DUNNING,
+      status: "READ_ONLY",
+      readOnlyReason: "payment_overdue",
+      outstandingTotal: 150,
+      payNowAmount: 50,
+    }),
+    want: { state: "read_only", amount: 50, dueOn: null, action: PAY_INVOICE },
+  },
+  {
+    name: "MUST 2: payNowAmount 0 is not a figure: falls back to what is owed, never Pay $0",
+    input: input({ billingState: "due", outstandingTotal: 150, payNowAmount: 0 }),
+    want: { state: "due", amount: 150, dueOn: null, action: PAY_INVOICE },
+  },
+  {
+    name: "MUST 2: nothing positive anywhere is null, never Pay $0 (a lagging dunning marker)",
+    input: input({ ...IN_DUNNING, outstandingTotal: 0, payNowAmount: 0, openInvoiceAmount: 0 }),
+    want: { state: "failed", amount: null, dueOn: "2026-11-24", action: PAY_INVOICE },
+  },
+  {
+    name: "MUST 2: a pay-now figure that rounds to 0 is treated as 0",
+    input: input({ billingState: "due", outstandingTotal: 20, payNowAmount: 0.004 }),
+    want: { state: "due", amount: 20, dueOn: null, action: PAY_INVOICE },
+  },
+  {
+    name: "processing has no button: it shows everything settling (outstandingTotal), not one invoice",
+    input: input({ billingState: "processing", outstandingTotal: 150, payNowAmount: 50 }),
+    want: { state: "processing", amount: 150, dueOn: null, action: null },
+  },
+  {
+    name: "SHOULD d (OBSERVE, pending SA): locked, no reason, dunning marker, Stripe unreachable: today's result is failed",
+    // Pending SA: a locked tenant arguably reads read_only. This row documents the CURRENT result only; do not
+    // "fix" it here. If the SA rules, change the expected state in the same diff as the code.
+    input: input({
+      status: "READ_ONLY",
+      readOnlyReason: null,
+      billingState: undefined,
+      pastDueInvoiceId: "in_1",
+      pastDueSince: "2026-11-10T20:00:00.000Z",
+    }),
+    want: { state: "failed", amount: null, dueOn: "2026-11-24", action: PAY_INVOICE },
+  },
 ];
 
 describe("billingStatusOf: SA-1146 state table (admin)", () => {
@@ -251,6 +305,42 @@ describe("billingStatusOf: SA-1146 state table (admin)", () => {
     ];
     expect([...covered].sort()).toEqual([...all].sort());
     expect([...BILLING_STATUS_STATES].sort()).toEqual([...all].sort());
+  });
+});
+
+describe("BillingStatusAction: the kind union is exactly the SA-1146 B-5 shape", () => {
+  // Type-level: a later kind makes the `never` assignment fail to compile here, not in the web's switch.
+  const label = (a: BillingStatusAction): string => {
+    switch (a.kind) {
+      case "pay":
+        return "Pay";
+      case "add_card":
+        return "Add card";
+      case "change_card":
+        return "Change card";
+      case "choose_plan":
+        return "Choose a plan";
+      default: {
+        const unreachable: never = a.kind;
+        return unreachable;
+      }
+    }
+  };
+
+  it("names the four kinds in the words C7 uses", () => {
+    const kinds: BillingStatusAction["kind"][] = ["pay", "add_card", "change_card", "choose_plan"];
+    expect(kinds.map((kind) => label({ kind, target: "checkout" }))).toEqual([
+      "Pay",
+      "Add card",
+      "Change card",
+      "Choose a plan",
+    ]);
+  });
+
+  it("a business with no card gets add_card; no state of the table hands out change_card", () => {
+    const kinds = new Set(ROWS.map((r) => billingStatusOf(r.input).action?.kind));
+    expect(kinds.has("add_card")).toBe(true);
+    expect(kinds.has("change_card")).toBe(false);
   });
 });
 

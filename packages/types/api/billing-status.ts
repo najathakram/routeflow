@@ -8,7 +8,7 @@ export type BillingStatusState =
 
 /** What the one primary button does: the word (`kind`) and where it goes (`target`; SA-1146 section 3). */
 export interface BillingStatusAction {
-  kind: "pay" | "change_card" | "choose_plan";
+  kind: "pay" | "add_card" | "change_card" | "choose_plan";
   target: "hosted_invoice" | "checkout" | "portal" | "choose_plan";
 }
 

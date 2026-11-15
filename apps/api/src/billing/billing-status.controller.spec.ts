@@ -9,6 +9,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { BillingStatusController } from "./billing-status.controller";
 import { PaymentDueService } from "./payment-due.service";
 import { SubscriptionService } from "./subscription.service";
+import { BillingStatusService } from "./billing-status.service";
 
 /** SA-1146 B-5: the role rule on the wire. Mocked at the module boundary (subscription, payment-due, zone). */
 
@@ -47,6 +48,7 @@ async function make(subscription: unknown = FAILED_SUBSCRIPTION, paymentDue: unk
     providers: [
       { provide: SubscriptionService, useValue: subscriptionSvc },
       { provide: PaymentDueService, useValue: paymentDueSvc },
+      BillingStatusService,
       { provide: PrismaService, useValue: prisma },
     ],
   })
