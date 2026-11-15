@@ -180,6 +180,25 @@ describe("g shortcut with the real counter screen", () => {
     expect(mockPush).toHaveBeenCalledWith("/customers");
     expect(screen.queryByText("Discard this sale?")).toBeNull();
   });
+
+  /**
+   * SA-1138 Q3: leave-with-lines coverage that survives A1 (which turns g c on the till into a scan): a sidebar link click with
+   * lines in the REAL screen's cart asks "Discard this sale?", and only Discard navigates.
+   */
+  it("with lines in the cart a sidebar link click asks 'Discard this sale?'; Discard leaves", async () => {
+    mount(COUNTER);
+    const field = await screen.findByLabelText("Scan or search items");
+    fireEvent.change(field, { target: { value: "COLA" } });
+    fireEvent.submit(field.closest("form")!);
+    await waitFor(() => expect((field as HTMLInputElement).value).toBe(""));
+    await waitFor(() => expect(screen.getByText(/Cola/)).toBeInTheDocument());
+    mockPush.mockClear();
+    fireEvent.click(screen.getAllByTestId("sidebar-nav-link")[0]);
+    expect(await screen.findByText("Discard this sale?")).toBeInTheDocument();
+    expect(mockPush).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(mockPush).toHaveBeenCalledTimes(1);
+  });
 });
 
 /** CQ-32: at tablet width (768) the shell's search control is a 44 px target; only a desktop width goes compact. */
