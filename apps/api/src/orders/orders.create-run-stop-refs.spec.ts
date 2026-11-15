@@ -25,7 +25,7 @@ jest.mock("../notifications/notifications.service", () => ({
 
 import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
-import { ForbiddenException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { getQueueToken } from "@nestjs/bull";
 import { ConfigService } from "@nestjs/config";
 
@@ -289,6 +289,78 @@ describe("OrdersService.create — staff run and stop ids are tenant-proven (B11
     await service.create(input({}), staff("OPERATOR"));
     expect(prisma.routeRun.findMany).not.toHaveBeenCalled();
     expect(prisma.routeRunStop.findMany).not.toHaveBeenCalled();
+  });
+
+  describe("status DRAFT with a run link and immediateDelivery (SA-1158)", () => {
+    const linked = { routeRunId: "run-1", routeRunStopId: "stop-1" };
+    const link = () => {
+      prisma.routeRun.findMany.mockResolvedValue([{ id: "run-1" }]);
+      prisma.routeRunStop.findMany.mockResolvedValue([{ id: "stop-1" }]);
+    };
+
+    it.each(["OPERATOR", "TENANT_ADMIN"] as const)(
+      "%s: status DRAFT + routeRunStopId + immediateDelivery true is 400 ORDER_DRAFT_CANNOT_DELIVER_NOW and nothing is written",
+      async (role) => {
+        arrange();
+        link();
+        const err = await service
+          .create(input({ status: "DRAFT", ...linked, immediateDelivery: true }), staff(role))
+          .catch((e) => e);
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect(err.getStatus()).toBe(400);
+        expect(err.getResponse().code).toBe("ORDER_DRAFT_CANNOT_DELIVER_NOW");
+        expect(prisma.order.create).not.toHaveBeenCalled();
+        expect(prisma.order.update).not.toHaveBeenCalled();
+        expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+      },
+    );
+
+    it("status DRAFT + routeRunId + immediateDelivery true is refused the same way, with no stop id", async () => {
+      arrange();
+      link();
+      const err = await service
+        .create(
+          input({ status: "DRAFT", routeRunId: "run-1", immediateDelivery: true }),
+          staff("OPERATOR"),
+        )
+        .catch((e) => e);
+      expect(err.getStatus()).toBe(400);
+      expect(err.getResponse().code).toBe("ORDER_DRAFT_CANNOT_DELIVER_NOW");
+      expect(prisma.order.create).not.toHaveBeenCalled();
+    });
+
+    it("guard: status DRAFT + a run link without immediateDelivery is created and linked, never written CONFIRMED", async () => {
+      arrange();
+      link();
+      prisma.order.create.mockResolvedValue({ ...NEW_ORDER, status: "DRAFT" });
+      await service.create(input({ status: "DRAFT", ...linked }), staff("OPERATOR"));
+      const update = prisma.order.update.mock.calls[0][0];
+      expect(update.data).toMatchObject({ routeRunId: "run-1", routeRunStopId: "stop-1" });
+      expect(update.data.status).not.toBe("CONFIRMED");
+    });
+
+    it("guard: status DRAFT + immediateDelivery false is not refused", async () => {
+      arrange();
+      link();
+      prisma.order.create.mockResolvedValue({ ...NEW_ORDER, status: "DRAFT" });
+      await expect(
+        service.create(
+          input({ status: "DRAFT", ...linked, immediateDelivery: false }),
+          staff("OPERATOR"),
+        ),
+      ).resolves.toBeDefined();
+    });
+
+    it("guard: a non-DRAFT order with a run link and immediateDelivery true is written CONFIRMED", async () => {
+      arrange();
+      link();
+      const out: any = await service.create(
+        input({ ...linked, immediateDelivery: true }),
+        staff("OPERATOR"),
+      );
+      expect(prisma.order.update.mock.calls[0][0].data.status).toBe("CONFIRMED");
+      expect(out.status).toBe("CONFIRMED");
+    });
   });
 
   it("a DRIVER keeps the B309 refusal (403, own run only) and never reaches the staff proof", async () => {

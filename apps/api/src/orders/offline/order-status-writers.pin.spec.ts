@@ -97,8 +97,10 @@ const INVENTORY: Record<string, Row> = {
   "orders/orders.service.ts::OrdersService.create": {
     how: "NOT_FROM_DRAFT",
     n: 1,
-    why: "the run/stop link write sets CONFIRMED when immediateDelivery is sent; an offline request (the only source of gate flags) refuses immediateDelivery with a 400, and any other DRAFT carries no gate flag",
+    why: "a DRAFT never reaches the CONFIRMED write: the online create refuses DRAFT + immediateDelivery (400) and the write reads !isDraft; offline refuses immediateDelivery",
     needs: [
+      "ORDER_DRAFT_CANNOT_DELIVER_NOW",
+      "isDraft",
       "orders/offline/offline-create.ts::resolveOfflineRequest:OFFLINE_IMMEDIATE_DELIVERY_ONLINE_ONLY",
     ],
   },

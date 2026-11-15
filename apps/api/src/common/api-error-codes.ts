@@ -601,6 +601,8 @@ export const API_ERROR_CODES = {
   OFFLINE_PAYMENT_ONLINE_ONLY: "OFFLINE_PAYMENT_ONLINE_ONLY",
   /** 400 from POST /orders: `offline: true` with `immediateDelivery` (SA-1124). Delivered-now is an online step. */
   OFFLINE_IMMEDIATE_DELIVERY_ONLINE_ONLY: "OFFLINE_IMMEDIATE_DELIVERY_ONLINE_ONLY",
+  /** 400 from POST /orders: `status: "DRAFT"` with `immediateDelivery` (SA-1158). A draft has passed no gate; save it as an order first. */
+  ORDER_DRAFT_CANNOT_DELIVER_NOW: "ORDER_DRAFT_CANNOT_DELIVER_NOW",
   /** 400 from POST /orders: `offline: true` without a usable `offlineQuote` (SA-1124). Fails closed, nothing is written. */
   OFFLINE_QUOTE_REQUIRED: "OFFLINE_QUOTE_REQUIRED",
   /**
