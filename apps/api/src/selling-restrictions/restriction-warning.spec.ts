@@ -894,16 +894,42 @@ describe("pins", () => {
         const code = strip(fs.readFileSync(path.join(SRC, rel), "utf8"));
         return /RESTRICTION_WARNING|RESTRICTION_OVERRIDE_CODES\.warning/.test(code);
       })
-      // the code names themselves (offline-create.ts only NAMES the code in its four-code finding list, it builds no body)
+      // the code names themselves
       .filter(
         (rel) =>
-          ![
-            "common/api-error-codes.ts",
-            "selling-restrictions/override-constants.ts",
-            "orders/offline/offline-create.ts",
-          ].includes(rel),
+          !["common/api-error-codes.ts", "selling-restrictions/override-constants.ts"].includes(
+            rel,
+          ),
       );
-    expect(offenders).toEqual(["selling-restrictions/restriction-warning.ts"]);
+    // offline-create.ts is listed, not excluded: its use is count-pinned by the test below (SA-1134 SHOULD 5)
+    expect(offenders).toEqual([
+      "orders/offline/offline-create.ts",
+      "selling-restrictions/restriction-warning.ts",
+    ]);
+  });
+
+  it("offline-create.ts only NAMES each restriction code, exactly as many times as today, and builds no restriction body (shrink-only)", () => {
+    const code = strip(fs.readFileSync(path.join(SRC, "orders/offline/offline-create.ts"), "utf8"));
+    const times = (word: string) => code.split(word).length - 1;
+    // Its four-code finding list names RESTRICTION_WARNING and SELLING_RESTRICTED once each; the rest is the engine's.
+    expect({
+      RESTRICTION_WARNING: times("RESTRICTION_WARNING"),
+      RESTRICTION_OVERRIDE_REASON_INVALID: times("RESTRICTION_OVERRIDE_REASON_INVALID"),
+      SELLING_RESTRICTED: times("SELLING_RESTRICTED"),
+      RESTRICTION_OVERRIDE_CODES: times("RESTRICTION_OVERRIDE_CODES"),
+      // a body is built with the engine (warningHash, the override constants), never here
+      warningHash: times("warningHash"),
+      "restriction-warning": times("restriction-warning"),
+      "override-constants": times("override-constants"),
+    }).toEqual({
+      RESTRICTION_WARNING: 1,
+      RESTRICTION_OVERRIDE_REASON_INVALID: 0,
+      SELLING_RESTRICTED: 1,
+      RESTRICTION_OVERRIDE_CODES: 0,
+      warningHash: 0,
+      "restriction-warning": 0,
+      "override-constants": 0,
+    });
   });
 
   it("the owner-only tenant switch is read in the engine and the two edit plans only (D-2026-09-25-banned-items-rules)", () => {

@@ -38,12 +38,12 @@ import { getQueueToken } from "@nestjs/bull";
 import { ConfigService } from "@nestjs/config";
 import { ConflictException } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
-import { PrismaClient } from "@prisma/client";
+import { OrderStatus, PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { describeDb, requireLocalDatabaseUrl } from "../../common/testing/db-spec";
 import { OrdersService } from "../orders.service";
-import { resolveReviewFlag } from "./review-flags";
+import { GATE_FLAG_KINDS, resolveReviewFlag } from "./review-flags";
 import { offlineCreateOptions, resolveOfflineRequest } from "./offline-create";
 import { oversellReaderOffProvider } from "../testing/policy-reader-provider";
 import { InvoicesService } from "../../invoices/invoices.service";
@@ -786,7 +786,250 @@ describeDb("SA-1124 PR-1a: offline create mode - real Postgres", () => {
         customerId: cust,
         items: [{ productId: w.clean, qty: 1 }],
       });
-      expect(listed.data.map((r: any) => r.id)).not.toContain(plain.id);
+      // SA-1134 SHOULD 4: re-read the list AFTER `plain` exists (the first read could never hold its id).
+      const after: any = await as(() =>
+        svc.findAll({ needsReview: true, limit: 100 } as never, staff()),
+      );
+      const ids = after.data.map((r: any) => r.id);
+      expect(ids).toContain(o.id);
+      expect(ids).not.toContain(plain.id);
+    }, 60_000);
+  });
+
+  /**
+   * SA-1134 (PR-1a2). R-1: an order holding an open GATE flag lives only on a DRAFT, so a cancelled one reopens to
+   * DRAFT (every flag kept open, no restriction check: promotion judges it later). R-2: needsReview skips CANCELLED
+   * orders. The rows below were recorded red on 92c874b04c before the code (see the facts file).
+   */
+  describe("PR-1a2: reopen, needsReview and the draft guards", () => {
+    const cancel = (id: string) =>
+      as(() => svc.changeStatus(id, { status: "CANCELLED" } as never, staff()));
+    const reopen = (id: string) => as(() => svc.reopenOrder(id, staff()));
+    const reviewIds = async (): Promise<string[]> => {
+      const r: any = await as(() =>
+        svc.findAll({ needsReview: true, limit: 100 } as never, staff()),
+      );
+      return r.data.map((x: any) => x.id);
+    };
+    const openFlags = async (id: string) =>
+      (await flagsOf(id)).filter((f) => f.resolvedAt === null);
+    const openGate = async (id: string) =>
+      (await openFlags(id)).filter((f) => GATE_FLAG_KINDS.includes(f.kind)).length;
+    const lineStatuses = async (id: string) =>
+      (await raw.orderItem.findMany({ where: { orderId: id } })).map((l) => l.status);
+
+    it("RO-1: a credit-refused offline draft, cancelled then reopened, is a DRAFT with its flag open, listed, and no stock moved", async () => {
+      const cust = await customer("ro1", 5);
+      const cart = { customerId: cust, items: [{ productId: w.clean, qty: 2 }] };
+      const first: any = await create(cart, offline(quoteOf(22, [line(0, 10)])));
+      expect(first.status).toBe("DRAFT");
+      const stockBefore = await stockOf(w.clean);
+      await cancel(first.id);
+      expect(await statusOf(first.id)).toBe("CANCELLED");
+      const reopened: any = await reopen(first.id);
+      expect({
+        returned: reopened.status,
+        stored: await statusOf(first.id),
+        openGateFlags: await openGate(first.id),
+        listed: (await reviewIds()).includes(first.id),
+        stockDelta: (await stockOf(w.clean)) - stockBefore,
+        lines: await lineStatuses(first.id),
+      }).toEqual({
+        returned: "DRAFT",
+        stored: "DRAFT",
+        openGateFlags: 1,
+        listed: true,
+        stockDelta: 0,
+        lines: ["PENDING"],
+      });
+    }, 60_000);
+
+    it("after the reopen the draft leaves DRAFT only through its promotion: refused while over the limit, then PENDING with the gate flag resolved", async () => {
+      const cust = await customer("ro1p", 5);
+      const first: any = await create(
+        { customerId: cust, items: [{ productId: w.clean, qty: 2 }] },
+        offline(quoteOf(22, [line(0, 10)])),
+      );
+      await cancel(first.id);
+      await reopen(first.id);
+      const stockBefore = await stockOf(w.clean);
+      const refused = await errOf(promote(first.id));
+      expect(bodyOf(refused).code).toBe("CREDIT_LIMIT_EXCEEDED");
+      expect(await statusOf(first.id)).toBe("DRAFT");
+      expect(await openGate(first.id)).toBe(1);
+      await raw.customer.update({ where: { id: cust }, data: { creditLimit: "1000.00" } });
+      await promote(first.id);
+      expect(await statusOf(first.id)).toBe("PENDING");
+      expect(await openGate(first.id)).toBe(0);
+      expect(await stockOf(w.clean)).toBe(stockBefore - 2); // the promotion takes the stock, once
+    }, 90_000);
+
+    it("RO-2 (guard): a price-changed-only offline order cancels and reopens to PENDING, stock re-taken, the flag still open", async () => {
+      const cust = await customer("ro2");
+      const o: any = await create(
+        { customerId: cust, items: [{ productId: pricey, qty: 3 }] },
+        offline(quoteOf(10, [line(0, 10)])),
+      );
+      expect(o.status).toBe("PENDING");
+      const stockTaken = await stockOf(pricey);
+      await cancel(o.id);
+      expect(await stockOf(pricey)).toBe(stockTaken + 3); // the cancel credited it back
+      const reopened: any = await reopen(o.id);
+      expect(reopened.status).toBe("PENDING");
+      expect(await statusOf(o.id)).toBe("PENDING");
+      expect(await stockOf(pricey)).toBe(stockTaken);
+      expect((await openFlags(o.id)).map((f) => f.kind)).toEqual(["PRICE_CHANGED_OFFLINE"]);
+    }, 60_000);
+
+    it("RO-3 (guard): a RESTRICTED-flagged draft reopens to DRAFT without a restriction refusal or an override", async () => {
+      const cust = await customer("ro3", undefined, "CA");
+      const o: any = await create(
+        { customerId: cust, items: [{ productId: w.banned, qty: 1 }] },
+        offline(quoteOf(11, [line(0, 10)])),
+      );
+      expect(o.status).toBe("DRAFT");
+      const stockBefore = await stockOf(w.banned);
+      await cancel(o.id);
+      const reopened: any = await reopen(o.id); // no warningHash, no restrictionOverrides
+      expect(reopened.status).toBe("DRAFT");
+      expect(await statusOf(o.id)).toBe("DRAFT");
+      expect((await openFlags(o.id)).filter((f) => f.kind === "RESTRICTED")).toHaveLength(1);
+      expect(await stockOf(w.banned)).toBe(stockBefore);
+      const stamped = await raw.orderItem.findMany({ where: { orderId: o.id } });
+      expect(stamped[0].restrictionOverrideReason).toBeNull();
+      // and it is still judged at its promotion: the warning
+      expect(bodyOf(await errOf(promote(o.id))).code).toBe("RESTRICTION_WARNING");
+    }, 90_000);
+
+    it("a gate flag next to manual flags: the order reopens to DRAFT and every flag stays open", async () => {
+      const cust = await customer("ro5", 5);
+      const open = await create({
+        customerId: await customer("ro5-other"),
+        items: [{ productId: w.clean, qty: 1 }],
+      });
+      const o: any = await create(
+        { customerId: cust, items: [{ productId: pricey, qty: 1 }] },
+        offline(quoteOf(10, [line(0, 10)]), null, (open as any).id),
+      );
+      expect(o.status).toBe("DRAFT");
+      await cancel(o.id);
+      await reopen(o.id);
+      expect(await statusOf(o.id)).toBe("DRAFT");
+      expect((await openFlags(o.id)).map((f) => f.kind).sort()).toEqual([
+        "CREDIT_BLOCKED",
+        "OPEN_ORDER_EXISTS",
+        "PRICE_CHANGED_OFFLINE",
+      ]);
+    }, 60_000);
+
+    it("a gate flag that promotion resolved is no longer open: cancel then reopen is PENDING, as before", async () => {
+      const cust = await customer("ro4", 5);
+      const o: any = await create(
+        { customerId: cust, items: [{ productId: w.clean, qty: 1 }] },
+        offline(quoteOf(11, [line(0, 10)])),
+      );
+      expect(o.status).toBe("DRAFT");
+      await raw.customer.update({ where: { id: cust }, data: { creditLimit: "1000.00" } });
+      await promote(o.id);
+      expect(await openGate(o.id)).toBe(0);
+      await cancel(o.id);
+      const reopened: any = await reopen(o.id);
+      expect(reopened.status).toBe("PENDING");
+      expect(await statusOf(o.id)).toBe("PENDING");
+    }, 60_000);
+
+    it("RO-6 (pin): from a gate-flagged DRAFT no status write but the promotion's reaches a live status, and the flag stays open", async () => {
+      const cust = await customer("ro6", 5);
+      const o: any = await create(
+        { customerId: cust, items: [{ productId: w.clean, qty: 2 }] },
+        offline(quoteOf(22, [line(0, 10)])),
+      );
+      expect(o.status).toBe("DRAFT");
+      const stockBefore = await stockOf(w.clean);
+      const outcomes: Record<string, string> = {};
+      for (const to of Object.values(OrderStatus).filter((s) => s !== OrderStatus.CANCELLED)) {
+        const e = await errOf(
+          as(() => svc.changeStatus(o.id, { status: to, reason: "probe" } as never, staff())),
+        );
+        outcomes[to] = e.getStatus() + (bodyOf(e).code ? " " + bodyOf(e).code : "");
+      }
+      expect(outcomes).toEqual({
+        DRAFT: "400",
+        PENDING: "409 CREDIT_LIMIT_EXCEEDED", // the promotion: judged, refused while over the limit
+        CONFIRMED: "400",
+        OUT_FOR_DELIVERY: "400",
+        PARTIALLY_DELIVERED: "400",
+        DELIVERED: "400",
+        REFUSED: "400",
+      });
+      expect(await statusOf(o.id)).toBe("DRAFT");
+      expect(await openGate(o.id)).toBe(1);
+      expect(await stockOf(w.clean)).toBe(stockBefore);
+    }, 90_000);
+
+    it("NR-1: a flagged order leaves the needsReview list when cancelled and is back after a reopen", async () => {
+      const cust = await customer("nr1");
+      const o: any = await create(
+        { customerId: cust, items: [{ productId: pricey, qty: 1 }] },
+        offline(quoteOf(10, [line(0, 10)])),
+      );
+      expect(await reviewIds()).toContain(o.id);
+      await cancel(o.id);
+      expect(await reviewIds()).not.toContain(o.id);
+      expect(await openFlags(o.id)).toHaveLength(1); // the cancel wrote and resolved no flag
+      await reopen(o.id);
+      expect(await reviewIds()).toContain(o.id);
+    }, 60_000);
+
+    it("SHOULD 2: a device time in the future is stored as sent and changes no price, no delivery date and no flag", async () => {
+      const cust = await customer("fut");
+      const cart = { customerId: cust, items: [{ productId: pricey, qty: 3 }] };
+      const master: any = await create(cart);
+      const future = new Date(Date.now() + 400 * 86_400_000);
+      const o: any = await create(
+        cart,
+        offline(quoteOf(Number(master.total), [line(0, 12)]), future),
+      );
+      const [row, mrow] = await Promise.all([
+        raw.order.findUniqueOrThrow({ where: { id: o.id }, include: { lineItems: true } }),
+        raw.order.findUniqueOrThrow({ where: { id: master.id }, include: { lineItems: true } }),
+      ]);
+      expect(row.offlineCreatedAt).toEqual(future);
+      expect(mrow.offlineCreatedAt).toBeNull();
+      expect(o.status).toBe("PENDING");
+      expect(Number(row.total)).toBe(Number(mrow.total));
+      expect(Number(row.lineItems[0].unitPrice)).toBe(Number(mrow.lineItems[0].unitPrice));
+      expect(row.requestedDeliveryDate).toEqual(mrow.requestedDeliveryDate);
+      expect(row.createdAt.getTime()).toBeLessThan(future.getTime());
+      expect(await flagsOf(o.id)).toHaveLength(0);
+    }, 60_000);
+
+    it("SHOULD 6: online first, then an offline resend of the same key with a different cart is the coded 409 carrying the holding order id", async () => {
+      const cust = await customer("k409");
+      const key = `k409-${RUN}`;
+      const online: any = await create({
+        customerId: cust,
+        idempotencyKey: key,
+        items: [{ productId: w.clean, qty: 2 }],
+      });
+      // the same cart sent offline is a replay of that order, never a second one
+      const same: any = await create(
+        { customerId: cust, idempotencyKey: key, items: [{ productId: w.clean, qty: 2 }] },
+        offline(quoteOf(22, [line(0, 10)])),
+      );
+      expect(same.id).toBe(online.id);
+      // a different cart (what a merged order looks like against the original resend) is refused
+      const e = await errOf(
+        create(
+          { customerId: cust, idempotencyKey: key, items: [{ productId: w.clean, qty: 5 }] },
+          offline(quoteOf(55, [line(0, 10)])),
+        ),
+      );
+      expect(e.getStatus()).toBe(409);
+      expect(bodyOf(e).code).toBe("IDEMPOTENCY_KEY_CART_MISMATCH");
+      expect(bodyOf(e).orderId).toBe(online.id);
+      expect(await raw.order.count({ where: { customerId: cust } })).toBe(1);
+      expect(await flagsOf(online.id)).toHaveLength(0);
     }, 60_000);
   });
 });
