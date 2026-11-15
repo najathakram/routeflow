@@ -6,6 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { apiClient } from "@/lib/api-client";
 import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
+import { installScanClock } from "@/test-utils/scan-clock";
 
 /**
  * A scan that starts while a dialog is closing. Escape in a dialog's text field puts the content in data-state="closed" and
@@ -257,6 +258,8 @@ const CASES: Case[] = [
     },
   },
 ];
+
+installScanClock(); // SA-1159: key stamps through the constants, never the wall clock
 
 describe("a scan that starts while a dialog is closing is looked up once, whole", () => {
   describe.each(CASES)("$name", ({ open, exitWindow }) => {
