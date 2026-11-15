@@ -105,4 +105,43 @@ describe("RecordCard", () => {
     renderCard({ subtitle: <b>Acme</b> });
     expect(screen.getByText("Acme").closest("p")).not.toHaveAttribute("title");
   });
+
+  describe("selection (optional, for pages with bulk actions)", () => {
+    it("renders no checkbox unless onSelectedChange is given", () => {
+      renderCard();
+      expect(screen.queryByRole("checkbox")).toBeNull();
+    });
+
+    it("renders a 44x44 checkbox named with the title, above the stretched link", async () => {
+      const user = userEvent.setup();
+      const onSelectedChange = jest.fn();
+      renderCard({ selected: false, onSelectedChange });
+      const box = screen.getByRole("checkbox", { name: "Select INV-1001" });
+      expect(box).not.toBeChecked();
+      const target = box.closest("label") as HTMLElement;
+      expect(target.className).toContain("h-11");
+      expect(target.className).toContain("w-11");
+      expect(target.className).toContain("relative");
+      expect(target.className).toContain("z-10");
+      await user.click(box);
+      expect(onSelectedChange).toHaveBeenCalledWith(true);
+      expect(push).not.toHaveBeenCalled();
+    });
+
+    it("shows the selected state and reports the unchecking", async () => {
+      const user = userEvent.setup();
+      const onSelectedChange = jest.fn();
+      const { container } = renderCard({ selected: true, onSelectedChange });
+      const box = screen.getByRole("checkbox", { name: "Select INV-1001" });
+      expect(box).toBeChecked();
+      expect(container.querySelector("[data-record-card]")!.className).toContain("bg-brand-50");
+      await user.click(box);
+      expect(onSelectedChange).toHaveBeenCalledWith(false);
+    });
+
+    it("keeps the title the only link", () => {
+      renderCard({ selected: false, onSelectedChange: jest.fn() });
+      expect(screen.getAllByRole("link")).toHaveLength(1);
+    });
+  });
 });

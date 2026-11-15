@@ -37,6 +37,10 @@ export interface RecordCardProps {
   meta?: React.ReactNode;
   /** Row actions, right aligned on the last row with the meta, above the stretched link. */
   actions?: React.ReactNode;
+  /** Only for pages whose table selects rows for bulk actions: the checkbox shows when
+   *  `onSelectedChange` is given. */
+  selected?: boolean;
+  onSelectedChange?: (selected: boolean) => void;
 }
 
 export function RecordCard({
@@ -49,21 +53,45 @@ export function RecordCard({
   badges,
   meta,
   actions,
+  selected,
+  onSelectedChange,
 }: RecordCardProps) {
+  const titleLink = (
+    <Link
+      href={href}
+      title={title}
+      className="min-w-0 truncate font-mono text-xs font-semibold text-ink-900 after:absolute after:inset-0 after:rounded-xl focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-inset focus-visible:after:ring-brand-500"
+    >
+      {title}
+    </Link>
+  );
   return (
     <li>
       <div
         data-record-card
-        className="relative flex flex-col gap-1.5 rounded-xl border border-surface-border bg-white p-3 shadow-card transition-colors hover:bg-surface-raised"
+        className={cn(
+          "relative flex flex-col gap-1.5 rounded-xl border border-surface-border bg-white p-3 shadow-card transition-colors hover:bg-surface-raised",
+          selected && "bg-brand-50",
+        )}
       >
         <div className="flex items-start justify-between gap-3">
-          <Link
-            href={href}
-            title={title}
-            className="min-w-0 truncate font-mono text-xs font-semibold text-ink-900 after:absolute after:inset-0 after:rounded-xl focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-inset focus-visible:after:ring-brand-500"
-          >
-            {title}
-          </Link>
+          {onSelectedChange ? (
+            <div className="flex min-w-0 items-center gap-2">
+              {/* A 44x44 target that overlaps the card padding (-m-2.5), so the row stays as tall as the text. */}
+              <label className="relative z-10 -m-2.5 grid h-11 w-11 shrink-0 cursor-pointer place-items-center">
+                <input
+                  type="checkbox"
+                  aria-label={`Select ${title}`}
+                  checked={selected ?? false}
+                  onChange={(e) => onSelectedChange(e.target.checked)}
+                  className="h-5 w-5 rounded border-surface-border text-brand-500 accent-brand-500"
+                />
+              </label>
+              {titleLink}
+            </div>
+          ) : (
+            titleLink
+          )}
           <div className="flex shrink-0 flex-col items-end">
             {amountLabel && (
               <span className="text-[11px] leading-tight text-navy/60">{amountLabel}</span>

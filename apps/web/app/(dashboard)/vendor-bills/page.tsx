@@ -18,6 +18,8 @@ import {
   ChevronUp,
   ChevronDown,
   ChevronsUpDown,
+  ArrowUp,
+  ArrowDown,
   Paperclip,
   Upload,
   ExternalLink,
@@ -26,15 +28,17 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import {
-  PageHeader,
   Button,
   cn,
   Modal,
   useToast,
   EmptyState,
   Badge,
+  Select,
   type BadgeVariant,
 } from "@routeflow/ui/web";
+import { RecordCard, RecordCardList } from "@/components/RecordCard";
+import { FiltersDisclosure, activeFilterCount } from "@/components/FiltersDisclosure";
 import { usePageTitle } from "@/lib/page-title-context";
 import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
@@ -147,6 +151,10 @@ function StatTile({
     </div>
   );
 }
+
+/** One KPI tile's cell: about 46% wide below md so two tiles and the edge of the third show. */
+const KPI_CELL =
+  "flex w-[46%] shrink-0 snap-start flex-col md:order-none md:w-auto md:shrink [&>*]:flex-1";
 
 // ─── Purchase-order status → Badge props (PO enum isn't in the shared Badge map) ─
 
@@ -1081,17 +1089,25 @@ function InventoryPurchasesTab() {
 
   return (
     <div className="space-y-5">
-      <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700">
+      <div className="hidden rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700 md:block">
         Inventory purchases are recorded as supplier bills. When a bill is <strong>received</strong>
         , stock is updated and product average costs are recalculated automatically.
       </div>
 
       {/* Actions row */}
       <div className="flex items-center justify-end gap-2">
-        <Button variant="secondary" onClick={() => setScanOpen(true)}>
+        <Button
+          variant="secondary"
+          className="min-h-[44px] md:min-h-0"
+          onClick={() => setScanOpen(true)}
+        >
           <Sparkles className="mr-1 h-4 w-4" /> Scan invoice
         </Button>
-        <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setIsCreateOpen(true)}>
+        <Button
+          className="min-h-[44px] md:min-h-0"
+          leftIcon={<Plus className="h-4 w-4" />}
+          onClick={() => setIsCreateOpen(true)}
+        >
           New bill
         </Button>
       </div>
@@ -1149,124 +1165,280 @@ function InventoryPurchasesTab() {
       )}
 
       {/* KPI row */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatTile
-          label="Open bills"
-          value={fmt(kpis.outstanding)}
-          hint={`${kpis.unpaidCount} bill${kpis.unpaidCount === 1 ? "" : "s"} unpaid`}
-          money
-        />
-        <StatTile
-          label="Due This Week"
-          value={fmt(kpis.dueThisWeekAmount)}
-          hint={`${kpis.dueThisWeekCount} bill${kpis.dueThisWeekCount === 1 ? "" : "s"} due in 7 days`}
-          money
-          ring={kpis.dueThisWeekCount > 0 ? "warning" : undefined}
-        />
-        <button
-          type="button"
-          onClick={() => {
-            setNeedsMappingOnly((v) => !v);
-            setPage(1);
-          }}
-          disabled={needsMappingCount === 0 && !needsMappingOnly}
-          title="Draft bills with no items or unmapped lines — their costs won't reach inventory until items are mapped and the bill is received"
-          className={cn(
-            "rounded-lg border p-4 text-left shadow-card transition-colors disabled:cursor-default",
-            needsMappingOnly
-              ? "border-danger bg-danger-bg"
-              : needsMappingCount > 0
-                ? "border-danger bg-white hover:bg-danger-bg/40"
-                : "border-surface-border bg-white",
-          )}
-        >
-          <span className="eyebrow-label block">Unlinked Items{needsMappingOnly ? " ✕" : ""}</span>
-          <span
+      {/* Below md the tiles are one sideways row (snap), Due This Week among the first two by order
+          classes, DOM order unchanged; from md up the grid is as before. */}
+      <div
+        data-kpi-row
+        className="flex snap-x gap-3 overflow-x-auto py-1 scrollbar-hide md:grid md:grid-cols-2 md:overflow-visible md:py-0 lg:grid-cols-4"
+      >
+        <div data-kpi-cell className={KPI_CELL + " order-1"}>
+          <StatTile
+            label="Open bills"
+            value={fmt(kpis.outstanding)}
+            hint={`${kpis.unpaidCount} bill${kpis.unpaidCount === 1 ? "" : "s"} unpaid`}
+            money
+          />
+        </div>
+        <div data-kpi-cell className={KPI_CELL + " order-2"}>
+          <StatTile
+            label="Due This Week"
+            value={fmt(kpis.dueThisWeekAmount)}
+            hint={`${kpis.dueThisWeekCount} bill${kpis.dueThisWeekCount === 1 ? "" : "s"} due in 7 days`}
+            money
+            ring={kpis.dueThisWeekCount > 0 ? "warning" : undefined}
+          />
+        </div>
+        <div data-kpi-cell className={KPI_CELL + " order-3"}>
+          <button
+            type="button"
+            onClick={() => {
+              setNeedsMappingOnly((v) => !v);
+              setPage(1);
+            }}
+            disabled={needsMappingCount === 0 && !needsMappingOnly}
+            title="Draft bills with no items or unmapped lines — their costs won't reach inventory until items are mapped and the bill is received"
             className={cn(
-              "mt-1.5 block text-2xl font-semibold tracking-[-0.02em]",
-              needsMappingCount > 0 ? "text-danger" : "text-navy",
+              "rounded-lg border p-4 text-left shadow-card transition-colors disabled:cursor-default",
+              needsMappingOnly
+                ? "border-danger bg-danger-bg"
+                : needsMappingCount > 0
+                  ? "border-danger bg-white hover:bg-danger-bg/40"
+                  : "border-surface-border bg-white",
             )}
           >
-            {needsMappingCount}
-          </span>
-          <span className="mt-1 block text-xs text-navy/70">bills awaiting item mapping</span>
-        </button>
-        <StatTile
-          label="Spend, 30d"
-          value={fmt(kpis.spend30d)}
-          hint="supplier bills in the last 30 days"
-          money
-        />
+            <span className="eyebrow-label block">
+              Unlinked Items{needsMappingOnly ? " ✕" : ""}
+            </span>
+            <span
+              className={cn(
+                "mt-1.5 block text-2xl font-semibold tracking-[-0.02em]",
+                needsMappingCount > 0 ? "text-danger" : "text-navy",
+              )}
+            >
+              {needsMappingCount}
+            </span>
+            <span className="mt-1 block text-xs text-navy/70">bills awaiting item mapping</span>
+          </button>
+        </div>
+        <div data-kpi-cell className={KPI_CELL + " order-4"}>
+          <StatTile
+            label="Spend, 30d"
+            value={fmt(kpis.spend30d)}
+            hint="supplier bills in the last 30 days"
+            money
+          />
+        </div>
       </div>
 
-      {/* Filter bar */}
-      <div className="flex flex-wrap items-center gap-3">
+      {/* Filter bar: search is always visible. Below md the status and date filters open from a
+          "Filters (n)" button that shares a row with the sort control, one labelled full-width
+          field per row; from md up it is the same inline bar (the groups use md:contents). */}
+      <div className="flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center md:gap-3">
         <input
           type="search"
           placeholder="Search by bill # or supplier…"
+          aria-label="Search bills"
           value={search}
           onChange={(e) => {
             setSearch(e.target.value);
             setPage(1);
           }}
-          className="h-10 w-64 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          className="h-11 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500 md:h-10 md:w-64"
         />
-        <select
-          value={statusFilter}
-          onChange={(e) => {
-            setStatusFilter(e.target.value);
-            setPage(1);
-          }}
-          className="h-10 rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+        <FiltersDisclosure
+          count={activeFilterCount({ statusFilter, dateFrom, dateTo })}
+          toolbar={
+            !isLoading && !isError && bills.length > 0 ? (
+              <div className="flex min-w-0 flex-1 items-center gap-1.5 md:hidden">
+                <div className="min-w-0 flex-1">
+                  <Select
+                    aria-label="Sort bills by"
+                    options={[
+                      { value: "billDate", label: "Bill date" },
+                      { value: "supplier", label: "Supplier" },
+                      { value: "dueDate", label: "Due date" },
+                      { value: "total", label: "Total" },
+                      { value: "status", label: "Status" },
+                    ]}
+                    value={sortCol}
+                    onChange={(e) => {
+                      if (e.target.value !== sortCol) toggleSort(e.target.value);
+                    }}
+                    className="h-11"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => toggleSort(sortCol)}
+                  aria-label={sortDir === "asc" ? "Sort descending" : "Sort ascending"}
+                  className="grid h-11 w-11 shrink-0 place-items-center rounded-ctl border border-surface-border bg-white text-navy hover:bg-surface-raised"
+                >
+                  {sortDir === "asc" ? (
+                    <ArrowUp className="h-4 w-4" />
+                  ) : (
+                    <ArrowDown className="h-4 w-4" />
+                  )}
+                </button>
+              </div>
+            ) : undefined
+          }
         >
-          {STATUS_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-        <div className="flex items-center gap-1.5">
-          <Calendar className="h-4 w-4 text-navy/70" />
-          <input
-            type="date"
-            value={dateFrom}
-            onChange={(e) => {
-              setDateFrom(e.target.value);
-              setPage(1);
-            }}
-            title="Bill date from"
-            className="h-10 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-          />
-          <span className="text-navy/70">–</span>
-          <input
-            type="date"
-            value={dateTo}
-            min={dateFrom || undefined}
-            onChange={(e) => {
-              setDateTo(e.target.value);
-              setPage(1);
-            }}
-            title="Bill date to"
-            className="h-10 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-          />
-          {(dateFrom || dateTo) && (
-            <button
-              onClick={() => {
-                setDateFrom("");
-                setDateTo("");
-                setPage(1);
-              }}
-              className="rounded p-1.5 text-navy/70 hover:text-danger transition-colors"
-              title="Clear dates"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          )}
-        </div>
+          <div className="flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center md:gap-3">
+            <div className="flex flex-col gap-1 md:contents">
+              <label
+                htmlFor="bills-status-filter"
+                className="text-xs font-medium text-navy/70 md:sr-only"
+              >
+                Status
+              </label>
+              <select
+                id="bills-status-filter"
+                value={statusFilter}
+                onChange={(e) => {
+                  setStatusFilter(e.target.value);
+                  setPage(1);
+                }}
+                className="h-11 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500 md:h-10 md:w-auto"
+              >
+                {STATUS_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:gap-1.5">
+              <Calendar className="hidden h-4 w-4 text-navy/70 md:block" />
+              <div className="flex flex-col gap-1 md:contents">
+                <label
+                  htmlFor="bills-date-from"
+                  className="text-xs font-medium text-navy/70 md:sr-only"
+                >
+                  From
+                </label>
+                <input
+                  id="bills-date-from"
+                  type="date"
+                  value={dateFrom}
+                  onChange={(e) => {
+                    setDateFrom(e.target.value);
+                    setPage(1);
+                  }}
+                  title="Bill date from"
+                  className="h-11 w-full rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500 md:h-10 md:w-32"
+                />
+              </div>
+              <span className="hidden text-navy/70 md:inline">–</span>
+              <div className="flex flex-col gap-1 md:contents">
+                <label
+                  htmlFor="bills-date-to"
+                  className="text-xs font-medium text-navy/70 md:sr-only"
+                >
+                  To
+                </label>
+                <input
+                  id="bills-date-to"
+                  type="date"
+                  value={dateTo}
+                  min={dateFrom || undefined}
+                  onChange={(e) => {
+                    setDateTo(e.target.value);
+                    setPage(1);
+                  }}
+                  title="Bill date to"
+                  className="h-11 w-full rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500 md:h-10 md:w-32"
+                />
+              </div>
+              {(dateFrom || dateTo) && (
+                <button
+                  onClick={() => {
+                    setDateFrom("");
+                    setDateTo("");
+                    setPage(1);
+                  }}
+                  className="grid min-h-[44px] place-items-center rounded border border-surface-border px-3 text-sm font-medium text-navy transition-colors hover:text-danger md:min-h-0 md:border-0 md:p-1.5 md:text-navy/70"
+                  title="Clear dates"
+                >
+                  <span className="md:hidden">Clear dates</span>
+                  <X className="hidden h-3.5 w-3.5 md:block" />
+                </button>
+              )}
+            </div>
+          </div>
+        </FiltersDisclosure>
       </div>
 
+      {/* Phone cards below md; the table takes over from md up. Loading, error and empty keep the
+          table's own state rows at every width. Same balance rule and selection as the table. */}
+      {!isLoading && !isError && bills.length > 0 && (
+        <>
+          <label className="flex min-h-[44px] items-center gap-3 text-sm text-navy md:hidden">
+            <input
+              type="checkbox"
+              aria-label="Select all bills on this page"
+              checked={allOnPageSelected}
+              onChange={toggleSelectAll}
+              className="h-5 w-5 rounded border-surface-border text-brand-500 accent-brand-500"
+            />
+            Select all on this page
+          </label>
+          <RecordCardList>
+            {sortedBills.map((bill: VendorBill) => {
+              const overdue = isOverdue(bill);
+              const balance = billBalance(bill);
+              return (
+                <RecordCard
+                  key={bill.id}
+                  href={`/vendor-bills/${bill.id}`}
+                  title={bill.billNumber}
+                  amountLabel="Balance"
+                  amount={fmt(balance)}
+                  amountTone={balance > 0 ? "danger" : "default"}
+                  subtitle={bill.supplier?.name ?? "—"}
+                  badges={
+                    <>
+                      <Badge status={bill.status} />
+                      {bill.status === "DRAFT" &&
+                        ((bill.items ?? []).length === 0 ||
+                          (bill.items ?? []).some((i) => !i.productId)) && (
+                          <span className="inline-flex items-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">
+                            needs items
+                          </span>
+                        )}
+                    </>
+                  }
+                  meta={
+                    <span className="flex flex-wrap gap-x-2 gap-y-0.5">
+                      <span>{fmtCalendarDate(bill.billDate ?? bill.createdAt)}</span>
+                      <span className={cn(overdue && "font-medium text-red-600")}>
+                        Due {fmtCalendarDate(bill.dueDate)}
+                        {overdue && (
+                          <span className="ml-1 text-xs font-semibold text-red-500">Overdue</span>
+                        )}
+                      </span>
+                      <span>Total {fmt(Number(bill.totalOwed ?? 0))}</span>
+                      <span>Paid {fmt(Number(bill.totalPaid ?? 0))}</span>
+                      {bill.purchaseOrder?.poNumber && (
+                        <span>PO {bill.purchaseOrder.poNumber}</span>
+                      )}
+                    </span>
+                  }
+                  selected={selectedBills.has(bill.id)}
+                  onSelectedChange={() => toggleSelect(bill)}
+                />
+              );
+            })}
+          </RecordCardList>
+        </>
+      )}
+
       {/* Table */}
-      <div className="overflow-hidden rounded-lg border border-surface-border">
+      <div
+        className={cn(
+          "overflow-hidden rounded-lg border border-surface-border",
+          !isLoading && !isError && bills.length > 0 && "hidden md:block",
+        )}
+      >
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="border-b border-surface-border bg-surface-raised">
@@ -2282,7 +2454,7 @@ function ExpensesContent() {
     <button
       onClick={() => setTab(tab)}
       className={cn(
-        "flex items-center gap-2 rounded-lg px-5 py-2 text-sm font-medium transition-colors",
+        "flex min-h-[44px] shrink-0 snap-start items-center gap-2 whitespace-nowrap rounded-lg px-5 py-2 text-sm font-medium transition-colors md:min-h-0",
         activeTab === tab ? "bg-white text-navy shadow-sm" : "text-navy/70 hover:text-navy",
       )}
     >
@@ -2297,13 +2469,19 @@ function ExpensesContent() {
 
   return (
     <div className="space-y-6 p-6">
-      <PageHeader
-        title="Supplier bills"
-        subtitle="One hub for supplier bills, purchase orders and inventory spend — supplier payments happen here."
-      />
+      {/* The description is hidden below md; from md up this is the PageHeader layout. */}
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
+        <div className="shrink">
+          <h2 className="whitespace-nowrap text-2xl font-bold text-navy">Supplier bills</h2>
+          <p className="mt-1 hidden text-sm text-navy/70 md:block">
+            One hub for supplier bills, purchase orders and inventory spend — supplier payments
+            happen here.
+          </p>
+        </div>
+      </div>
 
-      {/* Tab switcher */}
-      <div className="flex gap-1 rounded-xl border border-surface-border bg-surface-raised p-1 w-fit">
+      {/* Tab switcher: one sideways-scrolling row below md */}
+      <div className="flex w-fit max-w-full snap-x gap-1 overflow-x-auto rounded-xl border border-surface-border bg-surface-raised p-1 scrollbar-hide">
         <TabButton tab="inventory" label="Supplier bills" count={billsCount} />
         <TabButton tab="pos" label="Purchase orders" count={posCount} />
         <TabButton tab="other" label="Other expenses" />
