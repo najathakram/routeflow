@@ -25,7 +25,7 @@ import {
   buildReorderItems,
   canReorder,
   trackingHeadline,
-  trackingStepIndex,
+  trackingStepDone,
 } from "../../../lib/order-tracking-logic";
 import { invoiceLineQtyText } from "@routeflow/pricing";
 import { invoiceLineUnitNoun, usesUnitDisplay } from "../../../lib/invoice-line-display";
@@ -257,8 +257,7 @@ export default function CustomerOrderDetailScreen() {
               <View style={styles.trackingSteps}>
                 {["Pending", "Confirmed", "Out for delivery", "Partial", "Delivered"].map(
                   (label, idx) => {
-                    const stepIdx = trackingStepIndex(order.status);
-                    const done = stepIdx >= idx;
+                    const done = trackingStepDone(order.status, idx);
                     return (
                       <View key={label} style={styles.trackingStep}>
                         <View style={[styles.trackingDot, done && styles.trackingDotDone]} />

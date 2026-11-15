@@ -106,7 +106,7 @@ describe("SA-733 D6 / M6 — createCheckoutSession anchors every new subscriptio
   ])("%s: billing_cycle_anchor + create_prorations", async (_n, now, anchor) => {
     jest.useFakeTimers({ now: new Date(now), doNotFake: ONLY_DATE });
     const h = make();
-    await h.billing.createCheckoutSession("t1", "month");
+    await h.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" });
     expect(sent(h).mode).toBe("subscription");
     expect(sent(h).subscription_data).toEqual({
       billing_cycle_anchor: at(anchor),
@@ -114,10 +114,22 @@ describe("SA-733 D6 / M6 — createCheckoutSession anchors every new subscriptio
     });
   });
 
+  it("B-1: with no caller URLs the session returns to the Billing page, never to a /billing/success page", async () => {
+    jest.useFakeTimers({ now: new Date("2026-10-15T09:00:00Z"), doNotFake: ONLY_DATE });
+    const h = make();
+    await h.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" });
+    expect(new URL(sent(h).success_url).pathname + new URL(sent(h).success_url).search).toBe(
+      "/settings/billing?checkout=success",
+    );
+    expect(new URL(sent(h).cancel_url).pathname + new URL(sent(h).cancel_url).search).toBe(
+      "/settings/billing?checkout=cancelled",
+    );
+  });
+
   it("Oct 31 23:00Z: the session expires BEFORE the anchor (<= 11:00Z), so it cannot complete after it", async () => {
     jest.useFakeTimers({ now: new Date("2026-10-31T23:00:00Z"), doNotFake: ONLY_DATE });
     const h = make();
-    await h.billing.createCheckoutSession("t1", "month");
+    await h.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" });
     expect(sent(h).expires_at).toBeLessThanOrEqual(at("2026-11-01T11:00:00Z"));
     expect(sent(h).expires_at).toBeGreaterThan(at("2026-10-31T23:00:00Z") + 30 * 60);
   });
@@ -125,7 +137,7 @@ describe("SA-733 D6 / M6 — createCheckoutSession anchors every new subscriptio
   it("F1: every session says Managed Payments is OFF and never enables automatic tax", async () => {
     jest.useFakeTimers({ now: new Date("2026-10-15T09:00:00Z"), doNotFake: ONLY_DATE });
     const h = make({ addonSkus: ["FORECASTING"] });
-    await h.billing.createCheckoutSession("t1", "month");
+    await h.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" });
     expect(sent(h).managed_payments).toEqual({ enabled: false });
     expect(sent(h).automatic_tax?.enabled).not.toBe(true);
   });
@@ -141,14 +153,14 @@ describe("SA-733 D6 / M6 — createCheckoutSession anchors every new subscriptio
     it("card_and_bank: a trial tenant session offers card and us_bank_account", async () => {
       process.env[KEY] = "card_and_bank";
       const h = make();
-      await h.billing.createCheckoutSession("t1", "month");
+      await h.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" });
       expect(sent(h).payment_method_types).toEqual(["card", "us_bank_account"]);
     });
 
     it("unset: the field is absent (the Dashboard decides, as today)", async () => {
       delete process.env[KEY];
       const h = make();
-      await h.billing.createCheckoutSession("t1", "month");
+      await h.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" });
       expect(sent(h)).not.toHaveProperty("payment_method_types");
     });
   });
@@ -156,14 +168,14 @@ describe("SA-733 D6 / M6 — createCheckoutSession anchors every new subscriptio
   it("Oct 15: the session lives the plain 23 h", async () => {
     jest.useFakeTimers({ now: new Date("2026-10-15T09:00:00Z"), doNotFake: ONLY_DATE });
     const h = make();
-    await h.billing.createCheckoutSession("t1", "month");
+    await h.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" });
     expect(sent(h).expires_at).toBe(at("2026-10-16T08:00:00Z"));
   });
 
   it("add-on SKUs still ride subscription_data.metadata beside the anchor", async () => {
     jest.useFakeTimers({ now: new Date("2026-10-15T09:00:00Z"), doNotFake: ONLY_DATE });
     const h = make({ addonSkus: ["FORECASTING"] });
-    await h.billing.createCheckoutSession("t1", "month");
+    await h.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" });
     expect(sent(h).subscription_data).toEqual({
       billing_cycle_anchor: at("2026-11-01T12:00:00Z"),
       proration_behavior: "create_prorations",
@@ -174,7 +186,7 @@ describe("SA-733 D6 / M6 — createCheckoutSession anchors every new subscriptio
   it("never sends the combinations Checkout rejects: no trial with an anchor, no one-time line with proration none", async () => {
     jest.useFakeTimers({ now: new Date("2026-10-15T09:00:00Z"), doNotFake: ONLY_DATE });
     const h = make();
-    await h.billing.createCheckoutSession("t1", "month");
+    await h.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" });
     const sd = sent(h).subscription_data;
     expect(sd).not.toHaveProperty("trial_end");
     expect(sd).not.toHaveProperty("trial_period_days");
@@ -185,7 +197,9 @@ describe("SA-733 D6 / M6 — createCheckoutSession anchors every new subscriptio
   it("F3: inside the window before the 1st 12:00Z the checkout is refused (409 CHECKOUT_ANCHOR_WINDOW + retryAt), before any Stripe call", async () => {
     jest.useFakeTimers({ now: new Date("2026-11-01T10:45:00Z"), doNotFake: ONLY_DATE });
     const h = make();
-    const err: any = await h.billing.createCheckoutSession("t1", "month").catch((e) => e);
+    const err: any = await h.billing
+      .createCheckoutSession("t1", { surface: "ADMIN_LINK" })
+      .catch((e) => e);
     expect(err.getStatus()).toBe(409);
     expect(err.getResponse()).toMatchObject({
       code: API_ERROR_CODES.CHECKOUT_ANCHOR_WINDOW,
@@ -196,7 +210,9 @@ describe("SA-733 D6 / M6 — createCheckoutSession anchors every new subscriptio
 
   it("annual is refused (monthly only) with its own code, before any customer or session is created", async () => {
     const h = make();
-    const err: any = await h.billing.createCheckoutSession("t1", "year").catch((e) => e);
+    const err: any = await h.billing
+      .createCheckoutSession("t1", { interval: "year", surface: "ADMIN_LINK" })
+      .catch((e) => e);
     expect(err.getStatus()).toBe(400);
     expect(err.getResponse()).toMatchObject({
       code: API_ERROR_CODES.CHECKOUT_ANNUAL_NOT_SUPPORTED,
@@ -214,7 +230,9 @@ describe("ordinary checkout gates (Opus B1 + ruling item 8)", () => {
     "a held catch-up claim (%s) refuses an ordinary checkout with its coded 409",
     async (state, code) => {
       const h = make({ sub: { catchupState: state } });
-      const err: any = await h.billing.createCheckoutSession("t1", "month").catch((e) => e);
+      const err: any = await h.billing
+        .createCheckoutSession("t1", { surface: "ADMIN_LINK" })
+        .catch((e) => e);
       expect(err.getStatus()).toBe(409);
       expect(err.getResponse()).toMatchObject({ code });
       expect(h.create).not.toHaveBeenCalled();
@@ -223,7 +241,9 @@ describe("ordinary checkout gates (Opus B1 + ruling item 8)", () => {
 
   it("an externalPayment (manual-pay) tenant is routed to the catch-up: 409 EXTERNAL_PAYMENT_USE_CATCHUP, nothing created", async () => {
     const h = make({ sub: { externalPayment: true } });
-    const err: any = await h.billing.createCheckoutSession("t1", "month").catch((e) => e);
+    const err: any = await h.billing
+      .createCheckoutSession("t1", { surface: "ADMIN_LINK" })
+      .catch((e) => e);
     expect(err.getStatus()).toBe(409);
     expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.EXTERNAL_PAYMENT_USE_CATCHUP });
     expect(h.create).not.toHaveBeenCalled();
@@ -232,7 +252,7 @@ describe("ordinary checkout gates (Opus B1 + ruling item 8)", () => {
 
   it("a non-externalPayment tenant still checks out normally", async () => {
     const h = make({ sub: { externalPayment: false } });
-    await h.billing.createCheckoutSession("t1", "month");
+    await h.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" });
     expect(h.create).toHaveBeenCalledTimes(1);
   });
 });
@@ -253,7 +273,9 @@ describe("SA-832 / 453: checkout creation refuses an admin-locked tenant", () =>
     "%s: 409 TENANT_ADMIN_LOCKED, no add-on read, no customer, no Stripe session",
     async (_n, tenant) => {
       const h = make({ tenant });
-      const err: any = await h.billing.createCheckoutSession("t1", "month").catch((e) => e);
+      const err: any = await h.billing
+        .createCheckoutSession("t1", { surface: "ADMIN_LINK" })
+        .catch((e) => e);
       expect(err.getStatus()).toBe(409);
       expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.TENANT_ADMIN_LOCKED });
       expect(h.create).not.toHaveBeenCalled();
@@ -264,7 +286,9 @@ describe("SA-832 / 453: checkout creation refuses an admin-locked tenant", () =>
 
   it("the refusal copy never names the cause (a customer is not told an admin locked them)", async () => {
     const h = make({ tenant: { status: "READ_ONLY", readOnlyReason: "admin_set" } });
-    const err: any = await h.billing.createCheckoutSession("t1", "month").catch((e) => e);
+    const err: any = await h.billing
+      .createCheckoutSession("t1", { surface: "ADMIN_LINK" })
+      .catch((e) => e);
     expect(String(err.getResponse().message)).not.toMatch(/admin_set|administrator/i);
   });
 
@@ -278,7 +302,164 @@ describe("SA-832 / 453: checkout creation refuses an admin-locked tenant", () =>
     ["CANCELLED by a Stripe churn", { status: "CANCELLED", readOnlyReason: "stripe_cancelled" }],
   ])("control: %s checks out normally", async (_n, tenant) => {
     const h = make({ tenant });
-    await h.billing.createCheckoutSession("t1", "month");
+    await h.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" });
     expect(h.create).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("SA-1139 PR-1: the tenant's own subscription checkout x BILLING_CHECKOUT_UI", () => {
+  const UI = "BILLING_CHECKOUT_UI";
+  const prior = process.env[UI];
+  // What the service builds on its own (it takes no caller URLs); only used as the expected values.
+  const EXPECTED_RETURNS = {
+    successUrl: "https://app.test/settings/billing?checkout=success",
+    cancelUrl: "https://app.test/settings/billing?checkout=cancelled",
+  };
+  const priorWeb = process.env.WEB_URL;
+  beforeEach(() => {
+    delete process.env[UI];
+    process.env.WEB_URL = "https://app.test"; // the web base an embedded return_url must sit on (SA-1154)
+  });
+  afterEach(() => {
+    if (prior === undefined) delete process.env[UI];
+    else process.env[UI] = prior;
+    if (priorWeb === undefined) delete process.env.WEB_URL;
+    else process.env.WEB_URL = priorWeb;
+  });
+
+  /** Like Stripe's own embedded Session: it echoes the return_url it was created with. */
+  const echoEmbedded = (h: ReturnType<typeof make>, id = "cs_e", secret = "cs_e_secret_test") =>
+    h.create.mockImplementation(async (p: { return_url?: string }) => ({
+      id,
+      url: null,
+      ui_mode: "embedded_page",
+      client_secret: secret,
+      return_url: p.return_url,
+    }));
+
+  /** Today's params, key for key (the guard of case 1; also the hosted reference of case 7). */
+  async function hostedParams(addonSkus: string[] = []) {
+    const h = make({ addonSkus });
+    await h.billing.createCheckoutSession("t1", { surface: "TENANT_SELF" });
+    return sent(h);
+  }
+
+  it("case 1: switch unset -> hosted params exactly as today, and a hosted start", async () => {
+    const h = make();
+    const out = await h.billing.createCheckoutSession("t1", {
+      surface: "TENANT_SELF",
+    });
+    const p = sent(h);
+    expect(p.success_url).toBe(EXPECTED_RETURNS.successUrl);
+    expect(p.cancel_url).toBe(EXPECTED_RETURNS.cancelUrl);
+    expect(p.mode).toBe("subscription");
+    for (const k of ["ui_mode", "return_url", "redirect_on_completion"]) {
+      expect(p).not.toHaveProperty(k);
+    }
+    expect(out).toEqual({
+      uiMode: "hosted",
+      sessionId: "cs_1",
+      checkoutUrl: "https://pay.test",
+      clientSecret: null,
+      returnPath: null,
+    });
+  });
+
+  it("case 2: switch embedded, TENANT_SELF -> embedded params, a client secret, no checkoutUrl", async () => {
+    process.env[UI] = "embedded";
+    const h = make();
+    echoEmbedded(h);
+    const out = await h.billing.createCheckoutSession("t1", {
+      surface: "TENANT_SELF",
+    });
+    const p = sent(h);
+    expect(p.ui_mode).toBe("embedded_page");
+    expect(p.redirect_on_completion).toBe("if_required");
+    expect(p.return_url).toBe(`${EXPECTED_RETURNS.successUrl}&session_id={CHECKOUT_SESSION_ID}`);
+    expect(p).not.toHaveProperty("success_url");
+    expect(p).not.toHaveProperty("cancel_url");
+    expect(out).toEqual({
+      uiMode: "embedded",
+      sessionId: "cs_e",
+      checkoutUrl: null,
+      clientSecret: "cs_e_secret_test",
+      // O1: the plan checkout's own session says where it returns (SA-1154); no web caller names a path
+      returnPath: "/settings/billing?checkout=success",
+    });
+  });
+
+  it("case 2: the clientSecret is never written to a log line", async () => {
+    process.env[UI] = "embedded";
+    const h = make();
+    echoEmbedded(h);
+    const spies = (["log", "warn", "error", "debug", "verbose"] as const).map((m) =>
+      jest.spyOn((h.billing as any).logger, m).mockImplementation(() => undefined),
+    );
+    await h.billing.createCheckoutSession("t1", { surface: "TENANT_SELF" });
+    for (const s of spies) expect(JSON.stringify(s.mock.calls)).not.toContain("secret");
+  });
+
+  it("case 5: switch embedded, the platform admin's link (ADMIN_LINK) -> hosted with a url", async () => {
+    process.env[UI] = "embedded";
+    const h = make();
+    const out = await h.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" });
+    expect(sent(h)).not.toHaveProperty("ui_mode");
+    expect(out).toMatchObject({
+      uiMode: "hosted",
+      checkoutUrl: "https://pay.test",
+      clientSecret: null,
+      returnPath: null, // O8: never an embedded start, so nothing for the web to push
+    });
+  });
+
+  it("case 9: no surface (a JS caller) -> throws before any Stripe create; surface is never defaulted", async () => {
+    process.env[UI] = "embedded";
+    for (const arg of [undefined, "month", {}]) {
+      const h = make();
+      await expect(
+        (h.billing.createCheckoutSession as (t: string, o?: unknown) => Promise<unknown>).call(
+          h.billing,
+          "t1",
+          arg,
+        ),
+      ).rejects.toThrow(/surface/);
+      expect(h.create).not.toHaveBeenCalled();
+    }
+  });
+
+  it("case 6: switch embedded -> managed_payments off, payment_method_types as hosted", async () => {
+    process.env[UI] = "embedded";
+    process.env.BILLING_CHECKOUT_PAYMENT_METHODS = "card_and_bank";
+    try {
+      const h = make();
+      echoEmbedded(h, "cs_e", "s");
+      await h.billing.createCheckoutSession("t1", { surface: "TENANT_SELF" });
+      expect(sent(h).managed_payments).toEqual({ enabled: false });
+      expect(sent(h).payment_method_types).toEqual(["card", "us_bank_account"]);
+    } finally {
+      delete process.env.BILLING_CHECKOUT_PAYMENT_METHODS;
+    }
+  });
+
+  it("case 7: a trial tenant with add-ons -> subscription_data, expires_at and line items identical to the hosted params", async () => {
+    const hosted = await hostedParams(["FORECASTING"]);
+    process.env[UI] = "embedded";
+    const h = make({ addonSkus: ["FORECASTING"] });
+    echoEmbedded(h, "cs_e", "s");
+    await h.billing.createCheckoutSession("t1", { surface: "TENANT_SELF" });
+    const emb = sent(h);
+    expect(emb.ui_mode).toBe("embedded_page");
+    for (const k of [
+      "subscription_data",
+      "expires_at",
+      "line_items",
+      "metadata",
+      "customer",
+      "mode",
+    ]) {
+      expect(emb[k]).toEqual(hosted[k]);
+    }
+    expect(emb.subscription_data.metadata).toBeDefined();
+    expect(emb.line_items).toHaveLength(2);
   });
 });

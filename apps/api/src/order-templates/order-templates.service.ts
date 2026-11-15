@@ -18,6 +18,7 @@ import { customerPricing } from "../orders/units-prices-v2";
 import { resolveFulfilPath } from "../orders/fulfil-path-resolver";
 import { syncOrderLineCompositions } from "../orders/order-composition";
 import { orderTotalsOf } from "../orders/order-totals";
+import { newDocumentDiscountMode } from "../common/discount-tax-mode";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import { isMergeContention } from "../orders/merge-contention";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
@@ -1174,6 +1175,7 @@ export class OrderTemplatesService {
       taxRate,
       isTaxExempt,
       discount: 0, // W-762: a standing order carries no order-level discount
+      discountBase: newDocumentDiscountMode(), // SA-1141 R4: a standing-order run is a NEW document
     });
 
     // #1208 review LOW: guard the generated total the same way create() does

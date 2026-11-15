@@ -120,7 +120,7 @@ function BuyerPaymentsPageInner() {
         ? { tone: "neutral" as const, text: "Payment cancelled." }
         : null;
 
-  // Seeded from the invoice-detail "Pay this invoice" link (?amount=<balanceDue>).
+  // Seeded from the invoice-detail "Pay $X" button (?amount=<balanceDue>).
   const amountParam = searchParams.get("amount");
   const parsedAmount = amountParam ? Number(amountParam) : NaN;
   const defaultAmount =

@@ -10,17 +10,25 @@ import { join } from "path";
 
 const read = (rel: string): string => readFileSync(join(__dirname, rel), "utf8");
 
-const PAGES: Array<[string, string]> = [
-  ["invoices/new (new sale / invoice builder)", "invoices/new/page.tsx"],
-  ["invoices/[id]/edit", "invoices/[id]/edit/page.tsx"],
-  ["estimates (estimate builder)", "estimates/page.tsx"],
+// The two invoice footers go through `invoiceFooterTotals` (lib/discount-tax-base.ts, which hands the
+// document's discount base to `computeInvoiceTotals`); the estimate builder calls `computeInvoiceTotals` itself.
+const PAGES: Array<[string, string, string]> = [
+  ["invoices/new (new sale / invoice builder)", "invoices/new/page.tsx", "invoiceFooterTotals("],
+  ["invoices/[id]/edit", "invoices/[id]/edit/page.tsx", "invoiceFooterTotals("],
+  ["estimates (estimate builder)", "estimates/page.tsx", "computeInvoiceTotals("],
 ];
 
-describe.each(PAGES)("%s footer totals", (_name, rel) => {
+describe("the invoice footer helper stays on the pricing helper", () => {
+  it("lib/discount-tax-base.ts computes invoiceFooterTotals with computeInvoiceTotals", () => {
+    expect(read("../../lib/discount-tax-base.ts").includes("computeInvoiceTotals(")).toBe(true);
+  });
+});
+
+describe.each(PAGES)("%s footer totals", (_name, rel, helper) => {
   const source = read(rel);
 
-  it("computes the footer with computeInvoiceTotals", () => {
-    expect(source.includes("computeInvoiceTotals(")).toBe(true);
+  it(`computes the footer with ${helper.slice(0, -1)}`, () => {
+    expect(source.includes(helper)).toBe(true);
   });
 
   it("never sums line totals as raw floats", () => {

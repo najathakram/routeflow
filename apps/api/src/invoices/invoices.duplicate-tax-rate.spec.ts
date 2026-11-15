@@ -143,6 +143,7 @@ describe("InvoicesService.duplicate — the copy's tax rate (row 588)", () => {
       discount: data.discount,
       shipping: data.shippingFee,
       isTaxExempt: false,
+      discountBase: "LEGACY_POST_TAX",
     });
     expect({ subtotal: data.subtotal, tax: data.taxAmount, total: data.total }).toEqual({
       subtotal: fresh.subtotal,

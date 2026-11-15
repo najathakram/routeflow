@@ -533,14 +533,16 @@ describe("rail (xl and up)", () => {
     ).toHaveLength(1);
   });
 
-  it("highlights on sub-routes too: /settings/billing lights the Business card", () => {
+  it("highlights on sub-routes too: /settings/billing lights the Billing row, not the status card", () => {
     mockPath = "/settings/billing";
     renderWithProviders(<SettingsRail isAdmin />);
+    expect(row("plan-billing")).toHaveAttribute("aria-current", "page");
     const card = screen.getByTestId("business-card-rail");
-    expect(card).toHaveAttribute("aria-current", "page");
-    // "current" is a tint like the rail rows; the ring is for keyboard focus only
-    expect(card.className).toMatch(/bg-\[var\(--accent-soft\)\]/);
-    expect(card.className).not.toMatch(/(^|\s)ring-2/);
+    expect(card).not.toHaveAttribute("aria-current");
+    expect(card.className).not.toMatch(/bg-\[var\(--accent-soft\)\]/);
+    expect(
+      screen.getAllByRole("link").filter((l) => l.getAttribute("aria-current") === "page"),
+    ).toHaveLength(1);
   });
 
   it("in-page anchors become absolute so they work from any settings page", () => {

@@ -7,8 +7,9 @@
  * lines (rule F1). Web and mobile never send that PATCH; it is API and scripts only, so the exposed
  * set is the DRAFT invoices whose stored header disagrees with their lines. This report counts them.
  *
- * THE ARITHMETIC (inlined from the spec until `sumInvoiceTotals` lands in @routeflow/pricing; pinned
- * by `--self-test`), all money through `roundMoney`, sums in row order (lines ordered by id):
+ * THE ARITHMETIC (@routeflow/pricing's `sumInvoiceTotals`, pinned by `--self-test`; SA-1141 R8: no local copy), all money
+ * through `roundMoney`, sums in row order (lines ordered by id). Shown in the LEGACY_POST_TAX form; a PRE_TAX row takes its
+ * invoice discount off the goods' tax base (see packages/pricing/src/invoice-totals.ts):
  *   subtotal    = round(sum(line.subtotal))
  *   regularTax  = exempt ? 0 : round(sum(line.subtotal * line.taxRate))
  *   categoryTax = exempt ? 0 : round(sum(line.categoryTaxAmount))
@@ -59,7 +60,8 @@ import { fileURLToPath } from "node:url";
 import { resolveReportDbUrl } from "./lib/report-db-url.mjs";
 const require = createRequire(import.meta.url);
 const { isTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
-const { roundMoney } = require("@routeflow/pricing");
+const pricing = require("@routeflow/pricing");
+const { roundMoney } = pricing;
 
 const NAME = "report-b1043-stale-tax-state";
 const PAGE = 500;
@@ -75,25 +77,26 @@ const num = (v) => {
 };
 
 /**
- * The five formulas (F1). Pure; never mutates `lines`. Each line: { subtotal, taxRate?,
- * categoryTaxAmount? }. Sums run in the given row order.
+ * The five formulas (F1) are @routeflow/pricing's `sumInvoiceTotals`, the ONE formula (SA-1141 R8: this report no longer keeps
+ * a local copy, so it can never call a new discounted invoice stale after the cutover). A caller that names no mode gets
+ * LEGACY_POST_TAX, which is what the self-test and the five-formula pin exercise; `classifyInvoice` passes the ROW's mode.
  */
-export function sumInvoiceTotals(lines, { discount = 0, shipping = 0, isTaxExempt = false } = {}) {
-  let sub = 0;
-  let taxable = 0;
-  let levy = 0;
-  for (const l of lines) {
-    const s = num(l.subtotal);
-    sub += s;
-    taxable += s * num(l.taxRate);
-    levy += num(l.categoryTaxAmount);
-  }
-  const subtotal = roundMoney(sub);
-  const regularTax = isTaxExempt ? 0 : roundMoney(taxable);
-  const categoryTax = isTaxExempt ? 0 : roundMoney(levy);
-  const tax = roundMoney(regularTax + categoryTax);
-  const total = roundMoney(subtotal - num(discount) + num(shipping) + tax);
-  return { subtotal, regularTax, categoryTax, tax, total };
+export function sumInvoiceTotals(lines, { discountBase = "LEGACY_POST_TAX", ...opts } = {}) {
+  return pricing.sumInvoiceTotals(
+    lines.map((l) => ({ ...l, isNsf: pricing.isNsfLine(l) })),
+    { ...opts, discountBase },
+  );
+}
+
+/**
+ * The row's discount tax base (SA-1141 R3/R4): its SOURCE's createdAt (the order's, else the converted estimate's, else its
+ * own) against the one cutover constant. Dark (the constant is null) every row is LEGACY and no date is read.
+ */
+export function discountBaseOfRow(invoice) {
+  const from = pricing.DISCOUNT_PRE_TAX_FROM;
+  if (from == null) return "LEGACY_POST_TAX";
+  const at = invoice.orderCreatedAt ?? invoice.estimateCreatedAt ?? invoice.createdAt;
+  return pricing.discountTaxBaseOf({ createdAt: new Date(at) }, from);
 }
 
 /**
@@ -102,7 +105,12 @@ export function sumInvoiceTotals(lines, { discount = 0, shipping = 0, isTaxExemp
  */
 export function classifyInvoice(invoice, lines) {
   const exempt = !!invoice.isTaxExempt;
-  const computed = sumInvoiceTotals(lines, { isTaxExempt: exempt });
+  // PRE_TAX judges with the STORED discount (the stored tax was levied under it); LEGACY never reads it.
+  const computed = sumInvoiceTotals(lines, {
+    isTaxExempt: exempt,
+    discount: num(invoice.discount),
+    discountBase: discountBaseOfRow(invoice),
+  });
   const storedSubtotal = roundMoney(num(invoice.subtotal));
   const storedTax = roundMoney(num(invoice.taxAmount));
   const foreignTenant =
@@ -196,9 +204,12 @@ export function summarize(acc) {
 
 /** The two paged SELECTs. `statuses` is either DRAFT only or every non-VOID status (no input reaches the SQL). */
 export const INVOICE_PAGE_SQL = (allStatuses) => `SELECT i.id, i."tenantId", i."createdAt",
-       i.subtotal::text AS subtotal, i."taxAmount"::text AS "taxAmount",
+       i.subtotal::text AS subtotal, i."taxAmount"::text AS "taxAmount", i.discount::text AS discount,
+       o."createdAt" AS "orderCreatedAt", e."createdAt" AS "estimateCreatedAt",
        c."isTaxExempt" AS "isTaxExempt", t.slug
   FROM "Invoice" i
+  LEFT JOIN "Order" o ON o.id = i."orderId"
+  LEFT JOIN "Estimate" e ON e."invoiceId" = i.id
   LEFT JOIN "Customer" c ON c.id = i."customerId"
   LEFT JOIN "Tenant" t ON t.id = i."tenantId"
  WHERE ${allStatuses ? `i.status <> 'VOID'` : `i.status = 'DRAFT'`}
@@ -208,7 +219,8 @@ export const INVOICE_PAGE_SQL = (allStatuses) => `SELECT i.id, i."tenantId", i."
 
 export const LINES_SQL = `SELECT ii."invoiceId", ii."tenantId",
        ii.subtotal::text AS subtotal, ii."taxRate"::text AS "taxRate",
-       ii."categoryTaxAmount"::text AS "categoryTaxAmount"
+       ii."categoryTaxAmount"::text AS "categoryTaxAmount",
+       ii."systemKind"::text AS "systemKind", ii.description
   FROM "InvoiceItem" ii
  WHERE ii."invoiceId" = ANY($1::text[])
  ORDER BY ii."invoiceId", ii.id`;

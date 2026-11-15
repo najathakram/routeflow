@@ -206,6 +206,7 @@ describeDb(
       }
       await inTenant(() =>
         ledger.writeSaleEntries({
+          lockedPeriod: "REFUSE",
           tenantId,
           orderId: order.id,
           invoiceId: invoice.id,
@@ -279,6 +280,7 @@ describeDb(
         await l.counterDeadDocuments(db(), c.invoiceId);
         await l.reverseInvoiceEntries({ invoiceId: c.invoiceId, db: db(), preserveReturns: true });
         await ledger.writeSaleEntries({
+          lockedPeriod: "REFUSE",
           tenantId,
           orderId: c.orderId,
           invoiceId: c.invoiceId,

@@ -4,7 +4,7 @@ import type { MyPermissions, PermissionsMode } from "@routeflow/types";
 import { priceEditReported } from "./price-edit-answer";
 import { PrismaService } from "../../prisma/prisma.service";
 
-/** The mode `GET /users/me/permissions` reports. Always "shadow" in this release (nothing is enforced). */
+/** The mode `GET /users/me/permissions` reports. Always "shadow" in this release: the guard only logs. Price edits are enforced regardless of it (price-edit.ts). */
 export const PERMISSIONS_MODE: PermissionsMode = "shadow";
 
 /**
@@ -39,8 +39,8 @@ export function groupsFromDenied(
 }
 
 /**
- * The one predicate for "which feature groups does this principal hold". Reports only in this release:
- * nothing calls it to refuse a request.
+ * The one predicate for "which feature groups does this principal hold". The guard reads it in shadow (logs, never
+ * refuses); the price-edit answer reads the same deny list through `operatorDeniedGroups` and does refuse.
  *
  *   TENANT_ADMIN / SUPER_ADMIN -> every group, version 0, no database read.
  *   OPERATOR                   -> every group minus the row's `deniedPermissionGroups`.
@@ -96,12 +96,7 @@ export class OperatorPermissionsService {
       groups,
       version,
       mode: PERMISSIONS_MODE,
-      priceEditAllowed: priceEditReported(
-        user.role,
-        groups,
-        ALL_PERMISSION_GROUPS,
-        PERMISSIONS_MODE,
-      ),
+      priceEditAllowed: priceEditReported(user.role, groups, ALL_PERMISSION_GROUPS),
     };
   }
 }

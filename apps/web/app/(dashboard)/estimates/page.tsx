@@ -45,6 +45,7 @@ import {
   customerTierFor,
   type InvoiceTotalsLine,
 } from "@routeflow/pricing";
+import { newDocumentDiscountBase } from "@/lib/discount-tax-base";
 import { useCustomerPriceLayer } from "@/lib/api/useCustomerPriceLayer";
 import { PriceLayerNotice } from "@/components/PriceLayerNotice";
 import { customerPricingGate, gateNoticeLayer } from "@/lib/customer-pricing-gate";
@@ -430,7 +431,9 @@ function CreateEstimateModal({
   };
 
   // Footer subtotal: boxed-aware per-line totals, summed and rounded once in pricing.
-  const { subtotal } = computeInvoiceTotals(lineItems.map(toTotalsLine));
+  const { subtotal } = computeInvoiceTotals(lineItems.map(toTotalsLine), {
+    discountBase: newDocumentDiscountBase(),
+  });
 
   const priceBlocked = pricingGate.blockSave;
 

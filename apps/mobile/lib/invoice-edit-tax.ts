@@ -1,4 +1,4 @@
-import { inferredGoodsFlatRate, isNsfLine } from "@routeflow/pricing";
+import { inferredGoodsFlatRate, isNsfLine, LEGACY_DISCOUNT_BASE } from "@routeflow/pricing";
 
 /**
  * B294 (SA-141): each stored line's `{ taxRate, taxable }` when the operator invoice edit loads.
@@ -31,7 +31,7 @@ export function hydratedLineTax(
   const nsf = items.map((it) => isNsfLine(it));
   const inferred = inferredGoodsFlatRate(
     { subtotal: invoice.subtotal, taxAmount: invoice.taxAmount, lines: items },
-    { preferredRate: tenantRate },
+    { preferredRate: tenantRate, discountBase: LEGACY_DISCOUNT_BASE },
   );
   const fill = inferred?.verified ? inferred.rate : 0;
   return items.map((it, i) => {

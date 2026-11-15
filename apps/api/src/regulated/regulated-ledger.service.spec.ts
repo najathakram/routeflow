@@ -19,6 +19,7 @@ describe("RegulatedLedgerService", () => {
   describe("writeSaleEntries", () => {
     it("writes a SALE row per REGULATED line, skips standard lines, buckets by month", async () => {
       await service.writeSaleEntries({
+        lockedPeriod: "REFUSE",
         tenantId: "t1",
         orderId: "ord-1",
         invoiceId: "inv-1",
@@ -60,6 +61,7 @@ describe("RegulatedLedgerService", () => {
 
     it("RF-3: passes trackedSubcategoryId through onto the SALE row (null when absent)", async () => {
       await service.writeSaleEntries({
+        lockedPeriod: "REFUSE",
         tenantId: "t1",
         orderId: "ord-1",
         invoiceId: "inv-1",
@@ -94,6 +96,7 @@ describe("RegulatedLedgerService", () => {
 
     it("no-ops with no regulated lines and for a null tenant", async () => {
       await service.writeSaleEntries({
+        lockedPeriod: "REFUSE",
         tenantId: "t1",
         orderId: null,
         invoiceId: "inv-1",
@@ -111,6 +114,7 @@ describe("RegulatedLedgerService", () => {
         db: prisma,
       });
       await service.writeSaleEntries({
+        lockedPeriod: "REFUSE",
         tenantId: null,
         orderId: null,
         invoiceId: "inv-1",
@@ -151,6 +155,7 @@ describe("RegulatedLedgerService", () => {
 
     it("(1) a 5 boxes × 12 split line books 60, not 300 — qty already stores pieces (OrderItem invariant), boxes/pieces are the entry-snapshot only", async () => {
       await service.writeSaleEntries({
+        lockedPeriod: "REFUSE",
         tenantId: "t1",
         orderId: "ord-1",
         invoiceId: "inv-1",
@@ -163,6 +168,7 @@ describe("RegulatedLedgerService", () => {
 
     it("(2) a Case line with unitLabel and qty 60 books 60, never 720", async () => {
       await service.writeSaleEntries({
+        lockedPeriod: "REFUSE",
         tenantId: "t1",
         orderId: "ord-1",
         invoiceId: "inv-1",
@@ -176,6 +182,7 @@ describe("RegulatedLedgerService", () => {
     it("(3) a box-unaware line of 5 with packAtSale 12 books 60, logs the warn reason, ledger qty stays 5", async () => {
       const warnSpy = jest.spyOn((service as any).logger, "warn").mockImplementation(() => {});
       await service.writeSaleEntries({
+        lockedPeriod: "REFUSE",
         tenantId: "t1",
         orderId: "ord-1",
         invoiceId: "inv-1",
@@ -191,6 +198,7 @@ describe("RegulatedLedgerService", () => {
 
     it("(4) a non-boxed line of 7 books 7 (no packAtSale, no split)", async () => {
       await service.writeSaleEntries({
+        lockedPeriod: "REFUSE",
         tenantId: "t1",
         orderId: "ord-1",
         invoiceId: "inv-1",
@@ -223,6 +231,7 @@ describe("RegulatedLedgerService", () => {
     it("(8) the reversal of a box-unaware line nets its SALE row's unitBasisQty to exactly zero", async () => {
       const warnSpy = jest.spyOn((service as any).logger, "warn").mockImplementation(() => {});
       await service.writeSaleEntries({
+        lockedPeriod: "REFUSE",
         tenantId: "t1",
         orderId: "ord-1",
         invoiceId: "inv-1",
@@ -250,6 +259,7 @@ describe("RegulatedLedgerService", () => {
     describe("(8b) reverseReturnEntries on a box-unaware line compares PIECES to PIECES", () => {
       const writeBoxUnawareSale = async () => {
         await service.writeSaleEntries({
+          lockedPeriod: "REFUSE",
           tenantId: "t1",
           orderId: "ord-1",
           invoiceId: "inv-1",
@@ -555,6 +565,7 @@ describe("RegulatedLedgerService", () => {
       expect(reverse[0]).toMatchObject({ qty: -10, netSales: -50 });
 
       await service.writeSaleEntries({
+        lockedPeriod: "REFUSE",
         tenantId: "t1",
         orderId: "ord-1",
         invoiceId: "inv-1",

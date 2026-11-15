@@ -154,11 +154,16 @@ function mount(path: string) {
   return { ...view, go };
 }
 
-/** POS-7: the REAL CounterSaleScreen under the REAL shell - a g shortcut with lines in the cart opens the same Discard dialog. */
+/**
+ * POS-7 (flipped by SA-1138 A1): the REAL CounterSaleScreen under the REAL shell. On the till a printable key typed while focus
+ * is not in a text field is a scan key, so a g from the page goes to the scan box and the shell's g shortcut never fires: no
+ * Discard dialog and no navigation (the sidebar and Ctrl/Cmd+K still reach every page).
+ */
 describe("g shortcut with the real counter screen", () => {
   const press = (...keys: string[]) => keys.forEach((key) => fireEvent.keyDown(window, { key }));
+  beforeEach(() => mockPush.mockClear());
 
-  it("scanning a line then pressing g c asks 'Discard this sale?' instead of leaving", async () => {
+  it("with lines in the cart, g c from the page goes to the scan box: no Discard dialog, no navigation", async () => {
     mount(COUNTER);
     const field = await screen.findByLabelText("Scan or search items");
     fireEvent.change(field, { target: { value: "COLA" } });
@@ -167,18 +172,56 @@ describe("g shortcut with the real counter screen", () => {
     await waitFor(() => expect(screen.getByText(/Cola/)).toBeInTheDocument());
     (document.activeElement as HTMLElement | null)?.blur();
     press("g", "c");
+    expect(field).toHaveFocus();
+    expect(screen.queryByText("Discard this sale?")).toBeNull();
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  /**
+   * SA-1138 Q3: the leave-with-lines coverage the g c flip gave up, re-homed on the path master still has: a sidebar link click
+   * with lines in the REAL screen's cart asks "Discard this sale?", and only Discard navigates.
+   */
+  it("with lines in the cart a sidebar link click asks 'Discard this sale?'; Discard leaves", async () => {
+    mount(COUNTER);
+    const field = await screen.findByLabelText("Scan or search items");
+    fireEvent.change(field, { target: { value: "COLA" } });
+    fireEvent.submit(field.closest("form")!);
+    await waitFor(() => expect((field as HTMLInputElement).value).toBe(""));
+    await waitFor(() => expect(screen.getByText(/Cola/)).toBeInTheDocument());
+    fireEvent.click(screen.getAllByTestId("sidebar-nav-link")[0]);
     expect(await screen.findByText("Discard this sale?")).toBeInTheDocument();
     expect(mockPush).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Discard" }));
-    expect(mockPush).toHaveBeenCalledWith("/customers");
+    expect(mockPush).toHaveBeenCalledTimes(1);
   });
 
-  it("with an empty cart g c leaves directly", async () => {
+  it("with an empty cart g c does not leave either", async () => {
     mount(COUNTER);
-    await screen.findByLabelText("Scan or search items");
+    const field = await screen.findByLabelText("Scan or search items");
+    (document.activeElement as HTMLElement | null)?.blur();
     press("g", "c");
-    expect(mockPush).toHaveBeenCalledWith("/customers");
+    expect(field).toHaveFocus();
+    expect(mockPush).not.toHaveBeenCalled();
     expect(screen.queryByText("Discard this sale?")).toBeNull();
+  });
+
+  /**
+   * SA-1138 Q3: leave-with-lines coverage that survives A1 (which turns g c on the till into a scan): a sidebar link click with
+   * lines in the REAL screen's cart asks "Discard this sale?", and only Discard navigates.
+   */
+  it("with lines in the cart a sidebar link click asks 'Discard this sale?'; Discard leaves", async () => {
+    mount(COUNTER);
+    const field = await screen.findByLabelText("Scan or search items");
+    fireEvent.change(field, { target: { value: "COLA" } });
+    fireEvent.submit(field.closest("form")!);
+    await waitFor(() => expect((field as HTMLInputElement).value).toBe(""));
+    await waitFor(() => expect(screen.getByText(/Cola/)).toBeInTheDocument());
+    mockPush.mockClear();
+    fireEvent.click(screen.getAllByTestId("sidebar-nav-link")[0]);
+    expect(await screen.findByText("Discard this sale?")).toBeInTheDocument();
+    expect(mockPush).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(mockPush).toHaveBeenCalledTimes(1);
   });
 });
 

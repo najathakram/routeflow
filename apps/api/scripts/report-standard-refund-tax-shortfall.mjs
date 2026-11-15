@@ -36,6 +36,8 @@ import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  DISCOUNT_PRE_TAX_FROM,
+  discountTaxBaseOf,
   isNsfLine,
   refundableProductPoolShare,
   roundMoney,
@@ -77,7 +79,8 @@ WHERE r."kind" = 'STANDARD' AND r."status" = 'REFUNDED' AND r."refundedAt" IS NO
 ORDER BY r."refundedAt", r."id"`;
 const Q_RETURN_ITEMS = `SELECT "returnId", "productId", SUM("qty")::text AS "qty" FROM "ReturnItem"
 WHERE "returnId" = ANY($1::text[]) GROUP BY "returnId", "productId"`;
-const Q_INVOICES = `SELECT "id", "orderId", "taxAmount", "discount", "createdAt" FROM "Invoice"
+const Q_INVOICES = `SELECT "id", "orderId", "taxAmount", "discount", "createdAt",
+  (SELECT o."createdAt" FROM "Order" o WHERE o."id" = "Invoice"."orderId") AS "orderCreatedAt" FROM "Invoice"
 WHERE "orderId" = ANY($1::text[]) AND "status" NOT IN ('VOID', 'WRITTEN_OFF') ORDER BY "createdAt", "id"`;
 const Q_INVOICE_ITEMS = `SELECT "id", "invoiceId", "productId", "qty", "subtotal", "taxRate", "categoryTaxAmount",
   "systemKind", "description" FROM "InvoiceItem" WHERE "invoiceId" = ANY($1::text[]) ORDER BY "createdAt", "id"`;
@@ -171,6 +174,18 @@ export function priceReturn(ret, items, ctx) {
   };
 }
 
+/**
+ * The invoice's discount tax base (SA-1141 R3/R4/R8): its ORDER's createdAt against the one cutover constant (these invoices are
+ * order-linked), else its own. Dark (the constant is null) every invoice is LEGACY and no date is read.
+ */
+export function discountBaseOfInvoice(inv) {
+  if (DISCOUNT_PRE_TAX_FROM == null) return "LEGACY_POST_TAX";
+  return discountTaxBaseOf(
+    { createdAt: new Date(inv.orderCreatedAt ?? inv.createdAt) },
+    DISCOUNT_PRE_TAX_FROM,
+  );
+}
+
 /** Does the invoice's stored tax differ from the `sumInvoiceTotals` pools? A stored 0 is an exempt invoice: not counted. */
 export function taxDiffersFromPools(inv) {
   const stored = roundMoney(num(inv.taxAmount));
@@ -180,8 +195,9 @@ export function taxDiffersFromPools(inv) {
       subtotal: num(l.subtotal),
       taxRate: num(l.taxRate),
       categoryTaxAmount: num(l.categoryTaxAmount),
+      isNsf: isNsfLine(l),
     })),
-    { discount: num(inv.discount) },
+    { discount: num(inv.discount), discountBase: discountBaseOfInvoice(inv) },
   );
   return Math.abs(pools.tax - stored) > 0.005;
 }

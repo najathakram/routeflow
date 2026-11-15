@@ -16,7 +16,12 @@
  * exemption is read from the current customer: a duplicate is a new invoice). The tenant rate is read lazily, only on
  * the paths that need it, and is the `preferredRate` of the inference (it wins when it reproduces the stored tax).
  */
-import { isNsfLine, roundMoney, sameRateAtLegacyPrecision } from "@routeflow/pricing";
+import {
+  isNsfLine,
+  roundMoney,
+  sameRateAtLegacyPrecision,
+  type DiscountTaxBase,
+} from "@routeflow/pricing";
 import { inferredGoodsRateForCopy } from "./stored-tax-state";
 
 const EPS = 1e-9;
@@ -26,7 +31,14 @@ type SourceLine = { taxRate?: unknown; categoryTaxAmount?: unknown } & Record<st
 
 /** Stamps `copyLines[i].taxRate` (index-aligned with `fromLines`) per the rule above. */
 export async function retakeDuplicateTaxRates(
-  source: { subtotal: unknown; taxAmount: unknown; isTaxExempt: boolean },
+  // SA-1141 R5: `discount` + `discountBase` are the SOURCE's (its stored tax was levied on that base); the copy is a new document.
+  source: {
+    subtotal: unknown;
+    taxAmount: unknown;
+    discount?: unknown;
+    discountBase: DiscountTaxBase;
+    isTaxExempt: boolean;
+  },
   fromLines: ReadonlyArray<SourceLine>,
   copyLines: Array<{ taxRate: unknown }>,
   tenantFraction: () => Promise<number>,
@@ -35,8 +47,13 @@ export async function retakeDuplicateTaxRates(
   const goods = (i: number) => !isNsfLine(fromLines[i] as never);
   const infer = (preferredRate?: number) =>
     inferredGoodsRateForCopy(
-      { subtotal: source.subtotal, taxAmount: source.taxAmount, lines: fromLines },
-      { preferredRate },
+      {
+        subtotal: source.subtotal,
+        taxAmount: source.taxAmount,
+        discount: source.discount,
+        lines: fromLines,
+      },
+      { preferredRate, discountBase: source.discountBase },
     );
   const stampZero = (rate: number) =>
     fromLines.forEach((l, i) => {

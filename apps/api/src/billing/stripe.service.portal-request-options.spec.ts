@@ -3,6 +3,15 @@ import { StripeService } from "./stripe.service";
 // #2476 Opus MED fold: createBillingPortalSession forwards per-request options to stripe-node only
 // when a caller asks for them (the payment-failed email caps its call; the portal endpoint does not).
 describe("#2476 StripeService.createBillingPortalSession request options", () => {
+  const saved = process.env.WEB_URL;
+  beforeAll(() => {
+    process.env.WEB_URL = "https://app.test";
+  });
+  afterAll(() => {
+    if (saved === undefined) delete process.env.WEB_URL;
+    else process.env.WEB_URL = saved;
+  });
+
   function make() {
     const create = jest.fn(async () => ({ url: "https://billing.stripe.test/p/s" }));
     const svc = new StripeService({ get: () => undefined } as never);
@@ -24,7 +33,10 @@ describe("#2476 StripeService.createBillingPortalSession request options", () =>
 
   it("without options it passes none (Stripe's defaults)", async () => {
     const { svc, create } = make();
-    await svc.createBillingPortalSession({ customerId: "cus_1", returnUrl: "https://app.test/x" });
+    await svc.createBillingPortalSession({
+      customerId: "cus_1",
+      returnUrl: "https://app.test/settings/billing",
+    });
     expect((create.mock.calls[0] as unknown[])[1]).toBeUndefined();
   });
 });

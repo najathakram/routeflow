@@ -40,23 +40,14 @@ function failureCopy(e: unknown, prefix: string): string {
  *  - prefix -> the INVOICE numbering sequence (`PUT /import/numbering/INVOICE`), behind a server
  *    preview of the next number the new prefix would mint and an explicit confirm; the save
  *    carries the preview's `expectedNextNumber` so a sequence that moved meanwhile is refused;
- *  - payment due days -> the `invoice.defaultTerms` setting (`PATCH /settings/invoice`).
+ *  (Payment terms are NOT here: the one control is in the "Default invoice terms" card, UX guide B9.)
  * Nothing here PATCHes `/settings` any more (the api now 400s `invoicePrefix`/`paymentDueDays`).
  */
-export function InvoiceNumberingCard({
-  terms,
-  onTermsChange,
-  termsDisabled = false,
-}: {
-  /** The ONE payment-terms value, shared with the "Payment Terms" select (saved by the parent). */
-  terms: string;
-  onTermsChange: (value: string) => void;
-  termsDisabled?: boolean;
-}) {
+export function InvoiceNumberingCard() {
   const { toast } = useToast();
   const qc = useQueryClient();
   // The whole /import/numbering controller is admin-only (GET included): an operator never requests
-  // it, never sees the prefix field, and keeps the payment-terms select.
+  // it, never sees the prefix field.
   const isAdmin = isAccountAdmin(useAuth().user);
   const { data: numbering } = useQuery<NumberingSetting[]>({
     queryKey: NUMBERING_QUERY_KEY,
@@ -190,27 +181,6 @@ export function InvoiceNumberingCard({
             ) : null}
           </div>
         )}
-        <div>
-          <label htmlFor="invoice-due-days" className="mb-1.5 block text-sm font-medium text-navy">
-            Payment due days
-          </label>
-          <select
-            id="invoice-due-days"
-            value={terms}
-            onChange={(e) => onTermsChange(e.target.value)}
-            disabled={termsDisabled}
-            className={inputClass}
-          >
-            {INVOICE_TERMS_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-          <p className="mt-1 text-xs text-navy/70">
-            Default days until payment is due (Due on Receipt = 0).
-          </p>
-        </div>
       </div>
       {isAdmin && (
         <div className="mt-4 flex justify-end">

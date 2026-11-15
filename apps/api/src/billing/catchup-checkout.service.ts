@@ -8,6 +8,11 @@ import {
 import { fromCents, toCents } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { addonCatalogInvalidException } from "./addon-catalog-invalid";
+import {
+  API_BILLING_CANCEL_PATH,
+  API_BILLING_RETURN_PATHS,
+  billingReturnUrl,
+} from "./billing-return-paths";
 import { ADMIN_AUDIT_ENTITY } from "../platform-admin/audit-actions.constant";
 import { PrismaService } from "../prisma/prisma.service";
 import { billableAddonWhere } from "./addon-row";
@@ -29,7 +34,13 @@ import {
 import { planRefusalException, refusalCodesOf } from "./catchup-refusal";
 import { buildCatchupSessionParams } from "./catchup-session-params";
 import { PlatformPricingService } from "./platform-pricing.service";
-import { withCheckoutPolicy } from "./checkout-session-params";
+import {
+  assertCheckoutSurface,
+  checkoutStartFromSession,
+  withCheckoutPolicy,
+  type CheckoutSurface,
+} from "./checkout-session-params";
+import type { CheckoutStart } from "@routeflow/types";
 import { StripeService } from "./stripe.service";
 import { webBaseUrl } from "../config/web-base-url";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
@@ -358,12 +369,20 @@ export class CatchupCheckoutService {
    */
   async open(
     tenantId: string,
-    opts: { expectedStubCents: number; now?: Date; successPath?: string; cancelPath?: string },
-  ): Promise<{ checkoutUrl: string; sessionId: string; stubCents: number; shape: string }> {
+    opts: {
+      expectedStubCents: number;
+      now?: Date;
+      successPath?: string;
+      cancelPath?: string;
+      /** SA-1139: REQUIRED, never defaulted. ADMIN_LINK (back office) is always hosted; TENANT_SELF follows BILLING_CHECKOUT_UI. */
+      surface: CheckoutSurface;
+    },
+  ): Promise<CheckoutStart & { stubCents: number; shape: string }> {
+    assertCheckoutSurface(opts?.surface); // before anything is claimed or created
     const now = opts.now ?? new Date();
     // validated before anything is claimed or created
-    const successPath = safePath(opts.successPath, "/settings/billing?checkout=success");
-    const cancelPath = safePath(opts.cancelPath, "/settings/billing?checkout=cancelled");
+    const successPath = safePath(opts.successPath, API_BILLING_RETURN_PATHS.plan);
+    const cancelPath = safePath(opts.cancelPath, API_BILLING_CANCEL_PATH);
     if (!this.stripe.isConfigured) {
       throw new ServiceUnavailableException("Stripe is not configured.");
     }
@@ -401,7 +420,8 @@ export class CatchupCheckoutService {
     if (opts.expectedStubCents !== plan.stub.totalCents) throw changed();
 
     await this.claim.openClaim(tenantId); // under the Tenant lock, BEFORE any Stripe call
-    let session: { id: string; url: string };
+    let session: Parameters<typeof checkoutStartFromSession>[0];
+    let start: CheckoutStart;
     try {
       // Opus SHOULD-FIX 3: the plan above was read BEFORE the claim. Staff may have recorded a cheque in between
       // (the claim now blocks that, but not what already happened): re-plan under the claim and compare. A change
@@ -450,13 +470,18 @@ export class CatchupCheckoutService {
         addonSkus: addonLines.skus,
         plan: fresh.plan,
         now,
-        // PATHS ("/settings/billing?..."), joined to the one web base (webBaseUrl) here
-        successUrl: `${base}${successPath}`,
-        cancelUrl: `${base}${cancelPath}`,
+        // PATHS (billing-return-paths.ts), joined to the one web base (webBaseUrl) by the one helper
+        successUrl: billingReturnUrl(base, successPath),
+        cancelUrl: billingReturnUrl(base, cancelPath),
       });
-      session = await this.stripe.client.checkout.sessions.create(withCheckoutPolicy(params), {
-        idempotencyKey: `${tenantId}:catchup-session:${plan.paidThrough.getTime()}:${now.getTime()}`,
-      });
+      session = await this.stripe.client.checkout.sessions.create(
+        withCheckoutPolicy(params, { surface: opts.surface }),
+        {
+          idempotencyKey: `${tenantId}:catchup-session:${plan.paidThrough.getTime()}:${now.getTime()}`,
+        },
+      );
+      // inside the try: a session that cannot be handed back (no url / no secret) drops the claim like a failed create
+      start = checkoutStartFromSession(session);
     } catch (err) {
       await this.claim
         .abortClaim(tenantId)
@@ -476,8 +501,7 @@ export class CatchupCheckoutService {
       `Catch-up checkout ${session.id} created for tenant ${tenantId} (shape ${plan.shape}, stub ${plan.stub.totalCents} cents)`,
     );
     return {
-      checkoutUrl: session.url,
-      sessionId: session.id,
+      ...start,
       stubCents: plan.stub.totalCents,
       shape: plan.shape,
     };

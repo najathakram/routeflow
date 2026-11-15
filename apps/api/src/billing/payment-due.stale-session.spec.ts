@@ -149,7 +149,7 @@ describe("542d R1: the Oct 29 card-add session, clicked at D + 1 s", () => {
     });
     // created at A - 73 h: the $0 trial-shape card add, catchup_to = Nov 1
     const first = await t.svc.pay("t1", BEFORE_D, CARD_QUOTE);
-    const oldId = goLive(t, BEFORE_D, first.checkoutUrl);
+    const oldId = goLive(t, BEFORE_D, first.checkoutUrl as string);
     expect(createCalls(t)[0][0].metadata).toMatchObject({
       catchup_stub_cents: "0",
       catchup_shape: "trial",
@@ -162,7 +162,7 @@ describe("542d R1: the Oct 29 card-add session, clicked at D + 1 s", () => {
     const out = await t.svc.pay("t1", AFTER_D, quoteOf(fresh));
 
     // never the old session's url
-    expect(out.checkoutUrl).not.toBe(first.checkoutUrl);
+    expect(out.checkoutUrl).not.toBe(first.checkoutUrl as string);
     expect(createCalls(t)).toHaveLength(2);
     expect(expireCalls(t)).toEqual([`expireCheckoutSession:${oldId}`]);
     // order: create(old) ... expire(old) -> release(old) -> create(new)
@@ -197,7 +197,7 @@ describe("542d R2: an open 'Pay $X' session whose figure no longer matches", () 
   it("is expired and replaced by ONE session at the fresh price", async () => {
     const t = make([OCT_OPEN]);
     const first = await t.svc.pay("t1", NOW);
-    const oldId = goLive(t, NOW, first.checkoutUrl);
+    const oldId = goLive(t, NOW, first.checkoutUrl as string);
     expect(createCalls(t)[0][0].metadata.catchup_stub_cents).toBe("31000");
 
     t.setPrice(400); // the tenant's price changed after the session was opened
@@ -205,7 +205,7 @@ describe("542d R2: an open 'Pay $X' session whose figure no longer matches", () 
     expect(fresh.amountCents).toBe(40000);
     const out = await t.svc.pay("t1", NOW, quoteOf(fresh));
 
-    expect(out.checkoutUrl).not.toBe(first.checkoutUrl);
+    expect(out.checkoutUrl).not.toBe(first.checkoutUrl as string);
     expect(expireCalls(t)).toEqual([`expireCheckoutSession:${oldId}`]);
     expect(createCalls(t)).toHaveLength(2);
     expect(createCalls(t)[1][0].metadata.catchup_stub_cents).toBe("40000");
@@ -217,7 +217,7 @@ describe("542d R3: a session whose terms still match is reused untouched", () =>
   it("card add: no expire, no release, no second create", async () => {
     const t = make([OCT_PAID]);
     const first = await t.svc.pay("t1", BEFORE_D, CARD_QUOTE);
-    goLive(t, BEFORE_D, first.checkoutUrl);
+    goLive(t, BEFORE_D, first.checkoutUrl as string);
     expect(await t.svc.pay("t1", BEFORE_D, CARD_QUOTE)).toEqual(first);
     expect(createCalls(t)).toHaveLength(1);
     expect(expireCalls(t)).toEqual([]);
@@ -227,7 +227,7 @@ describe("542d R3: a session whose terms still match is reused untouched", () =>
   it("stub bill: no expire, no release, no second create", async () => {
     const t = make([OCT_OPEN]);
     const first = await t.svc.pay("t1", NOW);
-    goLive(t, NOW, first.checkoutUrl);
+    goLive(t, NOW, first.checkoutUrl as string);
     expect(await t.svc.pay("t1", NOW)).toEqual(first);
     expect(createCalls(t)).toHaveLength(1);
     expect(expireCalls(t)).toEqual([]);
@@ -239,7 +239,7 @@ describe("542d R4: the old session completes first -> the claim's refusal, never
   it("the expire is rejected (paid in the gap), the re-read says complete: AWAITING_FIRST_PAYMENT, claim untouched", async () => {
     const t = make();
     const first = await t.svc.pay("t1", BEFORE_D, CARD_QUOTE);
-    const oldId = goLive(t, BEFORE_D, first.checkoutUrl);
+    const oldId = goLive(t, BEFORE_D, first.checkoutUrl as string);
     // the admin pays the OLD session in the gap between our read and our expire
     (t.stripe.expireCheckoutSession as jest.Mock).mockImplementationOnce(async () => {
       t.stripe.calls.push(`expireCheckoutSession:${oldId}`);
@@ -260,7 +260,7 @@ describe("542d R5: a mismatch whose expiry Stripe cannot confirm is a 503, nothi
   it("the expire fails on the network and the re-read still says open", async () => {
     const t = make();
     const first = await t.svc.pay("t1", BEFORE_D, CARD_QUOTE);
-    const oldId = goLive(t, BEFORE_D, first.checkoutUrl);
+    const oldId = goLive(t, BEFORE_D, first.checkoutUrl as string);
     (t.stripe.expireCheckoutSession as jest.Mock).mockRejectedValueOnce(new Error("ECONNRESET"));
     const fresh = await t.svc.get("t1", AFTER_D);
     await expect(t.svc.pay("t1", AFTER_D, quoteOf(fresh))).rejects.toMatchObject({
@@ -276,7 +276,7 @@ describe("542d R6: a live session with no readable terms is unknown, never guess
   it("503 PAYMENT_STATE_UNKNOWN, Stripe not told to expire, claim and session untouched", async () => {
     const t = make();
     const first = await t.svc.pay("t1", BEFORE_D, CARD_QUOTE);
-    const oldId = goLive(t, BEFORE_D, first.checkoutUrl);
+    const oldId = goLive(t, BEFORE_D, first.checkoutUrl as string);
     (t.stripe as any).sessions[oldId].metadata = { tenantId: "t1", catchup: "prepaid" };
     await expect(t.svc.pay("t1", BEFORE_D, CARD_QUOTE)).rejects.toMatchObject({
       response: { code: API_ERROR_CODES.PAYMENT_STATE_UNKNOWN },
@@ -301,7 +301,7 @@ describe("542d nit 1 (SA-800c): the session reuse check signs EVERY term (price,
   it("(a) a $310 card add, then the operator sets $100: the unchanged banner no longer reuses it; ONE new session at the $100 recurring", async () => {
     const t = make();
     const first = await t.svc.pay("t1", BEFORE_D, CARD_QUOTE);
-    const oldId = goLive(t, BEFORE_D, first.checkoutUrl);
+    const oldId = goLive(t, BEFORE_D, first.checkoutUrl as string);
     expect(createCalls(t)[0][0].line_items[0].price_data.unit_amount).toBe(31000);
 
     t.setPrice(100);
@@ -309,7 +309,7 @@ describe("542d nit 1 (SA-800c): the session reuse check signs EVERY term (price,
     expect(await t.svc.get("t1", BEFORE_D)).toMatchObject({ cardNeeded: true, cardBy: OCT_29 });
     const out = await t.svc.pay("t1", BEFORE_D, CARD_QUOTE);
 
-    expect(out.checkoutUrl).not.toBe(first.checkoutUrl);
+    expect(out.checkoutUrl).not.toBe(first.checkoutUrl as string);
     expect(expireCalls(t)).toEqual([`expireCheckoutSession:${oldId}`]);
     expect(createCalls(t)).toHaveLength(2);
     const params = createCalls(t)[1][0];
@@ -326,12 +326,12 @@ describe("542d nit 1 (SA-800c): the session reuse check signs EVERY term (price,
     const shown = await t.svc.get("t1", NOW);
     expect(shown).toMatchObject({ due: false, cardNeeded: true });
     const first = await t.svc.pay("t1", NOW, quoteOf(shown));
-    const oldId = goLive(t, NOW, first.checkoutUrl);
+    const oldId = goLive(t, NOW, first.checkoutUrl as string);
     expect(createCalls(t)[0][0].metadata.catchup_forgiven_cents).toBe("10");
 
     t.setPrice(0.2);
     const out = await t.svc.pay("t1", NOW, quoteOf(await t.svc.get("t1", NOW)));
-    expect(out.checkoutUrl).not.toBe(first.checkoutUrl);
+    expect(out.checkoutUrl).not.toBe(first.checkoutUrl as string);
     expect(expireCalls(t)).toEqual([`expireCheckoutSession:${oldId}`]);
     expect(createCalls(t)).toHaveLength(2);
     expect(createCalls(t)[1][0].metadata.catchup_forgiven_cents).toBe("20");
@@ -344,13 +344,13 @@ describe("542d nit 1 (SA-800c): the session reuse check signs EVERY term (price,
     const t = make();
     if (startWithAddon) t.setAddons([ADDON_LINE], ["scan"]);
     const first = await t.svc.pay("t1", BEFORE_D, CARD_QUOTE);
-    const oldId = goLive(t, BEFORE_D, first.checkoutUrl);
+    const oldId = goLive(t, BEFORE_D, first.checkoutUrl as string);
 
     if (startWithAddon) t.setAddons([], []);
     else t.setAddons([ADDON_LINE], ["scan"]);
     const out = await t.svc.pay("t1", BEFORE_D, CARD_QUOTE);
 
-    expect(out.checkoutUrl).not.toBe(first.checkoutUrl);
+    expect(out.checkoutUrl).not.toBe(first.checkoutUrl as string);
     expect(expireCalls(t)).toEqual([`expireCheckoutSession:${oldId}`]);
     expect(createCalls(t)).toHaveLength(2);
     const lines = createCalls(t)[1][0].line_items;
@@ -360,10 +360,10 @@ describe("542d nit 1 (SA-800c): the session reuse check signs EVERY term (price,
   it("(f, C1) a live session with NO signature (created before it existed) is never reused: Stripe-confirmed expire, release, ONE new SIGNED session", async () => {
     const t = make();
     const first = await t.svc.pay("t1", BEFORE_D, CARD_QUOTE);
-    const oldId = goLive(t, BEFORE_D, first.checkoutUrl);
+    const oldId = goLive(t, BEFORE_D, first.checkoutUrl as string);
     delete (t.stripe as any).sessions[oldId].metadata.catchup_terms_sig;
     const out = await t.svc.pay("t1", BEFORE_D, CARD_QUOTE);
-    expect(out.checkoutUrl).not.toBe(first.checkoutUrl);
+    expect(out.checkoutUrl).not.toBe(first.checkoutUrl as string);
     expect(expireCalls(t)).toEqual([`expireCheckoutSession:${oldId}`]);
     expect((t.stripe as any).sessions[oldId].status).toBe("expired");
     expect(createCalls(t)).toHaveLength(2);
@@ -375,18 +375,18 @@ describe("542d nit 1 (SA-800c): the session reuse check signs EVERY term (price,
   it("(SA-800d a) an unsigned session open BEFORE the deploy is expired and a SIGNED one created; the NEXT click reuses that one (no second expire)", async () => {
     const t = make();
     const first = await t.svc.pay("t1", BEFORE_D, CARD_QUOTE);
-    const oldId = goLive(t, BEFORE_D, first.checkoutUrl);
+    const oldId = goLive(t, BEFORE_D, first.checkoutUrl as string);
     const old = (t.stripe as any).sessions[oldId];
     delete old.metadata.catchup_terms_sig;
     old.created = Math.floor(Date.parse("2026-10-16T00:00:00Z") / 1000); // before SIGNING_SINCE
 
     const second = await t.svc.pay("t1", BEFORE_D, CARD_QUOTE);
-    expect(second.checkoutUrl).not.toBe(first.checkoutUrl);
+    expect(second.checkoutUrl).not.toBe(first.checkoutUrl as string);
     expect(expireCalls(t)).toEqual([`expireCheckoutSession:${oldId}`]);
     expect(createCalls(t)).toHaveLength(2);
     expect(createCalls(t)[1][0].metadata.catchup_terms_sig).toMatch(/^[0-9a-f]{64}$/);
 
-    goLive(t, BEFORE_D, second.checkoutUrl);
+    goLive(t, BEFORE_D, second.checkoutUrl as string);
     expect(await t.svc.pay("t1", BEFORE_D, CARD_QUOTE)).toEqual(second);
     expect(expireCalls(t)).toHaveLength(1); // no second expire
     expect(createCalls(t)).toHaveLength(2);
@@ -395,7 +395,7 @@ describe("542d nit 1 (SA-800c): the session reuse check signs EVERY term (price,
   it("(SA-800d b) an unsigned session that has already COMPLETED: AWAITING_FIRST_PAYMENT, no expire, no release, no second session", async () => {
     const t = make();
     const first = await t.svc.pay("t1", BEFORE_D, CARD_QUOTE);
-    const oldId = goLive(t, BEFORE_D, first.checkoutUrl);
+    const oldId = goLive(t, BEFORE_D, first.checkoutUrl as string);
     const old = (t.stripe as any).sessions[oldId];
     delete old.metadata.catchup_terms_sig;
     old.status = "complete";
@@ -412,7 +412,7 @@ describe("542d nit 1 (SA-800c): the session reuse check signs EVERY term (price,
   it("(SA-800d b) an unsigned session paid in the gap (the expire is refused as complete): AWAITING_FIRST_PAYMENT, no release, no second session", async () => {
     const t = make();
     const first = await t.svc.pay("t1", BEFORE_D, CARD_QUOTE);
-    const oldId = goLive(t, BEFORE_D, first.checkoutUrl);
+    const oldId = goLive(t, BEFORE_D, first.checkoutUrl as string);
     delete (t.stripe as any).sessions[oldId].metadata.catchup_terms_sig;
     (t.stripe.expireCheckoutSession as jest.Mock).mockImplementationOnce(async () => {
       t.stripe.calls.push(`expireCheckoutSession:${oldId}`);
@@ -431,11 +431,11 @@ describe("542d nit 1 (SA-800c): the session reuse check signs EVERY term (price,
   it("(SA-800d d / N5) a plan KEY change at the same name and price recreates the session", async () => {
     const t = make();
     const first = await t.svc.pay("t1", BEFORE_D, CARD_QUOTE);
-    const oldId = goLive(t, BEFORE_D, first.checkoutUrl);
+    const oldId = goLive(t, BEFORE_D, first.checkoutUrl as string);
     expect(createCalls(t)[0][0].metadata.planKey).toBe("GROWTH");
     t.setPlanKey("PRO");
     const out = await t.svc.pay("t1", BEFORE_D, CARD_QUOTE);
-    expect(out.checkoutUrl).not.toBe(first.checkoutUrl);
+    expect(out.checkoutUrl).not.toBe(first.checkoutUrl as string);
     expect(expireCalls(t)).toEqual([`expireCheckoutSession:${oldId}`]);
     expect(createCalls(t)).toHaveLength(2);
     expect(createCalls(t)[1][0].metadata.planKey).toBe("PRO");
@@ -445,7 +445,7 @@ describe("542d nit 1 (SA-800c): the session reuse check signs EVERY term (price,
   it("(f, C1) a MALFORMED signature is unknown: 503, Stripe not told to expire, claim untouched", async () => {
     const t = make();
     const first = await t.svc.pay("t1", BEFORE_D, CARD_QUOTE);
-    const oldId = goLive(t, BEFORE_D, first.checkoutUrl);
+    const oldId = goLive(t, BEFORE_D, first.checkoutUrl as string);
     (t.stripe as any).sessions[oldId].metadata.catchup_terms_sig = "not-a-hash";
     await expect(t.svc.pay("t1", BEFORE_D, CARD_QUOTE)).rejects.toMatchObject({
       response: { code: API_ERROR_CODES.PAYMENT_STATE_UNKNOWN },
@@ -464,7 +464,7 @@ describe("542d nit 1 (SA-800c): the session reuse check signs EVERY term (price,
     async (_n, invoices, at, quote) => {
       const t = make([...invoices]);
       const first = await t.svc.pay("t1", at, quote);
-      goLive(t, at, first.checkoutUrl);
+      goLive(t, at, first.checkoutUrl as string);
       const later = new Date(at.getTime() + 20 * HOUR);
       // the banner has not changed; only `now` moved, and the expected side must not depend on it
       expect(await t.svc.pay("t1", later, quote)).toEqual(first);
@@ -478,7 +478,7 @@ describe("542d nit 1 (SA-800c): the session reuse check signs EVERY term (price,
     const t = make();
     t.setAddons([ADDON_LINE], ["scan"]);
     const first = await t.svc.pay("t1", BEFORE_D, CARD_QUOTE);
-    goLive(t, BEFORE_D, first.checkoutUrl);
+    goLive(t, BEFORE_D, first.checkoutUrl as string);
     expect(await t.svc.pay("t1", BEFORE_D, CARD_QUOTE)).toEqual(first);
     expect(expireCalls(t)).toEqual([]);
     expect(createCalls(t)).toHaveLength(1);
@@ -517,13 +517,13 @@ describe("542d nit 2: the lost-race path never expires a FRESHER winner", () => 
     jest.spyOn(t.catchup, "open").mockImplementationOnce(async (...args: any[]) => {
       // click B (after D) wins the claim between A's read and A's create
       const b = await t.svc.pay("t1", AFTER_D, quoteOf(await t.svc.get("t1", AFTER_D)));
-      bUrl = b.checkoutUrl;
+      bUrl = b.checkoutUrl as string;
       goLive(t, AFTER_D, bUrl);
       return (realOpen as any)(...args); // A's create now loses to the held claim
     });
     clockAt(AFTER_D); // the re-plan inside A's race path reads the wall clock
     const out = await t.svc.pay("t1", BEFORE_D, CARD_QUOTE);
-    expect(out).toEqual({ checkoutUrl: bUrl });
+    expect(out).toMatchObject({ uiMode: "hosted", checkoutUrl: bUrl, clientSecret: null });
     expect(createCalls(t)).toHaveLength(1); // B's session only
     expect(expireCalls(t)).toEqual([]);
     expect(t.db.subs[0].catchupState).toBe("SESSION_OPEN");
@@ -545,13 +545,13 @@ describe("billing-return-url: a session created before the web base was fixed", 
     delete process.env.FRONTEND_URL; // the misconfigured prod: the session is built on the localhost default
     const t = make([OCT_OPEN]);
     const first = await t.svc.pay("t1", NOW);
-    const oldId = goLive(t, NOW, first.checkoutUrl);
+    const oldId = goLive(t, NOW, first.checkoutUrl as string);
     expect(createCalls(t)[0][0].success_url).toMatch(/^http:\/\/localhost:3001\//);
 
     process.env.WEB_URL = "https://www.routeflow.test"; // the deploy that fixes it
     const out = await t.svc.pay("t1", NOW);
 
-    expect(out.checkoutUrl).not.toBe(first.checkoutUrl);
+    expect(out.checkoutUrl).not.toBe(first.checkoutUrl as string);
     expect(expireCalls(t)).toEqual([`expireCheckoutSession:${oldId}`]);
     expect(createCalls(t)).toHaveLength(2);
     expect(createCalls(t)[1][0].success_url).toBe(
@@ -568,9 +568,9 @@ describe("billing-return-url: a session created before the web base was fixed", 
     process.env.WEB_URL = "https://www.routeflow.test";
     const t = make([OCT_OPEN]);
     const first = await t.svc.pay("t1", NOW);
-    goLive(t, NOW, first.checkoutUrl);
+    goLive(t, NOW, first.checkoutUrl as string);
     const again = await t.svc.pay("t1", NOW);
-    expect(again.checkoutUrl).toBe(first.checkoutUrl);
+    expect(again.checkoutUrl).toBe(first.checkoutUrl as string);
     expect(expireCalls(t)).toEqual([]);
     expect(createCalls(t)).toHaveLength(1);
   });
@@ -580,7 +580,7 @@ describe("billing-return-url: a session created before the web base was fixed", 
     delete process.env.FRONTEND_URL;
     const t = make([OCT_OPEN]);
     const first = await t.svc.pay("t1", NOW);
-    const oldId = goLive(t, NOW, first.checkoutUrl);
+    const oldId = goLive(t, NOW, first.checkoutUrl as string);
     (t.stripe as any).sessions[oldId].status = "complete"; // paid in the gap
     process.env.WEB_URL = "https://www.routeflow.test";
     await expect(t.svc.pay("t1", NOW)).rejects.toMatchObject({

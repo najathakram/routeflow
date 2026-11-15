@@ -78,6 +78,8 @@ export function displayLineStatus(
   const delivered = Number(li.deliveredQty ?? 0);
   if (delivered > 0) return delivered + 1e-6 >= Number(li.qty) ? "DELIVERED" : "PARTIAL";
   if (orderStatus === "DELIVERED") return "DELIVERED";
+  // UX guide B20 (mirrors web): on the road, a line with no outcome yet is out for delivery, not Pending.
+  if (orderStatus === "OUT_FOR_DELIVERY") return "OUT_FOR_DELIVERY";
   return li.status;
 }
 

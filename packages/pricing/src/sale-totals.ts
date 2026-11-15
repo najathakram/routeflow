@@ -1,4 +1,5 @@
 import { computeCategoryTax, type CategoryTaxType } from "./pricing";
+import { assertDiscountTaxBase, type DiscountTaxBase } from "./discount-tax-base";
 import { regulatedUnitBasis } from "./regulated-unit-basis";
 import { chargeLinesOf, type ChargeLine } from "./charge-lines";
 import {
@@ -44,6 +45,7 @@ export interface SaleTotalsOptions {
   isTaxExempt?: boolean | null;
   discount?: number | null;
   shipping?: number | null;
+  discountBase: DiscountTaxBase;
 }
 
 export interface SaleTotals extends SummedInvoiceTotals {
@@ -55,10 +57,8 @@ export interface SaleTotals extends SummedInvoiceTotals {
   chargeLines: ChargeLine[];
 }
 
-export function saleTotals(
-  lines: readonly SaleTotalsLine[],
-  opts: SaleTotalsOptions = {},
-): SaleTotals {
+export function saleTotals(lines: readonly SaleTotalsLine[], opts: SaleTotalsOptions): SaleTotals {
+  assertDiscountTaxBase(opts?.discountBase);
   const exempt = opts.isTaxExempt === true;
   const rate = Number(opts.taxRate ?? 0) || 0;
   const lineTotals = lines.map((l) =>
@@ -91,7 +91,12 @@ export function saleTotals(
       taxRate: rate,
       categoryTaxAmount: lineCategoryTax[i],
     })),
-    { discount: opts.discount, shipping: opts.shipping, isTaxExempt: exempt },
+    {
+      discount: opts.discount,
+      shipping: opts.shipping,
+      isTaxExempt: exempt,
+      discountBase: opts.discountBase,
+    },
   );
   const chargeLines = chargeLinesOf(
     lines.map((l, i) => ({

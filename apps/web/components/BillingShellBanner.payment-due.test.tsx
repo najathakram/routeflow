@@ -85,6 +85,15 @@ describe("BillingShellBanner - payment due slot", () => {
     expect(screen.queryByTestId("payment-due-banner")).toBeNull();
   });
 
+  it("?checkout=success (SA-1139) suppresses the banner exactly like ?paid=1", () => {
+    mockDue = DUE;
+    mockQuery = "checkout=success";
+    renderWithProviders(
+      <BillingShellBanner scope="acme" view={healthy()} userRole="TENANT_ADMIN" />,
+    );
+    expect(screen.queryByTestId("payment-due-banner")).toBeNull();
+  });
+
   it("without ?paid=1 the same read shows the banner", () => {
     mockDue = DUE;
     mockQuery = "other=1";

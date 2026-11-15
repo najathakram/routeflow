@@ -58,6 +58,7 @@ const STATUS_STEPS = [
   "PARTIALLY_DELIVERED",
   "DELIVERED",
 ];
+const PARTIAL_STEP = STATUS_STEPS.indexOf("PARTIALLY_DELIVERED");
 export function trackingStepIndex(status: string): number {
   return STATUS_STEPS.indexOf(status);
 }
@@ -105,4 +106,11 @@ export function trackingRefetchInterval(
   if (isTerminalOrderStatus(data.status)) return false;
   if (data.tracking?.runStatus === "IN_PROGRESS") return 20_000;
   return false;
+}
+
+/** Whether step `idx` of the 5-step tracking bar reads done for an order at `status`. */
+export function trackingStepDone(status: string, idx: number): boolean {
+  // The Partial step (3) is done only for a partially delivered order; DELIVERED skips over it.
+  if (idx === PARTIAL_STEP && status !== "PARTIALLY_DELIVERED") return false;
+  return trackingStepIndex(status) >= idx;
 }

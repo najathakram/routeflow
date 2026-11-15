@@ -112,7 +112,10 @@ function make(
   const catchup = {
     plan: jest.fn().mockResolvedValue(o.report ?? report()),
     open: jest.fn().mockResolvedValue({
+      uiMode: "hosted",
       checkoutUrl: "https://checkout.stripe.test/new",
+      clientSecret: null,
+      returnPath: null,
       sessionId: "cs_new",
       stubCents: 31000,
       shape: "trial_one_time",
@@ -265,7 +268,11 @@ describe("PaymentDueService.pay", () => {
     process.env.FRONTEND_URL = "https://app.test";
     const { svc, catchup } = make();
     const out = await svc.pay("t1", NOW);
-    expect(out).toEqual({ checkoutUrl: "https://checkout.stripe.test/new" });
+    expect(out).toMatchObject({
+      uiMode: "hosted",
+      checkoutUrl: "https://checkout.stripe.test/new",
+      clientSecret: null,
+    });
     expect(catchup.open).toHaveBeenCalledTimes(1);
     // PATHS: open() joins them to its one FRONTEND_URL base
     expect(catchup.open).toHaveBeenCalledWith("t1", {
@@ -273,7 +280,55 @@ describe("PaymentDueService.pay", () => {
       now: NOW,
       successPath: "/settings/billing?paid=1",
       cancelPath: "/settings/billing?checkout=cancelled",
+      surface: "TENANT_SELF",
     });
+  });
+
+  it("SA-1139 case 4: an embedded create is handed back as a client secret and no url (the secret is the create's own)", async () => {
+    const { svc, catchup } = make();
+    catchup.open.mockResolvedValue({
+      uiMode: "embedded",
+      sessionId: "cs_emb",
+      checkoutUrl: null,
+      clientSecret: "cs_emb_secret_test",
+      returnPath: "/settings/billing?paid=1",
+      stubCents: 31000,
+      shape: "trial_one_time",
+    });
+    const out = await svc.pay("t1", NOW);
+    // SA-1154: the opener hands the web exactly the start the session produced (path included), no more fields
+    expect(out).toEqual({
+      uiMode: "embedded",
+      sessionId: "cs_emb",
+      checkoutUrl: null,
+      clientSecret: "cs_emb_secret_test",
+      returnPath: "/settings/billing?paid=1",
+    });
+    expect(catchup.open).toHaveBeenCalledWith(
+      "t1",
+      expect.objectContaining({ surface: "TENANT_SELF" }),
+    );
+  });
+
+  it("SA-1139 R5: an open EMBEDDED session (no url) is never reused: it is expired, released and a fresh one is created", async () => {
+    const { svc, catchup, stripe, claim } = make({
+      sub: { catchupState: "SESSION_OPEN", catchupSessionId: "cs_emb_old" },
+      report: report({ eligible: false, ineligible: ["claim_held"] }),
+      session: {
+        id: "cs_emb_old",
+        status: "open",
+        url: null,
+        client_secret: "cs_emb_old_secret_test",
+        expires_at: Math.floor(NOW.getTime() / 1000) + 3600,
+        metadata: TERMS_META,
+      },
+      expired: { id: "cs_emb_old", status: "expired" },
+    });
+    const out = await svc.pay("t1", NOW);
+    expect(stripe.expireCheckoutSession).toHaveBeenCalledWith("cs_emb_old");
+    expect(claim.onSessionExpired).toHaveBeenCalledTimes(1);
+    expect(catchup.open).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(out)).not.toContain("cs_emb_old_secret_test");
   });
 
   it("REUSES an open, unexpired session: no second create", async () => {
@@ -289,7 +344,12 @@ describe("PaymentDueService.pay", () => {
       },
     });
     const out = await svc.pay("t1", NOW);
-    expect(out).toEqual({ checkoutUrl: "https://checkout.stripe.test/open" });
+    expect(out).toMatchObject({
+      uiMode: "hosted",
+      checkoutUrl: "https://checkout.stripe.test/open",
+      clientSecret: null,
+      returnPath: null, // O5: a reused session is hosted; Stripe's own success_url (chosen at its creation) returns
+    });
     expect(stripe.getCheckoutSession).toHaveBeenCalledWith("cs_open");
     expect(catchup.open).not.toHaveBeenCalled();
   });
@@ -364,7 +424,12 @@ describe("PaymentDueService.pay", () => {
       });
       h.catchup.open.mockImplementation(async () => {
         order.push("open");
-        return { checkoutUrl: "https://checkout.stripe.test/new" };
+        return {
+          uiMode: "hosted",
+          sessionId: "cs_new",
+          checkoutUrl: "https://checkout.stripe.test/new",
+          clientSecret: null,
+        };
       });
       await h.svc.pay("t1", NOW);
       expect(order).toEqual(["stripe.expire", "claim.release", "open"]);
@@ -432,7 +497,11 @@ describe("PaymentDueService.pay", () => {
         const expired = { id: "cs_old", status: "expired", url: null, metadata: META };
         const h = twoReads(expired);
         const out = await h.svc.pay("t1", NOW);
-        expect(out).toEqual({ checkoutUrl: "https://checkout.stripe.test/new" });
+        expect(out).toMatchObject({
+          uiMode: "hosted",
+          checkoutUrl: "https://checkout.stripe.test/new",
+          clientSecret: null,
+        });
         expect(h.claim.onSessionExpired).toHaveBeenCalledWith(expired);
         expect(h.catchup.open).toHaveBeenCalledTimes(1);
       });
@@ -471,7 +540,11 @@ describe("PaymentDueService.pay", () => {
     it("an open, unexpired session with a url is still reused as is (no expire)", async () => {
       const live = { ...staleOpen, expires_at: Math.floor(NOW.getTime() / 1000) + 600 };
       const h = make({ ...held, session: live });
-      expect(await h.svc.pay("t1", NOW)).toEqual({ checkoutUrl: live.url });
+      expect(await h.svc.pay("t1", NOW)).toMatchObject({
+        uiMode: "hosted",
+        checkoutUrl: live.url,
+        clientSecret: null,
+      });
       expect(h.stripe.expireCheckoutSession).not.toHaveBeenCalled();
       expect(h.catchup.open).not.toHaveBeenCalled();
     });
@@ -509,9 +582,77 @@ describe("PaymentDueService.pay", () => {
         .mockResolvedValue({ catchupState: "SESSION_OPEN", catchupSessionId: "cs_raced" });
       h.catchup.open.mockRejectedValueOnce(mk());
       const out = await h.svc.pay("t1", NOW);
-      expect(out).toEqual({ checkoutUrl: raced.url });
+      expect(out).toMatchObject({ uiMode: "hosted", checkoutUrl: raced.url, clientSecret: null });
       expect(h.catchup.open).toHaveBeenCalledTimes(1);
     });
+
+    it.each(lostRace)(
+      "SA-1139 review: %s: an EMBEDDED raced winner (no url) is 409 to the loser; the winner's fresh session is never expired or released",
+      async (_l, mk) => {
+        const embedded = {
+          ...raced,
+          url: null,
+          client_secret: "cs_raced_secret_test",
+        };
+        const h = make({ session: embedded });
+        h.prisma.tenantSubscription.findUnique
+          .mockResolvedValueOnce({ catchupState: null, catchupSessionId: null })
+          .mockResolvedValue({ catchupState: "SESSION_OPEN", catchupSessionId: "cs_raced" });
+        h.catchup.open.mockRejectedValueOnce(mk());
+        const err: any = await h.svc.pay("t1", NOW).catch((e) => e);
+        expect(err).toBeInstanceOf(ConflictException);
+        expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.CATCHUP_SESSION_OPEN });
+        expect(JSON.stringify(err.getResponse())).not.toContain("secret");
+        expect(h.stripe.expireCheckoutSession).not.toHaveBeenCalled();
+        expect(h.claim.onSessionExpired).not.toHaveBeenCalled();
+        expect(h.catchup.open).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it.each(lostRace)(
+      "SA-1139 review NIT: %s: a raced EMBEDDED session past its time is not protected, it falls through to expire",
+      async (_l, mk) => {
+        const past = {
+          ...raced,
+          url: null,
+          client_secret: "cs_raced_secret_test",
+          expires_at: Math.floor(NOW.getTime() / 1000) - 60,
+        };
+        const h = make({
+          session: past,
+          expired: { id: "cs_raced", status: "expired", url: null, metadata: TERMS_META },
+        });
+        h.prisma.tenantSubscription.findUnique
+          .mockResolvedValueOnce({ catchupState: null, catchupSessionId: null })
+          .mockResolvedValue({ catchupState: "SESSION_OPEN", catchupSessionId: "cs_raced" });
+        h.catchup.open.mockRejectedValueOnce(mk());
+        const out: any = await h.svc.pay("t1", NOW).catch((e) => e);
+        expect(out).not.toBeInstanceOf(ConflictException);
+        expect(h.stripe.expireCheckoutSession).toHaveBeenCalledWith("cs_raced");
+      },
+    );
+
+    it.each(lostRace)(
+      "SA-1139 review NIT: %s: a live raced EMBEDDED winner whose terms mismatch stays open and answers 409 CATCHUP_SESSION_OPEN",
+      async (_l, mk) => {
+        const stale = {
+          ...raced,
+          url: null,
+          client_secret: "cs_raced_secret_test",
+          metadata: TRIAL_TERMS_META, // not this plan's terms: a hosted winner would be re-planned and expired
+        };
+        const h = make({ session: stale });
+        h.prisma.tenantSubscription.findUnique
+          .mockResolvedValueOnce({ catchupState: null, catchupSessionId: null })
+          .mockResolvedValue({ catchupState: "SESSION_OPEN", catchupSessionId: "cs_raced" });
+        h.catchup.open.mockRejectedValueOnce(mk());
+        const err: any = await h.svc.pay("t1", NOW).catch((e) => e);
+        expect(err).toBeInstanceOf(ConflictException);
+        expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.CATCHUP_SESSION_OPEN });
+        expect(h.stripe.expireCheckoutSession).not.toHaveBeenCalled();
+        expect(h.claim.onSessionExpired).not.toHaveBeenCalled();
+      },
+    );
 
     it.each(lostRace)(
       "%s: a raced session that cannot be read is a retryable 503, never the operator wording",
@@ -660,13 +801,18 @@ describe("SA-801: PaymentDueService.pay for a card-needed tenant", () => {
   it("opens ONE session through the same open() with expectedStubCents 0 (nothing charged now)", async () => {
     const { svc, catchup } = make({ report: trialReport() });
     const out = await svc.pay("t1", NOW);
-    expect(out).toEqual({ checkoutUrl: "https://checkout.stripe.test/new" });
+    expect(out).toMatchObject({
+      uiMode: "hosted",
+      checkoutUrl: "https://checkout.stripe.test/new",
+      clientSecret: null,
+    });
     expect(catchup.open).toHaveBeenCalledTimes(1);
     expect(catchup.open).toHaveBeenCalledWith("t1", {
       expectedStubCents: 0,
       now: NOW,
       successPath: "/settings/billing?paid=1&card=1",
       cancelPath: "/settings/billing?checkout=cancelled",
+      surface: "TENANT_SELF",
     });
   });
 
@@ -681,6 +827,7 @@ describe("SA-801: PaymentDueService.pay for a card-needed tenant", () => {
       now: NOW,
       successPath: "/settings/billing?paid=1&card=1",
       cancelPath: "/settings/billing?checkout=cancelled",
+      surface: "TENANT_SELF",
     });
   });
 
@@ -705,7 +852,11 @@ describe("SA-801: PaymentDueService.pay for a card-needed tenant", () => {
         metadata: TRIAL_TERMS_META,
       },
     });
-    expect(await svc.pay("t1", NOW)).toEqual({ checkoutUrl: "https://checkout.stripe.test/open" });
+    expect(await svc.pay("t1", NOW)).toMatchObject({
+      uiMode: "hosted",
+      checkoutUrl: "https://checkout.stripe.test/open",
+      clientSecret: null,
+    });
     expect(stripe.getCheckoutSession).toHaveBeenCalledWith("cs_open");
     expect(catchup.open).not.toHaveBeenCalled();
   });
@@ -852,10 +1003,19 @@ describe("542d: a live session whose terms differ from the fresh plan is stale",
       });
       h.catchup.open.mockImplementation(async () => {
         order.push("open");
-        return { checkoutUrl: "https://checkout.stripe.test/new" };
+        return {
+          uiMode: "hosted",
+          sessionId: "cs_new",
+          checkoutUrl: "https://checkout.stripe.test/new",
+          clientSecret: null,
+        };
       });
       const out = await h.svc.pay("t1", NOW);
-      expect(out).toEqual({ checkoutUrl: "https://checkout.stripe.test/new" });
+      expect(out).toMatchObject({
+        uiMode: "hosted",
+        checkoutUrl: "https://checkout.stripe.test/new",
+        clientSecret: null,
+      });
       expect(order).toEqual(["stripe.expire", "claim.release", "open"]);
       expect(h.stripe.expireCheckoutSession).toHaveBeenCalledWith("cs_old");
       expect(h.claim.onSessionExpired).toHaveBeenCalledWith(expiredReply);
@@ -908,8 +1068,10 @@ describe("542d: a live session whose terms differ from the fresh plan is stale",
         report: { ...rep, eligible: false, ineligible: ["claim_held"] } as any,
         session: live({ ...T, ...meta }),
       });
-      expect(await h.svc.pay("t1", NOW)).toEqual({
+      expect(await h.svc.pay("t1", NOW)).toMatchObject({
+        uiMode: "hosted",
         checkoutUrl: "https://checkout.stripe.test/old",
+        clientSecret: null,
       });
       expect(h.stripe.expireCheckoutSession).not.toHaveBeenCalled();
       expect(h.claim.onSessionExpired).not.toHaveBeenCalled();
@@ -929,8 +1091,10 @@ describe("542d: a live session whose terms differ from the fresh plan is stale",
           catchup_forgiven_cents: "30",
         }),
       });
-      expect(await h.svc.pay("t1", NOW)).toEqual({
+      expect(await h.svc.pay("t1", NOW)).toMatchObject({
+        uiMode: "hosted",
         checkoutUrl: "https://checkout.stripe.test/old",
+        clientSecret: null,
       });
       expect(h.stripe.expireCheckoutSession).not.toHaveBeenCalled();
     });
@@ -1031,7 +1195,11 @@ describe("542d: a live session whose terms differ from the fresh plan is stale",
       return h;
     };
     const same = mk(TERMS_META);
-    expect(await same.svc.pay("t1", NOW)).toEqual({ checkoutUrl: racedUrl });
+    expect(await same.svc.pay("t1", NOW)).toMatchObject({
+      uiMode: "hosted",
+      checkoutUrl: racedUrl,
+      clientSecret: null,
+    });
     expect(same.catchup.open).toHaveBeenCalledTimes(1);
 
     const other = mk({ ...TERMS_META, catchup_stub_cents: "40000" }, expiredReply);
@@ -1065,7 +1233,11 @@ describe("542d: a live session whose terms differ from the fresh plan is stale",
 
     it("click A planned the card add (pre-D); the winner's session is the post-D bill: A re-plans, it matches, A returns the winner's url, no expire", async () => {
       const h = race(heldTrial(), termsMeta(report()), heldBill());
-      expect(await h.svc.pay("t1", NOW)).toEqual({ checkoutUrl: racedUrl });
+      expect(await h.svc.pay("t1", NOW)).toMatchObject({
+        uiMode: "hosted",
+        checkoutUrl: racedUrl,
+        clientSecret: null,
+      });
       expect(h.catchup.plan).toHaveBeenCalledTimes(2); // the request's read and ONE re-plan
       expect(h.stripe.expireCheckoutSession).not.toHaveBeenCalled();
       expect(h.claim.onSessionExpired).not.toHaveBeenCalled();
@@ -1090,7 +1262,11 @@ describe("542d: a live session whose terms differ from the fresh plan is stale",
 
     it("a matching winner is returned without a re-plan", async () => {
       const h = race(heldBill(), termsMeta(report()), heldBill());
-      expect(await h.svc.pay("t1", NOW)).toEqual({ checkoutUrl: racedUrl });
+      expect(await h.svc.pay("t1", NOW)).toMatchObject({
+        uiMode: "hosted",
+        checkoutUrl: racedUrl,
+        clientSecret: null,
+      });
       expect(h.catchup.plan).toHaveBeenCalledTimes(1);
     });
 

@@ -8,7 +8,7 @@ import {
 import { buyerApiClient, getBuyerSubmitScope, type BuyerSeller } from "../buyer-auth";
 import { trackingRefetchInterval } from "../order-tracking-logic";
 import { buyerSubmitKeyFor, clearBuyerSubmitKey } from "../buyer-submit-key";
-import type { BuyerOrderItemEdit } from "@routeflow/types";
+import type { BuyerOrderItemEdit, OrderStatusGroupValue } from "@routeflow/types";
 import type {
   ChangeRequestResolution,
   ChangeRequestStatus,
@@ -454,7 +454,13 @@ export function useAddAllLow() {
 
 // ─── Orders ───────────────────────────────────────────────────────────────────
 
-export function useBuyerOrders(params?: { status?: string; page?: number; limit?: number }) {
+export function useBuyerOrders(params?: {
+  status?: string;
+  /** UX guide B12: a status group ("ACTIVE" = in progress); an explicit `status` wins. */
+  statusGroup?: OrderStatusGroupValue;
+  page?: number;
+  limit?: number;
+}) {
   // #2703 lead fold: GET /buyer/orders returns LIST rows (OrdersService.findAll), not the detail.
   return useQuery<{ data: BuyerOrderListItem[]; meta: any }>({
     queryKey: ["buyer-orders", params],

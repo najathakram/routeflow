@@ -487,7 +487,7 @@ describeDb("SA-733r3 N2 catch-up claim (real Postgres)", () => {
     expect(report.plan.stub.from.toISOString()).toBe("2026-12-01T12:00:00.000Z");
     expect(report.plan.stub.to.toISOString()).toBe("2026-12-01T12:00:00.000Z");
     expect(report.plan.stub.totalCents).toBe(0);
-    const out = await checkout.open(id, { now, expectedStubCents: 0 });
+    const out = await checkout.open(id, { now, expectedStubCents: 0, surface: "ADMIN_LINK" });
     const params = stripe.client.checkout.sessions.create.mock.calls[0][0];
     expect(params.metadata.catchup_from).toBe("2026-12-01T12:00:00.000Z");
     expect(params.metadata.catchup_to).toBe("2026-12-01T12:00:00.000Z");

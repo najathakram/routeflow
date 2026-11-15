@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Logger, NotFoundException } fro
 import { InvoiceStatus } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { DISCOUNT_SOURCE_SELECT, discountModeOf } from "../common/discount-tax-mode";
 import { sumConfirmed } from "./payment-predicates";
 import {
   assertTaxStateRecomputable,
@@ -57,7 +58,8 @@ export async function loadLockedInvoiceForEdit(
   if (peek.orderId)
     await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${peek.orderId} FOR UPDATE`;
   await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${id} FOR UPDATE`;
-  const invoice = await tx.invoice.findUnique({ where: { id } });
+  // SA-1141 R4/R6: the source's createdAt rides along, so the guard and the totals read the invoice's own discount mode.
+  const invoice = await tx.invoice.findUnique({ where: { id }, include: DISCOUNT_SOURCE_SELECT });
   if (!invoice) throw new NotFoundException("Invoice not found");
   if ((invoice.orderId ?? null) !== (peek.orderId ?? null)) {
     throw new ConflictException({
@@ -255,7 +257,7 @@ const differs = (a: unknown, b: unknown): boolean => roundMoney(Number(a) - Numb
 export function planHeaderOnlyTotals(
   locked: LockedInvoiceForEdit,
   dto: { discount?: number; shippingFee?: number },
-): { discount: number; shippingFee: number; total: number; subtotal: number } {
+): { discount: number; shippingFee: number; total: number; subtotal: number; taxAmount?: number } {
   const { invoice, storedRows, isTaxExempt, orderInvoiceCount } = locked;
   const discount = intakeMoney(dto.discount, invoice.discount);
   const shippingFee = intakeMoney(dto.shippingFee, invoice.shippingFee);
@@ -273,7 +275,13 @@ export function planHeaderOnlyTotals(
   if (differs(t.subtotal, invoice.subtotal)) {
     throw staleTaxStateError(stalePathOf(invoice));
   }
-  return { discount, shippingFee, total: t.total, subtotal: t.subtotal };
+  // PRE_TAX: a moved discount moves the tax (it is in the base), so the header carries the re-derived tax with it. LEGACY: the
+  // discount never enters the tax, so nothing but discount, fee and total is written (master's shape, byte for byte).
+  const taxMoved =
+    discountModeOf(invoice) === "PRE_TAX" && differs(t.tax, invoice.taxAmount)
+      ? { taxAmount: t.tax }
+      : {};
+  return { discount, shippingFee, total: t.total, subtotal: t.subtotal, ...taxMoved };
 }
 
 /**

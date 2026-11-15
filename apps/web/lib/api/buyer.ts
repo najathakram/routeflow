@@ -10,6 +10,7 @@ import type {
   AccountStatement,
   BuyerOrderItemEdit,
   ReorderLinesRequest,
+  OrderStatusGroupValue,
   ReorderLinesResponse,
 } from "@routeflow/types";
 import type { ChangeRequest } from "@/lib/change-requests";
@@ -352,7 +353,13 @@ export function useBuyerActiveOrder(fulfillPath?: string) {
   });
 }
 
-export function useBuyerOrders(params?: { page?: number; limit?: number; status?: string }) {
+export function useBuyerOrders(params?: {
+  page?: number;
+  limit?: number;
+  status?: string;
+  /** UX guide B12: a status group ("ACTIVE" = in progress); an explicit `status` wins. */
+  statusGroup?: OrderStatusGroupValue;
+}) {
   return useQuery<Paginated<BuyerOrderListItem>>({
     queryKey: ["buyer", "orders", params],
     queryFn: () => buyerApiClient.get("/buyer/orders", { params }).then((r) => r.data),

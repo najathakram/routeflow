@@ -100,6 +100,7 @@ import {
   type CustomerLayerUnit,
   type SellLevel,
 } from "@routeflow/pricing";
+import { invoiceFooterTotals, newDocumentDiscountBase } from "@/lib/discount-tax-base";
 import { useAuth } from "@/lib/auth-context";
 import { usePriceEditAllowed } from "@/lib/api/my-permissions";
 import { PRICE_RIGHTS_COPY, priceRightsRefusalCopy } from "@/lib/price-rights-copy";
@@ -1405,10 +1406,11 @@ export default function NewInvoicePage() {
 
   // The builder's "Adjustment" is signed: negative is an invoice discount, positive a surcharge
   // (the same mapping the submit handlers send). All footer money is rounded once, in pricing.
-  const { subtotal, tax, total } = computeInvoiceTotals(items.map(toTotalsLine), {
+  const { subtotal, tax, total } = invoiceFooterTotals(items.map(toTotalsLine), {
     discount: adjustment < 0 ? Math.abs(adjustment) : 0,
     shipping: adjustment > 0 ? adjustment : 0,
     taxRate,
+    discountBase: newDocumentDiscountBase(), // SA-1141 R7: a new invoice is stamped 'now'
   });
   const totalQty = items.reduce((s, it) => s + Number(it.qty), 0);
 

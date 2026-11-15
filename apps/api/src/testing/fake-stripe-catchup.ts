@@ -157,6 +157,17 @@ export function fakeStripeCatchup(
               params,
               opts,
             };
+            // SA-1139: an embedded session has no hosted url; it carries the secret that mounts the form (test value)
+            if (params.ui_mode === "embedded_page") {
+              return {
+                id,
+                url: null,
+                ui_mode: "embedded_page",
+                client_secret: `${id}_secret_test`,
+                // like Stripe's own Session object, the embedded return address is echoed back (SA-1154)
+                return_url: params.return_url,
+              };
+            }
             return { id, url: `https://pay.test/${id}` };
           }),
         },

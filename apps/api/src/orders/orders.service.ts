@@ -21,6 +21,7 @@ import { attachPaymentCreditNotes, ORDER_INVOICES_SELECT } from "./order-payment
 import { attachInvoicesNeedReview } from "./order-invoices-review";
 import { attachOrderToCollect } from "./order-to-collect";
 import { customerIsTaxExempt, editedOrderTotals, orderTotalsOf } from "./order-totals";
+import { discountModeOf, newDocumentDiscountMode } from "../common/discount-tax-mode";
 import { prepareInlineReturn, replayAfterCheck } from "./order-inline-return";
 import { reserveInlineReturnNumber as reserveReturnNo } from "./order-inline-return";
 import { applyInlineReturnInTx as applyReturn } from "./order-inline-return";
@@ -162,6 +163,7 @@ import { fulfillPathLocked } from "./fulfil-path-lock";
 import { assertCancelImpactAllows, cancelImpact } from "./order-cancel-impact";
 import { cancelOrderInTx, lockDeleteLines, type CancelOrderTxOptions } from "./order-cancel-tx";
 import { claimReopenInTx } from "./order-reopen-claim";
+import { judgeUnlessDraft, reopenTarget } from "./offline/reopen-target";
 import { assertNoCashRefundOnOrder } from "../invoices/invoice-cash-refund-guard";
 import {
   assertBuyerDiffShape,
@@ -556,6 +558,7 @@ export class OrdersService implements OnApplicationBootstrap {
       fulfillPathLocked: fulfillPathLocked(order), // row 673: the PATCH's own predicate
       editItemsLocked: await walkInSaleLocked(this.prisma.forTenant(), order), // W-861: the edit's own predicate
     } satisfies OrderReadGateFields);
+    Object.assign(order, { discountTaxBase: discountModeOf(order) }); // SA-1141 R7: the footers read the mode, never the clock
     await attachInvoiceStages(this.featureConfig, order); // fold 4: each invoice's pdfVariant
     attachRevisionNumber(order); // row 372
     order.lineItems = withComponentViews(order.lineItems) as typeof order.lineItems; // #2717 M3
@@ -849,6 +852,7 @@ export class OrdersService implements OnApplicationBootstrap {
               isTaxExempt,
               shipping: Number(winner.shippingFee ?? 0),
               discount: 0, // SA-918: no participant carries one (readMergeGroup refuses or skips)
+              discountBase: discountModeOf(winner),
             });
             await tx.order.update({
               where: { id: winner.id },
@@ -1079,6 +1083,7 @@ export class OrdersService implements OnApplicationBootstrap {
               isTaxExempt,
               shipping: Number(winner.shippingFee ?? 0),
               discount: 0, // SA-918: no participant carries one (readMergeGroup refuses or skips)
+              discountBase: discountModeOf(winner),
             });
             const routeUpdate = routeAssignment
               ? {
@@ -1232,6 +1237,14 @@ export class OrdersService implements OnApplicationBootstrap {
     // creating a second one. The pre-check runs below, once the caller's own customer is known; the
     // P2002 branch further down catches the narrow concurrent-race window that pre-check can't.
     assertCustomerMayNotDraft(dto.status, user.role, options); // F1(ii)
+    // SA-1158: status DRAFT with immediateDelivery is refused (400) before any read or write.
+    if (dto.status === "DRAFT" && dto.immediateDelivery === true) {
+      throw new BadRequestException({
+        code: API_ERROR_CODES.ORDER_DRAFT_CANNOT_DELIVER_NOW,
+        message:
+          "A draft can't be delivered on the spot. Save it as an order first, then deliver it.",
+      });
+    }
     const idempotencyKey = (dto as any).idempotencyKey as string | undefined;
     keep.assertSafeOverrideReasons(dto.items ?? [], []); // row 496: a typed reason, before any read or write
     const inlineRet = await prepareInlineReturn(this.inlineReturns, dto.inlineReturn, user);
@@ -1256,7 +1269,7 @@ export class OrdersService implements OnApplicationBootstrap {
     const commissionRatePct = parseCommissionRatePct(dto.commissionRatePct, user.role);
 
     const isStaffRole = user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
-    // SA-1034 (POS-5): the counter's own live answer (W-870), else the office's mode-aware one, once per request before any
+    // SA-1034 (POS-5): the counter's own answer (W-870), else the office's, both over the live denied groups, once per request before any
     // lock. A real staff price override (judged against the server's tier price) is refused 403 before anything is written.
     const priceEditAllowed =
       options.priceEditAllowed ??
@@ -1776,6 +1789,7 @@ export class OrdersService implements OnApplicationBootstrap {
       isTaxExempt,
       discount: orderDiscount,
       shipping: orderShippingFee,
+      discountBase: newDocumentDiscountMode(), // SA-1141 R3: a new order is stamped 'now'
     });
 
     // B451 gap 4: reject an oversized discountAmount (negative total) before any stock lock or tx.
@@ -1996,10 +2010,11 @@ export class OrdersService implements OnApplicationBootstrap {
           // written, resolved from the validated stop above.
           routeRunId: dto.routeRunId ?? resolvedRouteRunId ?? null,
           routeRunStopId: dto.routeRunStopId ?? null,
-          status: dto.immediateDelivery ? OrderStatus.CONFIRMED : order.status,
+          // SA-1158: the write reads !isDraft.
+          status: dto.immediateDelivery && !isDraft ? OrderStatus.CONFIRMED : order.status,
         },
       });
-      if (dto.immediateDelivery) {
+      if (dto.immediateDelivery && !isDraft) {
         order.status = OrderStatus.CONFIRMED;
       }
     }
@@ -2200,7 +2215,7 @@ export class OrdersService implements OnApplicationBootstrap {
         },
         { order, user, tenantId: rGate.tenantId(this.prisma, user, order.tenantId), ack: dto },
       );
-      await flags.assertPromotionCredit(this.prisma, order, (p) => this.creditGate(p), user); // SA-1124
+      await flags.assertPromotionCredit(order, (p) => this.creditGate(p), user); // SA-1345 Q2: every draft
     }
 
     // B585: goods leaving is the enforcement moment (operators only, by the role gates above; before
@@ -2498,33 +2513,40 @@ export class OrdersService implements OnApplicationBootstrap {
         `Cannot reopen order: invoice ${paidInvoice.invoiceNumber} is ${paidInvoice.status}. Void or credit the invoice before reopening.`,
       );
     }
-    // F-05 (SA-272): reopening moves the ORDER to PENDING, so EVERY line goes live — a new sale of the whole order,
+    // F-05 (SA-272): reopening a LIVE order moves it to PENDING (a cancelled DRAFT comes back as a DRAFT: SA-1136), so EVERY line goes live — a new sale of the whole order,
     // not only of the item-CANCELLED lines (cancelling a DRAFT never marks its lines CANCELLED, and drafts are
     // written without the check). Staff-only path; no delta, so every catalog line is checked, before any write.
     const tenant = rGate.tenantId(this.prisma, user, order.tenantId);
-    const restriction = await this.sellingRestrictions.assertLinesSellable({
-      ...rGate.whole({ tenant, order, user, lines: order.lineItems, dto: ack, allLive: true }),
-      channel: "STAFF", // a staff-only route; the principal below decides who may override
-    });
+    const target = await reopenTarget(this.prisma.forTenant(), id); // SA-1134 R-1: DRAFT while a gate flag is open
+    const restriction = await judgeUnlessDraft(target, () =>
+      this.sellingRestrictions.assertLinesSellable({
+        ...rGate.whole({ tenant, order, user, lines: order.lineItems, dto: ack, allLive: true }),
+        channel: "STAFF", // a staff-only route; the principal below decides who may override
+      }),
+    );
     return this.stockTx(
       "orders.reopen",
       async (tx) => {
-        await claimReopenInTx(tx, id); // B695: Order lock + CANCELLED -> PENDING CAS; the loser gets the 409
+        await claimReopenInTx(tx, id, target, user); // B695: Order lock + CANCELLED -> target CAS; the loser gets the 409
         // Row 510: under that lock, the override re-judged against the locked lines (every line goes live).
         const judged = new Set(order.lineItems.map((li) => li.productId as string));
         const stamped = await rGate.recheck(tx, restriction, id, judged, { allLive: true });
         // B64: the item-CANCELLED lines, read BEFORE they flip below — exactly what an F07 cancel credited
         // back (a pre-F07 cancel left lines untouched: empty, nothing re-decremented).
-        const cancelledLines = await tx.orderItem.findMany({
-          where: { orderId: id, status: ItemStatus.CANCELLED },
-          select: STOCK_SALE_LINE_SELECT,
-        });
+        const live = target !== OrderStatus.DRAFT; // SA-1136: a DRAFT held no stock; no flip, no re-take
+        const cancelledLines = live
+          ? await tx.orderItem.findMany({
+              where: { orderId: id, status: ItemStatus.CANCELLED },
+              select: STOCK_SALE_LINE_SELECT,
+            })
+          : [];
 
         // Revert cancelled line items back to PENDING
-        await tx.orderItem.updateMany({
-          where: { orderId: id, status: ItemStatus.CANCELLED },
-          data: { status: ItemStatus.PENDING },
-        });
+        if (live)
+          await tx.orderItem.updateMany({
+            where: { orderId: id, status: ItemStatus.CANCELLED },
+            data: { status: ItemStatus.PENDING },
+          });
 
         // Re-take exactly what the cancel credited back (order-stock.ts).
         await restoreStockForReopen(this.stockDeps(), tx, id, cancelledLines);
@@ -2533,7 +2555,7 @@ export class OrdersService implements OnApplicationBootstrap {
         const reopened = await tx.order.update({
           where: { id },
           data: {
-            status: OrderStatus.PENDING, // already set by the claim; kept so this write names the transition
+            status: target, // already set by the claim; kept so this write names the transition
             notes: order.notes
               ? `${order.notes}\n[Reopened ${new Date().toLocaleDateString()}]`
               : `[Reopened ${new Date().toLocaleDateString()}]`,
@@ -4474,6 +4496,7 @@ export class OrdersService implements OnApplicationBootstrap {
         const live = await tx.order.findUnique({
           where: { id: order.id },
           select: {
+            createdAt: true, // SA-1141 R3: the order's own discount mode
             tenantId: true,
             status: true,
             // Money input to the total below — read here, under the Order FOR UPDATE lock, so a

@@ -112,7 +112,8 @@ test.describe("shell no-regress @1440", () => {
       "Customers",
       "Warehouse",
       "Finance",
-      "Analytics",
+      // UX guide improvement 3 (UXG-R2): Reports and Analytics share one group.
+      "Reports & analytics",
       "Settings",
     ]) {
       await expect(nav.getByText(label, { exact: true }).first()).toBeVisible();

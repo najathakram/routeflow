@@ -1,4 +1,4 @@
-import { flatRateFromTotals } from "@routeflow/pricing";
+import { flatRateFromTotals, taxRateBaseOf, type DiscountTaxBase } from "@routeflow/pricing";
 import type { SystemConfigService } from "../system-config/system-config.service";
 
 /**
@@ -109,8 +109,15 @@ export function effectiveTaxRateFromTotals(
   tax: unknown,
   subtotal: unknown,
   isTaxExempt: boolean,
+  // SA-1141 R5: REQUIRED. The stored tax was levied on this base: LEGACY the subtotal (as ever), PRE_TAX subtotal - discount.
+  base: { discount: unknown; discountBase: DiscountTaxBase },
 ): number {
   // B294 (SA-141): the one `tax / subtotal` rule lives in @routeflow/pricing (flatRateFromTotals),
   // shared with inferredFlatRate — the backfill, applyPriceAdjustment and mobile all use it.
-  return isTaxExempt ? 0 : flatRateFromTotals(tax, subtotal);
+  return isTaxExempt
+    ? 0
+    : flatRateFromTotals(
+        tax,
+        taxRateBaseOf(Number(subtotal) || 0, Number(base.discount ?? 0) || 0, base.discountBase),
+      );
 }

@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Heart, Lock } from "lucide-react";
 import type { BuyerCatalogCounts, LockedCategory } from "@/lib/api/buyer";
+import { showsDealsChip } from "./deals-chip";
 
 export type RailSelection =
   | { kind: "all" }
@@ -134,7 +135,7 @@ export function CategoryRail({ counts, selection, onSelect }: CategoryRailProps)
         />
       )}
 
-      {collections.deals > 0 && (
+      {showsDealsChip({ total, collections }) && (
         <RailRow
           label="Deals"
           count={collections.deals}

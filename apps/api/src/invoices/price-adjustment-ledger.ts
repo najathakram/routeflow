@@ -7,9 +7,15 @@ import {
   recomputeCategoryTax,
   regulatedUnitBasis,
   roundMoney,
+  type DiscountTaxBase,
 } from "@routeflow/pricing";
 import type { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import {
+  DISCOUNT_SOURCE_SELECT,
+  discountModeOf,
+  type DiscountModeDoc,
+} from "../common/discount-tax-mode";
 import {
   assertInvoiceTotalsSane,
   assertNoNegativeLineSubtotal,
@@ -291,9 +297,10 @@ export function priceAdjustmentTaxState(
     items: any[];
     status?: unknown;
     orderId?: unknown;
+    discount?: unknown;
     /** SA-814e: non-VOID invoices sharing the order (read under the same lock / in the pre-flight). */
     orderInvoiceCount?: unknown;
-  },
+  } & DiscountModeDoc,
   isTaxExempt: boolean,
   /** The tenant's configured rate (`tenantPreferredRate`): wins the inference when it reproduces the stored tax. */
   preferredRate?: number | null,
@@ -309,7 +316,7 @@ export function priceAdjustmentTaxState(
   });
 }
 
-type InvoiceTotalsFacts = {
+type InvoiceTotalsFacts = DiscountModeDoc & {
   items: any[];
   discount?: unknown;
   shippingFee?: unknown;
@@ -328,12 +335,15 @@ export function totalsFromLines(
   lines: ReadonlyArray<{ subtotal?: unknown; taxRate?: unknown; categoryTaxAmount?: unknown }>,
   invoice: { discount?: unknown; shippingFee?: unknown },
   isTaxExempt: boolean,
+  // SA-1141 R6: the invoice's own mode (`discountModeOf(invoice)`), REQUIRED.
+  discountBase: DiscountTaxBase,
 ): { subtotal: number; taxAmount: number; total: number; discount: number } {
   const discount = Number(invoice.discount ?? 0);
   const t = sumInvoiceTotalsStrict(lines as any[], {
     discount,
     shipping: Number(invoice.shippingFee ?? 0),
     isTaxExempt,
+    discountBase,
   });
   return { subtotal: t.subtotal, taxAmount: t.tax, total: t.total, discount };
 }
@@ -357,7 +367,7 @@ function projectedTotals(
       ? { ...line, taxRate: flatRate }
       : line;
   });
-  return totalsFromLines(lines, inv, isTaxExempt);
+  return totalsFromLines(lines, inv, isTaxExempt, discountModeOf(inv));
 }
 
 /**
@@ -670,7 +680,7 @@ export async function lockInvoiceForPriceAdjustment(tx: any, inv: any): Promise<
   await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${inv.id} FOR UPDATE`;
   const live = await tx.invoice.findUnique({
     where: { id: inv.id },
-    include: { items: true, payments: true },
+    include: { items: true, payments: true, ...DISCOUNT_SOURCE_SELECT }, // SA-1141 R6: the row's own mode
   });
   if (!live) return inv;
   if (
@@ -789,7 +799,12 @@ export async function commitPriceAdjustment(args: {
 }): Promise<void> {
   const { inv, itemUpdates, auditLine, tx, recomputeStatus, isTaxExempt } = args;
   const updatedItems: any[] = await tx.invoiceItem.findMany({ where: { invoiceId: inv.id } });
-  const { subtotal, taxAmount, total } = totalsFromLines(updatedItems, inv, isTaxExempt);
+  const { subtotal, taxAmount, total } = totalsFromLines(
+    updatedItems,
+    inv,
+    isTaxExempt,
+    discountModeOf(inv),
+  );
   const existingInternal = inv.internalNotes ?? "";
   const confirmedPaid = sumConfirmed(inv.payments);
   assertNotOverpaidByPriceChange(confirmedPaid, total, inv); // B1051: before ANY invoice or ledger write

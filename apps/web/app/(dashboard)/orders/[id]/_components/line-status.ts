@@ -26,5 +26,7 @@ export function displayLineStatus(
   // No per-line delivery recorded, but the whole order is delivered → reflect that.
   if (orderStatus === "DELIVERED") return "DELIVERED";
   if (fulfillPath === "PICKUP" && orderStatus !== "CANCELLED") return null;
+  // UX guide B20: the order is on the road, so a line with no outcome yet is out for delivery, not "Pending".
+  if (orderStatus === "OUT_FOR_DELIVERY") return "OUT_FOR_DELIVERY";
   return li.status as BadgeStatus;
 }

@@ -867,6 +867,27 @@ col + delta)` has no read-modify-write window at all. And such a fix is regressi
 - **Guard:** none yet — propose a regression test with a fixture where the two diverge (nonzero
   tax), asserting both formulas independently.
 
+### L-344 · 2026-10-24 · domain · an idempotent early return still retries the side effect; a status lift is a predicate with a CAS twin (#3599)
+
+- **Symptom:** a card payment reinstated a tenant an admin had locked, and a redelivered checkout webhook skipped the price push its first delivery had failed to make.
+- **Root cause:** the payment handlers lifted any non-ACTIVE status, and the "already applied" early return also skipped a non-idempotent side effect that could have failed the first time.
+- **Lesson:** **A money event lifts a lock only through ONE predicate with a compare-and-set twin (`paymentReinstatable` / `paymentReinstatableWhere`), so the check and the write are one statement. An idempotent early return still retries the side effect that may have failed on the first delivery.**
+- **Guard:** the dunning-config and billing webhook specs.
+
+### L-349 · 2026-10-25 · domain · prove every id a write references is in the tenant, on the outer client, before any write (681 PR A)
+
+- **Symptom:** a create or update stored an id (customer, product, supplier, category) that pointed at a row of another tenant, or at nothing; nothing refused it.
+- **Root cause:** the writers trusted the id a client sent. Tenant scoping covered the row being written, not the rows it referenced.
+- **Lesson:** **A create or update that takes ids of other rows calls one helper (`assertRefsInTenant`) on the outer client before it opens a transaction. It checks existence and tenant only; archived or deleted state stays a separate policy. Roll it out behind a read-only, counts-only census so existing cross-tenant links reach the architect before the proof starts refusing.**
+- **Guard:** `assert-refs-in-tenant.ts` plus per-service specs; `report-cross-tenant-refs.mjs` census run by the owner.
+
+### L-351 · 2026-10-29 · domain · a business day (due, overdue, expiry, default date) is the tenant's calendar day, judged by one shared rule; host and browser zones never decide it
+
+- **Symptom:** in one window six surfaces judged a day in the wrong zone: browser-day sale and invoice dates, host-day badge and OVERDUE, a licence expired from UTC midnight of its printed date, a report date moved by the host offset.
+- **Root cause:** each caller compared a stored date with `new Date()` in its own zone. The house rule named a helper but nothing listed the callers, so each compare was a fresh copy, and UTC CI hid it.
+- **Lesson:** **Judge every today, due, overdue, expiry or default date through one shared tenant-day rule, passing the tenant's zone in; an unknown zone reads UTC, never "always valid". Pin the callers in a spec that fails on a new inline date-vs-clock compare, and test with the zone as data in a child process, never an in-worker `process.env.TZ`.**
+- **Guard:** `licence-validity-callers.spec` (07ce43595), `page.no-browser-clock.static.test.ts` (#3775), child-process premise in `pg-utc-types.spec.ts` (#3717). Evidence #3775, #3778, #3781, #3717, B330. Cf. archived L-047, L-232, L-252.
+
 ## security
 
 ### L-023 · 2026-07 · security
@@ -4733,3 +4754,26 @@ citations, closed-out with its own post-init assertion guard).
 - **Root cause:** the runner built one command string and let a shell parse it.
 - **Lesson:** **Spawn with an args array and `shell: false`, and treat a jest path argument as a regex. A script that forwards user patterns has a spec that feeds it a pattern with a space and a bracket and reads back the argv it produced.**
 - **Guard:** `run-db-tests.mjs` `serialDbArgs` and the forwarding specs in `apps/api/src/common/`.
+
+## Archived 2026-11-15 — zero outside citations, real spec guard; headroom for L-383..L-385 (bookkeeping for windows 40 to 42)
+
+### L-342 · 2026-10-24 · domain · send `null` to clear a field and omit it to leave it alone; `x || undefined` cannot clear (#3695, #3622)
+
+- **Symptom:** emptying a payment reference, notes, phone or delivery-window field on an edit form kept the old value, and the stale reference still counted in the duplicate-reference check.
+- **Root cause:** clients sent `x.trim() || undefined`. JSON drops `undefined`, and the server reads an absent key as "no change", so a clear looked exactly like leaving the field alone.
+- **Lesson:** **An update contract needs three states: a value sets, `null` clears, an absent key leaves alone. Type update DTOs as `string | null` and convert an emptied input to `null`. A cleared identifier carries no dedupe identity.**
+- **Guard:** `apps/mobile/lib/clearable-field.ts`, `UpdateInvoicePaymentDto` `reference`/`notes: string | null`, `payment-edit-ref.db.spec.ts`.
+
+### L-345 · 2026-10-25 · domain · every recurring Stripe price names a product we own, with a deterministic id; inline `product_data` is for one-time lines only (W-810)
+
+- **Symptom:** a later price push on a subscription born in Checkout failed, and the redelivery that followed never cleared.
+- **Root cause:** Checkout's inline `product_data` creates the product inactive, and an inactive product cannot take a new recurring price.
+- **Lesson:** **Create one product per plan code and per add-on SKU (`rf_plan_<code>`, `rf_addon_<sku>`), retrieve it first and reactivate it if inactive, and point every recurring `price_data` at it. Read and preview paths make no Stripe write. Test fakes need `products.retrieve`, not just `create`.**
+- **Guard:** `stripe-product.ts` with the stateful `fakeStripeProducts` used by the billing specs.
+
+### L-346 · 2026-10-25 · domain · a payment capacity check judges real money on the confirmed basis; an unconfirmed row it displaces is flagged, never allowed to refuse it (W-769)
+
+- **Symptom:** a staff member could not record a real payment because a draft or pending row on the same invoice already used up the balance.
+- **Root cause:** the capacity check counted unconfirmed rows as if they were money received, and each writer applied its own version of the check.
+- **Lesson:** **Capacity for a PAID write is the confirmed total; DRAFT and PENDING rows count only for writes that are themselves unconfirmed. A paid write that displaces an unconfirmed row flags it for review instead of refusing. The policy and predicate live in `@routeflow/pricing`, and one api file (`confirmed-basis.ts`) applies them for every writer.**
+- **Guard:** `payment-confirmation` specs in `packages/pricing` and the writer specs that reach `confirmed-basis.ts`.

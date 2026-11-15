@@ -125,51 +125,33 @@ describe("counter line note: focus and the g-shortcuts", () => {
     expect(screen.getByText(/Cola · /)).toBeInTheDocument();
   });
 
-  it("with lines in the cart and focus on the page, g then i opens the Discard dialog; Discard navigates once", async () => {
+  // SA-1138 A1 (was: g then i from the page opened Discard / navigated): on the till every printable key is a scan key, so a g
+  // from the page goes to the scan box and its i is typed there. Every page is still one Ctrl/Cmd+K or sidebar click away.
+  it("with lines in the cart and focus on the page, g then i goes to the scan box: no Discard dialog, no navigation", async () => {
     renderWithProviders(counter());
     await scan("COLA");
 
     (document.activeElement as HTMLElement | null)?.blur();
     expect(document.activeElement).toBe(document.body);
-    pressGI();
+    fireEvent.keyDown(document.body, { key: "g" });
+    expect(screen.getByLabelText("Scan or search items")).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: "i" });
 
-    expect(await screen.findByText("Discard this sale?")).toBeInTheDocument();
+    expect(screen.queryByText("Discard this sale?")).toBeNull();
     expect(navigate).not.toHaveBeenCalled();
     expect(push).not.toHaveBeenCalled();
     expect(screen.getByText(/Cola · /)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
-    expect(navigate).toHaveBeenCalledTimes(1);
-    expect(navigate).toHaveBeenCalledWith("/invoices");
-    expect(push).not.toHaveBeenCalled();
-    await waitFor(() => expect(screen.queryByText("Discard this sale?")).toBeNull());
   });
 
-  it("Keep selling closes the dialog and the shortcut goes nowhere", async () => {
-    renderWithProviders(counter());
-    await scan("COLA");
-
-    (document.activeElement as HTMLElement | null)?.blur();
-    pressGI();
-    await screen.findByText("Discard this sale?");
-
-    fireEvent.click(screen.getByRole("button", { name: "Keep selling" }));
-
-    await waitFor(() => expect(screen.queryByText("Discard this sale?")).toBeNull());
-    expect(navigate).not.toHaveBeenCalled();
-    expect(screen.getByText(/Cola · /)).toBeInTheDocument();
-  });
-
-  it("an empty cart: g then i navigates at once, with no dialog", () => {
+  it("an empty cart: g then i from the page does not navigate either", () => {
     renderWithProviders(counter());
     expect(screen.getByTestId("counter-sale-screen")).toBeInTheDocument();
 
-    (document.activeElement as HTMLElement | null)?.blur(); // the scan field holds focus on mount: a text field
     pressGI();
 
-    expect(navigate).toHaveBeenCalledTimes(1);
-    expect(navigate).toHaveBeenCalledWith("/invoices");
+    expect(navigate).not.toHaveBeenCalled();
     expect(screen.queryByText("Discard this sale?")).toBeNull();
+    expect(screen.getByLabelText("Scan or search items")).toHaveFocus();
   });
 });
 

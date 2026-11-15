@@ -79,6 +79,8 @@ export class BuyerAdminService {
         mobile: true,
         status: true,
         emailVerified: true,
+        // UX guide B21: selected only to answer "is a Google account linked"; the id itself is dropped below.
+        googleId: true,
         createdAt: true,
         updatedAt: true,
         deletedAt: true,
@@ -92,7 +94,8 @@ export class BuyerAdminService {
       },
     });
     if (!buyer) throw new NotFoundException("Buyer account not found");
-    return buyer;
+    const { googleId, ...rest } = buyer;
+    return { ...rest, googleLinked: googleId != null };
   }
 
   // ─── Set buyer status ─────────────────────────────────────────────────────────
