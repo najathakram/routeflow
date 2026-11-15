@@ -8,9 +8,14 @@
 export const ROUTE_STOPS_NOT_PLACED_MAX_NAMES = 3;
 
 export function routeStopsNotPlacedSentence(count: number, names: readonly string[]): string {
-  const n = Number.isFinite(count) && count > 0 ? Math.floor(count) : names.length;
-  const total = Math.max(n, names.length, 1);
-  const shown = names.slice(0, ROUTE_STOPS_NOT_PLACED_MAX_NAMES);
+  const usable = names.map((x) => x.trim()).filter((x) => x.length > 0);
+  const counted = Number.isFinite(count) && count > 0;
+  // No usable number and no usable name: say nothing about how many.
+  if (!counted && usable.length === 0)
+    return "Some stops have no map position. Check their addresses, then optimize again.";
+  const n = counted ? Math.floor(count) : usable.length;
+  const total = Math.max(n, usable.length, 1);
+  const shown = usable.slice(0, ROUTE_STOPS_NOT_PLACED_MAX_NAMES);
   const more = total - shown.length;
   const list =
     shown.length === 0 ? "" : ` (${shown.join(", ")}${more > 0 ? ` and ${more} more` : ""})`;
@@ -27,7 +32,10 @@ export function routeStopsNotPlacedFromBody(
   const d = data as Record<string, unknown>;
   if (d.code !== code) return null;
   const names = Array.isArray(d.names)
-    ? d.names.filter((x): x is string => typeof x === "string").map((x) => x.trim().slice(0, 80))
+    ? d.names
+        .filter((x): x is string => typeof x === "string")
+        .map((x) => x.trim().slice(0, 80))
+        .filter((x) => x.length > 0)
     : [];
   const count = typeof d.count === "number" ? d.count : names.length;
   return { count, names };

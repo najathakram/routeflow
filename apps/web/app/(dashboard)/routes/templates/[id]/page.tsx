@@ -44,6 +44,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { Badge, Button, Modal, useToast, cn, badgeStatusLabel } from "@routeflow/ui/web";
 import { useOnTenantToday } from "@/lib/tenant-timezone";
+import { codedToastCopy, genericToastCopy } from "@/lib/generic-toast-copy";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useDrivers } from "@/lib/api/drivers";
 import { useCustomers } from "@/lib/api/customers";
@@ -671,7 +672,11 @@ export default function RouteTemplateDetailPage() {
         });
       },
       onError: (err) =>
-        toast({ title: "Optimization failed", description: err.message, variant: "error" }),
+        toast({
+          title: "Optimization failed",
+          description: codedToastCopy(err) ?? genericToastCopy(err),
+          variant: "error",
+        }),
     });
   };
 

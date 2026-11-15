@@ -26,6 +26,23 @@ describe("routeStopsNotPlacedSentence (shared with web)", () => {
   });
 });
 
+describe("routeStopsNotPlacedSentence hardening", () => {
+  it("drops empty and space-only names", () => {
+    expect(routeStopsNotPlacedSentence(2, ["", " ", "Acme Deli"])).toBe(
+      "2 stops have no map position (Acme Deli and 1 more). Check their addresses, then optimize again.",
+    );
+    expect(routeStopsNotPlacedSentence(2, ["", " "])).toBe(
+      "2 stops have no map position. Check their addresses, then optimize again.",
+    );
+  });
+  it("claims no number when there is neither a count nor a usable name", () => {
+    const want = "Some stops have no map position. Check their addresses, then optimize again.";
+    expect(routeStopsNotPlacedSentence(0, [])).toBe(want);
+    expect(routeStopsNotPlacedSentence(Number.NaN, ["", " "])).toBe(want);
+    expect(routeStopsNotPlacedSentence(-1, [])).toBe(want);
+  });
+});
+
 describe("optimizeUnplacedCopy", () => {
   it("builds the sentence from count and names, ignoring the message", () => {
     expect(

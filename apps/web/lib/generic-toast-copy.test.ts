@@ -1039,5 +1039,8 @@ describe("genericToastCopy: UXG B14 stops without a map position", () => {
   });
   it("an uncoded 400 is still the generic sentence", () => {
     expect(codedToastCopy(err(400))).toBeNull();
+    expect(genericToastCopy(err(400))).toBe(
+      "Some details aren't valid. Check what you entered and try again.",
+    );
   });
 });

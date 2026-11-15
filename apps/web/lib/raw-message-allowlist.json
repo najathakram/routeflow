@@ -137,7 +137,7 @@
     "why": "B986-8 the rest: per-surface raw message read, pending (found by the AST scan: a read split across lines that the text scanner missed)"
   },
   "app/(dashboard)/routes/[id]/dispatch/page.tsx": {
-    "count": 3,
+    "count": 2,
     "why": "B986-5 routes + deliveries: per-surface raw message read, pending"
   },
   "app/(dashboard)/routes/[id]/page.tsx": {
@@ -157,7 +157,7 @@
     "why": "B986-5 routes + deliveries: per-surface raw message read, pending"
   },
   "app/(dashboard)/routes/templates/[id]/page.tsx": {
-    "count": 9,
+    "count": 8,
     "why": "B986-5 routes + deliveries: per-surface raw message read, pending"
   },
   "app/(dashboard)/sales-agents/_components/AgentFormModal.tsx": {

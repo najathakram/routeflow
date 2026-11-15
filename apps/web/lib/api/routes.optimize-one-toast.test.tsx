@@ -1,6 +1,6 @@
 import * as React from "react";
-import { readFileSync } from "fs";
-import { join } from "path";
+import { readFileSync, readdirSync } from "fs";
+import { join, relative, sep } from "path";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook } from "@testing-library/react";
 import { queryClientWithGlobalErrorToast, refusal } from "@/test-utils/global-error-toast";
@@ -45,16 +45,49 @@ describe.each([
   });
 });
 
-describe("every optimize failure toast reads the coded copy", () => {
+/**
+ * Inventory pin (class, not instance): the two optimize hooks opt out of the app-wide toast, so EVERY caller owns the failure
+ * toast and must build it through `codedToastCopy` (then the generic sentence), never print the raw message. A new caller turns
+ * the list red until it is added here and converted.
+ */
+describe("every caller of the optimize hooks toasts the coded copy", () => {
   const WEB = join(__dirname, "..", "..");
-  const read = (f: string) => readFileSync(join(WEB, f), "utf8");
-  const READ = "codedToastCopy(err) ?? genericToastCopy(err)";
-  it("the run page has one, the new-delivery page two, and none prints err.message", () => {
-    const run = read("app/(dashboard)/routes/[id]/page.tsx");
-    const nu = read("app/(dashboard)/deliveries/new/page.tsx");
-    expect(run.split(READ)).toHaveLength(2);
-    expect(nu.split(READ)).toHaveLength(3);
-    expect(run).not.toMatch(/Optimization failed",\s*description: err\.message/);
-    expect(nu).not.toMatch(/(unavailable|kept in current order)[^]{0,80}description: err.message/);
+  const walk = (dir: string): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+      if (e.name === "node_modules" || e.name === ".next") return [];
+      const full = join(dir, e.name);
+      if (e.isDirectory()) return walk(full);
+      return /\.(ts|tsx)$/.test(e.name) && !/\.(test|spec)\./.test(e.name) ? [full] : [];
+    });
+  const CALL = /(?<!function )\buse(OptimizeRoute|OptimizeTemplate)\(/;
+  const callers = walk(WEB)
+    .filter((f) => CALL.test(readFileSync(f, "utf8")))
+    .map((f) => relative(WEB, f).split(sep).join("/"))
+    .sort();
+
+  it("the callers are exactly these four pages", () => {
+    expect(callers).toEqual([
+      "app/(dashboard)/deliveries/new/page.tsx",
+      "app/(dashboard)/routes/[id]/dispatch/page.tsx",
+      "app/(dashboard)/routes/[id]/page.tsx",
+      "app/(dashboard)/routes/templates/[id]/page.tsx",
+    ]);
   });
+
+  it.each(callers)(
+    "%s: each optimize error handler goes through codedToastCopy, not err.message",
+    (f) => {
+      const src = readFileSync(join(WEB, f), "utf8");
+      const calls = [...src.matchAll(/\b(optimizeRoute|optimizeTemplate\.mutate)\(/g)];
+      expect(calls.length).toBeGreaterThan(0);
+      for (const c of calls) {
+        const tail = src.slice(c.index, c.index! + 3000);
+        const at = tail.indexOf("onError");
+        expect(at).toBeGreaterThan(-1);
+        const handler = tail.slice(at, at + 400);
+        expect(handler).toContain("codedToastCopy(err)");
+        expect(handler).not.toMatch(/description:\s*err\??\.message/);
+      }
+    },
+  );
 });
