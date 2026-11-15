@@ -15,7 +15,8 @@ import {
  *   - every other document (a manual invoice, a duplicate, a standing order, a counter sale) reads its own.
  *
  * `order` / `estimate` are the selected relations (`DISCOUNT_SOURCE_SELECT`). With the cutover set, an invoice that names an
- * order (`orderId`) but arrives without it is a loader bug: refused loudly (never a silent mode). Dark it never reads a date.
+ * order (`orderId`) but arrives without it is a loader bug: refused loudly (never a silent mode); so is an invoice (it has an
+ * `orderId` key) with no resolved order that arrives without its `estimate` (SA-1153 G). Dark it never reads a date.
  */
 export interface DiscountModeDoc {
   createdAt?: Date | string | null;
@@ -39,6 +40,11 @@ export function discountModeOf(
     throw new MoneyInvariantError(
       "Discount tax base: an order-linked invoice was loaded without its order.",
     );
+  }
+  // SA-1153 G: an invoice has no `estimateId` column (the estimate is a back-relation), so one loaded without it would fall through
+  // to its own `createdAt` and a converted quote would change mode at the next re-total. A loader bug: refused, never guessed.
+  if (doc && "orderId" in doc && doc.order?.createdAt == null && doc.estimate === undefined) {
+    throw new MoneyInvariantError("Discount tax base: an invoice was loaded without its estimate.");
   }
   const at = doc?.order?.createdAt ?? doc?.estimate?.createdAt ?? doc?.createdAt;
   if (at == null) {
