@@ -129,9 +129,12 @@ describe("SA-763r: an edit of a DELIVERED order keeps the delivered quantities",
     await edit([{ id: "li-A", productId: "prod-A", qty: 12 }]);
     expect(d("li-A")).toBe(12); // red on base: 0 (then 2 under the old per-edit-increase rule)
     h.prisma.product.update.mockClear();
-    await edit([{ id: "li-A", productId: "prod-A", qty: 5 }]);
+    // SA-1149 D2: the cut to 5 is now refused (nothing written); the 12 that left stay booked: nothing restocks
+    await expect(edit([{ id: "li-A", productId: "prod-A", qty: 5 }])).rejects.toMatchObject({
+      status: 409,
+    });
     expect(d("li-A")).toBe(12);
-    expect(h.prisma.product.update).not.toHaveBeenCalled(); // the 12 that left stay booked: nothing restocks
+    expect(h.prisma.product.update).not.toHaveBeenCalled();
   });
 
   it("a legacy line (d 0, qty 12) cut to 10 puts NOTHING back on the shelf and ends at d 12", async () => {
@@ -164,9 +167,9 @@ describe("SA-763r: an edit of a DELIVERED order keeps the delivered quantities",
     });
   });
 
-  it("12, cut to 10, raise to 11: d stays 12 and stock moves 0; raise to 14: d is 14 and stock moves 2", async () => {
-    seed([lineA({ qty: 12, deliveredQty: 12 })]);
-    await edit([{ id: "li-A", productId: "prod-A", qty: 10 }]);
+  // SA-1149 D2: the cut 12 -> 10 is refused now, so the line is seeded as the pre-D2 row it left: {q10,d12}.
+  it("pre-D2 row {q10,d12}, raise to 11: d stays 12 and stock moves 0; raise to 14: d is 14 and stock moves 2", async () => {
+    seed([lineA({ qty: 10, deliveredQty: 12 })]);
     await edit([{ id: "li-A", productId: "prod-A", qty: 11 }]);
     expect(d("li-A")).toBe(12); // red under the old rule: 13 (d += the raise of 1)
     expect(h.prisma.product.update).not.toHaveBeenCalled();
@@ -178,8 +181,9 @@ describe("SA-763r: an edit of a DELIVERED order keeps the delivered quantities",
     });
   });
 
+  // SA-1149 D2: seeded {q10,d8}: the cut to 8 lands at the delivered floor; the stamp lifts d back to the old 10.
   it("a cut books nothing (d stays, the goods are gone)", async () => {
-    seed([lineA()]);
+    seed([lineA({ deliveredQty: 8 })]);
     await edit([{ id: "li-A", productId: "prod-A", qty: 8 }]);
     expect(d("li-A")).toBe(10);
   });

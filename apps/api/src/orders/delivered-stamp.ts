@@ -154,10 +154,10 @@ function recreatedTargets(
   }
   const fresh = active.filter((li) => !heldIds.has(li.id)); // a surviving row is not recreated
   // SA-1149 D2: per product, the recreated rows may not total below what was delivered (and held) before the edit.
-  const sums = new Map<string, { delivered: number; held: number; next: number }>();
+  const sums = new Map<string, { delivered: number; held: number; next: number; fresh: boolean }>();
   const sumOf = (k: string) => {
     let v = sums.get(k);
-    if (!v) sums.set(k, (v = { delivered: 0, held: 0, next: 0 }));
+    if (!v) sums.set(k, (v = { delivered: 0, held: 0, next: 0, fresh: false }));
     return v;
   };
   for (const h of carry.held) {
@@ -166,8 +166,14 @@ function recreatedTargets(
     v.delivered += h.deliveredQty;
     v.held += h.qty ?? h.deliveredQty;
   }
-  for (const li of fresh) sumOf(keyOf(li.productId)).next += Number(li.qty);
-  for (const v of sums.values()) assertQtyNotBelowDelivered(v.delivered, v.held, v.next);
+  for (const li of fresh) {
+    const v = sumOf(keyOf(li.productId));
+    v.next += Number(li.qty);
+    v.fresh = true;
+  }
+  // a product with no recreated row is a removal (refused elsewhere), not a cut
+  for (const v of sums.values())
+    if (v.fresh) assertQtyNotBelowDelivered(v.delivered, v.held, v.next);
   const lastOfKey = new Map<string, string>();
   for (const li of fresh) lastOfKey.set(keyOf(li.productId), li.id);
   for (const li of fresh) {

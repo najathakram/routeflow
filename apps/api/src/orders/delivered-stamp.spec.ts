@@ -356,12 +356,20 @@ describe("stampDeliveredInFull — recreated (replace-all, M2)", () => {
     expect(db.line("n1").deliveredQty).toBe(12);
   });
 
-  it("a product cut below what was delivered keeps the carried value (never lowered)", async () => {
+  // SA-1149 D2: a replace-all that cuts a product below what was delivered is refused (the cut itself, 10 -> 6).
+  it("a product cut below what was delivered is refused 409 (D2); a pre-D2 row {q6,d10} restated at 6 keeps the carried 10", async () => {
+    const cut = makeStampDb({
+      status: "DELIVERED",
+      lines: [{ id: "n1", productId: "p1", qty: 6, deliveredQty: 0 }],
+    });
+    await expect(recreate(cut, held([["old1", "p1", 10, 10]]))).rejects.toMatchObject({
+      status: 409,
+    });
     const db = makeStampDb({
       status: "DELIVERED",
       lines: [{ id: "n1", productId: "p1", qty: 6, deliveredQty: 0 }],
     });
-    await recreate(db, held([["old1", "p1", 10, 10]]));
+    await recreate(db, held([["old1", "p1", 6, 10]]));
     expect(db.line("n1").deliveredQty).toBe(10);
   });
 
@@ -392,7 +400,7 @@ describe("stampDeliveredInFull — recreated (replace-all, M2)", () => {
       status: "DELIVERED",
       lines: [
         { id: "n1", productId: "p1", qty: 3, deliveredQty: 0 },
-        { id: "n2", productId: "p1", qty: 3, deliveredQty: 0 },
+        { id: "n2", productId: "p1", qty: 5, deliveredQty: 0 }, // SA-1149 D2: the rows total the delivered 8, not below it
       ],
     });
     await recreate(db, held([["old1", "p1", 8, 8]]));
