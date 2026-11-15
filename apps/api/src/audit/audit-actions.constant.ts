@@ -6,6 +6,10 @@
  * word as an API error code: api-error-codes-parity.spec.ts fails on a bare error-code literal anywhere else.
  */
 export const AUDIT_ACTIONS = {
+  /** SA-1136 W-1: an order cancelled, written by the one cancel writer (cancelOrderInTx) in its own transaction; meta {fromStatus}, the status it left under the lock. The reopen reads it to decide DRAFT or PENDING. */
+  ORDER_CANCELLED: "order.cancelled",
+  /** SA-1136 W-2: a cancelled order reopened, written by claimReopenInTx in its own transaction; meta {toStatus}. Makes the newest cancelled-or-reopened row describe the current cancel episode. */
+  ORDER_REOPENED: "order.reopened",
   /** W-1188: an order whose business date differs from the day it was entered; meta {orderNumber, orderDay, enteredDay, direction, days, surface, registerKey}. One row per dated order, in create()'s own transaction. */
   ORDER_DATED: "order.dated",
   /** Row 430 (SA-958): a tracked (regulated) category created; meta {before: null, after: {name, taxType, rate, unitBasis, priceIncludesTax, invoiceTreatment, requiresLicense, active}, via?}. */

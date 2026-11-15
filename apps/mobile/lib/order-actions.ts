@@ -173,7 +173,7 @@ function routeStatusActions(current: OrderStatus): StatusAction[] {
     // CANCELLED reopens through the dedicated /reopen endpoint below
     // (reopenCancelled), not PATCH /status like DELIVERED's reopen above.
     case "CANCELLED":
-      // POST /orders/:id/reopen → PENDING (OPERATOR-only; server 400s if a
+      // POST /orders/:id/reopen → DRAFT for a cancelled draft, else PENDING (OPERATOR-only; server 400s if a
       // paid/partial/written-off invoice exists).
       return [
         {
@@ -181,7 +181,8 @@ function routeStatusActions(current: OrderStatus): StatusAction[] {
           toStatus: "PENDING",
           style: "primary",
           icon: "refresh-outline",
-          confirmMessage: "Reopen this cancelled order back to Pending?",
+          confirmMessage:
+            "Reopen this order? A cancelled draft comes back as a draft. Any other order comes back as Pending.",
           reopenCancelled: true,
         },
       ];

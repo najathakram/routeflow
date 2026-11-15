@@ -36,7 +36,7 @@ jest.mock("../../notifications/notifications.service", () => ({
 import { randomUUID } from "crypto";
 import { getQueueToken } from "@nestjs/bull";
 import { ConfigService } from "@nestjs/config";
-import { ConflictException } from "@nestjs/common";
+import { ConflictException, Logger } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { OrderStatus, PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
@@ -1030,6 +1030,199 @@ describeDb("SA-1124 PR-1a: offline create mode - real Postgres", () => {
       expect(bodyOf(e).orderId).toBe(online.id);
       expect(await raw.order.count({ where: { customerId: cust } })).toBe(1);
       expect(await flagsOf(online.id)).toHaveLength(0);
+    }, 60_000);
+  });
+
+  /**
+   * SA-1136 (PR-1a3): a cancelled DRAFT reopens as a DRAFT. The source is the in-transaction AuditLog row the one
+   * cancel writer (`cancelOrderInTx`) leaves: `order.cancelled` with meta `fromStatus`; the reopen leaves `order.reopened`.
+   */
+  describe("PR-1a3: a cancelled draft reopens as a draft (SA-1136)", () => {
+    const cancel = (id: string) =>
+      as(() => svc.changeStatus(id, { status: "CANCELLED" } as never, staff()));
+    const reopen = (id: string) => as(() => svc.reopenOrder(id, staff()));
+    const draftOf = async (tag: string, creditLimit?: number, extra: object = {}) => {
+      const cust = await customer(tag, creditLimit);
+      const order: any = await create(
+        { customerId: cust, status: "DRAFT", items: [{ productId: w.clean, qty: 2 }], ...extra },
+        { skipAutoMerge: true },
+      );
+      expect(order.status).toBe("DRAFT");
+      return { cust, order };
+    };
+    const rowsOf = (id: string, action: string) =>
+      raw.auditLog.findMany({
+        where: { entityType: "Order", entityId: id, action },
+        orderBy: { createdAt: "asc" },
+      });
+    const lineStatuses = async (id: string) =>
+      (await raw.orderItem.findMany({ where: { orderId: id } })).map((l) => l.status).sort();
+    const movements = (productId: string) => raw.stockMovement.count({ where: { productId } });
+
+    it("O1-1: an online DRAFT, cancelled then reopened, is a DRAFT; no stock moved; one cancelled row (fromStatus DRAFT) and one reopened row (toStatus DRAFT)", async () => {
+      const { order } = await draftOf("o11");
+      const stockBefore = await stockOf(w.clean);
+      const movesBefore = await movements(w.clean);
+      await cancel(order.id);
+      const reopened: any = await reopen(order.id);
+      expect({
+        returned: reopened.status,
+        stored: await statusOf(order.id),
+        stockDelta: (await stockOf(w.clean)) - stockBefore,
+        movementDelta: (await movements(w.clean)) - movesBefore,
+        cancelled: (await rowsOf(order.id, "order.cancelled")).map((r) => r.meta),
+        reopened: (await rowsOf(order.id, "order.reopened")).map((r) => r.meta),
+      }).toEqual({
+        returned: "DRAFT",
+        stored: "DRAFT",
+        stockDelta: 0,
+        movementDelta: 0,
+        cancelled: [{ fromStatus: "DRAFT" }],
+        reopened: [{ toStatus: "DRAFT" }],
+      });
+    }, 60_000);
+
+    it("O1-3: a cancelled draft of a restricted product reopens as a DRAFT (no restriction judgment at the reopen) and is judged at its promotion", async () => {
+      // SA-1136 named the credit gate here, but promotion runs it only for an open CREDIT_BLOCKED flag (review-flags.ts
+      // assertPromotionCredit); a plain draft is judged by the restriction check and the license guard. This pins what runs.
+      const cust = await customer("o13", undefined, "CA");
+      const order: any = await create(
+        { customerId: cust, status: "DRAFT", items: [{ productId: w.banned, qty: 1 }] },
+        { skipAutoMerge: true },
+      );
+      expect(order.status).toBe("DRAFT");
+      await cancel(order.id);
+      const reopened: any = await reopen(order.id); // no warningHash, no restrictionOverrides
+      expect(reopened.status).toBe("DRAFT");
+      expect(bodyOf(await errOf(promote(order.id))).code).toBe("RESTRICTION_WARNING");
+      expect(await statusOf(order.id)).toBe("DRAFT");
+    }, 90_000);
+
+    it("O1-4: a struck-off line of a cancelled draft stays struck off; the live line stays live; no stock moved", async () => {
+      const cust = await customer("o14");
+      const order: any = await create(
+        {
+          customerId: cust,
+          status: "DRAFT",
+          items: [
+            { productId: w.clean, qty: 2 },
+            { productId: pricey, qty: 1 },
+          ],
+        },
+        { skipAutoMerge: true },
+      );
+      const lines = await raw.orderItem.findMany({ where: { orderId: order.id } });
+      const struck = lines.find((l) => l.productId === pricey)!;
+      // what writeLineRemoval leaves on a draft: CANCELLED, qty 0
+      await raw.orderItem.update({
+        where: { id: struck.id },
+        data: { status: "CANCELLED", qty: 0 },
+      });
+      const stockBefore = [await stockOf(w.clean), await stockOf(pricey)];
+      await cancel(order.id);
+      await reopen(order.id);
+      expect(await statusOf(order.id)).toBe("DRAFT");
+      const after = await raw.orderItem.findUniqueOrThrow({ where: { id: struck.id } });
+      expect(after.status).toBe("CANCELLED");
+      expect([await stockOf(w.clean), await stockOf(pricey)]).toEqual(stockBefore);
+    }, 60_000);
+
+    it("O1-2: a buyer who cancels its own DRAFT leaves the same row, and the staff reopen gives a DRAFT", async () => {
+      const { order, cust } = await draftOf("o12");
+      const buyerUserId = (await raw.customer.findUniqueOrThrow({ where: { id: cust } })).userId;
+      const buyer = { ...staff(), role: "CUSTOMER", sub: buyerUserId } as never;
+      await as(() => svc.changeStatus(order.id, { status: "CANCELLED" } as never, buyer));
+      expect((await rowsOf(order.id, "order.cancelled")).map((r) => r.meta)).toEqual([
+        { fromStatus: "DRAFT" },
+      ]);
+      const reopened: any = await reopen(order.id);
+      expect(reopened.status).toBe("DRAFT");
+    }, 60_000);
+
+    it("O1-5 (guard): a live order with tracked stock cancels (lines marked, stock credited) and reopens to PENDING with the stock re-taken", async () => {
+      const cust = await customer("o15");
+      const order: any = await create(
+        { customerId: cust, items: [{ productId: w.clean, qty: 3 }] },
+        { skipAutoMerge: true },
+      );
+      expect(order.status).toBe("PENDING");
+      const afterCreate = await stockOf(w.clean);
+      await cancel(order.id);
+      expect(await stockOf(w.clean)).toBe(afterCreate + 3);
+      expect((await rowsOf(order.id, "order.cancelled")).map((r) => r.meta)).toEqual([
+        { fromStatus: "PENDING" },
+      ]);
+      const reopened: any = await reopen(order.id);
+      expect(reopened.status).toBe("PENDING");
+      expect(await lineStatuses(order.id)).toEqual(["PENDING"]);
+      expect(await stockOf(w.clean)).toBe(afterCreate);
+    }, 60_000);
+
+    it("O1-6 (guard, legacy): a cancelled order with no audit row and no flag reopens to PENDING, as before", async () => {
+      const { order } = await draftOf("o16");
+      await cancel(order.id);
+      await raw.auditLog.deleteMany({ where: { entityType: "Order", entityId: order.id } });
+      const reopened: any = await reopen(order.id);
+      expect(reopened.status).toBe("PENDING");
+    }, 60_000);
+
+    it("O1-7 (guard, legacy plus R-1): no audit row but an open CREDIT_BLOCKED flag reopens to DRAFT, flag open", async () => {
+      const cust = await customer("o17", 5);
+      const first: any = await create(
+        { customerId: cust, items: [{ productId: w.clean, qty: 2 }] },
+        offline(quoteOf(22, [line(0, 10)])),
+      );
+      expect(first.status).toBe("DRAFT");
+      await cancel(first.id);
+      await raw.auditLog.deleteMany({ where: { entityType: "Order", entityId: first.id } });
+      const reopened: any = await reopen(first.id);
+      expect(reopened.status).toBe("DRAFT");
+      expect(
+        (await flagsOf(first.id)).filter(
+          (f) => f.resolvedAt === null && GATE_FLAG_KINDS.includes(f.kind),
+        ),
+      ).toHaveLength(1);
+    }, 60_000);
+
+    it("O1-8 (guard, stale episode): after a recorded reopen, an unrecorded cancel reads as unknown and reopens to PENDING", async () => {
+      const { order } = await draftOf("o18");
+      await cancel(order.id);
+      await reopen(order.id);
+      await raw.order.update({ where: { id: order.id }, data: { status: "CANCELLED" } });
+      const reopened: any = await reopen(order.id);
+      expect(reopened.status).toBe("PENDING");
+    }, 60_000);
+
+    it("O1-9 (guard, invariant): a live cancel that still holds an open gate flag is refused with the 409 and writes nothing", async () => {
+      const cust = await customer("o19", 5);
+      const first: any = await create(
+        { customerId: cust, items: [{ productId: w.clean, qty: 2 }] },
+        offline(quoteOf(22, [line(0, 10)])),
+      );
+      await cancel(first.id);
+      await raw.auditLog.updateMany({
+        where: { entityType: "Order", entityId: first.id, action: "order.cancelled" },
+        data: { meta: { fromStatus: "CONFIRMED" } },
+      });
+      const logged = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+      const stockBefore = await stockOf(w.clean);
+      const e = await errOf(reopen(first.id));
+      expect(e.getStatus()).toBe(409);
+      expect(bodyOf(e).code).toBe("ORDER_CHANGED_DURING_EDIT");
+      expect(await statusOf(first.id)).toBe("CANCELLED");
+      expect(await stockOf(w.clean)).toBe(stockBefore);
+      expect(await rowsOf(first.id, "order.reopened")).toHaveLength(0);
+      expect(logged.mock.calls.some((c) => String(c[0]).includes(first.id))).toBe(true);
+    }, 60_000);
+
+    it("O1-10 (guard, rollback): a cancel that fails after its claim leaves no order.cancelled row and the order unchanged", async () => {
+      const { order } = await draftOf("o110");
+      jest
+        .spyOn((svc as any).creditNotes, "releaseOrderCreditsInTx")
+        .mockRejectedValueOnce(new Error("boom"));
+      await errOf(cancel(order.id));
+      expect(await statusOf(order.id)).toBe("DRAFT");
+      expect(await rowsOf(order.id, "order.cancelled")).toHaveLength(0);
     }, 60_000);
   });
 });

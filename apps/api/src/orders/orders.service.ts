@@ -2498,7 +2498,7 @@ export class OrdersService implements OnApplicationBootstrap {
         `Cannot reopen order: invoice ${paidInvoice.invoiceNumber} is ${paidInvoice.status}. Void or credit the invoice before reopening.`,
       );
     }
-    // F-05 (SA-272): reopening moves the ORDER to PENDING, so EVERY line goes live — a new sale of the whole order,
+    // F-05 (SA-272): reopening a LIVE order moves it to PENDING (a cancelled DRAFT comes back as a DRAFT: SA-1136), so EVERY line goes live — a new sale of the whole order,
     // not only of the item-CANCELLED lines (cancelling a DRAFT never marks its lines CANCELLED, and drafts are
     // written without the check). Staff-only path; no delta, so every catalog line is checked, before any write.
     const tenant = rGate.tenantId(this.prisma, user, order.tenantId);
@@ -2512,22 +2512,26 @@ export class OrdersService implements OnApplicationBootstrap {
     return this.stockTx(
       "orders.reopen",
       async (tx) => {
-        await claimReopenInTx(tx, id, target); // B695: Order lock + CANCELLED -> target CAS; the loser gets the 409
+        await claimReopenInTx(tx, id, target, user); // B695: Order lock + CANCELLED -> target CAS; the loser gets the 409
         // Row 510: under that lock, the override re-judged against the locked lines (every line goes live).
         const judged = new Set(order.lineItems.map((li) => li.productId as string));
         const stamped = await rGate.recheck(tx, restriction, id, judged, { allLive: true });
         // B64: the item-CANCELLED lines, read BEFORE they flip below — exactly what an F07 cancel credited
         // back (a pre-F07 cancel left lines untouched: empty, nothing re-decremented).
-        const cancelledLines = await tx.orderItem.findMany({
-          where: { orderId: id, status: ItemStatus.CANCELLED },
-          select: STOCK_SALE_LINE_SELECT,
-        });
+        const live = target !== OrderStatus.DRAFT; // SA-1136: a DRAFT held no stock; no flip, no re-take
+        const cancelledLines = live
+          ? await tx.orderItem.findMany({
+              where: { orderId: id, status: ItemStatus.CANCELLED },
+              select: STOCK_SALE_LINE_SELECT,
+            })
+          : [];
 
         // Revert cancelled line items back to PENDING
-        await tx.orderItem.updateMany({
-          where: { orderId: id, status: ItemStatus.CANCELLED },
-          data: { status: ItemStatus.PENDING },
-        });
+        if (live)
+          await tx.orderItem.updateMany({
+            where: { orderId: id, status: ItemStatus.CANCELLED },
+            data: { status: ItemStatus.PENDING },
+          });
 
         // Re-take exactly what the cancel credited back (order-stock.ts).
         await restoreStockForReopen(this.stockDeps(), tx, id, cancelledLines);
