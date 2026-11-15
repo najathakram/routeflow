@@ -137,6 +137,10 @@ export function hasTwoPaySources(i: BillingStatusInput): boolean {
   return stripeOwes(i.subscription) && i.paymentDue.due;
 }
 
+/** S8: a Pay button needs a figure to collect. No positive figure means no Pay action (the state and its sentence stay). */
+const payWith = (action: BillingStatusAction, amount: number | null): BillingStatusAction | null =>
+  amount === null ? null : action;
+
 const NONE: BillingStatusView = { state: "none", amount: null, dueOn: null, action: null };
 
 export function billingStatusOf(i: BillingStatusInput): BillingStatusView {
@@ -183,9 +187,12 @@ function decide(i: BillingStatusInput): Decision {
   if (
     locked &&
     reason !== "subscription_cancelled" &&
-    (reason === "payment_overdue" || stripeOwes(s))
+    // no recorded reason but a dunning marker is a lock for an unpaid amount too, even when Stripe is unreachable (S10)
+    (reason === "payment_overdue" ||
+      stripeOwes(s) ||
+      (reason === null && Boolean(s.pastDueInvoiceId)))
   ) {
-    return make("read_only", { amount: payAmount, action: PAY_INVOICE });
+    return make("read_only", { amount: payAmount, action: payWith(PAY_INVOICE, payAmount) });
   }
   if (s.status === TRIAL && trialEnd && trialEnd.getTime() <= now.getTime()) {
     return make("trial_ended", { action: CHOOSE_PLAN });
@@ -200,7 +207,7 @@ function decide(i: BillingStatusInput): Decision {
       dueOn: since
         ? dayIn(new Date(since.getTime() + DUNNING_PAUSE_HOURS * HOUR_MS), timeZone)
         : null,
-      action: PAY_INVOICE,
+      action: payWith(PAY_INVOICE, payAmount),
     });
   }
 
@@ -208,17 +215,18 @@ function decide(i: BillingStatusInput): Decision {
   if (stripeOwes(s)) {
     return make("due", {
       amount: payAmount,
+      action: payWith(PAY_INVOICE, payAmount),
       dueOn: s.openInvoiceDueAt ? dayIn(s.openInvoiceDueAt, timeZone) : null,
-      action: PAY_INVOICE,
     });
   }
   if (d.due) {
+    const catchUp = positive(fromCents(d.amountCents)); // 0 cents is no figure (S8)
     return make(
       "due",
       {
-        amount: fromCents(d.amountCents),
+        amount: catchUp,
         dueOn: d.periodStart ? dayIn(d.periodStart, timeZone) : null,
-        action: PAY_CHECKOUT,
+        action: payWith(PAY_CHECKOUT, catchUp),
       },
       true, // the catch-up bill is the one amount staff see today (payment-due.test.ts), so it stays
     );

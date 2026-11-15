@@ -261,9 +261,43 @@ const ROWS: Row[] = [
     want: { state: "due", amount: 150, dueOn: null, action: PAY_INVOICE },
   },
   {
-    name: "MUST 2: nothing positive anywhere is null, never Pay $0 (a lagging dunning marker)",
+    // RULED CHANGE of expectation (lead, SA-1150 S8): round 1 pinned action PAY_INVOICE here; a Pay state with no
+    // positive figure has NO Pay action. The amount rule (null, never $0) is unchanged.
+    name: "S8: failed with nothing positive anywhere: amount null and NO Pay action (the state stays)",
     input: input({ ...IN_DUNNING, outstandingTotal: 0, payNowAmount: 0, openInvoiceAmount: 0 }),
-    want: { state: "failed", amount: null, dueOn: "2026-11-24", action: PAY_INVOICE },
+    want: { state: "failed", amount: null, dueOn: "2026-11-24", action: null },
+  },
+  {
+    name: "S8: Stripe due with no positive figure: state stays, amount null, no Pay action",
+    input: input({ billingState: "due", outstandingTotal: 0, payNowAmount: 0 }),
+    want: { state: "due", amount: null, dueOn: null, action: null },
+  },
+  {
+    name: "S8: read_only with no figure at all: state stays, amount null, no Pay action",
+    input: input({
+      status: "READ_ONLY",
+      readOnlyReason: "payment_overdue",
+      billingState: undefined,
+    }),
+    want: { state: "read_only", amount: null, dueOn: null, action: null },
+  },
+  {
+    name: "S8: a catch-up bill of 0 cents is not a Pay state either (no Pay to the checkout)",
+    input: input({ billingState: undefined }, { due: true, amountCents: 0 }),
+    want: { state: "due", amount: null, dueOn: null, action: null },
+  },
+  {
+    name: "S8 does not touch add_card: it is not a Pay state, amount null by rule (S6), the action stays",
+    input: input(
+      { billingState: undefined, paymentMethodSummary: null },
+      { cardNeeded: true, cardBy: "2026-11-20T03:00:00.000Z" },
+    ),
+    want: {
+      state: "due",
+      amount: null,
+      dueOn: "2026-11-19",
+      action: { kind: "add_card", target: "checkout" },
+    },
   },
   {
     name: "MUST 2: a pay-now figure that rounds to 0 is treated as 0",
@@ -321,9 +355,7 @@ const ROWS: Row[] = [
     want: { state: "none", amount: null, dueOn: null, action: null },
   },
   {
-    name: "SHOULD d (OBSERVE, pending SA): locked, no reason, dunning marker, Stripe unreachable: today's result is failed",
-    // Pending SA: a locked tenant arguably reads read_only. This row documents the CURRENT result only; do not
-    // "fix" it here. If the SA rules, change the expected state in the same diff as the code.
+    name: "S10: locked, no reason, dunning marker, Stripe unreachable: read_only, amount null, no action (was failed)",
     input: input({
       status: "READ_ONLY",
       readOnlyReason: null,
@@ -331,7 +363,7 @@ const ROWS: Row[] = [
       pastDueInvoiceId: "in_1",
       pastDueSince: "2026-11-10T20:00:00.000Z",
     }),
-    want: { state: "failed", amount: null, dueOn: "2026-11-24", action: PAY_INVOICE },
+    want: { state: "read_only", amount: null, dueOn: null, action: null },
   },
 ];
 

@@ -116,6 +116,8 @@ import { PlanFlagBootAlert } from "./plan-flag-boot-alert";
     PlanFlagBootAlert,
   ],
   exports: [
+    // SA-1146 B-6 (platform-admin billing status) reuses the one assembly.
+    BillingStatusService,
     EntitlementSweepService,
     StripeService,
     ScheduledPriceChangeService,
