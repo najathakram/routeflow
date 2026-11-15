@@ -19,7 +19,7 @@ export function useBusinessStatus(): BusinessStatus | null {
   return React.useMemo(() => businessStatus(sub.data, role), [sub.data, role]);
 }
 
-type Variant = "rail" | "list" | "pane";
+type Variant = "rail" | "list";
 
 /**
  * Apple-ID-row pattern: logo (or an initial), business name, plan + status pill. The whole card opens Plan &
@@ -39,7 +39,6 @@ function BusinessCardInner({ variant, active }: { variant: Variant; active?: boo
   const status = useBusinessStatus();
   const portal = useBillingPortal();
   const name = branding?.businessName?.trim() || "Your business";
-  const big = variant === "pane";
 
   const pay = status?.pay;
   const onPay = () => {
@@ -55,7 +54,7 @@ function BusinessCardInner({ variant, active }: { variant: Variant; active?: boo
         aria-current={active ? "page" : undefined}
         className={cn(
           "flex items-center gap-3 rounded-[var(--r-card)] border border-[var(--line)] bg-[var(--paper)] shadow-[var(--sh-card)] transition-colors [transition-duration:120ms] hover:bg-[var(--sunken)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary motion-reduce:transition-none",
-          big ? "p-5" : "p-3",
+          "p-3",
           pay && variant !== "rail" && "pr-32",
           active && "bg-[var(--accent-soft)] hover:bg-[var(--accent-soft)]",
         )}
@@ -65,26 +64,18 @@ function BusinessCardInner({ variant, active }: { variant: Variant; active?: boo
           <img
             src={branding.logoUrl}
             alt=""
-            className={cn("flex-none rounded-lg object-contain", big ? "h-14 w-14" : "h-10 w-10")}
+            className="h-10 w-10 flex-none rounded-lg object-contain"
           />
         ) : (
           <span
             aria-hidden="true"
-            className={cn(
-              "flex flex-none items-center justify-center rounded-lg bg-[var(--accent)] font-semibold text-[var(--primary-foreground)]",
-              big ? "h-14 w-14 text-2xl" : "h-10 w-10 text-lg",
-            )}
+            className="flex h-10 w-10 flex-none items-center justify-center rounded-lg bg-[var(--accent)] text-lg font-semibold text-[var(--primary-foreground)]"
           >
             {name.charAt(0).toUpperCase()}
           </span>
         )}
         <span className="min-w-0 flex-1">
-          <span
-            className={cn(
-              "block truncate font-[family-name:var(--font-display)] text-[var(--ink-900)]",
-              big ? "text-3xl leading-9" : "text-xl leading-6",
-            )}
-          >
+          <span className="block truncate font-[family-name:var(--font-display)] text-xl leading-6 text-[var(--ink-900)]">
             {name}
           </span>
           {status && (
