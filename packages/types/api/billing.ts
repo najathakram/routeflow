@@ -262,7 +262,7 @@ export interface BillingPaymentRow {
 }
 
 /**
- * `GET /settings/billing/payments?cursor=`: up to `PAYMENTS_PAGE_SIZE` rows, newest first. `nextCursor` is an opaque
+ * `GET /billing/payments?cursor=`: up to `PAYMENTS_PAGE_SIZE` rows, newest first. `nextCursor` is an opaque
  * string (null on the last page). `stripeUnavailable` is true when the card payments could not be read: the rows are
  * then the RouteFlow ones only and the page must say so (it is never an empty list posing as "no payments").
  */

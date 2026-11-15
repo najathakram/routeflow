@@ -1,5 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { roundMoney } from "@routeflow/pricing";
+import { fromCents, roundMoney } from "@routeflow/pricing";
 import type { BillingPaymentRow, BillingPaymentsPage } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { dunningZone } from "./dunning-zone";
@@ -48,21 +48,41 @@ let knownCurrencies: Set<string> | null = null;
 const loggedUnknown = new Set<string>();
 
 /**
- * A Stripe amount in the currency's MAJOR unit: the smallest-unit count divided by 10^exponent, the exponent being the
- * currency's own, never a bare /100. Only exponent 2 (USD and the like) and 0 (zero-decimal, JPY) are converted:
- * `roundMoney` keeps 2 places, so a 3-decimal currency would lose precision. Any other exponent, a currency this
- * runtime does not know, or a non-whole amount gives null: that row shows no amount rather than a wrong one.
+ * Stripe's own currency exponents (https://docs.stripe.com/currencies, "Zero-decimal currencies" and
+ * "Three-decimal currencies"), NOT the runtime's Intl data: Intl disagrees for ISK, UGX and the like, which Stripe
+ * still takes as two-decimal amounts. Every other currency is two-decimal.
+ */
+const STRIPE_ZERO_DECIMAL = new Set([
+  "BIF",
+  "CLP",
+  "DJF",
+  "GNF",
+  "JPY",
+  "KMF",
+  "KRW",
+  "MGA",
+  "PYG",
+  "RWF",
+  "VND",
+  "VUV",
+  "XAF",
+  "XOF",
+  "XPF",
+]);
+const STRIPE_THREE_DECIMAL = new Set(["BHD", "JOD", "KWD", "OMR", "TND"]);
+
+/**
+ * A Stripe amount in the currency's MAJOR unit: the smallest-unit count divided by 10^exponent, the exponent being
+ * Stripe's (lists above), never a bare division. Only exponent 2 and 0 are converted: `roundMoney` keeps 2 places, so a
+ * 3-decimal currency would lose precision. A 3-decimal code, a currency this runtime does not know, or a non-whole
+ * amount gives null: that row shows no amount rather than a wrong one.
  */
 export function stripeMinorToMajor(minor: number, currency: string): number | null {
   const code = currency.toUpperCase();
   knownCurrencies ??= new Set(Intl.supportedValuesOf("currency"));
   if (!knownCurrencies.has(code) || !Number.isInteger(minor)) return null;
-  const digits = new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: code,
-  }).resolvedOptions().maximumFractionDigits;
-  if (digits !== 2 && digits !== 0) return null;
-  return roundMoney(minor / 10 ** digits);
+  if (STRIPE_THREE_DECIMAL.has(code)) return null;
+  return STRIPE_ZERO_DECIMAL.has(code) ? roundMoney(minor) : fromCents(minor);
 }
 
 interface Candidate {
@@ -106,8 +126,11 @@ export class BillingPaymentsService {
       dunningZone(this.prisma, tenantId),
     ]);
 
+    // Newest first by timestamp ONLY. Array.sort is stable, so rows with one timestamp keep their own source's order
+    // (Stripe's, or the RouteFlow query's): an id tie-break could put a later-paged Stripe row ahead of one already
+    // returned, and the Stripe cursor (the last returned id) would then skip it.
     const candidates: Candidate[] = [...stripeSide.rows, ...rfSide.rows].sort(
-      (a, b) => b.at - a.at || (a.row.id < b.row.id ? 1 : a.row.id > b.row.id ? -1 : 0),
+      (a, b) => b.at - a.at,
     );
     const page = candidates.slice(0, PAYMENTS_PAGE_SIZE);
 

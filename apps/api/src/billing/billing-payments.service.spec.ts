@@ -177,6 +177,34 @@ describe("BillingPaymentsService (SA-1146 B-4)", () => {
     expect(seen).toEqual(expected);
   });
 
+  it("rows with one timestamp keep each source's own order: 13 of 13 over two pages, none twice", async () => {
+    // 13 Stripe invoices created in the same second, served in Stripe's own order (ids ascending here, so an id
+    // tie-break would reverse them and the cursor would skip rows); no RouteFlow rows.
+    const same = "2026-10-01T00:00:00Z";
+    const stripe: StripeInv[] = [];
+    for (let i = 0; i < 13; i++) stripe.push(inv(i, same));
+    const svc = await make(build({ subs: { t1: "cus_a" }, rf: [], stripe }));
+    const first = await svc.list("t1", null);
+    expect(first.rows).toHaveLength(12);
+    expect(first.nextCursor).not.toBeNull();
+    const second = await svc.list("t1", first.nextCursor);
+    expect(second.nextCursor).toBeNull();
+    const seen = [...first.rows, ...second.rows].map((r) => r.id);
+    expect(seen).toHaveLength(13);
+    expect(new Set(seen).size).toBe(13);
+    expect(seen).toEqual(stripe.map((s) => s.id));
+  });
+
+  it("a tie between the two sources puts neither out of its own order", async () => {
+    const same = "2026-10-01T00:00:00Z";
+    const stripe = [inv(1, same), inv(2, same)];
+    const rfRows = [rf(9, same), rf(8, same)];
+    const svc = await make(build({ subs: { t1: "cus_a" }, rf: rfRows, stripe }));
+    const ids = (await svc.list("t1", null)).rows.map((r) => r.id);
+    expect(ids.filter((i) => i.startsWith("in_"))).toEqual(["in_1", "in_2"]);
+    expect(ids.filter((i) => i.startsWith("rf_"))).toEqual(["rf_009", "rf_008"]);
+  });
+
   it("never returns another tenant's rows and reads the customer id from the tenant row", async () => {
     const h = build({
       subs: { t1: "cus_a", t2: "cus_b" },
@@ -297,6 +325,20 @@ describe("BillingPaymentsService (SA-1146 B-4)", () => {
     const rows = (await (await make(h)).list("t1", null)).rows;
     expect(rows.find((r) => r.id === "in_1")?.amount).toBeNull();
     expect(rows.find((r) => r.id === "in_2")?.amount).toBe(123.45);
+  });
+
+  it("HUF and ISK are two-decimal in Stripe's API whatever Intl says (4200 minor is 42)", async () => {
+    const h = build({
+      subs: { t1: "cus_a" },
+      rf: [],
+      stripe: [
+        { ...inv(1, "2026-10-01T00:00:00Z"), amount_paid: 4_200, currency: "huf" },
+        { ...inv(2, "2026-10-02T00:00:00Z"), amount_paid: 4_200, currency: "isk" },
+      ],
+    });
+    const rows = (await (await make(h)).list("t1", null)).rows;
+    expect(rows.find((r) => r.id === "in_1")).toMatchObject({ amount: 42, currency: "HUF" });
+    expect(rows.find((r) => r.id === "in_2")).toMatchObject({ amount: 42, currency: "ISK" });
   });
 
   it("a 3-decimal currency (BHD) shows no amount: only exponent 2 and 0 are converted", async () => {
