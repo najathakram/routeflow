@@ -109,6 +109,15 @@ describe("SA-1141 discount tax base pin", () => {
     expect(bad).toEqual([]);
   });
 
+  it("1b: every order-derived rate stamp in the invoice service reads the ORDER's mode (R4), never the new-document mode", () => {
+    const src = stripComments(
+      fs.readFileSync(path.join(ROOT, "apps/api/src/invoices/invoices.service.ts"), "utf8"),
+    );
+    const calls = callsIn(src, "applyOrderDerivedTaxRate");
+    expect(calls.length).toBe(4); // the four generation sites (the import is not a call)
+    expect(calls.filter((c) => /discountModeOf\(order\)/.test(c)).length).toBe(4);
+  });
+
   it("2: a string-literal mode appears only in the listed LEGACY-by-definition files, at the listed counts", () => {
     const found: Record<string, number> = {};
     for (const f of FILES) {
