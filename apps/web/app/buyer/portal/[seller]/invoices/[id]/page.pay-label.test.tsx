@@ -15,11 +15,11 @@ function makeInvoice(overrides: Record<string, unknown> = {}): BuyerInvoiceDetai
     taxAmount: 0,
     discount: 0,
     shippingFee: 0,
-    total: 10,
+    total: 60,
     dueDate: "2026-11-06",
     sentAt: null,
     viewedAt: null,
-    paidAt: "2026-10-07",
+    paidAt: null,
     issueDate: "2026-10-07",
     pdfUrl: null,
     notes: null,
@@ -31,10 +31,10 @@ function makeInvoice(overrides: Record<string, unknown> = {}): BuyerInvoiceDetai
         id: "item-1",
         description: "Mango Juice",
         productId: "p1",
-        qty: 1,
+        qty: 6,
         unitPrice: 10,
         discount: 0,
-        subtotal: 10,
+        subtotal: 60,
         priceType: "STANDARD",
         notes: null,
       }),
@@ -77,6 +77,12 @@ describe("buyer invoice detail — pay button label (UX guide B3)", () => {
     renderWithProviders(<Page />);
     expect(screen.getByRole("button", { name: "Pay $60.00" })).toBeInTheDocument();
     expect(screen.queryByText("Pay this invoice")).toBeNull();
+  });
+
+  it("keeps the label on one line beside the badge and PDF at 390", () => {
+    mockUseBuyerInvoice.mockReturnValue({ data: makeInvoice(), isLoading: false, isError: false });
+    renderWithProviders(<Page />);
+    expect(screen.getByRole("button", { name: "Pay $60.00" })).toHaveClass("whitespace-nowrap");
   });
 
   it("guard: it still seeds the payments page with amount=60.00", () => {

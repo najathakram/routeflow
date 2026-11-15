@@ -5,14 +5,14 @@
 import type { OrderStatusGroupValue } from "@routeflow/types";
 
 export const BUYER_ORDER_FILTERS = [
-  { id: "ALL", label: "All" },
-  { id: "ACTIVE", label: "Active" },
-  { id: "PENDING", label: "Pending" },
-  { id: "CONFIRMED", label: "Confirmed" },
-  { id: "OUT_FOR_DELIVERY", label: "Out for delivery" },
-  { id: "DELIVERED", label: "Delivered" },
-  { id: "REFUSED", label: "Refused" },
-  { id: "CANCELLED", label: "Cancelled" },
+  { id: "ALL", label: "All", empty: "No orders yet." },
+  { id: "ACTIVE", label: "Active", empty: "No active orders." },
+  { id: "PENDING", label: "Pending", empty: "No pending orders." },
+  { id: "CONFIRMED", label: "Confirmed", empty: "No confirmed orders." },
+  { id: "OUT_FOR_DELIVERY", label: "Out for delivery", empty: "No orders out for delivery." },
+  { id: "DELIVERED", label: "Delivered", empty: "No delivered orders." },
+  { id: "REFUSED", label: "Refused", empty: "No refused orders." },
+  { id: "CANCELLED", label: "Cancelled", empty: "No cancelled orders." },
 ] as const;
 
 export type BuyerOrderFilterId = (typeof BUYER_ORDER_FILTERS)[number]["id"];
@@ -26,9 +26,7 @@ export function buyerOrderQuery(filter: BuyerOrderFilterId): {
   return { status: filter };
 }
 
-/** Empty-state headline: "No orders yet" only on All; a filter names itself. */
+/** Empty-state headline: "No orders yet" only on All; a filter names itself, as a phrase of its own. */
 export function buyerOrdersEmptyText(filter: BuyerOrderFilterId): string {
-  if (filter === "ALL") return "No orders yet.";
-  const label = BUYER_ORDER_FILTERS.find((f) => f.id === filter)?.label ?? "";
-  return `No ${label.toLowerCase()} orders.`;
+  return BUYER_ORDER_FILTERS.find((f) => f.id === filter)?.empty ?? "No orders yet.";
 }

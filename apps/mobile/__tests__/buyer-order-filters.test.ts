@@ -14,7 +14,7 @@ describe("buyerOrderQuery", () => {
 describe("buyerOrdersEmptyText", () => {
   it("names the filter instead of claiming no orders exist", () => {
     expect(buyerOrdersEmptyText("CANCELLED")).toBe("No cancelled orders.");
-    expect(buyerOrdersEmptyText("OUT_FOR_DELIVERY")).toBe("No out for delivery orders.");
+    expect(buyerOrdersEmptyText("OUT_FOR_DELIVERY")).toBe("No orders out for delivery.");
   });
   it("guard: All keeps No orders yet.", () => {
     expect(buyerOrdersEmptyText("ALL")).toBe("No orders yet.");

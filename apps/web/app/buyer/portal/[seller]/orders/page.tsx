@@ -87,14 +87,39 @@ function orderLabel(order: { orderNumber?: string | null; id: string }): string 
  * keeps the old PENDING-only filter so the buyer loses nothing.
  */
 const ORDER_TABS = [
-  { id: "ALL", label: "All", params: {} },
-  { id: "ACTIVE", label: "Active", params: { statusGroup: "ACTIVE" as const } },
-  { id: "PENDING", label: "Pending", params: { status: "PENDING" } },
-  { id: "CONFIRMED", label: "Confirmed", params: { status: "CONFIRMED" } },
-  { id: "OUT_FOR_DELIVERY", label: "Out for delivery", params: { status: "OUT_FOR_DELIVERY" } },
-  { id: "DELIVERED", label: "Delivered", params: { status: "DELIVERED" } },
-  { id: "REFUSED", label: "Refused", params: { status: "REFUSED" } },
-  { id: "CANCELLED", label: "Cancelled", params: { status: "CANCELLED" } },
+  { id: "ALL", label: "All", empty: "No orders yet", params: {} },
+  {
+    id: "ACTIVE",
+    label: "Active",
+    empty: "No active orders",
+    params: { statusGroup: "ACTIVE" as const },
+  },
+  { id: "PENDING", label: "Pending", empty: "No pending orders", params: { status: "PENDING" } },
+  {
+    id: "CONFIRMED",
+    label: "Confirmed",
+    empty: "No confirmed orders",
+    params: { status: "CONFIRMED" },
+  },
+  {
+    id: "OUT_FOR_DELIVERY",
+    label: "Out for delivery",
+    empty: "No orders out for delivery",
+    params: { status: "OUT_FOR_DELIVERY" },
+  },
+  {
+    id: "DELIVERED",
+    label: "Delivered",
+    empty: "No delivered orders",
+    params: { status: "DELIVERED" },
+  },
+  { id: "REFUSED", label: "Refused", empty: "No refused orders", params: { status: "REFUSED" } },
+  {
+    id: "CANCELLED",
+    label: "Cancelled",
+    empty: "No cancelled orders",
+    params: { status: "CANCELLED" },
+  },
 ] as const;
 type OrderTabId = (typeof ORDER_TABS)[number]["id"];
 
@@ -205,9 +230,7 @@ export default function BuyerOrdersPage() {
             </>
           ) : (
             <>
-              <h2 className="text-lg font-semibold text-navy mb-2">
-                No {activeTab.label.toLowerCase()} orders
-              </h2>
+              <h2 className="text-lg font-semibold text-navy mb-2">{activeTab.empty}</h2>
               <button
                 type="button"
                 onClick={() => {

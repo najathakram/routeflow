@@ -202,6 +202,13 @@ describe("BuyerOrdersPage — UX guide B12 tabs", () => {
     expect(lastParams().statusGroup).toBeUndefined();
   });
 
+  it("Out for delivery reads as a phrase: No orders out for delivery", () => {
+    mockOrders = [];
+    renderWithProviders(<BuyerOrdersPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Out for delivery" }));
+    expect(screen.getByText("No orders out for delivery")).toBeInTheDocument();
+  });
+
   it("a filtered empty list names the filter and offers Show all orders", () => {
     mockOrders = [];
     renderWithProviders(<BuyerOrdersPage />);
