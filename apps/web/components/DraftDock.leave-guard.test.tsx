@@ -43,9 +43,13 @@ afterEach(() => {
   act(() => setCounterCartBusy(false));
 });
 
+// UX guide improvement 2: collapsed, the dock is the pill on every width; one click opens the chips.
+const openDock = () => fireEvent.click(screen.getByRole("button", { name: /parked draft/ }));
+
 describe("DraftDock leave guard", () => {
   it("Resume does not navigate while a sale is being recorded", () => {
     render(ui());
+    openDock();
     act(() => setCounterCartBusy(true));
     fireEvent.click(screen.getByRole("button", { name: "Resume" }));
     expect(mockPush).not.toHaveBeenCalled();
@@ -61,6 +65,7 @@ describe("DraftDock leave guard", () => {
 
   it("not busy: Resume and Start a new order instead navigate", () => {
     render(ui());
+    openDock();
     fireEvent.click(screen.getByRole("button", { name: "Resume" }));
     expect(mockPush).toHaveBeenCalledTimes(1);
     scan("ABCDEFGH");

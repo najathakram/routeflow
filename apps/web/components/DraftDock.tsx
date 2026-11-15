@@ -64,22 +64,7 @@ function newOrderHref(scanCode: string): string {
   return `/orders?${params.toString()}`;
 }
 
-// B668: below the lg breakpoint the dock floated over page content (768: the New-unit fields).
-function useNarrowViewport(): boolean {
-  const [narrow, setNarrow] = React.useState(false);
-  React.useEffect(() => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
-    const mq = window.matchMedia("(max-width: 1023px)");
-    const sync = () => setNarrow(mq.matches);
-    sync();
-    mq.addEventListener?.("change", sync);
-    return () => mq.removeEventListener?.("change", sync);
-  }, []);
-  return narrow;
-}
-
 function DraftDockInner() {
-  const narrow = useNarrowViewport();
   const pathname = usePathname();
   const till = isRegisterPath(pathname);
   const slot = useDraftDockSlot();
@@ -194,8 +179,9 @@ function DraftDockInner() {
 
   if (!hasDrafts) return null;
 
-  // Collapsed on a narrow screen = the pill alone; the chips (Resume / Discard) open with one tap.
-  const visible = collapsed ? (narrow ? [] : list.slice(0, 2)) : list;
+  // Collapsed = the pill alone on every width (B668 on phones, UX guide improvement 2 on desktop, where two
+  // cards used to float over sticky Save bars); the chips (Resume / Discard) open with one click.
+  const visible = collapsed ? [] : list;
 
   // One chip per draft, shared by the floating dock and the till's popover.
   const chipRows = (rows: SaleDraft[]) =>
@@ -265,8 +251,8 @@ function DraftDockInner() {
           install prompt (which lives in the bottom ~96px band, mirroring main's
           pb-24) — they can no longer overlap and hide the Resume/Discard actions. */
         <div className="pointer-events-none absolute bottom-24 left-4 z-40 flex max-h-[70vh] w-[min(92vw,420px)] flex-col gap-2 overflow-y-auto">
-          {/* Collapse control — a badge with the parked count (shown when >2). */}
-          {(list.length > 2 || (narrow && list.length > 0)) && (
+          {/* Collapse control — the pill with the parked count. */}
+          {list.length > 0 && (
             <button
               ref={pillRef}
               type="button"
