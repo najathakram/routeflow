@@ -109,7 +109,7 @@ describeDb(
       return p.id;
     }
 
-    type InvoiceStatusName = "SENT" | "PARTIAL" | "PAID" | "WRITTEN_OFF";
+    type InvoiceStatusName = "SENT" | "PARTIAL" | "PAID" | "WRITTEN_OFF" | "DRAFT";
     /**
      * The lane's fixture: a named customer's PENDING order of two lines of two products at 10.00 (total 20.00), one
      * invoice with `status`, and (when `paid` > 0) one CASH payment of that amount. `deposit` makes the invoice a deposit
