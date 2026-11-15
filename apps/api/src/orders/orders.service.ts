@@ -1232,7 +1232,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // creating a second one. The pre-check runs below, once the caller's own customer is known; the
     // P2002 branch further down catches the narrow concurrent-race window that pre-check can't.
     assertCustomerMayNotDraft(dto.status, user.role, options); // F1(ii)
-    // SA-1158: a DRAFT has passed no gate, so it is never delivered on the spot; refused before any read or write.
+    // SA-1158: status DRAFT with immediateDelivery is refused (400) before any read or write.
     if (dto.status === "DRAFT" && dto.immediateDelivery === true) {
       throw new BadRequestException({
         code: API_ERROR_CODES.ORDER_DRAFT_CANNOT_DELIVER_NOW,
@@ -2004,7 +2004,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // written, resolved from the validated stop above.
           routeRunId: dto.routeRunId ?? resolvedRouteRunId ?? null,
           routeRunStopId: dto.routeRunStopId ?? null,
-          // SA-1158: the invariant - a DRAFT (gates not passed) is never written CONFIRMED here.
+          // SA-1158: the write reads !isDraft.
           status: dto.immediateDelivery && !isDraft ? OrderStatus.CONFIRMED : order.status,
         },
       });

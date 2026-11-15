@@ -62,6 +62,7 @@ const operatorPayload = {
 
 describe("OrdersService.create — staff run and stop ids are tenant-proven (B1106 PR B)", () => {
   let service: OrdersService;
+  let moduleRef: TestingModule;
   const featureConfig = { getEffectiveMode: jest.fn() };
   let prisma: ReturnType<typeof createMockPrisma>;
 
@@ -196,6 +197,7 @@ describe("OrdersService.create — staff run and stop ids are tenant-proven (B11
       ],
     }).compile();
 
+    moduleRef = module;
     service = module.get<OrdersService>(OrdersService);
   });
 
@@ -324,6 +326,7 @@ describe("OrdersService.create — staff run and stop ids are tenant-proven (B11
           staff("OPERATOR"),
         )
         .catch((e) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
       expect(err.getStatus()).toBe(400);
       expect(err.getResponse().code).toBe("ORDER_DRAFT_CANNOT_DELIVER_NOW");
       expect(prisma.order.create).not.toHaveBeenCalled();
@@ -354,10 +357,16 @@ describe("OrdersService.create — staff run and stop ids are tenant-proven (B11
     it("guard: a non-DRAFT order with a run link and immediateDelivery true is written CONFIRMED", async () => {
       arrange();
       link();
+      const creditGate = jest.spyOn(service as any, "creditGate").mockResolvedValue(undefined);
       const out: any = await service.create(
         input({ ...linked, immediateDelivery: true }),
         staff("OPERATOR"),
       );
+      // the three entry checks ran, and stock was taken
+      expect(moduleRef.get(AuthorizationGuardService).assertAuthorizedOrThrow).toHaveBeenCalled();
+      expect(moduleRef.get(SellingRestrictionsService).assertLinesSellable).toHaveBeenCalled();
+      expect(creditGate).toHaveBeenCalledTimes(1);
+      expect(stock.written().length).toBeGreaterThan(0);
       expect(prisma.order.update.mock.calls[0][0].data.status).toBe("CONFIRMED");
       expect(out.status).toBe("CONFIRMED");
     });

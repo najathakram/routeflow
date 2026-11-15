@@ -274,6 +274,16 @@ describe("SA-1134 R-1: no writer but the promotion moves an order out of DRAFT",
     );
   });
 
+  it("SA-1158: both CONFIRMED writes in create() read !isDraft (source-text pin on the two conditions)", () => {
+    const text = fs.readFileSync(path.join(SRC, "orders/orders.service.ts"), "utf8");
+    const start = text.indexOf("  async create(");
+    const body = text.slice(start, text.indexOf("\n  async ", start + 1));
+    expect(body).toContain(
+      "status: dto.immediateDelivery && !isDraft ? OrderStatus.CONFIRMED : order.status",
+    );
+    expect(body).toContain("if (dto.immediateDelivery && !isDraft) {");
+  });
+
   it("each writer still contains the guard names its row relies on", () => {
     const missing: string[] = [];
     for (const [key, row] of Object.entries(INVENTORY)) {
