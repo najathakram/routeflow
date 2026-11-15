@@ -604,7 +604,7 @@ export default function ReturnDetailPage() {
               </Button>
               <Button
                 size="sm"
-                variant="danger"
+                variant="danger-outline"
                 leftIcon={<XCircle className="h-4 w-4" />}
                 onClick={() => setIsRejectOpen(true)}
               >
@@ -685,7 +685,7 @@ export default function ReturnDetailPage() {
           {canCancel && (
             <Button
               size="sm"
-              variant="danger"
+              variant="danger-outline"
               leftIcon={<Ban className="h-4 w-4" />}
               onClick={() => setIsCancelOpen(true)}
             >

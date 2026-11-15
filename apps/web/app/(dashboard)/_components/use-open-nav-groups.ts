@@ -71,7 +71,6 @@ export function useOpenNavGroups({
     if (lastKey.current === storageKey) return;
     lastKey.current = storageKey;
     setOpen(initial());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storageKey]);
 
   // Navigating into a group opens it (single mode: and closes the rest, as the accordion did).
