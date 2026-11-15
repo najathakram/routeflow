@@ -1,14 +1,18 @@
-// SA-1141 / W-989 PR-2, case 13 ("generate the invoice"): the four order-to-invoice GENERATION sites stamp the line tax rate off
-// the ORDER's discount mode (R4), never the new-document mode. Each site is driven through its real public method with the cutover
-// mocked to a past instant. Fixture: 100 @10%, order discount 20. PRE_TAX order tax 8 (rate 8 / 80 = 0.10; the wrong, LEGACY
-// base gives 0.08). LEGACY order tax 10 (rate 10 / 100 = 0.10; the wrong, PRE_TAX base gives 0.125). Own file: size ratchets.
-let mockFrom: Date | null = null;
-jest.mock("@routeflow/pricing", () => ({
-  ...jest.requireActual("@routeflow/pricing"),
-  get DISCOUNT_PRE_TAX_FROM() {
-    return mockFrom;
-  },
-}));
+// SA-1141 / W-989 PR-2, case 13 ("generate the invoice") and SA-1153 rows 6-9: the four order-to-invoice GENERATION sites stamp the
+// line tax rate off the ORDER's discount mode (R4), never the new-document mode. Each site is driven through its real public method
+// with the cutover SET by the harness (a past instant, so the real clock is after it: a swap to `newDocumentDiscountMode()` flips a
+// LEGACY order to PRE_TAX). Fixture: 100 @10%, order discount 20. LEGACY order tax 10 (rate 10 / 100); the same stored tax read as
+// PRE_TAX would be rate 10 / 80. Every row asserts the two things SA-1153 names: the fixture discriminates, and the stamped rate and
+// invoice tax of a LEGACY order equal the same call with the cutover NULL (no figure typed). Own file: size ratchets.
+import {
+  AFTER,
+  BEFORE,
+  FIXTURE,
+  expectFixtureDiscriminates,
+  underCutover,
+  withDiscountCutover,
+} from "../common/testing/discount-cutover";
+
 jest.mock("./invoice-pdf.service", () => ({
   InvoicePdfService: jest.fn().mockImplementation(() => ({
     getOrGenerate: jest.fn().mockResolvedValue("https://example.com/invoice.pdf"),
@@ -27,6 +31,7 @@ import { EmailService } from "../email/email.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { StorageService } from "../storage/storage.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { effectiveTaxRateFromTotals } from "../common/tax-rate";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
@@ -36,39 +41,6 @@ import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-aut
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
-
-// The cutover is in the past relative to "now" (frozen below), so `newDocumentDiscountMode()` is PRE_TAX: a site that calls it
-// instead of `discountModeOf(order)` flips a LEGACY order to PRE_TAX. Orders are dated either side of the cutover.
-const NOW = new Date("2026-06-01T12:00:00Z");
-const CUTOVER = new Date("2026-01-01T00:00:00Z");
-const BEFORE = new Date("2025-12-01T12:00:00Z");
-const AFTER = new Date("2026-02-01T12:00:00Z");
-
-beforeAll(() => {
-  jest.useFakeTimers({
-    now: NOW,
-    doNotFake: [
-      "hrtime",
-      "nextTick",
-      "performance",
-      "queueMicrotask",
-      "requestAnimationFrame",
-      "cancelAnimationFrame",
-      "requestIdleCallback",
-      "cancelIdleCallback",
-      "setImmediate",
-      "clearImmediate",
-      "setInterval",
-      "clearInterval",
-      "setTimeout",
-      "clearTimeout",
-    ],
-  });
-});
-afterAll(() => {
-  jest.useRealTimers();
-  mockFrom = null;
-});
 
 const orderLine = () => ({
   id: "oi-1",
@@ -114,15 +86,12 @@ const orderOf = (createdAt: Date, tax: number) => ({
   lineItems: [orderLine()],
 });
 
-const PRE_TAX_ORDER = () => orderOf(AFTER, 8);
-const LEGACY_ORDER = () => orderOf(BEFORE, 10);
-
-describe("case 13: the four invoice generation sites stamp the ORDER's mode (SA-1141 R4)", () => {
+describe("case 13 / SA-1153 rows 6-9: the four invoice generation sites stamp the ORDER's mode (SA-1141 R4)", () => {
+  withDiscountCutover();
   let service: InvoicesService;
   let prisma: ReturnType<typeof createMockPrisma>;
 
   beforeEach(async () => {
-    mockFrom = CUTOVER;
     prisma = createMockPrisma();
     prisma.orderItem.updateMany.mockResolvedValue({ count: 1 } as any);
     prisma.invoice.findFirst.mockResolvedValue({ items: [] });
@@ -266,16 +235,31 @@ describe("case 13: the four invoice generation sites stamp the ORDER's mode (SA-
     ["invoices.service.ts:2722 createPartialFromOrder", partial],
   ];
 
+  /** The stamped rate(s) and the invoice tax they reproduce, from a clean slate of recorded writes. */
+  const figures = async (run: (o: any) => Promise<any[]>, order: any) => {
+    prisma.invoice.create.mockClear();
+    prisma.invoice.update.mockClear();
+    const items = await run(order);
+    return { rates: rates(items), tax: stampedTax(items) };
+  };
+
   describe.each(sites)("%s", (_name, run) => {
-    it("a PRE_TAX order (tax 8 on 80) invoices at rate 0.10, not 0.08", async () => {
-      const items = await run(PRE_TAX_ORDER());
-      expect(rates(items)).toEqual([0.1]);
+    it("a LEGACY order (made BEFORE the cutover) invoiced NOW stamps the rate and invoice tax of the cutover-null run", async () => {
+      expectFixtureDiscriminates();
+      const dark = await underCutover(null, () => figures(run, orderOf(BEFORE, 10))); // master's figure
+      // 1: the same stored order read as a PRE_TAX one (dated AFTER) stamps a different rate: a swap to the new-document mode shows here
+      expect(await figures(run, orderOf(AFTER, 10))).not.toEqual(dark);
+      // 2: the LEGACY order, cutover set, equals the cutover-null run
+      expect(await figures(run, orderOf(BEFORE, 10))).toEqual(dark);
     });
 
-    it("a LEGACY order invoiced AFTER the cutover keeps rate 0.10 and sum of invoice tax = the order's tax 10 (not 0.125 / 12.5)", async () => {
-      const items = await run(LEGACY_ORDER());
-      expect(rates(items)).toEqual([0.1]);
-      expect(stampedTax(items)).toBe(10);
+    it("a PRE_TAX order (made AFTER the cutover, tax levied on the discounted base) stamps the rate that base implies", async () => {
+      const rate = effectiveTaxRateFromTotals(8, FIXTURE.subtotal, false, {
+        discount: FIXTURE.discount,
+        discountBase: "PRE_TAX",
+      });
+      const got = await figures(run, orderOf(AFTER, 8));
+      expect(got.rates).toEqual([rate]);
     });
   });
 });

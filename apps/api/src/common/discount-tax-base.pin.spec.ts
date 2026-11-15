@@ -12,6 +12,9 @@ import * as path from "path";
  *   3. The sites PR-1's pin did not reach (rate inference, the order-derived rate, the partial price follow, the B1043 report)
  *      read the mode from the caller: required parameter, no local formula.
  *
+ * (Pin 1b, a one-file count of the four `applyOrderDerivedTaxRate` calls, is gone: SA-1153 replaced it with the ordered per-file
+ * table of every mode call, `invoices/discount-tax-base.mode-sites.pin.spec.ts`. Two pins on one rule are not kept.)
+ *
  * Out of scope by the owner's 2026-10-24 ruling (no old-native fixes): apps/mobile/lib/invoice-totals.ts (the native mirror,
  * "the invoice-level discount comes off AFTER tax") and the mobile invoice-edit tax fill, which keep LEGACY.
  */
@@ -107,15 +110,6 @@ describe("SA-1141 discount tax base pin", () => {
       }
     }
     expect(bad).toEqual([]);
-  });
-
-  it("1b: every order-derived rate stamp in the invoice service reads the ORDER's mode (R4), never the new-document mode", () => {
-    const src = stripComments(
-      fs.readFileSync(path.join(ROOT, "apps/api/src/invoices/invoices.service.ts"), "utf8"),
-    );
-    const calls = callsIn(src, "applyOrderDerivedTaxRate");
-    expect(calls.length).toBe(4); // the four generation sites (the import is not a call)
-    expect(calls.filter((c) => /discountModeOf\(order\)/.test(c)).length).toBe(4);
   });
 
   it("2: a string-literal mode appears only in the listed LEGACY-by-definition files, at the listed counts", () => {
