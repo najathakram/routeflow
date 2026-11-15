@@ -327,7 +327,7 @@ describe("BillingPaymentsService (SA-1146 B-4)", () => {
     expect(rows.find((r) => r.id === "in_2")?.amount).toBe(123.45);
   });
 
-  it("HUF and ISK are two-decimal in Stripe's API whatever Intl says (4200 minor is 42)", async () => {
+  it("HUF, ISK, UGX and TWD are two-decimal in Stripe's API whatever Intl says (500 minor is 5, 4200 is 42)", async () => {
     const h = build({
       subs: { t1: "cus_a" },
       rf: [],
@@ -339,6 +339,20 @@ describe("BillingPaymentsService (SA-1146 B-4)", () => {
     const rows = (await (await make(h)).list("t1", null)).rows;
     expect(rows.find((r) => r.id === "in_1")).toMatchObject({ amount: 42, currency: "HUF" });
     expect(rows.find((r) => r.id === "in_2")).toMatchObject({ amount: 42, currency: "ISK" });
+  });
+
+  it("UGX and TWD are NOT zero-decimal here: Stripe takes them as two-decimal (UGX 500 is 5)", async () => {
+    const h = build({
+      subs: { t1: "cus_a" },
+      rf: [],
+      stripe: [
+        { ...inv(1, "2026-10-01T00:00:00Z"), amount_paid: 500, currency: "ugx" },
+        { ...inv(2, "2026-10-02T00:00:00Z"), amount_paid: 80_000, currency: "twd" },
+      ],
+    });
+    const rows = (await (await make(h)).list("t1", null)).rows;
+    expect(rows.find((r) => r.id === "in_1")).toMatchObject({ amount: 5, currency: "UGX" });
+    expect(rows.find((r) => r.id === "in_2")).toMatchObject({ amount: 800, currency: "TWD" });
   });
 
   it("a 3-decimal currency (BHD) shows no amount: only exponent 2 and 0 are converted", async () => {

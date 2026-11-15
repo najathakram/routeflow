@@ -51,6 +51,9 @@ const loggedUnknown = new Set<string>();
  * Stripe's own currency exponents (https://docs.stripe.com/currencies, "Zero-decimal currencies" and
  * "Three-decimal currencies"), NOT the runtime's Intl data: Intl disagrees for ISK, UGX and the like, which Stripe
  * still takes as two-decimal amounts. Every other currency is two-decimal.
+ *
+ * UGX (like ISK, HUF and TWD) is LEFT OUT of the zero-decimal set on purpose: Stripe's special-cases table says UGX is
+ * represented as a two-decimal value (500 is 5 UGX), so listing it here would show 100 times the amount.
  */
 const STRIPE_ZERO_DECIMAL = new Set([
   "BIF",
