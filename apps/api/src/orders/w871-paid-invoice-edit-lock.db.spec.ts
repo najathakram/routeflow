@@ -471,7 +471,8 @@ describeDb(
         status: 409,
         response: {
           code: CODE,
-          message: "This order is already paid. The office can add these items on a new order.",
+          message:
+            "This order's invoice can't change at the door. The office can add these items on a new order.",
         },
       });
       expect(await snapshot(o.id)).toEqual(before);
@@ -487,7 +488,6 @@ describeDb(
       const find = (opts?: any) =>
         tenantCtx.run(tenantId, () => orders.findActiveOrder(o.customerId, opts));
       expect(await find({ forMerge: true })).toBeNull();
-      expect(await find()).toBeNull();
     }, 60_000);
 
     it("case 16b: PARTIAL, WRITTEN_OFF, a PARTIAL deposit mirror and a SENT invoice with a live payment are not merge targets either", async () => {
@@ -543,6 +543,137 @@ describeDb(
       });
       const line = await raw.orderItem.findUniqueOrThrow({ where: { id: lines[0].id } });
       expect(Number(line.qty)).toBe(1);
+    }, 60_000);
+
+    // ---- SA-1156: what the post-edit settle re-adjusts (a credit-note payment on a DRAFT) does not lock; everything else does ----
+    type PayKind =
+      "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_CARD" | "ZELLE" | "ADVANCE" | "CREDIT_NOTE";
+    /** A DRAFT-invoice order (the deliver-later pending mirror) holding one payment of the given kind. */
+    async function draftWith(
+      kind: PayKind | null,
+      p: {
+        status?: "PAID" | "DRAFT" | "PENDING" | "VOID";
+        noNote?: boolean;
+        invoice?: InvoiceStatusName;
+      } = {},
+    ) {
+      const made = await pendingOrder({ status: p.invoice ?? "DRAFT" });
+      if (kind) {
+        const cn =
+          kind === "CREDIT_NOTE" && !p.noNote
+            ? await raw.creditNote.create({
+                data: {
+                  tenantId,
+                  customerId: made.o.customerId,
+                  creditNoteNumber: `CN-${randomUUID().slice(0, 8)}`,
+                  amount: "15.00",
+                  amountUsed: "15.00",
+                  status: "ISSUED",
+                } as any,
+              })
+            : null;
+        await raw.invoicePayment.create({
+          data: {
+            tenantId,
+            invoiceId: made.inv.id,
+            amount: kind === "CREDIT_NOTE" ? "15.00" : "5.00",
+            method: kind,
+            status: p.status ?? "PAID",
+            ...(cn ? { creditNoteId: cn.id } : {}),
+          } as any,
+        });
+      }
+      return made;
+    }
+    const cut = (lines: Array<{ id: string }>) => ({
+      items: [{ id: lines[0].id, action: "CANCEL" }],
+    });
+
+    it("E2/E3: a DRAFT mirror whose only payment is a credit note: the edit is allowed (the settle re-adjusts the credit)", async () => {
+      const { o, lines } = await draftWith("CREDIT_NOTE");
+      await edit(o.id, cut(lines));
+      expect(
+        (await raw.orderItem.findMany({ where: { orderId: o.id, status: "CANCELLED" } })).length,
+      ).toBe(1);
+    }, 60_000);
+
+    it("E4: the same order, a quantity increase, is allowed", async () => {
+      const { o, lines } = await draftWith("CREDIT_NOTE");
+      await edit(o.id, { items: [{ id: lines[0].id, qty: 3 }] });
+      expect(
+        Number((await raw.orderItem.findUniqueOrThrow({ where: { id: lines[0].id } })).qty),
+      ).toBe(3);
+    }, 60_000);
+
+    it.each(["CASH", "CHECK", "ACH", "OTHER", "CREDIT_CARD", "ZELLE"] as const)(
+      "E6: a DRAFT invoice with %s money on it still locks the edit",
+      async (kind) => {
+        const { o, lines } = await draftWith(kind);
+        await expectLocked(o.id, cut(lines));
+      },
+      60_000,
+    );
+
+    it.each([
+      ["E7 unconfirmed external row", "CASH", { status: "DRAFT" }],
+      ["E8 PENDING post-dated check (no writer)", "CHECK", { status: "PENDING" }],
+      ["E9 ADVANCE (no writer)", "ADVANCE", {}],
+      ["E12 credit-note payment with no note id (no writer)", "CREDIT_NOTE", { noNote: true }],
+    ] as const)(
+      "%s on a DRAFT locks the edit",
+      async (_n, kind, p) => {
+        const { o, lines } = await draftWith(kind, p as any);
+        await expectLocked(o.id, cut(lines));
+      },
+      60_000,
+    );
+
+    it("E10: a credit note AND cash on one DRAFT invoice: locked (the cash)", async () => {
+      const { o, lines, inv } = await draftWith("CREDIT_NOTE");
+      await raw.invoicePayment.create({
+        data: {
+          tenantId,
+          invoiceId: inv.id,
+          amount: "5.00",
+          method: "CASH",
+          status: "PAID",
+        } as any,
+      });
+      await expectLocked(o.id, cut(lines));
+    }, 60_000);
+
+    it("E11 (guard): only a VOID payment on a DRAFT: allowed", async () => {
+      const { o, lines } = await draftWith("CHECK", { status: "VOID" });
+      await edit(o.id, cut(lines));
+    }, 60_000);
+
+    it("E13 (guard): a SENT invoice whose only payment is a credit note: still locked", async () => {
+      const { o, lines } = await draftWith("CREDIT_NOTE", { invoice: "SENT" });
+      await expectLocked(o.id, cut(lines));
+    }, 60_000);
+
+    it("M1/M2: a DRAFT mirror holding only a credit IS a merge target; one holding cash is not", async () => {
+      const credit = await draftWith("CREDIT_NOTE");
+      const cash = await draftWith("CASH");
+      const find = (id: string) =>
+        tenantCtx.run(tenantId, () => orders.findActiveOrder(id, { forMerge: true }));
+      expect((await find(credit.o.customerId))?.id).toBe(credit.o.id);
+      expect(await find(cash.o.customerId)).toBeNull();
+    }, 60_000);
+
+    it("D1-D3: a display read (no forMerge) still returns a customer's PAID open order", async () => {
+      const { o } = await pendingOrder({ status: "PAID", paid: 20 });
+      const found = await tenantCtx.run(tenantId, () => orders.findActiveOrder(o.customerId));
+      expect(found?.id).toBe(o.id);
+    }, 60_000);
+
+    it("A1: the at-door apply on a DRAFT mirror holding only a credit goes through", async () => {
+      const { o, lines, products } = await draftWith("CREDIT_NOTE");
+      const cr = await atDoor(o.id, lines[0].id, products[0], o.customerId);
+      await tenantCtx.run(tenantId, () => orders.approveChangeRequestAtStop(cr.id, driver()));
+      expect((await raw.changeRequest.findUniqueOrThrow({ where: { id: cr.id } })).status).not.toBe(
+        "PENDING",
+      );
     }, 60_000);
 
     it("a VOID (bounced) payment on a SENT invoice does not block the edit (B314 kept)", async () => {
