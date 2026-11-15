@@ -249,11 +249,12 @@ describeDb("B1050 — delivered-qty edits book max(qty, delivered) per line, rea
       0,
     );
 
-  it("repro-1: {q10,d10} → 6 → 10 moves nothing (counter 90, ledger net 0)", async () => {
+  // SA-1149 D2: the old cut 10 -> 6 is refused now (see w946r-qty-floor D2-12), so the row is seeded as the pre-D2 state it left:
+  // a legacy "pre-D2 row" {q6,d10}. Raising it back to 10 still moves nothing.
+  it("repro-1: a pre-D2 row {q6,d10} raised to 10 moves nothing (counter 90, ledger net 0)", async () => {
     const p = await product("repro1");
-    const o = await order(plain(p, 10, 10));
+    const o = await order(plain(p, 6, 10));
     const id = o.lineItems[0].id;
-    await edit(o.id, { replaceAll: false, items: [{ id, qty: 6 }] });
     expect(await stock(p)).toBe(90);
     await edit(o.id, { replaceAll: false, items: [{ id, qty: 10 }] });
     expect(await stock(p)).toBe(90);

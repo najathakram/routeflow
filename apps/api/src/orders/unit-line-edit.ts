@@ -28,6 +28,7 @@ import { writeLineUpdate } from "./order-line-removal";
 import type { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import type { OrdersService } from "./orders.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { assertQtyNotBelowDelivered } from "./delivered-line-lock";
 import { linesPriceAtCustomerTier } from "./driver-line-price";
 
 /**
@@ -469,6 +470,10 @@ export async function updateUnitLine(
     // units P0b: a SUBSTITUTE is a different product: the old line's snapshot says nothing about it
     existing: isSubstitute ? undefined : (ctx.held?.get(lineId) as UnitSnapshotLine | undefined),
   });
+  if (!isSubstitute) {
+    const held = ctx.held?.get(lineId) as any;
+    assertQtyNotBelowDelivered(held?.deliveredQty, held?.qty, rest.qty); // SA-1149 D2
+  }
   const data = isSubstitute
     ? {
         ...rest,

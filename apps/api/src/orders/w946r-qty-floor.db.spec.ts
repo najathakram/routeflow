@@ -394,4 +394,28 @@ describeDb("W-946r quantity floor (SA-1149 D2), real Postgres", () => {
     await edit(o.id, { items: [{ id: o.lineItems[0].id, qty: 1 }] });
     expect(Number((await rows(o.id))[0].qty)).toBe(1);
   }, 120_000);
+
+  it("D2-9/D2-10/D2-11: an over-delivered {q2,d4} line: restated at 2 is 200, raised to 3 is 200, cut to 1 is 409", async () => {
+    const p = await product("d29");
+    const o = await delivered(p, 2, 4);
+    const id = o.lineItems[0].id;
+    await edit(o.id, { items: [{ id, qty: 2 }] });
+    expect(Number((await rows(o.id))[0].qty)).toBe(2);
+    await edit(o.id, { items: [{ id, qty: 3 }] });
+    expect(Number((await rows(o.id))[0].qty)).toBe(3);
+    const before = await snapshot(o.id);
+    await expect(edit(o.id, { items: [{ id, qty: 1 }] })).rejects.toMatchObject(LOWER);
+    expect(await snapshot(o.id)).toEqual(before);
+  }, 120_000);
+
+  it("D2-12: a fully delivered 10 of 10 cut to 6 is 409, nothing written, stock unmoved (the old b1050 repro-1 cut)", async () => {
+    const p = await product("d212");
+    const o = await delivered(p, 10, 10);
+    const before = await snapshot(o.id);
+    await expect(edit(o.id, { items: [{ id: o.lineItems[0].id, qty: 6 }] })).rejects.toMatchObject(
+      LOWER,
+    );
+    expect(await snapshot(o.id)).toEqual(before);
+    expect(await stock(p)).toBe(90);
+  }, 120_000);
 });

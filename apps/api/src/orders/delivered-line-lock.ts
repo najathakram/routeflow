@@ -200,3 +200,29 @@ function deliveredLineLocked(): ConflictException {
     message: DELIVERED_LINE_LOCKED_MESSAGE,
   });
 }
+
+export const DELIVERED_LINE_BELOW_MESSAGE =
+  "This line was delivered, so it can't go below what was delivered. To take goods back, record a return.";
+
+/**
+ * SA-1149 (W-946r, SA-992 D2): the quantity floor. A write of an existing line's quantity may not land below what was
+ * delivered, on any status. It refuses ONLY when the next qty is below BOTH the delivered qty and the line's held qty: a
+ * note edit that restates an over-delivered line ({q2,d4} sent as 2) is not a cut. Pure: pass the FINAL stored qty in the
+ * line's own unit (after `normalizeBoxesPieces`), so a box split or a unit line is judged on what is stored, never on
+ * `item.qty`. Throws 409.
+ */
+export function assertQtyNotBelowDelivered(
+  deliveredQty: unknown,
+  heldQty: unknown,
+  nextQty: unknown,
+): void {
+  const delivered = Number(deliveredQty ?? 0);
+  if (!(delivered > 0)) return;
+  const next = Number(nextQty);
+  if (next < delivered - QTY_EPS && next < Number(heldQty ?? 0) - QTY_EPS) {
+    throw new ConflictException({
+      code: API_ERROR_CODES.LINE_ALREADY_DELIVERED,
+      message: DELIVERED_LINE_BELOW_MESSAGE,
+    });
+  }
+}

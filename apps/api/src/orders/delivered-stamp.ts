@@ -24,6 +24,7 @@
  * goods left, so cancel-impact keeps refusing a cancel (use a Return).
  */
 import { ConflictException } from "@nestjs/common";
+import { assertQtyNotBelowDelivered } from "./delivered-line-lock";
 import { OrderStatus, type Prisma } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { deliveredBasisByLine, type DeliveredBasis } from "../invoices/delivered-basis-by-line";
@@ -55,7 +56,7 @@ export type HeldLine = {
  * row gets here (`captureRecreatedCarry` refuses the rest), so every held line is a no-evidence line.
  */
 export type RecreatedCarry = {
-  held: Array<{ id: string; key: string; deliveredQty: number }>;
+  held: Array<{ id: string; key: string; deliveredQty: number; qty?: number }>;
 };
 
 const keyOf = (productId: string | null | undefined) => productId ?? UNLISTED;
@@ -152,6 +153,21 @@ function recreatedTargets(
     if (!surviving.has(h.id)) carried.set(h.key, (carried.get(h.key) ?? 0) + h.deliveredQty);
   }
   const fresh = active.filter((li) => !heldIds.has(li.id)); // a surviving row is not recreated
+  // SA-1149 D2: per product, the recreated rows may not total below what was delivered (and held) before the edit.
+  const sums = new Map<string, { delivered: number; held: number; next: number }>();
+  const sumOf = (k: string) => {
+    let v = sums.get(k);
+    if (!v) sums.set(k, (v = { delivered: 0, held: 0, next: 0 }));
+    return v;
+  };
+  for (const h of carry.held) {
+    if (surviving.has(h.id)) continue;
+    const v = sumOf(h.key);
+    v.delivered += h.deliveredQty;
+    v.held += h.qty ?? h.deliveredQty;
+  }
+  for (const li of fresh) sumOf(keyOf(li.productId)).next += Number(li.qty);
+  for (const v of sums.values()) assertQtyNotBelowDelivered(v.delivered, v.held, v.next);
   const lastOfKey = new Map<string, string>();
   for (const li of fresh) lastOfKey.set(keyOf(li.productId), li.id);
   for (const li of fresh) {
@@ -194,6 +210,7 @@ export async function captureRecreatedCarry(
     held: held.map((h) => ({
       id: h.id,
       key: keyOf(h.productId),
+      qty: Number(h.qty),
       // no evidence on this order (refused above): the units that left are the booked floor max(d, qty); a
       // CANCELLED line was already returned to the shelf (never booked), so it keeps its stored value
       deliveredQty:

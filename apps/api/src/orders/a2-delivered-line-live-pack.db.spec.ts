@@ -206,6 +206,8 @@ describeDb(
       invoiced?: boolean;
       /** OrderItem.promoFreeUnits (a promo's free units, priced out of the line) */
       freeUnits?: number;
+      /** SA-1149: the delivered floor (default: all sold). 0 = a legacy never-stamped line, so a cut stays above it. */
+      delivered?: number;
     }
     async function seed(
       label: string,
@@ -268,7 +270,7 @@ describeDb(
           pieces: shape.pieces ?? 0,
           ...(shape.snapshot ? { unitsPerBox: shape.snapshot } : {}),
           ...(shape.freeUnits ? { promoFreeUnits: shape.freeUnits } : {}),
-          deliveredQty: shape.invoiced === false ? 0 : soldQty,
+          deliveredQty: shape.delivered ?? (shape.invoiced === false ? 0 : soldQty),
           invoicedQty: shape.invoiced === false ? 0 : soldQty,
           unitPrice: shape.unitPrice ?? 10,
           subtotal: lineSubtotal,
@@ -446,7 +448,7 @@ describeDb(
     }, 120_000);
 
     it("A2-3: a QTY edit 10 -> 9 on the delivered line is 90.00, not 9 pieces of a 24-pack (3.75)", async () => {
-      const s = await seed("qty", null, 24);
+      const s = await seed("qty", null, 24, { delivered: 0 });
       const before = await state(s);
       await edit(s, { qty: 9 });
       const after = await state(s);
@@ -459,7 +461,7 @@ describeDb(
     }, 120_000);
 
     it("A2-6: the 12-pack line, qty 120 -> 100, is 8 boxes + 4 pieces of a 12-pack at the stored price (83.33), not of the live 24", async () => {
-      const s = await seed("qty12", 12, 24);
+      const s = await seed("qty12", 12, 24, { delivered: 0 });
       const before = await state(s);
       await edit(s, { qty: 100 });
       const after = await state(s);
@@ -630,7 +632,7 @@ describeDb(
     }, 120_000);
 
     it("A2-18 (guard): a split with NO qty on the 12-pack line - boxes 8, pieces 4 - is qty 100 at the line's own pack", async () => {
-      const s = await seed("splitonly", 12, 24);
+      const s = await seed("splitonly", 12, 24, { delivered: 0 });
       const before = await state(s);
       await edit(s, { boxes: 8, pieces: 4 });
       const after = await state(s);
@@ -651,7 +653,7 @@ describeDb(
     }, 120_000);
 
     it("A2-20 (guard): the no-pack line edited twice - qty 10 -> 9, then price 12 - gives the same shape both times, stock 90", async () => {
-      const s = await seed("twice", null, 24);
+      const s = await seed("twice", null, 24, { delivered: 0 });
       const before = await state(s);
       await edit(s, { qty: 9 });
       const one = await state(s);
@@ -678,7 +680,7 @@ describeDb(
     }, 120_000);
 
     it("A2-21: the no-pack line whose product has NO pack now, qty 10 -> 9: boxes 9, 90.00, stock unmoved", async () => {
-      const s = await seed("nopack-nolive", null, null);
+      const s = await seed("nopack-nolive", null, null, { delivered: 0 });
       const before = await state(s);
       await edit(s, { qty: 9 });
       const after = await state(s);
@@ -696,7 +698,7 @@ describeDb(
     }, 120_000);
 
     it("A2-22 (guard): A2-21, then the product gains a 24-pack, then another edit: still boxes 9, 99.00, stock unmoved", async () => {
-      const s = await seed("nopack-gains", null, null);
+      const s = await seed("nopack-gains", null, null, { delivered: 0 });
       const before = await state(s);
       await edit(s, { qty: 9 });
       await prisma.product.update({ where: { id: s.productId }, data: { unitsPerBox: 24 } });
@@ -714,7 +716,7 @@ describeDb(
     }, 120_000);
 
     it("A2-12 (guard): after the qty edit 10 -> 9, a STANDARD return of 3 restocks 3 (measured on master: 3) - anything but 3 or a park goes back to the SA", async () => {
-      const s = await seed("ret", null, 24);
+      const s = await seed("ret", null, 24, { delivered: 0 });
       await edit(s, { qty: 9 });
       const mid = await state(s);
       const ret = await prisma.return.create({

@@ -110,7 +110,7 @@ describeDb("W-861 + W-871 — paid walk-in edits and post-delivery replaces, rea
   }
 
   /** A DELIVERED sale of 2 x 1.00, billed by a PAID invoice paid 2.00 in CASH (`paid: false`: a SENT invoice, no payment). */
-  async function paidSale(customerId: string, opts: { paid?: boolean } = {}) {
+  async function paidSale(customerId: string, opts: { paid?: boolean; delivered?: number } = {}) {
     const paid = opts.paid !== false;
     const productId = await product();
     const o = await raw.order.create({
@@ -126,7 +126,7 @@ describeDb("W-861 + W-871 — paid walk-in edits and post-delivery replaces, rea
               tenantId,
               productId,
               qty: 2,
-              deliveredQty: 2,
+              deliveredQty: opts.delivered ?? 2,
               invoicedQty: 2,
               unitPrice: "1.00",
               subtotal: "2.00",
@@ -391,7 +391,8 @@ describeDb("W-861 + W-871 — paid walk-in edits and post-delivery replaces, rea
   });
 
   it("SA-956 (c): a cut on that same order is still 409, with nothing written", async () => {
-    const { o, inv, pay, productId: pid } = await paidSale(await customer(false));
+    // SA-1149 D2: delivered 1 of 2, so the cut to 1 stays at the delivered floor and reaches the overpay guard
+    const { o, inv, pay, productId: pid } = await paidSale(await customer(false), { delivered: 1 });
     await raw.invoiceItem.create({
       data: {
         tenantId,
@@ -408,6 +409,15 @@ describeDb("W-861 + W-871 — paid walk-in edits and post-delivery replaces, rea
     await expect(
       edit(o.id, { items: [{ id: o.lineItems[0].id, productId: pid, qty: 1 }], replaceAll: false }),
     ).rejects.toMatchObject({ status: 409, response: { code: "ORDER_EDIT_WOULD_OVERPAY" } });
+    expect(await snapshot(o.id)).toEqual(before);
+  });
+
+  it("SA-956 (c2): a cut below the delivered qty is 409 LINE_ALREADY_DELIVERED, nothing written", async () => {
+    const { o, productId: pid } = await paidSale(await customer(false));
+    const before = await snapshot(o.id);
+    await expect(
+      edit(o.id, { items: [{ id: o.lineItems[0].id, productId: pid, qty: 1 }], replaceAll: false }),
+    ).rejects.toMatchObject({ status: 409, response: { code: "LINE_ALREADY_DELIVERED" } });
     expect(await snapshot(o.id)).toEqual(before);
   });
 

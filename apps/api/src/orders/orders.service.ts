@@ -128,7 +128,11 @@ import {
 import * as cancelledLines from "./order-edit-cancelled";
 import * as driverAccess from "./driver-edit-access";
 import { assertRemovalsNameALine, writeLineRemoval, writeLineUpdate } from "./order-line-removal";
-import { assertDeliveredLinesUntouched, reduceDeliveredLineEntries } from "./delivered-line-lock";
+import {
+  assertDeliveredLinesUntouched,
+  assertQtyNotBelowDelivered,
+  reduceDeliveredLineEntries,
+} from "./delivered-line-lock";
 import { lockEditedOrder, editGuards, walkInSaleLocked } from "./replace-after-delivery";
 import { CANCELLABLE_FROM, assertOrderStatusTransition } from "./order-status-transitions";
 import { buildStatusUpdateData } from "./order-status-claim";
@@ -3735,6 +3739,7 @@ export class OrdersService implements OnApplicationBootstrap {
                   pieces = null;
                 }
                 if (qty <= 0) continue;
+                assertQtyNotBelowDelivered(li.deliveredQty, li.qty, qty); // SA-1149 D2: after normalizeBoxesPieces
 
                 const existingUnitPrice = Number(li.unitPrice);
                 const overridePrice = typedLinePrice(user, item.unitPrice); // a driver's is dropped
