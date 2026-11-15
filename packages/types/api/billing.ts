@@ -265,6 +265,15 @@ export const BILLING_RETURN_PATHS = {
   cardAdd: "/settings/billing?paid=1&card=1",
 } as const;
 
+/**
+ * SA-1146 B-1: where the Stripe billing portal sends the tenant back: the Billing page itself, no notice. NOT a member
+ * of {@link BILLING_RETURN_PATHS}: that list is what an embedded Checkout may return to, and this is no Checkout return.
+ */
+export const BILLING_PORTAL_RETURN_PATH = "/settings/billing";
+
+/** SA-1146 B-1: where a cancelled Checkout lands (nothing was charged). Not a return path: the web never pushes it. */
+export const BILLING_CANCEL_PATH = "/settings/billing?checkout=cancelled";
+
 /** `POST /billing/payment-due/pay` (TENANT_ADMIN): the Stripe Checkout to send the admin to. */
 export interface PaymentDuePayResult {
   checkoutUrl: string;

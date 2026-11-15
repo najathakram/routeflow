@@ -60,7 +60,7 @@ describe("SettingsBillingController.createPortal (B4: admin-only portal)", () =>
       portalUrl: "https://billing.example/p/1",
       hostedInvoiceUrl: "https://invoice.example/i/1",
     });
-    expect(billing.createBillingPortalSession).toHaveBeenCalledWith("t1", undefined, {
+    expect(billing.createBillingPortalSession).toHaveBeenCalledWith("t1", {
       timeoutMs: expect.any(Number),
       maxNetworkRetries: expect.any(Number),
     });

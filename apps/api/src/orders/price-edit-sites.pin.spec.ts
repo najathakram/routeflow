@@ -6,7 +6,7 @@ import type { SaleOptions } from "./sale-options";
 /**
  * SA-1034: the price-edit capability is checked at every override site, through the ONE helper
  * `assertPriceEditAllowed` (staff-override.ts), with a required boolean that every compute site gets from the ONE
- * helper `priceEditAllowedFor` (auth/permissions/price-edit.ts: the deny list and the permissions mode read once).
+ * helper `priceEditAllowedFor` (auth/permissions/price-edit.ts: the live deny list, read once per request).
  *
  *  - `decideTierOverride(` has exactly the callers listed below; a new one is reviewed and added here.
  *  - each override-site file has EXACTLY its count of `assertPriceEditAllowed(` and `priceEditAllowedFor(` calls: a
@@ -214,11 +214,8 @@ describe("SA-1034: price-edit capability is checked at every override site", () 
         if (m[1].includes('"EDIT_LINE_PRICE"')) where.push(f.split("\\").join("/"));
       }
     }
-    // price-edit-answer.ts holds the two (role-only and enforced), shared by price-edit.ts and /me/permissions; the capability tables define the row, they do not call it.
-    expect(where).toEqual([
-      "auth/permissions/price-edit-answer.ts",
-      "auth/permissions/price-edit-answer.ts",
-    ]);
+    // price-edit-answer.ts holds the one enforced answer (mayEditPrice), shared by price-edit.ts and /me/permissions; the capability tables define the row, they do not call it.
+    expect(where).toEqual(["auth/permissions/price-edit-answer.ts"]);
   });
 
   it("priceEditAllowed rides both options, and only the counter sets it, over the live denied groups (SA-1034 r8)", () => {

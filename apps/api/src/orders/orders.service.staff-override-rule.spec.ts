@@ -26,6 +26,7 @@ jest.mock("../notifications/notifications.service", () => ({
   })),
 }));
 
+import { operatorWithRights } from "../common/testing/operator-with-rights";
 import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { BadRequestException } from "@nestjs/common";
@@ -111,6 +112,7 @@ describe("OrdersService — staff price-override rule (#2716c)", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    operatorWithRights(prisma, operatorPayload);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [

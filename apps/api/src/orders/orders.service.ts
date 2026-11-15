@@ -1236,6 +1236,14 @@ export class OrdersService implements OnApplicationBootstrap {
     // creating a second one. The pre-check runs below, once the caller's own customer is known; the
     // P2002 branch further down catches the narrow concurrent-race window that pre-check can't.
     assertCustomerMayNotDraft(dto.status, user.role, options); // F1(ii)
+    // SA-1158: status DRAFT with immediateDelivery is refused (400) before any read or write.
+    if (dto.status === "DRAFT" && dto.immediateDelivery === true) {
+      throw new BadRequestException({
+        code: API_ERROR_CODES.ORDER_DRAFT_CANNOT_DELIVER_NOW,
+        message:
+          "A draft can't be delivered on the spot. Save it as an order first, then deliver it.",
+      });
+    }
     const idempotencyKey = (dto as any).idempotencyKey as string | undefined;
     keep.assertSafeOverrideReasons(dto.items ?? [], []); // row 496: a typed reason, before any read or write
     const inlineRet = await prepareInlineReturn(this.inlineReturns, dto.inlineReturn, user);
@@ -1260,7 +1268,7 @@ export class OrdersService implements OnApplicationBootstrap {
     const commissionRatePct = parseCommissionRatePct(dto.commissionRatePct, user.role);
 
     const isStaffRole = user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
-    // SA-1034 (POS-5): the counter's own live answer (W-870), else the office's mode-aware one, once per request before any
+    // SA-1034 (POS-5): the counter's own answer (W-870), else the office's, both over the live denied groups, once per request before any
     // lock. A real staff price override (judged against the server's tier price) is refused 403 before anything is written.
     const priceEditAllowed =
       options.priceEditAllowed ??
@@ -2001,10 +2009,11 @@ export class OrdersService implements OnApplicationBootstrap {
           // written, resolved from the validated stop above.
           routeRunId: dto.routeRunId ?? resolvedRouteRunId ?? null,
           routeRunStopId: dto.routeRunStopId ?? null,
-          status: dto.immediateDelivery ? OrderStatus.CONFIRMED : order.status,
+          // SA-1158: the write reads !isDraft.
+          status: dto.immediateDelivery && !isDraft ? OrderStatus.CONFIRMED : order.status,
         },
       });
-      if (dto.immediateDelivery) {
+      if (dto.immediateDelivery && !isDraft) {
         order.status = OrderStatus.CONFIRMED;
       }
     }

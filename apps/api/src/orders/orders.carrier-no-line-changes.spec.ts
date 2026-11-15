@@ -21,6 +21,7 @@ jest.mock("./driver-edit-access", () => ({
   assertDriverMayEditOrder: jest.fn(),
 }));
 
+import { operatorWithRights } from "../common/testing/operator-with-rights";
 import { buildOrdersService, operatorPayload } from "./testing/orders-service-harness";
 
 const staff = { ...operatorPayload, tenantId: "t-1" } as never;
@@ -187,6 +188,7 @@ describe("SA-696: no line-set change on an order with the carrier", () => {
 
   beforeEach(async () => {
     h = await buildOrdersService();
+    operatorWithRights(h.prisma, operatorPayload);
     (h.service as any).featureConfig = { getEffectiveMode: jest.fn().mockResolvedValue("ship") };
     invoices = (h.service as any).invoicesService;
     h.prisma.customer.findFirst.mockResolvedValue({ id: "cust-1", pricingTier: 1 });

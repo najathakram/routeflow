@@ -10,12 +10,22 @@ import {
 const withCheckoutPolicy = <T extends Parameters<typeof policy>[0]>(params: T) =>
   policy(params, { surface: "TENANT_SELF" });
 
+// The platform return addresses are checked at this boundary (SA-1146 B-1): the web base is app.test.
+const savedWeb = process.env.WEB_URL;
+beforeAll(() => {
+  process.env.WEB_URL = "https://app.test";
+});
+afterAll(() => {
+  if (savedWeb === undefined) delete process.env.WEB_URL;
+  else process.env.WEB_URL = savedWeb;
+});
+
 const BASE = {
   mode: "subscription" as const,
   customer: "cus_1",
   line_items: [{ price: "price_1", quantity: 1 }],
-  success_url: "https://app.test/ok",
-  cancel_url: "https://app.test/no",
+  success_url: "https://app.test/settings/billing?checkout=success",
+  cancel_url: "https://app.test/settings/billing?checkout=cancelled",
   metadata: { tenantId: "t1" },
   subscription_data: { trial_end: 1_800_000_000 },
 };

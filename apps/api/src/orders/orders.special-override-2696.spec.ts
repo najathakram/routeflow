@@ -19,6 +19,7 @@ jest.mock("../common/db-locks", () => ({
   })),
 }));
 
+import { operatorWithRights } from "../common/testing/operator-with-rights";
 import {
   buildOrdersService,
   operatorPayload,
@@ -81,6 +82,7 @@ describe("#2696(c) staff price override — create (rule A)", () => {
 
   beforeEach(async () => {
     h = await buildOrdersService();
+    operatorWithRights(h.prisma, staff);
   });
 
   const create = (items: unknown[], user: never = staff) =>
@@ -235,6 +237,7 @@ describe("#2696(c) staff price override — updateOrderItems", () => {
 
   beforeEach(async () => {
     h = await buildOrdersService();
+    operatorWithRights(h.prisma, staff);
     h.prisma.customer.findFirst.mockResolvedValue({ pricingTier: 3 }); // operatorTierCtx read
     h.prisma.customerPrice.findMany.mockResolvedValue([]);
     h.prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 16, status: "PENDING" }]);
@@ -436,6 +439,7 @@ describe("#2696(c) SA-558d (i) — the create auto-merge's NEW line is a create"
   /** The line POST /orders writes for a fresh order. */
   const viaCreate = async (item: Record<string, unknown>) => {
     const h = await buildOrdersService();
+    operatorWithRights(h.prisma, staff);
     h.prisma.customer.findFirst.mockResolvedValue({ id: "cust-1", pricingTier: 3 });
     h.prisma.customer.findUnique.mockResolvedValue({
       id: "cust-1",
@@ -466,6 +470,7 @@ describe("#2696(c) SA-558d (i) — the create auto-merge's NEW line is a create"
   /** The line the same payload writes when it folds into a pending order (isCreateMerge). */
   const viaMerge = async (item: Record<string, unknown>) => {
     const h = await buildOrdersService();
+    operatorWithRights(h.prisma, staff);
     h.prisma.order.findUnique.mockResolvedValue({
       id: "ord-1",
       customerId: "cust-1",
