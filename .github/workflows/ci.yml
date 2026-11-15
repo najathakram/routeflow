@@ -352,6 +352,9 @@ jobs:
         run: npm run verify
         env:
           VERIFY_EXCLUDE: "@routeflow/control"
+          # Setting this splits verify into check-types + lint first, then jest (scripts/verify-turbo.mjs), so
+          # the api spec type check (about 11 GB) and the jest workers no longer share the runner's memory.
+          JEST_MAX_WORKERS: "2"
 
       # Registry state, not tree state — so this belongs in CI and not in the
       # local pre-push gate, where it would add network latency to every push.
