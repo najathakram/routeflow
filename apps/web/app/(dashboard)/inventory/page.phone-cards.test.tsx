@@ -160,6 +160,15 @@ describe("InventoryPage: phone cards", () => {
     expect(within(cards[0]).queryByRole("link", { name: "Open product" })).toBeNull();
   });
 
+  it("sets the product name as a name, not as a record number", () => {
+    const { container } = render(<InventoryPage />);
+    const cards = within(cardList(container)).getAllByRole("listitem");
+    const title = within(cards[0]).getByRole("link", { name: "Acme Boxed Gadget" });
+    expect(title.className).not.toContain("font-mono");
+    // The SKU under it is the code, and keeps the mono face.
+    expect(within(cards[0]).getByText("AG-1", { exact: false }).className).toContain("font-mono");
+  });
+
   it("shows at most two text actions plus one More actions button, with every action reachable", async () => {
     const user = userEvent.setup();
     const { container } = render(<InventoryPage />);

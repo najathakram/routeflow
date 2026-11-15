@@ -99,6 +99,7 @@ export function InventoryCards({
             key={item.id}
             href={`/products/${item.id}`}
             title={item.name}
+            titleKind="name"
             amountLabel="Current stock"
             amount={unitsLabel(Number(item.currentStock), item.unitsPerBox, item.unit)}
             amountTone={state === "out" ? "danger" : "default"}
