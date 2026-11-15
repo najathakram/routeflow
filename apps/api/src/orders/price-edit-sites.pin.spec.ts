@@ -227,7 +227,9 @@ describe("SA-1034: price-edit capability is checked at every override site", () 
     expect([create, sale]).toHaveLength(2);
     // the setters: one, in the counter, from `mayEditPrice` over `operatorDeniedGroups`; never a literal or a role-only answer
     const setters = files.filter((f) =>
-      /\bpriceEditAllowed:\s*(?:mayEditPrice|true|false|staffMay)\b/.test(code(read(f))),
+      /\bpriceEditAllowed:\s*(?:mayEditPrice|roleMayEditPrice|true|false|staffMay)\b/.test(
+        code(read(f)),
+      ),
     );
     expect(setters.map((f) => f.split("\\").join("/"))).toEqual([
       "orders/counter-sale/counter-sale.service.ts",

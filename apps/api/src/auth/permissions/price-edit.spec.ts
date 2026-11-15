@@ -55,6 +55,7 @@ describe("priceEditAllowedFor (one capability, enforced at every site)", () => {
     await expect(priceEditAllowedFor(prisma, principal(UserRole.OPERATOR), "s")).resolves.toBe(
       false,
     );
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 
   it("a failed deny-list read throws and writes no allow log (fails closed)", async () => {
