@@ -454,7 +454,13 @@ export function useAddAllLow() {
 
 // ─── Orders ───────────────────────────────────────────────────────────────────
 
-export function useBuyerOrders(params?: { status?: string; page?: number; limit?: number }) {
+export function useBuyerOrders(params?: {
+  status?: string;
+  /** UX guide B12: a status group ("ACTIVE" = in progress); an explicit `status` wins. */
+  statusGroup?: "ACTIVE";
+  page?: number;
+  limit?: number;
+}) {
   // #2703 lead fold: GET /buyer/orders returns LIST rows (OrdersService.findAll), not the detail.
   return useQuery<{ data: BuyerOrderListItem[]; meta: any }>({
     queryKey: ["buyer-orders", params],

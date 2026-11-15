@@ -13,6 +13,7 @@ import { tenantTimeZone } from "../common/tenant-time-zone";
 import { summarizeOpenInvoices } from "../invoices/invoice-balance-classify";
 import { OPEN_INVOICE_STATUSES } from "../invoices/invoice-status-sets";
 import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
+import { ACTIVE_ORDER_STATUSES } from "../common/terminal-order-statuses";
 
 @Injectable()
 export class BuyerDashboardService {
@@ -113,7 +114,7 @@ export class BuyerDashboardService {
       this.prisma.forTenant().order.count({
         where: {
           customerId,
-          status: { in: ["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED"] },
+          status: { in: [...ACTIVE_ORDER_STATUSES] },
         },
       }),
 

@@ -1,5 +1,5 @@
 import * as React from "react";
-import { renderWithProviders, screen, within } from "@/test-utils/render";
+import { renderWithProviders, screen, within, fireEvent } from "@/test-utils/render";
 import type { BuyerOrderListItem } from "@routeflow/types";
 import { orderLine, orderListItem } from "@/test-utils/buyer-order-fixtures";
 import BuyerOrdersPage from "./page";
@@ -19,16 +19,20 @@ jest.mock("next/navigation", () => ({
 }));
 
 let mockOrders: BuyerOrderListItem[] = [];
+const useBuyerOrdersMock = jest.fn((_params?: unknown) => ({}));
 jest.mock("@/lib/api/buyer", () => ({
-  useBuyerOrders: () => ({
-    data: {
-      data: mockOrders,
-      meta: { page: 1, limit: 20, total: mockOrders.length, totalPages: 1 },
-    },
-    isLoading: false,
-    isError: false,
-    error: null,
-  }),
+  useBuyerOrders: (params?: unknown) => (
+    useBuyerOrdersMock(params),
+    {
+      data: {
+        data: mockOrders,
+        meta: { page: 1, limit: 20, total: mockOrders.length, totalPages: 1 },
+      },
+      isLoading: false,
+      isError: false,
+      error: null,
+    }
+  ),
 }));
 // Business profiles 1B: an UNSET seller — this suite pins today's screen.
 jest.mock("@/lib/api/buyer-capabilities", () => ({
@@ -174,5 +178,36 @@ describe("BuyerOrdersPage — responsive list", () => {
     expect(screen.getByText("No orders yet")).toBeInTheDocument();
     expect(screen.queryByTestId("buyer-orders-cards")).toBeNull();
     expect(screen.queryByTestId("buyer-orders-table")).toBeNull();
+  });
+});
+
+describe("BuyerOrdersPage — UX guide B12 tabs", () => {
+  beforeEach(() => {
+    useBuyerOrdersMock.mockClear();
+    mockOrders = orders;
+  });
+  const lastParams = () => useBuyerOrdersMock.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+
+  it("Active asks for the ACTIVE group, not one status", () => {
+    renderWithProviders(<BuyerOrdersPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Active" }));
+    expect(lastParams()).toMatchObject({ statusGroup: "ACTIVE" });
+    expect(lastParams().status).toBeUndefined();
+  });
+
+  it("Pending keeps the old PENDING-only filter", () => {
+    renderWithProviders(<BuyerOrdersPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Pending" }));
+    expect(lastParams()).toMatchObject({ status: "PENDING" });
+    expect(lastParams().statusGroup).toBeUndefined();
+  });
+
+  it("a filtered empty list names the filter and offers Show all orders", () => {
+    mockOrders = [];
+    renderWithProviders(<BuyerOrdersPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Cancelled" }));
+    expect(screen.getByText("No cancelled orders")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show all orders" }));
+    expect(screen.getByText("No orders yet")).toBeInTheDocument();
   });
 });
