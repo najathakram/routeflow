@@ -45,13 +45,13 @@ describe("billing return paths: the API copy equals the shared allowlist", () =>
   });
 });
 
-/** Every non-spec .ts and .tsx under `dir`, recursively. */
+/** Every .ts and .tsx under `dir`, recursively, except `*.spec.ts(x)` (a helper such as common/testing/db-spec.ts IS scanned). */
 function scan(dir: string): { f: string; text: string }[] {
   const out: { f: string; text: string }[] = [];
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, e.name);
     if (e.isDirectory()) out.push(...scan(full));
-    else if (/.tsx?$/.test(e.name) && !/.(spec|test).tsx?$/.test(e.name))
+    else if (/\.tsx?$/.test(e.name) && !/\.spec\.tsx?$/.test(e.name))
       out.push({
         f: path.relative(SRC, full).split(path.sep).join("/"),
         text: fs.readFileSync(full, "utf8"),
@@ -88,6 +88,13 @@ const P4_EXCLUSIONS: { file: string; reason: string }[] = [
 ];
 
 describe("P4: the literal scan (raw text, all non-spec apps/api/src, .ts and .tsx)", () => {
+  it("the walk excludes only *.spec.ts(x): helpers named db-spec.ts and smtp-spec.ts are scanned, and .tsx too", () => {
+    const files = sources.map((x) => x.f);
+    expect(files).toContain("common/testing/db-spec.ts");
+    expect(files).toContain("common/testing/smtp-spec.ts");
+    expect(files.some((f) => /\.spec\.tsx?$/.test(f))).toBe(false);
+    expect(files.filter((f) => f.endsWith(".tsx")).length).toBeGreaterThanOrEqual(7);
+  });
   it("the walk reaches the .tsx sources too", () => {
     expect(sources.filter((x) => x.f.endsWith(".tsx")).length).toBeGreaterThanOrEqual(7);
   });
@@ -152,10 +159,14 @@ describe("assertBillingReturnUrl: the runtime check at the Stripe boundary (SA-1
       assertBillingReturnUrl("portal", U(API_BILLING_PORTAL_RETURN_PATH), BASE),
     ).not.toThrow();
   });
-  it("a base that ends in a slash joins without a doubled slash (webBaseUrl() may end in /)", () => {
-    const joined = billingReturnUrl("https://app.test/", API_BILLING_RETURN_PATHS.pay);
-    expect(() => assertBillingReturnUrl("success", joined, BASE)).not.toThrow();
-  });
+  it(
+    "a base written with a trailing slash joins without a doubled slash (webBaseUrl() itself never ends in " /
+      ")",
+    () => {
+      const joined = billingReturnUrl("https://app.test/", API_BILLING_RETURN_PATHS.pay);
+      expect(() => assertBillingReturnUrl("success", joined, BASE)).not.toThrow();
+    },
+  );
 
   const evil = "https://evil.test";
   const bad: [string, string][] = [
@@ -338,7 +349,7 @@ describe("per-site rows: the real withCheckoutPolicy and StripeService, a fake c
     const good = () => billingReturnUrl(base(), API_BILLING_RETURN_PATHS.plan);
     const evilUrl = "https://evil.test/settings/billing?checkout=success";
 
-    it("S3b: a single-quoted 'return_url' key throws and logs the one line", () => {
+    it("S3b: a return_url key already in the params object throws and logs the one line", () => {
       const p = { ...params(good(), cancel()), return_url: evilUrl };
       expect(() => withCheckoutPolicy(p as any, { surface })).toThrow(InternalServerErrorException);
       expect(logged).toHaveBeenCalledTimes(1);
@@ -349,6 +360,12 @@ describe("per-site rows: the real withCheckoutPolicy and StripeService, a fake c
     it('S4b: p["return_url"] = x (bracket assignment) throws and logs the one line', () => {
       const p: Record<string, unknown> = params(good(), cancel());
       p["return_url"] = evilUrl;
+      expect(() => withCheckoutPolicy(p as any, { surface })).toThrow(InternalServerErrorException);
+      expect(logged).toHaveBeenCalledTimes(1);
+      expect(String(logged.mock.calls[0][0])).toContain("BILLING_RETURN_URL_MISMATCH");
+    });
+    it("an EMPTY-string return_url on the params throws with the one log line (presence, not truthiness)", () => {
+      const p = { ...params(good(), cancel()), return_url: "" };
       expect(() => withCheckoutPolicy(p as any, { surface })).toThrow(InternalServerErrorException);
       expect(logged).toHaveBeenCalledTimes(1);
       expect(String(logged.mock.calls[0][0])).toContain("BILLING_RETURN_URL_MISMATCH");
