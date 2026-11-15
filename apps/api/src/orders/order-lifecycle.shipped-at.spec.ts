@@ -121,6 +121,20 @@ describe("W-904 updateShipmentImpl never writes shippedAt from its pre-read", ()
     expect(inv.shippedAt).toEqual(order.shippedAt);
   });
 
+  it("4b: the backfill is judged on the STATUS at write time: an order that left the shipped statuses after the read is not stamped", async () => {
+    const order = baseOrder({ status: "OUT_FOR_DELIVERY" });
+    const inv = { id: "inv-1", status: "SENT", shippedAt: null as Date | null };
+    // The read saw a shipped, unstamped order; by the write it is CANCELLED (not a shipped status).
+    const f = fakeDb(order, [inv], (o) => Object.assign(o, { status: "CANCELLED" }));
+    await save(f.deps);
+    const backfill = f.writes.find((w) => w.model === "order" && w.fn === "updateMany");
+    expect(backfill?.args.where.status).toEqual({
+      in: expect.arrayContaining(["OUT_FOR_DELIVERY"]),
+    });
+    expect(order.shippedAt).toBeNull();
+    expect(inv.shippedAt).toBeNull();
+  });
+
   it("6: a CONFIRMED order is not stamped, and no write carries the key (E-b)", async () => {
     const order = baseOrder();
     const inv = { id: "inv-1", status: "SENT", shippedAt: null as Date | null };
