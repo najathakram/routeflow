@@ -11,3 +11,26 @@ import { roundMoney } from "@routeflow/pricing";
 export function receivableSummaryBalanceTotal(rows: ReadonlyArray<{ balance: number }>): number {
   return roundMoney(rows.reduce((sum, r) => sum + Math.max(0, r.balance), 0));
 }
+
+/**
+ * UX guide B7: the footer's three lines. `total` IS `receivableSummaryBalanceTotal(rows)` (not re-added), so the bottom
+ * line cannot drift from today's figure; `openInvoices` (clamped invoice balances, the number AR aging shows) and
+ * `unusedCredit` (open CREDIT_NOTE balances) only say what it is made of.
+ */
+export function receivableSummaryBreakdown(
+  rows: ReadonlyArray<{ type: string; balance: number }>,
+): {
+  openInvoices: number;
+  unusedCredit: number;
+  total: number;
+} {
+  const sum = (type: string) =>
+    roundMoney(
+      rows.filter((r) => r.type === type).reduce((acc, r) => acc + Math.max(0, r.balance), 0),
+    );
+  return {
+    openInvoices: sum("INVOICE"),
+    unusedCredit: sum("CREDIT_NOTE"),
+    total: receivableSummaryBalanceTotal(rows),
+  };
+}

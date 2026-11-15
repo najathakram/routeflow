@@ -5,7 +5,10 @@
  */
 import * as fs from "fs";
 import * as path from "path";
-import { receivableSummaryBalanceTotal } from "./receivable-summary-total";
+import {
+  receivableSummaryBalanceTotal,
+  receivableSummaryBreakdown,
+} from "./receivable-summary-total";
 
 describe("receivableSummaryBalanceTotal", () => {
   it("does not net a negative (overpaid) row against what is owed", () => {
@@ -29,5 +32,23 @@ describe("receivableSummaryBalanceTotal", () => {
       "utf8",
     );
     expect(src).toContain("receivableSummaryBalanceTotal(rows)");
+  });
+});
+
+// UX guide B7: the footer says what its figure is made of. The bottom line IS the existing figure.
+describe("receivableSummaryBreakdown (UX guide B7)", () => {
+  it("splits open invoices (clamped) from unused credit; the total is today's figure", () => {
+    const rows = [
+      { type: "INVOICE", balance: 100 },
+      { type: "INVOICE", balance: -30 },
+      { type: "CREDIT_NOTE", balance: 12.5 },
+      { type: "PAYMENT", balance: 0 },
+    ];
+    expect(receivableSummaryBreakdown(rows)).toEqual({
+      openInvoices: 100,
+      unusedCredit: 12.5,
+      total: 112.5,
+    });
+    expect(receivableSummaryBreakdown(rows).total).toBe(receivableSummaryBalanceTotal(rows));
   });
 });
