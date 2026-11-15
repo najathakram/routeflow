@@ -33,7 +33,7 @@ export function FiltersDisclosure({
   const [open, setOpen] = React.useState(false);
   const panelId = React.useId();
   return (
-    <div>
+    <div className="md:contents">
       <div className="flex items-center gap-2 md:hidden">
         <button
           type="button"
@@ -47,7 +47,7 @@ export function FiltersDisclosure({
         </button>
         {toolbar}
       </div>
-      <div id={panelId} className={cn("mt-2 md:mt-0 md:block", open ? "block" : "hidden")}>
+      <div id={panelId} className={cn("mt-2 md:mt-0 md:contents", open ? "block" : "hidden")}>
         {children}
       </div>
     </div>

@@ -21,8 +21,12 @@ export function RecordCardList({ children }: { children: React.ReactNode }) {
 export interface RecordCardProps {
   /** Where the card opens. */
   href: string;
-  /** The record number, shown in mono. */
+  /** The record number (mono) or, with titleKind "name", a person or business name. */
   title: string;
+  /** "number" (default) shows the title in mono; "name" in the normal text, same size. */
+  titleKind?: "number" | "name";
+  /** Dims the whole card, like a dimmed table row (for example a void record). */
+  dimmed?: boolean;
   /** A preformatted amount; the card never formats or sums. */
   amount: React.ReactNode;
   /** A small muted label for the amount, for example the table header's own word. */
@@ -52,6 +56,8 @@ export interface RecordCardProps {
 export function RecordCard({
   href,
   title,
+  titleKind = "number",
+  dimmed,
   amount,
   amountLabel,
   amountTone = "default",
@@ -77,7 +83,10 @@ export function RecordCard({
             }
           : undefined
       }
-      className="min-w-0 truncate font-mono text-xs font-semibold text-ink-900 after:absolute after:inset-0 after:rounded-xl focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-inset focus-visible:after:ring-brand-500"
+      className={cn(
+        "min-w-0 truncate text-xs font-semibold text-ink-900 after:absolute after:inset-0 after:rounded-xl focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-inset focus-visible:after:ring-brand-500",
+        titleKind === "number" && "font-mono",
+      )}
     >
       {title}
     </Link>
@@ -89,6 +98,7 @@ export function RecordCard({
         className={cn(
           "relative flex flex-col gap-1.5 rounded-xl border border-surface-border bg-white p-3 shadow-card transition-colors hover:bg-surface-raised",
           selected && "bg-brand-50",
+          dimmed && "opacity-50",
         )}
       >
         <div className="flex items-start justify-between gap-3">

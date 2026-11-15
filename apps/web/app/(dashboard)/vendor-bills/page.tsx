@@ -131,7 +131,7 @@ function StatTile({
   return (
     <div
       className={cn(
-        "rounded-lg border border-surface-border bg-white p-4 shadow-card",
+        "rounded-lg border border-surface-border bg-white p-3 shadow-card md:p-4",
         ring === "warning" && "border-warning",
         ring === "danger" && "border-danger",
       )}
@@ -139,7 +139,7 @@ function StatTile({
       <span className="eyebrow-label block">{label}</span>
       <span
         className={cn(
-          "mt-1.5 block text-2xl text-navy",
+          "mt-0.5 block text-xl text-navy md:mt-1.5 md:text-2xl",
           money ? "money" : "font-semibold tracking-[-0.02em]",
           ring === "warning" && "text-[#B45309]",
           ring === "danger" && "text-danger",
@@ -147,7 +147,11 @@ function StatTile({
       >
         {value}
       </span>
-      {hint && <span className="mt-1 block text-xs text-navy/70">{hint}</span>}
+      {hint && (
+        <span className="mt-1 block text-xs text-navy/70 line-clamp-2 md:line-clamp-none">
+          {hint}
+        </span>
+      )}
     </div>
   );
 }
@@ -1121,7 +1125,7 @@ function InventoryPurchasesTab() {
           <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => setSelectedBills(new Map())}
-              className="text-sm text-navy/70 hover:text-navy transition-colors"
+              className="text-sm text-navy/70 hover:text-navy transition-colors max-md:min-h-[44px]"
             >
               Deselect all
             </button>
@@ -1129,7 +1133,7 @@ function InventoryPurchasesTab() {
               value={markPaidMethod}
               onChange={(e) => setMarkPaidMethod(e.target.value)}
               title="Payment method"
-              className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="h-9 rounded max-md:min-h-[44px] border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             >
               {SELECTABLE_PAYMENT_METHODS.map((m) => (
                 <option key={m} value={m}>
@@ -1142,10 +1146,11 @@ function InventoryPurchasesTab() {
               value={markPaidDate}
               onChange={(e) => setMarkPaidDate(e.target.value)}
               title="Payment date"
-              className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="h-9 w-32 rounded max-md:min-h-[44px] border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             />
             <Button
               variant="danger"
+              className="max-md:min-h-[44px]"
               leftIcon={<Trash2 className="h-4 w-4" />}
               loading={bulkDelete.isPending}
               onClick={() => void handleBulkDelete()}
@@ -1153,6 +1158,7 @@ function InventoryPurchasesTab() {
               Delete
             </Button>
             <Button
+              className="max-md:min-h-[44px]"
               leftIcon={<CheckCircle2 className="h-4 w-4" />}
               loading={bulkMarkPaid.isPending}
               disabled={markPaidPreview.count === 0}
@@ -1283,7 +1289,7 @@ function InventoryPurchasesTab() {
             ) : undefined
           }
         >
-          <div className="flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center md:gap-3">
+          <div className="flex flex-col gap-2 md:contents">
             <div className="flex flex-col gap-1 md:contents">
               <label
                 htmlFor="bills-status-filter"
@@ -1372,16 +1378,18 @@ function InventoryPurchasesTab() {
           table's own state rows at every width. Same balance rule and selection as the table. */}
       {!isLoading && !isError && bills.length > 0 && (
         <>
-          <label className="flex min-h-[44px] items-center gap-3 text-sm text-navy md:hidden">
-            <input
-              type="checkbox"
-              aria-label="Select all bills on this page"
-              checked={allOnPageSelected}
-              onChange={toggleSelectAll}
-              className="h-5 w-5 rounded border-surface-border text-brand-500 accent-brand-500"
-            />
-            Select all on this page
-          </label>
+          {selectedBills.size > 0 && (
+            <label className="flex min-h-[44px] items-center gap-3 text-sm text-navy md:hidden">
+              <input
+                type="checkbox"
+                aria-label="Select all on this page"
+                checked={allOnPageSelected}
+                onChange={toggleSelectAll}
+                className="h-5 w-5 rounded border-surface-border text-brand-500 accent-brand-500"
+              />
+              Select all on this page
+            </label>
+          )}
           <RecordCardList>
             {sortedBills.map((bill: VendorBill) => {
               const overdue = isOverdue(bill);
@@ -2454,7 +2462,7 @@ function ExpensesContent() {
     <button
       onClick={() => setTab(tab)}
       className={cn(
-        "flex min-h-[44px] shrink-0 snap-start items-center gap-2 whitespace-nowrap rounded-lg px-5 py-2 text-sm font-medium transition-colors md:min-h-0",
+        "flex min-h-[44px] items-center gap-2 rounded-lg px-5 py-2 text-sm font-medium transition-colors max-md:shrink-0 max-md:snap-start max-md:whitespace-nowrap md:min-h-0",
         activeTab === tab ? "bg-white text-navy shadow-sm" : "text-navy/70 hover:text-navy",
       )}
     >
@@ -2481,7 +2489,7 @@ function ExpensesContent() {
       </div>
 
       {/* Tab switcher: one sideways-scrolling row below md */}
-      <div className="flex w-fit max-w-full snap-x gap-1 overflow-x-auto rounded-xl border border-surface-border bg-surface-raised p-1 scrollbar-hide">
+      <div className="flex w-fit gap-1 rounded-xl border border-surface-border bg-surface-raised p-1 max-md:max-w-full max-md:snap-x max-md:overflow-x-auto max-md:scrollbar-hide">
         <TabButton tab="inventory" label="Supplier bills" count={billsCount} />
         <TabButton tab="pos" label="Purchase orders" count={posCount} />
         <TabButton tab="other" label="Other expenses" />

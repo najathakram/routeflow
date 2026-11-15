@@ -106,6 +106,32 @@ describe("RecordCard", () => {
     expect(screen.getByText("Acme").closest("p")).not.toHaveAttribute("title");
   });
 
+  describe("title kind and dimming", () => {
+    it("shows a number title in mono by default", () => {
+      renderCard();
+      const link = screen.getByRole("link", { name: "INV-1001" });
+      expect(link.className).toContain("font-mono");
+    });
+
+    it("shows a name title in the normal sans text at the same size", () => {
+      renderCard({ title: "Acme Foods", titleKind: "name" });
+      const link = screen.getByRole("link", { name: "Acme Foods" });
+      expect(link.className).not.toContain("font-mono");
+      expect(link.className).toContain("text-xs");
+      expect(link.className).toContain("font-semibold");
+    });
+
+    it("dims the whole card on request, like a dimmed table row", () => {
+      const { container } = renderCard({ dimmed: true });
+      expect(container.querySelector("[data-record-card]")!.className).toContain("opacity-50");
+    });
+
+    it("is not dimmed by default", () => {
+      const { container } = renderCard();
+      expect(container.querySelector("[data-record-card]")!.className).not.toContain("opacity-50");
+    });
+  });
+
   describe("selection (optional, for pages with bulk actions)", () => {
     it("renders no checkbox unless onSelectedChange is given", () => {
       renderCard();

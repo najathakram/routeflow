@@ -432,15 +432,19 @@ export default function CustomersPage() {
   );
 
   // The phone sort control (below md) drives the same sortBy / sortDir as the table's headers.
-  // Nothing sorted yet shows as Name; a first tap on the direction button sorts Name descending.
-  const phoneSortCol = sortBy || "contactName";
-  const togglePhoneDirection = () => {
-    if (!sortBy) {
-      setSortBy("contactName");
-      setSortDir("desc");
-    } else {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+  // Nothing sorted shows as "Newest" (the list's own order); picking a column sorts like the
+  // table header's first click (ascending), picking Newest clears the sort. The direction button
+  // only works once a column is picked.
+  const handlePhoneSortChange = (col: string) => {
+    if (!col) {
+      setSortBy("");
+      setSortDir("asc");
+    } else if (col !== sortBy) {
+      handleSort(col);
     }
+  };
+  const togglePhoneDirection = () => {
+    if (sortBy) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
   };
 
   // ── Edit door (SA-1084 A-2) ──────────────────────────────────────────────
@@ -802,35 +806,31 @@ export default function CustomersPage() {
           <Select
             aria-label="Sort customers by"
             options={[
+              { value: "", label: "Newest" },
               { value: "contactName", label: "Name" },
               { value: "businessName", label: "Business name" },
               { value: "receivables", label: "Open balance" },
             ]}
-            value={phoneSortCol}
-            onChange={(e) => {
-              if (e.target.value !== phoneSortCol) handleSort(e.target.value);
-            }}
+            value={sortBy}
+            onChange={(e) => handlePhoneSortChange(e.target.value)}
             className="h-11"
           />
         </div>
         <button
           type="button"
           onClick={togglePhoneDirection}
-          aria-label={sortBy && sortDir === "desc" ? "Sort ascending" : "Sort descending"}
-          className="grid h-11 w-11 shrink-0 place-items-center rounded-ctl border border-surface-border bg-white text-navy hover:bg-surface-raised"
+          disabled={!sortBy}
+          aria-label={sortDir === "desc" ? "Sort ascending" : "Sort descending"}
+          className="grid h-11 w-11 shrink-0 place-items-center rounded-ctl border border-surface-border bg-white text-navy hover:bg-surface-raised disabled:opacity-40"
         >
-          {sortBy && sortDir === "desc" ? (
-            <ArrowDown className="h-4 w-4" />
-          ) : (
-            <ArrowUp className="h-4 w-4" />
-          )}
+          {sortDir === "desc" ? <ArrowDown className="h-4 w-4" /> : <ArrowUp className="h-4 w-4" />}
         </button>
       </div>
     ) : undefined;
 
   // Type and Tag: a visible label below md, a screen-reader label from md up (the bar is as before).
   const typeField = (
-    <div className="flex flex-col gap-1 md:w-32">
+    <div className="flex flex-col gap-1 md:order-1 md:w-32">
       <label
         htmlFor="customers-type-filter"
         className="text-xs font-medium text-navy/70 md:sr-only"
@@ -851,7 +851,7 @@ export default function CustomersPage() {
   );
   const tagField =
     tags && tags.length > 0 ? (
-      <div className="flex flex-col gap-1 md:w-32">
+      <div className="flex flex-col gap-1 md:order-1 md:w-32">
         <label
           htmlFor="customers-tag-filter"
           className="text-xs font-medium text-navy/70 md:sr-only"
@@ -948,11 +948,11 @@ export default function CustomersPage() {
       {/* Selection action bar — never shown in the trash view (F3): the operator can only
           View + inline Restore a removed row, never bulk-act on it. */}
       {!removedFilter && selectMode && selected.size > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-danger/30 bg-danger-bg px-4 py-3">
+        <div className="flex items-center justify-between rounded-lg border border-danger/30 bg-danger-bg px-4 py-3 max-md:flex-wrap max-md:gap-2">
           <span className="text-sm font-medium text-navy">
             {selected.size} customer{selected.size !== 1 ? "s" : ""} selected
           </span>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-2 max-md:flex-wrap">
             <button
               onClick={() => setSelected(new Set())}
               className="text-sm text-navy/70 hover:text-navy transition-colors"
@@ -1149,19 +1149,19 @@ export default function CustomersPage() {
           </div>
 
           {/* Type + Tag filters, and the phone sort control */}
-          <div className="order-3 md:order-1">
+          <div className="order-3 md:contents">
             {tags && tags.length > 0 ? (
               <FiltersDisclosure
                 count={activeFilterCount({ typeFilter, tagFilter })}
                 toolbar={phoneSort}
               >
-                <div className="flex flex-col gap-2 md:flex-row md:items-center md:gap-2.5">
+                <div className="flex flex-col gap-2 md:contents">
                   {typeField}
                   {tagField}
                 </div>
               </FiltersDisclosure>
             ) : (
-              <div className="flex flex-col gap-2 md:flex-row md:items-center md:gap-2.5">
+              <div className="flex flex-col gap-2 md:contents">
                 {phoneSort}
                 {typeField}
               </div>
@@ -1214,6 +1214,7 @@ export default function CustomersPage() {
                     key={c.id}
                     href={`/customers/${c.id}`}
                     title={name}
+                    titleKind="name"
                     amount={
                       <OpenBalanceButton
                         customerId={c.id}
@@ -1225,16 +1226,7 @@ export default function CustomersPage() {
                     amountLabel="Open balance"
                     amountTone={balance > 0 ? "danger" : "default"}
                     subtitle={
-                      c.businessName && c.businessName !== name ? (
-                        <span className="inline-flex max-w-full items-center gap-1.5">
-                          <span className="truncate">{c.businessName}</span>
-                          {(c.regulatedCount ?? 0) > 0 && (
-                            <span title="Sells regulated items" className="shrink-0 text-amber-600">
-                              <ShieldCheck className="h-3.5 w-3.5" />
-                            </span>
-                          )}
-                        </span>
-                      ) : undefined
+                      c.businessName && c.businessName !== name ? c.businessName : undefined
                     }
                     badges={
                       <>
@@ -1242,6 +1234,11 @@ export default function CustomersPage() {
                           <Badge variant="danger" label="Removed" />
                         ) : (
                           <Badge status={status as BadgeStatus} />
+                        )}
+                        {(c.regulatedCount ?? 0) > 0 && (
+                          <span title="Sells regulated items" className="shrink-0 text-amber-600">
+                            <ShieldCheck className="h-3.5 w-3.5" />
+                          </span>
                         )}
                         {tagList.slice(0, 2).map((ta) => (
                           <span

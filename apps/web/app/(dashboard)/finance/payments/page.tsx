@@ -723,7 +723,7 @@ export default function FinancePaymentsPage() {
       {/* Filter bar: search is always visible. Below md the other filters open from a "Filters (n)"
           button that shares a row with the sort control, one labelled full-width field per row;
           from md up it is the same inline bar (the field groups use md:contents). */}
-      <div className="flex flex-col gap-2 md:flex-row md:items-start md:gap-3 md:rounded-xl md:border md:border-surface-border md:bg-white md:p-4 md:[&>div:last-child]:min-w-0 md:[&>div:last-child]:flex-1">
+      <div className="flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center md:gap-3 md:rounded-xl md:border md:border-surface-border md:bg-white md:p-4">
         <input
           id="payments-search"
           type="text"
@@ -771,7 +771,7 @@ export default function FinancePaymentsPage() {
             ) : undefined
           }
         >
-          <div className="flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center md:gap-3">
+          <div className="flex flex-col gap-2 md:contents">
             <div className="flex flex-col gap-2 md:contents">
               <div className="flex flex-col gap-1 md:contents">
                 <label
@@ -901,6 +901,7 @@ export default function FinancePaymentsPage() {
               key={p.id}
               href={`/finance/payments/${p.id}`}
               title={p.paymentNumber ?? p.reference ?? "—"}
+              dimmed={p.status === "VOID"}
               amount={fmt(p.amount)}
               subtitle={p.invoice.customer?.businessName ?? "—"}
               badges={
@@ -916,10 +917,10 @@ export default function FinancePaymentsPage() {
               meta={
                 <span className="flex flex-wrap gap-x-2 gap-y-0.5">
                   <span>{fmtDate(p.paidAt ?? p.createdAt)}</span>
-                  {p.reference && (
+                  {p.reference && (p.paymentNumber || p.imageKey) && (
                     <span className="inline-flex items-center gap-1">
                       {p.imageKey && <Paperclip className="h-3 w-3 text-navy/50" aria-hidden />}
-                      {p.reference}
+                      {p.paymentNumber && p.reference}
                     </span>
                   )}
                 </span>

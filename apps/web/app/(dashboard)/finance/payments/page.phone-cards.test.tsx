@@ -171,6 +171,61 @@ describe("FinancePaymentsPage — phone cards", () => {
     expect(screen.getByRole("button", { name: "Filters (1)" })).toBeInTheDocument();
   });
 
+  it("keeps the desktop filter bar: search and every control are direct items of one flex-wrap bar, no flex-1 column", () => {
+    renderWithProviders(<FinancePaymentsPage />);
+    const search = screen.getByPlaceholderText(/Search payment #/) as HTMLElement;
+    const bar = search.parentElement as HTMLElement;
+    expect(bar.className).toContain("md:flex-wrap");
+    expect(bar.className).toContain("md:items-center");
+    expect(bar.className).not.toContain("md:items-start");
+    expect(bar.className).not.toContain("flex-1");
+    // Every wrapper between the bar and a control takes no box from md up.
+    const controls = [
+      screen.getByLabelText("From"),
+      screen.getByLabelText("To"),
+      screen.getByLabelText("Method"),
+      screen.getByLabelText("Status"),
+      screen.getByLabelText("Customer"),
+      screen.getByRole("button", { name: "Clear" }),
+      screen.getByRole("button", { name: "Export CSV" }),
+    ];
+    for (const control of controls) {
+      let node = control.parentElement as HTMLElement;
+      while (node !== bar) {
+        expect(node.className).toContain("md:contents");
+        node = node.parentElement as HTMLElement;
+      }
+    }
+  });
+
+  it("does not repeat the reference in the meta line when the reference is the card title", () => {
+    mockUsePayments.mockReturnValue({
+      data: {
+        data: [makePayment({ id: "pay-c", paymentNumber: null, reference: "CHK-77", amount: 10 })],
+        meta: { total: 1, page: 1, limit: 25, totalPages: 1 },
+        summary: SUMMARY,
+      },
+      isLoading: false,
+    });
+    const { container } = renderWithProviders(<FinancePaymentsPage />);
+    const card = cardList(container)[0];
+    expect(within(card).getAllByText("CHK-77")).toHaveLength(1);
+  });
+
+  it("still shows the reference in the meta line when the card is titled by the payment number", () => {
+    const { container } = renderWithProviders(<FinancePaymentsPage />);
+    const card = cardList(container)[1];
+    expect(within(card).getByText("PAY-B")).toBeInTheDocument();
+    expect(within(card).getByText("CHK-9")).toBeInTheDocument();
+  });
+
+  it("dims a void payment card like the table row, and no other card", () => {
+    const { container } = renderWithProviders(<FinancePaymentsPage />);
+    const cards = cardList(container).map((li) => li.querySelector("[data-record-card]")!);
+    expect(cards[0].className).not.toContain("opacity-50");
+    expect(cards[1].className).toContain("opacity-50");
+  });
+
   it("clears every filter with a text Clear button", async () => {
     const user = userEvent.setup();
     renderWithProviders(<FinancePaymentsPage />);

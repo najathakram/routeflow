@@ -267,23 +267,118 @@ describe("CustomersPage — phone cards", () => {
     expect(screen.getByLabelText("Type")).toBeInTheDocument();
   });
 
-  it("has a phone sort control; the direction button says what a tap does", async () => {
-    const user = userEvent.setup();
+  it("has a phone sort control that tells the truth: Newest while nothing is sorted, direction disabled then", async () => {
     renderWithProviders(<CustomersPage />);
     const select = screen.getByLabelText("Sort customers by") as HTMLSelectElement;
     expect(Array.from(select.options).map((o) => [o.value, o.textContent])).toEqual([
+      ["", "Newest"],
       ["contactName", "Name"],
       ["businessName", "Business name"],
       ["receivables", "Open balance"],
     ]);
-    await user.selectOptions(select, "receivables");
-    expect(lastListParams).toMatchObject({ sortBy: "receivables", sortDir: "asc" });
-    const dir = screen.getByRole("button", { name: "Sort descending" });
+    expect(select.value).toBe("");
+    const dir = screen.getByRole("button", { name: /^Sort (ascending|descending)$/ });
+    expect(dir).toBeDisabled();
     expect(dir.className).toContain("h-11");
     expect(dir.className).toContain("w-11");
+    expect(lastListParams.sortBy).toBeUndefined();
+  });
+
+  it("picking a column sorts like the table header first click (ascending); the direction button then flips it", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<CustomersPage />);
+    const select = screen.getByLabelText("Sort customers by") as HTMLSelectElement;
+    await user.selectOptions(select, "receivables");
+    expect(lastListParams).toMatchObject({ sortBy: "receivables", sortDir: "asc" });
+    expect(select.value).toBe("receivables");
+    const dir = screen.getByRole("button", { name: "Sort descending" });
+    expect(dir).toBeEnabled();
     await user.click(dir);
     expect(lastListParams).toMatchObject({ sortBy: "receivables", sortDir: "desc" });
     expect(screen.getByRole("button", { name: "Sort ascending" })).toBeInTheDocument();
+  });
+
+  it("picking Newest clears the sort and disables the direction button again", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<CustomersPage />);
+    const select = screen.getByLabelText("Sort customers by") as HTMLSelectElement;
+    await user.selectOptions(select, "contactName");
+    await user.click(screen.getByRole("button", { name: "Sort descending" }));
+    await user.selectOptions(select, "");
+    expect(select.value).toBe("");
+    expect(lastListParams.sortBy).toBeUndefined();
+    expect(screen.getByRole("button", { name: /^Sort (ascending|descending)$/ })).toBeDisabled();
+    // Sorting again starts ascending, not from the old direction.
+    await user.selectOptions(select, "contactName");
+    expect(lastListParams).toMatchObject({ sortBy: "contactName", sortDir: "asc" });
+  });
+
+  it("shows a customer name in the normal text, not the mono number style", () => {
+    const { container } = renderWithProviders(<CustomersPage />);
+    const link = within(cards(container)[0]).getByRole("link", { name: "Ada Buyer" });
+    expect(link.className).not.toContain("font-mono");
+  });
+
+  it("marks every regulated customer on its card, in the badges row, also when the title is the business name", () => {
+    mockRows = [
+      row({ id: "cR1", regulatedCount: 2 }),
+      row({
+        id: "cR2",
+        contactName: "",
+        businessName: "Acme Tobacco",
+        regulatedCount: 1,
+        user: { id: "uR2", email: "r2@acme.test", username: "r2", status: "ACTIVE" },
+      }),
+      row({ id: "cR3", contactName: "Cy", businessName: "Cy Shop", regulatedCount: 0 }),
+    ];
+    const { container } = renderWithProviders(<CustomersPage />);
+    const list = cards(container);
+    for (const i of [0, 1]) {
+      const mark = within(list[i]).getByTitle("Sells regulated items");
+      const badgesRow = within(list[i]).getByText("Active").closest("div.flex-wrap") as HTMLElement;
+      expect(badgesRow).toContainElement(mark);
+    }
+    expect(within(list[2]).queryByTitle("Sells regulated items")).toBeNull();
+  });
+
+  it("keeps Type and Tag as separate items of the desktop bar, in the old order", () => {
+    mockTags = [{ id: "t1", name: "VIP", color: "#123456" }];
+    renderWithProviders(<CustomersPage />);
+    const search = screen.getByPlaceholderText("Name, business or phone…") as HTMLElement;
+    const bar = search.parentElement as HTMLElement;
+    const itemOf = (control: HTMLElement) => {
+      let node = control.parentElement as HTMLElement;
+      // The field wrapper is the item itself; any wrapper above it must be md:contents.
+      const item = node;
+      node = node.parentElement as HTMLElement;
+      while (node !== bar) {
+        expect(node.className).toContain("md:contents");
+        node = node.parentElement as HTMLElement;
+      }
+      return item;
+    };
+    const type = itemOf(screen.getByText("Type", { selector: "label" }));
+    const tag = itemOf(screen.getByText("Tag", { selector: "label" }));
+    expect(type).not.toBe(tag);
+    expect(type.className).toContain("md:order-1");
+    expect(tag.className).toContain("md:order-1");
+    expect(type.className).toContain("md:w-32");
+    expect(tag.className).toContain("md:w-32");
+    expect(search.className).toContain("md:order-3");
+  });
+
+  it("wraps the bulk bar only below md", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<CustomersPage />);
+    await user.click(screen.getByRole("button", { name: /^Select$/ }));
+    await user.click(screen.getByRole("checkbox", { name: "Select Ada Buyer" }));
+    const bar = screen.getByText("1 customer selected").parentElement as HTMLElement;
+    const inner = screen.getByRole("button", { name: "Deselect all" }).parentElement as HTMLElement;
+    for (const el of [bar, inner]) {
+      const classes = el.className.split(" ");
+      expect(classes).toContain("max-md:flex-wrap");
+      expect(classes).not.toContain("flex-wrap");
+    }
   });
 
   it("in select mode every card has a checkbox, the walk-in one disabled, and Select all works", async () => {

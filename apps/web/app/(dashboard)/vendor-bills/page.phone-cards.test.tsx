@@ -161,8 +161,8 @@ describe("Supplier bills list — phone cards", () => {
     // The bulk bar the table also uses appears and counts the selection.
     expect(screen.getByText("1 bill selected")).toBeInTheDocument();
     expect(box).toBeChecked();
-    // Select all on the page, the table header's control, is on the phone too.
-    await user.click(screen.getByRole("checkbox", { name: "Select all bills on this page" }));
+    // Select all on the page, the table header's control, is on the phone too (once selecting).
+    await user.click(screen.getByRole("checkbox", { name: "Select all on this page" }));
     expect(screen.getByText("3 bills selected")).toBeInTheDocument();
   });
 
@@ -252,14 +252,98 @@ describe("Supplier bills list — phone cards", () => {
     renderWithProviders(<ExpensesPage />);
     const tab = screen.getByRole("button", { name: /Purchase orders/ });
     const strip = tab.parentElement as HTMLElement;
-    expect(strip.className).toContain("overflow-x-auto");
-    expect(strip.className).not.toContain("flex-wrap");
-    expect(tab.className).toContain("shrink-0");
+    const classes = (el: HTMLElement) => el.className.split(" ");
+    expect(classes(strip)).toContain("max-md:overflow-x-auto");
+    expect(classes(strip)).not.toContain("overflow-x-auto");
+    expect(classes(strip)).not.toContain("snap-x");
+    expect(classes(strip)).not.toContain("flex-wrap");
+    expect(classes(tab)).toContain("max-md:shrink-0");
+    expect(classes(tab)).toContain("max-md:whitespace-nowrap");
+    expect(classes(tab)).not.toContain("shrink-0");
+    expect(classes(tab)).not.toContain("whitespace-nowrap");
     expect(tab.className).toContain("min-h-[44px]");
     for (const re of [/One hub for supplier bills/, /Inventory purchases are recorded/]) {
       const el = screen.getByText(re);
       expect(el.className).toContain("hidden");
       expect(el.className).toContain("md:block");
+    }
+  });
+
+  it("keeps the desktop filter bar: status select and the date group are separate items of the bar", () => {
+    renderWithProviders(<ExpensesPage />);
+    const search = screen.getByLabelText("Search bills") as HTMLElement;
+    const bar = search.parentElement as HTMLElement;
+    expect(bar.className).toContain("md:flex-wrap");
+    const status = screen.getByLabelText("Status");
+    const dateFrom = screen.getByLabelText("From");
+    const dateTo = screen.getByLabelText("To");
+    // The bar's direct item for a control: the first element, going up, that takes a box.
+    const itemOf = (control: HTMLElement) => {
+      let node = control.parentElement as HTMLElement;
+      while (node !== bar && node.className.includes("md:contents")) {
+        node = node.parentElement as HTMLElement;
+      }
+      // Reaching the bar means only md:contents wrappers sat above the control: it is the item.
+      if (node === bar) return control;
+      // Everything between that item and the bar must take no box from md up.
+      let up = node.parentElement as HTMLElement;
+      while (up !== bar) {
+        expect(up.className).toContain("md:contents");
+        up = up.parentElement as HTMLElement;
+      }
+      return node;
+    };
+    const statusItem = itemOf(status);
+    const fromItem = itemOf(dateFrom);
+    // The status select is its own item; the date group is another, shared by From and To.
+    expect(statusItem).toBe(status);
+    expect(fromItem).toBe(itemOf(dateTo));
+    expect(fromItem).not.toBe(status);
+    expect(fromItem.className).toContain("md:items-center");
+  });
+
+  it("shows Select all on this page below md only once a bill is selected", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<ExpensesPage />);
+    expect(screen.queryByRole("checkbox", { name: "Select all on this page" })).toBeNull();
+    await user.click(
+      within(cardList(container)[0]).getByRole("checkbox", { name: /^Select BILL-/ }),
+    );
+    const all = screen.getByRole("checkbox", { name: "Select all on this page" });
+    expect(all.closest("label")!.className).toContain("md:hidden");
+    expect(all.closest("label")!.textContent).toBe("Select all on this page");
+  });
+
+  it("uses the invoices phone tile markup: compact padding and value, hint clamped to two lines", () => {
+    renderWithProviders(<ExpensesPage />);
+    const tile = screen.getByText("Open bills").parentElement as HTMLElement;
+    expect(tile.className).toContain("p-3");
+    expect(tile.className).toContain("md:p-4");
+    const value = tile.querySelector("span.money") as HTMLElement;
+    expect(value.className).toContain("text-xl");
+    expect(value.className).toContain("md:text-2xl");
+    expect(value.className).toContain("md:mt-1.5");
+    const hint = screen.getByText(/bills? unpaid/) as HTMLElement;
+    expect(hint.className).toContain("line-clamp-2");
+    expect(hint.className).toContain("md:line-clamp-none");
+  });
+
+  it("makes the bulk bar controls 44px tall below md only", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<ExpensesPage />);
+    await user.click(
+      within(cardList(container)[0]).getByRole("checkbox", { name: /^Select BILL-/ }),
+    );
+    const controls = [
+      screen.getByRole("button", { name: "Deselect all" }),
+      screen.getByTitle("Payment method"),
+      screen.getByTitle("Payment date"),
+      screen.getByRole("button", { name: /Delete/ }),
+      screen.getByRole("button", { name: /^Mark [0-9]+ paid/ }),
+    ];
+    for (const el of controls) {
+      expect(el.className.split(" ")).toContain("max-md:min-h-[44px]");
+      expect(el.className.split(" ")).not.toContain("min-h-[44px]");
     }
   });
 

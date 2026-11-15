@@ -45,8 +45,15 @@ describe("FiltersDisclosure", () => {
     setup(0);
     const panel = screen.getByLabelText("Search").parentElement as HTMLElement;
     expect(panel.className).toContain("hidden");
-    expect(panel.className).toContain("md:block");
     expect(screen.getByRole("button", { name: "Filters" })).toBeInTheDocument();
+  });
+
+  it("takes no box from md up: root and panel are md:contents, so the controls are direct items of the page bar", () => {
+    setup(0);
+    const panel = screen.getByLabelText("Search").parentElement as HTMLElement;
+    expect(panel.className.split(" ")).toContain("md:contents");
+    expect(panel.className.split(" ")).not.toContain("md:block");
+    expect((panel.parentElement as HTMLElement).className.split(" ")).toContain("md:contents");
   });
 
   it("the button controls the panel by id", () => {
