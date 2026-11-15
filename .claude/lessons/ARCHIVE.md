@@ -867,6 +867,27 @@ col + delta)` has no read-modify-write window at all. And such a fix is regressi
 - **Guard:** none yet — propose a regression test with a fixture where the two diverge (nonzero
   tax), asserting both formulas independently.
 
+### L-344 · 2026-10-24 · domain · an idempotent early return still retries the side effect; a status lift is a predicate with a CAS twin (#3599)
+
+- **Symptom:** a card payment reinstated a tenant an admin had locked, and a redelivered checkout webhook skipped the price push its first delivery had failed to make.
+- **Root cause:** the payment handlers lifted any non-ACTIVE status, and the "already applied" early return also skipped a non-idempotent side effect that could have failed the first time.
+- **Lesson:** **A money event lifts a lock only through ONE predicate with a compare-and-set twin (`paymentReinstatable` / `paymentReinstatableWhere`), so the check and the write are one statement. An idempotent early return still retries the side effect that may have failed on the first delivery.**
+- **Guard:** the dunning-config and billing webhook specs.
+
+### L-349 · 2026-10-25 · domain · prove every id a write references is in the tenant, on the outer client, before any write (681 PR A)
+
+- **Symptom:** a create or update stored an id (customer, product, supplier, category) that pointed at a row of another tenant, or at nothing; nothing refused it.
+- **Root cause:** the writers trusted the id a client sent. Tenant scoping covered the row being written, not the rows it referenced.
+- **Lesson:** **A create or update that takes ids of other rows calls one helper (`assertRefsInTenant`) on the outer client before it opens a transaction. It checks existence and tenant only; archived or deleted state stays a separate policy. Roll it out behind a read-only, counts-only census so existing cross-tenant links reach the architect before the proof starts refusing.**
+- **Guard:** `assert-refs-in-tenant.ts` plus per-service specs; `report-cross-tenant-refs.mjs` census run by the owner.
+
+### L-351 · 2026-10-29 · domain · a business day (due, overdue, expiry, default date) is the tenant's calendar day, judged by one shared rule; host and browser zones never decide it
+
+- **Symptom:** in one window six surfaces judged a day in the wrong zone: browser-day sale and invoice dates, host-day badge and OVERDUE, a licence expired from UTC midnight of its printed date, a report date moved by the host offset.
+- **Root cause:** each caller compared a stored date with `new Date()` in its own zone. The house rule named a helper but nothing listed the callers, so each compare was a fresh copy, and UTC CI hid it.
+- **Lesson:** **Judge every today, due, overdue, expiry or default date through one shared tenant-day rule, passing the tenant's zone in; an unknown zone reads UTC, never "always valid". Pin the callers in a spec that fails on a new inline date-vs-clock compare, and test with the zone as data in a child process, never an in-worker `process.env.TZ`.**
+- **Guard:** `licence-validity-callers.spec` (07ce43595), `page.no-browser-clock.static.test.ts` (#3775), child-process premise in `pg-utc-types.spec.ts` (#3717). Evidence #3775, #3778, #3781, #3717, B330. Cf. archived L-047, L-232, L-252.
+
 ## security
 
 ### L-023 · 2026-07 · security

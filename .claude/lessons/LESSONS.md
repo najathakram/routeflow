@@ -12,6 +12,13 @@
 
 ## process
 
+### L-386 · 2026-11-15 · process · a gate names every touched src directory plus repo-truth, auth/permissions and common, runs the FULL web jest for any PR touching apps/web, and rebuilds the workspace dist first; the verdict states the totals (#4327, #4334)
+
+- **Symptom:** two PRs reached review on a narrower api run (15 suites; one without its touched `src/buyer`). A third reached PASS x2 with web files changed and no full web jest, and CI then caught a source pin in a static test. A review tree with a stale gitignored `packages/pricing/dist` ran web and api jest against the old pricing: tsc red, jest green.
+- **Root cause:** the gate was whatever the lane or reader chose to run, and nothing required the verdict to show its totals; a stale build output makes tests pass against code that is not in the tree.
+- **Lesson:** **The api gate is every touched `src/<dir>` plus `test:repo-truth`, `src/auth/permissions` and `src/common`; any PR that touches `apps/web` runs the FULL web jest and web lint; rebuild `packages/pricing` (and any touched package) at every gate checkout, and read a green jest beside a red tsc in one tree as a stale build output. The verdict states the suite and test totals.**
+- **Guard:** owed, NOT BUILT YET: the reviewer's verdict template carries the totals line; no repo file enforces it.
+
 ### L-379 · 2026-11-12 · process · a hold or fix order is issued only after the reviewer's verdict and browser evidence are posted; the order carries their board comment ids (#4302)
 
 - **Symptom:** a hold and a one-case fix order for #4302 went out from an interim reading, before the reader's FAIL (board 6819958479) and the browser evidence (6819958939, which found more than the reader's MUST) were posted. It cost a round.
@@ -42,6 +49,13 @@
 
 ## tooling
 
+### L-388 · 2026-11-15 · tooling · `gh run list --json conclusion` is the empty string, not null, while a run is in progress; map it to a marker explicitly and key timers by run id plus attempt (#4324)
+
+- **Symptom:** a window's hang guard cancelled a healthy rerun of #4324: the lead's script read a tab-split row, the in-progress conclusion was `""`, and the field after it shifted.
+- **Root cause:** `jq '.conclusion // "-"'` replaces only null and false, so the empty string passed through, and a whitespace-split read drops an empty field.
+- **Lesson:** **Map an empty conclusion to `-` explicitly (`if . == "" then "-" else . end`), read rows as JSON rather than splitting on tabs, and key every timer by run id and attempt so a rerun gets its own clock.**
+- **Guard:** none in the repo (lead tooling); the window script carries the explicit mapping.
+
 ### L-358 · 2026-10-30 · tooling · api check-types in a tree that did not build the workspace packages drowns in TS2307; build `packages/*` first
 
 - **Symptom:** the api type-check on a freshly installed train tree reported 913 diagnostics (baseline 551), nearly all "Cannot find module '@routeflow/pricing'".
@@ -64,6 +78,13 @@
 - **Guard:** none automatic; the sign-in screen's `build <sha7>` (`lib/build-info.ts`) is the on-screen check. Cf. [[L-265]] (stale build output in a proof).
 
 ## testing
+
+### L-387 · 2026-11-15 · testing · a test helper is not named `use*`: the web lint reads it as a hook and fails the PR (#4340)
+
+- **Symptom:** a web PR went red in CI on `react-hooks/rules-of-hooks`: a plain helper in a test file was called from a callback and its name began with `use`.
+- **Root cause:** the lint rule keys on the name, not on what the function does; the lane's gate had not run web lint.
+- **Lesson:** **Name test helpers for what they return (`makeX`, `renderX`, `withX`), never `useX`, unless the function really is a hook called at a component's top level. Web lint is part of every web PR gate.**
+- **Guard:** the web ESLint `react-hooks/rules-of-hooks` rule in `npm run lint`. Cf. [[L-386]].
 
 ### L-377 · 2026-11-12 · testing · a pin ships with a red probe the builder watched fail; a regex with a stray control byte matches nothing and passes whatever the tree holds (#4303)
 
@@ -200,12 +221,6 @@
 - **Lesson:** **Write the "is there a live X on these orders" test once, as a predicate that names every link (header key and line source key, dead statuses excluded), and make every guard count through it. Before trusting a guard, list each way a document can be tied to the row and write a red case for the link the author did not think of.**
 - **Guard:** `liveReturnWhere` in `returns/live-return-guard.ts`; `live-return-guard.spec.ts` RO-36, the DB rows RO-31..35 and the three-caller census `live-return-guard.structure.spec.ts`. Cf. [[L-223]] (sweep every emit site, not the named ones).
 
-### L-351 · 2026-10-29 · domain · a business day (due, overdue, expiry, default date) is the tenant's calendar day, judged by one shared rule; host and browser zones never decide it
-
-- **Symptom:** in one window six surfaces judged a day in the wrong zone: browser-day sale and invoice dates, host-day badge and OVERDUE, a licence expired from UTC midnight of its printed date, a report date moved by the host offset.
-- **Root cause:** each caller compared a stored date with `new Date()` in its own zone. The house rule named a helper but nothing listed the callers, so each compare was a fresh copy, and UTC CI hid it.
-- **Lesson:** **Judge every today, due, overdue, expiry or default date through one shared tenant-day rule, passing the tenant's zone in; an unknown zone reads UTC, never "always valid". Pin the callers in a spec that fails on a new inline date-vs-clock compare, and test with the zone as data in a child process, never an in-worker `process.env.TZ`.**
-- **Guard:** `licence-validity-callers.spec` (07ce43595), `page.no-browser-clock.static.test.ts` (#3775), child-process premise in `pg-utc-types.spec.ts` (#3717). Evidence #3775, #3778, #3781, #3717, B330. Cf. archived L-047, L-232, L-252.
 
 ### L-352 · 2026-10-29 · domain · a button disabled while pending does not stop a second click in the same frame; a create holds a synchronous per-attempt latch
 
@@ -214,19 +229,7 @@
 - **Lesson:** **Guard every create or money-writing submit with a ref latch set synchronously at the top of the handler and released in `onSettled`, so a failed attempt can retry; the disabled state is cosmetic. Its red-first spec fires two clicks in one tick and asserts one request, then asserts a retry after a failure is sent.**
 - **Guard:** red-first specs on the inline product create and the variant create (I-79, d0cd10bd3). Server idempotency stays the second line (cf. L-344).
 
-### L-349 · 2026-10-25 · domain · prove every id a write references is in the tenant, on the outer client, before any write (681 PR A)
 
-- **Symptom:** a create or update stored an id (customer, product, supplier, category) that pointed at a row of another tenant, or at nothing; nothing refused it.
-- **Root cause:** the writers trusted the id a client sent. Tenant scoping covered the row being written, not the rows it referenced.
-- **Lesson:** **A create or update that takes ids of other rows calls one helper (`assertRefsInTenant`) on the outer client before it opens a transaction. It checks existence and tenant only; archived or deleted state stays a separate policy. Roll it out behind a read-only, counts-only census so existing cross-tenant links reach the architect before the proof starts refusing.**
-- **Guard:** `assert-refs-in-tenant.ts` plus per-service specs; `report-cross-tenant-refs.mjs` census run by the owner.
-
-### L-344 · 2026-10-24 · domain · an idempotent early return still retries the side effect; a status lift is a predicate with a CAS twin (#3599)
-
-- **Symptom:** a card payment reinstated a tenant an admin had locked, and a redelivered checkout webhook skipped the price push its first delivery had failed to make.
-- **Root cause:** the payment handlers lifted any non-ACTIVE status, and the "already applied" early return also skipped a non-idempotent side effect that could have failed the first time.
-- **Lesson:** **A money event lifts a lock only through ONE predicate with a compare-and-set twin (`paymentReinstatable` / `paymentReinstatableWhere`), so the check and the write are one statement. An idempotent early return still retries the side effect that may have failed on the first delivery.**
-- **Guard:** the dunning-config and billing webhook specs.
 
 ### L-340 · 2026-10-24 · domain · one declared row-lock order, a pin that classifies every lock site, and no exception map that grows (#3680, #3697)
 
