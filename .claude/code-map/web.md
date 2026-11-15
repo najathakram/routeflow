@@ -101,3 +101,5 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/landing-2026-11-13-bk-fixes.md](web/landing-2026-11-13-bk-fixes.md) | Expired verify link + resend, customer-role staff gate (seesStaffControls), site print and motion, spec 85 |
 | [web/landing-2026-11-15-w40-42.md](web/landing-2026-11-15-w40-42.md) | Windows 40 to 42: Reopen confirm copy, one scan run-start rule (lib/scan-run.ts), counter Escape and Alt+D fixes, staff app polish (B9, B13, B20, B22) |
 | [web/landing-2026-11-15-w43-46.md](web/landing-2026-11-15-w43-46.md) | Windows 43 to 46: embedded Checkout host and panel (lib/checkout-embedded.ts), buyer Orders and Deals chips, paid-in-advance chip, Billing row and "How customers pay you" in Settings, admin plan price confirm |
+| [web/landing-2026-11-15-w47.md](web/landing-2026-11-15-w47.md) | Window 47: discount tax base in the invoice, estimate and till footers (lib/discount-tax-base.ts) |
+| [web/landing-2026-11-15-w48.md](web/landing-2026-11-15-w48.md) | Window 48: staff shell (build-operator-nav, open nav groups), scan clock rename, billing return redirects |
