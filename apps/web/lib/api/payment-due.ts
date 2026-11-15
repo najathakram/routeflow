@@ -5,7 +5,7 @@ import {
   type PaymentDueShown,
   type PaymentDueView,
 } from "@routeflow/types";
-import { isPaidReturn } from "../checkout-return";
+import { isStripeReturn } from "../checkout-return";
 import { assertCheckoutStartable, followCheckout } from "../checkout-embedded";
 import { apiClient } from "../api-client";
 import { guardCounterLeave } from "../counter-cart-signal";
@@ -21,7 +21,7 @@ const CARD_POLL_MS = 300_000;
  */
 export function paymentDuePollMs(view: PaymentDueView | undefined, search: string): number | false {
   if (view?.due) return POLL_MS;
-  if (view?.cardNeeded) return isPaidReturn(new URLSearchParams(search)) ? POLL_MS : CARD_POLL_MS;
+  if (view?.cardNeeded) return isStripeReturn(new URLSearchParams(search)) ? POLL_MS : CARD_POLL_MS;
   return false;
 }
 

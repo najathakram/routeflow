@@ -6,8 +6,8 @@
 type ParamReader = { get(name: string): string | null } | null | undefined;
 
 /** A payment was started and is being confirmed: `?paid=1` or `?checkout=success`. */
-export function isPaidReturn(params: ParamReader | string): boolean {
-  const p = typeof params === "string" ? new URLSearchParams(params) : params;
+export function isStripeReturn(search: ParamReader | string): boolean {
+  const p = typeof search === "string" ? new URLSearchParams(search) : search;
   return p?.get("paid") === "1" || p?.get("checkout") === "success";
 }
 

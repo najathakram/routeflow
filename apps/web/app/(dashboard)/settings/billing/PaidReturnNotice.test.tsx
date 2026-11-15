@@ -12,6 +12,9 @@ jest.mock("@/lib/api/billing", () => ({
     return { data: mockSub };
   },
 }));
+jest.mock("@/lib/tenant-timezone", () => ({
+  useTenantTimeZoneQuery: () => ({ zone: "America/Chicago", isError: false }),
+}));
 jest.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(mockQuery),
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
@@ -31,6 +34,29 @@ describe("PaidReturnNotice", () => {
       "Your payment is processing. Your bank hasn't cleared it yet.",
     );
     expect(lastOpts.refetchInterval?.({ state: { data: mockSub } })).toBe(15_000);
+  });
+
+  it("a return that charged nothing today (future trialEndsAt) never says Payment received", () => {
+    mockQuery = "checkout=success";
+    mockSub = { billingState: "current", trialEndsAt: "2099-11-01T05:00:00.000Z" };
+    renderWithProviders(<PaidReturnNotice />);
+    const note = screen.getByRole("status");
+    expect(note).toHaveTextContent("You're all set. Your first payment is on November 1, 2099.");
+    expect(note).not.toHaveTextContent("Payment received");
+  });
+
+  it("a past trialEndsAt does not change the wording", () => {
+    mockQuery = "paid=1";
+    mockSub = { billingState: "current", trialEndsAt: "2020-01-01T00:00:00.000Z" };
+    renderWithProviders(<PaidReturnNotice />);
+    expect(screen.getByRole("status")).toHaveTextContent("Payment received.");
+  });
+
+  it("?checkout=cancelled is dismissible", async () => {
+    mockQuery = "checkout=cancelled";
+    renderWithProviders(<PaidReturnNotice />);
+    await userEvent.click(screen.getByRole("button", { name: "OK" }));
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
   it("?checkout=cancelled shows one neutral line, no error", () => {

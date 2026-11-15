@@ -5,7 +5,9 @@ import { CheckCircle2, Clock } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { Button } from "@routeflow/ui/web";
 import { useSubscription } from "@/lib/api/billing";
-import { isCheckoutCancelled, isPaidReturn } from "@/lib/checkout-return";
+import { formatChargeDate } from "@/lib/payment-due";
+import { useTenantTimeZoneQuery } from "@/lib/tenant-timezone";
+import { isCheckoutCancelled, isStripeReturn } from "@/lib/checkout-return";
 
 type Outcome = "processing" | "received" | "failed" | "checking";
 
@@ -42,9 +44,10 @@ const COPY: Record<Outcome, string> = {
 export function PaidReturnNotice() {
   const params = useSearchParams();
   const [hidden, setHidden] = React.useState(false);
-  const paid = isPaidReturn(params);
+  const paid = isStripeReturn(params);
   const cancelled = isCheckoutCancelled(params);
   const cardAdded = params?.get("card") === "1";
+  const tz = useTenantTimeZoneQuery(paid);
   const startedAt = React.useRef(Date.now());
   // 706: poll only on the Stripe return (`?paid=1`, not a card add) and give up after POLL_CAP_MS, so an unknown
   // state cannot refetch the subscription forever; past the cap the neutral "checking" wording stays.
@@ -70,7 +73,15 @@ export function PaidReturnNotice() {
       </div>
     );
   }
-  const outcome = outcomeOf(data);
+  let outcome = outcomeOf(data);
+  // SA-1139 R5: a completion that charged nothing today (a future trial end) is never "Payment received".
+  const trialEnd = data?.trialEndsAt ? Date.parse(String(data.trialEndsAt)) : NaN;
+  const trialFuture = !cardAdded && outcome !== "failed" && trialEnd > Date.now();
+  const firstPaymentOn = trialFuture
+    ? formatChargeDate(String(data?.trialEndsAt), tz.zone ?? (tz.isError ? "UTC" : ""))
+    : null;
+  // The tenant's zone is still loading: say nothing about money until the date can be printed in it.
+  if (trialFuture && !firstPaymentOn) outcome = "checking";
   const bad = !cardAdded && outcome === "failed";
   const wait = !cardAdded && (outcome === "processing" || outcome === "checking");
   const Icon = wait ? Clock : CheckCircle2;
@@ -85,7 +96,11 @@ export function PaidReturnNotice() {
     >
       <span className="flex items-center gap-2">
         <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
-        {cardAdded ? "Card added. It can take a few minutes to confirm." : COPY[outcome]}
+        {cardAdded
+          ? "Card added. It can take a few minutes to confirm."
+          : firstPaymentOn
+            ? `You're all set. Your first payment is on ${firstPaymentOn}.`
+            : COPY[outcome]}
       </span>
       <Button size="sm" variant="ghost" onClick={() => setHidden(true)}>
         OK

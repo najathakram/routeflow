@@ -605,6 +605,51 @@ describe("PaymentDueService.pay", () => {
     );
 
     it.each(lostRace)(
+      "SA-1139 review NIT: %s: a raced EMBEDDED session past its time is not protected, it falls through to expire",
+      async (_l, mk) => {
+        const past = {
+          ...raced,
+          url: null,
+          client_secret: "cs_raced_secret_test",
+          expires_at: Math.floor(NOW.getTime() / 1000) - 60,
+        };
+        const h = make({
+          session: past,
+          expired: { id: "cs_raced", status: "expired", url: null, metadata: TERMS_META },
+        });
+        h.prisma.tenantSubscription.findUnique
+          .mockResolvedValueOnce({ catchupState: null, catchupSessionId: null })
+          .mockResolvedValue({ catchupState: "SESSION_OPEN", catchupSessionId: "cs_raced" });
+        h.catchup.open.mockRejectedValueOnce(mk());
+        const out: any = await h.svc.pay("t1", NOW).catch((e) => e);
+        expect(out).not.toBeInstanceOf(ConflictException);
+        expect(h.stripe.expireCheckoutSession).toHaveBeenCalledWith("cs_raced");
+      },
+    );
+
+    it.each(lostRace)(
+      "SA-1139 review NIT: %s: a live raced EMBEDDED winner whose terms mismatch stays open and answers 409 CATCHUP_SESSION_OPEN",
+      async (_l, mk) => {
+        const stale = {
+          ...raced,
+          url: null,
+          client_secret: "cs_raced_secret_test",
+          metadata: TRIAL_TERMS_META, // not this plan's terms: a hosted winner would be re-planned and expired
+        };
+        const h = make({ session: stale });
+        h.prisma.tenantSubscription.findUnique
+          .mockResolvedValueOnce({ catchupState: null, catchupSessionId: null })
+          .mockResolvedValue({ catchupState: "SESSION_OPEN", catchupSessionId: "cs_raced" });
+        h.catchup.open.mockRejectedValueOnce(mk());
+        const err: any = await h.svc.pay("t1", NOW).catch((e) => e);
+        expect(err).toBeInstanceOf(ConflictException);
+        expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.CATCHUP_SESSION_OPEN });
+        expect(h.stripe.expireCheckoutSession).not.toHaveBeenCalled();
+        expect(h.claim.onSessionExpired).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(lostRace)(
       "%s: a raced session that cannot be read is a retryable 503, never the operator wording",
       async (_l, mk) => {
         const h = make({ session: raced });
