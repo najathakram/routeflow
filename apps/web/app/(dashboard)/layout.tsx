@@ -73,13 +73,9 @@ import { useNoShellScroll } from "@/lib/use-no-shell-scroll";
 import { RouteGuard } from "./_components/gates/RouteGuard";
 import { activeLeafHref } from "./_components/nav-active";
 import { buildOperatorNav } from "./_components/build-operator-nav";
+import { useOpenNavGroups, type NavGroupMode } from "./_components/use-open-nav-groups";
 
-import {
-  defaultOpenGroup,
-  type NavEntry,
-  type NavGroup,
-  type NavLeaf,
-} from "./_components/nav-config";
+import { type NavEntry, type NavGroup, type NavLeaf } from "./_components/nav-config";
 
 // ─── Auth guard ───────────────────────────────────────────────────────────────
 // Role-based route/plan gating lives in ./_components/gates/RouteGuard.tsx (and
@@ -277,30 +273,25 @@ function SidebarNav({
   navStructure,
   collapsed,
   pathname,
+  mode,
+  userId,
   onNavigate,
 }: {
   navStructure: NavEntry[];
   collapsed: boolean;
   pathname: string;
+  /** "multi" (desktop rail): groups stay open and are remembered per user. "single" (phone drawer):
+   *  today's accordion, one group at a time (UX guide improvement 1). */
+  mode: NavGroupMode;
+  userId: string | null | undefined;
   onNavigate?: () => void;
 }) {
-  // Single-open accordion: at most one group expanded at a time, so the nav
-  // never overflows when every group is opened. The group containing the
-  // active route stays open regardless.
-  const activeGroupLabel =
-    navStructure.find(
-      (e): e is NavGroup =>
-        e.kind === "group" && e.children.some((c) => pathname.startsWith(c.href)),
-    )?.label ?? null;
-  const [openGroup, setOpenGroup] = React.useState<string | null>(() =>
-    defaultOpenGroup(navStructure, pathname),
-  );
-
-  React.useEffect(() => {
-    if (activeGroupLabel) setOpenGroup(activeGroupLabel);
-  }, [activeGroupLabel]);
-
-  const toggleGroup = (label: string) => setOpenGroup((cur) => (cur === label ? null : label));
+  const { isOpen, toggle: toggleGroup } = useOpenNavGroups({
+    nav: navStructure,
+    pathname,
+    userId,
+    mode,
+  });
 
   // Exactly ONE top-level leaf is active: the longest segment-boundary prefix (B918: a bare
   // startsWith lit both "Today's route" /routes/my-runs and "My Routes" /routes).
@@ -342,7 +333,7 @@ function SidebarNav({
             group={entry}
             collapsed={collapsed}
             pathname={pathname}
-            open={openGroup === entry.label}
+            open={isOpen(entry.label)}
             onToggle={toggleGroup}
             onNavigate={onNavigate}
           />
@@ -1115,7 +1106,13 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
         {/* Nav */}
         <nav className="flex-1 overflow-y-auto px-2 py-3">
-          <SidebarNav navStructure={navStructure} collapsed={railCollapsed} pathname={pathname} />
+          <SidebarNav
+            navStructure={navStructure}
+            collapsed={railCollapsed}
+            pathname={pathname}
+            mode="multi"
+            userId={user?.id}
+          />
         </nav>
 
         {/* Collapse toggle */}
@@ -1185,6 +1182,8 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
                 navStructure={navStructure}
                 collapsed={false}
                 pathname={pathname}
+                mode="single"
+                userId={user?.id}
                 onNavigate={() => setMobileNavOpen(false)}
               />
             </nav>
