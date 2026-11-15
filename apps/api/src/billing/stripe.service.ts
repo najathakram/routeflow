@@ -322,6 +322,30 @@ export class StripeService implements OnModuleInit {
     return { rows: Array.isArray(page?.data) ? page.data : [], hasMore: page?.has_more === true };
   }
 
+  /**
+   * SA-1146 B-4: a customer's PAID invoices, newest first, one page (`startingAfter` = the last invoice id already
+   * shown). The customer id is the TENANT ROW's, never a request value. Throws on a Stripe failure: the caller turns
+   * that into `stripeUnavailable`, never an empty list.
+   */
+  async listPaidCustomerInvoices(
+    customerId: string,
+    opts: { limit: number; startingAfter?: string },
+    request?: { timeoutMs: number; maxNetworkRetries: number },
+  ): Promise<{ rows: any[]; hasMore: boolean }> {
+    const page = await this.client.invoices.list(
+      {
+        customer: customerId,
+        status: "paid",
+        limit: opts.limit,
+        ...(opts.startingAfter ? { starting_after: opts.startingAfter } : {}),
+      },
+      request
+        ? { timeout: request.timeoutMs, maxNetworkRetries: request.maxNetworkRetries }
+        : undefined,
+    );
+    return { rows: Array.isArray(page?.data) ? page.data : [], hasMore: page?.has_more === true };
+  }
+
   /** Deletes a DRAFT invoice (only a draft can be deleted; an open one is voided). */
   async deleteDraftInvoice(invoiceId: string): Promise<any> {
     return this.client.invoices.del(invoiceId);

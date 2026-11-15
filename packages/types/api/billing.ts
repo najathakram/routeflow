@@ -238,3 +238,31 @@ export type CheckoutStart =
 export interface PaymentDuePayResult {
   checkoutUrl: string;
 }
+
+/**
+ * SA-1146 B-4: one row of the Billing "Payments" list. `source` says where it came from: a card payment
+ * (`stripe`, a paid Stripe invoice) or a RouteFlow invoice paid by hand (`routeflow`). `date` is an ISO instant the
+ * web prints in the tenant's zone. `amount` is dollars, rounded by the API (never recompute on the client).
+ * `receiptUrl` is Stripe's hosted invoice page, read live on every request and never stored; a RouteFlow row has none.
+ */
+export interface BillingPaymentRow {
+  id: string;
+  source: "stripe" | "routeflow";
+  date: string;
+  amount: number;
+  currency: string;
+  /** Stripe invoice number or the RouteFlow invoice number (`RF-YYYY-NNNN`); null when Stripe has none. */
+  number: string | null;
+  receiptUrl: string | null;
+}
+
+/**
+ * `GET /settings/billing/payments?cursor=`: up to `PAYMENTS_PAGE_SIZE` rows, newest first. `nextCursor` is an opaque
+ * string (null on the last page). `stripeUnavailable` is true when the card payments could not be read: the rows are
+ * then the RouteFlow ones only and the page must say so (it is never an empty list posing as "no payments").
+ */
+export interface BillingPaymentsPage {
+  rows: BillingPaymentRow[];
+  nextCursor: string | null;
+  stripeUnavailable: boolean;
+}
