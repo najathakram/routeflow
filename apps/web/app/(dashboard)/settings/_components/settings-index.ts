@@ -528,7 +528,7 @@ const ENTRIES: IndexEntry[] = [
     "payments",
     "Invoicing",
     ["terms", "net 30", "due date", "days to pay", "invoice"],
-    { anchor: "invoice-due-days" },
+    { anchor: "invoice-default-terms" },
   ),
   ...card(
     "original-price",

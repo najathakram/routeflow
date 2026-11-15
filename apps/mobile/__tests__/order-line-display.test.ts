@@ -435,3 +435,13 @@ describe("orderLineCardModel: the override note is part of the line's own model"
     );
   });
 });
+
+describe("displayLineStatus on an out-for-delivery order (UX guide B20, mirrors web)", () => {
+  it("a PENDING or CONFIRMED line with nothing delivered reads OUT_FOR_DELIVERY", () => {
+    for (const status of ["PENDING", "CONFIRMED"]) {
+      expect(displayLineStatus({ status, deliveredQty: 0, qty: 8 }, "OUT_FOR_DELIVERY")).toBe(
+        "OUT_FOR_DELIVERY",
+      );
+    }
+  });
+});

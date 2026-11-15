@@ -237,6 +237,19 @@ describe("BookkeepingService", () => {
       expect(result.advanceApplied).toBe(0);
     });
 
+    it("UX guide B13: findOne and the list carry the invoice's own number, and keep `order` for old callers", async () => {
+      prisma.invoice.findUnique.mockResolvedValue(MOCK_INVOICE);
+      const one: any = await service.findOne("txn-1");
+      expect(one.invoiceNumber).toBe("INV-0001");
+      expect(one.order).toEqual(MOCK_INVOICE.order);
+
+      prisma.invoice.findMany.mockResolvedValue([MOCK_INVOICE]);
+      prisma.invoice.count.mockResolvedValue(1);
+      const list: any = await service.findAll({ page: 1, limit: 20 });
+      expect(list.data[0].invoiceNumber).toBe("INV-0001");
+      expect(list.data[0].order).toEqual(MOCK_INVOICE.order);
+    });
+
     it("should throw NotFoundException when transaction does not exist", async () => {
       prisma.invoice.findUnique.mockResolvedValue(null);
       await expect(service.findOne("nonexistent")).rejects.toThrow(NotFoundException);
