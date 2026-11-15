@@ -303,9 +303,12 @@ export function SettingsFinder({
           {afterCard}
           <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--ink-500)]">
             <span>Frequently used:</span>
-            {CHIPS.map((c) => (
+            {CHIPS.flatMap((c) => {
+              const entry = nav.entries.find((e) => e.id === c.entryId);
+              return entry ? [{ ...c, href: rowHref(entry) }] : [];
+            }).map((c) => (
               <Link
-                key={c.href + c.label}
+                key={c.entryId}
                 href={c.href}
                 className={cn(
                   "rounded-full border border-[var(--line)] bg-[var(--paper)] px-3 py-1 font-medium text-[var(--accent-strong)]",
