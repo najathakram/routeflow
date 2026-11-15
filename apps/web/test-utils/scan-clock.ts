@@ -5,9 +5,12 @@ import { SCAN_KEY_GAP_MS } from "@/components/BarcodeScannerButton";
  * user-event CREATES it, so a slow render after key 1 on a loaded CI box stretches the stamped gap past SCAN_KEY_GAP_MS and
  * the detector restarts the sequence (a lost leading digit). A test that types a scan code key by key calls this once: every
  * keydown is stamped `stepMs` after the one before it, whatever the wall clock did. An event that sets its own `timeStamp`
- * (the tests that pin the gap on purpose) keeps it. Never reads Date.now() and never fakes timers.
+ * (the tests that pin the gap on purpose) keeps it. A keyup draws a stamp too, so two keydowns can be 2 x stepMs apart.
+ * `advance(ms)` moves the clock on, so the next key is stamped that much later: a stall on purpose, in stamped time. Never reads Date.now() and never fakes timers.
  */
-export function useScanClock(stepMs: number = SCAN_KEY_GAP_MS / 20): void {
+export function useScanClock(stepMs: number = SCAN_KEY_GAP_MS / 20): {
+  advance: (ms: number) => void;
+} {
   const stamps = new WeakMap<object, number>();
   let clock = 1_000_000;
   beforeEach(() => {
@@ -26,4 +29,9 @@ export function useScanClock(stepMs: number = SCAN_KEY_GAP_MS / 20): void {
   afterEach(() => {
     delete (KeyboardEvent.prototype as unknown as Record<string, unknown>).timeStamp;
   });
+  return {
+    advance(ms: number) {
+      clock += ms;
+    },
+  };
 }

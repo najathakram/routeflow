@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/test-utils/render";
 import { createNavShortcutHandler } from "@/lib/nav-shortcuts";
 import { CreateOrderModal } from "./CreateOrderModal";
+import { SCAN_KEY_GAP_MS } from "@/components/BarcodeScannerButton";
 import { useScanClock } from "@/test-utils/scan-clock";
 
 /**
@@ -144,7 +145,7 @@ async function openAndEscape(user: ReturnType<typeof userEvent.setup>) {
   await waitFor(() => expect(chipButton()).toHaveFocus());
 }
 
-useScanClock(); // SA-1159: key stamps through the constants, never the wall clock
+const scanClock = useScanClock(); // SA-1159: key stamps through the constants, never the wall clock
 
 describe("SA-1138 office: a scan that starts off a text field goes to Search", () => {
   it("O1: picker opened, Escape, focus back on the chip: KNOWN{Enter} is looked up once, whole; the picker stays shut", async () => {
@@ -203,22 +204,16 @@ describe("SA-1138 office: a scan that starts off a text field goes to Search", (
     expect(box.checked).toBe(before);
   });
 
-  it("O4b: a 300 ms stall in the page after key 1 (a loaded CI box) cannot cost the scan its first digit (SA-1159)", async () => {
+  it("O4b: a 300 ms stall inside the scan (stamped time) is not looked up as a code: the Search field's own submit gets the whole code (SA-1159)", async () => {
     await build();
     const box = screen.getAllByRole("checkbox")[0] as HTMLInputElement;
     box.focus();
     mockResolveProductByCode.mockClear();
-    let stalled = false;
-    search().addEventListener("input", () => {
-      if (stalled) return;
-      stalled = true;
-      const until = Date.now() + 300;
-      while (Date.now() < until) {
-        /* the page is busy */
-      }
-    });
-    await human().keyboard(`${KNOWN}{Enter}`);
-    await expectWholeScan(KNOWN);
+    const user = human();
+    await user.keyboard(KNOWN.slice(0, 1));
+    scanClock.advance(SCAN_KEY_GAP_MS + 100); // past SCAN_KEY_GAP_MS, well under SCAN_STALL_MAX_MS
+    await user.keyboard(`${KNOWN.slice(1)}{Enter}`);
+    await expectWholeScan(KNOWN); // exactly one lookup, of the whole code (the suffix never reaches onScan)
     expect(box.checked).toBe(false);
   });
 
