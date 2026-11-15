@@ -637,6 +637,7 @@ export class EstimatesService {
             soldAt: inv.issueDate ?? new Date(),
             lines: toSaleLedgerLines(invItems, packMap),
             db: tx,
+            lockedPeriod: "REFUSE", // W-965: the invoice is dated now, so the mode is moot; the guard stays
           });
         }
 

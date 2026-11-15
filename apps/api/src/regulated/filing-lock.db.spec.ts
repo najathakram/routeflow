@@ -468,6 +468,7 @@ describeDb("B297 PR5 — a LOCKED filing closes its period, real Postgres", () =
     await expect(
       inTenant(() =>
         asLedger().writeSaleEntries({
+          lockedPeriod: "REFUSE",
           tenantId,
           orderId: null,
           invoiceId: "inv-x",
@@ -490,6 +491,7 @@ describeDb("B297 PR5 — a LOCKED filing closes its period, real Postgres", () =
     // the current period is open: the same write books
     await inTenant(() =>
       asLedger().writeSaleEntries({
+        lockedPeriod: "REFUSE",
         tenantId,
         orderId: null,
         invoiceId: "inv-y",
