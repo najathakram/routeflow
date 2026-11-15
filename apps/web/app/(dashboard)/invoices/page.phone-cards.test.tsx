@@ -9,10 +9,11 @@ import InvoicesPage from "./page";
  * KPI tiles sit two per row.
  */
 
+let mockSearchString = "";
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
   usePathname: () => "/invoices",
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => new URLSearchParams(mockSearchString),
 }));
 
 jest.mock("@/lib/page-title-context", () => ({
@@ -67,6 +68,7 @@ jest.mock("@/lib/api/bookkeeping", () => ({
 
 describe("InvoicesPage — phone cards", () => {
   beforeEach(() => {
+    mockSearchString = "";
     mockUseInvoices.mockReset();
     mockUseInvoices.mockReturnValue({
       data: { data: INVOICES, meta: { total: 2, page: 1, limit: 20, totalPages: 1 } },
@@ -79,7 +81,7 @@ describe("InvoicesPage — phone cards", () => {
     const { container } = renderWithProviders(<InvoicesPage />);
     const list = container.querySelector("ul.md\\:hidden") as HTMLElement;
     expect(list).not.toBeNull();
-    const cards = within(list).getAllByRole("link");
+    const cards = within(list).getAllByRole("listitem");
     expect(cards).toHaveLength(2);
     expect(within(cards[0]).getByText("INV-A")).toBeInTheDocument();
     expect(within(cards[0]).getByText("Acme Foods")).toBeInTheDocument();
@@ -93,8 +95,9 @@ describe("InvoicesPage — phone cards", () => {
     const { container } = renderWithProviders(<InvoicesPage />);
     const list = container.querySelector("ul.md\\:hidden") as HTMLElement;
     const items = within(list).getAllByRole("listitem");
-    // Sent invoice: view + print. Draft invoice: view + print + delete.
-    expect(within(items[0]).getByRole("button", { name: /^View invoice/ })).toBeInTheDocument();
+    // A1-1: the card is the link, so no View action. Sent: print. Draft: print + delete.
+    expect(within(items[0]).queryByRole("button", { name: /^View invoice/ })).toBeNull();
+    expect(within(items[1]).queryByRole("button", { name: /^View invoice/ })).toBeNull();
     expect(
       within(items[0]).getByRole("button", { name: "Print invoice INV-A" }),
     ).toBeInTheDocument();
@@ -102,9 +105,15 @@ describe("InvoicesPage — phone cards", () => {
     expect(
       within(items[1]).getByRole("button", { name: "Delete invoice INV-B" }),
     ).toBeInTheDocument();
-    expect(within(items[1]).getByRole("link")).not.toContainElement(
+    expect(
       within(items[1]).getByRole("button", { name: "Print invoice INV-B" }),
-    );
+    ).toBeInTheDocument();
+    // A1-2: the title is an anchor to the invoice page; the card root is not a link.
+    const link = within(items[0]).getByRole("link", { name: "INV-A" });
+    expect(link.tagName).toBe("A");
+    expect(link).toHaveAttribute("href", "/invoices/inv-a");
+    expect(items[0].querySelector("[data-record-card]")).not.toHaveAttribute("role");
+    expect(items[0].querySelector("[role=link]")).toBeNull();
   });
 
   it("shows the table only from md up", () => {
@@ -114,12 +123,35 @@ describe("InvoicesPage — phone cards", () => {
     expect(wrapper.className).toContain("md:block");
   });
 
-  it("lays the KPI tiles two per row below sm", () => {
+  it("scrolls the KPI tiles sideways in one row below md, a grid from md up (A1 D1)", () => {
     renderWithProviders(<InvoicesPage />);
     const tile = screen.getByText("Total outstanding");
-    const grid = tile.closest("div.grid") as HTMLElement;
-    expect(grid.className).toContain("grid-cols-2");
-    expect(grid.className).not.toContain("grid-cols-1");
+    const scroller = tile.closest("[data-kpi-row]") as HTMLElement;
+    expect(scroller).not.toBeNull();
+    expect(scroller.className).toContain("overflow-x-auto");
+    expect(scroller.className).toContain("snap-x");
+    expect(scroller.className).toContain("md:grid");
+    expect(scroller.className).toContain("lg:grid-cols-6");
+    const cell = tile.closest("[data-kpi-cell]") as HTMLElement;
+    expect(cell.className).toContain("shrink-0");
+    expect(scroller.querySelectorAll("[data-kpi-cell]")).toHaveLength(6);
+  });
+
+  it("status tabs and due chips are one sideways-scrolling row each below md", () => {
+    renderWithProviders(<InvoicesPage />);
+    const tab = screen
+      .getAllByRole("button", { name: "Overdue" })
+      .find((el) => el.className.includes("border-b-2")) as HTMLElement;
+    const tabs = tab.parentElement as HTMLElement;
+    expect(tabs.className).toContain("overflow-x-auto");
+    expect(tabs.className).toContain("snap-x");
+    expect(tabs.className).not.toContain("flex-wrap");
+    expect(tab.className).toContain("shrink-0");
+    const chip = screen.getByRole("button", { name: "Due today" });
+    const chips = chip.parentElement as HTMLElement;
+    expect(chips.className).toContain("overflow-x-auto");
+    expect(chips.className).not.toContain("flex-wrap");
+    expect(chip.className).toContain("shrink-0");
   });
 
   it("has a phone sort control above the card list, outside the filters", async () => {
@@ -131,19 +163,70 @@ describe("InvoicesPage — phone cards", () => {
       ["invoiceNumber", "Invoice #"],
       ["status", "Status"],
       ["dueDate", "Due Date"],
-      ["total", "Amount"],
+      ["total", "Total"],
     ]);
+    // D1: the Filters button and the sort control share one row, both outside the panel.
+    const filters = screen.getByRole("button", { name: "Filters" });
     const control = select.closest("div.md\\:hidden") as HTMLElement;
     expect(control).not.toBeNull();
-    expect(control.nextElementSibling).toBe(container.querySelector("ul.md\\:hidden"));
-    expect(screen.getByRole("button", { name: "Filters" })).toBeInTheDocument();
+    expect(control.parentElement).toBe(filters.parentElement);
+    expect(container.querySelector("ul.md\\:hidden")).not.toBeNull();
 
     await user.selectOptions(select, "dueDate");
     const last = () => mockUseInvoices.mock.calls.at(-1)![0];
     expect(last()).toMatchObject({ sortBy: "dueDate", sortOrder: "asc" });
-    await user.click(screen.getByRole("button", { name: "Sort ascending" }));
+    // A1-4: the name says what a tap does.
+    const dir = screen.getByRole("button", { name: "Sort descending" });
+    expect(dir.className).toContain("border");
+    expect(dir.className).toContain("h-11");
+    expect(dir.className).toContain("w-11");
+    expect(dir.className).toContain("text-navy");
+    expect(dir.className).not.toContain("text-navy/");
+    expect(dir.querySelector("svg")!.getAttribute("class")).toContain("h-4");
+    await user.click(dir);
     expect(last()).toMatchObject({ sortBy: "dueDate", sortOrder: "desc" });
-    expect(screen.getByRole("button", { name: "Sort descending" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sort ascending" })).toBeInTheDocument();
+  });
+
+  it("A1-3: search is outside the Filters disclosure and does not count as a filter", () => {
+    mockSearchString = "search=acme";
+    renderWithProviders(<InvoicesPage />);
+    const search = screen.getByPlaceholderText(/Search by invoice/) as HTMLElement;
+    const button = screen.getByRole("button", { name: "Filters" });
+    const panel = document.getElementById(button.getAttribute("aria-controls")!) as HTMLElement;
+    expect(panel).not.toContainElement(search);
+    expect(panel).toContainElement(screen.getByTitle("Issue date from"));
+    expect(search.className).toContain("w-full");
+  });
+
+  it("A1-3: a date filter still counts", () => {
+    mockSearchString = "search=acme&dateFrom=2026-01-01";
+    renderWithProviders(<InvoicesPage />);
+    expect(screen.getByRole("button", { name: "Filters (1)" })).toBeInTheDocument();
+  });
+
+  it("A1-6: below md the three secondary actions are in the More menu; md up they are buttons", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<InvoicesPage />);
+    for (const name of ["Export", "Payments Received", "Recurring"]) {
+      const plain = screen.getByRole("button", { name });
+      expect(plain.className).toContain("hidden");
+      expect(plain.className).toContain("md:inline-flex");
+    }
+    const more = screen.getByRole("button", { name: "More actions" });
+    expect(more.className).toContain("md:hidden");
+    expect(screen.getByRole("button", { name: /New invoice/ })).toBeInTheDocument();
+    await user.click(more);
+    expect(await screen.findByRole("menuitem", { name: "Export" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Payments Received" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Recurring" })).toBeInTheDocument();
+  });
+
+  it("hides the page description below md", () => {
+    renderWithProviders(<InvoicesPage />);
+    const desc = screen.getByText(/Track receivables/);
+    expect(desc.className).toContain("hidden");
+    expect(desc.className).toContain("md:block");
   });
 
   it("does not render the sort control when there are no cards", () => {
@@ -184,12 +267,12 @@ describe("InvoicesPage — phone cards", () => {
       expect(el.className).toContain("min-h-[44px]");
       expect(el.className).toContain("min-w-[44px]");
     };
-    big(within(draft).getByRole("button", { name: /^View invoice/ }));
     big(within(draft).getByRole("button", { name: /^Print invoice/ }));
     big(within(draft).getByRole("button", { name: "Delete invoice INV-B" }));
-    expect(
-      within(draft).getByRole("button", { name: /^View invoice/ }).parentElement!.className,
-    ).toContain("gap-2");
+    const row = within(draft).getByRole("button", { name: /^Print invoice/ }).parentElement!;
+    expect(row.className).toContain("gap-2");
+    expect(row.parentElement!.className).toContain("relative");
+    expect(row.parentElement!.className).toContain("z-10");
 
     await user.click(within(draft).getByRole("button", { name: "Delete invoice INV-B" }));
     big(within(draft).getByTitle("Confirm delete"));
@@ -207,24 +290,49 @@ describe("InvoicesPage — phone cards", () => {
     expect(table.getAllByRole("button", { name: /^View invoice/ })[0].className).toContain("p-1.5");
   });
 
-  it("labels the balance and marks it danger only when money is owed", () => {
+  it("A1-5: the balance is danger only when the invoice is overdue, on the card and the table", () => {
+    const past = "2020-01-05T00:00:00.000Z";
+    const rows = [
+      makeInvoice({ id: "i1", invoiceNumber: "T-SENT", status: "SENT", balanceDue: 11 }),
+      makeInvoice({ id: "i2", invoiceNumber: "T-DRAFT", status: "DRAFT", balanceDue: 22 }),
+      makeInvoice({ id: "i3", invoiceNumber: "T-PAID", status: "PAID", balanceDue: 0 }),
+      makeInvoice({
+        id: "i4",
+        invoiceNumber: "T-OVER",
+        status: "OVERDUE",
+        balanceDue: 44,
+        dueDate: past,
+      }),
+      makeInvoice({
+        id: "i5",
+        invoiceNumber: "T-PART",
+        status: "PARTIAL",
+        balanceDue: 55,
+        dueDate: past,
+      }),
+    ];
     mockUseInvoices.mockReturnValue({
-      data: {
-        data: [
-          INVOICES[0],
-          makeInvoice({ id: "inv-p", invoiceNumber: "INV-P", status: "PAID", balanceDue: 0 }),
-        ],
-        meta: { total: 2, page: 1, limit: 20, totalPages: 1 },
-      },
+      data: { data: rows, meta: { total: 5, page: 1, limit: 20, totalPages: 1 } },
       isLoading: false,
       isError: false,
     });
     const { container } = renderWithProviders(<InvoicesPage />);
     const cards = within(container.querySelector("ul.md\\:hidden") as HTMLElement).getAllByRole(
-      "link",
+      "listitem",
     );
     expect(within(cards[0]).getByText("Balance Due")).toBeInTheDocument();
-    expect(within(cards[0]).getByText("$40.00").className).toContain("text-danger");
-    expect(within(cards[1]).getByText("$0.00").className).not.toContain("text-danger");
+    const tone = (el: HTMLElement) => (el.className.includes("text-danger") ? "danger" : "default");
+    const expected = ["default", "default", "default", "danger", "danger"];
+    const amounts = ["$11.00", "$22.00", "$0.00", "$44.00", "$55.00"];
+    amounts.forEach((amt, i) => {
+      expect(tone(within(cards[i]).getByText(amt))).toBe(expected[i]);
+    });
+    const body = within(screen.getByRole("table")).getAllByRole("row").slice(1);
+    amounts.forEach((amt, i) => {
+      const cell = within(body[i])
+        .getAllByText(amt)
+        .find((el) => el.className.includes("font-semibold"))!;
+      expect(tone(cell)).toBe(expected[i]);
+    });
   });
 });

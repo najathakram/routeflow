@@ -32,7 +32,7 @@ jest.mock("@/lib/api/bookkeeping", () => ({
 }));
 
 describe("InvoicesPage — row 323 status tabs stay reachable at 390px", () => {
-  it("renders Overdue in a wrapping tab row with 44px tap targets", () => {
+  it("renders Overdue in a sideways-scrolling tab row with 44px tap targets", () => {
     renderWithProviders(<InvoicesPage />);
     const overdue = screen
       .getAllByRole("button", { name: "Overdue" })
@@ -41,9 +41,11 @@ describe("InvoicesPage — row 323 status tabs stay reachable at 390px", () => {
     expect(overdue!.className).toContain("min-h-[44px]");
 
     const row = overdue!.parentElement as HTMLElement;
-    expect(row.className).toContain("flex-wrap");
-    expect(row.className).toContain("sm:flex-nowrap");
-    expect(row.className).not.toMatch(/(^|\s)overflow-x-auto/);
-    expect(row.className).not.toMatch(/(^|\s)scrollbar-hide/);
+    // UXG-R10-A1 D1 (supersedes the wrap): one row that scrolls sideways inside its own box, so
+    // the page never scrolls sideways and the next tab's edge shows as the hint.
+    expect(row.className).toMatch(/(^|\s)overflow-x-auto/);
+    expect(row.className).toContain("snap-x");
+    expect(row.className).not.toContain("flex-wrap");
+    expect(overdue!.className).toContain("shrink-0");
   });
 });

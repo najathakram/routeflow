@@ -1,8 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
-import { AlertTriangle } from "lucide-react";
+import Link from "next/link";
 import { cn } from "@routeflow/ui/web";
 
 /**
@@ -10,8 +9,10 @@ import { cn } from "@routeflow/ui/web";
  * amount on top, the customer or supplier under it, badges, then a meta row. The card does no
  * money math: `amount` is a string the page already formatted with its own helper.
  *
- * `actions` sit in a footer row OUTSIDE the clickable link area, so a button is never nested in a
- * link and pressing one never opens the record.
+ * The title is a real link stretched over the whole card (`after:absolute after:inset-0`), so tap,
+ * long press and keyboard all work and no button is nested in a link. `actions` share the last
+ * row with the meta line, lifted above the link (`relative z-10`), so pressing one never opens
+ * the record.
  */
 export function RecordCardList({ children }: { children: React.ReactNode }) {
   return <ul className="space-y-3 md:hidden">{children}</ul>;
@@ -34,9 +35,8 @@ export interface RecordCardProps {
   badges?: React.ReactNode;
   /** The meta row, for example the date. */
   meta?: React.ReactNode;
-  /** Row actions, rendered in a footer row outside the link. */
+  /** Row actions, right aligned on the last row with the meta, above the stretched link. */
   actions?: React.ReactNode;
-  urgent?: boolean;
 }
 
 export function RecordCard({
@@ -49,60 +49,52 @@ export function RecordCard({
   badges,
   meta,
   actions,
-  urgent,
 }: RecordCardProps) {
-  const router = useRouter();
   return (
     <li>
       <div
         data-record-card
-        className={cn(
-          "flex flex-col rounded-xl border border-surface-border bg-white shadow-card",
-          urgent && "border-l-2 border-l-danger",
-        )}
+        className="relative flex flex-col gap-1.5 rounded-xl border border-surface-border bg-white p-3 shadow-card transition-colors hover:bg-surface-raised"
       >
-        <div
-          role="link"
-          tabIndex={0}
-          onClick={() => router.push(href)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") router.push(href);
-          }}
-          className="flex cursor-pointer flex-col gap-2 rounded-xl p-4 transition-colors hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-500"
-        >
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-2">
-              {urgent && <AlertTriangle className="h-4 w-4 shrink-0 text-danger" />}
-              <span className="truncate font-mono text-xs font-semibold text-ink-900" title={title}>
-                {title}
-              </span>
-            </div>
-            <div className="flex shrink-0 flex-col items-end">
-              {amountLabel && <span className="text-[11px] text-navy/60">{amountLabel}</span>}
-              <span
-                className={cn(
-                  "font-mono text-sm font-semibold",
-                  amountTone === "danger" ? "text-danger" : "text-ink-900",
-                )}
-              >
-                {amount}
-              </span>
-            </div>
-          </div>
-          {subtitle != null && (
-            <p
-              className="truncate text-sm font-medium text-navy"
-              title={typeof subtitle === "string" ? subtitle : undefined}
+        <div className="flex items-start justify-between gap-3">
+          <Link
+            href={href}
+            title={title}
+            className="min-w-0 truncate font-mono text-xs font-semibold text-ink-900 after:absolute after:inset-0 after:rounded-xl focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-inset focus-visible:after:ring-brand-500"
+          >
+            {title}
+          </Link>
+          <div className="flex shrink-0 flex-col items-end">
+            {amountLabel && (
+              <span className="text-[11px] leading-tight text-navy/60">{amountLabel}</span>
+            )}
+            <span
+              className={cn(
+                "font-mono text-sm font-semibold",
+                amountTone === "danger" ? "text-danger" : "text-ink-900",
+              )}
             >
-              {subtitle}
-            </p>
-          )}
-          {badges != null && <div className="flex flex-wrap items-center gap-1.5">{badges}</div>}
-          {meta != null && <div className="text-xs text-navy/60">{meta}</div>}
+              {amount}
+            </span>
+          </div>
         </div>
-        {actions != null && (
-          <div className="flex items-center justify-end gap-2 border-t border-surface-border px-3 py-1.5">
-            {actions}
+        {subtitle != null && (
+          <p
+            className="truncate text-sm font-medium text-navy"
+            title={typeof subtitle === "string" ? subtitle : undefined}
+          >
+            {subtitle}
+          </p>
+        )}
+        {badges != null && <div className="flex flex-wrap items-center gap-1.5">{badges}</div>}
+        {(meta != null || actions != null) && (
+          <div className="flex items-end justify-between gap-2">
+            <div className="min-w-0 flex-1 text-xs text-navy/60">{meta}</div>
+            {actions != null && (
+              <div className="relative z-10 flex shrink-0 items-center justify-end gap-2">
+                {actions}
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -2,7 +2,11 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
+  MoreHorizontal,
+  ArrowUp,
+  ArrowDown,
   Plus,
   Eye,
   Calendar,
@@ -15,7 +19,7 @@ import {
   Download,
   Printer,
 } from "lucide-react";
-import { PageHeader, Button, cn, useToast, EmptyState, Select } from "@routeflow/ui/web";
+import { Button, cn, useToast, EmptyState, Select } from "@routeflow/ui/web";
 import { resolveConfirmedAmounts } from "@routeflow/pricing";
 import { OPEN_INVOICE_STATUS_LIST } from "@/lib/open-invoice-status";
 import { ToCollectChip } from "@/components/ToCollectChip";
@@ -98,6 +102,68 @@ export function resolveInvoiceListBalance(
     inv.payments ?? [],
   );
   return Math.max(0, Number(inv.total) - cash - creditApplied - advanceApplied);
+}
+
+/**
+ * The page's own overdue rule, the one `renderStatus` prints as "Overdue by N days": an OVERDUE
+ * invoice, or a PARTIAL one whose due date has passed. A SENT or VIEWED invoice prints its plain
+ * status, so it is not overdue here. Exported for direct unit testing.
+ */
+export function isInvoiceOverdue(inv: Pick<Invoice, "status" | "dueDate">): boolean {
+  if (inv.status === "OVERDUE") return true;
+  if (inv.status !== "PARTIAL") return false;
+  const diffDays = calendarDaysUntil(inv.dueDate);
+  return diffDays !== null && diffDays < 0;
+}
+
+/**
+ * UXG-R10-A1 D3: the balance is danger only when money is owed on an overdue invoice. A balance
+ * not yet due, a draft and a zero balance use the default tone. The phone card and the table cell
+ * both read this, so they agree at every width.
+ */
+export function resolveInvoiceListBalanceTone(
+  inv: Parameters<typeof resolveInvoiceListBalance>[0] & Pick<Invoice, "status" | "dueDate">,
+): "default" | "danger" {
+  return resolveInvoiceListBalance(inv) > 0 && isInvoiceOverdue(inv) ? "danger" : "default";
+}
+
+/** The phone "More" menu of the header (same look as the Orders list's): every target is 44 px tall. */
+function InvoicesMoreMenu({
+  items,
+}: {
+  items: { label: string; onSelect: () => void; disabled?: boolean }[];
+}) {
+  return (
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger asChild>
+        <button
+          type="button"
+          aria-label="More actions"
+          className="inline-flex h-11 w-11 items-center justify-center rounded-ctl border border-line-strong bg-paper text-navy shadow-card transition-colors hover:bg-surface-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-navy focus-visible:ring-offset-2 md:hidden"
+        >
+          <MoreHorizontal className="h-4 w-4" aria-hidden />
+        </button>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          align="end"
+          sideOffset={6}
+          className="z-50 min-w-[10rem] rounded-lg border border-surface-border bg-white p-1 shadow-dropdown"
+        >
+          {items.map((item) => (
+            <DropdownMenu.Item
+              key={item.label}
+              disabled={item.disabled}
+              onSelect={item.onSelect}
+              className="flex min-h-11 cursor-pointer items-center rounded-md px-3 text-sm text-navy outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[highlighted]:bg-surface-raised"
+            >
+              {item.label}
+            </DropdownMenu.Item>
+          ))}
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
+  );
 }
 
 /**
@@ -357,19 +423,27 @@ function PaymentSummaryBar({
   ];
 
   return (
-    <div className="grid grid-cols-2 gap-4 sm:grid-cols-2 lg:grid-cols-6">
+    <div
+      data-kpi-row
+      className="flex snap-x gap-3 overflow-x-auto scrollbar-hide md:grid md:grid-cols-2 md:gap-4 md:overflow-visible lg:grid-cols-6"
+    >
       {items.map((item) => (
-        <StatTile
+        <div
           key={item.label}
-          label={item.label}
-          value={item.value}
-          hint={item.hint}
-          money={item.money}
-          valueClass={item.valueClass}
-          active={item.active}
-          onClick={item.onClick}
-          ariaLabel={item.ariaLabel}
-        />
+          data-kpi-cell
+          className="flex w-[46%] shrink-0 snap-start flex-col md:w-auto md:shrink [&>*]:flex-1"
+        >
+          <StatTile
+            label={item.label}
+            value={item.value}
+            hint={item.hint}
+            money={item.money}
+            valueClass={item.valueClass}
+            active={item.active}
+            onClick={item.onClick}
+            ariaLabel={item.ariaLabel}
+          />
+        </div>
       ))}
     </div>
   );
@@ -447,14 +521,17 @@ export default function InvoicesPage() {
           </div>
         ) : (
           <div className={card ? "flex items-center gap-2" : "flex items-center gap-0.5"}>
-            <button
-              title="View invoice"
-              aria-label={`View invoice ${inv.invoiceNumber}`}
-              onClick={() => router.push(`/invoices/${inv.id}`)}
-              className={`${tap}rounded p-1.5 text-navy/70 hover:bg-white hover:text-navy transition-colors`}
-            >
-              <Eye className="h-4 w-4" />
-            </button>
+            {/* The phone card is itself the link, so it has no View button. */}
+            {!card && (
+              <button
+                title="View invoice"
+                aria-label={`View invoice ${inv.invoiceNumber}`}
+                onClick={() => router.push(`/invoices/${inv.id}`)}
+                className="rounded p-1.5 text-navy/70 hover:bg-white hover:text-navy transition-colors"
+              >
+                <Eye className="h-4 w-4" />
+              </button>
+            )}
             {!isCustomer && (
               <button
                 title="Print invoice"
@@ -669,16 +746,19 @@ export default function InvoicesPage() {
 
   return (
     <div className="space-y-5 p-6">
-      <PageHeader
-        title="Invoices"
-        subtitle="Track receivables — what's outstanding, due soon, and overdue across your customers."
-        action={
-          !isCustomer ? (
-            // B770: overflowed at 390px (New Invoice off-screen) because PageHeader's own
-            // action wrapper (shrink-0, no max-w-full) never actually shrank enough for THIS
-            // flex-wrap to trigger — fixed at the PageHeader level too
-            // (packages/ui/src/web/PageHeader.tsx), this row's own wrap is still needed so
-            // the content itself has somewhere to go once it can.
+      {/* Header: below md the title and New invoice share one row, the description is hidden and
+          Export / Payments Received / Recurring live in a More menu; from md up it is the full
+          header with plain buttons. Same layout as PageHeader. */}
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
+        <div className="shrink">
+          <h2 className="whitespace-nowrap text-2xl font-bold text-navy">Invoices</h2>
+          <p className="mt-1 hidden text-sm text-navy/70 md:block">
+            Track receivables — what&apos;s outstanding, due soon, and overdue across your
+            customers.
+          </p>
+        </div>
+        {!isCustomer && (
+          <div className="max-w-full shrink-0">
             <div className="flex flex-wrap items-center justify-end gap-2">
               <Button
                 variant="secondary"
@@ -693,6 +773,7 @@ export default function InvoicesPage() {
                 onClick={handleExport}
                 disabled={isExporting}
                 title="Export filtered invoices as CSV"
+                className="hidden md:inline-flex"
               >
                 {isExporting ? "Exporting…" : "Export"}
               </Button>
@@ -700,6 +781,7 @@ export default function InvoicesPage() {
                 variant="secondary"
                 size="sm"
                 onClick={() => router.push("/invoices/payments")}
+                className="hidden md:inline-flex"
               >
                 Payments Received
               </Button>
@@ -707,9 +789,21 @@ export default function InvoicesPage() {
                 variant="secondary"
                 size="sm"
                 onClick={() => router.push("/invoices/recurring")}
+                className="hidden md:inline-flex"
               >
                 Recurring
               </Button>
+              <InvoicesMoreMenu
+                items={[
+                  {
+                    label: isExporting ? "Exporting…" : "Export",
+                    onSelect: handleExport,
+                    disabled: isExporting,
+                  },
+                  { label: "Payments Received", onSelect: () => router.push("/invoices/payments") },
+                  { label: "Recurring", onSelect: () => router.push("/invoices/recurring") },
+                ]}
+              />
               <WriteButton
                 size="sm"
                 leftIcon={<Plus className="h-4 w-4" />}
@@ -719,9 +813,9 @@ export default function InvoicesPage() {
               </WriteButton>
               <ReadOnlyHint className="basis-full text-right text-xs text-slate-600" />
             </div>
-          ) : undefined
-        }
-      />
+          </div>
+        )}
+      </div>
 
       {/* Payment Summary — KPI stat tiles */}
       <PaymentSummaryBar
@@ -732,13 +826,13 @@ export default function InvoicesPage() {
       />
 
       {/* Status filter tabs */}
-      <div className="flex flex-wrap items-center gap-1 border-b border-surface-border sm:flex-nowrap sm:overflow-x-auto sm:scrollbar-hide">
+      <div className="flex snap-x items-center gap-1 overflow-x-auto border-b border-surface-border scrollbar-hide">
         {STATUS_TABS.map((tab) => (
           <button
             key={tab.value}
             onClick={() => handleFilterChange(tab.value)}
             className={cn(
-              "-mb-px inline-flex min-h-[44px] items-center whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium transition-colors",
+              "-mb-px inline-flex min-h-[44px] shrink-0 snap-start items-center whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium transition-colors",
               statusFilter === tab.value
                 ? "border-brand-500 text-brand-500"
                 : "border-transparent text-navy/70 hover:text-navy",
@@ -750,14 +844,14 @@ export default function InvoicesPage() {
       </div>
 
       {/* Due-soon chips */}
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex snap-x items-center gap-2 overflow-x-auto scrollbar-hide">
         {!isCustomer && (
           <button
             type="button"
             aria-pressed={toCollectOn}
             onClick={() => setFilter("toCollect", toCollectOn ? "" : "true")}
             className={cn(
-              "min-h-[44px] rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
+              "min-h-[44px] shrink-0 snap-start rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
               toCollectOn
                 ? "border-brand-500 bg-brand-500 text-white"
                 : "border-surface-border bg-white text-navy hover:bg-surface-raised",
@@ -766,14 +860,16 @@ export default function InvoicesPage() {
             To collect
           </button>
         )}
-        <span className="text-xs font-medium uppercase tracking-wider text-navy/70">Due:</span>
+        <span className="shrink-0 text-xs font-medium uppercase tracking-wider text-navy/70">
+          Due:
+        </span>
         {DUE_CHIPS.map((chip) => (
           <button
             key={chip.key}
             type="button"
             onClick={() => handleDueChipClick(chip.key)}
             className={cn(
-              "rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
+              "min-h-[44px] shrink-0 snap-start whitespace-nowrap rounded-full border px-3 py-1.5 text-sm font-medium transition-colors md:min-h-0",
               activeDueChip === chip.key
                 ? "border-brand-500 bg-brand-500 text-white"
                 : "border-surface-border bg-white text-navy hover:bg-surface-raised",
@@ -784,80 +880,92 @@ export default function InvoicesPage() {
         ))}
       </div>
 
-      {/* Filter bar — below md it opens from a "Filters (n)" button */}
-      <FiltersDisclosure count={activeFilterCount({ search, dateFrom, dateTo })}>
-        <div className="flex flex-wrap items-center gap-2">
-          <input
-            type="search"
-            placeholder="Search by invoice # or customer…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="h-9 w-56 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-          />
-          <div className="flex items-center gap-1.5">
-            <Calendar className="h-4 w-4 text-navy/70" />
-            <input
-              type="date"
-              value={dateFrom}
-              onChange={(e) => setFilter("dateFrom", e.target.value)}
-              max={dateTo || undefined}
-              className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-              title="Issue date from"
-            />
-            <span className="text-navy/70">–</span>
-            <input
-              type="date"
-              value={dateTo}
-              min={dateFrom || undefined}
-              onChange={(e) => setFilter("dateTo", e.target.value)}
-              className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-              title="Issue date to"
-            />
-            {(dateFrom || dateTo) && (
-              <button
-                onClick={() => setFilters({ dateFrom: "", dateTo: "" })}
-                className="rounded p-1 text-navy/70 hover:text-danger transition-colors"
-                title="Clear dates"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            )}
+      {/* Search is always visible. Below md the date fields open from a "Filters (n)" button that
+          shares a row with the sort control; from md up everything is inline as before. */}
+      <div className="flex flex-col gap-2 md:flex-row md:flex-wrap md:items-start">
+        <input
+          type="search"
+          placeholder="Search by invoice # or customer…"
+          aria-label="Search invoices"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="h-11 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500 md:h-9 md:w-56"
+        />
+        <FiltersDisclosure
+          count={activeFilterCount({ dateFrom, dateTo })}
+          toolbar={
+            !isLoading && !isError && invoices.length > 0 ? (
+              <div className="flex min-w-0 flex-1 items-center gap-1.5 md:hidden">
+                <div className="min-w-0 flex-1">
+                  <Select
+                    aria-label="Sort invoices by"
+                    options={[
+                      { value: "issueDate", label: "Date" },
+                      { value: "invoiceNumber", label: "Invoice #" },
+                      { value: "status", label: "Status" },
+                      { value: "dueDate", label: "Due Date" },
+                      { value: "total", label: "Total" },
+                    ]}
+                    value={sortBy}
+                    onChange={(e) => {
+                      if (e.target.value !== sortBy) toggleSort(e.target.value);
+                    }}
+                    className="h-11"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => toggleSort(sortBy)}
+                  aria-label={sortOrder === "asc" ? "Sort descending" : "Sort ascending"}
+                  className="grid h-11 w-11 shrink-0 place-items-center rounded-ctl border border-surface-border bg-white text-navy hover:bg-surface-raised"
+                >
+                  {sortOrder === "asc" ? (
+                    <ArrowUp className="h-4 w-4" />
+                  ) : (
+                    <ArrowDown className="h-4 w-4" />
+                  )}
+                </button>
+              </div>
+            ) : undefined
+          }
+        >
+          <div className="flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center">
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:gap-1.5">
+              <Calendar className="hidden h-4 w-4 text-navy/70 md:block" />
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setFilter("dateFrom", e.target.value)}
+                max={dateTo || undefined}
+                className="h-11 w-full rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500 md:h-9 md:w-32"
+                title="Issue date from"
+              />
+              <span className="hidden text-navy/70 md:inline">–</span>
+              <input
+                type="date"
+                value={dateTo}
+                min={dateFrom || undefined}
+                onChange={(e) => setFilter("dateTo", e.target.value)}
+                className="h-11 w-full rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500 md:h-9 md:w-32"
+                title="Issue date to"
+              />
+              {(dateFrom || dateTo) && (
+                <button
+                  onClick={() => setFilters({ dateFrom: "", dateTo: "" })}
+                  className="grid min-h-[44px] place-items-center rounded p-1 text-navy/70 transition-colors hover:text-danger md:min-h-0"
+                  title="Clear dates"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
           </div>
-        </div>
-      </FiltersDisclosure>
+        </FiltersDisclosure>
+      </div>
 
       {/* Phone cards — below md; the table below takes over from md up. Same balance helper and
           the same row actions as the table. While loading, on error or when empty, the table's own
           state rows show at every width. */}
-      {!isLoading && !isError && invoices.length > 0 && (
-        <div className="flex items-center gap-1.5 md:hidden">
-          <div className="min-w-0 flex-1">
-            <Select
-              aria-label="Sort invoices by"
-              options={[
-                { value: "issueDate", label: "Date" },
-                { value: "invoiceNumber", label: "Invoice #" },
-                { value: "status", label: "Status" },
-                { value: "dueDate", label: "Due Date" },
-                { value: "total", label: "Amount" },
-              ]}
-              value={sortBy}
-              onChange={(e) => {
-                if (e.target.value !== sortBy) toggleSort(e.target.value);
-              }}
-              className="h-10"
-            />
-          </div>
-          <button
-            type="button"
-            onClick={() => toggleSort(sortBy)}
-            aria-label={sortOrder === "asc" ? "Sort ascending" : "Sort descending"}
-            className="grid h-10 w-10 shrink-0 place-items-center rounded-ctl border border-surface-border bg-white text-navy/70 hover:bg-surface-raised"
-          >
-            <SortIcon col={sortBy} />
-          </button>
-        </div>
-      )}
       {!isLoading && !isError && invoices.length > 0 && (
         <RecordCardList>
           {invoices.map((inv: Invoice) => (
@@ -867,7 +975,7 @@ export default function InvoicesPage() {
               title={inv.invoiceNumber}
               amountLabel="Balance Due"
               amount={fmt(resolveInvoiceListBalance(inv))}
-              amountTone={resolveInvoiceListBalance(inv) > 0 ? "danger" : "default"}
+              amountTone={resolveInvoiceListBalanceTone(inv)}
               subtitle={inv.customer?.businessName ?? "—"}
               badges={
                 <>
@@ -1053,7 +1161,9 @@ export default function InvoicesPage() {
                         <span
                           className={cn(
                             "text-sm font-semibold",
-                            balance > 0 ? "text-danger" : "text-navy",
+                            resolveInvoiceListBalanceTone(inv) === "danger"
+                              ? "text-danger"
+                              : "text-navy",
                           )}
                         >
                           {fmt(balance)}

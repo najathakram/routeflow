@@ -59,6 +59,19 @@ describe("FiltersDisclosure", () => {
     );
   });
 
+  it("puts a toolbar next to the Filters button on the same row, outside the panel", () => {
+    render(
+      <FiltersDisclosure count={0} toolbar={<span>Sort here</span>}>
+        <input aria-label="From" />
+      </FiltersDisclosure>,
+    );
+    const button = screen.getByRole("button", { name: "Filters" });
+    const tool = screen.getByText("Sort here");
+    expect(tool.parentElement).toBe(button.parentElement);
+    const panel = screen.getByLabelText("From").parentElement as HTMLElement;
+    expect(panel).not.toContainElement(tool);
+  });
+
   it("opening makes the panel visible", async () => {
     const user = userEvent.setup();
     setup(1);

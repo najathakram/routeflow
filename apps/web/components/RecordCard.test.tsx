@@ -44,32 +44,44 @@ describe("RecordCard", () => {
     expect(list.className).toContain("md:hidden");
   });
 
-  it("opens the record on click and on Enter", async () => {
-    const user = userEvent.setup();
-    renderCard();
-    const card = screen.getByRole("link");
-    await user.click(card);
-    expect(push).toHaveBeenCalledWith("/invoices/inv-1");
-    push.mockClear();
-    card.focus();
-    await user.keyboard("{Enter}");
-    expect(push).toHaveBeenCalledWith("/invoices/inv-1");
+  it("the title is a real link to the record, stretched over the card (A1-2)", () => {
+    const { container } = renderCard();
+    const link = screen.getByRole("link", { name: "INV-1001" });
+    expect(link.tagName).toBe("A");
+    expect(link).toHaveAttribute("href", "/invoices/inv-1");
+    expect(link.className).toContain("after:absolute");
+    expect(link.className).toContain("after:inset-0");
+    const card = container.querySelector("[data-record-card]") as HTMLElement;
+    expect(card.className).toContain("relative");
+    expect(card).not.toHaveAttribute("role");
+    expect(card).not.toHaveAttribute("tabindex");
+    expect(container.querySelectorAll("[role=link]")).toHaveLength(0);
+    expect(screen.getAllByRole("link")).toHaveLength(1);
   });
 
-  it("an action button press does not navigate, and the button is outside the link", async () => {
+  it("clicking the card body does no script navigation (the link does it)", async () => {
     const user = userEvent.setup();
-    renderCard();
+    const { container } = renderCard();
+    await user.click(container.querySelector("[data-record-card]") as HTMLElement);
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("actions sit on the last row with the meta, above the link, with no footer border", async () => {
+    const user = userEvent.setup();
+    const { container } = renderCard();
     const button = screen.getByRole("button", { name: "Print" });
-    expect(screen.getByRole("link")).not.toContainElement(button);
+    const actions = button.parentElement as HTMLElement;
+    expect(actions.className).toContain("relative");
+    expect(actions.className).toContain("z-10");
+    expect(actions.parentElement).toContainElement(screen.getByText("Jan 5, 2026"));
+    expect(container.querySelector("[data-record-card]")!.innerHTML).not.toContain("border-t");
     await user.click(button);
     expect(push).not.toHaveBeenCalled();
   });
 
-  it("marks an urgent card with the danger border", () => {
-    renderCard({ urgent: true });
-    expect(screen.getByRole("link").closest("[data-record-card]")!.className).toContain(
-      "border-l-danger",
-    );
+  it("has no urgent prop: the card never takes a danger border", () => {
+    const { container } = renderCard();
+    expect(container.querySelector("[data-record-card]")!.className).not.toContain("border-l-");
   });
 
   it("shows an amount label and tones the amount danger on request", () => {
