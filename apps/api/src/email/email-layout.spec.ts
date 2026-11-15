@@ -241,6 +241,14 @@ describe("helpers", () => {
 });
 
 describe("RouteFlow's own mail", () => {
+  const RESET_URL = "https://app.test/reset-password?token=abcdef0123456789";
+  const resetWithName = (tenantName: string | null) =>
+    (
+      passwordResetMessage as unknown as (
+        p: Record<string, unknown>,
+      ) => ReturnType<typeof passwordResetMessage>
+    )({ resetUrl: RESET_URL, tenantName });
+
   const all = () => [
     verifyEmailMessage({
       verifyUrl: TOKEN_URL,
@@ -263,6 +271,9 @@ describe("RouteFlow's own mail", () => {
     signInLinkedMessage({ provider: "Apple", address: "jamie@acme.example", portal: true }),
     routeflowNotice({ subject: "s", heading: "h", lines: ["a", ["b ", { b: "c" }]], why: "w" }),
     routeflowFragmentMail({ subject: "s", heading: "h", bodyHtml: "<p>a</p>", why: "w" }),
+    // REG-B15: reset mail that names the business (cast keeps this compiling before the builder
+    // accepts tenantName).
+    resetWithName("Alpha Supply"),
   ];
 
   it.each(all().map((m, i) => [i, m.subject, m] as const))(
@@ -291,6 +302,30 @@ describe("RouteFlow's own mail", () => {
     expect(visible(m.html)).toContain("The link works for 15 minutes.");
     expect(visible(m.html)).toContain("your password will not change");
     expect(m.html).not.toMatch(/unsubscribe/i);
+  });
+
+  it("REG-B15 reset names the business in html and text", () => {
+    const m = resetWithName("Alpha Supply");
+    expect(visible(m.html)).toContain(
+      "reset the password for your RouteFlow account at Alpha Supply.",
+    );
+    expect(m.html).toContain("<strong>Alpha Supply</strong>");
+    expect(m.text).toContain("reset the password for your RouteFlow account at Alpha Supply.");
+  });
+
+  it("REG-B15 reset escapes a business name in html and keeps it raw in text", () => {
+    const m = resetWithName("A&B <Co>");
+    expect(m.html).toContain("A&amp;B &lt;Co&gt;");
+    expect(m.html).not.toContain("A&B <Co>");
+    expect(m.text).toContain("A&B <Co>");
+  });
+
+  it("REG-B15 reset without a business name keeps the generic sentence", () => {
+    for (const m of [resetWithName(null), all()[2]]) {
+      expect(visible(m.html)).toContain("reset the password for your RouteFlow account.");
+      expect(m.text).toContain("reset the password for your RouteFlow account.");
+      expect(visible(m.html)).not.toContain("account at");
+    }
   });
 
   it("makes no promise the code does not keep: no unsubscribe, no 'reply to this email'", () => {

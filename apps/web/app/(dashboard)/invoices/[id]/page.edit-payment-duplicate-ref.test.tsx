@@ -143,12 +143,15 @@ describe("invoices/[id]: editing a payment onto a used reference (W-718)", () =>
     expect(second).toEqual({ ...first, recordAnyway: true });
   });
 
-  it("a non-staff role: the sentence, no Record anyway", async () => {
+  // B1 (UX eval): payment-row edits are staff-only, so a non-staff role never reaches the edit, let alone
+  // "Record anyway" (drivers were already kept off /invoices by RouteGuard; the API is OPERATOR-only).
+  it("a non-staff role: no Edit payment control, so no edit and no Record anyway", () => {
     seedSession("DRIVER");
-    mockPatch.mockRejectedValueOnce(duplicate());
-    saveEdit();
-    await waitFor(() => expect(dupToast()).toBeDefined());
-    expect(dupToast().action).toBeUndefined();
+    renderWithProviders(<InvoiceDetailPage />, {
+      queryClient: queryClientWithGlobalErrorToast(mockGlobalToast),
+    });
+    expect(screen.queryByTitle("Edit payment")).toBeNull();
+    expect(mockPatch).not.toHaveBeenCalled();
   });
 });
 

@@ -41,4 +41,17 @@ describe("findAllOrdersImpl: needsReview passes the tenant to the relation filte
     await findAllOrdersImpl(prisma, { needsReview: true } as never, staff({ role: "DRIVER" }));
     expect(whereOf(findMany)).not.toHaveProperty("reviewFlags");
   });
+
+  it("R-2: a cancelled order is excluded, and the caller's own status filter survives next to it", async () => {
+    const { prisma, findMany } = world();
+    await findAllOrdersImpl(prisma, { needsReview: true, status: "PENDING" } as never, staff());
+    expect(whereOf(findMany).status).toBe("PENDING");
+    expect(whereOf(findMany).AND).toEqual([{ status: { not: "CANCELLED" } }]);
+  });
+
+  it("without needsReview a cancelled order is still listed (no exclusion)", async () => {
+    const { prisma, findMany } = world();
+    await findAllOrdersImpl(prisma, {} as never, staff());
+    expect(whereOf(findMany)).not.toHaveProperty("AND");
+  });
 });

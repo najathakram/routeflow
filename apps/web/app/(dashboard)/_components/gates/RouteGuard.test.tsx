@@ -224,6 +224,42 @@ describe("RouteGuard (B449 fix-round finding 5)", () => {
     }
   });
 
+  // REG-B1: a CUSTOMER reads invoices; the staff-only invoice sub-pages bounce like any disallowed path.
+  it.each(["/invoices/new", "/invoices/payments", "/invoices/recurring", "/invoices/abc/edit"])(
+    "REG-B1 bounces a CUSTOMER off %s to /dashboard",
+    (path) => {
+      mockUser = { role: "CUSTOMER" };
+      mockPathname = path;
+      render(
+        <RouteGuard>
+          <div />
+        </RouteGuard>,
+      );
+      expect(mockReplace).toHaveBeenCalledWith("/dashboard");
+    },
+  );
+
+  it.each(["/invoices", "/invoices/abc"])("REG-B1 lets a CUSTOMER stay on %s", (path) => {
+    mockUser = { role: "CUSTOMER" };
+    mockPathname = path;
+    render(
+      <RouteGuard>
+        <div />
+      </RouteGuard>,
+    );
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+
+  it("REG-B1 lets an OPERATOR stay on /invoices/new", () => {
+    mockPathname = "/invoices/new";
+    render(
+      <RouteGuard>
+        <div />
+      </RouteGuard>,
+    );
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+
   it("does not open the rest of a /get-the-app prefix to a CUSTOMER", () => {
     mockUser = { role: "CUSTOMER" };
     mockPathname = "/get-the-app/other";

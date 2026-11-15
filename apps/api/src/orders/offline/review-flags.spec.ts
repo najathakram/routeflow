@@ -33,8 +33,11 @@ describe("seesReviewFlags", () => {
 });
 
 describe("needsReviewWhere", () => {
+  // R-2 (SA-1134): a CANCELLED order is never listed, whatever its flags
+  const live = [{ status: { not: "CANCELLED" } }];
   const scoped = (tenantId: string) => ({
     reviewFlags: { some: { tenantId, resolvedAt: null } },
+    AND: live,
   });
 
   it("filters for staff when true, scoped to the caller's tenant (S2: the relation filter carries tenantId)", () => {
@@ -46,6 +49,7 @@ describe("needsReviewWhere", () => {
     expect(needsReviewWhere(true, noTenant, "t9")).toEqual(scoped("t9"));
     expect(needsReviewWhere(true, noTenant, null)).toEqual({
       reviewFlags: { some: { resolvedAt: null } },
+      AND: live,
     });
   });
 

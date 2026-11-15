@@ -161,6 +161,7 @@ import { fulfillPathLocked } from "./fulfil-path-lock";
 import { assertCancelImpactAllows, cancelImpact } from "./order-cancel-impact";
 import { cancelOrderInTx, lockDeleteLines, type CancelOrderTxOptions } from "./order-cancel-tx";
 import { claimReopenInTx } from "./order-reopen-claim";
+import { judgeUnlessDraft, reopenTarget } from "./offline/reopen-target";
 import { assertNoCashRefundOnOrder } from "../invoices/invoice-cash-refund-guard";
 import {
   assertBuyerDiffShape,
@@ -2497,33 +2498,40 @@ export class OrdersService implements OnApplicationBootstrap {
         `Cannot reopen order: invoice ${paidInvoice.invoiceNumber} is ${paidInvoice.status}. Void or credit the invoice before reopening.`,
       );
     }
-    // F-05 (SA-272): reopening moves the ORDER to PENDING, so EVERY line goes live — a new sale of the whole order,
+    // F-05 (SA-272): reopening a LIVE order moves it to PENDING (a cancelled DRAFT comes back as a DRAFT: SA-1136), so EVERY line goes live — a new sale of the whole order,
     // not only of the item-CANCELLED lines (cancelling a DRAFT never marks its lines CANCELLED, and drafts are
     // written without the check). Staff-only path; no delta, so every catalog line is checked, before any write.
     const tenant = rGate.tenantId(this.prisma, user, order.tenantId);
-    const restriction = await this.sellingRestrictions.assertLinesSellable({
-      ...rGate.whole({ tenant, order, user, lines: order.lineItems, dto: ack, allLive: true }),
-      channel: "STAFF", // a staff-only route; the principal below decides who may override
-    });
+    const target = await reopenTarget(this.prisma.forTenant(), id); // SA-1134 R-1: DRAFT while a gate flag is open
+    const restriction = await judgeUnlessDraft(target, () =>
+      this.sellingRestrictions.assertLinesSellable({
+        ...rGate.whole({ tenant, order, user, lines: order.lineItems, dto: ack, allLive: true }),
+        channel: "STAFF", // a staff-only route; the principal below decides who may override
+      }),
+    );
     return this.stockTx(
       "orders.reopen",
       async (tx) => {
-        await claimReopenInTx(tx, id); // B695: Order lock + CANCELLED -> PENDING CAS; the loser gets the 409
+        await claimReopenInTx(tx, id, target, user); // B695: Order lock + CANCELLED -> target CAS; the loser gets the 409
         // Row 510: under that lock, the override re-judged against the locked lines (every line goes live).
         const judged = new Set(order.lineItems.map((li) => li.productId as string));
         const stamped = await rGate.recheck(tx, restriction, id, judged, { allLive: true });
         // B64: the item-CANCELLED lines, read BEFORE they flip below — exactly what an F07 cancel credited
         // back (a pre-F07 cancel left lines untouched: empty, nothing re-decremented).
-        const cancelledLines = await tx.orderItem.findMany({
-          where: { orderId: id, status: ItemStatus.CANCELLED },
-          select: STOCK_SALE_LINE_SELECT,
-        });
+        const live = target !== OrderStatus.DRAFT; // SA-1136: a DRAFT held no stock; no flip, no re-take
+        const cancelledLines = live
+          ? await tx.orderItem.findMany({
+              where: { orderId: id, status: ItemStatus.CANCELLED },
+              select: STOCK_SALE_LINE_SELECT,
+            })
+          : [];
 
         // Revert cancelled line items back to PENDING
-        await tx.orderItem.updateMany({
-          where: { orderId: id, status: ItemStatus.CANCELLED },
-          data: { status: ItemStatus.PENDING },
-        });
+        if (live)
+          await tx.orderItem.updateMany({
+            where: { orderId: id, status: ItemStatus.CANCELLED },
+            data: { status: ItemStatus.PENDING },
+          });
 
         // Re-take exactly what the cancel credited back (order-stock.ts).
         await restoreStockForReopen(this.stockDeps(), tx, id, cancelledLines);
@@ -2532,7 +2540,7 @@ export class OrdersService implements OnApplicationBootstrap {
         const reopened = await tx.order.update({
           where: { id },
           data: {
-            status: OrderStatus.PENDING, // already set by the claim; kept so this write names the transition
+            status: target, // already set by the claim; kept so this write names the transition
             notes: order.notes
               ? `${order.notes}\n[Reopened ${new Date().toLocaleDateString()}]`
               : `[Reopened ${new Date().toLocaleDateString()}]`,

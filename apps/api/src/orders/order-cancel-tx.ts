@@ -1,5 +1,6 @@
 import { ConflictException } from "@nestjs/common";
 import { OrderStatus } from "@prisma/client";
+import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import type { CreditNotesService } from "../credit-notes/credit-notes.service";
@@ -132,6 +133,19 @@ export async function cancelOrderInTx(
       message: "The order changed while it was being cancelled — review it and try again.",
     });
   const row = (await tx.order.findUnique({ where: { id } }))!; // the locked row, never gone
+  // SA-1136 W-1: the status this cancel left, under the lock, in the same tx (a rollback or a 40001 re-run leaves exactly
+  // one row per committed cancel). `reopenTarget` reads it: a cancelled DRAFT reopens as a DRAFT.
+  await tx.auditLog.create({
+    data: {
+      tenantId: row.tenantId,
+      userId: user.sub,
+      impersonatedBy: user.impersonatedBy ?? null,
+      action: AUDIT_ACTIONS.ORDER_CANCELLED,
+      entityType: "Order",
+      entityId: id,
+      meta: { fromStatus: lockedStatus },
+    },
+  });
   if (cancelReturnsStock) {
     let activeItems = await tx.orderItem.findMany({
       where: { orderId: id, status: { not: "CANCELLED" } },

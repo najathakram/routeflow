@@ -11,6 +11,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { EncryptionService } from "../common/encryption.service";
 import { StorageService } from "../storage/storage.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { pinWallClock } from "../testing/pin-clock";
 
 const SECRET = "email-verify-token-test-secret-0123456789";
 const JWT_CONFIG = {
@@ -176,5 +177,58 @@ describe("email-verify token keys and audience", () => {
     await refused(
       jwt.sign(claims, { secret: verifyKey, audience: "email-verify", expiresIn: "-1s" }),
     );
+  });
+
+  // B2: a validly signed but past-expiry link answers with a machine code so the web page can offer a
+  // new link; a forged or otherwise bad token keeps the uncoded generic 400.
+  // (Spec files are outside the api-error-codes parity scan, so the bare value is allowed here.)
+  describe("REG-B2 expired link code", () => {
+    const EXPIRED = "VERIFICATION_LINK_EXPIRED";
+    const codeOf = (t: string) =>
+      verify(t).then(
+        () => "resolved",
+        (e) => (e.getResponse() as { code?: string }).code,
+      );
+
+    afterEach(() => jest.useRealTimers());
+
+    it("REG-B2 derived-key link past its 24h expiry answers VERIFICATION_LINK_EXPIRED", async () => {
+      pinWallClock("2026-11-12T09:00:00Z");
+      const token = jwt.sign(claims, {
+        secret: verifyKey,
+        audience: "email-verify",
+        expiresIn: "24h",
+      });
+      jest.setSystemTime(new Date("2026-11-13T09:00:01Z"));
+      expect(await codeOf(token)).toBe(EXPIRED);
+    });
+
+    it("REG-B2 legacy raw-secret link past its 24h expiry answers VERIFICATION_LINK_EXPIRED", async () => {
+      pinWallClock("2026-11-12T09:00:00Z");
+      const token = jwt.sign(claims, { expiresIn: "24h" });
+      jest.setSystemTime(new Date("2026-11-13T09:00:01Z"));
+      expect(await codeOf(token)).toBe(EXPIRED);
+    });
+
+    it("REG-B2 derived-key link one second before expiry still verifies", async () => {
+      pinWallClock("2026-11-12T09:00:00Z");
+      const token = jwt.sign(claims, {
+        secret: verifyKey,
+        audience: "email-verify",
+        expiresIn: "24h",
+      });
+      jest.setSystemTime(new Date("2026-11-13T08:59:59Z"));
+      await expect(verify(token)).resolves.toHaveProperty("accessToken");
+    });
+
+    it("REG-B2 forged-signature expired token stays the uncoded 400", async () => {
+      const token = jwt.sign(claims, {
+        secret: crypto.randomBytes(32),
+        audience: "email-verify",
+        expiresIn: "-1s",
+      });
+      expect(await codeOf(token)).toBeUndefined();
+      await refused(token);
+    });
   });
 });

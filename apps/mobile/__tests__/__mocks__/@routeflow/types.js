@@ -582,6 +582,7 @@ module.exports = {
     EMAIL_CHANGE_LINK_INVALID: "EMAIL_CHANGE_LINK_INVALID",
     EMAIL_TAKEN: "EMAIL_TAKEN",
     EMAIL_CHANGE_ACCOUNT_INACTIVE: "EMAIL_CHANGE_ACCOUNT_INACTIVE",
+    VERIFICATION_LINK_EXPIRED: "VERIFICATION_LINK_EXPIRED",
   },
   // SA-814e: hand copy of packages/types/api/error-codes.ts (pinned to the API's literal by the API parity spec).
   FILING_STALE_COPY:

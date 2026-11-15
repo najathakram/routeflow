@@ -1115,6 +1115,8 @@ export const API_ERROR_CODES = {
   EMAIL_TAKEN: "EMAIL_TAKEN",
   /** 409 from PATCH /users/:id: a login-email change that must wait for the new address was asked for an account that is not ACTIVE, or is deleted; the confirm could never land. Nothing was written and no mail was sent (B461, SA-1126). */
   EMAIL_CHANGE_ACCOUNT_INACTIVE: "EMAIL_CHANGE_ACCOUNT_INACTIVE",
+  /** 400 from POST /auth/verify-email: the sign-up link is validly signed but past its 24h expiry. Get a new one from POST /public/tenants/resend-verification (B2). */
+  VERIFICATION_LINK_EXPIRED: "VERIFICATION_LINK_EXPIRED",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
