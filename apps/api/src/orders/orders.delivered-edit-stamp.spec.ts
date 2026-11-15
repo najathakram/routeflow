@@ -132,6 +132,10 @@ describe("SA-763r: an edit of a DELIVERED order keeps the delivered quantities",
     // SA-1149 D2: the cut to 5 is now refused (nothing written); the 12 that left stay booked: nothing restocks
     await expect(edit([{ id: "li-A", productId: "prod-A", qty: 5 }])).rejects.toMatchObject({
       status: 409,
+      response: {
+        code: "LINE_ALREADY_DELIVERED",
+        message: expect.stringContaining("record a return"),
+      },
     });
     expect(d("li-A")).toBe(12);
     expect(h.prisma.product.update).not.toHaveBeenCalled();

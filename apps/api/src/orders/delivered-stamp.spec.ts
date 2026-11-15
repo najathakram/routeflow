@@ -364,6 +364,10 @@ describe("stampDeliveredInFull — recreated (replace-all, M2)", () => {
     });
     await expect(recreate(cut, held([["old1", "p1", 10, 10]]))).rejects.toMatchObject({
       status: 409,
+      response: {
+        code: "LINE_ALREADY_DELIVERED",
+        message: expect.stringContaining("record a return"),
+      },
     });
     const db = makeStampDb({
       status: "DELIVERED",
@@ -400,10 +404,11 @@ describe("stampDeliveredInFull — recreated (replace-all, M2)", () => {
       status: "DELIVERED",
       lines: [
         { id: "n1", productId: "p1", qty: 3, deliveredQty: 0 },
-        { id: "n2", productId: "p1", qty: 5, deliveredQty: 0 }, // SA-1149 D2: the rows total the delivered 8, not below it
+        { id: "n2", productId: "p1", qty: 3, deliveredQty: 0 },
       ],
     });
-    await recreate(db, held([["old1", "p1", 8, 8]]));
+    // SA-1149 D2: a pre-D2 legacy row {q6,d8}: the recreated 3 + 3 restate its qty (no cut), the carried 8 splits 3 and 5
+    await recreate(db, held([["old1", "p1", 6, 8]]));
     expect(db.line("n1").deliveredQty).toBe(3);
     expect(db.line("n2").deliveredQty).toBe(5); // the last row takes the rest: 3 + 5 = 8 carried
   });

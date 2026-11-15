@@ -417,4 +417,33 @@ describeDb("W-946r quantity floor (SA-1149 D2), real Postgres", () => {
     expect(await snapshot(o.id)).toEqual(before);
     expect(await stock(p)).toBe(90);
   }, 120_000);
+
+  it("D2-13: a unit-aware (Case of 12) line, 2 cases delivered (24 pieces), cut to 1 case is 409, nothing written; restated at 2 is 200", async () => {
+    const p = await product("d213");
+    await raw.productUnit.create({
+      data: { tenantId, productId: p, label: "Case", factorToBase: 12, price: "12.00" },
+    });
+    const o = await order(
+      {
+        productId: p,
+        qty: 24,
+        boxes: 2,
+        pieces: 0,
+        unitsPerBox: 12,
+        unitLabel: "Case",
+        deliveredQty: 24,
+        unitPrice: "12.00",
+        subtotal: "24.00",
+      },
+      "DELIVERED",
+    );
+    const id = o.lineItems[0].id;
+    const before = await snapshot(o.id);
+    await expect(edit(o.id, { items: [{ id, qty: 1, unitLabel: "Case" }] })).rejects.toMatchObject(
+      LOWER,
+    );
+    expect(await snapshot(o.id)).toEqual(before);
+    await edit(o.id, { items: [{ id, qty: 2, unitLabel: "Case" }] });
+    expect(Number((await rows(o.id))[0].qty)).toBe(24);
+  }, 120_000);
 });

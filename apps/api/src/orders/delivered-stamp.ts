@@ -12,7 +12,7 @@
  * ONE evidence predicate, shared with the counter-sale void's inverse `clearUnevidencedDelivered`). A line
  * with rows keeps its route evidence (the column there is a RECOMPUTE from the rows, routes.service.ts,
  * never an overwrite from here). An order with a `routeRunStopId` (a legacy route delivery) is never
- * touched. A value is never lowered (qty < delivered is legal, B1050). No existing evidence row is ever rewritten
+ * touched. A value is never lowered (a legacy row with qty < delivered stays as it is, B1050; a NEW cut below it is refused, SA-1149 D2). No existing evidence row is ever rewritten
  * from here. (Row 587: the status write's office-evidenced lines are completed by office-evidence-completion.ts.)
  *
  * It runs in the CALLER's transaction: the status and the stamp commit together. The route-stop writers
@@ -171,7 +171,7 @@ function recreatedTargets(
     v.next += Number(li.qty);
     v.fresh = true;
   }
-  // a product with no recreated row is a removal (refused elsewhere), not a cut
+  // a product with no recreated row is a removal, not a cut: this floor judges only products that still have a row
   for (const v of sums.values())
     if (v.fresh) assertQtyNotBelowDelivered(v.delivered, v.held, v.next);
   const lastOfKey = new Map<string, string>();

@@ -413,11 +413,30 @@ describeDb("W-861 + W-871 — paid walk-in edits and post-delivery replaces, rea
   });
 
   it("SA-956 (c2): a cut below the delivered qty is 409 LINE_ALREADY_DELIVERED, nothing written", async () => {
-    const { o, productId: pid } = await paidSale(await customer(false));
+    // the same manual-charge state as (c), so the floor is shown answering BEFORE the overpay check on one state
+    const { o, inv, pay, productId: pid } = await paidSale(await customer(false));
+    await raw.invoiceItem.create({
+      data: {
+        tenantId,
+        invoiceId: inv.id,
+        description: "manual charge",
+        qty: 1,
+        unitPrice: "3.00",
+        subtotal: "3.00",
+      } as never,
+    });
+    await raw.invoice.update({ where: { id: inv.id }, data: { subtotal: "5.00", total: "5.00" } });
+    await raw.invoicePayment.update({ where: { id: pay.id }, data: { amount: "5.00" } });
     const before = await snapshot(o.id);
     await expect(
       edit(o.id, { items: [{ id: o.lineItems[0].id, productId: pid, qty: 1 }], replaceAll: false }),
-    ).rejects.toMatchObject({ status: 409, response: { code: "LINE_ALREADY_DELIVERED" } });
+    ).rejects.toMatchObject({
+      status: 409,
+      response: {
+        code: "LINE_ALREADY_DELIVERED",
+        message: expect.stringContaining("record a return"),
+      },
+    });
     expect(await snapshot(o.id)).toEqual(before);
   });
 
