@@ -10,6 +10,10 @@ import {
 } from "@routeflow/types";
 import { BUYER_QTY_SPLIT_MISMATCH_COPY } from "./buyer-cart-line";
 import { READ_ONLY_SENTENCE } from "@routeflow/types/read-only-copy";
+import {
+  routeStopsNotPlacedFromBody,
+  routeStopsNotPlacedSentence,
+} from "@routeflow/types/route-stops-not-placed";
 import { regulatedAuthCopy } from "@routeflow/types/regulated-auth-copy";
 import {
   CREDIT_NOTE_ERROR_COPY,
@@ -527,6 +531,9 @@ export function codedToastCopy(err: unknown): string | null {
     return CUSTOMER_CODE_COPY[code];
   if (code === API_ERROR_CODES.INVOICE_TAX_STATE_STALE) return taxStateStaleCopy(data);
   if (code === API_ERROR_CODES.INSUFFICIENT_STOCK) return STOCK_COPY;
+  // UXG B14: optimize refused because stops have no map position; count and names come from STRUCTURED fields.
+  const unplaced = routeStopsNotPlacedFromBody(data, API_ERROR_CODES.ROUTE_STOPS_NOT_PLACED);
+  if (unplaced) return routeStopsNotPlacedSentence(unplaced.count, unplaced.names);
   // B986: coded refusals whose server sentence tells the user what to fix; the numbers come from STRUCTURED fields.
   if (code === API_ERROR_CODES.ALLOCATIONS_EXCEED_PAYMENT) return allocationsCopy(data);
   if (code === API_ERROR_CODES.UNLINKED_ITEMS) return unlinkedCopy(data);

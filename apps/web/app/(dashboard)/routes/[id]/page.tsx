@@ -75,7 +75,7 @@ import {
 import { RouteVariantsPanel } from "@/components/RouteVariantsPanel";
 import { RunSettlementForm } from "@/components/RunSettlementForm";
 import { officeSettlementControls } from "@/lib/run-settlement-controls";
-import { genericToastCopy } from "@/lib/generic-toast-copy";
+import { codedToastCopy, genericToastCopy } from "@/lib/generic-toast-copy";
 import { buildGoogleMapsLegs, type GmapsPoint } from "@/lib/gmaps-export";
 import { EditRunModal } from "../_components/EditRunModal";
 import { RouteMap, type VariantOverlay } from "./RouteMap";
@@ -616,7 +616,11 @@ export default function RouteRunDetailPage() {
         });
       },
       onError: (err) =>
-        toast({ title: "Optimization failed", description: err.message, variant: "error" }),
+        toast({
+          title: "Optimization failed",
+          description: codedToastCopy(err) ?? genericToastCopy(err),
+          variant: "error",
+        }),
     });
   };
 

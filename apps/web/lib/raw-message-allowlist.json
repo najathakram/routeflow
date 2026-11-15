@@ -40,7 +40,7 @@
     "why": "B986-7 orders + customers: per-surface raw message read, pending"
   },
   "app/(dashboard)/deliveries/new/page.tsx": {
-    "count": 7,
+    "count": 5,
     "why": "B986-5 routes + deliveries: per-surface raw message read, pending"
   },
   "app/(dashboard)/deliveries/page.tsx": {
@@ -141,7 +141,7 @@
     "why": "B986-5 routes + deliveries: per-surface raw message read, pending"
   },
   "app/(dashboard)/routes/[id]/page.tsx": {
-    "count": 10,
+    "count": 9,
     "why": "B986-5 routes + deliveries: per-surface raw message read, pending"
   },
   "app/(dashboard)/routes/_components/EditRunModal.tsx": {

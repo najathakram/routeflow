@@ -20,6 +20,7 @@ import DraggableFlatList, {
 import { ios } from "@routeflow/ui/tokens";
 import { NavAction, NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
 import { useAdminDrivers, useAdminRoute } from "../../../lib/api/admin";
+import { optimizeUnplacedCopy } from "../../../lib/route-optimize-error";
 import {
   useCreateRun,
   useDeleteRoute,
@@ -129,7 +130,10 @@ export default function RouteDetailScreen() {
       { routeId: id, order },
       {
         onSuccess: () => refetch(),
-        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) =>
+          showToast(
+            optimizeUnplacedCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again.",
+          ),
       },
     );
   };

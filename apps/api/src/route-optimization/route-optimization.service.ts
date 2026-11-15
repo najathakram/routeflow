@@ -13,6 +13,7 @@ import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RouteRealtime } from "../routes/route-realtime";
 import { retryOnTxConflict } from "../common/tx-retry";
 import { hasBlankStreet } from "../common/geocode.util";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { ApplyRouteVariantDto } from "./dto/apply-route-variant.dto";
 import { buildCostMatrices, type LatLng } from "./cost-matrix";
 
@@ -479,10 +480,14 @@ export class RouteOptimizationService {
       (s) => s.customerAddress?.lat == null || s.customerAddress?.lng == null,
     );
     if (missingCoords.length > 0) {
-      const names = missingCoords.map((s) => s.customer?.businessName ?? s.id).join(", ");
-      throw new BadRequestException(
-        `We couldn't place these customers on the map: ${names}. Check their addresses.`,
-      );
+      const nameList = missingCoords.map((s) => s.customer?.businessName ?? s.id);
+      const names = nameList.join(", ");
+      throw new BadRequestException({
+        code: API_ERROR_CODES.ROUTE_STOPS_NOT_PLACED,
+        message: `We couldn't place these customers on the map: ${names}. Check their addresses.`,
+        count: nameList.length,
+        names: nameList,
+      });
     }
 
     const stops: StopWithCoords[] = route.stops.map((s) => ({
@@ -711,10 +716,14 @@ export class RouteOptimizationService {
       (s) => effectiveAddr(s)?.lat == null || effectiveAddr(s)?.lng == null,
     );
     if (missingCoords.length > 0) {
-      const names = missingCoords.map((s) => s.routeStop.customer?.businessName ?? s.id).join(", ");
-      throw new BadRequestException(
-        `We couldn't place these customers on the map: ${names}. Check their addresses.`,
-      );
+      const nameList = missingCoords.map((s) => s.routeStop.customer?.businessName ?? s.id);
+      const names = nameList.join(", ");
+      throw new BadRequestException({
+        code: API_ERROR_CODES.ROUTE_STOPS_NOT_PLACED,
+        message: `We couldn't place these customers on the map: ${names}. Check their addresses.`,
+        count: nameList.length,
+        names: nameList,
+      });
     }
 
     const stops: StopWithCoords[] = run.stops.map((s) => {
