@@ -1889,6 +1889,7 @@ describe("SA-690 all three callers of createCheckoutSession bill the add-ons", (
         {} as any,
         {} as any,
         h.billing,
+        {} as any,
       ).createCheckout({ tenantId: "t1", sub: "u1" } as any),
     // POST /billing/checkout (super-admin): takes URLs only, so always monthly
     billingController: () =>

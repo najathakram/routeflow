@@ -18,7 +18,13 @@ function make(opts: { portal?: jest.Mock; pay?: jest.Mock; view?: any } = {}) {
     createBillingPortalSession:
       opts.portal ?? jest.fn().mockResolvedValue({ portalUrl: "https://billing.example/p/1" }),
   } as any;
-  const controller = new SettingsBillingController(subscription, {} as any, {} as any, billing);
+  const controller = new SettingsBillingController(
+    subscription,
+    {} as any,
+    {} as any,
+    billing,
+    {} as any,
+  );
   return { controller, subscription, billing };
 }
 

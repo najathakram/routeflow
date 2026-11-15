@@ -49,16 +49,19 @@ const loggedUnknown = new Set<string>();
 
 /**
  * A Stripe amount in the currency's MAJOR unit: the smallest-unit count divided by 10^exponent, the exponent being the
- * currency's own (USD 2, JPY 0), never a bare /100. Null for a currency this runtime does not know, or a non-whole
- * amount: that row then shows no amount rather than a wrong one.
+ * currency's own, never a bare /100. Only exponent 2 (USD and the like) and 0 (zero-decimal, JPY) are converted:
+ * `roundMoney` keeps 2 places, so a 3-decimal currency would lose precision. Any other exponent, a currency this
+ * runtime does not know, or a non-whole amount gives null: that row shows no amount rather than a wrong one.
  */
 export function stripeMinorToMajor(minor: number, currency: string): number | null {
   const code = currency.toUpperCase();
   knownCurrencies ??= new Set(Intl.supportedValuesOf("currency"));
   if (!knownCurrencies.has(code) || !Number.isInteger(minor)) return null;
-  const digits =
-    new Intl.NumberFormat("en-US", { style: "currency", currency: code }).resolvedOptions()
-      .maximumFractionDigits ?? 2;
+  const digits = new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: code,
+  }).resolvedOptions().maximumFractionDigits;
+  if (digits !== 2 && digits !== 0) return null;
   return roundMoney(minor / 10 ** digits);
 }
 

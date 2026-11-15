@@ -299,6 +299,16 @@ describe("BillingPaymentsService (SA-1146 B-4)", () => {
     expect(rows.find((r) => r.id === "in_2")?.amount).toBe(123.45);
   });
 
+  it("a 3-decimal currency (BHD) shows no amount: only exponent 2 and 0 are converted", async () => {
+    const h = build({
+      subs: { t1: "cus_a" },
+      rf: [],
+      stripe: [{ ...inv(1, "2026-10-01T00:00:00Z"), amount_paid: 12_345, currency: "bhd" }],
+    });
+    const rows = (await (await make(h)).list("t1", null)).rows;
+    expect(rows[0]).toMatchObject({ id: "in_1", amount: null, currency: "BHD" });
+  });
+
   it("Stripe not configured (no key) answers stripeUnavailable true with the RouteFlow rows", async () => {
     const h = build({
       subs: { t1: "cus_a" },
