@@ -8,7 +8,7 @@ import { SCAN_KEY_GAP_MS } from "@/components/BarcodeScannerButton";
  * (the tests that pin the gap on purpose) keeps it. A keyup draws a stamp too, so two keydowns can be 2 x stepMs apart.
  * `advance(ms)` moves the clock on, so the next key is stamped that much later: a stall on purpose, in stamped time. Never reads Date.now() and never fakes timers.
  */
-export function useScanClock(stepMs: number = SCAN_KEY_GAP_MS / 20): {
+export function installScanClock(stepMs: number = SCAN_KEY_GAP_MS / 20): {
   advance: (ms: number) => void;
 } {
   const stamps = new WeakMap<object, number>();

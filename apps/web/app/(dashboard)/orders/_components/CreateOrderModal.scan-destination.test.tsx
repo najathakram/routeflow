@@ -5,7 +5,7 @@ import { renderWithProviders } from "@/test-utils/render";
 import { createNavShortcutHandler } from "@/lib/nav-shortcuts";
 import { CreateOrderModal } from "./CreateOrderModal";
 import { SCAN_KEY_GAP_MS } from "@/components/BarcodeScannerButton";
-import { useScanClock } from "@/test-utils/scan-clock";
+import { installScanClock } from "@/test-utils/scan-clock";
 
 /**
  * SA-1138: where a scan goes in the order builder when focus is not in a text field. The REAL wedge detector (not mocked)
@@ -145,7 +145,7 @@ async function openAndEscape(user: ReturnType<typeof userEvent.setup>) {
   await waitFor(() => expect(chipButton()).toHaveFocus());
 }
 
-const scanClock = useScanClock(); // SA-1159: key stamps through the constants, never the wall clock
+const scanClock = installScanClock(); // SA-1159: key stamps through the constants, never the wall clock
 
 describe("SA-1138 office: a scan that starts off a text field goes to Search", () => {
   it("O1: picker opened, Escape, focus back on the chip: KNOWN{Enter} is looked up once, whole; the picker stays shut", async () => {

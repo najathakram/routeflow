@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { renderWithProviders } from "@/test-utils/render";
 import { CreateOrderModal } from "./CreateOrderModal";
-import { useScanClock } from "@/test-utils/scan-clock";
+import { installScanClock } from "@/test-utils/scan-clock";
 
 /**
  * W-1188 PR-3: the regular order's date is one chip (office policy, past-only) in place of the "Backdate this order" link,
@@ -152,7 +152,7 @@ beforeEach(() => {
   mockCreateError = null;
 });
 
-useScanClock(); // SA-1159: key stamps through the constants, never the wall clock
+installScanClock(); // SA-1159: key stamps through the constants, never the wall clock
 
 describe("order date chip on the regular order (W-1188 PR-3)", () => {
   it("shows the chip on Today and none of the old controls", () => {

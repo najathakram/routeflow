@@ -8,7 +8,7 @@ import { renderTill } from "@/test-utils/render-till";
 import { AnchoredPopover } from "@/components/AnchoredPopover";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 import { cameraFrameBlocked, counterDialogOpen } from "./counter-scan-guard";
-import { useScanClock } from "@/test-utils/scan-clock";
+import { installScanClock } from "@/test-utils/scan-clock";
 
 /**
  * W-1042 MUST 14b (SA-1062 A-1): the camera also stops for a menu or popover. `counterDialogOpen()` needs
@@ -129,7 +129,7 @@ function Drawer() {
   );
 }
 
-useScanClock(); // SA-1159: key stamps through the constants, never the wall clock
+installScanClock(); // SA-1159: key stamps through the constants, never the wall clock
 
 describe("W-1042 MUST 14b: the camera stops for a menu or popover", () => {
   it("R13c: the phone menu drawer open, a code in frame: the camera drops it", () => {
