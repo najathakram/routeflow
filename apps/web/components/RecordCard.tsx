@@ -14,8 +14,15 @@ import { cn } from "@routeflow/ui/web";
  * row with the meta line, lifted above the link (`relative z-10`), so pressing one never opens
  * the record.
  */
-export function RecordCardList({ children }: { children: React.ReactNode }) {
-  return <ul className="space-y-3 md:hidden">{children}</ul>;
+export function RecordCardList({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  /** For example bottom padding that keeps the last card above a fixed selection bar. */
+  className?: string;
+}) {
+  return <ul className={cn("space-y-3 md:hidden", className)}>{children}</ul>;
 }
 
 export interface RecordCardProps {
@@ -23,7 +30,7 @@ export interface RecordCardProps {
   href: string;
   /** The record number (mono) or, with titleKind "name", a person or business name. */
   title: string;
-  /** "number" (default) shows the title in mono; "name" in the normal text, same size. */
+  /** "number" (default) shows the title in mono text-xs; "name" in the normal text at text-sm, like the subtitle. */
   titleKind?: "number" | "name";
   /** Dims the whole card, like a dimmed table row (for example a void record). */
   dimmed?: boolean;
@@ -84,8 +91,8 @@ export function RecordCard({
           : undefined
       }
       className={cn(
-        "min-w-0 truncate text-xs font-semibold text-ink-900 after:absolute after:inset-0 after:rounded-xl focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-inset focus-visible:after:ring-brand-500",
-        titleKind === "number" && "font-mono",
+        "min-w-0 truncate font-semibold text-ink-900 after:absolute after:inset-0 after:rounded-xl focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-inset focus-visible:after:ring-brand-500",
+        titleKind === "number" ? "font-mono text-xs" : "text-sm",
       )}
     >
       {title}

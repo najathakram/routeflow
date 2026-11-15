@@ -106,19 +106,34 @@ describe("RecordCard", () => {
     expect(screen.getByText("Acme").closest("p")).not.toHaveAttribute("title");
   });
 
+  it("lets a page add classes to the card list, for example padding above a fixed bar", () => {
+    const { container } = render(
+      <RecordCardList className="max-md:pb-20">
+        <RecordCard href="/x" title="X-1" amount="$1.00" />
+      </RecordCardList>,
+    );
+    const ul = container.querySelector("ul") as HTMLElement;
+    expect(ul.className).toContain("md:hidden");
+    expect(ul.className).toContain("max-md:pb-20");
+  });
+
   describe("title kind and dimming", () => {
     it("shows a number title in mono by default", () => {
       renderCard();
       const link = screen.getByRole("link", { name: "INV-1001" });
       expect(link.className).toContain("font-mono");
+      expect(link.className).toContain("text-xs");
+      expect(link.className).not.toContain("text-sm");
     });
 
-    it("shows a name title in the normal sans text at the same size", () => {
+    it("shows a name title in the normal sans text, sized like the subtitle under it (text-sm)", () => {
       renderCard({ title: "Acme Foods", titleKind: "name" });
       const link = screen.getByRole("link", { name: "Acme Foods" });
       expect(link.className).not.toContain("font-mono");
-      expect(link.className).toContain("text-xs");
+      expect(link.className.split(" ")).toContain("text-sm");
+      expect(link.className.split(" ")).not.toContain("text-xs");
       expect(link.className).toContain("font-semibold");
+      expect(link.className).toContain("text-ink-900");
     });
 
     it("dims the whole card on request, like a dimmed table row", () => {

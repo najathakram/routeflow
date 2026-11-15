@@ -427,4 +427,74 @@ describe("CustomersPage — phone cards", () => {
     expect(values).toContain("");
     for (const v of values.filter(Boolean)) expect(allowed).toContain(v);
   });
+
+  // Elements before a node in the page flow, ignoring the fixed selection bar (out of flow below md).
+  const flowBefore = (node: HTMLElement) => {
+    const out: Element[] = [];
+    for (let n: HTMLElement | null = node; n && n.tagName !== "BODY"; n = n.parentElement) {
+      for (let p = n.previousElementSibling; p; p = p.previousElementSibling) {
+        if (!p.hasAttribute("data-selection-bar")) out.push(p);
+      }
+    }
+    return out;
+  };
+
+  it("renders the selection bar through the shared SelectionBar: fixed below md, the page's own classes from md up", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<CustomersPage />);
+    await user.click(screen.getByRole("button", { name: /^Select$/ }));
+    await user.click(
+      within(cards(container)[0]).getByRole("checkbox", { name: "Select Ada Buyer" }),
+    );
+    const bar = screen
+      .getByText("1 customer selected")
+      .closest("[data-selection-bar]") as HTMLElement;
+    expect(bar).not.toBeNull();
+    const classes = bar.className.split(" ");
+    expect(classes).toContain("max-md:fixed");
+    expect(classes.filter((c) => !c.startsWith("max-md:")).sort()).toEqual(
+      "flex items-center justify-between rounded-lg border border-danger/30 bg-danger-bg px-4 py-3"
+        .split(" ")
+        .sort(),
+    );
+    expect(
+      within(bar).getByRole("checkbox", { name: "Select all customers on this page" }),
+    ).toBeInTheDocument();
+    // Every control in the bar is at least 44px tall below md.
+    for (const el of [
+      within(bar).getByRole("button", { name: "Deselect all" }),
+      within(bar).getByRole("button", { name: /^Delete/ }),
+    ]) {
+      expect(el.className.split(" ")).toContain("max-md:min-h-[44px]");
+    }
+  });
+
+  it("entering select mode and ticking a card insert nothing above the card list below md; the list is padded for the bar", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<CustomersPage />);
+    await user.click(screen.getByRole("button", { name: /^Select$/ }));
+    const ul = container.querySelector("ul.md\\:hidden") as HTMLElement;
+    expect(ul.previousElementSibling).toBeNull();
+    const before = flowBefore(ul);
+    expect(ul.className).not.toContain("max-md:pb-");
+    await user.click(
+      within(cards(container)[0]).getByRole("checkbox", { name: "Select Ada Buyer" }),
+    );
+    expect(ul.previousElementSibling).toBeNull();
+    expect(flowBefore(ul)).toEqual(before);
+    expect(ul.className).toContain("max-md:pb-56");
+  });
+
+  it("gives Merge the same 44px target below md in the selection bar", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<CustomersPage />);
+    await user.click(screen.getByRole("button", { name: /^Select$/ }));
+    await user.click(
+      within(cards(container)[0]).getByRole("checkbox", { name: "Select Ada Buyer" }),
+    );
+    await user.click(within(cards(container)[1]).getByRole("checkbox", { name: "Select Bo" }));
+    expect(screen.getByRole("button", { name: /^Merge/ }).className.split(" ")).toContain(
+      "max-md:min-h-[44px]",
+    );
+  });
 });

@@ -431,9 +431,10 @@ describe("PKG-1 owner rule — nothing on the customers list is lost", () => {
   it("Edit customer opens the editor without navigating; row checkbox + bulk bar + merge in select mode", () => {
     renderWithProviders(<CustomersPage />);
     fireEvent.click(screen.getByRole("button", { name: /^select$/i }));
-    const boxes = screen.getAllByRole("checkbox");
+    // The table's own checkboxes: header first, then one per row.
+    const boxes = within(screen.getByRole("table")).getAllByRole("checkbox");
     fireEvent.click(boxes[1]);
-    fireEvent.click(screen.getAllByRole("checkbox")[2]);
+    fireEvent.click(within(screen.getByRole("table")).getAllByRole("checkbox")[2]);
     expect(screen.getByText(/2 customers selected/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^merge$/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /delete 2/i })).toBeInTheDocument();

@@ -39,6 +39,7 @@ import {
 } from "@routeflow/ui/web";
 import { RecordCard, RecordCardList } from "@/components/RecordCard";
 import { FiltersDisclosure, activeFilterCount } from "@/components/FiltersDisclosure";
+import { SelectionBar } from "@/components/SelectionBar";
 import { usePageTitle } from "@/lib/page-title-context";
 import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
@@ -1118,7 +1119,10 @@ function InventoryPurchasesTab() {
 
       {/* Bulk action bar */}
       {selectedBills.size > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-brand-300 bg-brand-50 px-4 py-3">
+        <SelectionBar
+          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-brand-300 bg-brand-50 px-4 py-3"
+          selectAll={{ checked: allOnPageSelected, onChange: toggleSelectAll }}
+        >
           <span className="text-sm font-medium text-navy">
             {selectedBills.size} bill{selectedBills.size !== 1 ? "s" : ""} selected
           </span>
@@ -1167,7 +1171,7 @@ function InventoryPurchasesTab() {
               Mark {markPaidPreview.count} paid — {fmt(markPaidPreview.total)}
             </Button>
           </div>
-        </div>
+        </SelectionBar>
       )}
 
       {/* KPI row */}
@@ -1379,19 +1383,8 @@ function InventoryPurchasesTab() {
           table's own state rows at every width. Same balance rule and selection as the table. */}
       {!isLoading && !isError && bills.length > 0 && (
         <>
-          {selectedBills.size > 0 && (
-            <label className="flex min-h-[44px] items-center gap-3 text-sm text-navy md:hidden">
-              <input
-                type="checkbox"
-                aria-label="Select all on this page"
-                checked={allOnPageSelected}
-                onChange={toggleSelectAll}
-                className="h-5 w-5 rounded border-surface-border text-brand-500 accent-brand-500"
-              />
-              Select all on this page
-            </label>
-          )}
-          <RecordCardList>
+          {/* While bills are selected the fixed bar covers the bottom of the screen: pad the list. */}
+          <RecordCardList className={selectedBills.size > 0 ? "max-md:pb-80" : undefined}>
             {sortedBills.map((bill: VendorBill) => {
               const overdue = isOverdue(bill);
               const balance = billBalance(bill);

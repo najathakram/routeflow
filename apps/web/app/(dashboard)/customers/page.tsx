@@ -70,6 +70,7 @@ import { WALK_IN_PROTECTED_COPY } from "./_components/walk-in-protection";
 import { CustomersMoreMenu } from "./_components/CustomersMoreMenu";
 import { RecordCard, RecordCardList } from "@/components/RecordCard";
 import { FiltersDisclosure, activeFilterCount } from "@/components/FiltersDisclosure";
+import { SelectionBar } from "@/components/SelectionBar";
 
 // A module-level component, never an inline `cell:` closure: flexRender mounts a cell function as a
 // component, so a closure rebuilt with `columns` is a new component type on every page render and
@@ -947,20 +948,32 @@ export default function CustomersPage() {
       {/* Selection action bar — never shown in the trash view (F3): the operator can only
           View + inline Restore a removed row, never bulk-act on it. */}
       {!removedFilter && selectMode && selected.size > 0 && (
-        <div className="flex items-center justify-between rounded-lg border border-danger/30 bg-danger-bg px-4 py-3 max-md:flex-wrap max-md:gap-2">
+        <SelectionBar
+          className="flex items-center justify-between rounded-lg border border-danger/30 bg-danger-bg px-4 py-3 max-md:flex-wrap max-md:gap-2"
+          selectAll={{
+            checked: allChecked,
+            indeterminate: someChecked && !allChecked,
+            label: "Select all customers on this page",
+            onChange: () => {
+              if (allChecked) setSelected(new Set());
+              else setSelected(new Set(allVisibleIds));
+            },
+          }}
+        >
           <span className="text-sm font-medium text-navy">
             {selected.size} customer{selected.size !== 1 ? "s" : ""} selected
           </span>
           <div className="flex items-center gap-2 max-md:flex-wrap">
             <button
               onClick={() => setSelected(new Set())}
-              className="text-sm text-navy/70 hover:text-navy transition-colors"
+              className="text-sm text-navy/70 hover:text-navy transition-colors max-md:min-h-[44px]"
             >
               Deselect all
             </button>
             {selected.size === 2 && (
               <Button
                 variant="secondary"
+                className="max-md:min-h-[44px]"
                 leftIcon={<Merge className="h-4 w-4" />}
                 onClick={handleMerge}
                 loading={mergeCustomers.isPending}
@@ -970,6 +983,7 @@ export default function CustomersPage() {
             )}
             <Button
               variant="danger"
+              className="max-md:min-h-[44px]"
               leftIcon={<Trash2 className="h-4 w-4" />}
               loading={isDeleting}
               onClick={() => setShowBulkDeleteConfirm(true)}
@@ -977,7 +991,7 @@ export default function CustomersPage() {
               Delete {selected.size}
             </Button>
           </div>
-        </div>
+        </SelectionBar>
       )}
 
       {/* Pending portal connection approvals */}
@@ -1183,25 +1197,12 @@ export default function CustomersPage() {
             keep the table's own states at every width. */}
         {!isLoading && !isError && customers.length > 0 && (
           <div className="p-3 md:hidden">
-            {selectMode && (
-              <label className="flex min-h-[44px] items-center gap-3 text-sm text-navy">
-                <input
-                  type="checkbox"
-                  aria-label="Select all customers on this page"
-                  checked={allChecked}
-                  ref={(el) => {
-                    if (el) el.indeterminate = someChecked && !allChecked;
-                  }}
-                  onChange={() => {
-                    if (allChecked) setSelected(new Set());
-                    else setSelected(new Set(allVisibleIds));
-                  }}
-                  className="h-5 w-5 cursor-pointer rounded border-navy/30 accent-brand-500"
-                />
-                Select all on this page
-              </label>
-            )}
-            <RecordCardList>
+            {/* While customers are selected the fixed bar covers the bottom of the screen: pad the list. */}
+            <RecordCardList
+              className={
+                !removedFilter && selectMode && selected.size > 0 ? "max-md:pb-56" : undefined
+              }
+            >
               {customers.map((c) => {
                 const name = c.contactName || c.businessName;
                 const status = c.user?.status ?? "ACTIVE";

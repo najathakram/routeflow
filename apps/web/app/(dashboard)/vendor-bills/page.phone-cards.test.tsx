@@ -368,4 +368,52 @@ describe("Supplier bills list — phone cards", () => {
     expect(panel.parentElement).toBe(root);
     expect(root.className.split(" ")).toContain("md:contents");
   });
+
+  // Elements before a node in the page flow, ignoring the fixed selection bar (out of flow below md).
+  const flowBefore = (node: HTMLElement) => {
+    const out: Element[] = [];
+    for (let n: HTMLElement | null = node; n && n.tagName !== "BODY"; n = n.parentElement) {
+      for (let p = n.previousElementSibling; p; p = p.previousElementSibling) {
+        if (!p.hasAttribute("data-selection-bar")) out.push(p);
+      }
+    }
+    return out;
+  };
+
+  it("renders the bulk bar through the shared SelectionBar: fixed below md, the page's own classes from md up", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<ExpensesPage />);
+    await user.click(
+      within(cardList(container)[0]).getByRole("checkbox", { name: /^Select BILL-/ }),
+    );
+    const bar = screen.getByText("1 bill selected").closest("[data-selection-bar]") as HTMLElement;
+    expect(bar).not.toBeNull();
+    const classes = bar.className.split(" ");
+    expect(classes).toContain("max-md:fixed");
+    // From md up the classes are the ones the bar had before.
+    expect(classes.filter((c) => !c.startsWith("max-md:")).sort()).toEqual(
+      "flex flex-wrap items-center justify-between gap-3 rounded-lg border border-brand-300 bg-brand-50 px-4 py-3"
+        .split(" ")
+        .sort(),
+    );
+    // Select all on this page lives in the bar below md.
+    expect(
+      within(bar).getByRole("checkbox", { name: "Select all on this page" }),
+    ).toBeInTheDocument();
+  });
+
+  it("ticking a card inserts nothing above the card list below md and pads the list for the bar", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<ExpensesPage />);
+    const ul = container.querySelector("ul.md\\:hidden") as HTMLElement;
+    const before = flowBefore(ul);
+    const prev = ul.previousElementSibling;
+    expect(ul.className).not.toContain("max-md:pb-");
+    await user.click(
+      within(cardList(container)[0]).getByRole("checkbox", { name: /^Select BILL-/ }),
+    );
+    expect(ul.previousElementSibling).toBe(prev);
+    expect(flowBefore(ul)).toEqual(before);
+    expect(ul.className).toContain("max-md:pb-80");
+  });
 });
