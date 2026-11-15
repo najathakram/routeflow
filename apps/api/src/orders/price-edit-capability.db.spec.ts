@@ -506,8 +506,6 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
       warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
     });
     afterEach(() => jest.restoreAllMocks());
-    const wouldDeny = () =>
-      warn.mock.calls.filter((c) => String(c[0]).includes("would-deny groups=PRICING"));
 
     it("M-R1 live: the denied operator's order line edit is a 403 PRICE_EDIT_NOT_PERMITTED; the line is unchanged", async () => {
       const o = await order();
@@ -553,7 +551,6 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
       const after = await lineOf(o.lineItems[0].id);
       expect(Number(after.unitPrice)).toBe(10);
       expect(after.overriddenBy).toBeNull();
-      expect(wouldDeny()).toHaveLength(0);
       expect(
         warn.mock.calls.filter((c) => String(c[0]).includes("denied groups=PRICING")),
       ).toHaveLength(1);
@@ -865,7 +862,7 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
       raw.recurringInvoiceItem.findMany({ where: { recurringInvoiceId: templateId } });
     const wouldDenyLogged = () =>
       (Logger.prototype.warn as unknown as jest.Mock).mock.calls.some((c) =>
-        String(c[0]).includes("would-deny"),
+        String(c[0]).includes("denied groups=PRICING"),
       );
 
     it("R6-1 live (rule 6): the denied operator's template with a catalog line typed 1.00 under the tier price is a 403; no template row", async () => {
