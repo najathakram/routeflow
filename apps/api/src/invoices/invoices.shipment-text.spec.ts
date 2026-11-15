@@ -8,13 +8,15 @@ import { InvoicesService } from "./invoices.service";
 describe("InvoicesService.updateInvoiceShipment: carrier / tracking text", () => {
   const findFirst = jest.fn();
   const update = jest.fn();
-  const self = { prisma: { forTenant: () => ({ invoice: { findFirst, update } }) } };
+  const updateMany = jest.fn();
+  const self = { prisma: { forTenant: () => ({ invoice: { findFirst, update, updateMany } }) } };
   const save = (body: Record<string, unknown>) =>
     InvoicesService.prototype.updateInvoiceShipment.call(self as any, "inv-1", body as any);
 
   beforeEach(() => {
     jest.resetAllMocks();
     update.mockResolvedValue({ id: "inv-1" });
+    updateMany.mockResolvedValue({ count: 1 });
   });
 
   it("refuses a formula-led tracking number after the trim (coded 400), nothing written", async () => {

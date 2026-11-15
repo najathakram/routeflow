@@ -61,22 +61,38 @@ export async function updateShipmentImpl(
 
   // Row 507: trimmed, and a CHANGED formula-led carrier / tracking is a coded 400 (change-only vs the stored pair).
   const { carrier, tracking } = resolveShipmentText(dto, order);
-  // E-b: shippedAt is the SHIP TRANSITION's stamp (changeStatus), never a side effect of saving
-  // tracking on an order that has not shipped. Saving tracking keeps whatever is there; it only
-  // backfills a legacy already-shipped order that has none.
-  const shippedAt =
-    order.shippedAt ?? (tracking && SHIPPED_STATUSES.has(order.status) ? new Date() : null);
-
-  const updated = await self.prisma.forTenant().order.update({
+  // E-b: shippedAt is the SHIP TRANSITION's stamp (changeStatus), never a side effect of saving tracking.
+  // W-904 (SA-1142): this save never writes it from the unlocked pre-read above (a ship claim that committed
+  // since would lose its stamp). The main write leaves the key out; a legacy already-shipped order with no stamp
+  // is backfilled by a conditional write the database judges at write time (still unstamped, still shipped).
+  const db = self.prisma.forTenant();
+  let updated = await db.order.update({
     where: { id: orderId },
-    data: { shippingCarrier: carrier, shippingTrackingNumber: tracking, shippedAt },
+    data: { shippingCarrier: carrier, shippingTrackingNumber: tracking },
   });
+  // A stamp seen at the read is never cleared by anything, so only an unstamped read needs the backfill.
+  if (tracking && !order.shippedAt && SHIPPED_STATUSES.has(order.status)) {
+    const filled = await db.order.updateMany({
+      where: { id: orderId, shippedAt: null, status: { in: [...SHIPPED_STATUSES] } },
+      data: { shippedAt: new Date() },
+    });
+    if (filled.count > 0) {
+      updated = (await db.order.findFirst({ where: { id: orderId } })) ?? updated;
+    }
+  }
 
-  // Mirror onto every non-void invoice generated from this order.
-  await self.prisma.forTenant().invoice.updateMany({
+  // Mirror onto every non-void invoice generated from this order: carrier and tracking as saved, the stamp
+  // fill-only from the order's COMMITTED value (never nulled, never moved).
+  await db.invoice.updateMany({
     where: { orderId, status: { not: "VOID" } },
-    data: { shippingCarrier: carrier, shippingTrackingNumber: tracking, shippedAt },
+    data: { shippingCarrier: carrier, shippingTrackingNumber: tracking },
   });
+  if (updated.shippedAt) {
+    await db.invoice.updateMany({
+      where: { orderId, status: { not: "VOID" }, shippedAt: null },
+      data: { shippedAt: updated.shippedAt },
+    });
+  }
 
   // Tracking added for the FIRST time (empty -> set) to a carrier order that is ALREADY shipped: tell the
   // customer once. The atomic `trackingNotifiedAt` claim inside notifyTrackingAdded makes it never repeat.

@@ -115,7 +115,7 @@ import {
 } from "./invoice-send-state";
 import { resolveInvoiceVariant } from "./invoice-stage";
 import { fingerprintOfSnapshot, readSendSnapshot, runSendCredits } from "./invoice-send-snapshot";
-import { orderShipmentFields } from "./order-shipment-fields";
+import { orderShipmentFields, writeInvoiceTracking } from "./order-shipment-fields";
 import {
   CheckStatus,
   CreditNoteStatus,
@@ -3275,12 +3275,7 @@ export class InvoicesService {
       throw new BadRequestException("Cannot update tracking on a voided invoice");
 
     const { carrier, tracking } = resolveShipmentText(dto, inv); // row 507: trim + formula guard
-    const shippedAt = tracking ? (inv.shippedAt ?? new Date()) : null;
-
-    return this.prisma.forTenant().invoice.update({
-      where: { id },
-      data: { shippingCarrier: carrier, shippingTrackingNumber: tracking, shippedAt },
-    });
+    return writeInvoiceTracking(this.prisma.forTenant(), id, carrier, tracking); // W-904: fill-only stamp
   }
 
   /**
