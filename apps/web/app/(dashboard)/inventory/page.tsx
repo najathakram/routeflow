@@ -4,7 +4,7 @@ import * as React from "react";
 import * as Tabs from "@radix-ui/react-tabs";
 import Link from "next/link";
 import { Plus, X, Info, Sparkles, Search, SlidersHorizontal, DollarSign } from "lucide-react";
-import { Badge, Button, Modal, PageHeader, ScrollShadow, cn, useToast } from "@routeflow/ui/web";
+import { Badge, Button, Modal, ScrollShadow, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
@@ -45,6 +45,13 @@ import { CreatePOModal } from "./_components/PurchaseOrdersCreateModal";
 import type { Supplier } from "./_components/purchase-orders-shared";
 import { lowStockThreshold } from "@routeflow/types";
 import { QuickRestockModal } from "./_components/QuickRestockModal";
+import {
+  InventoryCards,
+  InventorySortControl,
+  STOCK_TEXT_CLASS,
+  stockState,
+} from "./_components/InventoryCards";
+import { InventoryPhoneActions } from "./_components/InventoryPhoneActions";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -168,7 +175,7 @@ function StockTable({
 
   // 2) Sort. Numeric columns get explicit comparators so "100" sorts after
   // "20" (string compare would put it first).
-  const { sorted, sortKey, sortDir, requestSort } = useSortableData(filtered, {
+  const { sorted, sortKey, sortDir, requestSort, setSort } = useSortableData(filtered, {
     defaultKey: "name",
     defaultDir: "asc",
     comparators: {
@@ -215,199 +222,207 @@ function StockTable({
   }
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead className="border-b border-surface-border bg-surface-raised text-xs text-navy/70">
-          <tr>
-            <SortableTh
-              name="name"
-              current={sortKey}
-              dir={sortDir}
-              onSort={requestSort}
-              className="px-4 py-3 font-medium"
-            >
-              Product
-            </SortableTh>
-            <SortableTh
-              name="sku"
-              current={sortKey}
-              dir={sortDir}
-              onSort={requestSort}
-              className="px-4 py-3 font-medium"
-            >
-              SKU
-            </SortableTh>
-            <SortableTh
-              name="category"
-              current={sortKey}
-              dir={sortDir}
-              onSort={requestSort}
-              className="px-4 py-3 font-medium"
-            >
-              Category
-            </SortableTh>
-            <SortableTh
-              name="currentStock"
-              current={sortKey}
-              dir={sortDir}
-              onSort={requestSort}
-              className="px-4 py-3 font-medium"
-            >
-              Current stock
-            </SortableTh>
-            <SortableTh
-              name="unitsPerBox"
-              current={sortKey}
-              dir={sortDir}
-              onSort={requestSort}
-              className="px-4 py-3 font-medium"
-            >
-              Per Box
-            </SortableTh>
-            <SortableTh
-              name="averageCost"
-              current={sortKey}
-              dir={sortDir}
-              onSort={requestSort}
-              className="px-4 py-3 font-medium"
-            >
-              <span className="inline-flex items-center gap-1">
-                Unit cost
-                <span title="Shows standard cost for products on standard costing, or weighted average cost for AVCO, FIFO and LIFO. Updates automatically when supplier bills are received.">
-                  <Info className="h-3 w-3 text-navy/30 cursor-help" />
+    <>
+      {/* Phone cards (below md): same rows, sort and actions as the table; the table takes over from md up. */}
+      <div className="space-y-3 p-3 md:hidden">
+        <InventorySortControl sortKey={sortKey} sortDir={sortDir} onSort={setSort} />
+        <InventoryCards
+          items={sorted}
+          sectionNameById={sectionNameById}
+          variantInfoById={variantInfoById}
+          onSetCost={(item) => onSetCost(item as StockItem)}
+          onAdjust={(id) => {
+            setAdjustPreselectId(id);
+            setShowAdjustModal(true);
+          }}
+          onAssignToVariants={(item) => onAssignToVariants(item as StockItem)}
+        />
+      </div>
+      <div className="hidden overflow-x-auto md:block">
+        <table className="w-full text-sm">
+          <thead className="border-b border-surface-border bg-surface-raised text-xs text-navy/70">
+            <tr>
+              <SortableTh
+                name="name"
+                current={sortKey}
+                dir={sortDir}
+                onSort={requestSort}
+                className="px-4 py-3 font-medium"
+              >
+                Product
+              </SortableTh>
+              <SortableTh
+                name="sku"
+                current={sortKey}
+                dir={sortDir}
+                onSort={requestSort}
+                className="px-4 py-3 font-medium"
+              >
+                SKU
+              </SortableTh>
+              <SortableTh
+                name="category"
+                current={sortKey}
+                dir={sortDir}
+                onSort={requestSort}
+                className="px-4 py-3 font-medium"
+              >
+                Category
+              </SortableTh>
+              <SortableTh
+                name="currentStock"
+                current={sortKey}
+                dir={sortDir}
+                onSort={requestSort}
+                className="px-4 py-3 font-medium"
+              >
+                Current stock
+              </SortableTh>
+              <SortableTh
+                name="unitsPerBox"
+                current={sortKey}
+                dir={sortDir}
+                onSort={requestSort}
+                className="px-4 py-3 font-medium"
+              >
+                Per Box
+              </SortableTh>
+              <SortableTh
+                name="averageCost"
+                current={sortKey}
+                dir={sortDir}
+                onSort={requestSort}
+                className="px-4 py-3 font-medium"
+              >
+                <span className="inline-flex items-center gap-1">
+                  Unit cost
+                  <span title="Shows standard cost for products on standard costing, or weighted average cost for AVCO, FIFO and LIFO. Updates automatically when supplier bills are received.">
+                    <Info className="h-3 w-3 text-navy/30 cursor-help" />
+                  </span>
                 </span>
-              </span>
-            </SortableTh>
-            <SortableTh
-              name="totalValue"
-              current={sortKey}
-              dir={sortDir}
-              onSort={requestSort}
-              className="px-4 py-3 font-medium"
-            >
-              Total value
-            </SortableTh>
-            <th className="px-4 py-3" />
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-surface-border">
-          {sorted.map((item) => (
-            <tr
-              key={item.id}
-              ref={(el) => {
-                if (el) rowRefs.current.set(item.id, el);
-                else rowRefs.current.delete(item.id);
-              }}
-              className={cn(
-                "group transition-colors hover:bg-surface-raised/50",
-                item.currentStock <= 0 && "bg-danger-bg/30",
-                flashId === item.id && "bg-brand-50 hover:bg-brand-50",
-              )}
-            >
-              <td className="px-4 py-3 font-medium text-navy">
-                <span className="inline-flex items-center gap-1.5">
-                  {item.name}
-                  {item.trackedCategoryId && (
-                    <span
-                      className="rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-[11px] font-medium text-brand-700"
-                      title={sectionNameById.get(item.trackedCategoryId) ?? "Regulated type"}
-                    >
-                      {sectionNameById.get(item.trackedCategoryId) ?? "Type"}
-                    </span>
-                  )}
-                </span>
-              </td>
-              <td className="px-4 py-3 font-mono text-navy">{item.sku ?? "—"}</td>
-              <td className="px-4 py-3 text-navy/70">{item.category ?? "—"}</td>
-              <td className="px-4 py-3">
-                <span
-                  className={cn(
-                    "font-medium",
-                    item.currentStock <= 0
-                      ? "text-danger"
-                      : item.currentStock <= lowStockThreshold(item.reorderPoint)
-                        ? "text-warning"
-                        : "text-navy",
-                  )}
-                >
-                  {/* currentStock is stored in PIECES system-wide, so for a BOXED product
+              </SortableTh>
+              <SortableTh
+                name="totalValue"
+                current={sortKey}
+                dir={sortDir}
+                onSort={requestSort}
+                className="px-4 py-3 font-medium"
+              >
+                Total value
+              </SortableTh>
+              <th className="px-4 py-3" />
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-surface-border">
+            {sorted.map((item) => (
+              <tr
+                key={item.id}
+                ref={(el) => {
+                  if (el) rowRefs.current.set(item.id, el);
+                  else rowRefs.current.delete(item.id);
+                }}
+                className={cn(
+                  "group transition-colors hover:bg-surface-raised/50",
+                  item.currentStock <= 0 && "bg-danger-bg/30",
+                  flashId === item.id && "bg-brand-50 hover:bg-brand-50",
+                )}
+              >
+                <td className="px-4 py-3 font-medium text-navy">
+                  <span className="inline-flex items-center gap-1.5">
+                    {item.name}
+                    {item.trackedCategoryId && (
+                      <span
+                        className="rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-[11px] font-medium text-brand-700"
+                        title={sectionNameById.get(item.trackedCategoryId) ?? "Regulated type"}
+                      >
+                        {sectionNameById.get(item.trackedCategoryId) ?? "Type"}
+                      </span>
+                    )}
+                  </span>
+                </td>
+                <td className="px-4 py-3 font-mono text-navy">{item.sku ?? "—"}</td>
+                <td className="px-4 py-3 text-navy/70">{item.category ?? "—"}</td>
+                <td className="px-4 py-3">
+                  <span className={cn("font-medium", STOCK_TEXT_CLASS[stockState(item)])}>
+                    {/* currentStock is stored in PIECES system-wide, so for a BOXED product
                       it must never be rendered next to `item.unit` (a box/case noun) —
                       `unitsLabel` shows the piece count plus a parenthetical box
                       breakdown, and keeps the product's own unit noun when unboxed. */}
-                  {unitsLabel(Number(item.currentStock), item.unitsPerBox, item.unit)}
-                </span>
-              </td>
-              <td className="px-4 py-3 text-navy/70">
-                {item.unitsPerBox != null ? item.unitsPerBox : "—"}
-              </td>
-              <td className="px-4 py-3 text-navy/70">
-                {item.averageCost != null ? (
-                  formatMoney(item.averageCost)
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => onSetCost(item)}
-                    title="No cost basis recorded — click to set one"
-                    className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800 transition-colors hover:bg-amber-200"
-                  >
-                    No cost set
-                  </button>
-                )}
-              </td>
-              <td className="px-4 py-3 text-navy/70">
-                {item.totalValue != null ? formatMoney(item.totalValue) : "—"}
-              </td>
-              <td className="px-4 py-3">
-                <div className="flex items-center justify-end gap-3">
-                  <button
-                    type="button"
-                    onClick={() => onSetCost(item)}
-                    className="text-xs font-medium text-brand-600 transition-colors hover:underline"
-                  >
-                    Set cost
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAdjustPreselectId(item.id);
-                      setShowAdjustModal(true);
-                    }}
-                    className="text-xs font-medium text-brand-600 transition-colors hover:underline"
-                  >
-                    Adjust
-                  </button>
-                  {(() => {
-                    const info = variantInfoById.get(item.id);
-                    if (!info || info.parentProductId || !info.hasVariants) return null;
-                    return (
-                      <button
-                        type="button"
-                        onClick={() => onAssignToVariants(item)}
-                        className="text-xs font-medium text-brand-600 transition-colors hover:underline"
-                      >
-                        Assign to variants
-                      </button>
-                    );
-                  })()}
-                  <Link
-                    href={`/inventory/movements?product=${item.id}`}
-                    className="text-xs text-brand-500 hover:underline"
-                  >
-                    Movements
-                  </Link>
-                  <Link
-                    href={`/products/${item.id}`}
-                    className="text-xs text-brand-500 hover:underline"
-                  >
-                    Open product
-                  </Link>
-                </div>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+                    {unitsLabel(Number(item.currentStock), item.unitsPerBox, item.unit)}
+                  </span>
+                </td>
+                <td className="px-4 py-3 text-navy/70">
+                  {item.unitsPerBox != null ? item.unitsPerBox : "—"}
+                </td>
+                <td className="px-4 py-3 text-navy/70">
+                  {item.averageCost != null ? (
+                    formatMoney(item.averageCost)
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => onSetCost(item)}
+                      title="No cost basis recorded — click to set one"
+                      className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800 transition-colors hover:bg-amber-200"
+                    >
+                      No cost set
+                    </button>
+                  )}
+                </td>
+                <td className="px-4 py-3 text-navy/70">
+                  {item.totalValue != null ? formatMoney(item.totalValue) : "—"}
+                </td>
+                <td className="px-4 py-3">
+                  <div className="flex items-center justify-end gap-3">
+                    <button
+                      type="button"
+                      onClick={() => onSetCost(item)}
+                      className="text-xs font-medium text-brand-600 transition-colors hover:underline"
+                    >
+                      Set cost
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAdjustPreselectId(item.id);
+                        setShowAdjustModal(true);
+                      }}
+                      className="text-xs font-medium text-brand-600 transition-colors hover:underline"
+                    >
+                      Adjust
+                    </button>
+                    {(() => {
+                      const info = variantInfoById.get(item.id);
+                      if (!info || info.parentProductId || !info.hasVariants) return null;
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => onAssignToVariants(item)}
+                          className="text-xs font-medium text-brand-600 transition-colors hover:underline"
+                        >
+                          Assign to variants
+                        </button>
+                      );
+                    })()}
+                    <Link
+                      href={`/inventory/movements?product=${item.id}`}
+                      className="text-xs text-brand-500 hover:underline"
+                    >
+                      Movements
+                    </Link>
+                    <Link
+                      href={`/products/${item.id}`}
+                      className="text-xs text-brand-500 hover:underline"
+                    >
+                      Open product
+                    </Link>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }
 
@@ -1449,14 +1464,50 @@ export default function InventoryPage() {
 
   return (
     <div className="space-y-5 p-6">
-      <PageHeader
-        title="Inventory"
-        subtitle="Stock levels, cost basis, purchasing, and forecasting across your catalog."
-      />
+      {/* Header (same layout as PageHeader): below md the title and Quick restock share one row, the
+          description is hidden and the other Stock actions live in a More menu. */}
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
+        <div className="shrink">
+          <h2 className="whitespace-nowrap text-2xl font-bold text-navy">Inventory</h2>
+          <p className="mt-1 hidden text-sm text-navy/70 md:block">
+            Stock levels, cost basis, purchasing, and forecasting across your catalog.
+          </p>
+        </div>
+        {activeTab === "stock" && (
+          <InventoryPhoneActions
+            onRestock={() => setShowPurchaseModal(true)}
+            items={[
+              ...(missingCostCount > 0
+                ? [
+                    {
+                      label: `Set Costs (${missingCostCount})`,
+                      onSelect: () => setShowBulkCostModal(true),
+                    },
+                  ]
+                : []),
+              {
+                label: "Adjust stock",
+                onSelect: () => {
+                  setAdjustPreselectId(undefined);
+                  setShowAdjustModal(true);
+                },
+              },
+              { label: "Add product", onSelect: () => setShowAddProductModal(true) },
+              { label: "Scan invoice", onSelect: () => setShowScanModal(true) },
+            ]}
+          />
+        )}
+      </div>
 
-      {/* Summary cards */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-        <div className="rounded-lg border border-surface-border bg-white p-4 shadow-card">
+      {/* Summary cards: one sideways row below md (Out of Stock first), the grid from md up. */}
+      <div
+        data-kpi-row
+        className="flex snap-x gap-3 overflow-x-auto py-1 scrollbar-hide md:grid md:grid-cols-3 md:gap-4 md:overflow-visible md:py-0"
+      >
+        <div
+          data-kpi-cell
+          className="order-2 w-[46%] shrink-0 snap-start rounded-lg border border-surface-border bg-white p-4 shadow-card md:order-none md:w-auto md:shrink"
+        >
           <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
             Total Products
           </p>
@@ -1467,8 +1518,9 @@ export default function InventoryPage() {
         </div>
 
         <div
+          data-kpi-cell
           className={cn(
-            "rounded-lg border border-surface-border bg-white p-4 shadow-card",
+            "order-3 w-[46%] shrink-0 snap-start rounded-lg border border-surface-border bg-white p-4 shadow-card md:order-none md:w-auto md:shrink",
             missingCostCount > 0 && "border-warning/40 ring-2 ring-warning/10",
           )}
         >
@@ -1512,8 +1564,9 @@ export default function InventoryPage() {
         </div>
 
         <div
+          data-kpi-cell
           className={cn(
-            "rounded-lg border border-surface-border bg-white p-4 shadow-card",
+            "order-1 w-[46%] shrink-0 snap-start rounded-lg border border-surface-border bg-white p-4 shadow-card md:order-none md:w-auto md:shrink",
             outOfStockCount > 0 && "border-danger/40 ring-2 ring-danger/10",
           )}
         >
@@ -1555,7 +1608,7 @@ export default function InventoryPage() {
               <Link
                 key={tab.value}
                 href={tab.href}
-                className="-mb-px shrink-0 whitespace-nowrap border-b-2 border-transparent px-4 py-2.5 text-sm font-medium text-navy/70 transition-colors hover:text-navy"
+                className="-mb-px shrink-0 whitespace-nowrap border-b-2 border-transparent px-4 py-2.5 text-sm font-medium text-navy/70 transition-colors hover:text-navy max-md:flex max-md:min-h-[44px] max-md:items-center"
               >
                 {tab.label}
               </Link>
@@ -1564,7 +1617,7 @@ export default function InventoryPage() {
                 key={tab.value}
                 value={tab.value}
                 className={cn(
-                  "-mb-px shrink-0 whitespace-nowrap border-b-2 border-transparent px-4 py-2.5 text-sm font-medium transition-colors",
+                  "-mb-px shrink-0 whitespace-nowrap border-b-2 border-transparent px-4 py-2.5 text-sm font-medium transition-colors max-md:min-h-[44px]",
                   "text-navy/70 hover:text-navy",
                   "data-[state=active]:border-brand-500 data-[state=active]:text-navy",
                 )}
@@ -1627,7 +1680,7 @@ export default function InventoryPage() {
                   }
                 }}
                 placeholder="Search by name, SKU, or category…"
-                className="h-9 w-full rounded-lg border border-surface-border bg-white pl-9 pr-9 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                className="h-11 md:h-9 w-full rounded-lg border border-surface-border bg-white pl-9 pr-9 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                 role="combobox"
                 aria-expanded={stockSuggestOpen && stockSuggestions.length > 0}
                 aria-autocomplete="list"
@@ -1639,7 +1692,7 @@ export default function InventoryPage() {
                     setStockSearch("");
                     setStockSuggestOpen(false);
                   }}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-navy/30 transition-colors hover:bg-surface-raised hover:text-navy"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 max-md:right-0 max-md:grid max-md:h-11 max-md:w-11 max-md:place-items-center text-navy/30 transition-colors hover:bg-surface-raised hover:text-navy"
                   aria-label="Clear search"
                 >
                   <X className="h-3.5 w-3.5" />
@@ -1774,8 +1827,10 @@ export default function InventoryPage() {
                 return `${shown} of ${total}`;
               })()}
             </p>
-            <div className="flex flex-wrap gap-2">
-              {/* B562 (interim mitigation): the dedicated "Recompute" button and the
+            {/* The toolbar buttons are md and up; below md Quick restock is in the header and the rest in its More menu. */}
+            <div data-testid="stock-toolbar-actions" className="hidden md:block">
+              <div className="flex flex-wrap gap-2">
+                {/* B562 (interim mitigation): the dedicated "Recompute" button and the
                   "Costs" button's recompute fallback (used when there were no missing
                   costs) were removed here. recompute-costs is blind to raw order
                   decrements and can silently rewrite a tenant's whole inventory
@@ -1783,51 +1838,52 @@ export default function InventoryPage() {
                   InventoryController.recomputeCosts. Only the "Set Costs" path (for
                   products genuinely missing a cost basis) remains reachable. Do not
                   re-add either entry point until B562's root cause is fixed. */}
-              {missingCostCount > 0 && (
+                {missingCostCount > 0 && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    leftIcon={<DollarSign className="h-4 w-4" />}
+                    onClick={() => setShowBulkCostModal(true)}
+                    title={`Set a cost basis for ${missingCostCount} ${missingCostCount === 1 ? "product" : "products"} without one`}
+                  >
+                    {`Set Costs (${missingCostCount})`}
+                  </Button>
+                )}
                 <Button
                   size="sm"
                   variant="secondary"
-                  leftIcon={<DollarSign className="h-4 w-4" />}
-                  onClick={() => setShowBulkCostModal(true)}
-                  title={`Set a cost basis for ${missingCostCount} ${missingCostCount === 1 ? "product" : "products"} without one`}
+                  leftIcon={<SlidersHorizontal className="h-4 w-4" />}
+                  onClick={() => {
+                    setAdjustPreselectId(undefined);
+                    setShowAdjustModal(true);
+                  }}
                 >
-                  {`Set Costs (${missingCostCount})`}
+                  Adjust stock
                 </Button>
-              )}
-              <Button
-                size="sm"
-                variant="secondary"
-                leftIcon={<SlidersHorizontal className="h-4 w-4" />}
-                onClick={() => {
-                  setAdjustPreselectId(undefined);
-                  setShowAdjustModal(true);
-                }}
-              >
-                Adjust stock
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                leftIcon={<Plus className="h-4 w-4" />}
-                onClick={() => setShowAddProductModal(true)}
-              >
-                Add product
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                leftIcon={<Sparkles className="h-4 w-4" />}
-                onClick={() => setShowScanModal(true)}
-              >
-                Scan invoice
-              </Button>
-              <Button
-                size="sm"
-                leftIcon={<Plus className="h-4 w-4" />}
-                onClick={() => setShowPurchaseModal(true)}
-              >
-                Quick restock
-              </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  leftIcon={<Plus className="h-4 w-4" />}
+                  onClick={() => setShowAddProductModal(true)}
+                >
+                  Add product
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  leftIcon={<Sparkles className="h-4 w-4" />}
+                  onClick={() => setShowScanModal(true)}
+                >
+                  Scan invoice
+                </Button>
+                <Button
+                  size="sm"
+                  leftIcon={<Plus className="h-4 w-4" />}
+                  onClick={() => setShowPurchaseModal(true)}
+                >
+                  Quick restock
+                </Button>
+              </div>
             </div>
           </div>
 
