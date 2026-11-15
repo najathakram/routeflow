@@ -355,8 +355,7 @@ describeDb("W-946r quantity floor (SA-1149 D2), real Postgres", () => {
     await edit(o.id, { items: [{ id: o.lineItems[0].id, qty: 2 }] }).catch((e) => {
       outcome = { status: e?.status, code: e?.response?.code };
     });
-    // eslint-disable-next-line no-console
-    console.log("W946R-D2-3", JSON.stringify(outcome));
+    // D2-3 observed on master: PARTIALLY_DELIVERED is already refused (409 LINE_ALREADY_DELIVERED), so this row is a guard.
     expect(outcome).toMatchObject({ status: 409 });
     expect(await snapshot(o.id)).toEqual(before);
   }, 120_000);
