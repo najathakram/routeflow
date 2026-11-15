@@ -283,6 +283,14 @@ function StatTile({
 
 // ─── Payment Summary (KPI stat tiles) ─────────────────────────────────────────
 
+/** Below md the red Overdue total comes second; md and up keep the DOM order (`md:order-none`). */
+const KPI_PHONE_ORDER: Record<string, string> = {
+  "Total outstanding": "order-1 md:order-none",
+  Overdue: "order-2 md:order-none",
+  "Due today": "order-3 md:order-none",
+  "Due within 30 days": "order-4 md:order-none",
+};
+
 function PaymentSummaryBar({
   activeFilter,
   onFilter,
@@ -379,7 +387,7 @@ function PaymentSummaryBar({
   return (
     <div
       data-kpi-row
-      className="flex snap-x items-start gap-3 overflow-x-auto py-1 scrollbar-hide md:grid md:items-stretch md:py-0 md:grid-cols-2 md:gap-4 md:overflow-visible lg:grid-cols-6"
+      className="flex snap-x gap-3 overflow-x-auto py-1 scrollbar-hide md:grid md:py-0 md:grid-cols-2 md:gap-4 md:overflow-visible lg:grid-cols-6"
     >
       {items.map((item) => (
         <div
@@ -388,6 +396,7 @@ function PaymentSummaryBar({
           className={cn(
             "flex shrink-0 snap-start flex-col md:w-auto md:shrink [&>*]:flex-1",
             item.hint ? "w-[78%]" : "w-[46%]",
+            KPI_PHONE_ORDER[item.label] ?? "order-5",
           )}
         >
           <StatTile
@@ -802,7 +811,7 @@ export default function InvoicesPage() {
       </div>
 
       {/* Due-soon chips */}
-      <div className="flex snap-x items-center gap-2 overflow-x-auto py-1 scrollbar-hide md:py-0">
+      <div className="flex snap-x items-center gap-2 overflow-x-auto py-1 scrollbar-hide md:flex-wrap md:overflow-visible md:py-0">
         {!isCustomer && (
           <button
             type="button"
@@ -890,7 +899,14 @@ export default function InvoicesPage() {
           <div className="flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center">
             <div className="flex flex-col gap-2 md:flex-row md:items-center md:gap-1.5">
               <Calendar className="hidden h-4 w-4 text-navy/70 md:block" />
+              <label
+                htmlFor="invoice-date-from"
+                className="text-xs font-medium text-navy/70 md:sr-only"
+              >
+                From
+              </label>
               <input
+                id="invoice-date-from"
                 type="date"
                 value={dateFrom}
                 onChange={(e) => setFilter("dateFrom", e.target.value)}
@@ -899,7 +915,14 @@ export default function InvoicesPage() {
                 title="Issue date from"
               />
               <span className="hidden text-navy/70 md:inline">–</span>
+              <label
+                htmlFor="invoice-date-to"
+                className="text-xs font-medium text-navy/70 md:sr-only"
+              >
+                To
+              </label>
               <input
+                id="invoice-date-to"
                 type="date"
                 value={dateTo}
                 min={dateFrom || undefined}
@@ -910,10 +933,11 @@ export default function InvoicesPage() {
               {(dateFrom || dateTo) && (
                 <button
                   onClick={() => setFilters({ dateFrom: "", dateTo: "" })}
-                  className="grid min-h-[44px] place-items-center rounded p-1 text-navy/70 transition-colors hover:text-danger md:min-h-0"
+                  className="grid min-h-[44px] place-items-center rounded border border-surface-border px-3 text-sm font-medium text-navy transition-colors hover:text-danger md:min-h-0 md:border-0 md:p-1 md:text-navy/70"
                   title="Clear dates"
                 >
-                  <X className="h-3.5 w-3.5" />
+                  <span className="md:hidden">Clear dates</span>
+                  <X className="hidden h-3.5 w-3.5 md:block" />
                 </button>
               )}
             </div>

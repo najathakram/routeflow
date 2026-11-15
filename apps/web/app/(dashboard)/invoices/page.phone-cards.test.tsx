@@ -11,13 +11,14 @@ import InvoicesPage from "./page";
 
 let mockSearchString = "";
 const mockPush = jest.fn();
+const mockReplace = jest.fn();
 const mockApiGet = jest.fn();
 jest.mock("@/lib/api-client", () => ({
   ...jest.requireActual("@/lib/api-client"),
   apiClient: { get: (...a: unknown[]) => mockApiGet(...a) },
 }));
 jest.mock("next/navigation", () => ({
-  useRouter: () => ({ push: mockPush, replace: jest.fn() }),
+  useRouter: () => ({ push: mockPush, replace: mockReplace }),
   usePathname: () => "/invoices",
   useSearchParams: () => new URLSearchParams(mockSearchString),
 }));
@@ -76,6 +77,7 @@ describe("InvoicesPage — phone cards", () => {
   beforeEach(() => {
     mockSearchString = "";
     mockPush.mockClear();
+    mockReplace.mockClear();
     mockUseInvoices.mockReset();
     mockUseInvoices.mockReturnValue({
       data: { data: INVOICES, meta: { total: 2, page: 1, limit: 20, totalPages: 1 } },
@@ -154,7 +156,7 @@ describe("InvoicesPage — phone cards", () => {
     expect(withHint.className).not.toContain("w-[46%]");
     expect(without.className).toContain("w-[46%]");
     const row = without.closest("[data-kpi-row]") as HTMLElement;
-    expect(row.className).toContain("items-start");
+    expect(row.className).not.toContain("items-start");
     expect(row.className).toContain("py-1");
     expect(row.className).toContain("md:py-0");
     const chips = screen.getByRole("button", { name: "Due today" }).parentElement as HTMLElement;
@@ -163,6 +165,43 @@ describe("InvoicesPage — phone cards", () => {
     expect(screen.getByText("Draft payments not yet counted as paid").className).toContain(
       "line-clamp-2",
     );
+  });
+
+  it("shows Overdue second below md and keeps DOM order from md up", () => {
+    renderWithProviders(<InvoicesPage />);
+    const kpiRow = screen.getByText("Total outstanding").closest("[data-kpi-row]") as HTMLElement;
+    const order = (label: string) =>
+      (within(kpiRow).getByText(label).closest("[data-kpi-cell]") as HTMLElement).className;
+    const expected: [string, string][] = [
+      ["Total outstanding", "order-1"],
+      ["Overdue", "order-2"],
+      ["Due today", "order-3"],
+      ["Due within 30 days", "order-4"],
+    ];
+    for (const [label, cls] of expected) {
+      expect(order(label).split(" ")).toContain(cls);
+      expect(order(label)).toContain("md:order-none");
+    }
+    const row = screen.getByText("Total outstanding").closest("[data-kpi-row]") as HTMLElement;
+    expect(row.className).not.toContain("items-start");
+  });
+
+  it("labels the date fields From and To and clears them with a Clear dates button", async () => {
+    const user = userEvent.setup();
+    mockSearchString = "dateFrom=2026-01-01&dateTo=2026-02-01";
+    renderWithProviders(<InvoicesPage />);
+    expect(screen.getByLabelText("From")).toHaveAttribute("type", "date");
+    expect(screen.getByLabelText("To")).toHaveAttribute("type", "date");
+    await user.click(screen.getByRole("button", { name: "Clear dates" }));
+    expect(mockReplace).toHaveBeenCalled();
+    expect(String(mockReplace.mock.calls.at(-1)![0])).not.toContain("dateFrom");
+  });
+
+  it("the due-chip row wraps from md up instead of scrolling", () => {
+    renderWithProviders(<InvoicesPage />);
+    const chips = screen.getByRole("button", { name: "Due today" }).parentElement as HTMLElement;
+    expect(chips.className).toContain("md:flex-wrap");
+    expect(chips.className).toContain("md:overflow-visible");
   });
 
   it("status tabs and due chips are one sideways-scrolling row each below md", () => {
@@ -178,7 +217,7 @@ describe("InvoicesPage — phone cards", () => {
     const chip = screen.getByRole("button", { name: "Due today" });
     const chips = chip.parentElement as HTMLElement;
     expect(chips.className).toContain("overflow-x-auto");
-    expect(chips.className).not.toContain("flex-wrap");
+    expect(chips.className.split(" ")).not.toContain("flex-wrap");
     expect(chip.className).toContain("shrink-0");
   });
 
