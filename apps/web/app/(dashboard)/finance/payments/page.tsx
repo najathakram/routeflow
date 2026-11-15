@@ -560,7 +560,7 @@ export default function FinancePaymentsPage() {
     sortDir,
   };
 
-  const { data, isLoading } = useInvoicePayments(params);
+  const { data, isLoading, isError, refetch } = useInvoicePayments(params);
   const { data: customersData } = useCustomers({ limit: 200 });
   const voidPayment = useVoidPayment();
   const exportPayments = useExportPayments();
@@ -636,9 +636,13 @@ export default function FinancePaymentsPage() {
     setDateTo("");
     setCustomerId("");
   };
-  const filtered = Boolean(search || method || status || dateFrom || dateTo || customerId);
+  // `debouncedSearch` too: the query still carries the old text for 300 ms after the box is cleared.
+  const filtered = Boolean(
+    search || debouncedSearch || method || status || dateFrom || dateTo || customerId,
+  );
   // No payments at all (not "no results for this filter"): one message and one action, nothing to filter.
-  const trulyEmpty = !isLoading && payments.length === 0 && !filtered;
+  // Only a loaded answer of "zero in total" counts: a failed load, a page past the end and a filter are not empty.
+  const trulyEmpty = !isLoading && !isError && meta?.total === 0 && !filtered;
 
   const emptyState = filtered ? (
     <EmptyState
@@ -718,23 +722,28 @@ export default function FinancePaymentsPage() {
       </div>
 
       {/* Summary cards */}
-      {summary && (
+      {summary && !(trulyEmpty && summary.advanceBalance <= 0) && (
         <div
           data-kpi-row
-          className="flex snap-x gap-3 overflow-x-auto py-1 scrollbar-hide md:grid md:grid-cols-3 md:gap-4 md:overflow-visible md:py-0"
+          className={cn(
+            "flex snap-x gap-3 overflow-x-auto py-1 scrollbar-hide md:grid md:gap-4 md:overflow-visible md:py-0",
+            trulyEmpty ? "md:max-w-xs md:grid-cols-1" : "md:grid-cols-3",
+          )}
         >
-          <div
-            data-kpi-cell
-            className="w-[46%] shrink-0 snap-start rounded-xl border border-surface-border bg-white p-3 md:w-auto md:shrink md:p-4"
-          >
-            <p className="text-xs font-medium uppercase tracking-wide text-navy/70">
-              Total received
-            </p>
-            <p className="mt-1 text-2xl font-bold text-success">{fmt(summary.totalReceived)}</p>
-            <p className="text-xs text-navy/70 mt-0.5">
-              {summary.count} {summary.count === 1 ? "payment" : "payments"}
-            </p>
-          </div>
+          {!trulyEmpty && (
+            <div
+              data-kpi-cell
+              className="w-[46%] shrink-0 snap-start rounded-xl border border-surface-border bg-white p-3 md:w-auto md:shrink md:p-4"
+            >
+              <p className="text-xs font-medium uppercase tracking-wide text-navy/70">
+                Total received
+              </p>
+              <p className="mt-1 text-2xl font-bold text-success">{fmt(summary.totalReceived)}</p>
+              <p className="text-xs text-navy/70 mt-0.5">
+                {summary.count} {summary.count === 1 ? "payment" : "payments"}
+              </p>
+            </div>
+          )}
           {!trulyEmpty && (
             <div
               data-kpi-cell
@@ -1010,9 +1019,17 @@ export default function FinancePaymentsPage() {
           !isLoading && payments.length > 0 && "hidden md:block",
         )}
       >
-        {isLoading ? (
+        {isLoading || (payments.length === 0 && !isError && !trulyEmpty && !filtered) ? (
+          // Loading, or a page past the end for a moment before the page number is clamped.
           <div className="flex h-64 items-center justify-center">
             <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand-500 border-t-transparent" />
+          </div>
+        ) : payments.length === 0 && isError ? (
+          <div className="flex flex-col items-center gap-3 px-4 py-12 text-center">
+            <p className="text-sm text-danger">Couldn&apos;t load payments.</p>
+            <Button variant="secondary" size="sm" onClick={() => refetch()}>
+              Try again
+            </Button>
           </div>
         ) : payments.length === 0 ? (
           emptyState

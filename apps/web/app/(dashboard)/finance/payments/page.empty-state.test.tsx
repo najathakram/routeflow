@@ -7,10 +7,11 @@ import FinancePaymentsPage from "./page";
  * message and one action; a list filtered down to nothing keeps its filters and says so.
  */
 
+let mockUrlSearch = "";
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
   usePathname: () => "/finance/payments",
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => new URLSearchParams(mockUrlSearch ? { search: mockUrlSearch } : {}),
 }));
 jest.mock("@/lib/page-title-context", () => ({
   usePageTitle: () => ({ setTitle: jest.fn() }),
@@ -68,6 +69,7 @@ const ONE = {
 
 beforeEach(() => {
   mockUsePayments.mockReset();
+  mockUrlSearch = "";
 });
 
 describe("Payments received: no payments at all", () => {
@@ -131,5 +133,91 @@ describe("Payments received: filtered down to nothing", () => {
     expect(screen.getByLabelText("Search payments")).toBeInTheDocument();
     expect(screen.getByText(/Filtered Count/i)).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /Record payment/i })).toHaveLength(1);
+  });
+});
+
+describe("Payments received: loading, error and a search from the URL", () => {
+  it("loading: the spinner, no empty state, filters and the header action stay", () => {
+    mockUsePayments.mockReturnValue({ data: undefined, isLoading: true, isError: false });
+    renderWithProviders(<FinancePaymentsPage />);
+    expect(screen.queryByText("No payments yet")).toBeNull();
+    expect(screen.queryByText("No matching payments")).toBeNull();
+    expect(screen.getByLabelText("Search payments")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /Record payment/i })).toHaveLength(1);
+  });
+
+  it("error: an error line with Try again, filters stay, never 'No payments yet'", () => {
+    const refetch = jest.fn();
+    mockUsePayments.mockReturnValue({ data: undefined, isLoading: false, isError: true, refetch });
+    renderWithProviders(<FinancePaymentsPage />);
+    expect(screen.getByText("Couldn't load payments.")).toBeInTheDocument();
+    expect(screen.queryByText("No payments yet")).toBeNull();
+    expect(screen.getByLabelText("Search payments")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("a ?search= that matches nothing: filters stay and it says no payments match", () => {
+    mockUrlSearch = "zzz";
+    mockUsePayments.mockReturnValue(EMPTY);
+    renderWithProviders(<FinancePaymentsPage />);
+    expect(screen.getByText("No matching payments")).toBeInTheDocument();
+    expect(screen.getByLabelText("Search payments")).toHaveValue("zzz");
+    expect(screen.queryByText("No payments yet")).toBeNull();
+  });
+
+  it("clearing a search that matched nothing never flashes the truly-empty state", () => {
+    mockUrlSearch = "zzz";
+    mockUsePayments.mockReturnValue(EMPTY);
+    renderWithProviders(<FinancePaymentsPage />);
+    fireEvent.change(screen.getByLabelText("Search payments"), { target: { value: "" } });
+    // The query still carries "zzz" for the 300 ms debounce, so this is still a filtered list.
+    expect(screen.queryByText("No payments yet")).toBeNull();
+    expect(screen.getByLabelText("Search payments")).toBeInTheDocument();
+  });
+
+  it("a page past the end (rows empty, total above 0) is not 'No payments yet'", () => {
+    mockUsePayments.mockReturnValue({
+      data: {
+        data: [],
+        meta: { total: 5, page: 3, limit: 25, totalPages: 1 },
+        summary: { totalReceived: 200, count: 5, advanceBalance: 0 },
+      },
+      isLoading: false,
+      isError: false,
+    });
+    renderWithProviders(<FinancePaymentsPage />);
+    expect(screen.queryByText("No payments yet")).toBeNull();
+    expect(screen.getByLabelText("Search payments")).toBeInTheDocument();
+  });
+});
+
+describe("Payments received: the totals row with no payments", () => {
+  const withAdvance = (advanceBalance: number) => ({
+    ...EMPTY,
+    data: { ...EMPTY.data, summary: { totalReceived: 0, count: 0, advanceBalance } },
+  });
+
+  it("hides Total received (it only repeats the empty state) and Advance balance at 0", () => {
+    mockUsePayments.mockReturnValue(withAdvance(0));
+    renderWithProviders(<FinancePaymentsPage />);
+    expect(screen.queryByText("Total received")).toBeNull();
+    expect(screen.queryByText("Advance Balance")).toBeNull();
+  });
+
+  it("shows Advance balance alone when it is above 0, in a one-card row", () => {
+    mockUsePayments.mockReturnValue(withAdvance(25));
+    const { container } = renderWithProviders(<FinancePaymentsPage />);
+    expect(screen.queryByText("Total received")).toBeNull();
+    expect(screen.getByText("Advance Balance")).toBeInTheDocument();
+    expect(container.querySelectorAll("[data-kpi-cell]")).toHaveLength(1);
+    expect(container.querySelector("[data-kpi-row]")!.className).not.toContain("md:grid-cols-3");
+  });
+
+  it("with payments, all three cards stay", () => {
+    mockUsePayments.mockReturnValue(ONE);
+    const { container } = renderWithProviders(<FinancePaymentsPage />);
+    expect(screen.getByText("Total received")).toBeInTheDocument();
+    expect(container.querySelectorAll("[data-kpi-cell]")).toHaveLength(3);
   });
 });
