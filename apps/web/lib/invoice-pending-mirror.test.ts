@@ -1,4 +1,4 @@
-import { isPendingMirrorInvoice, pendingMirrorCopy } from "./invoice-pending-mirror";
+import { isPendingMirrorInvoice, paidInAdvance, pendingMirrorCopy } from "./invoice-pending-mirror";
 
 const draft = {
   orderId: "o1",
@@ -47,5 +47,20 @@ describe("pendingMirrorCopy: no delivery on a store-only order", () => {
   });
   it("R4: the pill's words are gone; only the note remains", () => {
     expect(Object.keys(pendingMirrorCopy(true))).toEqual(["note"]);
+  });
+});
+
+describe("paidInAdvance (UX guide B6)", () => {
+  it("full: a DRAFT with nothing left to pay", () => {
+    expect(paidInAdvance({ status: "DRAFT", total: 89.77, balanceDue: 0 })).toBe("full");
+  });
+  it("part: a DRAFT with some paid and some due", () => {
+    expect(paidInAdvance({ status: "DRAFT", total: 100, balanceDue: 40 })).toBe("part");
+  });
+  it("none: a SENT invoice, an unpaid DRAFT, a $0 DRAFT, or a missing balance", () => {
+    expect(paidInAdvance({ status: "SENT", total: 100, balanceDue: 0 })).toBe("none");
+    expect(paidInAdvance({ status: "DRAFT", total: 100, balanceDue: 100 })).toBe("none");
+    expect(paidInAdvance({ status: "DRAFT", total: 0, balanceDue: 0 })).toBe("none");
+    expect(paidInAdvance({ status: "DRAFT", total: 100 })).toBe("none");
   });
 });

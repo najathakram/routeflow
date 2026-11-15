@@ -1,4 +1,5 @@
 import { isPostDeliveryOrderStatus } from "@routeflow/types";
+import { roundMoney } from "@routeflow/pricing";
 
 /**
  * The order-linked DRAFT that mirrors an un-delivered order: it auto-syncs to the order and the API
@@ -40,4 +41,23 @@ export function pendingMirrorCopy(storeOnly: boolean | null): { note: string } {
   // owner rule: an invoice DRAFT until handed over, final at hand-over. A pickup order has no delivery.
   if (storeOnly) return { note: "you'll review and send this invoice after pickup." };
   return { note: "you'll review and send this invoice after delivery." };
+}
+
+/**
+ * UX guide B6: a DRAFT stays DRAFT after a prepayment (`statusFromPayments` keeps it terminal, by design), so say
+ * what the money did. "full" = DRAFT, total > 0 and nothing left to pay; "part" = DRAFT with some paid and some due;
+ * otherwise "none". A missing `balanceDue` claims nothing. One predicate for every page that shows the chip.
+ */
+export function paidInAdvance(inv: {
+  status?: string | null;
+  total?: number | string | null;
+  balanceDue?: number | string | null;
+}): "full" | "part" | "none" {
+  if (inv.status !== "DRAFT" || inv.balanceDue == null || inv.total == null) return "none";
+  const total = Number(inv.total);
+  const balanceDue = Number(inv.balanceDue);
+  if (!Number.isFinite(total) || !Number.isFinite(balanceDue)) return "none";
+  if (total > 0.001 && balanceDue <= 0.001) return "full";
+  if (balanceDue > 0.001 && roundMoney(total - balanceDue) > 0.001) return "part";
+  return "none";
 }

@@ -46,11 +46,13 @@ const useInvoicePaymentsSpy = jest.fn((..._args: unknown[]) => ({
   isLoading: false,
 }));
 
+const useInvoiceMock = jest.fn((..._args: unknown[]) => ({ data: undefined as unknown }));
+
 jest.mock("@/lib/api/invoices", () => ({
   ...jest.requireActual("@/lib/api/invoices"),
   usePaymentDetail: (id: string) => usePaymentDetailMock(id),
   useInvoicePayments: (...args: unknown[]) => useInvoicePaymentsSpy(...args),
-  useInvoice: () => ({ data: undefined }),
+  useInvoice: (...args: unknown[]) => useInvoiceMock(...args),
   useVoidPayment: () => ({ mutateAsync: jest.fn(), isPending: false }),
   useGetPaymentImageUrl: () => ({ mutateAsync: jest.fn() }),
 }));
@@ -60,7 +62,10 @@ jest.mock("@/lib/api-client", () => ({
 }));
 
 describe("PaymentDetailPage — REG-B80 single-payment fetch", () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    useInvoiceMock.mockReturnValue({ data: undefined });
+  });
 
   it("fetches the payment by id via usePaymentDetail, never pages useInvoicePayments, and renders the payment number", async () => {
     renderWithProviders(<PaymentDetailPage />);
@@ -70,5 +75,25 @@ describe("PaymentDetailPage — REG-B80 single-payment fetch", () => {
 
     expect(usePaymentDetailMock).toHaveBeenCalledWith("pay-9");
     expect(useInvoicePaymentsSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("PaymentDetailPage — UX guide B6 paid-in-advance chip", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    useInvoiceMock.mockReturnValue({ data: undefined });
+  });
+
+  it("says Paid in advance beside the badge of a fully prepaid DRAFT invoice", async () => {
+    useInvoiceMock.mockReturnValue({ data: { status: "DRAFT", total: 89.77, balanceDue: 0 } });
+    renderWithProviders(<PaymentDetailPage />);
+    expect(await screen.findByText("Paid in advance")).toBeInTheDocument();
+  });
+
+  it("says nothing for a settled SENT invoice (guard)", async () => {
+    useInvoiceMock.mockReturnValue({ data: { status: "SENT", total: 89.77, balanceDue: 0 } });
+    renderWithProviders(<PaymentDetailPage />);
+    await screen.findByText("PAY-000009");
+    expect(screen.queryByText(/paid in advance/i)).not.toBeInTheDocument();
   });
 });
