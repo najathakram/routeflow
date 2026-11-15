@@ -16,6 +16,7 @@
 jest.mock("./invoice-pdf.service", () => ({ InvoicePdfService: class InvoicePdfService {} }));
 jest.mock("../storage/compress.util", () => ({ compressDocument: jest.fn() }));
 
+import { operatorWithRights } from "../common/testing/operator-with-rights";
 import { Test } from "@nestjs/testing";
 import { BadRequestException } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
@@ -132,6 +133,7 @@ describe("InvoicesService — a typed price is judged against the customer's tie
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    operatorWithRights(prisma, USER);
     const hasFlag = jest.fn(async (_t: string, flag: string) => flag === "flag.units_v1");
     const module = await Test.createTestingModule({ providers: [InvoicesService] })
       .useMocker((token) => {

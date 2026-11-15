@@ -28,6 +28,7 @@ jest.mock("../notifications/notifications.service", () => ({
   })),
 }));
 
+import { operatorWithRights } from "../common/testing/operator-with-rights";
 import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { ServiceUnavailableException } from "@nestjs/common";
@@ -160,6 +161,7 @@ describe("OrdersService.updateOrderItems — driver lines resolve the customer's
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    operatorWithRights(prisma, operatorPayload);
     stock = wireStockHelper(prisma, { ample: true });
 
     const module: TestingModule = await Test.createTestingModule({
