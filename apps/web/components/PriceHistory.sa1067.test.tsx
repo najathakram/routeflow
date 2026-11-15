@@ -7,6 +7,7 @@ import type {
   PriceHistoryRow,
   PriceHistorySummary,
 } from "@/lib/api/price-history";
+import { useScanClock } from "@/test-utils/scan-clock";
 
 /** SA-1067 M1 (P1-P7): the panel opens with nothing chosen; one Enter never commits a price nobody picked. */
 
@@ -94,6 +95,8 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockGet.mockResolvedValue({ data: base() });
 });
+
+useScanClock(); // SA-1159: key stamps through the constants, never the wall clock
 
 describe("SA-1067 M1: the history panel opens with no row chosen", () => {
   it("P1/P2: a scanner's one Enter (digits then Enter) on the open panel commits nothing and keeps it open", async () => {

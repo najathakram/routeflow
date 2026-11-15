@@ -6,6 +6,7 @@ import { createNavShortcutHandler } from "@/lib/nav-shortcuts";
 import { renderTill } from "@/test-utils/render-till";
 import { apiClient } from "@/lib/api-client";
 import { CounterSaleScreen } from "./CounterSaleScreen";
+import { useScanClock } from "@/test-utils/scan-clock";
 
 /**
  * SA-1067 M2b (T1-T6, T8; T7 is a guard: part pay over the total is refused today, so the arm isn't wired there): Enter in Amount tendered or Amount paying now used to complete the sale. A real tender is within one
@@ -106,6 +107,8 @@ const complete = () =>
   fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
 const posted = () => mutateAsync.mock.calls.length;
 const hint = () => screen.queryByText(HINT);
+
+useScanClock(); // SA-1159: key stamps through the constants, never the wall clock
 
 describe("SA-1067 M2b: a tender far over the total needs a second Enter", () => {
   it("T1/T2: cash, total $12.50, tender 4011 Enter does not post, shows the hint and the change; a second Enter posts", async () => {

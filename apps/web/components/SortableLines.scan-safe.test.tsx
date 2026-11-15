@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createFieldScanRun } from "@/lib/scan-run";
 import { SortableLines, useSortableLine, type LineMove } from "./SortableLines";
+import { useScanClock } from "@/test-utils/scan-clock";
 
 /**
  * W-1187 PR-2b scan safety (the class that failed #4288 and #4293): a wedge scanner types a code and Enter at machine speed
@@ -88,6 +89,8 @@ beforeEach(() => {
   });
 });
 afterEach(() => jest.restoreAllMocks());
+
+useScanClock(); // SA-1159: key stamps through the constants, never the wall clock
 
 describe("SortableLines: scan safety", () => {
   it("Enter on a focused handle does not pick the line up (Space does)", async () => {

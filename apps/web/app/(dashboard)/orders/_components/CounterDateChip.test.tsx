@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import userEvent from "@testing-library/user-event";
 import { CounterDateChip, CounterDateReminder } from "./CounterDateChip";
 import { OFFICE_FUTURE_HINT } from "./CounterDatePicker";
+import { useScanClock } from "@/test-utils/scan-clock";
 
 // W-1188 N2: the chip's states, Alt+D, the picker's typed date, and the caps. Monday 2026-11-09 is the business's today.
 const TODAY = "2026-11-09";
@@ -18,6 +19,8 @@ function setup(value = "", over: Partial<React.ComponentProps<typeof CounterDate
   );
   return { onChange, onDone };
 }
+
+useScanClock(); // SA-1159: key stamps through the constants, never the wall clock
 
 describe("CounterDateChip states", () => {
   it("unknown day: shows the day with checking, never Today, never Dated (R8)", () => {

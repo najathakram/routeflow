@@ -3,6 +3,7 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/test-utils/render";
 import { CreateOrderModal } from "./CreateOrderModal";
+import { useScanClock } from "@/test-utils/scan-clock";
 
 /**
  * W-1187 PR-2b: a scan that starts while a line handle holds focus is looked up WHOLE. The REAL wedge detector
@@ -110,6 +111,8 @@ async function build() {
     await waitFor(() => expect(screen.getAllByText(n).length).toBeGreaterThan(0));
   }
 }
+
+useScanClock(); // SA-1159: key stamps through the constants, never the wall clock
 
 describe("CreateOrderModal: a scan that starts on a line handle (real detector)", () => {
   it("control: focus in the search box, the whole code is looked up", async () => {

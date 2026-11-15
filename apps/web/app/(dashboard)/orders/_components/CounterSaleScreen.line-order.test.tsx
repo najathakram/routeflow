@@ -6,6 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { screen, waitFor, fireEvent, within } from "@/test-utils/render";
 import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
+import { useScanClock } from "@/test-utils/scan-clock";
 
 /**
  * W-1187 PR-2b: the till's lines can be dragged into any order. The cart is a local list and its array order is the order the
@@ -144,6 +145,8 @@ async function altDown(name: string) {
     fireEvent.keyDown(handle(name), { key: "ArrowDown", code: "ArrowDown", altKey: true });
   });
 }
+
+useScanClock(); // SA-1159: key stamps through the constants, never the wall clock
 
 describe("CounterSaleScreen: drag a line into any order (W-1187 PR-2b)", () => {
   it("every line of a two-line cart has a labelled handle; a one-line cart has none", async () => {
