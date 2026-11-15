@@ -50,6 +50,8 @@ describeDb(
     const slug = assertTestTenant(`qa-w871b-${run}`, "w871-paid-invoice-edit-lock.db.spec.ts");
     let tenantId = "";
     let operatorUserId = "";
+    let driverUserId = "";
+    let driverId = "";
     const userIds: string[] = [];
     const customerIds: string[] = [];
     const productIds: string[] = [];
@@ -229,10 +231,23 @@ describeDb(
           resyncOrderInvoicesForEdit: async () => [],
           ...INVOICE_EDIT_STUBS,
           reconcileOrderDraftInvoice: async () => undefined,
+          findOpenOrderDraft: async () => null,
+          releaseWalletPaymentsInTx: async () => undefined,
+          voidInvoiceInTx: async () => undefined,
         },
         logger: new Logger(OrdersService.name),
         inlineReturns: {},
-        creditNotes: { settleOrderCreditsInTx: async () => ({ applied: 0, unapplied: 0 }) },
+        creditNotes: {
+          settleOrderCreditsInTx: async () => ({ applied: 0, unapplied: 0 }),
+          previewOrderCreditRelease: async () => [],
+          releaseOrderCreditsInTx: async () => undefined,
+        },
+        notifications: {
+          sendToCustomer: jest.fn().mockResolvedValue(undefined),
+          sendToUser: jest.fn().mockResolvedValue(1),
+        },
+        messaging: { notifyEvent: jest.fn().mockResolvedValue(undefined) },
+        oversellReader: { read: async () => false },
       });
       tenantId = (await raw.tenant.create({ data: { slug, name: `w871b ${slug}` } })).id;
       operatorUserId = (
@@ -246,6 +261,18 @@ describeDb(
         })
       ).id;
       userIds.push(operatorUserId);
+      driverUserId = (
+        await raw.user.create({
+          data: {
+            email: `dr-${run}@example.test`,
+            username: `dr-${run}`,
+            role: "DRIVER",
+            tenantId,
+          },
+        })
+      ).id;
+      userIds.push(driverUserId);
+      driverId = (await raw.driver.create({ data: { userId: driverUserId, tenantId } as any })).id;
     }, 120_000);
 
     afterEach(() => {
@@ -253,12 +280,19 @@ describeDb(
     });
 
     afterAll(async () => {
+      await raw.changeRequest.deleteMany({ where: { tenantId } });
+      await raw.deliveryMutation.deleteMany({ where: { tenantId } });
       await raw.invoicePayment.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
       await raw.invoiceItem.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
       await raw.invoice.deleteMany({ where: { id: { in: invoiceIds } } });
       await raw.orderRevision?.deleteMany?.({ where: { orderId: { in: orderIds } } });
       await raw.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
       await raw.order.deleteMany({ where: { id: { in: orderIds } } });
+      await raw.routeRunStop.deleteMany({ where: { tenantId } });
+      await raw.routeRun.deleteMany({ where: { tenantId } });
+      await raw.routeStop.deleteMany({ where: { tenantId } });
+      await raw.route.deleteMany({ where: { tenantId } });
+      await raw.driver.deleteMany({ where: { tenantId } });
       await raw.stockMovement.deleteMany({ where: { productId: { in: productIds } } });
       await raw.product.deleteMany({ where: { id: { in: productIds } } });
       await raw.customer.deleteMany({ where: { id: { in: customerIds } } });
@@ -336,7 +370,112 @@ describeDb(
       expect(await snapshot(o.id)).toEqual(before);
     }, 60_000);
 
-    it("a VOID (bounced) payment on a PAID-status invoice does not by itself lock, only the invoice status does (B314 kept for SENT)", async () => {
+    /** The order on an IN_PROGRESS run (a stop), as the at-door apply needs; returns the open change request. */
+    async function atDoor(orderId: string, lineId: string, productId: string, customerId: string) {
+      const route = await raw.route.create({
+        data: { name: `r-${run}-${orderIds.length}`, tenantId } as any,
+      });
+      const routeStop = await raw.routeStop.create({
+        data: { tenantId, routeId: route.id, stopNumber: 1, customerId } as any,
+      });
+      const rr = await raw.routeRun.create({
+        data: {
+          tenantId,
+          routeId: route.id,
+          scheduledDate: new Date("2026-10-12T00:00:00.000Z"),
+          status: "IN_PROGRESS" as any,
+          driverId,
+        },
+      });
+      const stop = await raw.routeRunStop.create({
+        data: {
+          tenantId,
+          routeRunId: rr.id,
+          routeStopId: routeStop.id,
+          stopNumber: 1,
+          status: "PENDING" as any,
+        } as any,
+      });
+      await raw.order.update({
+        where: { id: orderId },
+        data: { routeRunId: rr.id, routeRunStopId: stop.id },
+      });
+      return raw.changeRequest.create({
+        data: {
+          tenantId,
+          orderId,
+          productId,
+          orderItemId: lineId,
+          routeRunStopId: stop.id,
+          type: "CHANGE_QTY" as any,
+          requestedByRole: "DRIVER",
+          payload: { orderItemId: lineId, newQty: 3 },
+        } as any,
+      });
+    }
+    const driver = (): JwtPayload =>
+      ({
+        sub: driverUserId,
+        username: `dr-${run}`,
+        role: "DRIVER",
+        status: "ACTIVE",
+        forcePasswordChange: false,
+        tenantId,
+        tenantSlug: slug,
+      }) as JwtPayload;
+
+    it("case 15: the at-door change-request apply on a PAID order is 400 with the door copy; the request stays open, nothing written", async () => {
+      const { o, lines, products } = await pendingOrder({ status: "PAID", paid: 20 });
+      const cr = await atDoor(o.id, lines[0].id, products[0], o.customerId);
+      const before = await snapshot(o.id);
+      await expect(
+        tenantCtx.run(tenantId, () => orders.approveChangeRequestAtStop(cr.id, driver())),
+      ).rejects.toMatchObject({
+        status: 400,
+        response: {
+          code: CODE,
+          message: "This order is already paid. The office can add these items on a new order.",
+        },
+      });
+      expect(await snapshot(o.id)).toEqual(before);
+      expect((await raw.changeRequest.findUniqueOrThrow({ where: { id: cr.id } })).status).toBe(
+        "PENDING",
+      );
+    }, 60_000);
+
+    // Cases 16-17 pin `findActiveOrder`, the one search the buyer's placement (buyer.controller `forMerge`) and the staff create's
+    // merge offer both run; the controllers themselves are not driven here.
+    it("cases 16-17: a customer's PAID order is not a merge target (buyer's forMerge search and staff's offer find none)", async () => {
+      const { o } = await pendingOrder({ status: "PAID", paid: 20 });
+      const find = (opts?: any) =>
+        tenantCtx.run(tenantId, () => orders.findActiveOrder(o.customerId, opts));
+      expect(await find({ forMerge: true })).toBeNull();
+      expect(await find()).toBeNull();
+    }, 60_000);
+
+    it("case 16b: PARTIAL, WRITTEN_OFF, a PARTIAL deposit mirror and a SENT invoice with a live payment are not merge targets either", async () => {
+      for (const o of [
+        await pendingOrder({ status: "PARTIAL", paid: 10 }),
+        await pendingOrder({ status: "WRITTEN_OFF" }),
+        await pendingOrder({ status: "PARTIAL", paid: 10, deposit: true }),
+        await pendingOrder({ status: "SENT", paid: 10 }),
+      ]) {
+        const found = await tenantCtx.run(tenantId, () =>
+          orders.findActiveOrder(o.o.customerId, { forMerge: true }),
+        );
+        expect(found).toBeNull();
+      }
+    }, 60_000);
+
+    it("case 18 (guard): a PENDING order with a SENT invoice and no payment is still a merge target", async () => {
+      const { o } = await pendingOrder({ status: "SENT" });
+      const found = await tenantCtx.run(tenantId, () =>
+        orders.findActiveOrder(o.customerId, { forMerge: true }),
+      );
+      expect(found?.id).toBe(o.id);
+    }, 60_000);
+
+    it("a VOID (bounced) payment on a SENT invoice does not block the edit (B314 kept)", async () => {
       const { o, lines } = await pendingOrder({ status: "SENT", paid: 10 });
       await raw.invoicePayment.updateMany({
         where: { invoiceId: { in: invoiceIds.slice(-1) } },
