@@ -14,10 +14,10 @@ import {
   getTierPrice,
   isSpecialPrice,
   round4,
-  LEGACY_DISCOUNT_BASE,
   roundMoney,
 } from "@routeflow/pricing";
 import { loadMsrpMap } from "../common/msrp";
+import { discountModeOf, newDocumentDiscountMode } from "../common/discount-tax-mode";
 import { configuredTaxRateFraction } from "../common/tax-rate";
 import { assertNsfLinesUntaxed } from "../invoices/nsf-line-tax-guard";
 import { EntitlementsService } from "../billing/entitlements.service";
@@ -288,7 +288,7 @@ export class EstimatesService {
     // H5: the invoice rule - each line's subtotal x the rate, summed unrounded, rounded once; $0 when exempt.
     const taxed = sumInvoiceTotalsStrict(
       itemsData.map((it) => ({ subtotal: it.subtotal, taxRate })),
-      { discount, isTaxExempt, discountBase: LEGACY_DISCOUNT_BASE },
+      { discount, isTaxExempt, discountBase: newDocumentDiscountMode() }, // SA-1141 R3: a new quote is stamped 'now'
     );
     const tax = taxed.regularTax;
     const total = roundMoney(subtotal - discount + tax);
@@ -381,7 +381,7 @@ export class EstimatesService {
       },
     });
     if (!est) throw new NotFoundException("Estimate not found");
-    return { ...est, items: withFamilyNames(est.items) }; // a quote line still holding the bare variant name reads "<Family> - <Variant>"
+    return { ...est, discountTaxBase: discountModeOf(est), items: withFamilyNames(est.items) }; // a quote line still holding the bare variant name reads "<Family> - <Variant>"
   }
 
   async send(id: string) {
@@ -582,7 +582,7 @@ export class EstimatesService {
       } = sumInvoiceTotalsStrict(itemsData, {
         discount,
         isTaxExempt,
-        discountBase: LEGACY_DISCOUNT_BASE,
+        discountBase: discountModeOf(est), // SA-1141 R4: the invoice takes the ESTIMATE's mode (the quoted tax must not move)
       });
       // H5: the quote's regular tax against today's, so the operator is told when the rate (or the exempt flag) moved.
       const quotedTax = roundMoney(Number(est.taxAmount ?? 0));

@@ -1,4 +1,5 @@
-import { LEGACY_DISCOUNT_BASE, roundMoney, saleTotals, type ChargeLine } from "@routeflow/pricing";
+import { roundMoney, saleTotals, type ChargeLine, type DiscountTaxBase } from "@routeflow/pricing";
+import { newDocumentDiscountBase } from "./discount-tax-base";
 import { saleLinesOf, type CartCategory } from "./sale-lines";
 
 /**
@@ -23,6 +24,8 @@ export interface OrderBuilderTotalsContext {
   isTaxExempt?: boolean;
   discount?: number | null;
   shipping?: number | null;
+  /** SA-1141 R7: the order builder writes a NEW order; defaults to the base the server stamps now. */
+  discountBase?: DiscountTaxBase;
 }
 
 export interface OrderBuilderTotals {
@@ -48,7 +51,7 @@ export function orderBuilderTotals(
     taxRate: (Number(ctx.taxRatePct ?? 0) || 0) / 100,
     isTaxExempt: ctx.isTaxExempt === true,
     discount,
-    discountBase: LEGACY_DISCOUNT_BASE,
+    discountBase: ctx.discountBase ?? newDocumentDiscountBase(),
     shipping: ctx.shipping,
   });
   return {

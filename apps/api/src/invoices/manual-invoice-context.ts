@@ -1,5 +1,10 @@
 import { LINE_NAME_PRODUCT_SELECT } from "./invoice-line-name";
-import { LEGACY_DISCOUNT_BASE, roundMoney, type LadderUnit } from "@routeflow/pricing";
+import {
+  LEGACY_DISCOUNT_BASE,
+  roundMoney,
+  type DiscountTaxBase,
+  type LadderUnit,
+} from "@routeflow/pricing";
 import { sumInvoiceTotalsStrict } from "../common/money-invariants.util";
 import { effectiveTaxRateFromTotals } from "../common/tax-rate";
 import { assertSellableLines } from "../products/sellable-lines";
@@ -138,6 +143,7 @@ export function foldCategoryTax(
   isTaxExempt: boolean,
 ): number {
   zeroExemptCategoryTax(itemsData, isTaxExempt);
+  // The levy is never reduced by a discount (SA-1141 R1), so the base is irrelevant here: LEGACY by definition (pinned).
   return sumInvoiceTotalsStrict(itemsData, {
     isTaxExempt,
     discountBase: LEGACY_DISCOUNT_BASE,
@@ -233,18 +239,24 @@ export function derivedBaseAsPackItems<T extends { productId?: string | null }>(
  * though the invoice was issued with the correct total.
  */
 export function orderDerivedTaxRate(
-  order: { tax?: unknown; subtotal?: unknown },
+  order: { tax?: unknown; subtotal?: unknown; discountAmount?: unknown },
   isTaxExempt: boolean,
+  // SA-1141 R5: the ORDER's mode (`discountModeOf(order)`), REQUIRED: the stored tax was levied on subtotal - discount in PRE_TAX.
+  discountBase: DiscountTaxBase,
 ): number {
-  return effectiveTaxRateFromTotals(order?.tax, order?.subtotal, isTaxExempt);
+  return effectiveTaxRateFromTotals(order?.tax, order?.subtotal, isTaxExempt, {
+    discount: order?.discountAmount,
+    discountBase,
+  });
 }
 
 /** Stamps `orderDerivedTaxRate` onto every built line in place (mirrors foldCategoryTax's shape). */
 export function applyOrderDerivedTaxRate(
   itemsData: Array<{ taxRate?: number }>,
-  order: { tax?: unknown; subtotal?: unknown },
+  order: { tax?: unknown; subtotal?: unknown; discountAmount?: unknown },
   isTaxExempt: boolean,
+  discountBase: DiscountTaxBase,
 ): void {
-  const rate = orderDerivedTaxRate(order, isTaxExempt);
+  const rate = orderDerivedTaxRate(order, isTaxExempt, discountBase);
   for (const it of itemsData) it.taxRate = rate;
 }

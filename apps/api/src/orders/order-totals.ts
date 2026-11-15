@@ -1,10 +1,11 @@
 import {
-  LEGACY_DISCOUNT_BASE,
   sumInvoiceTotals,
+  type DiscountTaxBase,
   type MoneyLike,
   type SummedInvoiceTotals,
 } from "@routeflow/pricing";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
+import { discountModeOf, type DiscountModeDoc } from "../common/discount-tax-mode";
 
 /**
  * The ONE place an order header's tax, levy and total are summed. Every order writer (create, edit, merge,
@@ -19,7 +20,14 @@ export function orderTotalsOf(
   lines: readonly { subtotal?: MoneyLike | null; categoryTaxAmount?: MoneyLike | null }[],
   // W-762 / SA-918: `discount` is REQUIRED — the order's stored absolute discount, or an explicit 0 where the order can
   // carry none. A re-total that dropped it over-stated the order against its invoices.
-  opts: { taxRate: number; isTaxExempt: boolean; discount: number; shipping?: number },
+  // SA-1141 R3/R4: `discountBase` is REQUIRED: a NEW order passes `newDocumentDiscountMode()`, an existing one `discountModeOf(order)`.
+  opts: {
+    taxRate: number;
+    isTaxExempt: boolean;
+    discount: number;
+    shipping?: number;
+    discountBase: DiscountTaxBase;
+  },
 ): SummedInvoiceTotals {
   return sumInvoiceTotals(
     // the spread carries each line's levy through untouched (sumInvoiceTotals reads it by name)
@@ -28,8 +36,7 @@ export function orderTotalsOf(
       discount: opts.discount,
       shipping: opts.shipping,
       isTaxExempt: opts.isTaxExempt,
-      // SA-1141 PR-2 (R4): the order's own mode, threaded through `opts`; until then every order is LEGACY.
-      discountBase: LEGACY_DISCOUNT_BASE,
+      discountBase: opts.discountBase,
       strict: true,
     },
   );
@@ -44,7 +51,13 @@ const LEVY = "categoryTaxAmount" as const;
  */
 export function orderTotalsOfSums(
   sums: { subtotal: number; levy: number },
-  opts: { taxRate: number; isTaxExempt?: boolean; discount: number; shipping?: number },
+  opts: {
+    taxRate: number;
+    isTaxExempt?: boolean;
+    discount: number;
+    shipping?: number;
+    discountBase: DiscountTaxBase;
+  },
 ): SummedInvoiceTotals {
   return orderTotalsOf([{ subtotal: sums.subtotal, [LEVY]: sums.levy }], {
     ...opts,
@@ -74,7 +87,7 @@ export async function customerIsTaxExempt(
  */
 export function editedOrderTotals(
   lines: readonly { subtotal?: MoneyLike | null; categoryTaxAmount?: MoneyLike | null }[],
-  order: { discountAmount?: unknown },
+  order: { discountAmount?: unknown } & DiscountModeDoc,
   o: { taxRate: number; isTaxExempt: boolean; shipping: number; subtotal: number },
 ): SummedInvoiceTotals {
   const discount = Number(order.discountAmount ?? 0);
@@ -83,6 +96,7 @@ export function editedOrderTotals(
     isTaxExempt: o.isTaxExempt,
     shipping: o.shipping,
     discount,
+    discountBase: discountModeOf(order), // SA-1141 R3: the order's own mode
   });
   assertMoneyInvariantsOrThrow({
     subtotal: o.subtotal,

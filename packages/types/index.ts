@@ -291,3 +291,4 @@ export {
 export * from "./api/ready-for-pickup";
 export * from "./api/stock-availability";
 export * from "./stop-completion-key";
+export * from "./api/discount-tax-base";
