@@ -4,7 +4,7 @@ import { assertQtyNotBelowDelivered } from "./delivered-line-lock";
 describe("assertQtyNotBelowDelivered", () => {
   const refuses = (d: number, held: number, next: number) =>
     expect(() => assertQtyNotBelowDelivered(d, held, next)).toThrow();
-  const allows = (d: number, held: number, next: number) =>
+  const allows = (d: number | null, held: number, next: number) =>
     expect(() => assertQtyNotBelowDelivered(d, held, next)).not.toThrow();
 
   it("a cut below both is refused", () => {
