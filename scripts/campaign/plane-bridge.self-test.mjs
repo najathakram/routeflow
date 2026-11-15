@@ -3,7 +3,7 @@
 // Standalone, house convention: `node scripts/campaign/plane-bridge.self-test.mjs`, PASS/FAIL lines,
 // `process.exit(failures ? 1 : 0)`. Every CLI runs as a child (spawn, CLI_BUDGET_MS) against
 // plane-fake-server.mjs with a temp token file, temp config and temp machine root. Never touches a
-// real Plane, the real token, or anything under .claude/campaign/ except a READ in T1.
+// real Plane, the real token, or anything under registryRoot() except a READ in T1.
 import { createHash } from "node:crypto";
 import {
   existsSync,
