@@ -97,8 +97,10 @@ const INVENTORY: Record<string, Row> = {
   "orders/orders.service.ts::OrdersService.create": {
     how: "NOT_FROM_DRAFT",
     n: 1,
-    why: "the run/stop link write sets CONFIRMED when immediateDelivery is sent; an offline request (the only source of gate flags) refuses immediateDelivery with a 400, and any other DRAFT carries no gate flag",
+    why: "a DRAFT never reaches the CONFIRMED write: the online create refuses DRAFT + immediateDelivery (400) and the write reads !isDraft; offline refuses immediateDelivery",
     needs: [
+      "ORDER_DRAFT_CANNOT_DELIVER_NOW",
+      "isDraft",
       "orders/offline/offline-create.ts::resolveOfflineRequest:OFFLINE_IMMEDIATE_DELIVERY_ONLINE_ONLY",
     ],
   },
@@ -270,6 +272,16 @@ describe("SA-1134 R-1: no writer but the promotion moves an order out of DRAFT",
           .sort(),
       ),
     );
+  });
+
+  it("SA-1158: both CONFIRMED writes in create() read !isDraft (source-text pin on the two conditions)", () => {
+    const text = fs.readFileSync(path.join(SRC, "orders/orders.service.ts"), "utf8");
+    const start = text.indexOf("  async create(");
+    const body = text.slice(start, text.indexOf("\n  async ", start + 1));
+    expect(body).toContain(
+      "status: dto.immediateDelivery && !isDraft ? OrderStatus.CONFIRMED : order.status",
+    );
+    expect(body).toContain("if (dto.immediateDelivery && !isDraft) {");
   });
 
   it("each writer still contains the guard names its row relies on", () => {
