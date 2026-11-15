@@ -111,7 +111,8 @@ export function businessStatus(
 export interface AttentionItem {
   id: string;
   label: string;
-  href: string;
+  /** No href = an item with nothing for this person to open (a text row). */
+  href?: string;
 }
 
 /** The short "Needs attention" list on the hub: customers without a state for admins and operators, the billing and payment rows for admins only. A loading or failed read flags nothing. */
@@ -122,6 +123,8 @@ export function attentionItems(o: {
   stripe?: { connected?: boolean; configured?: boolean } | null;
   /** The customers-without-a-state card's totals (GET .../unknown-state-customers); null/undefined while loading. */
   unknownState?: { customersTotal?: number; truncated?: boolean } | null;
+  /** The selling-restrictions master switch is known to be OFF (never true while loading or failed). */
+  restrictionsOff?: boolean;
 }): AttentionItem[] {
   const items: AttentionItem[] = [];
   // apple-ux U1: the fix list lived only on Selling restrictions; it is raised here for admins AND operators (both may
@@ -137,6 +140,23 @@ export function attentionItems(o: {
           : "Some customers may need a state",
       href: "/settings/restrictions#customers-without-state",
     });
+  }
+  if (o.restrictionsOff) {
+    // The old hub banner, one row. Only an admin can turn restrictions on, so an operator gets the same thought
+    // as text with no link (nothing to open).
+    items.push(
+      o.isAdmin
+        ? {
+            id: "restrictions-off",
+            label: "Selling restrictions are off for staff orders and invoices",
+            href: "/settings/restrictions",
+          }
+        : {
+            id: "restrictions-off",
+            label:
+              "Selling restrictions are off for staff orders and invoices. Ask an admin to turn them on",
+          },
+    );
   }
   if (!o.isAdmin) return items;
   if (o.status?.due) {

@@ -174,6 +174,19 @@ describe("Needs attention", () => {
     stripe: { connected: true },
   };
 
+  it("restrictionsOff adds one row: a link for admins, text only (no href) for operators", () => {
+    const admin = attentionItems({ ...base, restrictionsOff: true });
+    expect(admin).toHaveLength(1);
+    expect(admin[0]).toMatchObject({ id: "restrictions-off", href: "/settings/restrictions" });
+    expect(admin[0].label).toMatch(/selling restrictions are off/i);
+    const op = attentionItems({ ...base, isAdmin: false, restrictionsOff: true });
+    expect(op).toHaveLength(1);
+    expect(op[0].id).toBe("restrictions-off");
+    expect(op[0].href).toBeUndefined();
+    expect(op[0].label).toMatch(/ask an admin/i);
+    expect(attentionItems({ ...base, restrictionsOff: false })).toEqual([]);
+  });
+
   it("is empty when nothing needs attention, and for operators", () => {
     expect(attentionItems(base)).toEqual([]);
     expect(
