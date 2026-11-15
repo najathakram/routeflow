@@ -95,9 +95,6 @@ describe("P4: the literal scan (raw text, all non-spec apps/api/src, .ts and .ts
     expect(files.some((f) => /\.spec\.tsx?$/.test(f))).toBe(false);
     expect(files.filter((f) => f.endsWith(".tsx")).length).toBeGreaterThanOrEqual(7);
   });
-  it("the walk reaches the .tsx sources too", () => {
-    expect(sources.filter((x) => x.f.endsWith(".tsx")).length).toBeGreaterThanOrEqual(7);
-  });
   it("one `/settings/billing` occurrence outside the home, the named exclusion (pinned by COUNT, not by file)", () => {
     const occurrences = sources
       .filter((s) => s.f !== HOME)
@@ -159,14 +156,10 @@ describe("assertBillingReturnUrl: the runtime check at the Stripe boundary (SA-1
       assertBillingReturnUrl("portal", U(API_BILLING_PORTAL_RETURN_PATH), BASE),
     ).not.toThrow();
   });
-  it(
-    "a base written with a trailing slash joins without a doubled slash (webBaseUrl() itself never ends in " /
-      ")",
-    () => {
-      const joined = billingReturnUrl("https://app.test/", API_BILLING_RETURN_PATHS.pay);
-      expect(() => assertBillingReturnUrl("success", joined, BASE)).not.toThrow();
-    },
-  );
+  it("a base written with a trailing slash joins without a doubled slash (webBaseUrl itself never ends in a slash)", () => {
+    const joined = billingReturnUrl("https://app.test/", API_BILLING_RETURN_PATHS.pay);
+    expect(() => assertBillingReturnUrl("success", joined, BASE)).not.toThrow();
+  });
 
   const evil = "https://evil.test";
   const bad: [string, string][] = [
