@@ -5,9 +5,11 @@ import { renderWithProviders, screen, within } from "@/test-utils/render";
 import { PaymentDueBanner } from "./PaymentDueBanner";
 
 const mockPay = jest.fn();
+let mockPayPending = false;
 const mockPortal = jest.fn();
 jest.mock("@/lib/api/payment-due", () => ({
-  usePayPaymentDue: () => ({ mutate: mockPay, isPending: false }),
+  ...jest.requireActual("@/lib/api/payment-due"),
+  usePayPaymentDue: () => ({ mutate: mockPay, isPending: mockPayPending }),
 }));
 jest.mock("@/lib/api/billing", () => ({
   useBillingPortal: () => ({ mutate: mockPortal, isPending: false }),
@@ -40,6 +42,7 @@ const due = (over: Partial<PaymentDueView> = {}): PaymentDueView => ({
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockPayPending = false;
   mockZone = { zone: "America/New_York", isError: false };
   window.localStorage.clear();
 });
@@ -58,11 +61,14 @@ describe("PaymentDueBanner", () => {
     await userEvent.click(within(box).getByRole("button", { name: "Pay now" }));
     expect(mockPay).toHaveBeenCalledTimes(1);
     // 542c: the click sends the terms this banner displayed (the server only compares them)
-    expect(mockPay).toHaveBeenCalledWith({
-      amountCents: 10_000,
-      periodStart: "2026-10-01T00:00:00.000Z",
-      cardBy: null,
-    });
+    expect(mockPay).toHaveBeenCalledWith(
+      {
+        amountCents: 10_000,
+        periodStart: "2026-10-01T00:00:00.000Z",
+        cardBy: null,
+      },
+      expect.anything(),
+    );
     expect(within(box).getByRole("link", { name: "View billing" })).toHaveAttribute(
       "href",
       "/settings/billing",
@@ -203,11 +209,14 @@ describe("PaymentDueBanner - card reminder", () => {
     await userEvent.click(within(box).getByRole("button", { name: "Add card" }));
     expect(mockPay).toHaveBeenCalledTimes(1);
     expect(mockPortal).not.toHaveBeenCalled();
-    expect(mockPay).toHaveBeenCalledWith({
-      amountCents: 0,
-      periodStart: null,
-      cardBy: "2026-10-29T12:00:00.000Z",
-    });
+    expect(mockPay).toHaveBeenCalledWith(
+      {
+        amountCents: 0,
+        periodStart: null,
+        cardBy: "2026-10-29T12:00:00.000Z",
+      },
+      expect.anything(),
+    );
     expect(within(box).getByRole("link", { name: "View billing" })).toHaveAttribute(
       "href",
       "/settings/billing",
@@ -297,5 +306,24 @@ describe("PaymentDueBanner - card reminder", () => {
     renderWithProviders(<PaymentDueBanner mode="card-reminder" due={FIXED} role="admin" />);
     expect(screen.getByRole("button", { name: "Add card" }).className).toMatch(/min-h-\[44px\]/);
     expect(screen.getByTestId("card-reminder-banner").className).toMatch(/flex-wrap/);
+  });
+});
+
+describe("PaymentDueBanner Pay while a payment form is open (SA-1139)", () => {
+  it("a second Pay answering CATCHUP_SESSION_OPEN says the form is already open, never 'wait'", async () => {
+    renderWithProviders(<PaymentDueBanner mode="payment-due" due={due()} role="admin" />);
+    await userEvent.click(screen.getByRole("button", { name: /pay now/i }));
+    const opts = mockPay.mock.calls[0]?.[1] as { onError?: (e: unknown) => void } | undefined;
+    expect(typeof opts?.onError).toBe("function");
+    const err = { response: { status: 409, data: { code: "CATCHUP_SESSION_OPEN" } } };
+    await React.act(async () => opts?.onError?.(err));
+    expect(await screen.findByText("Your payment form is already open.")).toBeInTheDocument();
+    expect(screen.queryByText(/wait for it to complete/i)).toBeNull();
+  });
+
+  it("the Pay button is disabled while the call is in flight", () => {
+    mockPayPending = true;
+    renderWithProviders(<PaymentDueBanner mode="payment-due" due={due()} role="admin" />);
+    expect(screen.getByRole("button", { name: /pay now/i })).toBeDisabled();
   });
 });
