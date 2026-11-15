@@ -155,4 +155,76 @@ describe("InvoicesPage — phone cards", () => {
     renderWithProviders(<InvoicesPage />);
     expect(screen.queryByLabelText("Sort invoices by")).toBeNull();
   });
+
+  it.each([
+    ["loading", { data: undefined, isLoading: true, isError: false }],
+    [
+      "empty",
+      {
+        data: { data: [], meta: { total: 0, page: 1, limit: 20, totalPages: 1 } },
+        isLoading: false,
+        isError: false,
+      },
+    ],
+  ])("while %s, the table wrapper stays visible and no cards or sort render", (_n, state) => {
+    mockUseInvoices.mockReturnValue(state);
+    const { container } = renderWithProviders(<InvoicesPage />);
+    const wrapper = screen.getByRole("table").closest("div.overflow-hidden") as HTMLElement;
+    expect(wrapper.className).not.toMatch(/(^|\s)hidden(\s|$)/);
+    expect(container.querySelector("ul.md\\:hidden")).toBeNull();
+    expect(screen.queryByLabelText("Sort invoices by")).toBeNull();
+  });
+
+  it("card actions are 44px targets 8px apart; the table keeps its small buttons", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<InvoicesPage />);
+    const list = container.querySelector("ul.md\\:hidden") as HTMLElement;
+    const draft = within(list).getAllByRole("listitem")[1];
+    const big = (el: HTMLElement) => {
+      expect(el.className).toContain("min-h-[44px]");
+      expect(el.className).toContain("min-w-[44px]");
+    };
+    big(within(draft).getByRole("button", { name: /^View invoice/ }));
+    big(within(draft).getByRole("button", { name: /^Print invoice/ }));
+    big(within(draft).getByRole("button", { name: "Delete invoice INV-B" }));
+    expect(
+      within(draft).getByRole("button", { name: /^View invoice/ }).parentElement!.className,
+    ).toContain("gap-2");
+
+    await user.click(within(draft).getByRole("button", { name: "Delete invoice INV-B" }));
+    big(within(draft).getByTitle("Confirm delete"));
+    big(within(draft).getByTitle("Cancel"));
+    expect(within(draft).getByTitle("Cancel").parentElement!.className).toContain("gap-2");
+    // The confirm shows on that card only, and Cancel hides it.
+    expect(within(list).getAllByTitle("Confirm delete")).toHaveLength(1);
+    await user.click(within(draft).getByTitle("Cancel"));
+    expect(within(draft).queryByTitle("Confirm delete")).toBeNull();
+
+    const table = within(screen.getByRole("table"));
+    for (const name of [/^View invoice/, /^Print invoice/]) {
+      expect(table.getAllByRole("button", { name })[0].className).not.toContain("min-h-[44px]");
+    }
+    expect(table.getAllByRole("button", { name: /^View invoice/ })[0].className).toContain("p-1.5");
+  });
+
+  it("labels the balance and marks it danger only when money is owed", () => {
+    mockUseInvoices.mockReturnValue({
+      data: {
+        data: [
+          INVOICES[0],
+          makeInvoice({ id: "inv-p", invoiceNumber: "INV-P", status: "PAID", balanceDue: 0 }),
+        ],
+        meta: { total: 2, page: 1, limit: 20, totalPages: 1 },
+      },
+      isLoading: false,
+      isError: false,
+    });
+    const { container } = renderWithProviders(<InvoicesPage />);
+    const cards = within(container.querySelector("ul.md\\:hidden") as HTMLElement).getAllByRole(
+      "link",
+    );
+    expect(within(cards[0]).getByText("Balance Due")).toBeInTheDocument();
+    expect(within(cards[0]).getByText("$40.00").className).toContain("text-danger");
+    expect(within(cards[1]).getByText("$0.00").className).not.toContain("text-danger");
+  });
 });

@@ -68,6 +68,11 @@ function todayLocalIso(): string {
   return `${y}-${m}-${d}`;
 }
 
+/** The invoice's issue date, falling back to when it was created. */
+function invoiceDate(inv: Invoice): string {
+  return (inv as any).issueDate ?? inv.createdAt;
+}
+
 /**
  * B421: the list row's Balance Due figure. The old inline version
  * (`inv.paidAmount ?? (inv.payments ?? []).reduce((s, p) => s + Number(p.amount), 0)`)
@@ -403,92 +408,97 @@ export default function InvoicesPage() {
   const [printingIds, setPrintingIds] = React.useState<ReadonlySet<string>>(() => new Set());
 
   /** The row actions (view, print, delete with its confirm), shared by the table row and the phone card. */
-  const renderRowActions = (inv: Invoice) => (
-    <>
-      {!isCustomer && confirmDeleteId === inv.id ? (
-        <div className="flex items-center gap-1">
-          <button
-            title="Confirm delete"
-            disabled={deleteInvoice.isPending}
-            onClick={async () => {
-              try {
-                await deleteInvoice.mutateAsync(inv.id);
-                setConfirmDeleteId(null);
-                toast({ title: "Invoice deleted", variant: "success" });
-              } catch (err: any) {
-                setConfirmDeleteId(null);
-                toast({
-                  title: "Delete failed",
-                  description: err?.response?.data?.message ?? err?.message ?? "Unknown error",
-                  variant: "error",
-                });
-              }
-            }}
-            className="rounded px-2 py-1 text-xs font-semibold text-white bg-danger hover:bg-danger/80 disabled:opacity-50 transition-colors"
-          >
-            {deleteInvoice.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : "Delete"}
-          </button>
-          <button
-            title="Cancel"
-            onClick={() => setConfirmDeleteId(null)}
-            className="rounded p-1 text-navy/70 hover:text-navy transition-colors"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      ) : (
-        <div className="flex items-center gap-0.5">
-          <button
-            title="View invoice"
-            aria-label={`View invoice ${inv.invoiceNumber}`}
-            onClick={() => router.push(`/invoices/${inv.id}`)}
-            className="rounded p-1.5 text-navy/70 hover:bg-white hover:text-navy transition-colors"
-          >
-            <Eye className="h-4 w-4" />
-          </button>
-          {!isCustomer && (
+  const renderRowActions = (inv: Invoice, size: "table" | "card" = "table") => {
+    // On the phone card every action is a 44px target with 8px between; the table keeps its small buttons.
+    const card = size === "card";
+    const tap = card ? "grid min-h-[44px] min-w-[44px] place-items-center " : "";
+    return (
+      <>
+        {!isCustomer && confirmDeleteId === inv.id ? (
+          <div className={card ? "flex items-center gap-2" : "flex items-center gap-1"}>
             <button
-              title="Print invoice"
-              aria-label={`Print invoice ${inv.invoiceNumber}`}
-              disabled={printingIds.has(inv.id)}
+              title="Confirm delete"
+              disabled={deleteInvoice.isPending}
               onClick={async () => {
-                if (printingIds.has(inv.id)) return;
-                setPrintingIds((prev) => new Set(prev).add(inv.id));
                 try {
-                  // The one shared print path; it never throws and tells the user when it could not. Each row
-                  // keeps its own spinner, and concurrent rows print independently (review finding F1).
-                  await printInvoice.print(inv.id);
-                } finally {
-                  setPrintingIds((prev) => {
-                    const next = new Set(prev);
-                    next.delete(inv.id);
-                    return next;
+                  await deleteInvoice.mutateAsync(inv.id);
+                  setConfirmDeleteId(null);
+                  toast({ title: "Invoice deleted", variant: "success" });
+                } catch (err: any) {
+                  setConfirmDeleteId(null);
+                  toast({
+                    title: "Delete failed",
+                    description: err?.response?.data?.message ?? err?.message ?? "Unknown error",
+                    variant: "error",
                   });
                 }
               }}
-              className="rounded p-1.5 text-navy/70 hover:bg-white hover:text-navy transition-colors disabled:opacity-50"
+              className={`${tap}rounded px-2 py-1 text-xs font-semibold text-white bg-danger hover:bg-danger/80 disabled:opacity-50 transition-colors`}
             >
-              {printingIds.has(inv.id) ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Printer className="h-4 w-4" />
-              )}
+              {deleteInvoice.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : "Delete"}
             </button>
-          )}
-          {!isCustomer && inv.status === "DRAFT" && (
             <button
-              title="Delete invoice"
-              aria-label={`Delete invoice ${inv.invoiceNumber}`}
-              onClick={() => setConfirmDeleteId(inv.id)}
-              className="rounded p-1.5 text-navy/70 hover:bg-white hover:text-danger transition-colors"
+              title="Cancel"
+              onClick={() => setConfirmDeleteId(null)}
+              className={`${tap}rounded p-1 text-navy/70 hover:text-navy transition-colors`}
             >
-              <Trash2 className="h-4 w-4" />
+              <X className="h-3.5 w-3.5" />
             </button>
-          )}
-        </div>
-      )}
-    </>
-  );
+          </div>
+        ) : (
+          <div className={card ? "flex items-center gap-2" : "flex items-center gap-0.5"}>
+            <button
+              title="View invoice"
+              aria-label={`View invoice ${inv.invoiceNumber}`}
+              onClick={() => router.push(`/invoices/${inv.id}`)}
+              className={`${tap}rounded p-1.5 text-navy/70 hover:bg-white hover:text-navy transition-colors`}
+            >
+              <Eye className="h-4 w-4" />
+            </button>
+            {!isCustomer && (
+              <button
+                title="Print invoice"
+                aria-label={`Print invoice ${inv.invoiceNumber}`}
+                disabled={printingIds.has(inv.id)}
+                onClick={async () => {
+                  if (printingIds.has(inv.id)) return;
+                  setPrintingIds((prev) => new Set(prev).add(inv.id));
+                  try {
+                    // The one shared print path; it never throws and tells the user when it could not. Each row
+                    // keeps its own spinner, and concurrent rows print independently (review finding F1).
+                    await printInvoice.print(inv.id);
+                  } finally {
+                    setPrintingIds((prev) => {
+                      const next = new Set(prev);
+                      next.delete(inv.id);
+                      return next;
+                    });
+                  }
+                }}
+                className={`${tap}rounded p-1.5 text-navy/70 hover:bg-white hover:text-navy transition-colors disabled:opacity-50`}
+              >
+                {printingIds.has(inv.id) ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Printer className="h-4 w-4" />
+                )}
+              </button>
+            )}
+            {!isCustomer && inv.status === "DRAFT" && (
+              <button
+                title="Delete invoice"
+                aria-label={`Delete invoice ${inv.invoiceNumber}`}
+                onClick={() => setConfirmDeleteId(inv.id)}
+                className={`${tap}rounded p-1.5 text-navy/70 hover:bg-white hover:text-danger transition-colors`}
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        )}
+      </>
+    );
+  };
 
   const [urlFilters, setFilter, , setFilters] = useUrlFilters({
     status: "",
@@ -855,7 +865,9 @@ export default function InvoicesPage() {
               key={inv.id}
               href={`/invoices/${inv.id}`}
               title={inv.invoiceNumber}
+              amountLabel="Balance Due"
               amount={fmt(resolveInvoiceListBalance(inv))}
+              amountTone={resolveInvoiceListBalance(inv) > 0 ? "danger" : "default"}
               subtitle={inv.customer?.businessName ?? "—"}
               badges={
                 <>
@@ -865,12 +877,12 @@ export default function InvoicesPage() {
               }
               meta={
                 <span className="flex flex-wrap gap-x-2 gap-y-0.5">
-                  <span>{fmtCalendarDate((inv as any).issueDate ?? inv.createdAt)}</span>
+                  <span>{fmtCalendarDate(invoiceDate(inv))}</span>
                   <span>Due {fmtCalendarDate(inv.dueDate)}</span>
                   <span>Total {fmt(Number(inv.total))}</span>
                 </span>
               }
-              actions={renderRowActions(inv)}
+              actions={renderRowActions(inv, "card")}
             />
           ))}
         </RecordCardList>
@@ -1003,7 +1015,7 @@ export default function InvoicesPage() {
                       className="group cursor-pointer transition-colors hover:bg-blue-50/40"
                     >
                       <td className="px-4 py-3 text-sm text-navy">
-                        {fmtCalendarDate((inv as any).issueDate ?? inv.createdAt)}
+                        {fmtCalendarDate(invoiceDate(inv))}
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex flex-col gap-0.5">

@@ -49,6 +49,16 @@ describe("FiltersDisclosure", () => {
     expect(screen.getByRole("button", { name: "Filters" })).toBeInTheDocument();
   });
 
+  it("the button controls the panel by id", () => {
+    setup(1);
+    const panel = screen.getByLabelText("Search").parentElement as HTMLElement;
+    expect(panel.id).not.toBe("");
+    expect(screen.getByRole("button", { name: "Filters (1)" })).toHaveAttribute(
+      "aria-controls",
+      panel.id,
+    );
+  });
+
   it("opening makes the panel visible", async () => {
     const user = userEvent.setup();
     setup(1);

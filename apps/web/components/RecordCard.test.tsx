@@ -71,4 +71,26 @@ describe("RecordCard", () => {
       "border-l-danger",
     );
   });
+
+  it("shows an amount label and tones the amount danger on request", () => {
+    renderCard({ amountLabel: "Balance due", amountTone: "danger" });
+    expect(screen.getByText("Balance due")).toBeInTheDocument();
+    expect(screen.getByText("$120.00").className).toContain("text-danger");
+  });
+
+  it("keeps the default amount tone and no label when none is given", () => {
+    renderCard();
+    expect(screen.getByText("$120.00").className).not.toContain("text-danger");
+    expect(screen.queryByText("Balance due")).toBeNull();
+  });
+
+  it("gives a string subtitle a title so a truncated name can be read", () => {
+    renderCard();
+    expect(screen.getByText("Acme Foods")).toHaveAttribute("title", "Acme Foods");
+  });
+
+  it("sets no title for a node subtitle", () => {
+    renderCard({ subtitle: <b>Acme</b> });
+    expect(screen.getByText("Acme").closest("p")).not.toHaveAttribute("title");
+  });
 });

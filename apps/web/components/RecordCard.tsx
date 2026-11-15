@@ -24,6 +24,10 @@ export interface RecordCardProps {
   title: string;
   /** A preformatted amount; the card never formats or sums. */
   amount: React.ReactNode;
+  /** A small muted label for the amount, for example the table header's own word. */
+  amountLabel?: string;
+  /** Tone only; the page decides when it applies. */
+  amountTone?: "default" | "danger";
   /** The customer or supplier. */
   subtitle?: React.ReactNode;
   /** Status badges and chips. */
@@ -39,6 +43,8 @@ export function RecordCard({
   href,
   title,
   amount,
+  amountLabel,
+  amountTone = "default",
   subtitle,
   badges,
   meta,
@@ -71,14 +77,31 @@ export function RecordCard({
                 {title}
               </span>
             </div>
-            <span className="shrink-0 font-mono text-sm font-semibold text-ink-900">{amount}</span>
+            <div className="flex shrink-0 flex-col items-end">
+              {amountLabel && <span className="text-[11px] text-navy/60">{amountLabel}</span>}
+              <span
+                className={cn(
+                  "font-mono text-sm font-semibold",
+                  amountTone === "danger" ? "text-danger" : "text-ink-900",
+                )}
+              >
+                {amount}
+              </span>
+            </div>
           </div>
-          {subtitle != null && <p className="truncate text-sm font-medium text-navy">{subtitle}</p>}
+          {subtitle != null && (
+            <p
+              className="truncate text-sm font-medium text-navy"
+              title={typeof subtitle === "string" ? subtitle : undefined}
+            >
+              {subtitle}
+            </p>
+          )}
           {badges != null && <div className="flex flex-wrap items-center gap-1.5">{badges}</div>}
           {meta != null && <div className="text-xs text-navy/60">{meta}</div>}
         </div>
         {actions != null && (
-          <div className="flex items-center justify-end gap-0.5 border-t border-surface-border px-3 py-1.5">
+          <div className="flex items-center justify-end gap-2 border-t border-surface-border px-3 py-1.5">
             {actions}
           </div>
         )}
