@@ -135,3 +135,4 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 | [api/landing-2026-11-12-w35-w36.md](api/landing-2026-11-12-w35-w36.md) | Windows 35 and 36 (c05d8e25f5..a2208ae4f1): offline staff order create (SA-1124 PR-1a), parked list sale day |
 | [api/landing-2026-11-12-w37.md](api/landing-2026-11-12-w37.md) | Window 37 (a2208ae4f1..495ea1cb18): invoice review gate for offline price drift (SA-1124 PR-1b) |
 | [api/landing-2026-11-13-bk-fixes.md](api/landing-2026-11-13-bk-fixes.md) | Expired verify-link code; password reset scoped to the request's business and named in the mail |
+| [api/landing-2026-11-15-w40-42.md](api/landing-2026-11-15-w40-42.md) | Windows 40 to 42 (13fb12fd73..efb69a5ca4): reopen target and claim (SA-1124/1136), pricing discount base (W-989 PR-1), embedded Checkout api (SA-1139 PR-1), ledger invoiceNumber |
