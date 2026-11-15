@@ -4,10 +4,11 @@ import { defaultOpenGroup, type NavEntry, type NavGroup } from "./nav-config";
 /**
  * Which sidebar groups are open (UX guide improvement 1).
  *
- * - `multi` (the desktop rail): any number of groups stay open and the set is remembered per user
- *   on this device (`rf-nav-open:{userId}`). Navigating into a group opens it. With nothing
- *   remembered the set is `defaultOpenGroup` (the first-load Warehouse pin is kept). Only a toggle
- *   writes, so a first visit still shows the default until the person chooses.
+ * - `multi` (the desktop rail): any number of groups stay open. The remembered set (per user on this
+ *   device, `rf-nav-open:{userId}`) holds only what the person opened or closed by clicking, plus the
+ *   first-load default (Warehouse, pin kept) while nothing is stored. A group is shown open when it is
+ *   remembered or holds the active page; merely navigating through a group never remembers it. Only a
+ *   toggle writes (UXG-R2 amendment 2026-11-15).
  * - `single` (the phone drawer): today's accordion, one group at a time, nothing stored.
  *
  * Storage read or write failures fall back to the in-memory set and never throw.
@@ -56,10 +57,16 @@ export function useOpenNavGroups({
         e.kind === "group" && e.children.some((c) => pathname.startsWith(c.href)),
     )?.label ?? null;
 
+  // multi: what the person opened by clicking (plus the first-load default while nothing is stored);
+  // single: the one open group, which follows navigation.
   const initial = (): string[] => {
-    const remembered = readStored(storageKey);
-    if (remembered)
-      return activeGroupLabel ? [...new Set([...remembered, activeGroupLabel])] : remembered;
+    if (mode === "multi") {
+      const remembered = readStored(storageKey);
+      if (remembered) return remembered;
+      // The group holding the page is open anyway, so the default only matters with no active group.
+      const def = activeGroupLabel ? null : defaultOpenGroup(nav, pathname);
+      return def ? [def] : [];
+    }
     const def = defaultOpenGroup(nav, pathname);
     return def ? [def] : [];
   };
@@ -76,36 +83,32 @@ export function useOpenNavGroups({
     setOpen(initialRef.current());
   }, [storageKey]);
 
-  // Navigating into a group opens it (single mode: and closes the rest, as the accordion did).
+  // The phone drawer is an accordion that follows navigation. The rail does not: a group the person
+  // only passed through is shown open while it holds the page (isOpen) and is never remembered.
   React.useEffect(() => {
-    if (!activeGroupLabel) return;
-    setOpen((cur) =>
-      mode === "single"
-        ? [activeGroupLabel]
-        : cur.includes(activeGroupLabel)
-          ? cur
-          : [...cur, activeGroupLabel],
-    );
+    if (mode !== "single" || !activeGroupLabel) return;
+    setOpen([activeGroupLabel]);
   }, [activeGroupLabel, mode]);
+
+  const isOpen = React.useCallback(
+    (label: string) => open.includes(label) || (mode === "multi" && label === activeGroupLabel),
+    [open, mode, activeGroupLabel],
+  );
 
   const toggle = React.useCallback(
     (label: string) => {
       setOpen((cur) => {
-        const next =
-          mode === "single"
-            ? cur.includes(label)
-              ? []
-              : [label]
-            : cur.includes(label)
-              ? cur.filter((l) => l !== label)
-              : [...cur, label];
-        if (mode === "multi") writeStored(storageKey, next);
+        if (mode === "single") return cur.includes(label) ? [] : [label];
+        // Toggle what is on screen: the group holding the page counts as open, so clicking it
+        // removes a (possibly absent) remembered entry and never stores it.
+        const shownOpen = cur.includes(label) || label === activeGroupLabel;
+        const next = shownOpen ? cur.filter((l) => l !== label) : [...cur, label];
+        writeStored(storageKey, next);
         return next;
       });
     },
-    [mode, storageKey],
+    [mode, storageKey, activeGroupLabel],
   );
 
-  const isOpen = React.useCallback((label: string) => open.includes(label), [open]);
   return { isOpen, toggle };
 }

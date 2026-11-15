@@ -372,3 +372,24 @@ describe("buildOperatorNav: every entry keeps its icon (master's nav-config and 
     expect(seen.map(([l]) => l)).toEqual(expect.arrayContaining([...ICON.keys()]));
   });
 });
+
+describe("buildOperatorNav: Shipments waits for the add-ons answer (recorded behaviour, pinned)", () => {
+  const holders = (nav: NavEntry[]) =>
+    nav.flatMap((e) =>
+      e.kind === "group" && e.children.some((c) => c.href === "/shipments") ? [e.label] : [],
+    );
+
+  it("while add-ons load (both access hooks still false), no group holds /shipments", () => {
+    const nav = buildOperatorNav(
+      ctx({ addonsLoading: true, routesAccess: false, deliveryAccess: false }),
+    );
+    expect(holders(nav)).toEqual([]);
+  });
+
+  it("once resolved, exactly one group holds it: Dispatch with access, Orders without", () => {
+    expect(holders(buildOperatorNav(ctx()))).toEqual(["Dispatch"]);
+    expect(holders(buildOperatorNav(ctx({ routesAccess: false, deliveryAccess: false })))).toEqual([
+      "Orders",
+    ]);
+  });
+});

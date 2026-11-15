@@ -88,3 +88,32 @@ describe("useOpenNavGroups", () => {
     spy.mockRestore();
   });
 });
+
+describe("useOpenNavGroups: only clicks are remembered (UXG-R2 amendment 2026-11-15)", () => {
+  it("a group merely navigated through is neither stored nor left open", () => {
+    const h = setup("multi", "/dashboard");
+    h.rerender({ pathname: "/invoices" }); // a Finance page
+    expect(h.result.current.isOpen("Finance")).toBe(true); // it holds the active page
+    act(() => h.result.current.toggle("Orders"));
+    const stored = JSON.parse(localStorage.getItem("rf-nav-open:u1") ?? "null");
+    expect(stored).toEqual(["Warehouse", "Orders"]);
+    expect(stored).not.toContain("Finance");
+    h.rerender({ pathname: "/dashboard" });
+    expect(h.result.current.isOpen("Finance")).toBe(false);
+  });
+
+  it("guard: a group the person opened by clicking stays open after navigating in and out", () => {
+    const h = setup("multi", "/dashboard");
+    act(() => h.result.current.toggle("Finance"));
+    h.rerender({ pathname: "/invoices" });
+    h.rerender({ pathname: "/dashboard" });
+    expect(h.result.current.isOpen("Finance")).toBe(true);
+  });
+
+  it("clicking the group that holds the page does not remember it", () => {
+    const h = setup("multi", "/invoices");
+    act(() => h.result.current.toggle("Finance"));
+    h.rerender({ pathname: "/dashboard" });
+    expect(h.result.current.isOpen("Finance")).toBe(false);
+  });
+});
