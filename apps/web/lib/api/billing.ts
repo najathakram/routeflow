@@ -10,11 +10,7 @@ import {
 } from "@routeflow/types";
 import { apiClient } from "../api-client";
 import { guardCounterLeave } from "../counter-cart-signal";
-import {
-  assertCheckoutStartable,
-  CHECKOUT_RETURN_PATHS,
-  followCheckout,
-} from "../checkout-embedded";
+import { assertCheckoutStartable, followCheckout } from "../checkout-embedded";
 
 export type { SubscriptionView };
 
@@ -376,8 +372,7 @@ export function useCreateCheckout() {
     // The page words a refused checkout (ADDON_BILLING_PENDING_CHECKOUT) inline; no second toast.
     meta: { localErrorToast: isMappedCheckoutError },
     // SA-1139: embedded opens the panel in place; hosted keeps today's redirect.
-    onSuccess: (r) =>
-      followCheckout(r, (url) => window.location.assign(url), CHECKOUT_RETURN_PATHS.plan),
+    onSuccess: (r) => followCheckout(r, (url) => window.location.assign(url)),
   });
 }
 

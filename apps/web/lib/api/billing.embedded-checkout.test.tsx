@@ -1,7 +1,8 @@
 import * as React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import type { CheckoutStart } from "@routeflow/types";
+import { BILLING_RETURN_PATHS, type CheckoutStart } from "@routeflow/types";
+import { shownTermsOf } from "../payment-due";
 import { useCreateCheckout } from "./billing";
 import { usePayPaymentDue } from "./payment-due";
 import {
@@ -27,13 +28,36 @@ function wrapper({ children }: { children: React.ReactNode }) {
   return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 }
 
-const embedded = (secret: string): CheckoutStart => ({
+// The server's answer carries the return path (SA-1154); the plan checkout's own session returns to ?checkout=success.
+const embedded = (
+  secret: string,
+  returnPath: string = BILLING_RETURN_PATHS.plan,
+): CheckoutStart => ({
   uiMode: "embedded",
   sessionId: "cs_test_1",
   checkoutUrl: null,
   clientSecret: secret,
+  returnPath,
 });
-const SHOWN = { amountCents: 10_000, periodStart: "2026-10-01T00:00:00.000Z", cardBy: null };
+const hosted: CheckoutStart = {
+  uiMode: "hosted",
+  sessionId: "cs_test_h",
+  checkoutUrl: "https://pay.test/cs_test_h",
+  clientSecret: null,
+  returnPath: null,
+};
+// The payload the banner really sends: shownTermsOf on the view it holds (see PaymentDueBanner.return-path.test.tsx).
+const OWED_VIEW = {
+  due: true,
+  pastDue: true,
+  amountCents: 10_000,
+  periodLabel: "October 2026",
+  periodStart: "2026-10-01T00:00:00.000Z",
+  cardNeeded: false,
+  chargeStartsOn: null,
+  cardBy: null,
+};
+const SHOWN = shownTermsOf(OWED_VIEW);
 
 describe("embedded checkout from the tenant mutations", () => {
   let errSpy: jest.SpyInstance;
@@ -66,31 +90,74 @@ describe("embedded checkout from the tenant mutations", () => {
     expect(mockGuard).not.toHaveBeenCalled();
   });
 
-  // SA-1139 fix round 1 MUST 2: each caller opens with the return path its hosted twin uses.
-  it("return path: plan checkout opens with the checkout success path", async () => {
-    mockPost.mockResolvedValue({ data: embedded("cs_secret_p") });
+  // SA-1154: the web opens with the path the SERVER sent; it never works one out from what it posted.
+  it("O1: plan checkout (no body) opens with the server's path, ?checkout=success", async () => {
+    mockPost.mockResolvedValue({ data: embedded("cs_secret_p", BILLING_RETURN_PATHS.plan) });
     const { result } = renderHook(() => useCreateCheckout(), { wrapper });
     act(() => result.current.mutate());
     await waitFor(() => expect(getEmbeddedCheckoutSecret()).toBe("cs_secret_p"));
+    expect(mockPost).toHaveBeenCalledWith("/billing/subscription/checkout");
     expect(getEmbeddedCheckoutReturnPath()).toBe("/settings/billing?checkout=success");
   });
 
-  it("return path: payment-due pay opens with ?paid=1", async () => {
-    mockPost.mockResolvedValue({ data: embedded("cs_secret_q") });
+  it("O1h: plan checkout hosted leaves through Stripe's redirect: nothing opens, no path is kept", async () => {
+    mockPost.mockResolvedValue({ data: hosted });
+    const { result } = renderHook(() => useCreateCheckout(), { wrapper });
+    act(() => result.current.mutate());
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(getEmbeddedCheckoutSecret()).toBeNull();
+    expect(getEmbeddedCheckoutReturnPath()).toBeNull();
+    // jsdom reports the page change it cannot perform: the hosted leave ran
+    expect(String(errSpy.mock.calls.flat())).toMatch(/navigation/);
+  });
+
+  it("payment-due pay opens with the server's path (the banner's own shown terms are sent)", async () => {
+    mockPost.mockResolvedValue({ data: embedded("cs_secret_q", BILLING_RETURN_PATHS.pay) });
     const { result } = renderHook(() => usePayPaymentDue(), { wrapper });
     act(() => result.current.mutate(SHOWN));
     await waitFor(() => expect(getEmbeddedCheckoutSecret()).toBe("cs_secret_q"));
     expect(getEmbeddedCheckoutReturnPath()).toBe("/settings/billing?paid=1");
   });
 
-  it("return path: payment-due card add (no shown terms) opens with ?paid=1&card=1, never a payment path", async () => {
-    mockPost.mockResolvedValue({ data: embedded("cs_secret_r") });
+  // O4 is API-only (no web caller sends no body); the web still pushes whatever the server decided.
+  it("O4: a pay with no body still opens with the server's path, not one worked out from the body", async () => {
+    mockPost.mockResolvedValue({ data: embedded("cs_secret_o4", BILLING_RETURN_PATHS.cardAdd) });
     const { result } = renderHook(() => usePayPaymentDue(), { wrapper });
     act(() => result.current.mutate(undefined));
-    await waitFor(() => expect(getEmbeddedCheckoutSecret()).toBe("cs_secret_r"));
-    const path = getEmbeddedCheckoutReturnPath() ?? "";
-    expect(path).toBe("/settings/billing?paid=1&card=1");
-    expect(new URLSearchParams(path.split("?")[1]).get("card")).toBe("1");
+    await waitFor(() => expect(getEmbeddedCheckoutSecret()).toBe("cs_secret_o4"));
+    expect(getEmbeddedCheckoutReturnPath()).toBe("/settings/billing?paid=1&card=1");
+  });
+
+  it.each([
+    ["another site", "https://evil.example/x"],
+    ["a scheme-relative address", "//evil.example/settings/billing?paid=1"],
+    ["a payment path with another value", "/settings/billing?paid=2"],
+    ["a known path with a suffix", "/settings/billing?paid=1&card=1&x=1"],
+    ["a script address", "javascript:alert(1)"],
+    ["an empty path", ""],
+  ])(
+    "O10: an embedded start whose returnPath is %s is refused before anything mounts (plan checkout)",
+    async (_name, bad) => {
+      mockPost.mockResolvedValue({ data: embedded("cs_secret_bad", bad) });
+      const { result } = renderHook(() => useCreateCheckout(), { wrapper });
+      act(() => result.current.mutate());
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      expect(getEmbeddedCheckoutSecret()).toBeNull();
+      expect(errSpy).toHaveBeenCalledTimes(1); // logged once
+      expect(JSON.stringify(errSpy.mock.calls)).not.toContain("cs_secret_bad");
+      // a plain error, no response body: the billing page words it as its fixed "couldn't start checkout" line
+      expect((result.current.error as { response?: unknown }).response).toBeUndefined();
+    },
+  );
+
+  it("O10: the same refusal on payment-due pay opens nothing and never leaves", async () => {
+    mockPost.mockResolvedValue({ data: embedded("cs_secret_bad2", "https://evil.example/x") });
+    const { result } = renderHook(() => usePayPaymentDue(), { wrapper });
+    act(() => result.current.mutate(SHOWN));
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(getEmbeddedCheckoutSecret()).toBeNull();
+    expect(mockGuard).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledTimes(1);
   });
 
   it("12: no publishable key fails the mutation, logs once and opens nothing", async () => {

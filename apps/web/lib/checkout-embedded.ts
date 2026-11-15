@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import type { CheckoutStart } from "@routeflow/types";
+import { BILLING_RETURN_PATHS, type CheckoutStart } from "@routeflow/types";
 
 /**
  * SA-1139 R4/R5/R7: the one place the web decides between Stripe's hosted page and the embedded form.
@@ -9,14 +9,13 @@ import type { CheckoutStart } from "@routeflow/types";
  */
 
 /**
- * Where each flow returns on completion: the same address its hosted twin uses, so the billing page's existing
- * handling runs unchanged. A card add must never land on a payment path (it would read "Payment received").
+ * SA-1154: the allowlist of addresses an embedded checkout may return to. It lives once in `@routeflow/types`
+ * (`BILLING_RETURN_PATHS`); this is only the web's name for it. The path itself is the SERVER's (`start.returnPath`,
+ * read from the Stripe session it created): the web checks it against this list and never works one out.
  */
-export const CHECKOUT_RETURN_PATHS = {
-  plan: "/settings/billing?checkout=success",
-  pay: "/settings/billing?paid=1",
-  cardAdd: "/settings/billing?paid=1&card=1",
-} as const;
+export { BILLING_RETURN_PATHS as CHECKOUT_RETURN_PATHS };
+
+const ALLOWED_RETURN_PATHS: readonly string[] = Object.values(BILLING_RETURN_PATHS);
 
 export type EmbeddedCheckoutOpen = { clientSecret: string; returnPath: string };
 
@@ -39,7 +38,7 @@ export function getEmbeddedCheckoutReturnPath(): string | null {
   return current?.returnPath ?? null;
 }
 
-/** Each caller passes its own return path; there is no shared default. */
+/** The caller passes the path the server sent; there is no default. */
 export function openEmbeddedCheckout(clientSecret: string, returnPath: string): void {
   current = { clientSecret, returnPath };
   emit();
@@ -69,28 +68,32 @@ export function stripePublishableKey(): string {
 
 /**
  * Runs inside a mutationFn so a failure takes the caller's normal error path: an embedded answer with no
- * publishable key logs once and throws, and nothing opens. Hosted answers pass through untouched.
+ * publishable key, or whose `returnPath` is not an exact member of the allowlist, logs once and throws, and
+ * nothing opens (no panel, no navigation, nothing charged: the form never mounts). Hosted answers pass through.
  */
 export function assertCheckoutStartable(start: CheckoutStart): CheckoutStart {
-  if (start.uiMode === "embedded" && !stripePublishableKey()) {
+  if (start.uiMode !== "embedded") return start;
+  if (!stripePublishableKey()) {
     // eslint-disable-next-line no-console -- the one deliberate log when the build has no key (R7)
     console.error("Embedded checkout needs NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY at web build time.");
     throw new Error("EMBEDDED_CHECKOUT_KEY_MISSING");
+  }
+  if (typeof start.returnPath !== "string" || !ALLOWED_RETURN_PATHS.includes(start.returnPath)) {
+    // eslint-disable-next-line no-console -- the one deliberate log when the server's return path is not allowed (SA-1154)
+    console.error("Embedded checkout refused: the return path is not an allowed billing path.");
+    throw new Error("EMBEDDED_CHECKOUT_RETURN_PATH_REFUSED");
   }
   return start;
 }
 
 /**
- * Follows a started checkout: embedded opens the panel in place; hosted hands the url to `leave`
- * (today's redirect, behind each caller's own guards). `returnPath` is where an embedded completion goes.
+ * Follows a started checkout (already through `assertCheckoutStartable`): embedded opens the panel in place and
+ * returns to the path the server sent; hosted hands the url to `leave` (today's redirect, behind each caller's own
+ * guards, and Stripe's own `success_url` brings the person back).
  */
-export function followCheckout(
-  start: CheckoutStart,
-  leave: (url: string) => void,
-  returnPath: string,
-): void {
+export function followCheckout(start: CheckoutStart, leave: (url: string) => void): void {
   if (start.uiMode === "embedded") {
-    openEmbeddedCheckout(start.clientSecret, returnPath);
+    openEmbeddedCheckout(start.clientSecret, start.returnPath);
     return;
   }
   leave(start.checkoutUrl);
