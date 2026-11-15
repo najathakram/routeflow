@@ -203,6 +203,8 @@ describe("SubscriptionBillingExtras.read: open-invoice facts (SA-777)", () => {
     });
     const out = await extras.read("t1", SUB);
     expect(out.openInvoiceDueLabel).toBe("Oct 15");
+    // S9: the same day as an ISO instant, for the status view to place on the tenant clock
+    expect(out.openInvoiceDueAt).toBe("2026-10-15T12:00:00.000Z");
     expect(out.settlingCount).toBe(1);
     expect(out.openInvoiceCount).toBe(2);
   });
@@ -276,6 +278,14 @@ describe("trimBillingViewForRole (SA-777)", () => {
     expect(out).not.toHaveProperty("openInvoiceCount");
     expect(out).not.toHaveProperty("settlingCount");
     expect(out.openInvoiceAmount).toBeNull();
+  });
+
+  it("S9: the due instant is a date, not money: an operator keeps it", () => {
+    const out: any = trimBillingViewForRole(
+      { ...view, openInvoiceDueAt: "2026-10-01T12:00:00.000Z" },
+      "OPERATOR",
+    );
+    expect(out.openInvoiceDueAt).toBe("2026-10-01T12:00:00.000Z");
   });
 
   it("a tenant admin sees everything", () => {

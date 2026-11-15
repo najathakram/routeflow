@@ -82,6 +82,47 @@ function orderLabel(order: { orderNumber?: string | null; id: string }): string 
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+/**
+ * UX guide B12: tabs are keyed by id. "Active" asks the server for the ACTIVE group (the one shared list); "Pending"
+ * keeps the old PENDING-only filter so the buyer loses nothing.
+ */
+const ORDER_TABS = [
+  { id: "ALL", label: "All", empty: "No orders yet", params: {} },
+  {
+    id: "ACTIVE",
+    label: "Active",
+    empty: "No active orders",
+    params: { statusGroup: "ACTIVE" as const },
+  },
+  { id: "PENDING", label: "Pending", empty: "No pending orders", params: { status: "PENDING" } },
+  {
+    id: "CONFIRMED",
+    label: "Confirmed",
+    empty: "No confirmed orders",
+    params: { status: "CONFIRMED" },
+  },
+  {
+    id: "OUT_FOR_DELIVERY",
+    label: "Out for delivery",
+    empty: "No orders out for delivery",
+    params: { status: "OUT_FOR_DELIVERY" },
+  },
+  {
+    id: "DELIVERED",
+    label: "Delivered",
+    empty: "No delivered orders",
+    params: { status: "DELIVERED" },
+  },
+  { id: "REFUSED", label: "Refused", empty: "No refused orders", params: { status: "REFUSED" } },
+  {
+    id: "CANCELLED",
+    label: "Cancelled",
+    empty: "No cancelled orders",
+    params: { status: "CANCELLED" },
+  },
+] as const;
+type OrderTabId = (typeof ORDER_TABS)[number]["id"];
+
 export default function BuyerOrdersPage() {
   const params = useParams();
   const router = useRouter();
@@ -89,7 +130,8 @@ export default function BuyerOrdersPage() {
   const sellerSlug = params.seller as string;
 
   const [page, setPage] = React.useState(1);
-  const [statusFilter, setStatusFilter] = React.useState("");
+  const [tabId, setTabId] = React.useState<OrderTabId>("ALL");
+  const activeTab = ORDER_TABS.find((t) => t.id === tabId) ?? ORDER_TABS[0];
   // Business profiles 1B: a configured seller without a fleet has no delivery run, so no
   // "Out for Delivery" filter. Each order's badge is the order detail's own label
   // (buyerOrderStatusLabel). Unset / unread / loading = today's tabs and labels.
@@ -106,7 +148,7 @@ export default function BuyerOrdersPage() {
     isLoading,
     isError,
     error,
-  } = useBuyerOrders({ page, limit: 20, status: statusFilter || undefined });
+  } = useBuyerOrders({ page, limit: 20, ...activeTab.params });
 
   // Validate slug matches active seller
   React.useEffect(() => {
@@ -147,32 +189,22 @@ export default function BuyerOrdersPage() {
 
       {/* Status filter tabs */}
       <div className="mb-5 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        {[
-          { label: "All", value: "" },
-          { label: "Active", value: "PENDING" },
-          { label: "Confirmed", value: "CONFIRMED" },
-          { label: "Out for delivery", value: "OUT_FOR_DELIVERY" },
-          { label: "Delivered", value: "DELIVERED" },
-          { label: "Refused", value: "REFUSED" },
-          { label: "Cancelled", value: "CANCELLED" },
-        ]
-          .filter((tab) => showsRoute || tab.value !== "OUT_FOR_DELIVERY")
-          .map((tab) => (
-            <button
-              key={tab.value}
-              onClick={() => {
-                setStatusFilter(tab.value);
-                setPage(1);
-              }}
-              className={`flex-shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
-                statusFilter === tab.value
-                  ? "border-buyer-500 bg-buyer-500 text-white"
-                  : "border-surface-border bg-white text-navy/70 hover:border-buyer-300 hover:text-buyer-600"
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
+        {ORDER_TABS.filter((tab) => showsRoute || tab.id !== "OUT_FOR_DELIVERY").map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => {
+              setTabId(tab.id);
+              setPage(1);
+            }}
+            className={`flex-shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+              tabId === tab.id
+                ? "border-buyer-500 bg-buyer-500 text-white"
+                : "border-surface-border bg-white text-navy/70 hover:border-buyer-300 hover:text-buyer-600"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
       {/* Error */}
@@ -191,8 +223,26 @@ export default function BuyerOrdersPage() {
       ) : orders.length === 0 && !isError ? (
         <div className="rounded-xl border border-dashed border-surface-border bg-white p-12 text-center">
           <ShoppingCart className="mx-auto mb-4 h-12 w-12 text-navy/20" />
-          <h2 className="text-lg font-semibold text-navy mb-2">No orders yet</h2>
-          <p className="text-sm text-navy/70">Orders from this seller will appear here.</p>
+          {tabId === "ALL" ? (
+            <>
+              <h2 className="text-lg font-semibold text-navy mb-2">No orders yet</h2>
+              <p className="text-sm text-navy/70">Orders from this seller will appear here.</p>
+            </>
+          ) : (
+            <>
+              <h2 className="text-lg font-semibold text-navy mb-2">{activeTab.empty}</h2>
+              <button
+                type="button"
+                onClick={() => {
+                  setTabId("ALL");
+                  setPage(1);
+                }}
+                className="mt-2 rounded-lg border border-surface-border px-3 py-1.5 text-sm font-medium text-buyer-600 hover:bg-surface-raised"
+              >
+                Show all orders
+              </button>
+            </>
+          )}
         </div>
       ) : orders.length > 0 ? (
         <>

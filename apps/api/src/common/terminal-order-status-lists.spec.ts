@@ -19,10 +19,18 @@ import * as fs from "fs";
 import * as path from "path";
 import ts from "typescript";
 import {
+  ACTIVE_ORDER_STATUSES as SHARED_ACTIVE,
+  ORDER_STATUS_GROUP_VALUES as SHARED_GROUPS,
+  ORDER_STATUS_VALUES,
   POST_DELIVERY_ORDER_STATUSES as SHARED_POST_DELIVERY,
   TERMINAL_ORDER_STATUSES as SHARED_TERMINAL,
 } from "@routeflow/types";
-import { POST_DELIVERY_ORDER_STATUSES, TERMINAL_ORDER_STATUSES } from "./terminal-order-statuses";
+import {
+  ACTIVE_ORDER_STATUSES,
+  ORDER_STATUS_GROUP_VALUES,
+  POST_DELIVERY_ORDER_STATUSES,
+  TERMINAL_ORDER_STATUSES,
+} from "./terminal-order-statuses";
 
 const REPO = path.resolve(__dirname, "../../../..");
 
@@ -176,5 +184,26 @@ describe("terminal-order-status-lists (SA-1101 P-1)", () => {
     const src = fs.readFileSync(path.join(REPO, "apps/api/src/routes/routes.service.ts"), "utf8");
     expect(src).not.toMatch(/data:\s*\{\s*status:\s*OrderStatus\.DELIVERED\s*\}/);
     expect(src.match(/applyStopOutcomes\(/g)?.length).toBe(2);
+  });
+});
+
+// UX guide B12: "in progress" is one list, and every status is classified exactly once.
+describe("ACTIVE_ORDER_STATUSES (UX guide B12)", () => {
+  it("guard: the API copy equals the shared list", () => {
+    expect([...ACTIVE_ORDER_STATUSES].sort()).toEqual([...SHARED_ACTIVE].sort());
+  });
+
+  it("guard: the API status group list equals the shared one", () => {
+    expect([...ORDER_STATUS_GROUP_VALUES].sort()).toEqual([...SHARED_GROUPS].sort());
+  });
+
+  it("guard: every order status is exactly one of DRAFT, active or terminal (a ninth status fails until classified)", () => {
+    const groups: string[][] = [["DRAFT"], [...SHARED_ACTIVE], [...SHARED_TERMINAL]];
+    for (const status of ORDER_STATUS_VALUES) {
+      expect({ status, groups: groups.filter((g) => g.includes(status)).length }).toEqual({
+        status,
+        groups: 1,
+      });
+    }
   });
 });
