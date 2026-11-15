@@ -1,6 +1,6 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
-import { screen, within, renderWithProviders } from "@/test-utils/render";
+import { screen, within, waitFor, renderWithProviders } from "@/test-utils/render";
 import InvoicesPage from "./page";
 
 /**
@@ -10,8 +10,14 @@ import InvoicesPage from "./page";
  */
 
 let mockSearchString = "";
+const mockPush = jest.fn();
+const mockApiGet = jest.fn();
+jest.mock("@/lib/api-client", () => ({
+  ...jest.requireActual("@/lib/api-client"),
+  apiClient: { get: (...a: unknown[]) => mockApiGet(...a) },
+}));
 jest.mock("next/navigation", () => ({
-  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+  useRouter: () => ({ push: mockPush, replace: jest.fn() }),
   usePathname: () => "/invoices",
   useSearchParams: () => new URLSearchParams(mockSearchString),
 }));
@@ -69,6 +75,7 @@ jest.mock("@/lib/api/bookkeeping", () => ({
 describe("InvoicesPage — phone cards", () => {
   beforeEach(() => {
     mockSearchString = "";
+    mockPush.mockClear();
     mockUseInvoices.mockReset();
     mockUseInvoices.mockReturnValue({
       data: { data: INVOICES, meta: { total: 2, page: 1, limit: 20, totalPages: 1 } },
@@ -220,6 +227,22 @@ describe("InvoicesPage — phone cards", () => {
     expect(await screen.findByRole("menuitem", { name: "Export" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Payments Received" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Recurring" })).toBeInTheDocument();
+    await user.click(screen.getByRole("menuitem", { name: "Payments Received" }));
+    expect(mockPush).toHaveBeenLastCalledWith("/invoices/payments");
+    await user.click(screen.getByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Recurring" }));
+    expect(mockPush).toHaveBeenLastCalledWith("/invoices/recurring");
+    // Export runs the export path: one request for the filtered list.
+    mockApiGet.mockClear();
+    await user.click(screen.getByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Export" }));
+    expect(mockPush).toHaveBeenCalledTimes(2);
+    await waitFor(() =>
+      expect(mockApiGet).toHaveBeenCalledWith(
+        "/invoices",
+        expect.objectContaining({ params: expect.objectContaining({ limit: 1000, page: 1 }) }),
+      ),
+    );
   });
 
   it("hides the page description below md", () => {

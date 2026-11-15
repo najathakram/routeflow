@@ -1,4 +1,4 @@
-import { resolveInvoiceListBalance, resolveInvoiceListBalanceTone } from "./page";
+import { resolveInvoiceListBalance, resolveInvoiceListBalanceTone } from "./invoice-list-balance";
 import type { Invoice, InvoicePayment } from "@/lib/api/invoices";
 
 function payment(overrides: Partial<InvoicePayment>): InvoicePayment {
@@ -87,6 +87,13 @@ describe("resolveInvoiceListBalanceTone (UXG-R10-A1 D3)", () => {
     ["paid", { status: "PAID", balanceDue: 0, dueDate: PAST }, "default"],
     ["overdue", { status: "OVERDUE", balanceDue: 40, dueDate: PAST }, "danger"],
     ["partly paid and overdue", { status: "PARTIAL", balanceDue: 20, dueDate: PAST }, "danger"],
+    ["sent, past due", { status: "SENT", balanceDue: 40, dueDate: PAST }, "default"],
+    ["void", { status: "VOID", balanceDue: 40, dueDate: PAST }, "default"],
+    [
+      "written off with a balance",
+      { status: "WRITTEN_OFF", balanceDue: 40, dueDate: PAST },
+      "default",
+    ],
   ])("%s -> %s", (_n, inv, tone) => {
     expect(resolveInvoiceListBalanceTone({ ...base, ...inv } as never)).toBe(tone);
   });
