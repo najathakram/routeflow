@@ -421,7 +421,8 @@ describe("stampDeliveredInFull — recreated (replace-all, M2)", () => {
         { id: "u1", productId: null, qty: 2, deliveredQty: 0 },
       ],
     });
-    await recreate(db, held([["old1", "p1", 10, 10]]));
+    // SA-1149 D2: the old p1 row is not carried here (omitting a delivered product is refused, D2-18): only new products
+    await recreate(db, held([]));
     expect(db.line("n1").deliveredQty).toBe(3);
     expect(db.line("u1").deliveredQty).toBe(2);
   });
@@ -508,5 +509,39 @@ describe("heldAtBookedFloor — the settle input", () => {
     expect(
       await feed(makeStampDb({ status: "DELIVERED", routeRunStopId: "s1", lines: [] }), rows),
     ).toBe(rows);
+  });
+});
+
+describe("captureRecreatedCarry refusal off the carry (SA-1149 D2)", () => {
+  const capture = (status: string, routeRunStopId: string | null, rows: any[]) =>
+    captureRecreatedCarry(
+      {
+        order: { findFirst: async () => ({ status, routeRunStopId }) },
+        deliveryMutation: { findMany: async () => [] },
+      } as never,
+      "o1",
+      rows,
+    );
+  const line = (status: string, d: number) => ({
+    id: "l1",
+    productId: "p1",
+    qty: 10,
+    deliveredQty: d,
+    status,
+  });
+
+  it.each([
+    ["reopened CONFIRMED", "CONFIRMED", null],
+    ["a DELIVERED route order", "DELIVERED", "stop1"],
+  ])("%s with a delivered live line: 409 ORDER_EDIT_DELIVERED_LINES", async (_n, status, stop) => {
+    await expect(capture(status, stop, [line("ACTIVE", 4)])).rejects.toMatchObject({
+      status: 409,
+      response: { code: "ORDER_EDIT_DELIVERED_LINES" },
+    });
+  });
+
+  it("a CANCELLED delivered line, or no delivered line, does not refuse (nothing to carry)", async () => {
+    expect(await capture("CONFIRMED", null, [line("CANCELLED", 4)])).toBeNull();
+    expect(await capture("CONFIRMED", null, [line("ACTIVE", 0)])).toBeNull();
   });
 });

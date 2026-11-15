@@ -418,7 +418,7 @@ describeDb("W-946r quantity floor (SA-1149 D2), real Postgres", () => {
     expect(await stock(p)).toBe(90);
   }, 120_000);
 
-  it("D2-13: a unit-aware (Case of 12) line, 2 cases delivered (24 pieces), cut to 1 case is 409, nothing written; restated at 2 is 200", async () => {
+  it("D2-22: a unit-aware (Case of 12) line, 2 cases delivered (24 pieces), cut to 1 case is 409, nothing written; restated at 2 is 200", async () => {
     const p = await product("d213");
     await raw.productUnit.create({
       data: { tenantId, productId: p, label: "Case", factorToBase: 12, price: "12.00" },
@@ -446,4 +446,134 @@ describeDb("W-946r quantity floor (SA-1149 D2), real Postgres", () => {
     await edit(o.id, { items: [{ id, qty: 2, unitLabel: "Case" }] });
     expect(Number((await rows(o.id))[0].qty)).toBe(24);
   }, 120_000);
+
+  // ---- SA-1149 amended 17:23Z: a replace-all off the carry that would delete a delivered line (reopened order, route order) ----
+  const DELIVERED_LINES = {
+    status: 409,
+    response: {
+      code: "ORDER_EDIT_DELIVERED_LINES",
+      message: expect.stringContaining("Change each line instead"),
+    },
+  };
+  const driver = () => principal("DRIVER", driverUserId);
+  const replace = (orderId: string, items: any[], who: JwtPayload = operator()) =>
+    edit(orderId, { replaceAll: true, items }, who);
+  const full = (productId: string, qty: number) => ({ productId, qty, unitPrice: "1.00" });
+
+  it("D2-13 (B1167 re-pin a): a reopened (CONFIRMED) order, line {10, d10}, staff replace-all to [6] is 409 ORDER_EDIT_DELIVERED_LINES, nothing written, stock 90", async () => {
+    const p = await product("d213b");
+    const o = await delivered(p, 10, 10, "CONFIRMED");
+    const before = await snapshot(o.id);
+    await expect(replace(o.id, [full(p, 6)])).rejects.toMatchObject(DELIVERED_LINES);
+    expect(await snapshot(o.id)).toEqual(before);
+    expect(await stock(p)).toBe(90);
+  }, 120_000);
+
+  it("D2-14 (B1167 re-pin b): DELIVERED, non-route, no records, {10, d10}, staff replace-all to [12]: refused 409 LINES_REPLACE_AFTER_DELIVERY before the carry (observed), nothing written", async () => {
+    const p = await product("d214");
+    const o = await delivered(p, 10, 10);
+    let outcome: unknown = "resolved";
+    await replace(o.id, [full(p, 12)]).catch((e) => {
+      outcome = { status: e?.status, code: e?.response?.code };
+    });
+    const lines = await rows(o.id);
+    expect({
+      outcome,
+      lines: lines.map((l) => [Number(l.qty), Number(l.deliveredQty)]),
+      stock: await stock(p),
+    }).toEqual(OBSERVED_D2_14);
+  }, 120_000);
+
+  it("D2-15: a PENDING (reopened) route order with a delivered line, the driver's full list is 409 ORDER_EDIT_DELIVERED_LINES", async () => {
+    const p = await product("d215");
+    const o = await delivered(p, 10, 4, "PENDING");
+    const route = await raw.route.create({ data: { name: `d215 ${run}`, tenantId } as any });
+    routeIds.push(route.id);
+    const routeStop = await raw.routeStop.create({
+      data: { tenantId, routeId: route.id, stopNumber: 1, customerId } as any,
+    });
+    const rr = await raw.routeRun.create({
+      data: {
+        tenantId,
+        routeId: route.id,
+        scheduledDate: new Date("2026-11-15T00:00:00.000Z"),
+        status: "IN_PROGRESS" as any,
+        driverId,
+      },
+    });
+    runIds.push(rr.id);
+    const stop = await raw.routeRunStop.create({
+      data: {
+        tenantId,
+        routeRunId: rr.id,
+        routeStopId: routeStop.id,
+        stopNumber: 1,
+        status: "PENDING" as any,
+      } as any,
+    });
+    await raw.order.update({
+      where: { id: o.id },
+      data: { routeRunId: rr.id, routeRunStopId: stop.id },
+    });
+    const before = await snapshot(o.id);
+    await expect(replace(o.id, [full(p, 10)], driver())).rejects.toMatchObject(DELIVERED_LINES);
+    expect(await snapshot(o.id)).toEqual(before);
+  }, 120_000);
+
+  it("D2-16 guard: a PENDING order whose lines all have d 0: staff replace-all is accepted as today", async () => {
+    const p = await product("d216");
+    const o = await delivered(p, 5, 0, "PENDING");
+    await replace(o.id, [full(p, 4)]);
+    expect((await rows(o.id)).map((l) => Number(l.qty))).toEqual([4]);
+  }, 120_000);
+
+  it("D2-17 guard: a CANCELLED delivered line does not trigger the refusal", async () => {
+    const p = await product("d217a");
+    const p2 = await product("d217b");
+    const o = await order(
+      [{ ...plain(p, 5, 5), status: "CANCELLED" }, plain(p2, 5, 0)],
+      "CONFIRMED",
+    );
+    await replace(o.id, [full(p2, 4)]);
+    expect((await rows(o.id)).some((l) => Number(l.qty) === 4)).toBe(true);
+  }, 120_000);
+
+  it("D2-18: DELIVERED, non-route, no records, x (d5) and y: a replace-all to [y] only (x omitted) is refused 409 by LINES_REPLACE_AFTER_DELIVERY (guard: the refuser, observed)", async () => {
+    const x = await product("d218x");
+    const y = await product("d218y");
+    const o = await order([plain(x, 5, 5), plain(y, 5, 0)], "DELIVERED");
+    const before = await snapshot(o.id);
+    let outcome: unknown = "resolved";
+    await replace(o.id, [full(y, 5)]).catch((e) => {
+      outcome = { status: e?.status, code: e?.response?.code };
+    });
+    expect(outcome).toEqual(OBSERVED_D2_18);
+    if (outcome !== "resolved") expect(await snapshot(o.id)).toEqual(before);
+  }, 120_000);
+
+  it("D2-19 guard: PARTIALLY_DELIVERED with a d3 line: a staff replace-all is 409 as before (B1234)", async () => {
+    const p = await product("d219");
+    const o = await delivered(p, 5, 3, "PARTIALLY_DELIVERED");
+    await expect(replace(o.id, [full(p, 5)])).rejects.toMatchObject({
+      status: 409,
+      response: { code: "LINE_ALREADY_DELIVERED" },
+    });
+  }, 120_000);
+
+  it("D2-20 guard: a reopened (CONFIRMED) order, d10 line, per-line {id, qty:12}: 200, id and stamp kept", async () => {
+    const p = await product("d220");
+    const o = await delivered(p, 10, 10, "CONFIRMED");
+    const id = o.lineItems[0].id;
+    await edit(o.id, { items: [{ id, qty: 12 }] });
+    const line = (await rows(o.id))[0];
+    expect([line.id, Number(line.qty), Number(line.deliveredQty)]).toEqual([id, 12, 10]);
+  }, 120_000);
 });
+
+/** Observed on d8473e8d1c + D2 (SA-1149: observe and report): staff replace-all on a DELIVERED order is refused before the carry. */
+const OBSERVED_D2_14 = {
+  outcome: { status: 409, code: "LINES_REPLACE_AFTER_DELIVERY" },
+  lines: [[10, 10]],
+  stock: 90,
+};
+const OBSERVED_D2_18 = { status: 409, code: "LINES_REPLACE_AFTER_DELIVERY" };

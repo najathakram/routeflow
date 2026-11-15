@@ -29,3 +29,23 @@ describe("quantity floor call sites (SA-1149 D2-8)", () => {
     expect(skip).toBeGreaterThan(0);
   });
 });
+
+/** SA-1149 D2-21: the replace-all refusal is thrown once, in captureRecreatedCarry; both replace sites mark before they delete. */
+describe("replace-all refusal sites (SA-1149 D2-21)", () => {
+  it("ORDER_EDIT_DELIVERED_LINES is thrown from one helper, called at both exits of captureRecreatedCarry", () => {
+    const src = read("delivered-stamp.ts");
+    expect(src.match(/code: API_ERROR_CODES\.ORDER_EDIT_DELIVERED_LINES/g)).toHaveLength(1);
+    expect(src.match(/throw deliveredLinesReplaced\(\)/g)).toHaveLength(2);
+  });
+
+  it("both replace sites call markLinesRecreated before their deleteMany (count 2)", () => {
+    const src = read("orders.service.ts");
+    expect(src.match(/markLinesRecreated\(tx, orderId, heldItems\)/g)).toHaveLength(2);
+    const sites = [...src.matchAll(/markLinesRecreated\(tx, orderId, heldItems\)/g)].map(
+      (m) => m.index!,
+    );
+    for (const at of sites) {
+      expect(src.slice(at).indexOf("deleteMany")).toBeGreaterThan(0);
+    }
+  });
+});

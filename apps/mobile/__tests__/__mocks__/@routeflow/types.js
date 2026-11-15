@@ -220,6 +220,7 @@ module.exports = {
     ORDER_CHANGED_DURING_EDIT: "ORDER_CHANGED_DURING_EDIT",
     ORDER_DELIVERY_ADDRESS_MISSING: "ORDER_DELIVERY_ADDRESS_MISSING",
     ORDER_EDIT_NEEDS_LINE_IDS: "ORDER_EDIT_NEEDS_LINE_IDS",
+    ORDER_EDIT_DELIVERED_LINES: "ORDER_EDIT_DELIVERED_LINES",
     /** B692: a manual PARTIALLY_DELIVERED names what was delivered per line (or the order already has delivery data). 409. */
     ORDER_PD_NEEDS_QUANTITIES: "ORDER_PD_NEEDS_QUANTITIES",
     /** B692: a delivered / partly-delivered order whose delivery quantities were never recorded is not cancelled blind. 409. */
