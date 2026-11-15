@@ -469,20 +469,43 @@ describe("CustomersPage — phone cards", () => {
     }
   });
 
-  it("entering select mode and ticking a card insert nothing above the card list below md; the list is padded for the bar", async () => {
+  it("entering select mode and ticking a card insert nothing above the card list below md; the list stays unpadded", async () => {
     const user = userEvent.setup();
     const { container } = renderWithProviders(<CustomersPage />);
     await user.click(screen.getByRole("button", { name: /^Select$/ }));
     const ul = container.querySelector("ul.md\\:hidden") as HTMLElement;
     expect(ul.previousElementSibling).toBeNull();
     const before = flowBefore(ul);
-    expect(ul.className).not.toContain("max-md:pb-");
     await user.click(
       within(cards(container)[0]).getByRole("checkbox", { name: "Select Ada Buyer" }),
     );
     expect(ul.previousElementSibling).toBeNull();
     expect(flowBefore(ul)).toEqual(before);
-    expect(ul.className).toContain("max-md:pb-56");
+    // The room for the bar is a spacer after the list, not padding on it.
+    expect(ul.className).not.toContain("max-md:pb-");
+  });
+
+  it("puts a spacer for the fixed bar after the pagination footer, only while a customer is ticked", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<CustomersPage />);
+    await user.click(screen.getByRole("button", { name: /^Select$/ }));
+    expect(container.querySelector("[data-selection-bar-spacer]")).toBeNull();
+    await user.click(
+      within(cards(container)[0]).getByRole("checkbox", { name: "Select Ada Buyer" }),
+    );
+    const spacers = container.querySelectorAll("[data-selection-bar-spacer]");
+    expect(spacers).toHaveLength(1);
+    const spacer = spacers[0] as HTMLElement;
+    const footer = screen.getByText("Per page:").closest("div.border-t") as HTMLElement;
+    expect(footer).not.toBeNull();
+    expect(Boolean(footer.compareDocumentPosition(spacer) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(
+      true,
+    );
+    expect(spacer).toHaveAttribute("aria-hidden", "true");
+    expect(spacer.className.split(" ")).toContain("md:hidden");
+    expect(spacer.className.split(" ")).toContain("h-44");
+    await user.click(screen.getByRole("button", { name: "Deselect all" }));
+    expect(container.querySelector("[data-selection-bar-spacer]")).toBeNull();
   });
 
   it("gives Merge the same 44px target below md in the selection bar", async () => {

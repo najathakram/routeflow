@@ -1,7 +1,7 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
 import { render, screen } from "@testing-library/react";
-import { SelectionBar } from "./SelectionBar";
+import { SelectionBar, SelectionBarSpacer } from "./SelectionBar";
 
 const PAGE_BAR = "flex items-center justify-between rounded-lg border px-4 py-3";
 
@@ -78,5 +78,14 @@ describe("SelectionBar", () => {
       </SelectionBar>,
     );
     expect(screen.queryByRole("checkbox")).toBeNull();
+  });
+
+  it("has a spacer hidden from md up and from assistive tech, taking the page's height class", () => {
+    const { container } = render(<SelectionBarSpacer className="h-72" />);
+    const spacer = container.querySelector("[data-selection-bar-spacer]") as HTMLElement;
+    expect(spacer).not.toBeNull();
+    expect(spacer).toHaveAttribute("aria-hidden", "true");
+    expect(spacer.className.split(" ")).toEqual(expect.arrayContaining(["md:hidden", "h-72"]));
+    expect(spacer.childNodes).toHaveLength(0);
   });
 });

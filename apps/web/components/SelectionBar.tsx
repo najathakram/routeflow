@@ -11,9 +11,9 @@ const SELECT_ALL_TEXT = "Select all on this page";
  * ticking a card never inserts anything above the list and moves it; it also holds the "Select all
  * on this page" checkbox there (`selectAll`), which the table shows in its header from md up.
  *
- * The page gives the card list bottom padding while the bar shows (RecordCardList `className`,
- * a fixed class sized to the bar), so the last card can scroll above it. Keep every control inside
- * at least 44px tall below md.
+ * The page renders a `SelectionBarSpacer` as the last element of its list section while the bar
+ * shows, so everything that follows the list (pagination, footer) can scroll above the bar.
+ * Keep every control inside at least 44px tall below md.
  */
 export function SelectionBar({
   className,
@@ -56,5 +56,17 @@ export function SelectionBar({
       )}
       {children}
     </div>
+  );
+}
+
+/**
+ * Empty room at the end of a list section, as tall as the fixed bar, so nothing that follows the
+ * list ends up under the bar on a phone. Place it as the LAST element of the list section, after
+ * the pagination and any footer, and render it only while the bar renders. `className` is a fixed
+ * height class sized to that page's bar (no measuring). It takes no space from md up.
+ */
+export function SelectionBarSpacer({ className }: { className?: string }) {
+  return (
+    <div aria-hidden="true" data-selection-bar-spacer className={cn("md:hidden", className)} />
   );
 }

@@ -39,7 +39,7 @@ import {
 } from "@routeflow/ui/web";
 import { RecordCard, RecordCardList } from "@/components/RecordCard";
 import { FiltersDisclosure, activeFilterCount } from "@/components/FiltersDisclosure";
-import { SelectionBar } from "@/components/SelectionBar";
+import { SelectionBar, SelectionBarSpacer } from "@/components/SelectionBar";
 import { usePageTitle } from "@/lib/page-title-context";
 import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
@@ -1384,7 +1384,7 @@ function InventoryPurchasesTab() {
       {!isLoading && !isError && bills.length > 0 && (
         <>
           {/* While bills are selected the fixed bar covers the bottom of the screen: pad the list. */}
-          <RecordCardList className={selectedBills.size > 0 ? "max-md:pb-80" : undefined}>
+          <RecordCardList>
             {sortedBills.map((bill: VendorBill) => {
               const overdue = isOverdue(bill);
               const balance = billBalance(bill);
@@ -1679,6 +1679,10 @@ function InventoryPurchasesTab() {
           </div>
         </div>
       )}
+
+      {/* Room for the fixed bulk bar below md, after the pagination so Previous / Next stay
+          reachable. h-72 covers the bar: select-all row, count, and wrapped controls. */}
+      {selectedBills.size > 0 && <SelectionBarSpacer className="h-72" />}
 
       <CreateBillModal isOpen={isCreateOpen} onClose={() => setIsCreateOpen(false)} />
       <ScanInvoiceModal

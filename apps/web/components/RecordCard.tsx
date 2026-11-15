@@ -14,15 +14,8 @@ import { cn } from "@routeflow/ui/web";
  * row with the meta line, lifted above the link (`relative z-10`), so pressing one never opens
  * the record.
  */
-export function RecordCardList({
-  children,
-  className,
-}: {
-  children: React.ReactNode;
-  /** For example bottom padding that keeps the last card above a fixed selection bar. */
-  className?: string;
-}) {
-  return <ul className={cn("space-y-3 md:hidden", className)}>{children}</ul>;
+export function RecordCardList({ children }: { children: React.ReactNode }) {
+  return <ul className="space-y-3 md:hidden">{children}</ul>;
 }
 
 export interface RecordCardProps {

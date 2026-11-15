@@ -106,17 +106,6 @@ describe("RecordCard", () => {
     expect(screen.getByText("Acme").closest("p")).not.toHaveAttribute("title");
   });
 
-  it("lets a page add classes to the card list, for example padding above a fixed bar", () => {
-    const { container } = render(
-      <RecordCardList className="max-md:pb-20">
-        <RecordCard href="/x" title="X-1" amount="$1.00" />
-      </RecordCardList>,
-    );
-    const ul = container.querySelector("ul") as HTMLElement;
-    expect(ul.className).toContain("md:hidden");
-    expect(ul.className).toContain("max-md:pb-20");
-  });
-
   describe("title kind and dimming", () => {
     it("shows a number title in mono by default", () => {
       renderCard();

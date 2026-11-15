@@ -70,7 +70,7 @@ import { WALK_IN_PROTECTED_COPY } from "./_components/walk-in-protection";
 import { CustomersMoreMenu } from "./_components/CustomersMoreMenu";
 import { RecordCard, RecordCardList } from "@/components/RecordCard";
 import { FiltersDisclosure, activeFilterCount } from "@/components/FiltersDisclosure";
-import { SelectionBar } from "@/components/SelectionBar";
+import { SelectionBar, SelectionBarSpacer } from "@/components/SelectionBar";
 
 // A module-level component, never an inline `cell:` closure: flexRender mounts a cell function as a
 // component, so a closure rebuilt with `columns` is a new component type on every page render and
@@ -1197,12 +1197,7 @@ export default function CustomersPage() {
             keep the table's own states at every width. */}
         {!isLoading && !isError && customers.length > 0 && (
           <div className="p-3 md:hidden">
-            {/* While customers are selected the fixed bar covers the bottom of the screen: pad the list. */}
-            <RecordCardList
-              className={
-                !removedFilter && selectMode && selected.size > 0 ? "max-md:pb-56" : undefined
-              }
-            >
+            <RecordCardList>
               {customers.map((c) => {
                 const name = c.contactName || c.businessName;
                 const status = c.user?.status ?? "ACTIVE";
@@ -1495,6 +1490,11 @@ export default function CustomersPage() {
           </div>
         )}
       </div>
+
+      {/* Room for the fixed selection bar below md, after the pagination footer so the footer
+          stays reachable. h-44 covers the bar: select-all row, count, and the wrapped
+          Deselect / Merge / Delete controls. Same condition as the bar. */}
+      {!removedFilter && selectMode && selected.size > 0 && <SelectionBarSpacer className="h-44" />}
 
       {/* Bulk delete confirmation — names the selected customers where feasible
           (REG-B130), falling back to a bare count past a readable cap. */}

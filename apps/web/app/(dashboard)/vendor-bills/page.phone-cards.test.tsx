@@ -402,18 +402,48 @@ describe("Supplier bills list — phone cards", () => {
     ).toBeInTheDocument();
   });
 
-  it("ticking a card inserts nothing above the card list below md and pads the list for the bar", async () => {
+  it("ticking a card inserts nothing above the card list below md and leaves the list unpadded", async () => {
     const user = userEvent.setup();
     const { container } = renderWithProviders(<ExpensesPage />);
     const ul = container.querySelector("ul.md\\:hidden") as HTMLElement;
     const before = flowBefore(ul);
     const prev = ul.previousElementSibling;
-    expect(ul.className).not.toContain("max-md:pb-");
     await user.click(
       within(cardList(container)[0]).getByRole("checkbox", { name: /^Select BILL-/ }),
     );
     expect(ul.previousElementSibling).toBe(prev);
     expect(flowBefore(ul)).toEqual(before);
-    expect(ul.className).toContain("max-md:pb-80");
+    // The room for the bar is a spacer after the list, not padding on it.
+    expect(ul.className).not.toContain("max-md:pb-");
+  });
+
+  it("puts a spacer for the fixed bar after the pagination, only while a bill is ticked", async () => {
+    mockUseBills.mockImplementation((params?: { limit?: number }) => ({
+      data: {
+        data: BILLS,
+        meta: { total: 60, page: 1, limit: params?.limit ?? 20, totalPages: 3 },
+      },
+      isLoading: false,
+      isError: false,
+    }));
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<ExpensesPage />);
+    expect(container.querySelector("[data-selection-bar-spacer]")).toBeNull();
+    await user.click(
+      within(cardList(container)[0]).getByRole("checkbox", { name: /^Select BILL-/ }),
+    );
+    const spacers = container.querySelectorAll("[data-selection-bar-spacer]");
+    expect(spacers).toHaveLength(1);
+    const spacer = spacers[0] as HTMLElement;
+    const follows = (a: Node, b: Node) =>
+      Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(follows(screen.getByRole("button", { name: "Next" }), spacer)).toBe(true);
+    expect(follows(screen.getByRole("button", { name: "Previous" }), spacer)).toBe(true);
+    expect(follows(container.querySelector("ul.md\\:hidden") as HTMLElement, spacer)).toBe(true);
+    expect(spacer).toHaveAttribute("aria-hidden", "true");
+    expect(spacer.className.split(" ")).toContain("md:hidden");
+    expect(spacer.className.split(" ")).toContain("h-72");
+    await user.click(screen.getByRole("button", { name: "Deselect all" }));
+    expect(container.querySelector("[data-selection-bar-spacer]")).toBeNull();
   });
 });
