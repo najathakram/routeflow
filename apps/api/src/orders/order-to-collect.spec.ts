@@ -69,9 +69,9 @@ describe("attachOrderToCollect", () => {
 });
 
 describe("the order detail wires it", () => {
-  it("orders.service.ts findOne calls attachOrderToCollect and does not select the intent into the buyer-visible include", () => {
-    const text = readFileSync(join(__dirname, "orders.service.ts"), "utf8");
-    expect(text).toMatch(/attachOrderToCollect\(this\.prisma\.forTenant\(\), order, user\)/);
+  it("order-find-one.ts (findOne, moved from orders.service.ts, SA-1160) calls attachOrderToCollect and does not select the intent into the buyer-visible include", () => {
+    const text = readFileSync(join(__dirname, "order-find-one.ts"), "utf8");
+    expect(text).toMatch(/attachOrderToCollect\(self\.prisma\.forTenant\(\), order, user\)/);
     expect(readFileSync(join(__dirname, "order-payment-credit-notes.ts"), "utf8")).not.toMatch(
       /expectedPaymentMethod/,
     );
