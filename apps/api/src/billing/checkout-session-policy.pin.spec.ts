@@ -18,7 +18,6 @@ const HELPER_FILE = path.join("billing", "checkout-session-params.ts");
 const WRAPPED: Record<string, number> = {
   "billing/billing.service.ts": 1, // BillingService.createCheckoutSession (inline price_data, anchored)
   "billing/catchup-checkout.service.ts": 1, // CatchupCheckoutService.open (prorated catch-up session)
-  "billing/stripe.service.ts": 1, // StripeService.createCheckoutSession (pre-created price subscription)
 };
 
 /**
@@ -154,5 +153,53 @@ describe("F1 pin self-controls (the scanner itself catches a skipped helper)", (
   it("an unlisted file with an unwrapped create is reported by the tree rule (not excluded)", () => {
     const injected = { file: "billing/new-thing.ts", ...scan("c.checkout.sessions.create({});") };
     expect(injected.findings.length > 0 && !(injected.file in EXCLUDED)).toBe(true);
+  });
+});
+
+/**
+ * SA-1139 R6: the embedded-Checkout keys are set in ONE place. `ui_mode` and `redirect_on_completion` appear in no
+ * production file but the helper; `return_url:` only in the helper and in the Billing Portal call (a different Stripe
+ * product, `StripeService.createBillingPortalSession`). A site that sets them itself would bypass `surface`.
+ */
+const EMBEDDED_KEYS = /\b(?:ui_mode|redirect_on_completion)\b/;
+const RETURN_URL_KEY = /\breturn_url\s*:/;
+const PORTAL_RETURN_URL_FILE = "billing/stripe.service.ts";
+
+function strayEmbeddedKeys(file: string, text: string): string[] {
+  const out: string[] = [];
+  if (EMBEDDED_KEYS.test(text)) out.push("ui_mode/redirect_on_completion");
+  if (RETURN_URL_KEY.test(text) && file !== PORTAL_RETURN_URL_FILE) out.push("return_url");
+  return out;
+}
+
+describe("SA-1139 R6 - ui_mode / return_url / redirect_on_completion live only in checkout-session-params.ts", () => {
+  it("no other production file under apps/api/src sets them", () => {
+    // `testing/` holds the Stripe fakes: they MIRROR the response for an embedded request, they set nothing
+    const bad = SCANNED.filter((s) => !s.file.startsWith("testing/"))
+      .map((s) => ({
+        file: s.file,
+        keys: strayEmbeddedKeys(s.file, fs.readFileSync(path.join(SRC_ROOT, s.file), "utf8")),
+      }))
+      .filter((s) => s.keys.length > 0);
+    expect(bad).toEqual([]);
+  });
+
+  it("the helper itself sets them (the pin is not vacuous)", () => {
+    const text = fs.readFileSync(path.join(SRC_ROOT, HELPER_FILE), "utf8");
+    expect(EMBEDDED_KEYS.test(text)).toBe(true);
+    expect(RETURN_URL_KEY.test(text)).toBe(true);
+    expect(/\bredirect_on_completion\b/.test(text)).toBe(true);
+  });
+
+  it("self-control: an injected ui_mode, redirect_on_completion or return_url is caught", () => {
+    const f = "billing/billing.service.ts";
+    expect(strayEmbeddedKeys(f, "x({ ui_mode: 'embedded_page' })")).toEqual([
+      "ui_mode/redirect_on_completion",
+    ]);
+    expect(strayEmbeddedKeys(f, "x({ redirect_on_completion: 'never' })")).toEqual([
+      "ui_mode/redirect_on_completion",
+    ]);
+    expect(strayEmbeddedKeys(f, "x({ return_url: u })")).toEqual(["return_url"]);
+    expect(strayEmbeddedKeys(PORTAL_RETURN_URL_FILE, "x({ return_url: u })")).toEqual([]);
   });
 });

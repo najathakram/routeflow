@@ -16,6 +16,7 @@ import {
 } from "./catchup-session-terms";
 
 import { StripeService } from "./stripe.service";
+import type { CheckoutStart } from "@routeflow/types";
 
 /**
  * The terms a session built from the fresh plan would carry, computed LAZILY (only when a live stored session needs
@@ -135,6 +136,11 @@ function lostTheClaimRace(err: unknown): boolean {
   );
 }
 
+/** A reused stored session is always a HOSTED one (an embedded session has no url, so it is expired and recreated, never reused). */
+function hostedStart(sessionId: string, url: string): CheckoutStart {
+  return { uiMode: "hosted", sessionId, checkoutUrl: url, clientSecret: null };
+}
+
 @Injectable()
 export class PaymentDueService {
   private readonly logger = new Logger(PaymentDueService.name);
@@ -225,7 +231,7 @@ export class PaymentDueService {
     tenantId: string,
     now: Date = new Date(),
     shown?: PaymentDueShownTerms,
-  ): Promise<{ checkoutUrl: string }> {
+  ): Promise<CheckoutStart> {
     const { view, stubCents, terms } = await this.read(tenantId, now);
     // SA-801 / SA-806: a card-needed tenant (nothing charged now) opens the very same catch-up session. The expected
     // stub is the planner's own `stub.totalCents` from the read above: 0 for the `trial` shape, the forgiven amount
@@ -243,7 +249,7 @@ export class PaymentDueService {
       });
     }
     const open = await this.openSessionUrl(tenantId, now, terms);
-    if (open) return { checkoutUrl: open };
+    if (open) return open;
 
     try {
       const out = await this.catchup.open(tenantId, {
@@ -252,8 +258,11 @@ export class PaymentDueService {
         // paths: open() joins them to its one web base (webBaseUrl)
         successPath: view.cardNeeded ? CARD_RETURN_PATH : PAID_RETURN_PATH,
         cancelPath: "/settings/billing?checkout=cancelled",
+        // SA-1139: the tenant pays on its own page, so the BILLING_CHECKOUT_UI switch applies
+        surface: "TENANT_SELF",
       });
-      return { checkoutUrl: out.checkoutUrl };
+      const { uiMode, sessionId, checkoutUrl, clientSecret } = out;
+      return { uiMode, sessionId, checkoutUrl, clientSecret } as CheckoutStart;
     } catch (err) {
       // A parallel click won the claim between our read and our create: hand back its session, never a second one
       // (and never the operator-facing "not eligible" wording).
@@ -261,7 +270,7 @@ export class PaymentDueService {
         // the racer's own coded refusals/503 from this read propagate as they are (all tenant-safe wording);
         // a claim we cannot see yet is "try again", never open()'s operator-facing "not eligible" text
         const raced = await this.openSessionUrl(tenantId, now, terms, true);
-        if (raced) return { checkoutUrl: raced };
+        if (raced) return raced;
         throw this.stateUnknown(tenantId, "unexpected_status", "read");
       }
       throw err;
@@ -292,7 +301,7 @@ export class PaymentDueService {
      * planned after it, so a mismatch is first re-checked against a fresh plan (see below).
      */
     raced = false,
-  ): Promise<string | null> {
+  ): Promise<CheckoutStart | null> {
     const row = (await this.prisma.tenantSubscription.findUnique({
       where: { tenantId },
       select: { catchupState: true, catchupSessionId: true },
@@ -325,12 +334,17 @@ export class PaymentDueService {
 
     let staleWinner = false; // a raced session that still mismatches the fresh plan, about to be expired
     const expiresMs = Number(session.expires_at ?? 0) * 1000;
+    // SA-1139: an EMBEDDED winner has no url (its secret is the winner's alone, never handed to a second click), so
+    // the reuse block below cannot see it. On the raced path it must still never be expired: the loser gets the
+    // claim's own 409 and retries, as with a hosted winner that could not be reused. Only a live one is protected:
+    // a past-time session falls through to the expire path as before.
+    if (raced && !session.url && expiresMs > now.getTime()) throw claimRefusal("SESSION_OPEN")!;
     if (session.url && expiresMs > now.getTime()) {
       const verdict = this.termsVerdict(tenantId, session.metadata, terms);
       // A session built before the web base was fixed carries a localhost (or other-origin) return URL for up to 23 h:
       // matching terms are not enough, it takes the same Stripe-confirmed expire, release and recreate path.
       const urlsOffBase = this.returnUrlsOffBase(tenantId, sessionId, session);
-      if (verdict === "match" && !urlsOffBase) return session.url;
+      if (verdict === "match" && !urlsOffBase) return hostedStart(sessionId, session.url);
       if (verdict === "unknown") throw this.stateUnknown(tenantId, "terms_unreadable", "read");
       if (verdict !== "match") this.warnIfUnsignedAfterSigning(tenantId, sessionId, session);
       if (raced && verdict !== "match") {
@@ -339,7 +353,7 @@ export class PaymentDueService {
         // No plan to compare with (nothing payable any more, or the read failed) decides nothing: retry, expire nothing.
         const again = await this.replanAfterRace(tenantId);
         if (this.termsVerdict(tenantId, session.metadata, again) === "match" && !urlsOffBase) {
-          return session.url;
+          return hostedStart(sessionId, session.url);
         }
         staleWinner = true;
       }

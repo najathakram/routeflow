@@ -236,6 +236,7 @@ export class SettingsBillingController {
     return this.billing.createCheckoutSession(tenantId, {
       successUrl: `${base}/settings/billing?checkout=success`,
       cancelUrl: `${base}/settings/billing?checkout=cancelled`,
+      surface: "TENANT_SELF",
     });
   }
 

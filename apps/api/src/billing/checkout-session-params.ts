@@ -1,5 +1,6 @@
 import { Logger } from "@nestjs/common";
 import type Stripe from "stripe";
+import type { CheckoutStart, CheckoutUiMode } from "@routeflow/types";
 
 /**
  * The ONE place a platform Checkout Session's tax / Managed Payments policy is applied (owner ruling
@@ -17,6 +18,10 @@ import type Stripe from "stripe";
  * SA-1037 r3 PR-1: the same chokepoint carries the ops switch for WHICH payment methods a platform session offers
  * ({@link checkoutPaymentMethodTypes}, env `BILLING_CHECKOUT_PAYMENT_METHODS`). Unset is today: the field is omitted
  * and the Stripe Dashboard decides.
+ *
+ * SA-1139 PR-1: the same chokepoint carries the ops switch for HOW a tenant-self session is shown
+ * ({@link checkoutUiMode}, env `BILLING_CHECKOUT_UI`). Unset is today: Stripe's hosted page. The embedded keys are set
+ * here and nowhere else (`checkout-session-policy.pin.spec.ts`).
  */
 
 const logger = new Logger("CheckoutPolicy");
@@ -65,17 +70,66 @@ export class CheckoutPolicyViolation extends Error {
   }
 }
 
-export type WithCheckoutPolicy<T> = T & { managed_payments: { enabled: false } };
+/** The one env var behind the checkout-UI switch: `hosted` (default) or `embedded`. */
+export const CHECKOUT_UI_ENV = "BILLING_CHECKOUT_UI";
+
+/**
+ * Who the session is for. `TENANT_SELF`: the tenant admin pays on our page, so the switch applies. `ADMIN_LINK`: the
+ * platform admin hands a URL on, and an embedded session has none, so it is ALWAYS hosted. REQUIRED, never defaulted.
+ */
+export type CheckoutSurface = "TENANT_SELF" | "ADMIN_LINK";
+
+/** Throws {@link CheckoutPolicyViolation} unless `surface` is a known surface (a JS caller; TypeScript refuses it at compile time). */
+export function assertCheckoutSurface(surface: unknown): asserts surface is CheckoutSurface {
+  if (surface !== "TENANT_SELF" && surface !== "ADMIN_LINK") {
+    throw new CheckoutPolicyViolation(
+      "a Checkout Session needs an explicit surface (TENANT_SELF or ADMIN_LINK)",
+    );
+  }
+}
+
+const warnedUnknownUi = new Set<string>();
+
+/**
+ * How a session for `surface` is shown, from env `BILLING_CHECKOUT_UI`: unset, empty, `hosted` or unknown -> hosted (an
+ * unknown value logs one warning per value, so a typo can never turn embedded on); `embedded` (trimmed, any case) ->
+ * embedded for `TENANT_SELF` only.
+ */
+export function checkoutUiMode(
+  surface: CheckoutSurface,
+  env: Record<string, string | undefined> = process.env,
+): CheckoutUiMode {
+  assertCheckoutSurface(surface);
+  const raw = (env[CHECKOUT_UI_ENV] ?? "").trim().toLowerCase();
+  if (raw && raw !== "hosted" && raw !== "embedded" && !warnedUnknownUi.has(raw)) {
+    warnedUnknownUi.add(raw);
+    logger.warn(
+      `${CHECKOUT_UI_ENV}="${raw}" is not a known value (hosted, embedded); sessions stay hosted`,
+    );
+  }
+  return raw === "embedded" && surface === "TENANT_SELF" ? "embedded" : "hosted";
+}
+
+export type WithCheckoutPolicy<T> = T & { managed_payments: { enabled: false } } & Pick<
+    Stripe.Checkout.SessionCreateParams,
+    "payment_method_types" | "ui_mode" | "return_url" | "redirect_on_completion"
+  >;
 
 /**
  * Returns `params` with `managed_payments: { enabled: false }` set (idempotent), every other key untouched, plus
  * `payment_method_types` from {@link checkoutPaymentMethodTypes} when the env names a set and the caller did not name its own.
  * Throws {@link CheckoutPolicyViolation} when the caller passed `automatic_tax.enabled: true` or
- * `managed_payments.enabled: true` - a silent rewrite would hide a policy change from review.
+ * `managed_payments.enabled: true` - a silent rewrite would hide a policy change from review - or no `surface`.
+ *
+ * SA-1139: in embedded mode the session is `ui_mode: "embedded_page"` with `redirect_on_completion: "if_required"`; its
+ * `success_url` becomes `return_url` (plus `session_id={CHECKOUT_SESSION_ID}`) and `success_url` / `cancel_url` are dropped
+ * (Stripe refuses them). The caller's success_url is the ONE return guard: each caller builds it from its own safe base/path.
  */
 export function withCheckoutPolicy<T extends Stripe.Checkout.SessionCreateParams>(
   params: T,
+  opts: { surface: CheckoutSurface },
 ): WithCheckoutPolicy<T> {
+  assertCheckoutSurface(opts?.surface);
   if (params.automatic_tax?.enabled === true) {
     throw new CheckoutPolicyViolation(
       "automatic_tax.enabled=true is not allowed on a Checkout Session (owner ruling: no tax on subscriptions)",
@@ -87,9 +141,53 @@ export function withCheckoutPolicy<T extends Stripe.Checkout.SessionCreateParams
     );
   }
   const paymentMethodTypes = params.payment_method_types ?? checkoutPaymentMethodTypes();
-  return {
-    ...params,
+  const policy = {
     ...(paymentMethodTypes ? { payment_method_types: paymentMethodTypes } : {}),
     managed_payments: { ...params.managed_payments, enabled: false as const },
   };
+  if (checkoutUiMode(opts.surface) !== "embedded") return { ...params, ...policy };
+
+  const { success_url, cancel_url: _cancel, ...rest } = params;
+  void _cancel;
+  if (!success_url) {
+    throw new CheckoutPolicyViolation(
+      "an embedded Checkout Session needs a success_url to return to",
+    );
+  }
+  const sessionParam = "session_id={CHECKOUT_SESSION_ID}";
+  return {
+    ...rest,
+    ...policy,
+    ui_mode: "embedded_page",
+    redirect_on_completion: "if_required",
+    return_url: success_url.includes("session_id=")
+      ? success_url
+      : `${success_url}${success_url.includes("?") ? "&" : "?"}${sessionParam}`,
+  } as unknown as WithCheckoutPolicy<T>;
+}
+
+/**
+ * The shared answer of a tenant-self checkout start (SA-1139 R3), read from the session Stripe returned: its own
+ * `ui_mode` is the truth of what was created, so the answer can never disagree with it. Never logs or echoes the
+ * secret; a missing url (hosted) or secret (embedded) throws.
+ */
+export function checkoutStartFromSession(session: {
+  id: string;
+  url?: string | null;
+  client_secret?: string | null;
+  ui_mode?: string | null;
+}): CheckoutStart {
+  if (session.ui_mode === "embedded_page") {
+    if (!session.client_secret) {
+      throw new Error(`embedded Checkout session ${session.id} returned no client_secret`);
+    }
+    return {
+      uiMode: "embedded",
+      sessionId: session.id,
+      checkoutUrl: null,
+      clientSecret: session.client_secret,
+    };
+  }
+  if (!session.url) throw new Error(`hosted Checkout session ${session.id} returned no url`);
+  return { uiMode: "hosted", sessionId: session.id, checkoutUrl: session.url, clientSecret: null };
 }

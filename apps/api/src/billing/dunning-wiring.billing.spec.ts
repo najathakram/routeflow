@@ -393,7 +393,9 @@ describe("BillingService x dunning wiring (SA-733r7 PR-B3)", () => {
         catchupState: null,
         pastDueInvoiceId: "in_1",
       });
-      const err: any = await svc.createCheckoutSession("t1").catch((e) => e);
+      const err: any = await svc
+        .createCheckoutSession("t1", { surface: "ADMIN_LINK" })
+        .catch((e) => e);
       expect(err).toBeInstanceOf(ConflictException);
       expect(err.getResponse()).toMatchObject({
         code: "PAYMENT_OVERDUE",

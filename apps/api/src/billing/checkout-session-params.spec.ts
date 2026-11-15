@@ -3,8 +3,12 @@ import {
   CHECKOUT_PAYMENT_METHODS_ENV,
   CheckoutPolicyViolation,
   checkoutPaymentMethodTypes,
-  withCheckoutPolicy,
+  withCheckoutPolicy as policy,
 } from "./checkout-session-params";
+
+/** These cases are about managed_payments / payment methods, not the UI mode: TENANT_SELF with the switch unset is hosted (SA-1139). */
+const withCheckoutPolicy = <T extends Parameters<typeof policy>[0]>(params: T) =>
+  policy(params, { surface: "TENANT_SELF" });
 
 const BASE = {
   mode: "subscription" as const,

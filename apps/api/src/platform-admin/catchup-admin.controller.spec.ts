@@ -45,7 +45,7 @@ describe("CatchupAdminController", () => {
     const c = new CatchupAdminController(svc as any, admin as any);
     expect(await c.plan(ID)).toMatchObject({ tenantId: ID, plan: { ok: false } });
     await c.open(ID, { expectedStubCents: 1234 }, { sub: "sa-1" } as any);
-    expect(svc.open).toHaveBeenCalledWith(ID, { expectedStubCents: 1234 });
+    expect(svc.open).toHaveBeenCalledWith(ID, { expectedStubCents: 1234, surface: "ADMIN_LINK" });
   });
 
   it("nit: a successful POST writes an admin audit row naming the admin, the session and the amount; a refusal writes none", async () => {

@@ -157,6 +157,15 @@ export function fakeStripeCatchup(
               params,
               opts,
             };
+            // SA-1139: an embedded session has no hosted url; it carries the secret that mounts the form (test value)
+            if (params.ui_mode === "embedded_page") {
+              return {
+                id,
+                url: null,
+                ui_mode: "embedded_page",
+                client_secret: `${id}_secret_test`,
+              };
+            }
             return { id, url: `https://pay.test/${id}` };
           }),
         },

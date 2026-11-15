@@ -108,6 +108,7 @@ describe("SettingsBillingController.createCheckout (WP3c, R2.9)", () => {
     expect(billing.createCheckoutSession).toHaveBeenCalledWith("t1", {
       successUrl: "https://app.example.com/settings/billing?checkout=success",
       cancelUrl: "https://app.example.com/settings/billing?checkout=cancelled",
+      surface: "TENANT_SELF",
     });
     expect(result).toEqual({ checkoutUrl: "https://checkout.stripe.com/x", sessionId: "cs_1" });
   });
@@ -122,6 +123,7 @@ describe("SettingsBillingController.createCheckout (WP3c, R2.9)", () => {
       expect(billing.createCheckoutSession).toHaveBeenCalledWith("t1", {
         successUrl: "https://www.routeflow.test/settings/billing?checkout=success",
         cancelUrl: "https://www.routeflow.test/settings/billing?checkout=cancelled",
+        surface: "TENANT_SELF",
       });
     } finally {
       if (savedWeb === undefined) delete process.env.WEB_URL;
@@ -140,6 +142,7 @@ describe("SettingsBillingController.createCheckout (WP3c, R2.9)", () => {
     expect(billing.createCheckoutSession).toHaveBeenCalledWith("t1", {
       successUrl: "http://localhost:3001/settings/billing?checkout=success",
       cancelUrl: "http://localhost:3001/settings/billing?checkout=cancelled",
+      surface: "TENANT_SELF",
     });
   });
 
