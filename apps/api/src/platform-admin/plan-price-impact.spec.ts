@@ -54,7 +54,7 @@ const FIXTURE: Row[] = [
 ];
 const PUSHED = new Set(["d"]);
 
-function make(currentMonthly = 100) {
+function make(currentMonthly = 100, currentAnnual: number | null = 1000) {
   const findMany = jest.fn(async ({ where }: any) =>
     FIXTURE.filter((r) => !(where.tenant?.deletedAt === null && r.deleted))
       .filter((r) =>
@@ -86,6 +86,7 @@ function make(currentMonthly = 100) {
           id: "def-1",
           planKey: "GROWTH",
           monthlyPrice: new Prisma.Decimal(currentMonthly),
+          annualPrice: currentAnnual === null ? null : new Prisma.Decimal(currentAnnual),
           isCustom: false,
         },
       ],
@@ -264,6 +265,102 @@ describe("SA-1100 §2 plan price edit: the confirmed count is re-checked on the 
     });
     await expect(
       service.updatePlanPrices("GROWTH", { monthly: 149, expectedAffected: 0 } as any, "admin-1"),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+});
+
+// UX guide B4: a Save that changes nothing must not write, sync Stripe for every tenant on the plan, or audit.
+describe("UX guide B4 unchanged plan price (UXG-R4: the retry still syncs)", () => {
+  const unchangedBody = (affected: number) =>
+    ({ monthly: 100, annual: 1000, expectedAffected: affected }) as any;
+
+  // API-1: nothing changed, the count matches: no write, but the fan-out runs once per target and one audit row says so.
+  it("API-1: monthly and annual equal to the stored values: no plan write, one sync per target, one audit row with pricesChanged false", async () => {
+    const { service, prisma, billingService, auditService } = make(100, 1000);
+    const impact = await service.getPlanPriceImpact("GROWTH", "100");
+    const out = await service.updatePlanPrices("GROWTH", unchangedBody(impact.affected), "admin-1");
+    expect(prisma.planDefinition.update).not.toHaveBeenCalled();
+    expect(billingService.syncStripeSubscriptionPrice).toHaveBeenCalledTimes(impact.affected);
+    expect(auditService.log).toHaveBeenCalledTimes(1);
+    expect(auditService.log.mock.calls[0][0]).toMatchObject({
+      action: "PLAN_PRICES_UPDATED",
+      meta: { pricesChanged: false },
+    });
+    expect(out).toMatchObject({ planKey: "GROWTH", monthlyPrice: 100, annualPrice: 1000 });
+    expect(out.synced).toBe(impact.affected);
+  });
+
+  it("API-1b: an omitted annual that resolves to the stored 10x value is also an unchanged re-sync", async () => {
+    const { service, prisma, billingService } = make(100, 1000);
+    const impact = await service.getPlanPriceImpact("GROWTH", "100");
+    await service.updatePlanPrices(
+      "GROWTH",
+      { monthly: 100, expectedAffected: impact.affected } as any,
+      "admin-1",
+    );
+    expect(prisma.planDefinition.update).not.toHaveBeenCalled();
+    expect(billingService.syncStripeSubscriptionPrice).toHaveBeenCalled();
+  });
+
+  // API-2: one target's sync throws: the response and the audit meta both say failed 1.
+  it("API-2: one target's sync throws: failed 1 in the response and in the audit meta", async () => {
+    const { service, billingService, auditService } = make(100, 1000);
+    billingService.syncStripeSubscriptionPrice.mockRejectedValueOnce(new Error("stripe 503"));
+    const impact = await service.getPlanPriceImpact("GROWTH", "100");
+    const out = await service.updatePlanPrices("GROWTH", unchangedBody(impact.affected), "admin-1");
+    expect(out.failed).toBe(1);
+    expect(auditService.log.mock.calls[0][0].meta).toMatchObject({
+      pricesChanged: false,
+      failed: 1,
+    });
+  });
+
+  it("the response counts targets already at the price as unchanged, and keeps them inside synced", async () => {
+    const { service, billingService } = make(100, 1000);
+    billingService.syncStripeSubscriptionPrice
+      .mockResolvedValueOnce({ synced: true, unchanged: true })
+      .mockResolvedValue({ synced: true });
+    const impact = await service.getPlanPriceImpact("GROWTH", "100");
+    const out = await service.updatePlanPrices("GROWTH", unchangedBody(impact.affected), "admin-1");
+    expect(out.unchanged).toBe(1);
+    expect(out.synced).toBe(impact.affected);
+  });
+
+  it("an annual-only change still writes and syncs", async () => {
+    const { service, prisma, billingService } = make(100, 1000);
+    prisma.planDefinition.update.mockResolvedValue({ monthlyPrice: 100, annualPrice: 1200 });
+    const impact = await service.getPlanPriceImpact("GROWTH", "100");
+    await service.updatePlanPrices(
+      "GROWTH",
+      { monthly: 100, annual: 1200, expectedAffected: impact.affected } as any,
+      "admin-1",
+    );
+    expect(prisma.planDefinition.update).toHaveBeenCalledTimes(1);
+    expect(billingService.syncStripeSubscriptionPrice).toHaveBeenCalled();
+  });
+
+  it("API-4: a real price change writes, syncs and audits with pricesChanged true", async () => {
+    const { service, prisma, billingService, auditService } = make(100, 1000);
+    prisma.planDefinition.update.mockResolvedValue({ monthlyPrice: 149, annualPrice: 1490 });
+    const impact = await service.getPlanPriceImpact("GROWTH", "149");
+    await service.updatePlanPrices(
+      "GROWTH",
+      { monthly: 149, expectedAffected: impact.affected } as any,
+      "admin-1",
+    );
+    expect(prisma.planDefinition.update).toHaveBeenCalledTimes(1);
+    expect(billingService.syncStripeSubscriptionPrice).toHaveBeenCalled();
+    expect(auditService.log.mock.calls[0][0].meta).toMatchObject({ pricesChanged: true });
+  });
+
+  it("API-3: a stale count still answers 409 even when nothing changed, and nothing is called", async () => {
+    const { service } = make(100, 1000);
+    await expect(
+      service.updatePlanPrices(
+        "GROWTH",
+        { monthly: 100, annual: 1000, expectedAffected: 9 } as any,
+        "admin-1",
+      ),
     ).rejects.toBeInstanceOf(ConflictException);
   });
 });

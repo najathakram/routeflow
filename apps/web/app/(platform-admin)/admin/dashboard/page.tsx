@@ -41,6 +41,8 @@ interface PlatformStats {
     name: string;
     status: string;
     plan: string;
+    /** The resolved plan (what the donut counts); `plan` is the legacy enum. UX guide B11. */
+    planKey?: string;
     createdAt: string;
   }>;
   trialsExpiringSoon: Array<{
@@ -48,6 +50,8 @@ interface PlatformStats {
     slug: string;
     name: string;
     plan: string;
+    /** The resolved plan (what the donut counts); `plan` is the legacy enum. UX guide B11. */
+    planKey?: string;
     trialEndsAt: string;
     createdAt: string;
     userCount: number;
@@ -58,6 +62,8 @@ interface PlatformStats {
     name: string;
     status: string;
     plan: string;
+    /** The resolved plan (what the donut counts); `plan` is the legacy enum. UX guide B11. */
+    planKey?: string;
     trialEndsAt: string | null;
     riskReason: string;
   }>;
@@ -401,7 +407,7 @@ export default function AdminDashboardPage() {
                           <div className="font-mono text-xs text-slate-400">{t.slug}</div>
                         </td>
                         <td className="px-4 py-2">
-                          <AdminBadge variant="plan">{t.plan}</AdminBadge>
+                          <AdminBadge variant="plan">{t.planKey ?? t.plan}</AdminBadge>
                         </td>
                         <td className="px-4 py-2 text-right font-mono text-slate-400">
                           {t.userCount}
@@ -471,7 +477,7 @@ export default function AdminDashboardPage() {
                         <AdminBadge>{t.status}</AdminBadge>
                       </td>
                       <td className="px-4 py-2">
-                        <AdminBadge variant="plan">{t.plan}</AdminBadge>
+                        <AdminBadge variant="plan">{t.planKey ?? t.plan}</AdminBadge>
                       </td>
                       <td className="px-4 py-2">
                         <Link
@@ -530,7 +536,7 @@ export default function AdminDashboardPage() {
                     <AdminBadge>{t.status}</AdminBadge>
                   </td>
                   <td className="px-5 py-3">
-                    <AdminBadge variant="plan">{t.plan}</AdminBadge>
+                    <AdminBadge variant="plan">{t.planKey ?? t.plan}</AdminBadge>
                   </td>
                   <td className="px-5 py-3 text-slate-400">
                     {new Date(t.createdAt).toLocaleDateString()}
