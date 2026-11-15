@@ -22,6 +22,26 @@ describe("PaidReturnNotice", () => {
     mockSub = undefined;
   });
 
+  // SA-1139: the API returns /settings/billing?checkout=success; it reads exactly like ?paid=1.
+  it("?checkout=success shows the same payment notice and polls like ?paid=1", () => {
+    mockQuery = "checkout=success";
+    mockSub = { billingState: "processing", paymentProcessing: true };
+    renderWithProviders(<PaidReturnNotice />);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Your payment is processing. Your bank hasn't cleared it yet.",
+    );
+    expect(lastOpts.refetchInterval?.({ state: { data: mockSub } })).toBe(15_000);
+  });
+
+  it("?checkout=cancelled shows one neutral line, no error", () => {
+    mockQuery = "checkout=cancelled";
+    renderWithProviders(<PaidReturnNotice />);
+    const note = screen.getByRole("status");
+    expect(note).toHaveTextContent("No payment was made.");
+    expect(note).not.toHaveTextContent(/received|processing|didn't go through/i);
+    expect(lastOpts.refetchInterval?.({ state: { data: undefined } })).toBe(false);
+  });
+
   it("a bank debit still processing reads as processing, never received (B1256)", () => {
     mockQuery = "paid=1";
     mockSub = { billingState: "processing", paymentProcessing: true };
@@ -77,7 +97,7 @@ describe("PaidReturnNotice", () => {
   });
 
   it("no param, or any other value: nothing", () => {
-    for (const q of ["", "paid=0", "checkout=cancelled"]) {
+    for (const q of ["", "paid=0", "checkout=other"]) {
       mockQuery = q;
       const { container, unmount } = renderWithProviders(<PaidReturnNotice />);
       expect(container.textContent).toBe("");

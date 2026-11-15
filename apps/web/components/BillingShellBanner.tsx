@@ -8,6 +8,7 @@ import { SubscriptionStrip } from "@/components/SubscriptionStrip";
 import { PaymentDueBanner } from "@/components/PaymentDueBanner";
 import { usePaymentDue } from "@/lib/api/payment-due";
 import { usePaidTransition } from "@/lib/billing-paid-notice";
+import { isPaidReturn } from "@/lib/checkout-return";
 import {
   bannerRoleOf,
   ownsBillingBanner,
@@ -74,7 +75,7 @@ export function BillingShellBanner({
   const { data: serverDue } = usePaymentDue({ enabled: role !== null });
   // Back from Stripe (`?paid=1`): an ACH payment is "processing" and the server can still say due for a while, so
   // the banner stays out of the way until the param is gone.
-  const justPaid = useSearchParams()?.get("paid") === "1";
+  const justPaid = isPaidReturn(useSearchParams());
   const paymentDue = justPaid ? undefined : serverDue;
   const state =
     role && (ownsBillingBanner(view) || view.status === "ACTIVE")

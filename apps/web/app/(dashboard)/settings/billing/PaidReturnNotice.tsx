@@ -5,6 +5,7 @@ import { CheckCircle2, Clock } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { Button } from "@routeflow/ui/web";
 import { useSubscription } from "@/lib/api/billing";
+import { isCheckoutCancelled, isPaidReturn } from "@/lib/checkout-return";
 
 type Outcome = "processing" | "received" | "failed" | "checking";
 
@@ -41,7 +42,8 @@ const COPY: Record<Outcome, string> = {
 export function PaidReturnNotice() {
   const params = useSearchParams();
   const [hidden, setHidden] = React.useState(false);
-  const paid = params?.get("paid") === "1";
+  const paid = isPaidReturn(params);
+  const cancelled = isCheckoutCancelled(params);
   const cardAdded = params?.get("card") === "1";
   const startedAt = React.useRef(Date.now());
   // 706: poll only on the Stripe return (`?paid=1`, not a card add) and give up after POLL_CAP_MS, so an unknown
@@ -53,7 +55,21 @@ export function PaidReturnNotice() {
       return o === "processing" || o === "checking" ? POLL_MS : false;
     },
   });
-  if (hidden || !paid) return null;
+  if (hidden || (!paid && !cancelled)) return null;
+  if (!paid) {
+    // `?checkout=cancelled`: nothing was charged. One neutral line; the Pay control stays ready.
+    return (
+      <div
+        role="status"
+        className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-700 ring-1 ring-slate-200"
+      >
+        <span>No payment was made.</span>
+        <Button size="sm" variant="ghost" onClick={() => setHidden(true)}>
+          OK
+        </Button>
+      </div>
+    );
+  }
   const outcome = outcomeOf(data);
   const bad = !cardAdded && outcome === "failed";
   const wait = !cardAdded && (outcome === "processing" || outcome === "checking");
