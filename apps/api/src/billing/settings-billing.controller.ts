@@ -29,6 +29,11 @@ import { QuoteDto } from "./dto/quote.dto";
 import { SubscribeDto, UpgradeDto, DowngradeDto, EnableAddonDto } from "./dto/mutation.dto";
 import { webBaseUrl } from "../config/web-base-url";
 import {
+  API_BILLING_CANCEL_PATH,
+  API_BILLING_RETURN_PATHS,
+  billingReturnUrl,
+} from "./billing-return-paths";
+import {
   inviteOnlyCheckoutAllowed,
   INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT,
 } from "./plan-catalog.constants";
@@ -234,8 +239,8 @@ export class SettingsBillingController {
     }
     const base = webBaseUrl();
     return this.billing.createCheckoutSession(tenantId, {
-      successUrl: `${base}/settings/billing?checkout=success`,
-      cancelUrl: `${base}/settings/billing?checkout=cancelled`,
+      successUrl: billingReturnUrl(base, API_BILLING_RETURN_PATHS.plan),
+      cancelUrl: billingReturnUrl(base, API_BILLING_CANCEL_PATH),
       surface: "TENANT_SELF",
     });
   }

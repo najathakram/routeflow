@@ -263,6 +263,9 @@ export const BILLING_RETURN_PATHS = {
   cardAdd: "/settings/billing?paid=1&card=1",
 } as const;
 
+/** SA-1146 B-1: where a cancelled Checkout lands (nothing was charged). Not a return path: the web never pushes it. */
+export const BILLING_CANCEL_PATH = "/settings/billing?checkout=cancelled";
+
 /** `POST /billing/payment-due/pay` (TENANT_ADMIN): the Stripe Checkout to send the admin to. */
 export interface PaymentDuePayResult {
   checkoutUrl: string;

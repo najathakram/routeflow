@@ -105,6 +105,11 @@ import {
 import type { CheckoutStart } from "@routeflow/types";
 import { webBaseUrl } from "../config/web-base-url";
 import {
+  API_BILLING_CANCEL_PATH,
+  API_BILLING_RETURN_PATHS,
+  billingReturnUrl,
+} from "./billing-return-paths";
+import {
   STRIPE_CHECKOUT_APPLIED_ACTION,
   STRIPE_CHECKOUT_ASYNC_FAILED_ACTION,
   STRIPE_CHECKOUT_ENTITY,
@@ -684,9 +689,8 @@ export class BillingService {
           customer: customerId,
           mode: "subscription",
           line_items: [{ price_data: priceData, quantity: 1 }, ...addons.lineItems],
-          success_url:
-            opts?.successUrl ?? `${baseUrl}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
-          cancel_url: opts?.cancelUrl ?? `${baseUrl}/billing/cancel`,
+          success_url: opts?.successUrl ?? billingReturnUrl(baseUrl, API_BILLING_RETURN_PATHS.plan),
+          cancel_url: opts?.cancelUrl ?? billingReturnUrl(baseUrl, API_BILLING_CANCEL_PATH),
           metadata: {
             tenantId,
             slug: tenant.slug,

@@ -114,6 +114,18 @@ describe("SA-733 D6 / M6 — createCheckoutSession anchors every new subscriptio
     });
   });
 
+  it("B-1: with no caller URLs the session returns to the Billing page, never to a /billing/success page", async () => {
+    jest.useFakeTimers({ now: new Date("2026-10-15T09:00:00Z"), doNotFake: ONLY_DATE });
+    const h = make();
+    await h.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" });
+    expect(new URL(sent(h).success_url).pathname + new URL(sent(h).success_url).search).toBe(
+      "/settings/billing?checkout=success",
+    );
+    expect(new URL(sent(h).cancel_url).pathname + new URL(sent(h).cancel_url).search).toBe(
+      "/settings/billing?checkout=cancelled",
+    );
+  });
+
   it("Oct 31 23:00Z: the session expires BEFORE the anchor (<= 11:00Z), so it cannot complete after it", async () => {
     jest.useFakeTimers({ now: new Date("2026-10-31T23:00:00Z"), doNotFake: ONLY_DATE });
     const h = make();
