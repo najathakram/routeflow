@@ -22,6 +22,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { GripVertical } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
+import { isScanKey } from "@/lib/scan-run";
 
 /**
  * W-1187 (SA ruling 8): the one drag-to-reorder wrapper for a list of lines. It owns the sensors (handle drag on a
@@ -63,9 +64,7 @@ export class NonTouchPointerSensor extends PointerSensor {
   ] as unknown as typeof PointerSensor.activators;
 }
 
-/** Scan safety (W-1187 PR-2b): no key timing is read here; a scan is told apart by the key it types. */
-const isPrintable = (e: React.KeyboardEvent) =>
-  e.key.length === 1 && e.key !== " " && !e.ctrlKey && !e.metaKey && !e.altKey;
+/** Scan safety (W-1187 PR-2b): no key timing is read here; a scan is told apart by the key it types (`@/lib/scan-run`). */
 const MODIFIER_KEYS = ["Shift", "Control", "Alt", "Meta", "AltGraph"];
 const MOVE_CODES = ["Space", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
 
@@ -105,7 +104,6 @@ interface Ctx {
   lines: SortableLine[];
   enabled: boolean;
   move: (id: string, toIndex: number) => void;
-  scanTarget?: () => HTMLElement | null;
 }
 const SortableCtx = React.createContext<Ctx | null>(null);
 
@@ -120,15 +118,12 @@ export function SortableLines({
   lines,
   onMove,
   enabled = true,
-  scanTarget,
   children,
 }: {
   lines: SortableLine[];
   onMove: (move: LineMove) => void;
   /** false: no handles, no drag (the order is closed, or a line edit is unsaved). */
   enabled?: boolean;
-  /** The scan field, when the screen has one: a printable key typed on a focused handle is a scan, so focus goes there. */
-  scanTarget?: () => HTMLElement | null;
   children: React.ReactNode;
 }) {
   const sensors = useSensors(
@@ -195,7 +190,7 @@ export function SortableLines({
   };
 
   return (
-    <SortableCtx.Provider value={{ lines, enabled, move, scanTarget }}>
+    <SortableCtx.Provider value={{ lines, enabled, move }}>
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
@@ -250,23 +245,8 @@ export function useSortableLine(id: string) {
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
-    if (isPrintable(e)) {
-      const target = ctx?.scanTarget?.(); // a scan, not a move: the code goes to the scan field
-      if (target) {
-        target.focus();
-        // The field's own wedge detector only hears keydowns on the field, and this one was typed on the handle: hand
-        // it key 1 as the field's keydown (the browser still types the character itself).
-        target.dispatchEvent(
-          new KeyboardEvent("keydown", {
-            key: e.key,
-            code: e.code,
-            bubbles: true,
-            cancelable: true,
-          }),
-        );
-      }
-      return;
-    }
+    // a scan key, not a move: the screen's capture (till scan box, order builder Search) owns it (lib/scan-run)
+    if (isScanKey(e)) return;
     if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
       e.preventDefault();
       e.stopPropagation();

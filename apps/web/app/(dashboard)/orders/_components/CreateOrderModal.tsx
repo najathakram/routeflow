@@ -24,6 +24,8 @@ import {
   pickerProductName,
 } from "@/lib/product-search-groups";
 import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
+import { createFieldScanRun } from "@/lib/scan-run";
+import { dialogOpenBesides } from "./counter-scan-guard";
 import {
   useCreateOrder,
   useActiveOrderForCustomer,
@@ -426,6 +428,20 @@ export function CreateOrderModal({
   const [customQty, setCustomQty] = React.useState("1");
   const [customError, setCustomError] = React.useState("");
   const productSearchRef = React.useRef<HTMLInputElement>(null);
+  // SA-1138: a scan that starts while focus is not in a text field (the date chip, a button, a handle, the dialog body) goes
+  // to the line Search: its wedge detector only hears keydowns on that field. Key order only, no clock.
+  const [fieldScanRun] = React.useState(() => createFieldScanRun());
+  React.useEffect(() => {
+    if (!isOpen) return;
+    const reset = () => fieldScanRun.reset();
+    document.addEventListener("pointerdown", reset, true);
+    return () => document.removeEventListener("pointerdown", reset, true);
+  }, [isOpen, fieldScanRun]);
+  const handleBuilderKeyDownCapture = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    // another window above the builder (the date picker, the merge prompt, New product, a price sheet) keeps its own rules
+    if (dialogOpenBesides(e.currentTarget)) return fieldScanRun.reset();
+    fieldScanRun.onKeyDown(e.nativeEvent, productSearchRef.current);
+  };
   // #2696 (owner): the quick-order "Qty" box beside the search is gone — every pick / scan adds 1
   // (one case for a case-packed product) and a repeat merges +1; the line's own qty is tap-to-type.
   // SA-090/Opus item 1: written INSIDE addLineItem's setLineItems updater (the only place the
@@ -2535,6 +2551,7 @@ export function CreateOrderModal({
       open={isOpen && !scanScreenActive}
       onClose={handleDismiss}
       onEscapeKeyDown={handleEscape}
+      onKeyDownCapture={handleBuilderKeyDownCapture}
       title={resumeDraftId ? "Resume draft" : storeOnlyPos ? POS_COPY.builderTitle : "Create Order"}
       description={
         storeOnlyPos ? POS_COPY.builderSubtitle : "Create a new order on behalf of a customer."
@@ -3238,7 +3255,6 @@ export function CreateOrderModal({
                 sortable={lineMove.sortable}
                 onMove={lineMove.onMove}
                 enabled={lineMove.enabled}
-                scanTarget={() => productSearchRef.current}
               >
                 {lineItems.map((li) =>
                   renderLine(li, {

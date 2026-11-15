@@ -6,6 +6,7 @@ import * as React from "react";
 import { addDays, orderDateRange, type OrderDatePolicy } from "@routeflow/pricing";
 import { Button, Modal, cn } from "@routeflow/ui/web";
 import { ORDER_DATE_COPY, type OrderDateNoun } from "@/lib/order-date-copy";
+import { isScanKey } from "@/lib/scan-run";
 import {
   dayLabel,
   longDay,
@@ -231,8 +232,7 @@ export function CounterDatePicker({
       e.stopPropagation();
       return;
     }
-    if (!altGr && (e.ctrlKey || e.altKey || e.metaKey)) return;
-    if (e.key.length !== 1 || e.key === " ") return;
+    if (!isScanKey(e)) return;
     swallow();
     if (onScanKey) {
       setText("");

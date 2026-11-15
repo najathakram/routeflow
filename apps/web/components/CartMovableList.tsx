@@ -11,18 +11,16 @@ export function CartMovableList({
   sortable,
   onMove,
   enabled,
-  scanTarget,
   children,
   ...ul
 }: {
   sortable: SortableLine[];
   onMove: (m: LineMove) => void;
   enabled: boolean;
-  scanTarget?: () => HTMLElement | null;
   children: React.ReactNode;
 } & Omit<React.HTMLAttributes<HTMLUListElement>, "children">) {
   return (
-    <SortableLines lines={sortable} onMove={onMove} enabled={enabled} scanTarget={scanTarget}>
+    <SortableLines lines={sortable} onMove={onMove} enabled={enabled}>
       <ul {...ul}>{children}</ul>
     </SortableLines>
   );
