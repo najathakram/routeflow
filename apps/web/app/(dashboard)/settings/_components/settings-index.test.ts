@@ -6,7 +6,7 @@ const MASTER_ITEMS: { label: string; href: string }[] = [
   { label: "User management", href: "/settings?tab=users" },
   { label: "Invoicing", href: "/settings?tab=invoicing" },
   { label: "Costing", href: "/settings?tab=costing" },
-  { label: "How to pay", href: "/settings?tab=remittance" },
+  { label: "How customers pay you", href: "/settings?tab=remittance" },
   { label: "Selling restrictions", href: "/settings/restrictions" },
   { label: "Import data", href: "/settings/import" },
   { label: "Migration", href: "/settings/migration" },
@@ -19,7 +19,7 @@ const MASTER_ITEMS: { label: string; href: string }[] = [
   { label: "Product labels", href: "/settings/product-categories" },
   { label: "Claude AI scanner", href: "/settings?tab=integrations" },
   { label: "GoHighLevel", href: "/settings?tab=gohighlevel" },
-  { label: "Plan & billing", href: "/settings/billing" },
+  { label: "Billing", href: "/settings/billing" },
   { label: "My account", href: "/settings?tab=account" },
 ];
 

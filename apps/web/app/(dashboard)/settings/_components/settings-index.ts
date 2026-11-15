@@ -32,7 +32,7 @@ export type IndexEntry = {
    * fleet account, or a user who can already act as a driver, the same rule as My account).
    */
   needs?: "fleet" | "selfServe" | "counter" | "unitsSettings" | "driverAccess";
-  /** false = searchable but not a row in the hub/rail lists (Plan & billing lives in the Business card). */
+  /** false = searchable but not a row in the hub/rail lists (reachable another way, e.g. a sub-page of a row). */
   listed?: false;
   /** Filled by a later change; a row shows `affects ?? desc`. */
   affects?: string;
@@ -217,7 +217,7 @@ const ENTRIES: IndexEntry[] = [
   {
     id: "how-to-pay",
     kind: "item",
-    label: "How to pay",
+    label: "How customers pay you",
     desc: "Remit-to & payment instructions",
     href: "/settings?tab=remittance",
     groupKey: "payments",
@@ -396,12 +396,22 @@ const ENTRIES: IndexEntry[] = [
   {
     id: "plan-billing",
     kind: "item",
-    label: "Plan & billing",
-    desc: "Subscription, usage & add-ons",
+    label: "Billing",
+    desc: "Your plan, payments and receipts",
     href: "/settings/billing",
     groupKey: "business",
-    listed: false,
-    keywords: ["plan", "subscription", "add-on", "upgrade", "usage", "trial"],
+    show: "admin",
+    keywords: [
+      "plan",
+      "subscription",
+      "add-on",
+      "upgrade",
+      "usage",
+      "trial",
+      "billing",
+      "receipt",
+      "invoice",
+    ],
   },
   {
     id: "billing-status",
@@ -591,7 +601,7 @@ const ENTRIES: IndexEntry[] = [
     "Where customers send payment",
     "remittance",
     "payments",
-    "How to pay",
+    "How customers pay you",
     ["remit", "check", "mail"],
   ),
   ...card(
@@ -600,7 +610,7 @@ const ENTRIES: IndexEntry[] = [
     "Check, ACH, wire and notes shown on the buyer Payments page",
     "remittance",
     "payments",
-    "How to pay",
+    "How customers pay you",
     ["bank", "ach", "wire", "zelle"],
   ),
   ...card(
@@ -928,7 +938,7 @@ export function searchIndex(q: string, entries: IndexEntry[]): IndexEntry[] {
 
 /** Row order inside each hub/rail group (direction 2b); ids not listed sort last. */
 export const GROUP_ROWS: Record<string, string[]> = {
-  business: ["business-profile", "user-management"],
+  business: ["business-profile", "plan-billing", "user-management"],
   fulfilment: ["fulfillment", "out-of-stock-ordering", "route-defaults"],
   counter: ["counter-sales", "counter-quick-keys", "day-close"],
   selling: ["tier-names", "costing", "units", "product-labels"],
