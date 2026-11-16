@@ -150,6 +150,7 @@ describeDb("units-fold E1 + E2 billed end to end: create() on real Postgres", ()
       taxRate: TAX_RATE,
       isTaxExempt: false,
       discount: 0,
+      discountBase: "LEGACY_POST_TAX",
     });
   const taxBasis = (fig: Fig, upb: number) =>
     regulatedUnitBasis(

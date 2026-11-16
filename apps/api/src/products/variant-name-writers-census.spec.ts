@@ -75,7 +75,7 @@ const ALLOWED: Record<string, string> = {
     "response mapper: copies variantName out (read)",
   "documents/receipt-model.ts": "response mapper: copies variantName out (read)",
   "documents/receipt.service.ts": "a select of variantName (read)",
-  "orders/orders.service.ts": "a select of variantName (read)",
+  "orders/order-find-one.ts": "a select of variantName (read)",
   "product-labels/product-labels.service.ts": "a select of variantName (read)",
   "products/dto/bulk-assign-parent.dto.ts": "the request DTO (validated, then handed to update())",
   "products/product-parent.ts":

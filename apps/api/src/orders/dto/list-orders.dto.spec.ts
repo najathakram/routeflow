@@ -58,3 +58,13 @@ describe("ListOrdersDto.hasTracking", () => {
     expect(parsed({}).hasTracking).toBeUndefined();
   });
 });
+
+// UX guide B12: the buyer "Active" tab sends a status GROUP.
+describe("ListOrdersDto.statusGroup", () => {
+  it("accepts ACTIVE", () => {
+    expect(validateQuery({ statusGroup: "ACTIVE" })).toEqual([]);
+  });
+  it("guard: rejects an unknown group", () => {
+    expect(validateQuery({ statusGroup: "OPEN" })).toContain("isIn");
+  });
+});

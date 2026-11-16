@@ -391,6 +391,8 @@ export const API_ERROR_CODES = {
   ORDER_CHANGED_DURING_EDIT: "ORDER_CHANGED_DURING_EDIT",
   ORDER_EDIT_NEEDS_LINE_IDS: "ORDER_EDIT_NEEDS_LINE_IDS",
   ORDER_EDIT_DELIVERED_LINES: "ORDER_EDIT_DELIVERED_LINES",
+  /** SA-1144: a pre-delivery edit of an order whose invoice holds payments or is closed (PAID, PARTIAL, WRITTEN_OFF). 400. */
+  ORDER_EDIT_INVOICE_HAS_PAYMENTS: "ORDER_EDIT_INVOICE_HAS_PAYMENTS",
   /** B692: a manual PARTIALLY_DELIVERED names what was delivered per line (or the order already has delivery data). 409. */
   ORDER_PD_NEEDS_QUANTITIES: "ORDER_PD_NEEDS_QUANTITIES",
   /** B692: a delivered / partly-delivered order whose delivery quantities were never recorded is not cancelled blind. 409. */
@@ -850,6 +852,8 @@ export const API_ERROR_CODES = {
   OFFLINE_PAYMENT_ONLINE_ONLY: "OFFLINE_PAYMENT_ONLINE_ONLY",
   /** 400 from POST /orders: `offline: true` with `immediateDelivery` (SA-1124). Delivered-now is an online step. */
   OFFLINE_IMMEDIATE_DELIVERY_ONLINE_ONLY: "OFFLINE_IMMEDIATE_DELIVERY_ONLINE_ONLY",
+  /** 400 from POST /orders: `status: "DRAFT"` with `immediateDelivery` (SA-1158). Save it as an order first, then deliver it. */
+  ORDER_DRAFT_CANNOT_DELIVER_NOW: "ORDER_DRAFT_CANNOT_DELIVER_NOW",
   /** 400 from POST /orders: `offline: true` without a usable `offlineQuote` (SA-1124). Fails closed, nothing is written. */
   OFFLINE_QUOTE_REQUIRED: "OFFLINE_QUOTE_REQUIRED",
   /**

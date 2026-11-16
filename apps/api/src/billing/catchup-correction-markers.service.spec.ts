@@ -224,7 +224,11 @@ describe("RED: a billing-start override sets the floor (replacing the first-acti
 
   it("... and open() sends it: one $100.00 one-time line, trial_end Nov 1, catchup_from Oct 1 12:00Z, catchup_to Nov 1 12:00Z", async () => {
     const h = pilot();
-    const out = await h.svc.open(T, { now: d("2026-10-13T10:00:00Z"), expectedStubCents: 10000 });
+    const out = await h.svc.open(T, {
+      surface: "ADMIN_LINK",
+      now: d("2026-10-13T10:00:00Z"),
+      expectedStubCents: 10000,
+    });
     expect(out).toMatchObject({ shape: "trial_one_time", stubCents: 10000 });
     const params = h.stripe.client.checkout.sessions.create.mock.calls[0][0];
     expect(params.subscription_data.trial_end).toBe(Date.UTC(2026, 10, 1, 12) / 1000);
@@ -271,7 +275,11 @@ describe("RED: an invalid billingStart is refused (anchor 1st at 12:00Z and >= g
     expect(r.eligible).toBe(false);
     expect(JSON.stringify([r.ineligible, r.plan])).toMatch(/billing_start/);
     await expect(
-      h.svc.open(T, { now: d("2026-10-13T10:00:00Z"), expectedStubCents: 10000 }),
+      h.svc.open(T, {
+        surface: "ADMIN_LINK",
+        now: d("2026-10-13T10:00:00Z"),
+        expectedStubCents: 10000,
+      }),
     ).rejects.toBeDefined();
     expect(h.stripe.client.checkout.sessions.create).not.toHaveBeenCalled();
   });

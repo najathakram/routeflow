@@ -518,6 +518,19 @@ export type OrderReviewFlagKindValue = (typeof ORDER_REVIEW_FLAG_KIND_VALUES)[nu
  * both DELIVERED and CANCELLED without REFUSED or this constant.
  */
 export const TERMINAL_ORDER_STATUSES = ["DELIVERED", "REFUSED", "CANCELLED"] as const;
+/**
+ * UX guide B12: an order that is in progress (accepted, not done): what the buyer's "Active" tab and the dashboard
+ * count mean. DRAFT, ACTIVE and TERMINAL partition `ORDER_STATUS_VALUES` (pinned in `terminal-order-status-lists.spec.ts`).
+ */
+export const ACTIVE_ORDER_STATUSES = [
+  "PENDING",
+  "CONFIRMED",
+  "OUT_FOR_DELIVERY",
+  "PARTIALLY_DELIVERED",
+] as const;
+/** UX guide B12: the status GROUPS a list may ask for instead of one status. */
+export const ORDER_STATUS_GROUP_VALUES = ["ACTIVE"] as const;
+export type OrderStatusGroupValue = (typeof ORDER_STATUS_GROUP_VALUES)[number];
 /** SA-1101: the delivery visit happened, so billing is on the delivered basis (final draft, no mirror). */
 export const POST_DELIVERY_ORDER_STATUSES = ["DELIVERED", "REFUSED"] as const;
 

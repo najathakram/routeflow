@@ -23,6 +23,7 @@ jest.mock("../notifications/notifications.service", () => ({
   })),
 }));
 
+import { operatorWithRights } from "../common/testing/operator-with-rights";
 import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { BadRequestException } from "@nestjs/common";
@@ -126,6 +127,7 @@ describe("OrdersService.updateOrderItems — a null line price is no override (r
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    operatorWithRights(prisma, operatorPayload);
     wireStockHelper(prisma);
 
     const module: TestingModule = await Test.createTestingModule({

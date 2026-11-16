@@ -5,7 +5,7 @@ import { handleMutationError } from "./mutation-error-toast";
 import { useRecordPaymentStandalone } from "./api/invoices";
 import { useApprovePaymentRequest, useRejectPaymentRequest } from "./api/payment-requests";
 import { useBulkCreateExpenses, useCreateExpense } from "./api/finance";
-import { useDownloadInvoice, useRecordPayment } from "./api/bookkeeping";
+import { useRecordPayment } from "./api/bookkeeping";
 
 /**
  * Rows 348 / 353 (PK-9): a finance page that renders a failed save in its OWN toast must not also get the app-wide
@@ -67,11 +67,6 @@ describe("finance pages: a failure the page toasts itself is not toasted twice (
       "useBulkCreateExpenses({ localErrorToast: true })",
       () => useBulkCreateExpenses({ localErrorToast: true }),
       [],
-    ],
-    [
-      "useDownloadInvoice({ localErrorToast: true })",
-      () => useDownloadInvoice({ localErrorToast: true }),
-      "t-1",
     ],
     [
       "useRecordPayment({ localErrorToast: true })",

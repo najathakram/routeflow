@@ -14,7 +14,7 @@ import {
  * an OPERATOR with no row holds nothing, so every group is denied (fail closed).
  *
  * Lives here, beside the service it reads through, so the till (live by an owner-ruled slice, BO-07) and the
- * price-edit helper (`price-edit.ts`, mode-aware) share the one deny-list read.
+ * price-edit helper (`price-edit.ts`) share the one deny-list read.
  */
 export async function operatorDeniedGroups(
   prisma: PrismaService,

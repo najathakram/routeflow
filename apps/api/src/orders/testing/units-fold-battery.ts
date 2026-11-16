@@ -516,7 +516,7 @@ export async function priceLine(a: PriceLineArgs): Promise<LineRun> {
           [TAX_AMOUNT_KEY]: stored[TAX_AMOUNT_KEY] as number,
         },
       ],
-      { taxRate: TAX_RATE, isTaxExempt: false, discount: 0 },
+      { taxRate: TAX_RATE, isTaxExempt: false, discount: 0, discountBase: "LEGACY_POST_TAX" },
     );
     const fig: Fig = {
       qty: stored.qty,

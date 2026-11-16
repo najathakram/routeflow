@@ -11,7 +11,9 @@
 // never checked — any value matches, mirroring how the real scripts resolve
 // everything else at runtime rather than by a hardcoded id):
 //   GET  projects/
+//   POST projects/                                 (additive, plane-bridge: Plane's 5 default states)
 //   GET  projects/<id>/states/
+//   POST projects/<id>/states/                     (additive, plane-bridge)
 //   GET  projects/<id>/labels/
 //   GET  projects/<id>/work-item-types/            (BARE ARRAY — see below)
 //   GET  members/                                  (BARE ARRAY — see below)
@@ -283,6 +285,34 @@ export function startFakePlane(seed = {}) {
       if (req.method === "GET" && tail.length === 1 && tail[0] === "projects") {
         return send(200, { results: projects, next_cursor: null, next_page_results: false });
       }
+      if (req.method === "POST" && tail.length === 1 && tail[0] === "projects") {
+        const identifier = String(body?.identifier ?? "");
+        const created = {
+          id: uuidIds ? nextUuid() : `project-${identifier.toLowerCase()}`,
+          identifier,
+          name: body?.name,
+          ...body,
+        };
+        projects.push(created);
+        byId.set(created.id, created);
+        const defaults = [
+          ["Backlog", "backlog"],
+          ["Todo", "unstarted"],
+          ["In Progress", "started"],
+          ["Done", "completed"],
+          ["Cancelled", "cancelled"],
+        ];
+        states[identifier] = defaults.map(([name, group], i) => ({
+          id: `state-${identifier.toLowerCase()}-${i + 1}`,
+          name,
+          group,
+        }));
+        labels[identifier] = [];
+        types[identifier] = [];
+        workItems[identifier] = [];
+        intake[identifier] = [];
+        return send(201, created);
+      }
       if (tail[0] !== "projects" || tail.length < 2) return notFound();
 
       const project = byId.get(tail[1]);
@@ -292,6 +322,16 @@ export function startFakePlane(seed = {}) {
 
       if (req.method === "GET" && rest.length === 1 && rest[0] === "states") {
         return send(200, { results: states[identifier] });
+      }
+      if (req.method === "POST" && rest.length === 1 && rest[0] === "states") {
+        const created = {
+          id: uuidIds
+            ? nextUuid()
+            : `state-${identifier.toLowerCase()}-${states[identifier].length + 1}`,
+          ...body,
+        };
+        states[identifier].push(created);
+        return send(201, created);
       }
       if (req.method === "GET" && rest.length === 1 && rest[0] === "labels") {
         return send(200, { results: labels[identifier] });

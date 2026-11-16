@@ -179,6 +179,7 @@ describeDb("B687 return + credit-note reversals compose on one order line — re
       },
     });
     await ledger.writeSaleEntries({
+      lockedPeriod: "REFUSE",
       tenantId,
       orderId: order.id,
       invoiceId: invoice.id,

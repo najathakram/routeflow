@@ -237,7 +237,9 @@ describe("MF1 (reverse): a checkout line with no priced billable row", () => {
     expect(catchupReportJson(r).refusals).toEqual([
       API_ERROR_CODES.CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG,
     ]);
-    const err: any = await h.svc.open("t1", { now: NOW, expectedStubCents: 34100 }).catch((e) => e);
+    const err: any = await h.svc
+      .open("t1", { surface: "ADMIN_LINK", now: NOW, expectedStubCents: 34100 })
+      .catch((e) => e);
     expect(err.getResponse()).toMatchObject({
       code: API_ERROR_CODES.CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG,
     });
@@ -268,7 +270,9 @@ describe("MF1: add-ons the card checkout cannot bill", () => {
 
   it("open(): 409 CATCHUP_ADDON_NOT_CARD_BILLABLE with fixed copy (no internal reason string), no claim, no Stripe call", async () => {
     const h = make({ invoices: [OCT_OPEN], addonRows: [manualOcr] });
-    const err: any = await h.svc.open("t1", { now: NOW, expectedStubCents: 31000 }).catch((e) => e);
+    const err: any = await h.svc
+      .open("t1", { surface: "ADMIN_LINK", now: NOW, expectedStubCents: 31000 })
+      .catch((e) => e);
     expect(err.getStatus()).toBe(409);
     expect(err.getResponse()).toMatchObject({
       code: API_ERROR_CODES.CATCHUP_ADDON_NOT_CARD_BILLABLE,
@@ -285,7 +289,9 @@ describe("MF1: add-ons the card checkout cannot bill", () => {
       addonLines: [forecasting],
       addonRows: [{ sku: "FORECASTING", addonKey: null, quantity: 1, priceSnapshot: 29 }],
     });
-    await expect(h.svc.open("t1", { now: NOW, expectedStubCents: 34100 })).rejects.toMatchObject({
+    await expect(
+      h.svc.open("t1", { surface: "ADMIN_LINK", now: NOW, expectedStubCents: 34100 }),
+    ).rejects.toMatchObject({
       response: { code: API_ERROR_CODES.CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG },
     });
     expect(h.stripe.client.checkout.sessions.create).not.toHaveBeenCalled();
@@ -299,7 +305,9 @@ describe("MF1: add-ons the card checkout cannot bill", () => {
     });
     expect((await ok.svc.plan("t1", NOW)).eligible).toBe(true);
     const h = make({ tenant: { status: "READ_ONLY" } });
-    const err: any = await h.svc.open("t1", { now: NOW, expectedStubCents: 0 }).catch((e) => e);
+    const err: any = await h.svc
+      .open("t1", { surface: "ADMIN_LINK", now: NOW, expectedStubCents: 0 })
+      .catch((e) => e);
     expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.CATCHUP_NOT_ELIGIBLE });
     expect(err.getResponse().message).not.toMatch(/tenant_not_active/);
   });
@@ -325,7 +333,11 @@ describe("MF2 -> SA-733r9: paid coverage is one walk over every paid source (act
       start: "2026-10-01T12:00:00.000Z",
       end: "2026-11-01T12:00:00.000Z",
     });
-    await h.svc.open("t1", { now: NOW, expectedStubCents: r.plan.stub.totalCents });
+    await h.svc.open("t1", {
+      surface: "ADMIN_LINK",
+      now: NOW,
+      expectedStubCents: r.plan.stub.totalCents,
+    });
     const params = h.stripe.client.checkout.sessions.create.mock.calls[0][0];
     expect(params.metadata.catchup_from).toBe("2026-10-10T09:00:00.000Z");
     expect(h.sub().catchupState).toBe("SESSION_OPEN");
@@ -336,7 +348,11 @@ describe("MF2 -> SA-733r9: paid coverage is one walk over every paid source (act
     activationRows(h, "2026-09-10T09:00:00Z", "2026-10-10T09:00:00Z");
     const r = await h.svc.plan("t1", NOW);
     if (!r.plan.ok) throw new Error("plan not ok");
-    await h.svc.open("t1", { now: NOW, expectedStubCents: r.plan.stub.totalCents });
+    await h.svc.open("t1", {
+      surface: "ADMIN_LINK",
+      now: NOW,
+      expectedStubCents: r.plan.stub.totalCents,
+    });
     const params = h.stripe.client.checkout.sessions.create.mock.calls[0][0];
     expect(params.managed_payments).toEqual({ enabled: false });
     expect(params.automatic_tax?.enabled).not.toBe(true);
@@ -351,7 +367,11 @@ describe("MF2 -> SA-733r9: paid coverage is one walk over every paid source (act
       activationRows(h, "2026-09-10T09:00:00Z", "2026-10-10T09:00:00Z");
       const r = await h.svc.plan("t1", NOW);
       if (!r.plan.ok) throw new Error("plan not ok");
-      await h.svc.open("t1", { now: NOW, expectedStubCents: r.plan.stub.totalCents });
+      await h.svc.open("t1", {
+        surface: "ADMIN_LINK",
+        now: NOW,
+        expectedStubCents: r.plan.stub.totalCents,
+      });
       const params = h.stripe.client.checkout.sessions.create.mock.calls[0][0];
       expect(params.payment_method_types).toEqual(["card", "us_bank_account"]);
     } finally {
@@ -371,6 +391,7 @@ describe("MF2 -> SA-733r9: paid coverage is one walk over every paid source (act
       process.env.FRONTEND_URL = "https://app.test";
       const h = make({ invoices: [OCT_OPEN], sub: sub() });
       await h.svc.open("t1", {
+        surface: "ADMIN_LINK",
         now: NOW,
         expectedStubCents: 31000,
         successPath: "/settings/billing?paid=1",
@@ -386,10 +407,20 @@ describe("MF2 -> SA-733r9: paid coverage is one walk over every paid source (act
       async (bad) => {
         const h = make({ invoices: [OCT_OPEN], sub: sub() });
         await expect(
-          h.svc.open("t1", { now: NOW, expectedStubCents: 31000, successPath: bad }),
+          h.svc.open("t1", {
+            surface: "ADMIN_LINK",
+            now: NOW,
+            expectedStubCents: 31000,
+            successPath: bad,
+          }),
         ).rejects.toThrow(/unsafe Checkout return path/);
         await expect(
-          h.svc.open("t1", { now: NOW, expectedStubCents: 31000, cancelPath: bad }),
+          h.svc.open("t1", {
+            surface: "ADMIN_LINK",
+            now: NOW,
+            expectedStubCents: 31000,
+            cancelPath: bad,
+          }),
         ).rejects.toThrow(/unsafe Checkout return path/);
         expect(h.stripe.client.checkout.sessions.create).not.toHaveBeenCalled();
       },
@@ -402,6 +433,7 @@ describe("MF2 -> SA-733r9: paid coverage is one walk over every paid source (act
       try {
         const h = make({ invoices: [OCT_OPEN], sub: sub() });
         await h.svc.open("t1", {
+          surface: "ADMIN_LINK",
           now: NOW,
           expectedStubCents: 31000,
           successPath: "/settings/billing?paid=1",
@@ -422,7 +454,7 @@ describe("MF2 -> SA-733r9: paid coverage is one walk over every paid source (act
     it("with no paths the defaults are unchanged (the super-admin route)", async () => {
       process.env.FRONTEND_URL = "https://app.test";
       const h = make({ invoices: [OCT_OPEN], sub: sub() });
-      await h.svc.open("t1", { now: NOW, expectedStubCents: 31000 });
+      await h.svc.open("t1", { surface: "ADMIN_LINK", now: NOW, expectedStubCents: 31000 });
       const params = h.stripe.client.checkout.sessions.create.mock.calls[0][0];
       expect(params.success_url).toBe("https://app.test/settings/billing?checkout=success");
       expect(params.cancel_url).toBe("https://app.test/settings/billing?checkout=cancelled");
@@ -568,7 +600,11 @@ describe("open()", () => {
       heldAtCreate.push({ ...h.sub() });
       return { id: "cs_new", url: "https://pay.test/cs_new", params };
     });
-    const out = await h.svc.open("t1", { now: NOW, expectedStubCents: 31000 });
+    const out = await h.svc.open("t1", {
+      surface: "ADMIN_LINK",
+      now: NOW,
+      expectedStubCents: 31000,
+    });
     expect(heldAtCreate[0]).toMatchObject({ catchupState: "SESSION_OPEN", catchupSessionId: null });
     expect(out).toMatchObject({ sessionId: "cs_new", shape: "trial_one_time", stubCents: 31000 });
     expect(h.sub()).toMatchObject({ catchupState: "SESSION_OPEN", catchupSessionId: "cs_new" });
@@ -582,7 +618,9 @@ describe("open()", () => {
     h.stripe.client.checkout.sessions.create.mockRejectedValueOnce(
       new Error("stripe: card details leaked"),
     );
-    const err: any = await h.svc.open("t1", { now: NOW, expectedStubCents: 31000 }).catch((e) => e);
+    const err: any = await h.svc
+      .open("t1", { surface: "ADMIN_LINK", now: NOW, expectedStubCents: 31000 })
+      .catch((e) => e);
     expect(err.getStatus()).toBe(503);
     expect(JSON.stringify(err.getResponse())).not.toContain("leaked");
     expect(h.sub().catchupState).toBeNull();
@@ -590,7 +628,11 @@ describe("open()", () => {
 
   it("the common case (unpaid October) opens a trial_one_time session: trial_end = A, ONE one-time line, no anchor, no proration_behavior", async () => {
     const h = make({ invoices: [OCT_OPEN] });
-    const out = await h.svc.open("t1", { now: NOW, expectedStubCents: 31000 });
+    const out = await h.svc.open("t1", {
+      surface: "ADMIN_LINK",
+      now: NOW,
+      expectedStubCents: 31000,
+    });
     expect(out).toMatchObject({ shape: "trial_one_time", stubCents: 31000 });
     const params = h.stripe.client.checkout.sessions.create.mock.calls[0][0];
     expect(params.subscription_data.trial_end).toBe(Date.UTC(2026, 10, 1, 12) / 1000);
@@ -606,7 +648,7 @@ describe("open()", () => {
 
   it("ruling item 8(e): a tenant who ALREADY PAID October gets the trial shape - no one-time line, the trial ends Nov 1, the card bills from then", async () => {
     const h = make({ invoices: [OCT_PAID] });
-    const out = await h.svc.open("t1", { now: NOW, expectedStubCents: 0 });
+    const out = await h.svc.open("t1", { surface: "ADMIN_LINK", now: NOW, expectedStubCents: 0 });
     expect(out).toMatchObject({ shape: "trial", stubCents: 0 });
     const params = h.stripe.client.checkout.sessions.create.mock.calls[0][0];
     expect(params.line_items.filter((l: any) => !l.price_data.recurring)).toHaveLength(0);
@@ -617,7 +659,11 @@ describe("open()", () => {
 
   it("a PAID window to a partial (Oct 5): the open succeeds with the prorated line (27/31), trial_end = Nov 1, catchup_from = Oct 5", async () => {
     const h = make({ invoices: [{ ...OCT_PAID, periodEnd: new Date("2026-10-05T12:00:00Z") }] });
-    const out = await h.svc.open("t1", { now: NOW, expectedStubCents: 27000 });
+    const out = await h.svc.open("t1", {
+      surface: "ADMIN_LINK",
+      now: NOW,
+      expectedStubCents: 27000,
+    });
     expect(out).toMatchObject({ shape: "trial_one_time", stubCents: 27000 });
     const params = h.stripe.client.checkout.sessions.create.mock.calls[0][0];
     expect(params.subscription_data.trial_end).toBe(Date.UTC(2026, 10, 1, 12) / 1000);
@@ -634,7 +680,9 @@ describe("open()", () => {
       periodEnd: new Date("2027-01-01T12:00:00Z"),
     };
     const h = make({ invoices: [OCT_PAID, gap] });
-    await expect(h.svc.open("t1", { now: NOW, expectedStubCents: 0 })).rejects.toMatchObject({
+    await expect(
+      h.svc.open("t1", { surface: "ADMIN_LINK", now: NOW, expectedStubCents: 0 }),
+    ).rejects.toMatchObject({
       response: { code: API_ERROR_CODES.CATCHUP_NEEDS_RULING },
     });
     expect(h.sub().catchupState).toBeNull();
@@ -643,7 +691,9 @@ describe("open()", () => {
 
   it("a tenant that already has a Stripe subscription is NEEDS RULING (census), before anything is written", async () => {
     const h = make({ sub: { stripeSubId: "sub_x" } });
-    await expect(h.svc.open("t1", { now: NOW, expectedStubCents: 0 })).rejects.toMatchObject({
+    await expect(
+      h.svc.open("t1", { surface: "ADMIN_LINK", now: NOW, expectedStubCents: 0 }),
+    ).rejects.toMatchObject({
       response: { code: API_ERROR_CODES.CATCHUP_NEEDS_RULING },
     });
     expect(h.db.locks).toHaveLength(0);
@@ -652,7 +702,9 @@ describe("open()", () => {
 
   it("an amount that moved since the dry-run: 409 CATCHUP_AMOUNT_CHANGED, nothing created", async () => {
     const h = make();
-    await expect(h.svc.open("t1", { now: NOW, expectedStubCents: 999 })).rejects.toMatchObject({
+    await expect(
+      h.svc.open("t1", { surface: "ADMIN_LINK", now: NOW, expectedStubCents: 999 }),
+    ).rejects.toMatchObject({
       response: { code: API_ERROR_CODES.CATCHUP_AMOUNT_CHANGED },
     });
     expect(h.sub().catchupState).toBeNull();
@@ -660,8 +712,10 @@ describe("open()", () => {
 
   it("a second open while a claim is held is refused (exactly one session per tenant)", async () => {
     const h = make();
-    await h.svc.open("t1", { now: NOW, expectedStubCents: 31000 });
-    await expect(h.svc.open("t1", { now: NOW, expectedStubCents: 31000 })).rejects.toMatchObject({
+    await h.svc.open("t1", { surface: "ADMIN_LINK", now: NOW, expectedStubCents: 31000 });
+    await expect(
+      h.svc.open("t1", { surface: "ADMIN_LINK", now: NOW, expectedStubCents: 31000 }),
+    ).rejects.toMatchObject({
       status: 409,
     });
     expect(h.stripe.client.checkout.sessions.create).toHaveBeenCalledTimes(1);
@@ -670,7 +724,9 @@ describe("open()", () => {
   it("Stripe not configured: 503 before anything else", async () => {
     const h = make();
     (h.stripe as any).isConfigured = false;
-    await expect(h.svc.open("t1", { now: NOW, expectedStubCents: 0 })).rejects.toMatchObject({
+    await expect(
+      h.svc.open("t1", { surface: "ADMIN_LINK", now: NOW, expectedStubCents: 0 }),
+    ).rejects.toMatchObject({
       status: 503,
     });
     expect(h.db.locks).toHaveLength(0);
@@ -687,7 +743,9 @@ describe("Opus review: planning under the claim, the plan key, billing start", (
       // the 2nd read (after the claim was taken) sees October PAID: the unpaid span (and the stub) changed
       return calls >= 2 ? [{ ...OCT_PAID, id: "inv_oct_open" }] : realFind(a);
     });
-    await expect(h.svc.open("t1", { now: NOW, expectedStubCents: 31000 })).rejects.toMatchObject({
+    await expect(
+      h.svc.open("t1", { surface: "ADMIN_LINK", now: NOW, expectedStubCents: 31000 }),
+    ).rejects.toMatchObject({
       response: { code: API_ERROR_CODES.CATCHUP_AMOUNT_CHANGED },
     });
     expect(h.sub().catchupState).toBeNull(); // the claim was dropped
@@ -702,7 +760,9 @@ describe("Opus review: planning under the claim, the plan key, billing start", (
       .mockImplementationOnce(real)
       .mockImplementationOnce(real)
       .mockImplementationOnce(async () => ({ ...(await real()), unit_amount: 32000 }));
-    await expect(h.svc.open("t1", { now: NOW, expectedStubCents: 31000 })).rejects.toMatchObject({
+    await expect(
+      h.svc.open("t1", { surface: "ADMIN_LINK", now: NOW, expectedStubCents: 31000 }),
+    ).rejects.toMatchObject({
       response: { code: API_ERROR_CODES.CATCHUP_AMOUNT_CHANGED },
     });
     expect(h.sub().catchupState).toBeNull();
@@ -711,7 +771,11 @@ describe("Opus review: planning under the claim, the plan key, billing start", (
 
   it("the re-plan under the claim does not refuse its own claim (claim_held is not a reason against itself)", async () => {
     const h = make({ invoices: [OCT_OPEN] });
-    const out = await h.svc.open("t1", { now: NOW, expectedStubCents: 31000 });
+    const out = await h.svc.open("t1", {
+      surface: "ADMIN_LINK",
+      now: NOW,
+      expectedStubCents: 31000,
+    });
     expect(out.sessionId).toBeTruthy();
   });
 
@@ -723,7 +787,7 @@ describe("Opus review: planning under the claim, the plan key, billing start", (
       source: "override",
       currency: "usd",
     });
-    await h.svc.open("t1", { now: NOW, expectedStubCents: 31000 });
+    await h.svc.open("t1", { surface: "ADMIN_LINK", now: NOW, expectedStubCents: 31000 });
     const params = h.stripe.client.checkout.sessions.create.mock.calls[0][0];
     expect(params.metadata.planKey).toBe("SCALE");
   });
@@ -771,7 +835,9 @@ describe("B1102 a held add-on with an unparseable catalog includedAtPlan", () =>
 
   it("open() writes the catalog-invalid notice and answers ADDON_CATALOG_INVALID, with the claim untouched and zero Stripe calls", async () => {
     const h = make({ invalid: INVALID, addonRows: held });
-    const err: any = await h.svc.open("t1", { now: NOW, expectedStubCents: 31000 }).catch((e) => e);
+    const err: any = await h.svc
+      .open("t1", { surface: "ADMIN_LINK", now: NOW, expectedStubCents: 31000 })
+      .catch((e) => e);
     expect(err.getStatus()).toBe(409);
     expect(err.getResponse()).toMatchObject({
       code: API_ERROR_CODES.ADDON_CATALOG_INVALID,
@@ -781,5 +847,144 @@ describe("B1102 a held add-on with an unparseable catalog includedAtPlan", () =>
     expect(h.mutations.recordInvalidCatalogAddons).toHaveBeenCalledWith("t1", INVALID);
     expect(h.stripe.calls).toEqual([]);
     expect(h.sub().catchupState).toBeNull();
+  });
+});
+
+describe("SA-1139 PR-1: the catch-up session x BILLING_CHECKOUT_UI", () => {
+  const UI = "BILLING_CHECKOUT_UI";
+  const prior = process.env[UI];
+  const priorBase = process.env.FRONTEND_URL;
+  beforeEach(() => {
+    delete process.env[UI];
+    process.env.FRONTEND_URL = "https://app.test";
+  });
+  afterEach(() => {
+    if (prior === undefined) delete process.env[UI];
+    else process.env[UI] = prior;
+    if (priorBase === undefined) delete process.env.FRONTEND_URL;
+    else process.env.FRONTEND_URL = priorBase;
+  });
+
+  const ready = () => {
+    const h = make({
+      invoices: [OCT_OPEN],
+      sub: {
+        periodStart: new Date("2026-10-01T12:00:00Z"),
+        periodEnd: new Date("2026-11-01T12:00:00Z"),
+      },
+    });
+    return h;
+  };
+  const sent = (h: ReturnType<typeof make>) =>
+    h.stripe.client.checkout.sessions.create.mock.calls[0][0];
+
+  it("case 1: switch unset -> today's hosted params and a hosted start", async () => {
+    const h = ready();
+    const out = await h.svc.open("t1", {
+      now: NOW,
+      expectedStubCents: 31000,
+      surface: "TENANT_SELF",
+    });
+    expect(sent(h)).toMatchObject({
+      success_url: "https://app.test/settings/billing?checkout=success",
+      cancel_url: "https://app.test/settings/billing?checkout=cancelled",
+    });
+    expect(sent(h)).not.toHaveProperty("ui_mode");
+    // O8: an admin link is never embedded, so its start has nothing for the web to push
+    expect(out).toMatchObject({ uiMode: "hosted", clientSecret: null, returnPath: null });
+    expect(out.checkoutUrl).toMatch(/^https:\/\/pay\.test\/cs_catchup/);
+  });
+
+  it("case 4: switch embedded, TENANT_SELF -> the embedded params through the same chokepoint, a client secret and no url", async () => {
+    process.env[UI] = "embedded";
+    const h = ready();
+    const out = await h.svc.open("t1", {
+      now: NOW,
+      expectedStubCents: 31000,
+      successPath: "/settings/billing?paid=1",
+      surface: "TENANT_SELF",
+    });
+    const p = sent(h);
+    expect(p.ui_mode).toBe("embedded_page");
+    expect(p.redirect_on_completion).toBe("if_required");
+    expect(p.return_url).toBe(
+      "https://app.test/settings/billing?paid=1&session_id={CHECKOUT_SESSION_ID}",
+    );
+    expect(p).not.toHaveProperty("success_url");
+    expect(p).not.toHaveProperty("cancel_url");
+    expect(p.managed_payments).toEqual({ enabled: false });
+    expect(out).toMatchObject({ uiMode: "embedded", checkoutUrl: null });
+    expect(out.clientSecret).toMatch(/^cs_catchup\d+_secret_test$/);
+    expect(h.sub().catchupSessionId).toBe(out.sessionId);
+    // O2: the start carries the path its own session returns to (SA-1154), without the session_id
+    expect(out.returnPath).toBe("/settings/billing?paid=1");
+  });
+
+  it("O3: switch embedded, a card add (successPath paid=1&card=1) -> returnPath is the card path, from the session", async () => {
+    process.env[UI] = "embedded";
+    const h = ready();
+    const out = await h.svc.open("t1", {
+      now: NOW,
+      expectedStubCents: 31000,
+      successPath: "/settings/billing?paid=1&card=1",
+      surface: "TENANT_SELF",
+    });
+    expect(sent(h).return_url).toBe(
+      "https://app.test/settings/billing?paid=1&card=1&session_id={CHECKOUT_SESSION_ID}",
+    );
+    expect(out.returnPath).toBe("/settings/billing?paid=1&card=1");
+  });
+
+  it("case 5: switch embedded, ADMIN_LINK (the back-office link) -> hosted, a url", async () => {
+    process.env[UI] = "embedded";
+    const h = ready();
+    const out = await h.svc.open("t1", {
+      now: NOW,
+      expectedStubCents: 31000,
+      surface: "ADMIN_LINK",
+    });
+    expect(sent(h)).not.toHaveProperty("ui_mode");
+    expect(sent(h).success_url).toBe("https://app.test/settings/billing?checkout=success");
+    expect(out).toMatchObject({ uiMode: "hosted", clientSecret: null });
+    expect(out.checkoutUrl).toMatch(/^https:\/\/pay\.test\//);
+  });
+
+  it("case 9: no surface given -> nothing is claimed or created (surface is required, never defaulted)", async () => {
+    process.env[UI] = "embedded";
+    const h = ready();
+    await expect(
+      (h.svc.open as (t: string, o: unknown) => Promise<unknown>)("t1", {
+        now: NOW,
+        expectedStubCents: 31000,
+      }),
+    ).rejects.toThrow(/surface/);
+    expect(h.stripe.client.checkout.sessions.create).not.toHaveBeenCalled();
+    expect(h.sub().catchupState).toBeNull();
+  });
+
+  it.each(["//evil.example", "/\\evil.example", "https://evil.example"])(
+    "case 3: switch embedded, successPath %s -> refused before anything is claimed or created (the one guard also guards return_url)",
+    async (bad) => {
+      process.env[UI] = "embedded";
+      const h = ready();
+      await expect(
+        h.svc.open("t1", {
+          now: NOW,
+          expectedStubCents: 31000,
+          successPath: bad,
+          surface: "TENANT_SELF",
+        }),
+      ).rejects.toThrow(/unsafe Checkout return path/);
+      expect(h.stripe.client.checkout.sessions.create).not.toHaveBeenCalled();
+    },
+  );
+
+  it("case 3: switch embedded, no successPath -> the default path in return_url", async () => {
+    process.env[UI] = "embedded";
+    const h = ready();
+    await h.svc.open("t1", { now: NOW, expectedStubCents: 31000, surface: "TENANT_SELF" });
+    expect(sent(h).return_url).toBe(
+      "https://app.test/settings/billing?checkout=success&session_id={CHECKOUT_SESSION_ID}",
+    );
   });
 });

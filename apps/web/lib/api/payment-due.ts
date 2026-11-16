@@ -1,5 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { PaymentDuePayResult, PaymentDueShown, PaymentDueView } from "@routeflow/types";
+import {
+  API_ERROR_CODES,
+  type CheckoutStart,
+  type PaymentDueShown,
+  type PaymentDueView,
+} from "@routeflow/types";
+import { isStripeReturn } from "../checkout-return";
+import { assertCheckoutStartable, followCheckout } from "../checkout-embedded";
 import { apiClient } from "../api-client";
 import { guardCounterLeave } from "../counter-cart-signal";
 
@@ -14,8 +21,7 @@ const CARD_POLL_MS = 300_000;
  */
 export function paymentDuePollMs(view: PaymentDueView | undefined, search: string): number | false {
   if (view?.due) return POLL_MS;
-  if (view?.cardNeeded)
-    return new URLSearchParams(search).get("paid") === "1" ? POLL_MS : CARD_POLL_MS;
+  if (view?.cardNeeded) return isStripeReturn(new URLSearchParams(search)) ? POLL_MS : CARD_POLL_MS;
   return false;
 }
 
@@ -34,6 +40,14 @@ export function usePaymentDue(options?: { enabled?: boolean }) {
   });
 }
 
+/** The 409 a second Pay gets while its first checkout session is still open. */
+export function isCheckoutAlreadyOpen(err: unknown): boolean {
+  return (
+    (err as { response?: { data?: { code?: unknown } } } | undefined)?.response?.data?.code ===
+    API_ERROR_CODES.CATCHUP_SESSION_OPEN
+  );
+}
+
 /** Only an https Stripe URL is followed; anything else (a malformed or scripted value) is refused. */
 export function safeCheckoutUrl(url: unknown): string | null {
   return typeof url === "string" && url.startsWith("https://") ? url : null;
@@ -48,22 +62,28 @@ export function safeCheckoutUrl(url: unknown): string | null {
  */
 export function usePayPaymentDue() {
   const qc = useQueryClient();
-  return useMutation<PaymentDuePayResult, Error, PaymentDueShown | undefined>({
+  return useMutation<CheckoutStart, Error, PaymentDueShown | undefined>({
+    // A second Pay answers 409 CATCHUP_SESSION_OPEN; the banner words that itself (the shared map says "wait").
+    meta: { localErrorToast: isCheckoutAlreadyOpen },
     mutationFn: (shown) =>
       (shown
         ? apiClient.post("/billing/payment-due/pay", { shown })
         : apiClient.post("/billing/payment-due/pay")
-      ).then((r) => r.data),
+      ).then((r) => assertCheckoutStartable(r.data)),
     // A refused pay (409 PAYMENT_NOT_DUE, or PAYMENT_TERMS_CHANGED) means the banner is stale: re-read it on error too.
     onError: () => {
       void qc.invalidateQueries({ queryKey: ["billing", "payment-due"] });
     },
-    onSuccess: (r) => {
-      const url = safeCheckoutUrl(r.checkoutUrl);
-      if (!url) return;
-      const go = () => window.location.assign(url);
-      if (guardCounterLeave(go)) return;
-      go();
-    },
+    // SA-1139: embedded opens the panel in place (no leave, so no cart guard); hosted is today's redirect.
+    // SA-1154: where an embedded form returns is the server's answer (a card add included); the web never
+    // works it out from what it sent.
+    onSuccess: (r) =>
+      followCheckout(r, (checkoutUrl) => {
+        const url = safeCheckoutUrl(checkoutUrl);
+        if (!url) return;
+        const go = () => window.location.assign(url);
+        if (guardCounterLeave(go)) return;
+        go();
+      }),
   });
 }

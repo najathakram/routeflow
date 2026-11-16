@@ -335,3 +335,49 @@ describe("before == after: unset sellers and an unreadable capability see today'
     expect(screen.queryByTestId("order-timeline")).toBeNull();
   });
 });
+
+describe("route timeline: Partial delivery is complete only for a partial order (UX guide B20)", () => {
+  const states = () =>
+    screen.getAllByTestId("timeline-step").map((s) => s.getAttribute("data-state"));
+
+  it("a fully DELIVERED order skips the Partial delivery step (upcoming), the rest complete", () => {
+    mockCaps = ready(UNSET);
+    mockOrder = order({ status: "DELIVERED" });
+    renderWithProviders(<BuyerOrderDetailPage />);
+    expect(states()).toEqual(["complete", "complete", "complete", "upcoming", "current"]);
+  });
+
+  it("a PARTIALLY_DELIVERED order shows that step as current", () => {
+    mockCaps = ready(UNSET);
+    mockOrder = order({ status: "PARTIALLY_DELIVERED" });
+    renderWithProviders(<BuyerOrderDetailPage />);
+    expect(states()).toEqual(["complete", "complete", "complete", "current", "upcoming"]);
+  });
+
+  // UX guide B20 (review): the line follows the path travelled, not the step, so a skipped step never breaks it.
+  const connectors = () =>
+    screen.getByTestId("order-timeline").querySelectorAll("[data-testid=timeline-connector]");
+  const connectorStates = () => Array.from(connectors()).map((c) => c.getAttribute("data-state"));
+
+  it("a fully DELIVERED order has every connector reached", () => {
+    mockCaps = ready(UNSET);
+    mockOrder = order({ status: "DELIVERED" });
+    renderWithProviders(<BuyerOrderDetailPage />);
+    expect(connectorStates()).toEqual(["reached", "reached", "reached", "reached"]);
+    expect(states()[3]).toBe("upcoming");
+  });
+
+  it("a PARTIALLY_DELIVERED order has three reached connectors and the last ahead", () => {
+    mockCaps = ready(UNSET);
+    mockOrder = order({ status: "PARTIALLY_DELIVERED" });
+    renderWithProviders(<BuyerOrderDetailPage />);
+    expect(connectorStates()).toEqual(["reached", "reached", "reached", "ahead"]);
+  });
+
+  it("an OUT_FOR_DELIVERY order has two reached connectors", () => {
+    mockCaps = ready(UNSET);
+    mockOrder = order({ status: "OUT_FOR_DELIVERY" });
+    renderWithProviders(<BuyerOrderDetailPage />);
+    expect(connectorStates()).toEqual(["reached", "reached", "ahead", "ahead"]);
+  });
+});

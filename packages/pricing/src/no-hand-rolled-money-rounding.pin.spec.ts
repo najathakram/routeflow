@@ -711,20 +711,6 @@ const ALLOW: Allow[] = [
     note: "a percent label or bar width, not an amount",
   },
   {
-    file: "apps/web/app/(dashboard)/bookkeeping/[transactionId]/page.tsx",
-    form: "F1",
-    count: 3,
-    why: "pending:PR-2",
-    note: "a web money site that PR-2 converts",
-  },
-  {
-    file: "apps/web/app/(dashboard)/bookkeeping/[transactionId]/page.tsx",
-    form: "F2",
-    count: 2,
-    why: "pending:PR-2",
-    note: "a web money site that PR-2 converts",
-  },
-  {
     file: "apps/api/src/credit-notes/credit-note-summary.ts",
     form: "F3",
     count: 1,

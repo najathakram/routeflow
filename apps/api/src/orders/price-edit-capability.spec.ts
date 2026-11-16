@@ -1,7 +1,7 @@
 /**
  * SA-1034: the price-edit capability is checked at every override site (staff-override.ts
  * `assertPriceEditAllowed`, sites pinned in price-edit-sites.pin.spec.ts). Each site's value comes from
- * `staffMay(role, "EDIT_LINE_PRICE", [])`; this spec drives that value both ways at the module boundary:
+ * `staffMay(role, "EDIT_LINE_PRICE", <the caller denied groups>)`; this spec drives that value both ways at the module boundary:
  *  - `false`: a line that becomes a NEW override is refused 403 PRICE_EDIT_NOT_PERMITTED before the write;
  *  - `true` (both staff roles today): the override is written unchanged.
  * Sites: create (pack line), updateOrderItems (substitute, add, existing-line edit), a unit line, an
@@ -26,6 +26,7 @@ import { staffMay } from "../auth/permissions/staff-capabilities";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { priceInvoiceLine, type LineOverrideCtx } from "../invoices/invoice-line-override";
 import { resolveLineUnits } from "../products/line-units";
+import { DEFAULT_DENIED_GROUPS, operatorWithRights } from "../common/testing/operator-with-rights";
 import { buildOrdersService, operatorPayload } from "./testing/orders-service-harness";
 import { buildUnitLine } from "./unit-line-build";
 
@@ -67,8 +68,10 @@ afterEach(() => {
 
 describe("SA-1034 price-edit capability — create (pack line)", () => {
   let h: Awaited<ReturnType<typeof buildOrdersService>>;
+  let op: typeof operatorPayload;
   beforeEach(async () => {
     h = await buildOrdersService();
+    op = operatorWithRights(h.prisma, operatorPayload);
     h.prisma.customer.findFirst.mockResolvedValue({ id: "cust-1", pricingTier: 1 });
     h.prisma.customer.findUnique.mockResolvedValue({
       id: "cust-1",
@@ -94,13 +97,17 @@ describe("SA-1034 price-edit capability — create (pack line)", () => {
   const create = (unitPrice: number) =>
     h.service.create(
       { customerId: "cust-1", items: [{ productId: "prod-1", qty: 2, unitPrice }] } as never,
-      { ...operatorPayload, tenantId: "t-1" } as never,
+      op as never,
     );
 
   it("capability false: an override is refused 403 before any write", async () => {
     capability(false);
     await refused(create(6));
-    expect(staffMayMock).toHaveBeenCalledWith(operatorPayload.role, "EDIT_LINE_PRICE", []);
+    expect(staffMayMock).toHaveBeenCalledWith(
+      operatorPayload.role,
+      "EDIT_LINE_PRICE",
+      DEFAULT_DENIED_GROUPS,
+    );
     expect(h.prisma.order.create).not.toHaveBeenCalled();
     expect(h.prisma.$transaction).not.toHaveBeenCalled();
   });
@@ -126,6 +133,7 @@ describe("SA-1034 price-edit capability — create (pack line)", () => {
 
 describe("SA-1034 price-edit capability — updateOrderItems", () => {
   let h: Awaited<ReturnType<typeof buildOrdersService>>;
+  let op: typeof operatorPayload;
   const ORDER = {
     id: "ord-1",
     customerId: "cust-1",
@@ -155,6 +163,7 @@ describe("SA-1034 price-edit capability — updateOrderItems", () => {
   };
   beforeEach(async () => {
     h = await buildOrdersService();
+    op = operatorWithRights(h.prisma, operatorPayload);
     h.prisma.customer.findFirst.mockResolvedValue({ pricingTier: 1 });
     h.prisma.customerPrice.findMany.mockResolvedValue([]);
     h.prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 12, status: "PENDING" }]);
@@ -164,11 +173,7 @@ describe("SA-1034 price-edit capability — updateOrderItems", () => {
     h.prisma.product.findUniqueOrThrow.mockResolvedValue({ ...PLAIN, id: "prod-sub" });
   });
   const edit = (items: unknown[]) =>
-    h.service.updateOrderItems(
-      "ord-1",
-      { items, replaceAll: false } as never,
-      operatorPayload as never,
-    );
+    h.service.updateOrderItems("ord-1", { items, replaceAll: false } as never, op as never);
 
   describe("substitute", () => {
     beforeEach(() => h.prisma.order.findUnique.mockResolvedValue({ ...ORDER, lineItems: [LINE] }));
@@ -178,7 +183,11 @@ describe("SA-1034 price-edit capability — updateOrderItems", () => {
     it("capability false: an override is refused 403 before the line is written", async () => {
       capability(false);
       await refused(sub(6));
-      expect(staffMayMock).toHaveBeenCalledWith(operatorPayload.role, "EDIT_LINE_PRICE", []);
+      expect(staffMayMock).toHaveBeenCalledWith(
+        operatorPayload.role,
+        "EDIT_LINE_PRICE",
+        DEFAULT_DENIED_GROUPS,
+      );
       expect(h.prisma.orderItem.update).not.toHaveBeenCalled();
     });
 

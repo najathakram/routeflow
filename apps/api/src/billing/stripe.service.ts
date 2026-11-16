@@ -2,7 +2,7 @@ import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { AppConfig } from "../config/configuration";
 import { STRIPE_API_VERSION, stripeInvoiceSubscriptionId } from "./stripe-period";
-import { withCheckoutPolicy } from "./checkout-session-params";
+import { assertBillingReturnUrl } from "./billing-return-paths";
 import type { InvoiceFacts } from "./catchup-claim";
 import { COUPON_SYNC_EXPAND, COUPON_SYNC_REQUEST, isInvoiceUpcomingNone } from "./coupon-unbilled";
 
@@ -71,27 +71,6 @@ export class StripeService implements OnModuleInit {
 
   async getCustomer(customerId: string): Promise<any> {
     return this.client.customers.retrieve(customerId);
-  }
-
-  // ─── Checkout Session ──────────────────────────────────────────────────────
-
-  async createCheckoutSession(params: {
-    customerId: string;
-    priceId: string;
-    successUrl: string;
-    cancelUrl: string;
-    metadata?: Record<string, string>;
-  }): Promise<{ id: string; url: string }> {
-    return this.client.checkout.sessions.create(
-      withCheckoutPolicy({
-        customer: params.customerId,
-        mode: "subscription",
-        line_items: [{ price: params.priceId, quantity: 1 }],
-        success_url: params.successUrl,
-        cancel_url: params.cancelUrl,
-        metadata: params.metadata,
-      }),
-    );
   }
 
   // ─── Subscription ─────────────────────────────────────────────────────────
@@ -344,6 +323,30 @@ export class StripeService implements OnModuleInit {
     return { rows: Array.isArray(page?.data) ? page.data : [], hasMore: page?.has_more === true };
   }
 
+  /**
+   * SA-1146 B-4: a customer's PAID invoices, newest first, one page (`startingAfter` = the last invoice id already
+   * shown). The customer id is the TENANT ROW's, never a request value. Throws on a Stripe failure: the caller turns
+   * that into `stripeUnavailable`, never an empty list.
+   */
+  async listPaidCustomerInvoices(
+    customerId: string,
+    opts: { limit: number; startingAfter?: string },
+    request?: { timeoutMs: number; maxNetworkRetries: number },
+  ): Promise<{ rows: any[]; hasMore: boolean }> {
+    const page = await this.client.invoices.list(
+      {
+        customer: customerId,
+        status: "paid",
+        limit: opts.limit,
+        ...(opts.startingAfter ? { starting_after: opts.startingAfter } : {}),
+      },
+      request
+        ? { timeout: request.timeoutMs, maxNetworkRetries: request.maxNetworkRetries }
+        : undefined,
+    );
+    return { rows: Array.isArray(page?.data) ? page.data : [], hasMore: page?.has_more === true };
+  }
+
   /** Deletes a DRAFT invoice (only a draft can be deleted; an open one is voided). */
   async deleteDraftInvoice(invoiceId: string): Promise<any> {
     return this.client.invoices.del(invoiceId);
@@ -381,9 +384,10 @@ export class StripeService implements OnModuleInit {
   /** #2476: `request` caps this one call (stripe-node's `timeout` / `maxNetworkRetries`); omit it for
    *  Stripe's defaults. */
   async createBillingPortalSession(
-    params: { customerId: string; returnUrl: string },
+    params: { customerId: string; returnUrl: string; tenantId?: string },
     request?: { timeoutMs: number; maxNetworkRetries: number },
   ): Promise<{ url: string }> {
+    assertBillingReturnUrl("portal", params.returnUrl, undefined, params.tenantId); // SA-1146 B-1 pin (b): the one portal create site
     return this.client.billingPortal.sessions.create(
       { customer: params.customerId, return_url: params.returnUrl },
       request

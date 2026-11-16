@@ -3,6 +3,7 @@ import { render, screen, fireEvent, cleanup, act } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { ToastProvider } from "@routeflow/ui/web";
 import { DraftDock } from "./DraftDock";
+import { installScanClock } from "@/test-utils/scan-clock";
 
 /**
  * SA-1066 F27: the "Add scanned item to a draft?" prompt over the receipt screen was a plain div: Escape did nothing and Tab
@@ -48,6 +49,8 @@ const open = () => {
 
 beforeEach(() => mockPush.mockClear());
 afterEach(cleanup);
+
+installScanClock(); // SA-1159: key stamps through the constants, never the wall clock
 
 describe("DraftDock scan prompt is a dialog (F27)", () => {
   it("is a dialog named by its question, and shows the scanned code", () => {

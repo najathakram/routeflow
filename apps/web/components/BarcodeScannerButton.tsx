@@ -53,6 +53,13 @@ interface BarcodeScannerButtonProps {
  *    opened through `openCamera()` (rear camera, 1080p, continuous-focus hint) and the
  *    resulting stream is handed to zxing — see `lib/scan-camera.ts` for why.
  */
+/** The longest gap between two keys that still counts as one scan burst; a longer gap is a new sequence (a person typing). */
+export const SCAN_KEY_GAP_MS = 200;
+/** The longest gap between the last key and Enter for the sequence to be taken as a scan. */
+export const SCAN_ENTER_GAP_MS = 150;
+/** A sequence that restarts less than this long after the previous key is a stall inside one scan, not a fresh start (SA-1159). */
+export const SCAN_STALL_MAX_MS = 1000;
+
 export function BarcodeScannerButton({
   onScan,
   inputRef,
@@ -97,6 +104,8 @@ export function BarcodeScannerButton({
 
     let lastKeyTime = 0;
     let sequence = "";
+    // SA-1159: the sequence restarted soon after the previous key, so it is the tail of one stalled scan, not a code.
+    let suspect = false;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       // The browser's own event time, not Date.now() at handling time: a long task (a render, a lookup
@@ -107,7 +116,14 @@ export function BarcodeScannerButton({
       if (e.key === "Enter") {
         // If we have a barcode-length sequence that arrived fast, treat as scan. The code is taken and the
         // sequence emptied in ONE step, before anything else can run.
-        if (sequence.length >= 6 && now - lastKeyTime < 150) {
+        if (suspect) {
+          // Not sent to onScan and not prevented: the field holds what the scanner sent, and its own submit reads it.
+          sequence = "";
+          suspect = false;
+          lastKeyTime = 0; // as after a take: the next scan, even at once, is a fresh start
+          return;
+        }
+        if (sequence.length >= 6 && now - lastKeyTime < SCAN_ENTER_GAP_MS) {
           const code = sequence;
           sequence = "";
           lastKeyTime = 0;
@@ -118,8 +134,9 @@ export function BarcodeScannerButton({
       }
 
       if (e.key.length === 1) {
-        if (now - lastKeyTime > 200) {
+        if (now - lastKeyTime > SCAN_KEY_GAP_MS) {
           // Gap too long — reset (user is typing normally)
+          suspect = lastKeyTime !== 0 && now - lastKeyTime < SCAN_STALL_MAX_MS;
           sequence = e.key;
         } else {
           sequence += e.key;

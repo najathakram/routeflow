@@ -388,7 +388,10 @@ export class PlatformAdminController {
     description: 'Optional JSON body: { interval?: "month" | "year" } — defaults to month.',
   })
   createCheckout(@Param("id") id: string, @Body("interval") interval?: "month" | "year") {
-    return this.billingService.createCheckoutSession(id, interval === "year" ? "year" : "month");
+    return this.billingService.createCheckoutSession(id, {
+      interval: interval === "year" ? "year" : "month",
+      surface: "ADMIN_LINK",
+    });
   }
 
   @Post("tenants/:id/billing/portal")

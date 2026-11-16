@@ -166,7 +166,8 @@ test.describe("Lite-plan nav/route gating (lite-L2)", () => {
         "Customers",
         "Warehouse",
         "Finance",
-        "Analytics",
+        // UX guide improvement 3 (UXG-R2): the group holding Reports and Analytics.
+        "Reports & analytics",
         "Regulated items",
         "Settings",
       ]);

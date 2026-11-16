@@ -19,6 +19,17 @@ export function counterDialogOpen(): boolean {
 }
 
 /**
+ * SA-1138: another window is open ABOVE `own` (the order builder's content): the date picker, the merge prompt, a price sheet,
+ * any other open dialog, or a held scan pause. The builder's scan capture stands down and that window's own rules run.
+ */
+export function dialogOpenBesides(own: Element | null): boolean {
+  if (scanPauseHeld()) return true;
+  return Array.from(document.querySelectorAll('[role="dialog"][data-state="open"]')).some(
+    (d) => d !== own,
+  );
+}
+
+/**
  * A decoded camera frame must be dropped: focus sits in a text field OTHER than the scan field (a typed tender, a line note,
  * the customer search), or a dialog is open. The scan field itself is the camera's own home, so focus there still counts.
  */

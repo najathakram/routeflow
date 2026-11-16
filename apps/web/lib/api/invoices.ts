@@ -9,7 +9,7 @@ import type {
   ToCollectState,
 } from "@routeflow/types";
 import type { InvoiceSendLock, InvoiceSendState } from "@/lib/invoice-send-state";
-import { isPostDeliveryOrderStatus } from "@routeflow/types";
+import { isPostDeliveryOrderStatus, type DiscountTaxBaseValue } from "@routeflow/types";
 import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import { isRecordPaymentLocalRefusal } from "@/lib/duplicate-payment-ref";
@@ -190,6 +190,8 @@ export interface Invoice {
   /** #2088: the tracked email state ("emailed, modified since" ...) and the pre-delivery lock; staff reads only. */
   sendState?: InvoiceSendState;
   sendLocked?: InvoiceSendLock | null;
+  /** SA-1141 R7: the document's discount tax base, derived by the API; absent = LEGACY. Never computed from a client clock. */
+  discountTaxBase?: DiscountTaxBaseValue;
   customerId: string;
   customer?: {
     id: string;

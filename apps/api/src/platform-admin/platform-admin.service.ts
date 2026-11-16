@@ -146,6 +146,7 @@ import {
 import { underTenantPriceLock } from "../billing/price-lock";
 import { clearNeedsReconcile } from "../billing/needs-reconcile";
 import { activationClaimRefusal } from "../billing/catchup-claim";
+import { API_BILLING_PORTAL_RETURN_PATH } from "../billing/billing-return-paths";
 import { issueSetPasswordLink } from "../users/set-password-token";
 import { assertSafeTextCell } from "../common/safe-text-cell";
 import { assertValidTenantTimeZone } from "../system-config/tenant-timezone.writer";
@@ -543,8 +544,8 @@ export class PlatformAdminService {
     });
 
     // #2439: the welcome email — a single-use 72h set-password link (never a password), the
-    // login URL, and a STABLE "Pay now" link (login → /settings/billing, whose checkout button
-    // mints a fresh Stripe session via POST /settings/billing/subscription/checkout) when this
+    // login URL, and a STABLE "Pay now" link (login → the Billing page, whose checkout button
+    // mints a fresh Stripe session via the tenant subscription-checkout route) when this
     // plan allows self-serve checkout (R2.7). No checkout session is created here any more: its
     // URL expired in 24h. Delivery is recorded on the audit row and returned.
     const webBase = (
@@ -555,7 +556,7 @@ export class PlatformAdminService {
     // email must not offer a card payment or say a trial is running.
     const payUrl =
       dto.startMode !== "active" && inviteOnlyCheckoutAllowed(planKey)
-        ? `${webBase}/login?redirect=${encodeURIComponent("/settings/billing")}`
+        ? `${webBase}/login?redirect=${encodeURIComponent(API_BILLING_PORTAL_RETURN_PATH)}`
         : null;
     const welcomeEmail = await this.sendWelcomeEmail({
       userId: result.user.id,
@@ -2008,7 +2009,16 @@ export class PlatformAdminService {
         where: { class: "PRODUCTION" },
         take: 5,
         orderBy: { createdAt: "desc" },
-        select: { id: true, slug: true, name: true, status: true, plan: true, createdAt: true },
+        select: {
+          id: true,
+          slug: true,
+          name: true,
+          status: true,
+          plan: true,
+          // UX guide B11: the badge shows the SAME resolved plan as the donut (see _resolveDisplayPlanKey).
+          subscription: { select: { planKey: true } },
+          createdAt: true,
+        },
       }),
       // Trials expiring within 7 days
       this.prisma.tenant.findMany({
@@ -2023,6 +2033,7 @@ export class PlatformAdminService {
           slug: true,
           name: true,
           plan: true,
+          subscription: { select: { planKey: true } },
           trialEndsAt: true,
           createdAt: true,
           _count: { select: { users: true } },
@@ -2039,7 +2050,15 @@ export class PlatformAdminService {
         },
         orderBy: { createdAt: "desc" },
         take: 10,
-        select: { id: true, slug: true, name: true, status: true, plan: true, trialEndsAt: true },
+        select: {
+          id: true,
+          slug: true,
+          name: true,
+          status: true,
+          plan: true,
+          subscription: { select: { planKey: true } },
+          trialEndsAt: true,
+        },
       }),
       this.mrrService.computeOverview(),
       this._weeklyFunnelOrUnavailable(now),
@@ -2070,12 +2089,17 @@ export class PlatformAdminService {
       mrr: mrrOverview.mrr,
       ledgerMrr: mrrOverview.ledgerMrr,
       planBreakdown: planCounts,
-      recentTenants,
+      // `plan` stays (the raw legacy enum, other consumers read it); `planKey` is the resolved plan (UX guide B11).
+      recentTenants: recentTenants.map(({ subscription: _sub, ...t }) => ({
+        ...t,
+        planKey: this._resolveDisplayPlanKey({ plan: t.plan, subscription: _sub }),
+      })),
       trialsExpiringSoon: trialsExpiringSoon.map((t) => ({
         id: t.id,
         slug: t.slug,
         name: t.name,
         plan: t.plan,
+        planKey: this._resolveDisplayPlanKey(t),
         trialEndsAt: t.trialEndsAt,
         createdAt: t.createdAt,
         userCount: t._count.users,
@@ -2086,6 +2110,7 @@ export class PlatformAdminService {
         name: t.name,
         status: t.status,
         plan: t.plan,
+        planKey: this._resolveDisplayPlanKey(t),
         trialEndsAt: t.trialEndsAt,
         riskReason: this._riskReason(t.status, t.trialEndsAt, now),
       })),
@@ -2642,10 +2667,26 @@ export class PlatformAdminService {
           ? null
           : dto.annual;
 
-    const updated = await this.prisma.planDefinition.update({
-      where: { planVersionId_planKey: { planVersionId: version.id, planKey: definition.planKey } },
-      data: { monthlyPrice: dto.monthly, annualPrice },
-    });
+    // UX guide B4 / UXG-R4: compared in cents (100 and "100.00" are the same price). When neither price differs
+    // from the stored one, only the catalog write is skipped: the fan-out and the audit row still run, because a
+    // re-save is the retry for tenants whose Stripe sync failed. A tenant already at the price is a no-op at Stripe.
+    const sameCents = (stored: Prisma.Decimal | null | undefined, next: unknown) =>
+      stored == null || next == null
+        ? (stored ?? null) === (next ?? null)
+        : roundMoney(Number(stored)) === roundMoney(Number(next));
+    const pricesChanged = !(
+      sameCents(definition.monthlyPrice, dto.monthly) &&
+      sameCents(definition.annualPrice, annualPrice)
+    );
+
+    const updated = pricesChanged
+      ? await this.prisma.planDefinition.update({
+          where: {
+            planVersionId_planKey: { planVersionId: version.id, planKey: definition.planKey },
+          },
+          data: { monthlyPrice: dto.monthly, annualPrice },
+        })
+      : definition;
 
     // Fan-out targets: `onPlan`, the selection counted above (see selectPlanPriceTargets, shared with the R24 read).
     // N3 (R1 Option B): a tenant whose scheduled DOWNGRADE price has ALREADY been pushed onto its Stripe base item
@@ -2657,6 +2698,7 @@ export class PlatformAdminService {
     let skippedDowngrade = 0;
 
     let synced = 0;
+    let unchanged = 0;
     let failed = 0;
     for (const target of targets) {
       try {
@@ -2681,7 +2723,10 @@ export class PlatformAdminService {
           return this.billingService.syncStripeSubscriptionPrice(target.tenantId);
         });
         if (result === "skipped") skippedDowngrade++;
-        else if (result?.synced) synced++;
+        else if (result?.synced) {
+          synced++;
+          if (result.unchanged) unchanged++;
+        }
       } catch (e) {
         failed++;
         this.logger.warn(
@@ -2699,6 +2744,7 @@ export class PlatformAdminService {
       meta: {
         platformAdmin: true,
         planKey,
+        pricesChanged,
         monthlyPrice: dto.monthly,
         annualPrice: annualPrice === null ? null : Number(annualPrice),
         updated: targets.length - skippedDowngrade,
@@ -2714,6 +2760,7 @@ export class PlatformAdminService {
       annualPrice: updated.annualPrice === null ? null : Number(updated.annualPrice),
       updated: targets.length - skippedDowngrade,
       synced,
+      unchanged,
       failed,
       skippedDowngrade,
     };

@@ -23,7 +23,11 @@ import type { LocalErrorToastOption } from "@/lib/local-error-toast";
 import type { OverrideStampView, RestrictionAck } from "@routeflow/types";
 import { splitIdAck, type IdWithAck } from "@/lib/api/restriction-warning";
 import type { HandOverSoldBy } from "@/lib/handover-stamp";
-import type { ReorderLinesRequest, ReorderLinesResponse } from "@routeflow/types";
+import type {
+  DiscountTaxBaseValue,
+  ReorderLinesRequest,
+  ReorderLinesResponse,
+} from "@routeflow/types";
 
 export type { ChangeRequest } from "@/lib/change-requests";
 
@@ -39,6 +43,8 @@ export type {
 export interface Order {
   id: string;
   orderNumber: string;
+  /** SA-1141 R7: the document's discount tax base, derived by the API; absent = LEGACY. */
+  discountTaxBase?: DiscountTaxBaseValue;
   /** Row 372: the latest edit revision (GET /orders/:id); the edit save sends it back as `expectedRevisionNumber`. */
   revisionNumber?: number;
   /** W-1187: the CAS token of `PUT /orders/:id/line-order`; a reorder bumps it and returns the new one. */

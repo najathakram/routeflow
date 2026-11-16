@@ -14,7 +14,11 @@ const ENTRIES: ReadonlyArray<[string, string, string]> = [
   ["Orders header", ORDERS, "<NewOrderButton"],
   ["orders empty state", ORDERS, "Create order"],
   ["dashboard, both branches", DASHBOARD, "<NewOrderButton"],
-  ["sidebar Counter leaf", "app/(dashboard)/layout.tsx", 'href: "/orders/counter-sale"'],
+  [
+    "sidebar Counter leaf",
+    "app/(dashboard)/_components/build-operator-nav.ts",
+    'href: "/orders/counter-sale"',
+  ],
   ["palette New Order", "components/CommandPalette.tsx", '"New Order"'],
   ["palette New counter sale", "components/CommandPalette.tsx", "/orders/counter-sale"],
   ["g t", "lib/nav-shortcuts.ts", "/orders/counter-sale"],

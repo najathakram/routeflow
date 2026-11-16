@@ -6,6 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { apiClient } from "@/lib/api-client";
 import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
+import { installScanClock } from "@/test-utils/scan-clock";
 
 /**
  * A scan that starts while a dialog is closing. Escape in a dialog's text field puts the content in data-state="closed" and
@@ -27,6 +28,9 @@ jest.mock("next/navigation", () => ({
 const COLA = { id: "p-cola", name: "Cola", pricePerUnit: 2.5, unit: "each", unitsPerBox: null };
 const KNOWN = "4006381333931";
 const UNKNOWN = "9999999999994";
+// SA-1138 T5/T6 (B1310): a code that starts with lowercase letters lands in the dying field unless every printable key is a scan key
+const LOWER = "cola12345678";
+const CODES = [KNOWN, LOWER];
 const WATER = { id: "p-water", name: "Water", pricePerUnit: 1, unit: "each", unitsPerBox: null };
 const resolved: string[] = [];
 const mockCreate = jest.fn();
@@ -34,7 +38,7 @@ jest.mock("@/lib/barcode-resolve", () => ({
   ...jest.requireActual("@/lib/barcode-resolve"),
   resolveProductByCode: async (code: string) => {
     resolved.push(code);
-    if (code === KNOWN) return { product: COLA, source: "sku" };
+    if (code === KNOWN || code === LOWER) return { product: COLA, source: "sku" };
     if (code === "Zz99yy") return { product: WATER, source: "sku" };
     return { notFound: true };
   },
@@ -255,37 +259,44 @@ const CASES: Case[] = [
   },
 ];
 
+installScanClock(); // SA-1159: key stamps through the constants, never the wall clock
+
 describe("a scan that starts while a dialog is closing is looked up once, whole", () => {
   describe.each(CASES)("$name", ({ open, exitWindow }) => {
     describe.each(Object.entries(ENDINGS))("ending %s", (_n, ending) => {
-      it.each(STARTS)("scan starts %i ms after Escape", async (start) => {
-        renderTill(<CounterSaleScreen />);
-        const field = await open();
-        act(() => field.focus());
-        expect(document.activeElement).toBe(field);
-        const dialogBefore = field.closest('[role="dialog"],[data-scan-pause]') as HTMLElement;
-        const user = userEvent.setup({ delay: 5, advanceTimers: jest.advanceTimersByTime });
-        await user.keyboard("{Escape}");
-        // the content is closing but still mounted (focus may already have moved to the scan box: that is the fix)
-        if (exitWindow) {
-          expect(dialogBefore.getAttribute("data-state")).toBe("closed");
-          expect(dialogBefore.isConnected).toBe(true);
-        }
-        if (start > 0) advance(start);
-        const typedInto: string[] = [];
-        field.addEventListener("input", () => typedInto.push((field as HTMLInputElement).value));
-        await user.keyboard(`${KNOWN}${ending}`);
-        await settle();
-        await waitFor(() => expect(itemNames().filter((n) => n.includes("Cola"))).toHaveLength(1));
-        expect(resolved).toEqual([KNOWN]); // one lookup, the whole code: no suffix lookup
-        expect(itemNames().find((n) => n.includes("Cola"))).toContain("× 1");
-        expect(scanBox().value).toBe("");
-        // nothing a person would have typed is left in the dying field
-        expect(
-          typedInto.filter((v) => v !== "" && v !== (field as HTMLInputElement).defaultValue),
-        ).toEqual([]);
-        cleanup();
-      });
+      it.each(STARTS.flatMap((st) => CODES.map((c) => [st, c] as const)))(
+        "scan starts %i ms after Escape, code %s",
+        async (start, code) => {
+          renderTill(<CounterSaleScreen />);
+          const field = await open();
+          act(() => field.focus());
+          expect(document.activeElement).toBe(field);
+          const dialogBefore = field.closest('[role="dialog"],[data-scan-pause]') as HTMLElement;
+          const user = userEvent.setup({ delay: 5, advanceTimers: jest.advanceTimersByTime });
+          await user.keyboard("{Escape}");
+          // the content is closing but still mounted (focus may already have moved to the scan box: that is the fix)
+          if (exitWindow) {
+            expect(dialogBefore.getAttribute("data-state")).toBe("closed");
+            expect(dialogBefore.isConnected).toBe(true);
+          }
+          if (start > 0) advance(start);
+          const typedInto: string[] = [];
+          field.addEventListener("input", () => typedInto.push((field as HTMLInputElement).value));
+          await user.keyboard(`${code}${ending}`);
+          await settle();
+          await waitFor(() =>
+            expect(itemNames().filter((n) => n.includes("Cola"))).toHaveLength(1),
+          );
+          expect(resolved).toEqual([code]); // one lookup, the whole code: no suffix lookup
+          expect(itemNames().find((n) => n.includes("Cola"))).toContain("× 1");
+          expect(scanBox().value).toBe("");
+          // nothing a person would have typed is left in the dying field
+          expect(
+            typedInto.filter((v) => v !== "" && v !== (field as HTMLInputElement).defaultValue),
+          ).toEqual([]);
+          cleanup();
+        },
+      );
     });
   });
 });

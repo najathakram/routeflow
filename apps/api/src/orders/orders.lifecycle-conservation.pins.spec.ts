@@ -61,6 +61,7 @@ jest.mock("../notifications/notifications.service", () => ({
   })),
 }));
 
+import { operatorWithRights } from "../common/testing/operator-with-rights";
 import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { BadRequestException, ConflictException } from "@nestjs/common";
@@ -134,6 +135,7 @@ describe("OrdersService — F07 lifecycle-conservation pins (green pre-fix)", ()
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    operatorWithRights(prisma, operatorPayload);
     wireStockHelper(prisma);
     prisma.order.updateMany.mockResolvedValue({ count: 1 }); // SA-404f F2: cancel CAS claims
 

@@ -5,6 +5,7 @@ import { Prisma } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
 import { orderTotalsOfSums } from "../orders/order-totals";
 import { effectiveTaxRateFromTotals } from "../common/tax-rate";
+import { discountModeOf, type DiscountModeDoc } from "../common/discount-tax-mode";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import { QTY_EPSILON } from "../orders/merge-idempotency";
 import { billableQtyFromBasis, type DeliveredBasis } from "./delivered-basis-by-line";
@@ -295,7 +296,13 @@ export async function checkOrderCoverage(params: {
 export async function finalizeOrderRecompute(params: {
   db: Prisma.TransactionClient;
   orderId: string;
-  order: { subtotal: unknown; tax: unknown; total?: unknown; shippingFee?: unknown };
+  order: {
+    subtotal: unknown;
+    tax: unknown;
+    total?: unknown;
+    shippingFee?: unknown;
+    discountAmount?: unknown;
+  } & DiscountModeDoc;
   deliveredBasis: DeliveredBasis;
   /** Order lines no invoice line resolved to (the caller's existing-line loop already removed
    *  every line it matched). */
@@ -341,7 +348,12 @@ export async function finalizeOrderRecompute(params: {
   const prevSubtotal = Number(order.subtotal) || 0;
   // B294 round 2: same semantics as the inline `prevSubtotal > 0 ? tax/prevSubtotal : 0` this
   // replaced — the shared helper's zero-subtotal guard lands on the same 0.
-  const effectiveTaxRate = effectiveTaxRateFromTotals(order.tax, prevSubtotal, false);
+  // SA-1141 R4/R5: the ORDER's mode; its stored tax was levied on subtotal - discount in PRE_TAX, so the rate divides by that.
+  const discountBase = discountModeOf(order);
+  const effectiveTaxRate = effectiveTaxRateFromTotals(order.tax, prevSubtotal, false, {
+    discount: order.discountAmount,
+    discountBase,
+  });
   // Shipping back-sync: the order's fee is DEFINED as Σ(non-void invoice fees) — an invoice-side
   // fee edit lands here and updates the order, which is what lets the order-driven reconciles
   // treat the order as source of truth.
@@ -357,7 +369,7 @@ export async function finalizeOrderRecompute(params: {
   );
   const { regularTax: tax, total } = orderTotalsOfSums(
     { subtotal, levy: categoryTaxSum },
-    { taxRate: effectiveTaxRate, shipping: shippingFeeSum, discount: discountSum },
+    { taxRate: effectiveTaxRate, shipping: shippingFeeSum, discount: discountSum, discountBase },
   );
   // SA-235: the Order row is written only when a column it would write differs (an identical save moves no updatedAt).
   const orderWrites: Array<[string, unknown]> = [

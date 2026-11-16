@@ -8,6 +8,7 @@ import { apiClient } from "@/lib/api-client";
 import { renderTill } from "@/test-utils/render-till";
 import { CounterLineRow } from "./CounterLineRow";
 import { CounterSaleScreen } from "./CounterSaleScreen";
+import { installScanClock } from "@/test-utils/scan-clock";
 
 /**
  * W-853 (SA-1021 as amended by SA-1022, SA-940 rule 19): a counter line shows the SAME `PriceHistoryButton` as Create Order
@@ -275,6 +276,8 @@ const chooseHistoryPrice = async (name: string, price: string) => {
 };
 const completeBtn = () => screen.getByRole("button", { name: "Complete & show receipt" });
 const interactiveCount = (name: string) => lineOf(name).querySelectorAll("button, input").length;
+
+installScanClock(); // SA-1159: key stamps through the constants, never the wall clock
 
 describe("W-853 the history button on a counter line", () => {
   it("shows one history button per line once a named customer is picked, and asks nothing until then", async () => {
@@ -868,7 +871,7 @@ describe("W-853 SA-1062 A-4: a scan with the price panel open goes to the scan b
     expect(mockLookups).toEqual([]);
   });
 
-  it("R13o: panel shut, focus on a line button, g: not routed to the scan box", async () => {
+  it("R13o: panel shut, focus on a line button, g: routed to the scan box like every printable key (SA-1138)", async () => {
     const user = userEvent.setup();
     renderTill(<CounterSaleScreen />);
     await scan("COLA");
@@ -877,8 +880,8 @@ describe("W-853 SA-1062 A-4: a scan with the price panel open goes to the scan b
     button.focus();
     expect(button).toHaveFocus();
     await user.keyboard("g");
-    expect(scanBox()).not.toHaveFocus();
-    expect(scanBox()).toHaveValue("");
+    expect(scanBox()).toHaveFocus();
+    expect(scanBox()).toHaveValue("g");
   });
 });
 

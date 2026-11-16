@@ -79,6 +79,7 @@ import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { buildGoogleMapsLegs, type GmapsPoint } from "@/lib/gmaps-export";
 import { EditRunModal } from "../_components/EditRunModal";
 import { RouteMap, type VariantOverlay } from "./RouteMap";
+import { stopCompletionLine } from "./stop-completion-line";
 import { ArrivedStopSheet } from "@/components/ArrivedStopSheet";
 
 // ─── Open in Google Maps export ───────────────────────────────────────────────
@@ -347,9 +348,7 @@ function StopItem({
     ? `${stop.customerAddress.line1}, ${stop.customerAddress.city}, ${stop.customerAddress.state}`
     : null;
 
-  const completedAt = stop.completedAt
-    ? new Date(stop.completedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
-    : null;
+  const completionLine = stopCompletionLine(stop);
 
   return (
     <div
@@ -390,8 +389,12 @@ function StopItem({
               )}
             </div>
             {addressLine && <p className="mt-0.5 truncate text-xs text-navy/70">{addressLine}</p>}
-            {completedAt && (
-              <p className="mt-0.5 text-xs text-success/80">Completed {completedAt}</p>
+            {completionLine && (
+              <p
+                className={`mt-0.5 text-xs ${completionLine.tone === "success" ? "text-success/80" : "text-navy/70"}`}
+              >
+                {completionLine.text}
+              </p>
             )}
           </div>
           {expanded ? (
