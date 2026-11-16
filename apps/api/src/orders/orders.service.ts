@@ -126,7 +126,12 @@ import {
 import * as cancelledLines from "./order-edit-cancelled";
 import * as driverAccess from "./driver-edit-access";
 import { assertRemovalsNameALine, writeLineRemoval, writeLineUpdate } from "./order-line-removal";
-import { assertDeliveredLinesUntouched, reduceDeliveredLineEntries } from "./delivered-line-lock";
+import {
+  assertDeliveredLinesUntouched,
+  assertQtyNotBelowDelivered,
+  ORDER_HAS_NO_LIVE_DELIVERED_LINE,
+  reduceDeliveredLineEntries,
+} from "./delivered-line-lock";
 import { lockEditedOrder, editGuards } from "./replace-after-delivery";
 import { CANCELLABLE_FROM, assertOrderStatusTransition } from "./order-status-transitions";
 import { buildStatusUpdateData } from "./order-status-claim";
@@ -453,7 +458,10 @@ export class OrdersService implements OnApplicationBootstrap {
   /** The most recent active (DRAFT/PENDING) order for a customer: see `merge-candidates.ts`. */
   async findActiveOrder(customerId: string, opts: MergeSearchOpts = {}) {
     // units_v1: a unit-aware order is never a MERGE target; display reads keep it visible.
-    const guard = opts.forMerge ? unitAware.ORDER_HAS_NO_UNIT_AWARE_LINE : {};
+    // SA-1149: nor is an order holding a live delivered line (AND, never a spread: both use the lineItems key).
+    const guard = opts.forMerge
+      ? { AND: [unitAware.ORDER_HAS_NO_UNIT_AWARE_LINE, ORDER_HAS_NO_LIVE_DELIVERED_LINE] }
+      : {};
     return findActiveOrderImpl(this.prisma, customerId, opts, guard, this.fulfilDeps());
   }
 
@@ -2669,6 +2677,10 @@ export class OrdersService implements OnApplicationBootstrap {
         let lineIdentity: "stable" | "recreated" = "stable"; // B1050: deleteMany + re-create flips it
         let markerCarry: Map<string, number> | undefined; // SA-716 M2: the create-merge fold only
         const heldItems = await tx.orderItem.findMany(heldLinesOf(orderId)); // B709: the LOCKED lines
+        // SA-1149 F1: the ONE booked-floor rule, read once. The per-line floor and the stock settle see the same d (a legacy
+        // {q12, d0} on a DELIVERED non-route order reads as {q12, d12}).
+        const heldFloored = await heldAtBookedFloor(tx, orderId, heldItems);
+        const flooredDelivered = new Map(heldFloored.map((h) => [h.id, h.deliveredQty]));
         const authorOf = authorship.editedLineAuthors(heldItems, dto.items ?? [], user); // SA ruling #3418
         restrictionPlan?.assertHeld(heldItems);
         await assertNoMirrorAppearedUnderLock(tx, orderId, judgeEdit, order.status); // DRAFT edit vs a concurrent bill
@@ -3001,6 +3013,7 @@ export class OrdersService implements OnApplicationBootstrap {
             overriddenBy: user?.sub ?? null,
             priceEditAllowed, // SA-1034: read once, before the transaction (top of this method)
             held: heldById,
+            flooredDelivered,
             repriceTierOnQtyOnly: user?.role === UserRole.CUSTOMER,
             categoryMap: await loadCategoryMapForProducts(tx, unitCtx.products), // B297
             authorOf, // SA ruling #3418: a unit line's author marker
@@ -3596,6 +3609,11 @@ export class OrdersService implements OnApplicationBootstrap {
                   pieces = null;
                 }
                 if (qty <= 0) continue;
+                assertQtyNotBelowDelivered(
+                  flooredDelivered.get(li.id) ?? li.deliveredQty,
+                  li.qty,
+                  qty,
+                ); // SA-1149 D2: after normalizeBoxesPieces
 
                 const existingUnitPrice = Number(li.unitPrice);
                 const overridePrice = typedLinePrice(user, item.unitPrice); // a driver's is dropped
@@ -3812,7 +3830,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // create()'s decrement at order time.
         let creditGate: (() => Promise<void>) | null = null; // re-run after an inline return (SA-221)
         if (order.status !== "DRAFT") {
-          const settleHeld = await heldAtBookedFloor(tx, orderId, heldItems); // SA-763r: input only
+          const settleHeld = heldFloored; // SA-763r: input only; the same read as the per-line floor (SA-1149 F1)
           await this.settleStockForEdit(tx, order, settleHeld, activeItems, user, undefined, {
             allowOversell,
             blockCredits: carrierLocked,

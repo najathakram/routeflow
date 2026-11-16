@@ -249,11 +249,12 @@ describeDb("B1050 — delivered-qty edits book max(qty, delivered) per line, rea
       0,
     );
 
-  it("repro-1: {q10,d10} → 6 → 10 moves nothing (counter 90, ledger net 0)", async () => {
+  // SA-1149 D2: the old cut 10 -> 6 is refused now (see w946r-qty-floor D2-12), so the row is seeded as the pre-D2 state it left:
+  // a legacy "pre-D2 row" {q6,d10}. Raising it back to 10 still moves nothing.
+  it("repro-1: a pre-D2 row {q6,d10} raised to 10 moves nothing (counter 90, ledger net 0)", async () => {
     const p = await product("repro1");
-    const o = await order(plain(p, 10, 10));
+    const o = await order(plain(p, 6, 10));
     const id = o.lineItems[0].id;
-    await edit(o.id, { replaceAll: false, items: [{ id, qty: 6 }] });
     expect(await stock(p)).toBe(90);
     await edit(o.id, { replaceAll: false, items: [{ id, qty: 10 }] });
     expect(await stock(p)).toBe(90);
@@ -294,16 +295,7 @@ describeDb("B1050 — delivered-qty edits book max(qty, delivered) per line, rea
     expect((await rows(o.id)).length).toBe(2);
   });
 
-  it("KNOWN B1167: replace-all recreates its lines WITHOUT deliveredQty: {x,10,d10} → [6] writes nothing; → [12] books 6", async () => {
-    // B1167 (known residual, owner ruling "fix the math only"): replace-all deletes and re-creates every
-    // line with deliveredQty reset to 0, so the first edit pools max(6, 10) = 10 (no write) but the
-    // second compares against the new line's own q = 6 and decrements 6 (stock 84, ledger −6), not 2.
-    const p = await product("replace-all");
-    const o = await order(plain(p, 10, 10));
-    await edit(o.id, { replaceAll: true, items: [{ productId: p, qty: 6, unitPrice: "1.00" }] });
-    expect(await stock(p)).toBe(90);
-    await edit(o.id, { replaceAll: true, items: [{ productId: p, qty: 12, unitPrice: "1.00" }] });
-    expect(await stock(p)).toBe(84);
-    expect(await ledgerNet(p)).toBe(-6);
-  });
+  // KNOWN B1167 (replace-all recreated its lines at deliveredQty 0) is SUPERSEDED by SA-1149 (17:23Z): a replace-all that would
+  // delete a delivered line off the carry is refused 409 ORDER_EDIT_DELIVERED_LINES. Re-pinned as D2-13 and D2-14 in
+  // w946r-qty-floor.db.spec.ts. The backorder-marker half of B1167 stays as written elsewhere.
 });

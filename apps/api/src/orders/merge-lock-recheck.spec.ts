@@ -8,6 +8,7 @@ import { ConflictException } from "@nestjs/common";
 import { InvoiceStatus, ItemStatus, OrderStatus } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { ORDER_LINE_ORDER_BY } from "./line-position";
+import { ORDER_HAS_NO_LIVE_DELIVERED_LINE } from "./delivered-line-lock";
 import { isMergeContention, mapLockError } from "./merge-contention";
 import {
   deleteLoserGuarded,
@@ -68,6 +69,7 @@ describe("mergeEligibleWhere — one predicate per path", () => {
       invoices: { none: { status: { not: InvoiceStatus.DRAFT } } },
       returns: { none: {} },
       deliveryMutations: { none: {} },
+      ...ORDER_HAS_NO_LIVE_DELIVERED_LINE, // SA-1149: a live delivered line is never a winner or a loser
     });
   });
   it("both kinds exclude an order with delivery evidence (a DeliveryMutation, FK RESTRICT)", () => {
@@ -84,6 +86,7 @@ describe("mergeEligibleWhere — one predicate per path", () => {
       returns: { none: {} },
       deliveryMutations: { none: {} },
       skipAutoMerge: false,
+      ...ORDER_HAS_NO_LIVE_DELIVERED_LINE, // SA-1149
     });
   });
   it("force skips a loser with two DRAFT invoices at the pre-read (C')", async () => {

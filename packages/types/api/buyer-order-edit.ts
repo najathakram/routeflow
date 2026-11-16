@@ -24,3 +24,11 @@ export interface BuyerUpdateOrderItemsRequest {
    */
   namesLines?: boolean;
 }
+
+/**
+ * SA-1149: a buyer's full-list save on an order that already has a delivered line is refused 409
+ * `ORDER_EDIT_DELIVERED_LINES`. The sentence the buyer reads, stored once: the web portal and the mobile buyer edit both
+ * show it instead of the server's staff wording. (The mobile jest stub holds a byte-identical hand copy, pinned equal.)
+ */
+export const BUYER_EDIT_DELIVERED_LINES_COPY =
+  "Part of this order was already delivered, so it can't be changed here. Contact the seller to change it.";

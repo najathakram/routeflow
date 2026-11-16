@@ -50,6 +50,7 @@ function makeCtx(): UnitWriteContext & {
     tier: () => 1,
     categoryMap: new Map([["cat-1", category]]),
     priceEditAllowed: true,
+    flooredDelivered: new Map(),
   };
 }
 

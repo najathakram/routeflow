@@ -35,7 +35,11 @@ import {
 } from "@/lib/api/buyer";
 import { computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
 import { buyerEditPayloadItems } from "@/lib/buyer-edit-payload";
-import { API_ERROR_CODES, SHIPPED_ORDER_MESSAGE } from "@routeflow/types";
+import {
+  API_ERROR_CODES,
+  BUYER_EDIT_DELIVERED_LINES_COPY,
+  SHIPPED_ORDER_MESSAGE,
+} from "@routeflow/types";
 import { describeChangeRequest, describeResolution } from "@/lib/change-requests";
 import { fmtCalendarDate } from "@/lib/formatting";
 import { ComponentSubLines } from "@/components/ComponentSubLines";
@@ -732,6 +736,14 @@ export default function BuyerOrderDetailPage() {
       ) {
         // B297 row 352: the order has more than one line for a product and this page is out of date.
         setActionError("This order has changed since you opened it. Refresh and try again.");
+        return;
+      }
+      if (
+        err?.response?.status === 409 &&
+        data?.code === API_ERROR_CODES.ORDER_EDIT_DELIVERED_LINES
+      ) {
+        // SA-1149: part of the order was delivered; the buyer gets the one stored sentence, never the staff wording.
+        setActionError(BUYER_EDIT_DELIVERED_LINES_COPY);
         return;
       }
       setActionError(data?.message ?? "Failed to update order items.");
