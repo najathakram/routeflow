@@ -1,4 +1,4 @@
-import { ConflictException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
@@ -22,6 +22,9 @@ export const AT_STOP_CONFLICT_MESSAGES = {
     "This order's delivery run isn't in progress, so the change can't be applied at the stop.",
   [API_ERROR_CODES.STOP_ALREADY_COMPLETED]:
     "This stop is already completed or skipped. Approve the request for the next delivery, or decline it.",
+  // SA-1144 D6: the order's invoice holds payments or is closed, so goods added at the door would be delivered unbilled.
+  [API_ERROR_CODES.ORDER_EDIT_INVOICE_HAS_PAYMENTS]:
+    "This order's invoice can't change at the door. The office can add these items on a new order.",
 } as const;
 
 export type AtStopConflict = keyof typeof AT_STOP_CONFLICT_MESSAGES;
@@ -34,4 +37,17 @@ export function atStopConflict(kind: AtStopConflict): ConflictException {
     ...(reason ? { reason } : {}),
     message: AT_STOP_CONFLICT_MESSAGES[kind],
   });
+}
+
+/**
+ * SA-1144 D6: the at-door apply reaches the order-edit refusal (`revertLinkedInvoicesToDraft`, a 400 with
+ * ORDER_EDIT_INVOICE_HAS_PAYMENTS). At the stop it answers in the at-stop shape: 409, the same code, the driver's sentence; the
+ * transaction rolls back and the change request stays open. Any other error passes through unchanged.
+ */
+export function paidOrderAtStop(err: unknown): never {
+  const body = err instanceof BadRequestException ? (err.getResponse() as { code?: string }) : null;
+  if (body?.code === API_ERROR_CODES.ORDER_EDIT_INVOICE_HAS_PAYMENTS) {
+    throw atStopConflict(API_ERROR_CODES.ORDER_EDIT_INVOICE_HAS_PAYMENTS);
+  }
+  throw err;
 }

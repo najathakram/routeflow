@@ -116,7 +116,7 @@ import { useElementOffScreen } from "./useElementOffScreen";
 import { repriceLines } from "./counter-sale-reprice";
 import { QTY_TOO_LARGE_COPY } from "./counter-qty-refusal";
 import { PRICE_LAYER_TOO_MANY_COPY } from "@/components/PriceLayerNotice";
-import { isTextEntryActive } from "@/lib/refocus-scanner";
+import { startsScanRun } from "@/lib/scan-run";
 import { CartMovableList } from "@/components/CartMovableList";
 import { useCartLineOrder } from "@/lib/use-cart-line-order";
 import { unlockScanCue } from "@/lib/scan-cue";
@@ -532,28 +532,14 @@ export function CounterSaleScreen() {
     };
     const onKey = (e: KeyboardEvent) => {
       if (handoverRef.current) return onHandover(e);
-      if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
-      // digits and CAPITAL letters on a desktop: the g-then-x navigation shortcuts are lowercase and a wedge's code is capitals
-      // (SA-1067 M4: a code that starts with a letter lost it, and its digits then matched a different item). While focus is inside the price history panel (a popover over
-      // the till) any printable key but Space is a scan: the whole code, letters included, so its Enter never presses Use.
-      // SA-1059: a touch-first device has no standing focus in the scan field, so a wedge's code that starts with a letter would
-      // lose it; there every letter is routed (a desktop routes digits and capitals only).
-      const routed = document.activeElement?.closest("[data-anchored-popover]")
-        ? /^\S$/
-        : isTouchFirst()
-          ? /^[0-9A-Za-z]$/
-          : /^[0-9A-Z]$/;
-      if (!routed.test(e.key)) return;
+      // SA-1138: ONE run-start rule (lib/scan-run): any printable key, whatever its case, while focus is on something that is
+      // not a text field (a button, a handle, the page) starts a scan, so the scan box takes it. Scans win over the g-then-x
+      // shortcuts here (every page is still one Ctrl/Cmd+K or sidebar click away). A popover over the till (price history)
+      // is a dialog with no text field in it, so it is the same rule. A Radix typeahead owner keeps its keys.
+      if (e.defaultPrevented || !startsScanRun(e)) return;
       const scanEl = scanRef.current;
-      if (!scanEl || document.activeElement === scanEl || isTextEntryActive()) return;
+      if (!scanEl || document.activeElement === scanEl) return;
       if (counterDialogOpen()) return;
-      // a Radix Select / Menu typeahead owns the digits while its list or trigger holds focus
-      if (
-        document.activeElement?.closest(
-          '[role="listbox"],[role="menu"],[role="combobox"],[data-radix-popper-content-wrapper],[data-radix-select-viewport],[data-radix-menu-content]',
-        )
-      )
-        return;
       scanEl.focus();
       e.stopImmediatePropagation();
     };

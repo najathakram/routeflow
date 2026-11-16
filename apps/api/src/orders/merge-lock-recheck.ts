@@ -23,6 +23,7 @@ import { ConflictException } from "@nestjs/common";
 import { InvoiceStatus, ItemStatus, OrderStatus, Prisma } from "@prisma/client";
 import { lockRowsNoWait } from "../common/db-locks";
 import { mergeInProgress } from "./merge-contention";
+import { ORDER_HAS_NO_LIVE_DELIVERED_LINE } from "./delivered-line-lock";
 import { sameFulfilPathAsWinner, unshipped } from "./merge-candidates";
 import {
   logDiscountedSkip,
@@ -60,6 +61,8 @@ export function mergeEligibleWhere(kind: MergeKind): Prisma.OrderWhereInput {
         returns: { none: {} },
         deliveryMutations: { none: {} },
         skipAutoMerge: false,
+        // SA-1149: an order holding a live delivered line is never a winner or a loser (the fold would lose the stamp)
+        ...ORDER_HAS_NO_LIVE_DELIVERED_LINE,
       }
     : {
         status: OrderStatus.PENDING,
@@ -68,6 +71,7 @@ export function mergeEligibleWhere(kind: MergeKind): Prisma.OrderWhereInput {
         returns: { none: {} },
         // delivery evidence (FK RESTRICT on the order): never deleted by a merge, so never a candidate
         deliveryMutations: { none: {} },
+        ...ORDER_HAS_NO_LIVE_DELIVERED_LINE, // SA-1149
       };
 }
 

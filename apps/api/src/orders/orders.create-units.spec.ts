@@ -12,6 +12,7 @@ jest.mock("../notifications/notifications.service", () => ({
   NotificationsService: class NotificationsService {},
 }));
 
+import { operatorWithRights } from "../common/testing/operator-with-rights";
 import { Test } from "@nestjs/testing";
 import { BadRequestException, ConflictException, ForbiddenException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
@@ -43,6 +44,7 @@ describe("OrdersService.create — sell by a unit (units_v1, 4b-2b)", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    operatorWithRights(prisma, operatorPayload);
     stock = wireStockHelper(prisma, { ample: true });
     const module = await Test.createTestingModule({ providers: [OrdersService] })
       .useMocker((token) => {

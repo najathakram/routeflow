@@ -154,6 +154,7 @@ describeDb(
         },
       });
       await ledger.writeSaleEntries({
+        lockedPeriod: "REFUSE",
         tenantId,
         orderId: order.id,
         invoiceId: invoice.id,

@@ -125,7 +125,7 @@ describe("notifyOrderShipped", () => {
 describe("updateShipmentImpl: one-time SHIPMENT_TRACKING_ADDED", () => {
   const shipped = (over: Record<string, unknown> = {}) => ({
     id: "ord-1",
-    shippedAt: null,
+    shippedAt: new Date("2026-10-01T00:00:00Z"), // a shipped order carries its transition's stamp (W-904: no backfill)
     status: "OUT_FOR_DELIVERY",
     fulfillPath: "SHIP",
     customerId: "cust-1",
@@ -312,7 +312,32 @@ describe("E-c / L6 / E-b decisions", () => {
       shippingTrackingNumber: null,
     });
     await updateShipmentImpl(h.deps, "ord-1", { shippingTrackingNumber: "1Z" } as any, operator);
-    expect(h.db.order.update.mock.calls[0][0].data.shippedAt).toBeNull();
+    // W-904: shippedAt is not a key of the main write, and no backfill is attempted on a CONFIRMED order.
+    expect(h.db.order.update.mock.calls[0][0].data).not.toHaveProperty("shippedAt");
+    expect(h.db.order.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("E-b: a shipped legacy row with tracking and no stamp is backfilled by the conditional write", async () => {
+    const h = harness();
+    h.db.order.findFirst.mockResolvedValue({
+      id: "ord-1",
+      shippedAt: null,
+      status: "OUT_FOR_DELIVERY",
+      fulfillPath: "SHIP",
+      customerId: "cust-1",
+      orderNumber: "ORD-123",
+      shippingTrackingNumber: "1Z",
+    });
+    await updateShipmentImpl(h.deps, "ord-1", { shippingTrackingNumber: "1Z2" } as any, operator);
+    expect(h.db.order.update.mock.calls[0][0].data).not.toHaveProperty("shippedAt");
+    expect(h.db.order.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "ord-1",
+        shippedAt: null,
+        status: { in: expect.arrayContaining(["OUT_FOR_DELIVERY"]) },
+      },
+      data: { shippedAt: expect.any(Date) },
+    });
   });
 
   it("clearing the tracking keeps the ship date the transition stamped", async () => {
@@ -328,6 +353,9 @@ describe("E-c / L6 / E-b decisions", () => {
       shippingTrackingNumber: "1Z",
     });
     await updateShipmentImpl(h.deps, "ord-1", { shippingTrackingNumber: "" } as any, operator);
-    expect(h.db.order.update.mock.calls[0][0].data.shippedAt).toBe(shippedAt);
+    // W-904: the stamp is kept by never being written (the key is absent), not by re-writing the pre-read value.
+    expect(h.db.order.update.mock.calls[0][0].data).not.toHaveProperty("shippedAt");
+    expect(h.db.order.updateMany).not.toHaveBeenCalled();
+    void shippedAt;
   });
 });

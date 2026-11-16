@@ -96,8 +96,20 @@ import { TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS, underTenantPriceLock } from "./pr
 import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { retryOnTxConflict } from "../common/tx-retry";
 import { NO_LIVE_SUBSCRIPTION, stopBillingIncludedAddonsTx } from "./addon-inclusion";
-import { withCheckoutPolicy } from "./checkout-session-params";
+import {
+  assertCheckoutSurface,
+  checkoutStartFromSession,
+  withCheckoutPolicy,
+  type CheckoutSurface,
+} from "./checkout-session-params";
+import type { CheckoutStart } from "@routeflow/types";
 import { webBaseUrl } from "../config/web-base-url";
+import {
+  API_BILLING_CANCEL_PATH,
+  API_BILLING_PORTAL_RETURN_PATH,
+  API_BILLING_RETURN_PATHS,
+  billingReturnUrl,
+} from "./billing-return-paths";
 import {
   STRIPE_CHECKOUT_APPLIED_ACTION,
   STRIPE_CHECKOUT_ASYNC_FAILED_ACTION,
@@ -540,17 +552,18 @@ export class BillingService {
    * inline via `PlatformPricingService` (catalog or per-tenant custom fee) and sent to
    * Stripe as `price_data` — no env-configured Stripe Price IDs involved, so any
    * plan/tier the catalog knows about (including GROWTH/SCALE) can check out.
-   * Returns the checkout URL that the tenant owner should visit to pay.
+   * Returns the {@link CheckoutStart}: a url to visit (hosted) or, when BILLING_CHECKOUT_UI=embedded and the
+   * surface is TENANT_SELF, a client secret that mounts the card form on our page (SA-1139).
    */
   async createCheckoutSession(
     tenantId: string,
-    // Accepts either the plan-specified bare interval (`interval = "month"`) or a
-    // fuller opts object (pre-existing callers pass successUrl/cancelUrl this way) —
-    // one signature that satisfies both call shapes without touching either caller.
-    intervalOrOpts?:
-      "month" | "year" | { interval?: "month" | "year"; successUrl?: string; cancelUrl?: string },
-  ): Promise<{ checkoutUrl: string; sessionId: string }> {
-    const opts = typeof intervalOrOpts === "string" ? { interval: intervalOrOpts } : intervalOrOpts;
+    // SA-1139: `surface` is REQUIRED and never defaulted (the admin link is hosted, a tenant's own checkout follows the switch).
+    opts: {
+      interval?: "month" | "year";
+      surface: CheckoutSurface;
+    },
+  ): Promise<CheckoutStart> {
+    assertCheckoutSurface(opts?.surface); // before anything is read, claimed or created
 
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
@@ -670,36 +683,38 @@ export class BillingService {
     // (which only accepts a pre-created `priceId`) via the underlying client, since
     // no env-configured Stripe Price exists for catalog-driven plans/tiers.
     const session = await this.stripe.client.checkout.sessions.create(
-      withCheckoutPolicy({
-        customer: customerId,
-        mode: "subscription",
-        line_items: [{ price_data: priceData, quantity: 1 }, ...addons.lineItems],
-        success_url:
-          opts?.successUrl ?? `${baseUrl}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: opts?.cancelUrl ?? `${baseUrl}/billing/cancel`,
-        metadata: {
-          tenantId,
-          slug: tenant.slug,
-          planKey: pricing.planKey,
-          interval,
-          ...(addons.skus.length ? { [CHECKOUT_ADDON_SKUS_KEY]: addons.skus.join(",") } : {}),
+      withCheckoutPolicy(
+        {
+          customer: customerId,
+          mode: "subscription",
+          line_items: [{ price_data: priceData, quantity: 1 }, ...addons.lineItems],
+          success_url: billingReturnUrl(baseUrl, API_BILLING_RETURN_PATHS.plan),
+          cancel_url: billingReturnUrl(baseUrl, API_BILLING_CANCEL_PATH),
+          metadata: {
+            tenantId,
+            slug: tenant.slug,
+            planKey: pricing.planKey,
+            interval,
+            ...(addons.skus.length ? { [CHECKOUT_ADDON_SKUS_KEY]: addons.skus.join(",") } : {}),
+          },
+          expires_at: anchor.expiresAt,
+          subscription_data: {
+            ...checkoutAnchorParams(anchor),
+            // The SKUs also ride the subscription itself, so a later reader of the subscription (not just
+            // the session) can see which add-ons its first invoice billed. A plan-only checkout sends none.
+            ...(addons.skus.length
+              ? { metadata: { tenantId, [CHECKOUT_ADDON_SKUS_KEY]: addons.skus.join(",") } }
+              : {}),
+          },
         },
-        expires_at: anchor.expiresAt,
-        subscription_data: {
-          ...checkoutAnchorParams(anchor),
-          // The SKUs also ride the subscription itself, so a later reader of the subscription (not just
-          // the session) can see which add-ons its first invoice billed. A plan-only checkout sends none.
-          ...(addons.skus.length
-            ? { metadata: { tenantId, [CHECKOUT_ADDON_SKUS_KEY]: addons.skus.join(",") } }
-            : {}),
-        },
-      }),
+        { surface: opts.surface },
+      ),
     );
 
     this.logger.log(
       `Checkout session ${session.id} created for tenant ${tenantId} (plan ${pricing.planKey}, ${interval}, anchor ${anchor.anchorAt.toISOString()})`,
     );
-    return { checkoutUrl: session.url, sessionId: session.id };
+    return checkoutStartFromSession(session);
   }
 
   // ─── Price sync (admin-driven price changes → live Stripe subscriptions) ──────
@@ -1026,7 +1041,6 @@ export class BillingService {
 
   async createBillingPortalSession(
     tenantId: string,
-    returnUrl?: string,
     request?: { timeoutMs: number; maxNetworkRetries: number },
   ): Promise<{ portalUrl: string }> {
     const sub = await this.prisma.tenantSubscription.findUnique({
@@ -1043,7 +1057,8 @@ export class BillingService {
     const portalSession = await this.stripe.createBillingPortalSession(
       {
         customerId: sub.stripeCustomerId,
-        returnUrl: returnUrl ?? `${baseUrl}/settings/billing`,
+        tenantId,
+        returnUrl: billingReturnUrl(baseUrl, API_BILLING_PORTAL_RETURN_PATH),
       },
       request,
     );
@@ -3165,9 +3180,8 @@ export class BillingService {
   private async portalUrlOrEmpty(tenantId: string): Promise<string> {
     try {
       // #2476: capped - this runs inside the webhook's claim lease, and the link is best-effort.
-      return (
-        await this.createBillingPortalSession(tenantId, undefined, PAYMENT_FAILED_PORTAL_REQUEST)
-      ).portalUrl;
+      return (await this.createBillingPortalSession(tenantId, PAYMENT_FAILED_PORTAL_REQUEST))
+        .portalUrl;
     } catch (e) {
       this.logger.warn(
         `Billing portal link unavailable for tenant ${tenantId}: ${(e as Error).message}`,

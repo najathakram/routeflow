@@ -490,11 +490,11 @@ describe("CounterSaleScreen", () => {
       }
     });
 
-    it("a letter is left alone (g-then-x navigation shortcuts keep working)", async () => {
+    it("a letter goes to the scan box too (SA-1138: scans win on the till, whatever the case)", async () => {
       await withCola();
       addNoteBtn().focus();
       fireEvent.keyDown(addNoteBtn(), { key: "g" });
-      expect(addNoteBtn()).toHaveFocus();
+      expect(scanField()).toHaveFocus();
     });
 
     it("typing in a text field, or with Ctrl, is never redirected", async () => {

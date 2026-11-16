@@ -89,6 +89,7 @@ Every row here is a pointer, not a description — open the linked file for the 
 | Product labels/categories, credit-limit guard | [`api`](api/catchup-2026-09-21-src.md) → `product-labels/`, `orders/credit-limit-guard.ts` |
 | Tenant config snapshots (restore on re-upgrade) | [`api`](api/catchup-2026-09-21-src.md) → `billing/tenant-config-snapshot*.ts` → web admin `ConfigSnapshotsTab` |
 | Scanning engine (shared), verify-turbo, release-health | [`packages`](packages.md) → `scanning`; [`api`](api/catchup-2026-09-21-scripts-schema.md) → `scripts/` |
+| Marketing site print/motion, pin ledger, spec 85 | [`web`](web/landing-2026-11-13-bk-fixes.md) → `public/site/js/{home-up,site}.js`, `e2e/85-site-proof-pages.spec.ts` |
 
 - **Verification layers:** 4 — `npm run verify` (types+lint+test) → `post-deploy-check`
   (read-only authenticated probe) → `feature-smoke` (write-path, approved test tenant only) →

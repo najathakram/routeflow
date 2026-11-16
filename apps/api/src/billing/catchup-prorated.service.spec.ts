@@ -166,7 +166,7 @@ describe("RED: the prorated start - the paid-through may be mid-month (r9 rule 2
   it("... and open() sends it: trial_end = Nov 1 12:00Z, ONE one-time line of $220.00, catchup_from = Oct 10, catchup_to = Nov 1", async () => {
     const h = make({ invoices: [OCT_OPEN] });
     activationRows(h, "2026-09-10T12:00:00Z", "2026-10-10T12:00:00Z");
-    const out = await h.svc.open(T, { now: NOW, expectedStubCents: 22000 });
+    const out = await h.svc.open(T, { surface: "ADMIN_LINK", now: NOW, expectedStubCents: 22000 });
     expect(out).toMatchObject({ shape: "trial_one_time", stubCents: 22000 });
     const params = h.stripe.client.checkout.sessions.create.mock.calls[0][0];
     expect(params.subscription_data.trial_end).toBe(Date.UTC(2026, 10, 1, 12) / 1000);
@@ -303,7 +303,9 @@ describe("RED: the plan price must be billable (r9 rule 7)", () => {
     expect(r.eligible).toBe(false);
     expect(r.plan).toEqual({ ok: false, reason: "no_billable_price" });
     expect(catchupReportJson(r).refusals).toContain("CATCHUP_NO_BILLABLE_PRICE");
-    await expect(h.svc.open(T, { now: NOW, expectedStubCents: 0 })).rejects.toMatchObject({
+    await expect(
+      h.svc.open(T, { surface: "ADMIN_LINK", now: NOW, expectedStubCents: 0 }),
+    ).rejects.toMatchObject({
       response: { code: "CATCHUP_NO_BILLABLE_PRICE" },
     });
     expect(h.sub().catchupState).toBeNull();
@@ -326,7 +328,7 @@ describe("RED: a line under 50 cents is forgiven once per session and settles AT
     expect(r.eligible).toBe(true);
     expect(r.plan.ok && r.plan.stub.totalCents).toBeLessThan(50); // the line is sub-minimum
     const expected = r.plan.ok ? r.plan.stub.totalCents : 0;
-    const out = await h.svc.open(T, { now, expectedStubCents: expected });
+    const out = await h.svc.open(T, { surface: "ADMIN_LINK", now, expectedStubCents: expected });
     const params = h.stripe.client.checkout.sessions.create.mock.calls[0][0];
     // the session never carries the sub-minimum line (Stripe rejects it) and says so in its metadata
     expect(params.line_items.filter((l: any) => !l.price_data.recurring)).toHaveLength(0);
@@ -369,7 +371,7 @@ describe("S2: the $0.50 boundary through the claim (49 forgiven once, 50 and 51 
     const now = d("2026-10-09T10:00:00Z");
     const r = await h.svc.plan(T, now);
     const expected = r.plan.ok ? r.plan.stub.totalCents : -1;
-    const out = await h.svc.open(T, { now, expectedStubCents: expected });
+    const out = await h.svc.open(T, { surface: "ADMIN_LINK", now, expectedStubCents: expected });
     const session = await complete(h, out.sessionId);
     return { h, out, session, params: h.stripe.client.checkout.sessions.create.mock.calls[0][0] };
   }

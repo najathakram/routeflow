@@ -61,6 +61,7 @@ import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { bulkDeleteResultTitle } from "@/lib/order-error-text";
 import { ReadOnlyHint, useReadOnlyGate, WriteButton } from "@/lib/read-only-gate";
 import { NewOrderButton } from "./_components/NewOrderButton";
+import { seesStaffControls } from "@/lib/default-unit-line";
 
 // ─── Saved view definitions ───────────────────────────────────────────────────
 
@@ -346,6 +347,9 @@ export default function OrdersPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { user } = useAuth();
+  // REG-B1: delete, batch ship and Plan delivery are staff-only in the API; a customer keeps Select and bulk Cancel.
+  const staffBulk = seesStaffControls(user?.role);
+  const canStartOrder = user?.role !== "CUSTOMER"; // REG-B1: a customer session never starts an order from this staff page
   // Same staff test as the shell's gate callers (layout.tsx, CommandPalette): everyone but CUSTOMER / DRIVER.
   const counterGate = useCounterSaleGate({
     enabled: user?.role !== "CUSTOMER" && user?.role !== "DRIVER",
@@ -415,6 +419,7 @@ export default function OrdersPage() {
     const resume = searchParams.get("resumeDraft");
     const scan = searchParams.get("scan");
     if (!resume && action !== "new") return;
+    if (!canStartOrder) return; // REG-B1: a customer session never opens the staff order builder
     // W-854: a bare ?action=new follows the one New order answer, and waits for it. `builder=1` (the /orders/new target),
     // `ship=1` ("Ship this order instead"), a resume and a scan ask for the builder itself.
     const direct =
@@ -445,7 +450,7 @@ export default function OrdersPage() {
     const qs = params.toString();
     router.replace(qs ? `/orders?${qs}` : "/orders", { scroll: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, newOrder.kind, readOnly]);
+  }, [searchParams, newOrder.kind, readOnly, canStartOrder]);
   const [selectMode, setSelectMode] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [isCancelling, setIsCancelling] = React.useState(false);
@@ -962,14 +967,16 @@ export default function OrdersPage() {
                 ]}
               />
             ) : null}
-            <NewOrderButton
-              entry={newOrder}
-              capability={counterGate.capability}
-              open={newOrderMenuOpen}
-              onOpenChange={setNewOrderMenuOpen}
-              onCounterSale={() => router.push("/orders/counter-sale")}
-              onRegularOrder={() => setIsCreateOpen(true)}
-            />
+            {canStartOrder && (
+              <NewOrderButton
+                entry={newOrder}
+                capability={counterGate.capability}
+                open={newOrderMenuOpen}
+                onOpenChange={setNewOrderMenuOpen}
+                onCounterSale={() => router.push("/orders/counter-sale")}
+                onRegularOrder={() => setIsCreateOpen(true)}
+              />
+            )}
             <ReadOnlyHint className="basis-full text-right text-xs text-slate-600" />
           </div>
         }
@@ -994,17 +1001,19 @@ export default function OrdersPage() {
             {isCancelling && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             Cancel {selected.size}
           </button>
-          <BatchShipActions
-            orders={filtered
-              .filter((o) => selected.has(o.id))
-              .map((o) => ({
-                id: o.id,
-                orderNumber: o.orderNumber,
-                customerName: o.customer?.businessName,
-              }))}
-            onDone={exitSelectMode}
-          />
-          {deliveryAccessEnabled && (
+          {staffBulk && (
+            <BatchShipActions
+              orders={filtered
+                .filter((o) => selected.has(o.id))
+                .map((o) => ({
+                  id: o.id,
+                  orderNumber: o.orderNumber,
+                  customerName: o.customer?.businessName,
+                }))}
+              onDone={exitSelectMode}
+            />
+          )}
+          {staffBulk && deliveryAccessEnabled && (
             <>
               <span className="h-[18px] w-px bg-white/20" />
               <button
@@ -1019,7 +1028,7 @@ export default function OrdersPage() {
               </button>
             </>
           )}
-          {deleteConfirm ? (
+          {!staffBulk ? null : deleteConfirm ? (
             <div className="flex items-center gap-2.5">
               <span className="text-[12.5px] font-semibold text-[#FCA5A5]">
                 Delete {selected.size} order{selected.size !== 1 ? "s" : ""}?
@@ -1297,7 +1306,7 @@ export default function OrdersPage() {
             <EmptyState
               variant="orders"
               title="No orders yet"
-              {...(newOrder.kind === "builder" || newOrder.kind === "menu"
+              {...(canStartOrder && (newOrder.kind === "builder" || newOrder.kind === "menu")
                 ? {
                     description: "Create an order on behalf of a customer to get started.",
                     action: (
@@ -1645,19 +1654,21 @@ export default function OrdersPage() {
           exact band: this bottom clearance lets the end of the list clear it. */}
       {hasDrafts && <div className="h-40 md:hidden" aria-hidden />}
 
-      <CreateOrderModal
-        isOpen={isCreateOpen}
-        onClose={() => {
-          setIsCreateOpen(false);
-          setResumeDraftId(null);
-          setInitialScanCode(null);
-          setInitialFulfillPath(null);
-        }}
-        resumeDraftId={resumeDraftId}
-        initialScanCode={initialScanCode}
-        initialFulfillPath={initialFulfillPath}
-        onViewOrder={(orderId) => router.push(`/orders/${orderId}`)}
-      />
+      {canStartOrder && (
+        <CreateOrderModal
+          isOpen={isCreateOpen}
+          onClose={() => {
+            setIsCreateOpen(false);
+            setResumeDraftId(null);
+            setInitialScanCode(null);
+            setInitialFulfillPath(null);
+          }}
+          resumeDraftId={resumeDraftId}
+          initialScanCode={initialScanCode}
+          initialFulfillPath={initialFulfillPath}
+          onViewOrder={(orderId) => router.push(`/orders/${orderId}`)}
+        />
+      )}
 
       {/* REG-B2: the bulk bar's Cancel used to fire the cancel for every selected order on the
           first click. Cancelling voids each order's linked invoices, so ask first — fixed copy

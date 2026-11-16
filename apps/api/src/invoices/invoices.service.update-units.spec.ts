@@ -7,6 +7,7 @@
 jest.mock("./invoice-pdf.service", () => ({ InvoicePdfService: class InvoicePdfService {} }));
 jest.mock("../storage/compress.util", () => ({ compressDocument: jest.fn() }));
 
+import { operatorWithRights } from "../common/testing/operator-with-rights";
 import { Test } from "@nestjs/testing";
 import { BadRequestException, ConflictException, ForbiddenException } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
@@ -104,12 +105,14 @@ describe("InvoicesService.update — a DRAFT invoice edit sells a line by a unit
     notes: null,
     ...over,
   });
+  const OPERATOR = { sub: "user-1", role: "OPERATOR" };
   const update = (items: unknown[], dto: Record<string, unknown> = {}) =>
     service.update("inv-1", { items, ...dto } as never);
   const written = () => prisma.invoice.update.mock.calls[0][0].data.items.create as any[];
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    operatorWithRights(prisma, OPERATOR);
     hasFlag = jest.fn(async (_t: string, flag: string) => flag === "flag.units_v1");
     const module = await Test.createTestingModule({ providers: [InvoicesService] })
       .useMocker((token) => {
@@ -428,7 +431,7 @@ describe("InvoicesService.update — a DRAFT invoice edit sells a line by a unit
             caseLine({ id: "row-1", unitPrice: 22, overrideReason: "damaged outer cartons" }),
           ],
         } as never,
-        { sub: "user-1", role: "OPERATOR" } as never,
+        OPERATOR as never,
       );
       expect(prisma.invoiceItem.update.mock.calls[0][0].data).toMatchObject({
         unitsPerBox: 12,
@@ -472,7 +475,7 @@ describe("InvoicesService.update — a DRAFT invoice edit sells a line by a unit
             caseLine({ id: "row-1", unitPrice: 22, overrideReason: "damaged outer cartons" }),
           ],
         } as never,
-        { sub: "user-1", role: "OPERATOR" } as never,
+        OPERATOR as never,
       );
       expect(prisma.invoiceItem.update.mock.calls[0][0].data).toMatchObject({
         unitLabel: "Case",

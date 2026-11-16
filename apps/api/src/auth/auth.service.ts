@@ -42,6 +42,15 @@ export interface DeviceInfo {
   deviceName?: string;
 }
 
+/** jsonwebtoken's expiry error, matched by name so a plain Error("jwt expired") stays on the generic path. */
+const isJwtExpired = (e: unknown): boolean =>
+  typeof e === "object" && e !== null && (e as { name?: unknown }).name === "TokenExpiredError";
+
+// One address can belong to several businesses; each gets its own link. Bounded so one request cannot
+// fan out into unbounded token writes and mails; someone in more can reach the rest from that
+// business's own sign-in page (tenant resolved).
+const PASSWORD_RESET_MAX_ACCOUNTS = 5;
+
 /**
  * RF-176 / W-767 (SA-917): a staff session with no business is a PLATFORM session, SUPER_ADMIN only. A null-tenantId JWT
  * bypasses every forTenant() scope and can read across businesses. The ONE check, made before EVERY staff token mint in
@@ -500,14 +509,22 @@ export class AuthService {
         secret: this.emailVerifyKey,
         audience: DERIVED_JWT_AUDIENCES.emailVerify,
       });
-    } catch {
+    } catch (keyErr) {
       // Links issued before per-purpose keys were signed with the session secret and carry no
       // audience; they stay valid for their own 24h and nothing else is accepted that way.
       // remove in PR-4a (token audience required), added 2026-10-07
       try {
         payload = this.jwtService.verify(token, { secret: jwtConfig.secret });
         if (payload.aud !== undefined) throw new Error("audience on a legacy-key token");
-      } catch {
+      } catch (legacyErr) {
+        // B2: a link validly signed by either key but past its 24h is "expired", not "invalid"
+        // (jsonwebtoken checks the signature before exp), so the page can offer a new link.
+        if (isJwtExpired(keyErr) || isJwtExpired(legacyErr)) {
+          throw new BadRequestException({
+            code: API_ERROR_CODES.VERIFICATION_LINK_EXPIRED,
+            message: "This verification link has expired. Request a new one.",
+          });
+        }
         throw new BadRequestException(
           "Verification link is invalid or has expired. Please sign up again or request a new link.",
         );
@@ -683,28 +700,55 @@ export class AuthService {
   async requestPasswordReset(
     email: string,
     surface: "web" | "mobile" = "mobile",
+    tenantId?: string,
   ): Promise<{ message: string }> {
     const MSG = { message: "If that address is registered you will receive a reset link shortly." };
 
-    // Look up user by email (cross-tenant safe — find first active match)
-    const user = await this.prisma.user.findFirst({
-      where: { email: email.toLowerCase(), deletedAt: null, status: "ACTIVE" },
-    });
-    if (!user) return MSG;
+    const lower = email.toLowerCase();
+    const select = { id: true, tenant: { select: { name: true } } } as const;
+    const active = { email: lower, deletedAt: null, status: "ACTIVE" as const };
 
-    // Raw 32-byte random token
-    const rawToken = crypto.randomBytes(32).toString("hex");
-    const tokenHash = this.hashToken(rawToken);
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 min
+    // One address can belong to several businesses (unique per business, not globally). When the
+    // request resolved a business, target the account there; otherwise (or when that business has
+    // no such account) every account with the address gets its own link, up to a cap.
+    let matches = tenantId
+      ? await this.prisma.user.findMany({ where: { ...active, tenantId }, select, take: 1 })
+      : [];
+    if (matches.length === 0) {
+      matches = await this.prisma.user.findMany({
+        where: active,
+        select,
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        take: PASSWORD_RESET_MAX_ACCOUNTS + 1,
+      });
+    }
+    if (matches.length === 0) return MSG;
+    if (matches.length > PASSWORD_RESET_MAX_ACCOUNTS) {
+      this.logger.warn(
+        `Password reset: address belongs to more than ${PASSWORD_RESET_MAX_ACCOUNTS} accounts; ` +
+          `links sent for the first ${PASSWORD_RESET_MAX_ACCOUNTS} only.`,
+      );
+      matches = matches.slice(0, PASSWORD_RESET_MAX_ACCOUNTS);
+    }
 
-    // Clean up any previous unexpired tokens for this user to avoid table bloat
-    await this.prisma.passwordResetToken.deleteMany({
-      where: { userId: user.id, usedAt: null, expiresAt: { gt: new Date() } },
-    });
+    // Phase 1: every token write, awaited, before any mail leaves.
+    const issued: { user: (typeof matches)[number]; rawToken: string }[] = [];
+    for (const user of matches) {
+      // Raw 32-byte random token
+      const rawToken = crypto.randomBytes(32).toString("hex");
+      const tokenHash = this.hashToken(rawToken);
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 min
 
-    await this.prisma.passwordResetToken.create({
-      data: { userId: user.id, tokenHash, expiresAt },
-    });
+      // Clean up any previous unexpired tokens for this user to avoid table bloat
+      await this.prisma.passwordResetToken.deleteMany({
+        where: { userId: user.id, usedAt: null, expiresAt: { gt: new Date() } },
+      });
+
+      await this.prisma.passwordResetToken.create({
+        data: { userId: user.id, tokenHash, expiresAt },
+      });
+      issued.push({ user, rawToken });
+    }
 
     // The base URL is resolved strictly server-side from config — accepting a
     // client-supplied URL here would let an attacker exfiltrate reset tokens.
@@ -713,9 +757,8 @@ export class AuthService {
     // included) links to the current website's /reset-password page.
     void surface;
     const base = urls.web;
-    const resetUrl = `${base}/reset-password?token=${rawToken}`;
 
-    // B212-class fix: this used to be fire-and-forget with the result
+    // Phase 2: one send per account. B212-class fix: this used to be fire-and-forget with the result
     // discarded (`.catch(() => {})`) — a real delivery failure had zero trace
     // anywhere but "user says they never got the email". Still fire-and-forget
     // (NOT awaited): the response text is the SAME fixed, enumeration-safe
@@ -724,30 +767,36 @@ export class AuthService {
     // unknown address never pays for — a timing oracle on the one endpoint
     // whose whole contract is enumeration safety (review finding on PR #778).
     // The attempt is logged, just never blocks the response.
-    const resetMail = passwordResetMessage({ resetUrl });
-    this.emailService
-      .send({
-        to: email,
-        subject: resetMail.subject,
-        html: resetMail.html,
-        text: resetMail.text,
-        // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
-        senderClass: "platform",
-      })
-      .then((sendResult) => {
-        if (!sendResult.delivered) {
-          this.logger.error(
-            `Password reset email NOT delivered for user ${user.id} (${email}) — ` +
-              `transport=${sendResult.transport} ` +
-              `error=${sendResult.error ?? sendResult.smtpFallbackReason ?? "unknown"}.`,
-          );
-        }
-      })
-      .catch((err: Error) => {
-        this.logger.error(
-          `Failed to send password reset email for user ${user.id} (${email}): ${err.message}`,
-        );
+    for (const { user, rawToken } of issued) {
+      const resetUrl = `${base}/reset-password?token=${rawToken}`;
+      const resetMail = passwordResetMessage({
+        resetUrl,
+        tenantName: user.tenant?.name ?? null,
       });
+      this.emailService
+        .send({
+          to: email,
+          subject: resetMail.subject,
+          html: resetMail.html,
+          text: resetMail.text,
+          // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
+          senderClass: "platform",
+        })
+        .then((sendResult) => {
+          if (!sendResult.delivered) {
+            this.logger.error(
+              `Password reset email NOT delivered for user ${user.id} (${email}) — ` +
+                `transport=${sendResult.transport} ` +
+                `error=${sendResult.error ?? sendResult.smtpFallbackReason ?? "unknown"}.`,
+            );
+          }
+        })
+        .catch((err: Error) => {
+          this.logger.error(
+            `Failed to send password reset email for user ${user.id} (${email}): ${err.message}`,
+          );
+        });
+    }
 
     return MSG;
   }

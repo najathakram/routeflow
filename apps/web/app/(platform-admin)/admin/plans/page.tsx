@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { roundMoney } from "@routeflow/pricing";
 import { superAdminClient } from "@/lib/admin-api";
 import { AdminCard } from "../../_components/AdminCard";
 import { planLabel } from "../../_components/AdminBadge";
@@ -58,6 +59,8 @@ function priceConfirmBody(i: PlanPriceImpact, changed = false): string {
         : `${i.ownPrice} with their own price are not affected.`,
     );
   }
+  // UX guide B4: say what happens to live subscriptions (the server syncs them after the save).
+  if (i.affected > 0) parts.push("Live Stripe subscriptions update from the next billing cycle.");
   return parts.join(" ");
 }
 
@@ -68,6 +71,21 @@ interface PendingPriceChange {
   impact: PlanPriceImpact;
   /** The server's 409: the count moved after the admin first looked, and this impact is the fresh one. */
   changed?: boolean;
+  /** UXG-R4: a re-apply of the stored prices ("Sync to Stripe"), not a price change. */
+  sync?: boolean;
+}
+
+/** UXG-R4: the confirm body of a sync. */
+function syncConfirmBody(p: PendingPriceChange): string {
+  const i = p.impact;
+  const parts: string[] = [];
+  if (p.changed) parts.push("The number of businesses changed since you looked.");
+  parts.push(
+    i.affected === 0
+      ? "Nothing will change: no live subscription is on this price."
+      : `Re-applies ${priceLabel(i.currentMonthly)} a month to ${i.affected} live ${i.affected === 1 ? "subscription" : "subscriptions"}. Subscriptions already at this price are not changed.`,
+  );
+  return parts.join(" ");
 }
 
 // ─── Row edit state ────────────────────────────────────────────────────────────
@@ -84,6 +102,38 @@ function draftFrom(plan: PlanCatalogEntry): RowDraft {
   };
 }
 
+/** Two optional prices are the same when both are none or equal to the cent. */
+function sameMoney(a: number | null, b: number | null): boolean {
+  if (a === null || b === null) return a === b;
+  return roundMoney(a) === roundMoney(b);
+}
+
+/** Compare two price fields as numbers ("100" and "100.00" are the same price; blank is "none"). */
+function samePrice(a: string, b: string): boolean {
+  const x = a.trim();
+  const y = b.trim();
+  if (x === "" || y === "") return x === y;
+  return roundMoney(Number(x)) === roundMoney(Number(y));
+}
+
+/** UX guide B4: a row is dirty only when a price differs from the catalog's stored one. */
+function isDirty(plan: PlanCatalogEntry, draft: RowDraft): boolean {
+  const stored = draftFrom(plan);
+  return !samePrice(draft.monthly, stored.monthly) || !samePrice(draft.annual, stored.annual);
+}
+
+/** The confirm's title: an annual-only change is not "from $100 to $100 a month". */
+function priceConfirmTitle(p: PendingPriceChange): string {
+  const monthlyChanged = roundMoney(p.monthly) !== roundMoney(p.impact.currentMonthly);
+  const storedAnnual = p.plan.annualPrice === null ? null : Number(p.plan.annualPrice);
+  if (!monthlyChanged && !sameMoney(p.annual, storedAnnual)) {
+    const from = storedAnnual === null ? "none" : priceLabel(storedAnnual);
+    const to = p.annual === null ? "none" : priceLabel(p.annual);
+    return `Change ${p.plan.name} annual price from ${from} to ${to} a year?`;
+  }
+  return `Change ${p.plan.name} from ${priceLabel(p.impact.currentMonthly)} to ${priceLabel(p.monthly)} a month?`;
+}
+
 // ─── Page ──────────────────────────────────────────────────────────────────────
 
 export default function PlansPage() {
@@ -96,6 +146,7 @@ export default function PlansPage() {
   // R24: the count is fetched before anything is saved; the PATCH only runs after Confirm.
   const [checkingKey, setCheckingKey] = React.useState<string | null>(null);
   const [checkFailedKey, setCheckFailedKey] = React.useState<string | null>(null);
+  const [checkFailedSync, setCheckFailedSync] = React.useState(false);
   const [pending, setPending] = React.useState<PendingPriceChange | null>(null);
   const [toast, setToast] = React.useState<{ type: "success" | "error"; text: string } | null>(
     null,
@@ -126,7 +177,7 @@ export default function PlansPage() {
     setDrafts((prev) => ({ ...prev, [planKey]: { ...prev[planKey], [field]: value } }));
   };
 
-  const startSave = async (plan: PlanCatalogEntry) => {
+  const startSave = async (plan: PlanCatalogEntry, sync = false) => {
     const draft = drafts[plan.planKey];
     if (!draft || draft.monthly.trim() === "") return;
     if (checkingKey || savingKey) return;
@@ -134,10 +185,11 @@ export default function PlansPage() {
     const annual = draft.annual.trim() === "" ? null : Number(draft.annual);
     setCheckingKey(plan.planKey);
     setCheckFailedKey(null);
+    setCheckFailedSync(sync);
     setToast(null);
     try {
       const impact = await fetchPlanPriceImpact(plan.planKey, monthly);
-      setPending({ plan, monthly, annual, impact });
+      setPending({ plan, monthly, annual, impact, sync });
     } catch {
       // Fixed copy; a failed check blocks the confirm (nothing opens) and offers Retry.
       setCheckFailedKey(plan.planKey);
@@ -148,7 +200,12 @@ export default function PlansPage() {
 
   const confirmSave = async () => {
     if (!pending || savingKey) return;
-    const { plan, monthly, annual, impact } = pending;
+    const { plan, monthly, annual, impact, sync } = pending;
+    // A sync with no live subscriptions has nothing to apply: its only button closes the dialog.
+    if (sync && impact.affected === 0) {
+      setPending(null);
+      return;
+    }
     setSavingKey(plan.planKey);
     try {
       // SA-1100 §2: the PATCH carries the count the admin confirmed; the server re-checks it before any write.
@@ -157,9 +214,12 @@ export default function PlansPage() {
         annual,
         expectedAffected: impact.affected,
       });
+      const already = result.unchanged ?? 0;
       setToast({
-        type: "success",
-        text: `Saved ${plan.name} — ${result.updated} tenant${result.updated === 1 ? "" : "s"} updated, ${result.synced} synced to Stripe${result.failed ? `, ${result.failed} failed` : ""}.`,
+        type: result.failed ? "error" : "success",
+        text: sync
+          ? `Synced ${plan.name}: ${result.synced - already} updated, ${already} already current${result.failed ? `, ${result.failed} failed` : ""}.`
+          : `Saved ${plan.name} — ${result.updated} tenant${result.updated === 1 ? "" : "s"} updated, ${result.synced} synced to Stripe${result.failed ? `, ${result.failed} failed` : ""}.`,
       });
       load();
       setPending(null);
@@ -169,10 +229,11 @@ export default function PlansPage() {
         // admin confirms what will really happen. If the fresh count cannot be read, never save blind.
         try {
           const fresh = await fetchPlanPriceImpact(plan.planKey, monthly);
-          setPending({ plan, monthly, annual, impact: fresh, changed: true });
+          setPending({ plan, monthly, annual, impact: fresh, changed: true, sync });
           return;
         } catch {
           setCheckFailedKey(plan.planKey);
+          setCheckFailedSync(!!sync);
           setPending(null);
           return;
         }
@@ -186,6 +247,11 @@ export default function PlansPage() {
       setSavingKey(null);
     }
   };
+
+  const catalogKeys = new Set(plans.map((p) => p.planKey));
+  const hiddenPlans = Object.entries(planBreakdown)
+    .filter(([key, count]) => !catalogKeys.has(key) && count > 0)
+    .sort(([a], [b]) => a.localeCompare(b));
 
   const checkFailedPlan = plans.find((p) => p.planKey === checkFailedKey);
 
@@ -208,7 +274,7 @@ export default function PlansPage() {
           <span>Couldn&apos;t check how many businesses this changes. Try again.</span>
           <button
             type="button"
-            onClick={() => startSave(checkFailedPlan)}
+            onClick={() => startSave(checkFailedPlan, checkFailedSync)}
             className="rounded-lg bg-slate-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-slate-600"
           >
             Retry
@@ -218,6 +284,7 @@ export default function PlansPage() {
 
       {toast && (
         <div
+          data-tone={toast.type}
           className={`rounded-lg px-4 py-3 text-sm ring-1 break-words ${
             toast.type === "success"
               ? "bg-green-900/30 text-green-300 ring-green-700/50"
@@ -290,13 +357,14 @@ export default function PlansPage() {
                           className="h-9 w-40 rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
                         />
                       </td>
-                      <td className="px-5 py-3">
+                      <td className="px-5 py-3 whitespace-nowrap">
                         <button
                           type="button"
                           disabled={
                             checkingKey !== null ||
                             savingKey !== null ||
-                            draft.monthly.trim() === ""
+                            draft.monthly.trim() === "" ||
+                            !isDirty(plan, draft)
                           }
                           onClick={() => startSave(plan)}
                           className="rounded-lg bg-indigo-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-600 disabled:opacity-50"
@@ -307,10 +375,46 @@ export default function PlansPage() {
                               ? "Saving…"
                               : "Save"}
                         </button>
+                        {/* UXG-R4: the retry for a plan whose Stripe sync failed. Only on a clean row: on a dirty one
+                            Save does the fan-out itself. */}
+                        {!isDirty(plan, draft) && draft.monthly.trim() !== "" && (
+                          <button
+                            type="button"
+                            disabled={checkingKey !== null || savingKey !== null}
+                            onClick={() => startSave(plan, true)}
+                            className="ml-2 rounded-lg px-3 py-2 text-sm font-semibold text-indigo-300 transition-colors hover:text-white disabled:opacity-50"
+                          >
+                            Sync to Stripe
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
                 })}
+                {/* UX guide B11: a plan that has tenants but is not in the public catalog (invite-only, e.g.
+                    Lite) still gets its row so the counts add up to the total. Read-only: it has no public
+                    price to edit and nothing here can save it. */}
+                {hiddenPlans.map(([key, count]) => (
+                  <tr key={key} className="hover:bg-slate-700/20">
+                    <td className="px-5 py-3">
+                      <div className="text-white">{planLabel(key)}</div>
+                      <div className="text-xs text-slate-400">{key}</div>
+                    </td>
+                    <td className="px-5 py-3 text-slate-400">{count}</td>
+                    <td className="px-5 py-3 text-slate-400" colSpan={2}>
+                      Invite-only, no public price
+                    </td>
+                    <td className="px-5 py-3">
+                      <button
+                        type="button"
+                        disabled
+                        className="rounded-lg bg-indigo-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                      >
+                        Save
+                      </button>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
@@ -321,17 +425,30 @@ export default function PlansPage() {
         open={pending !== null}
         onClose={() => setPending(null)}
         onConfirm={confirmSave}
-        variant="danger"
+        variant={pending?.sync ? "warning" : "danger"}
+        hideCancel={pending?.sync === true && pending.impact.affected === 0}
         title={
           pending
-            ? `Change ${pending.plan.name} from ${priceLabel(pending.impact.currentMonthly)} to ${priceLabel(pending.monthly)} a month?`
+            ? pending.sync
+              ? `Sync ${pending.plan.name} to Stripe?`
+              : priceConfirmTitle(pending)
             : ""
         }
-        description={pending ? priceConfirmBody(pending.impact, pending.changed) : undefined}
+        description={
+          pending
+            ? pending.sync
+              ? syncConfirmBody(pending)
+              : priceConfirmBody(pending.impact, pending.changed)
+            : undefined
+        }
         confirmLabel={
-          pending && pending.impact.affected > 0
-            ? `Change price for ${businesses(pending.impact.affected)}`
-            : "Change price"
+          pending?.sync
+            ? pending.impact.affected === 0
+              ? "Close"
+              : `Sync ${pending.impact.affected} ${pending.impact.affected === 1 ? "subscription" : "subscriptions"}`
+            : pending && pending.impact.affected > 0
+              ? `Change price for ${businesses(pending.impact.affected)}`
+              : "Change price"
         }
         loading={savingKey !== null}
       />

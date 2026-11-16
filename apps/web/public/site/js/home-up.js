@@ -6,7 +6,8 @@
    only while a trigger is active. The motion always runs (owner ruling 2026-11-03: no reduced-motion setting, no switch); only no-JS
    and a window under 600 px tall fall back to the HTML, which is the final state.
    Stop scrolling and the screen is finished: anything that is not a pinned object reveals once on enter, on the clock, never
-   on scroll position (ST.batch once, or toggleActions "play none none none"). Scrub is only for the desktop's pinned objects.
+   on scroll position (one trigger per element, played one time per page life, or a timeline that plays once). Content starts as it is: a
+   reveal first reached by a scroll update plays; one reached at rest (inside a refresh: load, anchor, print return) stays at rest. Scrub is only for the desktop's pinned objects.
    Phones have one pin, the answer card: CSS position:sticky with ScrollTrigger only watching, so it can't jump or fight the
    browser's own scrolling. The wheel is the hero: graphics/rf-wheel-up.js loads first and has mounted by the time this runs, so everything here is made
    top to bottom after it. */
@@ -15,7 +16,7 @@
   var d = document, html = d.documentElement, W = window;
   var $ = function (s, r) { return (r || d).querySelector(s); };
   var $$ = function (s, r) { return Array.prototype.slice.call((r || d).querySelectorAll(s)); };
-  /* No `once: true` on a trigger that is built after its start has passed (a visitor who arrives already scrolled: an anchor, a reload,
+  /* No `once` option on a trigger that is built after its start has passed (a visitor who arrives already scrolled: an anchor, a reload,
      a scroll before the scripts ran). ScrollTrigger kills a `once` trigger inside its own first refresh, and a later trigger's refresh walks
      the same list by index, so the kill shifts the list under it and it throws on a missing entry (reading 'end'); everything built after
      that stays hidden. "play none none none" plays the same single time and never removes itself. */
@@ -106,12 +107,50 @@
   ST.addEventListener("refreshInit", function () { if (!smoothHeld++) { smoothWas = html.style.scrollBehavior; html.style.scrollBehavior = "auto"; } });
   ST.addEventListener("refresh", function () { if (smoothHeld && !--smoothHeld) html.style.scrollBehavior = smoothWas; });
 
+  /* Reveal tweens that are playing when print starts are reverted at once, from the print handler: GSAP's own revert comes a little later
+     (after the media-change handlers of every section), and a page printed in that gap would show words half faded. */
+  var live = [], finals = [];
+  var track = function (t) { live = live.filter(function (x) { return x.progress() < 1; }); live.push(t); return t; }; // finished ones drop out
+  /* Everything keep()ed (a counted figure, a pill) has its final text recorded page-wide: whatever is mid-count when print starts prints final. */
+  var paperStop = function () {
+    live.forEach(function (t) { t.revert(); }); live = [];
+    finals.forEach(function (f) { f[0].textContent = f[1]; });
+    $$("[data-was].was").forEach(function (e) { e.classList.remove("was"); });
+  };
+  /* paper:start */
+  /* Print: the page is its own final state. Motion is screen-only (every condition below starts with `screen`), so when print starts
+     GSAP reverts every tween and pin; js-motion comes off with it so the CSS hides nothing. Back on screen the sections rebuild and
+     js-motion returns. Each ScrollTrigger refresh records the scroll place, scrolls to the top to measure, puts the place back and then
+     reports "refresh"; the first refresh after the rebuild recorded the place of the print layout, which has no pins. So for the one
+     frame after leaving print, each "refresh" report puts the saved place back (all the media-change handlers and GSAP's own rebuild
+     refreshes run before that frame; later refreshes record the restored place). Print turns off overflow-anchor (css/site.css), so
+     entering print does not shift the page before the place is read. A real print fires both the media change and beforeprint,
+     hence the idempotent toggle. */
+  var paperOn = false, paperMotion = false, paperY = 0, paperBack = false;
+  ST.addEventListener("refresh", function () {
+    if (paperBack && Math.abs(W.scrollY - paperY) > 1) { W.scrollTo({ top: paperY, behavior: "instant" }); ST.update(); }
+  });
+  var paper = function (on) {
+    if (on === paperOn) return;
+    paperOn = on;
+    if (on) { paperY = W.scrollY; paperMotion = html.classList.contains("js-motion"); html.classList.remove("js-motion"); paperStop(); return; }
+    html.classList.toggle("js-motion", paperMotion);
+    paperBack = true;
+    W.requestAnimationFrame(function () { paperBack = false; });
+  };
+  var printQ = W.matchMedia("print");
+  var onPrint = function (e) { paper(e.matches); };
+  if (printQ.addEventListener) printQ.addEventListener("change", onPrint); else if (printQ.addListener) printQ.addListener(onPrint);
+  W.addEventListener("beforeprint", function () { paper(true); });
+  W.addEventListener("afterprint", function () { paper(false); });
+  /* paper:end */
+
   /* desk: the pinned scenes, on a screen with room for them. mob: everything else, phones on their side too.
      pin: a phone or tablet held upright, the only place the answer card pins. */
   var Q = {
-    desk: "(min-width: 900px) and (min-height: 600px)",
-    mob: "(max-width: 899.98px), (max-height: 599.98px)",
-    pin: "(max-width: 899.98px) and (min-height: 600px)"
+    desk: "screen and (min-width: 900px) and (min-height: 600px)",
+    mob: "screen and (max-width: 899.98px), screen and (max-height: 599.98px)",
+    pin: "screen and (max-width: 899.98px) and (min-height: 600px)"
   };
   var SCRUB = 0.8, BELOW = -2; // BELOW: refreshPriority for sections under the wheel (everything above it, and the wheel, is 0)
   var EDGE = "top 104%"; // just under the screen, so everything on a stopped screen has already been told to appear
@@ -120,47 +159,104 @@
   var wc = function (els) {
     return function (self) { var v = self.isActive ? "transform, opacity" : ""; for (var i = 0; i < els.length; i++) if (els[i]) els[i].style.willChange = v; };
   };
+  /* Anything that is, holds or sits in an h1/h2 is moved by page motion, never faded: it must read on a screenshot, a print or a stalled trigger. */
+  var isHead = function (el) { return el.matches("h1,h2") || !!el.querySelector("h1,h2") || !!el.closest("h1,h2"); };
   var isShown = function (el) { return !!el && el.getClientRects().length > 0; };
   var shown = function (list) { return list.filter(isShown); };
 
   /* One section: matchMedia branches, scoped.
      build(c, scope, keep) returns its own cleanup; keep(el) restores an element's final text on revert. */
+  var curCtx = null; // the section's GSAP context while build runs; revealOnce keeps it for tweens made later, in trigger callbacks
   function section(scope, build) {
     var mm = g.matchMedia(scope);
     mm.add(Q, function (ctx) {
       var c = ctx.conditions;
       html.classList.add("js-motion");
       var kept = [];
-      var keep = function (el) { if (el) kept.push([el, el.textContent]); return el; };
-      var done = build(c, scope, keep);
+      var keep = function (el) {
+        if (el) {
+          kept.push([el, el.textContent]);
+          if (!finals.some(function (f) { return f[0] === el; })) finals.push([el, el.textContent]);
+        }
+        return el;
+      };
+      var done;
+      curCtx = ctx;
+      try { done = build(c, scope, keep); } finally { curCtx = null; }
       return function () { if (done) done(); kept.forEach(function (k) { k[0].textContent = k[1]; }); };
     }, scope);
     return function () { mm.revert(); };
   }
   /* A running total that steps as lines arrive: every frame shows the sum of the lines on screen, never an in-between
      number. Writes the same value to every element in els (a subtotal and its balance, say). */
-  function stepSum(keep, els, sums, duration) {
+  function stepSum(keep, els, sums, duration, onPlay) {
     els = els.filter(Boolean); els.forEach(keep);
     var o = { i: 0 }, n = sums.length - 1;
     var write = function () { var v = money(sums[Math.round(o.i)]); for (var k = 0; k < els.length; k++) els[k].textContent = v; };
+    /* No text changes before the animation plays: a timeline that never plays (a jump past it) must leave the page's own figures.
+       onPlay: the first write waits for the tween's start (sections that play on a trigger); the scrubbed scenes pass nothing and keep
+       their explicit first write, because their progress is the scroll and they always render. */
+    if (onPlay) return g.to(o, { i: n, duration: duration, ease: "steps(" + n + ")", onStart: write, onUpdate: write });
     write();
     return g.to(o, { i: n, duration: duration, ease: "steps(" + n + ")", onUpdate: write });
   }
-  /* A group that rises into place once, on the clock, the first time it comes near the screen. */
+  /* One play per element per page life (a print return replays nothing). Whatever is already above its start line when a section is
+     built is marked played at once, so it stays at rest instead of blanking and fading back on a first paint or a return. */
+  var played = [], settled = [];
+  /* A reveal callback that runs inside a ScrollTrigger refresh (the first measuring on load, an anchor arrival at load, a return from
+     print) or while a section is being built finds its content already past its start: the animation never starts and the content stays
+     as it is, instead of blinking out and back. (Jumping a never-started tween to its end would leave it unable to revert, so it is simply
+     not played.) A callback from a scroll update, at any speed, plays. */
+  var refreshing = false;
+  ST.addEventListener("refreshInit", function () { refreshing = true; });
+  ST.addEventListener("refresh", function () { refreshing = false; });
+  var atRest = function () { return refreshing || !!ST.isRefreshing || !!curCtx || paperOn || paperBack; }; // paperOn/paperBack: a print return restores the place first, whichever listener ran first
+  var gone = []; // trigger elements whose timeline was reached (played, or reached at rest): one play per page life, as revealOnce and settle keep
+  var go = function (self) {
+    var t = self.trigger;
+    if (gone.indexOf(t) >= 0) return;
+    gone.push(t);
+    if (!atRest()) { track(self.animation); self.animation.play(); }
+  };
+  var above = function (el, pct) { return el.getBoundingClientRect().top < W.innerHeight * pct / 100; };
+  /* A group that rises into place once, on the clock, the first time it comes near the screen. It starts visible: nothing is hidden
+     until the batch fires, so a stalled trigger or a print leaves the words as they are. Each element plays one time (a played list,
+     not `once`, which removes the trigger and shifts the list under later refreshes). The tween is made inside the section's context
+     so a print revert undoes it. */
   function revealOnce(items, rp, y, each) {
     items = shown(items);
     if (!items.length) return;
-    g.set(items, { opacity: 0, y: y == null ? 20 : y });
-    ST.batch(items, { start: EDGE, once: true, interval: 0.06, refreshPriority: rp || 0,
-      onEnter: function (b) { g.to(b, { opacity: 1, y: 0, stagger: { each: each || 0.07 }, overwrite: true }); } });
+    var cx = curCtx, rise = y == null ? 20 : y, queue = [], timer = null;
+    items.forEach(function (el) { if (above(el, 104) && played.indexOf(el) < 0) played.push(el); });
+    var flush = function () {
+      var b = queue; queue = []; timer = null;
+      if (paperOn) return;
+      var play = function () { track(g.from(b, { y: rise, opacity: function (i, el) { return isHead(el) ? 1 : 0; }, stagger: { each: each || 0.07 }, overwrite: true })); };
+      if (cx) cx.add(play); else play(); // made inside the section's context, so a print revert undoes it
+    };
+    /* One trigger per element (what ST.batch makes), gathered over 0.06 s by hand so each callback can be judged where it runs. */
+    items.forEach(function (el) {
+      ST.create({ trigger: el, start: EDGE, refreshPriority: rp || 0, onEnter: function () {
+        if (played.indexOf(el) >= 0) return;
+        played.push(el);
+        if (atRest()) return;
+        queue.push(el);
+        if (!timer) timer = cx ? cx.add(function () { return g.delayedCall(0.06, flush); }) : g.delayedCall(0.06, flush);
+      } });
+    });
   }
-  /* A big line that scales down and settles as it arrives. Once, on the clock. */
+  /* A big line that scales down and settles as it arrives. Once, on the clock. It starts as it is (nothing applies before the trigger
+     fires) and a heading only scales, never fades. */
   function settle(el, rp, from, start) {
     if (!isShown(el)) return;
-    g.fromTo(el, { scale: from || 1.14, opacity: 0, transformOrigin: "50% 60%" }, {
-      scale: 1, opacity: 1, ease: "power2.out", duration: 1,
-      scrollTrigger: { trigger: el, start: start || "top 96%", toggleActions: "play none none none", refreshPriority: rp || 0 }
-    });
+    var done = settled.indexOf(el) >= 0; // already played in this page life: its trigger stays (same count as a fresh load) and does nothing
+    /* A from tween (end state = the element as it is), so a revert in print puts the element back as it was: a fromTo that never rendered
+       its start state reverts to that start state instead. */
+    var a = { scale: from || 1.14, transformOrigin: "50% 60%", ease: "power2.out", duration: 1, immediateRender: false, onStart: function () { settled.push(el); } };
+    if (!isHead(el)) a.opacity = 0;
+    a.scrollTrigger = { trigger: el, start: start || "top 96%", toggleActions: "none none none none", refreshPriority: rp || 0 };
+    a.scrollTrigger.onEnter = done ? function () {} : function (self) { if (atRest()) settled.push(el); else { track(self.animation); self.animation.play(); } };
+    g.from(el, a);
   }
 
   /* ---------- 1. Hero: on load, not scroll. The wheel settles itself. ---------- */
@@ -221,7 +317,7 @@
       function (tl) {
         tl.fromTo(figs[0], { opacity: 0, y: 40 }, { opacity: 1, y: 0 }, 0)
           .fromTo(rowsOf(0), { opacity: 0, y: 10 }, { opacity: 1, y: 0, stagger: { each: 0.14 }, duration: 0.3 }, 0.25)
-          .add(stepSum(keep, [ordTot], [0, 45, 81, 111], 0.42), 0.2);
+          .add(stepSum(keep, [ordTot], [0, 45, 81, 111], 0.42, true), 0.2);
       },
       function (tl) {
         tl.fromTo(figs[1], { opacity: 0, y: 40 }, { opacity: 1, y: 0 }, 0)
@@ -251,8 +347,9 @@
       scrollTrigger: { trigger: pin, start: "top top", end: function () { return "+=" + dist(); }, pin: true, scrub: SCRUB, invalidateOnRefresh: true, onToggle: wc([track, bar]) } });
     g.fromTo(bar, { x: 0 }, { x: function () { return bar.offsetWidth * 3; }, ease: "none",
       scrollTrigger: { trigger: pin, start: "top top", end: function () { return "+=" + dist(); }, scrub: SCRUB, invalidateOnRefresh: true } });
-    /* Step 1 plays once as the section arrives; steps 2-4 as each one slides in. */
-    step[0](g.timeline({ defaults: { ease: "power2.out", duration: 0.6 }, scrollTrigger: { trigger: s, start: "top 60%", toggleActions: "play none none none" } }));
+    /* No tween that waits on a toggleActions trigger hides its target before the trigger fires (immediateRender false in each timeline's
+     defaults); only the scrubbed scenes, whose progress is the scroll, set their start state. Step 1 plays once as the section arrives; steps 2-4 as each one slides in. */
+    step[0](g.timeline({ defaults: { immediateRender: false, ease: "power2.out", duration: 0.6 }, scrollTrigger: { trigger: s, start: "top 60%", onEnter: go, toggleActions: "none none none none" } }));
     for (var i = 1; i < 4; i++) step[i](g.timeline({ defaults: { ease: "power2.out", duration: 0.6 }, scrollTrigger: { trigger: panels[i], containerAnimation: move, start: "left 78%", end: "left 22%", scrub: SCRUB } }));
     /* One step in focus: the panels either side stay dim. Opacity only, riding on the track. */
     panels.forEach(function (p, i) {
@@ -295,10 +392,10 @@
       .addLabel("s2", 2);
     var L = ["s0", "s1", "s2"], cur = 0;
     var setStep = function (i) { steps.forEach(function (li, k) { li.classList.toggle("on", k === i); }); };
-    var go = function (i) { if (i === cur) return; cur = i; setStep(i); tl.tweenTo(L[i], { duration: 0.8, ease: "power1.inOut", overwrite: true }); };
+    var goTo = function (i) { if (i === cur) return; cur = i; setStep(i); tl.tweenTo(L[i], { duration: 0.8, ease: "power1.inOut", overwrite: true }); };
     var idx = function (p) { return p < 1 / 3 ? 0 : p < 2 / 3 ? 1 : 2; };
     /* start and end match the CSS sticky range: the section's top at the header, its bottom at the screen's bottom. */
-    ST.create({ trigger: s, start: "top 68px", end: "bottom bottom", onUpdate: function (x) { go(idx(x.progress)); }, onRefresh: function (x) { go(idx(x.progress)); } });
+    ST.create({ trigger: s, start: "top 68px", end: "bottom bottom", onUpdate: function (x) { goTo(idx(x.progress)); }, onRefresh: function (x) { goTo(idx(x.progress)); } });
   }
 
   /* ---------- the real Orders screen: wide screens only, after the pain and the answer ---------- */
@@ -339,7 +436,7 @@
       };
       if (!c.desk) {
         /* Phones: two boxes, then six cans, once, and the one number is already there. */
-        var tlm = g.timeline({ defaults: { ease: "power3.out", duration: 0.45 }, scrollTrigger: { trigger: art, start: EDGE, toggleActions: "play none none none" } });
+        var tlm = g.timeline({ defaults: { immediateRender: false, ease: "power3.out", duration: 0.45 }, scrollTrigger: { trigger: art, start: EDGE, onEnter: go, toggleActions: "none none none none" } });
         drop(tlm).fromTo(cans, { y: function (i) { return cy[i] - 44; }, opacity: 0 }, { y: function (i) { return cy[i]; }, opacity: 1, duration: 0.3, stagger: { each: 0.09 } }, 1.1);
         revealOnce($$(".sl-big, .tier, .sl-prod, .sl-line", s), 0, 16);
         return;
@@ -353,9 +450,12 @@
         boxW.textContent = b === 1 ? " box + " : " boxes + "; pcW.textContent = n === 1 ? " pc" : " pcs";
       };
       paint();
-      g.timeline({ defaults: { ease: "power2.out" }, scrollTrigger: { trigger: s, start: "top 80%", toggleActions: "play none none none" } })
-        .fromTo(copy, { opacity: 0, y: 36 }, { opacity: 1, y: 0 }, 0)
-        .fromTo(line, { opacity: 0, y: 48 }, { opacity: 1, y: 0 }, 0.12);
+      /* The copy moves as a block; only what is not a heading fades with it. Starts visible: nothing applies before the trigger fires. */
+      var copyKids = Array.prototype.filter.call(copy.children, function (k) { return !isHead(k); });
+      g.timeline({ defaults: { ease: "power2.out" }, scrollTrigger: { trigger: s, start: "top 80%", onEnter: go, toggleActions: "none none none none" } })
+        .fromTo(copy, { y: 36 }, { y: 0, immediateRender: false }, 0)
+        .fromTo(copyKids, { opacity: 0 }, { opacity: 1, immediateRender: false }, 0)
+        .fromTo(line, { opacity: 0, y: 48 }, { opacity: 1, y: 0, immediateRender: false }, 0.12);
       /* Pinned: two boxes, then six loose cans, each from above. The count fields and the line total keep up. */
       var tl = g.timeline({ defaults: { ease: "power3.out", duration: 0.5 }, scrollTrigger: { trigger: pin, start: "top top", end: "+=85%", pin: true, scrub: SCRUB, onToggle: wc(boxes.concat(cans, [line])) } });
       drop(tl).to(st, { b: 2, duration: 1, ease: "steps(2)", onUpdate: paint }, 0.3)
@@ -364,14 +464,13 @@
         .fromTo(math, { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.4 }, 2.5)
         .to({}, { duration: 0.35 });
       /* Three stores arrive in order, once. The piece price counts up and the box of 12 follows it exactly. */
-      var tiers = $$(".tier", s), tl2 = g.timeline({ defaults: { ease: "power2.out" }, scrollTrigger: { trigger: $(".sl-tiers", s), start: "top 88%", toggleActions: "play none none none" } });
+      var tiers = $$(".tier", s), tl2 = g.timeline({ defaults: { immediateRender: false, ease: "power2.out" }, scrollTrigger: { trigger: $(".sl-tiers", s), start: "top 88%", onEnter: go, toggleActions: "none none none none" } });
       tiers.forEach(function (t, i) {
         var b = $(".tier-p b", t), box = $(".tier-b", t), to = parseFloat(b.dataset.count), o = { v: 0 }, boxText = box.textContent;
         keep(b); keep(box);
         var write = function () { var cents = Math.round(o.v * 100); b.textContent = money(cents / 100); box.textContent = boxText.replace(/^\$[\d.,]+/, money((cents * 12) / 100)); };
-        write();
         tl2.fromTo(t, { opacity: 0, y: 50 }, { opacity: 1, y: 0, duration: 0.6 }, i * 0.22)
-          .to(o, { v: to, duration: 0.6, onUpdate: write }, i * 0.22);
+          .to(o, { v: to, duration: 0.6, onStart: write, onUpdate: write }, i * 0.22);
       });
     });
   }
@@ -382,7 +481,7 @@
       var vis = $(".st-vis", s), shop = $(".st-shop", s), phone = $(".st-phone", s), tiles = $$(".b-tile", s), rows = $$(".sp-r", s), all = $(".sp-all", s), head = $(".st-head h2", s);
       var wideShop = isShown(shop);
       if (c.desk) settle(head, 0, 1.1, "top 92%"); else revealOnce($$(".st-head h2, .st-head .sub", s), 0, 16);
-      var tl = g.timeline({ defaults: { ease: "power2.out", duration: 0.8 }, scrollTrigger: { trigger: vis, start: c.desk ? "top 88%" : EDGE, toggleActions: "play none none none" } });
+      var tl = g.timeline({ defaults: { immediateRender: false, ease: "power2.out", duration: 0.8 }, scrollTrigger: { trigger: vis, start: c.desk ? "top 88%" : EDGE, onEnter: go, toggleActions: "none none none none" } });
       if (wideShop) {
         tl.fromTo(shop, { opacity: 0, y: 80, scale: 0.96 }, { opacity: 1, y: 0, scale: 1, duration: 1 }, 0)
           .fromTo(tiles, { opacity: 0, y: 24 }, { opacity: 1, y: 0, stagger: { each: 0.12 }, duration: 0.5 }, 0.35)
@@ -404,11 +503,11 @@
       var pay = $$(".c-tend, .c-quick, .c-right .c-t:nth-of-type(5), .c-chg", s);
       var wideWin = isShown(win);
       if (!c.desk) revealOnce($$(".ct-copy h2, .ct-copy .sub, .ct-note", s), 0, 16);
-      var tl = g.timeline({ defaults: { ease: "power2.out", duration: 0.6 }, scrollTrigger: { trigger: vis, start: wideWin ? "top 85%" : EDGE, toggleActions: "play none none none" } });
+      var tl = g.timeline({ defaults: { immediateRender: false, ease: "power2.out", duration: 0.6 }, scrollTrigger: { trigger: vis, start: wideWin ? "top 85%" : EDGE, onEnter: go, toggleActions: "none none none none" } });
       if (wideWin) {
         tl.fromTo(win, { opacity: 0, y: 60 }, { opacity: 1, y: 0, duration: 0.8 }, 0)
           .fromTo(lines, { opacity: 0, y: 14 }, { opacity: 1, y: 0, stagger: { each: 0.3 }, duration: 0.3 }, 0.35)
-          .add(stepSum(keep, [sub, total], [0, 18, 21], 0.6), 0.2)
+          .add(stepSum(keep, [sub, total], [0, 18, 21], 0.6, true), 0.2)
           .fromTo(pay, { opacity: 0, y: 10 }, { opacity: 1, y: 0, stagger: { each: 0.1 }, duration: 0.3 }, 0.9)
           .fromTo(rc, { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.5 }, 1.25)
           .fromTo(paper, { yPercent: 100 }, { yPercent: 0, duration: 0.9, ease: "power2.out" }, 1.45);
@@ -429,7 +528,7 @@
     var marks = [];
     items.forEach(function (it) {
       var card = $(".uc-card", it), ticks = $$(".rfw-tk path", it), pill = $("[data-was]", it), nums = $$("[data-to]", it);
-      var tl = g.timeline({ defaults: { ease: "power2.out", duration: 0.6 }, scrollTrigger: { trigger: it, start: EDGE, toggleActions: "play none none none", refreshPriority: BELOW } });
+      var tl = g.timeline({ defaults: { immediateRender: false, ease: "power2.out", duration: 0.6 }, scrollTrigger: { trigger: it, start: EDGE, onEnter: go, toggleActions: "none none none none", refreshPriority: BELOW } });
       tl.fromTo(it, { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.7, ease: "power3.out" }, 0)
         .fromTo(card, { y: 18 }, { y: 0, duration: 0.8, ease: "power3.out" }, 0.08);
       if (ticks.length) tl.fromTo(ticks, { strokeDashoffset: 1 }, { strokeDashoffset: 0, duration: 0.36, ease: "power2.inOut", stagger: 0.14 }, 0.45);
@@ -437,13 +536,12 @@
         keep(e);
         var to = +e.dataset.to, from = +e.dataset.from, o = { v: from }, fin = e.textContent, w = function () { e.textContent = money(o.v); };
         tl.fromTo(o, { v: from }, { v: to, duration: 0.95, ease: "power2.inOut", onStart: w, onUpdate: w, onComplete: function () { e.textContent = fin; } }, 0.4);
-        e.textContent = money(from);
       });
       if (pill) {
         keep(pill); marks.push(pill);
         var fin = pill.textContent;
-        pill.textContent = pill.dataset.was; pill.classList.add("was");
-        tl.call(function () { pill.textContent = fin; pill.classList.remove("was"); }, null, 1.15);
+        tl.call(function () { pill.textContent = pill.dataset.was; pill.classList.add("was"); }, null, 0)
+          .call(function () { pill.textContent = fin; pill.classList.remove("was"); }, null, 1.15);
       }
     });
     return function () { marks.forEach(function (m) { m.classList.remove("was"); }); };
@@ -457,7 +555,8 @@
   }
   function initFounder(s) {
     return section(s, function (c, s) {
-      g.fromTo($(".fd-in", s), { opacity: 0, y: 64 }, { opacity: 1, y: 0, duration: 1, ease: "power3.out", scrollTrigger: { trigger: s, start: EDGE, toggleActions: "play none none none", refreshPriority: BELOW } });
+      /* The block only moves (its heading is never faded; the lines under it fade through revealOnce below). Starts visible. */
+      g.fromTo($(".fd-in", s), { y: 64 }, { y: 0, immediateRender: false, duration: 1, ease: "power3.out", scrollTrigger: { trigger: s, start: EDGE, onEnter: go, toggleActions: "none none none none", refreshPriority: BELOW } });
       settle($(".fd-q", s), BELOW, c.desk ? 1.08 : 1.05, c.desk ? "top 88%" : EDGE);
       revealOnce($$(".fd .kick, .fd-short p, .fd-more, .fd-note p, .fd-sig", s), BELOW, 18, 0.1);
     });
@@ -470,11 +569,10 @@
       var cards = shown($$(".pcard", s));
       if (!cards.length) return;
       /* Each card rises in order, then its bar fills. The customer count never counts up: a contract number reads right at every moment. Once, on the clock. */
-      g.set(cards, { opacity: 0, y: 44 });
-      var tl = g.timeline({ scrollTrigger: { trigger: $(".pgrid", s), start: "top 88%", toggleActions: "play none none none", refreshPriority: BELOW } });
+      var tl = g.timeline({ defaults: { immediateRender: false }, scrollTrigger: { trigger: $(".pgrid", s), start: "top 88%", onEnter: go, toggleActions: "none none none none", refreshPriority: BELOW } });
       cards.forEach(function (card, i) {
         var at = i * 0.13, bar = $(".pm-bar i", card);
-        tl.to(card, { opacity: 1, y: 0, duration: 0.8, ease: "power3.out" }, at);
+        tl.fromTo(card, { opacity: 0, y: 44 }, { opacity: 1, y: 0, immediateRender: false, duration: 0.8, ease: "power3.out" }, at);
         tl.fromTo(bar, { scaleX: 0 }, { scaleX: 1, duration: 1.05, ease: "power2.inOut" }, at + 0.3);
       });
     });

@@ -82,6 +82,8 @@ jest.mock("@/components/InlineCreateProductModal", () => ({
 jest.mock("@/lib/refocus-scanner", () => ({
   scheduleScannerRefocus: jest.fn(),
   isTextEntryActive: () => false,
+  // the scan-run rule (SA-1138) reads the real one: typing in the notes goes through the builder's key capture
+  isTextEntryElement: jest.requireActual("@/lib/refocus-scanner").isTextEntryElement,
 }));
 
 let statement: Record<string, unknown> = { outstandingAmount: 420, overdueAmount: 420 };

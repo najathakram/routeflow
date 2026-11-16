@@ -98,3 +98,8 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/landing-2026-11-12-w32-w34.md](web/landing-2026-11-12-w32-w34.md) | Windows 32 and 34: buyer drags own order lines, operator presence cookie on impersonation (B1304) |
 | [web/landing-2026-11-12-w35-w36.md](web/landing-2026-11-12-w35-w36.md) | Windows 35 and 36: order date chip on the regular order, chip follow-ups, scan after a closing dialog |
 | [web/landing-2026-11-12-w37.md](web/landing-2026-11-12-w37.md) | Window 37: drag a line in the order builder and till, New sale date chip |
+| [web/landing-2026-11-13-bk-fixes.md](web/landing-2026-11-13-bk-fixes.md) | Expired verify link + resend, customer-role staff gate (seesStaffControls), site print and motion, spec 85 |
+| [web/landing-2026-11-15-w40-42.md](web/landing-2026-11-15-w40-42.md) | Windows 40 to 42: Reopen confirm copy, one scan run-start rule (lib/scan-run.ts), counter Escape and Alt+D fixes, staff app polish (B9, B13, B20, B22) |
+| [web/landing-2026-11-15-w43-46.md](web/landing-2026-11-15-w43-46.md) | Windows 43 to 46: embedded Checkout host and panel (lib/checkout-embedded.ts), buyer Orders and Deals chips, paid-in-advance chip, Billing row and "How customers pay you" in Settings, admin plan price confirm |
+| [web/landing-2026-11-15-w47.md](web/landing-2026-11-15-w47.md) | Window 47: discount tax base in the invoice, estimate and till footers (lib/discount-tax-base.ts) |
+| [web/landing-2026-11-15-w48.md](web/landing-2026-11-15-w48.md) | Window 48: staff shell (build-operator-nav, open nav groups), scan clock rename, billing return redirects |

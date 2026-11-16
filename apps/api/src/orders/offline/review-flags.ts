@@ -4,7 +4,7 @@ import {
   ForbiddenException,
   NotFoundException,
 } from "@nestjs/common";
-import { OrderReviewFlagKind, UserRole } from "@prisma/client";
+import { OrderReviewFlagKind, OrderStatus, UserRole } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
@@ -94,19 +94,16 @@ export async function resolveReviewFlag(
 }
 
 /**
- * Promoting an offline DRAFT that carries an open CREDIT_BLOCKED flag runs the credit gate with the order's projected
- * total, before any write (SA-1124 item 6). A plain draft is untouched: this reads one indexed count and returns.
+ * Promoting ANY draft into a live order runs the credit gate with the order's projected total, before any write: a promotion is
+ * the draft's entry moment, so it passes the same gate a NEW order passes at create() (B585), plain draft or offline draft with
+ * an open CREDIT_BLOCKED flag alike (SA-1345 Q2, owner yes 2026-11-15; SA-1124 item 6 ran it only for a flagged draft). The
+ * order itself is excluded from the exposure it is judged against. A customer with no limit is never gated (the gate decides).
  */
 export async function assertPromotionCredit(
-  prisma: Pick<PrismaService, "forTenant">,
   order: { id: string; customerId: string; total: unknown },
   creditGate: (p: CreditPointParams) => Promise<void>,
   principal: JwtPayload,
 ): Promise<void> {
-  const open = await prisma.forTenant().orderReviewFlag.count({
-    where: { orderId: order.id, kind: OrderReviewFlagKind.CREDIT_BLOCKED, resolvedAt: null },
-  });
-  if (open === 0) return;
   await creditGate({
     customerId: order.customerId,
     projectedTotal: roundMoney(Number(order.total)),
@@ -135,7 +132,8 @@ export async function resolveGateFlagsAtPromotion(
 }
 
 /**
- * The `GET /orders` filter for `needsReview=true`: an order with any open flag. Staff only (the same callers that see the
+ * The `GET /orders` filter for `needsReview=true`: a live (not CANCELLED) order with any open flag (SA-1134 R-2: a cancel
+ * resolves no flag, so a cancelled order keeps its flags; a reopen brings it back by itself). Staff only (the same callers that see the
  * flags): a customer's or driver's list is never filtered, or probed, by flags. The relation filter is NOT tenant-injected
  * by Prisma, so it carries the tenant itself (the caller's, else the request's) and so reads (tenantId, kind, resolvedAt).
  */
@@ -146,5 +144,9 @@ export function needsReviewWhere(
 ) {
   if (needsReview !== true || !seesReviewFlags(user)) return {};
   const tenantId = user.tenantId ?? requestTenantId ?? null;
-  return { reviewFlags: { some: { ...(tenantId ? { tenantId } : {}), resolvedAt: null } } };
+  return {
+    reviewFlags: { some: { ...(tenantId ? { tenantId } : {}), resolvedAt: null } },
+    // An AND clause, not a `status` key: the list assigns this over its own `where`, whose `status` is the caller's filter.
+    AND: [{ status: { not: OrderStatus.CANCELLED } }],
+  };
 }

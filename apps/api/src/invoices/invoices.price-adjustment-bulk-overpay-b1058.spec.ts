@@ -556,6 +556,7 @@ describe("bulk re-price: the overpay judgment is a PRE-FLIGHT check (B1058)", ()
             shippingFee: 0,
           },
           false,
+          "LEGACY_POST_TAX",
         ),
       ).toEqual({ subtotal: 83.7, taxAmount: 12.56, total: 96.26, discount: 0 });
     });
@@ -569,6 +570,7 @@ describe("bulk re-price: the overpay judgment is a PRE-FLIGHT check (B1058)", ()
             shippingFee: 2.5,
           },
           false,
+          "LEGACY_POST_TAX",
         ),
       ).toEqual({ subtotal: 100, taxAmount: 10, total: 107.5, discount: 5 });
     });

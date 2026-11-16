@@ -20,6 +20,21 @@ describe("the date chip and picker spell their noun through the copy map only", 
     },
   );
 
+  // B1318: the noun regex above misses a sentence with no noun in it (the till's "outside the dates this till takes" put back
+  // in the picker). Every whole string the map owns, for every noun, must be absent from the chip and picker source.
+  it.each(["CounterDateChip.tsx", "CounterDatePicker.tsx"])(
+    "%s repeats no whole string the copy map owns",
+    (file) => {
+      const code = codeOf(file);
+      const owned = Object.values(ORDER_DATE_COPY).flatMap((c) =>
+        Object.values(c).filter((v): v is string => typeof v === "string"),
+      );
+      expect(owned.length).toBeGreaterThan(0);
+      for (const text of owned) expect(code).not.toContain(text);
+      expect(code).not.toMatch(/outside the dates/i);
+    },
+  );
+
   it("every noun has the same keys and whole strings (no glued sentences)", () => {
     const keys = Object.keys(ORDER_DATE_COPY.order).sort();
     expect(Object.keys(ORDER_DATE_COPY.sale).sort()).toEqual(keys);

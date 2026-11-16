@@ -2017,6 +2017,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
   const [portalInviteEmail, setPortalInviteEmail] = React.useState("");
   const [portalMsg, setPortalMsg] = React.useState<string | null>(null);
   const [declineConfirmOpen, setDeclineConfirmOpen] = React.useState(false);
+  const [disconnectConfirmOpen, setDisconnectConfirmOpen] = React.useState(false);
 
   // Tax-exempt documents
   const { data: taxDocs = [] } = useCustomerTaxDocuments(id);
@@ -3174,7 +3175,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                             </Button>
                             <Button
                               size="sm"
-                              variant="danger"
+                              variant="danger-outline"
                               onClick={() => {
                                 setPortalMsg(null);
                                 setDeclineConfirmOpen(true);
@@ -3190,14 +3191,11 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                           portalStatus?.status === "PENDING_SELLER_APPROVAL") && (
                           <Button
                             size="sm"
-                            variant="danger"
+                            variant="danger-outline"
                             loading={disconnectPortal.isPending}
                             onClick={() => {
                               setPortalMsg(null);
-                              disconnectPortal.mutate(id, {
-                                onSuccess: () => setPortalMsg("Portal disconnected."),
-                                onError: () => setPortalMsg(null),
-                              });
+                              setDisconnectConfirmOpen(true);
                             }}
                           >
                             Disconnect Portal
@@ -4066,6 +4064,34 @@ function CustomerDetailPageInner({ id }: { id: string }) {
         confirmLabel="Yes, delete"
         variant="danger"
         loading={deleteContact.isPending}
+      />
+
+      <ConfirmDialog
+        open={disconnectConfirmOpen}
+        onClose={() => setDisconnectConfirmOpen(false)}
+        onConfirm={() => {
+          disconnectPortal.mutate(id, {
+            onSuccess: () => {
+              setDisconnectConfirmOpen(false);
+              setPortalMsg("Portal disconnected.");
+            },
+            onError: (err: unknown) => {
+              setDisconnectConfirmOpen(false);
+              setPortalMsg(null);
+              toast({
+                title: "Couldn't disconnect the portal",
+                description: safeTextErrorCopy(err) ?? "Please try again.",
+                variant: "error",
+              });
+            },
+          });
+        }}
+        title="Disconnect this customer's portal?"
+        description="They can't sign in to order or pay until you invite them again."
+        confirmLabel="Disconnect"
+        cancelLabel="Keep connected"
+        variant="danger"
+        loading={disconnectPortal.isPending}
       />
 
       <ConfirmDialog

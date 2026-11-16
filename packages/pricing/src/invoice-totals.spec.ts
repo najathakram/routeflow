@@ -1,4 +1,14 @@
-import { computeInvoiceLineTotal, computeInvoiceTotals } from "./invoice-totals";
+import {
+  computeInvoiceLineTotal,
+  computeInvoiceTotals as computeInvoiceTotalsMode,
+  type InvoiceTotalsOptions,
+} from "./invoice-totals";
+
+/** SA-1141: these cases pin master's behaviour, so every call states the LEGACY mode. */
+const computeInvoiceTotals = (
+  lines: Parameters<typeof computeInvoiceTotalsMode>[0],
+  opts: Omit<InvoiceTotalsOptions, "discountBase"> = {},
+) => computeInvoiceTotalsMode(lines, { ...opts, discountBase: "LEGACY_POST_TAX" });
 
 describe("computeInvoiceTotals — boxed lines", () => {
   it("1 box of 24 @ $12.90 totals $12.90, never $309.60", () => {

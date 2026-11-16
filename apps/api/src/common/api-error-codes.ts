@@ -149,6 +149,9 @@ export const API_ERROR_CODES = {
   MERGE_PACK_MISMATCH: "MERGE_PACK_MISMATCH",
   ORDER_CHANGED_DURING_EDIT: "ORDER_CHANGED_DURING_EDIT",
   ORDER_EDIT_NEEDS_LINE_IDS: "ORDER_EDIT_NEEDS_LINE_IDS",
+  ORDER_EDIT_DELIVERED_LINES: "ORDER_EDIT_DELIVERED_LINES",
+  /** SA-1144: a pre-delivery edit of an order whose invoice holds payments or is closed (PAID, PARTIAL, WRITTEN_OFF). 400. */
+  ORDER_EDIT_INVOICE_HAS_PAYMENTS: "ORDER_EDIT_INVOICE_HAS_PAYMENTS",
   /** B692: a manual PARTIALLY_DELIVERED names what was delivered per line (or the order already has delivery data). 409. */
   ORDER_PD_NEEDS_QUANTITIES: "ORDER_PD_NEEDS_QUANTITIES",
   /** B692: a delivered / partly-delivered order whose delivery quantities were never recorded is not cancelled blind. 409. */
@@ -601,6 +604,8 @@ export const API_ERROR_CODES = {
   OFFLINE_PAYMENT_ONLINE_ONLY: "OFFLINE_PAYMENT_ONLINE_ONLY",
   /** 400 from POST /orders: `offline: true` with `immediateDelivery` (SA-1124). Delivered-now is an online step. */
   OFFLINE_IMMEDIATE_DELIVERY_ONLINE_ONLY: "OFFLINE_IMMEDIATE_DELIVERY_ONLINE_ONLY",
+  /** 400 from POST /orders: `status: "DRAFT"` with `immediateDelivery` (SA-1158). Save it as an order first, then deliver it. */
+  ORDER_DRAFT_CANNOT_DELIVER_NOW: "ORDER_DRAFT_CANNOT_DELIVER_NOW",
   /** 400 from POST /orders: `offline: true` without a usable `offlineQuote` (SA-1124). Fails closed, nothing is written. */
   OFFLINE_QUOTE_REQUIRED: "OFFLINE_QUOTE_REQUIRED",
   /**
@@ -889,6 +894,8 @@ export const API_ERROR_CODES = {
   EMAIL_TAKEN: "EMAIL_TAKEN",
   /** 409 from PATCH /users/:id: a login-email change that must wait for the new address was asked for an account that is not ACTIVE, or is deleted; the confirm could never land. Nothing was written and no mail was sent (B461, SA-1126). */
   EMAIL_CHANGE_ACCOUNT_INACTIVE: "EMAIL_CHANGE_ACCOUNT_INACTIVE",
+  /** 400 from POST /auth/verify-email: the sign-up link is validly signed but past its 24h expiry. Get a new one from POST /public/tenants/resend-verification (B2). */
+  VERIFICATION_LINK_EXPIRED: "VERIFICATION_LINK_EXPIRED",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

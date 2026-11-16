@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import userEvent from "@testing-library/user-event";
 import { CounterDateChip, CounterDateReminder } from "./CounterDateChip";
 import { OFFICE_FUTURE_HINT } from "./CounterDatePicker";
+import { installScanClock } from "@/test-utils/scan-clock";
 
 // W-1188 N2: the chip's states, Alt+D, the picker's typed date, and the caps. Monday 2026-11-09 is the business's today.
 const TODAY = "2026-11-09";
@@ -18,6 +19,8 @@ function setup(value = "", over: Partial<React.ComponentProps<typeof CounterDate
   );
   return { onChange, onDone };
 }
+
+installScanClock(); // SA-1159: key stamps through the constants, never the wall clock
 
 describe("CounterDateChip states", () => {
   it("unknown day: shows the day with checking, never Today, never Dated (R8)", () => {
@@ -96,6 +99,35 @@ describe("Alt+D and the picker", () => {
     fireEvent.keyDown(scan, { key: "∂", code: "KeyD", altKey: true }); // Option+D on a Mac types a symbol
     expect(await screen.findByTestId("counter-date-picker")).toBeInTheDocument();
     expect(scan.value).toBe("");
+  });
+
+  // B1319: Alt+D belongs to the topmost window. Another dialog on top (New product) must not get a picker opened under it.
+  it("Alt+D does nothing while another dialog is open on top of the chip", () => {
+    render(
+      <div>
+        <CounterDateChip value="" today={TODAY} onChange={jest.fn()} />
+        <div role="dialog" aria-label="New product">
+          <input aria-label="product name" />
+        </div>
+      </div>,
+    );
+    const field = screen.getByLabelText("product name");
+    field.focus();
+    fireEvent.keyDown(field, { key: "∂", code: "KeyD", altKey: true });
+    expect(screen.queryByTestId("counter-date-picker")).toBeNull();
+  });
+
+  it("Alt+D still opens the picker when the chip sits in the topmost dialog (Create Order)", async () => {
+    render(
+      <div role="dialog" aria-label="Create Order">
+        <input aria-label="scan" />
+        <CounterDateChip value="" today={TODAY} onChange={jest.fn()} />
+      </div>,
+    );
+    const scan = screen.getByLabelText("scan");
+    scan.focus();
+    fireEvent.keyDown(scan, { key: "∂", code: "KeyD", altKey: true });
+    expect(await screen.findByTestId("counter-date-picker")).toBeInTheDocument();
   });
 
   it("a typed day applies on Enter, with a live echo", async () => {

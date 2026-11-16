@@ -85,7 +85,11 @@ describe("one shipped email when tracking is set with the ship action (F4)", () 
   });
 
   it("'Skip, ship now' then tracking added LATER: ORDER_SHIPPED, then exactly one tracking email (unchanged)", async () => {
-    const h = harness({ ...base, status: "OUT_FOR_DELIVERY" });
+    const h = harness({
+      ...base,
+      status: "OUT_FOR_DELIVERY",
+      shippedAt: new Date("2026-10-01T00:00:00Z"),
+    });
     await notifyOrderShipped(
       h.deps,
       {

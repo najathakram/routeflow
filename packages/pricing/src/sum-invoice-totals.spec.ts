@@ -1,11 +1,22 @@
 import { roundMoney } from "./pricing";
 import { MoneyInvariantError } from "./money-invariants";
 import {
-  computeInvoiceTotals,
-  sumInvoiceTotals,
+  computeInvoiceTotals as computeInvoiceTotalsMode,
+  sumInvoiceTotals as sumInvoiceTotalsMode,
   type InvoiceTotalsLine,
   type InvoiceTotalsOptions,
+  type SumInvoiceTotalsOptions,
 } from "./invoice-totals";
+
+/** SA-1141: these cases pin master's behaviour, so every call states the LEGACY mode. */
+const computeInvoiceTotals = (
+  lines: Parameters<typeof computeInvoiceTotalsMode>[0],
+  opts: Omit<InvoiceTotalsOptions, "discountBase"> = {},
+) => computeInvoiceTotalsMode(lines, { ...opts, discountBase: "LEGACY_POST_TAX" });
+const sumInvoiceTotals = (
+  lines: Parameters<typeof sumInvoiceTotalsMode>[0],
+  opts: Omit<SumInvoiceTotalsOptions, "discountBase"> = {},
+) => sumInvoiceTotalsMode(lines, { ...opts, discountBase: "LEGACY_POST_TAX" });
 
 /**
  * B1043 — ONE invoice-totals formula. `sumInvoiceTotals` is the arithmetic every server writer and
@@ -151,7 +162,7 @@ describe("computeInvoiceTotals composes sumInvoiceTotals", () => {
         taxable: rand() < 0.2 ? false : undefined,
         taxRate: rand() < 0.3 ? Math.round(rand() * 0.1 * 1e4) / 1e4 : undefined,
       }));
-      const opts: InvoiceTotalsOptions = {
+      const opts: Omit<InvoiceTotalsOptions, "discountBase"> = {
         taxRate: Math.round(rand() * 0.1 * 1e4) / 1e4,
         discount: roundMoney(rand() * 5),
         shipping: roundMoney(rand() * 5),

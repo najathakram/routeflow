@@ -91,7 +91,7 @@ describe("hand-over stamp stays off customer copies (row 342)", () => {
       "invoices/invoices.service.ts",
       "orders/counter-sale/counter-sale-today.ts",
       "orders/handover-stamp.ts",
-      "orders/orders.service.ts",
+      "orders/order-find-one.ts", // SA-1160: findOne, moved verbatim from orders.service.ts (a staff read; the class no longer names the helpers)
     ]);
   });
 });

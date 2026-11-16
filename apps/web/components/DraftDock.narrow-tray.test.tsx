@@ -70,10 +70,13 @@ describe("DraftDock: narrow-viewport tray (B668)", () => {
     expect(screen.getAllByRole("button", { name: "Discard draft" })).toHaveLength(2);
   });
 
-  it("on a wide screen the chips stay visible as before", () => {
+  // Superseded by UX guide improvement 2 (see DraftDock.collapsed-pill.test.tsx): the wide screen
+  // now collapses to the same pill, so the cards no longer float over sticky Save bars.
+  it("on a wide screen the collapsed dock is the pill too", () => {
     setNarrow(false);
     render(ui());
-    expect(screen.getAllByRole("button", { name: "Resume" })).toHaveLength(2);
+    expect(screen.queryAllByRole("button", { name: "Resume" })).toHaveLength(0);
+    expect(pill()).toBeInTheDocument();
   });
 
   it("the pill announces its state and controls the chips container", () => {

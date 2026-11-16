@@ -5,6 +5,7 @@ import { CheckCircle2, Clock } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { Button } from "@routeflow/ui/web";
 import { useSubscription } from "@/lib/api/billing";
+import { isCheckoutCancelled, isStripeReturn } from "@/lib/checkout-return";
 
 type Outcome = "processing" | "received" | "failed" | "checking";
 
@@ -37,11 +38,22 @@ const COPY: Record<Outcome, string> = {
  * SA-801: a card add (nothing charged) returns with `&card=1` and must never say "Payment received".
  * B1256 / Row 623: the wording follows the subscription's server-derived billing state (processing, received, failed,
  * or neutral while it loads), re-read every 15 s until it settles, for at most 5 minutes.
+ * SA-1154: the embedded form returns with a same-route push, so navigation does not remount the notice. It is keyed on
+ * the return query, so each return starts fresh: its own 5-minute window and a dismissal that does not carry over.
  */
 export function PaidReturnNotice() {
   const params = useSearchParams();
+  const returnKey = ["paid", "card", "checkout"]
+    .map((k) => `${k}=${params?.get(k) ?? ""}`)
+    .join("&");
+  return <PaidReturnNoticeBody key={returnKey} />;
+}
+
+function PaidReturnNoticeBody() {
+  const params = useSearchParams();
   const [hidden, setHidden] = React.useState(false);
-  const paid = params?.get("paid") === "1";
+  const paid = isStripeReturn(params);
+  const cancelled = isCheckoutCancelled(params);
   const cardAdded = params?.get("card") === "1";
   const startedAt = React.useRef(Date.now());
   // 706: poll only on the Stripe return (`?paid=1`, not a card add) and give up after POLL_CAP_MS, so an unknown
@@ -53,7 +65,21 @@ export function PaidReturnNotice() {
       return o === "processing" || o === "checking" ? POLL_MS : false;
     },
   });
-  if (hidden || !paid) return null;
+  if (hidden || (!paid && !cancelled)) return null;
+  if (!paid) {
+    // `?checkout=cancelled`: nothing was charged. One neutral line; the Pay control stays ready.
+    return (
+      <div
+        role="status"
+        className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-700 ring-1 ring-slate-200"
+      >
+        <span>No payment was made.</span>
+        <Button size="sm" variant="ghost" onClick={() => setHidden(true)}>
+          OK
+        </Button>
+      </div>
+    );
+  }
   const outcome = outcomeOf(data);
   const bad = !cardAdded && outcome === "failed";
   const wait = !cardAdded && (outcome === "processing" || outcome === "checking");

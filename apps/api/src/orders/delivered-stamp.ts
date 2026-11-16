@@ -12,7 +12,7 @@
  * ONE evidence predicate, shared with the counter-sale void's inverse `clearUnevidencedDelivered`). A line
  * with rows keeps its route evidence (the column there is a RECOMPUTE from the rows, routes.service.ts,
  * never an overwrite from here). An order with a `routeRunStopId` (a legacy route delivery) is never
- * touched. A value is never lowered (qty < delivered is legal, B1050). No existing evidence row is ever rewritten
+ * touched. A value is never lowered (a legacy row with qty < delivered stays as it is, B1050; a NEW cut below it is refused, SA-1149 D2). No existing evidence row is ever rewritten
  * from here. (Row 587: the status write's office-evidenced lines are completed by office-evidence-completion.ts.)
  *
  * It runs in the CALLER's transaction: the status and the stamp commit together. The route-stop writers
@@ -24,6 +24,7 @@
  * goods left, so cancel-impact keeps refusing a cancel (use a Return).
  */
 import { ConflictException } from "@nestjs/common";
+import { assertQtyNotBelowDelivered, isLiveDeliveredLine } from "./delivered-line-lock";
 import { OrderStatus, type Prisma } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { deliveredBasisByLine, type DeliveredBasis } from "../invoices/delivered-basis-by-line";
@@ -55,7 +56,14 @@ export type HeldLine = {
  * row gets here (`captureRecreatedCarry` refuses the rest), so every held line is a no-evidence line.
  */
 export type RecreatedCarry = {
-  held: Array<{ id: string; key: string; deliveredQty: number }>;
+  held: Array<{
+    id: string;
+    key: string;
+    deliveredQty: number;
+    qty?: number;
+    /** a CANCELLED line already went back to the shelf: it leaves the quantity floor (SA-1149) */
+    cancelled?: boolean;
+  }>;
 };
 
 const keyOf = (productId: string | null | undefined) => productId ?? UNLISTED;
@@ -152,6 +160,27 @@ function recreatedTargets(
     if (!surviving.has(h.id)) carried.set(h.key, (carried.get(h.key) ?? 0) + h.deliveredQty);
   }
   const fresh = active.filter((li) => !heldIds.has(li.id)); // a surviving row is not recreated
+  // SA-1149 D2: per product, the recreated rows may not total below what was delivered (and held) before the edit.
+  const sums = new Map<string, { delivered: number; held: number; next: number }>();
+  const sumOf = (k: string) => {
+    let v = sums.get(k);
+    if (!v) sums.set(k, (v = { delivered: 0, held: 0, next: 0 }));
+    return v;
+  };
+  for (const h of carry.held) {
+    if (surviving.has(h.id) || h.cancelled) continue;
+    const v = sumOf(h.key);
+    v.delivered += h.deliveredQty;
+    v.held += h.qty ?? h.deliveredQty;
+  }
+  for (const li of fresh) {
+    const v = sumOf(keyOf(li.productId));
+    v.next += Number(li.qty);
+  }
+  // SA-1149 D2: a net only. On every request path W-871 (`assertNoReplaceAfterDelivery`, replace-after-delivery.ts)
+  // refuses a replace on a DELIVERED order first. Removed with the carry by the LATER cleanup.
+  // A delivered product with no recreated row counts as next = 0, so the floor refuses the omission too.
+  for (const v of sums.values()) assertQtyNotBelowDelivered(v.delivered, v.held, v.next);
   const lastOfKey = new Map<string, string>();
   for (const li of fresh) lastOfKey.set(keyOf(li.productId), li.id);
   for (const li of fresh) {
@@ -169,8 +198,19 @@ function recreatedTargets(
  * A DELIVERED order with ANY qualifying DeliveryMutation row is REFUSED (409 ORDER_EDIT_NEEDS_LINE_IDS, before
  * any line is touched): the delete would orphan the evidence rows (their orderItemId is set null), and the
  * stable-id edit is the one model that keeps them attached. Otherwise it remembers each held line's delivered
- * quantity for the carry. Null when the order is not DELIVERED, or rode a route stop: nothing to carry.
+ * quantity for the carry. Null when the order is not DELIVERED, or rode a route stop: nothing to carry, and then a
+ * replace-all that would delete a delivered line is REFUSED (409 ORDER_EDIT_DELIVERED_LINES, SA-1149 D2).
  */
+export const DELIVERED_LINES_REPLACED_MESSAGE =
+  "Part of this order was already delivered, so its lines can't all be replaced at once. Change each line instead.";
+
+function deliveredLinesReplaced(): ConflictException {
+  return new ConflictException({
+    code: API_ERROR_CODES.ORDER_EDIT_DELIVERED_LINES,
+    message: DELIVERED_LINES_REPLACED_MESSAGE,
+  });
+}
+
 export async function captureRecreatedCarry(
   tx: Prisma.TransactionClient,
   orderId: string,
@@ -180,7 +220,15 @@ export async function captureRecreatedCarry(
     where: { id: orderId },
     select: { status: true, routeRunStopId: true },
   });
-  if (!head || head.status !== OrderStatus.DELIVERED) return null;
+  if (!head) return null;
+  // SA-1149 D2 (17:23Z): off the carry (not DELIVERED, or a route order) a replace-all deletes every line, and the
+  // recreated rows would start at deliveredQty 0: refused outright when any live line was delivered. The per-line
+  // edit keeps line ids, the stamp and the floor.
+  const deliveredLive = held.some(isLiveDeliveredLine);
+  if (head.status !== OrderStatus.DELIVERED) {
+    if (deliveredLive) throw deliveredLinesReplaced();
+    return null;
+  }
   const basis = await deliveredBasisByLine(tx, orderId);
   if (basis.hasMutations) {
     throw new ConflictException({
@@ -189,11 +237,16 @@ export async function captureRecreatedCarry(
         "This order was delivered with delivery records. Edit its lines one by one (keep each line's id) instead of replacing all of them.",
     });
   }
-  if (head.routeRunStopId) return null;
+  if (head.routeRunStopId) {
+    if (deliveredLive) throw deliveredLinesReplaced();
+    return null;
+  }
   return {
     held: held.map((h) => ({
       id: h.id,
       key: keyOf(h.productId),
+      qty: Number(h.qty),
+      cancelled: h.status === "CANCELLED",
       // no evidence on this order (refused above): the units that left are the booked floor max(d, qty); a
       // CANCELLED line was already returned to the shelf (never booked), so it keeps its stored value
       deliveredQty:

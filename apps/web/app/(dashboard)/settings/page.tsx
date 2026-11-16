@@ -2686,8 +2686,7 @@ function InvoicingTab() {
     }
   }, [savedSettings]);
 
-  // ONE value for the "Payment Terms" select and the Invoice Numbering "Payment Due Days" select
-  // (B1188): the draft shows the pick at once in both; it is dropped once the save settles, when
+  // The ONE payment-terms select (B1188, UX guide B9): the draft shows the pick at once; it is dropped once the save settles, when
   // the refetched server value takes over (or the pick reverts on failure).
   const [termsDraft, setTermsDraft] = React.useState<string | null>(null);
   const shownTerms = termsDraft ?? invoiceSettings?.defaultTerms ?? "Net 30";
@@ -2868,7 +2867,7 @@ function InvoicingTab() {
       <Card title="Default invoice terms">
         <div className="space-y-4">
           <p className="text-sm text-navy/70">
-            Automatically applied to invoices created from deliveries
+            Used for every new invoice. A customer&apos;s own terms override this.
           </p>
 
           <div className="flex items-center gap-4 rounded-lg border border-surface-border bg-surface-raised p-4">
@@ -2879,6 +2878,7 @@ function InvoicingTab() {
               <p className="text-sm font-semibold text-navy">Payment terms</p>
               <select
                 className="w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                id="invoice-default-terms"
                 aria-label="Payment terms"
                 value={shownTerms}
                 onChange={(e) => handleTermsChange(e.target.value)}
@@ -3019,11 +3019,7 @@ function InvoicingTab() {
         </div>
       </Card>
 
-      <InvoiceNumberingCard
-        terms={shownTerms}
-        onTermsChange={handleTermsChange}
-        termsDisabled={isLoading || updateSettings.isPending}
-      />
+      <InvoiceNumberingCard />
 
       <Card title="Invoice defaults">
         <div className="space-y-4">
@@ -3138,7 +3134,7 @@ function SettingsPageInner() {
     },
     invoicing: { title: "Invoicing", node: <InvoicingTab />, width: "max-w-3xl" },
     costing: { title: "Costing", node: <CostingTab />, width: "max-w-3xl" },
-    remittance: { title: "How to pay", node: <RemittanceTab />, width: "max-w-3xl" },
+    remittance: { title: "How customers pay you", node: <RemittanceTab />, width: "max-w-3xl" },
     integrations: {
       title: "Integrations",
       node: isAdmin ? <AIIntegrationsTab /> : <AdminOnlyNotice />,

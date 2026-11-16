@@ -53,7 +53,7 @@ apps/api/src/bookkeeping/bookkeeping.service.ts | ExpenseStatus | 1 | pending:B7
 apps/api/src/bookkeeping/dto/create-expense.dto.ts | ExpenseStatus | 2 | pending:B7 | array+union {PENDING,RECEIVED,PAID,VOID}
 apps/api/src/buyer/buyer-admin.controller.ts | BuyerAccountStatus | 1 | pending:B7 | union {ACTIVE,SUSPENDED,DELETED}
 apps/api/src/buyer/buyer-admin.service.ts | BuyerAccountStatus | 1 | pending:B7 | union {ACTIVE,SUSPENDED,DELETED}
-apps/api/src/buyer/buyer-dashboard.service.ts | OrderStatus | 2 | pending:B7 | array {PENDING,CONFIRMED,OUT_FOR_DELIVERY,PARTIALLY_D…
+apps/api/src/buyer/buyer-dashboard.service.ts | OrderStatus | 1 | pending:B7 | array {CONFIRMED,OUT_FOR_DELIVERY,PARTIALLY_DELIVERED}
 apps/api/src/buyer/buyer.service.ts | CustomerLinkStatus | 1 | pending:B7 | array {ACTIVE,INVITED,PENDING_SELLER_APPROVAL}
 apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts | CrmHandoffStatus | 4 | pending:B7 | array+object {CREATED,LINKED,SKIPPED,DRY_RUN,NEEDS_REVIEW,FA…
 apps/api/src/documents/receipt-model.ts | PaymentMethod | 2 | pending:B7 | array+object {CASH,CARD,CHECK,OTHER,STORE_CREDIT}
@@ -177,7 +177,6 @@ apps/api/src/common/barcode-bcid.ts | BarcodeSymbology | 2 | pending:B7 | object
 apps/api/src/messaging/messaging-config.service.ts | MessageChannel | 1 | pending:B4 | object {EMAIL,WHATSAPP,SMS,PORTAL}
 apps/api/src/orders/counter-sale/counter-sale-void-handback.ts | PaymentMethod | 1 | pending:B7 | object {CASH,CREDIT_CARD,CHECK}
 apps/api/src/settings-fulfilment/settings-fulfilment.service.ts | FulfillPath | 1 | pending:B7 | object {ROUTE,SHIP,PICKUP}
-apps/web/app/(dashboard)/bookkeeping/[transactionId]/page.tsx | TxnStatus | 1 | pending:B5 | union {UNPAID,PARTIAL,PAID}
 apps/web/app/(dashboard)/customers/[id]/invoice-status-badge.tsx | InvoiceStatus | 2 | pending:B5 | object {SENT,VIEWED,PARTIAL,OVERDUE}
 apps/web/app/(dashboard)/customers/[id]/page.tsx | CustomerLinkStatus | 1 | pending:B5 | chain {ACTIVE,INVITED,PENDING_SELLER_APPROVAL}
 apps/web/app/(dashboard)/customers/_components/walk-in-protection.tsx | UserStatus | 1 | pending:B5 | array {ACTIVE,INACTIVE,SUSPENDED}

@@ -35,7 +35,6 @@ for (const width of [1440, 768, 390]) {
       // Inventory: every control of the card and its terms neighbour.
       const prefix = page.getByLabel("Invoice number prefix");
       await expect(prefix).toBeVisible();
-      await expect(page.getByLabel("Payment due days")).toBeVisible();
       await expect(page.getByLabel("Payment terms")).toBeVisible();
       const save = page.getByRole("button", { name: "Save numbering" });
       await expect(save).toBeVisible();

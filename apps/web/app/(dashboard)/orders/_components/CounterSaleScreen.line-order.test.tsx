@@ -6,6 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { screen, waitFor, fireEvent, within } from "@/test-utils/render";
 import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
+import { installScanClock } from "@/test-utils/scan-clock";
 
 /**
  * W-1187 PR-2b: the till's lines can be dragged into any order. The cart is a local list and its array order is the order the
@@ -42,6 +43,8 @@ const PRODUCTS: Record<string, unknown> = {
   COLA: P("p-cola", "Cola"),
   WATER: P("p-water", "Water"),
   JUICE: P("p-juice", "Juice"),
+  cola12345678: P("p-cola", "Cola"), // SA-1138 T3: a lowercase-led code
+  "4006381333931": P("p-cola", "Cola"), // a real-shaped code that resolves to the product already in the cart
 };
 const mockLookups: string[] = [];
 jest.mock("@/lib/barcode-resolve", () => ({
@@ -142,6 +145,8 @@ async function altDown(name: string) {
     fireEvent.keyDown(handle(name), { key: "ArrowDown", code: "ArrowDown", altKey: true });
   });
 }
+
+installScanClock(); // SA-1159: key stamps through the constants, never the wall clock
 
 describe("CounterSaleScreen: drag a line into any order (W-1187 PR-2b)", () => {
   it("every line of a two-line cart has a labelled handle; a one-line cart has none", async () => {
@@ -267,6 +272,65 @@ describe("CounterSaleScreen: drag a line into any order (W-1187 PR-2b)", () => {
     await waitFor(() => expect(names()).toEqual(["Cola", "Water", "Juice"]));
     expect(mockToast).not.toHaveBeenCalled(); // no "Moved ..."
   });
+
+  it("SD-T3: a lowercase-led code + Enter typed on a line handle (not picked up) is looked up once, whole; the order stays", async () => {
+    await cart("COLA", "WATER");
+    mockLookups.length = 0;
+    handle("Water").focus();
+    const user = userEvent.setup({ delay: 5 });
+    await user.keyboard("cola12345678{Enter}");
+    await waitFor(() => expect(mockLookups.length).toBeGreaterThan(0));
+    expect(mockLookups).toEqual(["cola12345678"]);
+    await waitFor(() => expect(rows()[0]).toMatch(/× 2/));
+    expect(names()).toEqual(["Cola", "Water"]);
+    expect(mockToast).not.toHaveBeenCalled();
+  });
+
+  // SA-1138 TG8: a line picked up with Space, then a scan: the code is looked up once whole, the move ends, and a later
+  // ArrowDown (focus in the scan box) moves no line.
+  it.each(["4006381333931", "cola12345678"])(
+    "TG8: a line picked up with Space, then a whole scan %s + Enter: looked up once, the move ends, ArrowDown moves nothing",
+    async (code) => {
+      jest.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
+        this: Element,
+      ) {
+        const li = this.closest("li");
+        const i = li ? Array.from(li.parentElement!.children).indexOf(li) : 0;
+        const top = li ? i * 50 : 0;
+        return {
+          x: 0,
+          y: top,
+          top,
+          left: 0,
+          right: 200,
+          bottom: top + 50,
+          width: 200,
+          height: 50,
+          toJSON() {},
+        } as DOMRect;
+      });
+      await cart("COLA", "WATER", "JUICE");
+      mockLookups.length = 0;
+      const h = handle("Cola");
+      h.focus();
+      human();
+      fireEvent.keyDown(h, { key: " ", code: "Space" });
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 0));
+      });
+      expect(h).toHaveAttribute("aria-pressed", "true"); // picked up
+      const user = userEvent.setup({ delay: 5 });
+      await user.keyboard(`${code}{Enter}`);
+      await waitFor(() => expect(mockLookups.filter((c) => c === code)).toHaveLength(1));
+      expect(mockLookups).toEqual([code]);
+      expect(h).not.toHaveAttribute("aria-pressed", "true"); // the move ended
+      human();
+      await act(async () => {
+        fireEvent.keyDown(document, { key: "ArrowDown", code: "ArrowDown" });
+      });
+      expect(names()).toEqual(["Cola", "Water", "Juice"]);
+    },
+  );
 
   it("a burst of arrow keys + Enter on a focused handle moves and picks up nothing", async () => {
     await cart("COLA", "WATER");

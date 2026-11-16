@@ -3369,6 +3369,13 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
       });
     });
 
+    it("B-1: the portal returns to the Billing page (the one Stripe page with a way back)", async () => {
+      const { svc, stripe } = make({ sub: FAILING });
+      await svc.createBillingPortalSession("t1");
+      const returnUrl: string = stripe.createBillingPortalSession.mock.calls[0][0].returnUrl;
+      expect(new URL(returnUrl).pathname + new URL(returnUrl).search).toBe("/settings/billing");
+    });
+
     it("#2476: the user-facing portal session keeps Stripe's default request options", async () => {
       const { svc, stripe } = make({ sub: FAILING });
       await svc.createBillingPortalSession("t1");

@@ -77,6 +77,7 @@ describeDb("H3 qty-only unit edit keeps the stored price — real Postgres", () 
       tier: () => 3,
       overriddenBy: userId,
       held,
+      flooredDelivered: new Map(),
       repriceTierOnQtyOnly: buyer, // the buyer's count diff (SA-507b)
       categoryMap: new Map(),
       priceEditAllowed: true,

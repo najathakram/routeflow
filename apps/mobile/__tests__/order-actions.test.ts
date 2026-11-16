@@ -165,7 +165,8 @@ describe("statusActions — ROUTE (default) is byte-identical to the pre-extract
         toStatus: "PENDING",
         style: "primary",
         icon: "refresh-outline",
-        confirmMessage: "Reopen this cancelled order back to Pending?",
+        confirmMessage:
+          "Reopen this order? A cancelled draft comes back as a draft. Any other order comes back as Pending.",
         reopenCancelled: true,
       },
     ]);

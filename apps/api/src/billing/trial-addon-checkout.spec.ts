@@ -670,7 +670,7 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
       rows: [addonRow("FORECASTING", { qty: 1 }), addonRow("CUSTOMER_PACK_100", { qty: 2 })],
     });
 
-    await h.billing.createCheckoutSession("t1", "month");
+    await h.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" });
 
     const args = h.client.checkout.sessions.create.mock.calls[0][0];
     expect(args.mode).toBe("subscription");
@@ -700,7 +700,7 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
   it("puts the SKUs in the session metadata AND the subscription metadata", async () => {
     const h = make({ rows: [addonRow("CUSTOMER_PACK_100", { qty: 2 }), addonRow("FORECASTING")] });
 
-    await h.billing.createCheckoutSession("t1", "month");
+    await h.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" });
 
     const args = h.client.checkout.sessions.create.mock.calls[0][0];
     expect(args.metadata).toEqual({
@@ -729,7 +729,7 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
         addonRow("CUSTOMER_PACK_100", { qty: 4, addonKey: "extra_pack" }), // billable
       ],
     });
-    await h.billing.createCheckoutSession("t1", "month");
+    await h.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" });
     const lines = h.client.checkout.sessions.create.mock.calls[0][0].line_items;
     expect(lines).toHaveLength(3); // the plan + FORECASTING + the one CUSTOMER_PACK_100 line
     expect(lines.map((l: any) => l.quantity)).toEqual([1, 4, 1]);
@@ -741,7 +741,7 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
         addonRow("CUSTOMER_PACK_100", { addonKey: "extra_pack" }),
       ],
     });
-    await dup.billing.createCheckoutSession("t1", "month");
+    await dup.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" });
     expect(dup.client.checkout.sessions.create.mock.calls[0][0].line_items).toHaveLength(2); // plan + ONE line
 
     // a SKU the plan already bundles is never sold again (F3), so it gets no line either
@@ -750,7 +750,7 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
       tenantPlan: "BUSINESS",
       planKey: "SCALE",
     });
-    await bundled.billing.createCheckoutSession("t1", "month");
+    await bundled.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" });
     expect(bundled.client.checkout.sessions.create.mock.calls[0][0].line_items).toHaveLength(1);
   });
 
@@ -763,7 +763,7 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
         rows: [addonRow("CUSTOMER_PACK_100", { qty: 0 }), addonRow("FORECASTING", { qty: 1 })],
       });
 
-      await h.billing.createCheckoutSession("t1", "month");
+      await h.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" });
 
       expect(h.client.checkout.sessions.create.mock.calls[0][0].line_items).toHaveLength(2);
       const told = qtyNotices(h);
@@ -782,10 +782,12 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
 
     it("once per row however many checkouts are created (the dedupe key is the row)", async () => {
       const h = make({ rows: [addonRow("CUSTOMER_PACK_100", { qty: 0 })] });
-      await h.billing.createCheckoutSession("t1", "month");
-      await h.billing.createCheckoutSession("t1", "month");
+      await h.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" });
+      await h.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" });
       // an annual checkout is refused (SA-733 D6) AFTER the add-on lines were read: still the same one notice
-      await expect(h.billing.createCheckoutSession("t1", "year")).rejects.toMatchObject({
+      await expect(
+        h.billing.createCheckoutSession("t1", { interval: "year", surface: "ADMIN_LINK" }),
+      ).rejects.toMatchObject({
         status: 400,
       });
       expect(qtyNotices(h)).toHaveLength(1);
@@ -801,18 +803,20 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
         tenantPlan: "BUSINESS",
         planKey: "SCALE", // FORECASTING is bundled at SCALE
       });
-      await h.billing.createCheckoutSession("t1", "month");
+      await h.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" });
       expect(qtyNotices(h)).toEqual([]);
     });
 
     it("a quantity >= 1 row raises nothing; a notice that cannot be written never fails the checkout", async () => {
       const ok = make({ rows: [addonRow("CUSTOMER_PACK_100", { qty: 1 })] });
-      await ok.billing.createCheckoutSession("t1", "month");
+      await ok.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" });
       expect(qtyNotices(ok)).toEqual([]);
 
       const bad = make({ rows: [addonRow("CUSTOMER_PACK_100", { qty: 0 })] });
       bad.tx.auditLog.create.mockRejectedValueOnce(new Error("db down"));
-      await expect(bad.billing.createCheckoutSession("t1", "month")).resolves.toMatchObject({
+      await expect(
+        bad.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" }),
+      ).resolves.toMatchObject({
         sessionId: "cs_1",
       });
     });
@@ -826,7 +830,7 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
       ],
     });
 
-    await h.billing.createCheckoutSession("t1", "month");
+    await h.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" });
 
     const call = h.client.checkout.sessions.create.mock.calls[0][0];
     expect(call.line_items).toHaveLength(2); // the plan + FORECASTING only
@@ -836,7 +840,9 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
     // a quantity-0 row alone is nothing to bill: an ANNUAL checkout is no longer an ADD-ON refusal
     // (SA-733 D6 refuses every annual checkout, with its own code)
     const only = make({ rows: [addonRow("CUSTOMER_PACK_100", { qty: 0 })] });
-    const refused: any = await only.billing.createCheckoutSession("t1", "year").catch((e) => e);
+    const refused: any = await only.billing
+      .createCheckoutSession("t1", { interval: "year", surface: "ADMIN_LINK" })
+      .catch((e) => e);
     expect(refused.getResponse()).toMatchObject({
       code: API_ERROR_CODES.CHECKOUT_ANNUAL_NOT_SUPPORTED,
     });
@@ -854,7 +860,9 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
       ],
     });
 
-    const err: any = await h.billing.createCheckoutSession("t1", "year").catch((e) => e);
+    const err: any = await h.billing
+      .createCheckoutSession("t1", { interval: "year", surface: "ADMIN_LINK" })
+      .catch((e) => e);
 
     expect(err).toBeInstanceOf(ConflictException);
     expect(err.getResponse()).toEqual({
@@ -867,7 +875,9 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
   it("NIT: the checkout refusal no longer carries the generic copy (the shared constant of the enable/quantity/preview paths is unchanged)", async () => {
     // settings-billing.controller.spec / subscription-mutation.addon-billing.spec still pin that constant
     const h = make({ rows: [addonRow("CUSTOMER_PACK_100", { qty: 2 })] });
-    const err: any = await h.billing.createCheckoutSession("t1", "year").catch((e) => e);
+    const err: any = await h.billing
+      .createCheckoutSession("t1", { interval: "year", surface: "ADMIN_LINK" })
+      .catch((e) => e);
     expect(err.getResponse().message).not.toBe(
       "Add-ons can't be added to an annual plan online yet. Please contact support.",
     );
@@ -877,7 +887,9 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
   it("refuses an ANNUAL checkout that would bill an add-on: 409 ADDON_ANNUAL_NOT_SUPPORTED, no Stripe call", async () => {
     const h = make({ rows: [addonRow("CUSTOMER_PACK_100", { qty: 2 })] });
 
-    const err: any = await h.billing.createCheckoutSession("t1", "year").catch((e) => e);
+    const err: any = await h.billing
+      .createCheckoutSession("t1", { interval: "year", surface: "ADMIN_LINK" })
+      .catch((e) => e);
 
     expect(err).toBeInstanceOf(ConflictException);
     expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.ADDON_ANNUAL_NOT_SUPPORTED });
@@ -888,7 +900,7 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
 
   it("a checkout with no unbilled add-on is exactly the plan line (monthly and annual): no tags", async () => {
     const monthly = make({ rows: [] });
-    await monthly.billing.createCheckoutSession("t1", "month");
+    await monthly.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" });
     const m = monthly.client.checkout.sessions.create.mock.calls[0][0];
     expect(m.line_items).toEqual([{ price_data: PLAN_PRICE_DATA, quantity: 1 }]);
     expect(m.metadata).toEqual({
@@ -905,7 +917,9 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
 
     // only a SWITCHED-OFF row means nothing to bill: an annual checkout is then refused by D6 alone
     const annual = make({ rows: [addonRow("CUSTOMER_PACK_100", { active: false })] });
-    await expect(annual.billing.createCheckoutSession("t1", "year")).rejects.toMatchObject({
+    await expect(
+      annual.billing.createCheckoutSession("t1", { interval: "year", surface: "ADMIN_LINK" }),
+    ).rejects.toMatchObject({
       status: 400,
     });
   });
@@ -918,7 +932,7 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
         addonRow("CUSTOMER_PACK_100", { qty: 5, addonKey: "customer_pack_100_legacy" }),
       ],
     });
-    await h.billing.createCheckoutSession("t1", "month");
+    await h.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" });
     const lines = h.client.checkout.sessions.create.mock.calls[0][0].line_items;
     expect(lines).toHaveLength(2);
     expect(lines[1].quantity).toBe(2); // the oldest row — the same pick findAddonRow makes
@@ -1875,6 +1889,7 @@ describe("SA-690 all three callers of createCheckoutSession bill the add-ons", (
         {} as any,
         {} as any,
         h.billing,
+        {} as any,
       ).createCheckout({ tenantId: "t1", sub: "u1" } as any),
     // POST /billing/checkout (super-admin): takes URLs only, so always monthly
     billingController: () =>
@@ -3298,7 +3313,9 @@ describe("MUST-A2: only resource_missing means the stored subscription is not li
       h.stripe.getSubscription.mockRejectedValueOnce(transient());
       const spy = jest.spyOn(h.mutations, "checkoutAddonLines");
 
-      const err: any = await h.billing.createCheckoutSession("t1", "month").catch((e) => e);
+      const err: any = await h.billing
+        .createCheckoutSession("t1", { surface: "ADMIN_LINK" })
+        .catch((e) => e);
 
       expect(err).toBeInstanceOf(ServiceUnavailableException);
       expect(String(err.message)).not.toMatch(/connection to Stripe/); // fixed copy, never Stripe's text
@@ -3321,7 +3338,7 @@ describe("MUST-A2: only resource_missing means the stored subscription is not li
           Object.assign(new Error("No such subscription"), extra),
         );
 
-        await h.billing.createCheckoutSession("t1", "month");
+        await h.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" });
 
         expect(h.client.checkout.sessions.create).toHaveBeenCalledTimes(1);
       },
@@ -3332,7 +3349,9 @@ describe("MUST-A2: only resource_missing means the stored subscription is not li
         rows: [addonRow("CUSTOMER_PACK_100")],
         baseSub: { stripeSubId: "sub_live" },
       });
-      const err: any = await h.billing.createCheckoutSession("t1", "month").catch((e) => e);
+      const err: any = await h.billing
+        .createCheckoutSession("t1", { surface: "ADMIN_LINK" })
+        .catch((e) => e);
       expect(err.status).toBe(400);
       expect(h.client.checkout.sessions.create).not.toHaveBeenCalled();
     });
@@ -3350,7 +3369,7 @@ describe("S2 fold: with no live subscription at checkout, a stripeItemId that is
         ],
       });
 
-      await h.billing.createCheckoutSession("t1", "month");
+      await h.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" });
 
       const lines = h.client.checkout.sessions.create.mock.calls[0][0].line_items;
       expect(lines).toHaveLength(2);
@@ -3368,11 +3387,13 @@ describe("S2 fold: with no live subscription at checkout, a stripeItemId that is
           addonRow("FORECASTING", { isComp: true, stripeItemId: "si_comp" }),
         ],
       });
-      await h.billing.createCheckoutSession("t1", "month");
+      await h.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" });
       expect(h.client.checkout.sessions.create.mock.calls[0][0].line_items).toHaveLength(2);
 
       const annual = make({ rows: [addonRow("CUSTOMER_PACK_100", { stripeItemId: "si_dead" })] });
-      const err: any = await annual.billing.createCheckoutSession("t1", "year").catch((e) => e);
+      const err: any = await annual.billing
+        .createCheckoutSession("t1", { interval: "year", surface: "ADMIN_LINK" })
+        .catch((e) => e);
       expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.ADDON_ANNUAL_NOT_SUPPORTED });
     });
   });
@@ -3859,7 +3880,9 @@ describe("NIT 7/8: the path-(c) snapshot goes through the pricing helpers, and t
   it("an existing LIVE Stripe subscription is refused BEFORE the add-on rows are read", async () => {
     const h = make({ rows: [addonRow("CUSTOMER_PACK_100")], baseSub: { stripeSubId: "sub_live" } });
     const spy = jest.spyOn(h.mutations, "checkoutAddonLines");
-    const err: any = await h.billing.createCheckoutSession("t1", "month").catch((e) => e);
+    const err: any = await h.billing
+      .createCheckoutSession("t1", { surface: "ADMIN_LINK" })
+      .catch((e) => e);
     expect(err.status).toBe(400);
     expect(String(err.message)).toMatch(/already has a active Stripe subscription|already has a/);
     expect(spy).not.toHaveBeenCalled();
@@ -4009,7 +4032,7 @@ describe("SA-693 comps: a platform grant (TenantAddon.isComp) is never billed at
   it("a comp self-serve row on a trial gets NO checkout line (it was PENDING-SA-RULING: billed)", async () => {
     const h = make({ status: "TRIAL", rows: [comp("FORECASTING", { qty: 1 })] });
 
-    await h.billing.createCheckoutSession("t1", "month");
+    await h.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" });
 
     const args = h.client.checkout.sessions.create.mock.calls[0][0];
     expect(args.line_items).toHaveLength(1); // the plan only
@@ -4021,14 +4044,16 @@ describe("SA-693 comps: a platform grant (TenantAddon.isComp) is never billed at
     const onlyComp = make({ rows: [comp("CUSTOMER_PACK_100", { qty: 3 })] });
     // nothing billable -> no ADD-ON refusal; the annual checkout is refused by D6 (its own code) instead
     const noAddonRefusal: any = await onlyComp.billing
-      .createCheckoutSession("t1", "year")
+      .createCheckoutSession("t1", { interval: "year", surface: "ADMIN_LINK" })
       .catch((e) => e);
     expect(noAddonRefusal.getResponse()).toMatchObject({
       code: API_ERROR_CODES.CHECKOUT_ANNUAL_NOT_SUPPORTED,
     });
 
     const both = make({ rows: [comp("CUSTOMER_PACK_100"), addonRow("FORECASTING")] });
-    await expect(both.billing.createCheckoutSession("t1", "year")).rejects.toMatchObject({
+    await expect(
+      both.billing.createCheckoutSession("t1", { interval: "year", surface: "ADMIN_LINK" }),
+    ).rejects.toMatchObject({
       status: 409,
     });
   });
@@ -4041,7 +4066,7 @@ describe("SA-693 comps: a platform grant (TenantAddon.isComp) is never billed at
         comp("FORECASTING"),
       ],
     });
-    await h.billing.createCheckoutSession("t1", "month");
+    await h.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" });
     const lines = h.client.checkout.sessions.create.mock.calls[0][0].line_items;
     expect(lines).toHaveLength(2);
     expect(lines[1].quantity).toBe(2);
@@ -4113,8 +4138,8 @@ describe("ensureStripeCustomer is serialized per tenant (the billing advisory lo
     const h = make({ rows: [], storedCustomer: null });
 
     await Promise.all([
-      h.billing.createCheckoutSession("t1", "month"),
-      h.billing.createCheckoutSession("t1", "month"),
+      h.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" }),
+      h.billing.createCheckoutSession("t1", { surface: "ADMIN_LINK" }),
     ]);
 
     expect(h.stripe.createCustomer).toHaveBeenCalledTimes(1);

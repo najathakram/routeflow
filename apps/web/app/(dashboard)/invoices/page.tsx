@@ -826,9 +826,11 @@ export default function InvoicesPage() {
                         title="No invoices yet"
                         description="Create an invoice to bill a customer and start tracking receivables."
                         action={
-                          <WriteButton size="sm" onClick={() => router.push("/invoices/new")}>
-                            New invoice
-                          </WriteButton>
+                          !isCustomer ? (
+                            <WriteButton size="sm" onClick={() => router.push("/invoices/new")}>
+                              New invoice
+                            </WriteButton>
+                          ) : undefined
                         }
                       />
                     )}
@@ -936,33 +938,35 @@ export default function InvoicesPage() {
                             >
                               <Eye className="h-4 w-4" />
                             </button>
-                            <button
-                              title="Print invoice"
-                              aria-label={`Print invoice ${inv.invoiceNumber}`}
-                              disabled={printingIds.has(inv.id)}
-                              onClick={async () => {
-                                if (printingIds.has(inv.id)) return;
-                                setPrintingIds((prev) => new Set(prev).add(inv.id));
-                                try {
-                                  // The one shared print path; it never throws and tells the user when it could not. Each row
-                                  // keeps its own spinner, and concurrent rows print independently (review finding F1).
-                                  await printInvoice.print(inv.id);
-                                } finally {
-                                  setPrintingIds((prev) => {
-                                    const next = new Set(prev);
-                                    next.delete(inv.id);
-                                    return next;
-                                  });
-                                }
-                              }}
-                              className="rounded p-1.5 text-navy/70 hover:bg-white hover:text-navy transition-colors disabled:opacity-50"
-                            >
-                              {printingIds.has(inv.id) ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                              ) : (
-                                <Printer className="h-4 w-4" />
-                              )}
-                            </button>
+                            {!isCustomer && (
+                              <button
+                                title="Print invoice"
+                                aria-label={`Print invoice ${inv.invoiceNumber}`}
+                                disabled={printingIds.has(inv.id)}
+                                onClick={async () => {
+                                  if (printingIds.has(inv.id)) return;
+                                  setPrintingIds((prev) => new Set(prev).add(inv.id));
+                                  try {
+                                    // The one shared print path; it never throws and tells the user when it could not. Each row
+                                    // keeps its own spinner, and concurrent rows print independently (review finding F1).
+                                    await printInvoice.print(inv.id);
+                                  } finally {
+                                    setPrintingIds((prev) => {
+                                      const next = new Set(prev);
+                                      next.delete(inv.id);
+                                      return next;
+                                    });
+                                  }
+                                }}
+                                className="rounded p-1.5 text-navy/70 hover:bg-white hover:text-navy transition-colors disabled:opacity-50"
+                              >
+                                {printingIds.has(inv.id) ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Printer className="h-4 w-4" />
+                                )}
+                              </button>
+                            )}
                             {!isCustomer && inv.status === "DRAFT" && (
                               <button
                                 title="Delete invoice"

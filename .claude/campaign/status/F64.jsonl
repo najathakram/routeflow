@@ -167,14 +167,56 @@
 {"id":"B1307","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1308","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1309","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B1310","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1310","batch":"F64","tier":"T2","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4320: the till and the order builder route a scan that starts off a text field through the one run-start rule (apps/web/lib/scan-run.ts); pinned by scan-run.test.ts and CreateOrderModal.scan-destination.test.tsx (fixed in 137ea38436fdd9da86acf8b8ecbe335d1e0273df)","sha":"137ea38436fdd9da86acf8b8ecbe335d1e0273df"}
 {"id":"B1311","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1312","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1313","batch":"F64","tier":"T3","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4305: the pin pattern is now /<\\w*(Modal|Dialog)\\b/ with no 0x08 byte left in the file, a test pins the pattern source, and the builder observed two red probes and restored them (a throwaway ZzProbeWindow.tsx with an open Modal fails the pin; deleting the BatchShipActions.tsx reason fails it). The #4305 reader re-ran the probes and grep -c for the 0x08 byte returns 0. (fixed in 5a7623d208b5d0aa9dc4f10c5c119b02ac8a3072)","sha":"5a7623d208b5d0aa9dc4f10c5c119b02ac8a3072"}
-{"id":"B1314","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B1315","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1314","batch":"F64","tier":"T2","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4320: the till and the order builder route a scan that starts off a text field through the one run-start rule (apps/web/lib/scan-run.ts); pinned by scan-run.test.ts and CreateOrderModal.scan-destination.test.tsx (fixed in 137ea38436fdd9da86acf8b8ecbe335d1e0273df)","sha":"137ea38436fdd9da86acf8b8ecbe335d1e0273df"}
+{"id":"B1315","batch":"F64","tier":"T3","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4319: Escape cancelling a line move no longer closes Create order (SortableLines.escape.test.tsx) (fixed in f19c50b8fb059d9e9d204dda92be639a892aa6e8)","sha":"f19c50b8fb059d9e9d204dda92be639a892aa6e8"}
 {"id":"B1316","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B1317","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B1318","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B1319","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B1320","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1317","batch":"F64","tier":"T3","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4319: page.sale-date-chip.test.tsx pins the orderDate a sale invoice sends (fixed in f19c50b8fb059d9e9d204dda92be639a892aa6e8)","sha":"f19c50b8fb059d9e9d204dda92be639a892aa6e8"}
+{"id":"B1318","batch":"F64","tier":"T3","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4319: order-date-copy.inventory.test.ts catches a till-only string in the picker (fixed in f19c50b8fb059d9e9d204dda92be639a892aa6e8)","sha":"f19c50b8fb059d9e9d204dda92be639a892aa6e8"}
+{"id":"B1319","batch":"F64","tier":"T3","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4319: CounterDateChip ignores Alt+D while another dialog is open (CounterDateChip.test.tsx) (fixed in f19c50b8fb059d9e9d204dda92be639a892aa6e8)","sha":"f19c50b8fb059d9e9d204dda92be639a892aa6e8"}
+{"id":"B1320","batch":"F64","tier":"T3","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4319: the unused overdueCutoff import is removed from invoices.service.ts (fixed in f19c50b8fb059d9e9d204dda92be639a892aa6e8)","sha":"f19c50b8fb059d9e9d204dda92be639a892aa6e8"}
+{"id":"B249","batch":"F64","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Re-check 2026-11-12 at master a587d034e: the phone user-agent proxy to the old mobile-web build was removed in #1320 (c5bd03375). apps/web/middleware.ts has no user-agent logic (comment :52-55), lib/marketing-routes.ts:18-24 records the exemptions retired, and middleware.marketing.test.ts:57-121 pins no UA rewrite, so a mistyped path on a phone reaches app/not-found.tsx like desktop. (fixed in c5bd03375a5aa2b47b0178cfde9fe1fb2c50065d)","sha":"c5bd03375a5aa2b47b0178cfde9fe1fb2c50065d"}
+{"id":"B250","batch":"F64","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Not a defect, re-check 2026-11-12 at master a587d034e: the old mailto demo form is gone; /contact is the static public/site/contact.html with plain mailto links by owner decision (spec 36 T1, pinned by e2e/36-marketing-site.spec.ts:122-131 and site-company-contact.static.test.ts:133-136). A lead-capture endpoint would be a new feature, not a bug fix. (fixed in b9dff4df789e34ef4defdac2cd16a2ae32c68e9f)","sha":"b9dff4df789e34ef4defdac2cd16a2ae32c68e9f"}
+{"id":"B1321","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1322","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1323","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1324","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1329","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1327","batch":"F64","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4312: the date-scan spec pins the system date (Wed 2026-06-17 12:00Z) beside useFakeTimers; 48/48 on a real Friday, independent review PASS, Verify green at head 76a08e6ac (fixed in 13fb12fd73c3107d98ca154f6363070fddeb3c9e)","sha":"13fb12fd73c3107d98ca154f6363070fddeb3c9e"}
+{"id":"B1330","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1331","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1332","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1333","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1334","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1335","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1336","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1337","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1338","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1339","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1340","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1341","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1342","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1343","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1344","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1345","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1346","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1347","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1348","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1349","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1350","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1351","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1352","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1353","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1354","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1355","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1356","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1357","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1358","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1359","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1360","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1361","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1362","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1363","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}

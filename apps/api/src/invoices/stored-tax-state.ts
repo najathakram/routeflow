@@ -3,12 +3,14 @@ import { InvoiceStatus } from "@prisma/client";
 import {
   inferredGoodsFlatRate,
   roundMoney,
+  type DiscountTaxBase,
   type MoneyLike,
   type SummedInvoiceTotals,
   type SumInvoiceTotalsOptions,
 } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { sumInvoiceTotalsStrict } from "../common/money-invariants.util";
+import { discountModeOf, type DiscountModeDoc } from "../common/discount-tax-mode";
 import { configuredTaxRateFraction } from "../common/tax-rate";
 import { isNsfLine } from "./nsf-line";
 
@@ -133,7 +135,13 @@ export interface TaxStateVerdict {
 
 export interface TaxStateArgs {
   /** The invoice row's stored header (subtotal and taxAmount are read). */
-  invoice: { subtotal?: unknown; taxAmount?: unknown; status?: unknown; orderId?: unknown };
+  invoice: {
+    subtotal?: unknown;
+    taxAmount?: unknown;
+    discount?: unknown;
+    status?: unknown;
+    orderId?: unknown;
+  } & DiscountModeDoc;
   /** Its stored lines, read under the caller's lock. */
   storedLines: ReadonlyArray<StoredTaxLine>;
   /** True when the caller can write the inferred rate onto the lines (price adjustment, the items edit). */
@@ -176,19 +184,34 @@ export function taxStateOf(args: TaxStateArgs): TaxStateVerdict {
     shipping,
     preferredRate,
   } = args;
-  const opts: SumInvoiceTotalsOptions = { discount, shipping, isTaxExempt };
+  // SA-1141 R6: the verdict reads the ROW's own mode (its source's `createdAt`), never the clock: a legacy row's verdict is
+  // master's, a new row is never falsely STALE.
+  const discountBase = discountModeOf(invoice);
+  const opts: SumInvoiceTotalsOptions = { discount, shipping, isTaxExempt, discountBase };
   const totals = sumInvoiceTotalsStrict(storedLines, opts);
+  // PRE_TAX: the stored tax was levied under the STORED discount, so "does it reproduce" judges with that one (a header edit
+  // that moves the discount moves the tax: `totals` carries the NEW figure, the staleness test the stored one). LEGACY: the
+  // discount never enters the tax, so the same sum.
+  const judged =
+    discountBase === "PRE_TAX"
+      ? sumInvoiceTotalsStrict(storedLines, { ...opts, discount: Number(invoice.discount ?? 0) })
+      : totals;
   const exemptWithLevy =
     !!refuseExemptLevy &&
     !!isTaxExempt &&
     storedLines.some((l) => toCents(l.categoryTaxAmount) !== 0);
   const toleranceCents =
     orderSiblingCount == null ? 0 : orderAllocationToleranceCents(orderSiblingCount);
-  const stale = exemptWithLevy || differsBeyond(totals.tax, invoice.taxAmount, toleranceCents);
+  const stale = exemptWithLevy || differsBeyond(judged.tax, invoice.taxAmount, toleranceCents);
   if (!stale || !canRestamp || isTaxExempt) return { totals, stale, restampRate: null };
   const inferred = inferredGoodsFlatRate(
-    { subtotal: invoice.subtotal, taxAmount: invoice.taxAmount, lines: storedLines },
-    { preferredRate },
+    {
+      subtotal: invoice.subtotal,
+      taxAmount: invoice.taxAmount,
+      discount: invoice.discount,
+      lines: storedLines,
+    },
+    { preferredRate, discountBase },
   ); // #2656: goods only
   return { totals, stale, restampRate: inferred?.verified ? inferred.rate : null };
 }
@@ -199,10 +222,19 @@ export function taxStateOf(args: TaxStateArgs): TaxStateVerdict {
  * MONEY_INVARIANT) by `sumInvoiceTotalsStrict` BEFORE any rate is inferred from them.
  */
 export function inferredGoodsRateForCopy(
-  invoice: { subtotal: unknown; taxAmount: unknown; lines: ReadonlyArray<any> },
-  opts?: { preferredRate?: number | null },
+  invoice: {
+    subtotal: unknown;
+    taxAmount: unknown;
+    discount?: unknown;
+    lines: ReadonlyArray<any>;
+  },
+  // SA-1141 R5: the SOURCE invoice's mode (`discountModeOf(source)`), REQUIRED: its stored tax was levied on that base.
+  opts: { preferredRate?: number | null; discountBase: DiscountTaxBase },
 ) {
-  sumInvoiceTotalsStrict(invoice.lines.map((l) => ({ ...l, subtotal: l.subtotal ?? 0 })));
+  sumInvoiceTotalsStrict(
+    invoice.lines.map((l) => ({ ...l, subtotal: l.subtotal ?? 0 })),
+    { discountBase: opts.discountBase },
+  );
 
   return inferredGoodsFlatRate(invoice, opts);
 }

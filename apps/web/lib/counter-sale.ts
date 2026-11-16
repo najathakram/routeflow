@@ -6,7 +6,9 @@ import {
   type ChargeLine,
   validCustomer,
   validLine,
+  type DiscountTaxBase,
 } from "@routeflow/pricing";
+import { newDocumentDiscountBase } from "./discount-tax-base";
 import { formatReceiptMoney } from "./counter-receipt";
 import { saleLinesOf, type CartCategory, type CartLine } from "./sale-lines";
 
@@ -165,6 +167,8 @@ export interface CartTotalsContext {
   isTaxExempt?: boolean;
   /** The tenant's regulated categories by id; a line whose category is absent here is not levied. */
   categories?: ReadonlyMap<string, CartCategory>;
+  /** SA-1141 R7: the till's sale is a NEW document, so this defaults to the base the server stamps now. */
+  discountBase?: DiscountTaxBase;
 }
 
 /**
@@ -188,6 +192,7 @@ export function cartTotals(
   const t = saleTotals(saleLinesOf(lines, ctx.categories), {
     taxRate,
     isTaxExempt: ctx.isTaxExempt === true,
+    discountBase: ctx.discountBase ?? newDocumentDiscountBase(),
   });
   return {
     subtotal: t.subtotal,

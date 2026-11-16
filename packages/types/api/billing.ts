@@ -117,6 +117,8 @@ export interface SubscriptionView<TDate = string> {
   paymentProcessing?: boolean;
   /** "Oct 15": when the oldest owed invoice fell due / went overdue, formatted by the SERVER in the tenant's zone. */
   openInvoiceDueLabel?: string;
+  /** The same moment as `openInvoiceDueLabel`, an ISO instant (a date, not money: staff keep it). SA-1150 S9. */
+  openInvoiceDueAt?: string;
   /** The OLDEST owed invoice's hosted page (admins only; omitted while a payment is processing). */
   payNowUrl?: string;
   /** What `payNowUrl` collects (that one invoice's amount remaining, dollars): the Pay button's own figure. */
@@ -221,7 +223,91 @@ export interface PaymentDuePayRequest {
   shown?: PaymentDueShown;
 }
 
+/** SA-1139: how a platform Checkout Session is shown. `hosted` = Stripe's page (a url); `embedded` = our page (a client secret). */
+export const CHECKOUT_UI_MODE_VALUES = ["hosted", "embedded"] as const;
+export type CheckoutUiMode = (typeof CHECKOUT_UI_MODE_VALUES)[number];
+
+/**
+ * SA-1139 R3: what every tenant-self checkout start answers. Exactly one of `checkoutUrl` and `clientSecret` is set,
+ * chosen by `uiMode`: a client branches on `uiMode`, never on which field is null. The secret mounts Stripe's own
+ * card form (card data never reaches us); it is returned only to the admin who asked and is never logged.
+ */
+export type CheckoutStart =
+  | {
+      uiMode: "hosted";
+      sessionId: string;
+      checkoutUrl: string;
+      clientSecret: null;
+      /** Hosted returns through Stripe's own `success_url` redirect, so there is nothing for the web to push. */
+      returnPath: null;
+    }
+  | {
+      uiMode: "embedded";
+      sessionId: string;
+      checkoutUrl: null;
+      clientSecret: string;
+      /**
+       * SA-1154: where the web goes when the form completes, read by the server from the Stripe session it created
+       * (its own `return_url` without `session_id`). The web pushes it only when it is one of
+       * {@link BILLING_RETURN_PATHS}, and never works it out from the request.
+       */
+      returnPath: string;
+    };
+
+/**
+ * SA-1154: the one allowlist of billing return addresses (a tenant lands on its billing page): a plan checkout, a
+ * payment, and a card add (nothing was charged, so it must never land on the payment path). The web refuses an
+ * embedded start whose `returnPath` is not an exact member.
+ */
+export const BILLING_RETURN_PATHS = {
+  plan: "/settings/billing?checkout=success",
+  pay: "/settings/billing?paid=1",
+  cardAdd: "/settings/billing?paid=1&card=1",
+} as const;
+
+/**
+ * SA-1146 B-1: where the Stripe billing portal sends the tenant back: the Billing page itself, no notice. NOT a member
+ * of {@link BILLING_RETURN_PATHS}: that list is what an embedded Checkout may return to, and this is no Checkout return.
+ */
+export const BILLING_PORTAL_RETURN_PATH = "/settings/billing";
+
+/** SA-1146 B-1: where a cancelled Checkout lands (nothing was charged). Not a return path: the web never pushes it. */
+export const BILLING_CANCEL_PATH = "/settings/billing?checkout=cancelled";
+
 /** `POST /billing/payment-due/pay` (TENANT_ADMIN): the Stripe Checkout to send the admin to. */
 export interface PaymentDuePayResult {
   checkoutUrl: string;
+}
+
+/**
+ * SA-1146 B-4: one row of the Billing "Payments" list. `source` says where it came from: a card payment
+ * (`stripe`, a paid Stripe invoice) or a RouteFlow invoice paid by hand (`routeflow`). `date` is an ISO instant the
+ * web prints in the tenant's zone. `amount` is dollars, rounded by the API (never recompute on the client).
+ * `receiptUrl` is Stripe's hosted invoice page, read live on every request and never stored; a RouteFlow row has none.
+ */
+export interface BillingPaymentRow {
+  id: string;
+  source: "stripe" | "routeflow";
+  date: string;
+  /** Dollars (the currency's major unit), rounded by the API. Null when the currency is unknown: never a wrong figure. */
+  amount: number | null;
+  currency: string;
+  /** When it was paid: an ISO instant, or null when the source did not say. The order key stays `date`. */
+  paidAt: string | null;
+  /** "Paid {day}" day, formatted by the API in the tenant's zone (e.g. "Nov 1"); null with `paidAt`. */
+  paidDayLabel: string | null;
+  /** Stripe invoice number or the RouteFlow invoice number (`RF-YYYY-NNNN`); null when Stripe has none. */
+  number: string | null;
+  receiptUrl: string | null;
+}
+
+/**
+ * `GET /billing/payments?cursor=`: up to `PAYMENTS_PAGE_SIZE` rows, newest first. `nextCursor` is an opaque
+ * string (null on the last page). `stripeUnavailable` is true when the card payments could not be read: the rows are
+ * then the RouteFlow ones only and the page must say so (it is never an empty list posing as "no payments").
+ */
+export interface BillingPaymentsPage {
+  rows: BillingPaymentRow[];
+  nextCursor: string | null;
+  stripeUnavailable: boolean;
 }

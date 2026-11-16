@@ -2113,9 +2113,12 @@ function LedgerReport() {
               return (
                 <tr key={tx.id} className="hover:bg-surface-raised/50">
                   <td className="px-4 py-2.5">
-                    <span className="font-mono text-xs font-semibold text-navy">
-                      {tx.order?.orderNumber ?? tx.id.slice(0, 8)}
-                    </span>
+                    <Link
+                      href={`/invoices/${tx.id}`}
+                      className="font-mono text-xs font-semibold text-brand-600 hover:underline"
+                    >
+                      {tx.invoiceNumber ?? tx.order?.orderNumber ?? tx.id.slice(0, 8)}
+                    </Link>
                   </td>
                   <td className="px-4 py-2.5 font-medium text-brand-600">
                     {tx.customer?.businessName ?? "\u2014"}

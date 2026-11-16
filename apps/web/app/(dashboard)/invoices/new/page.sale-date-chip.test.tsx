@@ -200,4 +200,38 @@ describe("W-1188: the New sale's date is the order-date chip, worded 'Sale date'
     await waitFor(() => expect(chip()).toHaveAttribute("data-direction", "TODAY"));
     expect(dateInputs().map((i) => i.value)).toContain("2026-11-25"); // untouched terms: the due date stays where it was
   });
+
+  /** B1317: what the sale sends. Yesterday is that day; Today (the untouched date) sends no orderDate key at all. */
+  describe("the orderDate the sale posts", () => {
+    const createSale = async (user: ReturnType<typeof userEvent.setup>) => {
+      mockCustomers = [{ id: "cust-1", businessName: "Acme Co" }];
+      mockBarcodeProduct = { id: "prod-1", name: "Widget", pricePerUnit: "9.99" };
+      await user.click(screen.getByPlaceholderText(/search customers/i));
+      await user.click(await screen.findByText("Acme Co"));
+      capturedOnScan!("012345678905");
+      await screen.findByDisplayValue("Widget");
+      await user.click(screen.getByRole("button", { name: /create sale & invoice/i }));
+      await waitFor(() => expect(mockCreateSale).toHaveBeenCalledTimes(1));
+      return mockCreateSale.mock.calls[0][0] as Record<string, unknown>;
+    };
+
+    it("Yesterday sends that day as orderDate", async () => {
+      mockCustomers = [{ id: "cust-1", businessName: "Acme Co" }];
+      const user = await openSale();
+      await user.click(chipButton());
+      const dialog = await screen.findByRole("dialog", { name: "Sale date" });
+      await user.click(within(dialog).getByRole("button", { name: "Yesterday" }));
+      await waitFor(() => expect(chip()).toHaveAttribute("data-direction", "BACK"));
+      const dto = await createSale(user);
+      expect(dto.orderDate).toBe("2026-10-25");
+    });
+
+    it("Today sends no orderDate key", async () => {
+      mockCustomers = [{ id: "cust-1", businessName: "Acme Co" }];
+      const user = await openSale();
+      expect(chip()).toHaveAttribute("data-direction", "TODAY");
+      const dto = await createSale(user);
+      expect(dto).not.toHaveProperty("orderDate");
+    });
+  });
 });

@@ -78,7 +78,7 @@ describe("R24 plan price confirm", () => {
     expect(mockImpact).toHaveBeenCalledWith("GROWTH", 149);
     expect(
       within(dialog).getByText(
-        "This changes the bill for 12 businesses on their next renewal. $100 more each month in total. 3 with their own price are not affected.",
+        "This changes the bill for 12 businesses on their next renewal. $100 more each month in total. 3 with their own price are not affected. Live Stripe subscriptions update from the next billing cycle.",
       ),
     ).toBeInTheDocument();
     expect(
@@ -249,7 +249,7 @@ describe("R24 plan price confirm", () => {
     const dialog = await screen.findByRole("dialog");
     expect(
       within(dialog).getByText(
-        "This changes the bill for 1 business on their next renewal. $49 more each month in total.",
+        "This changes the bill for 1 business on their next renewal. $49 more each month in total. Live Stripe subscriptions update from the next billing cycle.",
       ),
     ).toBeInTheDocument();
     expect(
@@ -278,5 +278,175 @@ describe("R24 plan price confirm", () => {
     await screen.findByRole("dialog", { name: "Change Growth from $100 to $149 a month?" });
     expect(mockImpact).toHaveBeenCalledTimes(2);
     expect(mockPatch).not.toHaveBeenCalled();
+  });
+});
+
+// UX guide B4 (residual): Save stays off until a price really changed; an annual-only change is titled as
+// one; the confirm says what happens to live Stripe subscriptions.
+describe("UX guide B4 dirty Save", () => {
+  it("Save is disabled until a price differs from the stored one", async () => {
+    render(<AdminPlansPage />);
+    const input = await screen.findByLabelText("Growth monthly price (USD)");
+    const save = screen.getByRole("button", { name: "Save" });
+    expect(save).toBeDisabled();
+    fireEvent.change(input, { target: { value: "149" } });
+    expect(save).toBeEnabled();
+    // typing the stored value back (even written differently) is no change
+    fireEvent.change(input, { target: { value: "100.00" } });
+    expect(save).toBeDisabled();
+  });
+
+  it("an annual-only edit enables Save and is titled as an annual change, not 'from $100 to $100'", async () => {
+    mockImpact.mockResolvedValue(impact({ newMonthly: 100, monthlyDelta: 0 }));
+    render(<AdminPlansPage />);
+    const annual = await screen.findByLabelText("Growth annual price (USD)");
+    fireEvent.change(annual, { target: { value: "1200" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(
+      await screen.findByRole("dialog", {
+        name: "Change Growth annual price from $1,000 to $1,200 a year?",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("the confirm tells the admin live Stripe subscriptions update from the next billing cycle", async () => {
+    await editAndSave();
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText(/Live Stripe subscriptions update from the next billing cycle\./),
+    ).toBeInTheDocument();
+  });
+});
+
+// UX guide B11: the public catalog omits invite-only plans, but their tenants are in the stats.
+describe("UX guide B11 read-only row for a plan the public catalog omits", () => {
+  it("renders a Lite row with its count, 'Invite-only, no public price', and a disabled Save", async () => {
+    mockStats.mockResolvedValue({ data: { planBreakdown: { LITE: 1, GROWTH: 2 } } });
+    render(<AdminPlansPage />);
+    await screen.findByLabelText("Growth monthly price (USD)");
+    const row = screen.getByText("Lite").closest("tr")!;
+    expect(within(row).getByText("1")).toBeInTheDocument();
+    expect(within(row).getByText("Invite-only, no public price")).toBeInTheDocument();
+    expect(within(row).getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(within(row).queryByRole("spinbutton")).toBeNull();
+  });
+
+  it("adds no row for a plan with no tenants", async () => {
+    mockStats.mockResolvedValue({ data: { planBreakdown: { LITE: 0, GROWTH: 2 } } });
+    render(<AdminPlansPage />);
+    await screen.findByLabelText("Growth monthly price (USD)");
+    expect(screen.queryByText("Lite")).toBeNull();
+  });
+});
+
+// UXG-R4: Save stays off on a clean row, but the retry that an unchanged Save used to be is kept as a named
+// control, "Sync to Stripe", which reuses the same count check, confirm and 409 loop.
+describe("UXG-R4 Sync to Stripe (retry a failed plan sync)", () => {
+  const stored = () => ({
+    monthly: 100,
+    annual: 1000,
+  });
+
+  it("WEB-1: a clean row has Save disabled and a Sync to Stripe button", async () => {
+    render(<AdminPlansPage />);
+    await screen.findByLabelText("Growth monthly price (USD)");
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Sync to Stripe" })).toBeEnabled();
+  });
+
+  it("WEB-2: a dirty row hides Sync to Stripe and enables Save", async () => {
+    render(<AdminPlansPage />);
+    fireEvent.change(await screen.findByLabelText("Growth monthly price (USD)"), {
+      target: { value: "149" },
+    });
+    expect(screen.queryByRole("button", { name: "Sync to Stripe" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  });
+
+  it("WEB-3: Sync -> confirm -> PATCH with the stored prices and the confirmed count; the toast shows unchanged and failed", async () => {
+    mockImpact.mockResolvedValue(impact({ newMonthly: 100, monthlyDelta: 0 }));
+    mockPatch.mockResolvedValue({
+      planKey: "GROWTH",
+      monthlyPrice: 100,
+      annualPrice: 1000,
+      updated: 12,
+      synced: 11,
+      unchanged: 10,
+      failed: 1,
+    });
+    render(<AdminPlansPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Sync to Stripe" }));
+    const dialog = await screen.findByRole("dialog", { name: "Sync Growth to Stripe?" });
+    expect(mockImpact).toHaveBeenCalledWith("GROWTH", 100);
+    expect(
+      within(dialog).getByText(
+        "Re-applies $100 a month to 12 live subscriptions. Subscriptions already at this price are not changed.",
+      ),
+    ).toBeInTheDocument();
+    expect(mockPatch).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Sync 12 subscriptions" }));
+    await waitFor(() => expect(mockPatch).toHaveBeenCalledTimes(1));
+    expect(mockPatch).toHaveBeenCalledWith("GROWTH", { ...stored(), expectedAffected: 12 });
+    expect(
+      await screen.findByText("Synced Growth: 1 updated, 10 already current, 1 failed."),
+    ).toBeInTheDocument();
+    // a result with failures is not shown in the success style
+    expect(screen.getByText(/1 failed/)).toHaveAttribute("data-tone", "error");
+  });
+
+  it("a save that reports failed syncs shows the error tone; a clean save shows the success tone", async () => {
+    mockPatch.mockResolvedValueOnce({
+      planKey: "GROWTH",
+      monthlyPrice: 149,
+      annualPrice: 1000,
+      updated: 12,
+      synced: 11,
+      failed: 1,
+    });
+    await editAndSave();
+    const dialog = await screen.findByRole("dialog", {
+      name: "Change Growth from $100 to $149 a month?",
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Change price for 12 businesses" }));
+    expect(await screen.findByText(/Saved Growth.*1 failed/)).toHaveAttribute("data-tone", "error");
+  });
+
+  it("a clean save toast carries the success tone", async () => {
+    await editAndSave();
+    const dialog = await screen.findByRole("dialog", {
+      name: "Change Growth from $100 to $149 a month?",
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Change price for 12 businesses" }));
+    expect(await screen.findByText(/Saved Growth/)).toHaveAttribute("data-tone", "success");
+  });
+
+  it("with no live subscriptions the confirm says nothing will change and only offers Close (no PATCH)", async () => {
+    mockImpact.mockResolvedValue(impact({ affected: 0, ownPrice: 0, monthlyDelta: 0 }));
+    render(<AdminPlansPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Sync to Stripe" }));
+    const dialog = await screen.findByRole("dialog", { name: "Sync Growth to Stripe?" });
+    expect(within(dialog).getByText(/Nothing will change/)).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Cancel" })).toBeNull();
+    // the dialog's X is also named Close; the footer button is the last one
+    fireEvent.click(within(dialog).getAllByRole("button", { name: "Close" }).at(-1)!);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(mockPatch).not.toHaveBeenCalled();
+  });
+
+  it("a 409 on a sync fetches the count again and keeps the dialog on the new number", async () => {
+    mockImpact
+      .mockResolvedValueOnce(impact({ newMonthly: 100, monthlyDelta: 0 }))
+      .mockResolvedValueOnce(impact({ newMonthly: 100, monthlyDelta: 0, affected: 13 }));
+    mockPatch.mockRejectedValueOnce({
+      response: { status: 409, data: { code: "PLAN_PRICE_IMPACT_CHANGED", affected: 13 } },
+    });
+    render(<AdminPlansPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Sync to Stripe" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Sync 12 subscriptions" }));
+    expect(
+      await screen.findByRole("button", { name: "Sync 13 subscriptions" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toHaveTextContent("Sync Growth to Stripe?");
   });
 });

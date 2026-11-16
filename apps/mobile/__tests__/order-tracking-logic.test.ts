@@ -1,6 +1,11 @@
 import { readFileSync } from "fs";
 import { join } from "path";
-import { buildReorderItems, canReorder, trackingStepIndex } from "../lib/order-tracking-logic";
+import {
+  buildReorderItems,
+  canReorder,
+  trackingStepDone,
+  trackingStepIndex,
+} from "../lib/order-tracking-logic";
 
 describe("buildReorderItems", () => {
   it("drops CANCELLED lines and lines with no productId", () => {
@@ -205,5 +210,37 @@ describe("trackingHeadline / trackingRefetchInterval (F11)", () => {
     expect(buyerSrc).not.toMatch(
       /s === "OUT_FOR_DELIVERY" \|\| s === "PARTIALLY_DELIVERED" \? 20_000/,
     );
+  });
+});
+
+/** UX guide B20: "Partial" (step 3) is done only for a partially delivered order, never skipped over by DELIVERED. */
+describe("trackingStepDone (UX guide B20)", () => {
+  it("a DELIVERED order does not tick the Partial step but ticks every other", () => {
+    expect([0, 1, 2, 3, 4].map((i) => trackingStepDone("DELIVERED", i))).toEqual([
+      true,
+      true,
+      true,
+      false,
+      true,
+    ]);
+  });
+  it("a PARTIALLY_DELIVERED order ticks steps 0-3, not Delivered", () => {
+    expect([0, 1, 2, 3, 4].map((i) => trackingStepDone("PARTIALLY_DELIVERED", i))).toEqual([
+      true,
+      true,
+      true,
+      true,
+      false,
+    ]);
+  });
+  it("earlier statuses are unchanged", () => {
+    expect([0, 1, 2, 3, 4].map((i) => trackingStepDone("OUT_FOR_DELIVERY", i))).toEqual([
+      true,
+      true,
+      true,
+      false,
+      false,
+    ]);
+    expect(trackingStepDone("CANCELLED", 0)).toBe(false);
   });
 });
