@@ -902,11 +902,14 @@ describeDb(
       expect(await creditState(inv.id, cn.id)).toEqual({ paid: 10, used: 10 });
     }, 60_000);
 
-    it("E5g3: source gone, a quantity increase (order $20 to $40, no shrink): 200, the credit stays 15 and 15 (OBSERVE whether a top-up touches a source-gone note)", async () => {
+    it("E5g3: source gone, a quantity increase (order $20 to $40) with the credit intent fully applied: 200, the invoice follows to $40 and no credit is written (15 paid, 15 used)", async () => {
       const { o, inv, lines, cn } = await creditDraft();
       await markSourceGone(cn.id);
       await withRealCredits(() => edit(o.id, { items: [{ id: lines[0].id, qty: 3 }] }));
       expect(Number((await raw.order.findUniqueOrThrow({ where: { id: o.id } })).total)).toBe(40);
+      expect(Number((await raw.invoice.findUniqueOrThrow({ where: { id: inv.id } })).total)).toBe(
+        40,
+      );
       expect(await creditState(inv.id, cn.id)).toEqual({ paid: 15, used: 15 });
     }, 60_000);
 

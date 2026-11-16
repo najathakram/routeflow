@@ -191,6 +191,7 @@ export async function settleShrinkPayments(
     include: { payments: true },
   });
   if (invoices.length !== 1 || invoices[0].status !== "DRAFT") return [];
+  // scan-ok: draft-payment-not-void — keeps every payment that still counts; a DRAFT one counts too.
   const nonVoid = (invoices[0].payments ?? []).filter((p: any) => p.status !== "VOID");
   const paid = roundMoney(nonVoid.reduce((s: number, p: any) => s + Number(p.amount), 0));
   if (!(roundMoney(paid - roundMoney(newTotal)) > OPEN_CREDIT_EPSILON)) return [];

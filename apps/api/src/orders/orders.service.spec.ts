@@ -7688,7 +7688,11 @@ describe("OrdersService", () => {
 
       await service.updateOrderItems("ord-1", editDto, operatorPayload);
 
-      expect(prisma.invoice.findMany).not.toHaveBeenCalled();
+      // E5 (SA-1156): the paid-invoice settle reads the order's invoice WITH its payments; the credit-limit
+      // exposure read is the other invoice query, and that is the one that must not run.
+      expect(
+        prisma.invoice.findMany.mock.calls.filter(([a]: any[]) => !a?.include?.payments),
+      ).toHaveLength(0);
       expect(prisma.order.update).toHaveBeenCalled();
     });
 
@@ -7859,7 +7863,11 @@ describe("OrdersService", () => {
 
       await service.updateOrderItems("ord-1", editDto, operatorPayload);
 
-      expect(prisma.invoice.findMany).not.toHaveBeenCalled();
+      // E5 (SA-1156): the paid-invoice settle reads the order's invoice WITH its payments; the credit-limit
+      // exposure read is the other invoice query, and that is the one that must not run.
+      expect(
+        prisma.invoice.findMany.mock.calls.filter(([a]: any[]) => !a?.include?.payments),
+      ).toHaveLength(0);
       expect(prisma.order.update).toHaveBeenCalled();
     });
   });
