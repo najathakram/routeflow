@@ -133,6 +133,18 @@ describe("replace-all refusal and line-delete pins (SA-1149 P-a..P-e)", () => {
       uses(svc, "assertQtyNotBelowDelivered(") + uses(unit, "assertQtyNotBelowDelivered("),
     ).toBe(2);
   });
+
+  it("P-f wiring: the ctx field is fed from the booked-floor Map; no other Map feeds it", () => {
+    const svc = text("orders/orders.service.ts");
+    // the Map is built from heldFloored (the heldAtBookedFloor result), once
+    expect(svc.match(/const flooredDelivered = new Map\(\s*heldFloored\.map\(/g)).toHaveLength(1);
+    // the unit ctx takes that Map by name (shorthand), not a literal
+    expect(svc).toMatch(/held: heldById,\s*flooredDelivered,\s*repriceTierOnQtyOnly/);
+    // no empty or raw-row Map under that name anywhere in the service
+    expect(svc).not.toMatch(/flooredDelivered:\s*new Map/);
+    expect(svc).not.toMatch(/flooredDelivered\s*=\s*new Map\(\s*heldItems/);
+    expect(svc.match(/flooredDelivered\s*=/g)).toHaveLength(1);
+  });
 });
 
 /** SA-1149 20:55Z: round 1's `delivered` seed (a DELIVERED line with d below qty and no evidence) must not come back. */
