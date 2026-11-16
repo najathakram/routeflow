@@ -211,7 +211,7 @@
 {"id":"B1352","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1353","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1354","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B1355","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1355","batch":"F64","tier":"T2","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4335 (SA-1149): ORDER_HAS_NO_LIVE_DELIVERED_LINE is read by every forMerge search and both branches of mergeEligibleWhere, so an order holding a live delivered line is never a merge winner or loser; the sweep count and the fold use the one predicate. Pins: w946r-merge-delivered.db.spec.ts, merge-lock-recheck.spec.ts. (fixed in f932dabcc804cc414d4aa876a73d3c0b2788521f)","sha":"f932dabcc804cc414d4aa876a73d3c0b2788521f"}
 {"id":"B1356","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1357","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1358","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}

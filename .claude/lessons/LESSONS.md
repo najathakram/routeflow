@@ -26,6 +26,13 @@
 - **Lesson:** **A ratchet file's line count is meaningful only on the merge result. The lane gate reports that count from a merge-tree of the branch with current master (no worktree needed), and it is read again when the reads are ordered, with the window's other members added.**
 - **Guard:** the lead's combined check measures it for window members; `size-ratchet.spec.ts` fails the merged tree.
 
+### L-391 · 2026-11-16 · process · a verbatim move or rename runs the full api jest and a grep of the specs for the old path before the reads (#4321)
+
+- **Symptom:** a verbatim lift of one service method into its own file passed a gate sized to the touched folders and both reads, then went red in CI: a census spec in another folder names the files allowed to write a field by path, and the moved code was no longer at the listed path.
+- **Root cause:** "size the gate to the delta" counts the folders a diff edits, and a move edits two files while a pin elsewhere names the old one; nothing in the move's own tests reads that path.
+- **Lesson:** **A move or a rename is never sized to the delta: run the whole api jest, and grep every spec and script for the old path and the old symbol before the reads are ordered. A census or allow-list that names files by path is edited in the same PR as the move.**
+- **Guard:** `apps/api/src/products/variant-name-writers-census.spec.ts` (its allowed list now names the new file); the grep step is a lane habit with no script yet.
+
 ### L-379 · 2026-11-12 · process · a hold or fix order is issued only after the reviewer's verdict and browser evidence are posted; the order carries their board comment ids (#4302)
 
 - **Symptom:** a hold and a one-case fix order for #4302 went out from an interim reading, before the reader's FAIL (board 6819958479) and the browser evidence (6819958939, which found more than the reader's MUST) were posted. It cost a round.
@@ -199,13 +206,6 @@
 - **Root cause:** `resolveOperatorPathGuard` trusts the `rf-op-auth` presence cookie, which a normal operator sign-in sets; `setImpersonation` stored the tokens but never set the cookie.
 - **Lesson:** **Every code path that makes a browser an operator (sign-in, impersonation, any future switch) calls the one helper that sets the presence cookie, and every exit path clears it unless the browser holds operator tokens of its own. Test it through the real guard with no mocks of the helpers.**
 - **Guard:** `lib/impersonation.presence.test.ts` (5 tests, real guard and helpers). Open: the automatic exits in `lib/api-client.ts` clear the tokens but not the cookie (see the register). Cf. [[L-369]].
-
-### L-371 · 2026-11-06 · domain · a default and a backfill reach rows that exist and rows created; a row moved into a role gets the role's defaults from the code that moves it (SA-1050 A-5)
-
-- **Symptom:** a migration appended `BAD_DEBT` to every existing OPERATOR's deny list and set a column default for new rows, yet an admin moving a DRIVER or CUSTOMER to OPERATOR left that row at `{}`: an operator with write-offs on by default.
-- **Root cause:** a column default and a one-time backfill are keyed on a row existing or being created, not on a row changing into the audience; `updateUser` changed the role and nothing else.
-- **Lesson:** **When a default belongs to a role, apply it in the one service method that moves a row into the role, in the same update that changes the role, decided by the server and never the DTO. Write a red case for each source role and guards for a move out, a same-role save and a self edit; pin the API literal to the shared source of the default set.**
-- **Guard:** `OPERATOR_DEFAULT_DENIED_GROUPS` (`auth/permissions/operator-default-denied.ts`) pinned to the OFF set of `GROUP_INTRODUCED` in `permission-groups-contract.spec.ts`; `users-operator-entry.db.spec.ts` A5-1 to A5-7 (the two source-role rows were red on the unfixed service; two guard rows were added after a mutant survived). Cf. [[L-301]].
 
 ### L-370 · 2026-11-06 · domain · a capture gate on a diagnostic is keyed by every field the reader groups by, under one global budget and a bounded map; a coarser key hides the second site (B1285)
 
