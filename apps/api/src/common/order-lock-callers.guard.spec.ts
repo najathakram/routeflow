@@ -519,9 +519,9 @@ describe("SA-893: every transaction takes Return -> Order -> Invoice -> CreditNo
     "orders/order-cancel-impact.ts#lockOrderAndInvoicesInTx": "Order > Invoice",
     "orders/order-cancel-impact.ts#lockOrderForCancel": "Order > Invoice",
     "orders/order-cancel-tx.ts#cancelOrderInTx": "Order > Invoice",
+    "orders/order-merge-fold.ts#forceConsolidateCustomerImpl": "Order > Invoice", // SA-1162: moved out of orders.service.ts
     "orders/orders.service.ts#approveChangeRequestAtStop": "Order > Invoice",
     "orders/orders.service.ts#deleteOrder": "Order > Invoice",
-    "orders/orders.service.ts#forceConsolidateCustomer": "Order > Invoice",
     "orders/orders.service.ts#updateOrderItems": "Order > Invoice",
     "orders/replace-after-delivery.ts#lockEditedOrder": "Order > Invoice",
     "regulated/ledger-locks.ts#lockLedgerDocumentRows": "Order > Invoice",
