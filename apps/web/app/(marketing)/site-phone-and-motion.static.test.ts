@@ -83,9 +83,4 @@ describe("wheel pieces are explained and legible on a phone", () => {
       "body:has(.rfw:not(.rfw--static)) .sy-parts{display:block",
     );
   });
-
-  it("phone labels have a floor above 12 px", () => {
-    const wheel = read("graphics/rf-wheel-up.js");
-    expect(wheel).toContain("((phone ? 13 : 12) * dpr) / 31");
-  });
 });

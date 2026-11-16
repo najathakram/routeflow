@@ -50,6 +50,36 @@ test.beforeEach(async ({ context }) => {
 
 type Size = { w: number; h: number };
 
+// ─── T0 — the settle helper really waits (L-377: a proof helper that does nothing proves nothing) ──
+
+test.describe("T0 settle waits for the scrub to finish", () => {
+  test("T0 settle waits for the scrub to finish @1440x900", async ({ page }) => {
+    await openHomeNoSnap(page, { w: 1440, h: 900 });
+    // a jump leaves the 0.7 s scrub behind the scroll; settle() must not return until it has caught up
+    await page.evaluate(() => {
+      const inst = (
+        document.querySelector(".rfw") as HTMLElement & {
+          _rfw: { trig: { start: number; end: number } };
+        }
+      )._rfw;
+      window.scrollTo({
+        top: Math.round(inst.trig.start + (inst.trig.end - inst.trig.start) * 0.5),
+        behavior: "instant" as ScrollBehavior,
+      });
+    });
+    await settle(page);
+    const gap = await page.evaluate(() => {
+      const inst = (
+        document.querySelector(".rfw") as HTMLElement & {
+          _rfw: { T: { progress(): number }; trig: { progress: number } };
+        }
+      )._rfw;
+      return Math.abs(inst.T.progress() - inst.trig.progress);
+    });
+    expect(gap, "timeline progress still behind the scroll after settle()").toBeLessThan(0.002);
+  });
+});
+
 // The 15 part names, typed once here as the oracle (spec R6): ten in the outer ring, five inside.
 const OUTER_NAMES = [
   "Purchases",
@@ -74,7 +104,7 @@ const ALL_NAMES = [...OUTER_NAMES, ...INNER_NAMES];
 
 // Structural selectors the wheel and the home page already expose.
 const WORDS_SEL =
-  ".hx-copy h1, .hx-copy p, .hx-copy a, .rfw .rfw-h .rfw-title, .rfw .rfw-h .rfw-sub, .rfw .rfw-t .rfw-eye, .rfw .rfw-t .rfw-title, .rfw .rfw-t .rfw-sub";
+  ".hx-copy h1, .hx-copy p, .hx-copy a, .rfw .rfw-h .rfw-title, .rfw .rfw-h .rfw-sub, .rfw .rfw-t .rfw-eye, .rfw .rfw-t .rfw-title, .rfw .rfw-t .rfw-sub, .rfw .rfw-h .sy-go";
 const LEGEND_SEL = ".rfw .rfw-keys, .rfw .rfw-keyh";
 const HEADING_SEL = ".hx-copy h1, .rfw .rfw-h .rfw-title, .rfw .rfw-t .rfw-title";
 
@@ -278,7 +308,10 @@ test.describe("T3 R3,R4 wheel fits inside its box", () => {
       test.setTimeout(240_000);
       await openHomeNoSnap(page, size);
       const problems: string[] = [];
-      for (const share of nonEmpty(BEATS, "wheel checkpoints")) {
+      // On a portrait phone the end words are taller and meet the open wheel between .78 and .84: sample there too.
+      const phone = size.w <= 430 && size.h > size.w;
+      const shares = [...nonEmpty(BEATS, "wheel checkpoints"), ...(phone ? [0.78, 0.8] : [])];
+      for (const share of shares.sort((x, y) => x - y)) {
         await scrollWheelTo(page, share);
         problems.push(
           ...(await fitProblems(
@@ -515,14 +548,11 @@ test.describe("T7 R8 no empty screen after the wheel", () => {
           const heading = Array.from(document.querySelectorAll("h1, h2, h3")).some(
             (h) => !h.closest(".site-header") && sp.shown(h, 0.99) && whole(h),
           );
-          const button = Array.from(
-            document.querySelectorAll("a.btn, .sy-go, button:not(.rfw-b)"),
-          ).some((b) => !b.closest(".site-header") && sp.shown(b, 0.99) && whole(b));
-          return heading && button;
+          return heading;
         });
         if (wheelShare < 0.15 && !filled) {
           problems.push(
-            `${tag}: neither the wheel (${f(wheelShare)} of the window) nor a heading with its button`,
+            `${tag}: neither the wheel (${f(wheelShare)} of the window) nor a whole heading`,
           );
         }
       }

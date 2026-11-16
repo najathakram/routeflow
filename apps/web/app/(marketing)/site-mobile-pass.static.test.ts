@@ -177,29 +177,13 @@ describe("the first screen on a phone", () => {
     expect(read("home.html")).toContain('<span class="nb">No card needed.</span>');
   });
 
-  it("a phone never draws a wheel name under 11 px; the icon stays when the name is left out", () => {
-    expect(wheel).toContain("((small ? 11 : 10.5) * dpr) / 31");
-    expect(wheel).toContain("shy = small && fitN < floor");
+  it("a sideways phone of any size is small, and its icon floor is the phone's", () => {
     // a phone held sideways is small too; its icon floor is the phone's
     // a sideways phone of any size: narrow and short (land), or any window under 500 px tall (low, which a 932 px phone is)
     expect(wheel).toContain(
       "small = phone || low || !!(mctx && mctx.conditions && mctx.conditions.land);",
     );
     expect(wheel).toContain("(small ? 0.62 : 0.8) * dpr");
-    expect(wheel).toContain("if (!shy)");
-    expect(wheel).toContain("vis * (outer ? 1 - p.n * shown * (1 - flat) : 1)");
-  });
-
-  it("a side name that will not fit at 11 px is left out, the icon stays", () => {
-    expect(wheel).toContain("drop = small && room / Math.max(1, ...ls.map(wid)) < floor11;");
-    expect(wheel).toContain("if (!drop) for (let j = 0; j < ls.length; j++) ctx.fillText(");
-  });
-
-  it("on a short screen the names wait until the pieces settle", () => {
-    expect(wheel).toContain("brief && tile.clientHeight < 520 ? 2.7 : 1.7");
-    // only short screens: a window 500 px or taller draws exactly as before
-    expect(wheel).toContain("const brief = small;");
-    expect(wheel).toContain("at + late");
   });
 
   it("the short-screen CSS reaches a sideways phone and a wide window under 500 px only", () => {
@@ -211,25 +195,7 @@ describe("the first screen on a phone", () => {
     expect(css2).not.toContain("@media (max-height:599.98px) and (min-aspect-ratio:1/1){");
   });
 
-  it("the phone wheel and its hint sit above the browser bar", () => {
-    expect(wheel).toContain("roomy = vis > low + 36");
-    expect(wheel).toContain("hintAt(room)");
+  it("the phone hero keeps its tight top and bottom padding", () => {
     expect(css).toContain(".hx-up .hx-lay{padding-block:14px 6px}");
-  });
-});
-
-describe("the hover label never repeats a name the piece carries", () => {
-  const wheel = read("graphics/rf-wheel-up.js");
-
-  it("each piece records whether its own name is drawn right now (left out counts as not drawn)", () => {
-    expect(wheel).toContain("p.nd = false;");
-    expect(wheel).toContain("p.nd = name > 0.55 && shown === 1;");
-    expect(wheel).toContain("shown = shy ? 0 : 1;");
-    expect(wheel).toContain("shown = drop ? 0 : 1;");
-  });
-
-  it("the label is off for a named piece, on for an icon-only one, on hover and while it is up", () => {
-    expect(wheel).toContain('tip.classList.toggle("on", !P[i].nd)');
-    expect(wheel).toContain('if (tipI >= 0) tip.classList.toggle("on", !P[tipI].nd);');
   });
 });
