@@ -202,7 +202,7 @@ function deliveredLineLocked(): ConflictException {
 }
 
 export const DELIVERED_LINE_BELOW_MESSAGE =
-  "This line was delivered, so it can't go below what was delivered. To take goods back, record a return.";
+  "This line's quantity can't be less than what was delivered. To take goods back, record a return.";
 
 /**
  * SA-1149 (W-946r, SA-992 D2): the quantity floor. A write of an existing line's quantity may not land below what was
