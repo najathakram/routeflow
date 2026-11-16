@@ -320,7 +320,7 @@
        so a resize re-fits without re-recording a single tween. */
     const S = { wA: 0, wS: 0, wE: 0, lift: 0, dr: 0, spO: 0, spI: 0, u: ALL.indexOf(STORY[0]), hop: 0, fall: 1, obj: 0, focO: 0, rip: 0 };
     const P = ALL.map(() => ({ w: 0, h: 0, e: 0, c: 0 }));
-    const { STOP, H: HOLD, S0, stopAt, C0, END, BEATS } = planOf(phone), GO_SHOW = phone ? C0 + 1.7 : C0 - 0.22, GO_AT = GO_SHOW + 0.2;
+    const { STOP, H: HOLD, S0, stopAt, C0, END, BEATS } = planOf(phone), GO_SHOW = phone ? C0 + 1.7 : C0 - 0.22, GO_AT = GO_SHOW + (phone ? 0.05 : 0.2);
     inst.beats = BEATS.map((b) => b.slice());
     const WD = ALL.map((d, i) => {
       const o = i < NO, step = o ? STEP_O : 72, ca = (-90 + (o ? i : i - NO) * step) * RAD, hs = (step / 2) * RAD, L = outline(o ? R0 : r0, o ? R1 : r1, ca - hs, ca + hs, GAP);
@@ -617,11 +617,12 @@
       for (const x of BEATS) if (Math.abs(x[0] - t) < Math.abs(b - t)) b = x[0];
       return b / END;
     };
+    /* The snap keeps inertia off: ScrollTrigger reads the speed from the scrub's catch-up, not from the hand, and would throw a stopped scroll to a far beat (T9). */
     const link = () => {
       trig = ST.create({
         animation: T, trigger: el, start: phone ? () => "top " + pinTop + "px" : 0, end: "bottom bottom",
         scrub,
-        snap: opts.snap === false ? false : { snapTo: nearBeat, duration: { min: 0.35, max: 0.8 }, delay: 0.3, ease: "power2.out", inertia: true },
+        snap: opts.snap === false ? false : { snapTo: nearBeat, duration: { min: 0.35, max: 0.8 }, delay: 0.3, ease: "power2.out", inertia: false },
         refreshPriority: rp,
         onRefresh: mark,
         onToggle: (self) => { html.style.scrollBehavior = self.isActive ? "auto" : ""; },
