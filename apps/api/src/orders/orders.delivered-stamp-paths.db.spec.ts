@@ -346,11 +346,14 @@ describeDb("SA-763r — the delivered stamp through the real writers, real Postg
       lines: [{ qty: 12, d: 0 }],
     });
     await raw.product.update({ where: { id: productId }, data: { currentStock: 88 } }); // the sale took 12
-    await edit(orderId, { items: [{ id: lineIds[0], productId, qty: 10 }], replaceAll: false });
-    expect(await stock()).toBe(88); // red on base: 90 (the cut put 2 back)
-    expect(await dq(lineIds[0])).toBe(12);
+    // SA-1149 20:55Z (a): the shape {q12, d0} is real (a legacy counter sale); F1 refuses the cut (the booked floor is 12)
+    await expect(
+      edit(orderId, { items: [{ id: lineIds[0], productId, qty: 10 }], replaceAll: false }),
+    ).rejects.toMatchObject({ status: 409, response: { code: "LINE_ALREADY_DELIVERED" } });
+    expect(await stock()).toBe(88);
+    expect(await dq(lineIds[0])).toBe(0);
     await voidLike(orderId);
-    expect(await stock()).toBe(100); // red on base: 102 (14 restocked for 12 sold)
+    expect(await stock()).toBe(100); // 88 + the 12 booked; red on base: 102 (14 restocked for 12 sold)
   });
 
   it("the same legacy line cut through a replace-all is REFUSED 409 and the books stay: no restock, d 0, void back to the start", async () => {

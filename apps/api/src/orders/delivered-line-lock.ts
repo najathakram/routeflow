@@ -200,3 +200,44 @@ function deliveredLineLocked(): ConflictException {
     message: DELIVERED_LINE_LOCKED_MESSAGE,
   });
 }
+
+export const DELIVERED_LINE_BELOW_MESSAGE =
+  "This line's quantity can't be less than what was delivered. To take goods back, record a return.";
+
+/**
+ * SA-1149 (W-946r, SA-992 D2): the quantity floor. A write of an existing line's quantity may not land below what was
+ * delivered, on any status. It refuses ONLY when the next qty is below BOTH the delivered qty and the line's held qty: a
+ * note edit that restates an over-delivered line ({q2,d4} sent as 2) is not a cut. Pure: pass the FINAL stored qty in the
+ * line's own unit (after `normalizeBoxesPieces`), so a box split or a unit line is judged on what is stored, never on
+ * `item.qty`. Throws 409.
+ */
+export function assertQtyNotBelowDelivered(
+  deliveredQty: unknown,
+  heldQty: unknown,
+  nextQty: unknown,
+): void {
+  const delivered = Number(deliveredQty ?? 0);
+  if (!(delivered > 0)) return;
+  const next = Number(nextQty);
+  if (next < delivered - QTY_EPS && next < Number(heldQty ?? 0) - QTY_EPS) {
+    throw new ConflictException({
+      code: API_ERROR_CODES.LINE_ALREADY_DELIVERED,
+      message: DELIVERED_LINE_BELOW_MESSAGE,
+    });
+  }
+}
+
+/**
+ * SA-1149 (round 2): an order holding a live delivered line is never a merge target and never a merge loser (a merge
+ * folds by replace and deletes the loser's lines, so the delivered stamp would be lost, B1167). One fragment, read by
+ * every `forMerge` search and by both branches of `mergeEligibleWhere`; `isLiveDeliveredLine` is its JS twin (a unit row
+ * checks the two agree). Spread only inside a where that has no other `lineItems` key; otherwise use an `AND` (it shares the `lineItems` key with the unit-aware guard).
+ */
+export const ORDER_HAS_NO_LIVE_DELIVERED_LINE = {
+  lineItems: { none: { deliveredQty: { gt: 0 }, status: { not: "CANCELLED" } } },
+} as const;
+
+/** The JS twin of `ORDER_HAS_NO_LIVE_DELIVERED_LINE`: a line that is not CANCELLED and has delivered something. */
+export function isLiveDeliveredLine(line: { status?: unknown; deliveredQty?: unknown }): boolean {
+  return line.status !== "CANCELLED" && Number(line.deliveredQty ?? 0) > 0;
+}

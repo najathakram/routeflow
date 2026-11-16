@@ -6,9 +6,9 @@
  * changes (mirrors order-lifecycle.ts).
  */
 
-import { OrderStatus } from "@prisma/client";
 import { isMergeContention } from "./merge-contention";
 import { openTenantGroups } from "./sweep-tenant-gate";
+import { mergeEligibleWhere } from "./merge-lock-recheck";
 import type { OrdersService } from "./orders.service";
 
 export async function sweepAllPendingOrdersImpl(self: OrdersService): Promise<{
@@ -30,15 +30,9 @@ export async function sweepAllPendingOrdersImpl(self: OrdersService): Promise<{
   // findFirst/findMany happened to return first, not the customer's own tenant.
   // Group by tenantId alongside customerId so each group carries the tenant to
   // re-enter below.
-  const pendingMergeCandidateWhere = {
-    status: OrderStatus.PENDING,
-    routeRunId: null,
-    routeRunStopId: null,
-    transaction: { is: null },
-    invoices: { none: {} },
-    returns: { none: {} },
-    skipAutoMerge: false,
-  };
+  // SA-1149: the ONE merge-eligibility predicate decides both this count and the fold (readMergeGroup), so an order
+  // holding a live delivered line is in neither.
+  const pendingMergeCandidateWhere = mergeEligibleWhere("auto");
 
   const groups = await self.prisma.forTenant().order.groupBy({
     by: ["customerId", "tenantId"],
