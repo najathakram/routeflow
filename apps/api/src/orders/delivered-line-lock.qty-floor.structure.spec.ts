@@ -144,6 +144,9 @@ describe("replace-all refusal and line-delete pins (SA-1149 P-a..P-e)", () => {
     expect(svc).not.toMatch(/flooredDelivered:\s*new Map/);
     expect(svc).not.toMatch(/flooredDelivered\s*=\s*new Map\(\s*heldItems/);
     expect(svc.match(/flooredDelivered\s*=/g)).toHaveLength(1);
+    // third pattern (read 2): heldFloored IS the booked-floor read's result, never an alias of the raw held rows
+    expect(svc.match(/const heldFloored = await heldAtBookedFloor\(/g)).toHaveLength(1);
+    expect(svc).not.toMatch(/heldFloored\s*=\s*heldItems/);
   });
 });
 

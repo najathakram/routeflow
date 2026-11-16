@@ -276,7 +276,11 @@ import {
 } from "./order-status-invoicing";
 import { formatMoney } from "../messaging/messaging.helpers";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
-import { assertNoUnspentSourcedCredits } from "../credit-notes/sourced-credit-guard";
+import {
+  assertNoSourceGoneRestore,
+  assertNoUnspentSourcedCredits,
+  settleShrinkPayments,
+} from "../credit-notes/sourced-credit-guard";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
@@ -3381,6 +3385,9 @@ export class OrdersService implements OnApplicationBootstrap {
                 : {}),
           },
         });
+        // SA-1156 E5: refuse before commit
+        const shrinking = await settleShrinkPayments(tx, orderId, total);
+        await assertNoSourceGoneRestore(tx, shrinking);
         // SA-763r P-3 (M4/M5): an edit never creates an overpayment; judged at the TAIL of this tx
         // (edit-overpay-judge.ts), `skipInPlaceResync` from the in-tx HELD lines. A refusal rolls back all.
         skipInPlaceResync = await judgeEditTail(
@@ -4301,6 +4308,9 @@ export class OrdersService implements OnApplicationBootstrap {
           },
         });
 
+        // SA-1156 E5 (door)
+        const shrinking = await settleShrinkPayments(tx, order.id, total);
+        await assertNoSourceGoneRestore(tx, shrinking).catch(paidOrderAtStop); // SA-1156 E5d
         // ── Provenance: the DeliveryMutation row recording the at-door merge
         // (the P5-09 primitive; same table completeStop writes :2638-2650).
         if (mutationRow) {

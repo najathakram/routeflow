@@ -4,6 +4,8 @@ import { roundMoney } from "@routeflow/pricing";
 
 import { lockRowsNoWait } from "../common/db-locks";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { isSettleAdjustedPayment } from "../invoices/settle-adjusted-payment";
+import { cnConflict } from "./credit-note-errors";
 
 /**
  * B214 (REG-B214): the ONE home of "a credit note sourced by an invoice still carries spendable
@@ -147,4 +149,50 @@ export async function hasSourceDeletedMarker(db: any, creditNoteId: string): Pro
     select: { id: true },
   });
   return !!row;
+}
+
+/**
+ * B949 (moved here from CreditNotesService unchanged, SA-1156 E5 / OP-5: one predicate, one file): refuse
+ * (409 CREDIT_NOTE_SOURCE_GONE) when any of these payments would restore money to a note carrying the SOURCE_DELETED
+ * marker. Callers run it over the WHOLE payment list BEFORE the first restore so the operation is refused atomically.
+ * The way out is the note's own void. Count-pinned: five credit-note sites plus the order edit's and the door's pre-check.
+ */
+export async function assertNoSourceGoneRestore(
+  tx: any,
+  payments: ReadonlyArray<{ creditNoteId: string | null }>,
+): Promise<void> {
+  const ids = [...new Set(payments.map((p) => p.creditNoteId).filter(Boolean) as string[])];
+  for (const id of ids) {
+    if (!(await hasSourceDeletedMarker(tx, id))) continue;
+    const cn = await tx.creditNote.findFirst({
+      where: { id },
+      select: { creditNoteNumber: true },
+    });
+    throw cnConflict(
+      API_ERROR_CODES.CREDIT_NOTE_SOURCE_GONE,
+      `Credit note ${cn?.creditNoteNumber ?? id} came from a deleted invoice. Void that credit note first, then try again.`,
+    );
+  }
+}
+
+/**
+ * SA-1156 E5: the credit payments the post-edit settle WOULD shrink for this order at `newTotal` (the settle's own shrink
+ * condition), read inside the edit's transaction after the new total is known. Only an order with exactly one non-VOID
+ * invoice that is a DRAFT mirror has a single invoice to project onto; any other shape returns [] and master's behaviour
+ * stays (row E5c). The caller runs `assertNoSourceGoneRestore` over the result.
+ */
+export async function settleShrinkPayments(
+  tx: any,
+  orderId: string,
+  newTotal: number,
+): Promise<Array<{ creditNoteId: string | null }>> {
+  const invoices = await tx.invoice.findMany({
+    where: { orderId, status: { not: "VOID" } },
+    include: { payments: true },
+  });
+  if (invoices.length !== 1 || invoices[0].status !== "DRAFT") return [];
+  const nonVoid = (invoices[0].payments ?? []).filter((p: any) => p.status !== "VOID");
+  const paid = roundMoney(nonVoid.reduce((s: number, p: any) => s + Number(p.amount), 0));
+  if (!(roundMoney(paid - roundMoney(newTotal)) > OPEN_CREDIT_EPSILON)) return [];
+  return nonVoid.filter((p: any) => isSettleAdjustedPayment(p));
 }
