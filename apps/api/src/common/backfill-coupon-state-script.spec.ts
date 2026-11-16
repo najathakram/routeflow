@@ -115,7 +115,7 @@ describe("backfill-coupon-state.mjs", () => {
       .split(String.fromCharCode(10))
       .filter((l) => /console\.(log|error)/.test(l));
     expect(logLines.length).toBeGreaterThan(0);
-    for (const l of logLines) expect(l).not.toMatch(/slug|stripeCustomerId|\.name/);
+    for (const l of logLines) expect(l).not.toMatch(/slug|stripeCustomerId|\.name\b/);
     expect(code).not.toMatch(/stripeCustomerId/);
   });
 

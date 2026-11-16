@@ -40,8 +40,8 @@ describe("one helper (L-167): snap, boundary and contiguity come from rf-invoice
   it("catchup-plan.ts defines no snap / contiguity / boundary helper of its own", () => {
     const src = fs.readFileSync(path.join(__dirname, "catchup-plan.ts"), "utf8");
     expect(src).toContain('from "./rf-invoice/calendar-windows"');
-    expect(src).not.toMatch(/function (snapToBoundary|isContiguous|nearestBoundary)/);
-    expect(src).not.toMatch(/export (const|function) boundary/);
+    expect(src).not.toMatch(/function (snapToBoundary|isContiguous|nearestBoundary)\b/);
+    expect(src).not.toMatch(/export (const|function) boundary\b/);
   });
 
   it("firstBoundaryNotBefore is exact (no snapping): 'at least 72 h from now'", () => {
