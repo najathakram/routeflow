@@ -309,6 +309,10 @@ describe("genericToastCopy: codes users rely on", () => {
     // SA-804 (1) / B1232: FIFO and LIFO costing are retired.
     ["COSTING_METHOD_RETIRED", /^FIFO and LIFO costing are retired. Pick average cost/],
     ["ORDER_CHANGED_DURING_EDIT", /changed while you were editing/],
+    [
+      "ORDER_EDIT_INVOICE_HAS_PAYMENTS",
+      /has a payment or is closed, so its items can.t change here/,
+    ],
     ["DUPLICATE_LINE_ID", /^A line appears twice\. Refresh the page and try again\.$/],
     ["ORDER_BILLING_CHANGED", /billing changed/],
     ["ORDER_EDIT_WOULD_OVERPAY", /overpaid on the invoice/],

@@ -93,6 +93,9 @@ const CODE_COPY: Record<string, string> = {
   ORDER_DELIVERY_ADDRESS_MISSING:
     "This customer has no delivery address on file. Add one before switching the order to delivery.",
   ORDER_CHANGED_DURING_EDIT: "This order changed while you were editing it. Refresh and try again.",
+  // SA-1144: fixed copy (B980: never the server's text), the recovery in one line.
+  [API_ERROR_CODES.ORDER_EDIT_INVOICE_HAS_PAYMENTS]:
+    "This order's invoice has a payment or is closed, so its items can't change here. Remove the payment, or add the items on a new order.",
   // B297 PR5: the filing lock and the locked-period guards (fixed copy, never the server's text).
   [API_ERROR_CODES.FILING_PERIOD_RUNNING]:
     "This period hasn't ended yet. Lock the filing after the period ends.",

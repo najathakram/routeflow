@@ -215,9 +215,9 @@ const MODE_SITES: Record<string, string[]> = {
   ],
   "apps/api/src/invoices/stored-tax-state.ts": ["discountModeOf(invoice)"],
   "apps/api/src/order-templates/order-templates.service.ts": ["newDocumentDiscountMode()"],
+  "apps/api/src/orders/order-find-one.ts": ["discountModeOf(order)"], // SA-1160: findOne moved here verbatim
   "apps/api/src/orders/order-totals.ts": ["discountModeOf(order)"],
   "apps/api/src/orders/orders.service.ts": [
-    "discountModeOf(order)",
     "discountModeOf(winner)",
     "discountModeOf(winner)",
     "newDocumentDiscountMode()",

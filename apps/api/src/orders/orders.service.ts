@@ -17,9 +17,6 @@ import { LeaderCron } from "../common/cron-lock";
 import { withAfterCommit } from "../common/after-commit";
 import { InlineReturnsService } from "../returns/inline-returns.service";
 import * as inlineReturn from "./order-inline-return";
-import { attachPaymentCreditNotes, ORDER_INVOICES_SELECT } from "./order-payment-credit-notes";
-import { attachInvoicesNeedReview } from "./order-invoices-review";
-import { attachOrderToCollect } from "./order-to-collect";
 import { customerIsTaxExempt, editedOrderTotals, orderTotalsOf } from "./order-totals";
 import { discountModeOf, newDocumentDiscountMode } from "../common/discount-tax-mode";
 import { prepareInlineReturn, replayAfterCheck } from "./order-inline-return";
@@ -33,7 +30,6 @@ import {
   appendMergeRevisionInTx,
   appendOrderRevisionInTx,
   appendReopenRevisionInTx,
-  attachRevisionNumber,
 } from "./order-revisions";
 import * as authorship from "./line-author-channel"; // F1(i) + SA ruling #3418: the line's author
 import {
@@ -69,6 +65,7 @@ import { assertNoDuplicateLineIds } from "../common/duplicate-line-ids";
 import {
   atStopConflict,
   CHANGE_WINDOW_ORDER_STATUS,
+  paidOrderAtStop,
   CHANGE_WINDOW_RUN_NOT_ACTIVE,
 } from "./at-stop-conflicts";
 import { sourceLineFor } from "./source-line";
@@ -130,7 +127,7 @@ import * as cancelledLines from "./order-edit-cancelled";
 import * as driverAccess from "./driver-edit-access";
 import { assertRemovalsNameALine, writeLineRemoval, writeLineUpdate } from "./order-line-removal";
 import { assertDeliveredLinesUntouched, reduceDeliveredLineEntries } from "./delivered-line-lock";
-import { lockEditedOrder, editGuards, walkInSaleLocked } from "./replace-after-delivery";
+import { lockEditedOrder, editGuards } from "./replace-after-delivery";
 import { CANCELLABLE_FROM, assertOrderStatusTransition } from "./order-status-transitions";
 import { buildStatusUpdateData } from "./order-status-claim";
 import { assertDeliveredDemotionAllowed } from "./delivered-demotion.guard";
@@ -148,17 +145,15 @@ import {
   stampOrderIdempotencyKey,
   type IdempotencyLookupDeps,
 } from "./merge-idempotency";
-import { BUYER_EDIT_CLOSED_STATUSES, computeEditWindow } from "./edit-window";
+import { BUYER_EDIT_CLOSED_STATUSES } from "./edit-window";
 import {
-  ORDER_LINE_ORDER_BY,
   linePositionAllocator,
   loserLineRanks,
   replaceSlotPlanner,
   settleReplaceSlots,
 } from "./line-position";
-import { attachLinesRearranged, reorderOrderLines } from "./order-line-order";
+import { reorderOrderLines } from "./order-line-order";
 import type { ReorderLinesDto } from "./dto/reorder-lines.dto";
-import { fulfillPathLocked } from "./fulfil-path-lock";
 import { assertCancelImpactAllows, cancelImpact } from "./order-cancel-impact";
 import { cancelOrderInTx, lockDeleteLines, type CancelOrderTxOptions } from "./order-cancel-tx";
 import { claimReopenInTx } from "./order-reopen-claim";
@@ -198,8 +193,7 @@ import { UpdateShipmentDto } from "./dto/update-shipment.dto";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { sweepAllPendingOrdersImpl } from "./order-sweep";
-import { redactUpsellForCustomer } from "../common/upsell-redaction";
-import { orderFor } from "../common/staff-only-fields";
+import { findOneImpl } from "./order-find-one";
 import { currentTaxRate } from "../common/tax-rate";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InvoicesService } from "../invoices/invoices.service";
@@ -269,7 +263,6 @@ import { customerPricing, omitCustomerLayerHistory } from "./units-prices-v2";
 import { loadCategoryMapForProducts } from "./category-map";
 import { assertBuyerCartPricesCurrent } from "./buyer-cart-price-check";
 import { compositionStampOf, syncOrderLineCompositions } from "./order-composition";
-import { withComponentViews } from "./component-view";
 import { captureCompositionCarry } from "./order-edit-composition";
 import { loadActivePromotionRules } from "./promotion-rules";
 import { FeatureConfigService } from "../billing/feature-config.service";
@@ -285,10 +278,7 @@ import { collectUnlistedLoserItems, createUnlistedLoserLine } from "./merge-unli
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
-import type { OrderReadGateFields } from "@routeflow/types";
-import { attachInvoiceStages } from "./order-invoice-stage";
-import { HANDOVER_SOLD_BY_SELECT, seesHandOverStamp, stampHandedOverBy } from "./handover-stamp";
-import { EDIT_REVISIONS, updateStatusWithShipMarker } from "./order-ship-state";
+import { updateStatusWithShipMarker } from "./order-ship-state";
 import { assertStopDoneForOfficeDelivered } from "./office-delivered-route-stop";
 import {
   heldAtBookedFloor,
@@ -307,7 +297,6 @@ import {
 import { formatMoney } from "../messaging/messaging.helpers";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { assertNoUnspentSourcedCredits } from "../credit-notes/sourced-credit-guard";
-import { tenantSafeParentView } from "../products/product-parent";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
@@ -424,151 +413,9 @@ export class OrdersService implements OnApplicationBootstrap {
     return findAllOrdersImpl(this.prisma, query, user);
   }
 
+  /** Extracted verbatim to order-find-one.ts (size-ratchet move, SA-1160); thin delegator. */
   async findOne(id: string, user: JwtPayload) {
-    const order = await this.prisma.forTenant().order.findUnique({
-      where: { id },
-      include: {
-        customer: {
-          select: {
-            id: true,
-            businessName: true,
-            contactName: true,
-            phone: true,
-            mobile: true,
-            email: true,
-            isWalkIn: true,
-            user: { select: { email: true } }, // account email: the receipt pre-fill fallback
-          },
-        },
-        // Include `unitsPerBox` + `pricePerUnit` so the mobile/web edit UIs can render the boxes/pieces
-        // split for boxed products and recompute line subtotals locally without a second roundtrip.
-        // `averageCost` + `category` feed the live cost/margin hint + floor in the edit builder
-        // (pos-cost-roles-spec §1).
-        lineItems: {
-          include: {
-            components: { orderBy: { position: "asc" } }, // #2717 M3: frozen FIXED-line components
-            product: {
-              select: {
-                id: true,
-                name: true,
-                unit: true,
-                unitsPerBox: true,
-                pricePerUnit: true,
-                // units_v1 (SA-085f #2): pack tier prices for the picker's ladder, OPERATOR-ONLY
-                // — a buyer (this same findOne, buyer.controller.ts) must never see another
-                // customer's pricing tier; redactUpsellForCustomer never touched these columns.
-                ...(user.role !== UserRole.CUSTOMER
-                  ? { priceTier2: true, priceTier3: true, priceTier4: true, priceTier5: true }
-                  : {}),
-                averageCost: true,
-                category: true,
-                // Read-site name composition + SKU line (order-ui-redesign-spec §2/§4): a catalog
-                // variant stores only its own flavor in `name`, so the reader needs the parent.
-                sku: true,
-                unitSku: true,
-                variantName: true,
-                parentProductId: true,
-                // tenantId only for the tenant check below (B1211); it is stripped before the response.
-                parent: { select: { name: true, tenantId: true } },
-              },
-            },
-          },
-          // Scan/insertion order (R2): all lines in one create share the same
-          // createdAt (tx clock), so createdAt alone can't order them — `position`
-          // carries the scanned order. Legacy/appended lines have null position and
-          // sort LAST (NULLS LAST), with createdAt then id as the final tiebreaks (W-1187: ONE read order).
-          orderBy: ORDER_LINE_ORDER_BY,
-        },
-        ...(flags.seesReviewFlags(user) ? flags.REVIEW_FLAGS_INCLUDE : {}), // SA-1124: staff only
-        // row 342: who handed it over (staff only; `registerKey` is a scalar already on the row)
-        ...(seesHandOverStamp(user) ? { soldBy: HANDOVER_SOLD_BY_SELECT } : {}),
-        transaction: true,
-        invoices: { select: ORDER_INVOICES_SELECT }, // + each line's stored taxRate (row 329a)
-        // Credit-note INTENTS selected for this order (join table) — the reason/
-        // amount/status render at read time via the relation so an edit to the
-        // credit note's reason shows up everywhere automatically.
-        orderCreditNotes: {
-          include: {
-            creditNote: {
-              select: {
-                id: true,
-                creditNoteNumber: true,
-                reason: true,
-                amount: true,
-                amountUsed: true,
-                status: true,
-                expiresAt: true,
-              },
-            },
-          },
-        },
-        // P5-08: version history + the run state that governs the edit window.
-        revisions: EDIT_REVISIONS, // ship-state markers are not edits ("Edited N×")
-        // P5-09: post-dispatch change requests, newest first.
-        changeRequests: { orderBy: { createdAt: "desc" } },
-        // `driverId` feeds the F2-005 driver-ownership gate below.
-        routeRun: { select: { status: true, startedAt: true, driverId: true } },
-      },
-    });
-    if (!order) throw new NotFoundException("Order not found");
-
-    // B1211: a product's parent that belongs to another tenant is never shown (name or otherwise).
-    // The buyer order reads reach this same method, so they get the check too.
-    for (const line of order.lineItems ?? []) {
-      const product = line.product as { parent?: { tenantId?: string | null } | null } | null;
-      if (product && "parent" in product) {
-        product.parent = tenantSafeParentView(
-          product.parent,
-          order.tenantId ?? this.prisma.getTenantId(),
-        );
-      }
-    }
-
-    await rGate.stampOverrideNames(this.prisma.forTenant(), order.lineItems, user); // row 510: staff only
-    if (user.role === UserRole.CUSTOMER) {
-      // REG-B131: `deletedAt: null` here — a removal deactivates the user but an access token
-      // minted just before it stays valid for up to 15 minutes, so a removed customer's own
-      // in-flight session must fall into the existing refusal below.
-      const customer = await this.prisma
-        .forTenant()
-        .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
-      if (!customer || customer.id !== order.customerId) throw new ForbiddenException();
-      // A customer must never see an upsell's base price / that they were upsold.
-      redactUpsellForCustomer(order);
-    }
-
-    // F2-005: a DRIVER may only read an order that is on a run they are the
-    // driver of — otherwise they could enumerate any order's full detail.
-    // Orders not yet on a run (routeRun null) are never driver-readable.
-    if (user.role === UserRole.DRIVER) {
-      const driver = await this.prisma
-        .forTenant()
-        .driver.findFirst({ where: { userId: user.sub } });
-      if (!driver || order.routeRun?.driverId !== driver.id) throw new ForbiddenException();
-    }
-
-    // P5-08 edit window (G7): free editing is open until the order's run dispatches.
-    // `editableUntil` (the soft cutoff countdown) stays null until the per-weekday
-    // routes-cutoff config lands — the HARD close is dispatch, which is authoritative.
-    (order as any).editWindow = computeEditWindow(order, user.role);
-    // B1083: the web disables Cancel from this (one server predicate, never re-derived client-side).
-    Object.assign(order, {
-      cancelBlockedReason: await carrierGuard.carrierBlocked(this, order),
-      fulfillPathLocked: fulfillPathLocked(order), // row 673: the PATCH's own predicate
-      editItemsLocked: await walkInSaleLocked(this.prisma.forTenant(), order), // W-861: the edit's own predicate
-    } satisfies OrderReadGateFields);
-    Object.assign(order, { discountTaxBase: discountModeOf(order) }); // SA-1141 R7: the footers read the mode, never the clock
-    await attachInvoiceStages(this.featureConfig, order); // fold 4: each invoice's pdfVariant
-    attachRevisionNumber(order); // row 372
-    order.lineItems = withComponentViews(order.lineItems) as typeof order.lineItems; // #2717 M3
-
-    await attachPaymentCreditNotes(this.prisma.forTenant(), order); // #2404
-    await attachInvoicesNeedReview(this.prisma.forTenant(), order, user); // B1116 (staff only)
-    await attachOrderToCollect(this.prisma.forTenant(), order, user); // SA-1026 (staff only)
-    await attachLinesRearranged(this.prisma.forTenant(), order, user); // W-1187 (staff only)
-
-    stampHandedOverBy(order, user); // row 342: staff only; the display name is built once, here
-    return orderFor(user, order); // customer-facing fields only for the customer
+    return findOneImpl(this, id, user);
   }
 
   /**
@@ -4526,9 +4373,9 @@ export class OrdersService implements OnApplicationBootstrap {
         // before any mutation. Throws if it carries payments (money never detaches).
         // `lockRows`: the un-send's payment count is read under the same Invoice row lock
         // recordPayment takes, so a payment can't land between that count and the DRAFT flip.
-        await this.invoicesService.revertLinkedInvoicesForOrderEdit(order.id, tx, {
-          lockRows: true,
-        });
+        await this.invoicesService
+          .revertLinkedInvoicesForOrderEdit(order.id, tx, { lockRows: true })
+          .catch(paidOrderAtStop); // SA-1144 D6: the paid-order refusal, in the at-stop shape
 
         const heldItems = await tx.orderItem.findMany({
           where: { orderId: order.id },
@@ -4985,6 +4832,17 @@ export class OrdersService implements OnApplicationBootstrap {
 
     // Post-commit: mirror the draft invoice in lockstep. Never a new money formula.
     await this.invoicesService.reconcileOrderDraftInvoice(order.id, { basis: "order" });
+
+    // SA-1156 section 0: the door apply re-synced the DRAFT above, so run the same credit settle the office edit runs
+    // (Order lock first, Serializable, retried). The change request is already committed: a settle failure is logged at
+    // ERROR and never fails the door; the issuing send's settle catches up at delivery.
+    try {
+      await this.syncAndSettleOrderCredits(order.id, order.customerId, undefined);
+    } catch (err) {
+      this.logger.error(
+        `Credit settle after a door change request failed for order ${order.id}: ${err}`,
+      );
+    }
 
     return { merged: true, subtotal, tax, total };
   }

@@ -15,6 +15,7 @@ import { BadRequestException } from "@nestjs/common";
 import { FulfillPath, ItemStatus, OrderStatus } from "@prisma/client";
 import type { PrismaService } from "../prisma/prisma.service";
 import { resolveFulfilPath, type FulfilCaller, type FulfilPathDeps } from "./fulfil-path-resolver";
+import { EDIT_BLOCKING_INVOICE_WHERE } from "../invoices/order-edit-revert-set";
 
 /** An order's path; a row with none (never the case in production: the column is NOT NULL) is ROUTE. */
 export function effectiveFulfilPath(o: { fulfillPath?: FulfillPath | null }): FulfillPath {
@@ -137,6 +138,9 @@ export async function findActiveOrderImpl(
       // units_v1: a unit-aware order is never a MERGE target; display reads keep it visible.
       ...mergeGuard,
       shippedAt: null, // an already-shipped order is never a merge target (see `unshipped`)
+      // SA-1144 Decision 6: a paid, part-paid or written-off order (or one holding a live payment) is never a merge target:
+      // the edit refuses it, so the new order is created on its own, never refused at placement.
+      ...(opts.forMerge ? { invoices: { none: EDIT_BLOCKING_INVOICE_WHERE } } : {}),
       ...mergeCandidateWhere(fulfillPath),
     },
     include: {
