@@ -104,3 +104,4 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/landing-2026-11-15-w47.md](web/landing-2026-11-15-w47.md) | Window 47: discount tax base in the invoice, estimate and till footers (lib/discount-tax-base.ts) |
 | [web/landing-2026-11-15-w48.md](web/landing-2026-11-15-w48.md) | Window 48: staff shell (build-operator-nav, open nav groups), scan clock rename, billing return redirects |
 | [web/landing-2026-11-16-w49-51.md](web/landing-2026-11-16-w49-51.md) | Windows 49 and 51: toast copy for the paid-order edit refusal |
+| [web/landing-2026-11-16-w52.md](web/landing-2026-11-16-w52.md) | Window 52: buyer sentence for a delivered order (web portal and mobile) |

@@ -1,6 +1,6 @@
 {
-  "mappedSha": "ccecd1bf3b",
-  "generatedAt": "2026-11-16T00:21:21.792Z",
+  "mappedSha": "f932dabcc8",
+  "generatedAt": "2026-11-16T02:44:30.495Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1160,
-  "notes": "2026-11-16 (master ccecd1bf3b): api and web landing notes for windows 47 to 51, TOC rows; see CHANGELOG.md. Windows 13 to 26 (11-07 to 11-09) are not mapped yet."
+  "notes": "2026-11-16 (master f932dabcc8): api and web landing notes for windows 47 to 52, TOC rows; see CHANGELOG.md. Windows 13 to 26 (11-07 to 11-09) are not mapped yet."
 }
