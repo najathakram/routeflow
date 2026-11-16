@@ -61,7 +61,7 @@ function readsPagesDirectly(source: string): boolean {
   return (
     /readFileSync|readFile\(/.test(source) &&
     /\.html/.test(source) &&
-    /public[\/"', ]+site|SITE|SITE_ROOT|"site"/.test(source) &&
+    /public[\/"', ]+site|(?<![\/\w])SITE(?![\/\w])|SITE_ROOT|"site"/.test(source) &&
     !/readServedSitePage/.test(source)
   );
 }
@@ -99,6 +99,14 @@ describe("site pages are read through readServedSitePage", () => {
     expect(
       readsPagesDirectly(`${seam} const f = path.join(SITE, "home.html"); fs.existsSync(f);`),
     ).toBe(false);
+  });
+
+  it("the detector ignores a /SITE/ URL spelling beside a source read but keeps the SITE variable", () => {
+    expect(
+      readsPagesDirectly(`fs.readFileSync(path.join(__dirname, "a.ts")); x("/SITE/A.HTML")`),
+    ).toBe(false);
+    expect(readsPagesDirectly(`fs.readFileSync(path.join(SITE, "x.html"))`)).toBe(true);
+    expect(readsPagesDirectly("fs.readFileSync(`${SITE}/x.html`)")).toBe(true);
   });
 
   it("the detector sees a raw read and ignores one through the seam", () => {
