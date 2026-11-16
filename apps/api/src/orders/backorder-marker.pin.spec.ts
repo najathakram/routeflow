@@ -30,14 +30,17 @@ describe("backorderedPieces stays informational", () => {
       "orders/backorder-marker.ts",
       "orders/merge-line-writes.ts",
       "orders/offline/offline-create.ts", // informational flag row only: BACKORDERED_OFFLINE reads the column
+      "orders/order-merge-fold.ts", // the merge fold's carry, moved verbatim from orders.service.ts (SA-1162)
       "orders/orders.service.ts",
       "orders/packing-slip-data.ts", // display only: the slip's "Backorder" tag
     ]);
   });
 
   it("orders.service.ts only CARRIES it (merge fold creates) and hands create()'s value to the nested create", () => {
-    const src = readFileSync(join(SRC, "orders/orders.service.ts"), "utf8");
-    const lines = src.split("\n").filter((l) => l.includes("backorderedPieces"));
+    // SA-1162: the two merge-fold carries moved with the merge pair to order-merge-fold.ts.
+    const lines = ["orders/orders.service.ts", "orders/order-merge-fold.ts"]
+      .flatMap((f) => readFileSync(join(SRC, f), "utf8").split("\n"))
+      .filter((l) => l.includes("backorderedPieces"));
     expect(lines).toHaveLength(3);
     expect(lines.filter((l) => l.includes("append.data.backorderedPieces"))).toHaveLength(2);
     expect(

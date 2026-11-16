@@ -22,7 +22,7 @@ const GUARD = /assertSellableLines\(/g;
 const GUARDED: Record<string, { calls: number; sites: number; why: string }> = {
   "orders/orders.service.ts": {
     calls: 6,
-    sites: 10,
+    sites: 8,
     why: "create(); updateOrderItems: replace-all (x2 load sites), the diff edit-add, the substitute line; approveChangeRequestAtStop ADD_ITEM",
   },
   "orders/change-requests.service.ts": {
@@ -93,6 +93,10 @@ const ALLOWED: Record<string, { sites: number; why: string }> = {
   "returns/returns.service.ts": {
     sites: 1,
     why: "return lines/restock derive from the order lines being returned (guarded at their writers)",
+  },
+  "orders/order-merge-fold.ts": {
+    sites: 2,
+    why: "SA-1162: the customer merge pair, moved verbatim from orders.service.ts; it only carries lines of orders that were already guarded at their writers onto the survivor",
   },
   "orders/unit-line-edit.ts": {
     sites: 1,

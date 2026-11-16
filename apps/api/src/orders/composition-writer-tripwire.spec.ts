@@ -310,7 +310,7 @@ describe("composition writer tripwire (#2717 M3, case 14)", () => {
     const unlisted = [...fixtureSites.keys()].filter((k) => !REGISTRY[k]);
     expect(unlisted).toEqual(["fixture/fixture.service.ts::sneakyWriter"]);
     expect(fixtureSites.get(unlisted[0])).not.toMatch(
-      /syncOrderLineCompositions\(|this\.syncCompositions\(/,
+      /syncOrderLineCompositions\(|(?:this|self)\.syncCompositions\(/,
     );
   });
 
