@@ -92,9 +92,12 @@
 /* ---------- phone header: Pricing instead of a second trial button while the hero button shows ---------- */
 @media (max-width:899.98px){
   .js .site-header.hero-btn-in .nav-price{display:inline-flex}
+  .js body:has(.rfw.rfw-go-on.rfw-go-in) .site-header .nav-price{display:inline-flex}
   .js .site-header.hero-btn-in .btn-sm{display:none}
+  .js body:has(.rfw.rfw-go-on.rfw-go-in) .site-header .btn-sm{display:none}
   /* the open menu lists Pricing itself, so the header pill steps aside */
   .js body.menu-open .site-header.hero-btn-in .nav-price{display:none}
+  .js body.menu-open:has(.rfw.rfw-go-on.rfw-go-in) .site-header .nav-price{display:none}
 }
 
 /* ---------- header and footer links land clear of the fixed header ---------- */

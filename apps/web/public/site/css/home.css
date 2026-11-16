@@ -369,8 +369,6 @@
 /* ---------- 8. One system (the wheel; rf-wheel-up.css styles the block itself) ---------- */
 .sy{background:#fff}
 
-.sy-go{display:flex;flex-direction:column;align-items:center;text-align:center;padding:clamp(40px,5vw,64px) 0 clamp(16px,2vw,32px)}
-.sy-try{margin-bottom:22px}
 
 /* ---------- 9. Founder ---------- */
 .fd{background:#fff}
@@ -568,9 +566,6 @@
 
   /* The wheel: the line in, the button after */
 
-  .sy-go{align-items:stretch;text-align:left;padding:32px 0 24px}
-  .sy-try{margin-bottom:16px}
-  .sy-go .btn{width:100%}
 
   /* Use cases: a list of names; a tap opens the sentence */
   .inc{padding:56px 0 40px}
