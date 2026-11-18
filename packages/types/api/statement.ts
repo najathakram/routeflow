@@ -23,7 +23,7 @@ export interface AccountStatementInvoice {
   credit: number;
   /** total − paid − credit, clamped at 0 and rounded to the cent */
   unpaid: number;
-  /** whole days past the due date in the tenant's zone; 0 when due today, not yet due or no due date */
+  /** whole days past the due date in the tenant's zone; 0 when due today, not yet due, no due date, or a not-sent DRAFT (SA-1164 22:42Z D3e) */
   daysLate: number;
   /**
    * true only on a delivered, unsent DRAFT invoice (SA-1164 22:05Z): the row counts toward the open balance but the customer
