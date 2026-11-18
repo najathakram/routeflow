@@ -261,6 +261,9 @@ export function SettingsFinder({
         </div>
       </div>
 
+      {/* The rail's card stays while searching: at xl it is the page's only Business card and Pay entry. The phone list hides it, as before (the results are the whole screen). */}
+      {searching && rail && <BusinessCard variant={variant} />}
+
       {searching && results.length === 0 && (
         <Card className="space-y-3 text-sm text-[var(--ink-500)]">
           <p>No settings match “{query.trim()}”.</p>
@@ -303,9 +306,12 @@ export function SettingsFinder({
           {afterCard}
           <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--ink-500)]">
             <span>Frequently used:</span>
-            {CHIPS.map((c) => (
+            {CHIPS.flatMap((c) => {
+              const entry = nav.entries.find((e) => e.id === c.entryId);
+              return entry ? [{ ...c, href: rowHref(entry) }] : [];
+            }).map((c) => (
               <Link
-                key={c.href + c.label}
+                key={c.entryId}
                 href={c.href}
                 className={cn(
                   "rounded-full border border-[var(--line)] bg-[var(--paper)] px-3 py-1 font-medium text-[var(--accent-strong)]",

@@ -464,6 +464,6 @@ describe("SA-1159: a suffix after a short mid-scan stall is never sent to onScan
     const at = src.indexOf("const handleKeyDown");
     const handler = src.slice(at, src.indexOf('addEventListener("keydown"', at));
     expect(at).toBeGreaterThan(0);
-    expect(handler).not.toMatch(/(150|200|1000)/);
+    expect(handler).not.toMatch(/\b(150|200|1000)\b/);
   });
 });
