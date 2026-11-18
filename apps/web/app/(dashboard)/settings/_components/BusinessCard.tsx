@@ -26,7 +26,7 @@ type Variant = "rail" | "list";
  * billing; "Pay $X" is a sibling button (never a button inside a link) and only shows when payment is due.
  * A throw while reading the plan hides the card; the screen and the rest of the list stay.
  */
-export function BusinessCard(props: { variant: Variant; active?: boolean }) {
+export function BusinessCard(props: { variant: Variant }) {
   return (
     <RailBoundary>
       <BusinessCardInner {...props} />
@@ -34,7 +34,7 @@ export function BusinessCard(props: { variant: Variant; active?: boolean }) {
   );
 }
 
-function BusinessCardInner({ variant, active }: { variant: Variant; active?: boolean }) {
+function BusinessCardInner({ variant }: { variant: Variant }) {
   const { branding } = useTenant();
   const status = useBusinessStatus();
   const portal = useBillingPortal();
@@ -51,12 +51,10 @@ function BusinessCardInner({ variant, active }: { variant: Variant; active?: boo
       <Link
         href="/settings/billing"
         data-testid={variant === "rail" ? "business-card-rail" : "business-card"}
-        aria-current={active ? "page" : undefined}
         className={cn(
           "flex items-center gap-3 rounded-[var(--r-card)] border border-[var(--line)] bg-[var(--paper)] shadow-[var(--sh-card)] transition-colors [transition-duration:120ms] hover:bg-[var(--sunken)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary motion-reduce:transition-none",
           "p-3",
           pay && variant !== "rail" && "pr-32",
-          active && "bg-[var(--accent-soft)] hover:bg-[var(--accent-soft)]",
         )}
       >
         {branding?.logoUrl ? (

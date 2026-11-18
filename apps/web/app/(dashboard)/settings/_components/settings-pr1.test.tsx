@@ -620,6 +620,26 @@ describe("shell", () => {
     expect(within(nav).getByRole("list", { name: "Search results" })).toBeInTheDocument();
   });
 
+  it("a rail search on /settings/billing never marks the Business card current (it is a status card)", () => {
+    mockDesktop = true;
+    mockPath = "/settings/billing";
+    renderWithProviders(
+      <SettingsShell>
+        <SettingsHub isAdmin />
+      </SettingsShell>,
+    );
+    const nav = screen.getByRole("navigation", { name: "Settings" });
+    fireEvent.change(within(nav).getByLabelText("Search settings"), {
+      target: { value: "billing" },
+    });
+    const card = screen.getByTestId("business-card-rail");
+    expect(card).not.toHaveAttribute("aria-current");
+    expect(card.className).not.toMatch(/bg-\[var\(--accent-soft\)\]/);
+    expect(
+      screen.getAllByRole("link").filter((l) => l.getAttribute("aria-current") === "page").length,
+    ).toBeLessThanOrEqual(1);
+  });
+
   it("at xl the rail card is the Pay entry: payment due shows Pay with its amount", async () => {
     mockDesktop = true;
     seedApi({ "/billing/subscription": SUB_DUE });
