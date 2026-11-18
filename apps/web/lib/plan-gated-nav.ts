@@ -32,6 +32,30 @@ export type PlanFlagState = { enabled: boolean; resolved: boolean; failed: boole
  *  fails CLOSED, so a transient 5xx never stalls a paying tenant out of their own nav). */
 export const planFlagVisible = (s: PlanFlagState) => (s.resolved ? s.enabled : s.failed);
 
+/** The AR aging report: the one literal every AR link reads (pinned by plan-gated-nav.test.ts). */
+const AR_AGING_REPORT_HREF = "/finance/reports?report=ar-aging";
+
+/**
+ * UXG B8: where an AR aging link goes. `/finance/reports` is plan-gated (`flag.reports`), so a
+ * plan without Reports must not be offered the report. Visible (see `planFlagVisible`) -> the
+ * report, with the label each page already shows. Resolved and not enabled -> the dashboard
+ * falls back to Finance overview (which opens on every plan and shows the same aging figures);
+ * Finance overview itself gets `null` (no link, the figure stays). Still loading -> `null`.
+ */
+export function arAgingLink(
+  reports: PlanFlagState,
+  from: "dashboard" | "finance",
+): { href: string; label: string } | null {
+  if (planFlagVisible(reports))
+    return {
+      href: AR_AGING_REPORT_HREF,
+      label: from === "dashboard" ? "Full report" : "Aging report",
+    };
+  if (reports.resolved && from === "dashboard")
+    return { href: "/finance/dashboard", label: "Finance overview" };
+  return null;
+}
+
 /** The PLAN_GATED_NAV entry matching `pathname` (exact or prefix), if any. */
 export function matchPlanGatedRoute(pathname: string): FlagKey | null {
   for (const [prefix, key] of Object.entries(PLAN_GATED_NAV))
