@@ -151,7 +151,10 @@ function invoicesService() {
         customer: { findFirst: jest.fn().mockResolvedValue({ id: "c-1" }) },
       }),
     },
-    systemConfig: { get: jest.fn().mockResolvedValue(null) },
+    systemConfig: {
+      get: jest.fn().mockResolvedValue(null),
+      getAll: jest.fn().mockResolvedValue({}),
+    },
   });
   return { findUnique, service };
 }
