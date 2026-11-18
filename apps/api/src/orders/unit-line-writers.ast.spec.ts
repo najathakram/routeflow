@@ -84,7 +84,7 @@ const INVENTORY: Record<string, Row> = {
     why: "CHANGE_QTY/ADD_ITEM match by productId at the live pack",
     trioVia: ["categoryTaxSnapshotOf"],
   },
-  "orders/orders.service.ts::OrdersService.forceConsolidateCustomer": {
+  "orders/order-merge-fold.ts::forceConsolidateCustomerImpl": {
     kind: "GUARDED",
     needs: "assertNoUnitAwareLines",
     why: "merge folds by productId",
@@ -97,7 +97,7 @@ const INVENTORY: Record<string, Row> = {
     // create() call below), same as `InvoicesService.duplicate`'s inline-copy row.
     trioVia: ["categoryTaxType"],
   },
-  "orders/orders.service.ts::OrdersService.mergeAllPendingForCustomer": {
+  "orders/order-merge-fold.ts::mergeAllPendingForCustomerImpl": {
     kind: "GUARDED",
     needs: "isUnitAwareLine",
     why: "merge folds by productId; bails out when any candidate is unit-aware",
@@ -427,6 +427,7 @@ const FREE_WRITER_FILES = [
   "orders/office-evidence-completion.ts",
   "orders/recompute-line-category-taxes.ts",
   "orders/settle-split-free-units.ts",
+  "orders/order-merge-fold.ts", // SA-1162: the customer merge pair, moved verbatim out of orders.service.ts
 ];
 /** Pre-existing free-function line writers under orders/ that predate this scan (shrink-only; classify one to remove it). */
 const KNOWN_UNSCANNED_FREE_WRITERS = [
@@ -476,7 +477,10 @@ function lineWriteDataKeys(node: ts.Node): string[] {
   return [...keys].sort();
 }
 
-/** The only line columns each FREE_WRITER_FILES FIELD_ONLY row may write (exact set: adding a price or a qty fails). */
+/**
+ * The only line columns each FREE_WRITER_FILES FIELD_ONLY row may write (exact set: adding a price or a qty fails).
+ * A GUARDED row of a listed file declares its full measured set (SA-1162), so a new column it writes fails the build.
+ */
 const FREE_WRITER_DATA_KEYS: Record<string, string[]> = {
   "orders/order-cancel-tx.ts::cancelOrderInTx": ["status"],
   "orders/delivered-stamp.ts::clearUnevidencedDelivered": ["deliveredQty"],
@@ -486,6 +490,65 @@ const FREE_WRITER_DATA_KEYS: Record<string, string[]> = {
   "orders/line-position.ts::densifyOrderLines": ["position"],
   "orders/line-position.ts::restampKeptLines": ["position"],
   "orders/order-line-order.ts::reorderOrderLines": ["position"],
+  // SA-1162: GUARDED rows of a listed file declare their full measured set (a new column they write fails the build)
+  "orders/order-merge-fold.ts::mergeAllPendingForCustomerImpl": [
+    "...",
+    "authorChannel",
+    "backorderedPieces",
+    "boxes",
+    "categoryPriceIncludesTax",
+    "categoryTaxRate",
+    "categoryTaxType",
+    "notes",
+    "orderId",
+    "originalPrice",
+    "overriddenBy",
+    "overrideReason",
+    "pieces",
+    "position",
+    "priceType",
+    "productId",
+    "promoFreeUnits",
+    "qty",
+    "restrictionOverrideAt",
+    "restrictionOverrideBy",
+    "restrictionOverrideReason",
+    "restrictionOverrideRuleIds",
+    "status",
+    "subtotal",
+    "trackedCategoryId",
+    "unitPrice",
+    "unitsPerBox",
+  ],
+  "orders/order-merge-fold.ts::forceConsolidateCustomerImpl": [
+    "...",
+    "authorChannel",
+    "backorderedPieces",
+    "boxes",
+    "categoryPriceIncludesTax",
+    "categoryTaxRate",
+    "categoryTaxType",
+    "notes",
+    "orderId",
+    "originalPrice",
+    "overriddenBy",
+    "overrideReason",
+    "pieces",
+    "position",
+    "priceType",
+    "productId",
+    "promoFreeUnits",
+    "qty",
+    "restrictionOverrideAt",
+    "restrictionOverrideBy",
+    "restrictionOverrideReason",
+    "restrictionOverrideRuleIds",
+    "status",
+    "subtotal",
+    "trackedCategoryId",
+    "unitPrice",
+    "unitsPerBox",
+  ],
   "orders/recompute-line-category-taxes.ts::recomputeLineCategoryTaxes": [
     "categoryPriceIncludesTax",
     "categoryTaxAmount",
@@ -994,8 +1057,8 @@ const STATUS_COLUMNS = new Set([
 const U = "orders/orders.service.ts::OrdersService";
 const UPDATE_ITEMS = `${U}.updateOrderItems`;
 const CHANGE_REQUEST = `${U}.approveChangeRequestAtStop`;
-const MERGE_ALL = `${U}.mergeAllPendingForCustomer`;
-const FORCE = `${U}.forceConsolidateCustomer`;
+const MERGE_ALL = "orders/order-merge-fold.ts::mergeAllPendingForCustomerImpl"; // SA-1162: moved out of the class
+const FORCE = "orders/order-merge-fold.ts::forceConsolidateCustomerImpl";
 const RECOMPUTE = "invoices/invoices.service.ts::InvoicesService.recomputeOrderFromInvoices";
 const covered = (via: string, why: string): RevisionRow => ({ kind: "COVERED", via, why });
 const statusOnly = (why: string, lineStatus?: string): RevisionRow => ({

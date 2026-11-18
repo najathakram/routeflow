@@ -28,7 +28,9 @@ const BASELINE: Record<string, number> = {
   // taking 5 of these reads with it — 21 -> 16.
   // SA-1097: updateOrderItems' stored-line pack comes from resolveStoredLinePack, the live pack a candidate read
   // through live-pack-map.ts (a listed non-writer); the at-door CHANGE_QTY took the same helper — two direct reads fewer.
-  "orders/orders.service.ts": 13,
+  // SA-1162: the customer merge pair moved verbatim to order-merge-fold.ts and took two of these reads with it (13 -> 11).
+  "orders/orders.service.ts": 11,
+  "orders/order-merge-fold.ts": 2,
   // Round-4 prefactor (SA-124h): buildReplaceAllLineData, moved verbatim out of
   // orders.service.ts's replaceAll rebuild (see that file's own comment above) — same 5 reads,
   // same behavior, only relocated.

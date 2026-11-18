@@ -29,6 +29,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { InvoicesService } from "../invoices/invoices.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { NumberingService } from "../import/numbering.service";
+import { BuyerController } from "../buyer/buyer.controller";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -56,14 +57,10 @@ describeDb(
     const orderIds: string[] = [];
     const invoiceIds: string[] = [];
     const creditNoteIds: string[] = [];
-    /** A1b observed on the head (filled after the first run): payment and amountUsed after the door increase. */
-    const OBSERVED_A1B = { paid: 15, used: 15 };
-    /** E5 observed (filled after the first run). */
-    const OBSERVED_E5: "committed" | { status: number; code: string } = {
-      status: 409,
-      code: "CREDIT_NOTE_SOURCE_GONE",
-    };
-    const OBSERVED_E5_USED = 15;
+    /** SA-1156 E5r: the refusal the settle sends, as text (the pre-check runs the same predicate). */
+    const SOURCE_GONE = { status: 409, code: "CREDIT_NOTE_SOURCE_GONE" };
+    const SOURCE_GONE_TEXT =
+      "came from a deleted invoice. Void that credit note first, then try again.";
     const DOOR_SENTENCE =
       "This order's invoice can't change at the door. The office can add these items on a new order.";
 
@@ -702,15 +699,20 @@ describeDb(
     }, 60_000);
 
     /** SA-1156 section 0: the door's settle runs with the REAL credit service (the edit rows above stub it). */
-    async function creditDraft() {
+    async function creditDraft(opts?: {
+      noteAmount?: string;
+      used?: string;
+      payment?: string;
+      intent?: string;
+    }) {
       const made = await pendingOrder({ status: "DRAFT" });
       const cn = await raw.creditNote.create({
         data: {
           tenantId,
           customerId: made.o.customerId,
           creditNoteNumber: `CN-${randomUUID().slice(0, 8)}`,
-          amount: "15.00",
-          amountUsed: "15.00",
+          amount: opts?.noteAmount ?? "15.00",
+          amountUsed: opts?.used ?? "15.00",
           status: "ISSUED",
         } as any,
       });
@@ -719,14 +721,19 @@ describeDb(
         data: {
           tenantId,
           invoiceId: made.inv.id,
-          amount: "15.00",
+          amount: opts?.payment ?? "15.00",
           method: "CREDIT_NOTE",
           status: "PAID",
           creditNoteId: cn.id,
         } as any,
       });
       await raw.orderCreditNote.create({
-        data: { tenantId, orderId: made.o.id, creditNoteId: cn.id, amount: "15.00" } as any,
+        data: {
+          tenantId,
+          orderId: made.o.id,
+          creditNoteId: cn.id,
+          amount: opts?.intent ?? "15.00",
+        } as any,
       });
       return { ...made, cn };
     }
@@ -757,6 +764,42 @@ describeDb(
       used: Number((await raw.creditNote.findUniqueOrThrow({ where: { id: cnId } })).amountUsed),
     });
 
+    /** A1b read: the SUM of non-VOID CREDIT_NOTE payments naming the note (an apply writes a NEW row), plus the note's amountUsed. */
+    const creditSum = async (invId: string, cnId: string) => ({
+      paid: Number(
+        (
+          await raw.invoicePayment.findMany({
+            where: {
+              invoiceId: invId,
+              method: "CREDIT_NOTE",
+              creditNoteId: cnId,
+              status: { not: "VOID" },
+            },
+          })
+        ).reduce((a, p) => a + Number(p.amount), 0),
+      ),
+      used: Number((await raw.creditNote.findUniqueOrThrow({ where: { id: cnId } })).amountUsed),
+    });
+    const markSourceGone = (cnId: string) =>
+      raw.auditLog.create({
+        data: {
+          tenantId,
+          action: "SOURCE_DELETED",
+          entityType: "CreditNote",
+          entityId: cnId,
+        } as any,
+      });
+    /** Everything a refusal must leave alone: the order snapshot, the credit rows, revisions, audit rows and stock. */
+    const everything = async (orderId: string, products: string[]) => ({
+      snap: await snapshot(orderId),
+      credit: await raw.creditNote.findMany({ orderBy: { id: "asc" }, where: { tenantId } }),
+      revisions: await raw.orderRevision.count({ where: { orderId } }),
+      audits: await raw.auditLog.count({ where: { tenantId, entityId: orderId } }),
+      stock: (
+        await raw.product.findMany({ where: { id: { in: products } }, orderBy: { id: "asc" } })
+      ).map((p) => Number(p.currentStock)),
+    });
+
     it("A1/E19 (decrease): a door REMOVE_ITEM on a DRAFT holding a $15 credit settles the credit down to the new total", async () => {
       const { o, inv, lines, products, cn } = await creditDraft();
       const cr = await atDoor(o.id, lines[0].id, products[0], o.customerId, "REMOVE_ITEM");
@@ -772,8 +815,14 @@ describeDb(
       expect(await creditState(inv.id, cn.id)).toEqual({ paid: 10, used: 10 });
     }, 60_000);
 
-    it("A1b (increase): a door CHANGE_QTY that grows the total settles up to the intent (observed)", async () => {
-      const { o, inv, lines, products, cn } = await creditDraft();
+    it("A1b (increase): a door CHANGE_QTY to $40 tops the credit up to the intent: 30 paid, 30 used (no settle: 20 and 20)", async () => {
+      // the fixture the creation settle leaves on a $20 DRAFT with a larger intent: note 30, used 20, one $20 payment, intent 30
+      const { o, inv, lines, products, cn } = await creditDraft({
+        noteAmount: "30.00",
+        used: "20.00",
+        payment: "20.00",
+        intent: "30.00",
+      });
       const cr = await atDoor(o.id, lines[0].id, products[0], o.customerId, "CHANGE_QTY");
       await withRealCredits(() =>
         tenantCtx.run(tenantId, () => orders.approveChangeRequestAtStop(cr.id, driver())),
@@ -781,7 +830,7 @@ describeDb(
       expect(Number((await raw.invoice.findUniqueOrThrow({ where: { id: inv.id } })).total)).toBe(
         40,
       );
-      expect(await creditState(inv.id, cn.id)).toEqual(OBSERVED_A1B);
+      expect(await creditSum(inv.id, cn.id)).toEqual({ paid: 30, used: 30 });
     }, 60_000);
 
     it("A1c: a settle that throws never fails the door; one ERROR is logged and the request is applied", async () => {
@@ -815,29 +864,107 @@ describeDb(
       expect(await creditState(inv.id, cn.id)).toEqual({ paid: 10, used: 10 });
     }, 60_000);
 
-    it("E5 (observed): the credit's source note is gone: what the edit returns", async () => {
+    it("E5r (red-first): the credit's source note is gone: the edit is refused 409 CREDIT_NOTE_SOURCE_GONE and NOTHING is written", async () => {
+      const { o, lines, products, cn } = await creditDraft();
+      await markSourceGone(cn.id);
+      const before = await everything(o.id, products);
+      const got = (await withRealCredits(() =>
+        edit(o.id, cut(lines)).then(
+          () => ({ status: 200, code: undefined as string | undefined, message: "" }),
+          (e: any) => ({
+            status: e?.status as number,
+            code: e?.response?.code as string | undefined,
+            message: String(e?.response?.message),
+          }),
+        ),
+      )) as { status: number; code: string | undefined; message: string };
+      expect({ status: got.status, code: got.code }).toEqual(SOURCE_GONE);
+      expect(got.message).toContain(SOURCE_GONE_TEXT);
+      expect(await everything(o.id, products)).toEqual(before);
+    }, 60_000);
+
+    it("E5g1 (guard): source gone, a $10 credit and the order cut to $10 (the boundary: no excess): 200, no shrink, the pre-check does not fire", async () => {
+      const { o, inv, lines, cn } = await creditDraft({
+        noteAmount: "10.00",
+        used: "10.00",
+        payment: "10.00",
+        intent: "10.00",
+      });
+      await markSourceGone(cn.id);
+      await withRealCredits(() => edit(o.id, cut(lines)));
+      expect(Number((await raw.order.findUniqueOrThrow({ where: { id: o.id } })).total)).toBe(10);
+      expect(await creditState(inv.id, cn.id)).toEqual({ paid: 10, used: 10 });
+    }, 60_000);
+
+    it("E5g2 (guard): the same edit with the source present: 200, the settle shrinks the credit to $10 (as today)", async () => {
       const { o, inv, lines, cn } = await creditDraft();
-      await raw.auditLog.create({
+      await withRealCredits(() => edit(o.id, cut(lines)));
+      expect(await creditState(inv.id, cn.id)).toEqual({ paid: 10, used: 10 });
+    }, 60_000);
+
+    it("E5g3: source gone, a quantity increase (order $20 to $40) with the credit intent fully applied: 200, the invoice follows to $40 and no credit is written (15 paid, 15 used)", async () => {
+      const { o, inv, lines, cn } = await creditDraft();
+      await markSourceGone(cn.id);
+      await withRealCredits(() => edit(o.id, { items: [{ id: lines[0].id, qty: 3 }] }));
+      expect(Number((await raw.order.findUniqueOrThrow({ where: { id: o.id } })).total)).toBe(40);
+      expect(Number((await raw.invoice.findUniqueOrThrow({ where: { id: inv.id } })).total)).toBe(
+        40,
+      );
+      expect(await creditState(inv.id, cn.id)).toEqual({ paid: 15, used: 15 });
+    }, 60_000);
+
+    it("E5d (red-first): source gone, the door lowers the order to $10: 409 ORDER_EDIT_INVOICE_HAS_PAYMENTS with the door sentence, the request stays open, nothing written", async () => {
+      const { o, lines, products, cn } = await creditDraft();
+      await markSourceGone(cn.id);
+      const cr = await atDoor(o.id, lines[0].id, products[0], o.customerId, "REMOVE_ITEM");
+      const before = await everything(o.id, products);
+      const got = await withRealCredits(() =>
+        tenantCtx
+          .run(tenantId, () => orders.approveChangeRequestAtStop(cr.id, driver()))
+          .then(
+            () => ({ status: 200, code: undefined as string | undefined, message: "" }),
+            (e: any) => ({
+              status: e?.status as number,
+              code: e?.response?.code as string | undefined,
+              message: String(e?.response?.message),
+            }),
+          ),
+      );
+      expect(got).toEqual({ status: 409, code: CODE, message: DOOR_SENTENCE });
+      expect((await raw.changeRequest.findUniqueOrThrow({ where: { id: cr.id } })).status).toBe(
+        "PENDING",
+      );
+      expect(await everything(o.id, products)).toEqual(before);
+    }, 60_000);
+
+    it("E5c (guard): two invoices on the order (no single mirror): the pre-check does not fire; the edit commits, the order is $10, the base invoice stays $20, the credit stays 15 and 15 (the SA-681 partials state, as on master)", async () => {
+      const { o, inv, lines, cn } = await creditDraft();
+      await markSourceGone(cn.id);
+      const second = await raw.invoice.create({
         data: {
           tenantId,
-          action: "SOURCE_DELETED",
-          entityType: "CreditNote",
-          entityId: cn.id,
-        } as any,
+          customerId: o.customerId,
+          orderId: o.id,
+          invoiceNumber: `INV-${randomUUID().slice(0, 8)}-R1`,
+          status: "DRAFT",
+          subtotal: "0.00",
+          total: "0.00",
+        },
       });
-      const before = await snapshot(o.id);
-      const outcome = await withRealCredits(() =>
+      invoiceIds.push(second.id);
+      const got = await withRealCredits(() =>
         edit(o.id, cut(lines)).then(
           () => "committed" as const,
-          (e: any) => ({ status: e?.status, code: e?.response?.code }),
+          (e: any) => ({ status: e?.status as number, code: e?.response?.code as string }),
         ),
       );
-      expect(outcome).toEqual(OBSERVED_E5);
-      // OBSERVED (report to the SA): the 409 comes AFTER the edit committed. The order and its mirror are at $10 while the
-      // credit payment stays $15 (above the total) because the shrink was refused.
+      expect(got).toBe("committed");
       expect(Number((await raw.order.findUniqueOrThrow({ where: { id: o.id } })).total)).toBe(10);
-      expect((await creditState(inv.id, cn.id)).paid).toBe(15);
-      expect((await creditState(inv.id, cn.id)).used).toBe(OBSERVED_E5_USED);
+      expect(Number((await raw.invoice.findUniqueOrThrow({ where: { id: inv.id } })).total)).toBe(
+        20,
+      );
+      expect(await creditState(inv.id, cn.id)).toEqual({ paid: 15, used: 15 });
+      expect((await creditState(inv.id, cn.id)).paid).toBeGreaterThan(0);
     }, 60_000);
 
     it("A2: the door apply on a DRAFT holding cash still refuses 409 with the door sentence; the request stays open, nothing written", async () => {
@@ -856,15 +983,24 @@ describeDb(
       expect(await snapshot(o.id)).toEqual(before);
     }, 60_000);
 
-    it("M3: the buyer cart's merge read (the controller's exact call) skips a PAID order", async () => {
-      const { o } = await pendingOrder({ status: "PAID", paid: 20 });
-      const found = await tenantCtx.run(tenantId, () =>
-        orders.findActiveOrder(o.customerId, {
-          forMerge: true,
-          mergeAs: { audience: "buyer", role: "CUSTOMER", deniedGroups: [] },
-        }),
+    it("M3 (through the real buyer place): a cart beside a PAID order makes a NEW order and the PAID order is untouched", async () => {
+      const { o, products } = await pendingOrder({ status: "PAID", paid: 20 });
+      const before = await snapshot(o.id);
+      const userId = (await raw.customer.findUniqueOrThrow({ where: { id: o.customerId } }))
+        .userId as string;
+      const stubs: any[] = Array.from({ length: 19 }, () => ({}));
+      stubs[7] = orders;
+      stubs[16] = prisma;
+      const buyerCtl = new (BuyerController as any)(...stubs) as BuyerController;
+      const res: any = await tenantCtx.run(tenantId, () =>
+        buyerCtl.createOrder(
+          { items: [{ productId: products[0], qty: 1 }] } as any,
+          { tenantId, tenantSlug: slug, customerId: o.customerId, userId, role: "CUSTOMER" } as any,
+        ),
       );
-      expect(found).toBeNull();
+      orderIds.push(res.id);
+      expect(res.id).not.toBe(o.id);
+      expect(await snapshot(o.id)).toEqual(before);
     }, 60_000);
 
     it("a VOID (bounced) payment on a SENT invoice does not block the edit (B314 kept)", async () => {

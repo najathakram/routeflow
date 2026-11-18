@@ -15,14 +15,6 @@ const REGISTRY: Record<string, Array<{ arg: string; settledBy: string }>> = {
   "orders/orders.service.ts": [
     {
       arg: "bogoPromos",
-      settledBy: "mergeAllPendingForCustomer -> buildMergeLineWrites -> allocateSplitFreeUnits",
-    },
-    {
-      arg: "bogoPromos",
-      settledBy: "forceConsolidateCustomer -> buildMergeLineWrites -> allocateSplitFreeUnits",
-    },
-    {
-      arg: "bogoPromos",
       settledBy: "updateOrderItems stored-price qty edit -> settleSplitFreeUnits at the tail",
     },
     {
@@ -32,6 +24,17 @@ const REGISTRY: Record<string, Array<{ arg: string; settledBy: string }>> = {
     {
       arg: "buyerPromos",
       settledBy: "approveChangeRequestAtStop -> settleSplitFreeUnits before the totals",
+    },
+  ],
+  "orders/order-merge-fold.ts": [
+    {
+      arg: "bogoPromos",
+      settledBy:
+        "mergeAllPendingForCustomerImpl -> buildMergeLineWrites -> allocateSplitFreeUnits (SA-1162: moved out of orders.service.ts)",
+    },
+    {
+      arg: "bogoPromos",
+      settledBy: "forceConsolidateCustomerImpl -> buildMergeLineWrites -> allocateSplitFreeUnits",
     },
   ],
   "orders/merge-line-writes.ts": [

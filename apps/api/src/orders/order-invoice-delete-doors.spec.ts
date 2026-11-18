@@ -53,18 +53,24 @@ describe("REG-ROW259: deleteOrder unlinks the credit notes its invoices sourced"
   });
 });
 
-describe("REG-ROW259: orders.service.ts has no bare invoice delete", () => {
+describe("REG-ROW259: orders.service.ts and order-merge-fold.ts have no bare invoice delete", () => {
+  // SA-1162: the merge-loser draft delete moved to order-merge-fold.ts; the absence reads BOTH files, or it would pass
+  // vacuously for the file the door now lives in.
   const src = fs.readFileSync(path.join(__dirname, "orders.service.ts"), "utf8");
+  const fold = fs.readFileSync(path.join(__dirname, "order-merge-fold.ts"), "utf8");
 
-  it("REG-ROW259: neither door calls tx.invoice.delete directly; both call deleteOrderInvoice", () => {
+  it("REG-ROW259: neither door calls tx.invoice.delete directly; both call deleteOrderInvoice (one per file)", () => {
     expect(src).not.toMatch(/\.invoice\s*\.\s*delete(?:Many)?\s*\(/);
-    expect(src.match(/deleteOrderInvoice\(/g) ?? []).toHaveLength(2);
+    expect(fold).not.toMatch(/\.invoice\s*\.\s*delete(?:Many)?\s*\(/);
+    expect(src.match(/deleteOrderInvoice\(/g) ?? []).toHaveLength(1);
+    expect(fold.match(/deleteOrderInvoice\(/g) ?? []).toHaveLength(1);
   });
 
-  it("REG-ROW259: the merge-loser draft delete is inside forceConsolidateCustomer", () => {
-    const start = src.indexOf("  async forceConsolidateCustomer(");
-    const end = src.indexOf("\n  }\n", start);
-    expect(src.slice(start, end)).toContain("deleteOrderInvoice(tx, loserDraft.id,");
+  it("REG-ROW259: the merge-loser draft delete is inside forceConsolidateCustomerImpl", () => {
+    const start = fold.indexOf("export async function forceConsolidateCustomerImpl(");
+    const end = fold.indexOf("\n}\n", start);
+    expect(start).toBeGreaterThan(0);
+    expect(fold.slice(start, end)).toContain("deleteOrderInvoice(tx, loserDraft.id,");
   });
 
   it("REG-ROW259: deleteOrderInvoice has exactly two non-spec call sites (a new door must be seen and classified)", () => {
@@ -86,6 +92,6 @@ describe("REG-ROW259: orders.service.ts has no bare invoice delete", () => {
       }
     };
     walk(SRC);
-    expect(sites).toEqual(["orders/orders.service.ts", "orders/orders.service.ts"]);
+    expect(sites).toEqual(["orders/order-merge-fold.ts", "orders/orders.service.ts"]); // SA-1162: the merge door moved
   });
 });
