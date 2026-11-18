@@ -1812,16 +1812,17 @@ export class EmailService {
                 <td colspan="${footSpan}" style="padding:8px 12px;font-size:13px;font-weight:600;color:#374151;text-align:right;">Items</td>
                 <td style="padding:8px 12px;font-size:14px;font-weight:600;color:#374151;text-align:right;">${escapeHtml(itemCount)}</td>
               </tr>`;
+    // R6a + owner 2026-11-18 22:28Z ("Keep Total in place"): with Balance Due off the invoice Total prints above the
+    // Paid / credit / advance lines, and nothing takes the Balance Due spot at the bottom.
+    const totalRow = `<tr>
+                <td colspan="${footSpan}" style="padding:8px 12px;font-size:14px;font-weight:700;color:#1D2A3D;text-align:right;">Total</td>
+                <td style="padding:8px 12px;font-size:15px;font-weight:700;color:#1D2A3D;text-align:right;">${fmt(params.total)}</td>
+              </tr>`;
     const totalsFooter =
       params.balanceDue != null
-        ? `${itemCountRow}${amountPaidRow}${creditAppliedRow}${advanceAppliedRow}${
+        ? `${itemCountRow}${dropBalance ? totalRow : ""}${amountPaidRow}${creditAppliedRow}${advanceAppliedRow}${
             dropBalance
-              ? // R6a: the invoice-level figure stays: a Total row where Balance Due was (the email has no other Total).
-                `
-              <tr style="background:#f9fafb;">
-                <td colspan="${footSpan}" style="padding:12px;font-size:14px;font-weight:700;color:#1D2A3D;text-align:right;">Total</td>
-                <td style="padding:12px;font-size:16px;font-weight:700;color:#1D2A3D;text-align:right;">${fmt(params.total)}</td>
-              </tr>`
+              ? ""
               : `
               <tr style="background:#f9fafb;">
                 <td colspan="${footSpan}" style="padding:12px;font-size:14px;font-weight:700;color:#1D2A3D;text-align:right;">Balance Due</td>
@@ -1937,19 +1938,16 @@ export class EmailService {
     );
     bodyText.push(`Items: ${itemCount}`);
     const totalsLines: string[] = [];
+    // Owner 2026-11-18 22:28Z: Balance Due off keeps the invoice Total in place, above the Paid / credit lines.
+    if (dropBalance && params.balanceDue != null) totalsLines.push(`Total: ${fmt(params.total)}`);
     if (!dropPaid && params.totalPaid != null && params.totalPaid > 0)
       totalsLines.push(`Amount Paid: ${fmt(params.totalPaid)}`);
     if (params.creditApplied != null && params.creditApplied > 0)
       totalsLines.push(`${creditNoteLabel}: ${fmt(params.creditApplied)}`);
     if (params.advanceApplied != null && params.advanceApplied > 0)
       totalsLines.push(`Advance applied: ${fmt(params.advanceApplied)}`);
-    totalsLines.push(
-      params.balanceDue != null
-        ? dropBalance
-          ? `Total: ${fmt(params.total)}` // R6a: Balance Due off keeps the invoice-level figure
-          : `Balance Due: ${fmt(params.balanceDue)}`
-        : `Amount Due: ${fmt(params.total)}`,
-    );
+    if (params.balanceDue == null) totalsLines.push(`Amount Due: ${fmt(params.total)}`);
+    else if (!dropBalance) totalsLines.push(`Balance Due: ${fmt(params.balanceDue)}`);
     if (totalsLines.length > 0) bodyText.push(totalsLines.join("\n"));
     if (params.pdfUrl) bodyText.push(`Download PDF: ${params.pdfUrl}`);
     bodyText.push(

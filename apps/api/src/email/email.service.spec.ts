@@ -2571,10 +2571,17 @@ describe("EmailService.sendInvoice - Amount Paid / Balance Due switches (R6a, T1
     expect(html).toContain("Advance applied");
   });
 
-  it("balance off prints a Total line (text) and a Total row (HTML) where Balance Due was; both on adds none", async () => {
+  // Owner 2026-11-18 22:28Z "Keep Total in place": Total sits above the Paid / credit / advance lines, never at the bottom.
+  it("balance off prints Total above the Paid / credit lines (text and HTML); both on adds none", async () => {
     const off = await send({ hideBalanceDue: true });
-    expect(off.text).toContain("Advance applied: $20.00\nTotal: $200.00");
+    expect(off.text).toContain(
+      "Total: $200.00\nAmount Paid: $50.00\nCredit issued — CN-7: $40.00\nAdvance applied: $20.00\n",
+    );
     expect(totalRowAfter(off.html)).toContain("$200.00</td>");
+    const at = (label: string) => off.html.indexOf(`text-align:right;">${label}</td>`);
+    expect(at("Total")).toBeGreaterThan(at("Items"));
+    expect(at("Total")).toBeLessThan(at("Amount Paid"));
+    expect(at("Amount Paid")).toBeLessThan(at("Advance applied"));
     for (const over of [
       {},
       { hideAmountPaid: true },
@@ -2584,6 +2591,18 @@ describe("EmailService.sendInvoice - Amount Paid / Balance Due switches (R6a, T1
       expect(on.text).not.toContain("Total: ");
       expect(totalRowAfter(on.html)).toBe("");
     }
+  });
+
+  it("balance off: the last money line is not Total (pin, owner 22:28Z)", async () => {
+    const off = await send({ hideBalanceDue: true });
+    const moneyLines = off.text.split("\n").filter((l) => /\$\d/.test(l) && !/ = \$/.test(l));
+    expect(moneyLines[moneyLines.length - 1]).toBe("Advance applied: $20.00");
+    // label cells only (they carry the colspan); value cells are skipped
+    const labels = [...off.html.matchAll(/colspan="\d+" style="[^"]*">([^<]+)<\/td>/g)].map(
+      (m) => m[1],
+    );
+    expect(labels[labels.length - 1]).toBe("Advance applied");
+    expect(off.text).not.toContain("Advance applied: $20.00\nTotal");
   });
 
   it("with both off the totals paragraph still carries the Total line, and no empty paragraph", async () => {
