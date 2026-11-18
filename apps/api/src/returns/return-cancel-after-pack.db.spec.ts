@@ -779,20 +779,23 @@ describeDb("SA-1093 Rule 4: a return's cancel after a Boxes answer", () => {
         await returnOfThreeAddsThree(w);
       }, 60_000);
 
-      it("C-6c: a buyer edit names the line by orderItemId with a split: adds 3", async () => {
+      it("C-6c (SA-1161 B2): a buyer entry carrying a split is refused: 400, the line is not rewritten", async () => {
+        // No buyer screen sends boxes/pieces (the allowlist), so a buyer cannot rewrite a line with a split;
+        // the rewrite shape is covered by C-6a and C-6b above.
         const { w, line } = await openAtAnswer("c6c");
 
-        await inTenant(w, () =>
-          orders.updateOrderItems(
-            w.orderId,
-            { replaceAll: true, items: [{ ...oneBoxSixPieces(w), orderItemId: line.id }] },
-            { ...staff(w), role: "CUSTOMER" },
-            { buyerLineIds: true },
+        await expect(
+          inTenant(w, () =>
+            orders.updateOrderItems(
+              w.orderId,
+              { items: [{ ...oneBoxSixPieces(w), orderItemId: line.id }] },
+              { ...staff(w), role: "CUSTOMER" },
+              { buyerLineIds: true },
+            ),
           ),
-        );
+        ).rejects.toMatchObject({ response: { code: "BUYER_EDIT_INPUT_NOT_ALLOWED" } });
 
-        await expectRewritten(w, line.createdAt);
-        await returnOfThreeAddsThree(w);
+        expect(await liveLine(w)).toEqual(line); // nothing written
       }, 60_000);
 
       /** The per-line edit C-6d and C-6i share: the line stays on the order, delivered. */

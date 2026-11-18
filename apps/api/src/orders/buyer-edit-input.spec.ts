@@ -14,7 +14,7 @@ const read = (...p: string[]) => readFileSync(join(__dirname, ...p), "utf8");
 
 /** Fields declared in one class body of a DTO file (decorated or plain, comments skipped). */
 function declared(src: string, cls: string): string[] {
-  const start = src.search(new RegExp(`class ${cls}\b`));
+  const start = src.search(new RegExp(`class ${cls}\\b`));
   if (start < 0) throw new Error(`no class ${cls}`);
   const rest = src.slice(start);
   const open = rest.indexOf("{");
@@ -133,9 +133,38 @@ describe("buyer edit allowlist (SA-1161)", () => {
     );
     const list = (name: string) =>
       [
-        ...(src.match(new RegExp(`${name}\s*=\s*\[([^\]]*)\]`))?.[1] ?? "").matchAll(/"(\w+)"/g),
+        ...(src.match(new RegExp(`${name}\\s*=\\s*\\[([^\\]]*)\\]`))?.[1] ?? "").matchAll(
+          /"(\w+)"/g,
+        ),
       ].map((m) => m[1]);
     expect(list("BUYER_EDIT_ENTRY_FIELDS")).toEqual([...BUYER_EDIT_ENTRY_FIELDS]);
     expect(list("BUYER_EDIT_BODY_FIELDS")).toEqual([...BUYER_EDIT_BODY_FIELDS]);
+  });
+});
+
+/**
+ * B13: the buyer CREATE route needs no check of its own because its input is already an allowlist (the global
+ * pipe is whitelist + forbidNonWhitelisted). The server-built merge fold may carry more; the create DTOs may not
+ * grow unseen, so a new create field fails here until a row covers it.
+ */
+describe("buyer create DTOs stay closed (SA-1161 B13)", () => {
+  const create = read("..", "buyer", "dto", "buyer-create-order.dto.ts");
+  it("BuyerOrderItemDto declares exactly productId, qty, boxes, pieces, notes", () => {
+    expect(declared(create, "BuyerOrderItemDto").sort()).toEqual(
+      ["boxes", "notes", "pieces", "productId", "qty"].sort(),
+    );
+  });
+  it("BuyerCreateOrderDto declares exactly items, notes, urgent, requestedDeliveryDate, status, forceNew, fulfillPath", () => {
+    expect(declared(create, "BuyerCreateOrderDto").sort()).toEqual(
+      [
+        "forceNew",
+        "fulfillPath",
+        "items",
+        "notes",
+        "requestedDeliveryDate",
+        "status",
+        "urgent",
+      ].sort(),
+    );
   });
 });

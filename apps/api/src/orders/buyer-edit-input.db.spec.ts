@@ -323,6 +323,7 @@ describeDb("buyer edit allowlist (SA-1161), real Postgres", () => {
     const s: any[] = new Array(20).fill({});
     s[7] = orders;
     s[16] = prisma;
+    s[19] = { notifyBuyerOrderEdited: async () => undefined }; // the office email after an accepted edit
     return s;
   };
   const buyerCtl = () => new (BuyerController as any)(...stubs()) as BuyerController;
@@ -393,6 +394,17 @@ describeDb("buyer edit allowlist (SA-1161), real Postgres", () => {
       other: o.lineItems.find((l) => l.productId === y)!,
     };
   }
+  /** A PENDING order with no delivered line: the screens' replace body is accepted on it. */
+  async function untouched() {
+    const x = await product("bei");
+    const y = await product("bei");
+    const o = await orderFor(customerId, [plain(x, 2), plain(y, 2)]);
+    return {
+      o,
+      first: o.lineItems.find((l) => l.productId === x)!,
+      other: o.lineItems.find((l) => l.productId === y)!,
+    };
+  }
   /** Everything a refusal must leave alone. */
   const everything = async (orderId: string, products: string[]) => ({
     snap: await snapshot(orderId),
@@ -418,7 +430,14 @@ describeDb("buyer edit allowlist (SA-1161), real Postgres", () => {
         data: { tenantId, productId: x, label: "Case", factorToBase: 6, sortOrder: 0 },
       });
       const o = await orderFor(customerId, [
-        plain(x, 3, 2, { unitLabel: "Case", unitsPerBox: 6, unitPrice: "6.00", subtotal: "18" }),
+        plain(x, 3, 2, {
+          unitLabel: "Case",
+          unitsPerBox: 6,
+          boxes: 1,
+          pieces: 0,
+          unitPrice: "6.00",
+          subtotal: "18",
+        }),
       ]);
       const before = await everything(o.id, [x]);
       const got = await send(route, o.id, {
@@ -467,7 +486,15 @@ describeDb("buyer edit allowlist (SA-1161), real Postgres", () => {
         const { o, x, y, other } = await reopened();
         const before = await everything(o.id, [x, y]);
         const got = await send(route, o.id, {
-          items: [{ orderItemId: other.id, qty: 2, [f]: f === "action" ? "CANCEL" : "v" }],
+          items: [
+            {
+              orderItemId: other.id,
+              qty: 2,
+              // the pre-owner shape checks name a line by `id`; give it one so the allowlist answers
+              ...(f === "substituteProductId" ? { id: other.id } : {}),
+              [f]: f === "action" ? "UPDATE" : "v",
+            },
+          ],
         });
         expect(answer(got)).toEqual(REFUSED);
         expect(await everything(o.id, [x, y])).toEqual(before);
@@ -476,15 +503,20 @@ describeDb("buyer edit allowlist (SA-1161), real Postgres", () => {
     );
 
     it("B5: the web body {items:[{orderItemId, qty}], expectedRevisionNumber} on a line with no delivery is accepted", async () => {
-      const { o, other } = await reopened();
+      const { o, first, other } = await untouched();
       const got = await send(route, o.id, {
-        items: [{ orderItemId: other.id, qty: 3 }],
+        items: [
+          { productId: first.productId, orderItemId: first.id, qty: 2 },
+          { productId: other.productId, orderItemId: other.id, qty: 3 },
+        ],
         expectedRevisionNumber: 0,
       });
       expect(got.status).toBe(200);
-      expect(Number((await raw.orderItem.findUniqueOrThrow({ where: { id: other.id } })).qty)).toBe(
-        3,
-      );
+      // a replace re-creates the lines, so find it by product, not by the old id
+      const after = await raw.orderItem.findFirstOrThrow({
+        where: { orderId: o.id, productId: other.productId },
+      });
+      expect(Number(after.qty)).toBe(3);
     }, 60_000);
 
     it("B9: the delivered-line replace stays 409 ORDER_EDIT_DELIVERED_LINES with the listed shape", async () => {
@@ -517,9 +549,12 @@ describeDb("buyer edit allowlist (SA-1161), real Postgres", () => {
   });
 
   it("B6: the mobile body {items, namesLines:true} is accepted", async () => {
-    const { o, other } = await reopened();
+    const { o, first, other } = await untouched();
     const got = await send("buyer", o.id, {
-      items: [{ orderItemId: other.id, qty: 3 }],
+      items: [
+        { productId: first.productId, orderItemId: first.id, qty: 2 },
+        { productId: other.productId, orderItemId: other.id, qty: 3 },
+      ],
       namesLines: true,
     });
     expect(got.status).toBe(200);

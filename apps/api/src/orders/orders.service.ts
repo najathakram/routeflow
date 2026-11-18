@@ -1966,7 +1966,8 @@ export class OrdersService implements OnApplicationBootstrap {
         .forTenant()
         .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
       if (!owner || owner.id !== order.customerId) throw new ForbiddenException();
-      assertBuyerEditInput(dto); // SA-1161: the buyer screens' shape only, before any read-for-write or write
+      // SA-1161: client PATCH input only (the two routes that pass buyerLineIds); the server-built merge folds are not
+      if (opts?.buyerLineIds === true) assertBuyerEditInput(dto);
     }
     keep.assertSafeOverrideReasons(dto.items ?? [], order.lineItems); // row 496: after the owner check, before any write
     // R1: items are editable at ANY live stage — DRAFT/PENDING/CONFIRMED and now
