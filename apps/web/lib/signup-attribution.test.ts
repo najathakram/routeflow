@@ -29,7 +29,7 @@ describe("buildSignupAttribution", () => {
     expect(buildSignupAttribution({ ...base, search: "?foo=bar" })).toBeUndefined();
   });
 
-  it("prefers the URL over the first-touch record, field by field, and fills the rest from it", () => {
+  it("takes every campaign key from ONE place: the URL's campaign never mixes with the first touch's", () => {
     const firstTouch = JSON.stringify({
       utm_source: "newsletter",
       utm_medium: "email",
@@ -40,12 +40,31 @@ describe("buildSignupAttribution", () => {
     });
     expect(buildSignupAttribution({ ...base, search: "?utm_source=google", firstTouch })).toEqual({
       utmSource: "google",
-      utmMedium: "email",
-      gclid: "old",
       landingPath: "/pricing",
       firstSeenAt: "2026-11-10T10:00:00.000Z",
       referrerHost: "www.google.com",
     });
+  });
+
+  it("uses the first touch's whole campaign when the URL has none", () => {
+    const firstTouch = JSON.stringify({
+      utm_source: "newsletter",
+      utm_medium: "email",
+      gclid: "g",
+    });
+    expect(
+      buildSignupAttribution({
+        ...base,
+        firstTouch,
+        referrer: `${ORIGIN}/pricing?utm_source=b&utm_medium=m`,
+      }),
+    ).toEqual({ utmSource: "newsletter", utmMedium: "email", gclid: "g", landingPath: "/pricing" });
+  });
+
+  it("keeps only the first segment of a same-origin referrer path, so no token can ride along", () => {
+    expect(
+      buildSignupAttribution({ ...base, referrer: `${ORIGIN}/buyer/invite/tok_abc123?x=1` }),
+    ).toEqual({ landingPath: "/buyer" });
   });
 
   it("uses a same-origin referrer's tracked params and path, never its host", () => {
@@ -75,7 +94,6 @@ describe("buildSignupAttribution", () => {
       }),
     ).toEqual({
       utmSource: "a",
-      utmMedium: "m",
       landingPath: "/first",
       referrerHost: "first.example",
     });

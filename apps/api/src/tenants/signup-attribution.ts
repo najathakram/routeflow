@@ -39,8 +39,9 @@ const HOST_NAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61
 function clean(value: unknown, max: number): string | null {
   if (typeof value !== "string") return null;
   const text = value
+    // C0/C1 controls, DEL, zero-width and bidi marks, word joiners, BOM: nothing a source name needs.
     // eslint-disable-next-line no-control-regex
-    .replace(/[\u0000-\u001f\u007f]/g, "")
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2064\ufeff]/g, "")
     .trim()
     .slice(0, max)
     .trim();
@@ -63,10 +64,12 @@ export function normalizeSignupAttribution(
   const path = clean(input.landingPath, PATH_MAX + 1000)
     ?.split(/[?#]/)[0]
     .slice(0, PATH_MAX);
-  if (path && path.startsWith("/")) out.landingPath = path;
+  // "//host/x" is a host in disguise, not a path on our site.
+  if (path && path.startsWith("/") && !path.startsWith("//")) out.landingPath = path;
 
   const host = clean(input.referrerHost, HOST_MAX)?.toLowerCase();
-  if (host && HOST_NAME.test(host)) out.referrerHost = host;
+  // A name whose last label is all digits is an IP address, not a site name: dropped.
+  if (host && HOST_NAME.test(host) && !/(^|\.)\d+$/.test(host)) out.referrerHost = host;
 
   if (typeof input.firstSeenAt === "string") {
     const seen = new Date(input.firstSeenAt);

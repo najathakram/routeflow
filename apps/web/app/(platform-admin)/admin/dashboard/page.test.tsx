@@ -243,6 +243,13 @@ describe("AdminDashboardPage — sign-ups by source (Phase 1)", () => {
       ["google / cpc", "5", "4", "3", "2", "1", "1"],
       ["Not recorded", "2", "1", "0", "0", "0", "0"],
     ]);
+    // The weekly table counts a verification in the week it happened, older sign-ups included;
+    // this card counts only sign-ups from these 8 weeks, so the card says why its Verified can differ.
+    expect(
+      screen.getByText(
+        "Each sign-up from the last 8 weeks counts once, so Verified can differ from the weekly table.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("says the numbers can't be shown when the read failed, and the page still loads", async () => {

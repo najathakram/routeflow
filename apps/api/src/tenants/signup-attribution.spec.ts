@@ -38,6 +38,27 @@ describe("normalizeSignupAttribution", () => {
     });
   });
 
+  it("removes C1 controls and invisible zero-width characters too", () => {
+    expect(
+      normalizeSignupAttribution(
+        { utmSource: "go\u0085og\u200ble\u00a0\ufeff", utmTerm: "\u200b\u2060" },
+        NOW,
+      ),
+    ).toEqual({ utmSource: "google" });
+  });
+
+  it("drops a numeric (IP address) referrer host and a path that starts with two slashes", () => {
+    expect(
+      normalizeSignupAttribution(
+        { referrerHost: "10.0.0.1", landingPath: "//evil.example/x", utmSource: "a" },
+        NOW,
+      ),
+    ).toEqual({ utmSource: "a" });
+    expect(normalizeSignupAttribution({ referrerHost: "1password.com" }, NOW)).toEqual({
+      referrerHost: "1password.com",
+    });
+  });
+
   it("trims strings and removes control characters", () => {
     expect(normalizeSignupAttribution({ utmSource: "  go\u0000og\nle\u007f  " }, NOW)).toEqual({
       utmSource: "google",

@@ -14,6 +14,10 @@ describe("signupSourceLabel", () => {
     expect(signupSourceLabel({ utmSource: "x", utmMedium: "" })).toBe("x");
   });
 
+  it("lower-cases the medium too, so one source never splits into two rows by case", () => {
+    expect(signupSourceLabel({ utmSource: "Google", utmMedium: "CPC" })).toBe("google / cpc");
+  });
+
   it("names a click id when there is no utm source", () => {
     expect(signupSourceLabel({ gclid: "g" })).toBe("google / paid (click id)");
     expect(signupSourceLabel({ msclkid: "m" })).toBe("bing / paid (click id)");

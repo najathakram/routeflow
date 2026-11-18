@@ -157,6 +157,10 @@ function SignupsBySourceCard({ data }: { data: NonNullable<PlatformStats["signup
           </tbody>
         </table>
       </div>
+      <p className="border-t border-slate-700 px-5 py-3 text-xs text-slate-400">
+        Each sign-up from the last 8 weeks counts once, so Verified can differ from the weekly
+        table.
+      </p>
     </AdminCard>
   );
 }

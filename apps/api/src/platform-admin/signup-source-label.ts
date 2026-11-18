@@ -34,7 +34,7 @@ export function signupSourceLabel(row: SignupSourceFields | null | undefined): s
 
   if (row.utmSource) {
     const source = row.utmSource.toLowerCase();
-    return row.utmMedium ? `${source} / ${row.utmMedium}` : source;
+    return row.utmMedium ? `${source} / ${row.utmMedium.toLowerCase()}` : source;
   }
   if (row.gclid) return "google / paid (click id)";
   if (row.msclkid) return "bing / paid (click id)";

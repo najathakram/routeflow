@@ -1,8 +1,9 @@
 /**
  * Phase 1: what the sign-up form tells the API about where the visitor came from.
- * Built from, per field and in this order: the sign-up page's own URL, the site's first-touch record in
- * `sessionStorage["rf_first_touch"]`, then `document.referrer` (same-origin: its tracked params and path;
- * cross-origin: ONLY its hostname). Never a full URL, a query string beyond the tracked keys, an IP or a
+ * Built from, in this order: the sign-up page's own URL, the site's first-touch record in
+ * `sessionStorage["rf_first_touch"]`, then `document.referrer` (same-origin: its tracked params and the
+ * first path segment; cross-origin: ONLY its hostname). Campaign keys come together from the first source
+ * that has any; landing path, referrer host and first-seen time fill one by one. Never a full URL, a query string beyond the tracked keys, an IP or a
  * user agent. A missing or malformed first-touch record is ignored.
  */
 export interface SignupAttribution {
@@ -31,6 +32,13 @@ const TRACKED: Array<[string, keyof SignupAttribution]> = [
   ["gclid", "gclid"],
   ["fbclid", "fbclid"],
   ["msclkid", "msclkid"],
+];
+
+const CAMPAIGN_FIELDS = TRACKED.map(([, field]) => field);
+const CONTEXT_FIELDS: Array<keyof SignupAttribution> = [
+  "landingPath",
+  "referrerHost",
+  "firstSeenAt",
 ];
 
 const MAX_LEN = 255;
@@ -83,7 +91,9 @@ function fromReferrer(referrer: string, origin: string): SignupAttribution {
     return {};
   }
   if (url.origin === origin) {
-    return { ...fromParams(url.searchParams), landingPath: url.pathname };
+    // First path segment only: an app path past it can carry a token (e.g. /buyer/invite/<token>).
+    const first = url.pathname.split("/")[1];
+    return { ...fromParams(url.searchParams), ...(first ? { landingPath: `/${first}` } : {}) };
   }
   return url.hostname ? { referrerHost: url.hostname } : {};
 }
@@ -94,16 +104,20 @@ export function buildSignupAttribution(input: {
   referrer: string;
   origin: string;
 }): SignupAttribution | undefined {
-  const merged: SignupAttribution = {};
-  for (const layer of [
+  const layers = [
     fromParams(new URLSearchParams(input.search)),
     fromFirstTouch(input.firstTouch),
     fromReferrer(input.referrer, input.origin),
-  ]) {
-    for (const [key, value] of Object.entries(layer)) {
-      const field = key as keyof SignupAttribution;
-      if (merged[field] === undefined && value !== undefined) merged[field] = value;
-    }
+  ];
+  const merged: SignupAttribution = {};
+  // Campaign keys (utm_*, click ids) all come from the FIRST layer that has any, so one sign-up never
+  // mixes two campaigns (e.g. the URL's source with the first touch's medium).
+  const campaign = layers.find((l) => CAMPAIGN_FIELDS.some((f) => l[f] !== undefined));
+  if (campaign) for (const f of CAMPAIGN_FIELDS) if (campaign[f]) merged[f] = campaign[f];
+  // Context fields fill one by one, in layer order.
+  for (const f of CONTEXT_FIELDS) {
+    const hit = layers.find((l) => l[f] !== undefined);
+    if (hit) merged[f] = hit[f];
   }
   return Object.keys(merged).length === 0 ? undefined : merged;
 }
