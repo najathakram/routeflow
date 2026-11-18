@@ -122,6 +122,7 @@ import {
   reduceDeliveredLineEntries,
 } from "./delivered-line-lock";
 import { lockEditedOrder, editGuards } from "./replace-after-delivery";
+import { assertBuyerEditInput } from "./buyer-edit-input";
 import { CANCELLABLE_FROM, assertOrderStatusTransition } from "./order-status-transitions";
 import { buildStatusUpdateData } from "./order-status-claim";
 import { assertDeliveredDemotionAllowed } from "./delivered-demotion.guard";
@@ -1965,6 +1966,8 @@ export class OrdersService implements OnApplicationBootstrap {
         .forTenant()
         .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
       if (!owner || owner.id !== order.customerId) throw new ForbiddenException();
+      // SA-1161: client PATCH input only (the two routes that pass buyerLineIds); the server-built merge folds are not
+      if (opts?.buyerLineIds === true) assertBuyerEditInput(dto);
     }
     keep.assertSafeOverrideReasons(dto.items ?? [], order.lineItems); // row 496: after the owner check, before any write
     // R1: items are editable at ANY live stage — DRAFT/PENDING/CONFIRMED and now

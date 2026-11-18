@@ -303,5 +303,57 @@ describeDb(
         { productId, qty: 5, unitPrice: UNIT_PRICE, subtotal: 5 * UNIT_PRICE },
       ]);
     }, 120_000);
+
+    // SA-1161 B14: the create auto-merge is a server-built fold run as the buyer; the edit allowlist must not
+    // touch it, even though the fold's items carry fields a client PATCH may not send (boxes, pieces, a source line).
+    it("SA-1161 B14: a boxed cart still auto-merges into the open order with a boxed line (no refusal)", async () => {
+      const boxedId = (
+        await raw.product.create({
+          data: {
+            name: `Crate ${run}`,
+            unit: "Each",
+            unitsPerBox: 12,
+            pricePerUnit: "1",
+            currentStock: "100000",
+            tenantId,
+          },
+        })
+      ).id;
+      const pending = await raw.order.create({
+        data: {
+          customerId,
+          tenantId,
+          status: "PENDING",
+          subtotal: "12",
+          total: "12",
+          lineItems: {
+            create: [
+              {
+                tenantId,
+                productId: boxedId,
+                qty: 12,
+                boxes: 1,
+                pieces: 0,
+                unitsPerBox: 12,
+                unitPrice: "12",
+                subtotal: "12",
+              },
+            ],
+          },
+        },
+      });
+
+      const result = await submit(
+        [{ productId: boxedId, qty: 12, boxes: 1, pieces: 0 }],
+        {},
+        `k-${run}-b14`,
+      );
+
+      expect(result.id).toBe(pending.id);
+      expect(await orderCount()).toBe(1);
+      const lines = await raw.orderItem.findMany({ where: { orderId: pending.id } });
+      expect(lines.map((l) => Number(l.qty))).toEqual([24]);
+      await raw.stockMovement.deleteMany({ where: { productId: boxedId } }); // afterAll deletes the tenant's products
+    }, 120_000);
   },
 );

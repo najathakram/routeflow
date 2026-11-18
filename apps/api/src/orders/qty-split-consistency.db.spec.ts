@@ -397,12 +397,23 @@ describeDb(
         expect(await snapshot()).toBe(before);
       }, 120_000);
 
-      it("a pair consistent with the STORED pack (6) is not refused although the product is a 12-pack today", async () => {
+      it("a buyer entry carrying a split is a 400 BUYER_EDIT_INPUT_NOT_ALLOWED, whatever pack it matches, and the order is untouched (SA-1161 B1, B4)", async () => {
         const { orderId, lineId } = await storedLine(6, 12, 2);
-        // live product is 12/box: 2 boxes x 12 = 24 != 12, so only the stored pack (2 x 6 = 12) accepts it
-        await expect(
-          buyerEdit(orderId, { orderItemId: lineId, qty: 12, boxes: 2, pieces: 0 }),
-        ).resolves.toBeDefined();
+        const before = await snapshot();
+        const err = await buyerEdit(orderId, {
+          orderItemId: lineId,
+          qty: 12,
+          boxes: 2,
+          pieces: 0,
+        }).then(
+          () => null,
+          (e: unknown) => e,
+        );
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect((err as BadRequestException).getResponse()).toMatchObject({
+          code: "BUYER_EDIT_INPUT_NOT_ALLOWED",
+        });
+        expect(await snapshot()).toBe(before);
       }, 120_000);
 
       it("the stored-pack lookup never reads ANOTHER customer's line: a foreign id gets the live-pack answer", async () => {
