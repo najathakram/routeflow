@@ -1,4 +1,4 @@
-import { resolveInvoiceListBalance } from "./page";
+import { resolveInvoiceListBalance, resolveInvoiceListBalanceTone } from "./invoice-list-balance";
 import type { Invoice, InvoicePayment } from "@/lib/api/invoices";
 
 function payment(overrides: Partial<InvoicePayment>): InvoicePayment {
@@ -74,5 +74,37 @@ describe("resolveInvoiceListBalance (B421)", () => {
       payments: [payment({ amount: 150, method: "CASH" })],
     });
     expect(resolveInvoiceListBalance(inv)).toBe(0);
+  });
+});
+
+describe("resolveInvoiceListBalanceTone (UXG-R10-A1 D3)", () => {
+  const PAST = "2020-01-05T00:00:00.000Z";
+  const FUTURE = "2099-01-05T00:00:00.000Z";
+  const base = { total: 100, payments: [] };
+  it.each([
+    ["sent, not due", { status: "SENT", balanceDue: 40, dueDate: FUTURE }, "default"],
+    ["draft", { status: "DRAFT", balanceDue: 40, dueDate: FUTURE }, "default"],
+    ["paid", { status: "PAID", balanceDue: 0, dueDate: PAST }, "default"],
+    ["overdue", { status: "OVERDUE", balanceDue: 40, dueDate: PAST }, "danger"],
+    ["partly paid and overdue", { status: "PARTIAL", balanceDue: 20, dueDate: PAST }, "danger"],
+    ["sent, past due", { status: "SENT", balanceDue: 40, dueDate: PAST }, "default"],
+    ["void", { status: "VOID", balanceDue: 40, dueDate: PAST }, "default"],
+    [
+      "written off with a balance",
+      { status: "WRITTEN_OFF", balanceDue: 40, dueDate: PAST },
+      "default",
+    ],
+  ])("%s -> %s", (_n, inv, tone) => {
+    expect(resolveInvoiceListBalanceTone({ ...base, ...inv } as never)).toBe(tone);
+  });
+  it("partly paid and not yet due stays default", () => {
+    expect(
+      resolveInvoiceListBalanceTone({
+        ...base,
+        status: "PARTIAL",
+        balanceDue: 20,
+        dueDate: FUTURE,
+      } as never),
+    ).toBe("default");
   });
 });
