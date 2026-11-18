@@ -2,6 +2,8 @@ import * as React from "react";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { renderWithProviders } from "@/test-utils/render";
 import { SettingsHub } from "./SettingsHub";
+import { CHIPS } from "./settings-groups";
+import { buildIndex } from "./settings-index";
 import { SettingsRail } from "./SettingsRail";
 import { SettingsShell } from "./SettingsShell";
 import { StripeConnectCard } from "./StripeConnectCard";
@@ -377,6 +379,32 @@ describe("hub list (below xl)", () => {
     expect(screen.queryByTestId("settings-row-regulated-sections")).not.toBeInTheDocument();
     expect(screen.queryByTestId("settings-row-product-labels")).not.toBeInTheDocument();
     expect(screen.queryByText("Admin")).not.toBeInTheDocument();
+  });
+});
+
+// UX guide B16: a chip never points at a page the viewer cannot open (the Import index row is admin-only).
+describe("Frequently used chips follow the viewer's own settings index", () => {
+  const chipNames = () =>
+    within(screen.getByText("Frequently used:").parentElement as HTMLElement)
+      .getAllByRole("link")
+      .map((l) => l.textContent);
+
+  it("an operator gets no Import chip", () => {
+    mockUser = OPERATOR;
+    renderWithProviders(<SettingsHub isAdmin={false} />);
+    expect(chipNames()).not.toContain("Import");
+  });
+
+  it("guard: an admin keeps all four chips, in order", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    expect(chipNames()).toEqual(["Invoicing", "User management", "Import", "Notifications"]);
+  });
+
+  it("guard: every chip names an index entry, and takes its href from that entry", () => {
+    const entries = buildIndex({ isAdmin: true, fleet: true });
+    for (const c of CHIPS) {
+      expect(entries.map((e) => e.id)).toContain(c.entryId);
+    }
   });
 });
 
