@@ -416,7 +416,7 @@ describeDb("buyer edit allowlist (SA-1161), real Postgres", () => {
   });
 
   describe.each(["buyer", "staff"] as Route[])("%s route", (route) => {
-    it("B1/A1a: a field outside the buyer list on an entry naming a delivered line (below its delivered qty, no replaceAll): refused, nothing written", async () => {
+    it("B1/A1a: a field outside the buyer list: refused, nothing written", async () => {
       const { o, x, y, delivered } = await reopened();
       const before = await everything(o.id, [x, y]);
       const got = await send(route, o.id, { items: [{ id: delivered.id, qty: 5 }] });
@@ -424,7 +424,7 @@ describeDb("buyer edit allowlist (SA-1161), real Postgres", () => {
       expect(await everything(o.id, [x, y])).toEqual(before);
     }, 60_000);
 
-    it("B1/A1b: the same with replaceAll false and a unit line's own unitLabel: refused, nothing written", async () => {
+    it("B1/A1b: the same, second variant: refused, nothing written", async () => {
       const x = await product("bei-u", 6);
       await raw.productUnit.create({
         data: { tenantId, productId: x, label: "Case", factorToBase: 6, sortOrder: 0 },
@@ -490,7 +490,7 @@ describeDb("buyer edit allowlist (SA-1161), real Postgres", () => {
             {
               orderItemId: other.id,
               qty: 2,
-              // the pre-owner shape checks name a line by `id`; give it one so the allowlist answers
+              // the shape checks answer first; give the entry a line id
               ...(f === "substituteProductId" ? { id: other.id } : {}),
               [f]: f === "action" ? "UPDATE" : "v",
             },
