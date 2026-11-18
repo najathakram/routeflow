@@ -48,7 +48,7 @@ describe("route optimization: the unplaced refusal is coded (B14)", () => {
       lng: null,
     },
   });
-  it("optimizeTemplate throws code, count, names and keeps today's sentence verbatim", async () => {
+  const build = async () => {
     const prisma = createMockPrisma();
     const mod = await Test.createTestingModule({
       providers: [
@@ -59,12 +59,51 @@ describe("route optimization: the unplaced refusal is coded (B14)", () => {
         { provide: RouteFlowGateway, useValue: { emitRouteProgress: jest.fn() } },
       ],
     }).compile();
-    const service = mod.get(RouteOptimizationService);
+    return { prisma, service: mod.get(RouteOptimizationService) };
+  };
+  it("optimizeTemplate throws code, count, names and keeps today's sentence verbatim", async () => {
+    const { prisma, service } = await build();
     (prisma.forTenant() as any).route.findUnique.mockResolvedValue({
       id: "r1",
       stops: [stop("s1", "Acme Deli"), stop("s2", "Acme Market")],
     });
     const err = await service.optimizeTemplate("r1").catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse()).toEqual({
+      code: API_ERROR_CODES.ROUTE_STOPS_NOT_PLACED,
+      message:
+        "We couldn't place these customers on the map: Acme Deli, Acme Market. Check their addresses.",
+      count: 2,
+      names: ["Acme Deli", "Acme Market"],
+    });
+  });
+
+  it("optimizeRoute (the run path) throws the same code, count and names", async () => {
+    const { prisma, service } = await build();
+    const runStop = (id: string, name: string) => ({
+      id,
+      stopNumber: 1,
+      customerId: `c-${id}`,
+      customerAddress: null,
+      routeStop: {
+        customer: { id: `c-${id}`, businessName: name },
+        customerAddress: {
+          id: `a-${id}`,
+          line1: "1 Main St",
+          city: "Austin",
+          state: "TX",
+          lat: null,
+          lng: null,
+        },
+      },
+    });
+    (prisma.forTenant() as any).routeRun.findUnique.mockResolvedValue({
+      id: "run1",
+      status: "SCHEDULED",
+      startTime: null,
+      stops: [runStop("s1", "Acme Deli"), runStop("s2", "Acme Market")],
+    });
+    const err = await service.optimizeRoute("run1").catch((e) => e);
     expect(err).toBeInstanceOf(BadRequestException);
     expect(err.getResponse()).toEqual({
       code: API_ERROR_CODES.ROUTE_STOPS_NOT_PLACED,
