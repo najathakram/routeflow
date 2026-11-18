@@ -439,9 +439,9 @@ describe("hub pane (xl and up)", () => {
     mockDesktop = true;
   });
 
-  it("shows the large Business card and does NOT repeat the group rows (the rail owns them)", () => {
+  it("shows no second Business card and does NOT repeat the group rows (the rail owns both)", () => {
     renderWithProviders(<SettingsHub isAdmin />);
-    expect(screen.getByTestId("business-card")).toBeInTheDocument();
+    expect(screen.queryByTestId("business-card")).not.toBeInTheDocument();
     expect(screen.queryAllByTestId(/^settings-group-/)).toHaveLength(0);
     expect(screen.queryByLabelText("Search settings")).not.toBeInTheDocument();
     expect(screen.getByText("route-defaults-card")).toBeInTheDocument();
@@ -465,7 +465,12 @@ describe("hub pane (xl and up)", () => {
   });
 
   it("has no Needs attention list when nothing needs it, and none for operators", async () => {
-    renderWithProviders(<SettingsHub isAdmin />);
+    // The one Business card (and its status) lives in the rail, so the hub renders inside the shell.
+    renderWithProviders(
+      <SettingsShell>
+        <SettingsHub isAdmin />
+      </SettingsShell>,
+    );
     await screen.findByText("Active");
     expect(screen.queryByRole("list", { name: "Needs attention" })).not.toBeInTheDocument();
   });
@@ -473,7 +478,11 @@ describe("hub pane (xl and up)", () => {
   it("operators see no Needs attention list", async () => {
     mockUser = OPERATOR;
     seedApi({ "/billing/subscription": SUB_DUE, "/settings/remittance": {} });
-    renderWithProviders(<SettingsHub isAdmin={false} />);
+    renderWithProviders(
+      <SettingsShell>
+        <SettingsHub isAdmin={false} />
+      </SettingsShell>,
+    );
     await screen.findByText("Payment due");
     expect(screen.queryByRole("list", { name: "Needs attention" })).not.toBeInTheDocument();
   });
@@ -583,7 +592,7 @@ describe("shell", () => {
     expect(screen.getByText("page-body")).toBeInTheDocument();
   });
 
-  it("the rail and the pane carry distinct Business card testids", () => {
+  it("at xl the page holds one Business card (the rail's), and it opens Billing (UX guide P01)", () => {
     mockDesktop = true;
     renderWithProviders(
       <SettingsShell>
@@ -591,7 +600,57 @@ describe("shell", () => {
       </SettingsShell>,
     );
     expect(screen.getAllByTestId("business-card-rail")).toHaveLength(1);
-    expect(screen.getAllByTestId("business-card")).toHaveLength(1);
+    expect(screen.queryAllByTestId("business-card")).toHaveLength(0);
+    expect(screen.getByTestId("business-card-rail")).toHaveAttribute("href", "/settings/billing");
+  });
+
+  it("a rail search keeps the one Business card (it is not hidden by a typed query)", () => {
+    mockDesktop = true;
+    renderWithProviders(
+      <SettingsShell>
+        <SettingsHub isAdmin />
+      </SettingsShell>,
+    );
+    const nav = screen.getByRole("navigation", { name: "Settings" });
+    fireEvent.change(within(nav).getByLabelText("Search settings"), {
+      target: { value: "counter" },
+    });
+    expect(screen.getAllByTestId("business-card-rail")).toHaveLength(1);
+    expect(screen.queryAllByTestId("business-card")).toHaveLength(0);
+    expect(within(nav).getByRole("list", { name: "Search results" })).toBeInTheDocument();
+  });
+
+  it("a rail search on /settings/billing never marks the Business card current (it is a status card)", () => {
+    mockDesktop = true;
+    mockPath = "/settings/billing";
+    renderWithProviders(
+      <SettingsShell>
+        <SettingsHub isAdmin />
+      </SettingsShell>,
+    );
+    const nav = screen.getByRole("navigation", { name: "Settings" });
+    fireEvent.change(within(nav).getByLabelText("Search settings"), {
+      target: { value: "billing" },
+    });
+    const card = screen.getByTestId("business-card-rail");
+    expect(card).not.toHaveAttribute("aria-current");
+    expect(card.className).not.toMatch(/bg-\[var\(--accent-soft\)\]/);
+    expect(
+      screen.getAllByRole("link").filter((l) => l.getAttribute("aria-current") === "page").length,
+    ).toBeLessThanOrEqual(1);
+  });
+
+  it("at xl the rail card is the Pay entry: payment due shows Pay with its amount", async () => {
+    mockDesktop = true;
+    seedApi({ "/billing/subscription": SUB_DUE });
+    renderWithProviders(
+      <SettingsShell>
+        <SettingsHub isAdmin />
+      </SettingsShell>,
+    );
+    const pay = await screen.findByRole("button", { name: "Pay $149.00" });
+    expect(screen.getAllByRole("button", { name: /^Pay/ })).toHaveLength(1);
+    expect(screen.getByTestId("business-card-rail").parentElement).toContainElement(pay);
   });
 
   it("staff at xl get the rail beside the page; below xl the page alone", () => {
@@ -656,7 +715,7 @@ describe("the fulfilment flag is read once, by the admin rail or hub, only where
     mockUser = OPERATOR;
     mockDesktop = true;
     renderWithProviders(shell(<SettingsHub isAdmin={false} />));
-    await screen.findAllByTestId("business-card");
+    await screen.findAllByTestId("business-card-rail");
     expect(askedFulfilment()).toBe(0);
   });
 
@@ -671,8 +730,8 @@ describe("the fulfilment flag is read once, by the admin rail or hub, only where
   it("an operator's pane does not fetch the admin-only attention reads", async () => {
     mockUser = OPERATOR;
     mockDesktop = true;
-    renderWithProviders(<SettingsHub isAdmin={false} />);
-    await screen.findByTestId("business-card");
+    renderWithProviders(shell(<SettingsHub isAdmin={false} />));
+    await screen.findByTestId("business-card-rail");
     expect(calls.some((c) => c.url === "/settings/remittance")).toBe(false);
   });
 });
@@ -688,7 +747,7 @@ describe("a malformed hash never throws", () => {
         </SettingsShell>,
       ),
     ).not.toThrow();
-    expect((await screen.findAllByTestId("business-card")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByTestId("business-card-rail")).length).toBeGreaterThan(0);
   });
 });
 

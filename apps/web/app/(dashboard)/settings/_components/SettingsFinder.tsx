@@ -261,6 +261,9 @@ export function SettingsFinder({
         </div>
       </div>
 
+      {/* The rail's card stays while searching: at xl it is the page's only Business card and Pay entry. The phone list hides it, as before (the results are the whole screen). */}
+      {searching && rail && <BusinessCard variant={variant} />}
+
       {searching && results.length === 0 && (
         <Card className="space-y-3 text-sm text-[var(--ink-500)]">
           <p>No settings match “{query.trim()}”.</p>
