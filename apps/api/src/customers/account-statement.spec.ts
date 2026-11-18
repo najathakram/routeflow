@@ -104,10 +104,9 @@ describe("SA-1078 account statement (PR-1)", () => {
     expect(row.paid).toBe(0);
   });
 
-  it("S6: only an invoice that still owes is a row (draft, paid, void, written off and exactly paid are not)", async () => {
+  it("S6: only an invoice that still owes is a row (paid, void, written off and exactly paid are not)", async () => {
     arrange({
       invoices: [
-        inv("draft", 100, [], { status: "DRAFT" }),
         inv("paid", 100, [pay(100)], { status: "PAID" }),
         inv("void", 100, [], { status: "VOID" }),
         inv("wo", 100, [], { status: "WRITTEN_OFF" }),
@@ -117,9 +116,31 @@ describe("SA-1078 account statement (PR-1)", () => {
     });
     const res = await read();
     expect(res.openInvoices.map((r) => r.invoiceNumber)).toEqual(["OWES"]);
-    // and the read itself leaves the dead and unissued statuses out of the query
-    const notIn = prisma.invoice.findMany.mock.calls[0][0].where.status.notIn;
-    expect(notIn).toEqual(expect.arrayContaining(["DRAFT", "PAID", "VOID", "WRITTEN_OFF"]));
+    // and the read itself leaves the dead statuses, and every DRAFT but a post-delivery one, out of the query (SA-1164 21:13Z;
+    // the mock returns every row it is given, so the where is asserted here and executed in account-statement.db.spec.ts Q1-Q6)
+    const where = prisma.invoice.findMany.mock.calls[0][0].where;
+    expect(where.OR).toHaveLength(2);
+    expect(where.OR[0].status.notIn).toEqual(
+      expect.arrayContaining(["DRAFT", "PAID", "VOID", "WRITTEN_OFF"]),
+    );
+    expect(where.OR[1].status).toBe("DRAFT");
+    expect([...where.OR[1].order.status.in].sort()).toEqual(["DELIVERED", "REFUSED"]);
+  });
+
+  it("S6b: a DRAFT the where lets through (its order is delivered) is a row and part of the open balance, at its clamped balance", async () => {
+    arrange({
+      invoices: [
+        inv("sent", 100),
+        inv("dd", 60, [pay(10)], { status: "DRAFT" }),
+        inv("paid-draft", 40, [pay(40)], { status: "DRAFT" }),
+      ],
+    });
+    const res = await read();
+    expect(res.openInvoices.map((r) => [r.invoiceNumber, r.unpaid])).toEqual([
+      ["SENT", 100],
+      ["DD", 50],
+    ]);
+    expect(res.openBalance).toBe(150);
   });
 
   it("S7: float dust never breaks Total - Paid - Credit = Unpaid, to the cent, on any row", async () => {

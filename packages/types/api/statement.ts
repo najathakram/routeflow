@@ -10,7 +10,7 @@
 
 import type { ToCollectState } from "./enums";
 
-/** One invoice that still owes. Oldest first. Overpaid, exactly-paid, draft, void and written-off invoices are not rows. */
+/** One invoice that still owes. Oldest first. Overpaid, exactly-paid, void and written-off invoices are not rows; a draft is a row only on a delivered or refused order. */
 export interface AccountStatementInvoice {
   id: string;
   invoiceNumber: string;

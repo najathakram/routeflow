@@ -1,3 +1,4 @@
+import { InvoiceStatus, type Prisma } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
 import type {
   AccountStatement,
@@ -17,6 +18,7 @@ import { KPI_SUMMARY_EXCLUDED, OPEN_INVOICE_STATUSES } from "../invoices/invoice
 import { classifyInvoiceBalance } from "../invoices/invoice-balance-classify";
 import { toCollectState } from "../invoices/to-collect";
 import { isInternalEmail } from "../common/internal-email";
+import { POST_DELIVERY_ORDER_STATUSES } from "../common/terminal-order-statuses";
 import {
   addCalendarDays,
   calendarDateFromIso,
@@ -42,9 +44,21 @@ import { statementOutstandingAmount, statementOverdueAmount } from "./customer-s
 /**
  * SA-1078 PR-5: the ONE basis of "what a customer owes" on a list. The statement, the customers list and its CSV all read the
  * invoices this where selects with this select (see `open-balances.ts`) and sum them with `statementOutstandingAmount`, so a
- * figure printed anywhere is the sheet's figure. DRAFT, PAID, VOID and WRITTEN_OFF are never receivable.
+ * figure printed anywhere is the sheet's figure. PAID, VOID and WRITTEN_OFF are never receivable. A DRAFT is receivable only when its order is post-delivery
+ * (DELIVERED or REFUSED: the goods left, the invoice just has not been sent), SA-1164 21:13Z (PR-2b, supersedes SA-1078 PR-5
+ * "DRAFT is never receivable" for that case). Any other DRAFT (order still open, or no order) stays out, and the carrier-shipment
+ * DRAFT (`settledAtShipment`) stays out until its own row. The credit-exposure basis (`CREDIT_EXPOSURE_EXCLUDED`) is a different
+ * rule and unchanged. The where is a top-level `OR`: spread it next to other keys (an AND), never next to another `OR`.
  */
-export const OPEN_BALANCE_INVOICE_WHERE = { status: { notIn: KPI_SUMMARY_EXCLUDED } } as const;
+export const OPEN_BALANCE_INVOICE_WHERE = {
+  OR: [
+    { status: { notIn: KPI_SUMMARY_EXCLUDED } },
+    {
+      status: InvoiceStatus.DRAFT,
+      order: { status: { in: [...POST_DELIVERY_ORDER_STATUSES] } },
+    },
+  ],
+} satisfies Prisma.InvoiceWhereInput;
 export const OPEN_BALANCE_INVOICE_SELECT = {
   customerId: true,
   total: true,
@@ -81,7 +95,7 @@ export async function buildAccountStatement(
 
   const [invoices, creditNotes, advances, payments] = await Promise.all([
     prisma.forTenant().invoice.findMany({
-      // The same set as the older statements: DRAFT, PAID, VOID and WRITTEN_OFF are never receivable.
+      // PAID, VOID and WRITTEN_OFF are never receivable; a DRAFT is only on a post-delivery order (SA-1164 21:13Z).
       where: { customerId: customer.id, ...OPEN_BALANCE_INVOICE_WHERE },
       orderBy: [{ issueDate: "asc" }, { createdAt: "asc" }],
       select: {
@@ -142,7 +156,12 @@ export async function buildAccountStatement(
   let waitingToClear = 0;
   for (const inv of invoices) {
     for (const p of inv.payments) if (p.status === "PENDING") waitingToClear += Number(p.amount);
-    if (!(OPEN_INVOICE_STATUSES as readonly string[]).includes(inv.status)) continue;
+    // The where above already left only the receivable DRAFTs (post-delivery order) in; every other status is an open one.
+    if (
+      inv.status !== InvoiceStatus.DRAFT &&
+      !(OPEN_INVOICE_STATUSES as readonly string[]).includes(inv.status)
+    )
+      continue;
     const { balanceDue } = classifyInvoiceBalance(inv, cutoff);
     if (balanceDue <= 0) continue;
     const split = splitConfirmed(inv.payments);

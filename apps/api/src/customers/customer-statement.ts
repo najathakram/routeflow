@@ -1,4 +1,5 @@
 import { NotFoundException } from "@nestjs/common";
+import { InvoiceStatus } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import type { PrismaService } from "../prisma/prisma.service";
@@ -37,7 +38,12 @@ export function statementOutstandingAmount(
   timeZone: string | null,
   now: Date = new Date(),
 ): number {
-  return summarizeOpenInvoices(open, overdueCutoff(now, timeZone)).unpaidTotal;
+  // SA-1164 21:13Z: the rows are already the open-balance set (a DRAFT is in it only on a post-delivery order), so a DRAFT row
+  // is summed like an issued one. `summarizeOpenInvoices` (shared with the buyer receivables readers) ignores DRAFT by design.
+  const issued = open.map((inv) =>
+    inv.status === InvoiceStatus.DRAFT ? { ...inv, status: InvoiceStatus.SENT } : inv,
+  );
+  return summarizeOpenInvoices(issued, overdueCutoff(now, timeZone)).unpaidTotal;
 }
 
 /**
