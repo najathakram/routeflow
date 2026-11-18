@@ -38,6 +38,8 @@ export interface PdfSummaryLine {
 export interface PdfInvoiceRow {
   key: string;
   invoice: string;
+  /** "Not sent yet" on a delivered, unsent invoice, else null (SA-1164 D3d) */
+  notSent: string | null;
   due: string;
   /** null when not late */
   late: string | null;
@@ -102,6 +104,8 @@ export function buildAccountStatementPdfModel(s: AccountStatement): AccountState
     invoices: s.openInvoices.map((i) => ({
       key: i.id,
       invoice: i.invoiceNumber,
+      // SA-1164 D3d: a delivered, unsent invoice counts but the customer cannot open it yet
+      notSent: i.notSentYet ? "Not sent yet" : null,
       due: i.dueDate ? fmtPdfDate(i.dueDate) : "—",
       late: i.daysLate > 0 ? daysLateWords(i.daysLate) : null,
       total: fmtMoney(i.total),

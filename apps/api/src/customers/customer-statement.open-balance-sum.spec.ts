@@ -86,8 +86,9 @@ describe("D3 count pin: every S9 reader keeps joining the open-balance / receiva
   // [file, identifier, minimum uses (the import counts as one)]
   it.each([
     ["customers/customer-statement.ts", "OPEN_BALANCE_INVOICE_WHERE", 3], // import + buildMyStatement + buildOperatorStatement
-    ["customers/account-statement.ts", "OPEN_BALANCE_INVOICE_WHERE", 2], // definition + buildAccountStatement
-    ["customers/account-statement.ts", "RECEIVABLE_DRAFT_WHERE", 2], // definition + the open-balance where
+    ["customers/account-statement.ts", "OPEN_BALANCE_INVOICE_WHERE", 2], // import + buildAccountStatement
+    ["customers/open-balance-basis.ts", "RECEIVABLE_DRAFT_WHERE", 2], // definition + the open-balance where
+    ["customers/open-balance-basis.ts", "OPEN_BALANCE_INVOICE_WHERE", 1], // definition
     ["customers/open-balances.ts", "OPEN_BALANCE_INVOICE_WHERE", 2], // import + the read
     ["bookkeeping/bookkeeping.service.ts", "RECEIVABLE_DRAFT_WHERE", 3], // import + getArAgingInvoices + getCustomerBalanceSummary
   ] as const)("%s uses %s at least %i times", (rel, name, min) => {

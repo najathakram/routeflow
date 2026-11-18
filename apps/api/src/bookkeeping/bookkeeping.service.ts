@@ -78,7 +78,7 @@ import {
   type PaymentRefOpts,
 } from "../invoices/payment-ref-dedupe";
 import { overdueInvoiceCount } from "../invoices/invoice-balance-sql";
-import { RECEIVABLE_DRAFT_WHERE } from "../customers/account-statement";
+import { RECEIVABLE_DRAFT_WHERE } from "../customers/open-balance-basis";
 import { confirmedBalance, signedBalance } from "../invoices/invoice-balance-classify";
 import { paidInstantOf } from "../common/paid-instant";
 import { assertOrderReviewed } from "../orders/offline/order-review-gate";

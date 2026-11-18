@@ -8,7 +8,7 @@ import {
   sumConfirmed,
 } from "../invoices/payment-predicates";
 import { LIFETIME_INVOICED_EXCLUDED } from "../invoices/invoice-status-sets";
-import { OPEN_BALANCE_INVOICE_WHERE } from "./account-statement";
+import { OPEN_BALANCE_INVOICE_WHERE } from "./open-balance-basis";
 import { sweepableCredits } from "../credit-notes/auto-apply-candidates";
 import { loadCreditExposure, OPEN_ORDER_STATUSES } from "../invoices/credit-exposure";
 import {
