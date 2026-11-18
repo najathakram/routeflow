@@ -62,6 +62,32 @@ describe("B796 — at-stop refusals carry a human message (REG-B796)", () => {
     expect(() => paidOrderAtStop(plain)).toThrow(plain);
   });
 
+  it("SA-1156 E5d-u: the source-gone refusal is rethrown in the at-stop shape; a Conflict with any other code passes through", () => {
+    const gone = new ConflictException({
+      code: "CREDIT_NOTE_SOURCE_GONE",
+      message:
+        "Credit note X came from a deleted invoice. Void that credit note first, then try again.",
+    });
+    const out = (() => {
+      try {
+        return paidOrderAtStop(gone);
+      } catch (e) {
+        return e as ConflictException;
+      }
+    })();
+    expect(out).toBeInstanceOf(ConflictException);
+    expect(out.getResponse()).toEqual({
+      code: "ORDER_EDIT_INVOICE_HAS_PAYMENTS",
+      message:
+        "This order's invoice can't change at the door. The office can add these items on a new order.",
+    });
+    const other = new ConflictException({ code: "SOMETHING_ELSE", message: "x" });
+    expect(() => paidOrderAtStop(other)).toThrow(other);
+    // a BadRequest carrying the source-gone code is not the refusal the helper maps
+    const badRequest = new BadRequestException({ code: "CREDIT_NOTE_SOURCE_GONE", message: "x" });
+    expect(() => paidOrderAtStop(badRequest)).toThrow(badRequest);
+  });
+
   it("orders.service.ts throws no bare CHANGE_WINDOW_CLOSED / STOP_ALREADY_COMPLETED (all six via atStopConflict)", () => {
     const src = readFileSync(join(__dirname, "orders.service.ts"), "utf8");
     expect(src).not.toMatch(

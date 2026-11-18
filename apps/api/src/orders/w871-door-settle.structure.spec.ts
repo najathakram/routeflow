@@ -21,4 +21,24 @@ describe("W-871 door settle structure", () => {
     expect(src.match(/isSettleAdjustedPayment\(/g)).toHaveLength(1);
     expect(src).not.toContain('p.method === "CREDIT_NOTE"');
   });
+
+  it("E5p: assertNoSourceGoneRestore is defined once (sourced-credit-guard.ts) and called 7 times: five credit-note sites plus the order edit's and the door's pre-check", () => {
+    const guard = read("../credit-notes/sourced-credit-guard.ts");
+    expect(guard.match(/export async function assertNoSourceGoneRestore\(/g)).toHaveLength(1);
+    const cn = read("../credit-notes/credit-notes.service.ts");
+    const svc = read("orders.service.ts");
+    expect(cn.match(/assertNoSourceGoneRestore\(/g)).toHaveLength(5);
+    expect(svc.match(/assertNoSourceGoneRestore\(/g)).toHaveLength(2);
+    expect(cn).not.toContain("refuseSourceGoneRestores");
+    // both pre-checks read the settle's own shrink condition through the one selector, inside the transaction
+    expect(svc.match(/settleShrinkPayments\(tx, /g)).toHaveLength(2);
+  });
+
+  it("E5d: only the door's pre-check answers in the at-stop shape; the office edit's stays unwrapped", () => {
+    const svc = read("orders.service.ts");
+    expect(
+      svc.match(/assertNoSourceGoneRestore\(tx, shrinking\)\.catch\(paidOrderAtStop\);/g),
+    ).toHaveLength(1);
+    expect(svc.match(/assertNoSourceGoneRestore\(tx, shrinking\);/g)).toHaveLength(1);
+  });
 });

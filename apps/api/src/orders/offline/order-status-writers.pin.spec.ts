@@ -110,7 +110,7 @@ const INVENTORY: Record<string, Row> = {
     why: "the edit's CONFIRMED -> PENDING revert, behind shouldRevert (status CONFIRMED only)",
     needs: ["shouldRevert", "CONFIRMED"],
   },
-  "orders/orders.service.ts::OrdersService.forceConsolidateCustomer": {
+  "orders/order-merge-fold.ts::forceConsolidateCustomerImpl": {
     how: "NO_STATUS",
     n: 1,
     why: "the merge winner's write: totals and the route link (routeUpdate holds routeRunId and routeRunStopId); no status column",

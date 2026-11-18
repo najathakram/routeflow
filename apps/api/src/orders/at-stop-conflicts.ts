@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException } from "@nestjs/common";
+import { BadRequestException, ConflictException, HttpException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
@@ -42,11 +42,18 @@ export function atStopConflict(kind: AtStopConflict): ConflictException {
 /**
  * SA-1144 D6: the at-door apply reaches the order-edit refusal (`revertLinkedInvoicesToDraft`, a 400 with
  * ORDER_EDIT_INVOICE_HAS_PAYMENTS). At the stop it answers in the at-stop shape: 409, the same code, the driver's sentence; the
- * transaction rolls back and the change request stays open. Any other error passes through unchanged.
+ * transaction rolls back and the change request stays open. SA-1156 E5d: the credit restore's source-gone refusal
+ * (a 409 the office can fix by voiding the note, which a driver cannot) answers in the same shape. Any other error
+ * passes through unchanged.
  */
 export function paidOrderAtStop(err: unknown): never {
-  const body = err instanceof BadRequestException ? (err.getResponse() as { code?: string }) : null;
-  if (body?.code === API_ERROR_CODES.ORDER_EDIT_INVOICE_HAS_PAYMENTS) {
+  const body = err instanceof HttpException ? (err.getResponse() as { code?: string }) : null;
+  const paid =
+    err instanceof BadRequestException &&
+    body?.code === API_ERROR_CODES.ORDER_EDIT_INVOICE_HAS_PAYMENTS;
+  const sourceGone =
+    err instanceof ConflictException && body?.code === API_ERROR_CODES.CREDIT_NOTE_SOURCE_GONE;
+  if (paid || sourceGone) {
     throw atStopConflict(API_ERROR_CODES.ORDER_EDIT_INVOICE_HAS_PAYMENTS);
   }
   throw err;

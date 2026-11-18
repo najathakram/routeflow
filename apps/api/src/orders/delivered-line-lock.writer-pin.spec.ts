@@ -71,12 +71,12 @@ const REGISTRY: Record<string, Entry> = {
       "CHANGE_WINDOW_ORDER_STATUS for any other status; a delivered line is also LINE_ALREADY_DELIVERED",
   },
   // Order merges: the shared predicate (merge-lock-recheck.ts) only ever selects PENDING orders.
-  "orders/orders.service.ts::mergeAllPendingForCustomer": {
+  "orders/order-merge-fold.ts::mergeAllPendingForCustomerImpl": {
     kind: "status-gated",
     ...MERGE_GATE,
     reason: "merge group = PENDING, unrouted, uninvoiced orders",
   },
-  "orders/orders.service.ts::forceConsolidateCustomer": {
+  "orders/order-merge-fold.ts::forceConsolidateCustomerImpl": {
     kind: "status-gated",
     ...MERGE_GATE,
     reason: "merge group = PENDING, unrouted, uninvoiced orders",
