@@ -276,6 +276,8 @@ describe("settings registry — every SystemConfig key the settings writers writ
       hideOriginalPrice: true,
       hideBarcodes: true,
       hidePerPiece: true,
+      hideAmountPaid: true,
+      hideBalanceDue: true,
       depositDefaultPercent: 10,
       depositCollectAtOrder: true,
     } as any);
@@ -489,6 +491,8 @@ describe("settings registry — structural source scan of every SystemConfig wri
       "INVOICE_LAYOUT_KEYS.hideBarcodes": [INVOICE_LAYOUT_KEYS.hideBarcodes],
       "INVOICE_LAYOUT_KEYS.hideOriginalPrice": [INVOICE_LAYOUT_KEYS.hideOriginalPrice],
       "INVOICE_LAYOUT_KEYS.hidePerPiece": [INVOICE_LAYOUT_KEYS.hidePerPiece],
+      "INVOICE_LAYOUT_KEYS.hideAmountPaid": [INVOICE_LAYOUT_KEYS.hideAmountPaid],
+      "INVOICE_LAYOUT_KEYS.hideBalanceDue": [INVOICE_LAYOUT_KEYS.hideBalanceDue],
     },
     // static key constants inside SystemConfigService itself (the generic set(key) is a definition)
     "system-config/system-config.service.ts": {

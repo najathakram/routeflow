@@ -498,3 +498,65 @@ describe("SettingsController — GET/PATCH /settings/invoice hidePerPiece", () =
     expect(bad.map((e) => e.property)).toEqual(["hidePerPiece"]);
   });
 });
+
+// R6a (T10a): invoice.hideAmountPaid / invoice.hideBalanceDue, read through readInvoiceLayout (absent = shown).
+describe.each(["hideAmountPaid", "hideBalanceDue"] as const)(
+  "SettingsController — GET/PATCH /settings/invoice %s",
+  (field) => {
+    const key = `invoice.${field}`;
+    let controller: SettingsController;
+    let svc: { get: jest.Mock; set: jest.Mock; getAll: jest.Mock };
+
+    beforeEach(async () => {
+      svc = {
+        get: jest.fn().mockResolvedValue(null),
+        set: jest.fn().mockResolvedValue(undefined),
+        getAll: jest.fn().mockResolvedValue({}),
+      };
+      const module: TestingModule = await Test.createTestingModule({
+        controllers: [SettingsController],
+        providers: [
+          { provide: SystemConfigService, useValue: svc },
+          { provide: ConfigService, useValue: { get: jest.fn() } },
+          { provide: PrismaService, useValue: createMockPrisma() },
+          { provide: EmailService, useValue: { send: jest.fn().mockResolvedValue(undefined) } },
+          quickKeysSettingsStubProvider,
+        ],
+      }).compile();
+      controller = module.get<SettingsController>(SettingsController);
+    });
+
+    it("GET returns false when the key was never written", async () => {
+      expect((await controller.getInvoiceSettings())[field]).toBe(false);
+    });
+
+    it.each([
+      ["true", true],
+      ["false", false],
+      ["yes", false],
+    ])("GET reads %p as %p (only the string 'true' hides)", async (stored, expected) => {
+      svc.getAll.mockResolvedValue({ [key]: stored });
+      expect((await controller.getInvoiceSettings())[field]).toBe(expected);
+    });
+
+    it("PATCH writes the reader's key: true -> 'true', false -> 'false'", async () => {
+      await controller.updateInvoiceSettings({ [field]: true });
+      expect(svc.set).toHaveBeenCalledWith(key, "true");
+      await controller.updateInvoiceSettings({ [field]: false });
+      expect(svc.set).toHaveBeenCalledWith(key, "false");
+    });
+
+    it("PATCH without it does not touch the key", async () => {
+      await controller.updateInvoiceSettings({ defaultTerms: "Net 15" });
+      expect(svc.set).not.toHaveBeenCalledWith(key, expect.anything());
+    });
+
+    it("the DTO takes a boolean and refuses 'yes'", async () => {
+      expect(await validate(plainToInstance(UpdateInvoiceSettingsDto, { [field]: true }))).toEqual(
+        [],
+      );
+      const bad = await validate(plainToInstance(UpdateInvoiceSettingsDto, { [field]: "yes" }));
+      expect(bad.map((e) => e.property)).toEqual([field]);
+    });
+  },
+);

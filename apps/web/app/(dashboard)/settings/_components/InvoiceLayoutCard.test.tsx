@@ -17,7 +17,13 @@ jest.mock("@/lib/api-client", () => ({
   },
 }));
 
-const ON = { hideOriginalPrice: false, hideBarcodes: false, hidePerPiece: false };
+const ON = {
+  hideOriginalPrice: false,
+  hideBarcodes: false,
+  hidePerPiece: false,
+  hideAmountPaid: false,
+  hideBalanceDue: false,
+};
 
 // Wired like the Invoicing tab: pending = the in-flight PATCH body while the save runs.
 function Harness({ stored = ON }: { stored?: typeof ON }) {
@@ -110,5 +116,39 @@ describe("InvoiceLayoutCard", () => {
       screen.getByText("Sample. Your invoices use your own items and amounts."),
     ).toBeInTheDocument();
     expect(screen.getByText("Preview")).toBeInTheDocument();
+  });
+
+  it("T10d: five rows render, checked when nothing is hidden", () => {
+    renderWithProviders(<Harness />);
+    for (const name of [
+      "Show original price on discounted lines",
+      "Show barcodes on invoices",
+      "Show price per piece on invoices",
+      "Show amount paid",
+      "Show balance due",
+    ]) {
+      expect(screen.getByRole("checkbox", { name })).toBeChecked();
+    }
+  });
+
+  it.each([
+    ["Show amount paid", "hideAmountPaid", "Amount Paid"],
+    ["Show balance due", "hideBalanceDue", "Balance Due"],
+  ])("T10d: flipping %s drops its preview line at once and PATCHes", async (name, key, line) => {
+    mockPatch.mockImplementation(() => new Promise(() => {}));
+    renderWithProviders(<Harness />);
+    expect(within(preview()).getByText(line)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("checkbox", { name }));
+    await waitFor(() => expect(within(preview()).queryByText(line)).toBeNull());
+    expect(within(preview()).getByText("Total")).toBeInTheDocument();
+    expect(mockPatch).toHaveBeenCalledWith("/settings/invoice", { [key]: true });
+  });
+
+  it("T10d: a rejected PATCH on a new row returns its line to the preview", async () => {
+    mockPatch.mockRejectedValue(new Error("nope"));
+    renderWithProviders(<Harness />);
+    await userEvent.click(screen.getByRole("checkbox", { name: "Show amount paid" }));
+    await waitFor(() => expect(mockPatch).toHaveBeenCalled());
+    await waitFor(() => expect(within(preview()).getByText("Amount Paid")).toBeInTheDocument());
   });
 });

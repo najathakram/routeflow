@@ -236,7 +236,7 @@ export class InvoicePdfService {
     // the PDF payload so a customer-facing document respects it too.
     const { hideOriginalPrice } = layout;
     // Owner ruling 2026-11-04: the Per piece column's switch, read once per render. Absent = shown; only "true" hides.
-    const { hidePerPiece } = layout;
+    const { hidePerPiece, hideAmountPaid, hideBalanceDue } = layout; // R6a: the Paid / Balance Due lines
 
     const invWithBarcodes = {
       ...inv,
@@ -251,6 +251,8 @@ export class InvoicePdfService {
       advanceApplied,
       hideOriginalPrice,
       hidePerPiece,
+      hideAmountPaid,
+      hideBalanceDue,
     };
 
     let pdfBuffer: Buffer;

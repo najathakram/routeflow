@@ -7,6 +7,8 @@ export const INVOICE_LAYOUT_KEYS = {
   hideOriginalPrice: "invoice.hideOriginalPrice",
   hideBarcodes: "invoice.hideBarcodes",
   hidePerPiece: "invoice.hidePerPiece",
+  hideAmountPaid: "invoice.hideAmountPaid",
+  hideBalanceDue: "invoice.hideBalanceDue",
 } as const;
 
 export type InvoiceLayout = { [K in keyof typeof INVOICE_LAYOUT_KEYS]: boolean };
@@ -19,6 +21,8 @@ export function parseInvoiceLayout(
     hideOriginalPrice: on("hideOriginalPrice"),
     hideBarcodes: on("hideBarcodes"),
     hidePerPiece: on("hidePerPiece"),
+    hideAmountPaid: on("hideAmountPaid"),
+    hideBalanceDue: on("hideBalanceDue"),
   };
 }
 

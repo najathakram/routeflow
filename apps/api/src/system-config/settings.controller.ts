@@ -660,6 +660,9 @@ export class SettingsController {
       hideBarcodes: layout.hideBarcodes,
       // Owner ruling 2026-11-04: only the string "true" hides the Per piece column; a business that never wrote the key keeps it.
       hidePerPiece: layout.hidePerPiece,
+      // R6a: only the string "true" hides the Amount Paid / Balance Due lines of the invoice PDF and email.
+      hideAmountPaid: layout.hideAmountPaid,
+      hideBalanceDue: layout.hideBalanceDue,
       // WP-D1: absent/unset -> null (no tenant deposit default). Row 652: the web clears the field by sending 0, so a
       // stored "0" is also "no tenant default" (every reader treats it as no deposit; the form shows both as blank).
       depositDefaultPercent:
@@ -686,6 +689,12 @@ export class SettingsController {
     }
     if (dto.hidePerPiece !== undefined) {
       await this.svc.set(INVOICE_LAYOUT_KEYS.hidePerPiece, String(dto.hidePerPiece));
+    }
+    if (dto.hideAmountPaid !== undefined) {
+      await this.svc.set(INVOICE_LAYOUT_KEYS.hideAmountPaid, String(dto.hideAmountPaid));
+    }
+    if (dto.hideBalanceDue !== undefined) {
+      await this.svc.set(INVOICE_LAYOUT_KEYS.hideBalanceDue, String(dto.hideBalanceDue));
     }
     if (dto.depositDefaultPercent !== undefined) {
       await this.svc.set("invoice.depositDefaultPercent", String(dto.depositDefaultPercent));

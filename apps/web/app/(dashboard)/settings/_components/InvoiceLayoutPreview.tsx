@@ -7,10 +7,17 @@ export interface InvoiceLayoutFlags {
   hideOriginalPrice?: boolean;
   hideBarcodes?: boolean;
   hidePerPiece?: boolean;
+  hideAmountPaid?: boolean;
+  hideBalanceDue?: boolean;
 }
 
 const BARS = [2, 1, 3, 1, 2, 2, 1, 3, 1, 1, 2, 3, 1, 2, 1, 3, 2, 1];
 const SAMPLE_CODE = "0123456789";
+const TOTALS = [
+  ["Total", "$40.00"],
+  ["Amount Paid", "$15.00"],
+  ["Balance Due", "$25.00"],
+] as const;
 
 export function InvoiceLayoutPreview({ layout }: { layout: InvoiceLayoutFlags }) {
   const showOriginal = !layout.hideOriginalPrice;
@@ -62,12 +69,10 @@ export function InvoiceLayoutPreview({ layout }: { layout: InvoiceLayoutFlags })
           </div>
         </div>
         <dl data-testid="preview-totals" className="space-y-1">
-          {(
-            [
-              ["Total", "$40.00"],
-              ["Amount Paid", "$15.00"],
-              ["Balance Due", "$25.00"],
-            ] as const
+          {TOTALS.filter(
+            ([label]) =>
+              !(label === "Amount Paid" && layout.hideAmountPaid) &&
+              !(label === "Balance Due" && layout.hideBalanceDue),
           ).map(([label, amount]) => (
             <div key={label} className="flex justify-between">
               <dt data-testid="preview-total-label">{label}</dt>

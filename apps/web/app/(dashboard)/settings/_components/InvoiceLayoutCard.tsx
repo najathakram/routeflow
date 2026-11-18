@@ -4,7 +4,8 @@ import type { InvoiceSettings } from "@/lib/api/invoices";
 import { isReadOnlyRefusal } from "@/lib/read-only-refusal";
 import { InvoiceLayoutPreview } from "./InvoiceLayoutPreview";
 
-type LayoutKey = "hideOriginalPrice" | "hideBarcodes" | "hidePerPiece";
+type LayoutKey =
+  "hideOriginalPrice" | "hideBarcodes" | "hidePerPiece" | "hideAmountPaid" | "hideBalanceDue";
 type LayoutSettings = Pick<InvoiceSettings, LayoutKey>;
 
 interface MutateOptions {
@@ -44,6 +45,18 @@ const ROWS: {
     label: "Show price per piece on invoices",
     help: "Adds a Per piece column beside pack lines, on the invoice page, the PDF and the email. Turn off to print invoices without it.",
     doneDescription: "Per piece column updated.",
+  },
+  {
+    key: "hideAmountPaid",
+    label: "Show amount paid",
+    help: "Prints the Amount Paid line and the list of payments. Turn off to print invoices without them.",
+    doneDescription: "Amount paid display updated.",
+  },
+  {
+    key: "hideBalanceDue",
+    label: "Show balance due",
+    help: "Prints the Balance Due line. Turn off to print invoices without it.",
+    doneDescription: "Balance due display updated.",
   },
 ];
 

@@ -18,6 +18,7 @@ import {
 } from "./invoice-pdf-item";
 import { CREDIT_NOTE_METHOD, resolveConfirmedAmounts } from "./payment-predicates";
 import { pdfTermsView } from "./invoice-pdf-terms";
+import { pdfTotalsVisibility } from "./invoice-pdf-totals-visibility";
 
 type DecimalLike = { toNumber(): number } | number | string;
 
@@ -76,6 +77,9 @@ export interface InvoicePdfData {
    */
   creditApplied?: number | null;
   advanceApplied?: number | null;
+  /** R6a: the tenant's Paid / Balance Due switches (absent = shown); see pdfTotalsVisibility. */
+  hideAmountPaid?: boolean;
+  hideBalanceDue?: boolean;
   /** Tenant's "hide original/pre-promo price" setting (F03/R9) — same source as
    *  the invoice detail endpoint's `hideOriginalPrice` field. */
   hideOriginalPrice?: boolean | null;
@@ -487,6 +491,11 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
   // settled by a mix of cash/credit/advance can leave a sub-cent float
   // remnant that would otherwise render a red "Balance Due $0.00".
   const balance = roundMoney(total - totalPaid - creditApplied - advanceApplied);
+  const show = pdfTotalsVisibility({
+    ...invoice,
+    totalPaid,
+    paymentCount: invoice.payments.length,
+  });
   // B421: customer-facing wording is "Credit issued — CN-…" (brief ruling #3),
   // never folded into Amount Paid. Dedup + list every confirmed credit note
   // number applied to this invoice; falls back to the plain label if the
@@ -911,7 +920,7 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
                   </View>
                 </View>
               ) : null}
-              {totalPaid > 0 ? (
+              {show.amountPaidRow ? (
                 <View style={styles.totalRow}>
                   <Text style={[styles.totalLabel, { color: SUCCESS }]}>Amount Paid</Text>
                   <Text style={[styles.totalValue, { color: SUCCESS }]}>-{fmt(totalPaid)}</Text>
@@ -934,20 +943,22 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
                   <Text style={styles.totalValue}>-{fmt(advanceApplied)}</Text>
                 </View>
               ) : null}
-              <View style={styles.totalDivider} />
-              <View style={styles.totalBigRow}>
-                <Text style={[styles.totalBigLabel, { color: balance > 0 ? DANGER : SUCCESS }]}>
-                  Balance Due
-                </Text>
-                <Text style={[styles.totalBigValue, { color: balance > 0 ? DANGER : SUCCESS }]}>
-                  {fmt(balance > 0 ? balance : 0)}
-                </Text>
-              </View>
+              {show.balanceDueRow ? <View style={styles.totalDivider} /> : null}
+              {show.balanceDueRow ? (
+                <View style={styles.totalBigRow}>
+                  <Text style={[styles.totalBigLabel, { color: balance > 0 ? DANGER : SUCCESS }]}>
+                    Balance Due
+                  </Text>
+                  <Text style={[styles.totalBigValue, { color: balance > 0 ? DANGER : SUCCESS }]}>
+                    {fmt(balance > 0 ? balance : 0)}
+                  </Text>
+                </View>
+              ) : null}
             </View>
           </View>
 
           {/* Payment history */}
-          {invoice.payments.length > 0 ? (
+          {show.paymentHistory ? (
             <View>
               <Text style={styles.sectionTitle}>Payment History</Text>
               {invoice.payments.map((pmt) => {

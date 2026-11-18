@@ -3593,13 +3593,12 @@ export class InvoicesService {
     // F03/R9: the SAME tenant setting findOneOrThrow and the PDF read: the email renders the same item table as the
     // PDF attached to it, so it honours the hide-original-price preference too. The payload (the F03/R8/B421 paid
     // basis, the item table, the deposit schedule) is built in invoice-email-payload.ts (the service is on the ratchet).
-    const { hideOriginalPrice, hidePerPiece } = await readInvoiceLayout(this.systemConfig);
+    const layout = await readInvoiceLayout(this.systemConfig); // R6a: the invoice email's Paid / Balance Due switches ride it
     const emailPayload = buildInvoiceEmailPayload(snapshot, {
       recipientEmail,
       pdfUrl,
       attachment,
-      hideOriginalPrice,
-      hidePerPiece,
+      ...layout,
     });
     const parts = [this.prisma, this.pdfService, this.storage, this.logger, opts] as const;
     Object.assign(emailPayload, await completionEmailParts(...parts)); // I-120: COUNTER_COMPLETE only

@@ -2498,3 +2498,71 @@ describe("EmailService.sendInvoice — per-piece price (SA-1029 E-R1)", () => {
     expect(sendSpy.mock.calls[0][0].html as string).toContain("Per piece");
   });
 });
+
+// R6a (T10c): the invoice email's Amount Paid / Balance Due lines follow invoice.hideAmountPaid / hideBalanceDue.
+describe("EmailService.sendInvoice - Amount Paid / Balance Due switches (R6a, T10c)", () => {
+  const base = {
+    to: "buyer@example.com",
+    customerName: "Acme Buyer",
+    invoiceNumber: "INV-6001",
+    invoiceId: "inv-6001",
+    issueDate: "Jan 1, 2026",
+    dueDate: "Jan 31, 2026",
+    total: 200,
+    totalPaid: 50,
+    creditApplied: 40,
+    advanceApplied: 20,
+    creditNoteNumbers: ["CN-7"],
+    balanceDue: 90,
+    items: [{ description: "Sample Cola 12pk", qty: 2, unitPrice: 100, subtotal: 200 }],
+  };
+  const send = async (over: Record<string, unknown>) => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+    await svc.sendInvoice({ ...base, ...over } as any);
+    return sendSpy.mock.calls[0][0] as { html: string; text: string };
+  };
+
+  it("both on (absent or false) = today's body exactly", async () => {
+    const today = await send({});
+    const off = await send({ hideAmountPaid: false, hideBalanceDue: false });
+    expect(off.html).toBe(today.html);
+    expect(off.text).toBe(today.text);
+    expect(today.html).toContain("Amount Paid");
+    expect(today.html).toContain("Balance Due");
+    expect(today.text).toContain("Amount Paid: $50.00");
+    expect(today.text).toContain("Balance Due: $90.00");
+  });
+
+  it("paid off drops only the Amount Paid line (HTML and text)", async () => {
+    const { html, text } = await send({ hideAmountPaid: true });
+    expect(html).not.toContain("Amount Paid");
+    expect(text).not.toContain("Amount Paid");
+    expect(html).toContain("Balance Due");
+    expect(text).toContain("Balance Due: $90.00");
+    expect(html).toContain("Credit issued");
+    expect(html).toContain("Advance applied");
+    expect(text).toContain("Credit issued");
+    expect(text).toContain("Advance applied");
+  });
+
+  it("balance off drops only the Balance Due line (HTML and text)", async () => {
+    const { html, text } = await send({ hideBalanceDue: true });
+    expect(html).not.toContain("Balance Due");
+    expect(text).not.toContain("Balance Due");
+    expect(html).toContain("Amount Paid");
+    expect(text).toContain("Amount Paid: $50.00");
+    expect(html).toContain("Credit issued");
+    expect(html).toContain("Advance applied");
+  });
+
+  it("a reminder keeps showing the balance whatever the switches say", async () => {
+    const plain = await send({ isReminder: true });
+    const flagged = await send({ isReminder: true, hideAmountPaid: true, hideBalanceDue: true });
+    expect(flagged.html).toBe(plain.html);
+    expect(flagged.text).toBe(plain.text);
+    expect(flagged.html).toContain("Balance Due");
+  });
+});

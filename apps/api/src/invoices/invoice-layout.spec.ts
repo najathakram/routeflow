@@ -18,7 +18,7 @@ describe('parseInvoiceLayout (T1, guard: master\'s `=== "true"` rule)', () => {
     for (const [raw, expected] of cases) {
       const layout = parseInvoiceLayout(raw);
       expect(layout[name]).toBe(expected);
-      // the other two switches are untouched by this key
+      // the other switches are untouched by this key
       for (const other of NAMES.filter((n) => n !== name)) expect(layout[other]).toBe(false);
     }
   });
@@ -28,6 +28,8 @@ describe('parseInvoiceLayout (T1, guard: master\'s `=== "true"` rule)', () => {
       hideOriginalPrice: "invoice.hideOriginalPrice",
       hideBarcodes: "invoice.hideBarcodes",
       hidePerPiece: "invoice.hidePerPiece",
+      hideAmountPaid: "invoice.hideAmountPaid",
+      hideBalanceDue: "invoice.hideBalanceDue",
     });
   });
 });
@@ -43,6 +45,12 @@ describe("readInvoiceLayout (T2)", () => {
     expect(getAll).toHaveBeenCalledTimes(1);
     expect(getAll).toHaveBeenCalledWith("invoice.");
     expect(get).not.toHaveBeenCalled();
-    expect(layout).toEqual({ hideOriginalPrice: false, hideBarcodes: true, hidePerPiece: false });
+    expect(layout).toEqual({
+      hideOriginalPrice: false,
+      hideBarcodes: true,
+      hidePerPiece: false,
+      hideAmountPaid: false,
+      hideBalanceDue: false,
+    });
   });
 });
