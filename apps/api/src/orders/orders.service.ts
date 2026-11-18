@@ -133,6 +133,7 @@ import {
   reduceDeliveredLineEntries,
 } from "./delivered-line-lock";
 import { lockEditedOrder, editGuards } from "./replace-after-delivery";
+import { assertBuyerEditInput } from "./buyer-edit-input";
 import { CANCELLABLE_FROM, assertOrderStatusTransition } from "./order-status-transitions";
 import { buildStatusUpdateData } from "./order-status-claim";
 import { assertDeliveredDemotionAllowed } from "./delivered-demotion.guard";
@@ -2470,6 +2471,7 @@ export class OrdersService implements OnApplicationBootstrap {
         .forTenant()
         .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
       if (!owner || owner.id !== order.customerId) throw new ForbiddenException();
+      assertBuyerEditInput(dto); // SA-1161: the buyer screens' shape only, before any read-for-write or write
     }
     keep.assertSafeOverrideReasons(dto.items ?? [], order.lineItems); // row 496: after the owner check, before any write
     // R1: items are editable at ANY live stage — DRAFT/PENDING/CONFIRMED and now

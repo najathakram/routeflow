@@ -226,6 +226,7 @@ module.exports = {
     ORDER_EDIT_INVOICE_HAS_PAYMENTS: "ORDER_EDIT_INVOICE_HAS_PAYMENTS",
     ORDER_EDIT_NEEDS_LINE_IDS: "ORDER_EDIT_NEEDS_LINE_IDS",
     ORDER_EDIT_DELIVERED_LINES: "ORDER_EDIT_DELIVERED_LINES",
+    BUYER_EDIT_INPUT_NOT_ALLOWED: "BUYER_EDIT_INPUT_NOT_ALLOWED",
     /** B692: a manual PARTIALLY_DELIVERED names what was delivered per line (or the order already has delivery data). 409. */
     ORDER_PD_NEEDS_QUANTITIES: "ORDER_PD_NEEDS_QUANTITIES",
     /** B692: a delivered / partly-delivered order whose delivery quantities were never recorded is not cancelled blind. 409. */

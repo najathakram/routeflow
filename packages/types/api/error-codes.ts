@@ -391,6 +391,8 @@ export const API_ERROR_CODES = {
   ORDER_CHANGED_DURING_EDIT: "ORDER_CHANGED_DURING_EDIT",
   ORDER_EDIT_NEEDS_LINE_IDS: "ORDER_EDIT_NEEDS_LINE_IDS",
   ORDER_EDIT_DELIVERED_LINES: "ORDER_EDIT_DELIVERED_LINES",
+  /** SA-1161: a CUSTOMER edit carrying a field outside the buyer edit lists. 400, buyer-safe text, nothing written. */
+  BUYER_EDIT_INPUT_NOT_ALLOWED: "BUYER_EDIT_INPUT_NOT_ALLOWED",
   /** SA-1144: a pre-delivery edit of an order whose invoice holds payments or is closed (PAID, PARTIAL, WRITTEN_OFF). 400. */
   ORDER_EDIT_INVOICE_HAS_PAYMENTS: "ORDER_EDIT_INVOICE_HAS_PAYMENTS",
   /** B692: a manual PARTIALLY_DELIVERED names what was delivered per line (or the order already has delivery data). 409. */
