@@ -2,7 +2,7 @@
 //
 // SA-1078 (W-1096). One read answers "what does this customer owe us, on which invoices, what was paid and what was
 // not". Every figure is the server's, in dollars rounded to the cent; the screens never add, net or clamp. The API
-// imports this type-only (L-261), and the numbers come from `summarizeOpenInvoices`, so `openBalance` is the sum of
+// imports this type-only (L-261), and the numbers come from `statementOutstandingAmount`, so `openBalance` is the sum of
 // the `unpaid` column and equals the figure the customer page shows.
 //
 // Routes: `GET /customers/:id/account-statement` (staff) and `GET /buyer/account-statement` (the buyer's own view,

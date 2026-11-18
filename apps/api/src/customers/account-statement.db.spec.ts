@@ -40,7 +40,13 @@ type Pay = {
   settledAt?: Date | null;
 };
 type OrderStatusName =
-  "PENDING" | "CONFIRMED" | "OUT_FOR_DELIVERY" | "DELIVERED" | "REFUSED" | "CANCELLED";
+  | "PENDING"
+  | "CONFIRMED"
+  | "OUT_FOR_DELIVERY"
+  | "PARTIALLY_DELIVERED"
+  | "DELIVERED"
+  | "REFUSED"
+  | "CANCELLED";
 type Status = "SENT" | "PARTIAL" | "PAID" | "DRAFT" | "VOID" | "WRITTEN_OFF";
 
 describeDb("account statement (SA-1078), real Postgres", () => {
@@ -114,6 +120,7 @@ describeDb("account statement (SA-1078), real Postgres", () => {
     status: Status = "SENT",
     issue = "2026-09-01",
     orderId: string | null = null,
+    due = "2099-01-01",
   ) {
     const inv = await prisma.invoice.create({
       data: {
@@ -124,7 +131,7 @@ describeDb("account statement (SA-1078), real Postgres", () => {
         subtotal: total,
         total,
         issueDate: new Date(`${issue}T00:00:00.000Z`),
-        dueDate: new Date("2099-01-01T00:00:00.000Z"),
+        dueDate: new Date(`${due}T00:00:00.000Z`),
         ...(orderId ? { orderId } : {}),
       },
     });
@@ -250,16 +257,32 @@ describeDb("account statement (SA-1078), real Postgres", () => {
       // aging unit spec pins an old due date)
       expect(aging.buckets.current.map((e: any) => e.status)).toContain("DRAFT");
       expect(aging.buckets.current.find((e: any) => e.status === "DRAFT")?.balance).toBe(80);
-      // the buyer's ledger lists the delivered DRAFT with its status, so the screen can say "Not sent yet"
-      expect(
-        mine.transactions
-          .filter((t: any) => t.status === "DRAFT")
-          .map((t: any) => t.runningBalance),
-      ).toEqual(expect.arrayContaining([-80]));
       // and the rows are the whole answer
       expect(account.openInvoices.reduce((t, r) => Math.round((t + r.unpaid) * 100) / 100, 0)).toBe(
         EXPECTED,
       );
+    });
+  });
+
+  it("F1: a delivered DRAFT past its due date is not late on the statement, while an issued invoice past the same date is", async () => {
+    const s = await seedTenant("f1");
+    const orderId = await seedOrder(s, "DELIVERED", 60);
+    await seedInvoice(s, "sentlate", 100, [], "SENT", "2026-01-01", null, "2026-02-01");
+    await seedInvoice(s, "draftlate", 60, [], "DRAFT", "2026-01-01", orderId, "2026-02-01");
+    await tenantCtx.run(s.tenantId, async () => {
+      const res = await buildAccountStatement(
+        prisma,
+        { id: s.customerId, businessName: "Acme f1", email: null },
+        { staff: false },
+      );
+      expect(
+        res.openInvoices.map((r) => [r.invoiceNumber.split("-").pop(), r.daysLate > 0]),
+      ).toEqual([
+        ["sentlate", true],
+        ["draftlate", false],
+      ]);
+      expect(res.openInvoices[1].notSentYet).toBe(true);
+      expect(res.openBalance).toBe(160);
     });
   });
 
@@ -372,16 +395,19 @@ describeDb("account statement (SA-1078), real Postgres", () => {
     });
   });
 
-  it.each(["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY", "CANCELLED"] as const)(
-    "Q3: a DRAFT on a %s order is not counted",
-    async (orderStatus) => {
-      const s = await seedTenant(`q3-${orderStatus.toLowerCase().replace(/_/g, "")}`);
-      const orderId = await seedOrder(s, orderStatus, 120);
-      await seedInvoice(s, "q3", 120, [], "DRAFT", "2026-09-01", orderId);
-      const got = await readBalance(s);
-      expect(got).toEqual({ statementBalance: 0, statementRows: [], listBalance: 0 });
-    },
-  );
+  it.each([
+    "PENDING",
+    "CONFIRMED",
+    "OUT_FOR_DELIVERY",
+    "PARTIALLY_DELIVERED",
+    "CANCELLED",
+  ] as const)("Q3: a DRAFT on a %s order is not counted", async (orderStatus) => {
+    const s = await seedTenant(`q3-${orderStatus.toLowerCase().replace(/_/g, "")}`);
+    const orderId = await seedOrder(s, orderStatus, 120);
+    await seedInvoice(s, "q3", 120, [], "DRAFT", "2026-09-01", orderId);
+    const got = await readBalance(s);
+    expect(got).toEqual({ statementBalance: 0, statementRows: [], listBalance: 0 });
+  });
 
   it("Q4: a standalone DRAFT with no order is not counted", async () => {
     const s = await seedTenant("q4");

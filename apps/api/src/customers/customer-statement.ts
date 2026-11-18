@@ -170,7 +170,7 @@ export async function buildMyStatement(prisma: PrismaService, user: JwtPayload) 
   const ledgerInvoicesWithPaid = withPaid(ledgerInvoices);
 
   // H2: every money figure this statement returns is rounded to cents.
-  // SA-1078 PR-1: the total is the sum of each invoice's CLAMPED balance (`summarizeOpenInvoices`), never
+  // SA-1078 PR-1: the total is the sum of each invoice's CLAMPED balance (`statementOutstandingAmount`), never
   // `total - paid` summed raw, which netted an overpaid invoice against the others.
   const statementZone = await tenantTimeZone(prisma);
   const outstanding = statementOutstandingAmount(openInvoicesWithPaid, statementZone);
@@ -404,7 +404,7 @@ export async function buildOperatorStatement(
   const ledgerInvoicesWithPaid = withPaid(ledgerInvoices);
 
   // H2: every money figure this statement returns is rounded to cents.
-  // SA-1078 PR-1: the total is the sum of each invoice's CLAMPED balance (`summarizeOpenInvoices`), never
+  // SA-1078 PR-1: the total is the sum of each invoice's CLAMPED balance (`statementOutstandingAmount`), never
   // `total - paid` summed raw, which netted an overpaid invoice against the others.
   const statementZone = await tenantTimeZone(prisma);
   const outstanding = statementOutstandingAmount(openInvoicesWithPaid, statementZone);

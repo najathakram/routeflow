@@ -217,6 +217,13 @@ describe("SA-1164 D3d: the page says Not sent yet on a delivered, unsent invoice
     const source = readFileSync(join(__dirname, "account-statement-pdf-template.tsx"), "utf8");
     expect(source).toMatch(/row.notSent/);
   });
+
+  it("F1: a not-sent row prints no late text, even if the read carried days late", () => {
+    const m = buildAccountStatementPdfModel(
+      statement({ openInvoices: [invoice(1, { notSentYet: true, daysLate: 30 })] }),
+    );
+    expect(m.invoices[0]).toMatchObject({ notSent: "Not sent yet", late: null });
+  });
 });
 
 describe("PD4: a long statement wraps and the foot stays whole at the end", () => {

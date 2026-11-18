@@ -358,7 +358,7 @@ describe("SA-770 — BALANCE_CLAMPED readers behave (overpaid adds 0; a genuinel
     expect(helper).toMatch(/\broundMoney\(/);
     // never the gross: no amountPaid, no `total -`, no `- <something>paid` (the netting reduce S1-S3 removed)
     expect(helper).not.toMatch(/amountPaid/);
-    expect(helper).not.toMatch(/\btotal\b\s*-/);
+    expect(helper).not.toMatch(/\btotal\b\)?\s*-/); // also `Number(inv.total) - ...`
     expect(helper).not.toMatch(/-\s*\w*[Pp]aid\b/);
     expect(src.match(/\bstatementOutstandingAmount\(/g)?.length).toBe(3); // the definition and the two builders
     expect(src.match(/const outstanding = statementOutstandingAmount\(/g)?.length).toBe(2);

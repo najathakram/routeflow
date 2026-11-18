@@ -107,7 +107,7 @@ export function buildAccountStatementPdfModel(s: AccountStatement): AccountState
       // SA-1164 D3d: a delivered, unsent invoice counts but the customer cannot open it yet
       notSent: i.notSentYet ? "Not sent yet" : null,
       due: i.dueDate ? fmtPdfDate(i.dueDate) : "—",
-      late: i.daysLate > 0 ? daysLateWords(i.daysLate) : null,
+      late: i.daysLate > 0 && !i.notSentYet ? daysLateWords(i.daysLate) : null,
       total: fmtMoney(i.total),
       paid: fmtMoney(i.paid),
       credit: fmtMoney(i.credit),

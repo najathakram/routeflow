@@ -148,7 +148,8 @@ export async function buildAccountStatement(
       paid: roundMoney(split.cash),
       credit: roundMoney(split.creditApplied + split.advanceApplied),
       unpaid: balanceDue,
-      daysLate: daysLateOn(tenantDay, inv.dueDate),
+      // SA-1164 D3e: a bill that was never sent cannot be late; the row says "Not sent yet" and no days-late text
+      daysLate: inv.status === InvoiceStatus.DRAFT ? 0 : daysLateOn(tenantDay, inv.dueDate),
       ...(inv.status === InvoiceStatus.DRAFT ? { notSentYet: true } : {}),
       ...(opts.staff ? { toCollect: toCollectState(inv) } : {}),
     });

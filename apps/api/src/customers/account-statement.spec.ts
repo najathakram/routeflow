@@ -143,6 +143,21 @@ describe("SA-1078 account statement (PR-1)", () => {
     expect(res.openBalance).toBe(150);
   });
 
+  it("S6d (F1): a DRAFT whose due date is past is not late: daysLate 0, while an issued row with the same date is late", async () => {
+    arrange({
+      invoices: [
+        inv("sent", 100, [], { due: "2026-09-01" }),
+        inv("dd", 60, [], { status: "DRAFT", issue: "2026-08-01", due: "2026-09-01" }),
+      ],
+    });
+    const res = await read();
+    expect(res.openInvoices.map((r) => [r.invoiceNumber, r.daysLate > 0])).toEqual([
+      ["SENT", true],
+      ["DD", false],
+    ]);
+    expect(res.openInvoices[1].daysLate).toBe(0);
+  });
+
   it("S6c (D3b): only the DRAFT row carries notSentYet, so the buyer screens can say so; issued rows never carry the key", async () => {
     arrange({ invoices: [inv("sent", 100), inv("dd", 60, [], { status: "DRAFT" })] });
     const res = await read();

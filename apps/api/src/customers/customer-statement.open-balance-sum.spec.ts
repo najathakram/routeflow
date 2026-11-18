@@ -83,7 +83,7 @@ describe("D3 count pin: every S9 reader keeps joining the open-balance / receiva
       ) ?? []
     ).length;
 
-  // [file, identifier, minimum uses (the import counts as one)]
+  // [file, identifier, EXACT uses (the import counts as one): the count only shrinks when a reader is removed on purpose (OP-7)]
   it.each([
     ["customers/customer-statement.ts", "OPEN_BALANCE_INVOICE_WHERE", 3], // import + buildMyStatement + buildOperatorStatement
     ["customers/account-statement.ts", "OPEN_BALANCE_INVOICE_WHERE", 2], // import + buildAccountStatement
@@ -91,7 +91,7 @@ describe("D3 count pin: every S9 reader keeps joining the open-balance / receiva
     ["customers/open-balance-basis.ts", "OPEN_BALANCE_INVOICE_WHERE", 1], // definition
     ["customers/open-balances.ts", "OPEN_BALANCE_INVOICE_WHERE", 2], // import + the read
     ["bookkeeping/bookkeeping.service.ts", "RECEIVABLE_DRAFT_WHERE", 3], // import + getArAgingInvoices + getCustomerBalanceSummary
-  ] as const)("%s uses %s at least %i times", (rel, name, min) => {
-    expect(uses(rel, name)).toBeGreaterThanOrEqual(min);
+  ] as const)("%s uses %s exactly %i times", (rel, name, count) => {
+    expect(uses(rel, name)).toBe(count);
   });
 });
