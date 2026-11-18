@@ -1,3 +1,9 @@
+-- Phase 1 (source capture): one additive table, "SignupAttribution", one row per tenant (unique "tenantId", FK to "Tenant"
+-- ON DELETE CASCADE). Written only by public register; no backfill, nothing reads it until the dashboard card ships with it.
+-- `SET LOCAL lock_timeout = '5s'` bounds the wait on "Tenant" for the FK; a timeout rolls the whole file back.
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+
 -- CreateTable
 CREATE TABLE "SignupAttribution" (
     "id" TEXT NOT NULL,
@@ -23,3 +29,5 @@ CREATE UNIQUE INDEX "SignupAttribution_tenantId_key" ON "SignupAttribution"("ten
 
 -- AddForeignKey
 ALTER TABLE "SignupAttribution" ADD CONSTRAINT "SignupAttribution_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+COMMIT;
