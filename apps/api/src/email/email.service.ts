@@ -1816,7 +1816,12 @@ export class EmailService {
       params.balanceDue != null
         ? `${itemCountRow}${amountPaidRow}${creditAppliedRow}${advanceAppliedRow}${
             dropBalance
-              ? ""
+              ? // R6a: the invoice-level figure stays: a Total row where Balance Due was (the email has no other Total).
+                `
+              <tr style="background:#f9fafb;">
+                <td colspan="${footSpan}" style="padding:12px;font-size:14px;font-weight:700;color:#1D2A3D;text-align:right;">Total</td>
+                <td style="padding:12px;font-size:16px;font-weight:700;color:#1D2A3D;text-align:right;">${fmt(params.total)}</td>
+              </tr>`
               : `
               <tr style="background:#f9fafb;">
                 <td colspan="${footSpan}" style="padding:12px;font-size:14px;font-weight:700;color:#1D2A3D;text-align:right;">Balance Due</td>
@@ -1938,13 +1943,14 @@ export class EmailService {
       totalsLines.push(`${creditNoteLabel}: ${fmt(params.creditApplied)}`);
     if (params.advanceApplied != null && params.advanceApplied > 0)
       totalsLines.push(`Advance applied: ${fmt(params.advanceApplied)}`);
-    if (!(dropBalance && params.balanceDue != null))
-      totalsLines.push(
-        params.balanceDue != null
-          ? `Balance Due: ${fmt(params.balanceDue)}`
-          : `Amount Due: ${fmt(params.total)}`,
-      );
-    bodyText.push(totalsLines.join("\n"));
+    totalsLines.push(
+      params.balanceDue != null
+        ? dropBalance
+          ? `Total: ${fmt(params.total)}` // R6a: Balance Due off keeps the invoice-level figure
+          : `Balance Due: ${fmt(params.balanceDue)}`
+        : `Amount Due: ${fmt(params.total)}`,
+    );
+    if (totalsLines.length > 0) bodyText.push(totalsLines.join("\n"));
     if (params.pdfUrl) bodyText.push(`Download PDF: ${params.pdfUrl}`);
     bodyText.push(
       "If you have any questions about this invoice, please don't hesitate to contact us.",

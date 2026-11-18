@@ -46,6 +46,11 @@ beforeEach(() => {
 });
 
 describe("InvoiceLayoutCard", () => {
+  it("the preview panel is a named group, so a screen reader announces it", () => {
+    renderWithProviders(<Harness />);
+    expect(screen.getByRole("group", { name: "Invoice preview" })).toBe(preview());
+  });
+
   it("T6: holds the three switches under unchanged labels and PATCHes the same body", async () => {
     renderWithProviders(<Harness />);
     expect(screen.getByText("Invoice layout")).toBeInTheDocument();

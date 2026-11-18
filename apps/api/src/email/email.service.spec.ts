@@ -2525,15 +2525,28 @@ describe("EmailService.sendInvoice - Amount Paid / Balance Due switches (R6a, T1
     return sendSpy.mock.calls[0][0] as { html: string; text: string };
   };
 
+  // Master's Balance Due row and line, pinned literally so a change to the shared template can't pass both sides.
+  const BALANCE_TR = '<tr style="background:#f9fafb;">';
+  const BALANCE_LABEL =
+    'font-size:14px;font-weight:700;color:#1D2A3D;text-align:right;">Balance Due</td>';
+  const BALANCE_VALUE =
+    'font-size:16px;font-weight:700;color:#dc2626;text-align:right;">$90.00</td>';
+  const totalRowAfter = (html: string) => {
+    const at = html.indexOf('text-align:right;">Total</td>');
+    return at < 0 ? "" : html.slice(at, at + 220);
+  };
+
   it("both on (absent or false) = today's body exactly", async () => {
     const today = await send({});
     const off = await send({ hideAmountPaid: false, hideBalanceDue: false });
     expect(off.html).toBe(today.html);
     expect(off.text).toBe(today.text);
     expect(today.html).toContain("Amount Paid");
-    expect(today.html).toContain("Balance Due");
+    expect(today.html).toContain(BALANCE_TR);
+    expect(today.html).toContain(BALANCE_LABEL);
+    expect(today.html).toContain(BALANCE_VALUE);
     expect(today.text).toContain("Amount Paid: $50.00");
-    expect(today.text).toContain("Balance Due: $90.00");
+    expect(today.text).toContain("Advance applied: $20.00\nBalance Due: $90.00");
   });
 
   it("paid off drops only the Amount Paid line (HTML and text)", async () => {
@@ -2556,6 +2569,33 @@ describe("EmailService.sendInvoice - Amount Paid / Balance Due switches (R6a, T1
     expect(text).toContain("Amount Paid: $50.00");
     expect(html).toContain("Credit issued");
     expect(html).toContain("Advance applied");
+  });
+
+  it("balance off prints a Total line (text) and a Total row (HTML) where Balance Due was; both on adds none", async () => {
+    const off = await send({ hideBalanceDue: true });
+    expect(off.text).toContain("Advance applied: $20.00\nTotal: $200.00");
+    expect(totalRowAfter(off.html)).toContain("$200.00</td>");
+    for (const over of [
+      {},
+      { hideAmountPaid: true },
+      { hideAmountPaid: false, hideBalanceDue: false },
+    ]) {
+      const on = await send(over);
+      expect(on.text).not.toContain("Total: ");
+      expect(totalRowAfter(on.html)).toBe("");
+    }
+  });
+
+  it("with both off the totals paragraph still carries the Total line, and no empty paragraph", async () => {
+    const { text } = await send({
+      hideAmountPaid: true,
+      hideBalanceDue: true,
+      creditApplied: 0,
+      advanceApplied: 0,
+      totalPaid: 0,
+    });
+    expect(text).toContain("Total: $200.00");
+    expect(text).not.toContain("\n\n\n");
   });
 
   it("a reminder keeps showing the balance whatever the switches say", async () => {

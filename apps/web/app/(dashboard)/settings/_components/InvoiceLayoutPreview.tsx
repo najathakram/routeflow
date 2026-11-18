@@ -27,6 +27,7 @@ export function InvoiceLayoutPreview({ layout }: { layout: InvoiceLayoutFlags })
     <div>
       <h4 className="mb-2 text-sm font-semibold text-navy">Preview</h4>
       <div
+        role="group"
         aria-label="Invoice preview"
         className="space-y-3 rounded-card border border-surface-border bg-white p-4 text-sm text-navy shadow-card"
       >

@@ -155,3 +155,81 @@ describe("the invoice PDF's line rows (SA-1058 A-1)", () => {
     });
   });
 });
+
+// R6a: the switches reach the real template. Walks the rendered tree (the service spec mocks the template).
+describe("the invoice PDF's Amount Paid / Balance Due switches (R6a)", () => {
+  const payments = [
+    {
+      id: "p1",
+      method: "CASH",
+      amount: 50,
+      status: "PAID",
+      paidAt: new Date("2026-11-01T12:00:00Z"),
+    },
+    {
+      id: "p2",
+      method: "CREDIT_NOTE",
+      amount: 40,
+      status: "PAID",
+      paidAt: new Date("2026-11-01T12:00:00Z"),
+      creditNote: { creditNoteNumber: "CN-7", reason: "Return" },
+    },
+    {
+      id: "p3",
+      method: "ADVANCE",
+      amount: 20,
+      status: "PAID",
+      paidAt: new Date("2026-11-01T12:00:00Z"),
+    },
+  ];
+  const run = (hideAmountPaid: boolean, hideBalanceDue: boolean) =>
+    textsOf(
+      render([baseItem], {
+        subtotal: 200,
+        total: 200,
+        payments,
+        totalPaid: 50,
+        creditApplied: 40,
+        advanceApplied: 20,
+        hideAmountPaid,
+        hideBalanceDue,
+      }),
+    );
+  const has = (t: string[], s: string) => t.some((x) => x.includes(s));
+  const labels = [
+    "Amount Paid",
+    "Balance Due",
+    "Payment History",
+    "Credit issued",
+    "Advance applied",
+  ];
+
+  it.each([
+    [false, false, [true, true, true, true, true]],
+    [true, false, [false, true, false, true, true]],
+    [false, true, [true, false, true, true, true]],
+    [true, true, [false, false, false, true, true]],
+  ])("paid off=%s, balance off=%s shows %j of the five labels", (paid, balance, shown) => {
+    const t = run(paid, balance);
+    expect(labels.map((l) => has(t, l))).toEqual(shown);
+  });
+
+  it("a switch hides lines only: every printed figure is the same in all four combinations", () => {
+    const money = (t: string[]) => t.filter((x) => /^[$][0-9,]+[.][0-9]{2}$/.test(x));
+    const all = run(false, false);
+    expect(money(all)).toEqual(
+      expect.arrayContaining(["$200.00", "$50.00", "$40.00", "$20.00", "$90.00"]),
+    );
+    for (const [p, b] of [
+      [true, false],
+      [false, true],
+      [true, true],
+    ] as const) {
+      const figs = money(run(p, b));
+      for (const f of figs) expect(money(all)).toContain(f);
+      expect(figs).toEqual(expect.arrayContaining(["$200.00", "$40.00", "$20.00"]));
+    }
+    expect(money(run(true, false))).toContain("$90.00");
+    expect(money(run(false, true))).toContain("$50.00");
+  });
+});
