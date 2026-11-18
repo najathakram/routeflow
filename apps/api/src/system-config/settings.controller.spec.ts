@@ -143,9 +143,7 @@ describe("SettingsController — GET/PATCH /settings/invoice hideOriginalPrice",
   });
 
   it('GET returns hideOriginalPrice: true when stored "true"', async () => {
-    svc.get.mockImplementation((key: string) =>
-      key === "invoice.hideOriginalPrice" ? Promise.resolve("true") : Promise.resolve(null),
-    );
+    svc.getAll.mockResolvedValue({ "invoice.hideOriginalPrice": "true" });
     const result = await controller.getInvoiceSettings();
     expect(result.hideOriginalPrice).toBe(true);
   });
@@ -195,9 +193,7 @@ describe("SettingsController — GET/PATCH /settings/invoice hideBarcodes (SA-10
     ["false", false],
     ["yes", false],
   ])("GET reads %p as hideBarcodes %p (only the string 'true' hides)", async (stored, expected) => {
-    svc.get.mockImplementation((k: string) =>
-      Promise.resolve(k === "invoice.hideBarcodes" ? stored : null),
-    );
+    svc.getAll.mockResolvedValue({ "invoice.hideBarcodes": stored });
     expect((await controller.getInvoiceSettings()).hideBarcodes).toBe(expected);
   });
 
@@ -478,9 +474,7 @@ describe("SettingsController — GET/PATCH /settings/invoice hidePerPiece", () =
     ["false", false],
     ["yes", false],
   ])("GET reads %p as hidePerPiece %p (only the string 'true' hides)", async (stored, expected) => {
-    svc.get.mockImplementation((k: string) =>
-      Promise.resolve(k === "invoice.hidePerPiece" ? stored : null),
-    );
+    svc.getAll.mockResolvedValue({ "invoice.hidePerPiece": stored });
     expect((await controller.getInvoiceSettings()).hidePerPiece).toBe(expected);
   });
 

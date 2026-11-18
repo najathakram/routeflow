@@ -1,4 +1,5 @@
 import React from "react";
+import { readInvoiceLayout } from "./invoice-layout";
 import { invoiceLinesInOrder } from "./invoice-line-position";
 import { withFamilyNames } from "./invoice-line-name";
 import { SEND_SNAPSHOT_INCLUDE, type SendSnapshot } from "./invoice-send-snapshot";
@@ -154,7 +155,8 @@ export class InvoicePdfService {
 
     // SA-1031: the tenant's choice, read once per render (like hideOriginalPrice below). Absent = shown; only "true" hides.
     // Off skips every product-barcode draw here (no bwip call) and the template prints nothing for a null barcode.
-    const showBarcodes = (await this.systemConfig.get("invoice.hideBarcodes")) !== "true";
+    const layout = await readInvoiceLayout(this.systemConfig);
+    const showBarcodes = !layout.hideBarcodes;
 
     // Generate barcodes for each line item. Row 510: the staff-only override stamp is stripped here, in the one
     // mapper the template model is built from (the findUnique above includes whole item rows).
@@ -232,9 +234,9 @@ export class InvoicePdfService {
     // F03/R9: same tenant setting the invoice detail endpoint honors
     // (invoices.service.ts's findOneOrThrow, `invoice.hideOriginalPrice`) — rides
     // the PDF payload so a customer-facing document respects it too.
-    const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
+    const { hideOriginalPrice } = layout;
     // Owner ruling 2026-11-04: the Per piece column's switch, read once per render. Absent = shown; only "true" hides.
-    const hidePerPiece = (await this.systemConfig.get("invoice.hidePerPiece")) === "true";
+    const { hidePerPiece } = layout;
 
     const invWithBarcodes = {
       ...inv,

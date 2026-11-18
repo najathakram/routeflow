@@ -39,6 +39,7 @@ import { QuickKeysSettingsService } from "./quick-keys-settings.service";
 import { sanitizeReceiptFooter } from "./receipt-footer";
 
 import { RequirePermission, PermissionBase } from "../auth/permissions/permission.decorators";
+import { INVOICE_LAYOUT_KEYS, readInvoiceLayout } from "../invoices/invoice-layout";
 // RF-213: serve under both /settings and /tenant/settings so the frontend
 // calling the latter doesn't get a 404 while the operator app uses /settings.
 @Controller(["settings", "tenant/settings"])
@@ -134,7 +135,7 @@ export class SettingsController {
       // SA-762r F6: the counter receipt's footer line ("" when the tenant has not set one).
       receiptFooter: all["settings.receiptFooter"] ?? "",
       // the invoices' own switch (Settings > Invoices): the live receipt and the reprint follow it like the emailed receipt
-      hideOriginalPrice: (await this.svc.get("invoice.hideOriginalPrice")) === "true",
+      hideOriginalPrice: (await readInvoiceLayout(this.svc)).hideOriginalPrice,
       invoiceNotes,
       invoiceTerms,
       timezone,
@@ -641,9 +642,7 @@ export class SettingsController {
   @Get("invoice")
   async getInvoiceSettings() {
     const defaultTerms = await this.svc.get("invoice.defaultTerms");
-    const hideOriginalPriceRaw = await this.svc.get("invoice.hideOriginalPrice");
-    const hideBarcodesRaw = await this.svc.get("invoice.hideBarcodes");
-    const hidePerPieceRaw = await this.svc.get("invoice.hidePerPiece");
+    const layout = await readInvoiceLayout(this.svc);
     const depositDefaultPercentRaw = await this.svc.get("invoice.depositDefaultPercent");
     const depositCollectAtOrderRaw = await this.svc.get("invoice.depositCollectAtOrder");
     // SA-436 (#2401): lives on TenantConfig (the send tx reads it there); no row reads as OFF.
@@ -656,11 +655,11 @@ export class SettingsController {
       : null;
     return {
       defaultTerms: defaultTerms ?? "Net 30",
-      hideOriginalPrice: hideOriginalPriceRaw === "true",
+      hideOriginalPrice: layout.hideOriginalPrice,
       // SA-1031: only the string "true" hides; a tenant that never wrote the key keeps its barcodes.
-      hideBarcodes: hideBarcodesRaw === "true",
+      hideBarcodes: layout.hideBarcodes,
       // Owner ruling 2026-11-04: only the string "true" hides the Per piece column; a business that never wrote the key keeps it.
-      hidePerPiece: hidePerPieceRaw === "true",
+      hidePerPiece: layout.hidePerPiece,
       // WP-D1: absent/unset -> null (no tenant deposit default). Row 652: the web clears the field by sending 0, so a
       // stored "0" is also "no tenant default" (every reader treats it as no deposit; the form shows both as blank).
       depositDefaultPercent:
@@ -680,13 +679,13 @@ export class SettingsController {
       await this.svc.set("invoice.defaultTerms", dto.defaultTerms);
     }
     if (dto.hideOriginalPrice !== undefined) {
-      await this.svc.set("invoice.hideOriginalPrice", String(dto.hideOriginalPrice));
+      await this.svc.set(INVOICE_LAYOUT_KEYS.hideOriginalPrice, String(dto.hideOriginalPrice));
     }
     if (dto.hideBarcodes !== undefined) {
-      await this.svc.set("invoice.hideBarcodes", String(dto.hideBarcodes));
+      await this.svc.set(INVOICE_LAYOUT_KEYS.hideBarcodes, String(dto.hideBarcodes));
     }
     if (dto.hidePerPiece !== undefined) {
-      await this.svc.set("invoice.hidePerPiece", String(dto.hidePerPiece));
+      await this.svc.set(INVOICE_LAYOUT_KEYS.hidePerPiece, String(dto.hidePerPiece));
     }
     if (dto.depositDefaultPercent !== undefined) {
       await this.svc.set("invoice.depositDefaultPercent", String(dto.depositDefaultPercent));

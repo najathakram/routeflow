@@ -77,6 +77,12 @@ async function makeService(
           ? hidePerPiece
           : null,
     ),
+    getAll: jest.fn(async () => {
+      const all: Record<string, string> = {};
+      if (hideOriginalPrice != null) all["invoice.hideOriginalPrice"] = hideOriginalPrice;
+      if (hidePerPiece != null) all["invoice.hidePerPiece"] = hidePerPiece;
+      return all;
+    }),
     set: jest.fn().mockResolvedValue(undefined),
   };
   (prisma.systemConfig.findFirst as jest.Mock).mockResolvedValue(

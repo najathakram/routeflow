@@ -42,6 +42,7 @@ import {
   SYSTEM_CONFIG_ENABLED,
   SYSTEM_CONFIG_GOVERNING_ADDRESS,
 } from "../selling-restrictions/selling-restrictions.service";
+import { INVOICE_LAYOUT_KEYS } from "../invoices/invoice-layout";
 
 const row = (over: Partial<SettingRow>): SettingRow => ({
   key: "x.y",
@@ -482,6 +483,12 @@ describe("settings registry — structural source scan of every SystemConfig wri
     // SA-747: the counter quick keys value is ONE JSON string under this constant (quick-keys-settings.ts)
     "system-config/quick-keys-settings.service.ts": {
       QUICK_KEYS_CONFIG_KEY: [QUICK_KEYS_CONFIG_KEY],
+    },
+    // the invoice display switches are written by PATCH /settings/invoice under the one layout key map
+    "system-config/settings.controller.ts": {
+      "INVOICE_LAYOUT_KEYS.hideBarcodes": [INVOICE_LAYOUT_KEYS.hideBarcodes],
+      "INVOICE_LAYOUT_KEYS.hideOriginalPrice": [INVOICE_LAYOUT_KEYS.hideOriginalPrice],
+      "INVOICE_LAYOUT_KEYS.hidePerPiece": [INVOICE_LAYOUT_KEYS.hidePerPiece],
     },
     // static key constants inside SystemConfigService itself (the generic set(key) is a definition)
     "system-config/system-config.service.ts": {
