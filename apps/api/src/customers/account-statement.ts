@@ -42,6 +42,16 @@ import { statementOutstandingAmount, statementOverdueAmount } from "./customer-s
  */
 
 /**
+ * SA-1164 22:05Z: the unsent invoice that IS receivable: a DRAFT whose order is post-delivery (DELIVERED or REFUSED). Every reader under
+ * the S9 "same cents everywhere" pin (statements, customers list, Customer Balance Summary, AR aging) joins it, through
+ * OPEN_BALANCE_INVOICE_WHERE or an `OR` beside its own status set.
+ */
+export const RECEIVABLE_DRAFT_WHERE = {
+  status: InvoiceStatus.DRAFT,
+  order: { status: { in: [...POST_DELIVERY_ORDER_STATUSES] } },
+} satisfies Prisma.InvoiceWhereInput;
+
+/**
  * SA-1078 PR-5: the ONE basis of "what a customer owes" on a list. The statement, the customers list and its CSV all read the
  * invoices this where selects with this select (see `open-balances.ts`) and sum them with `statementOutstandingAmount`, so a
  * figure printed anywhere is the sheet's figure. PAID, VOID and WRITTEN_OFF are never receivable. A DRAFT is receivable only when its order is post-delivery
@@ -51,13 +61,7 @@ import { statementOutstandingAmount, statementOverdueAmount } from "./customer-s
  * rule and unchanged. The where is a top-level `OR`: spread it next to other keys (an AND), never next to another `OR`.
  */
 export const OPEN_BALANCE_INVOICE_WHERE = {
-  OR: [
-    { status: { notIn: KPI_SUMMARY_EXCLUDED } },
-    {
-      status: InvoiceStatus.DRAFT,
-      order: { status: { in: [...POST_DELIVERY_ORDER_STATUSES] } },
-    },
-  ],
+  OR: [{ status: { notIn: KPI_SUMMARY_EXCLUDED } }, RECEIVABLE_DRAFT_WHERE],
 } satisfies Prisma.InvoiceWhereInput;
 export const OPEN_BALANCE_INVOICE_SELECT = {
   customerId: true,
@@ -175,6 +179,7 @@ export async function buildAccountStatement(
       credit: roundMoney(split.creditApplied + split.advanceApplied),
       unpaid: balanceDue,
       daysLate: daysLateOn(tenantDay, inv.dueDate),
+      ...(inv.status === InvoiceStatus.DRAFT ? { notSentYet: true } : {}),
       ...(opts.staff ? { toCollect: toCollectState(inv) } : {}),
     });
   }

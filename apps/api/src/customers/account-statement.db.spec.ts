@@ -186,6 +186,14 @@ describeDb("account statement (SA-1078), real Postgres", () => {
       1.1,
       Array.from({ length: 10 }, () => ({ amount: 0.1 })),
     );
+    // SA-1164 22:05Z (D3): an unpaid DRAFT on a DELIVERED order is receivable and every reader counts it; a paid-in-full one
+    // adds 0 and is not a row; a DRAFT on a PENDING order is in none of them.
+    const delivered = await seedOrder(s, "DELIVERED", 80);
+    const deliveredPaid = await seedOrder(s, "DELIVERED", 60);
+    const pending = await seedOrder(s, "PENDING", 70);
+    await seedInvoice(s, "zdel", 80, [], "DRAFT", "2026-09-02", delivered);
+    await seedInvoice(s, "zdelpaid", 60, [{ amount: 60 }], "DRAFT", "2026-09-02", deliveredPaid);
+    await seedInvoice(s, "zpend", 70, [], "DRAFT", "2026-09-02", pending);
 
     const bookkeeping = new BookkeepingService(
       prisma,
@@ -195,7 +203,7 @@ describeDb("account statement (SA-1078), real Postgres", () => {
       {} as any,
       {} as any,
     );
-    const EXPECTED = 1750.1; // 500 + 300 + 400 + 450 + 100 + 0.10
+    const EXPECTED = 1830.1; // 500 + 300 + 400 + 450 + 100 + 0.10 + 80 (the delivered DRAFT)
 
     await tenantCtx.run(s.tenantId, async () => {
       const buyer = { sub: s.userId, role: "CUSTOMER" } as any;
@@ -219,15 +227,35 @@ describeDb("account statement (SA-1078), real Postgres", () => {
           ["d", 450],
           ["e", 100],
           ["dimes", 0.1],
+          ["zdel", 80],
         ],
       );
-      expect(account.openInvoices.map((r) => r.paid)).toEqual([0, 200, 0, 0, 0, 1]);
-      expect(account.openInvoices.map((r) => r.credit)).toEqual([0, 0, 100, 50, 0, 0]);
-      expect(account.openBalance).toBe(EXPECTED);
-      expect(operator.outstandingAmount).toBe(EXPECTED);
-      expect(mine.outstandingAmount).toBe(EXPECTED);
-      expect(summary?.balance).toBe(EXPECTED);
-      expect(aging.totals.total).toBe(EXPECTED);
+      expect(account.openInvoices.map((r) => r.paid)).toEqual([0, 200, 0, 0, 0, 1, 0]);
+      expect(account.openInvoices.map((r) => r.credit)).toEqual([0, 0, 100, 50, 0, 0, 0]);
+      // one object so a failure names every reader's cents at once
+      expect({
+        account: account.openBalance,
+        operator: operator.outstandingAmount,
+        mine: mine.outstandingAmount,
+        summary: summary?.balance,
+        aging: aging.totals.total,
+      }).toEqual({
+        account: EXPECTED,
+        operator: EXPECTED,
+        mine: EXPECTED,
+        summary: EXPECTED,
+        aging: EXPECTED,
+      });
+      // D3c: a counted DRAFT is never overdue, so it sits in the Current bucket (its due date is far out here; the
+      // aging unit spec pins an old due date)
+      expect(aging.buckets.current.map((e: any) => e.status)).toContain("DRAFT");
+      expect(aging.buckets.current.find((e: any) => e.status === "DRAFT")?.balance).toBe(80);
+      // the buyer's ledger lists the delivered DRAFT with its status, so the screen can say "Not sent yet"
+      expect(
+        mine.transactions
+          .filter((t: any) => t.status === "DRAFT")
+          .map((t: any) => t.runningBalance),
+      ).toEqual(expect.arrayContaining([-80]));
       // and the rows are the whole answer
       expect(account.openInvoices.reduce((t, r) => Math.round((t + r.unpaid) * 100) / 100, 0)).toBe(
         EXPECTED,

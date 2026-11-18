@@ -78,6 +78,7 @@ import {
   type PaymentRefOpts,
 } from "../invoices/payment-ref-dedupe";
 import { overdueInvoiceCount } from "../invoices/invoice-balance-sql";
+import { RECEIVABLE_DRAFT_WHERE } from "../customers/account-statement";
 import { confirmedBalance, signedBalance } from "../invoices/invoice-balance-classify";
 import { paidInstantOf } from "../common/paid-instant";
 import { assertOrderReviewed } from "../orders/offline/order-review-gate";
@@ -1662,14 +1663,20 @@ export class BookkeepingService implements OnModuleInit {
     const interval = Math.max(1, intervalDays);
     const invoices = await this.prisma.forTenant().invoice.findMany({
       where: {
-        status: {
-          in: [
-            InvoiceStatus.SENT,
-            InvoiceStatus.VIEWED,
-            InvoiceStatus.PARTIAL,
-            InvoiceStatus.OVERDUE,
-          ],
-        },
+        // SA-1164 22:05Z: a delivered, unsent DRAFT is receivable too (RECEIVABLE_DRAFT_WHERE)
+        OR: [
+          {
+            status: {
+              in: [
+                InvoiceStatus.SENT,
+                InvoiceStatus.VIEWED,
+                InvoiceStatus.PARTIAL,
+                InvoiceStatus.OVERDUE,
+              ],
+            },
+          },
+          RECEIVABLE_DRAFT_WHERE,
+        ],
       },
       include: {
         customer: { select: { id: true, businessName: true } },
@@ -1731,7 +1738,8 @@ export class BookkeepingService implements OnModuleInit {
         customerId: inv.customerId,
         businessName: inv.customer?.businessName ?? "",
       });
-      if (!inv.dueDate || !isOverdue(inv.dueDate, now, tz)) {
+      // a counted DRAFT is never overdue: it sits in Current whatever its due date says
+      if (inv.status === InvoiceStatus.DRAFT || !inv.dueDate || !isOverdue(inv.dueDate, now, tz)) {
         buckets[bucketKeys[0]].push(entry);
         continue;
       }
@@ -1848,7 +1856,11 @@ export class BookkeepingService implements OnModuleInit {
     // Get all non-draft/non-void invoices for full invoiced + received calculation
     const allInvoices = await this.prisma.forTenant().invoice.findMany({
       where: {
-        status: { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID] },
+        // SA-1164 22:05Z: plus a delivered, unsent DRAFT (RECEIVABLE_DRAFT_WHERE)
+        OR: [
+          { status: { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID] } },
+          RECEIVABLE_DRAFT_WHERE,
+        ],
       },
       include: {
         customer: { select: { id: true, businessName: true, contactName: true, phone: true } },
@@ -1877,6 +1889,7 @@ export class BookkeepingService implements OnModuleInit {
     const now = new Date();
     const tz = await tenantTimeZone(this.prisma); // SA-488: the tenant's due day
     const unpaidStatuses: Set<string> = new Set([
+      InvoiceStatus.DRAFT, // only a RECEIVABLE_DRAFT_WHERE one is read above
       InvoiceStatus.SENT,
       InvoiceStatus.VIEWED,
       InvoiceStatus.PARTIAL,
@@ -1910,7 +1923,7 @@ export class BookkeepingService implements OnModuleInit {
         const bal = confirmedBalance(inv.total, inv.payments);
         byCustomer[key].invoiceCount++;
         byCustomer[key].balance = roundMoney(byCustomer[key].balance + bal);
-        if (isOverdue(inv.dueDate, now, tz)) {
+        if (inv.status !== InvoiceStatus.DRAFT && isOverdue(inv.dueDate, now, tz)) {
           byCustomer[key].overdue = roundMoney(byCustomer[key].overdue + bal);
         }
       }

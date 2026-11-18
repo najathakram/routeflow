@@ -143,6 +143,16 @@ describe("SA-1078 account statement (PR-1)", () => {
     expect(res.openBalance).toBe(150);
   });
 
+  it("S6c (D3b): only the DRAFT row carries notSentYet, so the buyer screens can say so; issued rows never carry the key", async () => {
+    arrange({ invoices: [inv("sent", 100), inv("dd", 60, [], { status: "DRAFT" })] });
+    const res = await read();
+    expect(res.openInvoices.map((r) => [r.invoiceNumber, r.notSentYet])).toEqual([
+      ["SENT", undefined],
+      ["DD", true],
+    ]);
+    expect("notSentYet" in res.openInvoices[0]).toBe(false);
+  });
+
   it("S7: float dust never breaks Total - Paid - Credit = Unpaid, to the cent, on any row", async () => {
     arrange({
       invoices: [

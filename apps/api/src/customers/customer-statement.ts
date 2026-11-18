@@ -1,5 +1,4 @@
 import { NotFoundException } from "@nestjs/common";
-import { InvoiceStatus } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import type { PrismaService } from "../prisma/prisma.service";
@@ -8,12 +7,12 @@ import {
   RECEIVED_METHOD_FILTER,
   sumConfirmed,
 } from "../invoices/payment-predicates";
-import { KPI_SUMMARY_EXCLUDED, LIFETIME_INVOICED_EXCLUDED } from "../invoices/invoice-status-sets";
+import { LIFETIME_INVOICED_EXCLUDED } from "../invoices/invoice-status-sets";
+import { OPEN_BALANCE_INVOICE_WHERE } from "./account-statement";
 import { sweepableCredits } from "../credit-notes/auto-apply-candidates";
 import { loadCreditExposure, OPEN_ORDER_STATUSES } from "../invoices/credit-exposure";
 import {
   classifyInvoiceBalance,
-  summarizeOpenInvoices,
   type ClassifiableInvoice,
 } from "../invoices/invoice-balance-classify";
 import { overdueCutoff } from "../common/calendar-date";
@@ -30,20 +29,20 @@ import { toCollectSummary } from "../invoices/to-collect";
 
 /**
  * SA-1078 PR-1: the statement's outstanding figure = Σ the clamped balance of every open invoice
- * (`summarizeOpenInvoices`), so an overpaid invoice adds 0 and never nets down the others. The ONE total:
+ * (`classifyInvoiceBalance`), so an overpaid invoice adds 0 and never nets down the others. The ONE total:
  * both builders and the account statement read it (account-statement.ts), so the rows always add up to it.
+ * SA-1164 22:05Z: the caller passes the open-balance set; this sums, it does not select.
  */
 export function statementOutstandingAmount(
   open: ReadonlyArray<ClassifiableInvoice>,
   timeZone: string | null,
   now: Date = new Date(),
 ): number {
-  // SA-1164 21:13Z: the rows are already the open-balance set (a DRAFT is in it only on a post-delivery order), so a DRAFT row
-  // is summed like an issued one. `summarizeOpenInvoices` (shared with the buyer receivables readers) ignores DRAFT by design.
-  const issued = open.map((inv) =>
-    inv.status === InvoiceStatus.DRAFT ? { ...inv, status: InvoiceStatus.SENT } : inv,
+  const cutoff = overdueCutoff(now, timeZone);
+  return open.reduce(
+    (acc, inv) => roundMoney(acc + classifyInvoiceBalance(inv, cutoff).balanceDue),
+    0,
   );
-  return summarizeOpenInvoices(issued, overdueCutoff(now, timeZone)).unpaidTotal;
 }
 
 /**
@@ -106,11 +105,8 @@ export async function buildMyStatement(prisma: PrismaService, user: JwtPayload) 
     lifetimeReceivedAgg,
   ] = await Promise.all([
     prisma.forTenant().invoice.findMany({
-      // DRAFT is excluded with the settled/dead/forgiven statuses: a
-      // not-yet-issued invoice is not receivable, so it must not inflate
-      // outstanding/overdue. Same set as the invoices KPI summary (and the
-      // Invoices-tab card's former client-side filter).
-      where: { customerId: customer.id, status: { notIn: KPI_SUMMARY_EXCLUDED } },
+      // The ONE open-balance basis (SA-1164 22:05Z): settled/dead/forgiven out, an unsent DRAFT in only on a post-delivery order.
+      where: { customerId: customer.id, ...OPEN_BALANCE_INVOICE_WHERE },
       select: INVOICE_SELECT,
     }),
     prisma.forTenant().invoice.findMany({
@@ -306,11 +302,8 @@ export async function buildOperatorStatement(
     sweepable,
   ] = await Promise.all([
     prisma.forTenant().invoice.findMany({
-      // DRAFT is excluded with the settled/dead/forgiven statuses: a
-      // not-yet-issued invoice is not receivable, so it must not inflate
-      // outstanding/overdue. Same set as the invoices KPI summary (and the
-      // Invoices-tab card's former client-side filter).
-      where: { customerId, status: { notIn: KPI_SUMMARY_EXCLUDED } },
+      // The ONE open-balance basis (SA-1164 22:05Z): settled/dead/forgiven out, an unsent DRAFT in only on a post-delivery order.
+      where: { customerId, ...OPEN_BALANCE_INVOICE_WHERE },
       select: INVOICE_SELECT,
     }),
     prisma.forTenant().invoice.findMany({

@@ -25,6 +25,11 @@ export interface AccountStatementInvoice {
   unpaid: number;
   /** whole days past the due date in the tenant's zone; 0 when due today, not yet due or no due date */
   daysLate: number;
+  /**
+   * true only on a delivered, unsent DRAFT invoice (SA-1164 22:05Z): the row counts toward the open balance but the customer
+   * cannot open it yet. Absent on every issued invoice. The buyer screens say "Not sent yet" and show no open link.
+   */
+  notSentYet?: boolean;
   /** staff route only */
   toCollect?: ToCollectState;
 }
