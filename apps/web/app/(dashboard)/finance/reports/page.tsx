@@ -1320,9 +1320,8 @@ function ReceivableSummaryReport({ from, to }: { from?: string; to?: string }) {
             <td colSpan={5} className="px-4 py-2.5 font-semibold text-navy">
               Total (owed plus unused credit)
             </td>
-            <td className="px-4 py-2.5 text-right font-bold text-navy">
-              {fmt(rows.reduce((s, r) => s + r.total, 0))}
-            </td>
+            {/* Owner D9 (W-1218): the Total column is not summed; the cell stays so the columns align. */}
+            <td />
             <td className="px-4 py-2.5 text-right font-bold text-navy">
               {fmt(receivableSummaryBalanceTotal(rows))}
             </td>

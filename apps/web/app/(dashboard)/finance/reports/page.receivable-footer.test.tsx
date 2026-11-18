@@ -52,6 +52,12 @@ const cellOf = (label: string) => {
   return cells[cells.length - 1].textContent;
 };
 
+// The Total column's cell, one before the Balance cell.
+const totalColumnCellOf = (label: string) => {
+  const cells = screen.getByText(label).closest("tr")!.querySelectorAll("td");
+  return cells[cells.length - 2].textContent;
+};
+
 describe("Receivable Summary footer (UX guide B7)", () => {
   beforeEach(() => {
     mockRows = [row("INVOICE", 100), row("INVOICE", -30), row("CREDIT_NOTE", 12.5)];
@@ -78,5 +84,15 @@ describe("Receivable Summary footer (UX guide B7)", () => {
     expect(cellOf("Written-off invoices")).toBe("$40.00");
     expect(cellOf("Unused credit notes")).toBe("$12.50");
     expect(cellOf("Total (owed plus unused credit)")).toBe("$152.50");
+  });
+
+  // W-1218 / owner D9 "Drop it": the footer no longer adds invoice totals, payment amounts and credit-note
+  // amounts into one Total figure. The cell stays (columns align), the label stays, the Balance figure stays.
+  it("leaves the Total column cell of the footer empty and keeps the label and the balance", async () => {
+    mockRows = [row("INVOICE", 100), row("CREDIT_NOTE", 0, 17.25), { ...row("PAYMENT", 0, 40) }];
+    renderWithProviders(<FinanceReportsPage />);
+    await screen.findByText("Total (owed plus unused credit)");
+    expect(totalColumnCellOf("Total (owed plus unused credit)")).toBe("");
+    expect(cellOf("Total (owed plus unused credit)")).toBe("$100.00");
   });
 });
