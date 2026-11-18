@@ -213,6 +213,7 @@ export function createMockPrisma(): MockPrisma {
     tenantAddon: modelProxy(),
     tobaccoReport: modelProxy(),
     tenantConfig: modelProxy(),
+    signupAttribution: modelProxy(), // Phase 1: written inside TenantsService.register's transaction
     tenantFeatureConfig: modelProxy(), // L8: the fulfilment model read (null = unset)
     idempotencyKey: modelProxy(),
     // B215: OrdersController.create's staff merge branch replays a same-key

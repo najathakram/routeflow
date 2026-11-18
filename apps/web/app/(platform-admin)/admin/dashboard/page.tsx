@@ -32,6 +32,8 @@ interface PlatformStats {
    * means the read failed, and the card says so.
    */
   weeklyFunnel?: { weeks: FunnelWeek[] } | { unavailable: true };
+  /** Phase 1. Same rules as `weeklyFunnel`: absent from an older API, `unavailable` when the read failed. */
+  signupsBySource?: { rows: SourceRow[] } | { unavailable: true };
   mrr: number;
   ledgerMrr: number;
   planBreakdown: Record<string, number>;
@@ -90,6 +92,74 @@ const FUNNEL_COLUMNS: Array<[keyof Omit<FunnelWeek, "weekStart">, string]> = [
   ["firstPayment", "First payment"],
   ["demoBookings", "Demo bookings"],
 ];
+
+/** One source of the "Sign-ups by source" card (Phase 1): the weekly funnel's cohort counts for one source. */
+interface SourceRow {
+  source: string;
+  signups: number;
+  verified: number;
+  firstOrder: number;
+  firstInvoiceSent: number;
+  firstPayment: number;
+  payingNow: number;
+}
+
+const SOURCE_COLUMNS: Array<[keyof Omit<SourceRow, "source">, string]> = [
+  ["signups", "Sign-ups"],
+  ["verified", "Verified"],
+  ["firstOrder", "First order"],
+  ["firstInvoiceSent", "First invoice issued"],
+  ["firstPayment", "First payment"],
+  ["payingNow", "Paying now"],
+];
+
+const SOURCE_CARD_TITLE = "Sign-ups by source, last 8 weeks";
+
+function SignupsBySourceCard({ data }: { data: NonNullable<PlatformStats["signupsBySource"]> }) {
+  if ("unavailable" in data) {
+    return (
+      <AdminCard title={SOURCE_CARD_TITLE}>
+        <p className="text-sm text-slate-400">These numbers can&apos;t be shown right now.</p>
+      </AdminCard>
+    );
+  }
+  return (
+    <AdminCard title={SOURCE_CARD_TITLE} noPadding>
+      <div
+        className="overflow-x-auto"
+        role="region"
+        aria-label={SOURCE_CARD_TITLE}
+        tabIndex={0}
+        data-testid="dashboard-signups-by-source"
+      >
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-400">
+              <th className="px-4 py-2.5 text-left">Source</th>
+              {SOURCE_COLUMNS.map(([key, label]) => (
+                <th key={key} className="whitespace-nowrap px-4 py-2.5 text-right">
+                  {label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-700/50">
+            {data.rows.map((row) => (
+              <tr key={row.source} className="hover:bg-slate-700/20">
+                <td className="whitespace-nowrap px-4 py-2 text-slate-300">{row.source}</td>
+                {SOURCE_COLUMNS.map(([key]) => (
+                  <td key={key} className="px-4 py-2 text-right font-mono text-slate-200">
+                    {row[key]}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </AdminCard>
+  );
+}
 
 const weekLabel = (weekStart: string) =>
   new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" }).format(
@@ -276,6 +346,7 @@ export default function AdminDashboardPage() {
       </div>
 
       {stats.weeklyFunnel && <WeeklyFunnelCard funnel={stats.weeklyFunnel} />}
+      {stats.signupsBySource && <SignupsBySourceCard data={stats.signupsBySource} />}
 
       {/* Charts Row */}
       <div className="grid gap-6 lg:grid-cols-3">

@@ -134,6 +134,59 @@ describe("SignupPage — four fields and a username line (W2 B8)", () => {
   });
 });
 
+describe("SignupPage — where the sign-up came from (Phase 1)", () => {
+  beforeEach(() => {
+    usernameAvailable = true;
+    mockFetch();
+    window.sessionStorage.clear();
+  });
+  afterEach(() => {
+    window.history.replaceState({}, "", "/");
+    window.sessionStorage.clear();
+  });
+
+  async function submitAndReadBody() {
+    render(<SignupPage />);
+    typeBusiness();
+    await screen.findByText("Username: acme_distribution_admin");
+    fireEvent.change(screen.getByPlaceholderText("you@acme.com"), {
+      target: { value: "owner@acme.example" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("At least 8 characters"), {
+      target: { value: "Sup3rSecret!x9" },
+    });
+    fireEvent.submit(document.querySelector("form") as HTMLFormElement);
+    return await waitFor(() => {
+      const call = (global.fetch as jest.Mock).mock.calls.find(([u]) =>
+        String(u).includes("/public/tenants/register"),
+      );
+      expect(call).toBeDefined();
+      return JSON.parse(call[1].body);
+    });
+  }
+
+  it("sends the tracked keys from the page URL with the sign-up", async () => {
+    window.history.replaceState({}, "", "/signup?utm_source=google&utm_medium=cpc&gclid=g1&x=1");
+    const body = await submitAndReadBody();
+    expect(body.attribution).toEqual({ utmSource: "google", utmMedium: "cpc", gclid: "g1" });
+  });
+
+  it("falls back to the first-touch record the site left in this tab", async () => {
+    window.sessionStorage.setItem(
+      "rf_first_touch",
+      JSON.stringify({ utm_source: "newsletter", landingPath: "/pricing" }),
+    );
+    const body = await submitAndReadBody();
+    expect(body.attribution).toEqual({ utmSource: "newsletter", landingPath: "/pricing" });
+  });
+
+  it("sends no attribution at all when there is nothing to send", async () => {
+    const body = await submitAndReadBody();
+    expect(body).not.toHaveProperty("attribution");
+    expect(body.slug).toBe("acme-distribution");
+  });
+});
+
 describe("SignupPage — errors on leaving a field (W2 B7)", () => {
   beforeEach(() => {
     usernameAvailable = true;

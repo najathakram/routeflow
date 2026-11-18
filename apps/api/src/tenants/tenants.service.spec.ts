@@ -266,6 +266,54 @@ describe("TenantsService", () => {
       });
     });
 
+    // Phase 1: where the sign-up came from is kept as one row, inside the same transaction as the tenant.
+    describe("signup attribution (Phase 1)", () => {
+      const attrCreate = () => (prisma as any).signupAttribution.create as jest.Mock;
+      beforeEach(() => email.send.mockResolvedValue({ delivered: true, transport: "resend" }));
+
+      it("writes one row with the normalized values, for the new tenant, inside the transaction", async () => {
+        await service.register({
+          ...REGISTER_DTO,
+          attribution: {
+            utmSource: " Google ",
+            gclid: "g1",
+            landingPath: "/pricing?x=1",
+            referrerHost: "WWW.Bing.com",
+            ip: "1.2.3.4",
+          },
+        });
+        expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+        expect(attrCreate()).toHaveBeenCalledTimes(1);
+        expect(attrCreate()).toHaveBeenCalledWith({
+          data: {
+            tenantId: expect.stringMatching(/^tenant-/),
+            utmSource: "Google",
+            gclid: "g1",
+            landingPath: "/pricing",
+            referrerHost: "www.bing.com",
+          },
+        });
+      });
+
+      it("writes no row when there is no attribution", async () => {
+        await service.register(REGISTER_DTO);
+        expect(attrCreate()).not.toHaveBeenCalled();
+      });
+
+      it("still signs up, with no row, when the attribution is garbage", async () => {
+        for (const attribution of [{ foo: "bar" }, { utmSource: 5, referrerHost: "not a host" }]) {
+          attrCreate().mockClear();
+          const result = await service.register({
+            ...REGISTER_DTO,
+            slug: `acme-${Math.random().toString(36).slice(2, 8)}`,
+            attribution,
+          });
+          expect(result.tenant.slug).toMatch(/^acme-/);
+          expect(attrCreate()).not.toHaveBeenCalled();
+        }
+      });
+    });
+
     // SA-738: signup never relies on the column default; the zone is always written explicitly.
     describe("timezone (SA-738)", () => {
       const configCreate = () => (prisma as any).tenantConfig.create as jest.Mock;

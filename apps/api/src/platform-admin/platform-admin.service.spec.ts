@@ -3796,9 +3796,31 @@ describe("PlatformAdminService — audit provenance", () => {
     const NOW = iso("2026-10-28");
 
     const tenants = [
-      { id: "p1", class: "PRODUCTION", deletedAt: null, createdAt: iso("2026-10-27") },
-      { id: "p2", class: "PRODUCTION", deletedAt: null, createdAt: iso("2026-10-28") },
-      { id: "p3", class: "PRODUCTION", deletedAt: null, createdAt: iso("2026-10-14") },
+      // Phase 1: status and the sign-up source ride along (p1 and p3 came from the same ad, p2 has no row).
+      {
+        id: "p1",
+        class: "PRODUCTION",
+        deletedAt: null,
+        createdAt: iso("2026-10-27"),
+        status: "ACTIVE",
+        signupAttribution: { utmSource: "Google", utmMedium: "cpc" },
+      },
+      {
+        id: "p2",
+        class: "PRODUCTION",
+        deletedAt: null,
+        createdAt: iso("2026-10-28"),
+        status: "TRIAL",
+        signupAttribution: null,
+      },
+      {
+        id: "p3",
+        class: "PRODUCTION",
+        deletedAt: null,
+        createdAt: iso("2026-10-14"),
+        status: "TRIAL",
+        signupAttribution: { utmSource: "google", utmMedium: "cpc", gclid: "g1" },
+      },
       { id: "old", class: "PRODUCTION", deletedAt: null, createdAt: iso("2026-08-01") },
       // signed up before the window and places its FIRST order inside it: not part of the sign-up cohort
       { id: "late", class: "PRODUCTION", deletedAt: null, createdAt: iso("2026-08-15") },
@@ -4170,6 +4192,71 @@ describe("PlatformAdminService — audit provenance", () => {
       for (const week of stats.weeklyFunnel.weeks) {
         expect(week).not.toHaveProperty("answered");
       }
+    });
+
+    // Phase 1: the same cohort, one row per source label, from the SAME per-tenant reads as the weekly numbers.
+    describe("signupsBySource (Phase 1)", () => {
+      it("counts each cohort business once under its source label, biggest source first", async () => {
+        const stats: any = await service.getStats();
+        expect(stats.signupsBySource).toEqual({
+          rows: [
+            {
+              source: "google / cpc",
+              signups: 2,
+              verified: 2,
+              firstOrder: 2,
+              firstInvoiceSent: 2,
+              firstPayment: 2,
+              payingNow: 1,
+            },
+            {
+              source: "Not recorded",
+              signups: 1,
+              verified: 0,
+              firstOrder: 0,
+              firstInvoiceSent: 0,
+              firstPayment: 0,
+              payingNow: 0,
+            },
+          ],
+        });
+      });
+
+      it("adds up to the weekly funnel's cohort numbers (the two views cannot drift)", async () => {
+        const stats: any = await service.getStats();
+        const weekly = (key: string) =>
+          stats.weeklyFunnel.weeks.reduce((n: number, w: any) => n + w[key], 0);
+        const bySource = (key: string) =>
+          stats.signupsBySource.rows.reduce((n: number, r: any) => n + r[key], 0);
+        for (const key of ["signups", "firstOrder", "firstInvoiceSent", "firstPayment"]) {
+          expect(bySource(key)).toBe(weekly(key));
+        }
+      });
+
+      it("reads each per-tenant source once for both views", async () => {
+        await service.getStats();
+        expect((prisma as any).order.groupBy).toHaveBeenCalledTimes(1);
+        expect((prisma as any).invoicePayment.groupBy).toHaveBeenCalledTimes(1);
+      });
+
+      it("says it is out when a shared read fails, and logs once for both cards", async () => {
+        (prisma as any).order.groupBy = jest
+          .fn()
+          .mockRejectedValue(new Error("funnel read failed"));
+        const logged = jest.spyOn((service as any).logger, "error").mockImplementation(() => {});
+        const stats: any = await service.getStats();
+        expect(stats.signupsBySource).toEqual({ unavailable: true });
+        expect(stats.weeklyFunnel).toEqual({ unavailable: true });
+        expect(logged).toHaveBeenCalledTimes(1);
+      });
+
+      it("keeps the source table when only the demo-booking read fails", async () => {
+        (prisma as any).demoBooking.findMany = jest.fn().mockRejectedValue(new Error("bookings"));
+        jest.spyOn((service as any).logger, "error").mockImplementation(() => {});
+        const stats: any = await service.getStats();
+        expect(stats.weeklyFunnel).toEqual({ unavailable: true });
+        expect(stats.signupsBySource.rows).toHaveLength(2);
+      });
     });
 
     describe("when a funnel read fails", () => {

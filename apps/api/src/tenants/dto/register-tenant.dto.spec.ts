@@ -54,3 +54,25 @@ describe("RegisterTenantDto timezone (SA-738)", () => {
     expect(errors.map((e) => e.property)).toContain("timezone");
   });
 });
+
+describe("RegisterTenantDto attribution", () => {
+  it("is optional", async () => {
+    expect(await validate(plainToInstance(RegisterTenantDto, validDto))).toHaveLength(0);
+  });
+  it("passes with nested and unknown keys inside it", async () => {
+    const dto = plainToInstance(RegisterTenantDto, {
+      ...validDto,
+      attribution: { utmSource: "google", surprise: { deep: [1, 2] }, x: null },
+    });
+    expect(await validate(dto, { whitelist: true, forbidNonWhitelisted: true })).toHaveLength(0);
+  });
+  it.each([
+    ["a string", "utm"],
+    ["a number", 5],
+    ["an array", ["a"]],
+  ])("fails when it is %s", async (_label, attribution) => {
+    const dto = plainToInstance(RegisterTenantDto, { ...validDto, attribution });
+    const errors = await validate(dto);
+    expect(errors.map((e) => e.property)).toContain("attribution");
+  });
+});

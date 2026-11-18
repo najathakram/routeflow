@@ -10,6 +10,7 @@ import { Input, Button } from "@routeflow/ui/web";
 import { AuthShell } from "@/components/auth";
 import { UmamiScript } from "@/components/UmamiScript";
 import { safeTextBodyCopy } from "@/lib/safe-text-error-copy";
+import { readSignupAttribution } from "@/lib/signup-attribution";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -225,6 +226,8 @@ function SignupInner() {
           adminPassword: data.adminPassword,
           // SA-738: the business starts in the signer's own zone (omitted when unusable; the server then writes UTC).
           timezone: browserTimeZone(),
+          // Phase 1: the ad, page or site that brought this sign-up (left out when there is none).
+          attribution: readSignupAttribution(),
         }),
       });
 

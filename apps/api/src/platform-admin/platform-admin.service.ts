@@ -151,6 +151,7 @@ import { issueSetPasswordLink } from "../users/set-password-token";
 import { assertSafeTextCell } from "../common/safe-text-cell";
 import { assertValidTenantTimeZone } from "../system-config/tenant-timezone.writer";
 import { STAFF_ACCESS_AUDIENCE } from "../auth/session-token";
+import { signupSourceLabel, type SignupSourceFields } from "./signup-source-label";
 
 /** 409 TENANT_TRIAL_EXTEND_NOT_ALLOWED: an ACTIVE tenant is never moved to TRIAL. */
 function activeTenantTrialRefusal(): ConflictException {
@@ -185,6 +186,38 @@ export interface WeeklyFunnelWeek {
 
 /** The dashboard funnel: the weeks, or the mark that its read failed and the card should say so. */
 export type WeeklyFunnel = { weeks: WeeklyFunnelWeek[] } | { unavailable: true };
+
+/** One line of the dashboard's "Sign-ups by source" card: the weekly funnel's cohort counts for one source. */
+export interface SignupSourceRow {
+  source: string;
+  signups: number;
+  verified: number;
+  firstOrder: number;
+  firstInvoiceSent: number;
+  firstPayment: number;
+  /** Tenants whose status is ACTIVE today. */
+  payingNow: number;
+}
+
+export type SignupsBySource = { rows: SignupSourceRow[] } | { unavailable: true };
+
+/** The per-tenant reads the weekly funnel and the by-source table share (one entry per tenant per map). */
+interface FunnelTenantReads {
+  signupRows: Array<{
+    id: string;
+    createdAt: Date;
+    status: string;
+    signupAttribution: SignupSourceFields | null;
+  }>;
+  verifiedFirst: Map<string, Date>;
+  firstOrder: Map<string, Date>;
+  firstRoute: Map<string, Date>;
+  firstSend: Map<string, Date>;
+  firstPayment: Map<string, Date>;
+}
+
+/** The shared read failed and was already logged; the views say they are out without logging it again. */
+class FunnelReadsFailed extends Error {}
 
 @Injectable()
 export class PlatformAdminService {
@@ -1949,6 +1982,8 @@ export class PlatformAdminService {
     // PRODUCTION tenant was still counted into TOTAL TENANTS / ACTIVE / TRIAL / SUSPENDED
     // and into "+N this month". Fixing this DROPS the visible numbers — that is correct,
     // not a regression.
+    // The weekly funnel and the sign-ups-by-source table read the same per-tenant rows, once.
+    const funnelReads = this._funnelTenantReadsLogged(now);
     const [
       totalTenants,
       activeTenants,
@@ -1963,6 +1998,7 @@ export class PlatformAdminService {
       atRiskTenants,
       mrrOverview,
       weeklyFunnel,
+      signupsBySource,
     ] = await Promise.all([
       this.prisma.tenant.count({ where: { deletedAt: null, class: "PRODUCTION" } }),
       this.prisma.tenant.count({
@@ -2061,7 +2097,8 @@ export class PlatformAdminService {
         },
       }),
       this.mrrService.computeOverview(),
-      this._weeklyFunnelOrUnavailable(now),
+      this._weeklyFunnelOrUnavailable(now, funnelReads),
+      this._signupsBySourceOrUnavailable(now, funnelReads),
     ]);
 
     // Plan distribution keyed on the current catalog's planKey (STARTER/GROWTH/
@@ -2083,6 +2120,7 @@ export class PlatformAdminService {
       superAdminCount,
       newTenantsThisMonth,
       weeklyFunnel,
+      signupsBySource,
       // One MRR engine: MrrService.computeOverview() prices from the per-tenant snapshot,
       // already scoped to class: "PRODUCTION" (see mrr.service.ts). `mrr` is the live
       // run-rate; `ledgerMrr` reconciles it against the append-only BillingEvent ledger.
@@ -2140,7 +2178,45 @@ export class PlatformAdminService {
    * (test, demo, internal: `class` is set from the approved test-tenant list) and soft-deleted ones,
    * the same two filters as every count in getStats().
    */
-  private async _weeklyFunnel(now: Date): Promise<{ weeks: WeeklyFunnelWeek[] }> {
+  private async _weeklyFunnel(
+    now: Date,
+    reads?: Promise<FunnelTenantReads>,
+  ): Promise<{ weeks: WeeklyFunnelWeek[] }> {
+    const { weekStarts, weekIndex, windowStart } = this._funnelWindow(now);
+    const [cohort, bookings] = await Promise.all([
+      reads ?? this._funnelTenantReads(now),
+      this.prisma.demoBooking.findMany({
+        where: { createdAt: { gte: windowStart } },
+        select: { createdAt: true },
+      }),
+    ]);
+
+    const weeks: WeeklyFunnelWeek[] = weekStarts.map((ms) => ({
+      weekStart: new Date(ms).toISOString().slice(0, 10),
+      signups: 0,
+      verified: 0,
+      firstOrder: 0,
+      firstRoute: 0,
+      firstInvoiceSent: 0,
+      firstPayment: 0,
+      demoBookings: 0,
+    }));
+    const bump = (d: Date | null | undefined, key: keyof Omit<WeeklyFunnelWeek, "weekStart">) => {
+      const i = d ? weekIndex(d) : -1;
+      if (i >= 0) weeks[i][key] += 1;
+    };
+    for (const t of cohort.signupRows) bump(t.createdAt, "signups");
+    for (const d of cohort.verifiedFirst.values()) bump(d, "verified");
+    for (const d of cohort.firstOrder.values()) bump(d, "firstOrder");
+    for (const d of cohort.firstRoute.values()) bump(d, "firstRoute");
+    for (const d of cohort.firstSend.values()) bump(d, "firstInvoiceSent");
+    for (const d of cohort.firstPayment.values()) bump(d, "firstPayment");
+    for (const b of bookings) bump(b.createdAt, "demoBookings");
+    return { weeks };
+  }
+
+  /** The eight Monday-start UTC weeks (current week included) and a date-to-week lookup (-1 = outside). */
+  private _funnelWindow(now: Date) {
     const DAY_MS = 24 * 60 * 60 * 1000;
     const startOfToday = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
     const mondayOffset = (new Date(startOfToday).getUTCDay() + 6) % 7;
@@ -2154,6 +2230,16 @@ export class PlatformAdminService {
       const i = Math.floor((d.getTime() - weekStarts[0]) / (7 * DAY_MS));
       return i >= 0 && i < FUNNEL_WEEKS ? i : -1;
     };
+    return { weekStarts, windowStart, weekIndex };
+  }
+
+  /**
+   * The per-tenant reads behind BOTH the weekly funnel and the sign-ups-by-source table, so the two
+   * views can never define a "first order" or a "verified" sign-up differently. One entry per tenant
+   * in each map (the earliest such moment); the callers decide which week or source it falls in.
+   */
+  private async _funnelTenantReads(now: Date): Promise<FunnelTenantReads> {
+    const { windowStart } = this._funnelWindow(now);
     const live = { class: "PRODUCTION" as const, deletedAt: null };
     const firstEver = {
       by: ["tenantId" as const],
@@ -2163,11 +2249,26 @@ export class PlatformAdminService {
       having: { createdAt: { _min: { gte: windowStart } } },
     };
 
-    const [signupRows, activations, firstOrders, firstRoutes, firstSends, firstPayments, bookings] =
+    const [signupRows, activations, firstOrders, firstRoutes, firstSends, firstPayments] =
       await Promise.all([
         this.prisma.tenant.findMany({
           where: { ...live, createdAt: { gte: windowStart } },
-          select: { createdAt: true },
+          select: {
+            id: true,
+            createdAt: true,
+            status: true,
+            // Phase 1: the raw source fields; the label is worked out when the card is built.
+            signupAttribution: {
+              select: {
+                utmSource: true,
+                utmMedium: true,
+                gclid: true,
+                fbclid: true,
+                msclkid: true,
+                referrerHost: true,
+              },
+            },
+          },
         }),
         // AuditLog has no tenant relation, so the activations are read first and their tenants
         // are checked against `live` just below.
@@ -2196,10 +2297,6 @@ export class PlatformAdminService {
             invoice: { OR: [{ sentAt: { not: null } }, { orderId: { not: null } }] },
           },
         }),
-        this.prisma.demoBooking.findMany({
-          where: { createdAt: { gte: windowStart } },
-          select: { createdAt: true },
-        }),
       ]);
 
     const liveVerifiedIds = new Set<string>(
@@ -2216,44 +2313,116 @@ export class PlatformAdminService {
           ).map((t) => t.id),
     );
 
-    const weeks: WeeklyFunnelWeek[] = weekStarts.map((ms) => ({
-      weekStart: new Date(ms).toISOString().slice(0, 10),
-      signups: 0,
-      verified: 0,
-      firstOrder: 0,
-      firstRoute: 0,
-      firstInvoiceSent: 0,
-      firstPayment: 0,
-      demoBookings: 0,
-    }));
-    const bump = (d: Date | null | undefined, key: keyof Omit<WeeklyFunnelWeek, "weekStart">) => {
-      const i = d ? weekIndex(d) : -1;
-      if (i >= 0) weeks[i][key] += 1;
-    };
-    for (const t of signupRows) bump(t.createdAt, "signups");
-    // One verified tenant counts once, in the week of its first verification in the window.
-    const verifiedWeek = new Map<string, Date>();
+    // One verified tenant counts once, at the moment of its first verification in the window.
+    const verifiedFirst = new Map<string, Date>();
     for (const a of activations) {
       const id = a.tenantId as string;
-      const seen = verifiedWeek.get(id);
+      const seen = verifiedFirst.get(id);
       if (liveVerifiedIds.has(id) && (!seen || a.createdAt < seen))
-        verifiedWeek.set(id, a.createdAt);
+        verifiedFirst.set(id, a.createdAt);
     }
-    for (const d of verifiedWeek.values()) bump(d, "verified");
-    for (const r of firstOrders) bump(r._min?.createdAt, "firstOrder");
-    for (const r of firstRoutes) bump(r._min?.createdAt, "firstRoute");
-    for (const r of firstSends) bump(r._min?.sentAt, "firstInvoiceSent");
-    for (const r of firstPayments) bump(r._min?.createdAt, "firstPayment");
-    for (const b of bookings) bump(b.createdAt, "demoBookings");
-    return { weeks };
+    const firstOf = <T extends { tenantId: string | null }>(
+      rows: T[],
+      at: (r: T) => Date | null | undefined,
+    ) => {
+      const out = new Map<string, Date>();
+      for (const r of rows) {
+        const d = at(r);
+        if (r.tenantId && d) out.set(r.tenantId, d);
+      }
+      return out;
+    };
+    return {
+      signupRows,
+      verifiedFirst,
+      firstOrder: firstOf(firstOrders, (r) => r._min?.createdAt),
+      firstRoute: firstOf(firstRoutes, (r) => r._min?.createdAt),
+      firstSend: firstOf(firstSends, (r) => r._min?.sentAt),
+      firstPayment: firstOf(firstPayments, (r) => r._min?.createdAt),
+    };
+  }
+
+  /**
+   * One shared read for the dashboard's two sign-up views. A failure is logged here once; each view
+   * then reports itself unavailable without logging the same error again.
+   */
+  private _funnelTenantReadsLogged(now: Date): Promise<FunnelTenantReads> {
+    const reads = this._funnelTenantReads(now).catch((e) => {
+      this.logger.error(`Weekly funnel read failed: ${e instanceof Error ? e.message : String(e)}`);
+      throw new FunnelReadsFailed();
+    });
+    reads.catch(() => undefined); // each view awaits it and handles the failure itself
+    return reads;
   }
 
   /** The funnel sits inside getStats()'s Promise.all, so a bad read here must not fail the page. */
-  private async _weeklyFunnelOrUnavailable(now: Date): Promise<WeeklyFunnel> {
+  private async _weeklyFunnelOrUnavailable(
+    now: Date,
+    reads: Promise<FunnelTenantReads>,
+  ): Promise<WeeklyFunnel> {
     try {
-      return await this._weeklyFunnel(now);
+      return await this._weeklyFunnel(now, reads);
     } catch (e) {
-      this.logger.error(`Weekly funnel read failed: ${e instanceof Error ? e.message : String(e)}`);
+      if (!(e instanceof FunnelReadsFailed)) {
+        this.logger.error(
+          `Weekly funnel read failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+      return { unavailable: true };
+    }
+  }
+
+  /**
+   * Phase 1: the sign-up cohort (live tenants created in the eight weeks) grouped by where each came
+   * from. Each count is per tenant and uses the weekly funnel's own definitions through the shared
+   * reads. `payingNow` is the tenant's status being ACTIVE today. Biggest source first.
+   */
+  private async _signupsBySource(
+    now: Date,
+    reads: Promise<FunnelTenantReads>,
+  ): Promise<{ rows: SignupSourceRow[] }> {
+    const { weekIndex } = this._funnelWindow(now);
+    const cohort = await reads;
+    const inWindow = (d: Date | undefined) => !!d && weekIndex(d) >= 0;
+    const bySource = new Map<string, SignupSourceRow>();
+    for (const t of cohort.signupRows) {
+      if (!inWindow(t.createdAt)) continue; // the same bound as the weekly "signups" number
+      const source = signupSourceLabel(t.signupAttribution);
+      let row = bySource.get(source);
+      if (!row) {
+        row = {
+          source,
+          signups: 0,
+          verified: 0,
+          firstOrder: 0,
+          firstInvoiceSent: 0,
+          firstPayment: 0,
+          payingNow: 0,
+        };
+        bySource.set(source, row);
+      }
+      row.signups += 1;
+      if (inWindow(cohort.verifiedFirst.get(t.id))) row.verified += 1;
+      if (inWindow(cohort.firstOrder.get(t.id))) row.firstOrder += 1;
+      if (inWindow(cohort.firstSend.get(t.id))) row.firstInvoiceSent += 1;
+      if (inWindow(cohort.firstPayment.get(t.id))) row.firstPayment += 1;
+      if (t.status === "ACTIVE") row.payingNow += 1;
+    }
+    return { rows: [...bySource.values()].sort((a, b) => b.signups - a.signups) };
+  }
+
+  private async _signupsBySourceOrUnavailable(
+    now: Date,
+    reads: Promise<FunnelTenantReads>,
+  ): Promise<SignupsBySource> {
+    try {
+      return await this._signupsBySource(now, reads);
+    } catch (e) {
+      if (!(e instanceof FunnelReadsFailed)) {
+        this.logger.error(
+          `Sign-ups by source read failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
       return { unavailable: true };
     }
   }

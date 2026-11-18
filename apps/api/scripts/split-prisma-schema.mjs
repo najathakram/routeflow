@@ -113,6 +113,7 @@ const MODEL_DOMAIN = {
   // ─── tenancy ───────────────────────────────────────────────────────────────
   Tenant: "tenancy",
   TenantConfig: "tenancy",
+  SignupAttribution: "tenancy",
   TenantGoogleOAuth: "tenancy",
   User: "tenancy",
   UserPreference: "tenancy",

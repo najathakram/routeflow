@@ -99,6 +99,7 @@ model Tenant {
 
   users                   User[]
   config                  TenantConfig?
+  signupAttribution       SignupAttribution?
   googleOAuth             TenantGoogleOAuth?
   subscription            TenantSubscription?
   addons                  TenantAddon[]
@@ -239,6 +240,26 @@ model Tenant {
   @@index([deletedAt])
   @@index([planVersionId])
   @@index([class])
+}
+
+/// Phase 1: the ad, page or site that brought a trial sign-up. One row per tenant, written by public
+/// register only (older sign-ups have none). Raw fields; the dashboard names the source at read time.
+model SignupAttribution {
+  id           String    @id @default(uuid())
+  tenantId     String    @unique
+  tenant       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  utmSource    String?
+  utmMedium    String?
+  utmCampaign  String?
+  utmTerm      String?
+  utmContent   String?
+  gclid        String?
+  fbclid       String?
+  msclkid      String?
+  landingPath  String?
+  referrerHost String?
+  firstSeenAt  DateTime?
+  createdAt    DateTime  @default(now())
 }
 
 model TenantConfig {

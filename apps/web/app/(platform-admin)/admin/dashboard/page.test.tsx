@@ -183,3 +183,87 @@ describe("AdminDashboardPage — weekly funnel (W3 M1)", () => {
     expect(screen.queryByRole("region", { name: "Sign-ups by week" })).not.toBeInTheDocument();
   });
 });
+
+// Phase 1: where each sign-up came from, under the weekly funnel.
+describe("AdminDashboardPage — sign-ups by source (Phase 1)", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  const rows = [
+    {
+      source: "google / cpc",
+      signups: 5,
+      verified: 4,
+      firstOrder: 3,
+      firstInvoiceSent: 2,
+      firstPayment: 1,
+      payingNow: 1,
+    },
+    {
+      source: "Not recorded",
+      signups: 2,
+      verified: 1,
+      firstOrder: 0,
+      firstInvoiceSent: 0,
+      firstPayment: 0,
+      payingNow: 0,
+    },
+  ];
+
+  it("shows one line per source under its column labels", async () => {
+    mockStatsAndGrowth(baseStats({ signupsBySource: { rows } }));
+
+    render(<AdminDashboardPage />);
+
+    const region = await screen.findByRole("region", { name: "Sign-ups by source, last 8 weeks" });
+    expect(
+      within(region)
+        .getAllByRole("columnheader")
+        .map((h) => h.textContent),
+    ).toEqual([
+      "Source",
+      "Sign-ups",
+      "Verified",
+      "First order",
+      "First invoice issued",
+      "First payment",
+      "Paying now",
+    ]);
+    expect(
+      within(region)
+        .getAllByRole("row")
+        .slice(1)
+        .map((r) =>
+          within(r)
+            .getAllByRole("cell")
+            .map((c) => c.textContent),
+        ),
+    ).toEqual([
+      ["google / cpc", "5", "4", "3", "2", "1", "1"],
+      ["Not recorded", "2", "1", "0", "0", "0", "0"],
+    ]);
+  });
+
+  it("says the numbers can't be shown when the read failed, and the page still loads", async () => {
+    mockStatsAndGrowth(baseStats({ signupsBySource: { unavailable: true } }));
+
+    render(<AdminDashboardPage />);
+
+    expect(await screen.findByText("Sign-ups by source, last 8 weeks")).toBeInTheDocument();
+    expect(screen.getByText("These numbers can't be shown right now.")).toBeInTheDocument();
+    expect(screen.getByText("Platform Dashboard")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Sign-ups by source, last 8 weeks" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("leaves the card out when the API sends no field (an older API)", async () => {
+    mockStatsAndGrowth(baseStats({}));
+
+    render(<AdminDashboardPage />);
+
+    await screen.findByText("Platform Dashboard");
+    expect(screen.queryByText("Sign-ups by source, last 8 weeks")).not.toBeInTheDocument();
+  });
+});

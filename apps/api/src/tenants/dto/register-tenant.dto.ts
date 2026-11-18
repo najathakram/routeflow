@@ -1,4 +1,12 @@
-import { IsEmail, IsNotEmpty, IsOptional, IsString, Matches, MinLength } from "class-validator";
+import {
+  IsEmail,
+  IsNotEmpty,
+  IsObject,
+  IsOptional,
+  IsString,
+  Matches,
+  MinLength,
+} from "class-validator";
 import { IsTenantTimeZone } from "../../common/is-tenant-time-zone.validator";
 
 export class RegisterTenantDto {
@@ -43,4 +51,11 @@ export class RegisterTenantDto {
   @IsString()
   @IsTenantTimeZone()
   timezone?: string;
+
+  // Phase 1: where the sign-up came from (utm_*, click ids, landing path, referrer host). A free-form
+  // object on purpose: the global pipe forbids unknown keys, and an unknown key must never fail a
+  // sign-up. `normalizeSignupAttribution` keeps only the allowed fields.
+  @IsOptional()
+  @IsObject()
+  attribution?: Record<string, unknown>;
 }

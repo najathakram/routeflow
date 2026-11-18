@@ -35,6 +35,7 @@ import { isApprovedTestTenantSlug } from "../common/tenant-class.util";
 import { FALLBACK_ZONE } from "../common/tenant-time-zone";
 import { assertValidTenantTimeZone } from "../system-config/tenant-timezone.writer";
 import { createPendingFirstRun } from "../billing/first-run-marker";
+import { normalizeSignupAttribution } from "./signup-attribution";
 
 const RESERVED_SLUGS = new Set([
   "api",
@@ -133,6 +134,7 @@ export class TenantsService {
       throw new ConflictException(`Slug "${slug}" is already taken`);
     }
 
+    const attribution = normalizeSignupAttribution(dto.attribution);
     const trialEndsAt = new Date();
     trialEndsAt.setDate(trialEndsAt.getDate() + TRIAL_LENGTH_DAYS);
     const hashedPassword = await bcrypt.hash(adminPassword, 10);
@@ -156,6 +158,10 @@ export class TenantsService {
       });
 
       await tx.tenantConfig.create({ data: { tenantId: tenant.id, businessName, timezone } });
+      // Phase 1: where the sign-up came from. Empty or garbage attribution writes nothing and never fails a sign-up.
+      if (attribution) {
+        await tx.signupAttribution.create({ data: { tenantId: tenant.id, ...attribution } });
+      }
       // W1: the first question starts open for a public sign-up (no existing tenant holds this row).
       await createPendingFirstRun(tx, tenant.id);
 
