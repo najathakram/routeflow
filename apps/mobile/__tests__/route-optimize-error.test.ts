@@ -1,3 +1,5 @@
+import { readFileSync } from "fs";
+import { join } from "path";
 import { routeStopsNotPlacedSentence } from "@routeflow/types/route-stops-not-placed";
 import { optimizeUnplacedCopy } from "../lib/route-optimize-error";
 
@@ -55,5 +57,39 @@ describe("optimizeUnplacedCopy", () => {
     expect(optimizeUnplacedCopy(coded({ code: "OTHER", message: "x" }))).toBeNull();
     expect(optimizeUnplacedCopy(new Error("Network Error"))).toBeNull();
     expect(optimizeUnplacedCopy(undefined)).toBeNull();
+  });
+});
+
+// UXG B14 class guard: every optimize call site on mobile reads the coded 400 through optimizeUnplacedCopy. The
+// operator route template once got the call on the drag-reorder handler instead (which never receives this code).
+describe("optimize call sites use optimizeUnplacedCopy (caller pin)", () => {
+  const read = (rel: string) => readFileSync(join(__dirname, "..", "app", rel), "utf8");
+  const between = (src: string, from: string, to: string) => {
+    const a = src.indexOf(from);
+    expect(a).toBeGreaterThanOrEqual(0);
+    const b = src.indexOf(to, a + from.length);
+    return src.slice(a, b === -1 ? undefined : b);
+  };
+
+  it("driver route: the optimize mutation's onError", () => {
+    const src = read("(driver)/route/index.tsx");
+    // The silent pre-start optimize has no onError; the explicit re-optimize button is the last call.
+    const last = src.lastIndexOf("optimize.mutate(");
+    const body = src.slice(last, src.indexOf("\n  };", last));
+    expect(body).toContain("onError");
+    expect(body).toContain("optimizeUnplacedCopy(");
+  });
+  it("operator route run: the optimize mutation's onError", () => {
+    const src = read("(operator)/route-runs/[id].tsx");
+    const body = between(src, "optimizeMut.mutate(", "\n  };");
+    expect(body).toContain("onError");
+    expect(body).toContain("optimizeUnplacedCopy(");
+  });
+  it("operator route template: handleOptimize calls it, handleDragEnd does not", () => {
+    const src = read("(operator)/routes/[id].tsx");
+    const optimize = between(src, "const handleOptimize", "\n  const handleDispatchConfirm");
+    expect(optimize).toContain("optimizeUnplacedCopy(");
+    const drag = between(src, "const handleDragEnd", "\n  const handleOptimize");
+    expect(drag).not.toContain("optimizeUnplacedCopy");
   });
 });

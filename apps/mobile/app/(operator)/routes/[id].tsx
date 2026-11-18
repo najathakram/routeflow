@@ -130,10 +130,7 @@ export default function RouteDetailScreen() {
       { routeId: id, order },
       {
         onSuccess: () => refetch(),
-        onError: (e: any) =>
-          showToast(
-            optimizeUnplacedCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again.",
-          ),
+        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };
@@ -149,7 +146,10 @@ export default function RouteDetailScreen() {
         showToast(res?.usedFallback ? "Reordered (distance-based fallback)" : "Route optimized");
         refetch();
       },
-      onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      onError: (e: any) =>
+        showToast(
+          optimizeUnplacedCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again.",
+        ),
     });
   };
 
