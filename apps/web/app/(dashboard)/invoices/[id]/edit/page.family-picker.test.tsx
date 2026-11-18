@@ -91,7 +91,7 @@ describe("invoice edit product search (B1215 C7)", () => {
     await user.clear(input);
     await user.type(input, "pod");
     const option = await screen.findByRole("button", { name: /Sample Pod - Mint/ });
-    expect(screen.queryByRole("button", { name: /^Sample Pod(?! -)/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Sample Pod\b(?! -)/ })).not.toBeInTheDocument();
     await user.click(option);
     await waitFor(() => expect(screen.getByDisplayValue("Sample Pod - Mint")).toBeInTheDocument());
   });

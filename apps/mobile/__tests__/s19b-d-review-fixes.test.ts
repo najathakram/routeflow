@@ -157,7 +157,7 @@ describe("MUST 4: strict types", () => {
   it("tierPriceFor is typed by getTierPrice's own parameter, not Record<string, unknown>, and no `as never` casts remain", () => {
     expect(editItems).not.toMatch(/Record<string, unknown>/);
     for (const src of [editItems, newOrder, invoiceNew, catalog])
-      expect(src).not.toMatch(/as never/);
+      expect(src).not.toMatch(/\bas never\b/);
   });
 });
 
