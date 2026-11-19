@@ -1,6 +1,6 @@
 # Home lines: three sets to choose from (second owner box, SA-1174 A1 K15)
 
-> DECIDED (owner box 2026-11-19 ~20:26Z): Set 1. Open, one tap with the lead: whether Pricing's FAQ changes to "What is X for?" to match.
+> DECIDED (owner box 2026-11-19 ~20:26Z + ~20:29Z): Set 1, with "What is X for?" on both Home and Pricing.
 
 X is the new name. You asked for lines that sound like a person talking, not a slogan.
 
