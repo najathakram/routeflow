@@ -9,6 +9,9 @@ import { IDLE_RUN_MAX_MS, runWithIdleTimeout } from "./testing/run-with-idle-tim
 
 const REPO_ROOT = path.resolve(__dirname, "../../../..");
 const SCRIPT = path.resolve(REPO_ROOT, "scripts/leak-check.self-test.mjs");
+// Timeout headroom: this spec lives in the repo-truth lane beside bugs-self-test-script.spec.ts, which saw a
+// 121 s run fail under load. The idle bound (5 min without output) and the 30 min total cap here sit above that
+// spec's 1_000_000 ms child bound and 1_050_000 ms jest timeout, so a loaded host cannot fake a failure.
 const IDLE_MS = 300_000;
 
 // Two modes (about 8 s fast, about 80 s full): the fast mode runs library and simulated-stdin cases only; the full
