@@ -63,3 +63,64 @@ describe("sync-site-port tokenise", () => {
     );
   });
 });
+
+// SA-1178 A1: the home page's structured data is derived in one place (the generator's pure
+// function). The committed page must equal it for the current brand, and a value the page renderer
+// would HTML-escape (script content is raw text) is refused.
+const { homeJsonLd, unsafeJsonLdKeys } = require("../../../scripts/lib/site-port-jsonld.cjs") as {
+  homeJsonLd: (brand: ReturnType<typeof loadBrand>) => string;
+  unsafeJsonLdKeys: (brand: ReturnType<typeof loadBrand>) => string[];
+};
+const LD = /<script type="application\/ld\+json">[^<]*<\/script>/;
+
+/** The problems with home.html's committed structured data for a brand ([] when none). */
+function homeJsonLdProblems(committedHome: string, brand: ReturnType<typeof loadBrand>): string[] {
+  const problems: string[] = [];
+  const found = committedHome.match(LD)?.[0];
+  if (found !== homeJsonLd(brand)) {
+    problems.push(
+      "regenerate home: alternateName is stale (the ld+json differs from the generator)",
+    );
+  }
+  for (const key of unsafeJsonLdKeys(brand)) {
+    problems.push(`brand key "${key}" holds & < > " or ' and is placed raw in the ld+json script`);
+  }
+  return problems;
+}
+
+describe("home.html structured data (SA-1178)", () => {
+  const home = fs.readFileSync(path.join(SITE, "home.html"), "utf8");
+  const real = loadBrand();
+
+  it("equals the generator's output for the current brand.json and holds no unsafe value", () => {
+    expect(homeJsonLdProblems(home, real)).toEqual([]);
+  });
+
+  it("a brand whose name, formerly and officialName all differ goes red: alternateName is stale", () => {
+    const fx = { ...real, name: "Fx Name", formerly: "Fx Former", officialName: "Fx-Official" };
+    expect(homeJsonLd(fx)).toContain('"alternateName":["{{brand:name}}","{{brand:formerly}}"]');
+    expect(homeJsonLdProblems(home, fx).join("\n")).toContain(
+      "regenerate home: alternateName is stale",
+    );
+  });
+
+  it("alternateName drops duplicates and the official name, and is left out when empty", () => {
+    expect(homeJsonLd(real)).not.toContain("alternateName");
+    const one = homeJsonLd({ ...real, name: "A", formerly: "A", officialName: "B" });
+    expect(one).toContain('"alternateName":["{{brand:name}}"]');
+    const none = homeJsonLd({ ...real, name: "A", formerly: "B", officialName: "A" });
+    expect(none).toContain('"alternateName":["{{brand:formerly}}"]');
+  });
+
+  it("a brand value with & < > \" or ' in a tokenised key goes red and names the key", () => {
+    for (const bad of ["It's simple", "a & b", "x<y", 'say "hi"', "a>b"]) {
+      const fx = { ...real, shareLine: bad };
+      expect(unsafeJsonLdKeys(fx)).toEqual(["shareLine"]);
+      expect(homeJsonLdProblems(home, fx).join("\n")).toContain('brand key "shareLine"');
+    }
+  });
+
+  it("a key the script does not place is not checked", () => {
+    expect(unsafeJsonLdKeys({ ...real, titleSeparator: " &'\" " })).toEqual([]);
+  });
+});

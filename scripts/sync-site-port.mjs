@@ -43,6 +43,7 @@ const ORIGIN = BRAND.origin;
 // proves a re-run of this script reproduces the committed pages byte for byte (the design source is
 // machine-local, so that test runs the mapping on the committed pages, filled with the brand).
 const { escapeRe, tokenise } = createRequire(import.meta.url)("./lib/site-port-tokens.cjs");
+const { homeJsonLd } = createRequire(import.meta.url)("./lib/site-port-jsonld.cjs");
 // landing is tokenised in a later wave (T35 exemption table); until then it is written with the
 // design source's own typed name.
 const UNTOKENISED = new Set(["/landing"]);
@@ -181,40 +182,9 @@ function port(html, route, indexable) {
 <meta name="twitter:image" content="${img}">
 `;
   if (route === "/") {
-    // Structured data names the official name (SA-1178). Every value is a {{brand:key}} token, so the
-    // page follows the brand file; the tokens are filled when the page is served. alternateName is the
-    // everyday name and the former name, duplicates and the official name removed, and is left out when
-    // empty (it is empty while the brand has one name).
-    const alternateName = [BRAND.name, BRAND.formerly]
-      .filter((n, i, all) => all.indexOf(n) === i && n !== BRAND.officialName)
-      .map((n) => (n === BRAND.name ? "{{brand:name}}" : "{{brand:formerly}}"));
-    const graph = {
-      "@context": "https://schema.org",
-      "@graph": [
-        {
-          "@type": "Organization",
-          "@id": "{{brand:origin}}/#organization",
-          name: "{{brand:officialName}}",
-          ...(alternateName.length ? { alternateName } : {}),
-          legalName: "{{brand:legalEntity}}",
-          url: "{{brand:origin}}",
-          logo: "{{brand:origin}}{{brand:icon.512}}",
-          email: "{{brand:email}}",
-        },
-        {
-          "@type": "SoftwareApplication",
-          "@id": "{{brand:origin}}/#software",
-          name: "{{brand:officialName}}",
-          ...(alternateName.length ? { alternateName } : {}),
-          url: "{{brand:origin}}",
-          description: "{{brand:shareLine}}",
-          applicationCategory: "BusinessApplication",
-          operatingSystem: "Web",
-          publisher: { "@id": "{{brand:origin}}/#organization" },
-        },
-      ],
-    };
-    extra += `<script type="application/ld+json">${JSON.stringify(graph).replace(/</g, "\u003c")}</script>
+    // Structured data names the official name (SA-1178); scripts/lib/site-port-jsonld.cjs derives it,
+    // alternateName included, as {{brand:key}} tokens filled when the page is served.
+    extra += `${homeJsonLd(BRAND)}
 `;
   }
   h = h.replace(/(<meta name="description" content="[^"]*">\n)/, `$1${extra}`);
