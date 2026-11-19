@@ -341,10 +341,6 @@ export function toPromotionRules(promos: BuyerPromotion[] | undefined): Promotio
 // ─── Orders ───────────────────────────────────────────────────────────────────
 
 /**
- * `fulfillPath` scopes the read to the order a cart on that path would fold into (the server's own
- * merge search); omitted = the buyer's most recent active order, as before.
- */
-/**
  * SA-1172 (B304): what the server will bill for a cart, as OrdersService.create() prices it (POST /buyer/cart/quote).
  * Mirrors the API's `BuyerCartQuote` (apps/api/src/orders/order-quote.ts); `levy` is the regulated per-category tax.
  */
@@ -389,6 +385,10 @@ export function useBuyerCartQuote(
   };
 }
 
+/**
+ * `fulfillPath` scopes the read to the order a cart on that path would fold into (the server's own
+ * merge search); omitted = the buyer's most recent active order, as before.
+ */
 export function useBuyerActiveOrder(fulfillPath?: string) {
   return useQuery<BuyerOrder | null>({
     queryKey: fulfillPath ? ["buyer", "activeOrder", fulfillPath] : ["buyer", "activeOrder"],

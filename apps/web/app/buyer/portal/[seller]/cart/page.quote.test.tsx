@@ -7,7 +7,8 @@ import BuyerCartPage from "./page";
  * cover; without one the page says plainly that tax and fees are added, and Place order never waits on the quote.
  * Fixtures are placeholders (acme).
  */
-const QUOTE = { subtotal: 31.2, tax: 2.57, levy: 36, total: 69.77, taxExempt: false };
+// subtotal deliberately differs from the client subtotal (31.20): a row read from the client instead of the quote shows it
+const QUOTE = { subtotal: 30, tax: 2.48, levy: 36, total: 68.48, taxExempt: false };
 let quoteResult: { quote: typeof QUOTE | undefined; busy: boolean };
 let activeOrder: unknown;
 const quoteHook = jest.fn();
@@ -77,10 +78,10 @@ const valueOf = (label: string | RegExp) =>
 describe("buyer cart summary shows the server's quote", () => {
   it("9: Subtotal, Tax, Other taxes and fees and Total all come from the quote", () => {
     render(<BuyerCartPage />);
-    expect(valueOf(/^Subtotal \(/)).toBe("31.20");
-    expect(valueOf("Tax")).toBe("2.57");
+    expect(valueOf(/^Subtotal \(/)).toBe("30.00");
+    expect(valueOf("Tax")).toBe("2.48");
     expect(valueOf("Other taxes and fees")).toBe("36.00");
-    expect(valueOf("Total")).toBe("69.77");
+    expect(valueOf("Total")).toBe("68.48");
     expect(screen.queryByText(/calculated at checkout/i)).toBeNull();
     expect(screen.queryByText(/estimated total/i)).toBeNull();
   });
@@ -110,7 +111,7 @@ describe("buyer cart summary shows the server's quote", () => {
     render(<BuyerCartPage />);
     expect(screen.getByText("Total for these items")).toBeInTheDocument();
     expect(screen.queryByText("Total")).toBeNull();
-    expect(valueOf("Total for these items")).toBe("69.77");
+    expect(valueOf("Total for these items")).toBe("68.48");
   });
 
   it("SA-1172 F7: an open order carrying an order discount is never a merge target (the server makes the cart its own order)", () => {
@@ -160,12 +161,12 @@ describe("buyer cart summary shows the server's quote", () => {
   it("8 (a11y): one polite status line speaks the settled total; a loading quote stays, dimmed and busy", () => {
     const { container, rerender } = render(<BuyerCartPage />);
     const status = container.querySelector('[role="status"][aria-atomic="true"]');
-    expect(status).toHaveTextContent("Total $69.77");
+    expect(status).toHaveTextContent("Total $68.48");
     expect(status).toHaveAttribute("aria-atomic", "true");
     quoteResult = { quote: QUOTE, busy: true };
     rerender(<BuyerCartPage />);
     expect(container.querySelector('[role="status"][aria-atomic="true"]')).toHaveTextContent("");
     expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
-    expect(within(container).getByText("$69.77", { selector: "span" })).toBeInTheDocument();
+    expect(within(container).getByText("$68.48", { selector: "span" })).toBeInTheDocument();
   });
 });

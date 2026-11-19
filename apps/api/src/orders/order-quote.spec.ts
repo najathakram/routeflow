@@ -8,8 +8,25 @@ import { join } from "path";
 import { PromotionsService } from "../promotions/promotions.service";
 import { buildOrdersService, customerPayload } from "./testing/orders-service-harness";
 import { quoteForBuyer } from "./order-quote";
+import { reserveInlineReturnNumber as reserveReturnNo } from "./order-inline-return";
+import { nextOrderNumberFor } from "./order-number";
+import { resolveOversellAllowed } from "./oversell-policy";
 
-// qty 2 x $15.60, 8.25% sales tax, $1.50 per unit levy: subtotal 31.20, tax 2.57, levy 3.00, total 36.77.
+// Real implementations, wrapped so a test can assert a quote never reaches them.
+jest.mock("./order-inline-return", () => {
+  const a = jest.requireActual("./order-inline-return");
+  return { ...a, reserveInlineReturnNumber: jest.fn(a.reserveInlineReturnNumber) };
+});
+jest.mock("./order-number", () => {
+  const a = jest.requireActual("./order-number");
+  return { ...a, nextOrderNumberFor: jest.fn(a.nextOrderNumberFor) };
+});
+jest.mock("./oversell-policy", () => {
+  const a = jest.requireActual("./oversell-policy");
+  return { ...a, resolveOversellAllowed: jest.fn(a.resolveOversellAllowed) };
+});
+
+// qty 2 x $15.60, 8.25% sales tax, $18 per case excise: subtotal 31.20, tax 2.57, levy 36.00, total 69.77 (the reported bug's own figures).
 const PRODUCT = {
   id: "p-12pack",
   name: "Acme 12-pack",
@@ -23,7 +40,7 @@ const LEVY = {
   id: "cat-levy",
   name: "Acme levy",
   taxType: "EXCISE_PER_UNIT",
-  rate: 1.5,
+  rate: 18,
   unitBasis: "pack",
   priceIncludesTax: false,
 };
@@ -66,8 +83,8 @@ describe("quoteForBuyer is create()'s own number", () => {
     await expect(quote(h)).resolves.toEqual({
       subtotal: 31.2,
       tax: 2.57,
-      levy: 3,
-      total: 36.77,
+      levy: 36,
+      total: 69.77,
       taxExempt: false,
     });
   });
@@ -116,6 +133,8 @@ describe("quoteForBuyer is create()'s own number", () => {
 
   it("6: a quote writes nothing and reaches no gate, lock or number", async () => {
     const h = await setup();
+    jest.clearAllMocks();
+    const creditGate = jest.spyOn(h.service as never, "creditGate" as never);
     await quote(h);
     const p = h.prisma as any;
     expect(p.order.create).not.toHaveBeenCalled();
@@ -123,6 +142,11 @@ describe("quoteForBuyer is create()'s own number", () => {
     expect(p.orderItem.createMany).not.toHaveBeenCalled();
     expect(h.restrictions.assertLinesSellable).not.toHaveBeenCalled();
     expect(h.authGuard.assertAuthorizedOrThrow).not.toHaveBeenCalled();
+    // no order number, return number, credit gate or oversell read either (each sits after the fence)
+    expect(reserveReturnNo).not.toHaveBeenCalled();
+    expect(nextOrderNumberFor).not.toHaveBeenCalled();
+    expect(creditGate).not.toHaveBeenCalled();
+    expect(resolveOversellAllowed).not.toHaveBeenCalled();
   });
 
   it("7: a line create refuses gets create's refusal, never a partial quote", async () => {

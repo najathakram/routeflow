@@ -61,6 +61,23 @@ describe("useBuyerCartQuote", () => {
     expect(post).toHaveBeenCalledTimes(1);
   });
 
+  it("an older cart's response that lands last never replaces the newer cart's quote", async () => {
+    let resolveOld!: (v: unknown) => void;
+    post.mockImplementationOnce(() => new Promise((res) => (resolveOld = res)));
+    post.mockResolvedValueOnce({ data: quoteFor(20) });
+    const { result, rerender } = renderHook(
+      ({ qty }: { qty: number }) =>
+        useBuyerCartQuote("acme", [{ productId: "p1", qty }], undefined),
+      { wrapper: wrapper(), initialProps: { qty: 1 } },
+    );
+    await settle(); // cart 1 is in flight (slow)
+    rerender({ qty: 2 });
+    await settle(); // cart 2 answers first
+    await waitFor(() => expect(result.current.quote?.total).toBe(20));
+    await act(async () => resolveOld({ data: quoteFor(10) })); // cart 1 lands last
+    expect(result.current.quote?.total).toBe(20);
+  });
+
   it("21: switching seller with the same cart never shows the other seller's quote", async () => {
     post.mockResolvedValueOnce({ data: quoteFor(10) });
     const { result, rerender } = renderHook(

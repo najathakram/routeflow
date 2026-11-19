@@ -1,4 +1,5 @@
 import type { FulfillPath } from "@prisma/client";
+import type { CreateOrderDto } from "./dto/create-order.dto";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import type { PricedForWrite } from "./order-create-options";
 import type { OrdersService } from "./orders.service";
@@ -34,7 +35,11 @@ export async function quoteForBuyer(
 ): Promise<BuyerCartQuote> {
   try {
     await orders.create(
-      { items: items.map((i) => ({ ...i })), status: "PENDING", fulfillPath } as never,
+      {
+        items: items.map((i) => ({ ...i })),
+        status: "PENDING",
+        fulfillPath,
+      } satisfies CreateOrderDto,
       user,
       {
         quote: true,

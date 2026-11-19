@@ -106,7 +106,9 @@ function ReviewBody({
     activeSeller?.tenant.slug ?? "",
     quoteItems,
     undefined,
-    ready,
+    // a line the review could not resolve may be one generateOrder skips (hidden or inactive); create() checks restrictions
+    // only after the quote hook, so such a cart would be overstated: show the fallback instead
+    ready && review.unresolvedCount === 0,
   );
   const noOpenOrder = activeOrder.isSuccess && !activeOrder.data;
 

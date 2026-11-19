@@ -55,8 +55,12 @@ let mockCatalog: Array<Record<string, unknown>> = [
   { id: "p2", buyerPrice: 2.5, category: null, unitsPerBox: null },
 ];
 
+const quoteHook = jest.fn();
 jest.mock("@/lib/api/buyer", () => ({
-  useBuyerCartQuote: () => mockQuote.current,
+  useBuyerCartQuote: (...a: unknown[]) => {
+    quoteHook(...a);
+    return mockQuote.current;
+  },
   useBuyerActiveOrder: () => ({ isSuccess: true, data: mockActive.current }),
   useBuyerTemplates: () => ({ data: { data: [template], meta: { total: 1 } }, isLoading: false }),
   useBuyerReorder: (...a: unknown[]) => {
@@ -160,6 +164,28 @@ describe("buyer standing orders — Reorder review", () => {
       mockQuote.current = { quote: undefined, busy: false };
       mockActive.current = null;
     }
+  });
+
+  const asked = () => quoteHook.mock.calls.filter((c) => c[3] === true);
+
+  it("MUST-1: when every line is resolved the quote body is the live lines", async () => {
+    const user = userEvent.setup();
+    render(<BuyerTemplatesPage />);
+    await user.click(await screen.findByRole("button", { name: /^reorder$/i }));
+    await screen.findByRole("dialog");
+    expect(asked().at(-1)?.[1]).toEqual([
+      { productId: "p1", qty: 2 },
+      { productId: "p2", qty: 3 },
+    ]);
+  });
+
+  it("MUST-1: with an unresolved line no quote is asked for (the server could quote a line generateOrder skips)", async () => {
+    mockCatalog = [{ id: "p1", buyerPrice: 30, category: null, unitsPerBox: 12 }];
+    const user = userEvent.setup();
+    render(<BuyerTemplatesPage />);
+    await user.click(await screen.findByRole("button", { name: /^reorder$/i }));
+    await screen.findByRole("dialog");
+    expect(asked()).toHaveLength(0);
   });
 
   it("a successful placement closes the review", async () => {
