@@ -6,7 +6,6 @@
  */
 import { readFileSync } from "fs";
 import { join } from "path";
-import * as vm from "vm";
 import * as React from "react";
 import * as ts from "typescript";
 import { BuyerAuthService } from "../buyer/buyer-auth.service";
@@ -463,12 +462,7 @@ export function loadInvoiceModule(): Record<string, unknown> {
     "@routeflow/pricing": pricing,
   };
   const mod = { exports: {} as Record<string, unknown> };
-  (
-    vm.runInThisContext(
-      `(function (require, module, exports) {${outputText}
-})`,
-    ) as (...a: unknown[]) => void
-  )(
+  (new Function("require", "module", "exports", outputText) as (...a: unknown[]) => void)(
     (id: string) => {
       if (!(id in known)) throw new Error(`invoice-template: unexpected import ${id}`);
       return known[id];

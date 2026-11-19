@@ -276,7 +276,7 @@ describe("lane B1b: the invoice PDF under a fixture brand", () => {
     expect(brandInitials("RouteFlow")).toBe("RF");
     expect(brandInitials("XROV.IO")).toBe("XI");
     expect(brandInitials("Acme Foods Inc")).toBe("AF");
-    expect(brandInitials("Rovio")).toBe("RO");
+    expect(brandInitials("Acme")).toBe("AC");
     expect(brandInitials("a")).toBe("A");
     expect(brandInitials("  ")).toBe("");
   });
