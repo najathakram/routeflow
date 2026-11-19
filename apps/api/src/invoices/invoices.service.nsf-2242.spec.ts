@@ -48,7 +48,10 @@ describe("#2242 — an order rebuild keeps the NSF fee line", () => {
         { provide: RouteFlowGateway, useValue: { emitInvoiceUpdated: jest.fn() } },
         { provide: EmailService, useValue: { sendInvoice: jest.fn() } },
         { provide: InvoicePdfService, useValue: { getOrGenerate: jest.fn() } },
-        { provide: SystemConfigService, useValue: { get: jest.fn(), set: jest.fn() } },
+        {
+          provide: SystemConfigService,
+          useValue: { get: jest.fn(), getAll: jest.fn().mockResolvedValue({}), set: jest.fn() },
+        },
         {
           provide: RegulatedLedgerService,
           useValue: {

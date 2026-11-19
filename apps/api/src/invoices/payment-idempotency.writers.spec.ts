@@ -189,7 +189,10 @@ describe("SA-824 customer money-in writers replay on the Idempotency-Key", () =>
         { provide: RouteFlowGateway, useValue: { emitInvoiceUpdated: jest.fn() } },
         { provide: EmailService, useValue: { sendInvoice: jest.fn(), send: jest.fn() } },
         { provide: InvoicePdfService, useValue: { getOrGenerate: jest.fn() } },
-        { provide: SystemConfigService, useValue: { get: jest.fn(), set: jest.fn() } },
+        {
+          provide: SystemConfigService,
+          useValue: { get: jest.fn(), getAll: jest.fn().mockResolvedValue({}), set: jest.fn() },
+        },
         {
           provide: RegulatedLedgerService,
           useValue: { writeSaleEntries: jest.fn(), reverseInvoiceEntries: jest.fn() },

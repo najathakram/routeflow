@@ -103,7 +103,12 @@ async function make(
       },
       {
         provide: SystemConfigService,
-        useValue: { get: jest.fn(async (k: string) => cfg[k] ?? null) },
+        useValue: {
+          get: jest.fn(async (k: string) => cfg[k] ?? null),
+          getAll: jest.fn(async (prefix: string) =>
+            Object.fromEntries(Object.entries(cfg).filter(([k]) => k.startsWith(prefix))),
+          ),
+        },
       },
       {
         provide: FeatureConfigService,

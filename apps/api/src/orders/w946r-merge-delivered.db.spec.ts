@@ -174,7 +174,11 @@ describeDb("W-946r merge and floor (SA-1149 round 2), real Postgres", () => {
         { provide: InvoicePdfService, useValue: { getOrGenerate: jest.fn() } },
         {
           provide: SystemConfigService,
-          useValue: { get: jest.fn().mockResolvedValue(null), set: jest.fn() },
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+            set: jest.fn(),
+          },
         },
         RegulatedLedgerService,
         {

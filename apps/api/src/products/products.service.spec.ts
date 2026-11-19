@@ -64,7 +64,10 @@ describe("ProductsService", () => {
         },
         {
           provide: SystemConfigService,
-          useValue: { get: jest.fn().mockResolvedValue(null) },
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
         },
         // MSRP gate collaborators — flag.msrp defaults OFF; the pre-MSRP tests
         // never send an msrp key, so assertMsrpAllowed is never even called.
@@ -2991,7 +2994,13 @@ async function buildBulkDeleteProductsService(prisma: unknown): Promise<Products
         },
       },
       { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(false) } },
-      { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+      {
+        provide: SystemConfigService,
+        useValue: {
+          get: jest.fn().mockResolvedValue(null),
+          getAll: jest.fn().mockResolvedValue({}),
+        },
+      },
       { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(false) } },
       // #2185: reorder gate (assertReorderAllowed) reads overrides + entitlements for its deny body.
       { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },

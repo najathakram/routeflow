@@ -110,7 +110,10 @@ describe("case 13 / SA-1153 rows 6-9: the four invoice generation sites stamp th
           useValue: { sendInvoice: jest.fn(), isEmailConfigured: jest.fn() },
         },
         { provide: InvoicePdfService, useValue: { getOrGenerate: jest.fn() } },
-        { provide: SystemConfigService, useValue: { get: jest.fn(), set: jest.fn() } },
+        {
+          provide: SystemConfigService,
+          useValue: { get: jest.fn(), getAll: jest.fn().mockResolvedValue({}), set: jest.fn() },
+        },
         {
           provide: RegulatedLedgerService,
           useValue: {

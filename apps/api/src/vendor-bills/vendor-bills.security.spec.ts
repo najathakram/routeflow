@@ -71,7 +71,13 @@ describe("VendorBillsService — F10-004 payment amount guard", () => {
             recordAiUsage: jest.fn(),
           },
         },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: DuplicateMatchService, useValue: dupMatch },
         { provide: StorageService, useValue: storage },
         { provide: InventoryService, useValue: inventory },
@@ -212,7 +218,13 @@ describe("check-duplicate — access control", () => {
             recordAiUsage: jest.fn(),
           },
         },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: DuplicateMatchService, useValue: dupMatch },
         { provide: StorageService, useValue: storage },
         { provide: InventoryService, useValue: inventory },

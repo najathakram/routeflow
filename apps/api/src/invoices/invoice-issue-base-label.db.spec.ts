@@ -94,7 +94,11 @@ describeDb("SA-1029 A-1 base-word freeze from one pre-tx read — real Postgres"
         { provide: InvoicePdfService, useValue: { getOrGenerate: jest.fn() } },
         {
           provide: SystemConfigService,
-          useValue: { get: jest.fn().mockResolvedValue(null), set: jest.fn() },
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+            set: jest.fn(),
+          },
         },
         RegulatedLedgerService,
         {
@@ -364,7 +368,10 @@ describeDb("SA-1029 A-1 base-word freeze from one pre-tx read — real Postgres"
       },
       pdfService: { getOrGenerate: jest.fn().mockResolvedValue(undefined) },
       storage: { download: jest.fn() },
-      systemConfig: { get: jest.fn().mockResolvedValue(null) },
+      systemConfig: {
+        get: jest.fn().mockResolvedValue(null),
+        getAll: jest.fn().mockResolvedValue({}),
+      },
       logger: { warn: jest.fn(), log: jest.fn(), error: jest.fn() },
     };
     await tenantCtx.run(s.tenantId, () => sendReminder(deps as never, s.invoice.id));

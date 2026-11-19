@@ -20,7 +20,10 @@ function serviceReturning(inv: object) {
         }, // revisedAt: never revised
       }),
     },
-    systemConfig: { get: jest.fn().mockResolvedValue(null) },
+    systemConfig: {
+      get: jest.fn().mockResolvedValue(null),
+      getAll: jest.fn().mockResolvedValue({}),
+    },
   });
   return service;
 }

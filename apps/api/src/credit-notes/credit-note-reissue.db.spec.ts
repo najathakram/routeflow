@@ -129,7 +129,11 @@ describeDb("#2648 credit-note reissue (SA-535b)", () => {
         { provide: InvoicePdfService, useValue: { getOrGenerate: jest.fn() } },
         {
           provide: SystemConfigService,
-          useValue: { get: jest.fn().mockResolvedValue(null), set: jest.fn() },
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+            set: jest.fn(),
+          },
         },
         { provide: RegulatedLedgerService, useValue: mockLedger },
         {

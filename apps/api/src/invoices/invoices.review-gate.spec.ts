@@ -85,7 +85,10 @@ describe("InvoicesService: the review gate on an order with an open price flag (
           useValue: { sendInvoice, isEmailConfigured: jest.fn().mockResolvedValue(true) },
         },
         { provide: InvoicePdfService, useValue: { getOrGenerate: jest.fn() } },
-        { provide: SystemConfigService, useValue: { get: systemGet, set: jest.fn() } },
+        {
+          provide: SystemConfigService,
+          useValue: { get: systemGet, getAll: async () => ({}), set: jest.fn() },
+        },
         {
           provide: RegulatedLedgerService,
           useValue: {

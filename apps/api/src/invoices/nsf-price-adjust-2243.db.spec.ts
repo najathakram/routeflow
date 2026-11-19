@@ -92,7 +92,11 @@ describeDb("a price adjustment never taxes the NSF fee line (#2243)", () => {
         { provide: InvoicePdfService, useValue: { getOrGenerate: jest.fn() } },
         {
           provide: SystemConfigService,
-          useValue: { get: jest.fn().mockResolvedValue(null), set: jest.fn() },
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+            set: jest.fn(),
+          },
         },
         RegulatedLedgerService,
         {

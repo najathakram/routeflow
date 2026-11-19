@@ -63,6 +63,7 @@ describe("partial invoices: the invoicedQty bump is a compare-and-set (#2070, SA
   };
   const mockSystemConfig = {
     get: jest.fn().mockResolvedValue(null),
+    getAll: jest.fn().mockResolvedValue({}),
     set: jest.fn().mockResolvedValue(undefined),
   };
   const mockMessaging = {

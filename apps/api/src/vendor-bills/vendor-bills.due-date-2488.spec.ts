@@ -51,7 +51,13 @@ describe("VendorBillsService — #2488 dueDate is the literal calendar day", () 
             recordAiUsage: jest.fn(),
           },
         },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         {
           provide: DuplicateMatchService,
           useValue: {

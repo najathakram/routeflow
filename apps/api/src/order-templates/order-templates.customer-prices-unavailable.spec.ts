@@ -74,7 +74,13 @@ describe("OrderTemplatesService.generateDailyOrders: customer prices unavailable
           provide: TenantContextService,
           useValue: { run: jest.fn((_id: string, fn: () => unknown) => fn()) },
         },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue("10") } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue("10"),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: OrdersService, useValue: {} },
         { provide: AuthorizationGuardService, useValue: {} },
         { provide: NotificationsService, useValue: { sendToUser, sendToCustomer } },

@@ -64,6 +64,7 @@ describe("InvoicesService — the Order row is locked before an invoice is inser
   };
   const mockSystemConfig = {
     get: jest.fn().mockResolvedValue(null),
+    getAll: jest.fn().mockResolvedValue({}),
     set: jest.fn().mockResolvedValue(undefined),
   };
   const mockMessaging = {

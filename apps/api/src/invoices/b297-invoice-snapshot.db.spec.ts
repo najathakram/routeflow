@@ -96,7 +96,11 @@ describeDb("B297 PR3 — invoice recompute reads the line's rate snapshot, real 
         { provide: InvoicePdfService, useValue: { getOrGenerate: jest.fn() } },
         {
           provide: SystemConfigService,
-          useValue: { get: jest.fn().mockResolvedValue(null), set: jest.fn() },
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+            set: jest.fn(),
+          },
         },
         RegulatedLedgerService,
         {

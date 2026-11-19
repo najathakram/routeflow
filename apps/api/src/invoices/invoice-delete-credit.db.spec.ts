@@ -95,6 +95,7 @@ describeDb("B214 invoice delete vs sourced credit notes — real Postgres", () =
   };
   const mockSystemConfig = {
     get: jest.fn().mockResolvedValue(null),
+    getAll: jest.fn().mockResolvedValue({}),
     set: jest.fn().mockResolvedValue(undefined),
   };
   const mockCreditNotes = {

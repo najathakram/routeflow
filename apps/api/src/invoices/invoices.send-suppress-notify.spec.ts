@@ -46,7 +46,13 @@ describe("InvoicesService.send — suppressNotify", () => {
         { provide: RouteFlowGateway, useValue: { emitInvoiceUpdated: jest.fn() } },
         { provide: EmailService, useValue: {} },
         { provide: InvoicePdfService, useValue: {} },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue("false") } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue("false"),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: RegulatedLedgerService, useValue: {} },
         { provide: AuthorizationGuardService, useValue: {} },
         {

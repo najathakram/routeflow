@@ -1127,6 +1127,9 @@ export class EmailService {
     hideOriginalPrice?: boolean;
     /** The tenant's `invoice.hidePerPiece` setting (owner ruling 2026-11-04): true leaves the Per piece column and figure out of the body. */
     hidePerPiece?: boolean;
+    /** R6a: the tenant's `invoice.hideAmountPaid` / `invoice.hideBalanceDue`: true leaves that line out of the invoice email (a reminder ignores both). */
+    hideAmountPaid?: boolean;
+    hideBalanceDue?: boolean;
     /**
      * Row 401: a counter sale paid at the till is settled when it is rung, so the body prints no Due Date and no
      * Terms (the caller decides with `isPaidAtSale`, the rule the invoice page follows). Absent/false = both show.
@@ -1687,6 +1690,9 @@ export class EmailService {
       hideOriginalPrice?: boolean;
       /** Tenant's `invoice.hidePerPiece` — see sendInvoice's doc. */
       hidePerPiece?: boolean;
+      /** R6a: see sendInvoice's doc; a reminder ignores both. */
+      hideAmountPaid?: boolean;
+      hideBalanceDue?: boolean;
       /** Row 401: no Due Date / Terms rows for a paid-at-sale counter invoice — see sendInvoice's doc. */
       hideTerms?: boolean;
       /** Deposit schedule (display-only, derived server-side) — null/absent renders nothing. */
@@ -1769,8 +1775,11 @@ export class EmailService {
     // been updated yet (balanceDue undefined) keep the pre-F03 single
     // "Amount Due" = total row.
     const footSpan = showPerPiece ? 4 : 3;
+    // R6a: a switch drops its line only (never a figure); a reminder exists to ask for the balance, so it ignores both.
+    const dropPaid = !!params.hideAmountPaid && !params.isReminder;
+    const dropBalance = !!params.hideBalanceDue && !params.isReminder;
     const amountPaidRow =
-      params.totalPaid != null && params.totalPaid > 0
+      !dropPaid && params.totalPaid != null && params.totalPaid > 0
         ? `<tr>
                 <td colspan="${footSpan}" style="padding:8px 12px;font-size:13px;font-weight:600;color:#16a34a;text-align:right;">Amount Paid</td>
                 <td style="padding:8px 12px;font-size:14px;font-weight:600;color:#16a34a;text-align:right;">${fmt(params.totalPaid)}</td>
@@ -1803,13 +1812,23 @@ export class EmailService {
                 <td colspan="${footSpan}" style="padding:8px 12px;font-size:13px;font-weight:600;color:#374151;text-align:right;">Items</td>
                 <td style="padding:8px 12px;font-size:14px;font-weight:600;color:#374151;text-align:right;">${escapeHtml(itemCount)}</td>
               </tr>`;
+    // R6a + owner 2026-11-18 22:28Z ("Keep Total in place"): with Balance Due off the invoice Total prints above the
+    // Paid / credit / advance lines, and nothing takes the Balance Due spot at the bottom.
+    const totalRow = `<tr>
+                <td colspan="${footSpan}" style="padding:8px 12px;font-size:14px;font-weight:700;color:#1D2A3D;text-align:right;">Total</td>
+                <td style="padding:8px 12px;font-size:15px;font-weight:700;color:#1D2A3D;text-align:right;">${fmt(params.total)}</td>
+              </tr>`;
     const totalsFooter =
       params.balanceDue != null
-        ? `${itemCountRow}${amountPaidRow}${creditAppliedRow}${advanceAppliedRow}
+        ? `${itemCountRow}${dropBalance ? totalRow : ""}${amountPaidRow}${creditAppliedRow}${advanceAppliedRow}${
+            dropBalance
+              ? ""
+              : `
               <tr style="background:#f9fafb;">
                 <td colspan="${footSpan}" style="padding:12px;font-size:14px;font-weight:700;color:#1D2A3D;text-align:right;">Balance Due</td>
                 <td style="padding:12px;font-size:16px;font-weight:700;color:${params.balanceDue > 0 ? "#dc2626" : "#16a34a"};text-align:right;">${fmt(params.balanceDue)}</td>
               </tr>`
+          }`
         : `${itemCountRow}<tr style="background:#f9fafb;">
                 <td colspan="${footSpan}" style="padding:12px;font-size:14px;font-weight:700;color:#1D2A3D;text-align:right;">Amount Due</td>
                 <td style="padding:12px;font-size:16px;font-weight:700;color:#1D2A3D;text-align:right;">${fmt(params.total)}</td>
@@ -1919,18 +1938,17 @@ export class EmailService {
     );
     bodyText.push(`Items: ${itemCount}`);
     const totalsLines: string[] = [];
-    if (params.totalPaid != null && params.totalPaid > 0)
+    // Owner 2026-11-18 22:28Z: Balance Due off keeps the invoice Total in place, above the Paid / credit lines.
+    if (dropBalance && params.balanceDue != null) totalsLines.push(`Total: ${fmt(params.total)}`);
+    if (!dropPaid && params.totalPaid != null && params.totalPaid > 0)
       totalsLines.push(`Amount Paid: ${fmt(params.totalPaid)}`);
     if (params.creditApplied != null && params.creditApplied > 0)
       totalsLines.push(`${creditNoteLabel}: ${fmt(params.creditApplied)}`);
     if (params.advanceApplied != null && params.advanceApplied > 0)
       totalsLines.push(`Advance applied: ${fmt(params.advanceApplied)}`);
-    totalsLines.push(
-      params.balanceDue != null
-        ? `Balance Due: ${fmt(params.balanceDue)}`
-        : `Amount Due: ${fmt(params.total)}`,
-    );
-    bodyText.push(totalsLines.join("\n"));
+    if (params.balanceDue == null) totalsLines.push(`Amount Due: ${fmt(params.total)}`);
+    else if (!dropBalance) totalsLines.push(`Balance Due: ${fmt(params.balanceDue)}`);
+    if (totalsLines.length > 0) bodyText.push(totalsLines.join("\n"));
     if (params.pdfUrl) bodyText.push(`Download PDF: ${params.pdfUrl}`);
     bodyText.push(
       "If you have any questions about this invoice, please don't hesitate to contact us.",

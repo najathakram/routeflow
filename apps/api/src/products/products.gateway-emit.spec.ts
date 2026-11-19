@@ -57,7 +57,13 @@ describe("ProductsService — product.updated emits (REG-PROD-EMIT)", () => {
           },
         },
         { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(false) } },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(true) } },
         // #2185: reorder gate (assertReorderAllowed) reads overrides + entitlements for its deny body.
         { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },

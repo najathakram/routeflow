@@ -97,7 +97,11 @@ describeDb("SA-860 the email snapshot, real Postgres", () => {
         { provide: InvoicePdfService, useValue: pdf },
         {
           provide: SystemConfigService,
-          useValue: { get: jest.fn().mockResolvedValue(null), set: jest.fn() },
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+            set: jest.fn(),
+          },
         },
         {
           provide: RegulatedLedgerService,

@@ -74,6 +74,7 @@ describe("InvoicesService", () => {
 
   const mockSystemConfig = {
     get: jest.fn().mockResolvedValue(null),
+    getAll: jest.fn().mockResolvedValue({}),
     set: jest.fn().mockResolvedValue(undefined),
   };
 
@@ -7588,6 +7589,7 @@ describe("InvoicesService", () => {
       // re-created) — pin the tenant answer explicitly so these cases don't inherit
       // another describe's `invoice.hideOriginalPrice` value.
       mockSystemConfig.get.mockResolvedValue(null);
+      mockSystemConfig.getAll.mockResolvedValue({});
     });
 
     it("REG-B103: sendEmail forwards originalPrice / priceType / promoFreeUnits on the item row", async () => {
@@ -7611,9 +7613,7 @@ describe("InvoicesService", () => {
     // both honour it, so an ungated email body would be the ONE surface leaking the
     // struck pre-promo price a tenant configured away.
     it("REG-B103: sendEmail carries the tenant's hideOriginalPrice through to the email", async () => {
-      mockSystemConfig.get.mockImplementation(async (key: string) =>
-        key === "invoice.hideOriginalPrice" ? "true" : null,
-      );
+      mockSystemConfig.getAll.mockResolvedValue({ "invoice.hideOriginalPrice": "true" });
 
       await service.sendEmail("inv-b103");
 
@@ -7623,9 +7623,7 @@ describe("InvoicesService", () => {
     });
 
     it("REG-B103: sendReminder carries it too, and both default to false when unset", async () => {
-      mockSystemConfig.get.mockImplementation(async (key: string) =>
-        key === "invoice.hideOriginalPrice" ? "true" : null,
-      );
+      mockSystemConfig.getAll.mockResolvedValue({ "invoice.hideOriginalPrice": "true" });
       await service.sendReminder("inv-b103");
       expect(mockEmailService.sendInvoice).toHaveBeenCalledWith(
         expect.objectContaining({ hideOriginalPrice: true, isReminder: true }),
@@ -7633,7 +7631,7 @@ describe("InvoicesService", () => {
 
       // Unset (the default tenant) still shows the strike — the gate must not
       // silently suppress promo transparency for everyone.
-      mockSystemConfig.get.mockResolvedValue(null);
+      mockSystemConfig.getAll.mockResolvedValue({});
       mockEmailService.sendInvoice.mockClear();
       await service.sendReminder("inv-b103");
       expect(mockEmailService.sendInvoice).toHaveBeenCalledWith(
