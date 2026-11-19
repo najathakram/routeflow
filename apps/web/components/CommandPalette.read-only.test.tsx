@@ -1,7 +1,10 @@
+import * as fs from "fs";
+import * as path from "path";
 import * as React from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { SubscriptionView } from "@routeflow/types";
 import { ReadOnlyGateProvider } from "@/lib/read-only-gate";
+import { navFor } from "@/test-utils/nav";
 import { CommandPalette } from "./CommandPalette";
 
 /**
@@ -10,20 +13,12 @@ import { CommandPalette } from "./CommandPalette";
  * (Reports, Settings ...) and the non-write actions are untouched.
  */
 const mockPush = jest.fn();
-// SA-1087: the palette's Product insights entry reads the shared access rule; pinned in CommandPalette.insights.test.tsx.
-jest.mock("@/components/insights/use-insights-access", () => ({ useInsightsAccess: () => false }));
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push: mockPush }) }));
 jest.mock("@/lib/auth-context", () => ({ useAuth: () => ({ user: { role: "OPERATOR" } }) }));
 jest.mock("@/lib/api-client", () => ({
   apiClient: { get: jest.fn().mockResolvedValue({ data: {} }) },
 }));
-jest.mock("@/lib/tenant-features", () => ({ useTenantFeatures: () => ({ data: undefined }) }));
 jest.mock("@/lib/i18n", () => ({ useI18n: () => ({ t: (k: string) => k }) }));
-jest.mock("@/lib/api/addons", () => ({
-  useRoutesAccess: () => ({ enabled: true }),
-  useDeliveryAccess: () => ({ enabled: true }),
-}));
-jest.mock("@/lib/api/counter-sale", () => ({ useCounterSaleGate: () => ({ showButton: true }) }));
 
 const view = (status: string) =>
   ({ status, billingContactEmail: "dana@acme.test" }) as unknown as SubscriptionView;
@@ -37,7 +32,7 @@ describe("CommandPalette in a read-only workspace", () => {
   const renderRO = (onClose = () => {}) =>
     render(
       <ReadOnlyGateProvider view={view("READ_ONLY")}>
-        <CommandPalette open onClose={onClose} />
+        <CommandPalette open onClose={onClose} nav={navFor({ counterEnabled: true })} />
       </ReadOnlyGateProvider>,
     );
 
@@ -87,7 +82,7 @@ describe("CommandPalette in a read-only workspace", () => {
   it("an ACTIVE workspace: the create actions work as before (click and Enter)", () => {
     render(
       <ReadOnlyGateProvider view={view("ACTIVE")}>
-        <CommandPalette open onClose={() => {}} />
+        <CommandPalette open onClose={() => {}} nav={navFor({ counterEnabled: true })} />
       </ReadOnlyGateProvider>,
     );
     const row = screen.getByText("New Invoice").closest("button")!;
@@ -99,5 +94,25 @@ describe("CommandPalette in a read-only workspace", () => {
     fireEvent.change(input, { target: { value: "new invoice" } });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(mockPush).toHaveBeenCalledWith("/invoices/new");
+  });
+});
+
+describe("one read-only predicate (UXG-R8-A2 F3)", () => {
+  it("Enter on New Order in a read-only workspace does not push and keeps the palette open", () => {
+    const onClose = jest.fn();
+    render(
+      <ReadOnlyGateProvider view={view("READ_ONLY")}>
+        <CommandPalette open onClose={onClose} nav={navFor({ counterEnabled: true })} />
+      </ReadOnlyGateProvider>,
+    );
+    const input = screen.getByPlaceholderText("palette.placeholder");
+    fireEvent.keyDown(input, { key: "Enter" }); // the first row on an empty query is New Order
+    expect(mockPush).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("the palette reads QuickAction.blocked and never re-derives readOnlyGated && readOnly", () => {
+    const src = fs.readFileSync(path.resolve(__dirname, "CommandPalette.tsx"), "utf8");
+    expect(src).not.toContain("readOnlyGated &&");
   });
 });

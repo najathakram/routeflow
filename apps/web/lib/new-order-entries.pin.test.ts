@@ -19,8 +19,8 @@ const ENTRIES: ReadonlyArray<[string, string, string]> = [
     "app/(dashboard)/_components/build-operator-nav.ts",
     'href: "/orders/counter-sale"',
   ],
-  ["palette New Order", "components/CommandPalette.tsx", '"New Order"'],
-  ["palette New counter sale", "components/CommandPalette.tsx", "/orders/counter-sale"],
+  ["palette New Order", "app/(dashboard)/_components/nav-index.ts", '"New Order"'],
+  ["palette New counter sale", "app/(dashboard)/_components/nav-index.ts", "New counter sale"],
   ["g t", "app/(dashboard)/_components/nav-index.ts", '"/orders/counter-sale": "t"'],
   [
     "settings index",

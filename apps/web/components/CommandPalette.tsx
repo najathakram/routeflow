@@ -1,66 +1,30 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
 import { useGuardedRouter } from "@/lib/use-guarded-router";
-import { modeGatedVisible } from "@/lib/plan-gated-nav";
-import { useTenantFeatures } from "@/lib/tenant-features";
 import { createPortal } from "react-dom";
 import {
   Search,
-  LayoutDashboard,
-  ShoppingCart,
-  MapPin,
-  Truck,
   Users,
+  ShoppingCart,
   Package,
-  Settings,
   FileText,
-  Plus,
   ArrowRight,
-  RotateCcw,
-  FileCheck,
-  Wallet,
-  BarChart2,
-  Receipt,
-  CreditCard,
-  ShoppingBag,
-  BarChart3,
-  Building2,
-  Layers,
-  Megaphone,
-  Route as RouteIcon,
   type LucideIcon,
-  PackageCheck,
-  ScanSearch,
-  Store,
 } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
 import { apiClient } from "@/lib/api-client";
 import { displayEmail } from "@/lib/formatting";
 import { useI18n } from "@/lib/i18n";
-import { useRoutesAccess, useDeliveryAccess } from "@/lib/api/addons";
-import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { useReadOnlyGate } from "@/lib/read-only-gate";
-import { useInsightsAccess } from "@/components/insights/use-insights-access";
-
-/**
- * `?action=new` for a list route, preserving that list's own query state when
- * the palette is opened while already standing on it.
- *
- * The target page consumes `action` and replaces the URL with whatever remains,
- * so pushing a bare `/orders?action=new` from /orders?page=2 threw away the
- * operator's page and search on the way in.
- */
-function createHref(base: string): string {
-  const params =
-    typeof window !== "undefined" && window.location.pathname === base
-      ? new URLSearchParams(window.location.search)
-      : new URLSearchParams();
-  params.set("action", "new");
-  return `${base}?${params.toString()}`;
-}
+import type { NavEntry } from "@/app/(dashboard)/_components/nav-config";
+import {
+  NAV_ALIASES,
+  navLeaves,
+  quickActionHref,
+  quickActions,
+} from "@/app/(dashboard)/_components/nav-index";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -72,266 +36,42 @@ interface CommandItem {
   action: () => void;
   group: string;
   keywords?: string;
-  /** SA-733r6: creates something. In a read-only workspace the row stays, disabled, with the shared line. */
-  readOnlyGated?: boolean;
+  /** SA-733r6: creates something and the workspace is read-only (QuickAction.blocked): the row stays, disabled, with the shared line. */
+  blocked?: boolean;
 }
 
-// ─── Static command definitions ───────────────────────────────────────────────
+// ─── Rows come from the menu (UXG-R8) ─────────────────────────────────────────
 
 /**
- * Command ids gated per-feature addon (owner decision 2026-08-25: recurring
- * routes and ad-hoc order delivery are separate addons; owner decision
- * 2026-08-28: `devMode` no longer unlocks either one client-side).
+ * Jump to = every entry of the menu the layout built (so a page the menu hides is never offered, and a page it
+ * shows always is); Actions = the creating actions that menu can reach. Nothing here is listed by hand: see nav-index.
  */
-const ROUTES_COMMAND_IDS = ["nav-routes", "nav-drivers", "act-new-route"];
-const DELIVERY_COMMAND_IDS = ["act-plan-trip", "nav-deliveries"];
-/** POS-7a: shown only when the tenant's counter capability is always|optional (useCounterSaleGate.showButton). */
-const COUNTER_COMMAND_IDS = ["act-counter-sale"];
-/** SA-1087: the product finder — same audience as the insights endpoint (useInsightsAccess). */
-const INSIGHTS_COMMAND_IDS = ["nav-product-insights"];
-
-function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] {
-  const { user } = useAuth();
-  const { enabled: routesAccess } = useRoutesAccess();
-  const { enabled: deliveryAccess } = useDeliveryAccess();
-  const staffRole = user?.role !== "CUSTOMER" && user?.role !== "DRIVER";
-  const { showButton: counterEnabled } = useCounterSaleGate({ enabled: staffRole });
-  const insightsAccess = useInsightsAccess();
-  // SA-1032: promotions off (back office) drops the Promotions command; unloaded ⇒ shown.
-  const { data: tenantFeatures } = useTenantFeatures({ enabled: staffRole });
-  const modes = tenantFeatures?.modes;
-  return React.useMemo(
-    () =>
-      [
-        // ─ Navigation ──
-        {
-          id: "nav-dashboard",
-          group: "Navigate",
-          label: "Dashboard",
-          icon: LayoutDashboard,
-          action: () => router.push("/dashboard"),
-          keywords: "home",
-        },
-        {
-          id: "nav-orders",
-          group: "Navigate",
-          label: "All Orders",
-          icon: ShoppingCart,
-          action: () => router.push("/orders"),
-        },
-        {
-          id: "nav-returns",
-          group: "Navigate",
-          label: "Returns",
-          icon: RotateCcw,
-          action: () => router.push("/returns"),
-        },
-        {
-          id: "nav-deliveries",
-          group: "Navigate",
-          label: "Deliveries",
-          icon: Package,
-          action: () => router.push("/deliveries"),
-        },
-        {
-          id: "nav-routes",
-          group: "Navigate",
-          label: "Routes",
-          icon: MapPin,
-          action: () => router.push("/routes"),
-        },
-        {
-          id: "nav-drivers",
-          group: "Navigate",
-          label: "Drivers",
-          icon: Truck,
-          action: () => router.push("/drivers"),
-        },
-        {
-          id: "nav-customers",
-          group: "Navigate",
-          label: "Customers",
-          icon: Users,
-          action: () => router.push("/customers"),
-        },
-        {
-          id: "nav-products",
-          group: "Navigate",
-          label: "Products",
-          icon: Package,
-          action: () => router.push("/products"),
-        },
-        {
-          id: "nav-promotions",
-          group: "Navigate",
-          label: "Promotions",
-          icon: Megaphone,
-          action: () => router.push("/promotions"),
-        },
-        {
-          id: "nav-inventory",
-          group: "Navigate",
-          label: "Inventory",
-          icon: Layers,
-          action: () => router.push("/inventory"),
-        },
-        {
-          id: "nav-purchase-orders",
-          group: "Navigate",
-          label: "Purchase orders",
-          icon: PackageCheck,
-          action: () => router.push("/purchase-orders"),
-        },
-        {
-          id: "nav-suppliers",
-          group: "Navigate",
-          label: "Suppliers",
-          icon: Building2,
-          action: () => router.push("/suppliers"),
-        },
-        {
-          id: "nav-invoices",
-          group: "Navigate",
-          label: "Invoices",
-          icon: FileText,
-          action: () => router.push("/invoices"),
-        },
-        {
-          id: "nav-estimates",
-          group: "Navigate",
-          label: "Estimates",
-          icon: FileCheck,
-          action: () => router.push("/estimates"),
-        },
-        {
-          id: "nav-credit-notes",
-          group: "Navigate",
-          label: "Credit notes",
-          icon: Receipt,
-          action: () => router.push("/credit-notes"),
-        },
-        {
-          id: "nav-payments",
-          group: "Navigate",
-          label: "Payments",
-          icon: CreditCard,
-          action: () => router.push("/finance/payments"),
-        },
-        {
-          id: "nav-expenses",
-          group: "Navigate",
-          label: "Supplier bills",
-          icon: ShoppingBag,
-          action: () => router.push("/vendor-bills"),
-        },
-        {
-          id: "nav-finance",
-          group: "Navigate",
-          label: "Finance Overview",
-          icon: Wallet,
-          action: () => router.push("/finance/dashboard"),
-        },
-        {
-          id: "nav-reports",
-          group: "Navigate",
-          label: "Reports",
-          icon: BarChart3,
-          action: () => router.push("/finance/reports"),
-        },
-        {
-          id: "nav-analytics",
-          group: "Navigate",
-          label: "Analytics",
-          icon: BarChart2,
-          action: () => router.push("/analytics"),
-        },
-        {
-          id: "nav-product-insights",
-          group: "Navigate",
-          label: "Product insights",
-          icon: ScanSearch,
-          action: () => router.push("/insights"),
-          keywords: "look up find scan barcode sales history demand trend buyers",
-        },
-        {
-          id: "nav-settings",
-          group: "Navigate",
-          label: "Settings",
-          icon: Settings,
-          action: () => router.push("/settings"),
-        },
-        // ─ Actions ──
-        {
-          id: "act-new-order",
-          group: "Actions",
-          label: "New Order",
-          icon: Plus,
-          readOnlyGated: true,
-          action: () => router.push(createHref("/orders")),
-          keywords: "create add order",
-        },
-        {
-          id: "act-counter-sale",
-          group: "Actions",
-          label: "New counter sale",
-          icon: Store,
-          readOnlyGated: true,
-          action: () => router.push("/orders/counter-sale"),
-          keywords: "walk-in pickup pos till scan",
-        },
-        {
-          id: "act-new-invoice",
-          group: "Actions",
-          label: "New Invoice",
-          icon: Plus,
-          readOnlyGated: true,
-          action: () => router.push("/invoices/new"),
-          keywords: "create add invoice",
-        },
-        {
-          id: "act-new-route",
-          group: "Actions",
-          label: "New Route",
-          icon: Plus,
-          action: () => router.push("/routes/create"),
-          keywords: "create add route",
-        },
-        {
-          id: "act-plan-trip",
-          group: "Actions",
-          label: "Plan delivery",
-          icon: RouteIcon,
-          action: () => router.push("/deliveries/new"),
-          keywords: "adhoc trip dispatch delivery",
-        },
-        {
-          id: "act-new-customer",
-          group: "Actions",
-          label: "New Customer",
-          icon: Plus,
-          action: () => router.push(createHref("/customers")),
-          keywords: "create add customer",
-          readOnlyGated: true,
-        },
-        {
-          id: "act-new-product",
-          group: "Actions",
-          label: "New Product",
-          icon: Plus,
-          action: () => router.push(createHref("/products")),
-          keywords: "create add product",
-          readOnlyGated: true,
-        },
-      ].filter((c) => {
-        if (ROUTES_COMMAND_IDS.includes(c.id)) return routesAccess;
-        if (DELIVERY_COMMAND_IDS.includes(c.id)) return deliveryAccess;
-        if (COUNTER_COMMAND_IDS.includes(c.id)) return counterEnabled;
-        if (INSIGHTS_COMMAND_IDS.includes(c.id)) return insightsAccess;
-        if (c.id === "nav-promotions") return modeGatedVisible("/promotions", modes);
-        return true;
-      }),
-    [router, routesAccess, deliveryAccess, counterEnabled, insightsAccess, modes],
-  );
+function useStaticCommands(
+  nav: readonly NavEntry[],
+  router: ReturnType<typeof useGuardedRouter>,
+  staff: boolean,
+  readOnly: boolean,
+): { navRows: CommandItem[]; actionRows: CommandItem[] } {
+  return React.useMemo(() => {
+    const navRows = navLeaves(nav).map((leaf): CommandItem => ({
+      id: `nav-${leaf.href}`,
+      group: "Navigate",
+      label: leaf.label,
+      icon: leaf.icon,
+      action: () => router.push(leaf.href),
+      keywords: (NAV_ALIASES[leaf.href] ?? []).join(" ") || undefined,
+    }));
+    const actionRows = quickActions(nav, { staff, readOnly }).map((a): CommandItem => ({
+      id: a.id,
+      group: "Actions",
+      label: a.label,
+      icon: a.icon,
+      action: () => router.push(quickActionHref(a)),
+      keywords: a.keywords,
+      blocked: a.blocked,
+    }));
+    return { navRows, actionRows };
+  }, [nav, router, staff, readOnly]);
 }
 
 // ─── Fuzzy filter ──────────────────────────────────────────────────────────────
@@ -459,6 +199,8 @@ function useSearchResults(
 interface Props {
   open: boolean;
   onClose: () => void;
+  /** The menu this person has, as the layout built it (buildOperatorNav). */
+  nav: readonly NavEntry[];
 }
 
 /** Map an internal group key to its localized section label. */
@@ -475,7 +217,7 @@ function useGroupLabel() {
   );
 }
 
-export function CommandPalette({ open, onClose }: Props) {
+export function CommandPalette({ open, onClose, nav }: Props) {
   const router = useGuardedRouter(); // POS-7: a selection cannot leave the counter mid-sale
   const readOnlyGate = useReadOnlyGate();
   const { user } = useAuth();
@@ -491,28 +233,12 @@ export function CommandPalette({ open, onClose }: Props) {
   const [activeIndex, setActiveIndex] = React.useState(0);
   const inputRef = React.useRef<HTMLInputElement>(null);
 
-  const allStatic = useStaticCommands(router);
-
-  // For non-operators, restrict navigation items
-  const staticItems = React.useMemo(() => {
-    if (isOperator) return allStatic;
-    if (user?.role === "CUSTOMER")
-      return allStatic.filter((i) =>
-        [
-          "nav-dashboard",
-          "nav-orders",
-          "nav-returns",
-          "nav-invoices",
-          "nav-settings",
-          // REG-B1: no "act-new-order": starting an order is a staff action (owner ruling).
-        ].includes(i.id),
-      );
-    if (user?.role === "DRIVER")
-      return allStatic.filter((i) =>
-        ["nav-dashboard", "nav-routes", "nav-settings"].includes(i.id),
-      );
-    return allStatic;
-  }, [allStatic, isOperator, user?.role]);
+  const { navRows, actionRows } = useStaticCommands(nav, router, isOperator, readOnlyGate.readOnly);
+  // Empty query: creating comes first (the most frequent job). Typing keeps Jump to first.
+  const staticItems = React.useMemo(
+    () => (query ? [...navRows, ...actionRows] : [...actionRows, ...navRows]),
+    [navRows, actionRows, query],
+  );
 
   const { results: searchResults, loading: searchLoading } = useSearchResults(
     query,
@@ -526,7 +252,6 @@ export function CommandPalette({ open, onClose }: Props) {
     const filtered = staticItems.filter((i) => fuzzyMatch(i, query));
     const statics = filtered.map((item) => ({ type: "static" as const, item }));
     const searches = searchResults.map((item) => ({ type: "search" as const, item }));
-    // Design order (overlays.html): Jump to, Actions, then Results.
     return [...statics, ...searches];
   }, [staticItems, searchResults, query]);
 
@@ -557,7 +282,7 @@ export function CommandPalette({ open, onClose }: Props) {
         e.preventDefault();
         const selected = flatItems[activeIndex];
         if (!selected) return;
-        if (selected.type === "static" && selected.item.readOnlyGated && readOnlyGate.readOnly) {
+        if (selected.type === "static" && selected.item.blocked) {
           return; // disabled while read-only: the row says why
         }
         if (selected.type === "static") {
@@ -570,7 +295,7 @@ export function CommandPalette({ open, onClose }: Props) {
         onClose();
       }
     },
-    [flatItems, activeIndex, router, onClose, readOnlyGate.readOnly],
+    [flatItems, activeIndex, router, onClose],
   );
 
   // Group items for rendering
@@ -637,10 +362,7 @@ export function CommandPalette({ open, onClose }: Props) {
                 {entries.map(({ flatIndex, item, type }) => {
                   const Icon = item.icon;
                   const isActive = flatIndex === activeIndex;
-                  const blocked =
-                    type === "static" &&
-                    !!(item as CommandItem).readOnlyGated &&
-                    readOnlyGate.readOnly;
+                  const blocked = type === "static" && !!(item as CommandItem).blocked;
                   const sublabel = blocked
                     ? (readOnlyGate.line ?? undefined)
                     : "sublabel" in item

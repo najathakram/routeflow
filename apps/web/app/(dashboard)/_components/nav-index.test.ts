@@ -1,6 +1,13 @@
 import { buildOperatorNav, type OperatorNavContext } from "./build-operator-nav";
 import { DRIVER_NAV, OPERATOR_NAV, type NavEntry } from "./nav-config";
-import { activeNavLeaf, navLeaves, navShortcuts, navShortcutTargets } from "./nav-index";
+import {
+  activeNavLeaf,
+  navLeaves,
+  navShortcuts,
+  navShortcutTargets,
+  quickActionHref,
+  quickActions,
+} from "./nav-index";
 
 const ctx = (over: Partial<OperatorNavContext> = {}): OperatorNavContext => ({
   role: "OPERATOR",
@@ -75,5 +82,56 @@ describe("navShortcuts: only the pages this person's menu holds (UXG-R8 T9)", ()
     expect(letters).not.toContain("t");
     expect(letters).not.toContain("r");
     expect(letters).toContain("d"); // Drivers stays while Deliveries keeps Dispatch
+  });
+});
+
+describe("quickActions: the creating actions follow the menu (UXG-R8)", () => {
+  const ids = (nav: NavEntry[], o: { staff?: boolean; readOnly?: boolean } = {}) =>
+    quickActions(nav, { staff: o.staff ?? true, readOnly: o.readOnly ?? false }).map((a) => a.id);
+
+  it("a full operator gets the seven actions in the palette's order", () => {
+    expect(ids(buildOperatorNav(ctx()))).toEqual([
+      "act-new-order",
+      "act-counter-sale",
+      "act-new-invoice",
+      "act-new-route",
+      "act-plan-trip",
+      "act-new-customer",
+      "act-new-product",
+    ]);
+  });
+
+  it("an action whose page the menu lacks is not offered", () => {
+    const nav = buildOperatorNav(ctx({ counterEnabled: false, routesAccess: false }));
+    expect(ids(nav)).not.toContain("act-counter-sale");
+    expect(ids(nav)).not.toContain("act-new-route");
+    expect(ids(nav)).toContain("act-plan-trip");
+  });
+
+  it("a customer or a driver gets none, whatever their menu holds (REG-B1)", () => {
+    expect(ids(buildOperatorNav(ctx({ role: "CUSTOMER" })), { staff: false })).toEqual([]);
+    expect(ids(DRIVER_NAV as NavEntry[], { staff: false })).toEqual([]);
+  });
+
+  it("read-only blocks only the actions that create records", () => {
+    const blocked = quickActions(buildOperatorNav(ctx()), { staff: true, readOnly: true })
+      .filter((a) => a.blocked)
+      .map((a) => a.id);
+    expect(blocked).toEqual([
+      "act-new-order",
+      "act-counter-sale",
+      "act-new-invoice",
+      "act-new-customer",
+      "act-new-product",
+    ]);
+  });
+
+  it("a create form opens as ?action=new; a plain page opens as is", () => {
+    const [order, counter] = quickActions(buildOperatorNav(ctx()), {
+      staff: true,
+      readOnly: false,
+    });
+    expect(quickActionHref(order)).toBe("/orders?action=new");
+    expect(quickActionHref(counter)).toBe("/orders/counter-sale");
   });
 });
