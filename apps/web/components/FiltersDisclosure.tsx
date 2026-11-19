@@ -19,21 +19,30 @@ export function activeFilterCount(
  * Below md: a "Filters (n)" button that opens the page's existing filter controls in a panel (the
  * same Hide/View chevron toggle with aria-expanded as CustomerAccountStrip). From md up the
  * controls render inline, exactly as before. The children render once, so no control is duplicated.
+ *
+ * `layout`: "block" (default) makes the root a plain block and the panel `md:block`; use it when
+ * the disclosure stands on its own, for example as a child of a `space-y-*` page column (a
+ * `display: contents` box would lose that margin) or as its own card. "contents" makes root and
+ * panel `md:contents`; use it only for a disclosure placed INSIDE a flex bar whose controls must
+ * stay direct flex items of that bar from md up (payments, supplier bills, customers).
  */
 export function FiltersDisclosure({
   count,
   children,
   toolbar,
+  layout = "block",
 }: {
   count: number;
   children: React.ReactNode;
   /** Shown on the same row as the Filters button (below md), outside the panel; for example a sort control. */
   toolbar?: React.ReactNode;
+  layout?: "block" | "contents";
 }) {
+  const contents = layout === "contents";
   const [open, setOpen] = React.useState(false);
   const panelId = React.useId();
   return (
-    <div>
+    <div className={cn(contents && "md:contents")}>
       <div className="flex items-center gap-2 md:hidden">
         <button
           type="button"
@@ -47,7 +56,14 @@ export function FiltersDisclosure({
         </button>
         {toolbar}
       </div>
-      <div id={panelId} className={cn("mt-2 md:mt-0 md:block", open ? "block" : "hidden")}>
+      <div
+        id={panelId}
+        className={cn(
+          "mt-2 md:mt-0",
+          contents ? "md:contents" : "md:block",
+          open ? "block" : "hidden",
+        )}
+      >
         {children}
       </div>
     </div>

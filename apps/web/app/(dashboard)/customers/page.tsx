@@ -21,9 +21,10 @@ import {
   ChevronUp,
   ExternalLink,
   ShieldCheck,
+  ArrowUp,
+  ArrowDown,
 } from "lucide-react";
 import {
-  PageHeader,
   Table,
   Badge,
   Button,
@@ -66,6 +67,10 @@ import {
   useDropStatementParamNotOnPage,
 } from "@/components/account-statement/OpenBalanceButton";
 import { WALK_IN_PROTECTED_COPY } from "./_components/walk-in-protection";
+import { CustomersMoreMenu } from "./_components/CustomersMoreMenu";
+import { RecordCard, RecordCardList } from "@/components/RecordCard";
+import { FiltersDisclosure, activeFilterCount } from "@/components/FiltersDisclosure";
+import { SelectionBar, SelectionBarSpacer } from "@/components/SelectionBar";
 
 // A module-level component, never an inline `cell:` closure: flexRender mounts a cell function as a
 // component, so a closure rebuilt with `columns` is a new component type on every page render and
@@ -427,6 +432,22 @@ export default function CustomersPage() {
     </button>
   );
 
+  // The phone sort control (below md) drives the same sortBy / sortDir as the table's headers.
+  // Nothing sorted shows as "Newest" (the list's own order); picking a column sorts like the
+  // table header's first click (ascending), picking Newest clears the sort. The direction button
+  // only works once a column is picked.
+  const handlePhoneSortChange = (col: string) => {
+    if (!col) {
+      setSortBy("");
+      setSortDir("asc");
+    } else if (col !== sortBy) {
+      handleSort(col);
+    }
+  };
+  const togglePhoneDirection = () => {
+    if (sortBy) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+  };
+
   // ── Edit door (SA-1084 A-2) ──────────────────────────────────────────────
   // The list row carries no tax ID, so the form is opened with the customer's detail (the only read that carries
   // the last 4). It opens once that read has loaded (the form resets when its data changes); a failed read opens
@@ -777,26 +798,101 @@ export default function CustomersPage() {
     ],
   );
 
+  // The sort control (below md only) sits beside the Filters button, or on its own row when
+  // Type is the only filter.
+  const phoneSort =
+    !isLoading && !isError && customers.length > 0 ? (
+      <div className="flex min-w-0 flex-1 items-center gap-1.5 md:hidden">
+        <div className="min-w-0 flex-1">
+          <Select
+            aria-label="Sort customers by"
+            options={[
+              { value: "", label: "Newest" },
+              { value: "contactName", label: "Name" },
+              { value: "businessName", label: "Business name" },
+            ]}
+            value={sortBy}
+            onChange={(e) => handlePhoneSortChange(e.target.value)}
+            className="h-11"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={togglePhoneDirection}
+          disabled={!sortBy}
+          aria-label={sortDir === "desc" ? "Sort ascending" : "Sort descending"}
+          className="grid h-11 w-11 shrink-0 place-items-center rounded-ctl border border-surface-border bg-white text-navy hover:bg-surface-raised disabled:opacity-40"
+        >
+          {sortDir === "desc" ? <ArrowDown className="h-4 w-4" /> : <ArrowUp className="h-4 w-4" />}
+        </button>
+      </div>
+    ) : undefined;
+
+  // Type and Tag: a visible label below md, a screen-reader label from md up (the bar is as before).
+  const typeField = (
+    <div className="flex flex-col gap-1 md:order-1 md:w-32">
+      <label
+        htmlFor="customers-type-filter"
+        className="text-xs font-medium text-navy/70 md:sr-only"
+      >
+        Type
+      </label>
+      <Select
+        id="customers-type-filter"
+        options={[
+          { value: "", label: "All types" },
+          { value: "BUSINESS", label: "Business" },
+          { value: "INDIVIDUAL", label: "Individual" },
+        ]}
+        value={typeFilter}
+        onChange={(e) => setTypeFilter(e.target.value)}
+      />
+    </div>
+  );
+  const tagField =
+    tags && tags.length > 0 ? (
+      <div className="flex flex-col gap-1 md:order-1 md:w-32">
+        <label
+          htmlFor="customers-tag-filter"
+          className="text-xs font-medium text-navy/70 md:sr-only"
+        >
+          Tag
+        </label>
+        <Select
+          id="customers-tag-filter"
+          options={[
+            { value: "", label: "All tags" },
+            ...tags.map((t) => ({ value: t.id, label: t.name })),
+          ]}
+          value={tagFilter}
+          onChange={(e) => setTagFilter(e.target.value)}
+        />
+      </div>
+    ) : null;
+
   return (
     <div className="space-y-5 p-6">
-      <PageHeader
-        title="Customers"
-        subtitle={
-          meta?.total != null
-            ? `${meta.total} customer${meta.total !== 1 ? "s" : ""} · your current filters are saved in the page link — copy the URL to share this view.`
-            : "Your current filters are saved in the page link — copy the URL to share this view."
-        }
-        action={
-          // B749: overflowed at 390px because PageHeader's own action wrapper (shrink-0, no
-          // max-w-full) never actually shrank enough for THIS flex-wrap to trigger — fixed at
-          // the PageHeader level too (packages/ui/src/web/PageHeader.tsx), this row's own
-          // wrap is still needed so the content itself has somewhere to go once it can.
+      {/* Header: below md the title and New customer share one row, the description is hidden and
+          Import / Export / Select live in a More menu; from md up it is the PageHeader layout with
+          plain buttons. */}
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
+        <div className="shrink">
+          <h2 className="whitespace-nowrap text-2xl font-bold text-navy">Customers</h2>
+          <p className="mt-1 hidden text-sm text-navy/70 md:block">
+            {meta?.total != null
+              ? `${meta.total} customer${meta.total !== 1 ? "s" : ""} · your current filters are saved in the page link — copy the URL to share this view.`
+              : "Your current filters are saved in the page link — copy the URL to share this view."}
+          </p>
+        </div>
+        {/* B749: this row's own wrap is still needed so the content has somewhere to go. */}
+        <div className="max-w-full shrink-0">
           <div className="flex flex-wrap items-center justify-end gap-2">
             {canImport && (
               <Button
                 variant="secondary"
                 leftIcon={<Upload className="h-4 w-4" />}
                 onClick={() => setIsImportOpen(true)}
+                className="hidden md:inline-flex"
               >
                 Import
               </Button>
@@ -806,6 +902,7 @@ export default function CustomersPage() {
               leftIcon={<Download className="h-4 w-4" />}
               onClick={() => exportCustomers.mutate(exportParams)}
               loading={exportCustomers.isPending}
+              className="hidden md:inline-flex"
             >
               Export
             </Button>
@@ -816,34 +913,67 @@ export default function CustomersPage() {
                   selectMode ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />
                 }
                 onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
+                className="hidden md:inline-flex"
               >
                 {selectMode ? "Cancel" : "Select"}
               </Button>
             )}
-            <WriteButton onClick={() => setIsAddOpen(true)}>New customer</WriteButton>
+            <CustomersMoreMenu
+              items={[
+                ...(canImport ? [{ label: "Import", onSelect: () => setIsImportOpen(true) }] : []),
+                {
+                  label: "Export",
+                  onSelect: () => exportCustomers.mutate(exportParams),
+                  disabled: exportCustomers.isPending,
+                },
+                ...(!removedFilter
+                  ? [
+                      {
+                        label: selectMode ? "Cancel" : "Select",
+                        onSelect: () => (selectMode ? exitSelectMode() : setSelectMode(true)),
+                      },
+                    ]
+                  : []),
+              ]}
+            />
+            <WriteButton className="min-h-[44px] md:min-h-0" onClick={() => setIsAddOpen(true)}>
+              New customer
+            </WriteButton>
           </div>
-        }
-      />
+        </div>
+      </div>
 
       <ReadOnlyHint className="px-1 text-xs text-slate-600" />
 
       {/* Selection action bar — never shown in the trash view (F3): the operator can only
           View + inline Restore a removed row, never bulk-act on it. */}
       {!removedFilter && selectMode && selected.size > 0 && (
-        <div className="flex items-center justify-between rounded-lg border border-danger/30 bg-danger-bg px-4 py-3">
+        <SelectionBar
+          className="flex items-center justify-between rounded-lg border border-danger/30 bg-danger-bg px-4 py-3 max-md:flex-wrap max-md:gap-2"
+          selectAll={{
+            checked: allChecked,
+            indeterminate: someChecked && !allChecked,
+            label: "Select all customers on this page",
+            onChange: () => {
+              if (allChecked) setSelected(new Set());
+              else setSelected(new Set(allVisibleIds));
+            },
+          }}
+        >
           <span className="text-sm font-medium text-navy">
             {selected.size} customer{selected.size !== 1 ? "s" : ""} selected
           </span>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 max-md:flex-wrap">
             <button
               onClick={() => setSelected(new Set())}
-              className="text-sm text-navy/70 hover:text-navy transition-colors"
+              className="text-sm text-navy/70 hover:text-navy transition-colors max-md:min-h-[44px]"
             >
               Deselect all
             </button>
             {selected.size === 2 && (
               <Button
                 variant="secondary"
+                className="max-md:min-h-[44px]"
                 leftIcon={<Merge className="h-4 w-4" />}
                 onClick={handleMerge}
                 loading={mergeCustomers.isPending}
@@ -853,6 +983,7 @@ export default function CustomersPage() {
             )}
             <Button
               variant="danger"
+              className="max-md:min-h-[44px]"
               leftIcon={<Trash2 className="h-4 w-4" />}
               loading={isDeleting}
               onClick={() => setShowBulkDeleteConfirm(true)}
@@ -860,7 +991,7 @@ export default function CustomersPage() {
               Delete {selected.size}
             </Button>
           </div>
-        </div>
+        </SelectionBar>
       )}
 
       {/* Pending portal connection approvals */}
@@ -948,117 +1079,244 @@ export default function CustomersPage() {
 
       {/* Filter + table card */}
       <div className="rounded-lg border border-surface-border bg-white shadow-card">
-        {/* Filter bar */}
-        <div className="flex flex-wrap items-center gap-2.5 border-b border-surface-border px-4 py-3">
-          {/* Status filter chips */}
-          {[
-            { value: "", label: "All" },
-            { value: "ACTIVE", label: "Active" },
-            { value: "INACTIVE", label: "Inactive" },
-            { value: "SUSPENDED", label: "Suspended" },
-          ].map((o) => (
+        {/* Filter bar: search is always visible and first below md; the status and other chips are one
+            sideways row; Type and Tag open from "Filters (n)" next to the sort control. From md up it
+            is the same inline bar in the same order (the chip row uses md:contents, the md:order-*
+            classes keep each item where it was). */}
+        <div className="flex flex-col gap-2 border-b border-surface-border px-4 py-3 md:flex-row md:flex-wrap md:items-center md:gap-2.5">
+          <div className="order-2 flex snap-x items-center gap-2 overflow-x-auto scrollbar-hide md:contents">
+            {/* Status filter chips */}
+            {[
+              { value: "", label: "All" },
+              { value: "ACTIVE", label: "Active" },
+              { value: "INACTIVE", label: "Inactive" },
+              { value: "SUSPENDED", label: "Suspended" },
+            ].map((o) => (
+              <button
+                key={o.value || "all"}
+                onClick={() => setUrlFilter("status", o.value)}
+                className={cn(
+                  "inline-flex h-11 shrink-0 snap-start items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap transition-colors md:h-7",
+                  statusFilter === o.value
+                    ? "border-navy bg-navy text-white"
+                    : "border-surface-border bg-white text-navy hover:bg-surface-raised",
+                )}
+              >
+                {o.label}
+              </button>
+            ))}
+
+            {/* Regulated filter chip — customers holding at least one authorization against a
+                license-requiring tracked category (API side: WP15) */}
             <button
-              key={o.value || "all"}
-              onClick={() => setUrlFilter("status", o.value)}
+              onClick={() => setUrlFilter("regulated", !regulatedFilter)}
               className={cn(
-                "inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap transition-colors",
-                statusFilter === o.value
+                "inline-flex h-11 shrink-0 snap-start items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap transition-colors md:h-7",
+                regulatedFilter
                   ? "border-navy bg-navy text-white"
                   : "border-surface-border bg-white text-navy hover:bg-surface-raised",
               )}
             >
-              {o.label}
+              <ShieldCheck className="h-3.5 w-3.5" />
+              Regulated
             </button>
-          ))}
 
-          {/* Regulated filter chip — customers holding at least one authorization against a
-              license-requiring tracked category (API side: WP15) */}
-          <button
-            onClick={() => setUrlFilter("regulated", !regulatedFilter)}
-            className={cn(
-              "inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap transition-colors",
-              regulatedFilter
-                ? "border-navy bg-navy text-white"
-                : "border-surface-border bg-white text-navy hover:bg-surface-raised",
+            {/* Unassigned only toggle chip (fleet accounts only) */}
+            {fleet && (
+              <button
+                onClick={() => setUrlFilter("unassigned", !unassignedFilter)}
+                className={cn(
+                  "inline-flex h-11 shrink-0 snap-start items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap transition-colors md:h-7 md:order-2",
+                  unassignedFilter
+                    ? "border-brand-500 bg-brand-50 text-brand-600"
+                    : "border-surface-border bg-white text-navy hover:bg-surface-raised",
+                )}
+              >
+                <span
+                  className={cn(
+                    "inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border text-[10px]",
+                    unassignedFilter
+                      ? "border-brand-500 bg-brand-500 text-white"
+                      : "border-navy/30",
+                  )}
+                >
+                  {unassignedFilter && "✓"}
+                </span>
+                Unassigned only
+              </button>
             )}
-          >
-            <ShieldCheck className="h-3.5 w-3.5" />
-            Regulated
-          </button>
 
-          {/* Type filter */}
-          <div className="w-32">
-            <Select
-              options={[
-                { value: "", label: "All types" },
-                { value: "BUSINESS", label: "Business" },
-                { value: "INDIVIDUAL", label: "Individual" },
-              ]}
-              value={typeFilter}
-              onChange={(e) => setTypeFilter(e.target.value)}
-            />
-          </div>
-
-          {/* Tag filter */}
-          {tags && tags.length > 0 && (
-            <div className="w-32">
-              <Select
-                options={[
-                  { value: "", label: "All tags" },
-                  ...tags.map((t) => ({ value: t.id, label: t.name })),
-                ]}
-                value={tagFilter}
-                onChange={(e) => setTagFilter(e.target.value)}
-              />
-            </div>
-          )}
-
-          {/* Unassigned only toggle chip (fleet accounts only) */}
-          {fleet && (
+            {/* REG-B170: removed (soft-deleted) customers trash view */}
             <button
-              onClick={() => setUrlFilter("unassigned", !unassignedFilter)}
+              onClick={() => setUrlFilter("removed", !removedFilter)}
               className={cn(
-                "inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap transition-colors",
-                unassignedFilter
-                  ? "border-brand-500 bg-brand-50 text-brand-600"
+                "inline-flex h-11 shrink-0 snap-start items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap transition-colors md:h-7 md:order-2",
+                removedFilter
+                  ? "border-danger bg-danger-bg text-danger"
                   : "border-surface-border bg-white text-navy hover:bg-surface-raised",
               )}
             >
-              <span
-                className={cn(
-                  "inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border text-[10px]",
-                  unassignedFilter ? "border-brand-500 bg-brand-500 text-white" : "border-navy/30",
-                )}
-              >
-                {unassignedFilter && "✓"}
-              </span>
-              Unassigned only
+              <Trash2 className="h-3.5 w-3.5" />
+              Removed
             </button>
-          )}
+          </div>
 
-          {/* REG-B170: removed (soft-deleted) customers trash view */}
-          <button
-            onClick={() => setUrlFilter("removed", !removedFilter)}
-            className={cn(
-              "inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap transition-colors",
-              removedFilter
-                ? "border-danger bg-danger-bg text-danger"
-                : "border-surface-border bg-white text-navy hover:bg-surface-raised",
+          {/* Type + Tag filters, and the phone sort control */}
+          <div className="order-3 md:contents">
+            {tags && tags.length > 0 ? (
+              <FiltersDisclosure
+                layout="contents"
+                count={activeFilterCount({ typeFilter, tagFilter })}
+                toolbar={phoneSort}
+              >
+                <div className="flex flex-col gap-2 md:contents">
+                  {typeField}
+                  {tagField}
+                </div>
+              </FiltersDisclosure>
+            ) : (
+              <div className="flex flex-col gap-2 md:contents">
+                {phoneSort}
+                {typeField}
+              </div>
             )}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            Removed
-          </button>
+          </div>
 
-          {/* Search — pushed to the right */}
+          {/* Search — first below md; pushed to the right from md up */}
           <input
             type="search"
             placeholder="Name, business or phone…"
+            aria-label="Search customers"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="ml-auto h-8 w-64 rounded-lg border border-surface-border bg-white px-3 text-xs text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="order-1 h-11 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500 md:order-3 md:ml-auto md:h-8 md:w-64 md:text-xs"
           />
         </div>
+
+        {/* Phone cards below md (the table takes over from md up); loading, error and an empty list
+            keep the table's own states at every width. */}
+        {!isLoading && !isError && customers.length > 0 && (
+          <div className="p-3 md:hidden">
+            <RecordCardList>
+              {customers.map((c) => {
+                const name = c.contactName || c.businessName;
+                const status = c.user?.status ?? "ACTIVE";
+                const balance = c.openBalance ?? 0;
+                const tagList = c.tagAssignments ?? [];
+                const tap =
+                  "grid min-h-[44px] min-w-[44px] place-items-center rounded p-1.5 transition-colors";
+                return (
+                  <RecordCard
+                    key={c.id}
+                    href={`/customers/${c.id}`}
+                    title={name}
+                    titleKind="name"
+                    amount={
+                      <OpenBalanceButton
+                        customerId={c.id}
+                        className="relative z-10 -my-2.5 min-w-[44px] justify-end sm:min-h-[44px]"
+                      >
+                        {fmt(balance)}
+                      </OpenBalanceButton>
+                    }
+                    amountLabel="Open balance"
+                    amountTone={balance > 0 ? "danger" : "default"}
+                    subtitle={
+                      c.businessName && c.businessName !== name ? c.businessName : undefined
+                    }
+                    badges={
+                      <>
+                        {c.deletedAt ? (
+                          <Badge variant="danger" label="Removed" />
+                        ) : (
+                          <Badge status={status as BadgeStatus} />
+                        )}
+                        {(c.regulatedCount ?? 0) > 0 && (
+                          <span title="Sells regulated items" className="shrink-0 text-amber-600">
+                            <ShieldCheck className="h-3.5 w-3.5" />
+                          </span>
+                        )}
+                        {tagList.slice(0, 2).map((ta) => (
+                          <span
+                            key={ta.tag.id}
+                            title={ta.tag.name}
+                            className="inline-block max-w-[7rem] truncate rounded-full px-2 py-0.5 text-[10px] font-medium text-white"
+                            style={{ backgroundColor: ta.tag.color }}
+                          >
+                            {ta.tag.name}
+                          </span>
+                        ))}
+                        {tagList.length > 2 && (
+                          <span className="text-xs text-navy/70">+{tagList.length - 2}</span>
+                        )}
+                      </>
+                    }
+                    meta={
+                      c.phone ? (
+                        <a
+                          href={`tel:${c.phone.replace(/[^\d+]/g, "")}`}
+                          className="relative z-10 inline-flex min-h-[44px] items-center font-mono text-[11px] tabular-nums underline"
+                        >
+                          {c.phone}
+                        </a>
+                      ) : undefined
+                    }
+                    actions={
+                      c.deletedAt ? (
+                        <button
+                          type="button"
+                          aria-label={`Restore ${name}`}
+                          onClick={() => restoreCustomer.mutate({ id: c.id })}
+                          disabled={restoreCustomer.isPending}
+                          className={`${tap} text-brand-600 hover:bg-brand-50`}
+                        >
+                          <UserCheck className="h-4 w-4" />
+                        </button>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            aria-label={`Edit ${name}`}
+                            disabled={openingEditId !== null}
+                            onClick={() => void openEdit(c.id)}
+                            className={`${tap} text-navy/70 hover:bg-surface-raised hover:text-navy`}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          {!c.isWalkIn && (
+                            <button
+                              type="button"
+                              aria-label={`${status === "ACTIVE" ? "Deactivate" : "Activate"} ${name}`}
+                              onClick={() => toggleStatus(c.id, status, c.businessName)}
+                              className={cn(
+                                tap,
+                                "ml-2",
+                                status === "ACTIVE"
+                                  ? "text-success hover:bg-success-bg"
+                                  : "text-navy/30 hover:bg-surface-raised hover:text-navy",
+                              )}
+                            >
+                              {status === "ACTIVE" ? (
+                                <ToggleRight className="h-4 w-4" />
+                              ) : (
+                                <ToggleLeft className="h-4 w-4" />
+                              )}
+                            </button>
+                          )}
+                        </>
+                      )
+                    }
+                    selected={selected.has(c.id)}
+                    onSelectedChange={selectMode ? () => toggleSelect(c.id) : undefined}
+                    tapToSelect
+                    selectDisabled={c.isWalkIn === true}
+                    selectDisabledReason={WALK_IN_PROTECTED_COPY}
+                  />
+                );
+              })}
+            </RecordCardList>
+          </div>
+        )}
 
         {/* Loading / Error / Table */}
         {isLoading ? (
@@ -1074,93 +1332,95 @@ export default function CustomersPage() {
             </span>
           </div>
         ) : (
-          <Table
-            className="border-0 rounded-none overflow-x-auto"
-            data={visibleCustomers}
-            columns={columns}
-            onRowClick={(row) => {
-              if (selectMode) toggleSelect(row.original.id);
-              else router.push(`/customers/${row.original.id}`);
-            }}
-            emptyState={
-              removedFilter ? (
-                <EmptyState
-                  className={EMPTY_FIT}
-                  variant="customers"
-                  title="No removed customers"
-                  description="Nothing is in the trash right now."
-                  action={
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => setUrlFilter("removed", false)}
-                    >
-                      Show all customers
-                    </Button>
-                  }
-                />
-              ) : unassignedFilter ? (
-                <EmptyState
-                  className={EMPTY_FIT}
-                  variant="customers"
-                  title="No unassigned customers"
-                  description="Every customer is already assigned to a route."
-                  action={
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => setUrlFilter("unassigned", false)}
-                    >
-                      Show all customers
-                    </Button>
-                  }
-                />
-              ) : search || statusFilter || typeFilter || tagFilter || regulatedFilter ? (
-                <EmptyState
-                  className={EMPTY_FIT}
-                  variant="customers"
-                  title="No matching customers"
-                  description="No customers match your current search and filters."
-                  action={
-                    <div className="flex flex-wrap items-center justify-center gap-2">
-                      {search && (
-                        <Button variant="secondary" size="sm" onClick={() => setSearch("")}>
-                          Clear search
-                        </Button>
-                      )}
+          <div className={cn(customers.length > 0 && "hidden md:block")}>
+            <Table
+              className="border-0 rounded-none overflow-x-auto"
+              data={visibleCustomers}
+              columns={columns}
+              onRowClick={(row) => {
+                if (selectMode) toggleSelect(row.original.id);
+                else router.push(`/customers/${row.original.id}`);
+              }}
+              emptyState={
+                removedFilter ? (
+                  <EmptyState
+                    className={EMPTY_FIT}
+                    variant="customers"
+                    title="No removed customers"
+                    description="Nothing is in the trash right now."
+                    action={
                       <Button
                         variant="secondary"
                         size="sm"
-                        onClick={() => {
-                          setSearch("");
-                          setTypeFilter("");
-                          setTagFilter("");
-                          // One clearAll, not two setFilter calls: each setFilter rebuilds the
-                          // query string from the same render's searchParams, so the second
-                          // replace would restore the param the first one removed.
-                          clearUrlFilters();
-                        }}
+                        onClick={() => setUrlFilter("removed", false)}
                       >
-                        Clear filters
+                        Show all customers
                       </Button>
-                    </div>
-                  }
-                />
-              ) : (
-                <EmptyState
-                  className={EMPTY_FIT}
-                  variant="customers"
-                  title="No customers yet"
-                  description="Add your first customer to start taking orders and sending invoices."
-                  action={
-                    <WriteButton size="sm" onClick={() => setIsAddOpen(true)}>
-                      Add customer
-                    </WriteButton>
-                  }
-                />
-              )
-            }
-          />
+                    }
+                  />
+                ) : unassignedFilter ? (
+                  <EmptyState
+                    className={EMPTY_FIT}
+                    variant="customers"
+                    title="No unassigned customers"
+                    description="Every customer is already assigned to a route."
+                    action={
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => setUrlFilter("unassigned", false)}
+                      >
+                        Show all customers
+                      </Button>
+                    }
+                  />
+                ) : search || statusFilter || typeFilter || tagFilter || regulatedFilter ? (
+                  <EmptyState
+                    className={EMPTY_FIT}
+                    variant="customers"
+                    title="No matching customers"
+                    description="No customers match your current search and filters."
+                    action={
+                      <div className="flex flex-wrap items-center justify-center gap-2">
+                        {search && (
+                          <Button variant="secondary" size="sm" onClick={() => setSearch("")}>
+                            Clear search
+                          </Button>
+                        )}
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => {
+                            setSearch("");
+                            setTypeFilter("");
+                            setTagFilter("");
+                            // One clearAll, not two setFilter calls: each setFilter rebuilds the
+                            // query string from the same render's searchParams, so the second
+                            // replace would restore the param the first one removed.
+                            clearUrlFilters();
+                          }}
+                        >
+                          Clear filters
+                        </Button>
+                      </div>
+                    }
+                  />
+                ) : (
+                  <EmptyState
+                    className={EMPTY_FIT}
+                    variant="customers"
+                    title="No customers yet"
+                    description="Add your first customer to start taking orders and sending invoices."
+                    action={
+                      <WriteButton size="sm" onClick={() => setIsAddOpen(true)}>
+                        Add customer
+                      </WriteButton>
+                    }
+                  />
+                )
+              }
+            />
+          </div>
         )}
 
         {/* Pagination footer */}
@@ -1230,6 +1490,11 @@ export default function CustomersPage() {
           </div>
         )}
       </div>
+
+      {/* Room for the fixed selection bar below md, after the pagination footer so the footer
+          stays reachable. h-44 covers the bar: select-all row, count, and the wrapped
+          Deselect / Merge / Delete controls. Same condition as the bar. */}
+      {!removedFilter && selectMode && selected.size > 0 && <SelectionBarSpacer className="h-44" />}
 
       {/* Bulk delete confirmation — names the selected customers where feasible
           (REG-B130), falling back to a bare count past a readable cap. */}
