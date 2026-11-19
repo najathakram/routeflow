@@ -1,6 +1,8 @@
 // REG-B752: updateOrderItems and the change-request merge re-totalled an order with NO discount term, so every edit of a discounted
 // order overstated Order.total by exactly discountAmount (and fed that too-high figure to the credit gate). Both edit paths now
 // call editedOrderTotals (W-762, eef55bcdce), which applies the order's STORED discountAmount: the wrong value is total = subtotal + shipping.
+import { readFileSync } from "fs";
+import { join } from "path";
 import { editedOrderTotals } from "./order-totals";
 
 describe("REG-B752: an edit re-total keeps the order discount", () => {
@@ -33,5 +35,17 @@ describe("REG-B752: an edit re-total keeps the order discount", () => {
     );
     expect(totals.total).toBeLessThan(undiscounted.total);
     expect(totals.total).toBeLessThanOrEqual(undiscounted.total - 10 + 0.01);
+  });
+
+  // The helper alone is not the fix: both edit paths (updateOrderItems, the change-request apply) must still route their
+  // re-total through it with the STORED order, the one carrying discountAmount. A call site that sums by hand, or passes
+  // no order, drops the discount again (the B752 wrong value).
+  it("REG-B752: updateOrderItems and the change-request apply both re-total through editedOrderTotals with the stored order", () => {
+    const src = readFileSync(join(__dirname, "orders.service.ts"), "utf8");
+    const calls = [...src.matchAll(/editedOrderTotals\(\s*activeItems,\s*(\w+),/g)].map(
+      (m) => m[1],
+    );
+    expect(calls).toEqual(["order", "live"]);
+    expect(src).not.toMatch(/subtotal\s*\+\s*tax\s*\+\s*categoryTax\s*\+\s*shippingFee/);
   });
 });
