@@ -111,6 +111,31 @@ describe("SettingsPage — User management: Add User", () => {
     expect(createOperatorMutateAsync).not.toHaveBeenCalled();
   });
 
+  // B862 review N1: the driver made from this page must show in THIS page's list (query key ["users"]), else the
+  // list stays stale for 30 s and a retry answers "Email already in use".
+  it("creating the handed-off driver also refreshes the users list", async () => {
+    const { apiClient } = jest.requireMock("@/lib/api-client");
+    (apiClient.post as jest.Mock).mockResolvedValue({
+      data: { driver: { id: "d1" }, tempPassword: "Tmp-Pw-2" },
+    });
+    const user = userEvent.setup();
+    const { queryClient } = renderWithProviders(<SettingsPage />);
+    const invalidate = jest.spyOn(queryClient, "invalidateQueries");
+
+    await user.click(await screen.findByRole("button", { name: /^add user$/i }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.type(dialog.getByLabelText("Full Name"), "New Hire");
+    await user.type(dialog.getByLabelText("Email"), "newhire@example.com");
+    await user.selectOptions(dialog.getByLabelText("Role"), "DRIVER");
+    const driverDialog = within(await screen.findByRole("dialog", { name: /add driver/i }));
+    await user.click(driverDialog.getByRole("button", { name: /^create driver$/i }));
+
+    await waitFor(() => expect(apiClient.post).toHaveBeenCalledWith("/drivers", expect.anything()));
+    await waitFor(() =>
+      expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: ["users"] })),
+    );
+  });
+
   it("Add User defaults to Operator", async () => {
     const user = userEvent.setup();
     renderWithProviders(<SettingsPage />);

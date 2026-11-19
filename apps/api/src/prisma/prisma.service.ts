@@ -386,8 +386,8 @@ export class PrismaService
                   // create-side injection landed) makes the upsert resolve `null` and the
                   // caller 500s. Scoping `where` needs (1) a null guard throwing
                   // `tenantNotFound` and (2) a backfill migration for legacy rows —
-                  // tracked follow-on; today every tx-proxy upsert caller keys on the
-                  // tenant id or a compound unique, so the gap is unexploited.
+                  // tracked follow-on; today most tx-proxy upsert callers key on the
+                  // tenant id or a compound unique; the driver row (ensureDriverRow) keys on its unique userId.
                   args = {
                     ...args,
                     create: stampNestedTenant(modelClass, { ...args.create, tenantId }, tenantId),

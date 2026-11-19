@@ -4,7 +4,7 @@
  *  (b) updateUser(op -> DRIVER) writes an ACTIVE Driver row in the same transaction;
  *  (c) updateUser(DRIVER -> OPERATOR) sets the row INACTIVE, or refuses with a coded 409 when a run is open;
  *  (d) toggleDriverPermit enables through the same helper, inside a transaction;
- *  (e) the inventory pin: driver.create / driver.upsert appear only in drivers.service.ts.
+ *  (e) the inventory pin: a Driver row is written only inside ensureDriverRow (drivers.service.ts).
  */
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
@@ -145,12 +145,43 @@ describe("B862 inventory pin (K1, K5e)", () => {
       return statSync(p).isDirectory() ? walk(p) : p.endsWith(".ts") ? [p] : [];
     });
 
-  it("driver.create( and driver.upsert( appear only in drivers.service.ts (specs and DB fixtures excepted)", () => {
+  /** A Driver write: `x.driver.create(` and friends, or the nested form `driver: { create: ... }`. */
+  const DRIVER_WRITE =
+    /(^|[^A-Za-z])driver[^A-Za-z]{1,12}(create|createMany|upsert|connectOrCreate)([^A-Za-z]|$)/;
+  const NL = String.fromCharCode(10);
+  /** drivers.service.ts minus the body of ensureDriverRow, the one place a Driver row is written. */
+  const withoutWriter = (src: string): string => {
+    const fn = src.indexOf("export async function ensureDriverRow");
+    const start = src.lastIndexOf("/**", fn); // its doc comment names the call forms too
+    if (fn < 0 || start < 0) return src;
+    const end = src.indexOf(NL + "}", fn) + 2;
+    return src.slice(0, start) + src.slice(end);
+  };
+
+  it("the detector sees both the call form and the nested form", () => {
+    expect(DRIVER_WRITE.test("await tx.driver.create({ data })")).toBe(true);
+    expect(DRIVER_WRITE.test("await tx.driver.upsert({ where })")).toBe(true);
+    expect(DRIVER_WRITE.test("user.update({ data: { driver: { create: { phone: '' } } } })")).toBe(
+      true,
+    );
+    expect(DRIVER_WRITE.test("tx.driver.updateMany({ where })")).toBe(false);
+  });
+
+  it("only ensureDriverRow writes a Driver row (specs and testing fixtures excepted)", () => {
     const offenders = walk(SRC)
-      .filter((p) => !/\.spec\.ts$/.test(p) && !p.includes(`${join("testing")}`))
-      .filter((p) => !p.endsWith(join("drivers", "drivers.service.ts")))
-      .filter((p) => /\bdriver\.(create|upsert|createMany)\(/.test(readFileSync(p, "utf8")))
+      .filter((p) => !p.endsWith(".spec.ts") && !p.includes(join("src", "testing")))
+      .filter((p) => {
+        const src = readFileSync(p, "utf8");
+        return DRIVER_WRITE.test(
+          p.endsWith(join("drivers", "drivers.service.ts")) ? withoutWriter(src) : src,
+        );
+      })
       .map((p) => p.slice(SRC.length + 1));
     expect(offenders).toEqual([]);
+  });
+  it("ensureDriverRow itself still writes the row (the exemption is not vacuous)", () => {
+    const src = readFileSync(join(SRC, "drivers", "drivers.service.ts"), "utf8");
+    expect(DRIVER_WRITE.test(src)).toBe(true);
+    expect(DRIVER_WRITE.test(withoutWriter(src))).toBe(false);
   });
 });
