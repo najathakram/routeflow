@@ -89,7 +89,13 @@ describe("SA-740 §1: counter return source-sale pinning", () => {
       providers: [
         InlineReturnsQuoteService,
         { provide: PrismaService, useValue: prisma },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
       ],
     }).compile();
     service = moduleRef.get(InlineReturnsQuoteService);

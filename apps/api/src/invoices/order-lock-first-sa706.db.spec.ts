@@ -86,6 +86,7 @@ describeDb("invoice creation locks the Order row before its INSERT (SA-706)", ()
   };
   const mockSystemConfig = {
     get: jest.fn().mockResolvedValue(null),
+    getAll: jest.fn().mockResolvedValue({}),
     set: jest.fn().mockResolvedValue(undefined),
   };
   // settleOrderCreditsInTx's FIRST statements are lockOrderCreditSettle (Order FOR UPDATE, then the

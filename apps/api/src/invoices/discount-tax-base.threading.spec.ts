@@ -97,7 +97,10 @@ describe("case 8: a new invoice's tax comes off the discounted base", () => {
           useValue: { sendInvoice: jest.fn(), isEmailConfigured: jest.fn() },
         },
         { provide: InvoicePdfService, useValue: { getOrGenerate: jest.fn() } },
-        { provide: SystemConfigService, useValue: { get: jest.fn(), set: jest.fn() } },
+        {
+          provide: SystemConfigService,
+          useValue: { get: jest.fn(), getAll: jest.fn().mockResolvedValue({}), set: jest.fn() },
+        },
         {
           provide: RegulatedLedgerService,
           useValue: {

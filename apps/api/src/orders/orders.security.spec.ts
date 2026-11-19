@@ -70,7 +70,13 @@ describe("OrdersService — cross-tenant id 404s on scoped reads", () => {
         { provide: RouteFlowGateway, useValue: { emitOrderStatusChanged: jest.fn() } },
         { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(0.1) } },
         { provide: InvoicesService, useValue: {} },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: NotificationsService, useValue: {} },
         { provide: InventoryService, useValue: {} },
         {

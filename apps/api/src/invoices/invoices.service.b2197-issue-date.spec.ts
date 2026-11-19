@@ -57,6 +57,7 @@ describe("InvoicesService — #2197 issueDate is the literal calendar day", () =
   };
   const mockSystemConfig = {
     get: jest.fn().mockResolvedValue(null),
+    getAll: jest.fn().mockResolvedValue({}),
     set: jest.fn().mockResolvedValue(undefined),
   };
   const mockMessaging = {

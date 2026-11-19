@@ -463,7 +463,7 @@ describeDb("balanceDueSql — SQL <-> TS parity (SA-770), real Postgres", () => 
     const service = Object.create(InvoicesService.prototype) as InvoicesService;
     Object.assign(service as any, {
       prisma,
-      systemConfig: { get: async () => null },
+      systemConfig: { get: async () => null, getAll: async () => ({}) },
     });
     return service;
   }

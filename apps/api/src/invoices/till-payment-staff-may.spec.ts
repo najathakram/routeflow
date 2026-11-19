@@ -55,7 +55,13 @@ describe("InvoicesService: delete / update / bounce of a till payment need VOID_
         { provide: RouteFlowGateway, useValue: { emitInvoiceUpdated: jest.fn() } },
         { provide: EmailService, useValue: {} },
         { provide: InvoicePdfService, useValue: { getOrGenerate: jest.fn() } },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: RegulatedLedgerService, useValue: {} },
         { provide: AuthorizationGuardService, useValue: {} },
         { provide: CreditNotesService, useValue: {} },

@@ -62,7 +62,10 @@ describe("order templates: a buyer's create/update goes through the portal visib
         OrderTemplatesService,
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: { run: jest.fn((_i, fn) => fn()) } },
-        { provide: SystemConfigService, useValue: { get: jest.fn() } },
+        {
+          provide: SystemConfigService,
+          useValue: { get: jest.fn(), getAll: jest.fn().mockResolvedValue({}) },
+        },
         { provide: OrdersService, useValue: {} },
         { provide: AuthorizationGuardService, useValue: {} },
         { provide: NotificationsService, useValue: {} },

@@ -107,6 +107,7 @@ describeDb("header-only invoice PATCH on the one builder - real Postgres (B1043/
           provide: SystemConfigService,
           useValue: {
             get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
             set: jest.fn().mockResolvedValue(undefined),
           },
         },

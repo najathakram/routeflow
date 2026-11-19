@@ -78,6 +78,7 @@ describeDb("SA-1050 R-W2 / G-W4: invoice delete vs write-off history — real Po
   };
   const mockSystemConfig = {
     get: jest.fn().mockResolvedValue(null),
+    getAll: jest.fn().mockResolvedValue({}),
     set: jest.fn().mockResolvedValue(undefined),
   };
   const mockCreditNotes = {

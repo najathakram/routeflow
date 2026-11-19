@@ -60,6 +60,7 @@ describe('InvoicesService: a tenant deposit default of "0" means NO deposit (row
   };
   const mockSystemConfig = {
     get: jest.fn().mockResolvedValue(null),
+    getAll: jest.fn().mockResolvedValue({}),
     set: jest.fn().mockResolvedValue(undefined),
   };
   const mockMessaging = {

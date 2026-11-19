@@ -110,7 +110,13 @@ async function build(
       { provide: PrismaService, useValue: prisma },
       { provide: StorageService, useValue: { presignedUrls: jest.fn().mockResolvedValue([]) } },
       { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(false) } },
-      { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+      {
+        provide: SystemConfigService,
+        useValue: {
+          get: jest.fn().mockResolvedValue(null),
+          getAll: jest.fn().mockResolvedValue({}),
+        },
+      },
       {
         provide: EntitlementsService,
         useValue: {

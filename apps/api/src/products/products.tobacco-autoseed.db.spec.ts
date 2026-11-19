@@ -62,7 +62,13 @@ describeDb("row 430: the first-tobacco auto-seed is audited — real Postgres", 
         },
         // Tobacco is a gated add-on: this tenant holds it.
         { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(true) } },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
         entitlementAuthorityFromEntitlements,
         { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },

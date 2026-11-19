@@ -89,6 +89,7 @@ describeDb("SA-1101 refused order — stop close outcomes, real Postgres", () =>
   };
   const mockSystemConfig = {
     get: jest.fn().mockResolvedValue(null),
+    getAll: jest.fn().mockResolvedValue({}),
     set: jest.fn().mockResolvedValue(undefined),
   };
   const mockCreditNotes = {

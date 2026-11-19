@@ -62,7 +62,13 @@ describeDb("SA-603a code release, lazy reuse, restore and name rule — real Pos
           },
         },
         { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(false) } },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
         { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         entitlementAuthorityFromEntitlements,

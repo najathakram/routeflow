@@ -101,7 +101,10 @@ export async function buildOversellOrders(policy: PolicyFor = "off") {
         releaseWalletPaymentsInTx: jest.fn().mockResolvedValue({ credits: [], advances: 0 }),
       },
     ],
-    [SystemConfigService, { get: jest.fn().mockResolvedValue(null) }],
+    [
+      SystemConfigService,
+      { get: jest.fn().mockResolvedValue(null), getAll: jest.fn().mockResolvedValue({}) },
+    ],
     [
       SellingRestrictionsService,
       {

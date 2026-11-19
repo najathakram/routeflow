@@ -120,6 +120,7 @@ describeDb("#2716c — edited order's next invoice copies DISCOUNTED + list, rea
           provide: SystemConfigService,
           useValue: {
             get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
             set: jest.fn().mockResolvedValue(undefined),
           },
         },
