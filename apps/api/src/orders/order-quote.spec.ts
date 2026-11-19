@@ -116,7 +116,7 @@ describe("quoteForBuyer is create()'s own number", () => {
 
   it("5: a quantity-break promotion is netted in the quoted subtotal", async () => {
     const h = await setup();
-    h.module.get(PromotionsService).activeForCatalog.mockResolvedValue([
+    (h.module.get(PromotionsService).activeForCatalog as jest.Mock).mockResolvedValue([
       {
         id: "promo-1",
         type: "QTY_BREAK",
@@ -203,7 +203,9 @@ describe("16: the quote is the cart alone; a fold is priced on the combined qty"
   };
   it("an open order holding 3 of a buy-5-get-1 product plus 3 in the cart: the fold total is not old + quote", async () => {
     const h = await setup();
-    h.module.get(PromotionsService).activeForCatalog.mockResolvedValue([BOGO] as never);
+    (h.module.get(PromotionsService).activeForCatalog as jest.Mock).mockResolvedValue([
+      BOGO,
+    ] as never);
     const oldOrder = await quote(h, [{ productId: "p-12pack", qty: 3 }]); // what the open order holds
     const cartOnly = await quote(h, [{ productId: "p-12pack", qty: 3 }]); // what the quote shows for the cart
     const folded = await quote(h, [{ productId: "p-12pack", qty: 6 }]); // the fold re-earns BOGO on the combined 6
