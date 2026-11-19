@@ -1,5 +1,5 @@
 {
-  "mappedSha": "f5dbd46a833d9a36e285f1a0e3eba8126c9bbb56",
+  "mappedSha": "a250e9194cb9e27bc00a8a7dd461a0eac7546a4c",
   "generatedAt": "2026-11-19T19:32:39.987Z",
   "layout": "split-2026-09-13",
   "areas": [
@@ -9,7 +9,7 @@
     "packages"
   ],
   "partCounts": {
-    "api": 37,
+    "api": 38,
     "web": 33,
     "mobile": 16,
     "packages": 0

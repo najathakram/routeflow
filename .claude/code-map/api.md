@@ -142,3 +142,4 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 | [api/landing-2026-11-16-w49-51.md](api/landing-2026-11-16-w49-51.md) | Windows 49 and 51: paid-invoice edit lock (EDIT_BLOCKING_INVOICE_WHERE), settle predicate twin, findOne moved to order-find-one.ts, mode-site pin nits |
 | [api/landing-2026-11-16-w52.md](api/landing-2026-11-16-w52.md) | Window 52: delivered-line quantity floor, live-delivered-line merge fence (ORDER_HAS_NO_LIVE_DELIVERED_LINE) |
 | [api/landing-2026-11-19-w54-59.md](api/landing-2026-11-19-w54-59.md) | Windows 54-59: source-gone credit refusal, merge pair moved to order-merge-fold.ts, buyer edit allowlist, coded unplaced-stops refusal |
+| [api/landing-2026-11-19-push-guard.md](api/landing-2026-11-19-push-guard.md) | #4363: fail-closed pre-push leak guard, scripts/leak-check.mjs, its self-test and lane |
