@@ -150,7 +150,7 @@ beforeEach(() => {
 describe("PKG-1 customers list — F17 name link", () => {
   it("C1: the name is a real link to the detail page (tab stop) and the row still navigates", () => {
     renderWithProviders(<CustomersPage />);
-    const link = screen.getByRole("link", { name: "Ada Buyer" });
+    const link = within(screen.getByRole("table")).getByRole("link", { name: "Ada Buyer" });
     expect(link).toHaveAttribute("href", "/customers/cA");
     // Clicking the link lets the link navigate; the row handler must NOT also push (no double nav).
     fireEvent.click(link);
@@ -266,7 +266,7 @@ describe("W-1117 customers list — ?statement for a customer not on the page", 
     await waitFor(() => expect(statementParam()).toBeNull());
     mockRows = [row({ id: "cZ", businessName: "Zed Foods" }), B()]; // a page change or a sort brings the row in
     view.rerender(<CustomersPage />);
-    expect(await screen.findByText("Zed Foods")).toBeInTheDocument();
+    expect(await within(screen.getByRole("table")).findByText("Zed Foods")).toBeInTheDocument();
     await new Promise((r) => setTimeout(r, 100));
     expect(screen.queryByTestId("account-statement-sheet")).toBeNull();
   });
@@ -326,7 +326,9 @@ describe("PKG-1 customers list — F24 columns below sm (relocation, not removal
     renderWithProviders(<CustomersPage />);
     const lines = screen.getAllByTestId("name-secondary-line");
     expect(lines[0]).toHaveClass("sm:hidden");
-    const nameWrap = screen.getAllByRole("link", { name: "Ada Buyer" })[0].parentElement!;
+    const nameWrap = within(screen.getByRole("table")).getAllByRole("link", {
+      name: "Ada Buyer",
+    })[0].parentElement!;
     expect(nameWrap.className).toMatch(/overflow-wrap:anywhere/);
     const tel = within(lines[0]).getByTestId("name-secondary-phone");
     expect(tel).toHaveAttribute("href", "tel:5550100");
@@ -429,9 +431,10 @@ describe("PKG-1 owner rule — nothing on the customers list is lost", () => {
   it("Edit customer opens the editor without navigating; row checkbox + bulk bar + merge in select mode", () => {
     renderWithProviders(<CustomersPage />);
     fireEvent.click(screen.getByRole("button", { name: /^select$/i }));
-    const boxes = screen.getAllByRole("checkbox");
+    // The table's own checkboxes: header first, then one per row.
+    const boxes = within(screen.getByRole("table")).getAllByRole("checkbox");
     fireEvent.click(boxes[1]);
-    fireEvent.click(screen.getAllByRole("checkbox")[2]);
+    fireEvent.click(within(screen.getByRole("table")).getAllByRole("checkbox")[2]);
     expect(screen.getByText(/2 customers selected/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^merge$/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /delete 2/i })).toBeInTheDocument();
@@ -442,7 +445,7 @@ describe("PKG-1 owner rule — nothing on the customers list is lost", () => {
   it("select mode: clicking the name link toggles selection and never navigates", () => {
     renderWithProviders(<CustomersPage />);
     fireEvent.click(screen.getByRole("button", { name: /^select$/i }));
-    const link = screen.getByRole("link", { name: "Ada Buyer" });
+    const link = within(screen.getByRole("table")).getByRole("link", { name: "Ada Buyer" });
     const notPrevented = fireEvent.click(link);
     expect(notPrevented).toBe(false); // default (navigation) prevented
     expect(screen.getByText(/1 customer selected/i)).toBeInTheDocument();

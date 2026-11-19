@@ -1,5 +1,5 @@
 /**
- * Shared probes for the "site-proof" project (spec 85 now; the wheel spec 84 joins with WP1.2):
+ * Shared probes for the "site-proof" (spec 85) and local-lane "site-proof-wheel" (spec 84) projects:
  * the public site, signed out. Plan: .claude/pipeline/2026-11-13-site-wheel-print/README.md.
  *
  * House rules these helpers enforce:
@@ -133,22 +133,24 @@ export async function scrollWheelTo(page: Page, share: number): Promise<void> {
 
 /** Waits until the wheel's scrubbed progress is equal across two animation frames (no sleeps). */
 export async function settle(page: Page): Promise<void> {
-  await page.waitForFunction(
-    () =>
-      new Promise<boolean>((done) => {
-        const inst = (
-          document.querySelector(".rfw") as
-            (HTMLElement & { _rfw?: { T?: { progress(): number } } }) | null
-        )?._rfw;
-        if (!inst?.T) return done(true);
-        const a = inst.T.progress();
-        requestAnimationFrame(() =>
-          requestAnimationFrame(() => done(Math.abs(inst.T!.progress() - a) < 1e-4)),
-        );
-      }),
-    undefined,
-    { timeout: 10_000, polling: 100 },
-  );
+  let last = -1;
+  for (let i = 0; i < 200; i++) {
+    const p = await page.evaluate(
+      () =>
+        new Promise<number>((done) => {
+          const inst = (
+            document.querySelector(".rfw") as
+              (HTMLElement & { _rfw?: { T?: { progress(): number } } }) | null
+          )?._rfw;
+          requestAnimationFrame(() =>
+            requestAnimationFrame(() => done(inst?.T ? inst.T.progress() : -2)),
+          );
+        }),
+    );
+    if (Math.abs(p - last) < 1e-4) return;
+    last = p;
+  }
+  throw new Error("settle: wheel progress never stopped moving (200 frame pairs)");
 }
 
 /**

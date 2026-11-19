@@ -3,6 +3,7 @@ import * as nodemailer from "nodemailer";
 import {
   BRAND_NAVY,
   EMAIL_LAYOUT_MARKER,
+  headerSafeSubject,
   htmlToPlainText,
   isLayoutHtml,
   readableLinkText,
@@ -481,5 +482,26 @@ describe("the layout guard in EmailService (never RouteFlow's name on a tenant's
     expect(out.html).toBe(doc.html);
     expect(err).toHaveBeenCalledWith(expect.stringContaining("outside the shared layout"));
     jest.restoreAllMocks();
+  });
+});
+
+// B460: a subject is one header line. The same fold sanitizeDisplayName applies to a From name.
+describe("headerSafeSubject (B460)", () => {
+  it("folds CR, LF and CRLF into a single space, so no second header can start", () => {
+    const out = headerSafeSubject("Your trial ends tomorrow — Acme & Co\r\nBcc: x@acme.test");
+    expect(out).toBe("Your trial ends tomorrow — Acme & Co Bcc: x@acme.test");
+    expect(out).not.toMatch(/[\r\n]/);
+  });
+
+  it("folds the other line breaks (NEL, line and paragraph separators) and collapses runs", () => {
+    expect(headerSafeSubject("a\u0085b c d\r\n\r\n e")).toBe("a b c d e");
+  });
+
+  it("leaves an ordinary subject byte for byte, trims the ends, and is idempotent", () => {
+    const plain = "Payment failed — Acme & Co (St. Mary's)";
+    expect(headerSafeSubject(plain)).toBe(plain);
+    expect(headerSafeSubject("  \r\n padded \n")).toBe("padded");
+    const once = headerSafeSubject("x\r\ny");
+    expect(headerSafeSubject(once)).toBe(once);
   });
 });

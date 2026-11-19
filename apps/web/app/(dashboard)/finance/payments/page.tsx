@@ -2,7 +2,9 @@
 
 import React from "react";
 import { useRouter } from "next/navigation";
-import { Paperclip } from "lucide-react";
+import { Paperclip, ArrowUp, ArrowDown } from "lucide-react";
+import { RecordCard, RecordCardList } from "@/components/RecordCard";
+import { FiltersDisclosure, activeFilterCount } from "@/components/FiltersDisclosure";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
@@ -24,7 +26,7 @@ import { useAuth } from "@/lib/auth-context";
 import { toastDuplicatePaymentRef } from "@/lib/duplicate-payment-ref";
 import { dayClosedCopy } from "@/lib/day-closed-copy";
 import { useCustomers } from "@/lib/api/customers";
-import { useToast, EmptyState, Button, Badge } from "@routeflow/ui/web";
+import { useToast, EmptyState, Button, Badge, Select, cn } from "@routeflow/ui/web";
 import Link from "next/link";
 import { fmt, fmtDate } from "@/lib/formatting";
 import { tenantTodayIso, useResyncOnZone, useTenantTimeZone } from "@/lib/tenant-timezone";
@@ -46,6 +48,7 @@ import {
 } from "@/lib/payment-submit-key";
 import { usePaymentStatusCheck } from "@/lib/use-payment-status-check";
 import { PaymentStatusCheck } from "@/components/PaymentStatusCheck";
+import type { PaymentStatus } from "@routeflow/types";
 import { PAYMENT_STATUS_COPY } from "@routeflow/types/payment-submit-key";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
@@ -661,18 +664,28 @@ export default function FinancePaymentsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold text-navy">Payments received</h2>
-          <p className="text-sm text-navy/70">All payments recorded against invoices</p>
+          <p className="hidden text-sm text-navy/70 md:block">
+            All payments recorded against invoices
+          </p>
         </div>
         <div className="flex flex-col items-end">
-          <WriteButton onClick={() => setShowModal(true)}>Record payment</WriteButton>
+          <WriteButton className="min-h-[44px] md:min-h-0" onClick={() => setShowModal(true)}>
+            Record payment
+          </WriteButton>
           <ReadOnlyHint />
         </div>
       </div>
 
       {/* Summary cards */}
       {summary && (
-        <div className="grid grid-cols-3 gap-4">
-          <div className="rounded-xl border border-surface-border bg-white p-4">
+        <div
+          data-kpi-row
+          className="flex snap-x gap-3 overflow-x-auto py-1 scrollbar-hide md:grid md:grid-cols-3 md:gap-4 md:overflow-visible md:py-0"
+        >
+          <div
+            data-kpi-cell
+            className="w-[46%] shrink-0 snap-start rounded-xl border border-surface-border bg-white p-3 md:w-auto md:shrink md:p-4"
+          >
             <p className="text-xs font-medium uppercase tracking-wide text-navy/70">
               Total received
             </p>
@@ -681,14 +694,20 @@ export default function FinancePaymentsPage() {
               {summary.count} {summary.count === 1 ? "payment" : "payments"}
             </p>
           </div>
-          <div className="rounded-xl border border-surface-border bg-white p-4">
+          <div
+            data-kpi-cell
+            className="w-[46%] shrink-0 snap-start rounded-xl border border-surface-border bg-white p-3 md:w-auto md:shrink md:p-4"
+          >
             <p className="text-xs font-medium uppercase tracking-wide text-navy/70">
               Filtered Count
             </p>
             <p className="mt-1 text-2xl font-bold text-navy">{meta?.total ?? 0}</p>
             <p className="text-xs text-navy/70 mt-0.5">matching current filters</p>
           </div>
-          <div className="rounded-xl border border-surface-border bg-white p-4">
+          <div
+            data-kpi-cell
+            className="w-[46%] shrink-0 snap-start rounded-xl border border-surface-border bg-white p-3 md:w-auto md:shrink md:p-4"
+          >
             <p className="text-xs font-medium uppercase tracking-wide text-navy/70">
               Advance Balance
             </p>
@@ -702,91 +721,248 @@ export default function FinancePaymentsPage() {
         </div>
       )}
 
-      {/* Filter bar */}
-      <div className="rounded-xl border border-surface-border bg-white p-4 space-y-3">
-        <div className="flex flex-wrap gap-3 items-center">
-          <input
-            id="payments-search"
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search payment #, reference, customer... (/)"
-            className="w-64 rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-          />
-          <input
-            type="date"
-            value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-            className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-            title="From date"
-          />
-          <span className="text-navy/70 text-sm">–</span>
-          <input
-            type="date"
-            value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
-            className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-            title="To date"
-          />
-          <select
-            value={method}
-            onChange={(e) => setMethod(e.target.value)}
-            className="rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-          >
-            <option value="">All methods</option>
-            {ALL_PAYMENT_METHODS.map((m) => (
-              <option key={m} value={m}>
-                {METHOD_LABELS[m]}
-              </option>
-            ))}
-          </select>
-          <select
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-            className="rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-          >
-            <option value="">All statuses</option>
-            <option value="PAID">Paid</option>
-            <option value="DRAFT">Draft</option>
-            <option value="VOID">Void</option>
-          </select>
-          <select
-            value={customerId}
-            onChange={(e) => setCustomerId(e.target.value)}
-            className="rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-          >
-            <option value="">All customers</option>
-            {customers.map((c: { id: string; businessName: string }) => (
-              <option key={c.id} value={c.id}>
-                {c.businessName}
-              </option>
-            ))}
-          </select>
-          <button
-            onClick={() => {
-              setSearch("");
-              setMethod("");
-              setStatus("");
-              setDateFrom("");
-              setDateTo("");
-              setCustomerId("");
-            }}
-            className="text-sm text-navy/70 hover:text-navy underline"
-          >
-            Clear
-          </button>
-          <button
-            onClick={handleExport}
-            disabled={exportPayments.isPending}
-            className="ml-auto rounded-lg border border-surface-border px-3 py-2 text-sm text-navy/70 hover:bg-surface-raised transition-colors disabled:opacity-50"
-          >
-            {exportPayments.isPending ? "Exporting…" : "Export CSV"}
-          </button>
-        </div>
+      {/* Filter bar: search is always visible. Below md the other filters open from a "Filters (n)"
+          button that shares a row with the sort control, one labelled full-width field per row;
+          from md up it is the same inline bar (the field groups use md:contents). */}
+      <div className="flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center md:gap-3 md:rounded-xl md:border md:border-surface-border md:bg-white md:p-4">
+        <input
+          id="payments-search"
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search payment #, reference, customer... (/)"
+          aria-label="Search payments"
+          className="h-11 w-full rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 md:h-auto md:w-64"
+        />
+        <FiltersDisclosure
+          layout="contents"
+          count={activeFilterCount({ dateFrom, dateTo, method, status, customerId })}
+          toolbar={
+            !isLoading && payments.length > 0 ? (
+              <div className="flex min-w-0 flex-1 items-center gap-1.5 md:hidden">
+                <div className="min-w-0 flex-1">
+                  <Select
+                    aria-label="Sort payments by"
+                    options={[
+                      { value: "paidAt", label: "Date" },
+                      { value: "settledAt", label: "Bank date" },
+                      { value: "paymentNumber", label: "Payment #" },
+                      { value: "amount", label: "Amount" },
+                    ]}
+                    value={sortBy}
+                    onChange={(e) => {
+                      if (e.target.value !== sortBy) toggleSort(e.target.value);
+                    }}
+                    className="h-11"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => toggleSort(sortBy)}
+                  aria-label={sortDir === "asc" ? "Sort descending" : "Sort ascending"}
+                  className="grid h-11 w-11 shrink-0 place-items-center rounded-ctl border border-surface-border bg-white text-navy hover:bg-surface-raised"
+                >
+                  {sortDir === "asc" ? (
+                    <ArrowUp className="h-4 w-4" />
+                  ) : (
+                    <ArrowDown className="h-4 w-4" />
+                  )}
+                </button>
+              </div>
+            ) : undefined
+          }
+        >
+          <div className="flex flex-col gap-2 md:contents">
+            <div className="flex flex-col gap-2 md:contents">
+              <div className="flex flex-col gap-1 md:contents">
+                <label
+                  htmlFor="payments-date-from"
+                  className="text-xs font-medium text-navy/70 md:sr-only"
+                >
+                  From
+                </label>
+                <input
+                  id="payments-date-from"
+                  type="date"
+                  value={dateFrom}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                  className="h-11 w-full rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500 md:h-9 md:w-32"
+                  title="From date"
+                />
+              </div>
+              <span className="hidden text-sm text-navy/70 md:inline">–</span>
+              <div className="flex flex-col gap-1 md:contents">
+                <label
+                  htmlFor="payments-date-to"
+                  className="text-xs font-medium text-navy/70 md:sr-only"
+                >
+                  To
+                </label>
+                <input
+                  id="payments-date-to"
+                  type="date"
+                  value={dateTo}
+                  onChange={(e) => setDateTo(e.target.value)}
+                  className="h-11 w-full rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500 md:h-9 md:w-32"
+                  title="To date"
+                />
+              </div>
+            </div>
+            <div className="flex flex-col gap-1 md:contents">
+              <label
+                htmlFor="payments-method"
+                className="text-xs font-medium text-navy/70 md:sr-only"
+              >
+                Method
+              </label>
+              <select
+                id="payments-method"
+                value={method}
+                onChange={(e) => setMethod(e.target.value)}
+                className="min-h-[44px] w-full rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 md:min-h-0 md:w-auto"
+              >
+                <option value="">All methods</option>
+                {ALL_PAYMENT_METHODS.map((m) => (
+                  <option key={m} value={m}>
+                    {METHOD_LABELS[m]}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex flex-col gap-1 md:contents">
+              <label
+                htmlFor="payments-status"
+                className="text-xs font-medium text-navy/70 md:sr-only"
+              >
+                Status
+              </label>
+              <select
+                id="payments-status"
+                value={status}
+                onChange={(e) => setStatus(e.target.value)}
+                className="min-h-[44px] w-full rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 md:min-h-0 md:w-auto"
+              >
+                <option value="">All statuses</option>
+                <option value="PAID">Paid</option>
+                <option value="DRAFT">Draft</option>
+                <option value="VOID">Void</option>
+              </select>
+            </div>
+            <div className="flex flex-col gap-1 md:contents">
+              <label
+                htmlFor="payments-customer"
+                className="text-xs font-medium text-navy/70 md:sr-only"
+              >
+                Customer
+              </label>
+              <select
+                id="payments-customer"
+                value={customerId}
+                onChange={(e) => setCustomerId(e.target.value)}
+                className="min-h-[44px] w-full rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 md:min-h-0 md:w-auto"
+              >
+                <option value="">All customers</option>
+                {customers.map((c: { id: string; businessName: string }) => (
+                  <option key={c.id} value={c.id}>
+                    {c.businessName}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <button
+              onClick={() => {
+                setSearch("");
+                setMethod("");
+                setStatus("");
+                setDateFrom("");
+                setDateTo("");
+                setCustomerId("");
+              }}
+              className="min-h-[44px] self-start text-sm text-navy/70 underline hover:text-navy md:min-h-0 md:self-auto"
+            >
+              Clear
+            </button>
+            <button
+              onClick={handleExport}
+              disabled={exportPayments.isPending}
+              className="min-h-[44px] rounded-lg border border-surface-border px-3 py-2 text-sm text-navy/70 transition-colors hover:bg-surface-raised disabled:opacity-50 md:ml-auto md:min-h-0"
+            >
+              {exportPayments.isPending ? "Exporting…" : "Export CSV"}
+            </button>
+          </div>
+        </FiltersDisclosure>
       </div>
 
+      {/* Phone cards below md; the table takes over from md up. Loading and empty keep the table
+          wrapper's own states at every width. */}
+      {!isLoading && payments.length > 0 && (
+        <RecordCardList>
+          {payments.map((p) => (
+            <RecordCard
+              key={p.id}
+              href={`/finance/payments/${p.id}`}
+              title={p.paymentNumber ?? p.reference ?? "—"}
+              dimmed={p.status === "VOID"}
+              amount={fmt(p.amount)}
+              subtitle={p.invoice.customer?.businessName ?? "—"}
+              badges={
+                <>
+                  <span
+                    className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${METHOD_COLORS[p.method] ?? "bg-surface-raised text-navy/70"}`}
+                  >
+                    {METHOD_LABELS[p.method] ?? p.method}
+                  </span>
+                  <Badge status={(p.status ?? "PAID") as PaymentStatus} />
+                </>
+              }
+              meta={
+                <span className="flex flex-wrap gap-x-2 gap-y-0.5">
+                  <span>{fmtDate(p.paidAt ?? p.createdAt)}</span>
+                  {((p.reference && p.paymentNumber) || p.imageKey) && (
+                    <span className="inline-flex items-center gap-1">
+                      {p.imageKey && (
+                        <span title="Has receipt image" className="inline-flex shrink-0">
+                          <Paperclip className="h-3 w-3 text-navy/50" />
+                        </span>
+                      )}
+                      {p.paymentNumber && p.reference}
+                    </span>
+                  )}
+                </span>
+              }
+              actions={
+                <>
+                  <Link
+                    href={`/invoices/${p.invoice.id}`}
+                    aria-label={`View invoice ${p.invoice.invoiceNumber}`}
+                    className="grid min-h-[44px] min-w-[44px] place-items-center rounded px-1 text-sm font-medium text-brand-600 hover:underline"
+                  >
+                    {p.invoice.invoiceNumber}
+                  </Link>
+                  {p.status !== "VOID" && (
+                    <button
+                      type="button"
+                      aria-label={`Void payment ${p.paymentNumber ?? p.id}`}
+                      onClick={() => setVoidConfirm({ invoiceId: p.invoice.id, paymentId: p.id })}
+                      className="ml-2 grid min-h-[44px] min-w-[44px] place-items-center rounded px-1 text-sm font-medium text-danger hover:bg-danger-bg"
+                    >
+                      Void
+                    </button>
+                  )}
+                </>
+              }
+            />
+          ))}
+        </RecordCardList>
+      )}
+
       {/* Table */}
-      <div className="rounded-xl border border-surface-border bg-white overflow-hidden">
+      <div
+        className={cn(
+          "overflow-hidden rounded-xl border border-surface-border bg-white",
+          !isLoading && payments.length > 0 && "hidden md:block",
+        )}
+      >
         {isLoading ? (
           <div className="flex h-64 items-center justify-center">
             <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand-500 border-t-transparent" />
@@ -922,7 +1098,7 @@ export default function FinancePaymentsPage() {
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <Badge status={(p.status ?? "PAID") as "PAID" | "DRAFT" | "VOID"} />
+                      <Badge status={(p.status ?? "PAID") as PaymentStatus} />
                     </td>
                     <td className="px-4 py-3 text-right font-semibold text-success">
                       {fmt(p.amount)}

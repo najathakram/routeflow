@@ -78,7 +78,7 @@ export async function writeTenantFeatureConfig(
 // ─── B2b: Feature Console "Enable as add-on" action ───────────────────────────
 //
 // The console's per-row "Customise" button only ever writes an unbilled COMP
-// feature-override (see FeatureOverridesSection in page.tsx). The legacy
+// feature-override (see FeatureOverridesSection in _features/FeatureOverridesSection.tsx). The legacy
 // AVAILABLE_ADDONS toggle cards (being deleted) were the only UI that could create a
 // real, Stripe-billed TenantAddon via POST .../addons/enable — these two functions give
 // the console's "Enable as add-on" action that same endpoint, unchanged.

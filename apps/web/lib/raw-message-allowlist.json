@@ -248,8 +248,12 @@
     "count": 1,
     "why": "B986-2 platform-admin: per-surface raw message read, pending"
   },
+  "app/(platform-admin)/admin/tenants/[id]/_features/FeatureOverridesSection.tsx": {
+    "count": 2,
+    "why": "B986-2 platform-admin: per-surface raw message read, pending"
+  },
   "app/(platform-admin)/admin/tenants/[id]/page.tsx": {
-    "count": 6,
+    "count": 4,
     "why": "B986-2 platform-admin: per-surface raw message read, pending"
   },
   "app/(platform-admin)/admin/tenants/page.tsx": {

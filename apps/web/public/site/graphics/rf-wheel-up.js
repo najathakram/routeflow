@@ -128,13 +128,18 @@
     shadow(-62, -32, 124, 64) + slab(-60, -30, 0, 120, 60, 5, 5, "#ecfdf5", "#a7f3d0") + face.top(-60, -30, 5, Rc(10, 10, 46, 6, 3, "#059669") + Rc(10, 24, 72, 4, 2, "#a7f3d0") + Rc(10, 36, 52, 4, 2, "#a7f3d0") + Ci(100, 30, 11, "#14c98f") + Ln("M95 30l3.6 3.6l6.4 -7", "#fff", 2.4)),
   ];
   const tokenSVG = `<svg viewBox="-90 -115 180 160" aria-hidden="true">${FORMS.map((f) => `<g class="rfw-f">${f}</g>`).join("")}</svg>`;
-  const li = (d, o) => `<li${o ? ' class="o"' : ""}>${d.t}<span>${d.s}${d.n ? ` ${d.n}.` : ""}</span></li>`;
-  const staticHTML = () => `<div class="rfw-pin"><div class="rfw-wheel">${dial()}</div><div class="rfw-stage"><h2 class="rfw-title">${HERO[1].t}</h2><p class="rfw-sub">${HERO[0].s} ${HERO[1].s}</p><p class="rfw-keyh">${EYE_O}</p><ul class="rfw-keys">${OUTER.map((d) => li(d, 1)).join("")}</ul><p class="rfw-keyh">${EYE_I}</p><ul class="rfw-keys">${INNER.map((d) => li(d)).join("")}</ul></div></div>`;
+  /* With ic the item leads with its own icon (the live wheel's legend); the still keeps its words alone. */
+  const li = (d, o, ic) => `<li${o ? ' class="o"' : ""}>${ic ? `<svg class="rfw-ki" viewBox="0 0 48 48" aria-hidden="true"><g class="rfw-ic">${ICON[d.k]}</g></svg>` : ""}${d.t}<span>${d.s}${d.n ? ` ${d.n}.` : ""}</span></li>`;
+  const keys = (ic) => `<p class="rfw-keyh">${EYE_O}</p><ul class="rfw-keys">${OUTER.map((d) => li(d, 1, ic)).join("")}</ul><p class="rfw-keyh">${EYE_I}</p><ul class="rfw-keys">${INNER.map((d) => li(d, 0, ic)).join("")}</ul>`;
+  /* The one end-state button: here once, used by the still and the live wheel, and pasted byte for byte into the page's own still. */
+  const GO = { lead: "Try it with your own orders.", text: "Start free trial", href: "/signup", track: "trial_start_click", where: "after_wheel" };
+  const goHTML = () => `<div class="sy-go"><p class="sy-try">${GO.lead}</p><a class="btn btn-primary btn-lg" href="${GO.href}" data-track="${GO.track}" data-where="${GO.where}">${GO.text}</a></div>`;
+  const staticHTML = () => `<div class="rfw-pin"><div class="rfw-wheel">${dial()}</div><div class="rfw-stage"><h2 class="rfw-title">${HERO[1].t}</h2><p class="rfw-sub">${HERO[0].s} ${HERO[1].s}</p>${goHTML()}${keys(false)}</div></div>`;
   const stopHTML = (d) => `<div class="rfw-s"><div class="rfw-t" style="--pc:${d.c}"><p class="rfw-eye">${INNER.includes(d) ? EYE_I : EYE_O}</p><p class="rfw-title">${d.t}</p><p class="rfw-sub">${d.s}</p></div><div class="rfw-card" style="--acc:var(--rf-${d.a})" role="img" aria-label="Illustration with sample data: ${d.t}.">${CARD[d.k]}</div></div>`;
   const liveHTML = () => `${DEFS}<div class="rfw-pin"><div class="rfw-tile"><div class="rfw-cvw"><canvas class="rfw-cv" aria-hidden="true"></canvas></div>` +
     `<div class="rfw-wheel" role="group" aria-label="The RouteFlow wheel. Use the arrow keys to look at each piece. Press Enter to go to it.">${ALL.map((d, i) => `<button type="button" class="rfw-b" data-i="${i}" tabindex="${i ? -1 : 0}" aria-pressed="false" aria-label="${d.t}: ${d.s}${d.n ? ` ${d.n}.` : ""}"></button>`).join("")}</div>` +
     `<div class="rfw-tok" aria-hidden="true">${tokenSVG}</div><div class="rfw-tip" aria-hidden="true"></div>` +
-    `<div class="rfw-words"><p class="rfw-hint">${HINT}</p>${HERO.map((h, i) => `<div class="rfw-h h${i}">${i ? `<h2 class="rfw-title">${h.t}</h2>` : `<p class="rfw-title">${h.t}</p>`}<p class="rfw-sub">${h.s}</p></div>`).join("")}` +
+    `<div class="rfw-words"><p class="rfw-hint">${HINT}</p>${HERO.map((h, i) => `<div class="rfw-h h${i}">${i ? `<h2 class="rfw-title">${h.t}</h2>` : `<p class="rfw-title">${h.t}</p>`}<p class="rfw-sub">${h.s}</p>${i ? goHTML() : `<div class="rfw-legend" aria-hidden="true">${keys(true)}</div>`}</div>`).join("")}` +
     `</div>` +
     `</div></div><ol class="rfw-list">${ALL.map((d) => li(d)).join("")}</ol>`;
 
@@ -173,7 +178,6 @@
   };
   const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
   const mix = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
-  const lum = (c) => { const l = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * l(c[0]) + 0.7152 * l(c[1]) + 0.0722 * l(c[2]); };
   const css = (c, al) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${al == null ? 1 : +al.toFixed(3)})`;
   /* At rest a piece already wears a soft tint of its own colour (the share of the full colour it carries), so the first screen is not white. */
   const REST_TINT = 0.4;
@@ -181,10 +185,11 @@
   const NEU = [WHITE, hex("#fafafc")], WNEU = hex("#d6dee8"), MUTE = hex("#e2e8f0"), MUTEW = hex("#d6dee8");
   const THO = 40, THI = 34, THH = 58, DEPTH = 2000, FS = 46, FSI = 62, LF = 48, RT = 418, TOKW = 150, TILT = 68, YC = -260, HUB_R = 0.62, AIR = 90, DRIFT = 0.05, PITCH = 0.5, REST = 0.05;
   /* How the wheel comes apart. Every piece leaves straight out from the centre (EX, in wheel units), the layers part in
-     height (POSE), and the camera angle never changes once it is apart. */
-  const EXD = { o: 190, i: 104 }, EXP = { o: 92, i: 52 }, NOTE_K = 0.42;
-  const POSE_D = { apart: { zO: -160, zI: 350, zH: 620 }, story: { zO: -170, zI: 390, zH: 720 } };
-  const POSE_P = { apart: { zO: -200, zI: 400, zH: 800 }, story: { zO: -170, zI: 300, zH: 680 } };
+     height (OPEN) by one weight (S.lift), and the camera angle never changes once it is apart. One pose on every screen, so every
+     camera z is OPEN times the lift. EDGE is the least air between the open wheel and the stage's edge (T3 needs 8); HINT_H is
+     the hint's height (offsetHeight reads 0 after hintAt(false)); SH_REACH is how far of its radius a lifted piece's floor shadow
+     still shows. */
+  const EX = { o: 190, i: 104 }, OPEN = { zO: -170, zI: 390, zH: 720 }, EDGE = 12, HINT_H = 26, SH_REACH = 0.8, RIP_W = 40;
   /* The story on one playhead, mapped evenly to scroll from the top of the page: the come-apart, every piece named, a few stops,
      the way home. Each label sits in the middle of its hold. The phone has less scroll for each unit, so a stop spends more units
      and keeps about the same room to read. The ring makes one whole turn on the way: the first stop is near where it lands. */
@@ -200,6 +205,29 @@
 
   const idle = (f, ms) => (root.requestIdleCallback ? root.requestIdleCallback(f, { timeout: ms || 1500 }) : setTimeout(f, ms ? 200 : 60));
   const unidle = (id) => (root.cancelIdleCallback ? root.cancelIdleCallback(id) : clearTimeout(id));
+  /* Who is moving the page. A script must not write the scroll position (a snap, a refresh that puts the place back) while a
+     person's own scroll may still be moving: it would cancel it. Every person's input and every scroll is noted here. */
+  let lastIn = -1e9, lastMove = -1e9, lastRef = -1e9, pendRef = false;
+  const now = () => (root.performance ? root.performance.now() : Date.now());
+  const quiet = (ms) => now() - Math.max(lastIn, lastMove) > ms;
+  const calm = () => document.readyState === "complete" && now() - lastRef > 600 && quiet(250);
+  if (typeof document !== "undefined") {
+    const inn = () => { lastIn = now(); }, mv = () => { lastMove = now(); }, o = { passive: true, capture: true };
+    ["wheel", "touchstart", "touchmove", "keydown", "pointerdown"].forEach((n) => root.addEventListener(n, inn, o));
+    root.addEventListener("scroll", mv, o);
+  }
+  /* A refresh re-measures and may put the place back, so it waits for a still page; one retry, on the end of the scroll. */
+  const refreshCalm = () => {
+    const ST = root.ScrollTrigger;
+    if (!ST) return;
+    if (quiet(200)) { pendRef = false; ST.refresh(); return; }
+    if (pendRef) return;
+    pendRef = true;
+    let tm = 0;
+    const again = () => { ST.removeEventListener("scrollEnd", again); clearTimeout(tm); if (pendRef) { pendRef = false; refreshCalm(); } };
+    ST.addEventListener("scrollEnd", again);
+    tm = setTimeout(again, 900);
+  };
   let registered = false;
   function mount(el, opts) {
     if (el._rfw) return el._rfw;
@@ -219,16 +247,23 @@
     let mm = null, dead = false;
     const inst = (el._rfw = { el, live: false, beats: planOf(false).BEATS.map((b) => b.slice()), destroy });
     el.classList.add("rfw");
-    const still = () => { settled(); const tall = el.classList.contains("rfw-wait"); el.classList.add("rfw--static"); el.classList.remove("rfw-live", "rfw-wait"); el.innerHTML = staticHTML(); inst.live = false; if (tall && ST) Promise.resolve().then(() => ST.refresh()); };
+    const still = () => { settled(); const tall = el.classList.contains("rfw-wait"); el.classList.add("rfw--static"); el.classList.remove("rfw-live", "rfw-wait"); el.innerHTML = staticHTML(); inst.live = false; if (tall && ST) Promise.resolve().then(refreshCalm); };
     const start = () => {
       if (!can) return still();
       if (!registered) { g.registerPlugin(ST); registered = true; }
       /* One matchMedia owns every tween, trigger and listener; a change of width class reverts all of it and
          builds again. The motion always runs (owner ruling 2026-11-03), on every height; a phone held sideways (narrow, short, wider than tall) gets the wide layout, the words beside the wheel. */
       mm = g.matchMedia(el);
-      mm.add({ wide: "(min-width: 900px)", land: "(max-width: 899.98px) and (max-height: 599.98px) and (min-aspect-ratio: 1/1)", narrow: "(max-width: 899.98px)", low: "(max-height: 499.98px)" }, (c) => {
-        return live(g, ST, el, inst, !c.conditions.wide && !c.conditions.land, opts, c, { headerTop, pageTop, settled, slices: () => slow && !inst.built });
+      /* Every key is screen only (never a key named all, and print has its own context below); the stage is the window less 16 px
+         across and less the header and 16 px down, so a stage under 200 px a side (a window under 216 by 284) gets the still. */
+      const MQ = { wide: "(min-width: 900px)", land: "(max-width: 899.98px) and (max-height: 599.98px) and (min-aspect-ratio: 1/1)", narrow: "(max-width: 899.98px)", low: "(max-height: 499.98px)" };
+      const conds = { screen: "screen", tiny: "screen and (max-width: 215.98px), screen and (max-height: 283.98px)" };
+      for (const k in MQ) conds[k] = "screen and " + MQ[k];
+      mm.add(conds, (c) => {
+        return c.conditions.tiny ? void still() : live(g, ST, el, inst, !c.conditions.wide && !c.conditions.land, opts, c, { headerTop, pageTop, settled, slices: () => slow && !inst.built });
       });
+      /* On paper the wheel is the still: no canvas, nothing to scroll. */
+      mm.add("print", () => { still(); });
     };
     /* opts.lazy: the section's height is reserved now, so nothing below it ever shifts. The build waits for an idle moment
        after load and runs in small idle slices. If the visitor comes within reach first, whatever is left runs at once. */
@@ -267,10 +302,8 @@
   }
 
   function live(g, ST, el, inst, phone, opts, mctx, site) {
-    /* The phone rules for names and icons (11 px or icon only, a small icon floor) hold for a phone held either way; the layout is the wide one when it is held sideways. */
+    /* The small icon floor holds for a phone held either way; the layout is the wide one when it is held sideways. */
     const low = !!(mctx && mctx.conditions && mctx.conditions.low), small = phone || low || !!(mctx && mctx.conditions && mctx.conditions.land);
-    /* Short screens, where the names and the burst need the extra care below: a phone either way, or a wide window under 500 px tall. Every other window draws as it did. */
-    const brief = small;
     const { headerTop, pageTop, settled, slices } = site;
     const ends = () => el.getBoundingClientRect().bottom + root.scrollY, held0 = ends();
     headerTop();
@@ -285,13 +318,13 @@
 
     /* Everything the timeline moves is a unitless weight; the camera reads the fitted framing at draw time,
        so a resize re-fits without re-recording a single tween. */
-    const S = { wA: 0, wL: 0, wS: 0, wE: 0, lO: 0, lI: 0, lH: 0, hO: 0, hI: 0, hH: 0, dr: 0, spO: 0, spI: 0, u: ALL.indexOf(STORY[0]), hop: 0, fall: 1, obj: 0, focO: 0, rip: 0 };
-    const P = ALL.map(() => ({ w: 0, h: 0, e: 0, c: 0, n: 0 }));
-    const EX = phone ? EXP : EXD, POSE = Object.assign({}, phone ? POSE_P : POSE_D), { STOP, H: HOLD, S0, stopAt, C0, END, BEATS } = planOf(phone);
+    const S = { wA: 0, wS: 0, wE: 0, lift: 0, dr: 0, spO: 0, spI: 0, u: ALL.indexOf(STORY[0]), hop: 0, fall: 1, obj: 0, focO: 0, rip: 0 };
+    const P = ALL.map(() => ({ w: 0, h: 0, e: 0, c: 0 }));
+    const { STOP, H: HOLD, S0, stopAt, C0, END, BEATS } = planOf(phone), GO_SHOW = phone ? C0 + 1.7 : C0 - 0.22, GO_AT = GO_SHOW + (phone ? 0.05 : 0.2);
     inst.beats = BEATS.map((b) => b.slice());
     const WD = ALL.map((d, i) => {
       const o = i < NO, step = o ? STEP_O : 72, ca = (-90 + (o ? i : i - NO) * step) * RAD, hs = (step / 2) * RAD, L = outline(o ? R0 : r0, o ? R1 : r1, ca - hs, ca + hs, GAP);
-      return { i, d, o, ca, pts: L.pts, n: L.pts.length / 2, rim: L.rim, mid: o ? (R0 + R1) / 2 + 4 : (r0 + r1) / 2, ic: new Path2D(icd(ICON[d.k])), col: hex(d.c), wall: hex(d.w), ink: o ? hex(d.i) : WHITE, neu: NEU[i % 2], jit: Math.sin(i * 2.4) * (o ? 44 : 30), rank: Math.floor(Math.abs(mod((-90 + (o ? i : i - NO) * step) - 90 + 180, 360) - 180) / step), lines: lines2(d.t) };
+      return { i, d, o, ca, pts: L.pts, n: L.pts.length / 2, rim: L.rim, mid: o ? (R0 + R1) / 2 + 4 : (r0 + r1) / 2, ic: new Path2D(icd(ICON[d.k])), col: hex(d.c), wall: hex(d.w), ink: o ? hex(d.i) : WHITE, neu: NEU[i % 2], jit: Math.sin(i * 2.4) * (o ? 44 : 30), rank: Math.floor(Math.abs(mod((-90 + (o ? i : i - NO) * step) - 90 + 180, 360) - 180) / step) };
     });
     const OW = WD.slice(0, NO), IW = WD.slice(NO), HC = new Float32Array(96), ord = [];
     for (let j = 0; j < 48; j++) { const a = (j / 48) * TAU; HC[2 * j] = HUB * Math.cos(a); HC[2 * j + 1] = HUB * Math.sin(a); }
@@ -310,18 +343,18 @@
     const RING = sprite((t) => smooth(0.2, 0.62, t) * Math.pow(1 - smooth(0.72, 1, t), 1.5));
     const FLOOR = sprite((t) => smooth(0.42, 0.52, t) * Math.pow(1 - smooth(0.74, 1, t), 1.5));
 
-    let hubUp = 0, hubF = 0, hubSet = false, dpr = 1, K = 1, cx = 0, cy = 0, ct = 1, st = 0, px = 0, py = 0, pp = 1, dirty = true, focusI = -1, hc = false, pinTop = 0, tokPx = 120, ox = 0, oy = 0, stageBg = "#f5f5f7";
-    const F = { flat: { k: 0.4, x: 0, y: 0 }, end: { k: 0.4, x: 0, y: 0 }, burst: { k: 0.4, x: 0, y: 0 }, apart: { k: 0.4, x: 0, y: 0 }, story: { k: 0.4, x: 0, y: 0 } };
+    let hubUp = 0, hubF = 0, hubSet = false, dpr = 1, K = 1, cx = 0, cy = 0, ct = 1, st = 0, px = 0, py = 0, pp = 1, dirty = true, focusI = -1, hc = false, pinTop = 0, tokPx = 120, ox = 0, oy = 0, stageBg = "#f5f5f7", ringC = "#2b4c88";
+    const F = { flat: { k: 0.4, x: 0, y: 0 }, end: { k: 0.4, x: 0, y: 0 }, open: { k: 0.4, x: 0, y: 0 }, stop: { k: 0.4, x: 0, y: 0 } };
     const cam = { tilt: 0, zO: 0, zI: 0, zH: 0, k: 0.4, x: 0, y: 0 };
     const mark = () => { dirty = true; };
-    const KEYS = Object.keys(S), VAL = new Float64Array(KEYS.length + 2 + ALL.length * 5);
+    const KEYS = Object.keys(S), VAL = new Float64Array(KEYS.length + 2 + ALL.length * 4);
     let force = true;
     const unchanged = () => {
       let i = 0, same = true;
       const put = (v) => { if (VAL[i] !== v) { VAL[i] = v; same = false; } i++; };
       for (let j = 0; j < KEYS.length; j++) put(S[KEYS[j]]);
       put(Sp.o.x); put(Sp.i.x);
-      for (let j = 0; j < P.length; j++) { const p = P[j]; put(p.w); put(p.h); put(p.e); put(p.c); put(p.n); }
+      for (let j = 0; j < P.length; j++) { const p = P[j]; put(p.w); put(p.h); put(p.e); put(p.c); }
       return same;
     };
     const proj = (x, y, z) => { const Y = y * ct - z * st, Z = y * st + z * ct; pp = DEPTH / (DEPTH - Z); px = cx + K * x * pp; py = cy + K * ((Y - YC) * pp + YC); };
@@ -373,20 +406,17 @@
       else ctx.drawImage(fc, CL[0], CL[1], CL[2], CL[3], CL[0], CL[1], CL[2], CL[3]);
       whole = false;
     };
-    /* The layers leave and come home one at a time. The camera goes from the hero to centre stage, then makes room for the words,
-       and home to where the last words leave it room. */
+    /* The layers leave and come home on one weight (S.lift), so every camera z is the open pose times it. The camera goes from the
+       hero to the open frame, holds one framing for the words (the stops frame it a little differently only where the card needs room,
+       on a phone), and home to where the last words leave it room. */
     const pose = () => {
-      const A = POSE.apart, B = POSE.story, s = S.wS, e = S.wE, l = S.wL;
-      cam.zO = lerp(lerp(lerp(0, A.zO, S.lO), B.zO, s), 0, S.hO);
-      cam.zI = lerp(lerp(lerp(0, A.zI, S.lI), B.zI, s), 0, S.hI);
-      cam.zH = lerp(lerp(lerp(0, A.zH, S.lH), B.zH, s), 0, S.hH);
-      const m = S.wA * (1 - e), M = F.burst, L = F.apart, G = F.story, R = F.flat, N = F.end;
+      const e = S.wE, m = S.wA * (1 - e), R = F.flat, N = F.end, O = F.open, G = F.stop;
+      cam.zO = OPEN.zO * S.lift; cam.zI = OPEN.zI * S.lift; cam.zH = OPEN.zH * S.lift;
       cam.tilt = TILT * m;
-      cam.k = lerp(lerp(R.k, N.k, e), lerp(lerp(M.k, L.k, l), G.k, s), m); cam.x = lerp(lerp(R.x, N.x, e), lerp(lerp(M.x, L.x, l), G.x, s), m); cam.y = lerp(lerp(R.y, N.y, e), lerp(lerp(M.y, L.y, l), G.y, s), m);
+      cam.k = lerp(lerp(R.k, N.k, e), lerp(O.k, G.k, S.wS), m); cam.x = lerp(lerp(R.x, N.x, e), lerp(O.x, G.x, S.wS), m); cam.y = lerp(lerp(R.y, N.y, e), lerp(O.y, G.y, S.wS), m);
     };
-    const wc = {}, wid = (t) => wc[t] || (wc[t] = ctx.measureText(t).width);
     const plates = (list, spin, zB, th, outer) => {
-      const cs = Math.cos(spin), sn = Math.sin(spin), flat = 1 - clamp(0, 1, cam.tilt / 22), far = (outer ? EX.o : EX.i) * (1 + DRIFT * S.dr);
+      const cs = Math.cos(spin), sn = Math.sin(spin), far = (outer ? EX.o : EX.i) * (1 + DRIFT * S.dr);
       ord.length = 0;
       for (const w of list) ord.push(w);
       ord.sort((a, b) => Math.sin(a.ca + spin) * st * R1 + (P[a.i].w + P[a.i].h) * 300 - Math.sin(b.ca + spin) * st * R1 - (P[b.i].w + P[b.i].h) * 300);
@@ -403,88 +433,18 @@
         const edge = hc ? 0.55 : 0.08 * (1 - p.c);
         if (edge > 0.01) { ctx.lineWidth = dpr; ctx.strokeStyle = css(INK, edge); ctx.stroke(); }
         if (p.c > 0.02 && st > 0.05 && m < 0.5) { ctx.beginPath(); ctx.moveTo(tx[0], ty[0]); for (let j = 1; j < w.rim; j++) ctx.lineTo(tx[j], ty[j]); ctx.lineJoin = "miter"; ctx.lineWidth = 1.25 * dpr; ctx.strokeStyle = css(WHITE, 0.42 * p.c * (1 - m)); ctx.stroke(); }
-        if (focusI === w.i) { ctx.beginPath(); trace(tx, ty, n); ctx.lineWidth = 3 * dpr; ctx.strokeStyle = "#2b4c88"; ctx.stroke(); }
-        /* Words stay upright and readable; only the plate tilts. The piece the object stands on lets it have the spot. */
+        if (focusI === w.i) { ctx.beginPath(); trace(tx, ty, n); ctx.lineWidth = 3 * dpr; ctx.strokeStyle = ringC; ctx.stroke(); }
+        /* Only the plate tilts; the icon stands centred on it. The piece the object stands on lets it have the spot. A piece's name is
+           never painted: the legend, the 15 buttons and the name pill carry it. */
         const vis = (outer ? 1 - S.obj * p.w : 1) * (1 - m * 0.55);
-        p.nd = false;
         if (vis > 0.03) {
           proj(ux * (w.mid * rg + sl), uy * (w.mid * rg + sl), zT);
-          const sc = K * pp, ax = px, ay = py, sq = 0.62 + 0.38 * ct, size = (sc / dpr) * 31, nk = Math.max(phone ? sc * 1.22 : sc, ((phone ? 13 : 12) * dpr) / 31), nq = 1;
-          /* A piece's name: on the plate at rest, then back on it in the air as it comes off. A daily-work plate is big enough to
-             carry its name. A core plate is not, so its name hangs in the clear air beside it. The names keep a readable size
-             whatever the plate's. At the stops one piece is featured, so the rest carry their icons and no words. */
-          const name = outer ? Math.max(!phone && size >= 13 ? flat : 0, p.n) : p.n;
+          const sc = K * pp, ax = px, ay = py, sq = 0.62 + 0.38 * ct;
           ctx.fillStyle = ctx.strokeStyle = css(mix(INK, w.ink, p.c));
-          let shown = 0;
-          if (name > 0.01) {
-            ctx.globalAlpha = vis * name;
-            if (outer) {
-              /* A name is fitted inside its own piece at every width: never wider than the piece's face, never crossing its edge.
-                 Its ink is whichever of the piece's dark ink and white reads better on the piece's colour right now. */
-              let nf = nk, mf = phone ? nk * 0.62 : sc * 0.56, lit = false, shy = false, noteShy = false;
-              const nt = phone && w.d.n && w.d.n.length > 9;
-              const two = w.lines.length > 1, note = w.d.n && p.n > 0.01, y0 = p.n > 0.01 ? 12 - (two ? 16 : 0) - (note && nt ? 24 : 0) : 54 - (two ? 8 : 0);
-              {
-                let x0 = 1e9, x1 = -1e9;
-                for (let j = 0; j < n; j++) { if (tx[j] < x0) x0 = tx[j]; if (tx[j] > x1) x1 = tx[j]; }
-                /* the room is the piece's real width on the rows the words cover (a wedge is narrower near the hub than its bounding box says) */
-                let hw = Math.min(ax - x0, x1 - ax);
-                const yt = ay + (y0 - 22) * nk, yb = ay + (y0 + (w.lines.length - 1) * 31 + 6 + (note ? (nt ? 68 : 34) * 0.8 : 0)) * nk;
-                for (let q = 0; q < 5; q++) {
-                  const yy = yt + ((yb - yt) * q) / 4; let l = -1e9, r = 1e9;
-                  for (let j = 0; j < n; j++) { const k = (j + 1) % n, y1 = ty[j], y2 = ty[k]; if ((y1 <= yy && y2 > yy) || (y2 <= yy && y1 > yy)) { const xx = tx[j] + ((yy - y1) * (tx[k] - tx[j])) / (y2 - y1); if (xx <= ax && xx > l) l = xx; if (xx >= ax && xx < r) r = xx; } }
-                  if (l > -1e8 && r < 1e8) hw = Math.min(hw, ax - l, r - ax);
-                }
-                const room = 2 * hw * 0.88, floor = ((small ? 11 : 10.5) * dpr) / 31;
-                const fitN = Math.min(nk, room / Math.max(1, ...w.lines.map(wid)));
-                /* No name is drawn under 11 px on a phone: a piece whose name would be smaller shows its icon only, as at rest. */
-                shy = small && fitN < floor;
-                nf = Math.max(floor, fitN);
-                if (w.d.n) { const nw = room / Math.max(1, ...(nt ? lines2(w.d.n) : [w.d.n]).map(wid)); noteShy = small && nw < (11 * dpr) / 31; mf = Math.max(((small ? 11 : 10) * dpr) / 31, Math.min(mf, nf * 0.8, nw)); }
-                const lf = lum(f), ld = lum(mix(INK, w.ink, p.c));
-                lit = 1.05 / (lf + 0.05) > (Math.max(lf, ld) + 0.05) / (Math.min(lf, ld) + 0.05);
-                if (shy) lit = false;
-                if (lit) { ctx.fillStyle = ctx.strokeStyle = "#fff"; ctx.shadowColor = "rgba(0,0,0,0.34)"; ctx.shadowBlur = 2.5 * dpr; ctx.shadowOffsetY = 0.6 * dpr; }
-              }
-              shown = shy ? 0 : 1;
-              if (!shy) { ctx.setTransform(nf, 0, 0, nf * nq, ax, ay); for (let j = 0; j < w.lines.length; j++) ctx.fillText(w.lines[j], 0, y0 + j * 31); }
-              if (note && !shy && !noteShy) { const yn = ((y0 + 34) * nf) / mf, ls = nt ? lines2(w.d.n) : [w.d.n]; ctx.setTransform(mf, 0, 0, mf * nq, ax, ay); for (let j = 0; j < ls.length; j++) ctx.fillText(ls[j], 0, yn + j * 34); }
-              if (lit) { ctx.shadowColor = "rgba(0,0,0,0)"; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0; ctx.fillStyle = ctx.strokeStyle = css(mix(INK, w.ink, p.c)); } /* the icon keeps the piece's own ink */
-            } else {
-              const side = Math.abs(ux) > 0.7, r = (side || uy < 0 ? r1 : r0) + sl, gap = (phone ? 6 : 12) * dpr, ck = Math.max(phone ? sc * 0.9 : sc * 0.76, ((phone ? 13 : 12) * dpr) / 31);
-              proj(ux * r, uy * r, zT);
-              let ckf = ck, out = false, drop = false;
-              const ls = phone && side ? w.lines : [w.d.t], floor11 = (11 * dpr) / 31;
-              if (!side) {
-                /* the two back names sit side by side and share one size (the longest fits in 30% of the stage); the front one fits its piece */
-                let x0 = 1e9, x1 = -1e9;
-                for (let j = 0; j < n; j++) { if (tx[j] < x0) x0 = tx[j]; if (tx[j] > x1) x1 = tx[j]; }
-                const lim = uy < 0 ? 0.6 * cx : (x1 - x0) * 0.82, tw = uy < 0 ? Math.max(...list.map((v) => wid(v.d.t))) : wid(w.d.t);
-                ckf = Math.max(((small ? 11 : 10.5) * dpr) / 31, Math.min(ck, lim / Math.max(1, tw)));
-                /* On a small wheel the two back names would sit on top of each other: each then reads outward from its own piece, as far as the stage lets it. */
-                if (brief && uy < 0 && 2 * Math.abs(px - cx) < tw * ckf * 1.02) { const fitO = ((ux > 0 ? cv.width - px : px) - 8 * dpr) / Math.max(1, tw); out = true; drop = small && fitO < floor11; ckf = Math.max(((small ? 11 : 9) * dpr) / 31, Math.min(ckf, fitO)); }
-              } else if (brief) {
-                /* A name beside the wheel never runs off the stage: it shrinks, a little, to stay on it. */
-                const room = (ux > 0 ? cv.width - px : px) - gap - 8 * dpr;
-                /* A name that will not fit between its piece and the edge of the stage at 11 px is left out and the piece shows its icon alone, as the plates do. */
-                drop = small && room / Math.max(1, ...ls.map(wid)) < floor11;
-                ckf = Math.max(((small ? 11 : 9) * dpr) / 31, Math.min(ckf, room / Math.max(1, wid(w.d.t))));
-              }
-              ctx.textAlign = side || out ? (ux > 0 ? "left" : "right") : "center";
-              ctx.fillStyle = css(INK);
-              ctx.setTransform(ckf, 0, 0, ckf * nq, px + (side ? (ux > 0 ? gap : -gap) : 0), py + (side ? 5 * dpr : -gap));
-              if (!drop) for (let j = 0; j < ls.length; j++) ctx.fillText(ls[j], 0, (j - (ls.length - 1) / 2) * 34);
-              shown = drop ? 0 : 1;
-              ctx.textAlign = "center"; ctx.fillStyle = css(mix(INK, w.ink, p.c));
-            }
-          }
-          /* Whether the piece carries its own name right now: the hover label would only say it again. */
-          p.nd = name > 0.55 && shown === 1;
           const is = Math.max(1.25 * sc, (small ? 0.62 : 0.8) * dpr) * (outer ? 1 : rg + lift * 0.4);
-          /* Once it is named, a daily-work plate carries the name alone: its icon would crowd it. */
-          ctx.globalAlpha = vis * (outer ? 1 - p.n * shown * (1 - flat) : 1);
+          ctx.globalAlpha = vis;
           if (ctx.globalAlpha > 0.01) {
-            ctx.setTransform(is, 0, 0, is * sq, ax, ay - (outer ? 24 * sc * sq * flat : 0)); ctx.translate(-24, -24);
+            ctx.setTransform(is, 0, 0, is * sq, ax, ay); ctx.translate(-24, -24);
             ctx.lineWidth = ((outer ? 1.35 : 1.35 + lift * 0.5) * dpr) / is; ctx.lineCap = ctx.lineJoin = "round"; ctx.stroke(w.ic);
           }
           ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1;
@@ -549,28 +509,32 @@
       plates(IW, spi, zi, THI, false);
       rg = 1;
       hub(zh);
-      if (S.rip > 0.001 && S.rip < 0.999) { ctx.beginPath(); for (let j = 0; j <= 96; j++) { const a = (j / 96) * TAU, r = R1 + 14 + S.rip * 110; proj(r * Math.cos(a), r * Math.sin(a), 0); if (j) ctx.lineTo(px, py); else ctx.moveTo(px, py); } ctx.lineWidth = 1.25 * dpr; ctx.strokeStyle = css(NVY, 0.2 * (1 - S.rip)); ctx.stroke(); }
+      if (S.rip > 0.001 && S.rip < 0.999) { ctx.beginPath(); for (let j = 0; j <= 96; j++) { const a = (j / 96) * TAU, r = R1 + 14 + S.rip * RIP_W; proj(r * Math.cos(a), r * Math.sin(a), 0); if (j) ctx.lineTo(px, py); else ctx.moveTo(px, py); } ctx.lineWidth = 1.25 * dpr; ctx.strokeStyle = css(NVY, 0.2 * (1 - S.rip)); ctx.stroke(); }
       /* The object lives in the world; it is sized once per layout and only moves here. */
       if (S.obj > 0.01) { proj(ax, ay, zo + THO + lz + S.hop * 70 + S.fall * 520); tok.style.transform = `translate3d(${(px / dpr + ox).toFixed(1)}px,${(py / dpr + oy).toFixed(1)}px,0)`; }
-      /* A label that repeats the name already on the piece (the first screen, the stops) stays away; a piece with only its icon still gets it. */
-      if (tipI >= 0) tip.classList.toggle("on", !P[tipI].nd);
+      /* The name pill: no piece carries its name, so every hover or focus gets it. */
+      if (tipI >= 0) tip.classList.add("on");
       if (tipI >= 0) { const w = WD[tipI], p = P[tipI], o = w.o, a = w.ca + (o ? spo : spi), l = Math.max(p.w, p.h * 0.6), r = w.mid + l * (o ? FS : FSI) + p.e * (o ? EX.o : EX.i) * (1 + DRIFT * S.dr); proj(r * Math.cos(a), r * Math.sin(a), (o ? zo + THO : zi + THI) + l * LF); tip.style.transform = `translate3d(${(px / dpr + ox).toFixed(1)}px,${(py / dpr + oy - 46 * Math.max(0.6, K / dpr)).toFixed(1)}px,0) translateX(-50%)`; }
     };
 
-    /* Fit: every pose is projected at unit scale and fitted into the box the words and the card leave free. */
-    const bboxOf = (tilt, zo, zi, zh, eo, ei) => {
+    /* Fit: every pose is projected at unit scale and fitted into the box the words and the card leave free. It covers everything the
+       canvas draws; with sh it also covers the floor shadow of a lifted piece (draw, the DISC under it), which reaches past the plate. */
+    const bboxOf = (tilt, zo, zi, zh, eo, ei, sh) => {
       const t = tilt * RAD, c = Math.cos(t), s = Math.sin(t), lf = tilt ? LF : 0;
       let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
       const add = (x, y, z) => { const Y = y * c - z * s, Z = y * s + z * c, p = DEPTH / (DEPTH - Z), X = x * p, V = (Y - YC) * p + YC; if (X < x0) x0 = X; if (X > x1) x1 = X; if (V < y0) y0 = V; if (V > y1) y1 = V; };
       for (let j = 0; j < 48; j++) {
         const a = (j / 48) * TAU, ca = Math.cos(a), sa = Math.sin(a), r = R1 + (eo || 0) + (tilt ? 8 + FS * Math.max(0, sa) * Math.max(0, sa) : 8), ri = r1 + (ei || 0) + (tilt ? FSI * Math.max(0, sa) * Math.max(0, sa) : 0);
         add(r * ca, r * sa, zo + THO + lf); add(r * ca, r * sa, zo); add(ri * ca, ri * sa, zi + THI + lf); add(HUB * ca, HUB * sa * Math.max(1, HUB_R / Math.max(c, 0.05)), zh + THH);
+        if (sh && tilt) {
+          const rs = (R0 + R1) / 2 + 4 + FS + (eo || 0), ys = rs * sa + 24, zs = zo - 1 - AIR * (tilt / TILT), Ys = ys * c - zs * s, ps = DEPTH / (DEPTH - (ys * s + zs * c)), xs = rs * ca * ps, vs = (Ys - YC) * ps + YC, ra = SH_REACH * 180 * ps, rd = ra * c;
+          if (xs - ra < x0) x0 = xs - ra; if (xs + ra > x1) x1 = xs + ra; if (vs - rd < y0) y0 = vs - rd; if (vs + rd > y1) y1 = vs + rd;
+        }
       }
       return { x0, y0, x1, y1 };
     };
-    let noteTwo = false;
     const fitTo = (bb, box, wMax) => {
-      const k = Math.min((box.r - box.l) / (bb.x1 - bb.x0), (box.b - box.t) / (bb.y1 - bb.y0), wMax / (bb.x1 - bb.x0));
+      const k = Math.max(0.05, Math.min((box.r - box.l) / (bb.x1 - bb.x0), (box.b - box.t) / (bb.y1 - bb.y0), wMax == null ? Infinity : wMax / (bb.x1 - bb.x0)));
       return { k, x: (box.l + box.r) / 2 - (k * (bb.x0 + bb.x1)) / 2, y: (box.t + box.b) / 2 - (k * (bb.y0 + bb.y1)) / 2 };
     };
     const bottomOf = (h, e) => h.offsetTop + e.offsetTop + e.offsetHeight;
@@ -582,48 +546,34 @@
       hc = hcMQ.matches;
       const pad = phone ? 14 : Math.round(clamp(28, 56, W * 0.042));
       tile.style.setProperty("--rfw-in", pad + "px");
-      const eo = EX.o * (1 + DRIFT), ei = EX.i * (1 + DRIFT), box3 = (k) => bboxOf(TILT, POSE[k].zO, POSE[k].zI, POSE[k].zH, eo, ei);
-      const flatBB = bboxOf(0, 0, 0, 0), apartBB = box3("apart"), storyBB = box3("story"), tr = tile.getBoundingClientRect();
+      const eo = EX.o * (1 + DRIFT), ei = EX.i * (1 + DRIFT);
+      const flatBB = bboxOf(0, 0, 0, 0), endBB = bboxOf(0, 0, 0, 0, 14 + 0.81 * RIP_W), openBB = bboxOf(TILT, OPEN.zO, OPEN.zI, OPEN.zH, eo, ei, true), tr = tile.getBoundingClientRect();
+      /* endBB: the wheel at the end with the air it needs: the seating ripple's reach (drawn out to about 0.8 of RIP_W) and the pieces still coming home while the camera closes in. */
       /* Where the hint goes, under the wheel at rest. */
       const hintAt = (show) => { hint.style.display = show ? "" : "none"; hint.style.left = F.flat.x + "px"; hint.style.top = F.flat.y + F.flat.k * flatBB.y1 + (phone ? 6 : 10) + "px"; };
+      /* One frame for the open wheel, fitted once from what is in the DOM: the words, the legend, the card. Every box keeps EDGE from the tile. */
       if (phone) {
-        /* The hero's words sit above the stage, in the page. At rest the wheel takes what the first screen shows of the stage, and at
-           the end what the last words leave it. A short phone shows the top of it and scrolling brings the rest. */
-        const elTop = el.getBoundingClientRect().top + root.scrollY, vis = pin.offsetHeight + pinTop - elTop - tile.offsetTop, low = Math.min(W * 0.72, 460) + 14, roomy = vis > low + 36, keep = Math.max(176, vis - 40), room = roomy || vis >= 216;
-        /* Wheel and hint both sit above the browser bar: a screen too short for the full wheel gets a smaller one, not a cut one. */
-        F.flat = fitTo(flatBB, { l: pad, t: 14, r: W - pad, b: roomy ? clamp(low, H - 14, vis - 40) : keep }, W * 0.86);
-        hintAt(room);
-        F.end = fitTo(flatBB, { l: pad, t: bottomOf(hx[1], hx[1].querySelector(".rfw-sub")) + 18, r: W - pad, b: H - 18 }, W * 0.86);
-        const zs = (p, u) => ({ zO: p.zO * u, zI: p.zI * u, zH: p.zH * u }), aBand = { l: 8, t: bottomOf(hx[0], hx[0].querySelector(".rfw-sub")) + 12, r: W - 8, b: H - 30 };
-        for (let u = 1; u >= 0.55; u -= 0.05) {
-          POSE.apart = zs(POSE_P.apart, u);
-          const bb = box3("apart");
-          F.apart = fitTo(bb, aBand, W - 16);
-          F.burst = fitTo(bb, { l: 8, t: 14, r: W - 8, b: H - 14 }, W - 16);
-          if ((bb.x1 - bb.x0) * F.apart.k >= (W - 16) * 0.84) break;
-        }
+        /* The words sit above the wheel and the legend below it, all in the one tile. The wheel takes the band between them (a little less air from the words on a small band); at rest
+           it leaves room for the hint; at a stop it takes what the stop's words and card leave; at the end what the last words leave. */
+        const sub0 = hx[0].querySelector(".rfw-sub"), leg = hx[0].querySelector(".rfw-legend");
+        const headB = bottomOf(hx[0], sub0), legT = hx[0].offsetTop + leg.offsetTop, gy = clamp(8, EDGE, (legT - headB) * 0.06), box = { l: EDGE, t: headB + gy, r: W - EDGE, b: legT - gy };
+        F.open = fitTo(openBB, box);
+        F.flat = fitTo(flatBB, { l: box.l, t: box.t, r: box.r, b: box.b - HINT_H });
+        hintAt(true);
         const textB = Math.max.apply(null, stops.map((s, i) => bottomOf(s, tx_[i]))), cardT = Math.min.apply(null, stops.map((s, i) => s.offsetTop + cards[i].offsetTop));
-        const band = { l: 8, t: textB + 10, r: W - 8, b: cardT - 10 };
-        /* On a short screen the layers part a little less, so the wheel keeps most of its width instead of shrinking to fit the air. */
-        for (let u = 1; u >= 0.55; u -= 0.05) {
-          POSE.story = zs(POSE_P.story, u);
-          const bb = box3("story");
-          F.story = fitTo(bb, band, W - 16);
-          if ((bb.x1 - bb.x0) * F.story.k >= (W - 16) * 0.84) break;
-        }
+        F.stop = fitTo(openBB, { l: EDGE, t: textB + EDGE, r: W - EDGE, b: cardT - EDGE });
+        F.end = fitTo(endBB, { l: pad, t: bottomOf(hx[1], hx[1].lastElementChild) + 18, r: W - pad, b: H - 18 });
       } else {
         /* The words keep one column, on the left where the hero's words were; the wheel keeps the right of the stage. */
         const cr = copy ? copy.getBoundingClientRect() : null, L = cr ? Math.max(pad, cr.left - tr.left) : pad, gap = Math.max(24, W * 0.02);
         tile.style.setProperty("--rfw-l", L + "px");
-        const colR = hx[0].offsetLeft + hx[0].offsetWidth, restL = (cr ? cr.right - tr.left : colR) + gap, pv = brief && H < 480 ? Math.round(H * 0.04) : pad, side = { l: colR + gap, t: pv, r: W - pad, b: H - pv };
-        F.flat = F.end = fitTo(flatBB, { l: restL, t: pad, r: W - pad, b: H - pad - 28 }, H * 0.74);
+        const colR = hx[0].offsetLeft + hx[0].offsetWidth, restL = (cr ? cr.right - tr.left : colR) + gap;
+        F.flat = fitTo(flatBB, { l: restL, t: pad, r: W - pad, b: H - pad - 28 }, H * 0.74);
+        F.end = fitTo(endBB, { l: restL, t: pad, r: W - pad, b: H - pad - 28 }, H * 0.74);
         hintAt(true);
-        /* Centre stage: for this one moment the words have gone, so it may use the whole tile. */
-        F.burst = fitTo(apartBB, { l: pad, t: Math.round(pv * 0.7), r: W - pad, b: H - Math.round(pv * 0.7) }, W - 2 * pad);
-        F.apart = fitTo(apartBB, side, side.r - side.l);
-        F.story = fitTo(storyBB, side, side.r - side.l);
-        noteTwo = false;
+        F.open = F.stop = fitTo(openBB, { l: colR + gap, t: EDGE, r: W - EDGE, b: H - EDGE });
       }
+      ringC = getComputedStyle(el).getPropertyValue("--b500").trim() || "#2b4c88";
       /* The canvas covers the whole tile, since a piece in flight may go anywhere on the stage. It is opaque, and its wrapper keeps it inside the rounded corners. */
       const cw = W, ch = H;
       ox = 0; oy = 0;
@@ -638,11 +588,9 @@
       stageBg = getComputedStyle(tile).backgroundColor || stageBg;
       FK[0] = NaN;
       ctx.imageSmoothingEnabled = false;
-      ctx.font = `600 31px ${root.getComputedStyle(el).fontFamily || "sans-serif"}`; ctx.textAlign = "center";
-      for (const k in wc) delete wc[k];
       /* The object is sized once, where it stands: on the front piece of the exploded ring. */
-      const Z = (RT + FS + eo) * Math.sin(TILT * RAD) + (POSE.story.zO + THO + LF) * Math.cos(TILT * RAD);
-      tokPx = Math.round(F.story.k * (DEPTH / (DEPTH - Z)) * TOKW);
+      const Z = (RT + FS + eo) * Math.sin(TILT * RAD) + (OPEN.zO + THO + LF) * Math.cos(TILT * RAD);
+      tokPx = Math.round(F.stop.k * (DEPTH / (DEPTH - Z)) * TOKW);
       tok.style.setProperty("--tok", tokPx + "px");
       force = true;
       if (resized) draw(); else mark();
@@ -651,24 +599,30 @@
     pinTop = parseFloat(getComputedStyle(pin).top) || 0;
     /* One timeline holds the whole story and owns the one ScrollTrigger. Scroll is its playhead, so it reverses exactly. */
     let hov = -1, tipI = -1, tipT = 0, focused = false, curP = -1, drag = null, goTw = null, ready = false;
-    const IO = "power2.inOut", OUT = "power3.out", IN = "power2.in", rp = opts.refreshPriority == null ? 0 : opts.refreshPriority, scrub = opts.scrub == null ? 0.7 : opts.scrub;
-    const T = g.timeline({ defaults: { ease: "none" }, onUpdate: mark, paused: true });
+    const IO = "power2.inOut", OUT = "power3.out", IN = "power2.in", rp = opts.refreshPriority == null ? 0 : opts.refreshPriority, scrub = opts.scrub == null ? (root.matchMedia("(hover: none) and (pointer: coarse)").matches ? 0.3 : 0.7) : opts.scrub;
+    /* The trial button below the words is clickable only from GO_AT on, when its words are up (rfw-go-on); rfw-go-in says it is on screen. */
+    let goOn = false;
+    const T = g.timeline({ defaults: { ease: "none" }, onUpdate: () => { mark(); const on = T.time() >= GO_AT; if (on !== goOn) { goOn = on; el.classList.toggle("rfw-go-on", on); } }, paused: true });
     /* Made once the timeline is whole, so scroll only ever plays a finished story. */
     let trig = null;
     /* Rest on a label where there is something to read. Through the come-apart and the way home the scroll just holds the pieces
        wherever it stops, so a long flight never pulls against the hand. */
-    const nearBeat = (v) => {
+    const nearBeat = (v, self) => {
+      /* v is where the hand's speed would carry the page; it only picks the beat. Where nothing is chosen the page stays at its own progress, so it never moves after the hand stops. */
+      const stay = self ? self.progress : v;
+      if (!calm()) return stay;
       const t = v * END;
-      if ((t > 0.15 && t < T_OPEN - 0.5) || (t > C0 && t < END - 1.1)) return v;
+      if ((t > 0.15 && t < T_OPEN - 0.5) || (t > C0 && t < END - 1.1)) return stay;
       let b = BEATS[0][0];
       for (const x of BEATS) if (Math.abs(x[0] - t) < Math.abs(b - t)) b = x[0];
       return b / END;
     };
+    /* The snap keeps inertia off: ScrollTrigger reads the speed from the scrub's catch-up, not from the hand, and would throw a stopped scroll to a far beat (T9). */
     const link = () => {
       trig = ST.create({
-        animation: T, trigger: el, start: 0, end: "bottom bottom",
+        animation: T, trigger: el, start: phone ? () => "top " + pinTop + "px" : 0, end: "bottom bottom",
         scrub,
-        snap: opts.snap === false ? false : { snapTo: nearBeat, duration: { min: 0.35, max: 0.8 }, delay: 0.3, ease: IO, inertia: false },
+        snap: opts.snap === false ? false : { snapTo: nearBeat, duration: { min: 0.35, max: 0.8 }, delay: 0.3, ease: "power2.out", inertia: false },
         refreshPriority: rp,
         onRefresh: mark,
         onToggle: (self) => { html.style.scrollBehavior = self.isActive ? "auto" : ""; },
@@ -685,30 +639,24 @@
        wheel lifts out of the hero, draws in for a breath, and comes apart: the hub first, then the core, then the daily-work ring opens
        from the front around to the back, turning as it goes. Each piece takes its colour as it leaves, gets its name in the air, and
        lands with a long soft tail. */
-    if (!phone && copy) T.to(copy, { autoAlpha: 0, y: -28, duration: 0.7, ease: IN }, 0.1);
+    if (!phone && copy) T.to(copy, { autoAlpha: 0, y: -28, duration: 0.5, ease: IN }, 0.1);
+    if (phone) g.set(hx[0], { autoAlpha: 1, y: 0 }); else show(hx[0], 0.1, 0.5);
     hide(hint, 0.02, 0.3);
     T.to(S, { wA: 1, duration: 4.4, ease: "power1.inOut" }, 0.05);
     T.to(S, { spO: 54, spI: -36, duration: 7, ease: HEAVY }, 0.6);
-    T.to(S, { lH: 1, duration: 5.2, ease: HEAVY }, 0.7);
-    T.to(S, { lI: 1, duration: 5.2, ease: HEAVY }, 1.1);
-    T.to(S, { lO: 1, duration: 5.2, ease: HEAVY }, 1.3);
+    T.to(S, { lift: 1, duration: 5.2, ease: HEAVY }, 0.7);
     T.to(S, { dr: 1, duration: 5, ease: "sine.out" }, 3.3);
-    /* On a short stage the names wait until the pieces have landed, so they never sit on a piece still in flight. */
-    const late = brief && tile.clientHeight < 520 ? 2.7 : 1.7;
     WD.forEach((w) => {
       const p = P[w.i], at = w.o ? 1.4 + w.rank * 0.4 : 1.1 + w.rank * 0.36;
       T.to(p, { e: -0.03, duration: 0.5, ease: "sine.inOut" }, 0.35);
       T.to(p, { e: 1, duration: 4.5, ease: HEAVY }, at);
       T.to(p, { c: 1, duration: 1.2, ease: IO }, at + 0.5);
-      T.to(p, { n: 1, duration: 0.45, ease: OUT }, at + late);
-      T.to(p, { n: 0, duration: 0.3, ease: IO }, T_SEEN + 0.1);
     });
-    /* Every piece has its name. The camera makes room and one line says what it all is. */
-    T.to(S, { wL: 1, duration: 1, ease: IO }, T_OPEN);
-    show(hx[0], T_OPEN + 0.1, 0.4);
-    hide(hx[0], T_SEEN);
+    /* The legend carries every name while the wheel is open; the first stop's words take its place as they leave. */
+    hide(hx[0], S0 - HOLD);
     /* The ring brings the first stop to the front and the object drops onto it. The pieces stay apart. */
-    T.to(S, { wS: 1, spO: TURN[0], duration: 0.8, ease: IO }, T_SEEN + 0.05);
+    T.to(S, { spO: TURN[0], duration: 0.8, ease: IO }, T_SEEN + 0.05);
+    T.to(S, { wS: 1, duration: 0.5, ease: IO }, S0 - HOLD - 0.3);
     T.to(S, { focO: 1, duration: 0.4, ease: IO }, S0 - HOLD);
     T.to(tok, { autoAlpha: 1, duration: 0.06 }, S0 - HOLD + 0.06);
     T.to(S, { obj: 1, duration: 0.1 }, S0 - HOLD + 0.06);
@@ -721,7 +669,7 @@
       stops[i] = words.lastElementChild; tx_[i] = stops[i].firstElementChild; cards[i] = stops[i].lastElementChild;
       const L = stopAt(i), n = ALL.indexOf(d), a = act(g, cards[i], d), both = [tx_[i], cards[i]];
       T.set(both, { visibility: "visible" }, i ? L - STOP + 0.05 : T_SEEN + 0.1);
-      T.fromTo(tx_[i], { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.3, ease: OUT }, L - HOLD);
+      T.fromTo(tx_[i], { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.3, ease: OUT }, i ? stopAt(i - 1) + HOLD - 0.22 : S0 - HOLD);
       a.timeScale(a.totalDuration() / 0.55);
       T.add(a, L - HOLD - 0.05);
       T.to(P[n], { w: 1, duration: 0.36, ease: OUT }, L - HOLD);
@@ -754,17 +702,17 @@
     T.to(S, { obj: 0, duration: 0.14 }, C0);
     T.to(S, { focO: 0, duration: 0.5, ease: IO }, C0);
     T.to(S, { spO: 360, spI: -360, duration: 3.1, ease: HOME }, C0 - 0.1);
-    T.to(S, { wE: 1, duration: 3, ease: IO }, C0 + 0.05);
-    T.to(S, { hO: 1, duration: 2.7, ease: HOME }, C0 + 0.05);
-    T.to(S, { hI: 1, duration: 2.7, ease: HOME }, C0 + 0.2);
-    T.to(S, { hH: 1, duration: 2.7, ease: HOME }, C0 + 0.35);
+    T.to(S, { wE: 1, duration: 2.8, ease: IO }, C0 + 0.3);
+    T.to(S, { lift: 0, duration: 2.7, ease: HOME }, C0 + 0.05);
     WD.forEach((w) => {
       const p = P[w.i], at = C0 + (w.o ? 0.05 + (5 - w.rank) * 0.1 : 0.05 + (2 - w.rank) * 0.12);
       T.to(p, { e: 0, duration: 2.6, ease: HOME }, at);
       T.to(p, { c: 0, duration: 0.5, ease: IO }, C0 + 3.45 + (w.i % 7) * 0.03);
     });
     T.fromTo(S, { rip: 0 }, { rip: 1, duration: 0.35, ease: "power2.out", immediateRender: false }, C0 + 3);
-    show(hx[1], C0 + 2.9);
+    show(hx[1], C0 - 0.22, 0.4);
+    /* On a phone the trial lead and button sit over the stop's frame until the camera is well on its way, so they come up later than the heading. */
+    if (phone) T.fromTo(hx[1].querySelector(".sy-go"), { opacity: 0 }, { opacity: 1, duration: 0.4, ease: OUT }, GO_SHOW);
     T.to({}, { duration: 0.001 }, END - 0.001);
     BEATS.forEach(([t, name]) => T.addLabel(name, t));
     /* On load, not on scroll: the wheel settles into the hero. A small turn and a small scale on the canvas's own layer, so nothing is
@@ -777,11 +725,11 @@
     const goTo = (name) => {
       const y = trig.labelToScroll(name), o = { y: trig.scroll() }, dist = Math.abs(y - o.y) / Math.max(1, trig.end - trig.start);
       if (goTw) goTw.kill();
-      goTw = g.to(o, { y, duration: clamp(0.5, 1.6, 0.5 + dist * 3), ease: IO, onUpdate: () => trig.scroll(o.y) });
+      goTw = g.to(o, { y, duration: clamp(0.4, 0.9, 0.4 + dist * 2), ease: IO, onUpdate: () => trig.scroll(o.y) });
     };
     const showTip = (i) => {
       clearTimeout(tipT);
-      if (i >= 0) { tipI = i; tip.textContent = ALL[i].t; tip.classList.toggle("on", !P[i].nd); force = true; mark(); } else tipT = setTimeout(() => { tip.classList.remove("on"); tipI = -1; }, 160);
+      if (i >= 0) { tipI = i; tip.textContent = ALL[i].t; tip.classList.add("on"); force = true; mark(); } else tipT = setTimeout(() => { tip.classList.remove("on"); tipI = -1; }, 160);
     };
     const over = (i) => {
       if (i === hov) return;
@@ -863,6 +811,11 @@
       if (left * s.v <= 0) s.v = 0; else if (Math.abs(s.v) > OM * Math.abs(left)) s.v = OM * left;
     };
     const onLeave = (e) => { if (!drag && e.pointerType !== "touch") over(-1); };
+    /* The trial button is reachable by Tab while its words are away; focus brings the end of the story to it. */
+    const goLink = $(".rfw-h .sy-go a"), onGoFocus = () => { if (T.time() < GO_AT) goTo("one"); };
+    /* The person's own hand wins: any wheel, touch or key stops a tile's glide at once. */
+    const stopGo = () => { if (goTw) { goTw.kill(); goTw = null; } }, hand = { passive: true, capture: true };
+    let goIO = null;
     const onFocus = (e) => { const i = +e.target.dataset.i; if (e.target.matches(":focus-visible")) { focused = true; focusI = i; force = true; over(i); mark(); } };
     const onBlur = () => { focused = false; focusI = -1; force = true; over(-1); mark(); };
     const onKey = (e) => {
@@ -871,22 +824,22 @@
       const k = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
       if (k) { e.preventDefault(); const n = mod(i + k, N); btns[i].tabIndex = -1; btns[n].tabIndex = 0; btns[n].focus(); }
     };
-    const on = [[cv, "pointerdown", onDown], [cv, "pointermove", onMove], [cv, "pointerup", onUp], [cv, "pointercancel", onUp], [cv, "pointerleave", onLeave], [wheelBox, "focusin", onFocus], [wheelBox, "focusout", onBlur], [wheelBox, "keydown", onKey]];
+    const on = [[cv, "pointerdown", onDown], [cv, "pointermove", onMove], [cv, "pointerup", onUp], [cv, "pointercancel", onUp], [cv, "pointerleave", onLeave], [wheelBox, "focusin", onFocus], [wheelBox, "focusout", onBlur], [wheelBox, "keydown", onKey], [goLink, "focusin", onGoFocus]];
     const onRI = () => layout();
     let roSeen = false, alive = true, jobId = 0;
     /* The first report only repeats the layout the build has just done. */
     const ro = new ResizeObserver(() => { if (!roSeen) { roSeen = true; return; } layout(); draw(); });
     /* The first scroll should not meet cold code. In idle moments, draw each kind of pose, then put the true state back and
        draw that in the same moment, so nothing ever shows. */
-    const OPENED = { wA: 1, lO: 1, lI: 1, lH: 1, dr: 1 };
-    const WARMS = [Object.assign({ spO: 54, spI: -36 }, OPENED), Object.assign({ wL: 1, spO: 54, spI: -36 }, OPENED), Object.assign({ wL: 1, wS: 1, focO: 1, obj: 1, u: 2.4, hop: 0.5, fall: 0, spO: 90 }, OPENED), Object.assign({ wL: 1, wS: 1, wE: 0.5, hO: 0.5, hI: 0.5, hH: 0.5, rip: 0.5, spO: 320, spI: -240 }, OPENED)];
+    const OPENED = { wA: 1, lift: 1, dr: 1 };
+    const WARMS = [Object.assign({ spO: 54, spI: -36 }, OPENED), Object.assign({ wS: 1, spO: 54, spI: -36 }, OPENED), Object.assign({ wS: 1, focO: 1, obj: 1, u: 2.4, hop: 0.5, fall: 0, spO: 90 }, OPENED), Object.assign({}, OPENED, { wS: 1, wE: 0.5, lift: 0.5, rip: 0.5, spO: 320, spI: -240 })];
     let warmId = 0, warmN = 0;
     const warm = () => {
       warmId = 0;
       if (!alive || trig.isActive) return;
       const keepS = Object.assign({}, S), keepP = P.map((p) => Object.assign({}, p)), w = WARMS[warmN % WARMS.length];
       Object.assign(S, w);
-      P.forEach((p, i) => { p.c = 1; p.e = warmN % 2 ? 0.5 : 1; p.n = 1; p.w = i === (warmN * 3) % P.length ? 1 : 0; });
+      P.forEach((p, i) => { p.c = 1; p.e = warmN % 2 ? 0.5 : 1; p.w = i === (warmN * 3) % P.length ? 1 : 0; });
       for (let j = 0; j < 3; j++) { force = true; S.spO += 7; S.spI += 5; draw(); }
       Object.assign(S, keepS);
       P.forEach((p, i) => Object.assign(p, keepP[i]));
@@ -895,7 +848,7 @@
       if (warmN < WARMS.length * 3) warmId = idle(warm);
       else { force = true; draw(); }
     };
-    const fontsIn = () => { if (!alive) return; const h0 = ends(); layout(); if (Math.abs(h0 - ends()) > 0.5) ST.refresh(); else trig.refresh(); };
+    const fontsIn = () => { if (!alive) return; const h0 = ends(); layout(); if (Math.abs(h0 - ends()) > 0.5) refreshCalm(); else trig.refresh(); };
     /* The build as a short list of jobs: each stop with its own DOM, then the canvas and its listeners, then the finish. Lazily, one per idle moment. */
     /* Where the visitor is in the story, kept as they scroll, so a turn of the phone (the wheel is built again for the other shape) puts them back at the same place. */
     const trackKeep = () => {
@@ -903,8 +856,12 @@
       const y = root.scrollY, a = trig.start, z = trig.end;
       inst.keep = y < a ? { m: 0, y } : y > z ? { m: 2, d: y - z } : { m: 1, p: (y - a) / Math.max(1, z - a) };
     };
+    const onRefreshed = () => { lastRef = now(); };
     const arm = () => {
       root.addEventListener("scroll", trackKeep, { passive: true });
+      ["wheel", "touchstart", "keydown"].forEach((n) => root.addEventListener(n, stopGo, hand));
+      ST.addEventListener("refresh", onRefreshed);
+      if (root.IntersectionObserver) { goIO = new IntersectionObserver((es) => { es.forEach((e) => el.classList.toggle("rfw-go-in", e.isIntersecting)); }, { rootMargin: "-68px 0px 0px 0px" }); goIO.observe(goLink); }
       on.forEach(([t, n, f]) => t.addEventListener(n, f));
       g.ticker.add(tick);
       ST.addEventListener("refreshInit", onRI);
@@ -914,7 +871,7 @@
       ready = true;
     };
     const finish = () => {
-      if (Math.abs(held0 - ends()) > 0.5) Promise.resolve().then(() => { if (alive) ST.refresh(); }); else ST.sort();
+      if (Math.abs(held0 - ends()) > 0.5) Promise.resolve().then(() => { if (alive) refreshCalm(); }); else ST.sort();
       if (document.fonts && document.fonts.status !== "loaded" && document.fonts.ready) document.fonts.ready.then(fontsIn);
       delete inst.flush;
       /* Built again after a turn: back to the same place. */
@@ -924,7 +881,7 @@
         put(); Promise.resolve().then(put); root.requestAnimationFrame(put);
       }
       inst.rebuilt = true;
-      Object.assign(inst, { live: true, built: true, T, trig, S, P, Sp, at: (t) => trig.start + ((trig.end - trig.start) * t) / END, redraw: () => { force = true; whole = true; draw(); } });
+      Object.assign(inst, { live: true, built: true, T, trig, S, P, Sp, cam: () => ({ ...cam }), at: (t) => trig.start + ((trig.end - trig.start) * t) / END, redraw: () => { force = true; whole = true; draw(); } });
       settled();
       warmId = idle(warm);
     };
@@ -940,17 +897,21 @@
       ST.removeEventListener("refreshInit", onRI);
       ro.disconnect();
       root.removeEventListener("scroll", trackKeep);
+      ["wheel", "touchstart", "keydown"].forEach((n) => root.removeEventListener(n, stopGo, hand));
+      ST.removeEventListener("refresh", onRefreshed);
+      if (goIO) goIO.disconnect();
+      el.classList.remove("rfw-go-on", "rfw-go-in");
       on.forEach(([t, n, f]) => t.removeEventListener(n, f));
       clearTimeout(tipT);
       if (goTw) goTw.kill();
       html.style.scrollBehavior = "";
       if (!pageTop) el.style.removeProperty("--rfw-top");
-      ["T", "trig", "S", "P", "Sp", "at", "redraw", "flush"].forEach((k) => { delete inst[k]; });
+      ["T", "trig", "S", "P", "Sp", "cam", "at", "redraw", "flush"].forEach((k) => { delete inst[k]; });
       inst.live = false;
     };
   }
 
-  const api = { mount, staticHTML, cards: CARD, data: ALL, icons: ICON, beats: planOf(false).BEATS };
+  const api = { mount, staticHTML, goHTML, go: GO, refresh: refreshCalm, cards: CARD, data: ALL, icons: ICON, beats: planOf(false).BEATS };
   root.RFWheel = api;
   if (typeof document !== "undefined") {
     const all = () => { if (root.RFScenes) root.RFScenes.wheel = mount; document.querySelectorAll('[data-scene="wheel"]').forEach((e) => mount(e)); };
