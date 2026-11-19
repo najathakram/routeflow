@@ -88,32 +88,36 @@ describe("SettingsPage — User management: Add User", () => {
         name: "New Hire",
         email: "newhire@example.com",
         username: "nhire",
-        role: expect.stringMatching(/^(OPERATOR|DRIVER)$/), // B862: the role is always sent
       });
     });
     expect(await dialog.findByText("Tmp-Pw-1")).toBeInTheDocument();
   });
 
-  // B862: the Role picked in the form is the role sent; it used to be dropped, so every account became an operator.
-  it.each([["DRIVER"], ["OPERATOR"]])(
-    "sends the picked role %s to createOperator",
-    async (role) => {
-      createOperatorMutateAsync.mockResolvedValue({ tempPassword: "Tmp-Pw-1" });
-      const user = userEvent.setup();
-      renderWithProviders(<SettingsPage />);
+  // B862 / SA-1171 K2: a driver needs a driver profile, so Add User never creates one. Picking Driver opens the
+  // Drivers add form holding what was typed, and createOperator is not called.
+  it("opens the Add driver form prefilled when Driver is picked, and never calls createOperator", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
 
-      await user.click(await screen.findByRole("button", { name: /^add user$/i }));
-      const dialog = within(await screen.findByRole("dialog"));
-      await user.type(dialog.getByLabelText("Full Name"), "New Hire");
-      await user.type(dialog.getByLabelText("Email"), "newhire@example.com");
-      await user.selectOptions(dialog.getByLabelText("Role"), role);
-      await user.click(dialog.getByRole("button", { name: /^create user$/i }));
+    await user.click(await screen.findByRole("button", { name: /^add user$/i }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.type(dialog.getByLabelText("Full Name"), "New Hire");
+    await user.type(dialog.getByLabelText("Email"), "newhire@example.com");
+    await user.selectOptions(dialog.getByLabelText("Role"), "DRIVER");
 
-      await waitFor(() =>
-        expect(createOperatorMutateAsync).toHaveBeenCalledWith(expect.objectContaining({ role })),
-      );
-    },
-  );
+    const driverDialog = within(await screen.findByRole("dialog", { name: /add driver/i }));
+    await waitFor(() => expect(driverDialog.getByLabelText(/full name/i)).toHaveValue("New Hire"));
+    expect(driverDialog.getByLabelText(/^email/i)).toHaveValue("newhire@example.com");
+    expect(createOperatorMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("Add User defaults to Operator", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+    await user.click(await screen.findByRole("button", { name: /^add user$/i }));
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.getByLabelText("Role")).toHaveValue("OPERATOR");
+  });
 });
 
 describe("SettingsPage — User management: Edit User", () => {

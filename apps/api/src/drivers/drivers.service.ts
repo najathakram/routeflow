@@ -20,6 +20,45 @@ import { PostLocationDto } from "./dto/post-location.dto";
 import { geocodeAddress } from "../common/geocode.util";
 import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 
+/** The Driver columns a caller may set when it writes the row (the Drivers add flow sends all of them). */
+export interface DriverRowProfile {
+  contactName?: string;
+  phone?: string;
+  vehicleMake?: string;
+  vehicleModel?: string;
+  vehicleColour?: string;
+  vehiclePlate?: string;
+}
+
+/**
+ * B862 / SA-1171 K1: THE one writer of a Driver row. A user who drives has exactly one row, keyed on `userId`
+ * (unique), ACTIVE. Called inside the caller's own tenantTransaction, so the user write and the row land together.
+ * An existing row (a rehire, a double toggle) is reactivated, never duplicated, and its profile is left as it was.
+ * Callers: DriversService.create, UsersService.toggleDriverPermit (enable) and UsersService.updateUser (-> DRIVER).
+ * A spec pins that no other file calls driver.create / driver.upsert.
+ */
+export async function ensureDriverRow(
+  tx: { driver: { upsert: (args: any) => Promise<any> } },
+  user: { id: string; username: string },
+  profile: DriverRowProfile = {},
+) {
+  return tx.driver.upsert({
+    where: { userId: user.id },
+    create: {
+      userId: user.id,
+      contactName: profile.contactName ?? user.username,
+      phone: profile.phone ?? "",
+      vehicleMake: profile.vehicleMake,
+      vehicleModel: profile.vehicleModel,
+      vehicleColour: profile.vehicleColour,
+      vehiclePlate: profile.vehiclePlate,
+      status: "ACTIVE",
+    },
+    update: { status: "ACTIVE" },
+    include: { user: { select: { id: true, username: true, email: true, status: true } } },
+  });
+}
+
 @Injectable()
 export class DriversService {
   private readonly logger = new Logger(DriversService.name);
@@ -171,17 +210,13 @@ export class DriversService {
         },
       });
 
-      const driver = await tx.driver.create({
-        data: {
-          userId: user.id,
-          contactName: dto.contactName,
-          phone: dto.phone,
-          vehicleMake: dto.vehicleMake,
-          vehicleModel: dto.vehicleModel,
-          vehicleColour: dto.vehicleColour,
-          vehiclePlate: dto.vehiclePlate,
-        },
-        include: { user: { select: { id: true, username: true, email: true, status: true } } },
+      const driver = await ensureDriverRow(tx, user, {
+        contactName: dto.contactName,
+        phone: dto.phone,
+        vehicleMake: dto.vehicleMake,
+        vehicleModel: dto.vehicleModel,
+        vehicleColour: dto.vehicleColour,
+        vehiclePlate: dto.vehiclePlate,
       });
 
       return { driver, tempPassword };

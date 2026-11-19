@@ -32,7 +32,7 @@ describe("CreateOperatorDto.role (B862)", () => {
   });
 });
 
-describe("UsersService.createOperator role (B862)", () => {
+describe("UsersService.createOperator role (B862 / SA-1171 K2: always OPERATOR; DRIVER is refused, see users.driver-row.spec.ts)", () => {
   let service: UsersService;
   let prisma: ReturnType<typeof createMockPrisma>;
 
@@ -64,12 +64,6 @@ describe("UsersService.createOperator role (B862)", () => {
       .useMocker(() => ({}))
       .compile();
     service = mod.get(UsersService);
-  });
-
-  it("writes the DRIVER role when the dto asks for it", async () => {
-    const { user } = await service.createOperator({ ...base, role: UserRole.DRIVER } as any);
-    expect(prisma.user.create.mock.calls[0][0].data.role).toBe(UserRole.DRIVER);
-    expect(user.role).toBe(UserRole.DRIVER);
   });
 
   it("writes OPERATOR for OPERATOR and for no role (older callers)", async () => {
