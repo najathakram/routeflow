@@ -61,6 +61,7 @@ describeDb("users: the Driver row follows the role (B862, SA-1171)", () => {
   afterAll(async () => {
     if (tenantId) {
       await prisma.routeRun.deleteMany({ where: { tenantId } });
+      await prisma.route.deleteMany({ where: { tenantId } }); // the 409 case makes a route
       await prisma.driver.deleteMany({ where: { tenantId } });
       await prisma.passwordResetToken.deleteMany({ where: { user: { tenantId } } });
       await prisma.user.deleteMany({ where: { tenantId } });
@@ -94,7 +95,13 @@ describeDb("users: the Driver row follows the role (B862, SA-1171)", () => {
       data: { tenantId, name: `Acme route ${RUN}` } as never,
     });
     await prisma.routeRun.create({
-      data: { tenantId, routeId: route.id, driverId: d.id, status: "SCHEDULED" } as never,
+      data: {
+        tenantId,
+        routeId: route.id,
+        driverId: d.id,
+        scheduledDate: new Date(),
+        status: "SCHEDULED",
+      } as never,
     });
     await expect(update(u.id, { role: UserRole.OPERATOR })).rejects.toMatchObject({
       response: { code: "DRIVER_HAS_OPEN_RUN" },

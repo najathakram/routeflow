@@ -72,6 +72,7 @@ describeDb(
     afterAll(async () => {
       if (tenantId) {
         await prisma.passwordResetToken.deleteMany({ where: { user: { tenantId } } });
+        await prisma.driver.deleteMany({ where: { tenantId } }); // a DRIVER user now has a Driver row (B862)
         await prisma.user.deleteMany({ where: { tenantId } });
         await prisma.tenant.deleteMany({ where: { id: tenantId } });
       }
