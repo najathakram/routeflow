@@ -55,7 +55,7 @@ describe("#2192 script-spec lane", () => {
       ].filter(Boolean);
       expect({ file: path.basename(f), lanes }).toEqual({
         file: path.basename(f),
-        lanes: [f.endsWith("bugs-self-test-script.spec.ts") ? "repo-truth" : "scripts"],
+        lanes: [/(bugs|leak-check)-self-test-script.spec.ts$/.test(f) ? "repo-truth" : "scripts"],
       });
     }
   });

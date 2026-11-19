@@ -152,6 +152,8 @@
         // walks all of these outside apps/api/src — same reasoning as the docs-truth /
         // no-dead-deps entries above: an edit here must bust this task's cache too.
         "$TURBO_ROOT$/scripts/**",
+        // leak-check-self-test-script.spec.ts (repo-truth lane) drives the pre-push hook itself.
+        "$TURBO_ROOT$/.husky/pre-push",
         "$TURBO_ROOT$/.github/workflows/**",
         "$TURBO_ROOT$/.claude/skills/**",
         "$TURBO_ROOT$/apps/api/scripts/**",
