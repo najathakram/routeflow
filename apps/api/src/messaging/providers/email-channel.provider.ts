@@ -1,6 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { MessageChannel } from "@prisma/client";
 import { EmailService } from "../../email/email.service";
+import { BRAND } from "../../common/brand";
 import { MessageProvider, SendInput, SendResult } from "./message-provider.interface";
 import { buildNotificationEmailBody } from "./email-notification-template";
 
@@ -32,7 +33,7 @@ export class EmailChannelProvider implements MessageProvider {
       return { providerMsgId: `email-provider-skip-${input.channel}`, status: "failed" };
     }
 
-    const subject = input.subject ?? "Update from RouteFlow";
+    const subject = input.subject ?? `Update from ${BRAND.name}`;
 
     // EmailService.send() is documented as honest-by-result and never-throw
     // (R5), but MessageProvider.send()'s own contract is stricter — "MUST
@@ -42,7 +43,7 @@ export class EmailChannelProvider implements MessageProvider {
     // tenant-name lookup rides inside the same try — a DB hiccup there must
     // not throw out of this provider either.
     try {
-      // Opus review (N1): the template hard-coded "RouteFlow" — this is
+      // Opus review (N1): the template hard-coded the platform name — this is
       // buyer-facing mail and must carry the SAME tenant brand invoice emails
       // do, not the platform's own name.
       const look = await this.emailService.tenantLook();

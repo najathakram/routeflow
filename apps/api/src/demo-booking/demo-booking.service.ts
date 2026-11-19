@@ -21,6 +21,7 @@ import {
 import { BusyBlock, GoogleCalendarService } from "./google-calendar.service";
 import { isValidTimeZone, zonedDateParts, zonedWallClockToUtc } from "./zoned-time";
 import { escapeHtml } from "../common/html-escape";
+import { BRAND } from "../common/brand";
 import { routeflowFragmentMail, type BuiltEmail } from "../email/routeflow-mail";
 
 export interface AvailabilitySlot {
@@ -624,7 +625,7 @@ export class DemoBookingService {
     const notes = booking.notes ? plainTextField(booking.notes) : "";
 
     const lines = [
-      `RouteFlow product walkthrough with ${name} (${company}).`,
+      `${BRAND.name} product walkthrough with ${name} (${company}).`,
       "",
       `Contact: ${booking.email}`,
       ...(booking.phone ? [`Phone: ${plainTextField(booking.phone)}`] : []),
@@ -632,7 +633,7 @@ export class DemoBookingService {
       ...(notes ? ["What they want to cover:", notes] : []),
     ];
     return {
-      summary: `RouteFlow demo — ${company}`,
+      summary: `${BRAND.name} demo — ${company}`,
       description: lines.join("\n").trim(),
       startsAt: booking.startsAt,
       endsAt: booking.endsAt,
@@ -745,7 +746,7 @@ function hashToken(token: string): string {
 }
 
 function webUrl(): string {
-  return (process.env.WEB_URL || "https://www.routeflow.info").replace(/\/+$/, "");
+  return (process.env.WEB_URL || BRAND.origin).replace(/\/+$/, "");
 }
 
 function formatSlot(booking: DemoBooking): string {
@@ -801,10 +802,10 @@ export function buildBookingEmail(
   const manageUrl = `${baseUrl}/book-a-demo/manage#token=${encodeURIComponent(manageToken)}`;
   const heading =
     kind === "cancelled"
-      ? "Your RouteFlow demo is cancelled"
+      ? `Your ${BRAND.name} demo is cancelled`
       : kind === "rescheduled"
-        ? "Your RouteFlow demo has moved"
-        : "Your RouteFlow demo is confirmed";
+        ? `Your ${BRAND.name} demo has moved`
+        : `Your ${BRAND.name} demo is confirmed`;
   const intro =
     kind === "cancelled"
       ? "We have cancelled the walkthrough below. If that was not intended, book a new time whenever suits."
@@ -832,7 +833,7 @@ export function buildBookingEmail(
       ${meetRow}
     </table>`,
     cta,
-    why: "You are getting this because this address was used to book a RouteFlow demo.",
+    why: `You are getting this because this address was used to book a ${BRAND.name} demo.`,
   });
   return mail;
 }
@@ -879,6 +880,6 @@ export function buildAdminNotificationEmail(
       ${rowsHtml}
     </table>
     <p style="margin:22px 0 0;font-size:12px;line-height:1.7;color:#738aa0;">${escapeHtml(baseUrl)}</p>`,
-    why: "You are getting this because this address is on the list for RouteFlow demo-booking alerts.",
+    why: `You are getting this because this address is on the list for ${BRAND.name} demo-booking alerts.`,
   });
 }

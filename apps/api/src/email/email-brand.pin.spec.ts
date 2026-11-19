@@ -10,7 +10,7 @@ import { join } from "path";
  */
 const SRC = join(__dirname, "..");
 
-/** B1's source files, relative to `apps/api/src`. */
+/** B1's and B1b's source files, relative to `apps/api/src`. */
 const FILES = [
   "common/brand.ts",
   "email/email-layout.ts",
@@ -18,6 +18,14 @@ const FILES = [
   "email/email.service.ts",
   "billing/billing-notification.templates.ts",
   "buyer/buyer-auth.service.ts",
+  // lane B1b: what a new customer of the site receives on launch day, and the invoice document
+  "demo-booking/demo-booking.service.ts",
+  "onboarding/onboarding-intake.service.ts",
+  "onboarding/onboarding-lifecycle.service.ts",
+  "customers/portal-invite-email.ts",
+  "messaging/providers/email-channel.provider.ts",
+  "email/mailbox/mailbox-alert.copy.ts",
+  "bookkeeping/invoice-template.tsx",
 ];
 
 /** Identifiers that are never renamed (program B app allow-list) and the one typed host. */

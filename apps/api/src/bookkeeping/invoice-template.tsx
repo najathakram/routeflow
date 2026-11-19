@@ -1,6 +1,8 @@
 import React from "react";
 import { Document, Page, Text, View, StyleSheet } from "@react-pdf/renderer";
 import { fmtPdfDate } from "../common/pdf-date";
+// the colour constant below is already called BRAND
+import { BRAND as PLATFORM_BRAND } from "../common/brand";
 
 import { roundMoney } from "@routeflow/pricing";
 // Prisma Decimal is compatible with this interface (has toNumber / valueOf / toString)
@@ -48,6 +50,24 @@ const fmt = (val: DecimalLike) => `$${roundMoney(toNum(val)).toFixed(2)}`;
 
 // B954: the shared UTC-anchored PDF date (calendar dates are UTC-midnight instants).
 const fmtDate = fmtPdfDate;
+
+/**
+ * The initials in the logo square: the first letter of each of the first two words of the brand
+ * name, where words split on anything that is not a letter or digit and on a lower-to-upper hump
+ * ("BlueSky" is "BS", "ACME.CO" is "AC"); a one-word name gives its first two letters.
+ */
+export function brandInitials(name: string): string {
+  const words = name
+    .replace(/([\p{Ll}\p{N}])(\p{Lu})/gu, "$1 $2")
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+  const letters = words.length >= 2 ? `${words[0][0]}${words[1][0]}` : (words[0] ?? "").slice(0, 2);
+  return letters.toUpperCase();
+}
+
+const BRAND_INITIALS = brandInitials(PLATFORM_BRAND.name);
+/** The site host as printed on the document: the brand's origin without a leading `www.`. */
+const BRAND_HOST = new URL(PLATFORM_BRAND.origin).host.replace(/^www\./, "");
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
@@ -334,18 +354,20 @@ export function InvoiceTemplate({ transaction: txn }: { transaction: InvoiceTran
   const invoiceRef = txn.order?.orderNumber ?? txn.id.slice(0, 8).toUpperCase();
 
   return (
-    <Document title={`Invoice ${invoiceRef}`} author="RouteFlow">
+    <Document title={`Invoice ${invoiceRef}`} author={PLATFORM_BRAND.name}>
       <Page size="A4" style={styles.page}>
         {/* ── Header ── */}
         <View style={styles.header}>
           <View>
             <View style={styles.logoBox}>
               <View style={styles.logoSquare}>
-                <Text style={{ fontSize: 9, fontFamily: "Helvetica-Bold", color: "#fff" }}>RF</Text>
+                <Text style={{ fontSize: 9, fontFamily: "Helvetica-Bold", color: "#fff" }}>
+                  {BRAND_INITIALS}
+                </Text>
               </View>
-              <Text style={styles.logoText}>RouteFlow</Text>
+              <Text style={styles.logoText}>{PLATFORM_BRAND.name}</Text>
             </View>
-            <Text style={styles.logoSub}>Austin, TX · routeflow.io</Text>
+            <Text style={styles.logoSub}>{`Austin, TX · ${BRAND_HOST}`}</Text>
           </View>
           <View style={{ alignItems: "flex-end" }}>
             <Text style={styles.invoiceTitle}>INVOICE</Text>
@@ -454,7 +476,9 @@ export function InvoiceTemplate({ transaction: txn }: { transaction: InvoiceTran
 
         {/* ── Footer ── */}
         <View style={styles.footer} fixed>
-          <Text style={styles.footerText}>RouteFlow · Austin, TX · routeflow.io</Text>
+          <Text
+            style={styles.footerText}
+          >{`${PLATFORM_BRAND.name} · Austin, TX · ${BRAND_HOST}`}</Text>
           <Text style={styles.footerText}>Generated {fmtDate(new Date())}</Text>
         </View>
       </Page>

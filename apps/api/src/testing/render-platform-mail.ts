@@ -4,7 +4,22 @@
  * the output; a before/after run under the real brand proves a seam change altered no mail.
  * Sample data is placeholder-only (Acme). Not compiled into `dist/` (`**\/testing/**` is excluded).
  */
+import { readFileSync } from "fs";
+import { join } from "path";
+import * as vm from "vm";
+import * as React from "react";
+import * as ts from "typescript";
 import { BuyerAuthService } from "../buyer/buyer-auth.service";
+import * as signedToken from "../common/signed-token";
+import * as pdfDate from "../common/pdf-date";
+import * as brandModule from "../common/brand";
+import * as pricing from "@routeflow/pricing";
+import { DemoBookingService } from "../demo-booking/demo-booking.service";
+import { OnboardingIntakeService } from "../onboarding/onboarding-intake.service";
+import { OnboardingLifecycleService } from "../onboarding/onboarding-lifecycle.service";
+import { portalInviteEmail } from "../customers/portal-invite-email";
+import { EmailChannelProvider } from "../messaging/providers/email-channel.provider";
+import { mailboxRevokedCopy, mailboxThrottledCopy } from "../email/mailbox/mailbox-alert.copy";
 import {
   dunningTemplate,
   cancelledTemplate,
@@ -408,5 +423,292 @@ export async function renderPlatformMails(): Promise<Out> {
   await buyer.requestPasswordReset("b@acme.test");
   buyerSent.forEach((s, i) => put(out, `buyer-${i}`, s));
 
+  await renderLaneB1bMails(out);
+  renderInvoiceDocument(out);
+
   return out;
+}
+
+type Node = { $: string; props: Record<string, unknown>; children: unknown[] };
+
+/**
+ * Jest's `transform` here covers `.ts` and `.js` only and `moduleFileExtensions` lacks `tsx`, so
+ * the invoice template cannot be imported. This reads the file, compiles it with the TypeScript
+ * API (the same compiler ts-jest uses) and runs it with a `@react-pdf/renderer` stand-in whose
+ * components are plain string-typed elements, so the element tree can be serialised.
+ */
+export function loadInvoiceModule(): Record<string, unknown> {
+  const file = join(__dirname, "..", "bookkeeping", "invoice-template.tsx");
+  const { outputText } = ts.transpileModule(readFileSync(file, "utf8"), {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2020,
+      jsx: ts.JsxEmit.React,
+      esModuleInterop: true,
+    },
+  });
+  const el = (type: string) => (props: Record<string, unknown>) => React.createElement(type, props);
+  const reactPdf = {
+    Document: el("Document"),
+    Page: el("Page"),
+    View: el("View"),
+    Text: el("Text"),
+    StyleSheet: { create: (s: unknown) => s },
+  };
+  const known: Record<string, unknown> = {
+    react: React,
+    "@react-pdf/renderer": reactPdf,
+    "../common/pdf-date": pdfDate,
+    "../common/brand": brandModule,
+    "@routeflow/pricing": pricing,
+  };
+  const mod = { exports: {} as Record<string, unknown> };
+  (
+    vm.runInThisContext(
+      `(function (require, module, exports) {${outputText}
+})`,
+    ) as (...a: unknown[]) => void
+  )(
+    (id: string) => {
+      if (!(id in known)) throw new Error(`invoice-template: unexpected import ${id}`);
+      return known[id];
+    },
+    mod,
+    mod.exports,
+  );
+  return mod.exports;
+}
+
+/** Expands function components and flattens an element tree to plain, deterministic data. */
+function serialiseTree(node: unknown): unknown {
+  if (Array.isArray(node)) return node.flatMap((n) => serialiseTree(n) ?? []);
+  if (node === null || node === undefined || typeof node === "boolean") return null;
+  if (typeof node !== "object") return node;
+  const element = node as { type: unknown; props: Record<string, unknown> };
+  if (typeof element.type === "function") {
+    return serialiseTree((element.type as (p: unknown) => unknown)(element.props));
+  }
+  const { children, ...props } = element.props;
+  const kids = [children].flat(Infinity).flatMap((c) => serialiseTree(c) ?? []);
+  return { $: String(element.type), props, children: kids } satisfies Node;
+}
+
+function textOf(node: unknown): string[] {
+  if (Array.isArray(node)) return node.flatMap(textOf);
+  if (node && typeof node === "object") return textOf((node as Node).children);
+  return node === null || node === undefined ? [] : [String(node as string | number)];
+}
+
+/** The invoice PDF's element tree and its text, with the clock pinned (it prints "Generated"). */
+function renderInvoiceDocument(out: Out): void {
+  const Invoice = loadInvoiceModule().InvoiceTemplate as (p: { transaction: unknown }) => unknown;
+  const base = {
+    id: "txn-0001-abcdef",
+    customer: { businessName: "Acme Foods", contactName: "Sam Buyer" },
+    order: { orderNumber: "ORD-1" },
+    createdAt: "2026-01-02T00:00:00Z",
+    dueDate: "2026-02-01T00:00:00Z",
+    notes: "Thank you.",
+    items: [
+      { id: "i1", description: "Widget", qty: 2, unitPrice: 10.005, subtotal: 20.01 },
+      { id: "i2", description: "Gadget", qty: "1", unitPrice: "4.5", subtotal: "4.5" },
+    ],
+  };
+  const cases = {
+    paid: {
+      ...base,
+      status: "PAID",
+      totalOwed: 24.51,
+      totalPaid: 24.51,
+      paidAt: "2026-01-20T00:00:00Z",
+      payments: [
+        { id: "p1", amount: 24.51, method: "CARD", reference: "r1", createdAt: "2026-01-20" },
+      ],
+    },
+    unpaid: { ...base, status: "UNPAID", totalOwed: 24.51, totalPaid: 0, payments: [] },
+  };
+  jest.useFakeTimers({ now: new Date("2026-03-04T12:00:00Z") });
+  try {
+    for (const [name, transaction] of Object.entries(cases)) {
+      const tree = serialiseTree(Invoice({ transaction }));
+      out[`invoice-tree-${name}`] = JSON.stringify(tree, null, 1);
+      out[`invoice-text-${name}`] = textOf(tree).join("\n");
+    }
+  } finally {
+    jest.useRealTimers();
+  }
+}
+
+/** The mail and strings of the launch-day files (lane B1b), rendered with fixed inputs. */
+async function renderLaneB1bMails(out: Out): Promise<void> {
+  const sent: Sent[] = [];
+  const capture = {
+    send: jest.fn((p: Sent) => (sent.push(p), Promise.resolve({ delivered: true }))),
+    sendPlatform: jest.fn((p: Sent) => (sent.push(p), Promise.resolve({ delivered: true }))),
+  };
+  const drain = (label: string) => {
+    sent.splice(0).forEach((m, i) => put(out, `${label}${i ? `-${i}` : ""}`, m));
+  };
+  const prevWeb = process.env.WEB_URL;
+  const prevSecret = process.env.ONBOARDING_TOKEN_SECRET;
+  delete process.env.WEB_URL;
+  process.env.ONBOARDING_TOKEN_SECRET = "x".repeat(40);
+  const mint = jest.spyOn(signedToken, "mintSignedToken").mockReturnValue("tok-1");
+  const clock = jest.spyOn(Date, "now").mockReturnValue(Date.parse("2026-01-01T00:00:00Z"));
+  try {
+    // demo-booking: both mails per kind (the site falls back to the brand's origin), the event
+    const demo = new DemoBookingService({} as never, {} as never, capture as never);
+    const booking = {
+      id: "bk1",
+      name: "Sam Buyer",
+      email: "sam@acme.test",
+      phone: "555-0100",
+      company: "Acme Foods",
+      notes: "Route planning",
+      sourcePage: "/pricing",
+      startsAt: new Date("2026-03-02T15:00:00Z"),
+      endsAt: new Date("2026-03-02T15:30:00Z"),
+      timeZone: "America/Chicago",
+      status: "CONFIRMED",
+      meetUrl: "https://meet.test/abc",
+    };
+    for (const kind of ["booked", "rescheduled", "cancelled"] as const) {
+      await (
+        demo as never as { sendConfirmation(...a: unknown[]): Promise<boolean> }
+      ).sendConfirmation(booking, "mt-1", kind, { demoBookingAdminEmails: ["ops@acme.test"] });
+      const [booker, admin] = sent.splice(0);
+      put(out, `demo-booker-${kind}`, booker);
+      put(out, `demo-admin-${kind}`, admin);
+    }
+    const shape = (demo as never as { eventShape(b: unknown): Record<string, unknown> }).eventShape(
+      booking,
+    );
+    out["demo-event#subject"] = String(shape.summary);
+    out["demo-event#text"] = String(shape.description);
+
+    // onboarding intake: the link mail and the sent-back mail
+    const intakeCase = {
+      id: "c1",
+      status: "OPEN",
+      tenantId: null,
+      contactEmail: "sam@acme.test",
+      contactName: "Sam Buyer",
+      companyName: "Acme Foods",
+    };
+    const tx = {
+      $queryRaw: jest.fn(),
+      intakeAccessToken: { updateMany: jest.fn(), create: jest.fn() },
+      intakeSection: { update: jest.fn() },
+    };
+    const intake = new OnboardingIntakeService(
+      {
+        onboardingCase: { findUnique: jest.fn().mockResolvedValue(intakeCase) },
+        $transaction: (cb: (t: unknown) => unknown) => cb(tx),
+      } as never,
+      { log: jest.fn() } as never,
+      capture as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+    const priv = intake as never as Record<string, unknown>;
+    priv.ensureSections = jest.fn();
+    priv.event = jest.fn();
+    priv.adminAudit = jest.fn();
+    priv.lockSection = jest.fn().mockResolvedValue({ id: "s1", status: "SUBMITTED" });
+    priv.adminView = jest.fn();
+    await intake.issueLink("c1", "admin1", true);
+    drain("intake-link");
+    await intake.review("c1", "INVOICING", "request_changes", "Please confirm the tax id.", "a1");
+    drain("intake-sentback");
+
+    // onboarding lifecycle: the reminder
+    const lifecycle = new OnboardingLifecycleService(
+      {
+        onboardingCase: {
+          findMany: jest.fn().mockResolvedValue([
+            {
+              ...intakeCase,
+              tokens: [
+                {
+                  id: "t1",
+                  createdAt: new Date("2026-01-01T00:00:00Z"),
+                  expiresAt: new Date("2026-01-31T00:00:00Z"),
+                  lastUsedAt: null,
+                },
+              ],
+              sections: [
+                { key: "INVOICING", status: "EMPTY" },
+                { key: "TEAM", status: "DRAFT" },
+              ],
+            },
+          ]),
+        },
+        onboardingEvent: { findMany: jest.fn().mockResolvedValue([]), create: jest.fn() },
+      } as never,
+      capture as never,
+      {} as never,
+    );
+    await lifecycle.sendReminders(new Date("2026-01-10T00:00:00Z"));
+    drain("lifecycle-reminder");
+
+    // buyer-portal invite, in the three looks
+    for (const [name, look] of [
+      ["tenant", { kind: "tenant", name: "Acme Foods", color: "#336699" }],
+      ["neutral", { kind: "neutral" }],
+      ["own", { kind: "routeflow" }],
+    ] as const) {
+      put(
+        out,
+        `portal-invite-${name}`,
+        portalInviteEmail("Acme Foods", "https://app.test/i", look),
+      );
+    }
+
+    // the messaging engine's EMAIL transport: default subject, then a given one, per look
+    for (const [name, look, subject] of [
+      ["default-tenant", { kind: "tenant", name: "Acme Foods" }, undefined],
+      ["default-neutral", { kind: "neutral" }, undefined],
+      ["given-subject", { kind: "neutral" }, "Order ready"],
+    ] as const) {
+      const send = jest.fn((p: Sent & { layout?: unknown }) => {
+        put(out, `channel-${name}`, p);
+        out[`channel-${name}#layout`] = JSON.stringify(p.layout);
+        return Promise.resolve({ delivered: true, transport: "smtp" });
+      });
+      await new EmailChannelProvider({ tenantLook: async () => look, send } as never).send({
+        channel: "EMAIL",
+        to: "a@acme.test",
+        subject,
+        body: "Your order is ready.\nThanks.",
+      } as never);
+    }
+
+    // mailbox alert copy
+    for (const provider of ["GOOGLE", "MICROSOFT"] as const) {
+      for (const hasFallback of [true, false]) {
+        const c = mailboxRevokedCopy({ accountEmail: "m@acme.test", provider, hasFallback });
+        const label = `mailalert-revoked-${provider}-${hasFallback}`;
+        out[`${label}#subject`] = c.subject;
+        out[`${label}#text`] = [c.heading, ...c.paragraphs, c.cta].join("\n");
+        out[`${label}-inapp#text`] = `${c.inApp.title}\n${c.inApp.body}`;
+        const t = mailboxThrottledCopy({
+          accountEmail: "m@acme.test",
+          provider,
+          throttledUntil: new Date("2026-01-01T02:00:00Z"),
+          hasFallback,
+          now: new Date("2026-01-01T00:00:00Z"),
+        });
+        out[`mailalert-throttled-${provider}-${hasFallback}#text`] =
+          `${t.inApp.title}\n${t.inApp.body}`;
+      }
+    }
+  } finally {
+    mint.mockRestore();
+    clock.mockRestore();
+    if (prevWeb === undefined) delete process.env.WEB_URL;
+    else process.env.WEB_URL = prevWeb;
+    if (prevSecret === undefined) delete process.env.ONBOARDING_TOKEN_SECRET;
+    else process.env.ONBOARDING_TOKEN_SECRET = prevSecret;
+  }
 }

@@ -1,6 +1,6 @@
 import { BRAND } from "../common/brand";
 import { renderEmailLayout } from "./email-layout";
-import { renderPlatformMails } from "../testing/render-platform-mail";
+import { loadInvoiceModule, renderPlatformMails } from "../testing/render-platform-mail";
 
 /**
  * T-B5 (the T45 row for mail): with the brand module mocked to a fixture, every platform mail the
@@ -26,13 +26,6 @@ jest.mock("resend", () => ({ Resend: jest.fn() }));
 /** Identifiers and the one host that stay typed (sender domain, until the sender moves). */
 const ALLOWED = /send\.routeflow\.info/gi;
 
-/**
- * The mailbox-revoked body words come from `email/mailbox/mailbox-alert.copy.ts`, which lane B1b
- * owns; until it reads the brand those mails keep its typed name in the BODY (header, footer and
- * subject-free parts are still checked below). Delete this exemption when B1b lands.
- */
-const COPY_OWNED_BY_B1B = /^svc-mailbox-revoked/;
-
 /** Outputs whose name-ending sentence is deliberately left for the wave-4 flip (see T-B4). */
 const NAME_ENDS_SENTENCE = [
   "bill-trial-TRIAL_ENDING_7D",
@@ -50,7 +43,7 @@ beforeAll(async () => {
 });
 
 const own = (label: string) =>
-  /^(verify|reset|signin-linked|new-login|password-set|notice|fragment|layout-own|branded-own|bill-|buyer-|svc-(merge|set-password|welcome|email-change|role-changed|mailbox-revoked))/.test(
+  /^(verify|reset|signin-linked|new-login|password-set|notice|fragment|layout-own|branded-own|bill-|buyer-|svc-(merge|set-password|welcome|email-change|role-changed|mailbox-revoked)|demo-(booker|admin)|intake-|lifecycle-|portal-invite-own)/.test(
     label,
   );
 
@@ -62,7 +55,6 @@ describe("T-B5: platform mail under a fixture brand", () => {
 
   it("no output names the real brand, outside the allow-listed sender domain", () => {
     const leaks = Object.entries(out)
-      .filter(([k]) => !COPY_OWNED_BY_B1B.test(k))
       .filter(([, v]) => /route\s?flow/i.test(v.replace(ALLOWED, "")))
       .map(([k]) => k);
     expect(leaks).toEqual([]);
@@ -126,6 +118,170 @@ describe("T-B5: platform mail under a fixture brand", () => {
   });
 });
 
+/** Every label the B1b files produce, sorted. */
+const LABELS = [
+  "channel-default-neutral#html",
+  "channel-default-neutral#layout",
+  "channel-default-neutral#subject",
+  "channel-default-neutral#text",
+  "channel-default-tenant#html",
+  "channel-default-tenant#layout",
+  "channel-default-tenant#subject",
+  "channel-default-tenant#text",
+  "channel-given-subject#html",
+  "channel-given-subject#layout",
+  "channel-given-subject#subject",
+  "channel-given-subject#text",
+  "demo-admin-booked#html",
+  "demo-admin-booked#subject",
+  "demo-admin-booked#text",
+  "demo-admin-cancelled#html",
+  "demo-admin-cancelled#subject",
+  "demo-admin-cancelled#text",
+  "demo-admin-rescheduled#html",
+  "demo-admin-rescheduled#subject",
+  "demo-admin-rescheduled#text",
+  "demo-booker-booked#html",
+  "demo-booker-booked#subject",
+  "demo-booker-booked#text",
+  "demo-booker-cancelled#html",
+  "demo-booker-cancelled#subject",
+  "demo-booker-cancelled#text",
+  "demo-booker-rescheduled#html",
+  "demo-booker-rescheduled#subject",
+  "demo-booker-rescheduled#text",
+  "demo-event#subject",
+  "demo-event#text",
+  "intake-link#html",
+  "intake-link#subject",
+  "intake-link#text",
+  "intake-sentback#html",
+  "intake-sentback#subject",
+  "intake-sentback#text",
+  "invoice-text-paid",
+  "invoice-text-unpaid",
+  "invoice-tree-paid",
+  "invoice-tree-unpaid",
+  "lifecycle-reminder#html",
+  "lifecycle-reminder#subject",
+  "lifecycle-reminder#text",
+  "mailalert-revoked-GOOGLE-false#subject",
+  "mailalert-revoked-GOOGLE-false#text",
+  "mailalert-revoked-GOOGLE-false-inapp#text",
+  "mailalert-revoked-GOOGLE-true#subject",
+  "mailalert-revoked-GOOGLE-true#text",
+  "mailalert-revoked-GOOGLE-true-inapp#text",
+  "mailalert-revoked-MICROSOFT-false#subject",
+  "mailalert-revoked-MICROSOFT-false#text",
+  "mailalert-revoked-MICROSOFT-false-inapp#text",
+  "mailalert-revoked-MICROSOFT-true#subject",
+  "mailalert-revoked-MICROSOFT-true#text",
+  "mailalert-revoked-MICROSOFT-true-inapp#text",
+  "mailalert-throttled-GOOGLE-false#text",
+  "mailalert-throttled-GOOGLE-true#text",
+  "mailalert-throttled-MICROSOFT-false#text",
+  "mailalert-throttled-MICROSOFT-true#text",
+  "portal-invite-neutral#html",
+  "portal-invite-neutral#subject",
+  "portal-invite-neutral#text",
+  "portal-invite-own#html",
+  "portal-invite-own#subject",
+  "portal-invite-own#text",
+  "portal-invite-tenant#html",
+  "portal-invite-tenant#subject",
+  "portal-invite-tenant#text",
+];
+
+describe("lane B1b: launch-day mail and strings under a fixture brand", () => {
+  it("renders exactly the B1b label set (a label that stops being produced goes red)", () => {
+    const own = /^(demo-|intake-|lifecycle-|portal-invite|channel-|mailalert-|invoice-)/;
+    expect(
+      Object.keys(out)
+        .filter((k) => own.test(k))
+        .sort(),
+    ).toEqual(LABELS);
+  });
+
+  it("subjects, headings and the calendar event carry the brand name", () => {
+    for (const kind of ["booked", "rescheduled", "cancelled"]) {
+      expect(out[`demo-booker-${kind}#subject`]).toContain(`Your ${BRAND.name} demo`);
+    }
+    expect(out["demo-event#subject"]).toBe(`${BRAND.name} demo — Acme Foods`);
+    expect(out["demo-event#text"]).toContain(
+      `${BRAND.name} product walkthrough with Sam Buyer (Acme Foods).`,
+    );
+    expect(out["intake-link#subject"]).toBe(`Your ${BRAND.name} order and setup questionnaire`);
+    expect(out["lifecycle-reminder#subject"]).toBe(`Your ${BRAND.name} setup is waiting for you`);
+    expect(out["portal-invite-tenant#subject"]).toBe(
+      `Acme Foods invited you to their ${BRAND.name} buyer portal`,
+    );
+    expect(out["channel-default-neutral#subject"]).toBe(`Update from ${BRAND.name}`);
+    expect(out["channel-given-subject#subject"]).toBe("Order ready");
+    expect(out["mailalert-revoked-GOOGLE-true#subject"]).toBe(
+      `${BRAND.name} can no longer send from m@acme.test`,
+    );
+  });
+
+  it("the site fallback of the demo and intake links is the brand's origin", () => {
+    expect(out["demo-booker-booked#html"]).toContain(`${BRAND.origin}/book-a-demo/manage#token=`);
+    expect(out["intake-link#html"]).toContain(`${BRAND.origin}/onboarding#token=tok-1`);
+  });
+
+  it("a name with a special character is escaped in the html that interpolates it", async () => {
+    const brand = BRAND as { name: string };
+    const original = brand.name;
+    brand.name = "A&B";
+    try {
+      const re = await renderPlatformMails();
+      for (const label of ["intake-link#html", "lifecycle-reminder#html"]) {
+        expect(re[label]).toContain("A&amp;B");
+        expect(re[label]).not.toMatch(/A&B/);
+      }
+    } finally {
+      brand.name = original;
+    }
+  });
+});
+
+describe("lane B1b: the invoice PDF under a fixture brand", () => {
+  const labels = ["paid", "unpaid"];
+
+  it("prints the brand's name, host and initials, and no trace of the real brand", () => {
+    for (const l of labels) {
+      const tree = out[`invoice-tree-${l}`];
+      const text = out[`invoice-text-${l}`];
+      expect(tree).toContain(`"author": "${BRAND.name}"`);
+      expect(text).toContain(BRAND.name);
+      expect(text).toContain(`Austin, TX · fixture.test`);
+      expect(text).toContain(`${BRAND.name} · Austin, TX · fixture.test`);
+      expect(text.split("\n")).toContain("XI");
+      expect(`${tree}${text}`).not.toMatch(/route\s?flow/i);
+    }
+  });
+
+  it("the clock is pinned: every invoice prints the fixed 'Generated' date", () => {
+    for (const l of ["paid", "unpaid"]) {
+      expect(out[`invoice-text-${l}`].split("\n")).toContain("Mar 4, 2026");
+      expect(out[`invoice-tree-${l}`]).toContain("Mar 4, 2026");
+    }
+  });
+
+  it("the money lines are untouched by the brand (totals print as rounded cents)", () => {
+    expect(out["invoice-text-paid"]).toContain("$24.51");
+    expect(out["invoice-text-paid"]).toContain("$20.01");
+  });
+
+  it("derives initials from the name: two words, a camel hump, a dotted name, a short name", () => {
+    const { brandInitials } = loadInvoiceModule() as { brandInitials(n: string): string };
+    expect(brandInitials("RouteFlow")).toBe("RF");
+    expect(brandInitials("XROV.IO")).toBe("XI");
+    expect(brandInitials("Acme Foods Inc")).toBe("AF");
+    expect(brandInitials("Rovio")).toBe("RO");
+    expect(brandInitials("a")).toBe("A");
+    expect(brandInitials("  ")).toBe("");
+  });
+});
+
 describe("T-B4: the name never ends a sentence in the sign-up mail", () => {
   const signup = ["verify", "verify-resend", "reset", "reset-tenant"].flatMap((l) => [
     `${l}#html`,
@@ -159,16 +315,10 @@ describe("T-B4: the name never ends a sentence in the sign-up mail", () => {
     expect(subjects.length).toBeGreaterThan(30);
     for (const [k, v] of subjects) {
       expect({ k, ends: v.endsWith(".") }).toEqual({ k, ends: false });
-      expect({ k, long: v.length > 60 }).toEqual({ k, long: false });
+      // the booking subjects end in the slot's date, which is data, not the fixed part
+      const fixed = k.startsWith("demo-booker-") ? v.split(" — ")[0] : v;
+      expect({ k, long: fixed.length > 60 }).toEqual({ k, long: false });
     }
-  });
-});
-
-describe("the lane B1b exemption", () => {
-  it("the exempted mailbox-revoked outputs still carry the typed name (red when B1b lands: delete COPY_OWNED_BY_B1B)", () => {
-    const labels = Object.keys(out).filter((k) => COPY_OWNED_BY_B1B.test(k));
-    expect(labels.length).toBeGreaterThan(8);
-    expect(labels.some((k) => /route\s?flow/i.test(out[k].replace(ALLOWED, "")))).toBe(true);
   });
 });
 
