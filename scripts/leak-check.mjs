@@ -22,9 +22,10 @@
 //                                      range, plus ref names
 //   --text-file <path> | --stdin       a PR title/body/squash message
 //   --tree                             always-checked tracked paths in the working tree
-//   --hook                             .husky/pre-push: reads git's pre-push stdin, enforces the
-//                                      rebrand/* refusal (RF_REBRAND_PUSH=launch lifts it) and
-//                                      scans each pushed ref's outgoing range
+//   --hook                             .husky/pre-push: reads git's pre-push stdin, allows a
+//                                      rebrand/* branch pushed to its OWN ref only (owner ruling
+//                                      2026-11-19), refuses it on any other ref (RF_REBRAND_PUSH=launch
+//                                      lifts that) and scans each other pushed ref's outgoing range
 //
 // Every scanned text is matched as UTF-8 AND, when it carries a UTF-16 BOM or NULs, as UTF-16 (see
 // lib/leak-patterns.mjs matchesBuf).
@@ -223,21 +224,31 @@ function rangeForRef(cwd, lsha, rsha, notices) {
 }
 
 /**
- * Refuse when the commits being pushed overlap the commits only the local rebrand/* branches hold,
- * whatever the ref is called (HEAD:refs/heads/x, a sha refspec, a copied branch). Returns refusal
- * lines, or null when there is no overlap. Fails closed when origin/master is missing or a git call fails.
+ * Refuse when the commits being pushed overlap the commits only rebrand/* branches hold (local
+ * refs/heads/rebrand/* and remote-tracking refs/remotes/<remote>/rebrand/*: the branch now lives on the
+ * remote, so a machine may hold only the remote-tracking ref), whatever the ref is called
+ * (HEAD:refs/heads/x, a sha refspec, a copied branch). Returns refusal lines, or null when there is no
+ * overlap. Fails closed when origin/master is missing or a git call fails.
  */
 function privateOverlap(cwd, pushed) {
-  const refs = gitOut(cwd, ["for-each-ref", "--format=%(refname)", "refs/heads/rebrand/"]);
-  if (!refs.ok) return ["leak-check: cannot list local rebrand/* branches. Fail-closed."];
-  if (!refs.out.trim()) return null; // no private branches exist locally: nothing to overlap
+  const refs = gitOut(cwd, ["for-each-ref", "--format=%(refname)", "refs/heads/", "refs/remotes/"]);
+  if (!refs.ok) return ["leak-check: cannot list rebrand/* branches. Fail-closed."];
+  const isPrivRef = (r) =>
+    /^refs\/heads\/rebrand\/./.test(r) || /^refs\/remotes\/[^/]+\/rebrand\/./.test(r);
+  if (!refs.out.split("\n").some(isPrivRef)) return null; // no rebrand/* branches here: nothing to overlap
   if (!gitOut(cwd, ["rev-parse", "--verify", "-q", ORIGIN_MASTER]).ok) {
     return [
-      "leak-check: local rebrand/* branches exist but refs/remotes/origin/master is missing, so a push cannot be",
+      "leak-check: rebrand/* branches exist but refs/remotes/origin/master is missing, so a push cannot be",
       "leak-check: proven free of private commits. Fail-closed: run git fetch origin master, then push again.",
     ];
   }
-  const priv = gitOut(cwd, ["rev-list", "--glob=refs/heads/rebrand/*", "--not", ORIGIN_MASTER]);
+  const priv = gitOut(cwd, [
+    "rev-list",
+    "--glob=refs/heads/rebrand/*",
+    "--glob=refs/remotes/*/rebrand/*",
+    "--not",
+    ORIGIN_MASTER,
+  ]);
   if (!priv.ok) return ["leak-check: cannot list private commits. Fail-closed."];
   const privSet = new Set(priv.out.split("\n").filter(Boolean));
   if (privSet.size === 0) return null;
@@ -247,7 +258,7 @@ function privateOverlap(cwd, pushed) {
       return [`leak-check: cannot list outgoing commits of ${p.lsha.slice(0, 10)}. Fail-closed.`];
     if (out.out.split("\n").some((c) => c && privSet.has(c))) {
       return [
-        "leak-check: the push contains commits that belong to a local rebrand/* branch. Refused: they stay local until launch.",
+        "leak-check: the push contains commits that belong to a rebrand/* branch. Refused: they may only reach their own rebrand/* ref.",
         "leak-check: launch day only: RF_REBRAND_PUSH=launch git push ...",
       ];
     }
@@ -286,7 +297,7 @@ export function run(argv, { cwd = process.cwd(), env = process.env, input = "" }
     };
   }
 
-  // rebrand/* refusal needs no patterns file and applies under CI too, so it runs first.
+  // rebrand/* handling needs no patterns file and applies under CI too, so it runs first.
   let pushed = [];
   let refLines = 0;
   if (o.hook) {
@@ -297,6 +308,10 @@ export function run(argv, { cwd = process.cwd(), env = process.env, input = "" }
       if (!lref || !lsha || ZERO.test(lsha)) continue; // blank or a delete: nothing is pushed
       pushed.push({ lref, lsha, rref: rref ?? "", rsha: rsha ?? "0" });
     }
+    // Owner ruling 2026-11-19: a rebrand/* branch may be pushed to its OWN ref (same name both sides).
+    const isOwnRef = (p) => p.lref === p.rref && /^refs\/heads\/rebrand\/[^/]/.test(p.rref);
+    const ownCount = pushed.filter(isOwnRef).length;
+    pushed = pushed.filter((p) => !isOwnRef(p));
     const isRebrand = (p) => /(^|\/)rebrand\//i.test(p.lref) || /(^|\/)rebrand\//i.test(p.rref);
     const rebrand = pushed.some(isRebrand);
     if (rebrand && env.RF_REBRAND_PUSH === "launch") {
@@ -313,10 +328,13 @@ export function run(argv, { cwd = process.cwd(), env = process.env, input = "" }
       return {
         code: 1,
         lines: [
-          "leak-check: a rebrand/* ref is being pushed. Refused: these branches stay local until launch.",
+          "leak-check: a rebrand/* branch may only be pushed to its own ref (git push origin rebrand/<name>). Refused.",
           "leak-check: launch day only: RF_REBRAND_PUSH=launch git push ...",
         ],
       };
+    }
+    if (pushed.length === 0 && ownCount > 0) {
+      return { code: 0, lines: ["leak-check: rebrand/* pushed to its own ref - not scanned."] };
     }
     // CI never pushes through this hook, so CI=true on a developer machine must not skip the scan.
     if (pushed.length === 0) {

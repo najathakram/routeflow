@@ -184,17 +184,71 @@ try {
       git(repo, ["update-ref", "refs/remotes/origin/master", git(repo, ["rev-parse", "HEAD~1"])]);
       const line = `refs/heads/rebrand/x ${head} refs/heads/rebrand/x ${ZERO}`;
       const r = hook(repo, line);
-      check("rebrand/x push refused without env", r.code === 1 && !leaks(r.out), JSON.stringify(r));
-      const ok = hook(repo, line, { RF_REBRAND_PUSH: "launch" });
       check(
-        "rebrand/x push allowed with RF_REBRAND_PUSH=launch",
-        ok.code === 0,
-        JSON.stringify(ok),
+        "own-ref rebrand/x push allowed without env",
+        r.code === 0 && /own ref/.test(r.out) && !/rebrand\/x/.test(r.out),
+        JSON.stringify(r),
       );
-      const other = hook(repo, line, { RF_REBRAND_PUSH: "1" });
-      check("rebrand/x refused for a wrong env value", other.code === 1, JSON.stringify(other));
-      const lref = hook(repo, `refs/heads/rebrand/x ${head} refs/heads/feat/y ${ZERO}`);
-      check("rebrand/* LOCAL ref name refused too", lref.code === 1, JSON.stringify(lref));
+      const ok = hook(repo, line, { RF_REBRAND_PUSH: "launch" });
+      check("own-ref rebrand/x push allowed with launch too", ok.code === 0, JSON.stringify(ok));
+      const crossLine = `refs/heads/rebrand/x ${head} refs/heads/feat/y ${ZERO}`;
+      const lref = hook(repo, crossLine);
+      check(
+        "rebrand/x -> feat/y refused",
+        lref.code === 1 && /own ref/.test(lref.out) && !/rebrand\/x/.test(lref.out),
+        JSON.stringify(lref),
+      );
+      const rr = hook(repo, `refs/heads/feat/y ${head} refs/heads/rebrand/x ${ZERO}`);
+      check("feat/y -> rebrand/x refused", rr.code === 1, JSON.stringify(rr));
+      const hd = hook(repo, `HEAD ${head} refs/heads/rebrand/x ${ZERO}`);
+      check("HEAD -> rebrand/x refused", hd.code === 1, JSON.stringify(hd));
+      const cs = hook(repo, `refs/heads/Rebrand/x ${head} refs/heads/rebrand/x ${ZERO}`);
+      check("case-variant lref -> rebrand/x refused", cs.code === 1, JSON.stringify(cs));
+      const other = hook(repo, crossLine, { RF_REBRAND_PUSH: "yes" });
+      check("cross-ref refused for a wrong env value", other.code === 1, JSON.stringify(other));
+      const lc = hook(repo, crossLine, { RF_REBRAND_PUSH: "launch" });
+      check("cross-ref allowed with RF_REBRAND_PUSH=launch", lc.code === 0, JSON.stringify(lc));
+      // own-ref content is not scanned, and needs no patterns file
+      const hit = commit(repo, { "h.txt": "has zzfixture\n" });
+      const own = hook(repo, `refs/heads/rebrand/x ${hit} refs/heads/rebrand/x ${ZERO}`);
+      check("own-ref push with fixture content allowed", own.code === 0, JSON.stringify(own));
+      const bare = makeRepo({ patterns: null });
+      const bh = commit(bare, { "b.txt": "fine\n" });
+      const nb = hook(bare, `refs/heads/rebrand/x ${bh} refs/heads/rebrand/x ${ZERO}`);
+      check("own-ref push needs no patterns file", nb.code === 0, JSON.stringify(nb));
+      // mixed push: own-ref line plus a leaking feat/y line is scanned on feat/y
+      const ownLine = `refs/heads/rebrand/x ${head} refs/heads/rebrand/x ${ZERO}`;
+      const mixed = hook(repo, `${ownLine}\nrefs/heads/feat/y ${hit} refs/heads/feat/y ${ZERO}`);
+      check(
+        "mixed push scans the non-rebrand line",
+        mixed.code === 1 && !leaks(mixed.out),
+        mixed.out,
+      );
+      const bownLine = `refs/heads/rebrand/x ${bh} refs/heads/rebrand/x ${ZERO}`;
+      const mixedNoPat = hook(
+        bare,
+        `${bownLine}\nrefs/heads/feat/y ${bh} refs/heads/feat/y ${ZERO}`,
+      );
+      check(
+        "mixed push needs the patterns file",
+        mixedNoPat.code === 1,
+        JSON.stringify(mixedNoPat),
+      );
+      // overlap via a remote-tracking rebrand ref only (no local rebrand branch)
+      const { repo: orepo, base: obase } = baseRepo();
+      git(orepo, ["update-ref", "refs/remotes/origin/master", obase]);
+      const priv = commit(orepo, { "k.txt": "kit\n" }, "chore: private");
+      git(orepo, ["update-ref", "refs/remotes/origin/rebrand/x", priv]);
+      const ov = hook(orepo, `refs/heads/feat/y ${priv} refs/heads/feat/y ${ZERO}`);
+      check(
+        "overlap with a remote-tracking rebrand ref refused",
+        ov.code === 1 && /rebrand/.test(ov.out),
+        JSON.stringify(ov),
+      );
+      git(orepo, ["checkout", "-q", "-b", "feat/z", obase]);
+      const clean2 = commit(orepo, { "z.txt": "fine\n" });
+      const ovOk = hook(orepo, `refs/heads/feat/z ${clean2} refs/heads/feat/z ${ZERO}`);
+      check("push without the private commits passes", ovOk.code === 0, JSON.stringify(ovOk));
       const clean = hook(repo, `refs/heads/feat/x ${head} refs/heads/feat/x ${ZERO}`);
       check("hook passes a clean new-branch push", clean.code === 0, JSON.stringify(clean));
     }
@@ -366,11 +420,13 @@ try {
       git(repo, ["update-ref", "refs/remotes/origin/master", git(repo, ["rev-parse", "HEAD"])]);
       const head = commit(repo, { "b.txt": "has zzfixture\n" });
       const line = `refs/heads/rebrand/x ${head} refs/heads/rebrand/x ${ZERO}`;
+      const xline = `refs/heads/rebrand/x ${head} refs/heads/feat/y ${ZERO}`;
       check(
         "launch push of a rebrand ref skips the content scan",
-        hook(repo, line, { RF_REBRAND_PUSH: "launch" }).code === 0,
+        hook(repo, xline, { RF_REBRAND_PUSH: "launch" }).code === 0,
       );
-      check("non-launch rebrand push still refused", hook(repo, line).code === 1);
+      check("non-launch cross-ref rebrand push still refused", hook(repo, xline).code === 1);
+      check("own-ref rebrand push skips the content scan", hook(repo, line).code === 0);
       const nf = `refs/heads/feat/x ${head} refs/heads/feat/x ${ZERO}`;
       check(
         "launch env does not unscan a non-rebrand ref",
@@ -378,7 +434,7 @@ try {
       );
       const repo2 = makeRepo({ patterns: null });
       const h2 = commit(repo2, { "b.txt": "fine\n" });
-      const l2 = `refs/heads/rebrand/x ${h2} refs/heads/rebrand/x ${ZERO}`;
+      const l2 = `refs/heads/rebrand/x ${h2} refs/heads/feat/y ${ZERO}`;
       check(
         "launch rebrand push needs no patterns file",
         hook(repo2, l2, { RF_REBRAND_PUSH: "launch" }).code === 0,
@@ -495,8 +551,8 @@ try {
       const { repo } = baseRepo();
       git(repo, ["update-ref", "refs/remotes/origin/master", git(repo, ["rev-parse", "HEAD"])]);
       const head = commit(repo, { "b.txt": "has zzfixture\n" });
-      const rb = `refs/heads/rebrand/x ${head} refs/heads/rebrand/x ${ZERO}`;
-      check("CI=true: rebrand/* still refused", hook(repo, rb, { CI: "true" }).code === 1);
+      const rb = `refs/heads/rebrand/x ${head} refs/heads/feat/y ${ZERO}`;
+      check("CI=true: cross-ref rebrand still refused", hook(repo, rb, { CI: "true" }).code === 1);
       check(
         "CI=true + launch: rebrand allowed",
         hook(repo, rb, { CI: "true", RF_REBRAND_PUSH: "launch" }).code === 0,
