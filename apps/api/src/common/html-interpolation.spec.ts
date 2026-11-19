@@ -102,6 +102,10 @@ const ALLOWED: Record<string, Record<string, Allowed>> = {
     "deliverToAdmins :: tmpl.html":
       "built in billing-notification.templates.ts, which this guard scans (0 hits)",
   },
+  "onboarding/signup-journey.templates.ts": {
+    "welcomeEmail :: reminder.html":
+      "built by signIn in email/routeflow-mail.ts (every value escapeHtml'd), which this guard scans",
+  },
   "messaging/providers/email-channel.provider.ts": {
     "send :: buildNotificationEmailBody(input.body)":
       "built in messaging/providers/email-notification-template.ts, which escapes the whole body and which this guard scans (0 hits)",

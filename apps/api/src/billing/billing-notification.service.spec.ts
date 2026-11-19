@@ -310,11 +310,18 @@ describe("BillingNotificationService", () => {
       ]);
     });
 
-    it("the admin query filters status ACTIVE, role TENANT_ADMIN, deletedAt null, ordered by createdAt asc then id", async () => {
+    it("the admin query filters status ACTIVE, role TENANT_ADMIN, deletedAt null, a non-empty email, ordered by createdAt asc then id", async () => {
       const { svc, prisma } = makeService();
       await svc.notifyCancelled("t1");
       expect(prisma.user.findMany).toHaveBeenCalledWith({
-        where: { tenantId: "t1", role: "TENANT_ADMIN", status: "ACTIVE", deletedAt: null },
+        // SA-1165 A1 Q2: the empty-email rule moved from a JS filter into the where
+        where: {
+          tenantId: "t1",
+          role: "TENANT_ADMIN",
+          status: "ACTIVE",
+          deletedAt: null,
+          email: { not: "" },
+        },
         select: { email: true, username: true },
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });

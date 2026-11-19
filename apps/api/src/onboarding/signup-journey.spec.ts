@@ -89,21 +89,12 @@ describe("eligibleTenantWhere (W10, W11 first half, W9)", () => {
 });
 
 describe("accountAdminsOf keeps one definition with the journey (W9)", () => {
-  it("asks the database for the base admin where plus the tenant, and drops an empty email in its filter", async () => {
-    const findMany = jest.fn().mockResolvedValue([
-      { email: "a@acme.test", username: "A" },
-      { email: "", username: "B" },
-    ]);
+  it("asks the database for exactly ACCOUNT_ADMIN_WHERE plus the tenant (the email rule lives in the where)", async () => {
+    // The database drops an empty email now, so the mocked rows carry none; that proof is the T8 DB row and the
+    // stripe-customer-email "drops a row with no email" case (SA-1165 A1 B3a).
+    const findMany = jest.fn().mockResolvedValue([{ email: "a@acme.test", username: "A" }]);
     const out = await accountAdminsOf({ user: { findMany } } as never, "t1");
-    expect(findMany.mock.calls[0][0].where).toEqual({
-      tenantId: "t1",
-      role: "TENANT_ADMIN",
-      status: "ACTIVE",
-      deletedAt: null,
-    });
+    expect(findMany.mock.calls[0][0].where).toEqual({ tenantId: "t1", ...ACCOUNT_ADMIN_WHERE });
     expect(out).toEqual([{ email: "a@acme.test", username: "A" }]);
-    // the journey's where is that same definition plus the email clause, never a retyped copy
-    const { tenantId: _t, ...base } = findMany.mock.calls[0][0].where;
-    expect(ACCOUNT_ADMIN_WHERE).toEqual({ ...base, email: { not: "" } });
   });
 });

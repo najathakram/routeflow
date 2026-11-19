@@ -76,9 +76,8 @@ describe("welcomeEmail (T4)", () => {
   });
 
   it("requires a stop link at the type level", () => {
-    // @ts-expect-error stopUrl is REQUIRED (W3): a welcome with no stop link does not compile
     const { stopUrl: _omitted, ...withoutStop } = BASE;
-    // @ts-expect-error same: the call below is missing stopUrl
+    // @ts-expect-error stopUrl is REQUIRED (W3): a welcome with no stop link does not compile
     expect(() => welcomeEmail(withoutStop)).not.toThrow();
   });
 });

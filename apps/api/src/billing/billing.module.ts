@@ -139,6 +139,8 @@ import { PlanFlagBootAlert } from "./plan-flag-boot-alert";
     AddonAccessService,
     // SA-786: platform-admin bills an add-on the old plan included after an instant down-move.
     SubscriptionMutationService,
+    // SA-1165: the signup journey claims through the one notification door.
+    BillingNotificationService,
     // Platform-admin plan changes move the snapshot MRR run-rate, so they must emit the
     // matching signed BillingEvent delta (see PlatformAdminService.updatePlan).
     BillingEventService,

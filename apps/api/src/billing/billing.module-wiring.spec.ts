@@ -16,6 +16,8 @@ import { EmailModule } from "../email/email.module";
 import { RfInvoicesAdminService } from "../platform-admin/rf-invoices.service";
 import { BillingModule } from "./billing.module";
 import { BillingStatusService } from "./billing-status.service";
+import { BillingNotificationService } from "./billing-notification.service";
+import { OnboardingModule } from "../onboarding/onboarding.module";
 import { BillingService } from "./billing.service";
 import { CatchupCheckoutService } from "./catchup-checkout.service";
 import { AutoLockSwitchService } from "./auto-lock-switch.service";
@@ -32,6 +34,15 @@ describe("BillingModule exports the status service (SA-1146 B-6 imports it)", ()
   it("provides and exports BillingStatusService", () => {
     expect(Reflect.getMetadata("providers", BillingModule)).toContain(BillingStatusService);
     expect(Reflect.getMetadata("exports", BillingModule)).toContain(BillingStatusService);
+  });
+});
+
+describe("BillingModule exports the one notification door (SA-1165 A1)", () => {
+  it("exports BillingNotificationService, and OnboardingModule does not provide a second one", () => {
+    expect(Reflect.getMetadata("exports", BillingModule)).toContain(BillingNotificationService);
+    expect(Reflect.getMetadata("providers", OnboardingModule)).not.toContain(
+      BillingNotificationService,
+    );
   });
 });
 

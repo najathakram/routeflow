@@ -21,14 +21,8 @@ export function welcomeEmail(p: {
   return routeflowFragmentMail({
     subject: `Welcome to RouteFlow, ${p.businessName}`,
     heading: "You're in. Here's how to start.",
-    bodyHtml: [
-      emailParagraph("Three steps get you from sign-up to your first invoice:"),
-      emailParagraph("1. Add your products and customers."),
-      emailParagraph("2. Take your first order."),
-      emailParagraph("3. Send your first invoice."),
-      reminder.html,
-      emailParagraph("The RouteFlow team"),
-    ].join(""),
+    // One template literal, the shape verifyEmailMessage uses, so the B809 census reads each fragment.
+    bodyHtml: `${emailParagraph("Three steps get you from sign-up to your first invoice:")}${emailParagraph("1. Add your products and customers.")}${emailParagraph("2. Take your first order.")}${emailParagraph("3. Send your first invoice.")}${reminder.html}${emailParagraph("The RouteFlow team")}`,
     cta: { label: "Add your products and customers", url: `${base}${JOURNEY_WELCOME_PATH}` },
     why: `You're getting this because you started a RouteFlow trial for ${p.businessName}.`,
     footerLink: { label: "Stop these setup emails", url: p.stopUrl },

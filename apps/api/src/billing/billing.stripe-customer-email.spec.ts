@@ -46,8 +46,19 @@ const user = (o: Partial<U>): U => ({
 
 /** A users table that honours the `where` / `orderBy` it is given, so a query that forgets a filter shows it. */
 function usersTable(rows: U[]) {
+  // `{ not: x }` is the one operator a real query here sends (ACCOUNT_ADMIN_WHERE's email); any other operator
+  // throws, so a new filter can never silently match nothing (SA-1165 A1 B2).
   const match = (u: U, where: any = {}) =>
-    Object.entries(where).every(([k, v]) => (u as any)[k] === v);
+    Object.entries(where).every(([k, v]) => {
+      if (v !== null && typeof v === "object" && !(v instanceof Date)) {
+        const ops = Object.keys(v);
+        if (ops.length !== 1 || ops[0] !== "not") {
+          throw new Error(`unsupported where operator: ${k} ${JSON.stringify(v)}`);
+        }
+        return (u as any)[k] !== (v as { not: unknown }).not;
+      }
+      return (u as any)[k] === v;
+    });
   /** Honours `orderBy` as one key or a list of keys (createdAt / id, asc), like Prisma; unlisted ties keep insertion order. */
   const sorted = (list: U[], orderBy?: any) => {
     const keys: Array<Record<string, "asc" | "desc">> = orderBy
@@ -222,6 +233,18 @@ describe("one definition of the account admin (G4): billing notifications and th
     const recipients = await (svc as any).adminsOf("t1");
     expect(recipients.map((r: any) => r.email)).toEqual(
       (await accountAdminsOf(prisma, "t1")).map((a) => a.email),
+    );
+  });
+});
+
+describe("the users table mock never silently matches an operator it does not know (SA-1165 A1 B2)", () => {
+  it("honours { not } and throws on any other operator", async () => {
+    const table = usersTable([user({ email: "" }), user({ email: "ok@acme.test" })]);
+    expect(
+      (await table.findMany({ where: { email: { not: "" } } })).map((u: U) => u.email),
+    ).toEqual(["ok@acme.test"]);
+    await expect(table.findMany({ where: { email: { in: ["ok@acme.test"] } } })).rejects.toThrow(
+      "unsupported where operator",
     );
   });
 });

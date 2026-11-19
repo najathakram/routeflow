@@ -1,5 +1,4 @@
 import { Module } from "@nestjs/common";
-import { BillingNotificationService } from "../billing/billing-notification.service";
 import { BillingModule } from "../billing/billing.module";
 import { EmailModule } from "../email/email.module";
 import { StorageModule } from "../storage/storage.module";
@@ -25,9 +24,8 @@ import { PublicOnboardingController } from "./public-onboarding.controller";
     OnboardingIntakeService,
     OnboardingTenantService,
     OnboardingLifecycleService,
-    // The welcome tick claims through the billing notification door. BillingModule does not export it, so it is
-    // provided here too (stateless: the claim is a database row). No JOURNEY_STOP_LINKS provider yet, so it cannot send.
-    BillingNotificationService,
+    // The welcome tick claims through BillingModule's exported notification door (SA-1165 A1).
+    // No JOURNEY_STOP_LINKS provider yet, so it cannot send.
     SignupJourneyService,
   ],
   exports: [OnboardingService],
