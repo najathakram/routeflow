@@ -47,13 +47,6 @@
 - **Lesson:** **An order that holds a PR or tells a lane what to fix names the board comment ids of the verdict and of the browser evidence it rests on, and is not sent until both are posted. A fix scoped from an interim read is re-scoped when the evidence lands.**
 - **Guard:** owed, NOT BUILT YET: a required field in the lead's order template holding the board comment ids of the verdict and of its evidence. No file in the repo carries it today.
 
-### L-359 · 2026-10-30 · process · a train is pushed only after the CI-equivalent verify; type-checks plus one test file is not a gate, and CI is read by its closing Failed line
-
-- **Symptom:** a 13-member train pushed after clean merges, api and web type-checks and one test file went red in CI in three members (a web suite pinning an older unit rule, an api spec expecting another warning code, a writer-inventory spec). The first read of the log took one lane's "passed" counts for the whole api.
-- **Root cause:** each member's PASS was read at its own head; master-wide pins only fail on the merged tree, and the pre-push verify was skipped. A workspace's log holds several test lanes, so one lane's counts are not its result.
-- **Lesson:** **Run the CI Verify equivalent in the train tree (`FULL_VERIFY=1 npm run verify`) through the heavy slot and read it to the end before pushing a train; with a T1 member add the full DB lanes. Read CI by the closing `Failed:` line, never by one lane's counts.**
-- **Guard:** the train PR body states the command and the counts. Cf. [[L-353]]. A DB spec that needs a built artifact (the api dist) ships with the CI step that builds it, and a job that shows 0 steps after a few seconds has failed, not queued. The pre-check also runs `api-error-codes-parity` and `permission-coverage`: a member's bare error-code string in a web file passed every member read and went red only on the merged tree, because that spec scans web and api alike.
-
 ### L-337 · 2026-10-22 · process · merge only through a gate that lists EVERY check run at the exact head sha, required or not
 
 - **Symptom:** a merge window merged #3563 and #3585 while the "Replay migrations on a fresh database" check was FAILURE at the merged sha. #3563 carried three red DB specs (two variant-name specs hit the SA-823 R11 `reparentVia` guard in `ProductsService.update`; products-export gained a new last column) plus one from #3574 (a warning became an object). All spec-only; #3589 fixed them.
@@ -70,6 +63,13 @@
 
 ## tooling
 
+### L-395 · 2026-11-19 · tooling · a guard that matches file names read from `+++ b/` diff headers decodes git's C-quoting (or takes names from `-z` output), and withholds any name git quoted (#4363)
+
+- **Symptom:** the push guard printed, or failed to match, a path whose name held unusual bytes: git writes such a name in double quotes with octal escapes, and the `b/` prefix then sits inside the quotes.
+- **Root cause:** the header parser took the bytes after `+++ ` as the name, so a quoted name was matched, and echoed, in its escaped form.
+- **Lesson:** **Take names from NUL-separated output (`-z`) where git offers it; where only a header line exists, decode the quoting (octal bytes, backslash escapes, the prefix inside the quotes) before matching, and never print a name git quoted. A guard's output names shas and counts, not the text it matched.**
+- **Guard:** `scripts/leak-check.self-test.mjs` cases for quoted and variant file names in hook and range mode (red before the round-1 fix); `parseHeaderPath` in `scripts/leak-check.mjs`.
+
 ### L-388 · 2026-11-15 · tooling · `gh run list --json conclusion` is the empty string, not null, while a run is in progress; map it to a marker explicitly and key timers by run id plus attempt (#4324)
 
 - **Symptom:** a window's hang guard cancelled a healthy rerun of #4324: the lead's script read a tab-split row, the in-progress conclusion was `""`, and the field after it shifted.
@@ -84,14 +84,14 @@
 - **Lesson:** **Before reading a type-check count in a new tree, build the workspace packages that publish `dist/`. A count far above baseline with TS2307 on a package name is a missing build, not a member defect. After a `packages/*` change lands or is edited, rebuild `dist/` in every tree that tests against it: web specs import the built `dist`, so a stale one fails silently with wrong money figures, not an error (archived L-176).**
 - **Guard:** the train check script runs the package builds first, then api and web check-types.
 
-### L-329 · 2026-10-21 · tooling · an Expo web export can reuse a shared Metro cache and bake another build's EXPO_PUBLIC_* values; export with --clear and assert the bundle
-
-- **Symptom:** a phone proof build for #3553 from a fresh worktree, with `EXPO_PUBLIC_API_URL` and `EXPO_PUBLIC_BUILD_SHA` exported, came out pointing at another lane's API (`localhost:3000`) with an empty build sha.
-- **Root cause:** Metro's transform cache is shared across worktrees on one machine, and a cached transform with an earlier inlined env was reused. The export itself succeeded with no warning.
-- **Lesson:** **Every Expo web export used for a proof or a deploy runs `npx expo export --platform web --clear`, then greps `dist/_expo/static/js/web/*.js` for the exact API base URL and the full build sha before any capture. A substring check like "3310" is not proof: grep the whole value.**
-- **Guard:** none automatic; the sign-in screen's `build <sha7>` (`lib/build-info.ts`) is the on-screen check. Cf. [[L-265]] (stale build output in a proof).
-
 ## testing
+
+### L-396 · 2026-11-19 · testing · a change to a hook, or to a file a hook calls, runs every `*-script.spec.ts` that builds a hook fixture; a by-path review run misses them (#4363, fix round 2)
+
+- **Symptom:** a push guard added as the first step of `.husky/pre-push` passed its own self-test and the by-path review runs, then CI Verify went red with 11 failures in two specs that drive the real hook in a temp repo.
+- **Root cause:** each fixture copies only the files the hook used to call, so the new checker was missing and every push in them was refused; those specs were not in the by-path set.
+- **Lesson:** **Before the read, list the specs that copy or run `.husky/*` (grep the hook name in `apps/api/src/common/*-script.spec.ts`) and run them with the hook change. A fixture that copies a hook must copy everything the hook calls, and a missing file refuses with a plain message, not a node stack.**
+- **Guard:** the fixtures in `pre-push-trunk-script.spec.ts` and `skip-verify-audit-script.spec.ts` copy the checker and its lib, and each spec has a missing-checker case; `scripts/registry-root.self-test.mjs` lists the fixture. Cf. [[L-322]], [[L-323]].
 
 ### L-387 · 2026-11-15 · testing · a test helper is not named `use*`: the web lint reads it as a hook and fails the PR (#4340)
 

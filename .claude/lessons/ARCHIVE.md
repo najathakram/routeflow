@@ -4821,3 +4821,19 @@ citations, closed-out with its own post-init assertion guard).
 - **Root cause:** the log is shared by every watchdog run and holds bytes that grep treats as binary; "the newest line" was assumed to mean "my watchdog's line".
 - **Lesson:** **Start the watchdog, keep its pid, and read the deadline only from the log line that names that pid; read the log with `grep -a`; if no line for the pid appears, stop and ask instead of falling back to the tail.**
 - **Guard:** none automatic; the window script is owed this change. Cf. [[L-357]].
+
+## Archived 2026-11-19 — zero outside citations, no repo guard; headroom for L-395, L-396 (bookkeeping drafts for #4363)
+
+### L-359 · 2026-10-30 · process · a train is pushed only after the CI-equivalent verify; type-checks plus one test file is not a gate, and CI is read by its closing Failed line
+
+- **Symptom:** a 13-member train pushed after clean merges, api and web type-checks and one test file went red in CI in three members (a web suite pinning an older unit rule, an api spec expecting another warning code, a writer-inventory spec). The first read of the log took one lane's "passed" counts for the whole api.
+- **Root cause:** each member's PASS was read at its own head; master-wide pins only fail on the merged tree, and the pre-push verify was skipped. A workspace's log holds several test lanes, so one lane's counts are not its result.
+- **Lesson:** **Run the CI Verify equivalent in the train tree (`FULL_VERIFY=1 npm run verify`) through the heavy slot and read it to the end before pushing a train; with a T1 member add the full DB lanes. Read CI by the closing `Failed:` line, never by one lane's counts.**
+- **Guard:** the train PR body states the command and the counts. Cf. [[L-353]]. A DB spec that needs a built artifact (the api dist) ships with the CI step that builds it, and a job that shows 0 steps after a few seconds has failed, not queued. The pre-check also runs `api-error-codes-parity` and `permission-coverage`: a member's bare error-code string in a web file passed every member read and went red only on the merged tree, because that spec scans web and api alike.
+
+### L-329 · 2026-10-21 · tooling · an Expo web export can reuse a shared Metro cache and bake another build's EXPO_PUBLIC_* values; export with --clear and assert the bundle
+
+- **Symptom:** a phone proof build for #3553 from a fresh worktree, with `EXPO_PUBLIC_API_URL` and `EXPO_PUBLIC_BUILD_SHA` exported, came out pointing at another lane's API (`localhost:3000`) with an empty build sha.
+- **Root cause:** Metro's transform cache is shared across worktrees on one machine, and a cached transform with an earlier inlined env was reused. The export itself succeeded with no warning.
+- **Lesson:** **Every Expo web export used for a proof or a deploy runs `npx expo export --platform web --clear`, then greps `dist/_expo/static/js/web/*.js` for the exact API base URL and the full build sha before any capture. A substring check like "3310" is not proof: grep the whole value.**
+- **Guard:** none automatic; the sign-in screen's `build <sha7>` (`lib/build-info.ts`) is the on-screen check. Cf. [[L-265]] (stale build output in a proof).
