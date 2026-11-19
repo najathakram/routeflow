@@ -93,7 +93,9 @@ describe("P4: the literal scan (raw text, all non-spec apps/api/src, .ts and .ts
     expect(files).toContain("common/testing/db-spec.ts");
     expect(files).toContain("common/testing/smtp-spec.ts");
     expect(files.some((f) => /\.spec\.tsx?$/.test(f))).toBe(false);
-    expect(files.filter((f) => f.endsWith(".tsx")).length).toBeGreaterThanOrEqual(7);
+    // B444/B1023: bookkeeping/invoice-template.tsx (the second invoice letterhead) was deleted, so the six .tsx PDF
+    // templates left are the floor (was 7). A floor that only exists to prove the walk sees .tsx files.
+    expect(files.filter((f) => f.endsWith(".tsx")).length).toBeGreaterThanOrEqual(6);
   });
   it("one `/settings/billing` occurrence outside the home, the named exclusion (pinned by COUNT, not by file)", () => {
     const occurrences = sources
