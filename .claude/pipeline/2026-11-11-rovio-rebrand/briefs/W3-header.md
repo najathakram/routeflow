@@ -5,6 +5,7 @@ Base: `rebrand/rovio-site` with every W2 lane landed (2.1b is done with `site.cs
 ## 1. Files
 - **Owns:** `components/site-frame/SiteFrameHeader.tsx`, `components/site-frame/site-frame.css`, `public/site/css/site.css`, `public/site/css/mobile.css`, `public/site/js/site.js`; NEW `e2e/93-site-w3-header.spec.ts` (project `site-waves`). All of `public/site/css/home-up.css` (the P09 rules are at `:92-99`) and `public/site/js/home-up.js:64` (the hero-only `hero-btn-in` toggle, that line only), granted by SA-1174 K6 and K7. Build one observer in `js/site.js`: "the header trial pill is hidden while any other trial button is in the viewport". Delete the hero-only toggle at `home-up.js:64`, so only one script toggles the class; `SiteFrameHeader.tsx:53`, which hard-codes the class, follows.
 - **Must not touch:** any `*.html` (the static pages' header markup belongs to the page lanes in this wave; CSS and JS only here), `SiteFrame.tsx`, `site-frame-nav.ts`, `rf-wheel-up.*`, `js/home-up.js` (except the `:64` toggle), `js/auth-nav.js`, the API.
+- **SA-1180 (3):** the three `%23` hex literals in the `mobile.css` hero ring data-URI become the hex of current palette values (a data-URI cannot read a variable). Widen T35d red first: decode `%23` hex inside `url()` and fail unless the colour is in the palette value set. In the same commit, `site-mobile-pass` drops its pins on the old literals.
 
 ## 2. Red first
 | T | File · red now |
