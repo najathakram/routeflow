@@ -560,7 +560,7 @@ export default function FinancePaymentsPage() {
     sortDir,
   };
 
-  const { data, isLoading } = useInvoicePayments(params);
+  const { data, isLoading, isError, isFetching, error, refetch } = useInvoicePayments(params);
   const { data: customersData } = useCustomers({ limit: 200 });
   const voidPayment = useVoidPayment();
   const exportPayments = useExportPayments();
@@ -628,6 +628,49 @@ export default function FinancePaymentsPage() {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
+  const clearFilters = () => {
+    setSearch("");
+    setMethod("");
+    setStatus("");
+    setDateFrom("");
+    setDateTo("");
+    setCustomerId("");
+  };
+  // `debouncedSearch` too: the query still carries the old text for 300 ms after the box is cleared.
+  const filtered = Boolean(
+    search || debouncedSearch || method || status || dateFrom || dateTo || customerId,
+  );
+  // No payments at all (not "no results for this filter"): one message and one action, nothing to filter.
+  // Only a loaded answer of "zero in total" counts: a failed load, a page past the end and a filter are not empty.
+  const trulyEmpty = !isLoading && !isError && meta?.total === 0 && !filtered;
+
+  const emptyState = filtered ? (
+    <EmptyState
+      variant="invoices"
+      title="No matching payments"
+      description="No payments match your current search and filters."
+      action={
+        <Button variant="secondary" size="sm" onClick={clearFilters}>
+          Clear filters
+        </Button>
+      }
+    />
+  ) : (
+    <EmptyState
+      variant="invoices"
+      title="No payments yet"
+      description="Record a payment to mark invoices as paid."
+      action={
+        <div className="flex flex-col items-center">
+          <WriteButton size="sm" onClick={() => setShowModal(true)}>
+            Record payment
+          </WriteButton>
+          <ReadOnlyHint />
+        </div>
+      }
+    />
+  );
+
   return (
     <div className="space-y-6 p-6">
       {showModal && <RecordPaymentModal onClose={() => setShowModal(false)} />}
@@ -668,42 +711,51 @@ export default function FinancePaymentsPage() {
             All payments recorded against invoices
           </p>
         </div>
-        <div className="flex flex-col items-end">
-          <WriteButton className="min-h-[44px] md:min-h-0" onClick={() => setShowModal(true)}>
-            Record payment
-          </WriteButton>
-          <ReadOnlyHint />
-        </div>
+        {!trulyEmpty && (
+          <div className="flex flex-col items-end">
+            <WriteButton className="min-h-[44px] md:min-h-0" onClick={() => setShowModal(true)}>
+              Record payment
+            </WriteButton>
+            <ReadOnlyHint />
+          </div>
+        )}
       </div>
 
       {/* Summary cards */}
-      {summary && (
+      {summary && !(trulyEmpty && summary.advanceBalance <= 0) && (
         <div
           data-kpi-row
-          className="flex snap-x gap-3 overflow-x-auto py-1 scrollbar-hide md:grid md:grid-cols-3 md:gap-4 md:overflow-visible md:py-0"
+          className={cn(
+            "flex snap-x gap-3 overflow-x-auto py-1 scrollbar-hide md:grid md:gap-4 md:overflow-visible md:py-0",
+            trulyEmpty ? "md:max-w-xs md:grid-cols-1" : "md:grid-cols-3",
+          )}
         >
-          <div
-            data-kpi-cell
-            className="w-[46%] shrink-0 snap-start rounded-xl border border-surface-border bg-white p-3 md:w-auto md:shrink md:p-4"
-          >
-            <p className="text-xs font-medium uppercase tracking-wide text-navy/70">
-              Total received
-            </p>
-            <p className="mt-1 text-2xl font-bold text-success">{fmt(summary.totalReceived)}</p>
-            <p className="text-xs text-navy/70 mt-0.5">
-              {summary.count} {summary.count === 1 ? "payment" : "payments"}
-            </p>
-          </div>
-          <div
-            data-kpi-cell
-            className="w-[46%] shrink-0 snap-start rounded-xl border border-surface-border bg-white p-3 md:w-auto md:shrink md:p-4"
-          >
-            <p className="text-xs font-medium uppercase tracking-wide text-navy/70">
-              Filtered Count
-            </p>
-            <p className="mt-1 text-2xl font-bold text-navy">{meta?.total ?? 0}</p>
-            <p className="text-xs text-navy/70 mt-0.5">matching current filters</p>
-          </div>
+          {!trulyEmpty && (
+            <div
+              data-kpi-cell
+              className="w-[46%] shrink-0 snap-start rounded-xl border border-surface-border bg-white p-3 md:w-auto md:shrink md:p-4"
+            >
+              <p className="text-xs font-medium uppercase tracking-wide text-navy/70">
+                Total received
+              </p>
+              <p className="mt-1 text-2xl font-bold text-success">{fmt(summary.totalReceived)}</p>
+              <p className="text-xs text-navy/70 mt-0.5">
+                {summary.count} {summary.count === 1 ? "payment" : "payments"}
+              </p>
+            </div>
+          )}
+          {!trulyEmpty && (
+            <div
+              data-kpi-cell
+              className="w-[46%] shrink-0 snap-start rounded-xl border border-surface-border bg-white p-3 md:w-auto md:shrink md:p-4"
+            >
+              <p className="text-xs font-medium uppercase tracking-wide text-navy/70">
+                Filtered Count
+              </p>
+              <p className="mt-1 text-2xl font-bold text-navy">{meta?.total ?? 0}</p>
+              <p className="text-xs text-navy/70 mt-0.5">matching current filters</p>
+            </div>
+          )}
           <div
             data-kpi-cell
             className="w-[46%] shrink-0 snap-start rounded-xl border border-surface-border bg-white p-3 md:w-auto md:shrink md:p-4"
@@ -721,177 +773,181 @@ export default function FinancePaymentsPage() {
         </div>
       )}
 
-      {/* Filter bar: search is always visible. Below md the other filters open from a "Filters (n)"
+      {!trulyEmpty && (
+        <>
+          {/* Filter bar: search is always visible. Below md the other filters open from a "Filters (n)"
           button that shares a row with the sort control, one labelled full-width field per row;
           from md up it is the same inline bar (the field groups use md:contents). */}
-      <div className="flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center md:gap-3 md:rounded-xl md:border md:border-surface-border md:bg-white md:p-4">
-        <input
-          id="payments-search"
-          type="text"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search payment #, reference, customer... (/)"
-          aria-label="Search payments"
-          className="h-11 w-full rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 md:h-auto md:w-64"
-        />
-        <FiltersDisclosure
-          layout="contents"
-          count={activeFilterCount({ dateFrom, dateTo, method, status, customerId })}
-          toolbar={
-            !isLoading && payments.length > 0 ? (
-              <div className="flex min-w-0 flex-1 items-center gap-1.5 md:hidden">
-                <div className="min-w-0 flex-1">
-                  <Select
-                    aria-label="Sort payments by"
-                    options={[
-                      { value: "paidAt", label: "Date" },
-                      { value: "settledAt", label: "Bank date" },
-                      { value: "paymentNumber", label: "Payment #" },
-                      { value: "amount", label: "Amount" },
-                    ]}
-                    value={sortBy}
-                    onChange={(e) => {
-                      if (e.target.value !== sortBy) toggleSort(e.target.value);
-                    }}
-                    className="h-11"
-                  />
+          <div className="flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center md:gap-3 md:rounded-xl md:border md:border-surface-border md:bg-white md:p-4">
+            <input
+              id="payments-search"
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search payment #, reference, customer... (/)"
+              aria-label="Search payments"
+              className="h-11 w-full rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 md:h-auto md:w-64"
+            />
+            <FiltersDisclosure
+              layout="contents"
+              count={activeFilterCount({ dateFrom, dateTo, method, status, customerId })}
+              toolbar={
+                !isLoading && payments.length > 0 ? (
+                  <div className="flex min-w-0 flex-1 items-center gap-1.5 md:hidden">
+                    <div className="min-w-0 flex-1">
+                      <Select
+                        aria-label="Sort payments by"
+                        options={[
+                          { value: "paidAt", label: "Date" },
+                          { value: "settledAt", label: "Bank date" },
+                          { value: "paymentNumber", label: "Payment #" },
+                          { value: "amount", label: "Amount" },
+                        ]}
+                        value={sortBy}
+                        onChange={(e) => {
+                          if (e.target.value !== sortBy) toggleSort(e.target.value);
+                        }}
+                        className="h-11"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => toggleSort(sortBy)}
+                      aria-label={sortDir === "asc" ? "Sort descending" : "Sort ascending"}
+                      className="grid h-11 w-11 shrink-0 place-items-center rounded-ctl border border-surface-border bg-white text-navy hover:bg-surface-raised"
+                    >
+                      {sortDir === "asc" ? (
+                        <ArrowUp className="h-4 w-4" />
+                      ) : (
+                        <ArrowDown className="h-4 w-4" />
+                      )}
+                    </button>
+                  </div>
+                ) : undefined
+              }
+            >
+              <div className="flex flex-col gap-2 md:contents">
+                <div className="flex flex-col gap-2 md:contents">
+                  <div className="flex flex-col gap-1 md:contents">
+                    <label
+                      htmlFor="payments-date-from"
+                      className="text-xs font-medium text-navy/70 md:sr-only"
+                    >
+                      From
+                    </label>
+                    <input
+                      id="payments-date-from"
+                      type="date"
+                      value={dateFrom}
+                      onChange={(e) => setDateFrom(e.target.value)}
+                      className="h-11 w-full rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500 md:h-9 md:w-32"
+                      title="From date"
+                    />
+                  </div>
+                  <span className="hidden text-sm text-navy/70 md:inline">–</span>
+                  <div className="flex flex-col gap-1 md:contents">
+                    <label
+                      htmlFor="payments-date-to"
+                      className="text-xs font-medium text-navy/70 md:sr-only"
+                    >
+                      To
+                    </label>
+                    <input
+                      id="payments-date-to"
+                      type="date"
+                      value={dateTo}
+                      onChange={(e) => setDateTo(e.target.value)}
+                      className="h-11 w-full rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500 md:h-9 md:w-32"
+                      title="To date"
+                    />
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1 md:contents">
+                  <label
+                    htmlFor="payments-method"
+                    className="text-xs font-medium text-navy/70 md:sr-only"
+                  >
+                    Method
+                  </label>
+                  <select
+                    id="payments-method"
+                    value={method}
+                    onChange={(e) => setMethod(e.target.value)}
+                    className="min-h-[44px] w-full rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 md:min-h-0 md:w-auto"
+                  >
+                    <option value="">All methods</option>
+                    {ALL_PAYMENT_METHODS.map((m) => (
+                      <option key={m} value={m}>
+                        {METHOD_LABELS[m]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1 md:contents">
+                  <label
+                    htmlFor="payments-status"
+                    className="text-xs font-medium text-navy/70 md:sr-only"
+                  >
+                    Status
+                  </label>
+                  <select
+                    id="payments-status"
+                    value={status}
+                    onChange={(e) => setStatus(e.target.value)}
+                    className="min-h-[44px] w-full rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 md:min-h-0 md:w-auto"
+                  >
+                    <option value="">All statuses</option>
+                    <option value="PAID">Paid</option>
+                    <option value="DRAFT">Draft</option>
+                    <option value="VOID">Void</option>
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1 md:contents">
+                  <label
+                    htmlFor="payments-customer"
+                    className="text-xs font-medium text-navy/70 md:sr-only"
+                  >
+                    Customer
+                  </label>
+                  <select
+                    id="payments-customer"
+                    value={customerId}
+                    onChange={(e) => setCustomerId(e.target.value)}
+                    className="min-h-[44px] w-full rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 md:min-h-0 md:w-auto"
+                  >
+                    <option value="">All customers</option>
+                    {customers.map((c: { id: string; businessName: string }) => (
+                      <option key={c.id} value={c.id}>
+                        {c.businessName}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <button
-                  type="button"
-                  onClick={() => toggleSort(sortBy)}
-                  aria-label={sortDir === "asc" ? "Sort descending" : "Sort ascending"}
-                  className="grid h-11 w-11 shrink-0 place-items-center rounded-ctl border border-surface-border bg-white text-navy hover:bg-surface-raised"
+                  onClick={() => {
+                    setSearch("");
+                    setMethod("");
+                    setStatus("");
+                    setDateFrom("");
+                    setDateTo("");
+                    setCustomerId("");
+                  }}
+                  className="min-h-[44px] self-start text-sm text-navy/70 underline hover:text-navy md:min-h-0 md:self-auto"
                 >
-                  {sortDir === "asc" ? (
-                    <ArrowUp className="h-4 w-4" />
-                  ) : (
-                    <ArrowDown className="h-4 w-4" />
-                  )}
+                  Clear
+                </button>
+                <button
+                  onClick={handleExport}
+                  disabled={exportPayments.isPending}
+                  className="min-h-[44px] rounded-lg border border-surface-border px-3 py-2 text-sm text-navy/70 transition-colors hover:bg-surface-raised disabled:opacity-50 md:ml-auto md:min-h-0"
+                >
+                  {exportPayments.isPending ? "Exporting…" : "Export CSV"}
                 </button>
               </div>
-            ) : undefined
-          }
-        >
-          <div className="flex flex-col gap-2 md:contents">
-            <div className="flex flex-col gap-2 md:contents">
-              <div className="flex flex-col gap-1 md:contents">
-                <label
-                  htmlFor="payments-date-from"
-                  className="text-xs font-medium text-navy/70 md:sr-only"
-                >
-                  From
-                </label>
-                <input
-                  id="payments-date-from"
-                  type="date"
-                  value={dateFrom}
-                  onChange={(e) => setDateFrom(e.target.value)}
-                  className="h-11 w-full rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500 md:h-9 md:w-32"
-                  title="From date"
-                />
-              </div>
-              <span className="hidden text-sm text-navy/70 md:inline">–</span>
-              <div className="flex flex-col gap-1 md:contents">
-                <label
-                  htmlFor="payments-date-to"
-                  className="text-xs font-medium text-navy/70 md:sr-only"
-                >
-                  To
-                </label>
-                <input
-                  id="payments-date-to"
-                  type="date"
-                  value={dateTo}
-                  onChange={(e) => setDateTo(e.target.value)}
-                  className="h-11 w-full rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500 md:h-9 md:w-32"
-                  title="To date"
-                />
-              </div>
-            </div>
-            <div className="flex flex-col gap-1 md:contents">
-              <label
-                htmlFor="payments-method"
-                className="text-xs font-medium text-navy/70 md:sr-only"
-              >
-                Method
-              </label>
-              <select
-                id="payments-method"
-                value={method}
-                onChange={(e) => setMethod(e.target.value)}
-                className="min-h-[44px] w-full rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 md:min-h-0 md:w-auto"
-              >
-                <option value="">All methods</option>
-                {ALL_PAYMENT_METHODS.map((m) => (
-                  <option key={m} value={m}>
-                    {METHOD_LABELS[m]}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="flex flex-col gap-1 md:contents">
-              <label
-                htmlFor="payments-status"
-                className="text-xs font-medium text-navy/70 md:sr-only"
-              >
-                Status
-              </label>
-              <select
-                id="payments-status"
-                value={status}
-                onChange={(e) => setStatus(e.target.value)}
-                className="min-h-[44px] w-full rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 md:min-h-0 md:w-auto"
-              >
-                <option value="">All statuses</option>
-                <option value="PAID">Paid</option>
-                <option value="DRAFT">Draft</option>
-                <option value="VOID">Void</option>
-              </select>
-            </div>
-            <div className="flex flex-col gap-1 md:contents">
-              <label
-                htmlFor="payments-customer"
-                className="text-xs font-medium text-navy/70 md:sr-only"
-              >
-                Customer
-              </label>
-              <select
-                id="payments-customer"
-                value={customerId}
-                onChange={(e) => setCustomerId(e.target.value)}
-                className="min-h-[44px] w-full rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 md:min-h-0 md:w-auto"
-              >
-                <option value="">All customers</option>
-                {customers.map((c: { id: string; businessName: string }) => (
-                  <option key={c.id} value={c.id}>
-                    {c.businessName}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <button
-              onClick={() => {
-                setSearch("");
-                setMethod("");
-                setStatus("");
-                setDateFrom("");
-                setDateTo("");
-                setCustomerId("");
-              }}
-              className="min-h-[44px] self-start text-sm text-navy/70 underline hover:text-navy md:min-h-0 md:self-auto"
-            >
-              Clear
-            </button>
-            <button
-              onClick={handleExport}
-              disabled={exportPayments.isPending}
-              className="min-h-[44px] rounded-lg border border-surface-border px-3 py-2 text-sm text-navy/70 transition-colors hover:bg-surface-raised disabled:opacity-50 md:ml-auto md:min-h-0"
-            >
-              {exportPayments.isPending ? "Exporting…" : "Export CSV"}
-            </button>
+            </FiltersDisclosure>
           </div>
-        </FiltersDisclosure>
-      </div>
+        </>
+      )}
 
       {/* Phone cards below md; the table takes over from md up. Loading and empty keep the table
           wrapper's own states at every width. */}
@@ -963,10 +1019,23 @@ export default function FinancePaymentsPage() {
           !isLoading && payments.length > 0 && "hidden md:block",
         )}
       >
-        {isLoading ? (
+        {isLoading || (payments.length === 0 && !isError && !trulyEmpty && !filtered) ? (
+          // Loading, or a page past the end for a moment before the page number is clamped.
           <div className="flex h-64 items-center justify-center">
             <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand-500 border-t-transparent" />
           </div>
+        ) : payments.length === 0 && isError ? (
+          <div role="alert" className="flex flex-col items-center gap-3 px-4 py-12 text-center">
+            <p className="text-sm text-danger">Couldn&apos;t load payments.</p>
+            {/* A 403 is a decision, not a hiccup (the app's retry treats it as final): no Try again. */}
+            {(error as { response?: { status?: number } } | null)?.response?.status !== 403 && (
+              <Button variant="secondary" size="sm" disabled={isFetching} onClick={() => refetch()}>
+                {isFetching ? "Trying again…" : "Try again"}
+              </Button>
+            )}
+          </div>
+        ) : payments.length === 0 ? (
+          emptyState
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -1015,46 +1084,6 @@ export default function FinancePaymentsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-surface-border">
-                {payments.length === 0 && (
-                  <tr>
-                    <td colSpan={10} className="p-0">
-                      {search || method || status || dateFrom || dateTo || customerId ? (
-                        <EmptyState
-                          variant="invoices"
-                          title="No matching payments"
-                          description="No payments match your current search and filters."
-                          action={
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              onClick={() => {
-                                setSearch("");
-                                setMethod("");
-                                setStatus("");
-                                setDateFrom("");
-                                setDateTo("");
-                                setCustomerId("");
-                              }}
-                            >
-                              Clear filters
-                            </Button>
-                          }
-                        />
-                      ) : (
-                        <EmptyState
-                          variant="invoices"
-                          title="No payments yet"
-                          description="Record a payment to mark invoices as paid and track receipts."
-                          action={
-                            <WriteButton size="sm" onClick={() => setShowModal(true)}>
-                              Record payment
-                            </WriteButton>
-                          }
-                        />
-                      )}
-                    </td>
-                  </tr>
-                )}
                 {payments.map((p) => (
                   <tr
                     key={p.id}
