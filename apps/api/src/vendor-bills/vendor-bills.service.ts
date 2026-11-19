@@ -75,6 +75,7 @@ import { assertSellableLines } from "../products/sellable-lines";
 import { tenantSafeParentView } from "../products/product-parent";
 import { tenantTimeZone } from "../common/tenant-time-zone";
 import { paidInstantOf } from "../common/paid-instant";
+import { advisoryXactLock } from "../common/db-locks";
 
 /** What clients render when a bill is blocked as a duplicate. */
 export interface VendorBillDuplicatePayload {
@@ -441,10 +442,19 @@ export class VendorBillsService {
     return items.flatMap((i) => (i.productId ? [i.productId] : []));
   }
 
-  private async nextBillNumber() {
+  /**
+   * B844: the next BILL-YYYY-NNNN, read INSIDE the creating transaction under the per-tenant
+   * `vendor-bill-number` lock (transaction-scoped, released at commit), so two concurrent creates take the
+   * number one after the other and the second sees the first one's committed bill. Read outside, both read
+   * the same last number and the second insert failed on @@unique([tenantId, billNumber]).
+   */
+  private async nextBillNumber(tx: any) {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) throw new Error("vendor bill number: no tenant in context");
+    await advisoryXactLock(tx, "vendor-bill-number", tenantId);
     const year = new Date().getFullYear();
     const prefix = `BILL-${year}-`;
-    const last = await this.prisma.forTenant().vendorBill.findFirst({
+    const last = await tx.vendorBill.findFirst({
       where: { billNumber: { startsWith: prefix } },
       orderBy: { billNumber: "desc" },
     });
@@ -597,7 +607,6 @@ export class VendorBillsService {
       await this.assertNoPostedLineMatch(dto, totalOwed, supplierId ?? null);
     }
 
-    const billNumber = await this.nextBillNumber();
     const billInclude = {
       supplier: { select: { id: true, name: true } },
       items: {
@@ -648,6 +657,7 @@ export class VendorBillsService {
           );
         }
 
+        const billNumber = await this.nextBillNumber(tx);
         const created = await tx.vendorBill.create({
           data: {
             billNumber,

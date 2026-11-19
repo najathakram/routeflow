@@ -113,6 +113,7 @@ describe("db-locks — withAdvisoryLock (T1, R1)", () => {
         "stock-count",
         "stock-count-product",
         "payment-ref",
+        "vendor-bill-number",
       ]);
     });
   });
