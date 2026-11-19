@@ -880,6 +880,11 @@ export const API_ERROR_CODES = {
    */
   QTY_SPLIT_MISMATCH: "QTY_SPLIT_MISMATCH",
   /**
+   * 409 at the stop (approve a customer ADD_ITEM): the request carries a quantity and a box split that disagree, so merging
+   * it would bill the split's quantity. Nothing is written and the request stays open: the approver declines it (SA-1173 K2).
+   */
+  CHANGE_REQUEST_SPLIT_MISMATCH: "CHANGE_REQUEST_SPLIT_MISMATCH",
+  /**
    * 503 from create(): the order WAS saved but its credit-note sync exhausted its retries. The body carries
    * `orderId`: open that order and apply the credits there; a replay of the key never applies them.
    */

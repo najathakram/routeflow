@@ -90,6 +90,13 @@ export interface CheckQtySplitArgs {
   upbFor: (line: QtySplitLine) => number | null | undefined;
   tenantId?: string | null;
   logger?: Logger;
+  /** SA-1173 K2: the error an `enforce` refusal throws. Default is the buyer 400; only the at-stop approver passes one. */
+  refuse?: (found: QtySplitMismatch[]) => Error;
+}
+
+/** SA-1173 K3: the one role-to-mode rule: a customer's request is enforced, staff and drivers warn (row 531). */
+export function splitModeFor(role: string | null | undefined): QtySplitMode {
+  return role === "CUSTOMER" ? "enforce" : "warn";
 }
 
 const fallbackLogger = new Logger("QtySplitConsistency");
@@ -105,11 +112,12 @@ export function checkQtySplitConsistency(args: CheckQtySplitArgs): QtySplitMisma
     // enforce only, and only when the caller KNOWS the product (undefined = not found: the writer refuses it).
     const m =
       qtySplitMismatch(line, upb) ??
-      (args.mode === "enforce" && upb != null ? unpackableSplitMismatch(line, upb) : null);
+      (args.mode === "enforce" && upb !== undefined ? unpackableSplitMismatch(line, upb) : null);
     if (m) found.push(m);
   }
   if (found.length === 0) return found;
   if (args.mode === "enforce") {
+    if (args.refuse) throw args.refuse(found);
     throw new BadRequestException({
       code: API_ERROR_CODES.QTY_SPLIT_MISMATCH,
       message: "The quantity and the box split of a line disagree. Review the cart and try again.",

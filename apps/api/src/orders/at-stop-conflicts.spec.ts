@@ -35,6 +35,9 @@ describe("B796 — at-stop refusals carry a human message (REG-B796)", () => {
         "This stop is already completed or skipped. Approve the request for the next delivery, or decline it.",
       ORDER_EDIT_INVOICE_HAS_PAYMENTS:
         "This order's invoice can't change at the door. The office can add these items on a new order.",
+      // SA-1173 K2
+      CHANGE_REQUEST_SPLIT_MISMATCH:
+        "This request's quantity and box count don't match, so it can't be applied: decline it.",
     });
   });
 

@@ -582,6 +582,8 @@ describe("genericToastCopy: codes users rely on", () => {
       ["ORDER_BELOW_RETURN_CREDIT", /can't drop below the credit already issued.*returns/],
       ["UNIT_AWARE_LINE_UNVERIFIABLE", /lines couldn't be verified.*Ask an admin/],
       ["CHANGE_REQUEST_PACK_CHANGED", /pack size changed.*Decline it and re-add/],
+      // SA-1173 T2: the approver's sentence, never the buyer cart copy
+      ["CHANGE_REQUEST_SPLIT_MISMATCH", /quantity and box count don't match.*decline it./],
       ["INVOICE_CHANGED_CONCURRENTLY", /invoice changed.*Refresh and try again/],
       [
         "INVOICE_TAX_STATE_STALE",

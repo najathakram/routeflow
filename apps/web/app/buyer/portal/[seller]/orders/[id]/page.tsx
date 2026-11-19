@@ -378,6 +378,8 @@ function RequestChangeModal({
         setFormError(
           "The delivery run for this order has ended — changes can no longer be requested.",
         );
+      } else if (code === API_ERROR_CODES.QTY_SPLIT_MISMATCH) {
+        setFormError("This item's quantity didn't come through. Choose it again and resend."); // SA-1173 K3: fixed text, never the raw message
       } else if (code === API_ERROR_CODES.ORDER_WITH_CARRIER_NO_CHANGE_REQUEST) {
         setFormError(SHIPPED_ORDER_MESSAGE); // B1135: the order has shipped; there is no request to send
       } else {

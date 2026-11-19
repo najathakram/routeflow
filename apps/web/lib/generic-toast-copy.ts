@@ -213,6 +213,8 @@ const CODE_COPY: Record<string, string> = {
     "This order's total can't drop below the credit already issued or held against its returns. Raise the total, or deal with the return credit first.",
   [API_ERROR_CODES.UNIT_AWARE_LINE_UNVERIFIABLE]:
     "This invoice's lines couldn't be verified, so it can't be edited. Ask an admin.",
+  [API_ERROR_CODES.CHANGE_REQUEST_SPLIT_MISMATCH]:
+    "This request's quantity and box count don't match, so it can't be applied: decline it.",
   [API_ERROR_CODES.CHANGE_REQUEST_PACK_CHANGED]:
     "The pack size changed, so a change request was filed. Decline it and re-add the item to the next order.",
   [API_ERROR_CODES.MERGE_ALREADY_DECIDED]:

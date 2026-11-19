@@ -46,6 +46,7 @@ import {
 import { assertDriverMayEditOrder, underOrderLockForDriver } from "./driver-edit-access";
 import { throwIfWithCarrierChangeRequest } from "./order-carrier-guard";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { checkQtySplitConsistency, splitModeFor } from "./qty-split-consistency";
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
@@ -203,6 +204,7 @@ export class ChangeRequestsService {
             kind: true,
             isActive: true,
             portalVisible: true,
+            unitsPerBox: true,
             ...PORTAL_PARENT_INCLUDE,
           },
         });
@@ -213,6 +215,15 @@ export class ChangeRequestsService {
           await this.assertBuyerMayFile(product, order);
         } else if (!product) throw new BadRequestException("Product not found");
         assertSellableLines([product]); // WS8: refuse at filing time, not only at approval
+        // SA-1173 K3: a split that contradicts its own qty is refused at the customer, before a request exists
+        checkQtySplitConsistency({
+          mode: splitModeFor(user.role),
+          path: "orders.cr.file",
+          items: [{ productId: product.id, qty: dto.qty, boxes: dto.boxes, pieces: dto.pieces }],
+          upbFor: () => Number(product.unitsPerBox ?? 0),
+          tenantId: this.prisma.getTenantId(),
+          logger: this.logger,
+        });
         productId = product.id;
         payload = {
           productId: product.id,

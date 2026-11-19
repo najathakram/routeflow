@@ -65,7 +65,12 @@ import {
 } from "./at-stop-conflicts";
 import { sourceLineFor } from "./source-line";
 import { assertCustomerMayNotDraft, type CreateOrderOptions } from "./order-create-options";
-import { checkQtySplitConsistency, warnQtySplit, type QtySplitLine } from "./qty-split-consistency";
+import {
+  checkQtySplitConsistency,
+  splitModeFor,
+  warnQtySplit,
+  type QtySplitLine,
+} from "./qty-split-consistency";
 import { warnOrderLine } from "./order-line-ambiguity";
 import { mergeIntoStoredLine, pickHeldMergeTarget } from "./stored-line-merge";
 import {
@@ -4091,13 +4096,15 @@ export class OrdersService implements OnApplicationBootstrap {
             };
             // row 531: the add's own qty-vs-split check first (a buyer's is refused, staff/driver warn)
             checkQtySplitConsistency({
-              mode: cr.requestedByRole === UserRole.CUSTOMER ? "enforce" : "warn",
+              mode: splitModeFor(cr.requestedByRole),
               path: "orders.cr.add.merge",
               items: [{ ...payload, productId: product.id, qty: addQty } as QtySplitLine],
               // the add was filed at the LIVE pack; a repacked line is the helper's 409, never a split 400
               upbFor: () => upb,
               tenantId: this.prisma?.getTenantId?.(),
               logger: this.logger,
+              // SA-1173 K2: the approver's own refusal (409, decline-only), never the buyer's cart sentence
+              refuse: () => atStopConflict(API_ERROR_CODES.CHANGE_REQUEST_SPLIT_MISMATCH),
             });
             const merged = mergeIntoStoredLine({
               line: lineShape,

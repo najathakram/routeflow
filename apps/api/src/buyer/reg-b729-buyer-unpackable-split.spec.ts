@@ -148,3 +148,60 @@ describe("REG-B729: buyer order endpoints refuse a split on an unpackable produc
     expect(svc.create).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("SA-1173 S2: a refused split never reaches the key, the lock or the active-order read", () => {
+  it("createOrder with a key and an open order: lock, key lookup and active-order read are never called", async () => {
+    const prisma = createMockPrisma();
+    prisma.forTenant().product.findMany.mockResolvedValue([{ id: "plain", unitsPerBox: null }]);
+    const ordersStub = {
+      findActiveOrder: jest.fn().mockResolvedValue({ id: "ord-1", customerId: "cust-1" }),
+      findOrderIdByIdempotencyKey: jest.fn().mockResolvedValue("ord-1"),
+      create: jest.fn(),
+      updateOrderItems: jest.fn(),
+    };
+    const module = await Test.createTestingModule({
+      controllers: [BuyerController],
+      providers: [
+        oversellReaderOffProvider,
+        ...[
+          BuyerService,
+          BuyerCatalogService,
+          BuyerDashboardService,
+          ReplenishmentService,
+          ShelfService,
+          StockAlertService,
+          PromotionsService,
+          ChangeRequestsService,
+          InvoicesService,
+          InvoicePdfService,
+          StatementService,
+          StatementPdfService,
+          CustomersService,
+          OrderTemplatesService,
+          AuthorizationsService,
+          SystemConfigService,
+        ].map((p) => ({ provide: p, useValue: {} })),
+        { provide: OrdersService, useValue: ordersStub },
+        { provide: PrismaService, useValue: prisma },
+        {
+          provide: TenantContextService,
+          useValue: { run: jest.fn((_id, fn) => fn()), getOrNull: jest.fn().mockReturnValue(null) },
+        },
+      ],
+    }).compile();
+    const controller = module.get(BuyerController);
+    withAdvisoryLock.mockClear();
+    await expect(
+      controller.createOrder(
+        { items: [{ productId: "plain", qty: 3, boxes: 2, pieces: 0 }] } as any,
+        CTX as any,
+        "k-1",
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(withAdvisoryLock).not.toHaveBeenCalled();
+    expect(ordersStub.findOrderIdByIdempotencyKey).not.toHaveBeenCalled();
+    expect(ordersStub.findActiveOrder).not.toHaveBeenCalled();
+    expect(ordersStub.create).not.toHaveBeenCalled();
+    expect(ordersStub.updateOrderItems).not.toHaveBeenCalled();
+  });
+});
