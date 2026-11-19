@@ -8,8 +8,8 @@ const base = require("./package.json").jest;
 // scripts/run-unit-tests.mjs, which is what `npm test -w apps/api` runs. The base config ignores
 // the same pattern, so every script spec runs in exactly one lane.
 //
-// bugs-self-test-script.spec.ts is the one `-script.spec.ts` that stays in the repo-truth lane
-// (jest.repo-truth.config.js): turbo hashes that task's cross-tree inputs, which it needs.
+// bugs-self-test-script.spec.ts and leak-check-self-test-script.spec.ts are the `-script.spec.ts` files that
+// stay in the repo-truth lane (jest.repo-truth.config.js): turbo hashes that task's cross-tree inputs, which it needs.
 module.exports = {
   ...base,
   // The same campaign artifact as the parallel run, MERGED into it rather than overwriting it
@@ -19,7 +19,7 @@ module.exports = {
     ["<rootDir>/../../../scripts/jest-campaign-reporter.cjs", { artifact: "api", merge: true }],
   ],
   testRegex: "-script\\.spec\\.ts$",
-  testPathIgnorePatterns: ["/node_modules/", "bugs-self-test-script\\.spec\\.ts$"],
+  testPathIgnorePatterns: ["/node_modules/", "(bugs|leak-check)-self-test-script\\.spec\\.ts$"],
   // Serial by construction, whatever --maxWorkers the caller passes (run-unit-tests.mjs drops it).
   maxWorkers: 1,
 };

@@ -46,13 +46,14 @@ function makeOrder(overrides: Partial<Record<string, unknown>> = {}) {
 describe("TripsService", () => {
   let service: TripsService;
   let prisma: ReturnType<typeof createMockPrisma>;
-  let systemConfig: jest.Mocked<Pick<SystemConfigService, "get" | "set">>;
+  let systemConfig: jest.Mocked<Pick<SystemConfigService, "get" | "getAll" | "set">>;
 
   beforeEach(async () => {
     jest.clearAllMocks();
     prisma = createMockPrisma();
     systemConfig = {
       get: jest.fn().mockResolvedValue(null),
+      getAll: jest.fn().mockResolvedValue({}),
       set: jest.fn().mockResolvedValue(undefined),
     };
 

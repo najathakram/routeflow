@@ -94,7 +94,13 @@ describe("vendor-bill stock txs retry on a conflict (SA-767 L-1)", () => {
             recordAiUsage: jest.fn(),
           },
         },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: DuplicateMatchService, useValue: {} },
         { provide: StorageService, useValue: {} },
         { provide: InventoryService, useValue: inventory },

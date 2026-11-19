@@ -73,6 +73,7 @@ describeDb("B299: unvoid re-claims invoicedQty only when the quantity is still f
   };
   const mockSystemConfig = {
     get: jest.fn().mockResolvedValue(null),
+    getAll: jest.fn().mockResolvedValue({}),
     set: jest.fn().mockResolvedValue(undefined),
   };
   const mockCreditNotes = {

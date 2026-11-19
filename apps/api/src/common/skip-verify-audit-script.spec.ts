@@ -444,7 +444,7 @@ const FIXED_EXPORT = 'export RF_PUSH_REFS="$refs"';
  * fixtureRepo() (feat/code = code, docs/notes CHECKED OUT = docs-only) + a bare `origin` + the given
  * hook text installed as `.git/hooks/pre-push` next to copies of the real guard/audit scripts.
  */
-function pushFixture(hookText: string, auditSource?: string) {
+function pushFixture(hookText: string, auditSource?: string, withChecker = true) {
   const fx = fixtureRepo();
   const remote = fs.mkdtempSync(path.join(os.tmpdir(), "rf-b892-remote-"));
   git(remote, "init", "-q", "--bare");
@@ -454,6 +454,17 @@ function pushFixture(hookText: string, auditSource?: string) {
     path.join(REPO_ROOT, "scripts", "push-guard.mjs"),
     path.join(fx.dir, "scripts", "push-guard.mjs"),
   );
+  if (withChecker) {
+    // The hook runs the REAL G0 leak checker first (fail-closed): copy it and its lib, and write a dummy
+    // patterns file (matches nothing) into the fixture's git-common-dir.
+    fs.mkdirSync(path.join(fx.dir, "scripts", "lib"), { recursive: true });
+    for (const f of ["leak-check.mjs", path.join("lib", "leak-patterns.mjs")]) {
+      fs.copyFileSync(path.join(REPO_ROOT, "scripts", f), path.join(fx.dir, "scripts", f));
+    }
+    const common = path.resolve(fx.dir, git(fx.dir, "rev-parse", "--git-common-dir").trim());
+    fs.mkdirSync(path.join(common, "info"), { recursive: true });
+    fs.writeFileSync(path.join(common, "info", "leak-patterns"), "zz-fixture-never-matches-9f3\n");
+  }
   // The hook runs the #2865 size ratchet before the SKIP_VERIFY block; the fixture has no apps/api or
   // jest, so a pass-through stub stands in (the gate has its own self-test).
   fs.writeFileSync(path.join(fx.dir, "scripts", "size-ratchet-gate.mjs"), "process.exit(0);\n");
@@ -581,6 +592,24 @@ describe("B892: the real .husky/pre-push forwards git's pushed refs to the audit
         cleanup(fx);
         cleanup(fx2);
         fs.rmSync(probeOut, { force: true });
+      }
+    },
+    HOOK_TIMEOUT,
+  );
+
+  it(
+    "a fixture without scripts/leak-check.mjs refuses the push (fail-closed) and creates no remote ref",
+    () => {
+      const fx = pushFixture(HOOK_TEXT, undefined, false);
+      try {
+        const res = skipPush(fx, "hotfix: verify broken");
+        expect(res.status).not.toBe(0);
+        expect(`${res.stdout}${res.stderr}`).toContain(
+          "leak-check: scripts/leak-check.mjs is missing",
+        );
+        expect(git(fx.dir, "ls-remote", "--heads", "origin").trim()).toBe("");
+      } finally {
+        cleanup(fx);
       }
     },
     HOOK_TIMEOUT,

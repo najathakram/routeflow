@@ -59,7 +59,7 @@ export const KPI_SUMMARY_EXCLUDED: InvoiceStatus[] = [
  * only an unbacked draft is excluded and surfaced as "pending exposure". The credit-exposure
  * DB read therefore filters `CREDIT_NOT_APPLICABLE` (drafts included) and drops unbacked
  * drafts in JS. The customers list and CSV no longer read this basis: they show Open balance
- * (W-1096), from `OPEN_BALANCE_INVOICE_WHERE` in `customers/account-statement.ts`. Same members
+ * (W-1096), from `OPEN_BALANCE_INVOICE_WHERE` in `customers/open-balance-basis.ts`. Same members
  * as KPI_SUMMARY_EXCLUDED on purpose (one meaning of "an issued receivable"), but a separate
  * name so the credit basis is greppable and a future divergence is a deliberate edit, not an
  * accident.

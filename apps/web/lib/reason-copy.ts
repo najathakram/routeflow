@@ -1,6 +1,6 @@
 import { API_ERROR_CODES } from "@routeflow/types";
 import { aiResetDay } from "./ai-paused";
-import { RUN_UNFINALIZED_PREFIX } from "./api/invoices";
+import { RUN_SEND_FAILED_PREFIX, RUN_UNFINALIZED_PREFIX } from "./api/invoices";
 import type { ReturnReason } from "./api/returns";
 import { isReadOnlyRefusal, readOnlyRefusalCopy } from "./read-only-refusal";
 
@@ -120,6 +120,12 @@ export function describeRunFailure(lastError: string): { text: string; retryable
   if (lastError.startsWith(RUN_UNFINALIZED_PREFIX)) {
     return {
       text: "The invoice was created, but the run couldn't be finalized. Don't run it again.",
+      retryable: false,
+    };
+  }
+  if (lastError.startsWith(RUN_SEND_FAILED_PREFIX)) {
+    return {
+      text: "The invoice was created, but its email could not be sent. It is a draft: open it and send it. Don't run it again.",
       retryable: false,
     };
   }

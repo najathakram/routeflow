@@ -418,4 +418,14 @@ describe("InvoicesPage — phone cards", () => {
       expect(tone(cell)).toBe(expected[i]);
     });
   });
+
+  it("uses the block filter panel layout (a real box from md up)", () => {
+    renderWithProviders(<InvoicesPage />);
+    const button = screen.getByRole("button", { name: /^Filters/ });
+    const root = button.parentElement!.parentElement as HTMLElement;
+    const panel = document.getElementById(button.getAttribute("aria-controls")!) as HTMLElement;
+    expect(panel.parentElement).toBe(root);
+    expect(root.className.split(" ")).not.toContain("md:contents");
+    expect(panel.className.split(" ")).toContain("md:block");
+  });
 });

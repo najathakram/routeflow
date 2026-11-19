@@ -50,18 +50,18 @@ const TABLE: Record<string, Row> = {
     "REQUEST",
   ),
   "invoices/invoice-pdf.service.ts": R(
-    3,
+    1,
     "InvoicesController / BuyerController (CTX) and the recurring-invoice cron's send (CTX)",
     "REQUEST",
     "CTX",
   ),
   "invoices/invoice-reminder-email.ts": R(
-    2,
+    1,
     "free function; InvoicesService.sendReminder via InvoicesController",
     "REQUEST",
   ),
   "invoices/invoices.service.ts": R(
-    8,
+    6,
     "InvoicesController; the recurring-invoice cron runs generateInvoiceFromTemplate inside tenantCtx.run",
     "REQUEST",
     "CTX",
@@ -137,8 +137,8 @@ const CALL = new RegExp(
   `\\b(?:systemConfig|systemConfigService|svc)\\s*\\??\\.\\s*(?:${METHODS})\\s*\\(`,
   "g",
 );
-// A delegation to the one free function that takes the service.
-const FREE_FN = /\bcurrentTaxRate\s*\(/g;
+// A delegation to a free function that takes the service (readInvoiceLayout is the one reader of the invoice switches).
+const FREE_FN = /\b(?:currentTaxRate|readInvoiceLayout)\s*\(/g;
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {

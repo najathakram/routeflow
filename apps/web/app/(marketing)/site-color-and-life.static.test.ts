@@ -136,7 +136,7 @@ describe("life: the motion runs for everyone", () => {
     "%s: no reduced-motion query and no switch class gate the press and scroll motion",
     (file) => {
       const css = read(file);
-      expect(css).not.toMatch(/prefers-reduced-motion|html:not(.rm)|.rm/);
+      expect(css).not.toMatch(/prefers-reduced-motion|html:not\(\.rm\)|\.rm\b/);
       expect(css).toContain(".btn:active{transform:scale(.965)}");
     },
   );

@@ -59,6 +59,7 @@ describe("InvoicesService — shipping fields on the wire (F3, fold 1)", () => {
   };
   const mockSystemConfig = {
     get: jest.fn().mockResolvedValue(null),
+    getAll: jest.fn().mockResolvedValue({}),
     set: jest.fn().mockResolvedValue(undefined),
   };
   const mockMessaging = {

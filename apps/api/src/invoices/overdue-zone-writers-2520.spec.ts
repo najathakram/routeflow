@@ -76,6 +76,7 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
   };
   const mockSystemConfig = {
     get: jest.fn().mockResolvedValue(null),
+    getAll: jest.fn().mockResolvedValue({}),
     set: jest.fn().mockResolvedValue(undefined),
   };
   const mockMessaging = {

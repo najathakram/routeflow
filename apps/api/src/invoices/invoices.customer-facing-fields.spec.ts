@@ -59,7 +59,10 @@ function serviceReading(row: ReturnType<typeof invoiceRow>) {
         }, // revisedAt: never revised
       }),
     },
-    systemConfig: { get: jest.fn().mockResolvedValue(null) },
+    systemConfig: {
+      get: jest.fn().mockResolvedValue(null),
+      getAll: jest.fn().mockResolvedValue({}),
+    },
   });
   return { service, findMany };
 }

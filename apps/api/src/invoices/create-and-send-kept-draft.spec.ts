@@ -67,6 +67,7 @@ describe("InvoicesService — create-and-send keeps the draft (row 466)", () => 
 
   const mockSystemConfig = {
     get: jest.fn().mockResolvedValue(null),
+    getAll: jest.fn().mockResolvedValue({}),
     set: jest.fn().mockResolvedValue(undefined),
   };
 

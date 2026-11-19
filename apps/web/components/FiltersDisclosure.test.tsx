@@ -45,8 +45,27 @@ describe("FiltersDisclosure", () => {
     setup(0);
     const panel = screen.getByLabelText("Search").parentElement as HTMLElement;
     expect(panel.className).toContain("hidden");
-    expect(panel.className).toContain("md:block");
     expect(screen.getByRole("button", { name: "Filters" })).toBeInTheDocument();
+  });
+
+  it("by default is a plain block from md up: root has no md:contents, panel is md:block", () => {
+    setup(0);
+    const panel = screen.getByLabelText("Search").parentElement as HTMLElement;
+    expect(panel.className.split(" ")).toContain("md:block");
+    expect(panel.className.split(" ")).not.toContain("md:contents");
+    expect((panel.parentElement as HTMLElement).className.split(" ")).not.toContain("md:contents");
+  });
+
+  it('layout="contents" takes no box from md up: root and panel are md:contents', () => {
+    render(
+      <FiltersDisclosure count={0} layout="contents">
+        <input aria-label="Search" />
+      </FiltersDisclosure>,
+    );
+    const panel = screen.getByLabelText("Search").parentElement as HTMLElement;
+    expect(panel.className.split(" ")).toContain("md:contents");
+    expect(panel.className.split(" ")).not.toContain("md:block");
+    expect((panel.parentElement as HTMLElement).className.split(" ")).toContain("md:contents");
   });
 
   it("the button controls the panel by id", () => {

@@ -124,7 +124,11 @@ describeDb("SA-436/SA-436a credit-note auto-apply gate, blocks and exclusions (#
         { provide: InvoicePdfService, useValue: { getOrGenerate: jest.fn() } },
         {
           provide: SystemConfigService,
-          useValue: { get: jest.fn().mockResolvedValue(null), set: jest.fn() },
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+            set: jest.fn(),
+          },
         },
         { provide: RegulatedLedgerService, useValue: mockLedger },
         {

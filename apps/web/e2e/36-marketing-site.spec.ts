@@ -20,6 +20,7 @@
  * (playwright.config.ts).
  */
 import { test, expect, devices, type BrowserContext, type Page, webkit } from "@playwright/test";
+import { wheelBox } from "./helpers/site-proof";
 
 // The pages that wear the site header and footer, with their one h1.
 const H1_BY_ROUTE: Record<string, string> = {
@@ -1869,85 +1870,6 @@ test.describe("T22 — the wheel runs on a short screen", () => {
       await context.close();
     });
   }
-
-  // A phone held sideways, big or small, uses the phone's rule: no name under 11 px (the piece shows its icon only),
-  // and no name runs past the edge of the stage: a name that will not fit at 11 px is left out.
-  for (const s of [
-    { w: 667, h: 375 },
-    { w: 844, h: 390 },
-    { w: 915, h: 412 },
-    { w: 932, h: 430 },
-    { w: 640, h: 360 },
-    { w: 568, h: 320 },
-  ]) {
-    test(`T22 — ${s.w}x${s.h}: no wheel name under 11 px, none past the stage edge`, async ({
-      browser,
-    }) => {
-      test.setTimeout(150_000);
-      const context = await browser.newContext({
-        viewport: { width: s.w, height: s.h },
-        hasTouch: true,
-      });
-      const page = await context.newPage();
-      await page.addInitScript(() => {
-        type Draw = { px: number; l: number; r: number; cw: number; ts: number };
-        const w = window as unknown as { __draws: Draw[] };
-        w.__draws = [];
-        const f = CanvasRenderingContext2D.prototype.fillText;
-        CanvasRenderingContext2D.prototype.fillText = function (...a: Parameters<typeof f>) {
-          const t = this.getTransform();
-          const wd = this.measureText(String(a[0])).width * t.a;
-          const al = this.textAlign;
-          const l =
-            al === "left" || al === "start"
-              ? t.e
-              : al === "right" || al === "end"
-                ? t.e - wd
-                : t.e - wd / 2;
-          w.__draws.push({
-            px: (t.a * 31) / (window.devicePixelRatio || 1),
-            l,
-            r: l + wd,
-            cw: this.canvas.width,
-            ts: performance.now(),
-          });
-          return f.apply(this, a);
-        };
-      });
-      await page.goto("/", { waitUntil: "load" });
-      await page.waitForSelector(".rfw-live", { state: "attached", timeout: 30_000 });
-      await page.waitForTimeout(2500);
-      const { top, height } = await state(page);
-      type D = { px: number; l: number; r: number; cw: number; ts: number };
-      const settledFrames: D[] = [];
-      let drawn = 0;
-      for (const f of [0.1, 0.2, 0.3, 0.4]) {
-        await page.evaluate(() => ((window as unknown as { __draws: D[] }).__draws = []));
-        await page.evaluate(
-          ([t, h, f2, vh]) => {
-            document.documentElement.style.scrollBehavior = "auto";
-            window.scrollTo(0, (t as number) + (f2 as number) * ((h as number) - (vh as number)));
-          },
-          [top, height, f, s.h],
-        );
-        await page.waitForTimeout(1800);
-        const all = await page.evaluate(() => (window as unknown as { __draws: D[] }).__draws);
-        // every draw counts for the size; only the last frame (the settled one) counts for the edge
-        const last = all.length ? all[all.length - 1].ts : 0;
-        settledFrames.push(...all.filter((d) => d.ts > last - 40));
-        // a hold where nothing moves draws nothing new
-        drawn += all.length;
-        if (all.length)
-          expect(Math.min(...all.map((d) => d.px)), "smallest name").toBeGreaterThanOrEqual(10.95);
-      }
-      expect(drawn, "names were drawn").toBeGreaterThan(0);
-      for (const d of settledFrames) {
-        expect(d.l, "name stays inside the stage (left)").toBeGreaterThanOrEqual(-1);
-        expect(d.r, "name stays inside the stage (right)").toBeLessThanOrEqual(d.cw + 1);
-      }
-      await context.close();
-    });
-  }
 });
 
 // ─── T23 — on a phone, headings rise into place and are never hidden ─────────
@@ -1991,11 +1913,10 @@ test.describe("T23 — the phone's rising headings", () => {
   }
 });
 
-// ─── T24 — the hover label never repeats a name the piece already carries ────
-// Owner (Lead, 1440 x 900): the first screen showed a white "Customers" pill right above the Customers tile, which already says
-// "Customers". The hover/focus label (.rfw-tip) is for a piece with only its icon: it stays away while the piece carries its own
-// name (the first screen on a desktop) and shows whenever the name is not on the piece (an inner piece at rest, any piece on a phone).
-test.describe("T24 — the hover label does not repeat a drawn name", () => {
+// ─── T24 — the hover label shows on every piece ────────────────────────────
+// Names are no longer painted on the wheel (they are in the legend and the keyboard list), so the hover/focus label (.rfw-tip)
+// shows on every piece: a desktop tile, an inner piece and a phone tile alike.
+test.describe("T24 — the hover label shows on every piece", () => {
   const OUTER = 8; // Customers
   const INNER = 11; // an inner piece: icon only at rest on a desktop
 
@@ -2020,24 +1941,40 @@ test.describe("T24 — the hover label does not repeat a drawn name", () => {
     return tip(page);
   };
 
-  test("T24 — 1440x900: no label on a tile that names itself, a label on an icon-only piece", async ({
+  // The names are in the legend and the keyboard list now, never painted on the tile, so the label shows on every piece.
+  // The .rfw-b buttons are 1x1 px at the tile centre, so the pointer cannot aim at them: scan the wheel's own pixels with the mouse
+  // until the label reads the wanted name. A scan that never finds it throws (L-202).
+  const hoverPiece = async (page: import("@playwright/test").Page, name: string) => {
+    const box = await wheelBox(page);
+    const N = 24;
+    for (let r = 0; r < N; r++) {
+      for (let c = 0; c < N; c++) {
+        await page.mouse.move(
+          box.l + ((box.r - box.l) * (c + 0.5)) / N,
+          box.t + ((box.b - box.t) * (r + 0.5)) / N,
+        );
+        const t = await tip(page);
+        if (t.on && t.text === name) return t;
+      }
+    }
+    throw new Error(`T24: no point on the wheel made the label read "${name}"`);
+  };
+
+  test("T24 — 1440x900: the label shows on every piece, on a tile that once named itself too", async ({
     browser,
   }) => {
     test.setTimeout(120_000);
     const { context, page, errors } = await open(browser, 1440, 900);
-    // the pointer resting on the tile (the owner's case): the Customers tile sits at about (811, 428) on this first screen
-    await page.mouse.move(780, 400);
-    await page.mouse.move(811, 428, { steps: 4 });
-    await page.waitForTimeout(700);
-    expect((await tip(page)).on, "hover on the tile at rest shows no repeat").toBe(false);
-    await page.mouse.move(1085, 405);
-    await page.mouse.move(1125, 435, { steps: 4 });
-    await page.waitForTimeout(700);
-    expect((await tip(page)).on, "hover on an icon-only piece shows its label").toBe(true);
+    const hovered = await hoverPiece(page, "Customers");
+    expect(hovered.on, "hover on the Customers tile shows its label").toBe(true);
+    const innerHover = await hoverPiece(page, "Box or piece");
+    expect(innerHover.on, "hover on an inner piece shows its label").toBe(true);
     // keyboard focus
-    expect((await focusPiece(page, OUTER)).on, "Customers tile carries its name").toBe(false);
+    const outer = await focusPiece(page, OUTER);
+    expect(outer.on, "Customers tile shows its label on focus").toBe(true);
+    expect(outer.text).toBe("Customers");
     const inner = await focusPiece(page, INNER);
-    expect(inner.on, "an icon-only piece still gets its label").toBe(true);
+    expect(inner.on, "an inner piece shows its label on focus").toBe(true);
     expect(inner.text.length).toBeGreaterThan(0);
     expect(errors).toEqual([]);
     await context.close();

@@ -154,7 +154,13 @@ describe("B905: the quote reads the line's earlier inline returns", () => {
       providers: [
         InlineReturnsQuoteService,
         { provide: PrismaService, useValue: prisma },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
       ],
     }).compile();
     const svc = mod.get(InlineReturnsQuoteService);

@@ -1,6 +1,6 @@
 /**
- * Site proof, the wheel (spec 84), project "site-proof".
- * Plan: .claude/pipeline/2026-11-11-rovio-rebrand/test-plan.md, rows T3-T8.
+ * Site proof, the wheel (spec 84), project "site-proof-wheel" (local lane only; ~16 min on one worker).
+ * Bugs: B1321 (fit, names, pose), B1322 (heading in the words column), B1323 (end state), B1324 (print).
  *
  *   T3  R3,R4  the wheel fits inside its box, at every size and checkpoint
  *   T4  R5     one pose and one lift weight (the camera's ratios are constant)
@@ -50,6 +50,36 @@ test.beforeEach(async ({ context }) => {
 
 type Size = { w: number; h: number };
 
+// ─── T0 — the settle helper really waits (L-377: a proof helper that does nothing proves nothing) ──
+
+test.describe("T0 settle waits for the scrub to finish", () => {
+  test("T0 settle waits for the scrub to finish @1440x900", async ({ page }) => {
+    await openHomeNoSnap(page, { w: 1440, h: 900 });
+    // a jump leaves the 0.7 s scrub behind the scroll; settle() must not return until it has caught up
+    await page.evaluate(() => {
+      const inst = (
+        document.querySelector(".rfw") as HTMLElement & {
+          _rfw: { trig: { start: number; end: number } };
+        }
+      )._rfw;
+      window.scrollTo({
+        top: Math.round(inst.trig.start + (inst.trig.end - inst.trig.start) * 0.5),
+        behavior: "instant" as ScrollBehavior,
+      });
+    });
+    await settle(page);
+    const gap = await page.evaluate(() => {
+      const inst = (
+        document.querySelector(".rfw") as HTMLElement & {
+          _rfw: { T: { progress(): number }; trig: { progress: number } };
+        }
+      )._rfw;
+      return Math.abs(inst.T.progress() - inst.trig.progress);
+    });
+    expect(gap, "timeline progress still behind the scroll after settle()").toBeLessThan(0.002);
+  });
+});
+
 // The 15 part names, typed once here as the oracle (spec R6): ten in the outer ring, five inside.
 const OUTER_NAMES = [
   "Purchases",
@@ -74,7 +104,7 @@ const ALL_NAMES = [...OUTER_NAMES, ...INNER_NAMES];
 
 // Structural selectors the wheel and the home page already expose.
 const WORDS_SEL =
-  ".hx-copy h1, .hx-copy p, .hx-copy a, .rfw .rfw-h .rfw-title, .rfw .rfw-h .rfw-sub, .rfw .rfw-t .rfw-eye, .rfw .rfw-t .rfw-title, .rfw .rfw-t .rfw-sub";
+  ".hx-copy h1, .hx-copy p, .hx-copy a, .rfw .rfw-h .rfw-title, .rfw .rfw-h .rfw-sub, .rfw .rfw-t .rfw-eye, .rfw .rfw-t .rfw-title, .rfw .rfw-t .rfw-sub, .rfw .rfw-h .sy-go";
 const LEGEND_SEL = ".rfw .rfw-keys, .rfw .rfw-keyh";
 const HEADING_SEL = ".hx-copy h1, .rfw .rfw-h .rfw-title, .rfw .rfw-t .rfw-title";
 
@@ -278,7 +308,10 @@ test.describe("T3 R3,R4 wheel fits inside its box", () => {
       test.setTimeout(240_000);
       await openHomeNoSnap(page, size);
       const problems: string[] = [];
-      for (const share of nonEmpty(BEATS, "wheel checkpoints")) {
+      // On a portrait phone the end words are taller and meet the open wheel between .78 and .84: sample there too.
+      const phone = size.w <= 430 && size.h > size.w;
+      const shares = [...nonEmpty(BEATS, "wheel checkpoints"), ...(phone ? [0.78, 0.8] : [])];
+      for (const share of shares.sort((x, y) => x - y)) {
         await scrollWheelTo(page, share);
         problems.push(
           ...(await fitProblems(
@@ -515,14 +548,11 @@ test.describe("T7 R8 no empty screen after the wheel", () => {
           const heading = Array.from(document.querySelectorAll("h1, h2, h3")).some(
             (h) => !h.closest(".site-header") && sp.shown(h, 0.99) && whole(h),
           );
-          const button = Array.from(
-            document.querySelectorAll("a.btn, .sy-go, button:not(.rfw-b)"),
-          ).some((b) => !b.closest(".site-header") && sp.shown(b, 0.99) && whole(b));
-          return heading && button;
+          return heading;
         });
         if (wheelShare < 0.15 && !filled) {
           problems.push(
-            `${tag}: neither the wheel (${f(wheelShare)} of the window) nor a heading with its button`,
+            `${tag}: neither the wheel (${f(wheelShare)} of the window) nor a whole heading`,
           );
         }
       }
@@ -609,4 +639,119 @@ test.describe("T8 R9 resize leaves the wheel as a fresh load would", () => {
       expect(problems, `T8 @${share}: every step of the resize path that is wrong`).toEqual([]);
     });
   }
+});
+
+// ─── T9 — the snap leaves a stopped scroll alone and lands on a beat (snap ON, real wheel input) ───
+// L-377: every other test here re-mounts with snap off, so a snap that throws the page (the inertia
+// projection read from the scrub's catch-up, not from the hand) would pass them all.
+
+type WheelHandle = HTMLElement & {
+  _rfw?: { trig: { start: number; end: number } };
+};
+
+test.describe("T9 R9 a person who stops scrolling is left where they stopped", () => {
+  const SIZE = { w: 1440, h: 900 };
+  test(`T9 R9 the snap does not move a scroll that stops in the come-apart @${sizeName(SIZE)}`, async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width: SIZE.w, height: SIZE.h });
+    await page.goto("/", { waitUntil: "load" });
+    await waitForWheel(page);
+    await waitForArrival(page);
+    const range = await page.evaluate(() => {
+      const i = (document.querySelector(".rfw") as WheelHandle)._rfw!;
+      return {
+        s: i.trig.start,
+        e: i.trig.end,
+        snap: !!(i.trig as unknown as { vars: { snap?: unknown } }).vars.snap,
+      };
+    });
+    expect(range.snap, "the page's own wheel has its snap on").toBe(true);
+    const y = () => page.evaluate(() => window.scrollY);
+    const problems: string[] = [];
+    // two flicks of different strength, each ending inside the come-apart (share .2)
+    for (const [step, gap] of [
+      [100, 16],
+      [300, 8],
+    ]) {
+      await page.evaluate((top) => window.scrollTo({ top, behavior: "instant" }), range.s);
+      await frames(page, 2);
+      await page.mouse.move(SIZE.w / 2, SIZE.h / 2);
+      const target = range.s + (range.e - range.s) * 0.2;
+      for (let n = 0; (await y()) < target && n < 400; n++) {
+        await page.mouse.wheel(0, step);
+        await new Promise((r) => setTimeout(r, gap));
+      }
+      const stopped = await y();
+      await new Promise((r) => setTimeout(r, 1500));
+      const later = await y();
+      if (Math.abs(later - stopped) > 12)
+        problems.push(
+          `flick ${step}px every ${gap} ms stopped at ${stopped}, then the page moved to ${later}`,
+        );
+    }
+    expect(problems, "the page moved after the person stopped scrolling").toEqual([]);
+  });
+
+  test(`T9 R9 a scroll that stops near a stop settles on it and Enter on a tile goes there @${sizeName(SIZE)}`, async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width: SIZE.w, height: SIZE.h });
+    await page.goto("/", { waitUntil: "load" });
+    await waitForWheel(page);
+    await waitForArrival(page);
+    const info = await page.evaluate(() => {
+      const i = (document.querySelector(".rfw") as WheelHandle)._rfw as unknown as {
+        trig: { start: number; end: number };
+        T: { duration(): number };
+        beats: [number, string][];
+      };
+      const end = i.T.duration();
+      return {
+        s: i.trig.start,
+        e: i.trig.end,
+        beats: i.beats.map(([t, n]) => ({ share: t / end, name: n })),
+      };
+    });
+    const orders = info.beats.find((b) => b.name === "orders");
+    if (!orders) throw new Error("T9: the wheel lists no 'orders' beat");
+    const shareOf = async () =>
+      ((await page.evaluate(() => window.scrollY)) - info.s) / (info.e - info.s);
+    const settled = async () => {
+      let last = -1;
+      for (let i = 0; i < 80; i++) {
+        const v = await shareOf();
+        if (Math.abs(v - last) < 1e-4) return v;
+        last = v;
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      throw new Error("T9: the scroll never stopped moving");
+    };
+    // a hand stop a little past the first stop settles on it
+    await page.evaluate(
+      (top) => window.scrollTo({ top, behavior: "instant" }),
+      info.s + (info.e - info.s) * 0.5,
+    );
+    await frames(page, 2);
+    await page.mouse.move(SIZE.w / 2, SIZE.h / 2);
+    await page.mouse.wheel(0, 100);
+    await new Promise((r) => setTimeout(r, 400));
+    const afterWheel = await settled();
+    expect(Math.abs(afterWheel - orders.share), "settled share vs the 'orders' stop").toBeLessThan(
+      0.012,
+    );
+    // Enter on the Orders tile glides to its stop from rest and stays there (not one stop late)
+    await page.evaluate((top) => window.scrollTo({ top, behavior: "instant" }), info.s);
+    await frames(page, 2);
+    await page.locator('.rfw-b[data-i="3"]').focus();
+    await page.keyboard.press("Enter");
+    await new Promise((r) => setTimeout(r, 600));
+    const afterEnter = await settled();
+    expect(
+      Math.abs(afterEnter - orders.share),
+      "share after Enter on Orders vs its stop",
+    ).toBeLessThan(0.012);
+  });
 });

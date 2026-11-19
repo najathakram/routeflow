@@ -68,11 +68,20 @@ describe("CustomersService — Open balance on the list and the CSV (SA-1078 PR-
     prisma.advancePayment.findMany.mockResolvedValue([]);
   });
 
-  /** An invoice.findMany that applies the `where.status.notIn` the way the DB would. */
+  /**
+   * An invoice.findMany that applies the where the way the DB would: the `OR` of OPEN_BALANCE_INVOICE_WHERE (SA-1164 21:13Z:
+   * a status outside `notIn`, or a DRAFT whose order's status is in `order.status.in`). A row carries `order` only when it has one.
+   */
   const rows = (all: any[]) =>
     jest.fn((args: any = {}) => {
-      const notIn: string[] = args?.where?.status?.notIn ?? [];
-      return Promise.resolve(all.filter((r) => !notIn.includes(r.status)));
+      const clauses: any[] = args?.where?.OR ?? [{ status: args?.where?.status }];
+      const matches = (r: any) =>
+        clauses.some((c) =>
+          c.status?.notIn
+            ? !c.status.notIn.includes(r.status)
+            : r.status === c.status && (c.order?.status?.in ?? []).includes(r.order?.status),
+        );
+      return Promise.resolve(all.filter(matches));
     });
 
   const listed = async () => {
@@ -81,14 +90,30 @@ describe("CustomersService — Open balance on the list and the CSV (SA-1078 PR-
   };
   const csvTail = async () => (await service.exportCustomers({})).split("\n")[1];
 
-  it("L1: $100 issued plus a $200 draft behind an order reads Open balance 100.00 (drafts are not owed)", async () => {
+  it("L1: $100 issued plus a $200 draft on a DELIVERED order reads 300.00; a draft on an open order or with no order is not owed (SA-1164 21:13Z)", async () => {
     prisma.invoice.findMany.mockImplementation(
       rows([
         inv("cust-1", "SENT", 100),
         { ...inv("cust-1", "DRAFT", 200), order: { status: "DELIVERED" } },
+        { ...inv("cust-1", "DRAFT", 50), order: { status: "PENDING" } },
+        { ...inv("cust-1", "DRAFT", 70), order: { status: "CONFIRMED" } },
+        inv("cust-1", "DRAFT", 90),
       ]),
     );
-    expect((await listed()).openBalance).toBe(100);
+    expect((await listed()).openBalance).toBe(300);
+  });
+
+  it("a REFUSED order's draft counts like a DELIVERED one, and a fully paid draft adds 0", async () => {
+    prisma.invoice.findMany.mockImplementation(
+      rows([
+        { ...inv("cust-1", "DRAFT", 75.5), order: { status: "REFUSED" } },
+        {
+          ...inv("cust-1", "DRAFT", 40, [{ amount: 40, status: "PAID" }]),
+          order: { status: "DELIVERED" },
+        },
+      ]),
+    );
+    expect((await listed()).openBalance).toBe(75.5);
   });
 
   it("L2: $100 SENT with a $40 DRAFT payment reads 100.00 (an unconfirmed payment is not paid)", async () => {
@@ -152,8 +177,17 @@ describe("CustomersService — Open balance on the list and the CSV (SA-1078 PR-
     expect(prisma.invoice.findMany).toHaveBeenCalledTimes(1);
     const args = prisma.invoice.findMany.mock.calls[0][0];
     expect(args.where.customerId).toEqual({ in: ["cust-1"] });
-    // the EXACT set (order aside): a fifth status added to OPEN_BALANCE_INVOICE_WHERE must fail here, not pass
-    expect([...args.where.status.notIn].sort()).toEqual(["DRAFT", "PAID", "VOID", "WRITTEN_OFF"]);
+    // the EXACT where (SA-1164 21:13Z): a status added to either clause, or a third clause, must fail here, not pass
+    expect(args.where.OR).toHaveLength(2);
+    expect([...args.where.OR[0].status.notIn].sort()).toEqual([
+      "DRAFT",
+      "PAID",
+      "VOID",
+      "WRITTEN_OFF",
+    ]);
+    expect(args.where.OR[1].status).toBe("DRAFT");
+    expect([...args.where.OR[1].order.status.in].sort()).toEqual(["DELIVERED", "REFUSED"]);
+    expect(args.where.status).toBeUndefined();
     expect(args.select).toEqual({
       customerId: true,
       total: true,
@@ -185,7 +219,7 @@ describe("CustomersService — Open balance on the list and the CSV (SA-1078 PR-
     const csv = await service.exportCustomers({});
     expect(csv.split("\n")[0]).toContain("Open Balance");
     expect(csv.split("\n")[0]).not.toContain("Receivables");
-    expect(list).toBe(200);
+    expect(list).toBe(400); // 100 + the $200 draft on a DELIVERED order + 100 (the $40 DRAFT payment is not money) + 0
     expect(await csvTail()).toContain(`,${list.toFixed(2)},0.00`);
   });
 
@@ -210,6 +244,8 @@ describe("CustomersService — Open balance on the list and the CSV (SA-1078 PR-
       inv("cust-1", "SENT", 500, [{ amount: 100, status: "PAID" }]),
       inv("cust-1", "SENT", 50, [{ amount: 60, status: "PAID" }]), // overpaid: adds 0
       inv("cust-1", "SENT", 100, [{ amount: 40, status: "DRAFT" }]),
+      { ...inv("cust-1", "DRAFT", 80), order: { status: "DELIVERED" } }, // SA-1164 21:13Z: counted
+      { ...inv("cust-1", "DRAFT", 30), order: { status: "PENDING" } }, // not counted
     ];
     prisma.invoice.findMany.mockImplementation(rows(fixture));
     const list = (await listed()).openBalance;
@@ -232,6 +268,7 @@ describe("CustomersService — Open balance on the list and the CSV (SA-1078 PR-
     prisma.tenantConfig.findUnique.mockResolvedValue({ timezone: "UTC" });
     const statement = await buildAccountStatement(prisma as any, CUSTOMER, { staff: true });
 
+    expect(list).toBe(980); // 100 + 300 + 400 + 0 + 100 + 80
     expect(list).toBe(statement.openBalance);
     expect(csvFigure).toBe(statement.openBalance);
   });

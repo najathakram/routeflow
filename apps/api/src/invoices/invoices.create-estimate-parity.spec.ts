@@ -63,6 +63,7 @@ describe("H5 - an estimate is taxed like an invoice (create parity)", () => {
   };
   const mockSystemConfig = {
     get: jest.fn().mockResolvedValue(null),
+    getAll: jest.fn().mockResolvedValue({}),
     set: jest.fn().mockResolvedValue(undefined),
   };
   const mockMessaging = {

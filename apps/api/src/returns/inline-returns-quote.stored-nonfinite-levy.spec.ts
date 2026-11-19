@@ -36,7 +36,13 @@ describe("InlineReturnsQuoteService: a stored non-finite levy is refused, not cr
       providers: [
         InlineReturnsQuoteService,
         { provide: PrismaService, useValue: prisma },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
       ],
     }).compile();
     service = mod.get(InlineReturnsQuoteService);

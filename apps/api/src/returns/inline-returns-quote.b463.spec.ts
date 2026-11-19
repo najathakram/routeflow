@@ -37,7 +37,10 @@ describe("B463: the tax of unreferenced and excise-only return chunks", () => {
         { provide: PrismaService, useValue: prisma },
         {
           provide: SystemConfigService,
-          useValue: { get: jest.fn().mockResolvedValue(tenantTaxRatePercent) },
+          useValue: {
+            get: jest.fn().mockResolvedValue(tenantTaxRatePercent),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
         },
       ],
     }).compile();

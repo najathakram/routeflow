@@ -72,12 +72,12 @@ const PRINT_SIZES: Size[] = [
 /**
  * T1's wheel clause (R1: "the wheel as its still picture") is WP1.2's (B1321): the wheel's own
  * matchMedia gains a print branch that puts the still back and shows the words the wheel drives.
- * Until WP1.2 sets this to true, the clause is skipped with that reason in the report: the
+ * The clause is on (WP1.2 owns it now): the
  * `.rfw` still/canvas checks, and the effective (ancestor) opacity, visibility and sticky sweeps over
  * everything inside WHEEL_SCOPE (the wheel and the words column it is mounted with, `copy: ".hx-copy"`).
  * Inside `.hx-copy` (outside `.rfw`) each element's own computed opacity and visibility stay asserted.
  */
-const WHEEL_PRINT_CLAUSE = false;
+const WHEEL_PRINT_CLAUSE = true;
 const WHEEL_SCOPE = ".rfw, .hx-copy";
 
 test.describe("T1 R1 print shows the whole page", () => {

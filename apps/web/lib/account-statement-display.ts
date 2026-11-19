@@ -15,6 +15,7 @@ export const STATEMENT_COPY = {
   recentPayments: "Paid in the last 30 days",
   credits: "Credits",
   noOpenInvoices: "No open invoices",
+  notSentYet: "Not sent yet",
   loadFailed: "Couldn't load the statement.",
   tryAgain: "Try Again",
   viewStatement: "View statement",

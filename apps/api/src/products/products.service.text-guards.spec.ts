@@ -45,7 +45,10 @@ describe("ProductsService name guards (B964-2)", () => {
         },
         {
           provide: SystemConfigService,
-          useValue: { get: jest.fn().mockResolvedValue(null) },
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
         },
         // MSRP gate collaborators — flag.msrp defaults OFF; the pre-MSRP tests
         // never send an msrp key, so assertMsrpAllowed is never even called.

@@ -160,7 +160,7 @@ describeDb("cron vs manual generate of one template places ONE order (B1054)", (
       },
       messaging: { notifyEvent: jest.fn().mockResolvedValue(undefined) },
       entitlements: { hasFlag: async () => true },
-      systemConfig: { get: async () => "0" }, // settings.taxRate: 0% keeps the sums plain
+      systemConfig: { get: async () => "0", getAll: async () => ({}) }, // settings.taxRate: 0% keeps the sums plain
       sellingRestrictions: {
         getPolicy: async () => ({ enabled: false, addressPrecedence: "BILLING_FIRST" }),
         assertLinesSellable: async () => undefined,

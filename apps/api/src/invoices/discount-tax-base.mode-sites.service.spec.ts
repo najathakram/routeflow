@@ -68,7 +68,10 @@ describe("SA-1153 service rows 10, 11, 12+13 (cutover set)", () => {
           useValue: { sendInvoice: jest.fn(), isEmailConfigured: jest.fn() },
         },
         { provide: InvoicePdfService, useValue: { getOrGenerate: jest.fn() } },
-        { provide: SystemConfigService, useValue: { get: jest.fn(), set: jest.fn() } },
+        {
+          provide: SystemConfigService,
+          useValue: { get: jest.fn(), getAll: jest.fn().mockResolvedValue({}), set: jest.fn() },
+        },
         {
           provide: RegulatedLedgerService,
           useValue: {

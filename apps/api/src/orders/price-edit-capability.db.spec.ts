@@ -243,6 +243,7 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
           provide: SystemConfigService,
           useValue: {
             get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
             set: jest.fn().mockResolvedValue(undefined),
           },
         },

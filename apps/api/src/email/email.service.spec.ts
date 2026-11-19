@@ -2499,3 +2499,171 @@ describe("EmailService.sendInvoice — per-piece price (SA-1029 E-R1)", () => {
     expect(sendSpy.mock.calls[0][0].html as string).toContain("Per piece");
   });
 });
+
+// R6a (T10c): the invoice email's Amount Paid / Balance Due lines follow invoice.hideAmountPaid / hideBalanceDue.
+describe("EmailService.sendInvoice - Amount Paid / Balance Due switches (R6a, T10c)", () => {
+  const base = {
+    to: "buyer@example.com",
+    customerName: "Acme Buyer",
+    invoiceNumber: "INV-6001",
+    invoiceId: "inv-6001",
+    issueDate: "Jan 1, 2026",
+    dueDate: "Jan 31, 2026",
+    total: 200,
+    totalPaid: 50,
+    creditApplied: 40,
+    advanceApplied: 20,
+    creditNoteNumbers: ["CN-7"],
+    balanceDue: 90,
+    items: [{ description: "Sample Cola 12pk", qty: 2, unitPrice: 100, subtotal: 200 }],
+  };
+  const send = async (over: Record<string, unknown>) => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+    await svc.sendInvoice({ ...base, ...over } as any);
+    return sendSpy.mock.calls[0][0] as { html: string; text: string };
+  };
+
+  // Master's Balance Due row and line, pinned literally so a change to the shared template can't pass both sides.
+  const BALANCE_TR = '<tr style="background:#f9fafb;">';
+  const BALANCE_LABEL =
+    'font-size:14px;font-weight:700;color:#1D2A3D;text-align:right;">Balance Due</td>';
+  const BALANCE_VALUE =
+    'font-size:16px;font-weight:700;color:#dc2626;text-align:right;">$90.00</td>';
+  const totalRowAfter = (html: string) => {
+    const at = html.indexOf('text-align:right;">Total</td>');
+    return at < 0 ? "" : html.slice(at, at + 220);
+  };
+
+  it("both on (absent or false) = today's body exactly", async () => {
+    const today = await send({});
+    const off = await send({ hideAmountPaid: false, hideBalanceDue: false });
+    expect(off.html).toBe(today.html);
+    expect(off.text).toBe(today.text);
+    expect(today.html).toContain("Amount Paid");
+    expect(today.html).toContain(BALANCE_TR);
+    expect(today.html).toContain(BALANCE_LABEL);
+    expect(today.html).toContain(BALANCE_VALUE);
+    expect(today.text).toContain("Amount Paid: $50.00");
+    expect(today.text).toContain("Advance applied: $20.00\nBalance Due: $90.00");
+  });
+
+  it("paid off drops only the Amount Paid line (HTML and text)", async () => {
+    const { html, text } = await send({ hideAmountPaid: true });
+    expect(html).not.toContain("Amount Paid");
+    expect(text).not.toContain("Amount Paid");
+    expect(html).toContain("Balance Due");
+    expect(text).toContain("Balance Due: $90.00");
+    expect(html).toContain("Credit issued");
+    expect(html).toContain("Advance applied");
+    expect(text).toContain("Credit issued");
+    expect(text).toContain("Advance applied");
+  });
+
+  it("balance off drops only the Balance Due line (HTML and text)", async () => {
+    const { html, text } = await send({ hideBalanceDue: true });
+    expect(html).not.toContain("Balance Due");
+    expect(text).not.toContain("Balance Due");
+    expect(html).toContain("Amount Paid");
+    expect(text).toContain("Amount Paid: $50.00");
+    expect(html).toContain("Credit issued");
+    expect(html).toContain("Advance applied");
+  });
+
+  // Owner 2026-11-18 22:28Z "Keep Total in place": Total sits above the Paid / credit / advance lines, never at the bottom.
+  it("balance off prints Total above the Paid / credit lines (text and HTML); both on adds none", async () => {
+    const off = await send({ hideBalanceDue: true });
+    expect(off.text).toContain(
+      "Total: $200.00\nAmount Paid: $50.00\nCredit issued — CN-7: $40.00\nAdvance applied: $20.00\n",
+    );
+    expect(totalRowAfter(off.html)).toContain("$200.00</td>");
+    const at = (label: string) => off.html.indexOf(`text-align:right;">${label}</td>`);
+    expect(at("Total")).toBeGreaterThan(at("Items"));
+    expect(at("Total")).toBeLessThan(at("Amount Paid"));
+    expect(at("Amount Paid")).toBeLessThan(at("Advance applied"));
+    for (const over of [
+      {},
+      { hideAmountPaid: true },
+      { hideAmountPaid: false, hideBalanceDue: false },
+    ]) {
+      const on = await send(over);
+      expect(on.text).not.toContain("Total: ");
+      expect(totalRowAfter(on.html)).toBe("");
+    }
+  });
+
+  it("balance off: the last money line is not Total (pin, owner 22:28Z)", async () => {
+    const off = await send({ hideBalanceDue: true });
+    const moneyLines = off.text.split("\n").filter((l) => /\$\d/.test(l) && !/ = \$/.test(l));
+    expect(moneyLines[moneyLines.length - 1]).toBe("Advance applied: $20.00");
+    // label cells only (they carry the colspan); value cells are skipped
+    const labels = [...off.html.matchAll(/colspan="\d+" style="[^"]*">([^<]+)<\/td>/g)].map(
+      (m) => m[1],
+    );
+    expect(labels[labels.length - 1]).toBe("Advance applied");
+    expect(off.text).not.toContain("Advance applied: $20.00\nTotal");
+  });
+
+  it("with both off the totals paragraph still carries the Total line, and no empty paragraph", async () => {
+    const { text } = await send({
+      hideAmountPaid: true,
+      hideBalanceDue: true,
+      creditApplied: 0,
+      advanceApplied: 0,
+      totalPaid: 0,
+    });
+    expect(text).toContain("Total: $200.00");
+    expect(text).not.toContain("\n\n\n");
+  });
+
+  it("a reminder keeps showing the balance whatever the switches say", async () => {
+    const plain = await send({ isReminder: true });
+    const flagged = await send({ isReminder: true, hideAmountPaid: true, hideBalanceDue: true });
+    expect(flagged.html).toBe(plain.html);
+    expect(flagged.text).toBe(plain.text);
+    expect(flagged.html).toContain("Balance Due");
+  });
+});
+
+// B460 (SA-1167 R2): the subject is made header-safe at the send seam, once, for every template. The seam
+// is two entries: the public send() (tenant mail) and sendPlatform() (the billing and account mail).
+describe("EmailService — one-line subject at the send seam (B460)", () => {
+  const HOSTILE = "Trial ended — Acme & Co\r\nBcc: x@acme.test";
+  const SAFE = "Trial ended — Acme & Co Bcc: x@acme.test";
+
+  it("sendPlatform hands the transport a one-line subject", async () => {
+    const sendMail = jest.fn().mockResolvedValue({ messageId: "m1" });
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({ smtpHost: "smtp.example.com", smtpUser: "u", smtpPass: "p" });
+    const res = await svc.sendPlatform({ to: "a@acme.test", subject: HOSTILE, html: "<p>x</p>" });
+    expect(res.delivered).toBe(true);
+    expect(sendMail).toHaveBeenCalledTimes(1);
+    expect(sendMail.mock.calls[0][0].subject).toBe(SAFE);
+  });
+
+  it("send() passes a one-line subject down the transport chain", async () => {
+    const svc = makeService();
+    const chain = jest
+      .spyOn(svc as any, "sendUnrecorded")
+      .mockResolvedValue({ delivered: true, transport: "smtp" });
+    await svc.send({ to: "a@acme.test", subject: HOSTILE, html: "<p>x</p>" });
+    expect(chain).toHaveBeenCalledTimes(1);
+    expect((chain.mock.calls[0][0] as any).subject).toBe(SAFE);
+  });
+
+  it("a recorded send (delivery context) gets the same one-line subject", async () => {
+    const svc = makeService();
+    const chain = jest
+      .spyOn(svc as any, "sendUnrecorded")
+      .mockResolvedValue({ delivered: true, transport: "smtp" });
+    await svc.send({
+      to: "a@acme.test",
+      subject: HOSTILE,
+      html: "<p>x</p>",
+      delivery: { tenantId: "t1", kind: "INVOICE", entityType: "Invoice", entityId: "i1" } as any,
+    });
+    expect((chain.mock.calls[0][0] as any).subject).toBe(SAFE);
+  });
+});
