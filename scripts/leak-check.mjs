@@ -262,8 +262,8 @@ function rangeForRef(cwd, lsha, rsha, notices) {
 
 /**
  * Refuse when the commits being pushed overlap the commits only rebrand/* branches hold (local
- * refs/heads/rebrand/* and remote-tracking refs/remotes/<remote>/rebrand/*: the branch now lives on the
- * remote, so a machine may hold only the remote-tracking ref), whatever the ref is called
+ * refs/heads/rebrand/* and remote-tracking refs/remotes/<remote>/rebrand/*: a clone that fetched one before it
+ * was deleted may hold only the remote-tracking ref), whatever the ref is called
  * (HEAD:refs/heads/x, a sha refspec, a copied branch). Returns refusal lines, or null when there is no
  * overlap. Fails closed when origin/master is missing or a git call fails.
  */
@@ -291,7 +291,7 @@ function privateOverlap(cwd, pushed) {
       return [`leak-check: cannot list outgoing commits of ${p.lsha.slice(0, 10)}. Fail-closed.`];
     if (out.out.split("\n").some((c) => c && privSet.has(c))) {
       return [
-        "leak-check: the push contains commits that belong to a rebrand/* branch. Refused: they may only reach their own rebrand/* ref.",
+        "leak-check: the push contains commits that belong to a rebrand/* branch. Refused: they stay local until launch.",
         "leak-check: launch day only: RF_REBRAND_PUSH=launch git push ...",
       ];
     }
