@@ -464,6 +464,7 @@ export function loadInvoiceModule(): Record<string, unknown> {
     "@routeflow/pricing": pricing,
   };
   const mod = { exports: {} as Record<string, unknown> };
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval -- test harness: must run in Jest's own realm so the fake clock reaches the template (vm.runInThisContext does not)
   (new Function("require", "module", "exports", outputText) as (...a: unknown[]) => void)(
     (id: string) => {
       if (!(id in known)) throw new Error(`invoice-template: unexpected import ${id}`);
