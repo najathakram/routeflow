@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -18,6 +19,7 @@ import { UpdateDriverDto } from "./dto/update-driver.dto";
 import { ChangeDriverStatusDto } from "./dto/change-driver-status.dto";
 import { PostLocationDto } from "./dto/post-location.dto";
 import { geocodeAddress } from "../common/geocode.util";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 
 /** The Driver columns a caller may set when it writes the row (the Drivers add flow sends all of them). */
@@ -39,11 +41,12 @@ export interface DriverRowProfile {
  */
 export async function ensureDriverRow(
   tx: { driver: { upsert: (args: any) => Promise<any> } },
-  user: { id: string; username: string },
+  user: { id: string; username: string; tenantId?: string | null },
   profile: DriverRowProfile = {},
 ) {
   return tx.driver.upsert({
-    where: { userId: user.id },
+    // the unique userId plus the tenant (K-10: a tx upsert is keyed on the tenant id; a user belongs to one tenant)
+    where: { userId: user.id, tenantId: user.tenantId ?? null },
     create: {
       userId: user.id,
       contactName: profile.contactName ?? user.username,
@@ -57,6 +60,30 @@ export async function ensureDriverRow(
     update: { status: "ACTIVE" },
     include: { user: { select: { id: true, username: true, email: true, status: true } } },
   });
+}
+
+/**
+ * B862 / SA-1171 K4: a user stops driving. A driver with an open run is refused (no silent unassign: the Drivers
+ * page moves the run first); otherwise the row goes INACTIVE so the picker stops listing someone who no longer drives.
+ */
+export async function retireDriverRow(
+  tx: {
+    routeRun: { findFirst: (args: any) => Promise<any> };
+    driver: { updateMany: (args: any) => Promise<any> };
+  },
+  userId: string,
+) {
+  const open = await tx.routeRun.findFirst({
+    where: { driver: { userId }, status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
+    select: { id: true },
+  });
+  if (open) {
+    throw new ConflictException({
+      code: API_ERROR_CODES.DRIVER_HAS_OPEN_RUN,
+      message: "This driver has an open run. Move the run on the Drivers page first.",
+    });
+  }
+  await tx.driver.updateMany({ where: { userId }, data: { status: "INACTIVE" } });
 }
 
 @Injectable()

@@ -79,7 +79,7 @@ describe("B862 driver row writer (SA-1171)", () => {
     );
     expect(prisma.driver.upsert).toHaveBeenCalledTimes(1);
     const arg = prisma.driver.upsert.mock.calls[0][0] as any;
-    expect(arg.where).toEqual({ userId: "u1" });
+    expect(arg.where).toEqual({ userId: "u1", tenantId: "t1" });
     expect(arg.create).toMatchObject({ userId: "u1", status: "ACTIVE" });
     expect(arg.update).toMatchObject({ status: "ACTIVE" });
   });

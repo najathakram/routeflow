@@ -20,7 +20,7 @@ import * as crypto from "crypto";
 import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
 import { AddonService } from "../billing/addon.service";
-import { ensureDriverRow } from "../drivers/drivers.service";
+import { ensureDriverRow, retireDriverRow } from "../drivers/drivers.service";
 import { EmailService } from "../email/email.service";
 import { AppConfig } from "../config/configuration";
 import { ListUsersDto } from "./dto/list-users.dto";
@@ -522,17 +522,7 @@ export class UsersService {
       // the run first); otherwise the row goes INACTIVE so the picker stops listing someone who no longer drives. A
       // dual-role person (canActAsDriver) keeps their row.
       if (roleChanged && previousRole === UserRole.DRIVER && !user.canActAsDriver) {
-        const open = await tx.routeRun.findFirst({
-          where: { driver: { userId }, status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
-          select: { id: true },
-        });
-        if (open) {
-          throw new ConflictException({
-            code: API_ERROR_CODES.DRIVER_HAS_OPEN_RUN,
-            message: "This driver has an open run. Move the run on the Drivers page first.",
-          });
-        }
-        await tx.driver.updateMany({ where: { userId }, data: { status: "INACTIVE" } });
+        await retireDriverRow(tx, userId);
       }
       const row = await tx.user.update({
         where: { id: userId },
@@ -550,7 +540,8 @@ export class UsersService {
       });
       if (emailWritten || roleChanged) await revokeUserLinkTokens(tx, userId);
       // B862 / SA-1171 K1: a user who becomes a DRIVER gets their Driver row in this same transaction (one writer).
-      if (roleChanged && dto.role === UserRole.DRIVER) await ensureDriverRow(tx, row);
+      if (roleChanged && dto.role === UserRole.DRIVER)
+        await ensureDriverRow(tx, { ...row, tenantId: user.tenantId });
       // The hold's row is written AFTER the burn above, so a role change in the same edit cannot burn it. It burns the
       // user's older change rows itself: a newer request supersedes an older one.
       let changeToken: string | null = null;

@@ -142,6 +142,7 @@ const EXPECTED: Record<string, number> = {
   "billing/subscription-mutation.service.ts :: tenantSubscription :: tenantId": 1,
   "billing/tenant-addon-writer.ts :: tenantAddon :: compound-with-tenantId": 1,
   "billing/tenant-config-snapshot.service.ts :: tenantFeatureConfig :: compound-with-tenantId": 1,
+  "drivers/drivers.service.ts :: driver :: tenantId": 1,
   "invoices/invoices.service.ts :: paymentCounter :: id-is-tenantId": 2,
   "platform-admin/platform-admin.service.ts :: tenantSubscription :: tenantId": 3,
   "system-config/tenant-timezone.writer.ts :: tenantConfig :: tenantId": 1,
