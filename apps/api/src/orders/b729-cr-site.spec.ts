@@ -243,16 +243,18 @@ describe("SA-1173 K3: filing an ADD_ITEM checks the split at the live pack (T3)"
     expect(prisma.changeRequest.create).not.toHaveBeenCalled();
   });
 
-  it("T3: the pack is read live, so the select carries unitsPerBox", async () => {
+  it("T3: the pack is read live through the shared live-pack lookup (one findMany on unitsPerBox), not a direct product read", async () => {
     const { prisma, service } = await build();
     await service.create("ord-1", { ...dto, boxes: undefined, pieces: undefined }, customer);
-    const sel = prisma.product.findFirst.mock.calls[0][0].select;
-    expect(sel.unitsPerBox).toBe(true);
+    expect(prisma.product.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ select: { id: true, unitsPerBox: true } }),
+    );
+    expect(prisma.product.findFirst.mock.calls[0][0].select.unitsPerBox).toBeUndefined();
   });
 
   it("T3b: staff filing a contradictory split (at a 12-pack: warn mode only logs on a boxed product) is created, with one warn line", async () => {
     const { prisma, service } = await build();
-    prisma.product.findFirst.mockResolvedValue({ ...PLAIN, unitsPerBox: 12 });
+    prisma.product.findMany.mockResolvedValue([{ id: PLAIN.id, unitsPerBox: 12 }]);
     const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
     try {
       await service.create("ord-1", dto, staff);
