@@ -58,7 +58,7 @@ MF1-2 → §1; MF3 → §1, §6 (kit is not one PDF); MF4-6 → §5; MF7-8 → �
 | `admin@` (`demo-booking.config.ts:77`), `security@`, app `hello@` (`choose-plan:26`, `FirstRunCard:16`) | old mailboxes stay ≥ 12 months; app strings B3 | C1 |
 | `app/layout.tsx:52`; apex checks `post-deploy-check.mjs:171`, `google-signin-monitor.mjs:57` | B1; 2A.2 checks both apexes | B1, 2A.2 |
 
-Consoles (one C2 row each, read back at D0): Railway, registrar, Google OAuth, Maps referrers, Sentry, Umami, Search Console, Stripe public details, Workspace, API `CORS_ORIGINS`/`WEB_ORIGINS`/`WEB_URL`/`MOBILE_WEB_URL`. Runbooks and `SECURITY.md`: WP3.2.
+Consoles (one C2 row each, read back at D0): Railway, registrar, Google OAuth (origin, plus the consent-screen app name: SA-1174), Microsoft app registration display name (SA-1174), Maps referrers, Sentry, Umami, Search Console, Stripe public details, Workspace, API `CORS_ORIGINS`/`WEB_ORIGINS`/`WEB_URL`/`MOBILE_WEB_URL`. Runbooks and `SECURITY.md`: WP3.2.
 
 **Risks:**
 | # | Harm | Guard | Proof |
@@ -101,7 +101,7 @@ Ids B1321-B1328: staged in `wt/rovio-registry/.claude/campaign/bugs/` (unmerged 
 | B1324 | WP1.1 + WP1.2 | T1 (85, plus `WHEEL_PRINT_CLAUSE`), T2 |
 | B1328 | WP1.2 (goTo killed on input) | `36:T20` 0-ms variant 10/10 |
 | F03+P02, "customers and logins" | 1.3a/1.3b | NEW T41: one weight, one Enterprise line, no "Includes your team.", "customers" only (SA-1080, `js/prices.js:5`) |
-| P01, F04 | 2.1b CSS, 2.3-pricing markup | NEW T46: button at card foot 1440/393; ≤ 2 Tabs to the first plan |
+| P01, F04 | 2.1b CSS, 2.3-pricing markup | NEW T46a: gap above the button ≤ 32 px at 1440/393; T46b: ≤ 3 key presses (Tab and Enter only) to the first plan (SA-1174 K12) |
 | P05 | 2.3-home | NEW T47: "INVOICE" box inside its frame at 1440 |
 | P04 glow, D-4, B1294 | 2.1b | T18a; NEW T42 focus ≥ 3:1; the scan's rows |
 | P06, P07, D-3 | 2.2 | T19; "Stock value (cost)" |
@@ -126,7 +126,7 @@ Today (gzip): home 188.7 KB (JS 85.1), product 110.2, pricing 98.5, landing 35.2
 | 1 | 2.0b `rf-graphics.css`, `static-site-page.ts`, `components/brand/BrandTokens.tsx`, `packages/types/brand/*`, og route | now | T14a, T35d |
 | 1b | 2.1a `home-color`, `color-deep`, `product`, `company`, `does`, `start` css, `site-frame.css` · 2.4 `landing.html` · 1.3b-pages (8 html text, frame `*.tsx` strings, site-truth/contact pins) · 2.6 front door (`(marketing)/layout.tsx`, privacy, terms, `marketing.css`, `glass*.css`, `(auth)/**` incl. `admin-login`, `choose-role`, `buyer/login`, `not-found`, `verify-email`) · B1 (`common/brand.ts`, `email/{email-layout,routeflow-mail,email.service}.ts`, `billing-notification.templates.ts`, `buyer-auth.service.ts`, `no-runtime-workspace-imports.spec.ts`, sole owner of `app/layout.tsx`; 2.6's favicon move comes as a brief) · T-UX (`86-...spec.ts`, `playwright.config.ts`) | 2.0b | T14b, T18a, T14c, T11, T26, T-B1..7, T49-T53 |
 | 2 | 2.1b `site.css`, `mobile.css`, `home.css`, `home-up.css` (+P01/F04 CSS, D-4, B1294, font fallback) · 2.2 `rf-wheel-up.*` · S2 `home.html`, `36:T19` block, comments in `home-up.js`/`site.js`/`prices.js` (comments only; the six `<script>` tags on pages with no `[data-plan]` are 2.3-inner's, SA-1174 K3) · 2.1b-last `rf-graphics.css` retired aliases + the `landing.html` token block, one commit after 2.2 lands, owns T21 (SA-1174 K2) · B1b (rev 4 item 3 files) | WP1.2 in branch; B1 for B1b | T14b, T42, T19, T35 |
-| 3 | 2.3-home · 2.3-pricing · 2.3-inner (7 html) · header lane (`SiteFrameHeader.tsx`, `site-frame.css`, `site.css`, `mobile.css`, `js/site.js`) | W2 | T20, T21, T46-T48; **Docker 1** |
+| 3 | 2.3-home · 2.3-pricing · 2.3-inner (7 html) · header lane (`SiteFrameHeader.tsx`, `site-frame.css`, `site.css`, `mobile.css`, `js/site.js`, all of `home-up.css`, `js/home-up.js:64`; css owners per SA-1174 K6/K7) | W2 | T20, T21, T46-T48; **Docker 1** |
 | 4 | 2.5 flip (values, logo markup, icons, JSON-LD, footer), then 2A.2 (redirects, sitemap, `origin`, apex checks) | W3 | T22-T26, T30, T31, T33, T36-T38 |
 | 5 | 2.7 proof, T39, T43, T44, retest, gates, rollback rehearsal | all | **Docker 2** |
 Lanes run their own Jest files; browser red/green on `next dev` in the heavy slot; one whole web Jest (~25 min) per wave.
