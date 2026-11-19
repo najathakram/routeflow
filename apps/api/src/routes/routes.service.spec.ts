@@ -2623,6 +2623,35 @@ describe("RoutesService", () => {
     });
   });
 
+  // Driver run list scoped when there is no driver profile: a DRIVER user with no Driver row used to get an unscoped
+  // list (where = {}). Like findMyRuns it now fails closed: an empty page, and the runs table is never read.
+  describe("findAllRuns scope for a DRIVER with no driver profile", () => {
+    it("returns an empty page and reads no runs", async () => {
+      prisma.driver.findFirst.mockResolvedValue(null);
+      const result = await service.findAllRuns({} as any, driverPayload);
+      expect(result.data).toHaveLength(0);
+      expect(result.meta).toMatchObject({ total: 0 });
+      expect(prisma.routeRun.findMany).not.toHaveBeenCalled();
+    });
+
+    it("a DRIVER with a driver profile is still scoped to their own runs", async () => {
+      prisma.driver.findFirst.mockResolvedValue({ id: "drv-1", userId: "user-drv" });
+      prisma.routeRun.findMany.mockResolvedValue([]);
+      prisma.routeRun.count.mockResolvedValue(0);
+      await service.findAllRuns({} as any, driverPayload);
+      expect(prisma.routeRun.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ driverId: "drv-1" }) }),
+      );
+    });
+
+    it("an operator still sees every run (no driver scoping)", async () => {
+      prisma.routeRun.findMany.mockResolvedValue([]);
+      prisma.routeRun.count.mockResolvedValue(0);
+      await service.findAllRuns({} as any, operatorPayload);
+      expect(prisma.routeRun.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: {} }));
+    });
+  });
+
   // ─── G7 / F05: RUN_LINE_ITEMS_SELECT shared across the run read path ─────
 
   // T-B49a / R1 / REG-B49 — today the `{ id, productId, product, qty, unitPrice,

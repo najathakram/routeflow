@@ -1119,6 +1119,10 @@ export class RoutesService {
       if (driver) {
         where.driverId = driver.id;
         isDriverScoped = true;
+      } else if (user.role === UserRole.DRIVER) {
+        // A DRIVER user with no Driver row has no runs of their own: fail closed like findMyRuns, never
+        // fall through to an unscoped list.
+        return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
       }
     }
 
