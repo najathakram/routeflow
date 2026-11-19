@@ -51,6 +51,16 @@ describe("public site sentences the code backs", () => {
     }
   });
 
+  // Owner ruling 2026-11-19: a smaller plan turns off every staff and driver login and nobody can choose
+  // who stays, so the note saying "logins over its limit can be turned off" is not true. It stays out
+  // until the downgrade chooser is fixed.
+  it("product: no note about turning off logins on a smaller plan", () => {
+    const text = page("product");
+    expect(text).not.toMatch(/Smaller plan/i);
+    expect(text).not.toMatch(/logins over its limit/i);
+    expect(text).not.toMatch(/Admin logins stay on/i);
+  });
+
   // /login offers "Continue with Google" (auth.controller.ts); only company single sign-on is absent (feature-registry.ts).
   it("does-and-doesnt: names Google sign-in and rules out only company single sign-on", () => {
     const html = page("does-and-doesnt");
