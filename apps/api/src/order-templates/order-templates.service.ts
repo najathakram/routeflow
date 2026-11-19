@@ -662,6 +662,7 @@ export class OrderTemplatesService {
     let totalCreated = 0;
     let totalSkipped = 0;
     let totalSuppressed = 0;
+    let totalFailed = 0;
 
     const heldForPrices: Array<{
       tenantId: string;
@@ -669,7 +670,7 @@ export class OrderTemplatesService {
       ban: { count: number; names: string } | null;
     }> = [];
     // One unattended attempt for one template. "held" = the coded customer-prices 503 (the caller re-attempts it once);
-    // any other failure is logged and counts as nothing (as before). `retry` (the second attempt) carries the first
+    // any other failure is logged, counted as failed and announced to the tenant's operators (B340). `retry` (the second attempt) carries the first
     // attempt's ban note and tells createOrderFromTemplate its pre-pricing side effects already ran.
     const attemptOne = async (
       tenantId: string,
@@ -715,6 +716,10 @@ export class OrderTemplatesService {
             (held ? " (customer prices unavailable; will retry once)" : ""),
           err instanceof Error ? err.stack : String(err),
         );
+        // B340: the order tx committed (placed) or a concurrent run placed it (replayed) before this threw, so
+        // the order EXISTS: it is not "failed" and gets no "not placed" notice (same test as the ban notice below).
+        if (ctx.placed || ctx.replayed)
+          return { outcome: ctx.placed ? "created" : "skipped", ban: ctx.ban };
         return { outcome: pricesDown ? "held" : "failed", ban: ctx.ban };
       } finally {
         // A replay means today's order exists (a manual run placed it; that path sends no ban
@@ -777,6 +782,10 @@ export class OrderTemplatesService {
           else if (r.outcome === "skipped") totalSkipped++;
           else if (r.outcome === "held")
             heldForPrices.push({ tenantId: tenant.id, template, ban: r.ban });
+          else {
+            totalFailed++;
+            await this.notifyStandingOrderFailed(template);
+          }
         }
       });
     }
@@ -796,13 +805,17 @@ export class OrderTemplatesService {
           else if (r.outcome === "held") {
             totalSkipped++;
             await this.notifyStandingOrderHeldForPrices(held.template);
+          } else {
+            // The retry failed for another reason: one failed notice (the first attempt said nothing).
+            totalFailed++;
+            await this.notifyStandingOrderFailed(held.template);
           }
         });
       }
     }
 
     this.logger.log(
-      `Daily order generation complete: ${totalCreated} created, ${totalSkipped} skipped, ${totalSuppressed} suppressed (customer removed) across ${activeTenants.length} tenant(s)`,
+      `Daily order generation complete: ${totalCreated} created, ${totalSkipped} skipped, ${totalSuppressed} suppressed (customer removed), ${totalFailed} failed across ${activeTenants.length} tenant(s)`,
     );
   }
 
@@ -1361,6 +1374,25 @@ export class OrderTemplatesService {
       await this.notifyOperators(
         `Standing order "${template.name}"${who} was held and not placed: the customer's prices could not be loaded. ` +
           `Nothing was ordered or charged. Open the template and use "Generate now" to place it.`,
+      );
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  /**
+   * B340: a standing order failed for a reason other than the held-for-prices 503 and was NOT placed. Tell the operators,
+   * with what to do; the internal error text stays in the log. Best-effort: never fails a run.
+   */
+  private async notifyStandingOrderFailed(template: {
+    name: string;
+    customer?: { businessName?: string | null } | null;
+  }): Promise<void> {
+    const who = template.customer?.businessName ? ` for ${template.customer.businessName}` : "";
+    try {
+      await this.notifyOperators(
+        `Standing order "${template.name}"${who} failed and was not placed. Nothing was ordered or charged. ` +
+          `Open the template, check its items and use "Generate now" to place it.`,
       );
     } catch {
       /* best-effort */
