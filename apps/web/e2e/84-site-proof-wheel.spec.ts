@@ -1,5 +1,5 @@
 /**
- * Site proof, the wheel (spec 84), project "site-proof".
+ * Site proof, the wheel (spec 84), project "site-proof-wheel" (local lane only; ~16 min on one worker).
  * Bugs: B1321 (fit, names, pose), B1322 (heading in the words column), B1323 (end state), B1324 (print).
  *
  *   T3  R3,R4  the wheel fits inside its box, at every size and checkpoint
