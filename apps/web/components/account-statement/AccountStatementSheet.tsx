@@ -137,6 +137,11 @@ export function AccountStatementBody({
                   <tr key={r.id} data-testid="account-statement-invoice-row">
                     <td className="py-2 pr-2 align-top">
                       <InvoiceNumber id={r.id} number={r.invoiceNumber} link={linkInvoices} />
+                      {r.notSentYet && (
+                        <div className="text-xs text-navy/70" data-testid="statement-row-not-sent">
+                          {STATEMENT_COPY.notSentYet}
+                        </div>
+                      )}
                       <div
                         className="text-xs text-navy/70 sm:hidden"
                         data-testid="statement-row-detail"

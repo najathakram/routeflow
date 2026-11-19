@@ -115,6 +115,25 @@ describe("BP1: tap the Outstanding figure", () => {
     expect(within(dialog).queryAllByRole("link")).toHaveLength(0);
   });
 
+  it("SA-1164 D3b: a delivered, unsent invoice says Not sent yet and has no open link; an issued row does not", async () => {
+    mockBuyerGet.mockImplementation((url: string) =>
+      Promise.resolve({
+        data:
+          url === "/buyer/account-statement"
+            ? { ...STATEMENT, openInvoices: [inv(1), { ...inv(2), notSentYet: true }] }
+            : {},
+      }),
+    );
+    renderWithProviders(<BuyerOpenBalanceButton>$1,234.56</BuyerOpenBalanceButton>);
+    await tap();
+    const dialog = await sheet();
+    const rows = await within(dialog).findAllByTestId("account-statement-invoice-row");
+    expect(within(rows[0]).queryByText("Not sent yet")).toBeNull();
+    expect(within(rows[1]).getByText("Not sent yet")).toBeInTheDocument();
+    expect(within(rows[1]).getByText("INV-002")).toBeInTheDocument();
+    expect(within(dialog).queryAllByRole("link")).toHaveLength(0);
+  });
+
   it("Esc closes the sheet and focus returns to the figure", async () => {
     renderWithProviders(<BuyerOpenBalanceButton>$1,234.56</BuyerOpenBalanceButton>);
     const user = await tap();

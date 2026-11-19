@@ -78,6 +78,7 @@ import {
   type PaymentRefOpts,
 } from "../invoices/payment-ref-dedupe";
 import { overdueInvoiceCount } from "../invoices/invoice-balance-sql";
+import { RECEIVABLE_DRAFT_WHERE } from "../customers/open-balance-basis";
 import { confirmedBalance, signedBalance } from "../invoices/invoice-balance-classify";
 import { paidInstantOf } from "../common/paid-instant";
 import { assertOrderReviewed } from "../orders/offline/order-review-gate";
@@ -1662,20 +1663,26 @@ export class BookkeepingService implements OnModuleInit {
     const interval = Math.max(1, intervalDays);
     const invoices = await this.prisma.forTenant().invoice.findMany({
       where: {
-        status: {
-          in: [
-            InvoiceStatus.SENT,
-            InvoiceStatus.VIEWED,
-            InvoiceStatus.PARTIAL,
-            InvoiceStatus.OVERDUE,
-          ],
-        },
+        // SA-1164 22:05Z: a delivered, unsent DRAFT is receivable too (RECEIVABLE_DRAFT_WHERE)
+        OR: [
+          {
+            status: {
+              in: [
+                InvoiceStatus.SENT,
+                InvoiceStatus.VIEWED,
+                InvoiceStatus.PARTIAL,
+                InvoiceStatus.OVERDUE,
+              ],
+            },
+          },
+          RECEIVABLE_DRAFT_WHERE,
+        ],
       },
       include: {
         customer: { select: { id: true, businessName: true } },
         // F03/R1: AR-aging balances net out CONFIRMED (PAID) payments only — a
         // DRAFT one hasn't reduced what's owed, same as a VOID (bounced) one
-        // (P5-12). Keeps this report agreeing with getFinanceDashboard's AR bucket.
+        // (P5-12). Agrees with getFinanceDashboard's AR bucket except for a delivered DRAFT, which only this report counts (LATER row).
         payments: { where: CONFIRMED_PAYMENT },
       },
     });
@@ -1709,6 +1716,8 @@ export class BookkeepingService implements OnModuleInit {
       // below still age by dueDate, so an overdue deposit on a not-yet-due invoice stays CURRENT
       // and is surfaced by these fields and the top-level summary instead.
       const deposit = computeDepositFields(inv, paid, todayIso);
+      // SA-1164 D3f: a counted DRAFT was never sent, so its deposit is never late (it stays in the total and in Current)
+      if (inv.status === InvoiceStatus.DRAFT) deposit.depositOverdue = false;
       if (deposit.depositOverdue) {
         depositOverdue.count += 1;
         depositOverdue.outstanding += roundMoney((deposit.depositAmount ?? 0) - paid);
@@ -1731,7 +1740,8 @@ export class BookkeepingService implements OnModuleInit {
         customerId: inv.customerId,
         businessName: inv.customer?.businessName ?? "",
       });
-      if (!inv.dueDate || !isOverdue(inv.dueDate, now, tz)) {
+      // a counted DRAFT is never overdue: it sits in Current whatever its due date says
+      if (inv.status === InvoiceStatus.DRAFT || !inv.dueDate || !isOverdue(inv.dueDate, now, tz)) {
         buckets[bucketKeys[0]].push(entry);
         continue;
       }
@@ -1845,10 +1855,14 @@ export class BookkeepingService implements OnModuleInit {
   }
 
   async getCustomerBalanceSummary() {
-    // Get all non-draft/non-void invoices for full invoiced + received calculation
+    // Get all non-void invoices (a DRAFT only when delivered, RECEIVABLE_DRAFT_WHERE) for full invoiced + received calculation
     const allInvoices = await this.prisma.forTenant().invoice.findMany({
       where: {
-        status: { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID] },
+        // SA-1164 22:05Z: plus a delivered, unsent DRAFT (RECEIVABLE_DRAFT_WHERE)
+        OR: [
+          { status: { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID] } },
+          RECEIVABLE_DRAFT_WHERE,
+        ],
       },
       include: {
         customer: { select: { id: true, businessName: true, contactName: true, phone: true } },
@@ -1877,6 +1891,7 @@ export class BookkeepingService implements OnModuleInit {
     const now = new Date();
     const tz = await tenantTimeZone(this.prisma); // SA-488: the tenant's due day
     const unpaidStatuses: Set<string> = new Set([
+      InvoiceStatus.DRAFT, // only a RECEIVABLE_DRAFT_WHERE one is read above
       InvoiceStatus.SENT,
       InvoiceStatus.VIEWED,
       InvoiceStatus.PARTIAL,
@@ -1910,14 +1925,14 @@ export class BookkeepingService implements OnModuleInit {
         const bal = confirmedBalance(inv.total, inv.payments);
         byCustomer[key].invoiceCount++;
         byCustomer[key].balance = roundMoney(byCustomer[key].balance + bal);
-        if (isOverdue(inv.dueDate, now, tz)) {
+        if (inv.status !== InvoiceStatus.DRAFT && isOverdue(inv.dueDate, now, tz)) {
           byCustomer[key].overdue = roundMoney(byCustomer[key].overdue + bal);
         }
       }
     }
 
     // Compute closing balance and indicator for each customer. SIGNED BY DESIGN (a NET position, never
-    // clamped): invoiced minus received over every non-draft invoice, shown with a Dr/Cr indicator, so an
+    // clamped): invoiced minus received over every invoice read above (non-void; a DRAFT only when delivered), shown with a Dr/Cr indicator, so an
     // overpayment reads as a credit (Cr).
     for (const cust of Object.values(byCustomer)) {
       // rounded to cents BEFORE the sign picks Dr/Cr, so float dust (1.1 - 11 x 0.1 = 2e-16) reads as zero

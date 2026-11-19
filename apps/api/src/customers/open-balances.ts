@@ -1,6 +1,6 @@
 import type { PrismaService } from "../prisma/prisma.service";
 import { tenantTimeZone } from "../common/tenant-time-zone";
-import { OPEN_BALANCE_INVOICE_SELECT, OPEN_BALANCE_INVOICE_WHERE } from "./account-statement";
+import { OPEN_BALANCE_INVOICE_SELECT, OPEN_BALANCE_INVOICE_WHERE } from "./open-balance-basis";
 import { statementOutstandingAmount } from "./customer-statement";
 
 /**
