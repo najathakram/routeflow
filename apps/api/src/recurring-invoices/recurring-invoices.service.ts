@@ -27,7 +27,6 @@ import {
   packPriceMovesBaseline,
 } from "../orders/staff-override";
 import { loadTierBaseline } from "../invoices/invoice-line-override";
-import { RUN_SEND_FAILED_PREFIX, RUN_UNFINALIZED_PREFIX } from "@routeflow/types";
 import { EntitlementsService } from "../billing/entitlements.service";
 
 /** REG-B106: RecurringInvoice.lastRunStatus values (schema comment: "SUCCESS" | "FAILED"). */
@@ -38,12 +37,13 @@ export const SUSPENDED_ERROR_PREFIX = "Suspended:";
 /** Provisional lastError stamped at claim time; overwritten by SUCCESS or the real failure. */
 export const RUN_INTERRUPTED_ERROR = "Generation was interrupted before the invoice was created";
 /**
- * REG-B106 / B1251: the two "already billed" lastError prefixes (finalize failed, auto-send failed) are declared once in
- * `@routeflow/types`. The cycle is ALREADY BILLED, so the schedule is never given back and operator surfaces must not
- * offer a re-run. The aliases below keep the names the specs and this service use.
+ * REG-B106 / B1251: the two "already billed" lastError prefixes (finalize failed, auto-send failed). The cycle is ALREADY
+ * BILLED, so the schedule is never given back and operator surfaces must not offer a re-run. The api never value-imports
+ * `@routeflow/types` (raw TS: `node dist/main.js` would require it and crash), so these are literals; the single-source
+ * spec pins them equal to `RUN_SEND_FAILED_PREFIX` / `RUN_UNFINALIZED_PREFIX` in `packages/types/api/finance.ts`.
  */
-export const RUN_SEND_FAILED_ERROR = RUN_SEND_FAILED_PREFIX;
-export const RUN_UNFINALIZED_ERROR = RUN_UNFINALIZED_PREFIX;
+export const RUN_SEND_FAILED_ERROR = "The invoice was created but could not be emailed";
+export const RUN_UNFINALIZED_ERROR = "The invoice was created but the run could not be finalized";
 
 @Injectable()
 export class RecurringInvoicesService {
