@@ -1,5 +1,7 @@
 # SA-1174 · site rebrand, waves 2 and 3: rulings on OQ-1..OQ-11, the planner's three contradictions, and T46/T48 · ruling
 
+> [AMENDED 20:25Z by SA-1174 A1] K1: the static still also uses `symbolOnDark`; the T45 fixture gives it its own value. Owner box: item 1 not accepted (second box drafted by the rebrand seat); items 2-4 as recommended.
+
 - SA-1174 · 2026-11-19T20:02Z · from the site-rebrand coordinator, via the lead. Facts read in the local rebrand worktree at c5d9f99700, and on origin/master 79d5702e4e for code truth.
 - Brand-free: this file names neither the new name nor any path that carries it. "The budget test" means the branch's site budget test named after the new name; "the rebrand run dir" means the run's pipeline folder on the branch.
 - **Ruled by the SA:** 12 items: OQ-1, OQ-3..OQ-8, OQ-11, PC-1..PC-3, and the T46/T48 ids (K1-K12).
