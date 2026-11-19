@@ -185,8 +185,8 @@ try {
       const line = `refs/heads/rebrand/x ${head} refs/heads/rebrand/x ${ZERO}`;
       const r = hook(repo, line);
       check(
-        "own-ref rebrand/x push allowed without env",
-        r.code === 0 && /own ref/.test(r.out) && !/rebrand\/x/.test(r.out),
+        "own-ref rebrand/x push refused",
+        r.code === 1 && /stay off GitHub/.test(r.out) && !/rebrand\/x|zzfixture/.test(r.out),
         JSON.stringify(r),
       );
       const ok = hook(repo, line, { RF_REBRAND_PUSH: "launch" });
@@ -195,7 +195,7 @@ try {
       const lref = hook(repo, crossLine);
       check(
         "rebrand/x -> feat/y refused",
-        lref.code === 1 && /own ref/.test(lref.out) && !/rebrand\/x/.test(lref.out),
+        lref.code === 1 && /stay off GitHub/.test(lref.out) && !/rebrand\/x/.test(lref.out),
         JSON.stringify(lref),
       );
       const rr = hook(repo, `refs/heads/feat/y ${head} refs/heads/rebrand/x ${ZERO}`);
@@ -208,20 +208,43 @@ try {
       check("cross-ref refused for a wrong env value", other.code === 1, JSON.stringify(other));
       const lc = hook(repo, crossLine, { RF_REBRAND_PUSH: "launch" });
       check("cross-ref allowed with RF_REBRAND_PUSH=launch", lc.code === 0, JSON.stringify(lc));
-      // own-ref content is not scanned, and needs no patterns file
+      // own-ref is refused whatever the content, and before any patterns file is read
       const hit = commit(repo, { "h.txt": "has zzfixture\n" });
       const own = hook(repo, `refs/heads/rebrand/x ${hit} refs/heads/rebrand/x ${ZERO}`);
-      check("own-ref push with fixture content allowed", own.code === 0, JSON.stringify(own));
+      check(
+        "own-ref push with fixture content refused",
+        own.code === 1 && !leaks(own.out) && /stay off GitHub/.test(own.out),
+        JSON.stringify(own),
+      );
       const bare = makeRepo({ patterns: null });
       const bh = commit(bare, { "b.txt": "fine\n" });
       const nb = hook(bare, `refs/heads/rebrand/x ${bh} refs/heads/rebrand/x ${ZERO}`);
-      check("own-ref push needs no patterns file", nb.code === 0, JSON.stringify(nb));
-      // mixed push: own-ref line plus a leaking feat/y line is scanned on feat/y
+      check(
+        "own-ref push refused without a patterns file",
+        nb.code === 1 && /stay off GitHub/.test(nb.out),
+        JSON.stringify(nb),
+      );
+      const delLine = `refs/heads/rebrand/x ${ZERO} refs/heads/rebrand/x ${head}`;
+      const del = hook(repo, delLine);
+      check("delete of a rebrand ref allowed", del.code === 0, JSON.stringify(del));
+      const delNb = hook(bare, delLine);
+      check(
+        "delete of a rebrand ref needs no patterns file",
+        delNb.code === 0,
+        JSON.stringify(delNb),
+      );
+      const anyRemote = hook(repo, line);
+      check(
+        "own-ref refused whatever the remote",
+        anyRemote.code === 1 && !/rebrand\/x/.test(anyRemote.out),
+        JSON.stringify(anyRemote),
+      );
+      // mixed push: own-ref line plus a feat/y line is refused as a whole
       const ownLine = `refs/heads/rebrand/x ${head} refs/heads/rebrand/x ${ZERO}`;
       const mixed = hook(repo, `${ownLine}\nrefs/heads/feat/y ${hit} refs/heads/feat/y ${ZERO}`);
       check(
-        "mixed push scans the non-rebrand line",
-        mixed.code === 1 && !leaks(mixed.out),
+        "mixed push with an own-ref line refused as a whole",
+        mixed.code === 1 && /stay off GitHub/.test(mixed.out) && !leaks(mixed.out),
         mixed.out,
       );
       const bownLine = `refs/heads/rebrand/x ${bh} refs/heads/rebrand/x ${ZERO}`;
@@ -426,7 +449,7 @@ try {
         hook(repo, xline, { RF_REBRAND_PUSH: "launch" }).code === 0,
       );
       check("non-launch cross-ref rebrand push still refused", hook(repo, xline).code === 1);
-      check("own-ref rebrand push skips the content scan", hook(repo, line).code === 0);
+      check("own-ref rebrand push refused", hook(repo, line).code === 1);
       const nf = `refs/heads/feat/x ${head} refs/heads/feat/x ${ZERO}`;
       check(
         "launch env does not unscan a non-rebrand ref",
@@ -858,12 +881,14 @@ try {
       JSON.stringify(r),
     );
   }
-  // rule 4 in the fast lane: own-ref allowed, cross-ref refused
+  // rule 4 in the fast lane: own-ref refused, cross-ref refused, delete allowed
   {
     const { repo, base } = baseRepo();
     const head = commit(repo, { "b.txt": "fine\n" });
     const own = hook(repo, `refs/heads/rebrand/x ${head} refs/heads/rebrand/x ${ZERO}`);
-    check("fast: own-ref rebrand/x push allowed", own.code === 0, JSON.stringify(own));
+    check("fast: own-ref rebrand/x push refused", own.code === 1, JSON.stringify(own));
+    const del = hook(repo, `refs/heads/rebrand/x ${ZERO} refs/heads/rebrand/x ${head}`);
+    check("fast: delete of a rebrand ref allowed", del.code === 0, JSON.stringify(del));
     const cross = hook(repo, `refs/heads/rebrand/x ${head} refs/heads/master ${base}`);
     check("fast: rebrand/x -> master refused", cross.code === 1, JSON.stringify(cross));
     const up = hook(repo, `refs/heads/Rebrand/x ${head} refs/heads/master ${base}`);

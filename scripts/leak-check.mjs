@@ -22,10 +22,10 @@
 //                                      range, plus ref names
 //   --text-file <path> | --stdin       a PR title/body/squash message
 //   --tree                             always-checked tracked paths in the working tree
-//   --hook                             .husky/pre-push: reads git's pre-push stdin, allows a
-//                                      rebrand/* branch pushed to its OWN ref only (owner ruling
-//                                      2026-11-19), refuses it on any other ref (RF_REBRAND_PUSH=launch
-//                                      lifts that) and scans each other pushed ref's outgoing range
+//   --hook                             .husky/pre-push: reads git's pre-push stdin, refuses any
+//                                      push carrying a commit to a rebrand/* ref, own ref included
+//                                      (owner ruling 2026-11-19; deletes are fine; RF_REBRAND_PUSH=launch
+//                                      lifts it) and scans each other pushed ref's outgoing range
 //
 // Every scanned text is matched as UTF-8 AND, when it carries a UTF-16 BOM or NULs, as UTF-16 (see
 // lib/leak-patterns.mjs matchesBuf).
@@ -341,10 +341,6 @@ export function run(argv, { cwd = process.cwd(), env = process.env, input = "" }
       if (!lref || !lsha || ZERO.test(lsha)) continue; // blank or a delete: nothing is pushed
       pushed.push({ lref, lsha, rref: rref ?? "", rsha: rsha ?? "0" });
     }
-    // Owner ruling 2026-11-19: a rebrand/* branch may be pushed to its OWN ref (same name both sides).
-    const isOwnRef = (p) => p.lref === p.rref && /^refs\/heads\/rebrand\/[^/]/.test(p.rref);
-    const ownCount = pushed.filter(isOwnRef).length;
-    pushed = pushed.filter((p) => !isOwnRef(p));
     const isRebrand = (p) => /(^|\/)rebrand\//i.test(p.lref) || /(^|\/)rebrand\//i.test(p.rref);
     const rebrand = pushed.some(isRebrand);
     if (rebrand && env.RF_REBRAND_PUSH === "launch") {
@@ -361,13 +357,10 @@ export function run(argv, { cwd = process.cwd(), env = process.env, input = "" }
       return {
         code: 1,
         lines: [
-          "leak-check: a rebrand/* branch may only be pushed to its own ref (git push origin rebrand/<name>). Refused.",
+          "leak-check: rebrand/* branches stay off GitHub (owner ruling 2026-11-19). Refused.",
           "leak-check: launch day only: RF_REBRAND_PUSH=launch git push ...",
         ],
       };
-    }
-    if (pushed.length === 0 && ownCount > 0) {
-      return { code: 0, lines: ["leak-check: rebrand/* pushed to its own ref - not scanned."] };
     }
     // CI never pushes through this hook, so CI=true on a developer machine must not skip the scan.
     if (pushed.length === 0) {
