@@ -117,6 +117,9 @@ frontmatter blocked every push fleet-wide).
 - SA rulings are numbered and recorded; carry them into the brief **in the owner's terms** with
   attribution, never as a relay. Ask for a ruling with the facts already gathered (path:line),
   the question, and your own recommendation; SA amends or confirms.
+- **Starting a new SA:** its brief says to load `senior-architect` and `architect-panel` and to run
+  every decision through the panel at the tier the question needs (Full / Quick / Lens). Seat
+  agents die with their context when done; the SA keeps only the decision record (owner 2026-11-19).
 - **Observe, don't predict.** A red-first instruction names the case and says "observe and
   report"; a number appears only if it has been executed against the code it describes (SA-E13).
   Two of three predicted values were wrong on B687; the lane that patched, ran, observed and
