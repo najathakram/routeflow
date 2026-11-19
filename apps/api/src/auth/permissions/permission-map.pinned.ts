@@ -207,6 +207,7 @@ export const PERMISSION_MAP: Readonly<Record<string, string>> = {
   "BuyerPaymentsController.context": "UNGUARDED",
   "BuyerPaymentsController.preview": "UNGUARDED",
   "BuyerPaymentsController.requests": "UNGUARDED",
+  "BuyerQuoteController.quote": "UNGUARDED",
   "CatchupAdminController.census": "UNGUARDED",
   "CatchupAdminController.open": "UNGUARDED",
   "CatchupAdminController.plan": "UNGUARDED",

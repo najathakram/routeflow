@@ -22,6 +22,7 @@ import {
   completeLineFromCatalog,
 } from "@/lib/buyer-cart-line";
 import { CartRowQty } from "../_components/CartRowQty";
+import { CartQuoteSummary } from "../_components/CartQuoteSummary";
 import {
   BUYER_ORDER_CONFLICT_COPY,
   BUYER_ORDER_CONFLICT_NO_ID_COPY,
@@ -30,12 +31,18 @@ import {
 import {
   useBuyerProducts,
   useBuyerCreateOrder,
+  useBuyerCartQuote,
   useBuyerActiveOrder,
   useBuyerPromotions,
   toPromotionRules,
 } from "@/lib/api/buyer";
 import type { FulfilmentMethod } from "@routeflow/types";
-import { computeLineSubtotal, normalizeBoxesPieces, applyBestPromotion } from "@routeflow/pricing";
+import {
+  computeLineSubtotal,
+  normalizeBoxesPieces,
+  applyBestPromotion,
+  roundMoney,
+} from "@routeflow/pricing";
 import { useBuyerSellerCapabilities } from "@/lib/api/buyer-capabilities";
 import { objectPositionForUrl } from "@/lib/image-focal";
 import {
@@ -107,7 +114,9 @@ export default function BuyerCartPage() {
   // `forceNew` only for the buyer's explicit "Create new order instead": the server folds into the
   // open order whenever `forceNew` is absent, and `forceNew` also pins the new order out of every
   // later merge, so it is never sent for a buyer who simply has no open order.
-  const mergeable = activeReady && Boolean(activeOrder) && pathMatches;
+  // An order carrying an order discount is never folded into (W-762 / SA-918): the server makes the cart its own order.
+  const discounted = Number(activeOrder?.discountAmount ?? 0) > 0;
+  const mergeable = activeReady && Boolean(activeOrder) && pathMatches && !discounted;
   const willMerge = !forceNew && mergeable;
   const mergeTarget = willMerge ? activeOrder : null;
 
@@ -243,7 +252,20 @@ export default function BuyerCartPage() {
   // Unpriceable lines are excluded rather than counted as $0, so the estimate
   // never understates what the seller will actually invoice.
   const unresolvedCount = pricedLines.filter((l) => l.unresolved).length;
-  const subtotal = pricedLines.reduce((sum, l) => sum + (l.unresolved ? 0 : l.lineSubtotal), 0);
+
+  // SA-1172 (B304): the server's own figure for this cart. The body is exactly what Place order sends (unresolved
+  // lines included); nothing priceable, or the catalog still loading, means no quote and the plain fallback line.
+  // Place order never reads it.
+  const quoteItems = React.useMemo(() => cartOrderItems(lines), [lines]);
+  const { quote, busy: quoteBusy } = useBuyerCartQuote(
+    sellerSlug,
+    quoteItems,
+    fulfillPath,
+    catalogLoaded && unresolvedCount < pricedLines.length,
+  );
+  const subtotal = roundMoney(
+    pricedLines.reduce((sum, l) => sum + (l.unresolved ? 0 : l.lineSubtotal), 0),
+  );
   const savings = pricedLines.reduce(
     (sum, l) => sum + (l.unresolved ? 0 : l.lineOriginalSubtotal - l.lineSubtotal),
     0,
@@ -683,38 +705,15 @@ export default function BuyerCartPage() {
           {/* Summary */}
           <div className="rounded-xl border border-surface-border bg-white p-4 space-y-3">
             <h3 className="text-sm font-semibold text-navy">Order summary</h3>
-            {savings > 0 && (
-              <div className="flex justify-between text-sm">
-                <span className="text-navy/70">Items</span>
-                <span className="text-navy/70 line-through">{fmt(subtotal + savings)}</span>
-              </div>
-            )}
-            {savings > 0 && (
-              <div className="flex justify-between text-sm">
-                <span className="text-buyer-600">Promotion savings</span>
-                <span className="font-medium text-buyer-600">−{fmt(savings)}</span>
-              </div>
-            )}
-            <div className="flex justify-between text-sm">
-              <span className="text-navy/70">Subtotal ({cart.totalQty} items)</span>
-              <span className="font-medium text-navy">{fmt(subtotal)}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-navy/70">Tax</span>
-              <span className="text-navy/70">Calculated at checkout</span>
-            </div>
-            <div className="border-t border-surface-border pt-3 flex justify-between">
-              <span className="text-sm font-semibold text-navy">Estimated total</span>
-              <span className="text-lg font-bold text-navy">{fmt(subtotal)}</span>
-            </div>
-            {unresolvedCount > 0 && (
-              <p className="text-xs text-navy/60">
-                {unresolvedCount === 1
-                  ? "1 item isn't priced here and is excluded from this estimate."
-                  : `${unresolvedCount} items aren't priced here and are excluded from this estimate.`}{" "}
-                Your seller will confirm the price when they review the order.
-              </p>
-            )}
+            <CartQuoteSummary
+              quote={quote}
+              busy={quoteBusy}
+              merging={willMerge}
+              clientSubtotal={subtotal}
+              savings={savings}
+              unresolvedCount={unresolvedCount}
+              subtotalLabel={`Subtotal (${cart.totalQty} items)`}
+            />
           </div>
 
           {/* Actions */}

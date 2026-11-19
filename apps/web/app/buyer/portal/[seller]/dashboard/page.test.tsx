@@ -33,6 +33,7 @@ const order = (id: string, itemCount: number) => ({
 });
 
 jest.mock("@/lib/api/buyer", () => ({
+  useBuyerCartQuote: () => ({ quote: undefined, busy: false }),
   ...jest.requireActual("@/lib/api/buyer"),
   useBuyerDashboard: () => ({
     isLoading: false,

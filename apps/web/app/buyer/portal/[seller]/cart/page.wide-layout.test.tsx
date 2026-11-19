@@ -41,6 +41,7 @@ jest.mock("@/lib/buyer-cart", () => ({
   }),
 }));
 jest.mock("@/lib/api/buyer", () => ({
+  useBuyerCartQuote: () => ({ quote: undefined, busy: false }),
   useBuyerProducts: () => ({
     data: {
       data: [
