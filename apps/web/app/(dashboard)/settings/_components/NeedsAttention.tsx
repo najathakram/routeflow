@@ -3,6 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
+import { useRestrictionsSettings } from "@/lib/api/restrictions-settings";
 import { useRemittanceConfig } from "@/lib/api/remittance";
 import { useStripeConnectStatus } from "@/lib/api/stripe-connect";
 import { useUnknownStateBuckets } from "@/lib/api/unknown-state";
@@ -13,7 +14,7 @@ import { attentionItems } from "./settings-values";
 const ATTENTION_STALE_MS = 5 * 60_000;
 
 /**
- * The hub's short "what to do next" list: customers without a state (admins and operators), then payment due,
+ * The hub's short "what to do next" list: customers without a state and selling restrictions off (admins and operators; the operator row is text only), then payment due,
  * no "how to pay" yet, Stripe not connected (admins only). Renders nothing at all (no heading) when there is nothing
  * to do or a read has not answered.
  */
@@ -25,9 +26,15 @@ export function NeedsAttention({ isAdmin }: { isAdmin: boolean }) {
 /** Operators fix customer states too (owner ruling), so they get that one row and only its read. */
 function OperatorAttention() {
   const unknown = useUnknownStateBuckets(undefined, { staleTime: ATTENTION_STALE_MS });
+  const restrictions = useRestrictionsSettings();
   return (
     <AttentionList
-      items={attentionItems({ isAdmin: false, status: null, unknownState: unknown.data })}
+      items={attentionItems({
+        isAdmin: false,
+        status: null,
+        unknownState: unknown.data,
+        restrictionsOff: !restrictions.isError && restrictions.data?.enabled === false,
+      })}
     />
   );
 }
@@ -37,12 +44,14 @@ function AdminAttention() {
   const remittance = useRemittanceConfig();
   const stripe = useStripeConnectStatus();
   const unknown = useUnknownStateBuckets(undefined, { staleTime: ATTENTION_STALE_MS });
+  const restrictions = useRestrictionsSettings();
   const items = attentionItems({
     isAdmin: true,
     status,
     remittance: remittance.data,
     stripe: stripe.data,
     unknownState: unknown.data,
+    restrictionsOff: !restrictions.isError && restrictions.data?.enabled === false,
   });
   return <AttentionList items={items} />;
 }
@@ -60,16 +69,22 @@ function AttentionList({ items }: { items: ReturnType<typeof attentionItems> }) 
       >
         {items.map((i) => (
           <li key={i.id} className="border-b border-[var(--line)] last:border-b-0">
-            <Link
-              href={i.href}
-              className="flex min-h-[52px] items-center justify-between gap-3 px-4 py-2 text-[15px] font-medium text-[var(--ink-900)] transition-colors [transition-duration:120ms] hover:bg-[var(--sunken)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary motion-reduce:transition-none"
-            >
-              {i.label}
-              <ChevronRight
-                aria-hidden="true"
-                className="h-4 w-4 flex-none text-[var(--ink-400)]"
-              />
-            </Link>
+            {i.href ? (
+              <Link
+                href={i.href}
+                className="flex min-h-[52px] items-center justify-between gap-3 px-4 py-2 text-[15px] font-medium text-[var(--ink-900)] transition-colors [transition-duration:120ms] hover:bg-[var(--sunken)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary motion-reduce:transition-none"
+              >
+                {i.label}
+                <ChevronRight
+                  aria-hidden="true"
+                  className="h-4 w-4 flex-none text-[var(--ink-400)]"
+                />
+              </Link>
+            ) : (
+              <p className="flex min-h-[52px] items-center px-4 py-2 text-[15px] text-[var(--ink-700)]">
+                {i.label}
+              </p>
+            )}
           </li>
         ))}
       </ul>

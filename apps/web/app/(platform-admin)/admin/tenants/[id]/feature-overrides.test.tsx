@@ -1,7 +1,10 @@
 import * as React from "react";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { FeatureOverridesSection, type FeatureOverridesSectionHandle } from "./page";
+import {
+  FeatureOverridesSection,
+  type FeatureOverridesSectionHandle,
+} from "./_features/FeatureOverridesSection";
 
 const mockGet = jest.fn();
 

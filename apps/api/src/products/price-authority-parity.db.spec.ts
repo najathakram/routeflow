@@ -60,7 +60,13 @@ describeDb("SA-1041 price authority parity - real Postgres", () => {
         { provide: PrismaService, useValue: prisma },
         { provide: StorageService, useValue: { presignedUrls: jest.fn().mockResolvedValue([]) } },
         { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(false) } },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
         entitlementAuthorityFromEntitlements,
         { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },

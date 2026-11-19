@@ -330,6 +330,15 @@ export function wrapUnbrandedHtml(p: {
 }
 
 /**
+ * A subject as ONE header line (B460). Every line break (CR, LF, NEL, LS, PS) with the spaces around it folds to a
+ * single space, so a tenant-supplied name in a subject can never start a second header (`Bcc:`). The same rule
+ * as the CR/LF fold EmailService applies to a From display name, applied once at the send seam, not per template.
+ */
+export function headerSafeSubject(subject: string): string {
+  return subject.replace(/\s*[\r\n\u0085\u2028\u2029]+\s*/g, " ").trim();
+}
+
+/**
  * Plain text for a short html fragment a sender already built: paragraph breaks kept, tags
  * dropped, and every link written out as `text (url)` so a link is never lost from the text part.
  */

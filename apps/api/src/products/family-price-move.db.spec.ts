@@ -64,7 +64,13 @@ describeDb("SA-1082 A-1: a family save asks, and moves only what it names", () =
         { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
         { provide: StorageService, useValue: { presignedUrls: jest.fn().mockResolvedValue([]) } },
         { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(false) } },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn(async () => flags) } },
         entitlementAuthorityFromEntitlements,
         { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },

@@ -103,6 +103,7 @@ describeDb("the offline price-review gate on a real database (SA-1124 PR-1b)", (
             get: jest.fn(async (key: string) =>
               key === "invoice.depositCollectAtOrder" ? "true" : null,
             ),
+            getAll: jest.fn().mockResolvedValue({}),
             set: jest.fn(),
           },
         },

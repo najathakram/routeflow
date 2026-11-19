@@ -76,6 +76,10 @@ export interface MrrOverview {
    * that would make `mrr`/`ledgerMrr` agree by construction and permanently disable the
    * reconciliation check the divergence between them exists to provide.
    *
+   * B430: PlatformAdminService.deleteTenant() is a true-up writer: under the tenant row lock it books one
+   * SUBSCRIPTION_CANCELED of -Σ amountDelta (reason "delete_ledger_true_up") when the deleted tenant still
+   * sums to a non-zero value, so a soft-deleted tenant's events net to 0 here without a deletedAt filter.
+   *
    * #2045: the two gaps this comment used to list are both closed —
    *   - BillingService.reconcilePriceLedger() gates its emit on the shared isPayingRow (the full
    *     four-part paying set), so a price edit on a non-paying row books nothing (SA-140 item 1);

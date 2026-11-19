@@ -119,7 +119,13 @@ describe("W-861 + W-871: a paid walk-in sale and a post-delivery replace are ref
             revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue([]),
           },
         },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: NotificationsService, useValue: {} },
         { provide: InventoryService, useValue: {} },
         {

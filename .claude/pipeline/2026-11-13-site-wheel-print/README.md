@@ -37,15 +37,15 @@
   never use `once`; a heading is never faded by page motion; a print block in `css/site.css`; the phone
   rise in `css/mobile.css` moves a heading less than the gap under it, on screen only.
 - **WP1.2** (R1 wheel, R3-R9, R12, R13, R27; T1 wheel clause, T3-T8, T12, T13, T27). The wheel's own
-  matchMedia gains a print branch that shows the still; then set `WHEEL_PRINT_CLAUSE = true`, widen the
-  `site-proof` project's `testMatch` to spec 84, and land T13 and the T27 test. Carry the T8 harness fix:
+  matchMedia gains a print branch that shows the still; then set `WHEEL_PRINT_CLAUSE = true`, register spec 84 as the
+  local-lane `site-proof-wheel` project (never in `site-proof`: ~16 min on one worker), and land T13 and the T27 test. Carry the T8 harness fix:
   `triggerCount` counts only persistent triggers, and the fresh page is re-mounted and scrolled like the
   resized one. Carry the read-only `cam()` hook on the wheel handle that T4 reads.
 
 ## Rulings recorded here (2026-11-13)
 
-- **S9:** the post-deploy job runs every Playwright project, so only spec 85 matches `site-proof` on
-  `master`; spec 84 waits for WP1.2.
+- **S9:** the post-deploy job runs every Playwright project, so only spec 85 matches `site-proof`;
+  spec 84 is the local-lane `site-proof-wheel` project, kept out of CI and post-deploy for time.
 - **T13 lands with WP1.2.** Its distinctive clause caps the wheel script, calibrated as the base size
   plus the `cam()` hook, and WP1.1 touches no wheel file; its other clauses pass by construction today.
 - **T9 strengthened (L-377).** The WP0 probe measured only settled pairs with both boxes in the window and

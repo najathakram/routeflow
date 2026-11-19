@@ -136,7 +136,7 @@ describeDb(
         notifications,
         messaging: { notifyEvent: jest.fn().mockResolvedValue(undefined) },
         entitlements: { hasFlag: async () => true },
-        systemConfig: { get: async () => "0" },
+        systemConfig: { get: async () => "0", getAll: async () => ({}) },
         sellingRestrictions: restrictions,
         authGuard: { assertAuthorizedOrThrow: async () => undefined },
         promotionsService: { activeForCatalog: async () => [] },

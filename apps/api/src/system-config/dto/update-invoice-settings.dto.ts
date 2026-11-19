@@ -29,6 +29,18 @@ export class UpdateInvoiceSettingsDto {
   @IsBoolean()
   hidePerPiece?: boolean;
 
+  // R6a: SystemConfig `invoice.hideAmountPaid`. When true the invoice PDF (and the counter's Print invoice) and the invoice
+  // email leave the Amount Paid line (and the PDF's Payment History block) off. Absent = shown. Credit/advance lines never hide.
+  @IsOptional()
+  @IsBoolean()
+  hideAmountPaid?: boolean;
+
+  // R6a: SystemConfig `invoice.hideBalanceDue`. When true the invoice PDF and the invoice email leave the Balance Due line off
+  // (not the reminder, not the portal). Absent = shown.
+  @IsOptional()
+  @IsBoolean()
+  hideBalanceDue?: boolean;
+
   // WP-D1: tenant-wide deposit policy. Absent/0 = no tenant deposit default (a
   // customer's own defaultDepositPercent, or no deposit at all, still applies via
   // InvoicesService.resolveDefaultTerms's effectiveDepositPercent resolution). Send 0 to clear: null is refused (652).

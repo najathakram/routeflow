@@ -142,7 +142,13 @@ describe("InvoicesService display-unit wiring (SA-827)", () => {
             getOrGenerate: jest.fn().mockResolvedValue("https://files.example.test/invoice.pdf"),
           },
         },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue("false") } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue("false"),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         {
           provide: RegulatedLedgerService,
           useValue: {

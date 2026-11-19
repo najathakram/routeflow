@@ -1100,6 +1100,10 @@ export interface InvoiceSettings {
   hideBarcodes?: boolean;
   /** Owner ruling 2026-11-04: true = no Per piece column on the invoice page, PDF or email. Absent/false = shown. */
   hidePerPiece?: boolean;
+  /** true = no Amount Paid line or payments list on printed invoices. Absent/false = shown. */
+  hideAmountPaid?: boolean;
+  /** true = no Balance Due line on printed invoices. Absent/false = shown. */
+  hideBalanceDue?: boolean;
   /** Tenant-wide deposit default (0–100). null/absent = no tenant deposit policy;
    *  a customer's own `defaultDepositPercent` still wins when set. */
   depositDefaultPercent?: number | null; // GET: null when never set; PATCH: a number (0 clears), never null

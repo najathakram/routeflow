@@ -64,7 +64,13 @@ describe("OrderTemplatesService oversell call sites", () => {
         regulatedGateOpenProvider,
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: { run: jest.fn((_id, fn) => fn()) } },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue("10") } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue("10"),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         {
           provide: OrdersService,
           useValue: {

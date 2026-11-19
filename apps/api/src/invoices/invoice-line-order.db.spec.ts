@@ -88,7 +88,11 @@ describeDb("invoice lines read back in one product-wise order on every copy (SA-
         { provide: InvoicePdfService, useValue: { getOrGenerate: jest.fn() } },
         {
           provide: SystemConfigService,
-          useValue: { get: jest.fn().mockResolvedValue(null), set: jest.fn() },
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+            set: jest.fn(),
+          },
         },
         {
           provide: RegulatedLedgerService,
@@ -147,7 +151,11 @@ describeDb("invoice lines read back in one product-wise order on every copy (SA-
         },
         {
           provide: SystemConfigService,
-          useValue: { get: jest.fn().mockResolvedValue(null), set: jest.fn() },
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+            set: jest.fn(),
+          },
         },
       ],
     }).compile();
@@ -277,7 +285,10 @@ describeDb("invoice lines read back in one product-wise order on every copy (SA-
           emailService: { isEmailConfigured: async () => true, sendInvoice },
           pdfService: { getOrGenerate: jest.fn().mockResolvedValue(undefined) },
           storage: {},
-          systemConfig: { get: jest.fn().mockResolvedValue(null) },
+          systemConfig: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
           logger: new Logger("sa1058"),
         } as any,
         s.id,

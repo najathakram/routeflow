@@ -108,7 +108,13 @@ describe("InvoicesService.send — markSent takes the customer-wide note lock be
           useValue: { isEmailConfigured: jest.fn().mockResolvedValue(true) },
         },
         { provide: InvoicePdfService, useValue: {} },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue("false") } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue("false"),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: RegulatedLedgerService, useValue: {} },
         { provide: AuthorizationGuardService, useValue: {} },
         { provide: CreditNotesService, useValue: creditNotes },

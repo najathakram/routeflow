@@ -1,3 +1,4 @@
+import { InvoiceStatus } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
 import type {
   AccountStatement,
@@ -13,7 +14,8 @@ import {
   collectedDateOf,
   splitConfirmed,
 } from "../invoices/payment-predicates";
-import { KPI_SUMMARY_EXCLUDED, OPEN_INVOICE_STATUSES } from "../invoices/invoice-status-sets";
+import { OPEN_INVOICE_STATUSES } from "../invoices/invoice-status-sets";
+import { OPEN_BALANCE_INVOICE_WHERE } from "./open-balance-basis";
 import { classifyInvoiceBalance } from "../invoices/invoice-balance-classify";
 import { toCollectState } from "../invoices/to-collect";
 import { isInternalEmail } from "../common/internal-email";
@@ -38,20 +40,6 @@ import { statementOutstandingAmount, statementOverdueAmount } from "./customer-s
  * Nothing here is capped except the payments list: the open invoices and the credits are the customer's whole
  * open set (REG-B110), so the total always covers every row.
  */
-
-/**
- * SA-1078 PR-5: the ONE basis of "what a customer owes" on a list. The statement, the customers list and its CSV all read the
- * invoices this where selects with this select (see `open-balances.ts`) and sum them with `statementOutstandingAmount`, so a
- * figure printed anywhere is the sheet's figure. DRAFT, PAID, VOID and WRITTEN_OFF are never receivable.
- */
-export const OPEN_BALANCE_INVOICE_WHERE = { status: { notIn: KPI_SUMMARY_EXCLUDED } } as const;
-export const OPEN_BALANCE_INVOICE_SELECT = {
-  customerId: true,
-  total: true,
-  status: true,
-  dueDate: true,
-  payments: { select: { amount: true, status: true } },
-} as const;
 
 /** Payments older than this many calendar days (tenant zone) are not listed. Day 30 is in, day 31 is out. */
 export const STATEMENT_RECENT_DAYS = 30;
@@ -81,7 +69,7 @@ export async function buildAccountStatement(
 
   const [invoices, creditNotes, advances, payments] = await Promise.all([
     prisma.forTenant().invoice.findMany({
-      // The same set as the older statements: DRAFT, PAID, VOID and WRITTEN_OFF are never receivable.
+      // PAID, VOID and WRITTEN_OFF are never receivable; a DRAFT is only on a post-delivery order (SA-1164 21:13Z).
       where: { customerId: customer.id, ...OPEN_BALANCE_INVOICE_WHERE },
       orderBy: [{ issueDate: "asc" }, { createdAt: "asc" }],
       select: {
@@ -142,7 +130,12 @@ export async function buildAccountStatement(
   let waitingToClear = 0;
   for (const inv of invoices) {
     for (const p of inv.payments) if (p.status === "PENDING") waitingToClear += Number(p.amount);
-    if (!(OPEN_INVOICE_STATUSES as readonly string[]).includes(inv.status)) continue;
+    // The where above already left only the receivable DRAFTs (post-delivery order) in; every other status is an open one.
+    if (
+      inv.status !== InvoiceStatus.DRAFT &&
+      !(OPEN_INVOICE_STATUSES as readonly string[]).includes(inv.status)
+    )
+      continue;
     const { balanceDue } = classifyInvoiceBalance(inv, cutoff);
     if (balanceDue <= 0) continue;
     const split = splitConfirmed(inv.payments);
@@ -155,7 +148,9 @@ export async function buildAccountStatement(
       paid: roundMoney(split.cash),
       credit: roundMoney(split.creditApplied + split.advanceApplied),
       unpaid: balanceDue,
-      daysLate: daysLateOn(tenantDay, inv.dueDate),
+      // SA-1164 D3e: a bill that was never sent cannot be late; the row says "Not sent yet" and no days-late text
+      daysLate: inv.status === InvoiceStatus.DRAFT ? 0 : daysLateOn(tenantDay, inv.dueDate),
+      ...(inv.status === InvoiceStatus.DRAFT ? { notSentYet: true } : {}),
       ...(opts.staff ? { toCollect: toCollectState(inv) } : {}),
     });
   }

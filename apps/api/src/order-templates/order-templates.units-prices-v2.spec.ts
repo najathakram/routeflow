@@ -75,7 +75,13 @@ describe("S19: a standing order prices from the customer layer (flag.units_price
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: { run: jest.fn((_id, fn) => fn()) } },
         // settings.taxRate is stored as a PERCENT string — "10" is 10%.
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue("10") } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue("10"),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: OrdersService, useValue: ordersService },
         { provide: AuthorizationGuardService, useValue: authGuard },
         { provide: NotificationsService, useValue: notifications },

@@ -59,7 +59,13 @@ describe("VendorBillsService.create — negative-line/net-negative handling (B45
             recordAiUsage: jest.fn(),
           },
         },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: DuplicateMatchService, useValue: dupMatch },
         { provide: StorageService, useValue: { upload: jest.fn(), presignedUrl: jest.fn() } },
         {

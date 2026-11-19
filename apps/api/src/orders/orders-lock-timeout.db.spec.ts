@@ -80,7 +80,10 @@ describeDb("SA-767 r-note 3 (b) - a sale behind a held product lock (real Postgr
       [ConfigService, { get: jest.fn().mockReturnValue(0.1) }],
       [EntitlementsService, { hasFlag: jest.fn().mockResolvedValue(false) }],
       [getQueueToken("invoices"), { add: jest.fn() }],
-      [SystemConfigService, { get: jest.fn().mockResolvedValue(null) }],
+      [
+        SystemConfigService,
+        { get: jest.fn().mockResolvedValue(null), getAll: jest.fn().mockResolvedValue({}) },
+      ],
       [
         SellingRestrictionsService,
         {

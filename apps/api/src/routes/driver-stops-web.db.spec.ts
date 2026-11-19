@@ -127,6 +127,7 @@ describeDb("SA-1098 PR-2 driver stop on the web — real Postgres", () => {
           provide: SystemConfigService,
           useValue: {
             get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
             set: jest.fn().mockResolvedValue(undefined),
           },
         },

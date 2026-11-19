@@ -349,43 +349,48 @@ describe("SettingsHub search speaks the user's words", () => {
   });
 });
 
-describe("SettingsHub readiness banner", () => {
-  it("shows the banner with an admin link when the master switch is off", () => {
+describe("SettingsHub: restrictions off is one Needs-attention row", () => {
+  const off = () =>
     restrictions.mockReturnValue({ data: { enabled: false }, isLoading: false, isError: false });
-    renderWithProviders(<SettingsHub isAdmin />);
-    expect(screen.getByRole("status")).toHaveTextContent(
-      /staff orders and invoices aren.t checked/i,
-    );
-    expect(within(screen.getByRole("status")).getByRole("link")).toHaveAttribute(
-      "href",
-      "/settings/restrictions",
-    );
-  });
+  const list = () => screen.getByRole("list", { name: "Needs attention" });
 
-  it("shows text but no link to operators", () => {
-    restrictions.mockReturnValue({ data: { enabled: false }, isLoading: false, isError: false });
-    renderWithProviders(<SettingsHub isAdmin={false} />);
-    const banner = screen.getByRole("status");
-    expect(banner).toHaveTextContent(/staff orders and invoices aren.t checked/i);
-    expect(within(banner).queryByRole("link")).not.toBeInTheDocument();
-  });
-
-  it("can be dismissed", () => {
-    restrictions.mockReturnValue({ data: { enabled: false }, isLoading: false, isError: false });
+  it("the old banner is gone: no status block, no staff-orders sentence, no Dismiss", () => {
+    off();
     renderWithProviders(<SettingsHub isAdmin />);
-    fireEvent.click(screen.getByRole("button", { name: /dismiss/i }));
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.queryByText(/staff orders and invoices aren.t checked/i)).toBeNull();
+    expect(screen.queryByRole("button", { name: /dismiss/i })).toBeNull();
   });
 
-  it("no banner when enabled, loading, or errored", () => {
+  it("an admin gets one row that links to /settings/restrictions", () => {
+    off();
+    renderWithProviders(<SettingsHub isAdmin />);
+    const rows = within(list()).getAllByRole("link", { name: /selling restrictions are off/i });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toHaveAttribute("href", "/settings/restrictions");
+  });
+
+  it("an operator gets one row with no link and no button, and it says who can act", () => {
+    off();
+    renderWithProviders(<SettingsHub isAdmin={false} />);
+    const row = within(list()).getByText(/selling restrictions are off/i);
+    expect(row).toHaveTextContent(/ask an admin/i);
+    expect(
+      within(list()).queryByRole("link", { name: /selling restrictions are off/i }),
+    ).toBeNull();
+    expect(within(list()).queryByRole("button")).toBeNull();
+  });
+
+  it("no row when the switch is on, loading, or errored (also a failed refetch with old data)", () => {
     for (const r of [
       { data: { enabled: true }, isLoading: false, isError: false },
       { data: undefined, isLoading: true, isError: false },
       { data: undefined, isLoading: false, isError: true },
+      { data: { enabled: false }, isLoading: false, isError: true },
     ]) {
       restrictions.mockReturnValue(r);
       const { unmount } = renderWithProviders(<SettingsHub isAdmin />);
-      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+      expect(screen.queryByText(/selling restrictions are off/i)).toBeNull();
       unmount();
     }
   });

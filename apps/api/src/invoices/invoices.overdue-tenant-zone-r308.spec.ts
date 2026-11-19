@@ -121,7 +121,10 @@ describe("row 308: the staff invoice reads judge overdue in the invoice's tenant
       service = Object.create(InvoicesService.prototype) as InvoicesService;
       Object.assign(service, {
         prisma,
-        systemConfig: { get: jest.fn().mockResolvedValue(null) },
+        systemConfig: {
+          get: jest.fn().mockResolvedValue(null),
+          getAll: jest.fn().mockResolvedValue({}),
+        },
       });
     });
     afterEach(() => jest.useRealTimers());

@@ -192,7 +192,14 @@ describe("row 510: the invoice PDF model never carries the stamp", () => {
             presignedUrl: jest.fn().mockResolvedValue("https://cdn.example.com/x.pdf"),
           },
         },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          // getAll: the invoice layout switches are read in one call (invoice-layout.ts); {} = all absent = shown
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
       ],
     }).compile();
 

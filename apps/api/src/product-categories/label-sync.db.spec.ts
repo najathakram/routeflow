@@ -86,7 +86,13 @@ describeDb("category text -> label add-only sync (real Postgres)", () => {
         { provide: PrismaService, useValue: prisma },
         { provide: StorageService, useValue: { presignedUrl: jest.fn(), delete: jest.fn() } },
         { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(false) } },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
         entitlementAuthorityFromEntitlements,
         { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },

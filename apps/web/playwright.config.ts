@@ -843,9 +843,10 @@ export default defineConfig({
     // rise, T12 parity): geometry, print media and the parity diff for the signed-out site. Plan:
     // .claude/pipeline/2026-11-13-site-wheel-print/README.md. Signed out, `dependencies: []`, no
     // storage state; it blocks the analytics host so visits are never counted. The post-deploy job
-    // runs every project, so only specs that are green on master match here (review S9): spec 84
-    // (the wheel, T3-T8) joins with WP1.2. Same convention as "marketing": WITHOUT THIS ENTRY THE
-    // SPEC NEVER RUNS.
+    // runs every project, so only specs that are green on master match here (review S9). Spec 84
+    // (the wheel, T3-T8, ~16 min on one worker) is the local-lane "site-proof-wheel" project below,
+    // kept out of the post-deploy and CI runs for time. Same convention as "marketing": WITHOUT THIS
+    // ENTRY THE SPEC NEVER RUNS.
     {
       name: "site-proof",
       testMatch: /85-site-proof-pages\.spec\.ts/,
@@ -1175,6 +1176,14 @@ export default defineConfig({
               ...devices["Desktop Chrome"],
               storageState: path.join(AUTH_DIR, "operator.json"),
             },
+          },
+          // Spec 84, the home wheel (T3-T8): signed out like "site-proof", but 38 tests take ~16 min
+          // on one worker, so it runs on the local lane only (`--project=site-proof-wheel`).
+          {
+            name: "site-proof-wheel",
+            testMatch: /84-site-proof-wheel\.spec\.ts/,
+            dependencies: [],
+            use: { ...devices["Desktop Chrome"] },
           },
           // Units v2 (grid / stock-off / family / blank-tiers money): needs a stack built WITH the feature and `flag.units_prices_v2`
           // served to the test tenant; each spec fails (never skips) without it. Local lane only, like 71-73.

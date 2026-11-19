@@ -27,10 +27,12 @@ describe("P-1: one file draws every invoice barcode", () => {
     ]);
   });
 
-  it("that file calls bwipjs.toBuffer exactly 3 times, and reads invoice.hideBarcodes", () => {
+  it("that file calls bwipjs.toBuffer exactly 3 times, and reads the hideBarcodes switch via the layout reader", () => {
     const src = readFileSync(importers[0], "utf8");
     expect(src.split("bwipjs.toBuffer(").length - 1).toBe(3);
-    expect(src).toContain('"invoice.hideBarcodes"');
+    // the switch is read through the one layout reader (its key is pinned in invoice-layout.sites.spec.ts)
+    expect(src).toContain("readInvoiceLayout(");
+    expect(src).toContain("layout.hideBarcodes");
   });
 
   it("MP-G5: the send fingerprint does not read which barcode source is drawn (a rendering rule, not data)", () => {

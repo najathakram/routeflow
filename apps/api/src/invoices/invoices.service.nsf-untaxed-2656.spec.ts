@@ -61,6 +61,7 @@ describe("InvoicesService — #2656 the NSF line is never taxed", () => {
   };
   const mockSystemConfig = {
     get: jest.fn().mockResolvedValue(null),
+    getAll: jest.fn().mockResolvedValue({}),
     set: jest.fn().mockResolvedValue(undefined),
   };
   const mockMessaging = {

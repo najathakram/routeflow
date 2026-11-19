@@ -116,7 +116,13 @@ describe("updateOrderItems — operator diff branch reads the locked line, not t
             revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue([]),
           },
         },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: NotificationsService, useValue: {} },
         { provide: InventoryService, useValue: {} },
         {

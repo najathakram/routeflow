@@ -45,7 +45,10 @@ describe("InvoicesService.sendReminder - only an issued, unpaid invoice (row 318
       prisma,
       emailService: email,
       pdfService: pdf,
-      systemConfig: { get: jest.fn().mockResolvedValue(null) },
+      systemConfig: {
+        get: jest.fn().mockResolvedValue(null),
+        getAll: jest.fn().mockResolvedValue({}),
+      },
     });
   });
 

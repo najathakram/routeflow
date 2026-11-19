@@ -118,7 +118,13 @@ describe("#2255 Serializable invoice transactions retry on conflict, guards re-r
             getOrGenerate: jest.fn().mockResolvedValue("https://files.example.test/invoice.pdf"),
           },
         },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue("false") } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue("false"),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: RegulatedLedgerService, useValue: ledger },
         { provide: AuthorizationGuardService, useValue: {} },
         { provide: CreditNotesService, useValue: creditNotes },

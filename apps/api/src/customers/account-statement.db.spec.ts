@@ -22,6 +22,7 @@ import { TenantContextService } from "../tenant/tenant-context.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { BookkeepingService } from "../bookkeeping/bookkeeping.service";
 import { buildAccountStatement } from "./account-statement";
+import { openBalancesByCustomer } from "./open-balances";
 import { buildMyStatement, buildOperatorStatement } from "./customer-statement";
 import { CustomersService } from "./customers.service";
 
@@ -38,6 +39,14 @@ type Pay = {
   paidAt?: Date;
   settledAt?: Date | null;
 };
+type OrderStatusName =
+  | "PENDING"
+  | "CONFIRMED"
+  | "OUT_FOR_DELIVERY"
+  | "PARTIALLY_DELIVERED"
+  | "DELIVERED"
+  | "REFUSED"
+  | "CANCELLED";
 type Status = "SENT" | "PARTIAL" | "PAID" | "DRAFT" | "VOID" | "WRITTEN_OFF";
 
 describeDb("account statement (SA-1078), real Postgres", () => {
@@ -67,13 +76,14 @@ describeDb("account statement (SA-1078), real Postgres", () => {
     await prisma.creditNote.deleteMany({ where: { tenantId } });
     await prisma.advancePayment.deleteMany({ where: { tenantId } });
     await prisma.invoice.deleteMany({ where: { tenantId } });
+    await prisma.order.deleteMany({ where: { tenantId } });
     await prisma.tenantConfig.deleteMany({ where: { tenantId } });
     await prisma.customer.deleteMany({ where: { tenantId } });
     await prisma.user.deleteMany({ where: { tenantId } });
     await prisma.tenant.delete({ where: { id: tenantId } });
   }
 
-  async function seedTenant(label: string) {
+  async function seedTenant(label: string, opts: { walkIn?: boolean } = {}) {
     seq += 1;
     const slug = assertTestTenant(
       `qa-sa1078-${RUN}-${seq}-${label}`,
@@ -94,6 +104,7 @@ describeDb("account statement (SA-1078), real Postgres", () => {
         userId: user.id,
         businessName: `Acme ${label}`,
         contactName: label,
+        ...(opts.walkIn ? { isWalkIn: true } : {}),
         email: `ap-${slug}@example.invalid`,
         tenantId: tenant.id,
       },
@@ -108,6 +119,8 @@ describeDb("account statement (SA-1078), real Postgres", () => {
     payments: Pay[] = [],
     status: Status = "SENT",
     issue = "2026-09-01",
+    orderId: string | null = null,
+    due = "2099-01-01",
   ) {
     const inv = await prisma.invoice.create({
       data: {
@@ -118,7 +131,8 @@ describeDb("account statement (SA-1078), real Postgres", () => {
         subtotal: total,
         total,
         issueDate: new Date(`${issue}T00:00:00.000Z`),
-        dueDate: new Date("2099-01-01T00:00:00.000Z"),
+        dueDate: new Date(`${due}T00:00:00.000Z`),
+        ...(orderId ? { orderId } : {}),
       },
     });
     for (const p of payments)
@@ -134,6 +148,17 @@ describeDb("account statement (SA-1078), real Postgres", () => {
         },
       });
     return inv.id;
+  }
+
+  async function seedOrder(
+    s: { tenantId: string; customerId: string },
+    status: OrderStatusName,
+    total: number,
+  ) {
+    const order = await prisma.order.create({
+      data: { tenantId: s.tenantId, customerId: s.customerId, status, subtotal: total, total },
+    });
+    return order.id;
   }
 
   function customersService(): CustomersService {
@@ -168,6 +193,14 @@ describeDb("account statement (SA-1078), real Postgres", () => {
       1.1,
       Array.from({ length: 10 }, () => ({ amount: 0.1 })),
     );
+    // SA-1164 22:05Z (D3): an unpaid DRAFT on a DELIVERED order is receivable and every reader counts it; a paid-in-full one
+    // adds 0 and is not a row; a DRAFT on a PENDING order is in none of them.
+    const delivered = await seedOrder(s, "DELIVERED", 80);
+    const deliveredPaid = await seedOrder(s, "DELIVERED", 60);
+    const pending = await seedOrder(s, "PENDING", 70);
+    await seedInvoice(s, "zdel", 80, [], "DRAFT", "2026-09-02", delivered);
+    await seedInvoice(s, "zdelpaid", 60, [{ amount: 60 }], "DRAFT", "2026-09-02", deliveredPaid);
+    await seedInvoice(s, "zpend", 70, [], "DRAFT", "2026-09-02", pending);
 
     const bookkeeping = new BookkeepingService(
       prisma,
@@ -177,7 +210,7 @@ describeDb("account statement (SA-1078), real Postgres", () => {
       {} as any,
       {} as any,
     );
-    const EXPECTED = 1750.1; // 500 + 300 + 400 + 450 + 100 + 0.10
+    const EXPECTED = 1830.1; // 500 + 300 + 400 + 450 + 100 + 0.10 + 80 (the delivered DRAFT)
 
     await tenantCtx.run(s.tenantId, async () => {
       const buyer = { sub: s.userId, role: "CUSTOMER" } as any;
@@ -201,19 +234,55 @@ describeDb("account statement (SA-1078), real Postgres", () => {
           ["d", 450],
           ["e", 100],
           ["dimes", 0.1],
+          ["zdel", 80],
         ],
       );
-      expect(account.openInvoices.map((r) => r.paid)).toEqual([0, 200, 0, 0, 0, 1]);
-      expect(account.openInvoices.map((r) => r.credit)).toEqual([0, 0, 100, 50, 0, 0]);
-      expect(account.openBalance).toBe(EXPECTED);
-      expect(operator.outstandingAmount).toBe(EXPECTED);
-      expect(mine.outstandingAmount).toBe(EXPECTED);
-      expect(summary?.balance).toBe(EXPECTED);
-      expect(aging.totals.total).toBe(EXPECTED);
+      expect(account.openInvoices.map((r) => r.paid)).toEqual([0, 200, 0, 0, 0, 1, 0]);
+      expect(account.openInvoices.map((r) => r.credit)).toEqual([0, 0, 100, 50, 0, 0, 0]);
+      // one object so a failure names every reader's cents at once
+      expect({
+        account: account.openBalance,
+        operator: operator.outstandingAmount,
+        mine: mine.outstandingAmount,
+        summary: summary?.balance,
+        aging: aging.totals.total,
+      }).toEqual({
+        account: EXPECTED,
+        operator: EXPECTED,
+        mine: EXPECTED,
+        summary: EXPECTED,
+        aging: EXPECTED,
+      });
+      // D3c: a counted DRAFT is never overdue, so it sits in the Current bucket (its due date is far out here; the
+      // aging unit spec pins an old due date)
+      expect(aging.buckets.current.map((e: any) => e.status)).toContain("DRAFT");
+      expect(aging.buckets.current.find((e: any) => e.status === "DRAFT")?.balance).toBe(80);
       // and the rows are the whole answer
       expect(account.openInvoices.reduce((t, r) => Math.round((t + r.unpaid) * 100) / 100, 0)).toBe(
         EXPECTED,
       );
+    });
+  });
+
+  it("F1: a delivered DRAFT past its due date is not late on the statement, while an issued invoice past the same date is", async () => {
+    const s = await seedTenant("f1");
+    const orderId = await seedOrder(s, "DELIVERED", 60);
+    await seedInvoice(s, "sentlate", 100, [], "SENT", "2026-01-01", null, "2026-02-01");
+    await seedInvoice(s, "draftlate", 60, [], "DRAFT", "2026-01-01", orderId, "2026-02-01");
+    await tenantCtx.run(s.tenantId, async () => {
+      const res = await buildAccountStatement(
+        prisma,
+        { id: s.customerId, businessName: "Acme f1", email: null },
+        { staff: false },
+      );
+      expect(
+        res.openInvoices.map((r) => [r.invoiceNumber.split("-").pop(), r.daysLate > 0]),
+      ).toEqual([
+        ["sentlate", true],
+        ["draftlate", false],
+      ]);
+      expect(res.openInvoices[1].notSentYet).toBe(true);
+      expect(res.openBalance).toBe(160);
     });
   });
 
@@ -274,6 +343,115 @@ describeDb("account statement (SA-1078), real Postgres", () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  // SA-1164 21:13Z (PR-2b), rows Q1-Q6: a DRAFT invoice on a post-delivery order (DELIVERED or REFUSED) is a receivable;
+  // every other DRAFT is not. One tenant per row; each reads the statement AND the customers-list figure.
+  async function readBalance(s: { tenantId: string; customerId: string }) {
+    return tenantCtx.run(s.tenantId, async () => {
+      const statement = await buildAccountStatement(
+        prisma,
+        { id: s.customerId, businessName: "Acme q", email: null },
+        { staff: true },
+      );
+      const list = await openBalancesByCustomer(prisma, [s.customerId], new Date());
+      return {
+        statementBalance: statement.openBalance,
+        statementRows: statement.openInvoices.map((r) => [
+          r.invoiceNumber.split("-").pop(),
+          r.unpaid,
+        ]),
+        listBalance: list.get(s.customerId) ?? 0,
+      };
+    });
+  }
+
+  it("Q1: a DRAFT on a DELIVERED order, unpaid, counts on the statement and the customers list", async () => {
+    const s = await seedTenant("q1");
+    const orderId = await seedOrder(s, "DELIVERED", 120);
+    await seedInvoice(s, "q1", 120, [], "DRAFT", "2026-09-01", orderId);
+    const got = await readBalance(s);
+    expect(got).toEqual({ statementBalance: 120, statementRows: [["q1", 120]], listBalance: 120 });
+  });
+
+  it("Q2: a fully paid DRAFT on a DELIVERED order is in the open set and adds 0 (the clamp)", async () => {
+    const s = await seedTenant("q2");
+    const orderId = await seedOrder(s, "DELIVERED", 120);
+    await seedInvoice(s, "q2", 120, [{ amount: 120 }], "DRAFT", "2026-09-01", orderId);
+    const got = await readBalance(s);
+    // in the open set, but a 0.00 balance is no statement row (the statement's existing rule)
+    expect(got).toEqual({ statementBalance: 0, statementRows: [], listBalance: 0 });
+  });
+
+  it("REFUSED counts like DELIVERED (POST_DELIVERY_ORDER_STATUSES)", async () => {
+    const s = await seedTenant("refused");
+    const orderId = await seedOrder(s, "REFUSED", 75.5);
+    await seedInvoice(s, "rf", 75.5, [], "DRAFT", "2026-09-01", orderId);
+    const got = await readBalance(s);
+    expect(got).toEqual({
+      statementBalance: 75.5,
+      statementRows: [["rf", 75.5]],
+      listBalance: 75.5,
+    });
+  });
+
+  it.each([
+    "PENDING",
+    "CONFIRMED",
+    "OUT_FOR_DELIVERY",
+    "PARTIALLY_DELIVERED",
+    "CANCELLED",
+  ] as const)("Q3: a DRAFT on a %s order is not counted", async (orderStatus) => {
+    const s = await seedTenant(`q3-${orderStatus.toLowerCase().replace(/_/g, "")}`);
+    const orderId = await seedOrder(s, orderStatus, 120);
+    await seedInvoice(s, "q3", 120, [], "DRAFT", "2026-09-01", orderId);
+    const got = await readBalance(s);
+    expect(got).toEqual({ statementBalance: 0, statementRows: [], listBalance: 0 });
+  });
+
+  it("Q4: a standalone DRAFT with no order is not counted", async () => {
+    const s = await seedTenant("q4");
+    await seedInvoice(s, "q4", 120, [], "DRAFT");
+    const got = await readBalance(s);
+    expect(got).toEqual({ statementBalance: 0, statementRows: [], listBalance: 0 });
+  });
+
+  it("Q5: a walk-in customer's DRAFT on a DELIVERED order counts on the statement (no carve-out)", async () => {
+    const s = await seedTenant("q5", { walkIn: true });
+    const orderId = await seedOrder(s, "DELIVERED", 40);
+    await seedInvoice(s, "q5", 40, [], "DRAFT", "2026-09-01", orderId);
+    const got = await readBalance(s);
+    expect(got.statementBalance).toBe(40);
+    expect(got.statementRows).toEqual([["q5", 40]]);
+  });
+
+  it("Q6: a DRAFT raised at a carrier shipment (order still open) is not counted; LATER row, named in the PR", async () => {
+    const s = await seedTenant("q6");
+    const orderId = await seedOrder(s, "OUT_FOR_DELIVERY", 1758);
+    await seedInvoice(s, "q6", 1758, [], "DRAFT", "2026-09-01", orderId);
+    const got = await readBalance(s);
+    expect(got).toEqual({ statementBalance: 0, statementRows: [], listBalance: 0 });
+  });
+
+  it("a mixed customer: SENT 100 + DRAFT on DELIVERED 50 + DRAFT on PENDING 30, with VOID, PAID and WRITTEN_OFF on a delivered order, reads 150", async () => {
+    const s = await seedTenant("mix");
+    const delivered = await seedOrder(s, "DELIVERED", 50);
+    const pending = await seedOrder(s, "PENDING", 30);
+    await seedInvoice(s, "sent", 100, [], "SENT", "2026-08-01");
+    await seedInvoice(s, "dd", 50, [], "DRAFT", "2026-08-02", delivered);
+    await seedInvoice(s, "dp", 30, [], "DRAFT", "2026-08-03", pending);
+    await seedInvoice(s, "void", 10, [], "VOID", "2026-08-04", delivered);
+    await seedInvoice(s, "paid", 10, [{ amount: 10 }], "PAID", "2026-08-05", delivered);
+    await seedInvoice(s, "wo", 10, [], "WRITTEN_OFF", "2026-08-06", delivered);
+    const got = await readBalance(s);
+    expect(got).toEqual({
+      statementBalance: 150,
+      statementRows: [
+        ["sent", 100],
+        ["dd", 50],
+      ],
+      listBalance: 150,
+    });
   });
 
   it("S18: another tenant's customer is a 404 on the staff read, and nothing of it leaks", async () => {

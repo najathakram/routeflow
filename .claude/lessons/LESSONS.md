@@ -33,6 +33,13 @@
 - **Lesson:** **A move or a rename is never sized to the delta: run the whole api jest, and grep every spec and script for the old path and the old symbol before the reads are ordered. A census or allow-list that names files by path is edited in the same PR as the move.**
 - **Guard:** `apps/api/src/products/variant-name-writers-census.spec.ts` (its allowed list now names the new file); the grep step is a lane habit with no script yet.
 
+### L-393 · 2026-11-19 · deploy · the health commit equals the last merge that changed apps/api or packages, not the last merge (windows 51 to 56)
+
+- **Symptom:** after a web-only merge, a close check compared the API health commit to the merge commit and read a stall: both API hosts still reported the earlier merge.
+- **Root cause:** a web-only or docs-only merge does not rebuild the API; its status goes green in the same second it is created, so the health commit never moves.
+- **Lesson:** **A close check compares the health commit to the last merge that touched `apps/api` or `packages/`, and reads the other merges by their own service statuses.**
+- **Guard:** none in the repo (lead tooling); the window close script carries the rule.
+
 ### L-379 · 2026-11-12 · process · a hold or fix order is issued only after the reviewer's verdict and browser evidence are posted; the order carries their board comment ids (#4302)
 
 - **Symptom:** a hold and a one-case fix order for #4302 went out from an interim reading, before the reader's FAIL (board 6819958479) and the browser evidence (6819958939, which found more than the reader's MUST) were posted. It cost a round.
@@ -99,6 +106,13 @@
 - **Root cause:** the predicate was never itself tested, and a scan that finds nothing in a skipped file looks identical to a clean file. Separately, a row label written with two quoted pieces was a type error that plain `tsc` never reports, because it skips specs.
 - **Lesson:** **Give every scan's walk a row that asserts the named edge files ARE scanned (a helper called `*-spec.ts`, a `.tsx` file) and the excluded kinds are not; escape the dots in a file-name predicate. A spec type error is judged only by `npm run check-types -w apps/api` (the ratchet), and prettier rewrites quoted keys, so a row meant to test a quoted-key spelling tests nothing: label it as a label.**
 - **Guard:** the walk row in `apps/api/src/billing/billing-return-paths.spec.ts` (db-spec.ts and smtp-spec.ts scanned, no `*.spec.ts(x)`, at least seven `.tsx` files).
+
+### L-392 · 2026-11-19 · testing · a raw control byte typed into a regex literal makes a negative pin pass whatever the code holds (#4349, B1313)
+
+- **Symptom:** twelve `not.toMatch` pins in ten spec files, and one till inventory pin, held a raw backspace byte (0x08) where a word boundary was meant, so each matched nothing and passed on any tree; three raw NUL bytes sat in a script as separators.
+- **Root cause:** an editor or paste turned `\b` into the control character, the pin still read as a regex, and a negative assertion over a pattern that cannot match is always green.
+- **Lesson:** **Write a boundary as the two-character escape, never a typed byte, and give every negative pin a probe that makes it match the thing it forbids (L-377). A source scan for control bytes (0x00 to 0x08, 0x0B, 0x0C, 0x0E to 0x1F, 0x7F) over every tracked text file, asserting it scanned files and with no exception list, is the standing guard.**
+- **Guard:** the twelve pins were fixed in #4349 with a red then green probe each; the standing scan is owed (B1364).
 
 ### L-377 · 2026-11-12 · testing · a pin ships with a red probe the builder watched fail; a regex with a stray control byte matches nothing and passes whatever the tree holds (#4303)
 
@@ -307,13 +321,6 @@
 
 ## security
 
-### L-372 · 2026-11-06 · security · a rotation resets every stored copy of the secret, a derived hash included, and an output scan covers every exit that holds the secret in scope (#4232)
-
-- **Symptom:** (review notes on #4232; nothing leaked) the invite rotation cleared the code and its expiry but not `inviteTokenHash`; and the "no digest in the output" scan ran on the dry run, the no-backup refusal, the stale refusal and the committed apply, not on the compare-and-swap refusal, the one path with a planned digest beside the message.
-- **Root cause:** the rotation was written against today's columns: the hash column is empty and unread, and in this codebase a NULL expiry counts as live, so a later backfill would bring a rotated link back. The scan list was the paths the author thought of.
-- **Lesson:** **The SET of a rotation names every column that can resolve the secret (code, hash, expiry) and a row asserts each; sequence a hash backfill after any pending rotation. An output scan lists every exit that has the secret in scope, refusals first. A plan file that holds digests is mode 0600, expires in 24 h and is rewritten as spent after the commit.**
-- **Guard:** `ef87ea532f` (plan file 0600, 24 h limit, spent plan holds no digest); P-1 to P-4 in `common/portal-invite-census.db.spec.ts`. Open: B1291 (the CAS refusal scan), B1292 (the hash). Cf. [[L-188]].
-
 ### L-328 · 2026-10-21 · security · a same-origin form POST under `Referrer-Policy: no-referrer` sends `Origin: null`; an Origin-equals-Host check then refuses every login
 
 - **Symptom:** after the control dashboard set `Referrer-Policy: no-referrer`, every login was refused with 403, although the page and the form were on the same host.
@@ -357,13 +364,6 @@
 - **Root cause:** a Radix dialog stays mounted with `data-state="closed"` for its 150 ms exit animation and keeps focus in its text box. The refocus and the key redirect both read a focused text box as "a person is typing" and stood down, so the keys died with the unmount.
 - **Lesson:** **A guard that asks whether a person is typing asks one shared predicate, and that predicate excludes a field inside a closing dialog. Add no timer, no key timing and no new focus owner for it. Test it with a harness that emulates the exit animation (jsdom has none), at start delays on both sides of the animation, and with both line endings.**
 - **Guard:** `insideClosingDialog` in `lib/refocus-scanner.ts` (read by `isTextEntryElement`); `refocus-scanner.test.ts` and `CounterSaleScreen.escape-scan.test.tsx` (removing the predicate turns 18 tests red). Open: Change the price with a code that starts in lowercase (`CounterLinePriceEdit.tsx:252`). Cf. [[L-353]].
-
-### L-373 · 2026-11-06 · web · a percentage padding resolves against the parent's width; size a centred box with min(max, 100% - gutter) and fixed padding, and make the source scan read every spelling (#4234)
-
-- **Symptom:** on a wide screen the home founder card grew to 1,640 px and its text sat in a narrow strip, with about 360 px of padding per side; the no-JS hero had the same shape.
-- **Root cause:** the side padding was a percentage half-gap, `(100% - 1200px)/2`, and a percentage padding resolves against the parent's width, not the box's own width.
-- **Lesson:** **A centred box on a page grid is `width: min(<grid>, 100% - <gutter>)` with a centring margin and a fixed clamp padding, never a percentage half-gap. A static scan for the bad shape normalises whitespace, covers the equivalent spellings (`calc(50% - N)`, a custom property holding the half-gap) and walks the whole stylesheet tree.**
-- **Guard:** `site-founder-card-width.static.test.ts` (card width; a scan of `css/` and `graphics/` for one spelling). Open: B1294 (the other spellings). Cf. [[L-364]].
 
 ### L-385 · 2026-11-15 · web · one exported predicate says whether a key starts a scan run; each screen decides only where the scan goes (#4320, B1310, B1314)
 

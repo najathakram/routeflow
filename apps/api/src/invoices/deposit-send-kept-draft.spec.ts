@@ -67,6 +67,7 @@ describe("InvoicesService — deposit-at-placement send keeps the invoice (row 4
 
   const mockSystemConfig = {
     get: jest.fn().mockResolvedValue(null),
+    getAll: jest.fn().mockResolvedValue({}),
     set: jest.fn().mockResolvedValue(undefined),
   };
 

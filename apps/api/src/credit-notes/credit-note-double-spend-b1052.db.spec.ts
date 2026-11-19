@@ -178,7 +178,13 @@ describeDb("B1052 a credit note can't be spent twice (concurrent settles, real P
           useValue: { isEmailConfigured: jest.fn().mockResolvedValue(true) },
         },
         { provide: InvoicePdfService, useValue: { getOrGenerate: jest.fn() } },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         {
           provide: AuthorizationGuardService,
           useValue: {
