@@ -112,6 +112,15 @@ describeDb("users: the Driver row follows the role (B862, SA-1171)", () => {
     expect((await rows(u.id))[0].status).toBe("ACTIVE");
   });
 
+  it("(e) a CUSTOMER login refuses a staff role: 400, role unchanged, no Driver row", async () => {
+    const u = await mkUser(UserRole.CUSTOMER);
+    await expect(update(u.id, { role: UserRole.DRIVER })).rejects.toMatchObject({ status: 400 });
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: u.id } })).role).toBe(
+      UserRole.CUSTOMER,
+    );
+    expect(await rows(u.id)).toHaveLength(0);
+  });
+
   it("(d) two concurrent permit enables leave one row and no error", async () => {
     const u = await mkUser(UserRole.OPERATOR);
     const toggle = () =>

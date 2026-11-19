@@ -436,6 +436,13 @@ export class UsersService {
       throw new ForbiddenException("Cannot change the role of the tenant admin.");
     }
 
+    // B862: a CUSTOMER login is a buyer's account, never a driver. Handing it the DRIVER role would give it a Driver row
+    // (ensureDriverRow), and a later customer delete or merge would then fail on Driver_userId_fkey. The list excludes
+    // CUSTOMER, so only a direct API call reaches this. CUSTOMER -> OPERATOR stays allowed (SA-1050 A5-2 pins it).
+    if (user.role === UserRole.CUSTOMER && dto.role === UserRole.DRIVER) {
+      throw new BadRequestException("A customer login cannot be made a driver.");
+    }
+
     // Only allow OPERATOR or DRIVER roles when changing role
     if (
       dto.role &&
