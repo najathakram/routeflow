@@ -143,3 +143,32 @@ describe("checkQtySplitConsistency: warn", () => {
     expect((logger.warn as jest.Mock).mock.calls[0][0]).toContain("path=counter.sale");
   });
 });
+
+describe("SA-1170 K1 (B729): a split on a no-pack product must agree with its own qty (enforce only)", () => {
+  const line = (over: object) => ({ productId: "p", qty: 3, ...over });
+  const enforce = (l: object, upb: number | null | undefined) =>
+    checkQtySplitConsistency({ mode: "enforce", path: "t", items: [line(l)], upbFor: () => upb });
+
+  it("refuses a contradictory split (3 each as 2 boxes)", () => {
+    expect(() => enforce({ boxes: 2, pieces: 0 }, 0)).toThrow(/disagree/);
+    expect(() => enforce({ boxes: 2, pieces: 0 }, 1)).toThrow(/disagree/);
+    expect(() => enforce({ pieces: 2 }, 0)).toThrow(/disagree/);
+  });
+  it("lets self-consistent and empty splits through", () => {
+    expect(enforce({ qty: 24, boxes: 2, pieces: 0 }, 0)).toEqual([]);
+    expect(enforce({ boxes: 0, pieces: 0 }, 0)).toEqual([]);
+    expect(enforce({ pieces: 3 }, 0)).toEqual([]);
+  });
+  it("an unknown product (undefined) is the writer's to refuse; warn mode never changes", () => {
+    expect(enforce({ boxes: 2, pieces: 0 }, undefined)).toEqual([]);
+    expect(
+      checkQtySplitConsistency({
+        mode: "warn",
+        path: "t",
+        items: [line({ boxes: 2, pieces: 0 })],
+        upbFor: () => 0,
+        logger: { warn: jest.fn() } as any,
+      }),
+    ).toEqual([]);
+  });
+});
