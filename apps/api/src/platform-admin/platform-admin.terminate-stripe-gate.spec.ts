@@ -82,10 +82,13 @@ function make(
       return { status: "canceled", customer: "cus_1" };
     }),
   };
+  const txClients: unknown[] = []; // the transaction client each $transaction callback received
   prisma.$transaction.mockImplementation(async (fn: any) => {
     inTx = true;
     try {
-      return await fn({ ...prisma, tenantSubscription: prisma.tenantSubscription });
+      const tx = { ...prisma, tenantSubscription: prisma.tenantSubscription };
+      txClients.push(tx);
+      return await fn(tx);
     } finally {
       inTx = false;
     }
@@ -111,7 +114,7 @@ function make(
     {} as any,
     stripe,
   );
-  return { svc, prisma, stripe, stripeCalls, auditLog, emit };
+  return { svc, prisma, stripe, stripeCalls, auditLog, emit, txClients };
 }
 
 type Op = [string, (svc: PlatformAdminService) => Promise<unknown>];
@@ -533,7 +536,7 @@ describe("deleteTenant - ledger true-up (B430)", () => {
     prisma.billingEvent.aggregate.mockResolvedValue({ _sum: { amountDelta: v } });
 
   it("books one -100 true-up inside the transaction when the tenant still sums to +100", async () => {
-    const { svc, prisma, emit } = make({ pre: null });
+    const { svc, prisma, emit, txClients } = make({ pre: null });
     sum(prisma, 100);
     await svc.deleteTenant(TENANT_ID, "a1");
     expect(prisma.billingEvent.aggregate).toHaveBeenCalledWith({
@@ -552,7 +555,10 @@ describe("deleteTenant - ledger true-up (B430)", () => {
     });
     expect(opts.amountDelta).toBe(-100);
     expect(opts.actorId).toBe("a1");
-    expect(opts.tx).toBeDefined();
+    // the row joins the delete's own transaction client, not the root client (a spread copy, so identity matters)
+    expect(txClients).toHaveLength(1);
+    expect(opts.tx).toBe(txClients[0]);
+    expect(opts.tx).not.toBe(prisma);
   });
 
   it("books the opposite sign when the tenant sums below zero", async () => {

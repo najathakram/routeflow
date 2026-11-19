@@ -11,6 +11,7 @@
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
+import { roundMoney } from "@routeflow/pricing";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { BillingEventService } from "../billing/billing-event.service";
 import { MrrService } from "../billing/mrr.service";
@@ -144,7 +145,7 @@ describeDb("deleteTenant ledger true-up (B430, DB)", () => {
     // (shape a) would drop both tenants and report a change of 0; a blind offset (shape b) would add +100 for B.
     const after = await mrr.computeOverview();
     expect(after.ledgerMrr).toBe(baseline.ledgerMrr);
-    expect(after.momDelta).toBe(baseline.momDelta - 200);
+    expect(roundMoney(after.momDelta - baseline.momDelta)).toBe(-200);
   });
 
   it("a refused delete (tenant not SUSPENDED) books no row", async () => {
