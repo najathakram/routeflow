@@ -31,6 +31,7 @@ const P = (step: string): Row => ({ kind: "PENDING", step });
 const X = (why: string): Row => ({ kind: "EXEMPT", why });
 
 const ord = (m: string) => `orders/orders.service.ts::OrdersService.${m}`;
+const merge = (f: string) => `orders/order-merge-fold.ts::${f}`; // SA-1162: the customer merge pair, moved out of the class
 const inv = (m: string) => `invoices/invoices.service.ts::InvoicesService.${m}`;
 const rt = (m: string) => `routes/routes.service.ts::RoutesService.${m}`;
 const vb = (m: string) => `vendor-bills/vendor-bills.service.ts::VendorBillsService.${m}`;
@@ -54,10 +55,10 @@ const TABLE: Record<string, Row> = {
   [ord("updateFulfillPath")]: G,
   // W-774: the STAFF judge the counter's read-only pre-judge shares with the switch. It writes nothing; both callers are enforcement points.
   [ord("staffSellable")]: G,
-  [ord("mergeAllPendingForCustomer")]: X(
+  [merge("mergeAllPendingForCustomerImpl")]: X(
     "owner ruling 2026-09-25 (#2093) / SA-255: MERGE AND WARN — folds orders each checked when placed, never blocked; warns via merge-restriction-warning.ts (pinned in orders.merge-warn.spec.ts)",
   ),
-  [ord("forceConsolidateCustomer")]: X(
+  [merge("forceConsolidateCustomerImpl")]: X(
     "owner ruling 2026-09-25 (#2093) / SA-255: MERGE AND WARN — folds orders each checked when placed, never blocked; warns via merge-restriction-warning.ts (pinned in orders.merge-warn.spec.ts)",
   ),
   // F1(iii): a buyer's ADD_ITEM filing is judged on BUYER_PORTAL when FILED (called by ChangeRequestsService.create).
@@ -389,6 +390,7 @@ const FREE_WRITER_FILES = [
   "orders/order-cancel-tx.ts",
   "orders/delivered-stamp.ts",
   "orders/draft-promotion-judgement.ts",
+  "orders/order-merge-fold.ts", // SA-1162: the customer merge pair, moved out of the class
   "invoices/draft-order-restrictions.ts",
   "invoices/invoice-restriction-lines.ts",
 ];

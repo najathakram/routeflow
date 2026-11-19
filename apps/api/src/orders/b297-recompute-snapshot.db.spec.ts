@@ -690,7 +690,7 @@ describeDb("B297 PR3 — a recompute reads the line's rate snapshot, real Postgr
 
   const buyerEdit = (orderId: string, items: any[], extra: Record<string, unknown> = {}) =>
     inTenant(() =>
-      orders.updateOrderItems(orderId, { replaceAll: true, items, ...extra } as any, buyer(), {
+      orders.updateOrderItems(orderId, { items, ...extra } as any, buyer(), {
         buyerLineIds: true,
       }),
     );
@@ -916,7 +916,7 @@ describeDb("B297 PR3 — a recompute reads the line's rate snapshot, real Postgr
     const [l0] = await lines(created.id);
     await raiseCategoryRate(0.08);
     await buyerEdit(created.id, [
-      { productId: boxed.id, qty: 36, boxes: 3, pieces: 0, orderItemId: l0.id },
+      { productId: boxed.id, qty: 36, orderItemId: l0.id }, // SA-1161 F: the screens' body (no split fields)
     ]);
     expect(shape(await lines(created.id))).toEqual(
       [
@@ -994,7 +994,7 @@ describeDb("B297 PR3 — a recompute reads the line's rate snapshot, real Postgr
     await buyerEdit(
       m.orderId,
       [
-        { productId: m.productId, qty: 24, boxes: 2, pieces: 0, orderItemId: m.boxSplitId },
+        { productId: m.productId, qty: 24, orderItemId: m.boxSplitId }, // SA-1161 F: no split fields from a buyer
         { productId: m.productId, qty: 2, orderItemId: m.packId },
       ],
       { namesLines: true },

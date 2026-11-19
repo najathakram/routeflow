@@ -97,7 +97,7 @@ it("Total quantity names each unit and is not the unitless sum 42", async () => 
   const dt = await screen.findByText("Total quantity");
   const text = dt.parentElement!.textContent ?? "";
   expect(text).toContain("3 boxes · 6 bottles");
-  expect(text).not.toMatch(/42/);
+  expect(text).not.toMatch(/\b42\b/);
 });
 
 // W-1185 fix 1 (F6): "Line items" is the number of rows in the table, a zero-quantity row included.

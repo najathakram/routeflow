@@ -37,6 +37,8 @@ import { useDrivers, type Driver } from "@/lib/api/drivers";
 import { useProducts } from "@/lib/api/products";
 import { unitsLabel } from "@/lib/stock-label";
 import { useFinanceDashboard } from "@/lib/api/finance";
+import { usePlanFlag } from "@/lib/api/plan-flags";
+import { arAgingLink } from "@/lib/plan-gated-nav";
 import { useInvoices, type Invoice } from "@/lib/api/invoices";
 import { useRoutesAccess, useDeliveryAccess } from "@/lib/api/addons";
 import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusBadge";
@@ -237,6 +239,7 @@ interface AgingData {
 }
 
 function ArAgingWidget({ aging }: { aging: AgingData }) {
+  const arLink = arAgingLink(usePlanFlag("flag.reports"), "dashboard");
   const num = (v: unknown) => {
     const n = Number(v ?? 0);
     return Number.isFinite(n) ? n : 0;
@@ -270,12 +273,14 @@ function ArAgingWidget({ aging }: { aging: AgingData }) {
     >
       <div className="flex items-center justify-between border-b border-surface-border px-5 py-3.5">
         <h3 className="text-base font-semibold text-navy">AR aging</h3>
-        <Link
-          href="/finance/reports?report=ar-aging"
-          className="flex items-center gap-1 text-xs font-medium text-brand-500 hover:underline"
-        >
-          Full report <ArrowRight className="h-3 w-3" />
-        </Link>
+        {arLink && (
+          <Link
+            href={arLink.href}
+            className="flex items-center gap-1 text-xs font-medium text-brand-500 hover:underline"
+          >
+            {arLink.label} <ArrowRight className="h-3 w-3" />
+          </Link>
+        )}
       </div>
 
       <div className="p-5 space-y-4">

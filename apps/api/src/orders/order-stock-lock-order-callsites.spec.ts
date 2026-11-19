@@ -252,8 +252,10 @@ const POLICY_CALL =
   /\bresolveOversellAllowed\s*\(|\boversellReader\b|\bpolicyOversellReader\b|\bpolicies\s*\.|\bPolicyService\b|\bpolicyValue\b/;
 
 describe("static scan: no resolver / policy call inside a transaction callback", () => {
-  const file = path.join(__dirname, "orders.service.ts");
-  const bodies = transactionBodies(fs.readFileSync(file, "utf8"));
+  // SA-1162: the customer merge pair (its transaction callbacks) moved to order-merge-fold.ts; scan both.
+  const bodies = ["orders.service.ts", "order-merge-fold.ts"].flatMap((f) =>
+    transactionBodies(fs.readFileSync(path.join(__dirname, f), "utf8")),
+  );
 
   it("finds the transaction callbacks (the scan is not vacuous)", () => {
     expect(bodies.length).toBeGreaterThan(10);

@@ -21,8 +21,8 @@ type Entry = { kind: "order" | "invoice" | "exempt"; reason?: string };
 const REGISTRY: Record<string, Entry> = {
   "orders/orders.service.ts::create": { kind: "order" },
   "orders/orders.service.ts::updateOrderItems": { kind: "order" },
-  "orders/orders.service.ts::mergeAllPendingForCustomer": { kind: "order" },
-  "orders/orders.service.ts::forceConsolidateCustomer": { kind: "order" },
+  "orders/order-merge-fold.ts::mergeAllPendingForCustomerImpl": { kind: "order" }, // SA-1162: moved out of orders.service.ts
+  "orders/order-merge-fold.ts::forceConsolidateCustomerImpl": { kind: "order" },
   "orders/orders.service.ts::approveChangeRequestAtStop": { kind: "order" },
   "order-templates/order-templates.service.ts::createOrderFromTemplate": { kind: "order" },
   "invoices/invoices.service.ts::recomputeOrderFromInvoices": { kind: "order" },
@@ -310,7 +310,7 @@ describe("composition writer tripwire (#2717 M3, case 14)", () => {
     const unlisted = [...fixtureSites.keys()].filter((k) => !REGISTRY[k]);
     expect(unlisted).toEqual(["fixture/fixture.service.ts::sneakyWriter"]);
     expect(fixtureSites.get(unlisted[0])).not.toMatch(
-      /syncOrderLineCompositions\(|this\.syncCompositions\(/,
+      /syncOrderLineCompositions\(|(?:this|self)\.syncCompositions\(/,
     );
   });
 
@@ -330,7 +330,10 @@ describe("composition writer tripwire (#2717 M3, case 14)", () => {
   it.each(Object.entries(REGISTRY).filter(([, e]) => e.kind === "order"))(
     "%s calls syncOrderLineCompositions in the same function",
     (key) => {
-      expect(sites.get(key)).toMatch(/syncOrderLineCompositions\(|this\.syncCompositions\(/);
+      // SA-1162: the merge pair moved to order-merge-fold.ts, where the class is `self`
+      expect(sites.get(key)).toMatch(
+        /syncOrderLineCompositions\(|(?:this|self)\.syncCompositions\(/,
+      );
     },
   );
 

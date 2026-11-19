@@ -127,7 +127,8 @@ describe("OrderItem create-site census (authorChannel)", () => {
       "apps/api/src/invoices/invoices.service.ts": 1,
       "apps/api/src/order-templates/order-templates.service.ts": 1,
       "apps/api/src/orders/merge-unlisted-lines.ts": 1,
-      "apps/api/src/orders/orders.service.ts": 10,
+      "apps/api/src/orders/order-merge-fold.ts": 2, // SA-1162: the customer merge pair, moved verbatim
+      "apps/api/src/orders/orders.service.ts": 8,
       "apps/api/src/orders/unit-line-edit.ts": 1,
     });
   });

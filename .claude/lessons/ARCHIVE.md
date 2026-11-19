@@ -4791,3 +4791,24 @@ citations, closed-out with its own post-init assertion guard).
 - **Root cause:** `npm ci --ignore-scripts`, the rule that stopped husky rewriting the shared hooksPath, also skips creating `.husky/_`, and git treats a hooksPath to a missing directory as no hooks, with no warning. Fixing the install line one way reopened the other way.
 - **Lesson:** **Every path that creates a tree (worktree, heavy-slot, dispatch, swarm scripts) installs or copies the hooks itself and refuses a hookless tree. Before the first commit or push from a new tree, assert `.husky/_/pre-push` exists and `check-git-hooks` passes; a push that ran no hook is unverified, whatever it printed.**
 - **Guard:** `worktree.mjs` refuses a hookless tree (B642, #3880); heavy-slot, dispatch and bug-swarm trees ensure hooks (#3951); new trees copy hooks (#3956); `scripts/check-git-hooks.mjs`. Cf. archived L-263, L-274.
+
+### L-371 · 2026-11-06 · domain · a default and a backfill reach rows that exist and rows created; a row moved into a role gets the role's defaults from the code that moves it (SA-1050 A-5)
+
+- **Symptom:** a migration appended `BAD_DEBT` to every existing OPERATOR's deny list and set a column default for new rows, yet an admin moving a DRIVER or CUSTOMER to OPERATOR left that row at `{}`: an operator with write-offs on by default.
+- **Root cause:** a column default and a one-time backfill are keyed on a row existing or being created, not on a row changing into the audience; `updateUser` changed the role and nothing else.
+- **Lesson:** **When a default belongs to a role, apply it in the one service method that moves a row into the role, in the same update that changes the role, decided by the server and never the DTO. Write a red case for each source role and guards for a move out, a same-role save and a self edit; pin the API literal to the shared source of the default set.**
+- **Guard:** `OPERATOR_DEFAULT_DENIED_GROUPS` (`auth/permissions/operator-default-denied.ts`) pinned to the OFF set of `GROUP_INTRODUCED` in `permission-groups-contract.spec.ts`; `users-operator-entry.db.spec.ts` A5-1 to A5-7 (the two source-role rows were red on the unfixed service; two guard rows were added after a mutant survived). Cf. [[L-301]].
+
+### L-372 · 2026-11-06 · security · a rotation resets every stored copy of the secret, a derived hash included, and an output scan covers every exit that holds the secret in scope (#4232)
+
+- **Symptom:** (review notes on #4232; nothing leaked) the invite rotation cleared the code and its expiry but not `inviteTokenHash`; and the "no digest in the output" scan ran on the dry run, the no-backup refusal, the stale refusal and the committed apply, not on the compare-and-swap refusal, the one path with a planned digest beside the message.
+- **Root cause:** the rotation was written against today's columns: the hash column is empty and unread, and in this codebase a NULL expiry counts as live, so a later backfill would bring a rotated link back. The scan list was the paths the author thought of.
+- **Lesson:** **The SET of a rotation names every column that can resolve the secret (code, hash, expiry) and a row asserts each; sequence a hash backfill after any pending rotation. An output scan lists every exit that has the secret in scope, refusals first. A plan file that holds digests is mode 0600, expires in 24 h and is rewritten as spent after the commit.**
+- **Guard:** `ef87ea532f` (plan file 0600, 24 h limit, spent plan holds no digest); P-1 to P-4 in `common/portal-invite-census.db.spec.ts`. Open: B1291 (the CAS refusal scan), B1292 (the hash). Cf. [[L-188]].
+
+### L-373 · 2026-11-06 · web · a percentage padding resolves against the parent's width; size a centred box with min(max, 100% - gutter) and fixed padding, and make the source scan read every spelling (#4234)
+
+- **Symptom:** on a wide screen the home founder card grew to 1,640 px and its text sat in a narrow strip, with about 360 px of padding per side; the no-JS hero had the same shape.
+- **Root cause:** the side padding was a percentage half-gap, `(100% - 1200px)/2`, and a percentage padding resolves against the parent's width, not the box's own width.
+- **Lesson:** **A centred box on a page grid is `width: min(<grid>, 100% - <gutter>)` with a centring margin and a fixed clamp padding, never a percentage half-gap. A static scan for the bad shape normalises whitespace, covers the equivalent spellings (`calc(50% - N)`, a custom property holding the half-gap) and walks the whole stylesheet tree.**
+- **Guard:** `site-founder-card-width.static.test.ts` (card width; a scan of `css/` and `graphics/` for one spelling). Open: B1294 (the other spellings). Cf. [[L-364]].

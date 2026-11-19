@@ -675,6 +675,8 @@ export function useRunPackingList(id: string) {
 export function useOptimizeRoute() {
   const qc = useQueryClient();
   return useMutation<OptimizeResult, Error, string>({
+    // UXG B14: the caller renders the one failure toast (coded copy), so the app-wide one stays off.
+    meta: { localErrorToast: true },
     mutationFn: (id) =>
       apiClient.post<OptimizeResult>(`/route-runs/${id}/optimize`).then((r) => r.data),
     onSuccess: (_, id) => {
@@ -687,6 +689,7 @@ export function useOptimizeRoute() {
 export function useOptimizeTemplate() {
   const qc = useQueryClient();
   return useMutation<OptimizeResult, Error, string>({
+    meta: { localErrorToast: true },
     mutationFn: (id) =>
       apiClient.post<OptimizeResult>(`/routes/${id}/optimize`).then((r) => r.data),
     onSuccess: (_, id) => {
