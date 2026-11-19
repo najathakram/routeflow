@@ -43,9 +43,9 @@ const ORIGIN = BRAND.origin;
 // proves a re-run of this script reproduces the committed pages byte for byte (the design source is
 // machine-local, so that test runs the mapping on the committed pages, filled with the brand).
 const { escapeRe, tokenise } = createRequire(import.meta.url)("./lib/site-port-tokens.cjs");
-// home and landing are tokenised in later waves (T35 exemption table); until then they are
-// written with the design source's own typed name.
-const UNTOKENISED = new Set(["/", "/landing"]);
+// landing is tokenised in a later wave (T35 exemption table); until then it is written with the
+// design source's own typed name.
+const UNTOKENISED = new Set(["/landing"]);
 const SITE_PREFIX = "/site/";
 
 const copy = (rel) => {
@@ -151,7 +151,10 @@ function port(html, route, indexable) {
   const title = (h.match(/<title>([^<]*)<\/title>/) ?? [])[1];
   const desc = (h.match(/<meta name="description" content="([^"]*)">/) ?? [])[1];
   const img = `${ORIGIN}/opengraph-image`;
-  const alt = `${BRAND.name}. ${BRAND.shareLine}`;
+  // home's alt reads "Name: line" (a colon, so a dotted name never doubles its full stop); written as
+  // tokens because the token mapping has no rule for the share line on its own
+  const alt =
+    route === "/" ? "{{brand:name}}: {{brand:shareLine}}" : `${BRAND.name}. ${BRAND.shareLine}`;
   let extra =
     `<link rel="canonical" href="${ORIGIN}${route}">
 ` +
@@ -178,26 +181,36 @@ function port(html, route, indexable) {
 <meta name="twitter:image" content="${img}">
 `;
   if (route === "/") {
+    // Structured data names the official name (SA-1178). Every value is a {{brand:key}} token, so the
+    // page follows the brand file; the tokens are filled when the page is served. alternateName is the
+    // everyday name and the former name, duplicates and the official name removed, and is left out when
+    // empty (it is empty while the brand has one name).
+    const alternateName = [BRAND.name, BRAND.formerly]
+      .filter((n, i, all) => all.indexOf(n) === i && n !== BRAND.officialName)
+      .map((n) => (n === BRAND.name ? "{{brand:name}}" : "{{brand:formerly}}"));
     const graph = {
       "@context": "https://schema.org",
       "@graph": [
         {
           "@type": "Organization",
-          "@id": `${ORIGIN}/#organization`,
-          name: BRAND.name,
-          url: ORIGIN,
-          logo: `${ORIGIN}${BRAND.icon["512"]}`,
-          email: BRAND.email,
+          "@id": "{{brand:origin}}/#organization",
+          name: "{{brand:officialName}}",
+          ...(alternateName.length ? { alternateName } : {}),
+          legalName: "{{brand:legalEntity}}",
+          url: "{{brand:origin}}",
+          logo: "{{brand:origin}}{{brand:icon.512}}",
+          email: "{{brand:email}}",
         },
         {
           "@type": "SoftwareApplication",
-          "@id": `${ORIGIN}/#software`,
-          name: BRAND.name,
-          url: ORIGIN,
-          description: BRAND.shareLine,
+          "@id": "{{brand:origin}}/#software",
+          name: "{{brand:officialName}}",
+          ...(alternateName.length ? { alternateName } : {}),
+          url: "{{brand:origin}}",
+          description: "{{brand:shareLine}}",
           applicationCategory: "BusinessApplication",
           operatingSystem: "Web",
-          publisher: { "@id": `${ORIGIN}/#organization` },
+          publisher: { "@id": "{{brand:origin}}/#organization" },
         },
       ],
     };

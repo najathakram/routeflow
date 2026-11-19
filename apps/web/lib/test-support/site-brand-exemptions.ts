@@ -29,10 +29,8 @@ export interface Exemption {
 }
 
 export const EXEMPT: Exemption[] = [
-  { path: "public/site/home.html", scope: "file", liftedBy: "W2", lane: "S2" },
-  { path: "public/site/js/home-up.js", scope: "comments", liftedBy: "W2", lane: "S2" },
-  { path: "public/site/js/site.js", scope: "comments", liftedBy: "W2", lane: "S2" },
-  { path: "public/site/js/prices.js", scope: "comments", liftedBy: "W2", lane: "S2" },
+  // 62 hex in style/fill stay until W3 (the home colour pass).
+  { path: "public/site/home.html", scope: "hex", liftedBy: "W3", lane: "2.3-home" },
   { path: "public/site/graphics/rf-wheel-up.js", scope: "file", liftedBy: "W2", lane: "2.2" },
   { path: "public/site/graphics/rf-wheel-up.css", scope: "file", liftedBy: "W2", lane: "2.2" },
   { path: "public/site/css/site.css", scope: "comments", liftedBy: "W2", lane: "2.1b" },

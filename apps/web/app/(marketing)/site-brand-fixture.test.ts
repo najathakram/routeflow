@@ -4,8 +4,9 @@
 // umami-tag and the share image. Every name, src, host and mailbox must come from the fixture and
 // nothing of the real brand may be left. The share image's colours are the current brand's own and
 // stay typed until wave 1 (BrandTokens), so no palette fixture is applied to it here; T35 holds that
-// as a hex-only exemption row. home is exempt until its own wave (T35's
-// table) and are not asserted here. A name/formerly swap fails the last block.
+// as a hex-only exemption row. Every page is now tokenised, home included (its hex stays until W3):
+// the home page also draws the reversed symbol (hub template and static still) from symbolOnDark, and
+// its structured data names officialName. A name/formerly swap fails the last block.
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { render } from "@testing-library/react";
@@ -70,8 +71,8 @@ jest.mock("next/og", () => ({
 const FIXTURE = loadBrand();
 const FIXTURE_HOST = new URL(FIXTURE.origin).hostname;
 
-// The pages tokenised so far: every page T35's shared exemption table does not exempt as a file
-// (home until its own wave). Nothing is hard-coded here.
+// The pages tokenised so far: every page T35's shared exemption table does not exempt as a file.
+// Nothing is hard-coded here.
 const TOKENISED = STATIC_SITE_PAGE_NAMES.filter(
   (p) => !isFileExempt(`public/site/${p}.html`),
 ) as StaticSitePage[];
@@ -93,9 +94,9 @@ const esc = (v: string) =>
 const collected: string[] = [];
 
 describe("the pages", () => {
-  it("covers the nine tokenised pages (landing joined in wave 1b) and nothing else is asserted", () => {
-    expect(TOKENISED).toHaveLength(9);
-    expect(TOKENISED).not.toContain("home");
+  it("covers the ten tokenised pages (landing joined in wave 1b, home in wave 2) and nothing else is asserted", () => {
+    expect(TOKENISED).toHaveLength(10);
+    expect(TOKENISED).toContain("home");
     expect(TOKENISED).toContain("landing");
   });
 
@@ -107,7 +108,7 @@ describe("the pages", () => {
     expect(html).toContain(FIXTURE.name);
     // title: "Page :: Name"; landing is "Name :: Tagline" (its served title has always led with the name)
     const title = html.match(/<title>([^<]*)<\/title>/)?.[1] ?? "";
-    if (page === "landing") {
+    if (page === "landing" || page === "home") {
       expect(title.startsWith(`${esc(FIXTURE.name)}${esc(FIXTURE.titleSeparator)}`)).toBe(true);
     } else {
       expect(title.endsWith(`${esc(FIXTURE.titleSeparator)}${esc(FIXTURE.name)}`)).toBe(true);
@@ -120,10 +121,60 @@ describe("the pages", () => {
     expect(html).toContain(`src="${FIXTURE.logo.onLight}"`);
     expect(html).toContain(`mailto:${FIXTURE.email}`);
     expect(html).toContain(`© 2026 ${FIXTURE.name}`);
-    expect(html).toContain(`content="${esc(FIXTURE.name)}. ${esc(FIXTURE.shareLine)}"`);
+    // the share-image alt: "Name. Line", and on home "Name: Line" (a colon, so a dotted name never
+    // doubles its full stop)
+    const alt = page === "home" ? ": " : ". ";
+    expect(html).toContain(`content="${esc(FIXTURE.name)}${alt}${esc(FIXTURE.shareLine)}"`);
     expect(html).not.toContain(FIXTURE.shareLine);
     // formerly is a different string from name and appears nowhere while it is unused
     expect(html).not.toContain(FIXTURE.formerly);
+  });
+});
+
+describe("the home page: reversed symbol and official name", () => {
+  const home = () => readServedSitePage("home", { websiteId: undefined });
+
+  it("the hub template and the static still both draw symbolOnDark, never symbol", () => {
+    const html = home();
+    expect(FIXTURE.symbolOnDark).not.toBe(FIXTURE.symbol);
+    const tpl = html.match(/<template id="brand-symbol"><img src="([^"]*)" alt=""><\/template>/);
+    expect(tpl?.[1]).toBe(FIXTURE.symbolOnDark);
+    const still = html.match(/<image href="([^"]*)"/g) ?? [];
+    expect(still).toHaveLength(1);
+    expect(still[0]).toBe(`<image href="${FIXTURE.symbolOnDark}"`);
+    // the light-surface symbol is not drawn on the dark disc (it is used elsewhere, on light bands),
+    // and no typed mark is left
+    const hub = html.slice(
+      html.indexOf('<template id="brand-symbol">'),
+      html.indexOf('<h2 class="rfw-title">'),
+    );
+    expect(hub).toContain(FIXTURE.symbolOnDark);
+    expect(hub).not.toContain(FIXTURE.symbol);
+    expect(html).not.toContain('class="mk"');
+  });
+
+  it("the structured data names officialName and legalName; the head and title keep the everyday name", () => {
+    const html = home();
+    const raw = html.match(/<script type="application\/ld\+json">([^<]*)<\/script>/)?.[1] ?? "";
+    const graph = JSON.parse(raw)["@graph"] as Array<Record<string, unknown>>;
+    expect(graph).toHaveLength(2);
+    for (const node of graph) expect(node.name).toBe(FIXTURE.officialName);
+    expect(graph[0]).toMatchObject({ "@type": "Organization", legalName: FIXTURE.legalEntity });
+    expect(FIXTURE.officialName).not.toBe(FIXTURE.name);
+    expect(html).toContain(`<meta property="og:site_name" content="${FIXTURE.name}">`);
+    const title = html.match(/<title>([^<]*)<\/title>/)?.[1] ?? "";
+    expect(title.startsWith(esc(FIXTURE.name))).toBe(true);
+    expect(title).not.toContain(FIXTURE.officialName);
+  });
+
+  it("a rendered official name sits in a white-space:nowrap element and never contains U+2011", () => {
+    const html = home();
+    expect(html).not.toContain("\u2011");
+    const body = html
+      .slice(html.indexOf("<body"))
+      .replace(/<script[\s\S]*?<\/script>/g, "")
+      .replace(/<span style="white-space:nowrap">[^<]*<\/span>/g, "");
+    expect(body).not.toContain(FIXTURE.officialName);
   });
 });
 

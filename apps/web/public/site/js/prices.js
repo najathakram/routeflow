@@ -1,4 +1,4 @@
-/* RouteFlow prices: ONE object. Swap the numbers here; site.js writes them into every [data-plan][data-field] and [data-addon][data-field].
+/* The prices: ONE object. Swap the numbers here; site.js writes them into every [data-plan][data-field] and [data-addon][data-field].
    Source: apps/api/prisma/plan-catalog-v13.definitions.ts (newest catalog). v13 changes only Lite's flags, so
    prices and customers are the rows it inherits from v11/v12.
    Yearly price = monthly x 10 ("2 months free", billing-math.ts), computed below. Enterprise has no stored price.

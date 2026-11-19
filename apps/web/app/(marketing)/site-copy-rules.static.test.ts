@@ -1,6 +1,7 @@
-// Copy rules for the eight inner pages (wave 1b): T41 pricing wording (plan limits are about
-// customers only, one Enterprise line, no stray lines, one weight) and T37 (no sentence ends with
-// the brand name, titles stay short) with a dotted fixture name. Pages are read as served.
+// Copy rules for the eight inner pages (wave 1b) and the home page (wave 2): T41 pricing wording
+// (plan limits are about customers only, one Enterprise line, no stray lines, one weight) and T37
+// (no sentence ends with the brand name, titles stay short) with a dotted fixture name, plus the
+// SA-1080 rule (no login or seat numbers on any served page). Pages are read as served.
 import { loadBrand } from "@routeflow/types/brand";
 import { readServedSitePage } from "@/lib/read-site-page";
 import {
@@ -63,6 +64,14 @@ describe("T41: plans differ by customers only", () => {
     expect(bad).toEqual([]);
   });
 
+  it("home: no plan-limit sentence mentions logins, and it says customers only", () => {
+    const text = readable(served("home"));
+    const lines = text.split(/(?<=[.!?])\s+|\n/);
+    expect(lines.filter((l) => /\bdiffer\b/i.test(l) && /logins?\b/i.test(l))).toEqual([]);
+    expect(text).toContain("The plans differ by how many customers they include.");
+    expect(text).not.toMatch(/customers and logins/);
+  });
+
   it("pricing and product say the plans differ by customers only", () => {
     expect(readable(served("pricing"))).toContain(
       "The plans differ by how many customers they include.",
@@ -103,6 +112,60 @@ describe("T41: plans differ by customers only", () => {
       const html = served(p);
       expect(html).toContain("free for 14 days.</h2><p>No card needed.</p>");
       expect(html).not.toContain("free.</h2><p>14 days free. No card needed.</p>");
+    }
+  });
+});
+
+// SA-1080 A-1 (js/prices.js:5): plans differ by price and customers only; seats and logins are not
+// counted, so no served page puts a number next to the words login or seat.
+const LOGIN_NUMBER =
+  /(?:\d[\d,]*|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|unlimited)\b)\s+(?:[a-z-]+\s+)?(?:logins?|seats?)\b|\b(?:logins?|seats?)\s*[:=(]?\s*\d/gi;
+const loginNumbers = (text: string): string[] => text.match(LOGIN_NUMBER) ?? [];
+
+describe("SA-1080: no number next to login or seat", () => {
+  it("the rule flags a fixture sentence (it is not vacuous)", () => {
+    expect(loginNumbers("Starter includes up to 5 logins.")).toHaveLength(1);
+    expect(loginNumbers("Each plan has 3 staff seats and 2 driver logins.")).toHaveLength(2);
+    expect(loginNumbers("Seats: 10")).toHaveLength(1);
+    expect(loginNumbers("Add as many logins as you need.")).toEqual([]);
+  });
+
+  it.each(STATIC_SITE_PAGE_NAMES)("%s: no login or seat count", (p) => {
+    expect(loginNumbers(readable(served(p)))).toEqual([]);
+  });
+});
+
+describe("T37 home: no sentence ends with the name (dotted fixture name)", () => {
+  const home = () => readServedSitePage("home", { brand: DOTTED, websiteId: undefined });
+
+  it("the home page carries the fixture name and no sentence ends with it", () => {
+    const html = home();
+    expect(html).toContain("FIXTURE.TEST");
+    const text = readable(html);
+    expect(text).not.toMatch(/FIXTURE\.TEST\s*[.!?]/);
+    // the three lines that used to end with the name, as decided (Set 1)
+    expect(text).toContain("What is FIXTURE.TEST for?");
+    expect(text).toContain("What FIXTURE.TEST helps you do.");
+    expect(text).toContain("You do every step in FIXTURE.TEST, start to finish.");
+    expect(text).not.toContain("What is FIXTURE.TEST?");
+    expect(text).not.toContain("Every step is in FIXTURE.TEST.");
+    expect(text).not.toContain("What you can do with FIXTURE.TEST.");
+  });
+
+  it("the title is at most 60 characters with the real name and the fixture", () => {
+    expect(titleOf(served("home")).length).toBeLessThanOrEqual(60);
+    expect(titleOf(home()).length).toBeLessThanOrEqual(60);
+  });
+
+  it("pricing asks the same question as home, with the same answer", () => {
+    const q = "What is FIXTURE.TEST for?";
+    const answer =
+      "Software for businesses that sell to stores. Take orders, send invoices, and get paid.";
+    for (const p of ["home", "pricing"] as StaticSitePage[]) {
+      const html = readServedSitePage(p, { brand: DOTTED, websiteId: undefined });
+      expect(html).toContain("<summary>" + q);
+      expect(html).toContain(answer);
+      expect(html).not.toContain("What does FIXTURE.TEST do?");
     }
   });
 });

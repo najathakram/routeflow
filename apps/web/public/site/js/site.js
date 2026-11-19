@@ -1,4 +1,4 @@
-/* RouteFlow site behaviour, design preview 2026-11-01. Shared by every page.
+/* The site behaviour, design preview 2026-11-01. Shared by every page.
    Menu, prices, and GSAP motion (ported from the Grok baseline's M1/M2/M4 patterns).
    Rules: transform + opacity only; one matchMedia; no-JS shows the final state (the motion always runs, owner ruling 2026-11-03); pins only >= 900px; no snap. */
 (function () {
