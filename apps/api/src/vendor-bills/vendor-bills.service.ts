@@ -448,7 +448,7 @@ export class VendorBillsService {
    * number one after the other and the second sees the first one's committed bill. Read outside, both read
    * the same last number and the second insert failed on @@unique([tenantId, billNumber]).
    */
-  private async nextBillNumber(tx: any) {
+  private async nextBillNumber(tx: Prisma.TransactionClient) {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) throw new Error("vendor bill number: no tenant in context");
     await advisoryXactLock(tx, "vendor-bill-number", tenantId);

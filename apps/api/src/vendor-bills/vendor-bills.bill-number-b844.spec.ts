@@ -1,6 +1,4 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
-import { Prisma } from "@prisma/client";
 import { VendorBillsService } from "./vendor-bills.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { PlatformConfigService } from "../platform-admin/platform-config.service";
@@ -13,12 +11,10 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
 
 /**
- * Units/PO step 7 — a vendor bill linked to a purchase order:
- *  - create() links an existing PO (validated, one bill per PO, hard-gated against
- *    the PO) or raises a DRAFT PO from its own lines in the same transaction;
- *  - update() keeps a linked draft bill within the PO;
- *  - guard (e): a PO-linked bill NEVER touches stock on receive / revert / void —
- *    the PO is the stock mover, so a scanned delivery is never counted twice.
+ * B844: the next BILL-YYYY-NNNN is read inside the creating transaction, under the per-tenant
+ * `vendor-bill-number` advisory lock, so two concurrent creates take numbers one after the other. Read outside the
+ * tx, both read the same last number and the second insert failed on @@unique([tenantId, billNumber]).
+ * (The concurrent proof against real Postgres is vendor-bills.bill-number-b844.db.spec.ts.)
  */
 
 jest.mock("@anthropic-ai/sdk", () => ({
@@ -34,19 +30,7 @@ jest.mock("sharp", () => ({
   })),
 }));
 
-const D = (n: number | string) => new Prisma.Decimal(n);
-
-/** A PO for 24 pieces of prod-1 @ $1.25/piece. */
-const po = (o: Record<string, unknown> = {}) => ({
-  id: "po-1",
-  poNumber: "PO-2026-0001",
-  supplierId: "sup-1",
-  status: "SENT",
-  items: [{ id: "poi-1", productId: "prod-1", qtyOrdered: D(24), unitCost: D(1.25) }],
-  ...o,
-});
-
-/** One case of 24 @ $30 == 24 pieces @ $1.25 — within the PO above. */
+/** One bill line. */
 const billLine = (o: Record<string, unknown> = {}) => ({
   productId: "prod-1",
   description: "Widget 24pk",
@@ -54,32 +38,6 @@ const billLine = (o: Record<string, unknown> = {}) => ({
   unitCost: 30,
   packSize: 24,
   sku: "W-24",
-  ...o,
-});
-
-const linkedItem = (o: Record<string, unknown> = {}) => ({
-  id: "item-1",
-  productId: "prod-1",
-  description: "Widget 24pk",
-  qty: D(1),
-  unitCost: D(30),
-  packSize: 24,
-  qtyReceived: null as Prisma.Decimal | null,
-  product: { id: "prod-1", name: "Widget 24pk", currentStock: D(0), averageCost: null },
-  ...o,
-});
-
-const bill = (o: Record<string, unknown> = {}) => ({
-  id: "bill-1",
-  billNumber: "BILL-2026-0042",
-  supplierId: "sup-1",
-  status: "DRAFT",
-  billDate: new Date("2026-06-01"),
-  receivedDate: null as Date | null,
-  purchaseOrderId: null as string | null,
-  totalPaid: D(0),
-  items: [linkedItem()],
-  supplier: { id: "sup-1", name: "Acme Supply" },
   ...o,
 });
 
