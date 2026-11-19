@@ -114,7 +114,7 @@ describe("InvoiceLayoutCard", () => {
     renderWithProviders(<Harness />);
     expect(
       screen.getByText(
-        "Choose what prints on your invoices. Applies to the invoice PDF, the counter's Print invoice and the invoice email.",
+        "Choose what prints on your invoices. The counter's Print invoice prints the PDF.",
       ),
     ).toBeInTheDocument();
     expect(
@@ -147,6 +147,16 @@ describe("InvoiceLayoutCard", () => {
     await waitFor(() => expect(within(preview()).queryByText(line)).toBeNull());
     expect(within(preview()).getByText("Total")).toBeInTheDocument();
     expect(mockPatch).toHaveBeenCalledWith("/settings/invoice", { [key]: true });
+  });
+
+  // #3686 read 1 NIT: the checkbox reads the in-flight value like the preview, not the stored one.
+  it("T10d: while the save runs the checkbox already shows the new state, with the preview", async () => {
+    mockPatch.mockImplementation(() => new Promise(() => {}));
+    renderWithProviders(<Harness />);
+    const box = screen.getByRole("checkbox", { name: "Show balance due" });
+    await userEvent.click(box);
+    await waitFor(() => expect(within(preview()).queryByText("Balance Due")).toBeNull());
+    expect(box).not.toBeChecked();
   });
 
   it("T10d: a rejected PATCH on a new row returns its line to the preview", async () => {

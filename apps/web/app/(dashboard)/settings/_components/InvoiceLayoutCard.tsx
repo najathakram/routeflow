@@ -31,31 +31,31 @@ const ROWS: {
   {
     key: "hideOriginalPrice",
     label: "Show original price on discounted lines",
-    help: "When off, invoices show only the final unit price — no struck-through original price or badge.",
+    help: "When off, invoices show only the final unit price — no struck-through original price or badge. Applies to the invoice page, the PDF, the email, reminders and receipts.",
     doneDescription: "Original price display updated successfully.",
   },
   {
     key: "hideBarcodes",
     label: "Show barcodes on invoices",
-    help: "Prints each product's barcode and code on its line. Turn off to print invoices without them.",
+    help: "Prints each product's barcode and code on its line in the PDF. Turn off to print invoices without them.",
     doneDescription: "Barcode display updated.",
   },
   {
     key: "hidePerPiece",
     label: "Show price per piece on invoices",
-    help: "Adds a Per piece column beside pack lines, on the invoice page, the PDF and the email. Turn off to print invoices without it.",
+    help: "Adds a Per piece column beside pack lines, on the invoice page, the PDF, the email and reminders. Turn off to print invoices without it.",
     doneDescription: "Per piece column updated.",
   },
   {
     key: "hideAmountPaid",
     label: "Show amount paid",
-    help: "Prints the Amount Paid line and the list of payments. Turn off to print invoices without them.",
+    help: "Prints the Amount Paid line, the list of payments, the Paid or Partial stamp and the paid date on the PDF and the email. Reminders always show the amount paid.",
     doneDescription: "Amount paid display updated.",
   },
   {
     key: "hideBalanceDue",
     label: "Show balance due",
-    help: "Prints the Balance Due line. Turn off to print invoices without it.",
+    help: "Prints the Balance Due line on the PDF and the email. Reminders always show it.",
     doneDescription: "Balance due display updated.",
   },
 ];
@@ -90,8 +90,7 @@ export function InvoiceLayoutCard({ settings, pending, onToggle, disabled }: Pro
     <Card title="Invoice layout">
       <div className="space-y-4">
         <p className="text-sm text-navy/70">
-          Choose what prints on your invoices. Applies to the invoice PDF, the counter&apos;s Print
-          invoice and the invoice email.
+          Choose what prints on your invoices. The counter&apos;s Print invoice prints the PDF.
         </p>
         <div className="grid gap-5 md:grid-cols-2">
           <div className="space-y-4">
@@ -108,7 +107,7 @@ export function InvoiceLayoutCard({ settings, pending, onToggle, disabled }: Pro
                   <input
                     type="checkbox"
                     aria-label={row.label}
-                    checked={!settings?.[row.key]}
+                    checked={!shown?.[row.key]}
                     onChange={(e) => handleChange(row.key, row.doneDescription, e.target.checked)}
                     disabled={disabled}
                     className="h-4 w-4 rounded border-surface-border"
