@@ -337,6 +337,13 @@
 
 ## web
 
+### L-394 · 2026-11-19 · web · a scroll snap with inertia on reads its speed from the scrub's catch-up, not the hand, and throws a stopped scroll to a far beat; keep inertia off and drive the snap with real wheel input (#4367)
+
+- **Symptom:** on the home wheel a flick that stopped inside the come-apart was thrown to the far end of the wheel about 1.5 s later (T9: 600 to 1118, then 1698).
+- **Root cause:** with `inertia` on, ScrollTrigger's snap takes its velocity from the scrubbed timeline catching up to the page, which keeps moving after the hand has stopped, so it snapped to a beat in the direction of that stale speed.
+- **Lesson:** **A snap on a scrubbed timeline sets `inertia: false` and lets `snapTo` settle on the nearest beat; a snap is proved with real wheel input and the snap switched on, because a test that sets `scrollTo` never feels the speed. A script writes the scroll position only after the person has stopped (a scroll-end wait), or it cancels their scroll.**
+- **Guard:** `apps/web/e2e/84-site-proof-wheel.spec.ts` T9 (real wheel input, snap on; seen red at the middle commit with inertia on); the comment beside `snap` in `public/site/graphics/rf-wheel-up.js`. Cf. [[L-381]], [[L-392]] (the same PR repaired another raw-control-byte pin).
+
 ### L-382 · 2026-11-13 · web · a reveal reached at rest is recorded as played at once; one played-list serves every reveal path (B1324)
 
 - **Symptom:** on the marketing pages a section already on screen at load, an anchor arrival, or the return from print blanked its text and faded it back in, or replayed a timeline on the next scroll.
@@ -380,13 +387,6 @@
 - **Root cause:** the Verify job's `timeout-minutes: 30` was set when the suite was smaller; each landing grew it, the earlier trains sat a few minutes under the limit, and the next, larger train crossed it. `cancelled` looks like a manual or concurrency cancel; only the check-run annotation ("exceeded the maximum execution time") says it was the limit. For the local chain, `&&` stops at the first non-zero exit, so a load flake in the middle silently skips the tail.
 - **Lesson:** **Size a hosted job's `timeout-minutes` from the measured duration of its slowest stage chain plus about 50% headroom, and re-measure when a train grows the suite. Read a `cancelled` job by its annotations before calling it red: a timeout is a one-line CI config fix, not a code defect. Read a failed local verify by which step stopped the chain, and run every step after it by hand before accepting the verify.**
 - **Guard:** Verify timeout raised 30 to 45 in `ci.yml` (train Y); no automatic check yet. Cf. [[L-357]], [[L-363]].
-
-### L-361 · 2026-10-31 · deploy · a window script reads the watchdog deadline from the log line of the pid it started, and reads that log with `grep -a`
-
-- **Symptom:** a window script took its "time left" from the last deadline line in the watchdog log. The log is appended by every run, so the tail could hold the previous run's deadline, already in the past; acting on it flips the repo private while a deploy is still building. A plain `grep` on the same log also printed "Binary file matches" and no deadline at all.
-- **Root cause:** the log is shared by every watchdog run and holds bytes that grep treats as binary; "the newest line" was assumed to mean "my watchdog's line".
-- **Lesson:** **Start the watchdog, keep its pid, and read the deadline only from the log line that names that pid; read the log with `grep -a`; if no line for the pid appears, stop and ask instead of falling back to the tail.**
-- **Guard:** none automatic; the window script is owed this change. Cf. [[L-357]].
 
 ### L-360 · 2026-10-30 · deploy · a landing is deployed only when every service status on the merge commit is SUCCESS; the repo has more than api and web
 

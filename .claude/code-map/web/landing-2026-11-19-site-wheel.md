@@ -1,0 +1,16 @@
+# Web landing, home wheel fit (#4367, master `f5dbd46a83`)
+
+Paths under `apps/web/` unless they start with another root. Marketing-site files only; no api, no migration, no env var. Facts read in the diff of `f5dbd46a83`.
+
+- **#4367 the home wheel fits its box, names sit beside it, the snap stops throwing scroll (W-1237; fixes B1321 to B1323 and the wheel half of B1324).**
+  - `public/site/graphics/rf-wheel-up.js` (73,279 bytes, cap 80,000): one pose and one lift weight for every screen (`OPEN` times `S.lift`, so every camera z derives from them); one fit taken from one box, side by side or stacked (`EDGE` is the least air to the stage edge); no part names painted on the canvas; a legend (`.rfw-legend`, same icons) in the words column; a heading up at every point of the scroll; the trial button built once from the `GO` constant and placed in the end state (`rfw-go-on` once its words are up, `GO_AT`; `rfw-go-in` while on screen); `refreshCalm` and a "who is moving the page" note make the snap and page refreshes wait until the person has stopped scrolling; the snap keeps `inertia: false` (L-394); `api.refresh` is `refreshCalm`; `_rfw.cam()` is a read-only camera snapshot for tests.
+  - `public/site/graphics/rf-wheel-up.css`: legend grid and its short-height and phone variants, the end-state button rules (`.rfw .sy-go`, live versus still).
+  - `public/site/js/home-up.js`: the old after-wheel block (`initGo`) is gone; `refreshSoon` calls `RFWheel.refresh` when it exists; `ST.config` gains `autoRefreshEvents: "visibilitychange,resize"`.
+  - `public/site/home.html`, `css/home.css`, `css/home-up.css`, `css/mobile.css`: the standalone "Try it" block and its rules removed (the heading id `sy-h` becomes `sy-ph`); on a phone the header swaps its trial pill for Pricing while the wheel's button shows; the still markup is regenerated.
+  - Print shows the still (the wheel print clause in spec 85 is on).
+- **Tests and proof.**
+  - `e2e/84-site-proof-wheel.spec.ts` (new, 38 tests: fit, one pose, names off the canvas, heading always up, end state, resize, snap T9). It is the local-lane project `site-proof-wheel` in `playwright.config.ts` (the `isLocalOnlyLane` guard); CI and post-deploy do not run it (about 16 min on one worker). `site-proof` matches spec 85 only.
+  - `e2e/helpers/site-proof.ts` `settle()` now loops until the timeline progress is steady and throws if it never is (the old one never waited: `waitForFunction` does not await a returned promise); `e2e/helpers/site-parity.changes.json` records the `sy-h` to `sy-ph` change.
+  - `app/(marketing)/site-pin-ledger.json` (one row per pin that named deleted wheel code, each with the test that replaces it) and `app/(marketing)/site-pins.static.test.ts` (the ledger counts, and the trial button built once from one constant, one `sy-go` in `home.html`). Four older static tests lose their dead pins; one reduced-motion pin that held a raw control byte is literal now (L-392, L-377).
+  - `e2e/36-marketing-site.spec.ts` (name-pill case scans the wheel for the label; T20 covers B1328) and `e2e/85-site-proof-pages.spec.ts` (print clause on).
+- **Open (see the PR body):** one follow-up for three review notes (two more T5 sizes, stop a tile glide on `pointerdown`, add the two site-proof projects to `local:e2e`); the post-deploy E2E job reaching its 45-minute timeout is W-1234.
