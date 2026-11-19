@@ -105,7 +105,7 @@ describeDb("B444 bookkeeping pdf download is tenant-scoped (real Postgres)", () 
     expect(r.url).toContain(`invoice-pdfs/${INV_A}.pdf`);
   });
 
-  it("another tenant's invoice id is a 404", async () => {
+  it("REG-B188 (db): another tenant's invoice id is a 404", async () => {
     await expect(tenantCtx.run(T_A, () => service.getPdfUrl(INV_B))).rejects.toBeInstanceOf(
       NotFoundException,
     );
