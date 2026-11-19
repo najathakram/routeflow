@@ -42,6 +42,8 @@ export interface UseSortableDataResult<T> {
   sortKey: string | null;
   sortDir: SortDirection;
   requestSort: (key: string) => void;
+  /** Set the column and direction directly (the phone sort control: no unsorted step). */
+  setSort: (key: string, dir: SortDirection) => void;
   /** Reset sort to the default (or unsorted if no default was given). */
   reset: () => void;
 }
@@ -94,6 +96,11 @@ export function useSortableData<T>(
     [sortKey, sortDir],
   );
 
+  const setSort = React.useCallback((key: string, dir: SortDirection) => {
+    setSortKey(key);
+    setSortDir(dir);
+  }, []);
+
   const reset = React.useCallback(() => {
     setSortKey(defaultKey != null ? String(defaultKey) : null);
     setSortDir(defaultDir);
@@ -128,6 +135,7 @@ export function useSortableData<T>(
     sortKey,
     sortDir,
     requestSort: requestSortFull,
+    setSort,
     reset,
   };
 }

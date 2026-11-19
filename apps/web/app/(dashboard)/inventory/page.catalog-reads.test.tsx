@@ -7,7 +7,7 @@
  *   which lives on the Stock tab, so it is enabled only while that tab is showing.
  */
 import * as React from "react";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import InventoryPage from "./page";
 
 let tab = "stock";
@@ -112,7 +112,12 @@ describe("InventoryPage catalog reads", () => {
 
   it("Quick Restock offers the active products from the stock overview", () => {
     render(<InventoryPage />);
-    fireEvent.click(screen.getByRole("button", { name: /quick restock/i }));
+    // The page now also has a phone-only Quick restock in its header; this pins the toolbar one.
+    fireEvent.click(
+      within(screen.getByTestId("stock-toolbar-actions")).getByRole("button", {
+        name: /quick restock/i,
+      }),
+    );
     const list = screen.getByTestId("restock-products");
     expect(list).toHaveTextContent("Widget");
     expect(list).toHaveTextContent("Boxed Gadget");
@@ -124,8 +129,8 @@ describe("InventoryPage catalog reads", () => {
     fireEvent.click(screen.getByRole("button", { name: /^adjust stock$/i }));
     const input = screen.getByPlaceholderText(/type name or sku/i);
     fireEvent.change(input, { target: { value: "g" } });
-    expect(screen.getByRole("button", { name: /boxed gadget/i })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /retired gizmo/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^boxed gadget/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^retired gizmo/i })).not.toBeInTheDocument();
   });
 
   it("Adjust Stock needs a reason and sends it (SA-828)", () => {
@@ -133,7 +138,7 @@ describe("InventoryPage catalog reads", () => {
     render(<InventoryPage />);
     fireEvent.click(screen.getByRole("button", { name: /^adjust stock$/i }));
     fireEvent.change(screen.getByPlaceholderText(/type name or sku/i), { target: { value: "g" } });
-    fireEvent.click(screen.getByRole("button", { name: /boxed gadget/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^boxed gadget/i }));
     fireEvent.change(screen.getByRole("spinbutton"), { target: { value: "-2" } });
     const save = screen.getByRole("button", { name: /save adjustment/i });
     expect(save).toBeDisabled();
