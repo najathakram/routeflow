@@ -900,6 +900,10 @@ export const API_ERROR_CODES = {
   EMAIL_CHANGE_ACCOUNT_INACTIVE: "EMAIL_CHANGE_ACCOUNT_INACTIVE",
   /** 400 from POST /auth/verify-email: the sign-up link is validly signed but past its 24h expiry. Get a new one from POST /public/tenants/resend-verification (B2). */
   VERIFICATION_LINK_EXPIRED: "VERIFICATION_LINK_EXPIRED",
+  /** 400 from POST /users/operator: a driver account is created from the Drivers page (it needs a driver profile), never from Add User. Nothing was written (B862, SA-1171 K2). */
+  DRIVER_VIA_DRIVERS_PAGE: "DRIVER_VIA_DRIVERS_PAGE",
+  /** 409 from PATCH /users/:id: the person is a driver with an open run, so their role cannot move off Driver yet. Nothing was written (B862, SA-1171 K4). */
+  DRIVER_HAS_OPEN_RUN: "DRIVER_HAS_OPEN_RUN",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

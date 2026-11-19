@@ -1,6 +1,8 @@
 "use client";
 
 import * as React from "react";
+import { AddDriverModal } from "../drivers/_components/AddDriverModal";
+import { useCreateDriver } from "@/lib/api/drivers";
 import { useForm, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { API_ERROR_CODES } from "@routeflow/types";
@@ -578,10 +580,13 @@ function AddUserModal({
   isOpen,
   onClose,
   onCreated,
+  onPickDriver,
 }: {
   isOpen: boolean;
   onClose: () => void;
   onCreated: (tempPassword: string) => void;
+  /** B862 / SA-1171 K2: a driver needs a driver profile, so picking Driver continues in the Drivers add form. */
+  onPickDriver: (prefill: { contactName: string; email: string; username: string }) => void;
 }) {
   const createOperator = useCreateOperator();
   // Fleet-off (no routes / delivery addon): there are no drivers to add, so no DRIVER role option.
@@ -598,12 +603,25 @@ function AddUserModal({
     formState: { errors, isSubmitting, touchedFields },
   } = useForm<AddUserFormValues>({
     resolver: zodResolver(addUserSchema),
-    defaultValues: { role: "DRIVER" },
+    defaultValues: { role: "OPERATOR" },
   });
 
   React.useEffect(() => {
     if (!fleet) setValue("role", "OPERATOR");
   }, [fleet, setValue]);
+
+  // Picking Driver carries what was typed into the Drivers add form (the one place a driver is created).
+  const pickedRole = watch("role");
+  const nameTyped = watch("name") ?? "";
+  const emailTyped = watch("email") ?? "";
+  const usernameTyped = watch("username") ?? "";
+  React.useEffect(() => {
+    if (pickedRole !== "DRIVER") return;
+    onPickDriver({ contactName: nameTyped, email: emailTyped, username: usernameTyped });
+    reset();
+    onClose();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires once per pick, with the values at that moment
+  }, [pickedRole]);
 
   const nameValue = watch("name") ?? "";
   React.useEffect(() => {
@@ -950,6 +968,11 @@ function UserManagementTab() {
   const isAdmin = isAccountAdmin(viewer);
   const changeStatus = useChangeUserStatus();
   const [isAddOpen, setIsAddOpen] = React.useState(false);
+  const [isAddDriverOpen, setIsAddDriverOpen] = React.useState(false);
+  const [driverPrefill, setDriverPrefill] = React.useState<
+    { contactName: string; email: string; username: string } | undefined
+  >(undefined);
+  const createDriver = useCreateDriver();
   const [editingUser, setEditingUser] = React.useState<AppUser | null>(null);
   const { toast } = useToast();
 
@@ -1075,6 +1098,16 @@ function UserManagementTab() {
         isOpen={isAddOpen}
         onClose={() => setIsAddOpen(false)}
         onCreated={handleCreated}
+        onPickDriver={(prefill) => {
+          setDriverPrefill(prefill);
+          setIsAddDriverOpen(true);
+        }}
+      />
+      <AddDriverModal
+        isOpen={isAddDriverOpen}
+        onClose={() => setIsAddDriverOpen(false)}
+        initial={driverPrefill}
+        onCreateDriver={async (data) => (await createDriver.mutateAsync(data)).tempPassword}
       />
 
       <EditUserModal

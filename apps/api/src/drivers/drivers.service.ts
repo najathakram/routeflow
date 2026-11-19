@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -18,7 +19,80 @@ import { UpdateDriverDto } from "./dto/update-driver.dto";
 import { ChangeDriverStatusDto } from "./dto/change-driver-status.dto";
 import { PostLocationDto } from "./dto/post-location.dto";
 import { geocodeAddress } from "../common/geocode.util";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
+
+/** The Driver columns a caller may set when it writes the row (the Drivers add flow sends all of them). */
+export interface DriverRowProfile {
+  contactName?: string;
+  phone?: string;
+  vehicleMake?: string;
+  vehicleModel?: string;
+  vehicleColour?: string;
+  vehiclePlate?: string;
+}
+
+/**
+ * B862 / SA-1171 K1: THE one writer of a Driver row. A user who drives has exactly one row, keyed on `userId`
+ * (unique), ACTIVE. Called inside the caller's own tenantTransaction, so the user write and the row land together.
+ * An existing row (a rehire, a double toggle) is reactivated, never duplicated, and its profile is left as it was.
+ * Callers: DriversService.create, UsersService.toggleDriverPermit (enable) and UsersService.updateUser (-> DRIVER).
+ * A spec pins that no other file calls driver.create / driver.upsert.
+ */
+export async function ensureDriverRow(
+  tx: {
+    driver: { upsert: (args: any) => Promise<any> };
+    customer: { findFirst: (args: any) => Promise<any> };
+  },
+  user: { id: string; username: string; tenantId?: string | null },
+  profile: DriverRowProfile = {},
+) {
+  // A buyer's login (a Customer row points at it) never drives: a Driver row would block that customer's delete or merge on
+  // Driver_userId_fkey. Judged on the link, not the role, so CUSTOMER -> OPERATOR -> DRIVER and the driver permit cannot get round it.
+  // It throws inside the caller's transaction, so the user write rolls back with it.
+  const buyer = await tx.customer.findFirst({ where: { userId: user.id }, select: { id: true } });
+  if (buyer) throw new BadRequestException("A customer login cannot be made a driver.");
+  return tx.driver.upsert({
+    // the unique userId plus the tenant (K-10: a tx upsert is keyed on the tenant id; a user belongs to one tenant)
+    where: { userId: user.id, tenantId: user.tenantId ?? null },
+    create: {
+      userId: user.id,
+      contactName: profile.contactName ?? user.username,
+      phone: profile.phone ?? "",
+      vehicleMake: profile.vehicleMake,
+      vehicleModel: profile.vehicleModel,
+      vehicleColour: profile.vehicleColour,
+      vehiclePlate: profile.vehiclePlate,
+      status: "ACTIVE",
+    },
+    update: { status: "ACTIVE" },
+    include: { user: { select: { id: true, username: true, email: true, status: true } } },
+  });
+}
+
+/**
+ * B862 / SA-1171 K4: a user stops driving. A driver with an open run is refused (no silent unassign: the Drivers
+ * page moves the run first); otherwise the row goes INACTIVE so the picker stops listing someone who no longer drives.
+ */
+export async function retireDriverRow(
+  tx: {
+    routeRun: { findFirst: (args: any) => Promise<any> };
+    driver: { updateMany: (args: any) => Promise<any> };
+  },
+  userId: string,
+) {
+  const open = await tx.routeRun.findFirst({
+    where: { driver: { userId }, status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
+    select: { id: true },
+  });
+  if (open) {
+    throw new ConflictException({
+      code: API_ERROR_CODES.DRIVER_HAS_OPEN_RUN,
+      message: "This driver has an open run. Move the run on the Drivers page first.",
+    });
+  }
+  await tx.driver.updateMany({ where: { userId }, data: { status: "INACTIVE" } });
+}
 
 @Injectable()
 export class DriversService {
@@ -171,17 +245,13 @@ export class DriversService {
         },
       });
 
-      const driver = await tx.driver.create({
-        data: {
-          userId: user.id,
-          contactName: dto.contactName,
-          phone: dto.phone,
-          vehicleMake: dto.vehicleMake,
-          vehicleModel: dto.vehicleModel,
-          vehicleColour: dto.vehicleColour,
-          vehiclePlate: dto.vehiclePlate,
-        },
-        include: { user: { select: { id: true, username: true, email: true, status: true } } },
+      const driver = await ensureDriverRow(tx, user, {
+        contactName: dto.contactName,
+        phone: dto.phone,
+        vehicleMake: dto.vehicleMake,
+        vehicleModel: dto.vehicleModel,
+        vehicleColour: dto.vehicleColour,
+        vehiclePlate: dto.vehiclePlate,
       });
 
       return { driver, tempPassword };
