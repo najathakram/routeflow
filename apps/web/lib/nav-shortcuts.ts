@@ -1,5 +1,5 @@
 /**
- * The dashboard shell's keyboard navigation: "g" then a letter jumps to a page ("g i" = Invoices), "?" toggles the help.
+ * The dashboard shell's keyboard navigation: "g" then a letter jumps to a page ("g i" = Invoices; the letters come from the menu, see nav-index), "?" toggles the help.
  *
  * Typing is never hijacked (an editable target or focus in a text field resets the sequence). Every jump goes through the
  * counter's shared leave guard: with a cart holding lines it opens the same "Discard this sale?" dialog as every other way
@@ -7,6 +7,12 @@
  * is refused with the notice, and off the counter it just navigates.
  */
 import { guardCounterLeave } from "./counter-cart-signal";
+import { SHORTCUT_KEYS } from "@/app/(dashboard)/_components/nav-index";
+
+/** Every key of the map, for a caller that does not pass the menu's own (a bare handler in a test). */
+const ALL_TARGETS: Readonly<Record<string, string>> = Object.fromEntries(
+  Object.entries(SHORTCUT_KEYS).map(([href, letter]) => [letter, href]),
+);
 
 /** An element the user types text into (input, textarea, select, contenteditable). */
 export function isEditableElement(el: EventTarget | Element | null | undefined): boolean {
@@ -24,10 +30,13 @@ const SEQUENCE_MS = 800;
 export interface NavShortcutDeps {
   /** The RAW router push: the handler asks `guardCounterLeave` itself, so a guarded push here would ask twice. */
   push: (href: string) => void;
-  /** "g r" / "g d" only exist for a tenant with routes */
-  routesAccess: boolean;
-  /** "g t" only exists for a tenant with counter sales */
-  counterEnabled: boolean;
+  /** letter -> page for "g" + letter: the shortcuts of the menu this person has (navShortcutTargets), so a key never
+   *  opens a page the menu does not hold. */
+  targets?: Readonly<Record<string, string>>;
+  /** Ignored: the keys come from the menu now. Kept optional only so older callers still type-check. */
+  routesAccess?: boolean;
+  /** Ignored, see routesAccess. */
+  counterEnabled?: boolean;
   toggleHelp: () => void;
   now?: () => number;
 }
@@ -44,28 +53,8 @@ export function createNavShortcutHandler(deps: NavShortcutDeps): (e: KeyboardEve
   };
 
   const go = (seq: string) => {
-    switch (seq) {
-      case "go":
-        return nav("/orders");
-      case "gr":
-        return deps.routesAccess ? nav("/routes") : undefined;
-      case "gd":
-        return deps.routesAccess ? nav("/drivers") : undefined;
-      case "gc":
-        return nav("/customers");
-      case "gi":
-        return nav("/invoices");
-      case "gf":
-        return nav("/finance/dashboard");
-      case "gs":
-        return nav("/settings");
-      case "gt":
-        return deps.counterEnabled ? nav("/orders/counter-sale") : undefined;
-      case "gh":
-        return nav("/dashboard");
-      default:
-        return undefined;
-    }
+    const href = (deps.targets ?? ALL_TARGETS)[seq.slice(1)];
+    return href ? nav(href) : undefined;
   };
 
   return (e: KeyboardEvent) => {

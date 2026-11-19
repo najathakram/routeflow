@@ -72,7 +72,7 @@ import { useTenantFeatures } from "@/lib/tenant-features";
 import { SkipToContentLink } from "@/components/SkipToContentLink";
 import { useNoShellScroll } from "@/lib/use-no-shell-scroll";
 import { RouteGuard } from "./_components/gates/RouteGuard";
-import { activeLeafHref } from "./_components/nav-active";
+import { activeNavLeaf, navShortcuts, navShortcutTargets } from "./_components/nav-index";
 import { buildOperatorNav } from "./_components/build-operator-nav";
 import { useOpenNavGroups, type NavGroupMode } from "./_components/use-open-nav-groups";
 
@@ -168,41 +168,25 @@ function NavLink({
 
 // ─── Nav group section ────────────────────────────────────────────────────────
 
-/**
- * When a group has sibling children whose hrefs prefix one another (e.g.
- * "/deliveries" and "/deliveries/new"), a plain `pathname.startsWith(href)`
- * check lights up every ancestor, not just the actual current page. Return
- * the single longest-matching child href (or null) so exactly one leaf highlights.
- */
-function longestMatchingChildHref(children: NavLeaf[], pathname: string): string | null {
-  let best: string | null = null;
-  for (const child of children) {
-    const matches = pathname === child.href || pathname.startsWith(child.href + "/");
-    if (matches && (best === null || child.href.length > best.length)) {
-      best = child.href;
-    }
-  }
-  return best;
-}
-
 function NavGroupSection({
   group,
   collapsed,
-  pathname,
+  activeHref,
   open,
   onToggle,
   onNavigate,
 }: {
   group: NavGroup;
   collapsed: boolean;
-  pathname: string;
+  /** The href of the one active leaf of the whole menu (activeNavLeaf), or null. */
+  activeHref: string | null;
   /** Whether the parent accordion currently has this group expanded. */
   open: boolean;
   /** Ask the parent to toggle this group (single-open accordion). */
   onToggle: (label: string) => void;
   onNavigate?: () => void;
 }) {
-  const activeChildHref = longestMatchingChildHref(group.children, pathname);
+  const activeChildHref = group.children.some((c) => c.href === activeHref) ? activeHref : null;
   const isAnyChildActive = activeChildHref !== null;
   // The group holding the active route is always shown expanded so the current
   // page is never hidden inside a collapsed group.
@@ -294,12 +278,9 @@ function SidebarNav({
     mode,
   });
 
-  // Exactly ONE top-level leaf is active: the longest segment-boundary prefix (B918: a bare
+  // Exactly ONE leaf of the whole menu is active: the longest segment-boundary match (B918: a bare
   // startsWith lit both "Today's route" /routes/my-runs and "My Routes" /routes).
-  const activeLeaf = activeLeafHref(
-    navStructure.filter((e): e is NavLeaf => e.kind === "leaf"),
-    pathname,
-  );
+  const activeLeaf = activeNavLeaf(navStructure, pathname)?.href ?? null;
 
   return (
     <ul className="flex flex-col gap-0.5">
@@ -333,7 +314,7 @@ function SidebarNav({
             key={entry.label}
             group={entry}
             collapsed={collapsed}
-            pathname={pathname}
+            activeHref={activeLeaf}
             open={isOpen(entry.label)}
             onToggle={toggleGroup}
             onNavigate={onNavigate}
@@ -1045,38 +1026,26 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
   // ── Keyboard shortcuts ──
   const [shortcutHelpOpen, setShortcutHelpOpen] = React.useState(false);
+  // The keys and the help both come from the menu this person has (nav-index): no key for a page the menu hides.
+  const shortcutTargets = React.useMemo(() => navShortcutTargets(navStructure), [navStructure]);
   React.useEffect(() => {
     // "g" + letter navigation and "?" help; the rules (typing, modifiers, the cart's leave guard) live in lib/nav-shortcuts.
     const handler = createNavShortcutHandler({
       push: (href) => rawRouter.push(href),
-      routesAccess,
-      counterEnabled,
+      targets: shortcutTargets,
       toggleHelp: () => setShortcutHelpOpen((v) => !v),
     });
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [rawRouter, routesAccess, counterEnabled]);
+  }, [rawRouter, shortcutTargets]);
 
   const SHORTCUTS = React.useMemo(
-    () =>
-      [
-        { keys: ["g", "h"], label: "Go to Dashboard" },
-        { keys: ["g", "o"], label: "Go to Orders" },
-        { keys: ["g", "r"], label: "Go to Routes" },
-        { keys: ["g", "d"], label: "Go to Drivers" },
-        { keys: ["g", "c"], label: "Go to Customers" },
-        { keys: ["g", "i"], label: "Go to Invoices" },
-        { keys: ["g", "f"], label: "Go to Finance" },
-        { keys: ["g", "s"], label: "Go to Settings" },
-        { keys: ["g", "t"], label: "Go to Counter sale" },
-        { keys: ["⌘", "K"], label: "Open command palette" },
-        { keys: ["?"], label: "Show keyboard shortcuts" },
-      ].filter(
-        (s) =>
-          (routesAccess || (s.label !== "Go to Routes" && s.label !== "Go to Drivers")) &&
-          (counterEnabled || s.label !== "Go to Counter sale"),
-      ),
-    [routesAccess, counterEnabled],
+    () => [
+      ...navShortcuts(navStructure).map((s) => ({ keys: s.keys as string[], label: s.label })),
+      { keys: ["⌘", "K"], label: "Open command palette" },
+      { keys: ["?"], label: "Show keyboard shortcuts" },
+    ],
+    [navStructure],
   );
 
   return (

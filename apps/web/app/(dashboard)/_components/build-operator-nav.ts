@@ -46,7 +46,7 @@ function getNavForRole(
   ).map((entry): NavEntry => {
     if (entry.kind !== "group" || entry.label !== "Dispatch") return entry;
     // Inside a visible Dispatch group, the routes/delivery leaves are each
-    // gated on their own feature; Overview and Drivers are shared by both
+    // gated on their own feature; the Dispatch overview and Drivers are shared by both
     // and always render once the group itself is showing.
     return {
       ...entry,

@@ -1,4 +1,6 @@
 import { createNavShortcutHandler } from "./nav-shortcuts";
+import { DRIVER_NAV, OPERATOR_NAV } from "@/app/(dashboard)/_components/nav-config";
+import { navShortcutTargets } from "@/app/(dashboard)/_components/nav-index";
 import {
   cancelCounterLeave,
   confirmCounterLeave,
@@ -24,8 +26,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   handler = createNavShortcutHandler({
     push,
-    routesAccess: true,
-    counterEnabled: true,
+    targets: navShortcutTargets(OPERATOR_NAV),
     toggleHelp: jest.fn(),
   });
 });
@@ -120,5 +121,34 @@ describe("g shortcuts and the counter leave guard", () => {
     pause.remove();
     press("g", "c");
     expect(push).toHaveBeenCalledWith("/customers");
+  });
+});
+
+describe("g shortcuts follow the menu the person has (UXG-R8 T9)", () => {
+  it("a driver: g o goes nowhere, g r opens My Routes", () => {
+    const driver = createNavShortcutHandler({
+      push,
+      targets: navShortcutTargets(DRIVER_NAV),
+      toggleHelp: jest.fn(),
+    });
+    const key = (...keys: string[]) =>
+      keys.forEach((k) => driver(new KeyboardEvent("keydown", { key: k })));
+    key("g", "o");
+    expect(push).not.toHaveBeenCalled();
+    key("g", "r");
+    expect(push).toHaveBeenCalledWith("/routes");
+  });
+
+  it("a letter the nav lacks does nothing, a counter letter works when present", () => {
+    const targets = navShortcutTargets(OPERATOR_NAV);
+    expect(targets.t).toBeUndefined();
+    const withCounter = createNavShortcutHandler({
+      push,
+      targets: { ...targets, t: "/orders/counter-sale" },
+      toggleHelp: jest.fn(),
+    });
+    withCounter(new KeyboardEvent("keydown", { key: "g" }));
+    withCounter(new KeyboardEvent("keydown", { key: "t" }));
+    expect(push).toHaveBeenCalledWith("/orders/counter-sale");
   });
 });

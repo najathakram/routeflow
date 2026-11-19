@@ -85,7 +85,7 @@ describe("buildOperatorNav", () => {
   it("canActAsDriver adds My Routes to Dispatch", () => {
     const nav = buildOperatorNav(ctx({ canActAsDriver: true }));
     expect(group(nav, "Dispatch")?.children.map((c) => c.label)).toEqual([
-      "Overview",
+      "Dispatch",
       "Routes",
       "Order delivery",
       "Shipments",
@@ -131,7 +131,7 @@ describe("buildOperatorNav", () => {
     const nav = buildOperatorNav(ctx());
     expect(group(nav, "Orders")?.children.map((c) => c.label)).toContain("Estimates");
     expect(group(nav, "Finance")?.children.map((c) => c.label)).toEqual([
-      "Overview",
+      "Finance overview",
       "Invoices",
       "Payments",
       "Payment requests",
@@ -183,10 +183,10 @@ const ANALYTICS_ENTRY = "Reports & analytics > Reports, Analytics";
 const SHAPE_FULL = [
   "Dashboard",
   "Orders > All Orders, Estimates, Returns",
-  "Dispatch > Overview, Routes, Order delivery, Shipments, Drivers",
+  "Dispatch > Dispatch, Routes, Order delivery, Shipments, Drivers",
   "Customers",
   "Warehouse > Inventory, Purchase orders, Products, Promotions, Suppliers, Supplier bills, Supplier statements",
-  "Finance > Overview, Invoices, Payments, Payment requests, Credit notes",
+  "Finance > Finance overview, Invoices, Payments, Payment requests, Credit notes",
   "Reports & analytics > Reports, Analytics",
   "Settings",
 ];
@@ -194,10 +194,10 @@ const SHAPE_FULL = [
 const SHAPE_LITE = [
   "Dashboard",
   "Orders > All Orders",
-  "Dispatch > Overview, Routes, Order delivery, Shipments, Drivers",
+  "Dispatch > Dispatch, Routes, Order delivery, Shipments, Drivers",
   "Customers",
   "Warehouse > Inventory, Purchase orders, Products, Promotions, Supplier statements",
-  "Finance > Overview, Invoices, Payments, Payment requests",
+  "Finance > Finance overview, Invoices, Payments, Payment requests",
   "Settings",
 ];
 
@@ -239,15 +239,15 @@ const children = (nav: NavEntry[], label: string) =>
 const lastEntry = (nav: NavEntry[]) => shape(nav)[nav.length - 1];
 
 describe("buildOperatorNav: add-ons, modes, plan states (master's gating rules)", () => {
-  it("routes add-on only: Dispatch has Overview, Routes and Drivers, no Order delivery", () => {
+  it("routes add-on only: Dispatch has Dispatch, Routes and Drivers, no Order delivery", () => {
     const nav = buildOperatorNav(ctx({ routesAccess: true, deliveryAccess: false }));
-    expect(children(nav, "Dispatch")).toEqual(["Overview", "Routes", "Shipments", "Drivers"]);
+    expect(children(nav, "Dispatch")).toEqual(["Dispatch", "Routes", "Shipments", "Drivers"]);
   });
 
-  it("delivery add-on only: Dispatch has Overview, Order delivery and Drivers, no Routes", () => {
+  it("delivery add-on only: Dispatch has Dispatch, Order delivery and Drivers, no Routes", () => {
     const nav = buildOperatorNav(ctx({ routesAccess: false, deliveryAccess: true }));
     expect(children(nav, "Dispatch")).toEqual([
-      "Overview",
+      "Dispatch",
       "Order delivery",
       "Shipments",
       "Drivers",
@@ -321,7 +321,7 @@ describe("buildOperatorNav: every entry keeps its icon (master's nav-config and 
     ["Estimates", FileCheck],
     ["Returns", RotateCcw],
     ["Dispatch", Truck],
-    ["Overview", LayoutDashboard],
+    ["Finance overview", LayoutDashboard],
     ["Routes", MapPin],
     ["Order delivery", Package],
     ["Shipments", Truck],
@@ -366,9 +366,14 @@ describe("buildOperatorNav: every entry keeps its icon (master's nav-config and 
       seen.push([e.label, e.icon]);
       if (e.kind === "group") for (const c of e.children) seen.push([c.label, c.icon]);
     }
-    // "Overview" appears under Dispatch and Finance with the same icon, so a Map by label is exact.
-    for (const [label, icon] of seen)
-      expect([label, icon === ICON.get(label)]).toEqual([label, true]);
+    // "Dispatch" names both the group (Truck) and its first leaf (LayoutDashboard), so that label has two icons.
+    for (const [label, icon] of seen) {
+      const ok =
+        label === "Dispatch"
+          ? icon === Truck || icon === LayoutDashboard
+          : icon === ICON.get(label);
+      expect([label, ok]).toEqual([label, true]);
+    }
     expect(seen.map(([l]) => l)).toEqual(expect.arrayContaining([...ICON.keys()]));
   });
 });

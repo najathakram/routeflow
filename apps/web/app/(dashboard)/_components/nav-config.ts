@@ -24,6 +24,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+import { activeNavGroup, activeNavLeaf } from "./nav-index";
+
 // ─── Nav types & structure ────────────────────────────────────────────────────
 
 export type NavLeaf = { kind: "leaf"; label: string; href: string; icon: LucideIcon };
@@ -51,7 +53,7 @@ export const OPERATOR_NAV: NavEntry[] = [
     label: "Dispatch",
     icon: Truck,
     children: [
-      { kind: "leaf", label: "Overview", href: "/dispatch", icon: LayoutDashboard },
+      { kind: "leaf", label: "Dispatch", href: "/dispatch", icon: LayoutDashboard },
       { kind: "leaf", label: "Routes", href: "/routes", icon: MapPin },
       { kind: "leaf", label: "Order delivery", href: "/deliveries", icon: Package },
       // Moved here from Finance (UX guide improvement 3). Without a Dispatch group buildOperatorNav
@@ -87,7 +89,12 @@ export const OPERATOR_NAV: NavEntry[] = [
     label: "Finance",
     icon: Wallet,
     children: [
-      { kind: "leaf", label: "Overview", href: "/finance/dashboard", icon: LayoutDashboard },
+      {
+        kind: "leaf",
+        label: "Finance overview",
+        href: "/finance/dashboard",
+        icon: LayoutDashboard,
+      },
       { kind: "leaf", label: "Invoices", href: "/invoices", icon: FileText },
       { kind: "leaf", label: "Payments", href: "/finance/payments", icon: CreditCard },
       {
@@ -149,26 +156,15 @@ export const DRIVER_NAV: NavEntry[] = [
  * remembered per user by useOpenNavGroups).
  */
 export function defaultOpenGroup(nav: NavEntry[], pathname: string): string | null {
-  const active = nav.find(
-    (e): e is NavGroup => e.kind === "group" && e.children.some((c) => pathname.startsWith(c.href)),
-  );
+  const active = activeNavGroup(nav, pathname);
   if (active) return active.label;
   return nav.some((e) => e.kind === "group" && e.label === "Warehouse") ? "Warehouse" : null;
 }
 
-/** The sidebar label for the operator route `pathname` sits under (longest matching leaf href), so
+/** The sidebar label for the operator route `pathname` sits under (the one active-entry rule, see nav-index), so
  *  a lock card can name the feature the person actually clicked. */
 export function navLabelForPath(rawPathname: string): string | null {
   // SA-1087: the product insights pages are part of Analytics, which has the one sidebar entry.
-  const pathname = /^\/insights(\/|$)/.test(rawPathname) ? "/analytics" : rawPathname;
-  let best: NavLeaf | null = null;
-  const consider = (leaf: NavLeaf) => {
-    const hit = pathname === leaf.href || pathname.startsWith(leaf.href + "/");
-    if (hit && (!best || leaf.href.length > best.href.length)) best = leaf;
-  };
-  for (const e of OPERATOR_NAV) {
-    if (e.kind === "leaf") consider(e);
-    else if (e.kind === "group") e.children.forEach(consider);
-  }
-  return (best as NavLeaf | null)?.label ?? null;
+  const path = /^\/insights(\/|$)/.test(rawPathname) ? "/analytics" : rawPathname;
+  return activeNavLeaf(OPERATOR_NAV, path)?.label ?? null;
 }
