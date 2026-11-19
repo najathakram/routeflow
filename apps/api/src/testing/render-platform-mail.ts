@@ -12,6 +12,7 @@ import { BuyerAuthService } from "../buyer/buyer-auth.service";
 import * as signedToken from "../common/signed-token";
 import * as pdfDate from "../common/pdf-date";
 import * as brandModule from "../common/brand";
+import * as brandHostModule from "../common/brand-host";
 import * as pricing from "@routeflow/pricing";
 import { DemoBookingService } from "../demo-booking/demo-booking.service";
 import { OnboardingIntakeService } from "../onboarding/onboarding-intake.service";
@@ -459,6 +460,7 @@ export function loadInvoiceModule(): Record<string, unknown> {
     "@react-pdf/renderer": reactPdf,
     "../common/pdf-date": pdfDate,
     "../common/brand": brandModule,
+    "../common/brand-host": brandHostModule,
     "@routeflow/pricing": pricing,
   };
   const mod = { exports: {} as Record<string, unknown> };

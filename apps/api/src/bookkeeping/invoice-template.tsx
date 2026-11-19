@@ -3,6 +3,7 @@ import { Document, Page, Text, View, StyleSheet } from "@react-pdf/renderer";
 import { fmtPdfDate } from "../common/pdf-date";
 // the colour constant below is already called BRAND
 import { BRAND as PLATFORM_BRAND } from "../common/brand";
+import { brandHost } from "../common/brand-host";
 
 import { roundMoney } from "@routeflow/pricing";
 // Prisma Decimal is compatible with this interface (has toNumber / valueOf / toString)
@@ -67,7 +68,7 @@ export function brandInitials(name: string): string {
 
 const BRAND_INITIALS = brandInitials(PLATFORM_BRAND.name);
 /** The site host as printed on the document: the brand's origin without a leading `www.`. */
-const BRAND_HOST = new URL(PLATFORM_BRAND.origin).host.replace(/^www\./, "");
+const BRAND_HOST = brandHost(PLATFORM_BRAND.origin);
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
