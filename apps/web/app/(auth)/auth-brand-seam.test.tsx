@@ -16,6 +16,7 @@ jest.mock("@routeflow/types/brand/load", () => {
   const actual = jest.requireActual("@routeflow/types/brand/load");
   const fixture = actual.validateBrand({
     name: "FIXTURE.TEST",
+    officialName: "FIXTURE-OFFICIAL",
     formerly: "Fixture Former Name",
     legalEntity: "Fixture Legal Holdings Ltd",
     origin: "https://www.fixture-host.example",
@@ -30,6 +31,7 @@ jest.mock("@routeflow/types/brand/load", () => {
       small: "/fx/logo-small.svg",
     },
     symbol: "/fx/symbol.svg",
+    symbolOnDark: "/fx/symbol-dark.svg",
     icon: {
       favicon: "/fx/tab-icon.png",
       apple: "/fx/apple.png",

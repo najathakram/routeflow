@@ -7,6 +7,8 @@ import paletteJson from "./palette.json";
 
 export interface Brand {
   readonly name: string;
+  /** The full legal-style product name (structured data only). Equal to `name` while there is one name. */
+  readonly officialName: string;
   /** The previous name. Equal to `name` means "no former-name line". */
   readonly formerly: string;
   readonly legalEntity: string;
@@ -18,6 +20,8 @@ export interface Brand {
   readonly shareLine: string;
   readonly logo: { readonly onLight: string; readonly onDark: string; readonly small: string };
   readonly symbol: string;
+  /** The symbol drawn on a dark surface (the wheel hub and its still). `symbol` is for light ones. */
+  readonly symbolOnDark: string;
   readonly icon: {
     readonly favicon: string;
     readonly apple: string;
@@ -33,6 +37,7 @@ export interface Brand {
 /** Every key a brand must carry, dotted for the nested ones. The reader checks each. */
 export const BRAND_KEYS = [
   "name",
+  "officialName",
   "formerly",
   "legalEntity",
   "origin",
@@ -45,6 +50,7 @@ export const BRAND_KEYS = [
   "logo.onDark",
   "logo.small",
   "symbol",
+  "symbolOnDark",
   "icon.favicon",
   "icon.apple",
   "icon.192",

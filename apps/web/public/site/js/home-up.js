@@ -1,4 +1,4 @@
-/* RouteFlow home (index.html), the wheel in the hero. Replaces js/site.js on this page only. Edited by hand.
+/* The home page (index.html), the wheel in the hero. Replaces js/site.js on this page only. Edited by hand.
    Chrome first (prices, tracking, header, menu), then motion.
    Motion: GSAP + ScrollTrigger. One init per section: initX(scope) builds that section inside gsap.matchMedia(scope)
    and returns a cleanup (gsap.context style), so each one ports to useGSAP({ scope }) as it is.

@@ -42,20 +42,23 @@ describe("public site sentences the code backs", () => {
   });
 
   // SA-1080 (js/prices.js:5): plans differ by price and number of customers; seats are not enforced.
-  // home still carries the older "customers and logins" line until its own lane (owner ruling D1).
-  it("pricing, product: plans differ by customers only", () => {
-    for (const name of ["pricing", "product"]) {
+  // The plan limits no staff or driver logins (SA-1175 R1 K7), so every page says customers only.
+  it("home, pricing, product: plans differ by customers only", () => {
+    for (const name of ["home", "pricing", "product"]) {
       const html = page(name);
       expect(html).toMatch(/The plans differ by how many customers they include\./);
       expect(html).not.toMatch(/customers and logins/);
     }
   });
 
-  // D1: home is still on the older line; lane S2 / 2.3-home flips this pin to customers only.
-  it("home: still says customers and logins (D1, until lane S2 / 2.3-home)", () => {
-    expect(page("home")).toMatch(
-      /The plans differ by how many customers and logins they include\./,
-    );
+  // Owner ruling 2026-11-19: a smaller plan turns off every staff and driver login and nobody can choose
+  // who stays, so the note saying "logins over its limit can be turned off" is not true. It stays out
+  // until the downgrade chooser is fixed.
+  it("product: no note about turning off logins on a smaller plan", () => {
+    const text = page("product");
+    expect(text).not.toMatch(/Smaller plan/i);
+    expect(text).not.toMatch(/logins over its limit/i);
+    expect(text).not.toMatch(/Admin logins stay on/i);
   });
 
   // /login offers "Continue with Google" (auth.controller.ts); only company single sign-on is absent (feature-registry.ts).

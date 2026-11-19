@@ -1,5 +1,6 @@
 {
   "name": "RouteFlow",
+  "officialName": "RouteFlow",
   "formerly": "RouteFlow",
   "legalEntity": "Routeflow Solutions LLC",
   "origin": "https://www.routeflow.info",
@@ -14,6 +15,7 @@
     "small": "/site/img/routeflow-mark-64.png"
   },
   "symbol": "/site/img/routeflow-mark-64.png",
+  "symbolOnDark": "/site/img/routeflow-mark-reversed.svg",
   "icon": {
     "favicon": "/site/img/routeflow-mark-64.png",
     "apple": "/brand/routeflow-mark-180.png",

@@ -43,9 +43,10 @@ const ORIGIN = BRAND.origin;
 // proves a re-run of this script reproduces the committed pages byte for byte (the design source is
 // machine-local, so that test runs the mapping on the committed pages, filled with the brand).
 const { escapeRe, tokenise } = createRequire(import.meta.url)("./lib/site-port-tokens.cjs");
-// home and landing are tokenised in later waves (T35 exemption table); until then they are
-// written with the design source's own typed name.
-const UNTOKENISED = new Set(["/", "/landing"]);
+const { homeJsonLd } = createRequire(import.meta.url)("./lib/site-port-jsonld.cjs");
+// landing is tokenised in a later wave (T35 exemption table); until then it is written with the
+// design source's own typed name.
+const UNTOKENISED = new Set(["/landing"]);
 const SITE_PREFIX = "/site/";
 
 const copy = (rel) => {
@@ -151,7 +152,10 @@ function port(html, route, indexable) {
   const title = (h.match(/<title>([^<]*)<\/title>/) ?? [])[1];
   const desc = (h.match(/<meta name="description" content="([^"]*)">/) ?? [])[1];
   const img = `${ORIGIN}/opengraph-image`;
-  const alt = `${BRAND.name}. ${BRAND.shareLine}`;
+  // home's alt reads "Name: line" (a colon, so a dotted name never doubles its full stop); written as
+  // tokens because the token mapping has no rule for the share line on its own
+  const alt =
+    route === "/" ? "{{brand:name}}: {{brand:shareLine}}" : `${BRAND.name}. ${BRAND.shareLine}`;
   let extra =
     `<link rel="canonical" href="${ORIGIN}${route}">
 ` +
@@ -178,30 +182,9 @@ function port(html, route, indexable) {
 <meta name="twitter:image" content="${img}">
 `;
   if (route === "/") {
-    const graph = {
-      "@context": "https://schema.org",
-      "@graph": [
-        {
-          "@type": "Organization",
-          "@id": `${ORIGIN}/#organization`,
-          name: BRAND.name,
-          url: ORIGIN,
-          logo: `${ORIGIN}${BRAND.icon["512"]}`,
-          email: BRAND.email,
-        },
-        {
-          "@type": "SoftwareApplication",
-          "@id": `${ORIGIN}/#software`,
-          name: BRAND.name,
-          url: ORIGIN,
-          description: BRAND.shareLine,
-          applicationCategory: "BusinessApplication",
-          operatingSystem: "Web",
-          publisher: { "@id": `${ORIGIN}/#organization` },
-        },
-      ],
-    };
-    extra += `<script type="application/ld+json">${JSON.stringify(graph).replace(/</g, "\u003c")}</script>
+    // Structured data names the official name (SA-1178); scripts/lib/site-port-jsonld.cjs derives it,
+    // alternateName included, as {{brand:key}} tokens filled when the page is served.
+    extra += `${homeJsonLd(BRAND)}
 `;
   }
   h = h.replace(/(<meta name="description" content="[^"]*">\n)/, `$1${extra}`);

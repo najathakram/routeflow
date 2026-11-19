@@ -26,10 +26,6 @@ const PUBLIC_DIR = path.resolve(__dirname, "../../public");
 
 /** Rules not met yet. Key: `<rule>:<page>`. The wave package that clears it is named in `wave`. */
 const PENDING_WAVE: Record<string, { wave: string; reason: string }> = {
-  "home-total:home": {
-    wave: "W4 2.5 (end-mark to SVG), or W3 2.3-home if it lands first",
-    reason: "home is ~185 KB gzip against 175; the 25 KB end-mark png is the lever, not the font",
-  },
   ...Object.fromEntries(
     STATIC_SITE_PAGE_NAMES.map((p): [string, { wave: string; reason: string }] => [
       `logo-svg:${p}`,
@@ -39,10 +35,6 @@ const PENDING_WAVE: Record<string, { wave: string; reason: string }> = {
       },
     ]),
   ),
-  "raster-icons:home": {
-    wave: "W4 2.5",
-    reason: "home.html end-mark is a 25 KB gzip png (limit 15); the SVG end-mark removes it",
-  },
   ...Object.fromEntries(
     ["getting-started", "does-and-doesnt", "data-in-and-out", "security", "company", "contact"].map(
       (p): [string, { wave: string; reason: string }] => [
@@ -212,7 +204,9 @@ describe("T43 site weight budget (gzip)", () => {
       }
 
       rule("img-size", page, `${page}: every img has width and height`, () => {
-        const bad = [...w.html.matchAll(/<img\b[^>]*>/g)]
+        // a <template> image is only a decode source for the wheel hub, never laid out
+        const laidOut = w.html.replace(/<template[\s\S]*?<\/template>/g, "");
+        const bad = [...laidOut.matchAll(/<img\b[^>]*>/g)]
           .map((m) => m[0])
           .filter((tag) => !/\swidth="\d+"/.test(tag) || !/\sheight="\d+"/.test(tag));
         expect(bad).toEqual([]);

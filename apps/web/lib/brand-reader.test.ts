@@ -47,6 +47,20 @@ describe("validateBrand", () => {
     expect(() => validateBrand(broken)).toThrow(`"${key}"`);
   });
 
+  it("the two keys of the name swap are required: symbolOnDark (the reversed symbol) and officialName", () => {
+    expect(BRAND_KEYS).toContain("symbolOnDark");
+    expect(BRAND_KEYS).toContain("officialName");
+    for (const key of ["symbolOnDark", "officialName"]) {
+      const broken = raw();
+      delete broken[key];
+      expect(() => validateBrand(broken)).toThrow(`"${key}"`);
+    }
+  });
+
+  it("officialName carries no U+2011 (metadata uses the plain hyphen)", () => {
+    expect(String(raw().officialName)).not.toContain("‑");
+  });
+
   it("throws on an empty or non-string value, and on a missing nested object", () => {
     expect(() => validateBrand({ ...raw(), name: "" })).toThrow('"name"');
     expect(() => validateBrand({ ...raw(), origin: 3 })).toThrow('"origin"');
