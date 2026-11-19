@@ -110,6 +110,24 @@ describe("the pin ledger accounts for every literal pin the static site tests lo
   });
 });
 
+// Names live in the legend, so the wheel script paints none on the canvas. The check is a function of the
+// source text so a probe can run it on a copy with a planted draw call and see it red.
+const textDraws = (src: string): string[] => src.match(/\b(?:fillText|strokeText)\s*\(/g) ?? [];
+
+describe("the wheel paints no name on the canvas", () => {
+  const src = fs.readFileSync(path.join(SITE, "graphics/rf-wheel-up.js"), "utf8");
+
+  it("holds no fillText( and no strokeText(", () => {
+    expect(src.length).toBeGreaterThan(10_000);
+    expect(textDraws(src)).toEqual([]);
+  });
+
+  it("the check sees a planted draw call", () => {
+    expect(textDraws(src + '\nctx.fillText("x",0,0);')).toHaveLength(1);
+    expect(textDraws(src + '\nctx.strokeText("x",0,0);')).toHaveLength(1);
+  });
+});
+
 describe("the end-state trial button has one source", () => {
   const home = fs.readFileSync(path.join(SITE, "home.html"), "utf8");
   const src = fs.readFileSync(path.join(SITE, "graphics/rf-wheel-up.js"), "utf8");

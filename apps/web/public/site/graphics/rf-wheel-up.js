@@ -859,7 +859,7 @@
     const onRefreshed = () => { lastRef = now(); };
     const arm = () => {
       root.addEventListener("scroll", trackKeep, { passive: true });
-      ["wheel", "touchstart", "keydown"].forEach((n) => root.addEventListener(n, stopGo, hand));
+      ["wheel", "touchstart", "pointerdown", "keydown"].forEach((n) => root.addEventListener(n, stopGo, hand));
       ST.addEventListener("refresh", onRefreshed);
       if (root.IntersectionObserver) { goIO = new IntersectionObserver((es) => { es.forEach((e) => el.classList.toggle("rfw-go-in", e.isIntersecting)); }, { rootMargin: "-68px 0px 0px 0px" }); goIO.observe(goLink); }
       on.forEach(([t, n, f]) => t.addEventListener(n, f));
@@ -897,7 +897,7 @@
       ST.removeEventListener("refreshInit", onRI);
       ro.disconnect();
       root.removeEventListener("scroll", trackKeep);
-      ["wheel", "touchstart", "keydown"].forEach((n) => root.removeEventListener(n, stopGo, hand));
+      ["wheel", "touchstart", "pointerdown", "keydown"].forEach((n) => root.removeEventListener(n, stopGo, hand));
       ST.removeEventListener("refresh", onRefreshed);
       if (goIO) goIO.disconnect();
       el.classList.remove("rfw-go-on", "rfw-go-in");

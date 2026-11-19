@@ -19,6 +19,7 @@ import {
   BEATS,
   SIZES,
   blockAnalytics,
+  collectPageErrors,
   drawCounts,
   frames,
   headerBottom,
@@ -46,6 +47,17 @@ test.describe.configure({ mode: "parallel" });
 
 test.beforeEach(async ({ context }) => {
   await blockAnalytics(context);
+});
+
+// Every test here fails on any uncaught page error; the failure names the test.
+const pageErrors = new Map<string, string[]>();
+test.beforeEach(async ({ page }, info) => {
+  pageErrors.set(info.testId, collectPageErrors(page));
+});
+test.afterEach(async ({}, info) => {
+  const errors = pageErrors.get(info.testId) ?? [];
+  pageErrors.delete(info.testId);
+  expect(errors, `uncaught page errors in "${info.title}"`).toEqual([]);
 });
 
 type Size = { w: number; h: number };
@@ -383,6 +395,9 @@ const T5_SIZES: Size[] = [
   { w: 1288, h: 593 },
   { w: 390, h: 844 },
   { w: 844, h: 390 },
+  { w: 568, h: 320 },
+  { w: 667, h: 375 },
+  { w: 768, h: 1024 },
 ];
 
 test.describe("T5 R6 names are not painted on the canvas", () => {
@@ -490,6 +505,8 @@ const T7_SIZES: Size[] = [
   { w: 1440, h: 900 },
   { w: 1288, h: 593 },
   { w: 390, h: 844 },
+  { w: 768, h: 1024 },
+  { w: 844, h: 390 },
 ];
 
 test.describe("T7 R8 no empty screen after the wheel", () => {
@@ -753,5 +770,52 @@ test.describe("T9 R9 a person who stops scrolling is left where they stopped", (
       Math.abs(afterEnter - orders.share),
       "share after Enter on Orders vs its stop",
     ).toBeLessThan(0.012);
+  });
+
+  test(`T10 R9 grabbing the page mid-glide stops the glide @${sizeName(SIZE)}`, async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width: SIZE.w, height: SIZE.h });
+    await page.goto("/", { waitUntil: "load" });
+    await waitForWheel(page);
+    await waitForArrival(page);
+    const start = await page.evaluate(
+      () => (document.querySelector(".rfw") as WheelHandle)._rfw!.trig.start,
+    );
+    await page.evaluate((top) => window.scrollTo({ top, behavior: "instant" }), start);
+    await frames(page, 2);
+    await page.locator('.rfw-b[data-i="3"]').focus();
+    // Enter starts the glide; the pointerdown (a grab of the scrollbar or the page) lands mid-glide.
+    const run = page.evaluate(
+      () =>
+        new Promise<{ moved: number; grab: number; after: number[] }>((done) => {
+          const y0 = window.scrollY;
+          const after: number[] = [];
+          let grab = -1;
+          const step = () => {
+            const y = window.scrollY;
+            if (grab < 0 && Math.abs(y - y0) > 40) {
+              grab = y;
+              document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+              requestAnimationFrame(() => requestAnimationFrame(step));
+              return;
+            }
+            if (grab >= 0) {
+              after.push(y);
+              if (after.length >= 12) return done({ moved: Math.abs(grab - y0), grab, after });
+            }
+            requestAnimationFrame(step);
+          };
+          requestAnimationFrame(step);
+        }),
+    );
+    await page.keyboard.press("Enter");
+    const r = await run;
+    expect(r.moved, "the glide had begun before the grab").toBeGreaterThan(40);
+    // two frames after the grab the page holds still for the rest of what would have been the glide
+    const settled = r.after.slice(1);
+    const drift = Math.max(...settled) - Math.min(...settled);
+    expect(drift, `scrollY after the grab: ${settled.join(",")}`).toBeLessThanOrEqual(1);
   });
 });
