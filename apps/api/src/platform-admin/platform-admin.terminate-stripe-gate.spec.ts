@@ -65,6 +65,10 @@ function make(
   prisma.tenant.update.mockResolvedValue(done);
   // deleteTenant: the guarded write (where status SUSPENDED) then a re-read of the row it wrote
   prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
+  // B430: deleteTenant reads the tenant's ledger sum inside the transaction, after the guarded write.
+  prisma.billingEvent = {
+    aggregate: jest.fn().mockResolvedValue({ _sum: { amountDelta: null } }),
+  };
   const stripeCalls: boolean[] = []; // was each getSubscription call made inside the transaction?
   const auditLog = jest.fn().mockResolvedValue(undefined);
   const stripe: any = {
@@ -86,6 +90,7 @@ function make(
       inTx = false;
     }
   });
+  const emit = jest.fn().mockResolvedValue({});
   const svc = new PlatformAdminService(
     prisma,
     {} as any,
@@ -96,7 +101,7 @@ function make(
     {} as any,
     {} as any,
     {} as any,
-    { emit: jest.fn().mockResolvedValue({}) } as any,
+    { emit } as any,
     {} as any,
     { invalidate: jest.fn() } as any,
     { log: auditLog } as any,
@@ -106,7 +111,7 @@ function make(
     {} as any,
     stripe,
   );
-  return { svc, prisma, stripe, stripeCalls, auditLog };
+  return { svc, prisma, stripe, stripeCalls, auditLog, emit };
 }
 
 type Op = [string, (svc: PlatformAdminService) => Promise<unknown>];
@@ -518,5 +523,70 @@ describe("deleteTenant - the SUSPENDED check is re-proved under the row lock", (
       status: "SUSPENDED",
     });
     expect(prisma.tenant.update).not.toHaveBeenCalled();
+  });
+});
+
+// B430 / SA-1167 R1: a tenant is deleted with its ledger sum at zero. deleteTenant reads the sum under the
+// row lock, after the guarded write, and books ONE SUBSCRIPTION_CANCELED true-up of -sum, or nothing at 0.
+describe("deleteTenant - ledger true-up (B430)", () => {
+  const sum = (prisma: any, v: unknown) =>
+    prisma.billingEvent.aggregate.mockResolvedValue({ _sum: { amountDelta: v } });
+
+  it("books one -100 true-up inside the transaction when the tenant still sums to +100", async () => {
+    const { svc, prisma, emit } = make({ pre: null });
+    sum(prisma, 100);
+    await svc.deleteTenant(TENANT_ID, "a1");
+    expect(prisma.billingEvent.aggregate).toHaveBeenCalledWith({
+      _sum: { amountDelta: true },
+      where: { tenantId: TENANT_ID },
+    });
+    expect(emit).toHaveBeenCalledTimes(1);
+    const [tenantId, type, payload, opts] = emit.mock.calls[0];
+    expect(tenantId).toBe(TENANT_ID);
+    expect(type).toBe("subscription.canceled");
+    expect(payload).toEqual({
+      fromStatus: "SUSPENDED",
+      toStatus: "CANCELLED",
+      appliedAt: expect.any(String),
+      reason: "delete_ledger_true_up",
+    });
+    expect(opts.amountDelta).toBe(-100);
+    expect(opts.actorId).toBe("a1");
+    expect(opts.tx).toBeDefined();
+  });
+
+  it("books the opposite sign when the tenant sums below zero", async () => {
+    const { svc, prisma, emit } = make({ pre: null });
+    sum(prisma, "-40.50");
+    await svc.deleteTenant(TENANT_ID, "a1");
+    expect(emit.mock.calls[0][3].amountDelta).toBe(40.5);
+  });
+
+  it.each([
+    ["no events (null sum)", null],
+    ["exactly 0", 0],
+    ["0.004, which rounds to 0", 0.004],
+    ["-0.004, which rounds to 0 (no -0 row)", -0.004],
+  ])("books nothing when the ledger sum is %s", async (_label, v) => {
+    const { svc, prisma, emit } = make({ pre: null });
+    sum(prisma, v);
+    await svc.deleteTenant(TENANT_ID, "a1");
+    expect(emit).not.toHaveBeenCalled();
+  });
+
+  it("reads the sum only after the guarded write, and books nothing when that write refuses", async () => {
+    const ok = make({ pre: null });
+    sum(ok.prisma, 100);
+    await ok.svc.deleteTenant(TENANT_ID, "a1");
+    expect(ok.prisma.tenant.updateMany.mock.invocationCallOrder[0]).toBeLessThan(
+      ok.prisma.billingEvent.aggregate.mock.invocationCallOrder[0],
+    );
+
+    const refused = make({ pre: null });
+    sum(refused.prisma, 100);
+    refused.prisma.tenant.updateMany.mockResolvedValue({ count: 0 });
+    await refused.svc.deleteTenant(TENANT_ID, "a1").catch(() => undefined);
+    expect(refused.prisma.billingEvent.aggregate).not.toHaveBeenCalled();
+    expect(refused.emit).not.toHaveBeenCalled();
   });
 });

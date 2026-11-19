@@ -680,6 +680,29 @@ export class PlatformAdminService {
         data: { deletedAt: new Date(), status: "CANCELLED" },
       });
       if (count !== 1) throw notSuspendedRefusal();
+      // B430 / SA-1167 R1: a deleted tenant leaves the ledger at zero. The suspend paths book their own churn
+      // delta, but a tenant suspended by a write that booked none (or before B557) still sums to +X, and
+      // mrr.service's ledgerMrr / momDelta read every PRODUCTION tenant's events. The sum is read here, after
+      // the guarded write, under the row lock above, so no writer can move it between the read and the true-up;
+      // it books nothing when the sum already rounds to 0. Same shape as updateTenantClass().
+      const ledger = await tx.billingEvent.aggregate({
+        _sum: { amountDelta: true },
+        where: { tenantId: id },
+      });
+      const trueUp = roundMoney(-Number(ledger._sum.amountDelta ?? 0));
+      if (trueUp !== 0) {
+        await this.billingEventService.emit(
+          id,
+          BILLING_EVENTS.SUBSCRIPTION_CANCELED,
+          {
+            fromStatus: "SUSPENDED",
+            toStatus: "CANCELLED",
+            appliedAt: new Date().toISOString(),
+            reason: "delete_ledger_true_up",
+          },
+          { amountDelta: trueUp, actorId: adminId, tx },
+        );
+      }
       return tx.tenant.findUniqueOrThrow({ where: { id } });
     });
     // Evict cached status so the guard blocks this tenant immediately
