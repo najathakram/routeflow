@@ -23,11 +23,11 @@ const TEXT_EXT = new Set(
   "ts tsx js jsx mjs cjs css html json svg md txt xml webmanifest".split(" ").map((e) => "." + e),
 );
 
-// site-color-and-life.static.test.ts still holds one 0x08 byte on this branch; the fix lands on
-// master from another lane. It is skipped from the failure list so this pin is green here, but the
-// second test below asserts the byte is STILL there: once the master fix merges in, that test goes
-// red and the row must be deleted, so the exception cannot outlive its reason.
-const PENDING_ON_MASTER: string[] = ["apps/web/app/(marketing)/site-color-and-life.static.test.ts"];
+// A file that still holds a control byte here while its fix lands on master from another lane. It is
+// skipped from the failure list, and the second test below asserts the byte is STILL there: once the
+// master fix merges in, that test goes red and the row must be deleted, so the exception cannot
+// outlive its reason. Empty since the master catch-up brought in the site-color-and-life fix.
+const PENDING_ON_MASTER: string[] = [];
 
 export interface ControlByteHit {
   offset: number;
