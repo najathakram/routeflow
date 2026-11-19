@@ -31,18 +31,18 @@ Master has no spec above 85 today; re-check before naming (bug-id clash trap, th
 - Each lane writes its own ledger change in its own commit, and never lands while site-pins is red. A lane that adds a counted pin raises the baseline in that commit and lists the pins. A lane deletes no pin; if one must go, stop and report. Lanes never edit master's guard. The reports list each edited pin literal, old -> new; the reviewer confirms none got weaker. The W2 and W3 close-out commits only verify; they write no new rows.
 - These header sign-in and focus pins stay unedited, and "unedited" means `git diff --stat <lane base>..HEAD -- <those paths>` prints nothing: `components/site-frame/site-frame.test.tsx:29,68-81`; `app/(marketing)/marketing-port.static.test.ts:318-320,331`; `app/(marketing)/site-auth-nav.static.test.ts` (whole file); e2e `36:1327` (`36:T20`). Binds 2.1b and the header lane.
 
-**Owner box (SA-1174), four taps through the lead. Lanes must not build these items until the owner rules.** Recommended default first:
+**Owner box (SA-1174), four taps through the lead. Item 1 is still OWNER BOX pending (SA-1174): lanes must not build it until the owner rules. Items 2-4 are decided (owner box 2026-11-19 ~20:22Z).** Recommended default first:
 1. Home lines that end with the name: "X keeps every step in one place." (wheel line and home), "What X does for you." (section heading), "What does X do?" (FAQ), or the alternative "Every step is in X, start to finish." Touches S2 and 2.2.
-2. Product page "Smaller plan" note: delete it now, or write a true warning now. Touches S2.
-3. Mailbox help text after the switch: rename the app in both consoles on switch day with the text switching the same day, or keep the old name for now. Touches B3.
-4. Pricing keyboard link label: "Skip to plans" (only if T46b shows it is needed), or "Skip to prices". Touches 2.3-pricing.
+2. DECIDED (owner box 2026-11-19 ~20:22Z): "Delete it now". Product page "Smaller plan" note: S2 deletes it. Touches S2.
+3. DECIDED (owner box 2026-11-19 ~20:22Z): "On switch day". Mailbox help text: rename the app in both the Google and Microsoft consoles on switch day, and the three help-text sentences switch the same day; until then the old name stays. Touches B3.
+4. DECIDED (owner box 2026-11-19 ~20:22Z): "Skip to plans", built only if T46b is red at the 2.3-pricing base. Touches 2.3-pricing.
 
 **D0 console list (SA-1174).** Add the Google OAuth consent-screen app name and the Microsoft app registration display name to the consoles read back at D0 (spec-delta §2a covers only the origin). OQ-9 depends on both.
 
 ## Order and parallel groups
 | Step | Lanes (parallel inside a step) | Starts when | Files (no two lanes share one) |
 |---|---|---|---|
-| W2 | **2.1b**, **2.2**, **S2** | step 0 done | 2.1b: site/mobile/home/home-up css (band role rules in `site.css`, tints out of `mobile.css`, the P04 glow) · 2.2: `rf-wheel-up.*` · S2: `home.html`, `js/*` comments (`prices.js` comments only), the one-key `symbolOnDark` grant in `packages/types/brand/*`; its `product.html:303` item waits for owner-box item 2 |
+| W2 | **2.1b**, **2.2**, **S2** | step 0 done | 2.1b: site/mobile/home/home-up css (band role rules in `site.css`, tints out of `mobile.css`, the P04 glow) · 2.2: `rf-wheel-up.*` · S2: `home.html`, `js/*` comments (`prices.js` comments only), the one-key `symbolOnDark` grant in `packages/types/brand/*`; its `product.html:303` note is deleted (owner-box item 2 decided, owner box 2026-11-19 ~20:22Z) |
 | W2-last | 2.1b-last (one commit; owns T21) | 2.1b and 2.2 landed | `rf-graphics.css` aliases + `landing.html` token block |
 | W2 close | coordinator | all W2 landed | verification only (no new ledger rows), whole web Jest |
 | W3 | **2.3-home**, **2.3-pricing**, **2.3-inner**, **header** | W2 close green | 2.3-home: `home.html`, `home.css`, `home-color.css` · 2.3-pricing: `pricing.html` · 2.3-inner: 7 inner html, `product`, `company`, `does`, `start` and `color-deep` css, the six `prices.js` script tags · header: `SiteFrameHeader.tsx`, `site-frame.css`, `site.css`, `mobile.css`, `js/site.js`, all of `home-up.css`, `js/home-up.js:64` (that toggle only) |
@@ -74,6 +74,6 @@ Build and start the local stack from the branch head (`npm run local:up`, produc
 - OQ-6 Ruled SA-1174 (K5): yes; in one commit S2 swaps the `home.html` file row for the hex row and removes `<g class="mk">`.
 - OQ-7 Ruled SA-1174 (K6): one W3 owner per css file (table above); band roles ship in W2 inside 2.1b; a page lane needing a shared-css rule stops and reports.
 - OQ-8 Ruled SA-1174 (K7): the header lane owns all of `home-up.css` plus `js/home-up.js:64`; one observer in `js/site.js` replaces the hero-only toggle.
-- OQ-9 Ruled SA-1174: B3 owns the three mailbox strings (built from `BRAND.name`) with their pins in one change; the switch timing is Owner box (SA-1174) item 3.
-- OQ-10 Owner box (SA-1174): the "Smaller plan" note is not true today; recommended default is to delete it. Lanes wait.
+- OQ-9 Ruled SA-1174: B3 owns the three mailbox strings (built from `BRAND.name`) with their pins in one change; the switch timing is decided, owner-box item 3: on switch day, text and both console names together (owner box 2026-11-19 ~20:22Z).
+- OQ-10 Decided (owner box 2026-11-19 ~20:22Z, item 2): the "Smaller plan" note is not true today; S2 deletes it now.
 - OQ-11 Ruled SA-1174 (K8): the coordinator renames the budget test to `site-wheel-budget.static.test.ts` in step 0, keeping the suffix; the 2.2 brief's list follows.
