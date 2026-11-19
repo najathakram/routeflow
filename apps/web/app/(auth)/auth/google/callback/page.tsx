@@ -121,13 +121,9 @@ function GoogleCallbackInner() {
     ) {
       if (type === "BUYER") {
         // Store buyer tokens under the namespaced keys that `BuyerAuthProvider`
-        // and `getStoredBuyer()` actually read. Also keep the legacy keys
-        // populated for any code path that hasn't been migrated yet
-        // (e.g. /buyer/portal/page.tsx, /buyer/invite, buyer change-password).
+        // and `getStoredBuyer()` actually read. The legacy keys are not written (B139).
         localStorage.setItem(BUYER_KEYS.accessToken, accessToken);
         localStorage.setItem(BUYER_KEYS.refreshToken, refreshToken);
-        localStorage.setItem("buyerAccessToken", accessToken);
-        localStorage.setItem("buyerRefreshToken", refreshToken);
         // Set the buyer presence cookie that the dashboard middleware checks
         // (without this the middleware can't tell a buyer apart from a
         // logged-out user and may misroute them).
