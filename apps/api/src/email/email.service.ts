@@ -26,6 +26,7 @@ import {
   endSentence,
   renderBrandButton,
   emailParagraph,
+  headerSafeSubject,
   htmlToPlainText,
   renderBrandedEmail,
   renderEmailLayout,
@@ -1223,6 +1224,8 @@ export class EmailService {
   async send(
     params: EmailSendParams & { delivery?: EmailDeliveryContext },
   ): Promise<EmailSendResult> {
+    // B460: the one place a tenant-supplied subject becomes a header line (sendPlatform has its own).
+    params = { ...params, subject: headerSafeSubject(params.subject) };
     // Sentinel guard (#2854 Opus B4 + r2): the public `send` is the one entry; a sentinel refuses
     // BEFORE any transport or delegation. With a delivery ctx the refusal records ONE masked
     // FAILED row (SA-615(3)); without a ctx nothing is recorded.
@@ -1555,6 +1558,8 @@ export class EmailService {
     id?: string;
     error?: string;
   }> {
+    // B460: the same one-line subject rule as send(); billing and account mail enter here, not there.
+    params = { ...params, subject: headerSafeSubject(params.subject) };
     // Sentinel guard (#2854 Opus r2): sendPlatform is PUBLIC and called directly
     // (set-password / welcome / email-change / role-change, billing-notification,
     // onboarding) — it needs its own refusal, not just send()'s.
