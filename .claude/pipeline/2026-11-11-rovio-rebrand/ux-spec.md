@@ -186,7 +186,7 @@ screen (R1, R2).
 |---|---|---|
 | Header on white, footer on bone | `rovio-logo-horizontal-small-colour.svg` | 112 to 132 px wide (minimum 90) |
 | Any ink band | `rovio-logo-horizontal-small-colour-reversed.svg` or `rovio-symbol-colour-reversed.svg` | symbol 44 px (minimum 24) |
-| Wheel hub and pictures | the symbol's path, copper light on ink | scales with the art |
+| Wheel hub and pictures | the reversed symbol (`symbolOnDark`), drawn with `drawImage`, copper light on ink | scales with the art |
 | Tab and touch icons | kit `icons/web/favicon-48.png`, `apple-touch-icon.png`, `icon-192.png`, `icon-512.png`, saved as `rovio-mark-48/180/192/512.png` | the names avoid the banned `favicon.*` strings (E21) |
 | Share image | the code-built `/opengraph-image` route, redrawn: kit logo artwork, ink on white with a bone base | 1200 × 630, same URL |
 
