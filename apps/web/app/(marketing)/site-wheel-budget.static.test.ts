@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 // T13 (R13), a guard that passes today: the rebrand must not make the public site heavier or pull in
-// anything new. Plan: .claude/pipeline/2026-11-11-rovio-rebrand/test-plan.md.
+// anything new.
 import * as fs from "fs";
 import * as path from "path";
 
