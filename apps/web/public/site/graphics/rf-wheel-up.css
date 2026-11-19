@@ -85,6 +85,36 @@
 .rfw-keys span{display:block;margin-top:2px;font-size:15px;font-weight:400;letter-spacing:0;color:var(--muted)}
 .rfw-keyh{margin:24px 0 0;font-size:15px;font-weight:500;color:var(--muted)}
 .rfw-keyh+.rfw-keys{margin-top:8px}
+/* The end-state button: it is part of the closing words. Reachable by Tab while those words are away (it keeps its own visibility, the
+   words' opacity hides it), clickable only once they are up (rfw-go-on, set by the wheel). The still's button is always live. */
+.rfw .sy-go{visibility:visible;margin-top:22px}
+.rfw-live .sy-go{pointer-events:none}
+.rfw-live.rfw-go-on .sy-go{pointer-events:auto}
+.rfw .sy-try{margin:0 0 16px}
+.rfw--static .sy-go{margin-top:20px}
+/* The live wheel's legend: every name, each with its own icon, in the words column beside the open wheel; the one place the names are written. */
+.rfw-legend .rfw-keys{display:grid;margin:6px 0 0;padding:0;list-style:none;font-size:15px;line-height:20px;font-weight:500;letter-spacing:-.01em}
+.rfw-legend .rfw-keys:nth-of-type(1){grid-auto-flow:column;grid-template-rows:repeat(5,auto);grid-template-columns:repeat(2,minmax(0,1fr));column-gap:14px}
+.rfw-legend .rfw-keys li{display:flex;align-items:center;gap:8px;padding:0;border:0;min-width:0;white-space:nowrap}
+.rfw-legend .rfw-keys li span{display:none}
+.rfw-legend .rfw-keys{row-gap:6px}
+.rfw-legend .rfw-keyh{margin-top:18px}
+.rfw-legend .rfw-keyh:first-child{margin-top:20px}
+.rfw-ki{flex:none;display:block;width:16px;height:16px;overflow:visible}
+.rfw-ki .rfw-ic{stroke:currentColor}
+/* Under 720 px tall the items run in lines, so the legend stays short. */
+@media (max-height:719.98px){
+  .rfw-legend .rfw-keys,.rfw-legend .rfw-keys:nth-of-type(1){display:flex;flex-wrap:wrap;gap:2px 14px}
+  .rfw-legend .rfw-keyh{margin-top:12px}
+  .rfw-legend .rfw-keyh:first-child{margin-top:14px}
+}
+@media (max-height:499.98px){
+  .rfw-legend .rfw-keys{font-size:14px;line-height:18px;gap:0 12px}
+  .rfw-legend .rfw-keyh{display:none}
+  .rfw-legend .rfw-keys:first-of-type{margin-top:8px}
+  .rfw-h .rfw-title{font-size:clamp(26px,7.6vh,48px)}
+  .rfw-h .rfw-sub{margin-top:8px;font-size:clamp(14px,3.6vh,18px)}
+}
 @media (max-width:899px) and (min-height:600px),(max-width:899px) and (max-aspect-ratio:1/1){
   .rfw{--rfw-run:2;--rfw-grid:calc(100% - 24px)}
   .rfw-h,.rfw-s{left:var(--rfw-in);right:var(--rfw-in);width:auto;text-align:center}
@@ -93,6 +123,11 @@
   .rfw-h .rfw-title{font-size:clamp(32px,9.4vw,40px);letter-spacing:-.03em}
   .rfw-h .rfw-sub{margin-top:8px;font-size:17px}
   .rfw-hint{font-size:15px}
+  .rfw-legend{position:absolute;left:0;right:0;bottom:0}
+  .rfw-legend .rfw-keys,.rfw-legend .rfw-keys:nth-of-type(1){display:flex;flex-wrap:wrap;justify-content:center;gap:2px 14px}
+  .rfw-legend .rfw-keyh{margin-top:10px}
+  .rfw-legend .rfw-keyh:first-child{margin-top:0}
+  .rfw .sy-go .btn{width:100%}
   .rfw-t .rfw-eye{display:none}
   .rfw-t .rfw-title{font-size:clamp(28px,8.2vw,34px)}
   .rfw-t .rfw-sub{margin-top:6px;font-size:16px}
@@ -110,6 +145,11 @@
   .rfw--static .rfw-icw{transform:scale(2)}
   .rfw--static .rfw-i2w{transform:scale(1.5)}
   .rfw--static .rfw-keys{grid-template-columns:minmax(0,1fr)}
+}
+/* A short phone (stage about half legend): the group labels step aside, so the legend stays in the lower half and the wheel keeps the rest. */
+@media (max-width:899px) and (min-height:600px) and (max-height:639.98px),(max-width:899px) and (max-aspect-ratio:1/1) and (max-height:639.98px){
+  .rfw-legend .rfw-keyh{display:none}
+  .rfw-legend .rfw-keys+.rfw-keyh+.rfw-keys{margin-top:8px}
 }
 @media (prefers-contrast:more){
   .rfw-tile{background:#fff;box-shadow:inset 0 0 0 1px var(--rf-ink)}

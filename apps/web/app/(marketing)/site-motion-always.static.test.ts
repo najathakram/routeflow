@@ -116,41 +116,8 @@ describe("the public site's motion does not depend on the visitor's motion setti
   // The pixels are checked by eye on stills at 390 and 360 (and WebKit); these pin the rules the drawing follows.
   describe("the phone wheel's words", () => {
     const wheel = read("graphics/rf-wheel-up.js");
-    it("names stay upright at every width (no squash)", () => {
-      expect(wheel).toContain("nq = 1;");
+    it("phone names are never squashed (the squash factor is not set per phone)", () => {
       expect(wheel).not.toMatch(/nq = phone \? 0\.\d+/);
-    });
-    it("a name is fitted to the width of its own piece, never wider, at every width", () => {
-      expect(wheel).toContain(
-        "const wc = {}, wid = (t) => wc[t] || (wc[t] = ctx.measureText(t).width);",
-      );
-      expect(wheel).toContain("Math.min(ax - x0, x1 - ax)");
-      expect(wheel).toContain("room / Math.max(1, ...w.lines.map(wid))");
-      expect(wheel).toContain("for (const k in wc) delete wc[k];"); // font changes clear the measures
-    });
-    it("the room for a name is the piece's real width on the rows the words cover, not its bounding box", () => {
-      expect(wheel).toContain("const room = 2 * hw * 0.88");
-      expect(wheel).toContain("hw = Math.min(hw, ax - l, r - ax)");
-    });
-    it("the icon keeps the piece's own ink after a white name", () => {
-      expect(wheel).toContain(
-        "ctx.fillStyle = ctx.strokeStyle = css(mix(INK, w.ink, p.c)); } /* the icon keeps",
-      );
-    });
-    it("a long note wraps to two lines on a phone", () => {
-      expect(wheel).toContain("const nt = phone && w.d.n && w.d.n.length > 9;");
-      expect(wheel).toContain("lines2(w.d.n)");
-    });
-    it("ink is white (with a soft shadow) where white reads better than the piece's dark ink", () => {
-      expect(wheel).toContain("const lf = lum(f), ld = lum(mix(INK, w.ink, p.c));");
-      expect(wheel).toContain(
-        "lit = 1.05 / (lf + 0.05) > (Math.max(lf, ld) + 0.05) / (Math.min(lf, ld) + 0.05);",
-      );
-      expect(wheel).toContain('ctx.shadowColor = "rgba(0,0,0,0.34)"');
-    });
-    it("the two back core names share one size and the front one fits its piece", () => {
-      expect(wheel).toContain("uy < 0 ? 0.6 * cx : (x1 - x0) * 0.82");
-      expect(wheel).toContain("Math.max(...list.map((v) => wid(v.d.t)))");
     });
     it("the hub mark stands upright on the puck's front while the lid is a sliver, and lies on it as the lid opens", () => {
       expect(wheel).toContain("let up = 0, ft = -1e9, fb = -1e9, lt = 1e9;");

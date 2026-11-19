@@ -98,7 +98,7 @@
   if (!g || !ST) { html.classList.remove("js-motion"); return; }
   g.registerPlugin(ST); // once, before any ScrollTrigger is made
   g.defaults({ ease: "power3.out", duration: 0.8 }); // the house ease and duration
-  ST.config({ ignoreMobileResize: true });
+  ST.config({ ignoreMobileResize: true, autoRefreshEvents: "visibilitychange,resize" });
   /* ScrollTrigger.refresh() scrolls to the top to measure, then back (scrollTo(0,0), scrollTo(0,y)). With the site's
      `scroll-behavior: smooth` both calls are animated, so a question or card opened after scrolling down made the page
      swoop toward the top, and on a phone a touch or momentum in that window left the person there. Every refresh, whoever
@@ -520,9 +520,6 @@
   }
 
   /* ---------- refreshPriority -2 for what has no pin under it ---------- */
-  function initGo(s) {
-    return section(s, function (c, s) { revealOnce($$(".sy-go > *", s), BELOW, 16); });
-  }
   /* The sample cards the wheel no longer stops on. Each rises once, then the one thing that matters on it happens, as it did on the wheel. */
   function closer(items, keep) {
     var marks = [];
@@ -590,9 +587,9 @@
   /* ---------- run, in page order ---------- */
   var cleanups = [];
   var run = function (pair) { var el = $(pair[0]); if (el) cleanups.push(pair[1](el)); };
-  [["#top", initHero], ["#one-system", initGo], ["#problem", initProblem], ["#journey", initJourney], ["#shot", initShot], ["#sell", initSell], ["#stores", initStores], ["#counter", initCounter], ["#use-cases", initUseCases], ["#founder", initFounder], ["#pricing", initPricing], ["#faq", initFaq], ["#start", initEnd]].forEach(run);
+  [["#top", initHero], ["#problem", initProblem], ["#journey", initJourney], ["#shot", initShot], ["#sell", initSell], ["#stores", initStores], ["#counter", initCounter], ["#use-cases", initUseCases], ["#founder", initFounder], ["#pricing", initPricing], ["#faq", initFaq], ["#start", initEnd]].forEach(run);
   var queued = 0;
-  refreshSoon = function () { if (queued) return; queued = W.requestAnimationFrame(function () { queued = 0; ST.refresh(); }); };
+  refreshSoon = function () { if (queued) return; queued = W.requestAnimationFrame(function () { queued = 0; if (W.RFWheel && W.RFWheel.refresh) W.RFWheel.refresh(); else ST.refresh(); }); };
   refreshSoon();
   if (d.fonts && d.fonts.ready) d.fonts.ready.then(refreshSoon);
   W.addEventListener("load", function () {
