@@ -9,7 +9,13 @@ import type {
   ToCollectState,
 } from "@routeflow/types";
 import type { InvoiceSendLock, InvoiceSendState } from "@/lib/invoice-send-state";
-import { isPostDeliveryOrderStatus, type DiscountTaxBaseValue } from "@routeflow/types";
+import {
+  isAlreadyBilledRunError,
+  isPostDeliveryOrderStatus,
+  RUN_SEND_FAILED_PREFIX,
+  RUN_UNFINALIZED_PREFIX,
+  type DiscountTaxBaseValue,
+} from "@routeflow/types";
 import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import { isRecordPaymentLocalRefusal } from "@/lib/duplicate-payment-ref";
@@ -905,28 +911,12 @@ export function usePaymentDetail(id: string) {
 
 // ─── Recurring invoices ───────────────────────────────────────────────────────
 
-/**
- * REG-B106: mirrors `RUN_UNFINALIZED_ERROR` in
- * `apps/api/src/recurring-invoices/recurring-invoices.service.ts`. A `lastError` starting
- * with this text means the invoice WAS created (the cycle is billed) and only the run's
- * bookkeeping failed — so that failure must never be offered as a retry: re-running would
- * bill the same cycle twice.
- */
-export const RUN_UNFINALIZED_PREFIX = "The invoice was created but the run could not be finalized";
-
-/**
- * B1251: mirrors `RUN_SEND_FAILED_ERROR` in the same API file. The invoice WAS created (a DRAFT) and only its
- * auto-send email failed: the cycle is billed, so this is not a retry either; the operator sends the draft.
- */
-export const RUN_SEND_FAILED_PREFIX = "The invoice was created but could not be emailed";
+// REG-B106 / B1251: the "already billed" prefixes are declared once in @routeflow/types (a re-run would bill twice).
+export { RUN_SEND_FAILED_PREFIX, RUN_UNFINALIZED_PREFIX };
 
 /** True when a FAILED cycle produced no invoice, so "Run Now" is a safe retry. */
 export function isRetryableRunFailure(lastError?: string | null): boolean {
-  return (
-    !!lastError &&
-    !lastError.startsWith(RUN_UNFINALIZED_PREFIX) &&
-    !lastError.startsWith(RUN_SEND_FAILED_PREFIX)
-  );
+  return !!lastError && !isAlreadyBilledRunError(lastError);
 }
 
 export function useRecurringInvoices(customerId?: string) {

@@ -3,6 +3,26 @@
 import type { CheckStatus } from "./enums";
 import type { API_ERROR_CODES } from "./error-codes";
 
+/**
+ * REG-B106: prefix of the recurring-invoice `lastError` recorded when the invoice WAS created but the run could not be
+ * finalized (the link or outcome write failed). The cycle is ALREADY BILLED: never offer a re-run.
+ * Declared once here; the api writes it, web and mobile read it (single-source pinned by
+ * `apps/api/src/recurring-invoices/run-prefix-single-source.spec.ts`).
+ */
+export const RUN_UNFINALIZED_PREFIX = "The invoice was created but the run could not be finalized";
+/**
+ * B1251: prefix recorded when the invoice WAS created (and linked) but the auto-send email failed, so it stays a
+ * DRAFT. Same rule: the cycle is ALREADY BILLED; the operator opens the invoice and sends it.
+ */
+export const RUN_SEND_FAILED_PREFIX = "The invoice was created but could not be emailed";
+/** True when a recurring `lastError` means the cycle is already billed (a re-run would bill it twice). */
+export function isAlreadyBilledRunError(lastError?: string | null): boolean {
+  return (
+    !!lastError &&
+    (lastError.startsWith(RUN_UNFINALIZED_PREFIX) || lastError.startsWith(RUN_SEND_FAILED_PREFIX))
+  );
+}
+
 export interface CreatePartialInvoiceItem {
   orderItemId: string;
   qty: number;
@@ -180,7 +200,7 @@ export interface RecurringInvoice {
   lastRunStatus?: "SUCCESS" | "FAILED" | null;
   /**
    * F13/#612: failure text of the last run. A value starting with
-   * `RUN_UNFINALIZED_PREFIX` (see `apps/web/lib/api/invoices.ts`) means the invoice WAS
+   * `RUN_UNFINALIZED_PREFIX` (declared above) means the invoice WAS
    * created and only the run bookkeeping failed — never offer that as a retry. B1251: the same holds for a value
    * starting with `RUN_SEND_FAILED_PREFIX` (the invoice exists as a draft; only its auto-send email failed).
    */
