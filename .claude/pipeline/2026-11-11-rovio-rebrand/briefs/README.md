@@ -41,6 +41,16 @@ Master has no spec above 85 today; re-check before naming (bug-id clash trap, th
 
 **SWITCH-DAY GATE (owner box ~23:22Z, SA-1178 Q1: "Ask for both in writing (Recommended)"):** before switch day, the trademark attorney's written clearance must name all four: **X-Rovio**, **Rovio**, **xrovio.com** and **xrov.io**. If any one is missing, there is no switch, no DNS, no certificate and no mailbox.
 
+**Switch-day list additions (S2 review, 2026-11-19):**
+- `symbolOnDark` moves from today's `/site/img/routeflow-mark-reversed.svg` to the kit's `/site/img/brand/symbol-reversed.svg`, together with the other path keys. It never points there before clearance, because that file is the new mark (SA-1178 F8).
+- The switch commit re-runs the JSON-LD generator (`scripts/sync-site-port.mjs`) and commits the regenerated home in the same commit as the JSON lines. The S2 guard test (SA-1178 A1 K2) is red until it does.
+- `tokenise()` cannot round-trip home since S2: `/` left `UNTOKENISED`, and there is no rule for the `symbolOnDark` path or the colon alt. Home is hand-maintained apart from its JSON-LD block. Port-script re-runs must skip home or gain context rules (LATER).
+
+**Notes for later lanes (S2 review):**
+- 2.2: `.mk` in `graphics/rf-wheel-up.css:81` is dead, because S2 removed `<g class="mk">`. Delete it in 2.2. Also, 2.1b removed `--tint` from `site.css`, but `rf-wheel-up.css` still reads `var(--tint)`: 2.2 replaces it with a live token.
+- W4 2.5 and W3 2.3-home: the end-mark-to-SVG item and the `home-total:home` / `raster-icons:home` speed rows are done in S2.
+- W4 2.5: a json escape mode for ld+json tokens, only if a brand value ever needs `& < > " '` (SA-1178 A1 K3).
+
 **D0 console list (SA-1174).** Add the Google OAuth consent-screen app name and the Microsoft app registration display name to the consoles read back at D0 (spec-delta §2a covers only the origin). OQ-9 depends on both.
 
 ## Order and parallel groups
