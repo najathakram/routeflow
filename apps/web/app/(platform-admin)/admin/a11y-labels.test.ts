@@ -179,7 +179,10 @@ describe("platform-admin a11y — controls carry an accessible name (A3 F1/F2/F3
   // <DisabledHint id="X"> and points the control's aria-describedby at the same id, in the same
   // file. (The other ~60 `disabled` sites are pending-state or pagination bounds: self-evident.)
   const REASONED_DISABLED: Array<[string, string]> = [
-    [path.join("admin", "tenants", "[id]", "page.tsx"), "feature-override-hint"],
+    [
+      path.join("admin", "tenants", "[id]", "_features", "FeatureOverridesSection.tsx"),
+      "feature-override-hint",
+    ],
     [
       path.join("admin", "tenants", "[id]", "_features", "ConfigSnapshotsTab.tsx"),
       "restore-nothing-hint",
