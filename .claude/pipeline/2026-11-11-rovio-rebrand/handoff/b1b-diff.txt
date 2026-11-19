@@ -1,0 +1,51 @@
+differing labels: 8 of 260
+LABEL buyer-0#html
+  line 27
+    OLD: "    <a href=\"https://app.test/buyer/verify-email?token=52ff86d99e553a7f891927243fc5f1c5d2c1f0ce40e4084e7c1c1cc586df45eb\" style=\"display:inline-block;padding:14px 28px;line-height:16px;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;color:#FFFFFF;text-decoration:none;\">Verify my email</a>"
+    NEW: "    <a href=\"https://app.test/buyer/verify-email?token=801ad9f1b6188a87ac163c19e9a879f00da2085259a44269003aa46bc03d9518\" style=\"display:inline-block;padding:14px 28px;line-height:16px;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;color:#FFFFFF;text-decoration:none;\">Verify my email</a>"
+  line 28
+    OLD: "  </td></tr></table></div><p style=\"margin:16px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:20px;color:#536579;\">If the button does not work, use this link: <a href=\"https://app.test/buyer/verify-email?token=52ff86d99e553a7f891927243fc5f1c5d2c1f0ce40e4084e7c1c1cc586df45eb\" style=\"color:#087D76;\">app.test/buyer/verify-email</a></p>"
+    NEW: "  </td></tr></table></div><p style=\"margin:16px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:20px;color:#536579;\">If the button does not work, use this link: <a href=\"https://app.test/buyer/verify-email?token=801ad9f1b6188a87ac163c19e9a879f00da2085259a44269003aa46bc03d9518\" style=\"color:#087D76;\">app.test/buyer/verify-email</a></p>"
+LABEL buyer-0#text
+  line 9
+    OLD: "Verify my email: https://app.test/buyer/verify-email?token=52ff86d99e553a7f891927243fc5f1c5d2c1f0ce40e4084e7c1c1cc586df45eb"
+    NEW: "Verify my email: https://app.test/buyer/verify-email?token=801ad9f1b6188a87ac163c19e9a879f00da2085259a44269003aa46bc03d9518"
+LABEL buyer-1#html
+  line 27
+    OLD: "    <a href=\"https://app.test/buyer/reset-password?token=2bdd0080cb3ec21413f49c71d4b91862e172f155a00c9a2d5e96a8c2968a3bf0\" style=\"display:inline-block;padding:14px 28px;line-height:16px;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;color:#FFFFFF;text-decoration:none;\">Reset password</a>"
+    NEW: "    <a href=\"https://app.test/buyer/reset-password?token=4ab6fe8d51ccfdcb60923f1ea02092852637a123e2a898fc5ad738375030afdb\" style=\"display:inline-block;padding:14px 28px;line-height:16px;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;color:#FFFFFF;text-decoration:none;\">Reset password</a>"
+  line 28
+    OLD: "  </td></tr></table></div><p style=\"margin:16px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:20px;color:#536579;\">If the button does not work, use this link: <a href=\"https://app.test/buyer/reset-password?token=2bdd0080cb3ec21413f49c71d4b91862e172f155a00c9a2d5e96a8c2968a3bf0\" style=\"color:#087D76;\">app.test/buyer/reset-password</a></p>"
+    NEW: "  </td></tr></table></div><p style=\"margin:16px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:20px;color:#536579;\">If the button does not work, use this link: <a href=\"https://app.test/buyer/reset-password?token=4ab6fe8d51ccfdcb60923f1ea02092852637a123e2a898fc5ad738375030afdb\" style=\"color:#087D76;\">app.test/buyer/reset-password</a></p>"
+LABEL buyer-1#text
+  line 7
+    OLD: "Reset password: https://app.test/buyer/reset-password?token=2bdd0080cb3ec21413f49c71d4b91862e172f155a00c9a2d5e96a8c2968a3bf0"
+    NEW: "Reset password: https://app.test/buyer/reset-password?token=4ab6fe8d51ccfdcb60923f1ea02092852637a123e2a898fc5ad738375030afdb"
+LABEL invoice-text-paid
+  line 3
+    OLD: "Austin, TX · routeflow.io"
+    NEW: "Austin, TX · routeflow.info"
+  line 46
+    OLD: "RouteFlow · Austin, TX · routeflow.io"
+    NEW: "RouteFlow · Austin, TX · routeflow.info"
+LABEL invoice-text-unpaid
+  line 3
+    OLD: "Austin, TX · routeflow.io"
+    NEW: "Austin, TX · routeflow.info"
+  line 35
+    OLD: "RouteFlow · Austin, TX · routeflow.io"
+    NEW: "RouteFlow · Austin, TX · routeflow.info"
+LABEL invoice-tree-paid
+  line 104
+    OLD: "          \"Austin, TX · routeflow.io\""
+    NEW: "          \"Austin, TX · routeflow.info\""
+  line 1009
+    OLD: "        \"RouteFlow · Austin, TX · routeflow.io\""
+    NEW: "        \"RouteFlow · Austin, TX · routeflow.info\""
+LABEL invoice-tree-unpaid
+  line 104
+    OLD: "          \"Austin, TX · routeflow.io\""
+    NEW: "          \"Austin, TX · routeflow.info\""
+  line 838
+    OLD: "        \"RouteFlow · Austin, TX · routeflow.io\""
+    NEW: "        \"RouteFlow · Austin, TX · routeflow.info\""
