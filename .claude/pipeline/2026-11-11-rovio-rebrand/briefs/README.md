@@ -37,6 +37,8 @@ Master has no spec above 85 today; re-check before naming (bug-id clash trap, th
 3. DECIDED (owner box 2026-11-19 ~20:22Z): "On switch day". Mailbox help text: rename the app in both the Google and Microsoft consoles on switch day, and the three help-text sentences switch the same day; until then the old name stays. Touches B3.
 4. DECIDED (owner box 2026-11-19 ~20:22Z): "Skip to plans", built only if T46b is red at the 2.3-pricing base. Touches 2.3-pricing.
 
+**Owner ruling 2026-11-19 (to the PC coordinator, verbatim):** "the official name of the tool is gonna be X-Rovio. But we usually refer to it as Rovio. our domain will be xrovio.com and xrov.io". Two names now: official "X-Rovio", everyday "Rovio"; `xrov.io` is a second domain (no longer a fallback name). SA ruling pending on the brand keys (proposal: `name` stays "Rovio", new `officialName` "X-Rovio" granted to S2; `xrov.io` redirects to `www.xrovio.com`). **S2 does not start until that ruling lands.**
+
 **D0 console list (SA-1174).** Add the Google OAuth consent-screen app name and the Microsoft app registration display name to the consoles read back at D0 (spec-delta §2a covers only the origin). OQ-9 depends on both.
 
 ## Order and parallel groups
