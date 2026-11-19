@@ -1023,7 +1023,8 @@ describeDb("I-120 Complete at counter — real Postgres", () => {
     expect(err?.getStatus?.()).toBe(409);
     expect(err.getResponse()).toMatchObject({
       code: "COUNTER_COMPLETE_SHIPPED",
-      message: "This order has shipped with the carrier.",
+      message:
+        "This order is with the carrier. To hand it over here, first Unmark shipped, then switch it to Store pickup.",
     });
     await expectUntouched(orderId, invoiceId, {
       path: "SHIP",

@@ -20,7 +20,11 @@ import type {
   OrderCancelBlockedReason,
 } from "@routeflow/types";
 import type { LocalErrorToastOption } from "@/lib/local-error-toast";
-import type { OverrideStampView, RestrictionAck } from "@routeflow/types";
+import type {
+  OrderEditRevertsSentField,
+  OverrideStampView,
+  RestrictionAck,
+} from "@routeflow/types";
 import { splitIdAck, type IdWithAck } from "@/lib/api/restriction-warning";
 import type { HandOverSoldBy } from "@/lib/handover-stamp";
 import type {
@@ -146,6 +150,8 @@ export interface Order {
   cancelBlockedReason?: OrderCancelBlockedReason | null;
   /** W-861: the server refuses an items edit (a paid walk-in sale); Edit items is not offered. Never re-derived. */
   editItemsLocked?: boolean;
+  /** B1372 (SA-1177 K2): the sent invoices saving an items edit turns back into drafts (the page confirms first). Never re-derived. */
+  editRevertsSentInvoices?: OrderEditRevertsSentField["editRevertsSentInvoices"];
   /** P5-08: whether the order can still be edited directly (closes on dispatch). */
   editWindow?: {
     editable: boolean;

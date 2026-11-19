@@ -1,4 +1,5 @@
 import { ConflictException } from "@nestjs/common";
+import { COUNTER_COMPLETE_SHIPPED_MESSAGE } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { AUDIT_ACTIONS } from "../../audit/audit-actions.constant";
 import { claimStopStatusChange, lockStopsOrdersForRelease } from "../../routes/delivery-lines.util";
@@ -56,7 +57,7 @@ export function completeAtCounterRunRefusal(
   if (shipped) {
     return new ConflictException({
       code: API_ERROR_CODES.COUNTER_COMPLETE_SHIPPED,
-      message: "This order has shipped with the carrier.",
+      message: COUNTER_COMPLETE_SHIPPED_MESSAGE, // B1372 K4.2: names the next step
     });
   }
   const run = activeRun(order);

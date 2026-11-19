@@ -116,6 +116,7 @@ import {
   recordInvoiceEmailed,
   assertOrderInvoiceUnlockedFor,
   sendFieldsFor,
+  changedSinceSentNumbers,
   type SendEmailArgs,
 } from "./invoice-send-state";
 import { resolveInvoiceVariant } from "./invoice-stage";
@@ -3602,6 +3603,14 @@ export class InvoicesService {
     });
     const parts = [this.prisma, this.pdfService, this.storage, this.logger, opts] as const;
     Object.assign(emailPayload, await completionEmailParts(...parts)); // I-120: COUNTER_COMPLETE only
+    const first = { id, invoiceNumber: inv.invoiceNumber, fingerprint }; // B1372 K2: "changed since we last sent it"
+    const changed = await changedSinceSentNumbers(
+      this.prisma,
+      this.featureConfig,
+      first,
+      opts?.withInvoiceIds,
+    );
+    Object.assign(emailPayload, { changedSinceSent: changed });
     const sendResult = await this.emailService.sendInvoice(emailPayload);
 
     // R5: the email server was configured but the actual send did NOT succeed
