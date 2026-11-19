@@ -23,7 +23,7 @@ import { GET as ogGet } from "./opengraph-image/route";
 jest.mock("@routeflow/types/brand/load", () => {
   const actual = jest.requireActual("@routeflow/types/brand/load");
   const fixture = actual.validateBrand({
-    name: "XROV.IO",
+    name: "FIXTURE.TEST",
     formerly: "Fixture Former Name",
     legalEntity: "Fixture Legal Holdings Ltd",
     origin: "https://www.fixture-host.example",
@@ -75,7 +75,7 @@ const TOKENISED = STATIC_SITE_PAGE_NAMES.filter(
 ) as StaticSitePage[];
 
 const REAL_BRAND = CURRENT_BRAND;
-/** The planned name the fixture build must never show. The fixture itself is named XROV.IO (dotted,
+/** The planned name the fixture build must never show. The fixture itself is named FIXTURE.TEST (dotted,
  *  so the "name ends a sentence" double full stop is exercised), so only "rovio" is forbidden. */
 const PLANNED_NAME = /rovio/i;
 /** What the renderer is expected to do to a value placed in HTML (written out here on purpose). */

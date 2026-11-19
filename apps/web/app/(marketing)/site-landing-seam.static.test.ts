@@ -140,7 +140,7 @@ describe("T45 (landing alone): a fixture brand shows nothing of the real one", (
   const FIXTURE = loadBrand();
   const fx = {
     ...FIXTURE,
-    name: "XROV.IO",
+    name: "FIXTURE.TEST",
     origin: "https://www.fixture-host.example",
     email: "writeto@fixture-host.example",
     shareLine: "A fixture line.",
@@ -156,14 +156,16 @@ describe("T45 (landing alone): a fixture brand shows nothing of the real one", (
   });
 
   it("takes name, host, mailbox and logo paths from the brand", () => {
-    expect(html).toContain("<title>XROV.IO :: Software for wholesalers and distributors</title>");
+    expect(html).toContain(
+      "<title>FIXTURE.TEST :: Software for wholesalers and distributors</title>",
+    );
     expect(html).toContain(`<link rel="canonical" href="${fx.origin}/landing">`);
-    expect(html).toContain(`<meta property="og:site_name" content="XROV.IO">`);
+    expect(html).toContain(`<meta property="og:site_name" content="FIXTURE.TEST">`);
     expect(html).toContain(`<link rel="icon" href="/fx/tab-icon.png"`);
     expect(html).toContain(`<img src="/fx/logo-light.svg"`);
     expect(html).toContain(`mailto:${fx.email}`);
-    expect(html).toContain("© 2026 XROV.IO");
-    expect(html).toContain(`content="XROV.IO. A fixture line."`);
+    expect(html).toContain("© 2026 FIXTURE.TEST");
+    expect(html).toContain(`content="FIXTURE.TEST. A fixture line."`);
     expect(html).toContain(`href="${fx.origin}/landing"`);
     expect(html).toContain(`content="${fx.origin}/opengraph-image"`);
   });
@@ -508,15 +510,15 @@ describe("T37: no sentence ends with the name; the title is short", () => {
     return decode([text, ...attrs].join("\n"));
   }
   const titleOf = (html: string) => decode(html.match(/<title>([^<]*)<\/title>/)?.[1] ?? "");
-  const DOTTED = { ...loadBrand(), name: "XROV.IO" };
+  const DOTTED = { ...loadBrand(), name: "FIXTURE.TEST" };
 
   it("no name followed by . ! or ?, real name and dotted fixture", () => {
     const real = readable(served());
     expect(real).toContain(BRAND.name);
     expect(real).not.toMatch(new RegExp(`${BRAND.name}\\s*[.!?]`));
     const fixture = readable(served(DOTTED));
-    expect(fixture).toContain("XROV.IO");
-    expect(fixture).not.toMatch(/XROV\.IO\s*[.!?]/);
+    expect(fixture).toContain("FIXTURE.TEST");
+    expect(fixture).not.toMatch(/FIXTURE\.TEST\s*[.!?]/);
   });
 
   it("the title is the name, the separator and the tagline, at most 60 characters", () => {

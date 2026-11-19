@@ -6,12 +6,12 @@ import { loadInvoiceModule, renderPlatformMails } from "../testing/render-platfo
  * T-B5 (the T45 row for mail): with the brand module mocked to a fixture, every platform mail the
  * B1 files render carries the fixture's name, logo and site and no trace of the real brand. A mail
  * that still reads a typed literal fails here, whatever the real brand.json holds. A dotted name
- * ("XROV.IO") also exposes a name that ends a sentence ("XROV.IO.").
+ * ("FIXTURE.TEST") also exposes a name that ends a sentence ("FIXTURE.TEST.").
  */
 jest.mock("../common/brand", () => ({
   // not frozen: the former-name test flips `formerly`
   BRAND: {
-    name: "XROV.IO",
+    name: "FIXTURE.TEST",
     formerly: "Old Fixture",
     origin: "https://fixture.test",
     emailLogo: "/x/logo.png",
@@ -50,7 +50,7 @@ const own = (label: string) =>
 describe("T-B5: platform mail under a fixture brand", () => {
   it("renders the whole set (a vacuous empty render would pass every check below)", () => {
     expect(Object.keys(out).length).toBeGreaterThan(100);
-    expect(BRAND.name).toBe("XROV.IO");
+    expect(BRAND.name).toBe("FIXTURE.TEST");
   });
 
   it("no output names the real brand, outside the allow-listed sender domain", () => {
@@ -254,7 +254,7 @@ describe("lane B1b: the invoice PDF under a fixture brand", () => {
       expect(text).toContain(BRAND.name);
       expect(text).toContain(`Austin, TX · fixture.test`);
       expect(text).toContain(`${BRAND.name} · Austin, TX · fixture.test`);
-      expect(text.split("\n")).toContain("XI");
+      expect(text.split("\n")).toContain("FT");
       expect(`${tree}${text}`).not.toMatch(/route\s?flow/i);
     }
   });
@@ -274,7 +274,7 @@ describe("lane B1b: the invoice PDF under a fixture brand", () => {
   it("derives initials from the name: two words, a camel hump, a dotted name, a short name", () => {
     const { brandInitials } = loadInvoiceModule() as { brandInitials(n: string): string };
     expect(brandInitials("RouteFlow")).toBe("RF");
-    expect(brandInitials("XROV.IO")).toBe("XI");
+    expect(brandInitials("FIXTURE.TEST")).toBe("FT");
     expect(brandInitials("Acme Foods Inc")).toBe("AF");
     expect(brandInitials("Acme")).toBe("AC");
     expect(brandInitials("a")).toBe("A");

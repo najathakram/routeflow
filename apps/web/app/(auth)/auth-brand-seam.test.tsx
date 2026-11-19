@@ -15,7 +15,7 @@ import { CURRENT_BRAND } from "@/lib/test-support/site-brand-exemptions";
 jest.mock("@routeflow/types/brand/load", () => {
   const actual = jest.requireActual("@routeflow/types/brand/load");
   const fixture = actual.validateBrand({
-    name: "XROV.IO",
+    name: "FIXTURE.TEST",
     formerly: "Fixture Former Name",
     legalEntity: "Fixture Legal Holdings Ltd",
     origin: "https://www.fixture-host.example",

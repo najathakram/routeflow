@@ -20,7 +20,7 @@ const PAGES = [
   "security",
 ] as StaticSitePage[];
 
-const DOTTED = { ...loadBrand(), name: "XROV.IO" };
+const DOTTED = { ...loadBrand(), name: "FIXTURE.TEST" };
 
 const decode = (s: string) =>
   s
@@ -110,8 +110,8 @@ describe("T41: plans differ by customers only", () => {
 describe("T37: no sentence ends with the name (dotted fixture name)", () => {
   it.each(PAGES)("%s: no name followed by . ! or ?", (p) => {
     const html = readServedSitePage(p, { brand: DOTTED, websiteId: undefined });
-    expect(html).toContain("XROV.IO");
-    expect(readable(html)).not.toMatch(/XROV\.IO\s*[.!?]/);
+    expect(html).toContain("FIXTURE.TEST");
+    expect(readable(html)).not.toMatch(/FIXTURE\.TEST\s*[.!?]/);
   });
 
   it.each(PAGES)("%s: title is at most 60 characters with the real name and the fixture", (p) => {
