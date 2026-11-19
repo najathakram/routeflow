@@ -32,7 +32,7 @@ const EXEMPT: Record<string, { labels: string[]; why: string }> = {
     labels: ["Record payment"],
     why: "the record-payment MODAL's own submit: it opens only from the gated triggers in this file; the server refuses the write",
   },
-  "app/(dashboard)/estimates/page.tsx": {
+  "app/(dashboard)/estimates/EstimateFormModal.tsx": {
     labels: ["Create estimate"],
     why: "the new-estimate MODAL's own submit: it opens only from the gated New estimate triggers; the server refuses the write",
   },
