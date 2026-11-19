@@ -131,13 +131,6 @@ export const TENANT_JOBS: Readonly<Record<string, TenantJobSpec>> = {
     reason:
       "a notification over existing stock; already not SUSPENDED / CANCELLED, now via the shared constant",
   },
-  "invoices.generate-invoice": {
-    class: "RECORD_KEEPING",
-    filter: "RECORD_KEEPING",
-    filterFile: "bookkeeping/invoice.processor.ts",
-    reason:
-      "the PDF of an EXISTING transaction; a SUSPENDED / CANCELLED tenant's job is skipped, not retried",
-  },
   "mailbox-alert.sweepPending": {
     class: "RECORD_KEEPING",
     filter: "NONE",

@@ -2,9 +2,9 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { PlatformConfigService } from "../platform-admin/platform-config.service";
 
-// Mock invoice.service.ts to avoid loading @react-pdf/renderer (ESM-only)
-jest.mock("./invoice.service", () => ({
-  InvoiceService: jest.fn().mockImplementation(() => ({
+// Mock invoice-pdf.service.ts to avoid loading @react-pdf/renderer (ESM-only)
+jest.mock("../invoices/invoice-pdf.service", () => ({
+  InvoicePdfService: jest.fn().mockImplementation(() => ({
     generateInvoice: jest.fn(),
     getPresignedUrl: jest.fn(),
   })),
@@ -18,7 +18,7 @@ jest.mock("../vendor-bills/vendor-bills.service", () => ({
 }));
 
 import { BookkeepingService } from "./bookkeeping.service";
-import { InvoiceService } from "./invoice.service";
+import { InvoicePdfService } from "../invoices/invoice-pdf.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { StorageService } from "../storage/storage.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -44,7 +44,7 @@ describe("BookkeepingService.bulkMarkPaid", () => {
         },
         BookkeepingService,
         { provide: PrismaService, useValue: prisma },
-        { provide: InvoiceService, useValue: { getPresignedUrl: jest.fn() } },
+        { provide: InvoicePdfService, useValue: { getPresignedUrl: jest.fn() } },
         {
           provide: StorageService,
           useValue: {

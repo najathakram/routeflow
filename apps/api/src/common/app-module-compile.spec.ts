@@ -61,8 +61,6 @@ describe("AppModule compiles its full DI graph", () => {
     })
       .overrideProvider(PrismaService)
       .useValue(prismaStub)
-      .overrideProvider(getQueueToken("invoices"))
-      .useValue(invoiceQueueStub)
       // SA-823: the product-import queue, the same stub (no Redis connection)
       .overrideProvider(getQueueToken("product-import"))
       .useValue(invoiceQueueStub)

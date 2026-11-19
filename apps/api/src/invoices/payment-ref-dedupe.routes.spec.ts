@@ -1,7 +1,7 @@
 // The controllers pull the services' ESM-only dependency chains in; the routes need none of them.
 jest.mock("@anthropic-ai/sdk", () => ({ __esModule: true, default: jest.fn() }));
 jest.mock("./invoice-pdf.service", () => ({ InvoicePdfService: jest.fn() }));
-jest.mock("../bookkeeping/invoice.service", () => ({ InvoiceService: jest.fn() }));
+jest.mock("../invoices/invoice-pdf.service", () => ({ InvoicePdfService: jest.fn() }));
 jest.mock("../vendor-bills/vendor-bills.service", () => ({ VendorBillsService: jest.fn() }));
 jest.mock("../payment-requests/payment-requests.service", () => ({
   PaymentRequestsService: jest.fn(),

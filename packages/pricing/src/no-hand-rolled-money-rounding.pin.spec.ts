@@ -473,13 +473,6 @@ const ALLOW: Allow[] = [
     note: "a margin percent",
   },
   {
-    file: "apps/api/src/bookkeeping/invoice-template.tsx",
-    form: "F4",
-    count: 1,
-    why: "not-money",
-    note: "a line quantity on the printed invoice, not an amount",
-  },
-  {
     file: "apps/api/src/import/import.service.ts",
     form: "F4",
     count: 2,
