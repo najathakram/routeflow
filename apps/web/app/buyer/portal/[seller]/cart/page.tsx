@@ -114,7 +114,9 @@ export default function BuyerCartPage() {
   // `forceNew` only for the buyer's explicit "Create new order instead": the server folds into the
   // open order whenever `forceNew` is absent, and `forceNew` also pins the new order out of every
   // later merge, so it is never sent for a buyer who simply has no open order.
-  const mergeable = activeReady && Boolean(activeOrder) && pathMatches;
+  // An order carrying an order discount is never folded into (W-762 / SA-918): the server makes the cart its own order.
+  const discounted = Number(activeOrder?.discountAmount ?? 0) > 0;
+  const mergeable = activeReady && Boolean(activeOrder) && pathMatches && !discounted;
   const willMerge = !forceNew && mergeable;
   const mergeTarget = willMerge ? activeOrder : null;
 

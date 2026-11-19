@@ -167,6 +167,29 @@ describe("quoteForBuyer is create()'s own number", () => {
   });
 });
 
+describe("16: the quote is the cart alone; a fold is priced on the combined qty", () => {
+  const BOGO = {
+    id: "promo-bogo",
+    type: "BUY_N_GET_M",
+    value: 1,
+    minQty: 5,
+    scope: "ALL",
+    category: null,
+    productIds: [],
+  };
+  it("an open order holding 3 of a buy-5-get-1 product plus 3 in the cart: the fold total is not old + quote", async () => {
+    const h = await setup();
+    h.module.get(PromotionsService).activeForCatalog.mockResolvedValue([BOGO] as never);
+    const oldOrder = await quote(h, [{ productId: "p-12pack", qty: 3 }]); // what the open order holds
+    const cartOnly = await quote(h, [{ productId: "p-12pack", qty: 3 }]); // what the quote shows for the cart
+    const folded = await quote(h, [{ productId: "p-12pack", qty: 6 }]); // the fold re-earns BOGO on the combined 6
+    expect(oldOrder.subtotal + cartOnly.subtotal).toBe(93.6);
+    expect(folded.subtotal).toBe(78); // 5 x 15.60: the 6th is free
+    expect(folded.subtotal).not.toBe(oldOrder.subtotal + cartOnly.subtotal);
+    expect(folded.total).not.toBe(oldOrder.total + cartOnly.total);
+  });
+});
+
 describe("the quote seam is pinned", () => {
   const SRC = join(__dirname, "..");
   const walk = (dir: string): string[] =>

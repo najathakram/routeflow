@@ -113,6 +113,19 @@ describe("buyer cart summary shows the server's quote", () => {
     expect(valueOf("Total for these items")).toBe("69.77");
   });
 
+  it("SA-1172 F7: an open order carrying an order discount is never a merge target (the server makes the cart its own order)", () => {
+    activeOrder = {
+      id: "o-old",
+      orderNumber: "ORD-100",
+      fulfillPath: "ROUTE",
+      discountAmount: "5.00",
+    };
+    render(<BuyerCartPage />);
+    expect(screen.queryByText("Total for these items")).toBeNull();
+    expect(screen.queryByText(/will be added to your existing order/i)).toBeNull();
+    expect(screen.getByText("Total")).toBeInTheDocument();
+  });
+
   it("18: with no quote (pending, failed or throttled) the fallback shows and Place order stays enabled", () => {
     quoteResult = { quote: undefined, busy: false };
     render(<BuyerCartPage />);
