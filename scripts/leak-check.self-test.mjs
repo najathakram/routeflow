@@ -789,6 +789,86 @@ try {
       hook(repo, line(dropped)).code === 0,
     );
   }
+  // ---- fix round 1: git C-quoted names (zero-width, full-width, directory, plain non-ASCII) are never printed ----
+  {
+    const ZW = "\u200b";
+    const BS = String.fromCharCode(92); // git writes a quoted byte as a backslash plus three octal digits
+    const cases = [
+      [
+        "zero-width file name",
+        `zz${ZW}fixture.txt`,
+        "zzfixture line\n",
+        [ZW, `${BS}342`, "fixture.txt"],
+      ],
+      [
+        "full-width file name",
+        "\uff5a\uff5a\uff46\uff49\uff58\uff54\uff55\uff52\uff45.txt",
+        "zzfixture line\n",
+        ["\uff5a", `${BS}357`],
+      ],
+      [
+        "zero-width directory name",
+        `zz${ZW}fixture/notes.txt`,
+        "zzfixture line\n",
+        [ZW, `${BS}342`, "notes"],
+      ],
+      [
+        "plain quoted name (non-matching)",
+        "caf\u00e9-notes.txt",
+        "zzfixture line\n",
+        [`${BS}303`, "caf", "notes"],
+      ],
+    ];
+    for (const [label, name, body, banned] of cases) {
+      const { repo, base } = baseRepo();
+      const head = commit(repo, { [name]: body });
+      const noName = (r) => !banned.some((b) => r.out.includes(b)) && !leaks(r.out);
+      const withheld = (r) => /added line\(s\) in \(path withheld\)/.test(r.out);
+      const rg = cli(repo, ["--range", `${base}..${head}`]);
+      check(
+        `range: ${label} is withheld, never printed`,
+        rg.code === 1 && noName(rg) && withheld(rg),
+        JSON.stringify(rg),
+      );
+      const hk = hook(repo, `refs/heads/feat/y ${head} refs/heads/feat/y ${ZERO}`);
+      check(
+        `hook: ${label} is withheld, never printed`,
+        hk.code === 1 && noName(hk) && withheld(hk),
+        JSON.stringify(hk),
+      );
+    }
+    const { repo } = baseRepo();
+    const bad = cli(repo, ["--range", "zzfixture..nope"]);
+    check(
+      "unresolvable --range does not echo the argument",
+      bad.code === 2 && !leaks(bad.out) && !/nope/.test(bad.out),
+      JSON.stringify(bad),
+    );
+  }
+  // overlap ref filters are case-insensitive, like the ref-name rule
+  {
+    const { repo, base } = baseRepo();
+    git(repo, ["update-ref", "refs/remotes/origin/master", base]);
+    const priv = commit(repo, { "kit.txt": "private work\n" });
+    git(repo, ["update-ref", "refs/heads/Rebrand/x", priv]);
+    const r = hook(repo, `refs/heads/feat/y ${priv} refs/heads/feat/y ${ZERO}`);
+    check(
+      "overlap with a Rebrand/x (case variant) branch refused",
+      r.code === 1,
+      JSON.stringify(r),
+    );
+  }
+  // rule 4 in the fast lane: own-ref allowed, cross-ref refused
+  {
+    const { repo, base } = baseRepo();
+    const head = commit(repo, { "b.txt": "fine\n" });
+    const own = hook(repo, `refs/heads/rebrand/x ${head} refs/heads/rebrand/x ${ZERO}`);
+    check("fast: own-ref rebrand/x push allowed", own.code === 0, JSON.stringify(own));
+    const cross = hook(repo, `refs/heads/rebrand/x ${head} refs/heads/master ${base}`);
+    check("fast: rebrand/x -> master refused", cross.code === 1, JSON.stringify(cross));
+    const up = hook(repo, `refs/heads/Rebrand/x ${head} refs/heads/master ${base}`);
+    check("fast: Rebrand/x -> master refused", up.code === 1, JSON.stringify(up));
+  }
   // ---- fix round: real pushes against a throwaway bare repo (the hook is wired as a real pre-push) ----
   if (FULL) {
     const realRepo = () => {

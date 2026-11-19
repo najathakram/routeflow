@@ -25,9 +25,11 @@ regex; never paste it into a file, test, commit message or PR.
     `origin/master` (or every commit not on a remote when there is none); an update scans
     `remote-sha..local-sha`.
 - Fail-closed: a missing, empty or invalid patterns file refuses the push with a message saying how
-  to create it. CI (`CI=true` or `GITHUB_ACTIONS`) does not run it and never fails on it.
+  to create it. `CI=true` does not skip the hook: it never skips a push. Only the manual modes (`--range`,
+  `--text-file`, `--stdin`, `--tree`) treat a missing patterns file under CI as a skip, exit 0.
 - Output names commit shas, file paths and counts only; a path or ref that itself matches is
-  withheld. Matched text is never printed.
+  withheld, and so is any path git quotes (unusual bytes, such as zero-width or non-ASCII letters).
+  Matched text is never printed.
 
 ## Manual use
 
@@ -52,6 +54,9 @@ Exit codes: 0 clean, 1 hit, 2 usage or patterns file missing/empty/invalid.
 - `RF_REBRAND_PUSH=launch` is only for launch-day pushes of the name to master or other refs: it lifts
   the cross-ref refusal and the content scan for rebrand-named refs only; any other ref in the same
   push is still scanned.
+- The own-ref allowance applies to any remote. The repo is public during deploy windows, so a
+  `rebrand/*` ref pushed then is visible (owner ruling 2026-11-19 accepted that).
+- `git push --no-verify` and `HUSKY=0` skip the whole guard. House rule: never use them.
 - Merge commits are scanned against their first parent, annotated tag messages are scanned, and any
   failed git call or non-UTF-8 patterns file refuses the push (exit 2) instead of passing.
 

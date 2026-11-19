@@ -33,7 +33,7 @@
 // Exit: 0 clean, 1 hit, 2 usage / patterns file missing, empty or invalid / any failed git call
 // (fail closed on a dev machine; only the non-hook modes treat a missing file under CI as a skip, exit 0;
 // --hook never skips: CI does not push through it). Pushing nothing (deletes only) is exit 0. Output carries
-// commit shas, line counts and file paths ONLY, never matched text; a path that itself matches is withheld.
+// commit shas, line counts and file paths ONLY, never matched text; a path that itself matches, or that git quotes, is withheld.
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -63,6 +63,40 @@ function gitOut(cwd, args) {
 }
 /** Bytes of a git result (injected test runners may only provide `out`). */
 const bytesOf = (r) => r.buf ?? Buffer.from(r.out ?? "", "utf8");
+
+const ESC = { a: 7, b: 8, f: 12, n: 10, r: 13, t: 9, v: 11, ["\\"]: 92, '"': 34 };
+/**
+ * The path of a `+++ ` diff header line (bytes after the marker). git C-quotes a name with unusual bytes
+ * ("..." with \ooo octal bytes and \t \n \" \\ escapes), then the `b/` prefix sits INSIDE the quotes. Returns
+ * { name, quoted }: the decoded name (UTF-8) without the prefix, and whether git quoted it.
+ */
+export function parseHeaderPath(buf) {
+  let name;
+  const quoted = buf[0] === 0x22;
+  if (quoted) {
+    const bytes = [];
+    for (let i = 1; i < buf.length; i++) {
+      const c = buf[i];
+      if (c === 0x22) break;
+      if (c !== 92) {
+        bytes.push(c);
+        continue;
+      }
+      const d = buf.toString("latin1", i + 1, i + 4);
+      if (/^[0-7]{3}$/.test(d)) {
+        bytes.push(parseInt(d, 8) & 0xff);
+        i += 3;
+      } else {
+        const e = ESC[String.fromCharCode(buf[++i])];
+        if (e !== undefined) bytes.push(e);
+      }
+    }
+    name = Buffer.from(bytes).toString("utf8");
+  } else {
+    name = buf.toString("utf8").replace(/\t$/, "");
+  }
+  return { name: name.replace(/^b\//, ""), quoted };
+}
 
 /**
  * Scan an array of rev-list arguments. Pushes identifier-only hit lines into `hits`.
@@ -121,11 +155,13 @@ export function scanRevs(cwd, regexes, revArgs, hits, git = gitOut) {
         ]);
     if (!diffR.ok) return false;
     let file = "";
+    let fileQuoted = false;
     let count = 0;
     let inHeader = false;
     const flush = () => {
       if (count) {
-        const shown = matches(regexes, file) ? "(path withheld)" : file;
+        // A quoted name (unusual bytes) is never printed, whatever it decodes to.
+        const shown = fileQuoted || matches(regexes, file) ? "(path withheld)" : file;
         hits.push(`commit ${short}: ${count} added line(s) in ${shown}`);
       }
       count = 0;
@@ -135,10 +171,11 @@ export function scanRevs(cwd, regexes, revArgs, hits, git = gitOut) {
         flush();
         inHeader = true;
         file = "";
+        fileQuoted = false;
       } else if (inHeader) {
-        const s = raw.toString("utf8");
-        if (s.startsWith("+++ ")) file = s.slice(4).replace(/^b\//, "");
-        else if (s.startsWith("@@")) inHeader = false;
+        if (raw.toString("latin1", 0, 4) === "+++ ") {
+          ({ name: file, quoted: fileQuoted } = parseHeaderPath(raw.subarray(4)));
+        } else if (raw[0] === 0x40 && raw[1] === 0x40) inHeader = false;
       } else if (raw[0] === 0x2b && matchesBuf(regexes, raw.subarray(1))) {
         count++;
       }
@@ -233,22 +270,18 @@ function rangeForRef(cwd, lsha, rsha, notices) {
 function privateOverlap(cwd, pushed) {
   const refs = gitOut(cwd, ["for-each-ref", "--format=%(refname)", "refs/heads/", "refs/remotes/"]);
   if (!refs.ok) return ["leak-check: cannot list rebrand/* branches. Fail-closed."];
+  // Case-insensitive, like isRebrand in run(): a Rebrand/x branch holds private commits too.
   const isPrivRef = (r) =>
-    /^refs\/heads\/rebrand\/./.test(r) || /^refs\/remotes\/[^/]+\/rebrand\/./.test(r);
-  if (!refs.out.split("\n").some(isPrivRef)) return null; // no rebrand/* branches here: nothing to overlap
+    /^refs\/heads\/rebrand\/./i.test(r) || /^refs\/remotes\/[^/]+\/rebrand\/./i.test(r);
+  const privRefs = refs.out.split("\n").filter(isPrivRef);
+  if (privRefs.length === 0) return null; // no rebrand/* branches here: nothing to overlap
   if (!gitOut(cwd, ["rev-parse", "--verify", "-q", ORIGIN_MASTER]).ok) {
     return [
       "leak-check: rebrand/* branches exist but refs/remotes/origin/master is missing, so a push cannot be",
       "leak-check: proven free of private commits. Fail-closed: run git fetch origin master, then push again.",
     ];
   }
-  const priv = gitOut(cwd, [
-    "rev-list",
-    "--glob=refs/heads/rebrand/*",
-    "--glob=refs/remotes/*/rebrand/*",
-    "--not",
-    ORIGIN_MASTER,
-  ]);
+  const priv = gitOut(cwd, ["rev-list", ...privRefs, "--not", ORIGIN_MASTER]);
   if (!priv.ok) return ["leak-check: cannot list private commits. Fail-closed."];
   const privSet = new Set(priv.out.split("\n").filter(Boolean));
   if (privSet.size === 0) return null;
@@ -395,7 +428,7 @@ export function run(argv, { cwd = process.cwd(), env = process.env, input = "" }
       (r, i) => matchesBuf(regexes, r) && hits.push(`ref #${i + 1}: name matches (withheld)`),
     );
     if (!scanRevs(cwd, regexes, withBase(cwd, [o.range], notices), hits)) {
-      return { code: 2, lines: [`leak-check: cannot resolve range ${o.range}`] };
+      return { code: 2, lines: ["leak-check: cannot resolve the --range argument."] };
     }
   } else if (o.textFile || o.stdin) {
     let text = input;

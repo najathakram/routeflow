@@ -59,7 +59,7 @@ refs="$(cat)"
 # <git-common-dir>/info/leak-patterns, never in git) in the pushed diff, commit messages, file and ref
 # names, and any rebrand/* ref (lifted only by RF_REBRAND_PUSH=launch). Runs FIRST, before the trunk
 # check, the SKIP_VERIFY hatch and verify, so SKIP_VERIFY cannot bypass it. Fail-closed on a dev machine
-# when the patterns file is missing or empty; under CI only the content scan is skipped (the rebrand/* refusal is not).
+# when the patterns file is missing or empty, under CI too: CI=true never skips --hook (only the manual modes skip a missing file under CI).
 # Prints identifiers only, never the matched text. See docs/runbooks/push-leak-guards.md.
 # >>> leak-guard
 printf '%s\n' "$refs" | node scripts/leak-check.mjs --hook || exit 1
