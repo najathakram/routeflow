@@ -4812,3 +4812,12 @@ citations, closed-out with its own post-init assertion guard).
 - **Root cause:** the side padding was a percentage half-gap, `(100% - 1200px)/2`, and a percentage padding resolves against the parent's width, not the box's own width.
 - **Lesson:** **A centred box on a page grid is `width: min(<grid>, 100% - <gutter>)` with a centring margin and a fixed clamp padding, never a percentage half-gap. A static scan for the bad shape normalises whitespace, covers the equivalent spellings (`calc(50% - N)`, a custom property holding the half-gap) and walks the whole stylesheet tree.**
 - **Guard:** `site-founder-card-width.static.test.ts` (card width; a scan of `css/` and `graphics/` for one spelling). Open: B1294 (the other spellings). Cf. [[L-364]].
+
+## Archived 2026-11-19 — zero outside citations, no repo guard; headroom for L-394 (bookkeeping for #4367)
+
+### L-361 · 2026-10-31 · deploy · a window script reads the watchdog deadline from the log line of the pid it started, and reads that log with `grep -a`
+
+- **Symptom:** a window script took its "time left" from the last deadline line in the watchdog log. The log is appended by every run, so the tail could hold the previous run's deadline, already in the past; acting on it flips the repo private while a deploy is still building. A plain `grep` on the same log also printed "Binary file matches" and no deadline at all.
+- **Root cause:** the log is shared by every watchdog run and holds bytes that grep treats as binary; "the newest line" was assumed to mean "my watchdog's line".
+- **Lesson:** **Start the watchdog, keep its pid, and read the deadline only from the log line that names that pid; read the log with `grep -a`; if no line for the pid appears, stop and ask instead of falling back to the tail.**
+- **Guard:** none automatic; the window script is owed this change. Cf. [[L-357]].
