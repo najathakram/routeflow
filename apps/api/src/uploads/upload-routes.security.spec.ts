@@ -25,15 +25,6 @@
  * regression that this suite would otherwise miss.
  */
 
-// `invoice-template.tsx` is JSX, and the api Jest project's moduleFileExtensions
-// are js/json/ts only — so any spec whose import graph reaches
-// `bookkeeping/invoice.service` must stub it. Same virtual mock the existing
-// bookkeeping specs use; the PDF templates that DO have moduleNameMapper entries
-// (invoice-pdf-template, statement-pdf-template, tobacco-report-pdf) need nothing.
-jest.mock("../bookkeeping/invoice-template", () => ({ InvoiceTemplate: () => null }), {
-  virtual: true,
-});
-
 import { INestApplication } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import type { Request } from "express";

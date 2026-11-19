@@ -14,8 +14,8 @@ import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 
-// Loading the real InvoiceService pulls in @react-pdf/renderer (ESM-only); AR aging never uses it.
-jest.mock("./invoice.service", () => ({ InvoiceService: jest.fn() }));
+// Loading the real InvoicePdfService pulls in @react-pdf/renderer (ESM-only); AR aging never uses it.
+jest.mock("../invoices/invoice-pdf.service", () => ({ InvoicePdfService: jest.fn() }));
 jest.mock("../vendor-bills/vendor-bills.service", () => ({ VendorBillsService: jest.fn() }));
 
 import { BookkeepingService } from "./bookkeeping.service";

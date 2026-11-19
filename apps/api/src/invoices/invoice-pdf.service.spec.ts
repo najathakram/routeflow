@@ -37,6 +37,7 @@ jest.mock("@react-pdf/renderer", () => ({
 
 import { readFileSync } from "fs";
 import { join } from "path";
+import { NotFoundException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { baseUnitSuffix } from "@routeflow/pricing";
 import { InvoicePdfService, invoicePdfStorageKey } from "./invoice-pdf.service";
@@ -690,5 +691,30 @@ describe("invoice-pdf-template — qtyCellText wiring (B653)", () => {
     expect(at).toBeGreaterThan(-1);
     const call = src.slice(at, src.indexOf("})", at) + 2);
     expect(call).toMatch(/unitLabel:\s*item\.unitLabel/);
+  });
+});
+
+describe("InvoicePdfService.generateAndUpload — tenant scope (REG-B188)", () => {
+  beforeEach(() => {
+    mockCapturedInvoice = null;
+    jest.clearAllMocks();
+  });
+
+  it("REG-B188: the renderer reads the invoice only through forTenant(); another tenant's id is NotFound", async () => {
+    const prisma = createMockPrisma();
+    // The root client would return the other tenant's row; the tenant-scoped client does not see it.
+    const rootFind = prisma.invoice.findUnique;
+    rootFind.mockResolvedValue(baseInvoiceFixture({ id: "inv-other-tenant" }) as any);
+    const scopedFind = jest.fn().mockResolvedValue(null);
+    (prisma as any).forTenant = jest.fn().mockReturnValue({ invoice: { findUnique: scopedFind } });
+    const storage = makeStorage();
+    const service = await makeService(prisma, storage, null);
+
+    await expect(service.getOrGenerate("inv-other-tenant")).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(scopedFind).toHaveBeenCalledTimes(1);
+    expect(rootFind).not.toHaveBeenCalled();
+    expect(storage.upload).not.toHaveBeenCalled();
   });
 });

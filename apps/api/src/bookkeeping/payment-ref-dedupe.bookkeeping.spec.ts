@@ -11,8 +11,8 @@ jest.mock("../common/db-locks", () => ({
   }),
 }));
 jest.mock("@anthropic-ai/sdk", () => ({ __esModule: true, default: jest.fn() }));
-jest.mock("./invoice.service", () => ({
-  InvoiceService: jest.fn().mockImplementation(() => ({})),
+jest.mock("../invoices/invoice-pdf.service", () => ({
+  InvoicePdfService: jest.fn().mockImplementation(() => ({})),
 }));
 jest.mock("../vendor-bills/vendor-bills.service", () => ({
   VendorBillsService: jest.fn().mockImplementation(() => ({})),
@@ -20,7 +20,7 @@ jest.mock("../vendor-bills/vendor-bills.service", () => ({
 
 import { Test } from "@nestjs/testing";
 import { BookkeepingService } from "./bookkeeping.service";
-import { InvoiceService } from "./invoice.service";
+import { InvoicePdfService } from "../invoices/invoice-pdf.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { StorageService } from "../storage/storage.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -117,7 +117,7 @@ describe("row 498: BookkeepingService.recordPayment dedupes on a normalised refe
       providers: [
         BookkeepingService,
         { provide: PrismaService, useValue: prisma },
-        { provide: InvoiceService, useValue: {} },
+        { provide: InvoicePdfService, useValue: {} },
         { provide: StorageService, useValue: {} },
         { provide: VendorBillsService, useValue: {} },
         {

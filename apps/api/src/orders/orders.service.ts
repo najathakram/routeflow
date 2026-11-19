@@ -22,8 +22,6 @@ import { newDocumentDiscountMode } from "../common/discount-tax-mode";
 import { prepareInlineReturn, replayAfterCheck } from "./order-inline-return";
 import { reserveInlineReturnNumber as reserveReturnNo } from "./order-inline-return";
 import { applyInlineReturnInTx as applyReturn } from "./order-inline-return";
-import { InjectQueue } from "@nestjs/bull";
-import type { Queue } from "bull";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import { appendOrderRevisionInTx, appendReopenRevisionInTx } from "./order-revisions";
@@ -309,7 +307,6 @@ export class OrdersService implements OnApplicationBootstrap {
     // A1) read this off an explicit `self: OrdersService` from outside the class — TS `private` is
     // compile-time only, so this is byte-identical at runtime.
     readonly prisma: PrismaService,
-    @InjectQueue("invoices") private readonly invoiceQueue: Queue,
     private readonly gateway: RouteFlowGateway,
     private readonly notifications: NotificationsService,
     readonly invoicesService: InvoicesService,
