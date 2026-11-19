@@ -4,6 +4,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  InternalServerErrorException,
   Logger,
   NotFoundException,
   OnApplicationBootstrap,
@@ -926,7 +927,9 @@ export class OrdersService implements OnApplicationBootstrap {
       // 0/1 — the web still sends boxes:1 for unitsPerBox:1) keeps the operator's
       // qty instead of falling into normalizeBoxesPieces' non-boxed branch with no
       // qty at all, which derives 0 and trips the invariant below.
-      this.warnSplit(options.counterSale ? "counter.sale" : "orders.create.lines", item, upb);
+      if (!options.quote) {
+        this.warnSplit(options.counterSale ? "counter.sale" : "orders.create.lines", item, upb);
+      } // SA-1172 K2a: a quote adds no census line
       if ((item.boxes ?? 0) > 0 || (item.pieces ?? 0) > 0) {
         const split = normalizeBoxesPieces({
           boxes: item.boxes,
@@ -1150,7 +1153,10 @@ export class OrdersService implements OnApplicationBootstrap {
       shipping: orderShippingFee,
       total,
     });
-    if (!isDraft) await options.beforeWrite?.({ total }); // B1209: a refusal here has written nothing
+    if (!isDraft) {
+      await options.beforeWrite?.({ total, subtotal, tax, categoryTax, isTaxExempt }); // B1209: a refusal here has written nothing
+    }
+    if (options.quote) throw new InternalServerErrorException("quote reached the write path"); // SA-1172 K2b
 
     // W6: license guard — a real (non-draft) sale of a license-required category to
     // a customer without a VERIFIED authorization (or active §8 override) throws a

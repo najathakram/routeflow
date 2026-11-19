@@ -53,6 +53,7 @@ const mockRecent = [
 ];
 
 jest.mock("@/lib/api/buyer", () => ({
+  useBuyerCartQuote: () => ({ quote: undefined, busy: false }),
   useBuyerDashboard: () => ({
     data: {
       recentOrders: mockRecent,

@@ -26,6 +26,7 @@ import { GatewaysModule } from "../gateways/gateways.module";
 import { BuyerAuthController } from "./buyer-auth.controller";
 import { BuyerController } from "./buyer.controller";
 import { BuyerCapabilitiesController } from "./buyer-capabilities.controller";
+import { BuyerQuoteController } from "./buyer-quote.controller";
 import { BuyerAdminController, CustomerLinksAdminController } from "./buyer-admin.controller";
 import { BuyerMergeController } from "./buyer-merge.controller";
 import { BuyerAdminMergeController } from "./buyer-admin-merge.controller";
@@ -89,6 +90,7 @@ import { BuyerPaymentsController } from "../payment-requests/buyer-payments.cont
     BuyerController,
     // Business profiles 1B: GET /buyer/capabilities (kept out of BuyerController's constructor).
     BuyerCapabilitiesController,
+    BuyerQuoteController,
     BuyerAdminController,
     CustomerLinksAdminController,
     BuyerMergeController,

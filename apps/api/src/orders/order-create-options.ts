@@ -5,6 +5,15 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import type { SourceLines } from "./source-line";
 import type { OrderItemAuthorChannel } from "./line-author-channel";
 
+/** What `beforeWrite` receives: create()'s own server-priced figures (B1209 `total`; SA-1172 K1 adds the rest). */
+export interface PricedForWrite {
+  total: number;
+  subtotal: number;
+  tax: number;
+  categoryTax: number;
+  isTaxExempt: boolean;
+}
+
 /** The ORIGINAL order a replay hands back (create()'s replay lookup includes its lines). */
 export interface ReplayedOrder {
   id: string;
@@ -86,7 +95,13 @@ export interface CreateOrderOptions {
   lineAuthor?: OrderItemAuthorChannel;
   priceEditAllowed?: boolean;
   onReplay?: (order: ReplayedOrder, cart?: ReplayedCart) => void;
-  beforeWrite?: (priced: { total: number }) => void | Promise<void>;
+  beforeWrite?: (priced: PricedForWrite) => void | Promise<void>;
+  /**
+   * SA-1172 K2: the buyer cart quote (order-quote.ts is the ONLY setter; never a DTO field). create() prices as for a
+   * real order, hands the figures to `beforeWrite` (which throws the quote's private sentinel), and skips the SA-982
+   * line census. A fence right after the hook refuses if the hook ever does not throw, so a quote writes nothing.
+   */
+  quote?: true;
   creditPaidNow?: (total: number) => number;
   offline?: OfflineCreateOption;
 }

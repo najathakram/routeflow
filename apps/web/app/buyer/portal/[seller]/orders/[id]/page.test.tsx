@@ -160,6 +160,30 @@ describe("BuyerOrderDetailPage — Track your delivery (#2095)", () => {
   });
 });
 
+describe("BuyerOrderDetailPage — the levy is a row (SA-1172 K9, test 22)", () => {
+  const summary = () => screen.getByTestId("order-summary");
+
+  it("an order with a regulated levy shows it as Other taxes and fees, so the figures add up", () => {
+    mockOrder = order([{ ...LISTED, categoryTaxAmount: 6 }], { tax: 1.65, total: 27.65 });
+    renderWithProviders(<BuyerOrderDetailPage />);
+    expect(summary()).toHaveTextContent("Other taxes and fees");
+    expect(summary()).toHaveTextContent("$6.00");
+  });
+
+  it("no levy, or only a cancelled line carrying one: no such row", () => {
+    mockOrder = order([{ ...LISTED, categoryTaxAmount: 0 }]);
+    const { unmount } = renderWithProviders(<BuyerOrderDetailPage />);
+    expect(summary()).not.toHaveTextContent("Other taxes and fees");
+    unmount();
+    mockOrder = order([
+      LISTED,
+      { ...LISTED, id: "li-9", status: "CANCELLED", categoryTaxAmount: 6 },
+    ]);
+    renderWithProviders(<BuyerOrderDetailPage />);
+    expect(summary()).not.toHaveTextContent("Other taxes and fees");
+  });
+});
+
 describe("BuyerOrderDetailPage — order with a custom line (B586)", () => {
   it("REG-B586: renders instead of crashing, showing the custom line's own label", () => {
     mockOrder = order([LISTED, CUSTOM]);
