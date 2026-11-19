@@ -22,6 +22,10 @@
 // API_ERROR_CODES (#2163): must stay equal to `packages/types/api/error-codes.ts`; pinned by
 // apps/api/src/common/api-error-codes-parity.spec.ts, which `require`s THIS file.
 module.exports = {
+  // Hand copy of packages/types/api/buyer-order-edit.ts BUYER_EDIT_DELIVERED_LINES_COPY (SA-1149); pinned equal by
+  // apps/api/src/orders/buyer-edit-delivered-copy.spec.ts (which `require`s THIS file).
+  BUYER_EDIT_DELIVERED_LINES_COPY:
+    "Part of this order was already delivered, so it can't be changed here. Contact the seller to change it.",
   // Hand copy of packages/types/api/orders.ts CREDITS_PENDING_COPY (B1205); byte-identical.
   CREDITS_PENDING_COPY:
     "The order was saved, but the credit notes weren't applied yet. Someone in the office needs to apply them on the order.",
@@ -219,7 +223,10 @@ module.exports = {
     MERGE_PACK_MISMATCH: "MERGE_PACK_MISMATCH",
     ORDER_CHANGED_DURING_EDIT: "ORDER_CHANGED_DURING_EDIT",
     ORDER_DELIVERY_ADDRESS_MISSING: "ORDER_DELIVERY_ADDRESS_MISSING",
+    ORDER_EDIT_INVOICE_HAS_PAYMENTS: "ORDER_EDIT_INVOICE_HAS_PAYMENTS",
     ORDER_EDIT_NEEDS_LINE_IDS: "ORDER_EDIT_NEEDS_LINE_IDS",
+    ORDER_EDIT_DELIVERED_LINES: "ORDER_EDIT_DELIVERED_LINES",
+    BUYER_EDIT_INPUT_NOT_ALLOWED: "BUYER_EDIT_INPUT_NOT_ALLOWED",
     /** B692: a manual PARTIALLY_DELIVERED names what was delivered per line (or the order already has delivery data). 409. */
     ORDER_PD_NEEDS_QUANTITIES: "ORDER_PD_NEEDS_QUANTITIES",
     /** B692: a delivered / partly-delivered order whose delivery quantities were never recorded is not cancelled blind. 409. */
@@ -496,6 +503,7 @@ module.exports = {
     OFFLINE_CREDITS_ONLINE_ONLY: "OFFLINE_CREDITS_ONLINE_ONLY",
     OFFLINE_PAYMENT_ONLINE_ONLY: "OFFLINE_PAYMENT_ONLINE_ONLY",
     OFFLINE_IMMEDIATE_DELIVERY_ONLINE_ONLY: "OFFLINE_IMMEDIATE_DELIVERY_ONLINE_ONLY",
+    ORDER_DRAFT_CANNOT_DELIVER_NOW: "ORDER_DRAFT_CANNOT_DELIVER_NOW",
     OFFLINE_QUOTE_REQUIRED: "OFFLINE_QUOTE_REQUIRED",
     ORDER_REVIEW_FLAG_NOT_MANUAL: "ORDER_REVIEW_FLAG_NOT_MANUAL",
     ORDER_REVIEW_REQUIRED: "ORDER_REVIEW_REQUIRED",
@@ -579,6 +587,7 @@ module.exports = {
     RETURN_CANCEL_RETRY: "RETURN_CANCEL_RETRY",
     LOW_STOCK_TOO_MANY: "LOW_STOCK_TOO_MANY",
     ROUTE_HAS_DELIVERY_EVIDENCE: "ROUTE_HAS_DELIVERY_EVIDENCE",
+    ROUTE_STOPS_NOT_PLACED: "ROUTE_STOPS_NOT_PLACED",
     EMAIL_CHANGE_LINK_INVALID: "EMAIL_CHANGE_LINK_INVALID",
     EMAIL_TAKEN: "EMAIL_TAKEN",
     EMAIL_CHANGE_ACCOUNT_INACTIVE: "EMAIL_CHANGE_ACCOUNT_INACTIVE",

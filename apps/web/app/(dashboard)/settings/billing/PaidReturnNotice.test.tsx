@@ -22,6 +22,47 @@ describe("PaidReturnNotice", () => {
     mockSub = undefined;
   });
 
+  // SA-1139: the API returns /settings/billing?checkout=success; it reads exactly like ?paid=1.
+  it("?checkout=success shows the same payment notice and polls like ?paid=1", () => {
+    mockQuery = "checkout=success";
+    mockSub = { billingState: "processing", paymentProcessing: true };
+    renderWithProviders(<PaidReturnNotice />);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Your payment is processing. Your bank hasn't cleared it yet.",
+    );
+    expect(lastOpts.refetchInterval?.({ state: { data: mockSub } })).toBe(15_000);
+  });
+
+  // SA-1139 fix round 1: trialEndsAt is the app sign-up trial and is never cleared on activation, so the web
+  // must not guess "first payment on <date>" from it. The wording comes from the outcome and the card flag only.
+  it.each(["checkout=success", "paid=1"])(
+    "%s with a future trialEndsAt and a paid outcome still says Payment received",
+    (query) => {
+      mockQuery = query;
+      mockSub = { billingState: "current", trialEndsAt: "2099-11-01T05:00:00.000Z" };
+      renderWithProviders(<PaidReturnNotice />);
+      const note = screen.getByRole("status");
+      expect(note).toHaveTextContent("Payment received.");
+      expect(note).not.toHaveTextContent("first payment");
+    },
+  );
+
+  it("?checkout=cancelled is dismissible", async () => {
+    mockQuery = "checkout=cancelled";
+    renderWithProviders(<PaidReturnNotice />);
+    await userEvent.click(screen.getByRole("button", { name: "OK" }));
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("?checkout=cancelled shows one neutral line, no error", () => {
+    mockQuery = "checkout=cancelled";
+    renderWithProviders(<PaidReturnNotice />);
+    const note = screen.getByRole("status");
+    expect(note).toHaveTextContent("No payment was made.");
+    expect(note).not.toHaveTextContent(/received|processing|didn't go through/i);
+    expect(lastOpts.refetchInterval?.({ state: { data: undefined } })).toBe(false);
+  });
+
   it("a bank debit still processing reads as processing, never received (B1256)", () => {
     mockQuery = "paid=1";
     mockSub = { billingState: "processing", paymentProcessing: true };
@@ -77,7 +118,7 @@ describe("PaidReturnNotice", () => {
   });
 
   it("no param, or any other value: nothing", () => {
-    for (const q of ["", "paid=0", "checkout=cancelled"]) {
+    for (const q of ["", "paid=0", "checkout=other"]) {
       mockQuery = q;
       const { container, unmount } = renderWithProviders(<PaidReturnNotice />);
       expect(container.textContent).toBe("");
@@ -123,6 +164,52 @@ describe("PaidReturnNotice", () => {
       mockQuery = "paid=1&card=1";
       renderWithProviders(<PaidReturnNotice />);
       expect(poll({ billingState: "processing" })).toBe(false);
+    });
+  });
+
+  // SA-1154: the embedded form returns with a same-route push, so the notice is NOT remounted by navigation. It is keyed
+  // on the return query so each return starts fresh (its 5-minute window and its dismissal).
+  describe("a new return on a page that stayed open starts fresh (SA-1154)", () => {
+    const poll = (data: unknown) => lastOpts.refetchInterval?.({ state: { data } });
+
+    it("a page open for more than 5 minutes polls again when ?checkout=success arrives", () => {
+      mockQuery = "";
+      const now = jest.spyOn(Date, "now");
+      try {
+        now.mockReturnValue(1_000_000);
+        const { rerender } = renderWithProviders(<PaidReturnNotice />);
+        now.mockReturnValue(1_000_000 + 6 * 60_000); // the Billing page sat open for six minutes
+        mockQuery = "checkout=success"; // the embedded form completes: router.push on the same route
+        rerender(<PaidReturnNotice />);
+        expect(poll(undefined)).toBe(15_000);
+      } finally {
+        now.mockRestore();
+      }
+    });
+
+    it("a notice that was dismissed shows again for the next return", async () => {
+      mockQuery = "paid=1";
+      mockSub = { billingState: "current" };
+      const { rerender } = renderWithProviders(<PaidReturnNotice />);
+      await userEvent.click(screen.getByRole("button", { name: "OK" }));
+      expect(screen.queryByRole("status")).toBeNull();
+      mockQuery = "checkout=success";
+      rerender(<PaidReturnNotice />);
+      expect(screen.getByRole("status")).toHaveTextContent("Payment received.");
+    });
+
+    it("the same query re-rendered is the same return: the clock is not reset", () => {
+      mockQuery = "paid=1";
+      const now = jest.spyOn(Date, "now");
+      try {
+        now.mockReturnValue(1_000_000);
+        const { rerender } = renderWithProviders(<PaidReturnNotice />);
+        now.mockReturnValue(1_000_000 + 6 * 60_000);
+        rerender(<PaidReturnNotice />);
+        expect(poll(undefined)).toBe(false);
+      } finally {
+        now.mockRestore();
+      }
     });
   });
 });

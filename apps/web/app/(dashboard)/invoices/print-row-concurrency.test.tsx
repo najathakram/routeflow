@@ -1,6 +1,6 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen, waitFor } from "@/test-utils/render";
+import { renderWithProviders, screen, waitFor, within } from "@/test-utils/render";
 import InvoicesPage from "./page";
 
 /**
@@ -105,8 +105,12 @@ describe("InvoicesPage — row Print concurrency (F1)", () => {
     const user = userEvent.setup();
     renderWithProviders(<InvoicesPage />);
 
-    const printA = await screen.findByRole("button", { name: "Print invoice INV-A" });
-    const printB = await screen.findByRole("button", { name: "Print invoice INV-B" });
+    const printA = await within(screen.getByRole("table")).findByRole("button", {
+      name: "Print invoice INV-A",
+    });
+    const printB = await within(screen.getByRole("table")).findByRole("button", {
+      name: "Print invoice INV-B",
+    });
 
     // Start row A's print, then row B's — row A's request is still
     // pending when row B's fires (the exact concurrency the bug depended on).

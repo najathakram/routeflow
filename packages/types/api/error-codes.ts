@@ -390,6 +390,11 @@ export const API_ERROR_CODES = {
   MERGE_PACK_MISMATCH: "MERGE_PACK_MISMATCH",
   ORDER_CHANGED_DURING_EDIT: "ORDER_CHANGED_DURING_EDIT",
   ORDER_EDIT_NEEDS_LINE_IDS: "ORDER_EDIT_NEEDS_LINE_IDS",
+  ORDER_EDIT_DELIVERED_LINES: "ORDER_EDIT_DELIVERED_LINES",
+  /** SA-1161: a CUSTOMER edit carrying a field outside the buyer edit lists. 400, buyer-safe text, nothing written. */
+  BUYER_EDIT_INPUT_NOT_ALLOWED: "BUYER_EDIT_INPUT_NOT_ALLOWED",
+  /** SA-1144: a pre-delivery edit of an order whose invoice holds payments or is closed (PAID, PARTIAL, WRITTEN_OFF). 400. */
+  ORDER_EDIT_INVOICE_HAS_PAYMENTS: "ORDER_EDIT_INVOICE_HAS_PAYMENTS",
   /** B692: a manual PARTIALLY_DELIVERED names what was delivered per line (or the order already has delivery data). 409. */
   ORDER_PD_NEEDS_QUANTITIES: "ORDER_PD_NEEDS_QUANTITIES",
   /** B692: a delivered / partly-delivered order whose delivery quantities were never recorded is not cancelled blind. 409. */
@@ -849,6 +854,8 @@ export const API_ERROR_CODES = {
   OFFLINE_PAYMENT_ONLINE_ONLY: "OFFLINE_PAYMENT_ONLINE_ONLY",
   /** 400 from POST /orders: `offline: true` with `immediateDelivery` (SA-1124). Delivered-now is an online step. */
   OFFLINE_IMMEDIATE_DELIVERY_ONLINE_ONLY: "OFFLINE_IMMEDIATE_DELIVERY_ONLINE_ONLY",
+  /** 400 from POST /orders: `status: "DRAFT"` with `immediateDelivery` (SA-1158). Save it as an order first, then deliver it. */
+  ORDER_DRAFT_CANNOT_DELIVER_NOW: "ORDER_DRAFT_CANNOT_DELIVER_NOW",
   /** 400 from POST /orders: `offline: true` without a usable `offlineQuote` (SA-1124). Fails closed, nothing is written. */
   OFFLINE_QUOTE_REQUIRED: "OFFLINE_QUOTE_REQUIRED",
   /**
@@ -1109,6 +1116,8 @@ export const API_ERROR_CODES = {
   RETURN_CANCEL_RETRY: "RETURN_CANCEL_RETRY",
   /** 409 from DELETE /routes/:id and DELETE /route-runs/:id: the route or run holds delivery records (POD, signatures, payments); deactivate it instead (SA-842). Nothing was written. */
   ROUTE_HAS_DELIVERY_EVIDENCE: "ROUTE_HAS_DELIVERY_EVIDENCE",
+  /** 400 from POST /routes/:id/optimize and /route-runs/:id/optimize: some stops have no map position; body carries `count` and `names`. Nothing was written (UXG B14). */
+  ROUTE_STOPS_NOT_PLACED: "ROUTE_STOPS_NOT_PLACED",
   /** 400 from POST /auth/confirm-email-change: the link is unknown, used, expired, replaced by a newer request, burned by an account change, or the email moved since the request. One answer for all of them; nothing was written (B461, SA-1116). */
   EMAIL_CHANGE_LINK_INVALID: "EMAIL_CHANGE_LINK_INVALID",
   /** 409 from POST /auth/confirm-email-change: the new address now belongs to another account of the business. Nothing was written (B461, SA-1116). */

@@ -2125,7 +2125,7 @@ export class EmailService {
   /**
    * #2439: the new-workspace welcome email. It carries the workspace, the username, a single-use
    * set-password link (never a password), the login URL and — when self-serve checkout is allowed
-   * for the plan — a STABLE "Pay now" link (login → /settings/billing, which mints a fresh Stripe
+   * for the plan — a STABLE "Pay now" link (login → the Billing page, which mints a fresh Stripe
    * checkout on click), so nothing in it goes stale in 24h. Platform sender only.
    */
   async sendTenantWelcomeEmail(params: {

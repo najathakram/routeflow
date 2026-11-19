@@ -39,6 +39,7 @@ import { QtyStepper } from "./_components/QtyStepper";
 import { CartLineUnit } from "../_components/CartLineUnit";
 import { ProductTile } from "./_components/ProductTile";
 import { CategoryRail, type RailSelection } from "./_components/CategoryRail";
+import { showsDealsChip } from "./_components/deals-chip";
 import { RunningLowStrip } from "./_components/RunningLowStrip";
 import { ShopSearch } from "./_components/ShopSearch";
 import { deriveTilePrice } from "./_components/tile-pricing";
@@ -300,7 +301,7 @@ export default function BuyerShopPage() {
         selection: { kind: "collection", collection: "new" },
       });
     }
-    if (counts.collections.deals > 0) {
+    if (showsDealsChip(counts)) {
       items.push({
         key: "deals",
         label: "Deals",

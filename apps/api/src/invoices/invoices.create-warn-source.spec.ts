@@ -10,6 +10,7 @@ jest.mock("../common/msrp", () => ({
   loadMsrpMap: jest.fn().mockResolvedValue(new Map([["p1", 30]])),
 }));
 
+import { operatorWithRights } from "../common/testing/operator-with-rights";
 import { Test } from "@nestjs/testing";
 import { BadRequestException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { InvoicesService } from "./invoices.service";
@@ -39,6 +40,7 @@ describe("InvoicesService.create — the warn census names its source (SA-982 PR
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    operatorWithRights(prisma, actor);
     const module = await Test.createTestingModule({ providers: [InvoicesService] })
       .useMocker((token) => {
         if (token === PrismaService) return prisma;

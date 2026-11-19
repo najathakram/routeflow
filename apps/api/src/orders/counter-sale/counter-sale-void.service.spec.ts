@@ -198,9 +198,16 @@ describe("CounterSaleVoidService: a same-day cash + card sale (test 4)", () => {
     const voided = b.module.get(InvoicesService) as unknown as Record<string, jest.Mock>;
     expect(voided.voidInvoiceInTx).toHaveBeenCalledWith(b.tx, "inv-1", ORDER_ID);
     expect(voided.voidInvoiceInTx).toHaveBeenCalledWith(b.tx, "inv-2", ORDER_ID);
-    // ONE audit row with the reason, the hand-back and the actor, written in the tx
-    expect(b.prisma.auditLog.create).toHaveBeenCalledTimes(1);
+    // SA-1136 O1-11: the cancel unwind records what the sale left (DELIVERED), then ONE void row with the reason, the
+    // hand-back and the actor, both written in the tx
+    expect(b.prisma.auditLog.create).toHaveBeenCalledTimes(2);
     expect(b.prisma.auditLog.create.mock.calls[0][0].data).toMatchObject({
+      action: "order.cancelled",
+      entityType: "Order",
+      entityId: ORDER_ID,
+      meta: { fromStatus: "DELIVERED" },
+    });
+    expect(b.prisma.auditLog.create.mock.calls[1][0].data).toMatchObject({
       action: "counter-sale.voided",
       entityType: "Order",
       entityId: ORDER_ID,
@@ -216,7 +223,9 @@ describe("CounterSaleVoidService: a same-day cash + card sale (test 4)", () => {
     const at = (m: { mock: { invocationCallOrder: number[] } }) => m.mock.invocationCallOrder[0];
     expect(at(b.invoices.voidPaymentInTx as never)).toBeLessThan(at(b.prisma.order.updateMany));
     expect(at(b.prisma.order.updateMany)).toBeLessThan(at(b.prisma.product.update));
-    expect(at(b.prisma.product.update)).toBeLessThan(at(b.prisma.auditLog.create));
+    expect(at(b.prisma.product.update)).toBeLessThan(
+      b.prisma.auditLog.create.mock.invocationCallOrder[1],
+    );
     expect(b.gateway.emitOrderStatusChanged).toHaveBeenCalledTimes(1);
     expect(b.gateway.emitOrderStatusChanged).toHaveBeenCalledWith(
       "test-tenant",

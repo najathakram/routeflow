@@ -7,7 +7,8 @@ description: >-
   error log that a replacement can start from cold. Never implements, pushes, merges or flips.
   Use when the user says "senior architect", "SA", "design ruling", "is this the right shape",
   "review against the ruling", "sequence these PRs", "what must the fix look like", or asks for a
-  verdict on a money/units/ledger change; also load when a lead asks the SA for a read.
+  verdict on a money/units/ledger change; also load when a lead asks the SA for a read. Every
+  evaluation runs through the architect-panel skill (Full, Quick or Lens tier).
 ---
 
 # Senior Architect — the seat, the discipline, the records
@@ -105,6 +106,15 @@ git add …; fi`. Never chain `check-gate | tail -1 && git commit`: the pipe ret
   mini lane built row 699 from the lead's relay (fixed by the lead as 3dc082b, 2026-10-23).
 
 ## 2. The ruling
+
+**Every evaluation runs through the `architect-panel` skill** (owner ask 2026-11-19): design
+rulings, PR reads and sequencing. Pick the tier first: Full for HIGH-risk work, Quick for medium
+design questions, Lens (the SA answers the five seat questions itself) for routine reads against
+an existing ruling. State the tier in the ruling line, and cite the panel's `decision.md` path for
+Full and Quick runs. The panel's owner list decides what goes to the owner as a box; its hard
+vetoes stand unless the owner overrides them. Panel seats run as subagents that end with their
+context once their work is done; only the decision record comes back, so the SA keeps the result
+and not the seats' working (owner 2026-11-19).
 
 One line per **standing** ruling, appended to `RULINGS.md` (see §5), in this shape:
 

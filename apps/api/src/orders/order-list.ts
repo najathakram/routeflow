@@ -4,6 +4,7 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import type { PrismaService } from "../prisma/prisma.service";
 import { ordersFor } from "../common/staff-only-fields";
+import { ACTIVE_ORDER_STATUSES } from "../common/terminal-order-statuses";
 import { ListOrdersDto } from "./dto/list-orders.dto";
 import { dateAndShipmentFilters } from "./list-filters";
 import { needsReviewWhere } from "./offline/review-flags";
@@ -19,6 +20,7 @@ export async function findAllOrdersImpl(
     productId,
     search,
     status,
+    statusGroup,
     urgent,
     page = 1,
     limit = 20,
@@ -61,6 +63,7 @@ export async function findAllOrdersImpl(
   if (productId) where.lineItems = { some: { productId } };
 
   if (status) where.status = status;
+  else if (statusGroup === "ACTIVE") where.status = { in: [...ACTIVE_ORDER_STATUSES] };
   if (urgent !== undefined) where.urgent = urgent;
   // Ad-hoc trips + fulfillment mode: filter by ROUTE/SHIP. Omitted ⇒ no where
   // key at all (every existing order stays visible either way).

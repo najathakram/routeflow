@@ -63,6 +63,7 @@ function makeCtx(held: Array<Record<string, unknown>> = [storedOverride]) {
     tier: () => 3,
     overriddenBy: "u-now",
     held: new Map(held.map((h) => [h.id as string, h])),
+    flooredDelivered: new Map(),
     categoryMap: new Map(),
     priceEditAllowed: true,
   };

@@ -2,6 +2,7 @@ import {
   IsBoolean,
   IsDateString,
   IsEnum,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -11,6 +12,7 @@ import {
 import { Transform, Type } from "class-transformer";
 import { FulfillPath, OrderStatus } from "@prisma/client";
 import { MAX_LIST_LIMIT } from "../../common/pagination";
+import { ORDER_STATUS_GROUP_VALUES } from "../../common/terminal-order-statuses";
 
 export class ListOrdersDto {
   @IsOptional() @IsString() customerId?: string;
@@ -23,6 +25,10 @@ export class ListOrdersDto {
   @IsOptional() @IsString() productId?: string;
   @IsOptional() @IsString() search?: string;
   @IsOptional() @IsEnum(OrderStatus) status?: OrderStatus;
+  /** UX guide B12: a status GROUP ("ACTIVE" = in progress). An explicit `status` wins over it. */
+  @IsOptional()
+  @IsIn(ORDER_STATUS_GROUP_VALUES)
+  statusGroup?: (typeof ORDER_STATUS_GROUP_VALUES)[number];
   @IsOptional() @Transform(({ value }) => value === "true") @IsBoolean() urgent?: boolean;
   @IsOptional() @IsInt() @Min(1) @Type(() => Number) page?: number = 1;
   @IsOptional() @IsInt() @Min(1) @Max(MAX_LIST_LIMIT) @Type(() => Number) limit?: number = 20;

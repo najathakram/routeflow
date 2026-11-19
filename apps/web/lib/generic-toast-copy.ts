@@ -10,6 +10,10 @@ import {
 } from "@routeflow/types";
 import { BUYER_QTY_SPLIT_MISMATCH_COPY } from "./buyer-cart-line";
 import { READ_ONLY_SENTENCE } from "@routeflow/types/read-only-copy";
+import {
+  routeStopsNotPlacedFromBody,
+  routeStopsNotPlacedSentence,
+} from "@routeflow/types/route-stops-not-placed";
 import { regulatedAuthCopy } from "@routeflow/types/regulated-auth-copy";
 import {
   CREDIT_NOTE_ERROR_COPY,
@@ -93,6 +97,9 @@ const CODE_COPY: Record<string, string> = {
   ORDER_DELIVERY_ADDRESS_MISSING:
     "This customer has no delivery address on file. Add one before switching the order to delivery.",
   ORDER_CHANGED_DURING_EDIT: "This order changed while you were editing it. Refresh and try again.",
+  // SA-1144: fixed copy (B980: never the server's text), the recovery in one line.
+  [API_ERROR_CODES.ORDER_EDIT_INVOICE_HAS_PAYMENTS]:
+    "This order's invoice has a payment or is closed, so its items can't change here. Remove the payment, or add the items on a new order.",
   // B297 PR5: the filing lock and the locked-period guards (fixed copy, never the server's text).
   [API_ERROR_CODES.FILING_PERIOD_RUNNING]:
     "This period hasn't ended yet. Lock the filing after the period ends.",
@@ -282,7 +289,7 @@ const CODE_COPY: Record<string, string> = {
   [API_ERROR_CODES.CHOOSE_PLAN_AT_CHECKOUT]:
     "Choose your plan at checkout. Your plan starts once your payment clears.",
   [API_ERROR_CODES.CATCHUP_SESSION_OPEN]:
-    "A card checkout is open for this account (October catch-up), so this change isn't available yet. Wait for it to complete or expire, then try again.",
+    "Your payment page is already open. Finish it there, or try again in a moment.",
   [API_ERROR_CODES.CATCHUP_PENDING]:
     "This account's card payment is being confirmed (October catch-up). This change is available once it clears.",
   // SA-733r5 r-note: a catch-up the plan refuses because card billing would lose or change a charge. The account
@@ -504,6 +511,9 @@ function taxStateStaleCopy(data: Record<string, unknown>): string {
     : INVOICE_TAX_STATE_STALE_COPY.ISSUED;
 }
 
+/** On-screen time for a toast whose message is two sentences (for example the optimize refusal); the default is 4 s. */
+export const LONG_TOAST_MS = 10_000;
+
 export function codedToastCopy(err: unknown): string | null {
   const refusal = safeTextErrorCopy(err);
   if (refusal) return refusal;
@@ -524,6 +534,9 @@ export function codedToastCopy(err: unknown): string | null {
     return CUSTOMER_CODE_COPY[code];
   if (code === API_ERROR_CODES.INVOICE_TAX_STATE_STALE) return taxStateStaleCopy(data);
   if (code === API_ERROR_CODES.INSUFFICIENT_STOCK) return STOCK_COPY;
+  // UXG B14: optimize refused because stops have no map position; count and names come from STRUCTURED fields.
+  const unplaced = routeStopsNotPlacedFromBody(data, API_ERROR_CODES.ROUTE_STOPS_NOT_PLACED);
+  if (unplaced) return routeStopsNotPlacedSentence(unplaced.count, unplaced.names);
   // B986: coded refusals whose server sentence tells the user what to fix; the numbers come from STRUCTURED fields.
   if (code === API_ERROR_CODES.ALLOCATIONS_EXCEED_PAYMENT) return allocationsCopy(data);
   if (code === API_ERROR_CODES.UNLINKED_ITEMS) return unlinkedCopy(data);

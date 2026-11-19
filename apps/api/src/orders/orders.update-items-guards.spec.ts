@@ -56,6 +56,7 @@ jest.mock("../notifications/notifications.service", () => ({
   })),
 }));
 
+import { operatorWithRights } from "../common/testing/operator-with-rights";
 import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { ForbiddenException } from "@nestjs/common";
@@ -140,6 +141,7 @@ describe("OrdersService — F06 guards (TP2)", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    operatorWithRights(prisma, operatorPayload);
     wireStockHelper(prisma);
 
     const module: TestingModule = await Test.createTestingModule({

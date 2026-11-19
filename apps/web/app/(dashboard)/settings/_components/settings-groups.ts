@@ -70,9 +70,14 @@ export function entryCrumb(e: { groupKey: string; page?: string; label: string }
   return tail === group ? group : `${group} › ${tail}`;
 }
 
-export const CHIPS: { label: string; href: string }[] = [
-  { label: "Invoicing", href: "/settings?tab=invoicing" },
-  { label: "User management", href: "/settings?tab=users" },
-  { label: "Import", href: "/settings/import" },
-  { label: "Notifications", href: "/settings?tab=notifications" },
+/**
+ * "Frequently used" shortcuts (UX guide B16). Each names an index entry (`ENTRIES` in settings-index.ts) instead of a bare
+ * href: the finder shows a chip only when the viewer's own index has that entry, and takes the href from it, so a
+ * shortcut can never point at a page the viewer cannot open or drift from the row it mirrors.
+ */
+export const CHIPS: { entryId: string; label: string }[] = [
+  { entryId: "invoicing", label: "Invoicing" },
+  { entryId: "user-management", label: "User management" },
+  { entryId: "import-data", label: "Import" },
+  { entryId: "notifications", label: "Notifications" },
 ];

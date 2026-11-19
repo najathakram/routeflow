@@ -576,6 +576,7 @@ describe("E1-c intended difference (SA-996): an own-priced Piece is charged per 
       taxRate: TAX_RATE,
       isTaxExempt: false,
       discount: 0,
+      discountBase: "LEGACY_POST_TAX",
     });
   const taxBasis = (fig: Fig, upb: number) =>
     regulatedUnitBasis(
@@ -754,6 +755,7 @@ describe("E2 odd tier (PF-14, SA-996): flag-on normalises a tier outside 1-5 thr
       taxRate: TAX_RATE,
       isTaxExempt: false,
       discount: 0,
+      discountBase: "LEGACY_POST_TAX",
     });
   type Side = { unitPrice: number; priceType: string; originalPrice: number | null };
   const pinned = async (cust: CustomerRow, want: { off: Side; on: Side }) => {

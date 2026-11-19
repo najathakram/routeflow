@@ -17,6 +17,17 @@ export const TERMINAL_ORDER_STATUSES: readonly OrderStatus[] = [
   OrderStatus.CANCELLED,
 ];
 
+/** UX guide B12: in progress (accepted, not done). Pinned set-equal to the shared `ACTIVE_ORDER_STATUSES`. */
+export const ACTIVE_ORDER_STATUSES: readonly OrderStatus[] = [
+  OrderStatus.PENDING,
+  OrderStatus.CONFIRMED,
+  OrderStatus.OUT_FOR_DELIVERY,
+  OrderStatus.PARTIALLY_DELIVERED,
+];
+
+/** UX guide B12: the status groups a list may ask for (literal copy of the shared `ORDER_STATUS_GROUP_VALUES`). */
+export const ORDER_STATUS_GROUP_VALUES = ["ACTIVE"] as const;
+
 /** The delivery visit happened, so billing is on the delivered basis (final draft, no pending mirror). */
 export const POST_DELIVERY_ORDER_STATUSES: readonly OrderStatus[] = [
   OrderStatus.DELIVERED,

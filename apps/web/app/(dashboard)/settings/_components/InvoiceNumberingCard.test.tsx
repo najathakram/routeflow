@@ -6,7 +6,7 @@ import { InvoiceNumberingCard } from "./InvoiceNumberingCard";
 // B1188: Settings > Invoicing "Save Numbering" PATCHed /settings {invoicePrefix, paymentDueDays},
 // which the api accepted and dropped. The prefix now saves to the numbering sequence
 // (PUT /import/numbering/INVOICE) behind a server PREVIEW + explicit CONFIRM, carrying the
-// preview's version token; the days control is a select bound to invoice.defaultTerms
+// preview's version token; payment terms live in the Default invoice terms card (UX guide B9)
 // (PATCH /settings/invoice).
 
 const mockGet = jest.fn();
@@ -46,7 +46,6 @@ const numberingRows = [
 ];
 
 beforeEach(() => {
-  onTermsChange.mockReset();
   mockGet.mockReset();
   mockPut.mockReset();
   mockPatch.mockReset();
@@ -71,18 +70,8 @@ beforeEach(() => {
   mockPatch.mockResolvedValue({ data: {} });
 });
 
-const onTermsChange = jest.fn();
-function Harness({ initial = "Net 30" }: { initial?: string }) {
-  const [terms, setTerms] = React.useState(initial);
-  return (
-    <InvoiceNumberingCard
-      terms={terms}
-      onTermsChange={(v) => {
-        onTermsChange(v);
-        setTerms(v);
-      }}
-    />
-  );
+function Harness() {
+  return <InvoiceNumberingCard />;
 }
 const prefixInput = () => screen.findByLabelText(/invoice number prefix/i);
 
@@ -96,23 +85,23 @@ async function typePrefix(value: string) {
 const putCalls = () => mockPut.mock.calls;
 const patchesTo = (url: string) => mockPatch.mock.calls.filter((c) => c[0] === url);
 
+describe("InvoiceNumberingCard (UX guide B9)", () => {
+  it("has no payment-terms select: that value lives in the Default invoice terms card only", async () => {
+    renderWithProviders(<Harness />);
+    await prefixInput();
+    expect(screen.queryByRole("combobox", { name: /payment due days/i })).toBeNull();
+    expect(screen.queryAllByRole("combobox")).toHaveLength(0);
+  });
+});
+
 describe("InvoiceNumberingCard (B1188)", () => {
-  it("inventory: prefix input, payment-terms select, Save Numbering button, all present", async () => {
+  it("inventory: prefix input and Save Numbering button, all present", async () => {
     renderWithProviders(<Harness />);
     const prefix = (await prefixInput()) as HTMLInputElement;
     await waitFor(() => expect(prefix.value).toBe("INV-"));
     expect(prefix).toHaveAttribute("placeholder", "INV-");
     expect(screen.getByText(/prepended to invoice numbers/i)).toBeInTheDocument();
 
-    const days = (await screen.findByLabelText(/payment due days/i)) as HTMLSelectElement;
-    expect(days.tagName).toBe("SELECT");
-    expect(
-      within(days)
-        .getAllByRole("option")
-        .map((o) => o.textContent),
-    ).toEqual(["Due on Receipt", "Net 15", "Net 30", "Net 45", "Net 60"]);
-    expect(days.value).toBe("Net 30");
-    expect(screen.getByText(/default days until payment is due/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /save numbering/i })).toBeInTheDocument();
   });
 
@@ -155,16 +144,6 @@ describe("InvoiceNumberingCard (B1188)", () => {
       "/import/numbering/INVOICE/preview",
       expect.anything(),
     );
-    expect(putCalls()).toHaveLength(0);
-  });
-
-  it("the days select reports its pick to the shared terms value, never PATCHing /settings", async () => {
-    renderWithProviders(<Harness />);
-    const days = (await screen.findByLabelText(/payment due days/i)) as HTMLSelectElement;
-    await userEvent.selectOptions(days, "Net 45");
-    expect(onTermsChange).toHaveBeenCalledWith("Net 45");
-    expect(days.value).toBe("Net 45");
-    expect(patchesTo("/settings")).toHaveLength(0);
     expect(putCalls()).toHaveLength(0);
   });
 

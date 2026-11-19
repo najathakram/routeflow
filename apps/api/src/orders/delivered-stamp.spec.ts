@@ -356,12 +356,24 @@ describe("stampDeliveredInFull — recreated (replace-all, M2)", () => {
     expect(db.line("n1").deliveredQty).toBe(12);
   });
 
-  it("a product cut below what was delivered keeps the carried value (never lowered)", async () => {
+  // SA-1149 D2: a replace-all that cuts a product below what was delivered is refused (the cut itself, 10 -> 6).
+  it("a product cut below what was delivered is refused 409 (D2); a pre-D2 row {q6,d10} restated at 6 keeps the carried 10", async () => {
+    const cut = makeStampDb({
+      status: "DELIVERED",
+      lines: [{ id: "n1", productId: "p1", qty: 6, deliveredQty: 0 }],
+    });
+    await expect(recreate(cut, held([["old1", "p1", 10, 10]]))).rejects.toMatchObject({
+      status: 409,
+      response: {
+        code: "LINE_ALREADY_DELIVERED",
+        message: expect.stringContaining("record a return"),
+      },
+    });
     const db = makeStampDb({
       status: "DELIVERED",
       lines: [{ id: "n1", productId: "p1", qty: 6, deliveredQty: 0 }],
     });
-    await recreate(db, held([["old1", "p1", 10, 10]]));
+    await recreate(db, held([["old1", "p1", 6, 10]]));
     expect(db.line("n1").deliveredQty).toBe(10);
   });
 
@@ -395,22 +407,38 @@ describe("stampDeliveredInFull — recreated (replace-all, M2)", () => {
         { id: "n2", productId: "p1", qty: 3, deliveredQty: 0 },
       ],
     });
-    await recreate(db, held([["old1", "p1", 8, 8]]));
+    // SA-1149 D2: a pre-D2 legacy row {q6,d8}: the recreated 3 + 3 restate its qty (no cut), the carried 8 splits 3 and 5
+    await recreate(db, held([["old1", "p1", 6, 8]]));
     expect(db.line("n1").deliveredQty).toBe(3);
     expect(db.line("n2").deliveredQty).toBe(5); // the last row takes the rest: 3 + 5 = 8 carried
   });
 
-  it("a product that is new in the edit is delivered in full; an unlisted line too", async () => {
+  it("U-2 (SA-1149): a delivered product restated in a new row keeps its carry; new products are delivered in full; an unlisted line too", async () => {
     const db = makeStampDb({
       status: "DELIVERED",
       lines: [
-        { id: "n1", productId: "p9", qty: 3, deliveredQty: 0 },
+        { id: "n1", productId: "p1", qty: 10, deliveredQty: 0 },
+        { id: "n2", productId: "p2", qty: 3, deliveredQty: 0 },
+        { id: "n3", productId: "p3", qty: 2, deliveredQty: 0 },
         { id: "u1", productId: null, qty: 2, deliveredQty: 0 },
       ],
     });
+    // held p1 {q10, d10}; recreated p1 x10 (a new id), p2 x3, p3 x2: no refusal
     await recreate(db, held([["old1", "p1", 10, 10]]));
-    expect(db.line("n1").deliveredQty).toBe(3);
+    expect(db.line("n1").deliveredQty).toBe(10); // carried
+    expect(db.line("n2").deliveredQty).toBe(3); // the entry rule
+    expect(db.line("n3").deliveredQty).toBe(2);
     expect(db.line("u1").deliveredQty).toBe(2);
+  });
+
+  it("U-3 (SA-1149): a CANCELLED delivered line is skipped by the floor: recreating only p2 resolves, no 409", async () => {
+    const db = makeStampDb({
+      status: "DELIVERED",
+      lines: [{ id: "n2", productId: "p2", qty: 3, deliveredQty: 0 }],
+    });
+    // held CANCELLED p1 {q10, d10}; recreated [p2 x3]. Red when the `|| h.cancelled` skip in recreatedTargets is dropped.
+    await recreate(db, [{ ...held([["old1", "p1", 10, 10]])[0], status: "CANCELLED" }] as never);
+    expect(db.line("n2").deliveredQty).toBe(3);
   });
 
   it("captures nothing for an order that is not DELIVERED", async () => {
@@ -495,5 +523,39 @@ describe("heldAtBookedFloor — the settle input", () => {
     expect(
       await feed(makeStampDb({ status: "DELIVERED", routeRunStopId: "s1", lines: [] }), rows),
     ).toBe(rows);
+  });
+});
+
+describe("captureRecreatedCarry refusal off the carry (SA-1149 D2)", () => {
+  const capture = (status: string, routeRunStopId: string | null, rows: any[]) =>
+    captureRecreatedCarry(
+      {
+        order: { findFirst: async () => ({ status, routeRunStopId }) },
+        deliveryMutation: { findMany: async () => [] },
+      } as never,
+      "o1",
+      rows,
+    );
+  const line = (status: string, d: number) => ({
+    id: "l1",
+    productId: "p1",
+    qty: 10,
+    deliveredQty: d,
+    status,
+  });
+
+  it.each([
+    ["reopened CONFIRMED", "CONFIRMED", null],
+    ["a DELIVERED route order", "DELIVERED", "stop1"],
+  ])("%s with a delivered live line: 409 ORDER_EDIT_DELIVERED_LINES", async (_n, status, stop) => {
+    await expect(capture(status, stop, [line("ACTIVE", 4)])).rejects.toMatchObject({
+      status: 409,
+      response: { code: "ORDER_EDIT_DELIVERED_LINES" },
+    });
+  });
+
+  it("a CANCELLED delivered line, or no delivered line, does not refuse (nothing to carry)", async () => {
+    expect(await capture("CONFIRMED", null, [line("CANCELLED", 4)])).toBeNull();
+    expect(await capture("CONFIRMED", null, [line("ACTIVE", 0)])).toBeNull();
   });
 });

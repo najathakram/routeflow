@@ -55,7 +55,7 @@ describe("CreateOrderModal default selling unit wiring (#2784)", () => {
       src.indexOf("const doSubmitOrder = ("),
       src.indexOf("createOrder.mutate("),
     );
-    expect(doSubmit).not.toMatch(/lineItems/);
+    expect(doSubmit).not.toMatch(/\blineItems\b/);
     // N9: the units read is staff-only
     expect(src).toMatch(
       /useDefaultUnitResolver\(\s*lineItems,\s*setLineItems,\s*tierForProduct,\s*isStaffRole\(authUser\?\.role\),\s*rememberedOf,?\s*\)/,

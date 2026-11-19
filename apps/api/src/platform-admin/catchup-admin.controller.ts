@@ -59,7 +59,10 @@ export class CatchupAdminController {
     @Body() dto: CatchupCheckoutDto,
     @CurrentUser() admin: JwtPayload,
   ) {
-    const out = await this.catchup.open(id, { expectedStubCents: dto.expectedStubCents });
+    const out = await this.catchup.open(id, {
+      expectedStubCents: dto.expectedStubCents,
+      surface: "ADMIN_LINK",
+    });
     // Who opened which payment session for which tenant, for what amount. Written only after the session exists
     // (a refusal creates nothing and records nothing); the checkout URL is a payment link and is never logged.
     await this.admin.recordAdminAction(id, admin.sub, AdminAuditAction.TENANT_CONFIG_UPDATED, {

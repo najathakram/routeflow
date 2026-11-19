@@ -178,7 +178,7 @@ try {
     }
     const normalized = normalize(row.rawDescription);
     if (!normalized) continue;
-    const key = `${row.tenantId} ${resolvedSupplierId} ${normalized}`;
+    const key = `${row.tenantId}\u0000${resolvedSupplierId}\u0000${normalized}`;
     const enriched = { ...row, resolvedSupplierId, normalized };
     const existing = groups.get(key);
     if (!existing) {
@@ -217,7 +217,7 @@ try {
     );
     for (const c of collisions.slice(0, 10)) {
       console.log(
-        `  key=${c.key.replace(/ /g, " | ")} kept=${c.kept.id} (updatedAt=${c.kept.updatedAt}) ` +
+        `  key=${c.key.replace(/\u0000/g, " | ")} kept=${c.kept.id} (updatedAt=${c.kept.updatedAt}) ` +
           `dropped=${c.dropped.id} (updatedAt=${c.dropped.updatedAt})`,
       );
     }

@@ -155,6 +155,8 @@ describe("DraftDock on the till (SA-1066 A-3)", () => {
     const wrapper = container.querySelector("div.absolute") as HTMLElement;
     expect(wrapper.className).toMatch(/(^|\s)left-4(\s|$)/);
     expect(wrapper.className).not.toMatch(/md:left-auto|md:right-4/);
+    // UX guide improvement 2: collapsed it is the pill; one click opens the chips.
+    fireEvent.click(screen.getByRole("button", { name: /2 parked drafts/ }));
     expect(screen.getAllByRole("button", { name: "Resume" })).toHaveLength(2);
   });
 });

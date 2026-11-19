@@ -7297,14 +7297,17 @@ describe("OrdersService", () => {
         operatorPayload,
       );
 
-      expect(prisma.order.update).toHaveBeenCalledWith(
+      // W-904: the main write never carries the stamp (it is judged from an unlocked read); a legacy
+      // shipped order with no stamp is backfilled by a separate conditional write.
+      expect(prisma.order.update).toHaveBeenCalledWith({
+        where: { id: "ord-1" },
+        data: { shippingCarrier: "UPS", shippingTrackingNumber: "1Z999AA10123456784" },
+      });
+      expect(prisma.order.update.mock.calls[0][0].data).not.toHaveProperty("shippedAt");
+      expect(prisma.order.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "ord-1" },
-          data: expect.objectContaining({
-            shippingCarrier: "UPS",
-            shippingTrackingNumber: "1Z999AA10123456784",
-            shippedAt: expect.any(Date),
-          }),
+          where: expect.objectContaining({ id: "ord-1", shippedAt: null }),
+          data: { shippedAt: expect.any(Date) },
         }),
       );
       expect(prisma.invoice.updateMany).toHaveBeenCalledWith(
@@ -7685,7 +7688,11 @@ describe("OrdersService", () => {
 
       await service.updateOrderItems("ord-1", editDto, operatorPayload);
 
-      expect(prisma.invoice.findMany).not.toHaveBeenCalled();
+      // E5 (SA-1156): the paid-invoice settle reads the order's invoice WITH its payments; the credit-limit
+      // exposure read is the other invoice query, and that is the one that must not run.
+      expect(
+        prisma.invoice.findMany.mock.calls.filter(([a]: any[]) => !a?.include?.payments),
+      ).toHaveLength(0);
       expect(prisma.order.update).toHaveBeenCalled();
     });
 
@@ -7856,7 +7863,11 @@ describe("OrdersService", () => {
 
       await service.updateOrderItems("ord-1", editDto, operatorPayload);
 
-      expect(prisma.invoice.findMany).not.toHaveBeenCalled();
+      // E5 (SA-1156): the paid-invoice settle reads the order's invoice WITH its payments; the credit-limit
+      // exposure read is the other invoice query, and that is the one that must not run.
+      expect(
+        prisma.invoice.findMany.mock.calls.filter(([a]: any[]) => !a?.include?.payments),
+      ).toHaveLength(0);
       expect(prisma.order.update).toHaveBeenCalled();
     });
   });

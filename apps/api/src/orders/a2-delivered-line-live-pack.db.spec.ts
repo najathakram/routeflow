@@ -177,8 +177,14 @@ describeDb(
         await prisma.invoice.deleteMany(where).catch(swallow);
         await prisma.stockMovement.deleteMany({ where: { product: { tenantId } } }).catch(swallow);
         await (prisma as any).orderRevision?.deleteMany(where).catch(swallow);
+        await prisma.deliveryMutation.deleteMany(where).catch(swallow);
         await prisma.orderItem.deleteMany(where).catch(swallow);
         await prisma.order.deleteMany(where).catch(swallow);
+        await prisma.routeRunStop.deleteMany(where).catch(swallow);
+        await prisma.routeRun.deleteMany(where).catch(swallow);
+        await prisma.routeStop.deleteMany(where).catch(swallow);
+        await prisma.route.deleteMany(where).catch(swallow);
+        await prisma.driver.deleteMany(where).catch(swallow);
         await prisma.product.deleteMany(where).catch(swallow);
         await prisma.customer.deleteMany(where).catch(swallow);
         await prisma.user.deleteMany(where).catch(swallow);
@@ -317,6 +323,75 @@ describeDb(
     }
     type Seeded = Awaited<ReturnType<typeof seed>>;
 
+    /**
+     * SA-1149 (20:55Z block): the one producible shape of a delivered line that can be cut down to what was delivered,
+     * a route SHORT DROP. The order rides a COMPLETED run stop, the line's deliveredQty is d, and one PARTIAL
+     * DeliveryMutation (quantityDelivered = d, the stop's id, the driver) is the evidence a route delivery writes.
+     * A DELIVERED order with d below qty and no evidence is a shape no writer produces (round 1's seed was one).
+     */
+    async function shortRouteDrop(s: Seeded, delivered: number) {
+      const driverUser = await prisma.user.create({
+        data: {
+          email: `d-${s.slug}@example.invalid`,
+          username: `d-${s.slug}`,
+          role: "DRIVER",
+          tenantId: s.tenantId,
+        },
+      });
+      const driver = await prisma.driver.create({
+        data: { userId: driverUser.id, tenantId: s.tenantId } as any,
+      });
+      const order = await prisma.order.findUniqueOrThrow({ where: { id: s.orderId } });
+      const route = await prisma.route.create({
+        data: { name: `a2 ${s.slug}`, tenantId: s.tenantId } as any,
+      });
+      const routeStop = await prisma.routeStop.create({
+        data: {
+          tenantId: s.tenantId,
+          routeId: route.id,
+          stopNumber: 1,
+          customerId: order.customerId,
+        } as any,
+      });
+      const run = await prisma.routeRun.create({
+        data: {
+          tenantId: s.tenantId,
+          routeId: route.id,
+          scheduledDate: new Date("2026-11-15T00:00:00.000Z"),
+          status: "COMPLETED" as any,
+          driverId: driver.id,
+        },
+      });
+      const stop = await prisma.routeRunStop.create({
+        data: {
+          tenantId: s.tenantId,
+          routeRunId: run.id,
+          routeStopId: routeStop.id,
+          stopNumber: 1,
+          status: "COMPLETED" as any,
+        } as any,
+      });
+      await prisma.order.update({
+        where: { id: s.orderId },
+        data: { routeRunId: run.id, routeRunStopId: stop.id },
+      });
+      await prisma.orderItem.update({ where: { id: s.lineId }, data: { deliveredQty: delivered } });
+      await prisma.deliveryMutation.create({
+        data: {
+          tenantId: s.tenantId,
+          orderId: s.orderId,
+          orderItemId: s.lineId,
+          productId: s.productId,
+          routeRunStopId: stop.id,
+          driverId: driver.id,
+          type: "PARTIAL",
+          qty: String(delivered),
+          quantityDelivered: String(delivered),
+        } as any,
+      });
+      return s;
+    }
+
     const operatorOf = (s: Seeded): JwtPayload =>
       ({
         sub: s.operatorId,
@@ -446,7 +521,7 @@ describeDb(
     }, 120_000);
 
     it("A2-3: a QTY edit 10 -> 9 on the delivered line is 90.00, not 9 pieces of a 24-pack (3.75)", async () => {
-      const s = await seed("qty", null, 24);
+      const s = await shortRouteDrop(await seed("qty", null, 24), 9);
       const before = await state(s);
       await edit(s, { qty: 9 });
       const after = await state(s);
@@ -454,17 +529,21 @@ describeDb(
       measure("A2-3 after", after);
       expect(after.line.subtotal).toBe(90);
       expect(after.invoices[0]!.total).toBe(90);
-      expect(after.stock).toBe(before.stock); // a price/qty edit of a delivered line books no stock
-      expect(after.ledger).toEqual(before.ledger);
+      // SA-1149 20:55Z: stock = 90 + max(10,9) - max(9,9) = 91; the 1 undelivered unit goes back on the shelf
+      expect(before.stock).toBe(90);
+      expect(after.stock).toBe(91);
+      measure("A2-3 ledger", after.ledger);
+      expect(after.ledger).toEqual([...before.ledger, { type: "SALE", qty: 1 }]); // SA-1149 21:34Z: the cut appends one SALE row, +1
     }, 120_000);
 
     it("A2-6: the 12-pack line, qty 120 -> 100, is 8 boxes + 4 pieces of a 12-pack at the stored price (83.33), not of the live 24", async () => {
-      const s = await seed("qty12", 12, 24);
+      const s = await shortRouteDrop(await seed("qty12", 12, 24), 100);
       const before = await state(s);
       await edit(s, { qty: 100 });
       const after = await state(s);
       measure("A2-6 before", before);
       measure("A2-6 after", after);
+      expect(after.ledger).toEqual([...before.ledger, { type: "SALE", qty: 20 }]); // SA-1149 21:34Z: +20 pieces back
       expect(after.line).toMatchObject({
         qty: 100,
         boxes: 8,
@@ -474,6 +553,8 @@ describeDb(
         subtotal: 83.33,
       });
       expect(after.invoices[0]!.total).toBe(83.33);
+      // SA-1149 20:55Z: 90 + 120 - 100 = 110, the 20 undelivered pieces go back, in pieces
+      expect(after.stock).toBe(110);
     }, 120_000);
 
     it("A2-7: A2-2 on an OPEN order (no invoice yet) reads the same pack: 12, 10 boxes, 120.00", async () => {
@@ -630,13 +711,15 @@ describeDb(
     }, 120_000);
 
     it("A2-18 (guard): a split with NO qty on the 12-pack line - boxes 8, pieces 4 - is qty 100 at the line's own pack", async () => {
-      const s = await seed("splitonly", 12, 24);
+      const s = await shortRouteDrop(await seed("splitonly", 12, 24), 100);
       const before = await state(s);
       await edit(s, { boxes: 8, pieces: 4 });
       const after = await state(s);
       measure("A2-18 after", after);
       expect(after.line).toMatchObject({ qty: 100, boxes: 8, pieces: 4, unitsPerBox: 12 });
-      unmoved(before, after);
+      // SA-1149 20:55Z: 90 + 120 - 100 = 110 (the 20 undelivered pieces; not a defect, see A6-F2)
+      expect(after.stock).toBe(110);
+      expect(after.ledger).toEqual([...before.ledger, { type: "SALE", qty: 20 }]); // SA-1149 21:34Z
     }, 120_000);
 
     it("A2-19: a fractional qty on the no-pack line is refused, nothing written", async () => {
@@ -650,8 +733,8 @@ describeDb(
       expect(after).toEqual(before);
     }, 120_000);
 
-    it("A2-20 (guard): the no-pack line edited twice - qty 10 -> 9, then price 12 - gives the same shape both times, stock 90", async () => {
-      const s = await seed("twice", null, 24);
+    it("A2-20 (guard): the no-pack line edited twice - qty 10 -> 9, then price 12 - gives the same shape both times, stock 91", async () => {
+      const s = await shortRouteDrop(await seed("twice", null, 24), 9);
       const before = await state(s);
       await edit(s, { qty: 9 });
       const one = await state(s);
@@ -673,12 +756,15 @@ describeDb(
         unitsPerBox: null,
         subtotal: 108,
       });
-      unmoved(before, one);
-      unmoved(before, two);
+      // SA-1149 20:55Z: 91 after the first edit and 91 after the second (no qty change)
+      expect(one.stock).toBe(91);
+      expect(two.stock).toBe(91);
+      expect(one.ledger).toEqual([...before.ledger, { type: "SALE", qty: 1 }]); // SA-1149 21:34Z: first edit +1
+      expect(two.ledger).toEqual(one.ledger); // the second edit changes no qty: no row
     }, 120_000);
 
-    it("A2-21: the no-pack line whose product has NO pack now, qty 10 -> 9: boxes 9, 90.00, stock unmoved", async () => {
-      const s = await seed("nopack-nolive", null, null);
+    it("A2-21: the no-pack line whose product has NO pack now, qty 10 -> 9: boxes 9, 90.00, stock 91", async () => {
+      const s = await shortRouteDrop(await seed("nopack-nolive", null, null), 9);
       const before = await state(s);
       await edit(s, { qty: 9 });
       const after = await state(s);
@@ -692,11 +778,12 @@ describeDb(
         subtotal: 90,
       });
       expect(after.invoices[0]!.total).toBe(90);
-      unmoved(before, after);
+      expect(after.stock).toBe(91); // SA-1149 20:55Z: 90 + 10 - 9
+      expect(after.ledger).toEqual([...before.ledger, { type: "SALE", qty: 1 }]); // SA-1149 21:34Z
     }, 120_000);
 
-    it("A2-22 (guard): A2-21, then the product gains a 24-pack, then another edit: still boxes 9, 99.00, stock unmoved", async () => {
-      const s = await seed("nopack-gains", null, null);
+    it("A2-22 (guard): A2-21, then the product gains a 24-pack, then another edit: still boxes 9, 99.00, stock 91", async () => {
+      const s = await shortRouteDrop(await seed("nopack-gains", null, null), 9);
       const before = await state(s);
       await edit(s, { qty: 9 });
       await prisma.product.update({ where: { id: s.productId }, data: { unitsPerBox: 24 } });
@@ -710,13 +797,17 @@ describeDb(
         unitsPerBox: null,
         subtotal: 99,
       });
-      unmoved(before, after);
+      expect(after.stock).toBe(91); // SA-1149 20:55Z: after both edits
+      expect(after.ledger).toEqual([...before.ledger, { type: "SALE", qty: 1 }]); // SA-1149 21:34Z: first edit +1, second none
+      expect(before.stock).toBe(90);
     }, 120_000);
 
     it("A2-12 (guard): after the qty edit 10 -> 9, a STANDARD return of 3 restocks 3 (measured on master: 3) - anything but 3 or a park goes back to the SA", async () => {
-      const s = await seed("ret", null, 24);
+      const s = await shortRouteDrop(await seed("ret", null, 24), 9);
+      const before = await state(s);
       await edit(s, { qty: 9 });
       const mid = await state(s);
+      expect(mid.ledger).toEqual([...before.ledger, { type: "SALE", qty: 1 }]); // SA-1149 21:34Z: the cut
       const ret = await prisma.return.create({
         data: {
           tenantId: s.tenantId,
@@ -738,7 +829,10 @@ describeDb(
       measure("A2-12 stock before return", mid.stock);
       measure("A2-12 stock after return", after.stock);
       measure("A2-12 ledger after return", after.ledger);
+      expect(mid.stock).toBe(91); // SA-1149 20:55Z: the cut puts the 1 undelivered unit back
       expect(after.stock - mid.stock).toBe(3);
+      expect(after.stock).toBe(94);
+      expect(after.ledger).toEqual([...mid.ledger, { type: "RETURN", qty: 3 }]); // the return's own row (type observed: RETURN)
     }, 120_000);
     // ── SA-1097 A-6 rows A6-1..A6-9: a stored line with pieces and NO boxes ({boxes null, pieces 6}) ─────────────────
     const OPEN = { status: "PENDING", invoiced: false } as const;

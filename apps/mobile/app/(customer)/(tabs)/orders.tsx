@@ -14,19 +14,16 @@ import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, NavAction, NavBar, Pill } from "@routeflow/ui/mobile/ios";
 import { useState } from "react";
 import { useBuyerOrders, type BuyerOrderListItem } from "../../../lib/api/buyer";
+import {
+  BUYER_ORDER_FILTERS,
+  buyerOrderQuery,
+  buyerOrdersEmptyText,
+  type BuyerOrderFilterId,
+} from "../../../lib/buyer-order-filters";
 import { useBuyerSessionStore } from "../../../lib/buyer-session-store";
 
-const FILTERS = [
-  { id: "ALL", label: "All" },
-  { id: "PENDING", label: "Pending" },
-  { id: "CONFIRMED", label: "Confirmed" },
-  { id: "OUT_FOR_DELIVERY", label: "Out for delivery" },
-  { id: "DELIVERED", label: "Delivered" },
-  { id: "REFUSED", label: "Refused" },
-  { id: "CANCELLED", label: "Cancelled" },
-] as const;
-
-type FilterId = (typeof FILTERS)[number]["id"];
+const FILTERS = BUYER_ORDER_FILTERS;
+type FilterId = BuyerOrderFilterId;
 
 function orderPill(status: string) {
   switch (status) {
@@ -70,9 +67,8 @@ export default function CustomerOrdersScreen() {
   // via useBuyerSocket(). It invalidates ["buyer-orders"] on order.statusChanged,
   // so this screen will re-fetch automatically — no per-screen wiring needed.
 
-  const statusParam = filter === "ALL" ? undefined : filter;
   const { data, isLoading, isFetching, refetch } = useBuyerOrders({
-    status: statusParam,
+    ...buyerOrderQuery(filter),
     limit: 30,
   });
   const orders = data?.data ?? [];
@@ -110,14 +106,20 @@ export default function CustomerOrdersScreen() {
           </View>
         ) : orders.length === 0 ? (
           <View style={styles.center}>
-            <Text style={styles.empty}>No orders yet.</Text>
-            <Pressable
-              style={styles.primaryBtn}
-              onPress={() => router.push("/(customer)/(tabs)/catalog")}
-            >
-              <Ionicons name="grid-outline" size={16} color="#fff" />
-              <Text style={styles.primaryBtnText}>Browse catalog</Text>
-            </Pressable>
+            <Text style={styles.empty}>{buyerOrdersEmptyText(filter)}</Text>
+            {filter === "ALL" ? (
+              <Pressable
+                style={styles.primaryBtn}
+                onPress={() => router.push("/(customer)/(tabs)/catalog")}
+              >
+                <Ionicons name="grid-outline" size={16} color="#fff" />
+                <Text style={styles.primaryBtnText}>Browse catalog</Text>
+              </Pressable>
+            ) : (
+              <Pressable style={styles.primaryBtn} onPress={() => setFilter("ALL")}>
+                <Text style={styles.primaryBtnText}>Show all orders</Text>
+              </Pressable>
+            )}
           </View>
         ) : (
           <View style={styles.list}>

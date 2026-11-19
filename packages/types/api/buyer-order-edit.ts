@@ -23,4 +23,40 @@ export interface BuyerUpdateOrderItemsRequest {
    * Send `true` always; omitting it is the legacy contract (the one-release product fallback above).
    */
   namesLines?: boolean;
+  /** Row 380: the revision the client read; a stale one is 409 `ORDER_REVISION_STALE`. */
+  expectedRevisionNumber?: number;
 }
+
+/**
+ * SA-1149: a buyer's full-list save on an order that already has a delivered line is refused 409
+ * `ORDER_EDIT_DELIVERED_LINES`. The sentence the buyer reads, stored once: the web portal and the mobile buyer edit both
+ * show it instead of the server's staff wording. (The mobile jest stub holds a byte-identical hand copy, pinned equal.)
+ */
+export const BUYER_EDIT_DELIVERED_LINES_COPY =
+  "Part of this order was already delivered, so it can't be changed here. Contact the seller to change it.";
+
+/**
+ * SA-1161: the ONE list of what a buyer edit may carry, for the server's allowlist (`assertBuyerEditInput`) and the
+ * clients. Each list is held equal to its interface below, so a new field cannot be added to one and not the other.
+ */
+export const BUYER_EDIT_ENTRY_FIELDS = ["productId", "qty", "orderItemId"] as const;
+export const BUYER_EDIT_BODY_FIELDS = ["items", "namesLines", "expectedRevisionNumber"] as const;
+
+type SameKeys<A extends string, B extends string> = [A] extends [B]
+  ? [B] extends [A]
+    ? true
+    : never
+  : never;
+const entryFieldsInSync: SameKeys<
+  keyof BuyerOrderItemEdit,
+  (typeof BUYER_EDIT_ENTRY_FIELDS)[number]
+> = true;
+const bodyFieldsInSync: SameKeys<
+  keyof BuyerUpdateOrderItemsRequest,
+  (typeof BUYER_EDIT_BODY_FIELDS)[number]
+> = true;
+/** Compile-time proof only: this assignment fails the build if a list and its interface drift. */
+export const BUYER_EDIT_LISTS_IN_SYNC: readonly [true, true] = [
+  entryFieldsInSync,
+  bodyFieldsInSync,
+];

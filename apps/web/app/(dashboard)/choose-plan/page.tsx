@@ -7,6 +7,7 @@ import { fmtDate } from "@/lib/formatting";
 import {
   usePlans,
   useRecommendation,
+  useSubscription,
   useQuote,
   useSubscribe,
   useUpgrade,
@@ -45,6 +46,7 @@ export default function ChoosePlanPage() {
   const { toast } = useToast();
   const plans = usePlans();
   const rec = useRecommendation();
+  const subscription = useSubscription();
   const quote = useQuote();
   const subscribe = useSubscribe();
   const upgrade = useUpgrade();
@@ -93,7 +95,30 @@ export default function ChoosePlanPage() {
   const isCommitting =
     subscribe.isPending || upgrade.isPending || downgrade.isPending || resume.isPending;
   // The plan the tenant is on right now, normalized past legacy aliases server-side.
-  const currentPlanKey = preview?.change?.fromPlanKey ?? null;
+  // UX guide B10: the server's own answer (the recommendation read) is known on load; the quote's
+  // `fromPlanKey` only exists after a pick, so it is the fallback, not the source.
+  const currentPlanKey = rec.data?.currentPlanKey ?? preview?.change?.fromPlanKey ?? null;
+  // Picking your own plan is NOT always a no-op. The server treats it as a real SUBSCRIBE (a conversion to paid)
+  // unless the business is ACTIVE with a period end, so only then do the other cases apply: with a scheduled
+  // downgrade or cancellation it is the way to call that off, and on the other billing cycle it is the cycle
+  // switch. Everywhere else (a trial, an expired trial, no period end, or the read not loaded yet) the button
+  // is the plain "Choose". It stops, as "Current plan", only for an ACTIVE business on this very cycle with
+  // nothing scheduled.
+  const sub = subscription.data;
+  const ownPlanActive = sub != null && sub.status === "ACTIVE" && sub.renewalAt != null;
+  // When it stays live, the label says what pressing it does.
+  const ownPlanLiveLabel = !ownPlanActive
+    ? "Choose"
+    : sub.cancelAtPeriodEnd || sub.downgradeToPlanKey != null
+      ? "Keep this plan"
+      : cycle === "ANNUAL"
+        ? "Switch to annual billing"
+        : "Switch to monthly billing";
+  const ownPlanIsNoChange =
+    ownPlanActive &&
+    sub.cycle === cycle &&
+    !sub.cancelAtPeriodEnd &&
+    sub.downgradeToPlanKey == null;
   // A DOWNGRADE that the server flagged as over-cap deactivates staff accounts at period end —
   // it is only committable once the tenant has acknowledged that. Keyed on the server's own
   // seat signal, never on `warning` being non-empty: that field also carries unrelated copy
@@ -230,7 +255,7 @@ export default function ChoosePlanPage() {
                   {isCurrent && <Badge variant="info" label="Current plan" />}
                   {isRec && !isCurrent && (
                     <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
-                      <Sparkles className="h-3 w-3" /> Best fit
+                      <Sparkles className="h-3 w-3" /> Fits your usage
                     </span>
                   )}
                 </div>
@@ -252,14 +277,29 @@ export default function ChoosePlanPage() {
                 <Button
                   variant={isSel ? "primary" : "secondary"}
                   onClick={() => pick(p.planKey, p.isCustom)}
-                  disabled={quote.isPending && isSel}
+                  disabled={(quote.isPending && isSel) || (isCurrent && ownPlanIsNoChange)}
                 >
-                  {p.isCustom ? "Contact sales" : isSel ? "Selected" : "Choose"}
+                  {p.isCustom
+                    ? "Contact sales"
+                    : isCurrent && ownPlanIsNoChange
+                      ? "Current plan"
+                      : isSel
+                        ? "Selected"
+                        : isCurrent
+                          ? ownPlanLiveLabel
+                          : "Choose"}
                 </Button>
               </Card>
             );
           })}
       </div>
+
+      {recommended && recommended !== currentPlanKey && (
+        <p className="text-center text-xs text-slate-400">
+          &ldquo;Fits your usage&rdquo; marks the cheapest plan that covers your current users,
+          routes and AI scans. It is a hint, not advice to change.
+        </p>
+      )}
 
       {/* Quote summary */}
       {preview && !preview.isCustom && (

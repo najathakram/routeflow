@@ -12,6 +12,7 @@ import {
   useBuyerUpdateOrderItems,
 } from "../../../../lib/api/buyer";
 import { showToast } from "../../../../lib/toast";
+import { buyerEditSaveError } from "../../../../lib/buyer-edit-save-error";
 import { invoiceLineUnitNoun } from "../../../../lib/invoice-line-display";
 import {
   addCatalogItem,
@@ -81,7 +82,7 @@ export default function BuyerEditItemsScreen() {
           }
           router.back();
         },
-        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Save failed."),
+        onError: (e: any) => showToast(buyerEditSaveError(e)),
       },
     );
   };

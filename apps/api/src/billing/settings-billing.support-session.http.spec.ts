@@ -11,6 +11,7 @@ import { AuditService } from "../audit/audit.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { listenOnLoopback } from "../common/testing/listen-loopback";
 import { BillingService } from "./billing.service";
+import { BillingPaymentsService } from "./billing-payments.service";
 import { ProrationService } from "./proration.service";
 import { StripeConnectController } from "../stripe-connect/stripe-connect.controller";
 import { StripeConnectService } from "../stripe-connect/stripe-connect.service";
@@ -94,6 +95,7 @@ describe("tenant billing routes in a support session (SA-778)", () => {
         { provide: ProrationService, useValue: proration },
         { provide: SubscriptionMutationService, useValue: mutations },
         { provide: BillingService, useValue: billing },
+        { provide: BillingPaymentsService, useValue: {} },
         { provide: AuditService, useValue: audit },
       ],
     })

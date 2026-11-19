@@ -33,6 +33,7 @@ import {
   CreditNoteStatus,
 } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
+import { isOpenCreditNote } from "../credit-notes/sourced-credit-guard";
 import {
   ACCRUAL_REVENUE_STATUSES,
   estimateCogs,
@@ -172,6 +173,7 @@ export class BookkeepingService implements OnModuleInit {
         creditApplied,
         advanceApplied,
         customer: inv.customer,
+        invoiceNumber: inv.invoiceNumber,
         order: inv.order ?? { orderNumber: inv.invoiceNumber },
         payments: inv.payments,
       };
@@ -210,6 +212,7 @@ export class BookkeepingService implements OnModuleInit {
       creditApplied,
       advanceApplied,
       customer: inv.customer,
+      invoiceNumber: inv.invoiceNumber,
       order: inv.order ?? { orderNumber: inv.invoiceNumber },
       payments: inv.payments,
       items: [],
@@ -379,6 +382,7 @@ export class BookkeepingService implements OnModuleInit {
         creditApplied: creditApplied2,
         advanceApplied: advanceApplied2,
         customer: updated.customer,
+        invoiceNumber: updated.invoiceNumber,
         order: updated.order ?? { orderNumber: updated.invoiceNumber },
         payments: updated.payments,
       };
@@ -2470,6 +2474,9 @@ export class BookkeepingService implements OnModuleInit {
       });
     }
 
+    // UX guide B7: only OPEN credit is unused credit (not VOID, not expired, something left): the one predicate every
+    // other credit surface reads. A voided or expired note stays listed with its status; its balance is 0.
+    const now = new Date();
     for (const cn of creditNotes) {
       rows.push({
         customerName: cn.customer.businessName,
@@ -2478,7 +2485,9 @@ export class BookkeepingService implements OnModuleInit {
         type: "CREDIT_NOTE",
         status: cn.status,
         total: Number(cn.amount),
-        balance: Number(cn.amount) - Number(cn.amountUsed),
+        balance: isOpenCreditNote(cn, now)
+          ? roundMoney(Number(cn.amount) - Number(cn.amountUsed))
+          : 0,
       });
     }
 

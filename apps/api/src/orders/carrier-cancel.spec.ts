@@ -315,7 +315,10 @@ describe("B1: unmark vs reopen (ship-state markers)", () => {
     // S2 / row 586: the locked re-read (and the invoice revert) runs inside the edit transaction
     expect(src).toMatch(/const carrierLocked = await carrierGuard\.carrierRevertUnderLock\(/);
     expect(src).toMatch(/blockCredits: carrierLocked,/);
-    expect(src).toMatch(/revisions: EDIT_REVISIONS/);
+    // SA-1160: findOne moved verbatim to order-find-one.ts; its revisions select is read there
+    expect(
+      require("fs").readFileSync(require("path").join(__dirname, "order-find-one.ts"), "utf8"),
+    ).toMatch(/revisions: EDIT_REVISIONS/);
     // S5: the cancel transaction re-checks under its lock
     // (SA-762r F1: that body moved verbatim to order-cancel-tx.ts; changeStatus hands it the carrier guard)
     const cancelTx = require("fs").readFileSync(

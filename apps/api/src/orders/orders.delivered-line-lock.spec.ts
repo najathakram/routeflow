@@ -16,6 +16,7 @@ jest.mock("../notifications/notifications.service", () => ({
   NotificationsService: jest.fn().mockImplementation(() => ({})),
 }));
 
+import { operatorWithRights } from "../common/testing/operator-with-rights";
 import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { getQueueToken } from "@nestjs/bull";
@@ -94,6 +95,7 @@ describe("B1234: delivered lines of a PARTIALLY_DELIVERED order are locked (upda
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    operatorWithRights(prisma, operator);
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         oversellReaderOffProvider,

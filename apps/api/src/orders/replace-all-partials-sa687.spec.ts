@@ -26,6 +26,7 @@ jest.mock("../invoices/invoice-pdf.service", () => ({
 }));
 jest.mock("../storage/compress.util", () => ({ compressDocument: jest.fn() }));
 
+import { operatorWithRights } from "../common/testing/operator-with-rights";
 import { buildOrdersService, operatorPayload } from "./testing/orders-service-harness";
 import { ConflictException, Logger } from "@nestjs/common";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -47,6 +48,7 @@ const sum = (rows: Array<Record<string, unknown>>) =>
 /** A 10-box order split 6 / 4 by the real writers, then REPLACED (same lines) by the real updateOrderItems. */
 async function splitThenReplaceAll(orderStatus: string) {
   const h = await buildOrdersService();
+  operatorWithRights(h.prisma, operatorPayload);
   const invPrisma = createMockPrisma();
   const db = new SplitInvoiceFakeDb();
   db.install(invPrisma);

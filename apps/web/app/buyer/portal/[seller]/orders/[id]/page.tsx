@@ -35,7 +35,11 @@ import {
 } from "@/lib/api/buyer";
 import { computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
 import { buyerEditPayloadItems } from "@/lib/buyer-edit-payload";
-import { API_ERROR_CODES, SHIPPED_ORDER_MESSAGE } from "@routeflow/types";
+import {
+  API_ERROR_CODES,
+  BUYER_EDIT_DELIVERED_LINES_COPY,
+  SHIPPED_ORDER_MESSAGE,
+} from "@routeflow/types";
 import { describeChangeRequest, describeResolution } from "@/lib/change-requests";
 import { fmtCalendarDate } from "@/lib/formatting";
 import { ComponentSubLines } from "@/components/ComponentSubLines";
@@ -215,14 +219,21 @@ function OrderTimeline({ order, view }: { order: BuyerOrder; view: BuyerOrderTra
     <div data-testid="order-timeline" className="flex items-center justify-between gap-0">
       {icons.map((step, i) => {
         const Icon = step.icon;
-        const isComplete = !isCancelled && !isRefused && i <= currentIdx;
+        // UX guide B20: "Partial delivery" ticks only for a partially delivered order; a full DELIVERED one skips it.
+        const skipped =
+          icons[i].label === "Partial delivery" && order.status !== "PARTIALLY_DELIVERED";
+        const isComplete = !isCancelled && !isRefused && i <= currentIdx && !skipped;
         const isCurrent = !isCancelled && !isRefused && i === currentIdx;
+        // The connector follows the path travelled, so a skipped step never breaks the line.
+        const reached = !isCancelled && !isRefused && i <= currentIdx;
 
         return (
           <React.Fragment key={step.label}>
             {i > 0 && (
               <div
-                className={`flex-1 h-0.5 ${isComplete ? "bg-buyer-500" : "bg-surface-border"}`}
+                data-testid="timeline-connector"
+                data-state={reached ? "reached" : "ahead"}
+                className={`flex-1 h-0.5 ${reached ? "bg-buyer-500" : "bg-surface-border"}`}
               />
             )}
             <div
@@ -725,6 +736,14 @@ export default function BuyerOrderDetailPage() {
       ) {
         // B297 row 352: the order has more than one line for a product and this page is out of date.
         setActionError("This order has changed since you opened it. Refresh and try again.");
+        return;
+      }
+      if (
+        err?.response?.status === 409 &&
+        data?.code === API_ERROR_CODES.ORDER_EDIT_DELIVERED_LINES
+      ) {
+        // SA-1149: part of the order was delivered; the buyer gets the one stored sentence, never the staff wording.
+        setActionError(BUYER_EDIT_DELIVERED_LINES_COPY);
         return;
       }
       setActionError(data?.message ?? "Failed to update order items.");

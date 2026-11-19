@@ -59,7 +59,10 @@ import { Badge, cn, useToast, type ToastVariant } from "@routeflow/ui/web";
 import type { ToCollectState } from "@routeflow/types";
 import { depositOverdueLine, groupArAgingByCustomer, toCollectLookup } from "@/lib/ar-aging-rows";
 import { ToCollectChip } from "@/components/ToCollectChip";
-import { receivableSummaryBalanceTotal } from "@/lib/receivable-summary-total";
+import {
+  receivableSummaryBalanceTotal,
+  receivableSummaryBreakdown,
+} from "@/lib/receivable-summary-total";
 import { OpenBalanceButton } from "@/components/account-statement/OpenBalanceButton";
 import Link from "next/link";
 import { useTransactions, useRecordPayment, type Transaction } from "@/lib/api/bookkeeping";
@@ -1238,6 +1241,7 @@ function ReceivableSummaryReport({ from, to }: { from?: string; to?: string }) {
     total: number;
     balance: number;
   }> = data?.data ?? [];
+  const breakdown = receivableSummaryBreakdown(rows);
   return (
     <table className="w-full text-sm">
       <thead>
@@ -1288,13 +1292,36 @@ function ReceivableSummaryReport({ from, to }: { from?: string; to?: string }) {
       </tbody>
       {rows.length > 0 && (
         <tfoot>
+          {/* UX guide B7: say what the bottom line is made of; the bottom line stays today's figure. */}
           <tr className="border-t-2 border-navy bg-surface-raised">
+            <td colSpan={5} className="px-4 py-2 text-navy">
+              Open invoices (overpayments not netted)
+            </td>
+            <td />
+            <td className="px-4 py-2 text-right text-navy">{fmt(breakdown.openInvoices)}</td>
+          </tr>
+          {breakdown.writtenOff > 0 && (
+            <tr className="bg-surface-raised">
+              <td colSpan={5} className="px-4 py-2 text-navy">
+                Written-off invoices
+              </td>
+              <td />
+              <td className="px-4 py-2 text-right text-navy">{fmt(breakdown.writtenOff)}</td>
+            </tr>
+          )}
+          <tr className="bg-surface-raised">
+            <td colSpan={5} className="px-4 py-2 text-navy">
+              Unused credit notes
+            </td>
+            <td />
+            <td className="px-4 py-2 text-right text-navy">{fmt(breakdown.unusedCredit)}</td>
+          </tr>
+          <tr className="bg-surface-raised">
             <td colSpan={5} className="px-4 py-2.5 font-semibold text-navy">
-              Total (overpayments not netted)
+              Total (owed plus unused credit)
             </td>
-            <td className="px-4 py-2.5 text-right font-bold text-navy">
-              {fmt(rows.reduce((s, r) => s + r.total, 0))}
-            </td>
+            {/* Owner D9 (W-1218): the Total column is not summed; the cell stays so the columns align. */}
+            <td />
             <td className="px-4 py-2.5 text-right font-bold text-navy">
               {fmt(receivableSummaryBalanceTotal(rows))}
             </td>
@@ -2113,9 +2140,12 @@ function LedgerReport() {
               return (
                 <tr key={tx.id} className="hover:bg-surface-raised/50">
                   <td className="px-4 py-2.5">
-                    <span className="font-mono text-xs font-semibold text-navy">
-                      {tx.order?.orderNumber ?? tx.id.slice(0, 8)}
-                    </span>
+                    <Link
+                      href={`/invoices/${tx.id}`}
+                      className="font-mono text-xs font-semibold text-brand-600 hover:underline"
+                    >
+                      {tx.invoiceNumber ?? tx.order?.orderNumber ?? tx.id.slice(0, 8)}
+                    </Link>
                   </td>
                   <td className="px-4 py-2.5 font-medium text-brand-600">
                     {tx.customer?.businessName ?? "\u2014"}

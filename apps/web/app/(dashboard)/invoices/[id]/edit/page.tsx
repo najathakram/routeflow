@@ -30,13 +30,13 @@ import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { scanRowQty } from "../../invoice-scan-level";
 import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
 import { SoldUnitQty } from "./SoldUnitQty";
+import { invoiceFooterTotals, wireDiscountBase } from "@/lib/discount-tax-base";
 import { displayProductName } from "@/lib/product-display";
 import { sellableFlat } from "@/lib/product-search-groups";
 import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import {
   isSpecialTier,
   computeInvoiceLineTotal,
-  computeInvoiceTotals,
   type InvoiceTotalsLine,
   normalizeBoxesPieces,
   packFromOwnSplit,
@@ -390,6 +390,7 @@ function toTotalsLine(it: LineItemState): InvoiceTotalsLine {
     freeUnits: lineFreeUnits(it),
     discount: Number(it.discount),
     taxRate: Number(it.taxRate),
+    isNsf: isNsfLine(it), // SA-1141 R1: a fee line is not goods
   };
 }
 
@@ -624,7 +625,11 @@ export default function EditInvoicePage() {
     subtotal,
     tax: taxTotal,
     total,
-  } = computeInvoiceTotals(items.map(toTotalsLine), { discount: invDiscount, shipping });
+  } = invoiceFooterTotals(items.map(toTotalsLine), {
+    discount: invDiscount,
+    shipping,
+    discountBase: wireDiscountBase(invoice?.discountTaxBase), // SA-1141 R7: the document's own mode
+  });
 
   // ── Item helpers ──────────────────────────────────────────────────────────────
 

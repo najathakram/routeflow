@@ -1,6 +1,13 @@
+import * as fs from "fs";
+import * as path from "path";
 import * as React from "react";
 import { render, screen, fireEvent, createEvent, waitFor, act } from "@testing-library/react";
-import { BarcodeScannerButton } from "./BarcodeScannerButton";
+import {
+  BarcodeScannerButton,
+  SCAN_ENTER_GAP_MS,
+  SCAN_KEY_GAP_MS,
+  SCAN_STALL_MAX_MS,
+} from "./BarcodeScannerButton";
 
 // The webcam path: @zxing/browser is mocked so a decode can be fired on demand, and
 // navigator.mediaDevices is stubbed so the constraints the component asks for can be inspected.
@@ -287,7 +294,7 @@ describe("USB / physical scanner survives a parent that re-renders on every keys
   const keyAt = (input: HTMLElement, key: string, timeStamp: number) => {
     const ev = createEvent.keyDown(input, { key });
     Object.defineProperty(ev, "timeStamp", { value: timeStamp });
-    fireEvent(input, ev);
+    return fireEvent(input, ev); // false when the handler prevented the default
   };
   const typeBurst = (input: HTMLElement, code: string, startTs: number, stepMs: number) => {
     let ts = startTs;
@@ -352,5 +359,111 @@ describe("USB / physical scanner survives a parent that re-renders on every keys
     const ts = typeBurst(input, "abcdef", 1000, 250); // > the 200ms gap reset
     keyAt(input, "Enter", ts + 250);
     expect(onScan).not.toHaveBeenCalled();
+  });
+});
+
+// SA-1159: a stall inside a scan must not turn the keys after it into a "code". Every key time is set explicitly (never
+// Date.now() or fake timers), through the exported constants.
+describe("SA-1159: a suffix after a short mid-scan stall is never sent to onScan", () => {
+  const keyAt = (input: HTMLElement, key: string, timeStamp: number) => {
+    const ev = createEvent.keyDown(input, { key });
+    Object.defineProperty(ev, "timeStamp", { value: timeStamp });
+    return fireEvent(input, ev);
+  };
+  const setup = () => {
+    const onScan = jest.fn();
+    render(<ScanField onScan={onScan} />);
+    return { onScan, input: screen.getByLabelText("scan") as HTMLInputElement };
+  };
+  function ScanField({ onScan }: { onScan: (code: string, source?: "field") => void }) {
+    const ref = React.useRef<HTMLInputElement>(null);
+    const [v, setV] = React.useState("");
+    return (
+      <>
+        <input ref={ref} value={v} onChange={(e) => setV(e.target.value)} aria-label="scan" />
+        <BarcodeScannerButton inputRef={ref} onScan={(c, s) => onScan(c, s)} title="Scan barcode" />
+      </>
+    );
+  }
+  /** Type each char at its time; returns the last time. */
+  const type = (input: HTMLInputElement, chars: string, from: number, step: number) => {
+    let ts = from;
+    for (const ch of chars) {
+      keyAt(input, ch, (ts += step));
+      fireEvent.change(input, { target: { value: input.value + ch } });
+    }
+    return ts;
+  };
+  const CODE = "4006381333931";
+
+  it("G1: 4, a 250 ms stall, then the rest at 10 ms: Enter is not prevented, onScan is not called, the field holds the whole code", () => {
+    const { onScan, input } = setup();
+    let ts = type(input, CODE[0], 5000, 10);
+    ts = type(input, CODE.slice(1), ts + 250 - 10, 10);
+    const notPrevented = keyAt(input, "Enter", ts + 10);
+    expect(onScan).not.toHaveBeenCalled();
+    expect(notPrevented).toBe(true);
+    expect(input.value).toBe(CODE);
+  });
+
+  it("after a refused suffix, a whole scan 300 ms later is taken (the refusal leaves no suspicion behind)", () => {
+    const { onScan, input } = setup();
+    let ts = type(input, CODE[0], 5000, 10);
+    ts = type(input, CODE.slice(1), ts + 240, 10);
+    keyAt(input, "Enter", (ts += 10));
+    expect(onScan).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: "" } });
+    ts = type(input, CODE, ts + 300, 10);
+    keyAt(input, "Enter", ts + 10);
+    expect(onScan.mock.calls).toEqual([[CODE, "field"]]);
+  });
+
+  it("G2: 13 digits at 10 ms, Enter 10 ms later: one scan of the whole code, Enter prevented", () => {
+    const { onScan, input } = setup();
+    const ts = type(input, CODE, 5000, 10);
+    const notPrevented = keyAt(input, "Enter", ts + 10);
+    expect(onScan.mock.calls).toEqual([[CODE, "field"]]);
+    expect(notPrevented).toBe(false);
+  });
+
+  it("G3: a key, a pause of 1.5 s, then 13 digits at 10 ms: a fresh start, the 13 digits are scanned", () => {
+    const { onScan, input } = setup();
+    const ts0 = type(input, "x", 5000, 10);
+    const ts = type(input, CODE, ts0 + 1500, 10);
+    keyAt(input, "Enter", ts + 10);
+    expect(onScan.mock.calls).toEqual([[CODE, "field"]]);
+  });
+
+  it("G4: human typing at 250 ms per key is not a scan and Enter is not prevented", () => {
+    const { onScan, input } = setup();
+    const ts = type(input, "abcdefgh", 5000, 250);
+    const notPrevented = keyAt(input, "Enter", ts + 250);
+    expect(onScan).not.toHaveBeenCalled();
+    expect(notPrevented).toBe(true);
+  });
+
+  it("G5: a stall of exactly SCAN_KEY_GAP_MS does not reset (the rule is strict): the whole code is scanned", () => {
+    const { onScan, input } = setup();
+    let ts = type(input, CODE[0], 5000, 10);
+    ts = type(input, CODE.slice(1), ts + SCAN_KEY_GAP_MS - 10, 10);
+    keyAt(input, "Enter", ts + 10);
+    expect(onScan.mock.calls).toEqual([[CODE, "field"]]);
+  });
+
+  it("G5b: one millisecond over SCAN_KEY_GAP_MS resets, and the suffix is refused", () => {
+    const { onScan, input } = setup();
+    let ts = type(input, CODE[0], 5000, 10);
+    ts = type(input, CODE.slice(1), ts + SCAN_KEY_GAP_MS + 1 - 10, 10);
+    keyAt(input, "Enter", ts + 10);
+    expect(onScan).not.toHaveBeenCalled();
+  });
+
+  it("G6: the three gaps are exported named constants and the key handler holds no bare 150, 200 or 1000", () => {
+    expect([SCAN_ENTER_GAP_MS, SCAN_KEY_GAP_MS, SCAN_STALL_MAX_MS]).toEqual([150, 200, 1000]);
+    const src = fs.readFileSync(path.join(__dirname, "BarcodeScannerButton.tsx"), "utf8");
+    const at = src.indexOf("const handleKeyDown");
+    const handler = src.slice(at, src.indexOf('addEventListener("keydown"', at));
+    expect(at).toBeGreaterThan(0);
+    expect(handler).not.toMatch(/\b(150|200|1000)\b/);
   });
 });

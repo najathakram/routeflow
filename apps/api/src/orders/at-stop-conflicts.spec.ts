@@ -1,9 +1,9 @@
 // The harness FIRST: it jest.mock()s modules that orders.service also imports.
 import { buildOrdersService, operatorPayload } from "./testing/orders-service-harness";
-import { ConflictException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { AT_STOP_CONFLICT_MESSAGES, atStopConflict } from "./at-stop-conflicts";
+import { AT_STOP_CONFLICT_MESSAGES, atStopConflict, paidOrderAtStop } from "./at-stop-conflicts";
 
 /**
  * B796 (REG-B796) — every at-stop 409 carries a human `message`, with its `code`/`reason`
@@ -18,6 +18,7 @@ describe("B796 — at-stop refusals carry a human message (REG-B796)", () => {
       { code: "CHANGE_WINDOW_CLOSED", reason: "RUN_NOT_ACTIVE" },
     ],
     ["STOP_ALREADY_COMPLETED", { code: "STOP_ALREADY_COMPLETED" }],
+    ["ORDER_EDIT_INVOICE_HAS_PAYMENTS", { code: "ORDER_EDIT_INVOICE_HAS_PAYMENTS" }],
   ] as const)("%s → a 409 with its code, reason and message", (kind, body) => {
     const err = atStopConflict(kind);
     expect(err).toBeInstanceOf(ConflictException);
@@ -32,7 +33,59 @@ describe("B796 — at-stop refusals carry a human message (REG-B796)", () => {
         "This order's delivery run isn't in progress, so the change can't be applied at the stop.",
       STOP_ALREADY_COMPLETED:
         "This stop is already completed or skipped. Approve the request for the next delivery, or decline it.",
+      ORDER_EDIT_INVOICE_HAS_PAYMENTS:
+        "This order's invoice can't change at the door. The office can add these items on a new order.",
     });
+  });
+
+  it("SA-1144 case 22: the paid-order refusal is rethrown in the at-stop shape (409, same code, the driver's sentence); anything else passes through", () => {
+    const refusal = new BadRequestException({
+      code: "ORDER_EDIT_INVOICE_HAS_PAYMENTS",
+      message: "Remove its payments first",
+    });
+    const out = (() => {
+      try {
+        return paidOrderAtStop(refusal);
+      } catch (e) {
+        return e as ConflictException;
+      }
+    })();
+    expect(out).toBeInstanceOf(ConflictException);
+    expect(out.getResponse()).toEqual({
+      code: "ORDER_EDIT_INVOICE_HAS_PAYMENTS",
+      message:
+        "This order's invoice can't change at the door. The office can add these items on a new order.",
+    });
+    const other = new Error("boom");
+    expect(() => paidOrderAtStop(other)).toThrow(other);
+    const plain = new BadRequestException("plain");
+    expect(() => paidOrderAtStop(plain)).toThrow(plain);
+  });
+
+  it("SA-1156 E5d-u: the source-gone refusal is rethrown in the at-stop shape; a Conflict with any other code passes through", () => {
+    const gone = new ConflictException({
+      code: "CREDIT_NOTE_SOURCE_GONE",
+      message:
+        "Credit note X came from a deleted invoice. Void that credit note first, then try again.",
+    });
+    const out = (() => {
+      try {
+        return paidOrderAtStop(gone);
+      } catch (e) {
+        return e as ConflictException;
+      }
+    })();
+    expect(out).toBeInstanceOf(ConflictException);
+    expect(out.getResponse()).toEqual({
+      code: "ORDER_EDIT_INVOICE_HAS_PAYMENTS",
+      message:
+        "This order's invoice can't change at the door. The office can add these items on a new order.",
+    });
+    const other = new ConflictException({ code: "SOMETHING_ELSE", message: "x" });
+    expect(() => paidOrderAtStop(other)).toThrow(other);
+    // a BadRequest carrying the source-gone code is not the refusal the helper maps
+    const badRequest = new BadRequestException({ code: "CREDIT_NOTE_SOURCE_GONE", message: "x" });
+    expect(() => paidOrderAtStop(badRequest)).toThrow(badRequest);
   });
 
   it("orders.service.ts throws no bare CHANGE_WINDOW_CLOSED / STOP_ALREADY_COMPLETED (all six via atStopConflict)", () => {

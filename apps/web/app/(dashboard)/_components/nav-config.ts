@@ -42,6 +42,7 @@ export const OPERATOR_NAV: NavEntry[] = [
     icon: ShoppingCart,
     children: [
       { kind: "leaf", label: "All Orders", href: "/orders", icon: ShoppingCart },
+      { kind: "leaf", label: "Estimates", href: "/estimates", icon: FileCheck },
       { kind: "leaf", label: "Returns", href: "/returns", icon: RotateCcw },
     ],
   },
@@ -53,6 +54,9 @@ export const OPERATOR_NAV: NavEntry[] = [
       { kind: "leaf", label: "Overview", href: "/dispatch", icon: LayoutDashboard },
       { kind: "leaf", label: "Routes", href: "/routes", icon: MapPin },
       { kind: "leaf", label: "Order delivery", href: "/deliveries", icon: Package },
+      // Moved here from Finance (UX guide improvement 3). Without a Dispatch group buildOperatorNav
+      // puts it at the end of Orders.
+      { kind: "leaf", label: "Shipments", href: "/shipments", icon: Truck },
       { kind: "leaf", label: "Drivers", href: "/drivers", icon: Truck },
     ],
   },
@@ -69,6 +73,13 @@ export const OPERATOR_NAV: NavEntry[] = [
       { kind: "leaf", label: "Promotions", href: "/promotions", icon: Megaphone },
       { kind: "leaf", label: "Suppliers", href: "/suppliers", icon: Building2 },
       { kind: "leaf", label: "Supplier bills", href: "/vendor-bills", icon: ClipboardList },
+      // Moved here from Finance (UX guide improvement 3); not plan-gated, so every plan keeps it.
+      {
+        kind: "leaf",
+        label: "Supplier statements",
+        href: "/finance/statements",
+        icon: FileSpreadsheet,
+      },
     ],
   },
   {
@@ -78,9 +89,6 @@ export const OPERATOR_NAV: NavEntry[] = [
     children: [
       { kind: "leaf", label: "Overview", href: "/finance/dashboard", icon: LayoutDashboard },
       { kind: "leaf", label: "Invoices", href: "/invoices", icon: FileText },
-      { kind: "leaf", label: "Shipments", href: "/shipments", icon: Truck },
-      { kind: "leaf", label: "Estimates", href: "/estimates", icon: FileCheck },
-      { kind: "leaf", label: "Credit notes", href: "/credit-notes", icon: Receipt },
       { kind: "leaf", label: "Payments", href: "/finance/payments", icon: CreditCard },
       {
         kind: "leaf",
@@ -88,18 +96,20 @@ export const OPERATOR_NAV: NavEntry[] = [
         href: "/finance/payment-requests",
         icon: DollarSign,
       },
-      {
-        kind: "leaf",
-        label: "Supplier statements",
-        href: "/finance/statements",
-        icon: FileSpreadsheet,
-      },
-      { kind: "leaf", label: "Reports", href: "/finance/reports", icon: BarChart3 },
+      { kind: "leaf", label: "Credit notes", href: "/credit-notes", icon: Receipt },
     ],
   },
-  // Analytics is app-wide (Revenue, Products & Inventory, Customers, Operations),
-  // so it lives at top level rather than nested under Finance.
-  { kind: "leaf", label: "Analytics", href: "/analytics", icon: BarChart2 },
+  // Reports and Analytics (app-wide: Revenue, Products & Inventory, Customers, Operations) share one
+  // group (UX guide improvement 3); Analytics keeps the one sidebar entry for product insights (SA-1087).
+  {
+    kind: "group",
+    label: "Reports & analytics",
+    icon: BarChart3,
+    children: [
+      { kind: "leaf", label: "Reports", href: "/finance/reports", icon: BarChart3 },
+      { kind: "leaf", label: "Analytics", href: "/analytics", icon: BarChart2 },
+    ],
+  },
   { kind: "leaf", label: "Settings", href: "/settings", icon: Settings },
 ];
 
@@ -135,7 +145,8 @@ export const DRIVER_NAV: NavEntry[] = [
 /**
  * Which sidebar group starts expanded. The group holding the active route wins; on a first
  * load with no active group the Warehouse group opens so Purchase Orders is visible without
- * hunting. The nav is a single-open accordion, so this never grows the rail.
+ * hunting (UX guide improvement 1 keeps it as the first-load default; groups the person opened are
+ * remembered per user by useOpenNavGroups).
  */
 export function defaultOpenGroup(nav: NavEntry[], pathname: string): string | null {
   const active = nav.find(

@@ -426,12 +426,15 @@ describe("OrdersService.updateOrderItems: a buyer's full-list replace keeps unch
     });
   });
 
-  it("MUST 1: the buyer's items edit (orderItemId) echoing a '-'-led stored reason is not refused either", async () => {
+  it("MUST 1 (SA-1161 B2): a buyer entry echoing a stored reason is a refused field now: 400, nothing written", async () => {
+    // No buyer screen sends overrideReason; the stored reason is kept server-side (see the keep rows around this one).
     prime([line({ ...OVERRIDE, overrideReason: "-5 courtesy" })]);
-    await replace([
-      { productId: "prod-a", qty: 18, orderItemId: "li-1", overrideReason: "-5 courtesy" },
-    ]);
-    expect(created()[0]).toMatchObject({ overrideReason: "-5 courtesy", unitPrice: 8 });
+    await expect(
+      replace([
+        { productId: "prod-a", qty: 18, orderItemId: "li-1", overrideReason: "-5 courtesy" },
+      ]),
+    ).rejects.toMatchObject({ response: { code: "BUYER_EDIT_INPUT_NOT_ALLOWED" } });
+    expect(created()).toHaveLength(0);
   });
 
   it("MUST 2: a box-split override is NOT kept once the product's box size changed (12 -> 6): it prices fresh", async () => {

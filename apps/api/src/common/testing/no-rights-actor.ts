@@ -2,7 +2,7 @@ import { UserRole, UserStatus } from "@prisma/client";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
 
 /**
- * A principal that holds NO price-edit rights (`roleMayEditPrice` is false for a buyer, so `priceEditAllowedFor` answers
+ * A principal that holds NO price-edit rights (a buyer never edits a line price, so `priceEditAllowedFor` answers
  * without a database read). SA-1034 rule 4: `EstimatesService.create` and `RecurringInvoicesService.create/update` take a
  * REQUIRED actor; a spec that is not about price rights passes this, which behaves exactly as the old missing actor did.
  */

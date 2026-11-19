@@ -90,7 +90,7 @@ export function usePermissionDeniedWatcher(): void {
 }
 
 /**
- * SA-1034 rule 10: may the signed-in user type a line price (so add a custom item)? The SERVER's mode-applied answer
+ * SA-1034 rule 10: may the signed-in user type a line price (so add a custom item)? The SERVER's answer
  * (`priceEditAllowed`, never a role guess here), read for an OPERATOR only: an account admin always may, and nobody
  * else reaches these screens. Pending, failed and missing answers read as ALLOWED: this only decides what to show, and
  * the server refuses (403 PRICE_EDIT_NOT_PERMITTED, same sentence) whatever the screen offered.

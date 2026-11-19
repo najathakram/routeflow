@@ -43,6 +43,7 @@ function ctxFor(ladders: Record<string, LadderUnit[]>) {
     tier: () => 1,
     overriddenBy: "u-now",
     held: new Map([[held.id, held]]),
+    flooredDelivered: new Map(),
     categoryMap: new Map(),
     priceEditAllowed: true,
   };

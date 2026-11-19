@@ -31,7 +31,12 @@ function prng(seed: number): () => number {
 
 /** The rate an order-derived line stores: order.tax / order.subtotal, kept to the column's 4 places. */
 const storedRate = (orderTax: number, orderSubtotal: number): number =>
-  Math.round(effectiveTaxRateFromTotals(orderTax, orderSubtotal, false) * 10_000) / 10_000;
+  Math.round(
+    effectiveTaxRateFromTotals(orderTax, orderSubtotal, false, {
+      discount: 0,
+      discountBase: "LEGACY_POST_TAX",
+    }) * 10_000,
+  ) / 10_000;
 
 describe("the order-allocation tolerance", () => {
   it("the bound is ceil(n / 2) cents for n invoices sharing the order (at least 1)", () => {

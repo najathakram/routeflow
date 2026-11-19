@@ -29,6 +29,7 @@ function makeTx(opts: { status: string; lines: Line[]; mutations?: unknown[] }) 
       findUnique: jest.fn().mockResolvedValue({ id: "o1", status: opts.status }),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
+    auditLog: { create: jest.fn().mockResolvedValue({}) }, // SA-1136 W-1: the cancel writes its order.cancelled row
     orderItem: {
       findMany: jest.fn().mockResolvedValue(opts.lines),
       updateMany: jest.fn(),

@@ -4,6 +4,8 @@ import { InvoiceStatus } from "@prisma/client";
 import { draftBillsLessThanOrder } from "./invoice-partition";
 import { isNsfLine } from "./nsf-line";
 import { applyComposedLineEdits } from "./invoice-composed-edit";
+import type { DiscountTaxBase } from "@routeflow/pricing";
+import { discountModeOf } from "../common/discount-tax-mode";
 import { sumInvoiceTotalsStrict } from "../common/money-invariants.util";
 import { UnitLineSplitError } from "../orders/unit-line-split";
 
@@ -34,7 +36,11 @@ export interface FollowDeps {
     opts: { priorBilledQty: number; priorPack?: number | null },
   ): any;
   /** InvoicesService.orderDerivedTaxRate, bound. */
-  taxRateOf(order: { tax?: unknown; subtotal?: unknown }, isTaxExempt: boolean): number;
+  taxRateOf(
+    order: { tax?: unknown; subtotal?: unknown; discountAmount?: unknown },
+    isTaxExempt: boolean,
+    discountBase: DiscountTaxBase,
+  ): number;
   /** InvoicesService.applyMsrpSnapshots, bound (stamps each rebuilt line's MSRP like every other builder). */
   applyMsrp(db: any, customerId: string, items: any[]): Promise<void>;
   tenantId: string | null;
@@ -118,6 +124,7 @@ export async function planPartialPriceFollow(
     select: { isTaxExempt: true },
   });
   const isTaxExempt = !!customer?.isTaxExempt;
+  const orderMode = discountModeOf(order); // SA-1141 R4: a derived draft takes the ORDER's mode
 
   const billedBefore = new Map<string, number>(); // orderItemId -> qty billed by EARLIER live invoices
   const plan: FollowPlan = { drafts: [], issuedPartialsUnchanged: [] };
@@ -162,7 +169,7 @@ export async function planPartialPriceFollow(
         plan.issuedPartialsUnchanged.push({ invoiceId: inv.id, invoiceNumber: inv.invoiceNumber });
       } else {
         await deps.applyMsrp(db, order.customerId, [...fresh.values()]);
-        const rate = deps.taxRateOf(order, isTaxExempt);
+        const rate = deps.taxRateOf(order, isTaxExempt, orderMode);
         const itemUpdates = [...fresh].map(([id, f]) => ({
           id,
           data: {
@@ -197,6 +204,7 @@ export async function planPartialPriceFollow(
           discount: Number(inv.discount ?? 0),
           shipping: Number(inv.shippingFee ?? 0),
           isTaxExempt,
+          discountBase: orderMode,
         });
         plan.drafts.push({
           invoiceId: inv.id,

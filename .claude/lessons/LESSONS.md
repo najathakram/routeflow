@@ -12,6 +12,34 @@
 
 ## process
 
+### L-386 · 2026-11-15 · process · a gate names every touched src directory plus repo-truth, auth/permissions and common, runs the FULL web jest for any PR touching apps/web, and rebuilds the workspace dist first; the verdict states the totals (#4327, #4334)
+
+- **Symptom:** two PRs reached review on a narrower api run (15 suites; one without its touched `src/buyer`). A third reached PASS x2 with web files changed and no full web jest, and CI then caught a source pin in a static test. A review tree with a stale gitignored `packages/pricing/dist` ran web and api jest against the old pricing: tsc red, jest green.
+- **Root cause:** the gate was whatever the lane or reader chose to run, and nothing required the verdict to show its totals; a stale build output makes tests pass against code that is not in the tree.
+- **Lesson:** **The api gate is every touched `src/<dir>` plus `test:repo-truth`, `src/auth/permissions` and `src/common`; any PR that touches `apps/web` runs the FULL web jest and web lint; rebuild `packages/pricing` (and any touched package) at every gate checkout, and read a green jest beside a red tsc in one tree as a stale build output. The verdict states the suite and test totals.**
+- **Guard:** owed, NOT BUILT YET: the reviewer's verdict template carries the totals line; no repo file enforces it.
+
+### L-390 · 2026-11-15 · process · a size-ratchet count is read on a merge of the branch with current master plus the queued members, not on the branch's own base
+
+- **Symptom:** two PRs passed their local gates and both reads, yet each broke `size-ratchet.spec.ts` once merged with master (the orders service at 5,178 and 5,204 lines against a ratchet of 5,177).
+- **Root cause:** the count was taken on the branch's own base; master had grown through other merges, and the queued window added more.
+- **Lesson:** **A ratchet file's line count is meaningful only on the merge result. The lane gate reports that count from a merge-tree of the branch with current master (no worktree needed), and it is read again when the reads are ordered, with the window's other members added.**
+- **Guard:** the lead's combined check measures it for window members; `size-ratchet.spec.ts` fails the merged tree.
+
+### L-391 · 2026-11-16 · process · a verbatim move or rename runs the full api jest and a grep of the specs for the old path before the reads (#4321)
+
+- **Symptom:** a verbatim lift of one service method into its own file passed a gate sized to the touched folders and both reads, then went red in CI: a census spec in another folder names the files allowed to write a field by path, and the moved code was no longer at the listed path.
+- **Root cause:** "size the gate to the delta" counts the folders a diff edits, and a move edits two files while a pin elsewhere names the old one; nothing in the move's own tests reads that path.
+- **Lesson:** **A move or a rename is never sized to the delta: run the whole api jest, and grep every spec and script for the old path and the old symbol before the reads are ordered. A census or allow-list that names files by path is edited in the same PR as the move.**
+- **Guard:** `apps/api/src/products/variant-name-writers-census.spec.ts` (its allowed list now names the new file); the grep step is a lane habit with no script yet.
+
+### L-393 · 2026-11-19 · deploy · the health commit equals the last merge that changed apps/api or packages, not the last merge (windows 51 to 56)
+
+- **Symptom:** after a web-only merge, a close check compared the API health commit to the merge commit and read a stall: both API hosts still reported the earlier merge.
+- **Root cause:** a web-only or docs-only merge does not rebuild the API; its status goes green in the same second it is created, so the health commit never moves.
+- **Lesson:** **A close check compares the health commit to the last merge that touched `apps/api` or `packages/`, and reads the other merges by their own service statuses.**
+- **Guard:** none in the repo (lead tooling); the window close script carries the rule.
+
 ### L-379 · 2026-11-12 · process · a hold or fix order is issued only after the reviewer's verdict and browser evidence are posted; the order carries their board comment ids (#4302)
 
 - **Symptom:** a hold and a one-case fix order for #4302 went out from an interim reading, before the reader's FAIL (board 6819958479) and the browser evidence (6819958939, which found more than the reader's MUST) were posted. It cost a round.
@@ -42,19 +70,19 @@
 
 ## tooling
 
+### L-388 · 2026-11-15 · tooling · `gh run list --json conclusion` is the empty string, not null, while a run is in progress; map it to a marker explicitly and key timers by run id plus attempt (#4324)
+
+- **Symptom:** a window's hang guard cancelled a healthy rerun of #4324: the lead's script read a tab-split row, the in-progress conclusion was `""`, and the field after it shifted.
+- **Root cause:** `jq '.conclusion // "-"'` replaces only null and false, so the empty string passed through, and a whitespace-split read drops an empty field.
+- **Lesson:** **Map an empty conclusion to `-` explicitly (`if . == "" then "-" else . end`), read rows as JSON rather than splitting on tabs, and key every timer by run id and attempt so a rerun gets its own clock.**
+- **Guard:** none in the repo (lead tooling); the window script carries the explicit mapping.
+
 ### L-358 · 2026-10-30 · tooling · api check-types in a tree that did not build the workspace packages drowns in TS2307; build `packages/*` first
 
 - **Symptom:** the api type-check on a freshly installed train tree reported 913 diagnostics (baseline 551), nearly all "Cannot find module '@routeflow/pricing'".
 - **Root cause:** `@routeflow/pricing`, `returns` and `scanning` resolve their types from `dist/`; `npm ci --ignore-scripts` builds nothing, so every importer fails.
 - **Lesson:** **Before reading a type-check count in a new tree, build the workspace packages that publish `dist/`. A count far above baseline with TS2307 on a package name is a missing build, not a member defect. After a `packages/*` change lands or is edited, rebuild `dist/` in every tree that tests against it: web specs import the built `dist`, so a stale one fails silently with wrong money figures, not an error (archived L-176).**
 - **Guard:** the train check script runs the package builds first, then api and web check-types.
-
-### L-354 · 2026-10-29 · tooling · a worktree whose hooks directory is missing runs no hooks and says nothing; every tree-making path installs them and a push checks they exist
-
-- **Symptom:** a train branch was pushed from a fresh worktree and its pre-push never ran; earlier the same silence came from a relative shared `core.hooksPath` that a plain `npm ci` rewrote.
-- **Root cause:** `npm ci --ignore-scripts`, the rule that stopped husky rewriting the shared hooksPath, also skips creating `.husky/_`, and git treats a hooksPath to a missing directory as no hooks, with no warning. Fixing the install line one way reopened the other way.
-- **Lesson:** **Every path that creates a tree (worktree, heavy-slot, dispatch, swarm scripts) installs or copies the hooks itself and refuses a hookless tree. Before the first commit or push from a new tree, assert `.husky/_/pre-push` exists and `check-git-hooks` passes; a push that ran no hook is unverified, whatever it printed.**
-- **Guard:** `worktree.mjs` refuses a hookless tree (B642, #3880); heavy-slot, dispatch and bug-swarm trees ensure hooks (#3951); new trees copy hooks (#3956); `scripts/check-git-hooks.mjs`. Cf. archived L-263, L-274.
 
 ### L-329 · 2026-10-21 · tooling · an Expo web export can reuse a shared Metro cache and bake another build's EXPO_PUBLIC_* values; export with --clear and assert the bundle
 
@@ -64,6 +92,27 @@
 - **Guard:** none automatic; the sign-in screen's `build <sha7>` (`lib/build-info.ts`) is the on-screen check. Cf. [[L-265]] (stale build output in a proof).
 
 ## testing
+
+### L-387 · 2026-11-15 · testing · a test helper is not named `use*`: the web lint reads it as a hook and fails the PR (#4340)
+
+- **Symptom:** a web PR went red in CI on `react-hooks/rules-of-hooks`: a plain helper in a test file was called from a callback and its name began with `use`.
+- **Root cause:** the lint rule keys on the name, not on what the function does; the lane's gate had not run web lint.
+- **Lesson:** **Name test helpers for what they return (`makeX`, `renderX`, `withX`), never `useX`, unless the function really is a hook called at a component's top level. Web lint is part of every web PR gate.**
+- **Guard:** the web ESLint `react-hooks/rules-of-hooks` rule in `npm run lint`. Cf. [[L-386]].
+
+### L-389 · 2026-11-15 · testing · a source scan's file-walk predicate is pinned by a row that names edge files, and a label type error shows only under the spec ratchet (#4344)
+
+- **Symptom:** a return-address scan walked the API sources with `/.(spec|test).tsx?$/` as its skip filter; the unescaped dot also dropped `common/testing/db-spec.ts` and `smtp-spec.ts`, so the scan read green while skipping both. A reader found it, not the scan.
+- **Root cause:** the predicate was never itself tested, and a scan that finds nothing in a skipped file looks identical to a clean file. Separately, a row label written with two quoted pieces was a type error that plain `tsc` never reports, because it skips specs.
+- **Lesson:** **Give every scan's walk a row that asserts the named edge files ARE scanned (a helper called `*-spec.ts`, a `.tsx` file) and the excluded kinds are not; escape the dots in a file-name predicate. A spec type error is judged only by `npm run check-types -w apps/api` (the ratchet), and prettier rewrites quoted keys, so a row meant to test a quoted-key spelling tests nothing: label it as a label.**
+- **Guard:** the walk row in `apps/api/src/billing/billing-return-paths.spec.ts` (db-spec.ts and smtp-spec.ts scanned, no `*.spec.ts(x)`, at least seven `.tsx` files).
+
+### L-392 · 2026-11-19 · testing · a raw control byte typed into a regex literal makes a negative pin pass whatever the code holds (#4349, B1313)
+
+- **Symptom:** twelve `not.toMatch` pins in ten spec files, and one till inventory pin, held a raw backspace byte (0x08) where a word boundary was meant, so each matched nothing and passed on any tree; three raw NUL bytes sat in a script as separators.
+- **Root cause:** an editor or paste turned `\b` into the control character, the pin still read as a regex, and a negative assertion over a pattern that cannot match is always green.
+- **Lesson:** **Write a boundary as the two-character escape, never a typed byte, and give every negative pin a probe that makes it match the thing it forbids (L-377). A source scan for control bytes (0x00 to 0x08, 0x0B, 0x0C, 0x0E to 0x1F, 0x7F) over every tracked text file, asserting it scanned files and with no exception list, is the standing guard.**
+- **Guard:** the twelve pins were fixed in #4349 with a red then green probe each; the standing scan is owed (B1364).
 
 ### L-377 · 2026-11-12 · testing · a pin ships with a red probe the builder watched fail; a regex with a stray control byte matches nothing and passes whatever the tree holds (#4303)
 
@@ -156,6 +205,13 @@
 - **Lesson:** **In the tree under test run `npx prisma generate` from `apps/api` after the install, and prove any changed `select`/`include`/`where` with an executed query against a database migrated from THAT tree's `prisma/migrations` (`npm run local:migrate`, then the DB lane). A link to another tree's `node_modules` is fine for docs-only work and never for code that touches the schema.**
 - **Guard:** none automatic; the install order in [[L-254]] (`npm ci --ignore-scripts`, `prisma generate`, build `packages/*`), `npm run local:drift` against the compose DB, and the executed-query rule. Cf. archived L-176. Extended 2026-10-21: a DB-backed spec that needs reference data (a published plan catalog) passed on a seeded dev database and failed in CI's fresh replay database. A DB spec seeds the reference data it needs through the shipped idempotent publishers, behind the local-DB guard, and is proved once against an empty migrated database.
 
+### L-383 · 2026-11-15 · testing · a probe's entry condition names the branch it passes through; "nothing changed" from a skipped branch proves nothing about the branch you meant to test (W-946r)
+
+- **Symptom:** a probe of a delivered line's quantity floor sent `qty: 0`, saw the save succeed with stock, delivered count and invoice unchanged, and read it as "the floor holds, close with a pin". A re-probe at `qty: 3` showed the opposite: the stored qty dropped below the delivered count, the line flipped to Pending, stock got no return, and the invoice billed the lower quantity (B1330).
+- **Root cause:** the per-line update branch of `updateOrderItems` skips any non-positive quantity for every existing line (`if (qty <= 0) continue`), so `qty: 0` never reached a quantity write. The brief named the input, not the branch it takes.
+- **Lesson:** **Before a probe's result is read as a verdict, read the code path the entry condition takes at the base and name the branch; a "no change" outcome is evidence only if that branch contains the write under test. Probe a value the generic skip lets through (a positive one), and say which branch each value reaches.**
+- **Guard:** none automatic. SA-E111 records the miss; the red pin for the floor (B1330) lands with F-1, and B1336 tracks the silent `qty: 0` skip itself.
+
 ## domain
 
 ### L-375 · 2026-11-12 · domain · a flag the middleware reads to route a browser is set by every path that starts a session, impersonation included (B1304)
@@ -164,13 +220,6 @@
 - **Root cause:** `resolveOperatorPathGuard` trusts the `rf-op-auth` presence cookie, which a normal operator sign-in sets; `setImpersonation` stored the tokens but never set the cookie.
 - **Lesson:** **Every code path that makes a browser an operator (sign-in, impersonation, any future switch) calls the one helper that sets the presence cookie, and every exit path clears it unless the browser holds operator tokens of its own. Test it through the real guard with no mocks of the helpers.**
 - **Guard:** `lib/impersonation.presence.test.ts` (5 tests, real guard and helpers). Open: the automatic exits in `lib/api-client.ts` clear the tokens but not the cookie (see the register). Cf. [[L-369]].
-
-### L-371 · 2026-11-06 · domain · a default and a backfill reach rows that exist and rows created; a row moved into a role gets the role's defaults from the code that moves it (SA-1050 A-5)
-
-- **Symptom:** a migration appended `BAD_DEBT` to every existing OPERATOR's deny list and set a column default for new rows, yet an admin moving a DRIVER or CUSTOMER to OPERATOR left that row at `{}`: an operator with write-offs on by default.
-- **Root cause:** a column default and a one-time backfill are keyed on a row existing or being created, not on a row changing into the audience; `updateUser` changed the role and nothing else.
-- **Lesson:** **When a default belongs to a role, apply it in the one service method that moves a row into the role, in the same update that changes the role, decided by the server and never the DTO. Write a red case for each source role and guards for a move out, a same-role save and a self edit; pin the API literal to the shared source of the default set.**
-- **Guard:** `OPERATOR_DEFAULT_DENIED_GROUPS` (`auth/permissions/operator-default-denied.ts`) pinned to the OFF set of `GROUP_INTRODUCED` in `permission-groups-contract.spec.ts`; `users-operator-entry.db.spec.ts` A5-1 to A5-7 (the two source-role rows were red on the unfixed service; two guard rows were added after a mutant survived). Cf. [[L-301]].
 
 ### L-370 · 2026-11-06 · domain · a capture gate on a diagnostic is keyed by every field the reader groups by, under one global budget and a bounded map; a coarser key hides the second site (B1285)
 
@@ -192,55 +241,6 @@
 - **Root cause:** the guard counted `Return.orderId` only. For an inline return that is the carrying order; the order the goods were sold on is `ReturnItem.sourceOrderId`. The header link and the line link are two answers to one question.
 - **Lesson:** **Write the "is there a live X on these orders" test once, as a predicate that names every link (header key and line source key, dead statuses excluded), and make every guard count through it. Before trusting a guard, list each way a document can be tied to the row and write a red case for the link the author did not think of.**
 - **Guard:** `liveReturnWhere` in `returns/live-return-guard.ts`; `live-return-guard.spec.ts` RO-36, the DB rows RO-31..35 and the three-caller census `live-return-guard.structure.spec.ts`. Cf. [[L-223]] (sweep every emit site, not the named ones).
-
-### L-351 · 2026-10-29 · domain · a business day (due, overdue, expiry, default date) is the tenant's calendar day, judged by one shared rule; host and browser zones never decide it
-
-- **Symptom:** in one window six surfaces judged a day in the wrong zone: browser-day sale and invoice dates, host-day badge and OVERDUE, a licence expired from UTC midnight of its printed date, a report date moved by the host offset.
-- **Root cause:** each caller compared a stored date with `new Date()` in its own zone. The house rule named a helper but nothing listed the callers, so each compare was a fresh copy, and UTC CI hid it.
-- **Lesson:** **Judge every today, due, overdue, expiry or default date through one shared tenant-day rule, passing the tenant's zone in; an unknown zone reads UTC, never "always valid". Pin the callers in a spec that fails on a new inline date-vs-clock compare, and test with the zone as data in a child process, never an in-worker `process.env.TZ`.**
-- **Guard:** `licence-validity-callers.spec` (07ce43595), `page.no-browser-clock.static.test.ts` (#3775), child-process premise in `pg-utc-types.spec.ts` (#3717). Evidence #3775, #3778, #3781, #3717, B330. Cf. archived L-047, L-232, L-252.
-
-### L-352 · 2026-10-29 · domain · a button disabled while pending does not stop a second click in the same frame; a create holds a synchronous per-attempt latch
-
-- **Symptom:** a double-click on a create action sent two POSTs; the second came back 409 "already exists".
-- **Root cause:** the loading state disables the button only after a re-render, so a second click in the same frame still submits. Disabling on the pending flag was the approach that did not hold.
-- **Lesson:** **Guard every create or money-writing submit with a ref latch set synchronously at the top of the handler and released in `onSettled`, so a failed attempt can retry; the disabled state is cosmetic. Its red-first spec fires two clicks in one tick and asserts one request, then asserts a retry after a failure is sent.**
-- **Guard:** red-first specs on the inline product create and the variant create (I-79, d0cd10bd3). Server idempotency stays the second line (cf. L-344).
-
-### L-349 · 2026-10-25 · domain · prove every id a write references is in the tenant, on the outer client, before any write (681 PR A)
-
-- **Symptom:** a create or update stored an id (customer, product, supplier, category) that pointed at a row of another tenant, or at nothing; nothing refused it.
-- **Root cause:** the writers trusted the id a client sent. Tenant scoping covered the row being written, not the rows it referenced.
-- **Lesson:** **A create or update that takes ids of other rows calls one helper (`assertRefsInTenant`) on the outer client before it opens a transaction. It checks existence and tenant only; archived or deleted state stays a separate policy. Roll it out behind a read-only, counts-only census so existing cross-tenant links reach the architect before the proof starts refusing.**
-- **Guard:** `assert-refs-in-tenant.ts` plus per-service specs; `report-cross-tenant-refs.mjs` census run by the owner.
-
-### L-346 · 2026-10-25 · domain · a payment capacity check judges real money on the confirmed basis; an unconfirmed row it displaces is flagged, never allowed to refuse it (W-769)
-
-- **Symptom:** a staff member could not record a real payment because a draft or pending row on the same invoice already used up the balance.
-- **Root cause:** the capacity check counted unconfirmed rows as if they were money received, and each writer applied its own version of the check.
-- **Lesson:** **Capacity for a PAID write is the confirmed total; DRAFT and PENDING rows count only for writes that are themselves unconfirmed. A paid write that displaces an unconfirmed row flags it for review instead of refusing. The policy and predicate live in `@routeflow/pricing`, and one api file (`confirmed-basis.ts`) applies them for every writer.**
-- **Guard:** `payment-confirmation` specs in `packages/pricing` and the writer specs that reach `confirmed-basis.ts`.
-
-### L-345 · 2026-10-25 · domain · every recurring Stripe price names a product we own, with a deterministic id; inline `product_data` is for one-time lines only (W-810)
-
-- **Symptom:** a later price push on a subscription born in Checkout failed, and the redelivery that followed never cleared.
-- **Root cause:** Checkout's inline `product_data` creates the product inactive, and an inactive product cannot take a new recurring price.
-- **Lesson:** **Create one product per plan code and per add-on SKU (`rf_plan_<code>`, `rf_addon_<sku>`), retrieve it first and reactivate it if inactive, and point every recurring `price_data` at it. Read and preview paths make no Stripe write. Test fakes need `products.retrieve`, not just `create`.**
-- **Guard:** `stripe-product.ts` with the stateful `fakeStripeProducts` used by the billing specs.
-
-### L-344 · 2026-10-24 · domain · an idempotent early return still retries the side effect; a status lift is a predicate with a CAS twin (#3599)
-
-- **Symptom:** a card payment reinstated a tenant an admin had locked, and a redelivered checkout webhook skipped the price push its first delivery had failed to make.
-- **Root cause:** the payment handlers lifted any non-ACTIVE status, and the "already applied" early return also skipped a non-idempotent side effect that could have failed the first time.
-- **Lesson:** **A money event lifts a lock only through ONE predicate with a compare-and-set twin (`paymentReinstatable` / `paymentReinstatableWhere`), so the check and the write are one statement. An idempotent early return still retries the side effect that may have failed on the first delivery.**
-- **Guard:** the dunning-config and billing webhook specs.
-
-### L-342 · 2026-10-24 · domain · send `null` to clear a field and omit it to leave it alone; `x || undefined` cannot clear (#3695, #3622)
-
-- **Symptom:** emptying a payment reference, notes, phone or delivery-window field on an edit form kept the old value, and the stale reference still counted in the duplicate-reference check.
-- **Root cause:** clients sent `x.trim() || undefined`. JSON drops `undefined`, and the server reads an absent key as "no change", so a clear looked exactly like leaving the field alone.
-- **Lesson:** **An update contract needs three states: a value sets, `null` clears, an absent key leaves alone. Type update DTOs as `string | null` and convert an emptied input to `null`. A cleared identifier carries no dedupe identity.**
-- **Guard:** `apps/mobile/lib/clearable-field.ts`, `UpdateInvoicePaymentDto` `reference`/`notes: string | null`, `payment-edit-ref.db.spec.ts`.
 
 ### L-340 · 2026-10-24 · domain · one declared row-lock order, a pin that classifies every lock site, and no exception map that grows (#3680, #3697)
 
@@ -312,14 +312,14 @@
 - **Lesson:** **Before declaring one writer for a ledger or event stream, grep the whole tree for every emit of those events and every `amountDelta:` site, not only the call sites the brief named. Route each one through the writer or exempt it explicitly.**
 - **Guard:** #2186: `subscribe()` (`subscription-mutation.service.ts` :395-421 at review) was the writer the sweep missed and now calls `emitAddonDelta`. On master, `ADDON_ENABLED/DISABLED` is emitted only in `billing/addon-ledger.ts`. No structural pin yet; propose one beside `mrr-paying-predicate.parity.spec.ts`.
 
+### L-384 · 2026-11-15 · domain · a rule that is about to become a per-document mode is a REQUIRED parameter that throws when omitted, and every legacy caller states the old mode by name (#4323, W-989)
+
+- **Symptom:** an invoice-level discount must start lowering the sales-tax base for new documents only, while every stored document keeps today's formula. An optional mode would let any caller that forgot it silently total on one formula and re-derive a stored tax rate on the other.
+- **Root cause:** the totals and rate-inference helpers had no notion of a mode, and a default would hide the callers that still need a decision (the cutover constant stays null until the owner flips it).
+- **Lesson:** **Add the mode as a REQUIRED union on every totals and rate-inference helper, assert it at runtime (a JS caller or a mock gets an error, never a default), have each existing caller pass an exported legacy constant by name so a grep lists the sites still to thread, and derive a document's mode from its immutable creation time so a stored document keeps its formula for life.**
+- **Guard:** `packages/pricing/src/discount-tax-base.spec.ts` (an omitted mode throws in `computeInvoiceTotals`, `saleTotals`, `sumInvoiceTotals` and the rate inference; PRE_TAX 8 / 88 against LEGACY 10 / 90); the compiler for every typed caller. Cf. archived L-347.
+
 ## security
-
-### L-372 · 2026-11-06 · security · a rotation resets every stored copy of the secret, a derived hash included, and an output scan covers every exit that holds the secret in scope (#4232)
-
-- **Symptom:** (review notes on #4232; nothing leaked) the invite rotation cleared the code and its expiry but not `inviteTokenHash`; and the "no digest in the output" scan ran on the dry run, the no-backup refusal, the stale refusal and the committed apply, not on the compare-and-swap refusal, the one path with a planned digest beside the message.
-- **Root cause:** the rotation was written against today's columns: the hash column is empty and unread, and in this codebase a NULL expiry counts as live, so a later backfill would bring a rotated link back. The scan list was the paths the author thought of.
-- **Lesson:** **The SET of a rotation names every column that can resolve the secret (code, hash, expiry) and a row asserts each; sequence a hash backfill after any pending rotation. An output scan lists every exit that has the secret in scope, refusals first. A plan file that holds digests is mode 0600, expires in 24 h and is rewritten as spent after the commit.**
-- **Guard:** `ef87ea532f` (plan file 0600, 24 h limit, spent plan holds no digest); P-1 to P-4 in `common/portal-invite-census.db.spec.ts`. Open: B1291 (the CAS refusal scan), B1292 (the hash). Cf. [[L-188]].
 
 ### L-328 · 2026-10-21 · security · a same-origin form POST under `Referrer-Policy: no-referrer` sends `Origin: null`; an Origin-equals-Host check then refuses every login
 
@@ -365,12 +365,12 @@
 - **Lesson:** **A guard that asks whether a person is typing asks one shared predicate, and that predicate excludes a field inside a closing dialog. Add no timer, no key timing and no new focus owner for it. Test it with a harness that emulates the exit animation (jsdom has none), at start delays on both sides of the animation, and with both line endings.**
 - **Guard:** `insideClosingDialog` in `lib/refocus-scanner.ts` (read by `isTextEntryElement`); `refocus-scanner.test.ts` and `CounterSaleScreen.escape-scan.test.tsx` (removing the predicate turns 18 tests red). Open: Change the price with a code that starts in lowercase (`CounterLinePriceEdit.tsx:252`). Cf. [[L-353]].
 
-### L-373 · 2026-11-06 · web · a percentage padding resolves against the parent's width; size a centred box with min(max, 100% - gutter) and fixed padding, and make the source scan read every spelling (#4234)
+### L-385 · 2026-11-15 · web · one exported predicate says whether a key starts a scan run; each screen decides only where the scan goes (#4320, B1310, B1314)
 
-- **Symptom:** on a wide screen the home founder card grew to 1,640 px and its text sat in a narrow strip, with about 360 px of padding per side; the no-JS hero had the same shape.
-- **Root cause:** the side padding was a percentage half-gap, `(100% - 1200px)/2`, and a percentage padding resolves against the parent's width, not the box's own width.
-- **Lesson:** **A centred box on a page grid is `width: min(<grid>, 100% - <gutter>)` with a centring margin and a fixed clamp padding, never a percentage half-gap. A static scan for the bad shape normalises whitespace, covers the equivalent spellings (`calc(50% - N)`, a custom property holding the half-gap) and walks the whole stylesheet tree.**
-- **Guard:** `site-founder-card-width.static.test.ts` (card width; a scan of `css/` and `graphics/` for one spelling). Open: B1294 (the other spellings). Cf. [[L-364]].
+- **Symptom:** a scan whose code began with a lowercase letter or punctuation, typed while a button, a drag handle or the page held focus, lost its leading keys; on the order builder its ending Enter reopened the date picker; on the till a leading `g` was taken by the g-then-x shortcut.
+- **Root cause:** the date picker, the line drag handle and the till each spelled "this key starts a scan" for themselves, with different case, focus and modifier rules.
+- **Lesson:** **Keep the run-start rule in one module (printable character, not Space, no Ctrl, Meta or Alt, focus not in a text field or a typeahead owner) and let each surface own only its destination field; the capture hands the key over and never stops a scan key, so a keyboard line move can still cancel. A rule about key order reads no clock.**
+- **Guard:** `apps/web/lib/scan-run.test.ts`, `scan-run.structure.test.ts` (the module reads no clock, no second spelling of the rule), `CreateOrderModal.scan-destination.test.tsx`, `CounterSaleScreen.sa1067.test.tsx`.
 
 ## deploy
 

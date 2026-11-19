@@ -68,6 +68,8 @@ export interface PlanPriceFanoutResult {
   annualPrice: number | null;
   updated: number;
   synced: number;
+  /** Of `synced`, how many were already at this price (nothing sent to Stripe). Absent on older servers. */
+  unchanged?: number;
   failed: number;
 }
 

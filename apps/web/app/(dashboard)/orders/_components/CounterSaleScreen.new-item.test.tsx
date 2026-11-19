@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, waitFor, fireEvent, within, act } from "@/test-utils/render";
 import { apiClient } from "@/lib/api-client";
 import { CounterSaleScreen } from "./CounterSaleScreen";
+import { installScanClock } from "@/test-utils/scan-clock";
 
 /**
  * W-1042 (SA-1062 MUSTs 9-14a): a new item at the counter. Nothing opens by itself: an unknown scan's miss line and the
@@ -134,6 +135,8 @@ async function fillAndSave(name = "Fresh Pie", price = "4.5") {
   fireEvent.change(priceInput(), { target: { value: price } });
   fireEvent.submit(saveButton().closest("form")!);
 }
+
+installScanClock(); // SA-1159: key stamps through the constants, never the wall clock
 
 describe("W-1042 the miss line", () => {
   it("R6: an unknown scan that is a final not-found carries a Create item button", async () => {
