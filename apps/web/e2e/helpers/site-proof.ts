@@ -1,5 +1,5 @@
 /**
- * Shared probes for the "site-proof" project (specs 84 and 85):
+ * Shared probes for the "site-proof" (spec 85) and local-lane "site-proof-wheel" (spec 84) projects:
  * the public site, signed out. Plan: .claude/pipeline/2026-11-13-site-wheel-print/README.md.
  *
  * House rules these helpers enforce:
