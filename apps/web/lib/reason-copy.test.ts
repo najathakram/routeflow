@@ -1,5 +1,5 @@
 import * as fs from "fs";
-import { RUN_UNFINALIZED_PREFIX } from "./api/invoices";
+import { RUN_UNFINALIZED_PREFIX, isRetryableRunFailure } from "./api/invoices";
 import * as path from "path";
 import {
   DELIVERY_FIX_LINK_VALUES,
@@ -58,6 +58,16 @@ describe("reason-copy: run failures, return reasons, save errors (#1965)", () =>
     );
     expect(r.retryable).toBe(false);
     expect(r.text).not.toMatch(/P2002|abc|boom/);
+  });
+
+  it("describeRunFailure: B1251 a created-but-not-emailed run is not retryable, says draft, never echoes the server text", () => {
+    const lastError =
+      "The invoice was created but could not be emailed (invoice abc): EMAIL_NOT_CONFIGURED";
+    const r = describeRunFailure(lastError);
+    expect(r.retryable).toBe(false);
+    expect(r.text).toMatch(/draft/i);
+    expect(r.text).not.toMatch(/EMAIL_NOT_CONFIGURED|abc/);
+    expect(isRetryableRunFailure(lastError)).toBe(false);
   });
 
   it("describeRunFailure: an unknown failure gets the generic retry sentence with no raw text", () => {

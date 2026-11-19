@@ -95,6 +95,7 @@ module.exports = {
     // SA-1101: the shared terminal-order-status lists (pure, no imports), same subpath trick.
     "^@routeflow/types/api/enums$": "<rootDir>/../../packages/types/api/enums.ts",
     "^@routeflow/types/api/restrictions$": "<rootDir>/../../packages/types/api/restrictions.ts",
+    "^@routeflow/types/api/finance$": "<rootDir>/../../packages/types/api/finance.ts",
     "^@routeflow/types/api/fulfilment$": "<rootDir>/../../packages/types/api/fulfilment.ts",
     "^expo-secure-store$": "<rootDir>/__tests__/__mocks__/expo-secure-store.js",
     // #2653: the shell bridge is pure TS (zod only) — resolve it to SOURCE, ahead of the ui stub.

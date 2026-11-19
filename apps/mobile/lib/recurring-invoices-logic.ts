@@ -1,4 +1,16 @@
+import {
+  isAlreadyBilledRunError,
+  RUN_SEND_FAILED_PREFIX,
+  RUN_UNFINALIZED_PREFIX,
+} from "@routeflow/types/api/finance";
 import type { RecurringFrequency } from "./api/recurring-invoices";
+
+// B1251 single source: the "already billed" prefixes live in @routeflow/types (never typed here).
+export { RUN_SEND_FAILED_PREFIX, RUN_UNFINALIZED_PREFIX };
+
+/** Fixed copy for an "already billed" failure (mirrors the web card's describeRunFailure; no raw server text). */
+export const RUN_ALREADY_BILLED_COPY =
+  "The invoice was created, but the run did not finish cleanly. Open the invoice and check it. Don't run it again.";
 
 /**
  * Pure (screen-free, testable) recurring-invoice helpers — the Active/Paused pill
@@ -35,8 +47,16 @@ export interface RecurringActionFlags {
  * template regardless of active state); Pause only when active, Resume only when
  * paused — the pause/resume toggle.
  */
-export function recurringActionFlags(isActive: boolean): RecurringActionFlags {
-  return { canRunNow: true, canPause: isActive, canActivate: !isActive };
+export function recurringActionFlags(
+  isActive: boolean,
+  lastError?: string | null,
+): RecurringActionFlags {
+  // B1251: while the last run is already billed (invoice exists), a re-run would bill the cycle twice.
+  return {
+    canRunNow: !isAlreadyBilledRunError(lastError),
+    canPause: isActive,
+    canActivate: !isActive,
+  };
 }
 
 /**
@@ -76,6 +96,9 @@ export function lastRunOutcome(t: {
 }): LastRunOutcome | null {
   if (!t.lastRunAt || !t.lastRunStatus) return null;
   if (t.lastRunStatus === "FAILED") {
+    if (isAlreadyBilledRunError(t.lastError)) {
+      return { variant: "red", label: "Last run failed", detail: RUN_ALREADY_BILLED_COPY };
+    }
     return { variant: "red", label: "Last run failed", detail: t.lastError ?? undefined };
   }
   return { variant: "green", label: "Last run succeeded" };
