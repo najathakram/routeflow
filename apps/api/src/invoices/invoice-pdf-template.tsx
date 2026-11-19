@@ -606,7 +606,7 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
                   <Text style={[styles.docBadgeText, { color: SUCCESS }]}>FINAL</Text>
                 </View>
               ) : null}
-              <StatusBadge status={invoice.status} styles={styles} />
+              {show.statusBadge ? <StatusBadge status={invoice.status} styles={styles} /> : null}
             </View>
           </View>
 
@@ -636,7 +636,7 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
               {terms.showDueAndTerms && invoice.paymentTermsLabel ? (
                 <Text style={styles.billSub}>Terms: {invoice.paymentTermsLabel}</Text>
               ) : null}
-              {invoice.paidAt ? (
+              {show.paidDate && invoice.paidAt ? (
                 <Text style={[styles.billSub, { color: SUCCESS }]}>
                   Paid: {fmtDate(invoice.paidAt)}
                 </Text>

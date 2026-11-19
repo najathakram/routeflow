@@ -438,10 +438,34 @@ describe("InvoicePdfService.generateAndUpload - Paid / Balance Due switches (R6a
     for (const f of figures) expect(f).toEqual(figures[0]);
     // only the visible rows differ; both on = today's output
     expect(visibility).toEqual([
-      { amountPaidRow: true, balanceDueRow: true, paymentHistory: true },
-      { amountPaidRow: false, balanceDueRow: true, paymentHistory: false },
-      { amountPaidRow: true, balanceDueRow: false, paymentHistory: true },
-      { amountPaidRow: false, balanceDueRow: false, paymentHistory: false },
+      {
+        amountPaidRow: true,
+        balanceDueRow: true,
+        paymentHistory: true,
+        statusBadge: true,
+        paidDate: true,
+      },
+      {
+        amountPaidRow: false,
+        balanceDueRow: true,
+        paymentHistory: false,
+        statusBadge: true,
+        paidDate: false,
+      },
+      {
+        amountPaidRow: true,
+        balanceDueRow: false,
+        paymentHistory: true,
+        statusBadge: true,
+        paidDate: true,
+      },
+      {
+        amountPaidRow: false,
+        balanceDueRow: false,
+        paymentHistory: false,
+        statusBadge: true,
+        paidDate: false,
+      },
     ]);
   });
 });

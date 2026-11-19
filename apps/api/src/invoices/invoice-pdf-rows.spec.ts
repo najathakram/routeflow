@@ -195,8 +195,11 @@ describe("the invoice PDF's Amount Paid / Balance Due switches (R6a)", () => {
         hideBalanceDue,
       }),
     );
-  const has = (t: string[], s: string) => t.some((x) => x.includes(s));
+  // "Total" matches exactly: a substring test would be met by "Subtotal" and pin nothing (#3686 read 1, probe 1d).
+  const has = (t: string[], s: string) =>
+    s === "Total" ? t.includes("Total") : t.some((x) => x.includes(s));
   const labels = [
+    "Total",
     "Amount Paid",
     "Balance Due",
     "Payment History",
@@ -205,13 +208,19 @@ describe("the invoice PDF's Amount Paid / Balance Due switches (R6a)", () => {
   ];
 
   it.each([
-    [false, false, [true, true, true, true, true]],
-    [true, false, [false, true, false, true, true]],
-    [false, true, [true, false, true, true, true]],
-    [true, true, [false, false, false, true, true]],
-  ])("paid off=%s, balance off=%s shows %j of the five labels", (paid, balance, shown) => {
+    [false, false, [true, true, true, true, true, true]],
+    [true, false, [true, false, true, false, true, true]],
+    [false, true, [true, true, false, true, true, true]],
+    [true, true, [true, false, false, false, true, true]],
+  ])("paid off=%s, balance off=%s shows %j of the six labels", (paid, balance, shown) => {
     const t = run(paid, balance);
     expect(labels.map((l) => has(t, l))).toEqual(shown);
+  });
+
+  it("balance off: Total prints before Amount Paid", () => {
+    const t = run(false, true);
+    expect(t.indexOf("Total")).toBeGreaterThan(-1);
+    expect(t.indexOf("Total")).toBeLessThan(t.indexOf("Amount Paid"));
   });
 
   it("a switch hides lines only: every printed figure is the same in all four combinations", () => {
@@ -232,4 +241,81 @@ describe("the invoice PDF's Amount Paid / Balance Due switches (R6a)", () => {
     expect(money(run(true, false))).toContain("$90.00");
     expect(money(run(false, true))).toContain("$50.00");
   });
+
+  // Owner 2026-11-18 22:28Z "Keep Total in place": with Balance Due off the rendered template still prints the
+  // invoice Total row, with the invoice total (not the subtotal), above the Paid / credit / advance lines.
+  it("Paid on, Balance Due off: the rendered Total row carries the invoice total, above Amount Paid", () => {
+    const tree = walk(
+      InvoicePdfTemplate({
+        invoice: {
+          id: "inv-1",
+          invoiceNumber: "INV-1",
+          status: "SENT",
+          subtotal: 190,
+          taxAmount: 0,
+          discount: 0,
+          shippingFee: 10,
+          total: 200,
+          issueDate: new Date("2026-10-30T12:00:00Z"),
+          dueDate: new Date("2026-11-30T12:00:00Z"),
+          customer: { businessName: "Acme Foods", contactName: "Pat" },
+          items: [baseItem],
+          payments,
+          totalPaid: 50,
+          creditApplied: 40,
+          advanceApplied: 20,
+          hideAmountPaid: false,
+          hideBalanceDue: true,
+        },
+      }),
+    );
+    const same = (a: string[], b: string[]) =>
+      a.length === b.length && a.every((x, i) => x === b[i]);
+    const totalRows = tree.filter((el) => same(textsOf(el), ["Total", "$200.00"]));
+    expect(totalRows).toHaveLength(1);
+    const reading = tree.flatMap((el) =>
+      [el.props?.children]
+        .flat()
+        .filter((c) => typeof c === "string")
+        .map(String),
+    );
+    expect(reading.indexOf("Total")).toBeGreaterThan(-1);
+    expect(reading.indexOf("Total")).toBeLessThan(reading.indexOf("Amount Paid"));
+    expect(reading).not.toContain("Balance Due");
+  });
+});
+
+// Owner 2026-11-18 (box 02:22Z 11-19): Paid off also hides the PAID / PARTIAL stamp and the "Paid: {date}" line.
+describe("the invoice PDF's paid stamp and paid date follow the Paid switch (R6a)", () => {
+  const isBadge = (el: El) =>
+    typeof el.type === "function" && (el.type as { name?: string }).name === "StatusBadge";
+  const view = (status: string, hideAmountPaid: boolean) => {
+    const tree = render([baseItem], {
+      status,
+      paidAt: status === "PAID" ? new Date("2026-11-01T12:00:00Z") : null,
+      totalPaid: status === "PAID" ? 19 : 5,
+      hideAmountPaid,
+    });
+    return {
+      stamp: tree.filter(isBadge).map((el) => el.props?.status),
+      paidDate: textsOf(tree).some((x) => x.startsWith("Paid:")),
+    };
+  };
+
+  it.each(["PAID", "PARTIAL"])("%s: stamp shown with Paid on, gone with Paid off", (status) => {
+    expect(view(status, false).stamp).toEqual([status]);
+    expect(view(status, true).stamp).toEqual([]);
+  });
+
+  it("the paid date shows with Paid on and is gone with Paid off", () => {
+    expect(view("PAID", false).paidDate).toBe(true);
+    expect(view("PAID", true).paidDate).toBe(false);
+  });
+
+  it.each(["SENT", "OVERDUE", "VOID"])(
+    "%s: the stamp stays with Paid off (it says nothing about payment)",
+    (status) => {
+      expect(view(status, true).stamp).toEqual([status]);
+    },
+  );
 });

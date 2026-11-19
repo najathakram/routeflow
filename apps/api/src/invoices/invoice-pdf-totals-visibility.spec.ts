@@ -5,7 +5,13 @@ describe("pdfTotalsVisibility (T10b)", () => {
   const paid = { totalPaid: 50, paymentCount: 2 };
 
   it("both switches on (absent) = today's output: Amount Paid row, Balance Due row, Payment History", () => {
-    const today = { amountPaidRow: true, balanceDueRow: true, paymentHistory: true };
+    const today = {
+      amountPaidRow: true,
+      balanceDueRow: true,
+      paymentHistory: true,
+      statusBadge: true,
+      paidDate: true,
+    };
     expect(pdfTotalsVisibility({ ...paid })).toEqual(today);
     expect(pdfTotalsVisibility({ ...paid, hideAmountPaid: false, hideBalanceDue: false })).toEqual(
       today,
@@ -17,6 +23,8 @@ describe("pdfTotalsVisibility (T10b)", () => {
       amountPaidRow: false,
       balanceDueRow: true,
       paymentHistory: false,
+      statusBadge: true,
+      paidDate: false,
     });
   });
 
@@ -25,6 +33,8 @@ describe("pdfTotalsVisibility (T10b)", () => {
       amountPaidRow: true,
       balanceDueRow: false,
       paymentHistory: true,
+      statusBadge: true,
+      paidDate: true,
     });
   });
 
@@ -33,6 +43,22 @@ describe("pdfTotalsVisibility (T10b)", () => {
       amountPaidRow: false,
       balanceDueRow: true,
       paymentHistory: false,
+      statusBadge: true,
+      paidDate: true,
     });
+  });
+
+  // Owner 2026-11-18 (box 02:22Z 11-19): Paid off hides the PAID / PARTIAL stamp and the paid date.
+  it.each([
+    ["PAID", false],
+    ["PARTIAL", false],
+    ["SENT", true],
+    ["OVERDUE", true],
+    ["VOID", true],
+  ])("paid off: the %s stamp shows=%s; the paid date never shows", (status, shown) => {
+    const v = pdfTotalsVisibility({ ...paid, status: status as string, hideAmountPaid: true });
+    expect(v.statusBadge).toBe(shown);
+    expect(v.paidDate).toBe(false);
+    expect(pdfTotalsVisibility({ ...paid, status: status as string }).statusBadge).toBe(true);
   });
 });
