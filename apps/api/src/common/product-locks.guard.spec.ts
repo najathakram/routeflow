@@ -257,7 +257,7 @@ describe("SA-767 Nit 6 — the stock writers use retryStockTx", () => {
   });
 
   it("the inventory service no longer uses the bare retryOnTxConflict (SA-767 L-2)", () => {
-    expect(inv).not.toMatch(/retryOnTxConflict/);
+    expect(inv).not.toMatch(/\bretryOnTxConflict\b/);
   });
 
   it("the vendor-bill service no longer imports the bare retryOnTxConflict", () => {

@@ -779,19 +779,33 @@ describeDb("SA-1093 Rule 4: a return's cancel after a Boxes answer", () => {
         await returnOfThreeAddsThree(w);
       }, 60_000);
 
-      it("C-6c: a buyer edit names the line by orderItemId with a split: adds 3", async () => {
-        const { w, line } = await openAtAnswer("c6c");
+      it("C-6c (SA-1161 B4): a buyer edit names the line by orderItemId in the screens' shape: rewritten at today's pack, adds 3", async () => {
+        // SA-1161-F1: a line with its own split, sold before the answer (a box-unaware line parks, B665).
+        const w = await beforeBoxes("c6c", SPLIT);
+        await prisma.invoiceItem.deleteMany({ where: { tenantId: w.tenantId } });
+        await prisma.invoice.deleteMany({ where: { tenantId: w.tenantId } });
+        await prisma.order.update({ where: { id: w.orderId }, data: { status: "PENDING" } });
+        // A buyer is held to stock (staff are warned), so the line is stocked for the buyer's qty 30.
+        await stocked(w, { currentStock: 720 });
+        const line = await liveLine(w);
 
         await inTenant(w, () =>
           orders.updateOrderItems(
             w.orderId,
-            { replaceAll: true, items: [{ ...oneBoxSixPieces(w), orderItemId: line.id }] },
+            {
+              items: [{ productId: w.productId, qty: 30, orderItemId: line.id }],
+              namesLines: true,
+            },
             { ...staff(w), role: "CUSTOMER" },
             { buyerLineIds: true },
           ),
         );
 
+        // 30 pieces at pack 24 is 1 box and 6 pieces; the held line is 10 pieces, so 720 - 20 = 700.
         await expectRewritten(w, line.createdAt);
+        const edited = await liveLine(w);
+        expect([Number(edited.qty), edited.boxes, edited.pieces]).toEqual([30, 1, 6]);
+        expect(await stock(w)).toBe(700);
         await returnOfThreeAddsThree(w);
       }, 60_000);
 

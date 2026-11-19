@@ -4,10 +4,8 @@ import * as React from "react";
 import Link from "next/link";
 import { ChevronRight, UserCircle } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
-import { ReadinessBanner } from "./ReadinessBanner";
 import { RouteDefaultsCard } from "./RouteDefaultsCard";
 import { BuyerOversellCard } from "./BuyerOversellCard";
-import { BusinessCard } from "./BusinessCard";
 import { NeedsAttention } from "./NeedsAttention";
 import { SettingsFinder } from "./SettingsFinder";
 import { normalize, searchSettings } from "./settings-index";
@@ -19,7 +17,7 @@ import { useSettingsNav } from "./use-settings-nav";
 /**
  * Settings hub: the bare /settings screen. Below xl it is the whole settings list (search, your business,
  * what needs attention, frequent links, the groups with their values). At xl and up the rail (SettingsShell) holds all of that and
- * this shows the big Business card, what needs attention, and the loose cards. Every setting screen stays
+ * this shows what needs attention and the loose cards (the rail holds the one Business card). Every setting screen stays
  * reachable; role-gated rows are hidden the same way the sidebar hides them.
  */
 /** A card the page renders under the hub (Stripe Connect, tier names): shown at `#id`, hidden by a search it doesn't match. */
@@ -68,13 +66,8 @@ export function SettingsHub({
         Manage your business, selling rules, orders, notifications and integrations.
       </p>
 
-      <ReadinessBanner isAdmin={isAdmin} />
-
       {desktop ? (
-        <>
-          <BusinessCard variant="pane" />
-          <NeedsAttention isAdmin={isAdmin} />
-        </>
+        <NeedsAttention isAdmin={isAdmin} />
       ) : (
         <SettingsFinder
           variant="list"

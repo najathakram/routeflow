@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useFinanceDashboard } from "@/lib/api/finance";
+import { usePlanFlag } from "@/lib/api/plan-flags";
+import { arAgingLink } from "@/lib/plan-gated-nav";
 import {
   TrendingDown,
   DollarSign,
@@ -172,6 +174,7 @@ export default function FinanceDashboardPage() {
   }, [setTitle]);
   const router = useRouter();
   const { data, isLoading, refetch } = useFinanceDashboard();
+  const arLink = arAgingLink(usePlanFlag("flag.reports"), "finance");
 
   const summaryRows = [
     { label: "Today", key: "today" as const },
@@ -273,12 +276,14 @@ export default function FinanceDashboardPage() {
       <div className="rounded-card border border-line bg-paper shadow-card">
         <div className="flex items-center justify-between border-b border-surface-border px-5 py-3.5">
           <h3 className="text-base font-semibold text-navy">AR Aging</h3>
-          <Link
-            href="/finance/reports?report=ar-aging"
-            className="flex items-center gap-1 text-[12.5px] font-medium text-brand-500 hover:underline"
-          >
-            Aging report <ArrowRight className="h-3.5 w-3.5" />
-          </Link>
+          {arLink && (
+            <Link
+              href={arLink.href}
+              className="flex items-center gap-1 text-[12.5px] font-medium text-brand-500 hover:underline"
+            >
+              {arLink.label} <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          )}
         </div>
         <div className="p-5">
           <div className="flex items-baseline gap-2">
@@ -494,21 +499,40 @@ export default function FinanceDashboardPage() {
 
       {/* Action Stats */}
       <div className="grid grid-cols-4 gap-4">
-        <Link
-          href="/finance/reports?report=ar-aging"
-          className="group rounded-card border border-line bg-paper p-4 shadow-card transition-all hover:border-orange-200 hover:shadow-dropdown"
-        >
-          <div className="flex items-center justify-between">
-            <span className="flex h-9 w-9 items-center justify-center rounded-ctl text-orange-500 bg-orange-50">
-              <AlertCircle className="h-4 w-4" />
-            </span>
-            <ArrowRight className="h-4 w-4 text-navy/20 transition-transform group-hover:translate-x-0.5" />
-          </div>
-          <p className="mt-3 font-mono tabular-nums text-lg font-bold text-navy">
-            {fmt((ar?.days31_45 ?? 0) + (ar?.days45plus ?? 0))}
-          </p>
-          <p className="text-xs text-navy/70">Overdue ({">"}30 days)</p>
-        </Link>
+        {(() => {
+          const body = (
+            <>
+              <div className="flex items-center justify-between">
+                <span className="flex h-9 w-9 items-center justify-center rounded-ctl text-orange-500 bg-orange-50">
+                  <AlertCircle className="h-4 w-4" />
+                </span>
+                {arLink && (
+                  <ArrowRight className="h-4 w-4 text-navy/20 transition-transform group-hover:translate-x-0.5" />
+                )}
+              </div>
+              <p className="mt-3 font-mono tabular-nums text-lg font-bold text-navy">
+                {fmt((ar?.days31_45 ?? 0) + (ar?.days45plus ?? 0))}
+              </p>
+              <p className="text-xs text-navy/70">Overdue ({">"}30 days)</p>
+            </>
+          );
+          // B8: a plan without Reports keeps the figure and loses only the navigation.
+          return arLink ? (
+            <Link
+              href={arLink.href}
+              className="group rounded-card border border-line bg-paper p-4 shadow-card transition-all hover:border-orange-200 hover:shadow-dropdown"
+            >
+              {body}
+            </Link>
+          ) : (
+            <div
+              data-testid="overdue-tile"
+              className="rounded-card border border-line bg-paper p-4 shadow-card"
+            >
+              {body}
+            </div>
+          );
+        })()}
 
         <Link
           href="/finance/payments"

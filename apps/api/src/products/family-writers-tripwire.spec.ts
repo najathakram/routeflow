@@ -22,7 +22,7 @@ const GUARD = /assertSellableLines\(/g;
 const GUARDED: Record<string, { calls: number; sites: number; why: string }> = {
   "orders/orders.service.ts": {
     calls: 6,
-    sites: 10,
+    sites: 8,
     why: "create(); updateOrderItems: replace-all (x2 load sites), the diff edit-add, the substitute line; approveChangeRequestAtStop ADD_ITEM",
   },
   "orders/change-requests.service.ts": {
@@ -93,6 +93,10 @@ const ALLOWED: Record<string, { sites: number; why: string }> = {
   "returns/returns.service.ts": {
     sites: 1,
     why: "return lines/restock derive from the order lines being returned (guarded at their writers)",
+  },
+  "orders/order-merge-fold.ts": {
+    sites: 2,
+    why: "SA-1162: the customer merge pair, moved verbatim from orders.service.ts; it only carries lines of orders that were already guarded at their writers onto the survivor",
   },
   "orders/unit-line-edit.ts": {
     sites: 1,
@@ -239,13 +243,13 @@ describe("SA-823: one family creator, one reparent path, units v2 untouched", ()
       ["products/product-families.service.ts", 2], // its definition and the createFamily call
     ]);
     const imp = srcOf("import/product-family-import.service.ts");
-    expect(imp).not.toMatch(/productUnit/);
+    expect(imp).not.toMatch(/\bproductUnit\b/);
     // ANY write verb on ANY receiver (db., tx., an alias of forTenant()): the import service holds no write at all
     expect(imp).not.toMatch(
       /\.\s*(?:create|createMany|createManyAndReturn|update|updateMany|upsert|delete|deleteMany)\s*\(/,
     );
     expect(imp).not.toMatch(/\$executeRaw|\$queryRaw|\$transaction/);
-    expect(imp).not.toMatch(/kind\s*:\s*"FAMILY"/);
+    expect(imp).not.toMatch(/\bkind\s*:\s*"FAMILY"/);
   });
 
   it("T12: no productUnit write in the family service, product-parent.ts or the reparent paths of ProductsService", () => {

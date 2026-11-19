@@ -103,7 +103,7 @@ const R510_STAMP =
 
 const ORDER_FRESH = "deliveredQty invoicedQty overrideReason overriddenBy status";
 const MERGE = {
-  file: "orders/orders.service.ts",
+  file: "orders/order-merge-fold.ts", // SA-1162: moved out of orders.service.ts
   target: "OrderItem" as const,
   anchor: { via: "delegate", model: "orderItem" } as Anchor,
   carried:
@@ -303,8 +303,8 @@ export const COPIERS: Copier[] = [
       notes: "unverified",
     },
   },
-  { id: "C9a", fn: "mergeAllPendingForCustomer", ...MERGE },
-  { id: "C9b", fn: "forceConsolidateCustomer", ...MERGE },
+  { id: "C9a", fn: "mergeAllPendingForCustomerImpl", ...MERGE },
+  { id: "C9b", fn: "forceConsolidateCustomerImpl", ...MERGE },
   {
     // W-1187: the unlisted (catalog-free) loser line both merges append, one literal shared by C9a and C9b (it was
     // inline in each). Written from the loser line's own columns; never boxed, never a catalog line.

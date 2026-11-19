@@ -1,4 +1,52 @@
-import { PLAN_GATED_NAV, matchPlanGatedRoute, planFlagVisible } from "./plan-gated-nav";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import {
+  PLAN_GATED_NAV,
+  arAgingLink,
+  matchPlanGatedRoute,
+  planFlagVisible,
+} from "./plan-gated-nav";
+
+describe("arAgingLink (UXG B8): three states x two pages", () => {
+  const REPORT = "/finance/reports?report=ar-aging";
+  const loading = { enabled: true, resolved: false, failed: false };
+  const withReports = { enabled: true, resolved: true, failed: false };
+  const without = { enabled: false, resolved: true, failed: false };
+  const failed = { enabled: false, resolved: false, failed: true };
+
+  it("plan with Reports: the report, with each page's existing label", () => {
+    expect(arAgingLink(withReports, "dashboard")).toEqual({ href: REPORT, label: "Full report" });
+    expect(arAgingLink(withReports, "finance")).toEqual({ href: REPORT, label: "Aging report" });
+  });
+  it("plan without Reports: the dashboard goes to Finance overview, Finance overview has no link", () => {
+    expect(arAgingLink(without, "dashboard")).toEqual({
+      href: "/finance/dashboard",
+      label: "Finance overview",
+    });
+    expect(arAgingLink(without, "finance")).toBeNull();
+  });
+  it("still loading: no link on either page", () => {
+    expect(arAgingLink(loading, "dashboard")).toBeNull();
+    expect(arAgingLink(loading, "finance")).toBeNull();
+  });
+  it("fetch failed: fails open like planFlagVisible (the report link)", () => {
+    expect(arAgingLink(failed, "dashboard")?.href).toBe(REPORT);
+    expect(arAgingLink(failed, "finance")?.href).toBe(REPORT);
+  });
+});
+
+describe("inventory pin: the AR aging report literal lives only in the helper (shrink-only)", () => {
+  const WEB = resolve(__dirname, "..");
+  const read = (f: string) => readFileSync(resolve(WEB, f), "utf8");
+  const count = (s: string) => (s.match(/report=ar-aging/g) ?? []).length;
+  it("the dashboard and Finance overview pages carry zero literals", () => {
+    expect(count(read("app/(dashboard)/dashboard/page.tsx"))).toBe(0);
+    expect(count(read("app/(dashboard)/finance/dashboard/page.tsx"))).toBe(0);
+  });
+  it("the helper's module carries exactly one", () => {
+    expect(count(read("lib/plan-gated-nav.ts"))).toBe(1);
+  });
+});
 
 describe("matchPlanGatedRoute", () => {
   it("matches every PLAN_GATED_NAV prefix exactly", () => {

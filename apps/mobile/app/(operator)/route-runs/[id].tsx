@@ -30,6 +30,7 @@ import {
 } from "../../../lib/api/routes";
 import { openRouteInMaps } from "../../../components/openInMaps";
 import { showToast } from "../../../lib/toast";
+import { optimizeUnplacedCopy } from "../../../lib/route-optimize-error";
 import { confirm } from "../../../lib/confirm";
 
 async function readCurrentLocation(): Promise<{ lat: number; lng: number } | null> {
@@ -144,7 +145,10 @@ export default function OperatorRouteRunScreen() {
         showToast(res?.usedFallback ? "Reordered (fallback)" : "Run optimized");
         refetch();
       },
-      onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      onError: (e: any) =>
+        showToast(
+          optimizeUnplacedCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again.",
+        ),
     });
   };
 

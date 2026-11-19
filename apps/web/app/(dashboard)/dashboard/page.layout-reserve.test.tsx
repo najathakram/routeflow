@@ -35,6 +35,9 @@ jest.mock("@/lib/api/addons", () => ({
   useRoutesAccess: () => routes,
   useDeliveryAccess: () => ({ enabled: delivery, resolved: true }),
 }));
+// B8: the AR aging link reads the plan's `flag.reports`; the default is a plan WITH Reports.
+let reports = { enabled: true, resolved: true, failed: false };
+jest.mock("@/lib/api/plan-flags", () => ({ usePlanFlag: () => reports }));
 let counterButton = false;
 jest.mock("@/lib/api/counter-sale", () => ({
   useCounterSaleGate: () => ({
@@ -83,6 +86,7 @@ beforeEach(() => {
   loading = true;
   routes = { enabled: true, resolved: true };
   delivery = false;
+  reports = { enabled: true, resolved: true, failed: false };
   counterButton = false;
   authUser = { id: "u1", role: "OPERATOR", tenantSlug: "acme" };
   window.localStorage.clear();
@@ -263,6 +267,28 @@ describe("D5 no feature lost: per-role cards, links and gates (loaded)", () => {
       /Full report/.test(a.textContent ?? ""),
     );
     expect(link?.getAttribute("href")).toBe("/finance/reports?report=ar-aging");
+  });
+  // B8. Entry condition: loaded, operator, `financeData.arAging` present (the widget renders only then), and the
+  // subscription says whether `flag.reports` is granted. Red on master: the link rendered on every plan.
+  it("B8 plan without Reports: no Full report link; Finance overview instead", () => {
+    reports = { enabled: false, resolved: true, failed: false };
+    const { container } = renderWithProviders(<DashboardPage />);
+    expect(screen.queryByRole("link", { name: /Full report/ })).toBeNull();
+    expect(hrefs(container)).not.toContain("/finance/reports?report=ar-aging");
+    const link = screen.getByRole("link", { name: /Finance overview/ });
+    expect(link.getAttribute("href")).toBe("/finance/dashboard");
+  });
+  it("B8 Reports flag still loading: no AR link at all", () => {
+    reports = { enabled: true, resolved: false, failed: false };
+    const { container } = renderWithProviders(<DashboardPage />);
+    expect(screen.queryByRole("link", { name: /Full report/ })).toBeNull();
+    expect(screen.queryByRole("link", { name: /Finance overview/ })).toBeNull();
+    expect(hrefs(container)).not.toContain("/finance/reports?report=ar-aging");
+  });
+  it("B8 plan with Reports: Full report unchanged, no Finance overview link", () => {
+    const { container } = renderWithProviders(<DashboardPage />);
+    expect(hrefs(container)).toContain("/finance/reports?report=ar-aging");
+    expect(screen.queryByRole("link", { name: /Finance overview/ })).toBeNull();
   });
   it("New order offers the menu for an operator only when the gate says so (REG-B1: never for a customer)", () => {
     counterButton = true;

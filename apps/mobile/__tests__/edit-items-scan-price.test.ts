@@ -318,7 +318,7 @@ describe("edit-items.tsx below-floor label parity (REG-B263-H)", () => {
   // collapsed to one placeholder — proves the RENDERED WORDING matches
   // without caring how the interpolated percentage is computed (the strip
   // needs a `marginFrac!` non-null assertion the list row doesn't).
-  const staticShape = (literal: string) => literal.replace(/\$\{[^}]*\}/g, " ");
+  const staticShape = (literal: string) => literal.replace(/\$\{[^}]*\}/g, "\u0000");
 
   // The list row's own two message literals (`DraftItemCard`) — extracted by
   // regex from the SOURCE OF TRUTH so the strip's copy is checked against

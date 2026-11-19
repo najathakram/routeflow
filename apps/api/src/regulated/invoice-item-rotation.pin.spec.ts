@@ -35,7 +35,7 @@ const SITES: Record<string, { class: RotationClass; why: string }> = {
     class: "WHOLE_INVOICE_DELETE_REVERSED",
     why: "B65: each linked invoice's ledger is reversed before its items go",
   },
-  "orders/orders.service.ts#forceConsolidateCustomer": {
+  "orders/order-merge-fold.ts#forceConsolidateCustomerImpl": {
     class: "WHOLE_INVOICE_DELETE_REVERSED",
     why: "clearLoserDraftForDelete settles the loser's DRAFT mirror to zero (INVOICE_ZEROED) before its delete (R10)",
   },
