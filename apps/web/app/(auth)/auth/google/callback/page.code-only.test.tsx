@@ -85,4 +85,25 @@ describe("GoogleCallbackPage — tokens only via the one-time code", () => {
     expect(String(url)).toMatch(/\/auth\/google\/exchange$/);
     expect(init).toMatchObject({ method: "POST", body: JSON.stringify({ code: "one-time-code" }) });
   });
+
+  it("stores a buyer session under the namespaced keys only (B139: no legacy copy survives sign-out)", async () => {
+    mockSearchParams = new URLSearchParams({ code: "buyer-code" });
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        accessToken: "buyer-access-token",
+        refreshToken: "buyer-refresh-token",
+        type: "BUYER",
+      }),
+    });
+
+    renderWithProviders(<GoogleCallbackPage />);
+
+    await waitFor(() =>
+      expect(localStorage.getItem(BUYER_KEYS.accessToken)).toBe("buyer-access-token"),
+    );
+    expect(localStorage.getItem(BUYER_KEYS.refreshToken)).toBe("buyer-refresh-token");
+    expect(localStorage.getItem("buyerAccessToken")).toBeNull();
+    expect(localStorage.getItem("buyerRefreshToken")).toBeNull();
+  });
 });
