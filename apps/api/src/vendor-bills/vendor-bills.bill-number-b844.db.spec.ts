@@ -28,6 +28,7 @@ describeDb("B844 concurrent vendor bill creates mint distinct numbers (real Post
   let tenantCtx: TenantContextService;
   let prisma: PrismaService;
   let service: VendorBillsService;
+  let supplierId: string;
 
   beforeAll(async () => {
     requireLocalDatabaseUrl();
@@ -49,11 +50,16 @@ describeDb("B844 concurrent vendor bill creates mint distinct numbers (real Post
       stub({}),
     );
     await prisma.tenant.create({ data: { id: TENANT, slug: SLUG, name: `ACME ${SLUG}` } });
+    // create() requires a supplier (manual-create guard); one supplier on the throwaway tenant serves all 12
+    supplierId = (
+      await prisma.supplier.create({ data: { tenantId: TENANT, name: `ACME Supplies ${sfx}` } })
+    ).id;
   });
 
   afterAll(async () => {
     await prisma.vendorBillItem.deleteMany({ where: { tenantId: TENANT } }).catch(() => undefined);
     await prisma.vendorBill.deleteMany({ where: { tenantId: TENANT } }).catch(() => undefined);
+    await prisma.supplier.deleteMany({ where: { tenantId: TENANT } }).catch(() => undefined);
     await prisma.tenantConfig.deleteMany({ where: { tenantId: TENANT } }).catch(() => undefined);
     await prisma.tenant.deleteMany({ where: { id: TENANT } }).catch(() => undefined);
     await prisma.$disconnect();
@@ -64,6 +70,7 @@ describeDb("B844 concurrent vendor bill creates mint distinct numbers (real Post
       tenantCtx.run(TENANT, () =>
         service.create({
           items: [{ description: `Sample line ${i}`, qty: 1, unitCost: 10 }],
+          supplierId,
           allowDuplicate: true,
         } as any),
       );
