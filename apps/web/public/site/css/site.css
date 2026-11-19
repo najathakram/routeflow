@@ -77,10 +77,10 @@ h3{font-size:var(--rf-h4);line-height:1.15;font-weight:650;letter-spacing:-.02em
 /* ---------- sections ---------- */
 .section{padding:clamp(80px,11vw,152px) 0}
 .section.alt{background:var(--rf-soft)}
-/* Band roles: the three backgrounds, as classes. A page names the role in its html; nothing else paints a band. */
+/* Band roles: the three backgrounds, as classes. A page names the role in its html. Rules that still paint a band themselves: .pcard.featured, .cta-band, .risk, .site-header.on-dark (site.css), .home .sl/.jr/.ct/#pricing and .pb/.end (home.css, home-color.css), .pd-how/.pd-who/.pd-deep (product.css, color-deep.css). */
 .band-white{background:var(--rf-white);color:var(--rf-text)}
 .band-bone{background:var(--rf-soft);color:var(--rf-text)}
-.band-ink{--ring-c:var(--rf-accent-on-panel);background:var(--rf-panel);color:var(--rf-on-panel)}
+.band-ink{background:var(--rf-panel);color:var(--rf-on-panel)}
 .band-ink .eyebrow,.band-ink .kick{color:var(--rf-link-on-panel)}
 .band-ink .lede,.band-ink .sub,.band-ink p{color:var(--rf-on-panel-2)}
 .band-ink a:not(.btn){color:var(--rf-link-on-panel)}
@@ -103,7 +103,7 @@ h3{font-size:var(--rf-h4);line-height:1.15;font-weight:650;letter-spacing:-.02em
 /* ---------- pricing ---------- */
 .pgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;align-items:start}
 .pcard{background:var(--rf-white);border-radius:var(--r);padding:clamp(28px,3vw,40px);display:flex;flex-direction:column;gap:6px;box-shadow:var(--rf-ring)}
-.pcard.featured{--ring-c:var(--rf-accent-on-panel);background:var(--rf-panel);color:var(--rf-on-panel);box-shadow:var(--rf-ring)}
+.pcard.featured{background:var(--rf-panel);color:var(--rf-on-panel);box-shadow:var(--rf-ring)}
 .pprice{display:flex;align-items:baseline;gap:4px;margin:14px 0 4px;font-size:64px;font-weight:650;letter-spacing:-.04em;line-height:1}
 .pprice .cur{font-size:32px;letter-spacing:-.02em;margin-right:2px}
 .pprice small{font-size:17px;font-weight:500;letter-spacing:-.01em;margin-left:8px;color:var(--rf-text-2)}
@@ -124,7 +124,7 @@ h3{font-size:var(--rf-h4);line-height:1.15;font-weight:650;letter-spacing:-.02em
 .faq details p{padding:0 0 24px;color:var(--rf-text-2);font-size:19px;max-width:36em}
 
 /* ---------- cta band + footer ---------- */
-.cta-band{--ring-c:var(--rf-accent-on-panel);background:var(--rf-panel);color:var(--rf-on-panel);border-radius:var(--rf-r-stage);padding:clamp(48px,7vw,104px) clamp(24px,5vw,80px);text-align:center;display:grid;justify-items:center;gap:20px}
+.cta-band{background:var(--rf-panel);color:var(--rf-on-panel);border-radius:var(--rf-r-stage);padding:clamp(48px,7vw,104px) clamp(24px,5vw,80px);text-align:center;display:grid;justify-items:center;gap:20px}
 .cta-band p{font-size:20px;color:var(--rf-on-panel-2)}
 .cta-band .cta-row{justify-content:center;margin-top:12px}
 .site-footer{padding:72px 0 40px;background:var(--rf-soft);font-size:16px;color:var(--rf-text-2)}
@@ -271,7 +271,7 @@ h2+.lede,.section-head h2+.lede{margin-top:18px}
   .pl-inc a{display:inline-block;padding:11px 0;margin:-11px 0}
   .pl-go{display:block;margin-top:20px}
   .pl-go .btn{width:100%}
-  .risk{--ring-c:var(--rf-accent-on-panel);display:block;margin-top:22px;padding:26px 22px;border-radius:var(--r);background:var(--rf-panel);color:var(--rf-on-panel)}
+  .risk{display:block;margin-top:22px;padding:26px 22px;border-radius:var(--r);background:var(--rf-panel);color:var(--rf-on-panel)}
   .risk-h{font-size:28px;line-height:1.12;font-weight:650;letter-spacing:-.02em}
   .risk-s{margin-top:8px;font-size:18px;line-height:1.35;color:var(--rf-on-panel-2)}
   .risk .btn{margin-top:18px;width:100%;color:var(--rf-text)}
@@ -286,11 +286,11 @@ h2+.lede,.section-head h2+.lede{margin-top:18px}
 .link:active,.hx-more:active,.pd-go:active,.fd-more:active,.brand:active,.nav-links a:active,.nav-signin:active,.nav-price:active,.menu-btn:active,.site-footer a:active,.mobile-menu a:not(.btn):active,summary:active,main a:not(.btn):not(.pd-tile):active{opacity:.6;transition:opacity .1s ease-out}
 
 /* ---------- an ink header: the page turns it dark over a dark band ---------- */
-.site-header.on-dark{--ring-c:var(--rf-accent-on-panel);background:var(--rf-panel)}
+.site-header.on-dark{background:var(--rf-panel)}
 
 /* a phrase that must not break: the brand and its verb in a headline, an unbreakable name */
 .nb{white-space:nowrap}
-/* the founder note: "co-founder’s" never breaks at its hyphen, at any width (the phone-only .nb rule in mobile.css does not reach a desktop) */
+/* the founder note keeps its own line: a pin in site-company-contact reads it, so it stays though .nb above already covers it */
 .fd-short .nb,.fd-note .nb,.co-body .nb{white-space:nowrap}
 
 /* ---------- print ---------- */

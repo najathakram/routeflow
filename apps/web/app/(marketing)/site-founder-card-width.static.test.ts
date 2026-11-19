@@ -13,7 +13,7 @@ const rule = css.split("\n").find((l) => l.startsWith("#founder .fd-in{")) ?? ""
 // The half-gap scan (B1294). A percentage padding resolves against the parent width, and the half-gap
 // of a centred column is spelled ((100% - N) / 2) or (50% - N): directly in a padding, or through a
 // custom property that a padding then reads. Comments and line breaks are read out first.
-const HALF_GAP = String.raw`\(\s*100%\s*-[^)]*\)\s*\/\s*2|50%\s*-\s*\d`;
+const HALF_GAP = String.raw`\(\s*100%\s*-[^;{}]*?\)\s*\/\s*2|50%\s*-\s*\d`;
 const padsWithHalfGap = (raw: string): boolean => {
   const text = raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\s+/g, " ");
   if (new RegExp(`padding[^;{}]*(?:${HALF_GAP})`).test(text)) return true;
@@ -87,6 +87,7 @@ describe("the half-gap scan reads every spelling", () => {
       "a custom property written with 50%",
       ":root{--gut:calc(50% - 600px);}.b{padding-inline:var(--gut,0)}",
     ],
+    ["a var() inside the half-gap", ".a{padding:0 calc((100% - var(--w))/2)}"],
     ["a rule split over lines", ".a{\n  padding:\n    0\n    calc( (100%\n - 1200px)\n / 2);\n}"],
   ])("flags %s", (_name, css) => {
     expect(padsWithHalfGap(css)).toBe(true);

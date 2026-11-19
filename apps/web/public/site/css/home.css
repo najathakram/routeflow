@@ -133,7 +133,7 @@
 @media (max-width:899.98px),(max-height:599.98px){#shot{display:none}}
 
 /* ---------- 2. Problem ---------- */
-.pb{--ring-c:var(--rf-accent-on-panel);background:var(--rf-panel);color:var(--rf-on-panel-2)}
+.pb{background:var(--rf-panel);color:var(--rf-on-panel-2)}
 .pb-pin{padding:clamp(96px,11vw,150px) 0}
 .pb-grid{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr);gap:48px;align-items:center}
 .pb-lines{font-size:clamp(30px,4.2vw,64px);line-height:1.12;letter-spacing:-.034em;font-weight:650}
@@ -392,7 +392,7 @@
 .home .fq a{color:var(--rf-link)}
 
 /* ---------- 12. Final call ---------- */
-.end{--ring-c:var(--rf-accent-on-panel);background:var(--rf-panel);color:var(--rf-on-panel);text-align:center}
+.end{background:var(--rf-panel);color:var(--rf-on-panel);text-align:center}
 .end-in{padding:clamp(110px,13vw,180px) 0;display:flex;flex-direction:column;align-items:center}
 .end-mark{width:64px;height:64px;margin-bottom:28px;filter:brightness(0) invert(1)}
 .end h2{font-size:clamp(44px,6.4vw,104px);line-height:1.02;letter-spacing:-.04em}

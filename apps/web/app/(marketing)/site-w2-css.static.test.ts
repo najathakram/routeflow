@@ -8,6 +8,7 @@
 // finds nothing throws.
 import * as fs from "fs";
 import * as path from "path";
+import { readServedSitePage } from "@/lib/read-site-page";
 
 const WEB = path.resolve(__dirname, "../..");
 const read = (rel: string) => fs.readFileSync(path.join(WEB, rel), "utf8");
@@ -75,7 +76,10 @@ describe("font: a matched fallback face, so a swap shifts nothing", () => {
   });
 
   it("its overrides are the ones the landing page carries", () => {
-    const landing = faceOf(read("public/site/landing.html"), "Geist Fallback");
+    const landing = faceOf(
+      readServedSitePage("landing", { websiteId: undefined }),
+      "Geist Fallback",
+    );
     const pick = (face: string) =>
       ["size-adjust", "ascent-override", "descent-override", "line-gap-override"].map((p) => {
         const m = new RegExp(`${p}:([^;}]+)`).exec(face);
@@ -189,9 +193,22 @@ describe("D-4: one ring token, set by the band, never a list of selectors", () =
     expect(sels.filter((s) => s.includes(":focus-visible"))).toEqual([":focus-visible"]);
   });
 
-  it("the ink band and the ink header raise the token to the on-panel accent", () => {
-    for (const sel of [".band-ink", ".site-header.on-dark"]) {
-      expect(declOf(SITE, sel, "--ring-c")).toEqual(["var(--rf-accent-on-panel)"]);
+  it("no rule sets the ring to copper light: one ring colour holds on ink and on a white card inside ink", () => {
+    const all = [
+      SITE,
+      MOBILE,
+      strip(read("public/site/css/home.css")),
+      strip(read("public/site/css/home-up.css")),
+    ];
+    for (const css of all) {
+      for (const r of rulesOf(css)) {
+        if (r.selectors.includes(":root")) continue;
+        expect({ sel: r.selectors, ring: r.decls["--ring-c"] }).toEqual({
+          sel: r.selectors,
+          ring: undefined,
+        });
+      }
     }
+    expect(declOf(SITE, ":root", "--ring-c")).toEqual(["var(--rf-accent)"]);
   });
 });
