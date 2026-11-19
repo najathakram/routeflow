@@ -187,7 +187,6 @@ apps/web/app/(dashboard)/estimates/page.tsx | PriceType | 1 | pending:B6 | union
 apps/web/app/(dashboard)/finance/commissions/[id]/page.tsx | CommissionAdjustmentKind | 1 | pending:B5 | object {CLAWBACK,RATE_CHANGE,REASSIGNMENT,MANUAL}
 apps/web/app/(dashboard)/finance/commissions/[id]/page.tsx | CommissionStatementLineKind | 1 | pending:B5 | object {CLAIM,ADJUSTMENT,CARRYFORWARD}
 apps/web/app/(dashboard)/finance/payments/[id]/page.tsx | PaymentStatus | 1 | pending:B5 | union {PAID,DRAFT,VOID}
-apps/web/app/(dashboard)/finance/payments/page.tsx | PaymentStatus | 1 | pending:B5 | union {PAID,DRAFT,VOID}
 apps/web/app/(dashboard)/finance/reports/page.tsx | EstimateStatus | 1 | pending:B5 | array {,DRAFT,SENT,ACCEPTED,DECLINED}
 apps/web/app/(dashboard)/finance/reports/page.tsx | InvoiceStatus | 2 | pending:B5 | array+object {,DRAFT,SENT,PAID,OVERDUE,PARTIAL,VOID}
 apps/web/app/(dashboard)/finance/reports/page.tsx | TxnStatus | 1 | pending:B5 | object {PAID,PARTIAL,UNPAID}

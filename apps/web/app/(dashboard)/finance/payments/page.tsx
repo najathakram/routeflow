@@ -48,6 +48,7 @@ import {
 } from "@/lib/payment-submit-key";
 import { usePaymentStatusCheck } from "@/lib/use-payment-status-check";
 import { PaymentStatusCheck } from "@/components/PaymentStatusCheck";
+import type { PaymentStatus } from "@routeflow/types";
 import { PAYMENT_STATUS_COPY } from "@routeflow/types/payment-submit-key";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
@@ -911,7 +912,7 @@ export default function FinancePaymentsPage() {
                   >
                     {METHOD_LABELS[p.method] ?? p.method}
                   </span>
-                  <Badge status={(p.status ?? "PAID") as "PAID" | "DRAFT" | "VOID"} />
+                  <Badge status={(p.status ?? "PAID") as PaymentStatus} />
                 </>
               }
               meta={
@@ -1097,7 +1098,7 @@ export default function FinancePaymentsPage() {
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <Badge status={(p.status ?? "PAID") as "PAID" | "DRAFT" | "VOID"} />
+                      <Badge status={(p.status ?? "PAID") as PaymentStatus} />
                     </td>
                     <td className="px-4 py-3 text-right font-semibold text-success">
                       {fmt(p.amount)}
