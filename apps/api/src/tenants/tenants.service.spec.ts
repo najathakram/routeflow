@@ -266,12 +266,49 @@ describe("TenantsService", () => {
       });
     });
 
-    // Phase 1: where the sign-up came from is kept as one row, inside the same transaction as the tenant.
+    // Phase 1: where the sign-up came from is kept as one row, written AFTER the sign-up commits,
+    // so a missing table (old schema) or a failed write can never block or roll back a sign-up.
     describe("signup attribution (Phase 1)", () => {
       const attrCreate = () => (prisma as any).signupAttribution.create as jest.Mock;
       beforeEach(() => email.send.mockResolvedValue({ delivered: true, transport: "resend" }));
 
-      it("writes one row with the normalized values, for the new tenant, inside the transaction", async () => {
+      it("still signs up, and logs a warning, when the attribution write throws", async () => {
+        attrCreate().mockRejectedValueOnce(
+          new Error('relation "SignupAttribution" does not exist'),
+        );
+        const warned = jest.spyOn((service as any).logger, "warn").mockImplementation(() => {});
+
+        const result = await service.register({
+          ...REGISTER_DTO,
+          attribution: { utmSource: "google" },
+        });
+
+        expect(result.tenant.slug).toBe(REGISTER_DTO.slug);
+        expect(attrCreate()).toHaveBeenCalledTimes(1);
+        expect(warned).toHaveBeenCalledWith(expect.stringContaining("SignupAttribution"));
+        // The verification email still goes out: nothing after the write was skipped.
+        expect(email.send).toHaveBeenCalled();
+      });
+
+      it("writes the row outside the sign-up transaction, after it commits", async () => {
+        const order: string[] = [];
+        const realTx = (prisma.$transaction as jest.Mock).getMockImplementation()!;
+        (prisma.$transaction as jest.Mock).mockImplementationOnce(async (...args: any[]) => {
+          const out = await realTx(...args);
+          order.push("commit");
+          return out;
+        });
+        attrCreate().mockImplementationOnce(async () => {
+          order.push("attribution");
+          return {};
+        });
+
+        await service.register({ ...REGISTER_DTO, attribution: { utmSource: "google" } });
+
+        expect(order).toEqual(["commit", "attribution"]);
+      });
+
+      it("writes one row with the normalized values, for the new tenant", async () => {
         await service.register({
           ...REGISTER_DTO,
           attribution: {

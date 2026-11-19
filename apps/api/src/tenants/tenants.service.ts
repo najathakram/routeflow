@@ -158,10 +158,6 @@ export class TenantsService {
       });
 
       await tx.tenantConfig.create({ data: { tenantId: tenant.id, businessName, timezone } });
-      // Phase 1: where the sign-up came from. Empty or garbage attribution writes nothing and never fails a sign-up.
-      if (attribution) {
-        await tx.signupAttribution.create({ data: { tenantId: tenant.id, ...attribution } });
-      }
       // W1: the first question starts open for a public sign-up (no existing tenant holds this row).
       await createPendingFirstRun(tx, tenant.id);
 
@@ -202,6 +198,21 @@ export class TenantsService {
 
       return { tenant, user, linkId };
     });
+
+    // Phase 1: where the sign-up came from, written only AFTER the sign-up has committed and never
+    // inside its transaction, so a missing table (an old schema) or a failed write can't block or
+    // roll back a sign-up. Empty or garbage attribution writes nothing.
+    if (attribution) {
+      try {
+        await this.prisma.signupAttribution.create({
+          data: { tenantId: result.tenant.id, ...attribution },
+        });
+      } catch (e) {
+        this.logger.warn(
+          `SignupAttribution not saved for tenant ${result.tenant.id}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
 
     // Generate a 24-hour email verification JWT and send it. Registration itself
     // must never fail over a mail-transport problem (the tenant+user rows are

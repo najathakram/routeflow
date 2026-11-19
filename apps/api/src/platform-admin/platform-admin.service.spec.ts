@@ -4019,6 +4019,13 @@ describe("PlatformAdminService — audit provenance", () => {
       (prisma as any).demoBooking = {
         findMany: jest.fn(async (args: any) => bookings.filter((b) => matches(b, args?.where))),
       };
+      (prisma as any).signupAttribution = {
+        findMany: jest.fn(async (args: any) =>
+          tenants
+            .filter((t: any) => t.signupAttribution && matches({ tenantId: t.id }, args?.where))
+            .map((t: any) => ({ tenantId: t.id, ...t.signupAttribution })),
+        ),
+      };
     });
 
     afterEach(() => {
@@ -4248,6 +4255,27 @@ describe("PlatformAdminService — audit provenance", () => {
         expect(stats.signupsBySource).toEqual({ unavailable: true });
         expect(stats.weeklyFunnel).toEqual({ unavailable: true });
         expect(logged).toHaveBeenCalledTimes(1);
+      });
+
+      // The weekly funnel must never depend on the new table: production runs the old schema until
+      // the migration is approved, and a failed source read takes out only the source card.
+      it("the shared tenant read never touches the attribution table", async () => {
+        await service.getStats();
+        for (const [args] of prisma.tenant.findMany.mock.calls as any[]) {
+          expect(JSON.stringify(args ?? {})).not.toContain("signupAttribution");
+        }
+      });
+
+      it("keeps the weekly funnel when only the attribution read fails", async () => {
+        (prisma as any).signupAttribution.findMany = jest
+          .fn()
+          .mockRejectedValue(new Error('relation "SignupAttribution" does not exist'));
+        const logged = jest.spyOn((service as any).logger, "error").mockImplementation(() => {});
+        const stats: any = await service.getStats();
+        expect(stats.signupsBySource).toEqual({ unavailable: true });
+        expect(stats.weeklyFunnel.weeks).toHaveLength(8);
+        expect(logged).toHaveBeenCalledTimes(1);
+        expect(String(logged.mock.calls[0][0])).toContain("Sign-ups by source");
       });
 
       it("keeps the source table when only the demo-booking read fails", async () => {

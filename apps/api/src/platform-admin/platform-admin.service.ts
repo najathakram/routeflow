@@ -207,7 +207,6 @@ interface FunnelTenantReads {
     id: string;
     createdAt: Date;
     status: string;
-    signupAttribution: SignupSourceFields | null;
   }>;
   verifiedFirst: Map<string, Date>;
   firstOrder: Map<string, Date>;
@@ -2257,17 +2256,8 @@ export class PlatformAdminService {
             id: true,
             createdAt: true,
             status: true,
-            // Phase 1: the raw source fields; the label is worked out when the card is built.
-            signupAttribution: {
-              select: {
-                utmSource: true,
-                utmMedium: true,
-                gclid: true,
-                fbclid: true,
-                msclkid: true,
-                referrerHost: true,
-              },
-            },
+            // Phase 1: no signupAttribution join here. The weekly funnel must not depend on that
+            // table; _signupsBySource reads it on its own.
           },
         }),
         // AuditLog has no tenant relation, so the activations are read first and their tenants
@@ -2384,10 +2374,29 @@ export class PlatformAdminService {
     const { weekIndex } = this._funnelWindow(now);
     const cohort = await reads;
     const inWindow = (d: Date | undefined) => !!d && weekIndex(d) >= 0;
+    const signups = cohort.signupRows.filter((t) => inWindow(t.createdAt)); // the weekly "signups" bound
+    // Its own read, so a missing or failing table takes out only this card, never the weekly funnel.
+    const attributions = new Map<string, SignupSourceFields>(
+      signups.length === 0
+        ? []
+        : (
+            await this.prisma.signupAttribution.findMany({
+              where: { tenantId: { in: signups.map((t) => t.id) } },
+              select: {
+                tenantId: true,
+                utmSource: true,
+                utmMedium: true,
+                gclid: true,
+                fbclid: true,
+                msclkid: true,
+                referrerHost: true,
+              },
+            })
+          ).map(({ tenantId, ...fields }) => [tenantId, fields]),
+    );
     const bySource = new Map<string, SignupSourceRow>();
-    for (const t of cohort.signupRows) {
-      if (!inWindow(t.createdAt)) continue; // the same bound as the weekly "signups" number
-      const source = signupSourceLabel(t.signupAttribution);
+    for (const t of signups) {
+      const source = signupSourceLabel(attributions.get(t.id) ?? null);
       let row = bySource.get(source);
       if (!row) {
         row = {
