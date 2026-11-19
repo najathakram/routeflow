@@ -1,5 +1,5 @@
 {"id":"B334","batch":"F44","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Re-check 2026-11-09 at 27d8125e17: b32caa75 (#3773): migration.service.ts:260-295 per-row catch marks SKIPPED, job reaches CONFIRMED; migration.service.bt9.db.spec.ts:75 (e2 SKIPPED, job CONFIRMED, undoable). fixed in b32caa7591 (fixed in b32caa759199f44ad823503b863629ab37096038)","sha":"b32caa759199f44ad823503b863629ab37096038"}
 {"id":"B335","batch":"F44","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B336","batch":"F44","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B337","batch":"F44","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B337","batch":"F44","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"SA-1169 C1 class A: fix sha f85e0421a1 verified (fixed in f85e0421a1a22743d637ca88bb37d8ac20bdabeb)","sha":"f85e0421a1a22743d637ca88bb37d8ac20bdabeb"}
 {"id":"B338","batch":"F44","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
