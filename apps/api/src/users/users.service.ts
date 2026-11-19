@@ -274,7 +274,7 @@ export class UsersService {
         email: dto.email,
         username: dto.username,
         password: hashedPassword,
-        role: UserRole.OPERATOR,
+        role: dto.role ?? UserRole.OPERATOR, // B862: the invite's role (OPERATOR or DRIVER; the DTO refuses the rest)
         forcePasswordChange: true,
       },
       select: {

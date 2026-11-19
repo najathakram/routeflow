@@ -34,8 +34,9 @@ export function useCreateOperator() {
   return useMutation<
     { user: AppUser; tempPassword: string },
     Error,
-    { name: string; email: string; username: string }
+    { name: string; email: string; username: string; role: "OPERATOR" | "DRIVER" }
   >({
+    // `name` is collected by the form but the user record has no name column, so it is not sent.
     mutationFn: ({ name: _name, ...dto }) =>
       apiClient.post("/users/operator", dto).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),

@@ -626,6 +626,7 @@ function AddUserModal({
       name: data.name,
       email: data.email,
       username: data.username,
+      role: data.role, // B862: the role picked in the form, not the server's OPERATOR default
     });
     setTempPassword(result.tempPassword);
     onCreated(result.tempPassword);
