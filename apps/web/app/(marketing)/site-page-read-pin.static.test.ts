@@ -33,6 +33,9 @@ const ALLOWED_DIRECT_READERS: Record<string, string> = {
   "app/(marketing)/site-raw-path-redirect.static.test.ts":
     "must see the raw file to know which pages carry tokens",
   "lib/site-port-tokens.test.ts": "compares the committed raw pages with the script's output",
+  // Arrived from master in the catch-up (#4367), after the snapshot; lanes never edit master's guard.
+  "app/(marketing)/site-pins.static.test.ts":
+    "master's pin guard: the wheel's end-state markup in the raw home.html, byte for byte",
 };
 
 // The file-size budget test (replaced by the wheel budget in W1) is matched by its suffix.
