@@ -48,18 +48,11 @@ const refs = (file: string, re: RegExp) => [...new Set(stripComments(read(file))
 // Files outside this lane that still reference a retired name today (scanned 2026-11-14).
 const T14B_ROWS: Array<{ file: string; lane: string; wave: string }> = [
   { file: "public/site/graphics/rf-graphics.css", lane: "2.1b-last", wave: "W2" },
-  { file: "public/site/css/site.css", lane: "2.1b", wave: "W2" },
-  { file: "public/site/css/home.css", lane: "2.1b", wave: "W2" },
-  { file: "public/site/css/home-up.css", lane: "2.1b", wave: "W2" },
   { file: "public/site/graphics/rf-wheel-up.css", lane: "2.2", wave: "W2" },
 ];
 
 // Files outside this lane that still hold a gradient, blur, glow or non-ring shadow today.
 const T18A_ROWS: Array<{ file: string; lane: string; wave: string }> = [
-  { file: "public/site/css/site.css", lane: "2.1b", wave: "W2" },
-  { file: "public/site/css/mobile.css", lane: "2.1b", wave: "W2" },
-  { file: "public/site/css/home.css", lane: "2.1b", wave: "W2" },
-  { file: "public/site/css/home-up.css", lane: "2.1b", wave: "W2" },
   { file: "public/site/graphics/rf-wheel-up.css", lane: "2.2", wave: "W2" },
 ];
 
