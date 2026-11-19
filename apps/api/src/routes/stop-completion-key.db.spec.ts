@@ -129,6 +129,7 @@ describeDb("SA-1098 PR-1 stop completion key — real Postgres", () => {
           provide: SystemConfigService,
           useValue: {
             get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
             set: jest.fn().mockResolvedValue(undefined),
           },
         },

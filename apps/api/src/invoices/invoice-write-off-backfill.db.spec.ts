@@ -82,6 +82,7 @@ describeDb("SA-1050 PR-1: ensureWriteOffEvent and the backfill (real Postgres)",
   };
   const mockSystemConfig = {
     get: jest.fn().mockResolvedValue(null),
+    getAll: jest.fn().mockResolvedValue({}),
     set: jest.fn().mockResolvedValue(undefined),
   };
   const mockCreditNotes = {

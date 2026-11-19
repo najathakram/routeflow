@@ -54,6 +54,8 @@ export function buildInvoiceEmailPayload(
     attachment: InvoiceEmailAttachment | undefined;
     hideOriginalPrice: boolean;
     hidePerPiece?: boolean;
+    hideAmountPaid?: boolean; // R6a: the invoice email only; the reminder keeps both lines
+    hideBalanceDue?: boolean;
   },
 ) {
   const { totalPaid, creditApplied, advanceApplied, creditNoteNumbers, balanceDue } =
@@ -91,6 +93,8 @@ export function buildInvoiceEmailPayload(
     hideTerms: isPaidAtSale(inv),
     hideOriginalPrice: ctx.hideOriginalPrice,
     hidePerPiece: !!ctx.hidePerPiece,
+    hideAmountPaid: !!ctx.hideAmountPaid,
+    hideBalanceDue: !!ctx.hideBalanceDue,
     // Deposit schedule (display-only): derive with the same read-time math the detail endpoint uses; null when the
     // invoice carries no deposit.
     depositAmount: computeDepositFields(inv, 0, new Date().toISOString().slice(0, 10))

@@ -183,7 +183,7 @@
 {"id":"B1321","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1322","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1323","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B1324","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1324","batch":"F64","tier":"T2","state":"already-fixed","pr":null,"proof":null,"evidence":"SA-1169 C1 class A': spec apps/web/app/(marketing)/site-motion-always.static.test.ts:184 pins the fix (fixed in 9239618968df5a9675363df79ac8ccfbf5a0b73f)","sha":"9239618968df5a9675363df79ac8ccfbf5a0b73f"}
 {"id":"B1329","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1327","batch":"F64","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4312: the date-scan spec pins the system date (Wed 2026-06-17 12:00Z) beside useFakeTimers; 48/48 on a real Friday, independent review PASS, Verify green at head 76a08e6ac (fixed in 13fb12fd73c3107d98ca154f6363070fddeb3c9e)","sha":"13fb12fd73c3107d98ca154f6363070fddeb3c9e"}
 {"id":"B1330","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
@@ -220,3 +220,9 @@
 {"id":"B1361","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1362","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1363","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1364","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1365","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1366","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1367","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1368","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1369","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}

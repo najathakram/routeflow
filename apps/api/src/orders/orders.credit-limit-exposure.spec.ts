@@ -113,7 +113,10 @@ describe("OrdersService — credit-limit exposure (D6 / B462, option B)", () => 
         },
         {
           provide: SystemConfigService,
-          useValue: { get: jest.fn().mockResolvedValue(null) },
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
         },
         { provide: NotificationsService, useValue: {} },
         {

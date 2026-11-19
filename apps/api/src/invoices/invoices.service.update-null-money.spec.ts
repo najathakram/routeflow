@@ -65,7 +65,10 @@ describe("InvoicesService.update() — row 603: a null discount / shippingFee is
           useValue: { sendInvoice: jest.fn(), isEmailConfigured: jest.fn() },
         },
         { provide: InvoicePdfService, useValue: { getOrGenerate: jest.fn() } },
-        { provide: SystemConfigService, useValue: { get: jest.fn(), set: jest.fn() } },
+        {
+          provide: SystemConfigService,
+          useValue: { get: jest.fn(), getAll: jest.fn().mockResolvedValue({}), set: jest.fn() },
+        },
         {
           provide: RegulatedLedgerService,
           useValue: {

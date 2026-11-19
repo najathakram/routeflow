@@ -171,7 +171,13 @@ describe("VendorBillsService", () => {
             recordAiUsage: jest.fn(),
           },
         },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: DuplicateMatchService, useValue: dupMatch },
         { provide: StorageService, useValue: storage },
         { provide: InventoryService, useValue: inventory },
@@ -2027,7 +2033,13 @@ describe("VendorBillsService", () => {
               recordAiUsage,
             },
           },
-          { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+          {
+            provide: SystemConfigService,
+            useValue: {
+              get: jest.fn().mockResolvedValue(null),
+              getAll: jest.fn().mockResolvedValue({}),
+            },
+          },
           { provide: DuplicateMatchService, useValue: dupMatch },
           { provide: StorageService, useValue: storage },
           { provide: InventoryService, useValue: inventory },
@@ -2079,7 +2091,10 @@ describe("VendorBillsService", () => {
           },
           {
             provide: SystemConfigService,
-            useValue: { get: jest.fn().mockResolvedValue(BUSINESS_KEY) },
+            useValue: {
+              get: jest.fn().mockResolvedValue(BUSINESS_KEY),
+              getAll: jest.fn().mockResolvedValue({}),
+            },
           },
           { provide: DuplicateMatchService, useValue: dupMatch },
           { provide: StorageService, useValue: storage },

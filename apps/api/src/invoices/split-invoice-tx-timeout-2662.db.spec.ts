@@ -86,6 +86,7 @@ describeDb("split-invoice creation that outlives the tx timeout is a clean 503 (
   };
   const mockSystemConfig = {
     get: jest.fn().mockResolvedValue(null),
+    getAll: jest.fn().mockResolvedValue({}),
     set: jest.fn().mockResolvedValue(undefined),
   };
   const mockCreditNotes = {

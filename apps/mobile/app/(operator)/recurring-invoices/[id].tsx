@@ -50,7 +50,7 @@ export default function RecurringInvoiceDetailScreen() {
   }
 
   const s = recurringPillFor(template.isActive);
-  const flags = recurringActionFlags(template.isActive);
+  const flags = recurringActionFlags(template.isActive, template.lastError);
   const outcome = lastRunOutcome(template);
   // lastRunAt is a real timestamp (has a meaningful time-of-day) — kept in the
   // viewer's local time, unlike nextRunAt below which is a UTC-midnight

@@ -1799,6 +1799,16 @@ describe("CustomersService", () => {
       if (where.status?.not !== undefined) {
         matched = matched.filter((r: any) => r.status !== where.status.not);
       }
+      // OPEN_BALANCE_INVOICE_WHERE (SA-1164 22:05Z): a status outside `notIn`, or a DRAFT whose order status is in `order.status.in`
+      if (Array.isArray(where.OR)) {
+        matched = matched.filter((r: any) =>
+          where.OR.some((c: any) =>
+            c.status?.notIn
+              ? !c.status.notIn.includes(r.status)
+              : r.status === c.status && (c.order?.status?.in ?? []).includes(r.order?.status),
+          ),
+        );
+      }
       if (where.balance?.gt !== undefined) {
         matched = matched.filter((r: any) => Number(r.balance) > where.balance.gt);
       }

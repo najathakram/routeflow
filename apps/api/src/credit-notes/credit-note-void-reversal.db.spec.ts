@@ -124,7 +124,11 @@ describeDb("SA-436 PR-2 credit-note void-with-reversal (#2402)", () => {
         { provide: InvoicePdfService, useValue: { getOrGenerate: jest.fn() } },
         {
           provide: SystemConfigService,
-          useValue: { get: jest.fn().mockResolvedValue(null), set: jest.fn() },
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+            set: jest.fn(),
+          },
         },
         { provide: RegulatedLedgerService, useValue: mockLedger },
         {

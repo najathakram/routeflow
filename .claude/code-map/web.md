@@ -105,3 +105,5 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/landing-2026-11-15-w48.md](web/landing-2026-11-15-w48.md) | Window 48: staff shell (build-operator-nav, open nav groups), scan clock rename, billing return redirects |
 | [web/landing-2026-11-16-w49-51.md](web/landing-2026-11-16-w49-51.md) | Windows 49 and 51: toast copy for the paid-order edit refusal |
 | [web/landing-2026-11-16-w52.md](web/landing-2026-11-16-w52.md) | Window 52: buyer sentence for a delivered order (web portal and mobile) |
+| [web/landing-2026-11-19-w54-59.md](web/landing-2026-11-19-w54-59.md) | Windows 54-59: one settings Business card, receivable footer, plan-gated AR links, RecordCard and FiltersDisclosure, optimize copy |
+| [web/landing-2026-11-19-site-wheel.md](web/landing-2026-11-19-site-wheel.md) | #4367: the home wheel fits its box (one pose, legend, end-state trial button), the snap stops throwing scroll, spec 84 on the local lane |

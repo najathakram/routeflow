@@ -29,7 +29,10 @@ describe("InvoicesService.findOne category select (row 398)", () => {
           },
         }),
       },
-      systemConfig: { get: jest.fn().mockResolvedValue(null) },
+      systemConfig: {
+        get: jest.fn().mockResolvedValue(null),
+        getAll: jest.fn().mockResolvedValue({}),
+      },
     });
     await service.findOne("inv-1");
     const arg = findUnique.mock.calls[0][0] as {

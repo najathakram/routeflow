@@ -22,7 +22,10 @@ const OPERATOR = {
   status: "ACTIVE",
   forcePasswordChange: false,
 } as any;
-const ZERO_TAX_SYSTEM_CONFIG = { get: jest.fn().mockResolvedValue(null) };
+const ZERO_TAX_SYSTEM_CONFIG = {
+  get: jest.fn().mockResolvedValue(null),
+  getAll: jest.fn().mockResolvedValue({}),
+};
 
 describe("#2178 — the preflight prices against the post-revert matching set", () => {
   let quote: InlineReturnsQuoteService;

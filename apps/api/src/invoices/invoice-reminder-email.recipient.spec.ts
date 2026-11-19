@@ -35,7 +35,10 @@ function deps(customerEmail: string | null) {
     emailService: { isEmailConfigured: jest.fn().mockResolvedValue(true), sendInvoice },
     pdfService: { getOrGenerate: jest.fn().mockResolvedValue(undefined) },
     storage: { download: jest.fn() },
-    systemConfig: { get: jest.fn().mockResolvedValue(null) },
+    systemConfig: {
+      get: jest.fn().mockResolvedValue(null),
+      getAll: jest.fn().mockResolvedValue({}),
+    },
     logger: { warn: jest.fn() },
   };
   return { d: d as never, sendInvoice };

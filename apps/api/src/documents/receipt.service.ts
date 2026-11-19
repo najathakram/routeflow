@@ -31,6 +31,7 @@ import { renderOrderReceipt } from "./render-order-receipt";
 import type { SendReceiptDto } from "./send-receipt.dto";
 import { sellerDisplayName } from "../common/seller-display-name";
 import { ORDER_LINE_ORDER_BY } from "../orders/line-position";
+import { INVOICE_LAYOUT_KEYS, parseInvoiceLayout } from "../invoices/invoice-layout";
 
 /** The EmailDelivery `kind` and `entityType` every receipt send is logged (and counted) under. */
 const RECEIPT_KIND = "RECEIPT" as const;
@@ -50,7 +51,7 @@ const SETTING_KEYS = [
   "settings.receiptFooter",
   "settings.taxRate",
   // the invoices' own switch: no struck list price and no Discounts row
-  "invoice.hideOriginalPrice",
+  INVOICE_LAYOUT_KEYS.hideOriginalPrice,
 ];
 
 const tooMany = (code: string, message: string) =>
@@ -285,7 +286,7 @@ export class ReceiptService {
       phone: config?.phone ?? settings["settings.phone"],
       footer: settings["settings.receiptFooter"],
       configuredTaxPercent: taxRatePercentFrom(settings["settings.taxRate"]),
-      hideOriginalPrice: settings["invoice.hideOriginalPrice"] === "true",
+      hideOriginalPrice: parseInvoiceLayout(settings).hideOriginalPrice,
     };
     const { subject, html, text } = renderOrderReceipt(
       order,

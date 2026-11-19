@@ -28,7 +28,10 @@ describe("RouteOptimizationService.geocodeAddress skips a blank-street address",
         RouteOptimizationService,
         { provide: PrismaService, useValue: createMockPrisma() },
         { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue("test-key") } },
-        { provide: SystemConfigService, useValue: { get: jest.fn(), set: jest.fn() } },
+        {
+          provide: SystemConfigService,
+          useValue: { get: jest.fn(), getAll: jest.fn().mockResolvedValue({}), set: jest.fn() },
+        },
         { provide: RouteFlowGateway, useValue: { emitRouteProgress: jest.fn() } },
       ],
     }).compile();

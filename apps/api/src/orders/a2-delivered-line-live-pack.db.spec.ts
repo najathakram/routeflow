@@ -74,7 +74,11 @@ describeDb(
           get: (_t, prop) => (prop === "then" || typeof prop === "symbol" ? undefined : jest.fn()),
         },
       );
-      const systemConfig = { get: jest.fn().mockResolvedValue(null), set: jest.fn() };
+      const systemConfig = {
+        get: jest.fn().mockResolvedValue(null),
+        getAll: jest.fn().mockResolvedValue({}),
+        set: jest.fn(),
+      };
       const mod = await Test.createTestingModule({
         providers: [
           InvoicesService,

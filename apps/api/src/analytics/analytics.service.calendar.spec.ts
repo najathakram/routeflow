@@ -32,12 +32,15 @@ describe("AnalyticsService — B118 tenant-timezone on-time cutoff", () => {
   let service: AnalyticsService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let addonService: { hasAddon: jest.Mock };
-  let systemConfig: { get: jest.Mock };
+  let systemConfig: { get: jest.Mock; getAll: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
     addonService = { hasAddon: jest.fn().mockResolvedValue(false) };
-    systemConfig = { get: jest.fn().mockResolvedValue(null) };
+    systemConfig = {
+      get: jest.fn().mockResolvedValue(null),
+      getAll: jest.fn().mockResolvedValue({}),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -178,7 +181,13 @@ describe("AnalyticsService — invoice date windows/buckets read UTC, not host-l
         SalesFactsService,
         { provide: PrismaService, useValue: prisma },
         { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(false) } },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
       ],
     }).compile();
 

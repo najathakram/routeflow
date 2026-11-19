@@ -33,7 +33,13 @@ describe("InlineReturnsQuoteService: an unreferenced return reads the customer l
       providers: [
         InlineReturnsQuoteService,
         { provide: PrismaService, useValue: prisma },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: EntitlementsService, useValue: { hasFlag, hasFlagStrict: hasFlag } },
       ],
     }).compile();

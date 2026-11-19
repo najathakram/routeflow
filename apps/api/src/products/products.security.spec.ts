@@ -62,7 +62,13 @@ describe("ProductsService — F8-003 import error disclosure", () => {
         { provide: PrismaService, useValue: prisma },
         { provide: StorageService, useValue: {} },
         { provide: AddonService, useValue: { assertWithinLimit: jest.fn() } },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(false) } },
         // #2185: reorder gate (assertReorderAllowed) reads overrides + entitlements for its deny body.
         { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },
@@ -114,7 +120,13 @@ describe("ProductsService.clearAll — cross-tenant wipe regression", () => {
         { provide: PrismaService, useValue: prisma },
         { provide: StorageService, useValue: {} },
         { provide: AddonService, useValue: {} },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(false) } },
         // #2185: reorder gate (assertReorderAllowed) reads overrides + entitlements for its deny body.
         { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },
@@ -196,7 +208,13 @@ describe("ProductsService.bulkAssignParent — cross-tenant parent id rejected",
         { provide: PrismaService, useValue: prisma },
         { provide: StorageService, useValue: {} },
         { provide: AddonService, useValue: {} },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(false) } },
         // #2185: reorder gate (assertReorderAllowed) reads overrides + entitlements for its deny body.
         { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },

@@ -17,7 +17,10 @@ describe("SettingsController: hideOriginalPrice on GET /settings (receipts follo
     const svc = {
       get: jest.fn(async (k: string) => stored[k] ?? null),
       set: jest.fn(),
-      getAll: jest.fn(async () => ({})),
+      // the layout reader's one `getAll("invoice.")`; `settings.` has no business here
+      getAll: jest.fn(async (prefix: string) =>
+        Object.fromEntries(Object.entries(stored).filter(([k]) => k.startsWith(prefix))),
+      ),
     };
     const mod = await Test.createTestingModule({
       controllers: [SettingsController],
@@ -35,7 +38,7 @@ describe("SettingsController: hideOriginalPrice on GET /settings (receipts follo
   it('is true only when invoice.hideOriginalPrice is stored as "true"', async () => {
     const on = await build({ "invoice.hideOriginalPrice": "true" });
     expect((await on.controller.getSettings()).hideOriginalPrice).toBe(true);
-    expect(on.svc.get).toHaveBeenCalledWith("invoice.hideOriginalPrice");
+    expect(on.svc.getAll).toHaveBeenCalledWith("invoice.");
   });
 
   it('is false when the tenant never set it or stored "false"', async () => {

@@ -33,7 +33,10 @@ const capability = priceEditAllowedFor as jest.Mock;
 // rate (deferred PR-1b item) via SystemConfigService — 0% here so every pre-existing oracle
 // in this file (hand-derived before this reader existed) is unaffected; the fallback itself
 // gets its own dedicated tax-rate describe block below.
-const ZERO_TAX_SYSTEM_CONFIG = { get: jest.fn().mockResolvedValue(null) };
+const ZERO_TAX_SYSTEM_CONFIG = {
+  get: jest.fn().mockResolvedValue(null),
+  getAll: jest.fn().mockResolvedValue({}),
+};
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import type { QuoteInlineReturnItemDto } from "./dto/quote-inline-return.dto";
 
@@ -870,11 +873,14 @@ describe("InlineReturnsQuoteService — PR-1c: unreferenced-chunk tax fallback r
   let service: InlineReturnsQuoteService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let db: ReturnType<PrismaService["forTenant"]>;
-  let systemConfig: { get: jest.Mock };
+  let systemConfig: { get: jest.Mock; getAll: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
-    systemConfig = { get: jest.fn().mockResolvedValue("8") }; // 8% tenant rate
+    systemConfig = {
+      get: jest.fn().mockResolvedValue("8"),
+      getAll: jest.fn().mockResolvedValue({}),
+    }; // 8% tenant rate
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         InlineReturnsQuoteService,
@@ -1048,7 +1054,13 @@ describe("InlineReturnsQuoteService — #2695 (SA-557): a staff per-line credit 
         InlineReturnsQuoteService,
         { provide: PrismaService, useValue: prisma },
         // The tenant's CURRENT rate is 8% — a matched chunk must never be taxed at it.
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue("8") } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue("8"),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
       ],
     }).compile();
     service = module.get(InlineReturnsQuoteService);

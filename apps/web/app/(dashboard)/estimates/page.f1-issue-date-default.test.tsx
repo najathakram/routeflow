@@ -15,7 +15,8 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen } from "@/test-utils/render";
-import EstimatesPage, { defaultExpiryDate } from "./page";
+import EstimatesPage from "./page";
+import { defaultExpiryDate } from "./estimate-date-defaults";
 
 // #711 delta review: defaultExpiryDate() still computed via `.toISOString()`
 // (UTC) after defaultIssueDate() was fixed to local — west of UTC in the

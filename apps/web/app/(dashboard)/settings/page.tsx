@@ -90,6 +90,7 @@ import { SettingsHub } from "./_components/SettingsHub";
 import { SendingDomainCard } from "./_components/SendingDomainCard";
 import { MailboxCard } from "./_components/MailboxCard";
 import { StripeConnectCard } from "./_components/StripeConnectCard";
+import { InvoiceLayoutCard } from "./_components/InvoiceLayoutCard";
 import { InvoiceNumberingCard, INVOICE_TERMS_OPTIONS } from "./_components/InvoiceNumberingCard";
 import GoHighLevelSettingsTab from "./_components/GoHighLevelSettingsTab";
 import { FulfillmentSettingsTab } from "./_components/FulfillmentSettingsTab";
@@ -2714,69 +2715,6 @@ function InvoicingTab() {
     );
   };
 
-  const handleHideBarcodesChange = (checked: boolean) => {
-    updateSettings.mutate(
-      { hideBarcodes: !checked },
-      {
-        onSuccess: () =>
-          toast({
-            title: "Invoice settings saved",
-            description: "Barcode display updated.",
-            variant: "success",
-          }),
-        onError: (err) =>
-          isReadOnlyRefusal(err) ||
-          toast({
-            title: "Failed to save",
-            description: "Could not update invoice settings.",
-            variant: "error",
-          }),
-      },
-    );
-  };
-
-  const handleHidePerPieceChange = (checked: boolean) => {
-    updateSettings.mutate(
-      { hidePerPiece: !checked },
-      {
-        onSuccess: () =>
-          toast({
-            title: "Invoice settings saved",
-            description: "Per piece column updated.",
-            variant: "success",
-          }),
-        onError: (err) =>
-          isReadOnlyRefusal(err) ||
-          toast({
-            title: "Failed to save",
-            description: "Could not update invoice settings.",
-            variant: "error",
-          }),
-      },
-    );
-  };
-
-  const handleHideOriginalPriceChange = (checked: boolean) => {
-    updateSettings.mutate(
-      { hideOriginalPrice: !checked },
-      {
-        onSuccess: () =>
-          toast({
-            title: "Invoice settings saved",
-            description: "Original price display updated successfully.",
-            variant: "success",
-          }),
-        onError: (err) =>
-          isReadOnlyRefusal(err) ||
-          toast({
-            title: "Failed to save",
-            description: "Could not update invoice settings.",
-            variant: "error",
-          }),
-      },
-    );
-  };
-
   // Deposit % is free text, so — like customers/[id]/page.tsx's
   // defaultDepositPercent field — it must NOT PATCH per keystroke: typing "50"
   // would persist 5 first and the server value would fight the field
@@ -2893,68 +2831,6 @@ function InvoicingTab() {
             </div>
           </div>
 
-          <div className="flex items-center gap-4 rounded-lg border border-surface-border bg-surface-raised p-4">
-            <div className="flex-1 space-y-1">
-              <p className="text-sm font-semibold text-navy">
-                Show original price on discounted lines
-              </p>
-              <p className="text-xs text-navy/70">
-                When off, invoices show only the final unit price — no struck-through original price
-                or badge.
-              </p>
-            </div>
-            <label className="inline-flex shrink-0 cursor-pointer items-center">
-              <input
-                type="checkbox"
-                aria-label="Show original price on discounted lines"
-                checked={!invoiceSettings?.hideOriginalPrice}
-                onChange={(e) => handleHideOriginalPriceChange(e.target.checked)}
-                disabled={isLoading || updateSettings.isPending}
-                className="h-4 w-4 rounded border-surface-border"
-              />
-            </label>
-          </div>
-
-          <div className="flex items-center gap-4 rounded-lg border border-surface-border bg-surface-raised p-4">
-            <div className="flex-1 space-y-1">
-              <p className="text-sm font-semibold text-navy">Show barcodes on invoices</p>
-              <p className="text-xs text-navy/70">
-                Prints each product&apos;s barcode and code on its line. Turn off to print invoices
-                without them.
-              </p>
-            </div>
-            <label className="inline-flex shrink-0 cursor-pointer items-center">
-              <input
-                type="checkbox"
-                aria-label="Show barcodes on invoices"
-                checked={!invoiceSettings?.hideBarcodes}
-                onChange={(e) => handleHideBarcodesChange(e.target.checked)}
-                disabled={isLoading || updateSettings.isPending}
-                className="h-4 w-4 rounded border-surface-border"
-              />
-            </label>
-          </div>
-
-          <div className="flex items-center gap-4 rounded-lg border border-surface-border bg-surface-raised p-4">
-            <div className="flex-1 space-y-1">
-              <p className="text-sm font-semibold text-navy">Show price per piece on invoices</p>
-              <p className="text-xs text-navy/70">
-                Adds a Per piece column beside pack lines, on the invoice page, the PDF and the
-                email. Turn off to print invoices without it.
-              </p>
-            </div>
-            <label className="inline-flex shrink-0 cursor-pointer items-center">
-              <input
-                type="checkbox"
-                aria-label="Show price per piece on invoices"
-                checked={!invoiceSettings?.hidePerPiece}
-                onChange={(e) => handleHidePerPieceChange(e.target.checked)}
-                disabled={isLoading || updateSettings.isPending}
-                className="h-4 w-4 rounded border-surface-border"
-              />
-            </label>
-          </div>
-
           <div className="border-t border-surface-border pt-4">
             <p className="mb-3 text-sm font-semibold text-navy">Deposits</p>
             <div className="space-y-4">
@@ -3018,6 +2894,13 @@ function InvoicingTab() {
           </div>
         </div>
       </Card>
+
+      <InvoiceLayoutCard
+        settings={invoiceSettings}
+        pending={updateSettings.isPending ? updateSettings.variables : undefined}
+        onToggle={updateSettings.mutate}
+        disabled={isLoading || updateSettings.isPending}
+      />
 
       <InvoiceNumberingCard />
 

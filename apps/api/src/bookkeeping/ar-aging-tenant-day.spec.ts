@@ -138,6 +138,27 @@ describe("B331: AR aging counts days past due on the tenant's calendar day", () 
     expect(result.buckets.days1_30.map((e: any) => e.id)).toEqual(["inv-1"]);
   });
 
+  it("SA-1164 D3c: a counted DRAFT with an old due date is never overdue and sits in Current", async () => {
+    at(CHICAGO_NOW);
+    zone("America/Chicago");
+    prisma.invoice.findMany.mockResolvedValue([
+      { ...invoice("2026-08-01T00:00:00.000Z"), id: "inv-draft", status: "DRAFT" },
+      invoice("2026-08-01T00:00:00.000Z"),
+    ]);
+
+    const result: any = await service.getArAgingInvoices();
+
+    expect(result.buckets.current.map((e: any) => e.id)).toEqual(["inv-draft"]);
+    expect(
+      Object.values(result.buckets)
+        .flat()
+        .map((e: any) => e.id)
+        .sort(),
+    ).toEqual(["inv-1", "inv-draft"]);
+    expect(result.totals.current).toBe(100);
+    expect(result.totals.total).toBe(200);
+  });
+
   // Tokyo is UTC+9: 20:00Z on Dec 1 is 05:00 on Dec 2 locally, so Nov 1 is 31 tenant days late
   // (second bucket). The UTC-instant count floors to 30 and kept it in the first bucket.
   it("getArAgingInvoices: 31 tenant days late is in the second bucket (east of UTC, early morning)", async () => {

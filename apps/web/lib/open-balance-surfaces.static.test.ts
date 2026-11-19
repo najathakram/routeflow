@@ -82,7 +82,8 @@ describe("U21: the open-balance figure is only printed inside OpenBalanceButton"
   it("no other staff file reads the statement's open balance without being listed", () => {
     const files = execSync(
       'git grep -l -E "outstandingAmount|openBalance" -- "*.tsx" ":!*.test.tsx"',
-      { cwd: ROOT, encoding: "utf8" },
+      // Under the pre-push hook git exports GIT_DIR, which makes cwd the work tree and the grep find nothing.
+      { cwd: ROOT, encoding: "utf8", env: gitFreeEnv() },
     )
       .split("\n")
       .filter(Boolean);
@@ -90,6 +91,12 @@ describe("U21: the open-balance figure is only printed inside OpenBalanceButton"
     expect(files.filter((f) => !known.has(f))).toEqual([]);
   });
 });
+
+function gitFreeEnv(): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries(process.env).filter(([k]) => !k.startsWith("GIT_")),
+  ) as NodeJS.ProcessEnv;
+}
 
 describe("U22: one name for the figure on the customer page", () => {
   const page = read("app/(dashboard)/customers/[id]/page.tsx");

@@ -96,7 +96,12 @@ export function AccountStatementPdfTemplate({
               wrap={false}
               style={[styles.tableRow, idx % 2 === 1 ? styles.tableRowAlt : {}]}
             >
-              <Text style={[styles.cellText, col.invoice]}>{row.invoice}</Text>
+              <View style={col.invoice}>
+                <Text style={styles.cellText}>{row.invoice}</Text>
+                {row.notSent ? (
+                  <Text style={{ fontSize: 7, color: GRAY, marginTop: 1 }}>{row.notSent}</Text>
+                ) : null}
+              </View>
               <View style={col.due}>
                 <Text style={styles.cellText}>{row.due}</Text>
                 {row.late ? (

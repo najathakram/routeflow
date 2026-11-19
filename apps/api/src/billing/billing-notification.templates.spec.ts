@@ -418,3 +418,33 @@ describe("billing-notification.templates", () => {
     });
   });
 });
+
+// B460: the plain-text part is derived from the html by the one shared decoder, so an "&" in a business name
+// reads as "&" there, not "&amp;". The subject is made header-safe at the EmailService seam (see its spec).
+describe("trialEndingTemplate plain text (B460)", () => {
+  it.each(["TRIAL_ENDING_7D", "TRIAL_ENDING_1D", "TRIAL_ENDING_EXPIRY"] as const)(
+    "%s: the text shows the business name as typed, with no entity and no tag",
+    (milestone) => {
+      const t = trialEndingTemplate({
+        businessName: "Acme & Co",
+        adminName: "Jamie",
+        milestone,
+        trialEndsAt: "Sep 23, 2026",
+      });
+      expect(t.text).toContain("Acme & Co");
+      expect(t.text).not.toContain("&amp;");
+      expect(t.text).not.toMatch(/<[^>]+>/);
+    },
+  );
+
+  it("a markup-like business name stays escaped in the html and reads as typed in the text", () => {
+    const t = trialEndingTemplate({
+      businessName: "Acme <b> & Sons",
+      adminName: "Jamie",
+      milestone: "TRIAL_ENDING_7D",
+      trialEndsAt: "Sep 23, 2026",
+    });
+    expect(t.html).toContain("Acme &lt;b&gt; &amp; Sons");
+    expect(t.text).toContain("Acme <b> & Sons");
+  });
+});

@@ -80,7 +80,13 @@ describe("RouteAnalysisService — AI usage metering", () => {
       providers: [
         RouteAnalysisService,
         { provide: PrismaService, useValue: prisma },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         {
           provide: PlatformConfigService,
           useValue: {

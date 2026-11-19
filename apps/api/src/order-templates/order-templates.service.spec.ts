@@ -81,7 +81,10 @@ describe("OrderTemplatesService — regulated license guard on reorder", () => {
         // settings.taxRate is stored as a PERCENT string — "10" is 10%.
         {
           provide: SystemConfigService,
-          useValue: { get: jest.fn().mockResolvedValue("10") },
+          useValue: {
+            get: jest.fn().mockResolvedValue("10"),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
         },
         { provide: OrdersService, useValue: ordersService },
         { provide: AuthorizationGuardService, useValue: authGuard },
@@ -274,7 +277,10 @@ describe("OrderTemplatesService — template ownership (F2-003)", () => {
         // settings.taxRate is stored as a PERCENT string — "10" is 10%.
         {
           provide: SystemConfigService,
-          useValue: { get: jest.fn().mockResolvedValue("10") },
+          useValue: {
+            get: jest.fn().mockResolvedValue("10"),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
         },
         { provide: OrdersService, useValue: { mergeAllPendingForCustomer: jest.fn() } },
         {
@@ -451,7 +457,13 @@ describe("OrderTemplatesService — pricing pin, tier 1 unchanged (T16)", () => 
         regulatedGateOpenProvider,
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: { run: jest.fn((_id, fn) => fn()) } },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue("10") } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue("10"),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: OrdersService, useValue: ordersService },
         {
           provide: AuthorizationGuardService,
@@ -518,7 +530,13 @@ describe("OrderTemplatesService — update() with no items key (T27)", () => {
         regulatedGateOpenProvider,
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: { run: jest.fn((_id, fn) => fn()) } },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue("10") } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue("10"),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: OrdersService, useValue: { mergeAllPendingForCustomer: jest.fn() } },
         {
           provide: AuthorizationGuardService,

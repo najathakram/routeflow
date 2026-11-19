@@ -129,6 +129,7 @@ describe("PD1: every figure on the page is the read's, to the cent", () => {
       unpaid: "$80.25",
     });
     expect(m.invoices[1]).toMatchObject({ due: "—", late: null });
+    expect(m.invoices.map((r) => r.notSent)).toEqual([null, null]);
     expect(m.foot).toEqual({ label: "Open balance", value: "$160.50" });
   });
 
@@ -204,6 +205,24 @@ describe("PD3: nothing internal reaches the page", () => {
     expect(methodWords("SOMETHING_NEW")).toBe("Payment");
     expect(methodWords("ACH")).toBe("Bank transfer");
     expect(methodWords("ZELLE")).toBe("Zelle");
+  });
+});
+
+describe("SA-1164 D3d: the page says Not sent yet on a delivered, unsent invoice", () => {
+  it("prints the label from notSentYet and nowhere else", () => {
+    const m = buildAccountStatementPdfModel(
+      statement({ openInvoices: [invoice(1), invoice(2, { notSentYet: true })] }),
+    );
+    expect(m.invoices.map((r) => r.notSent)).toEqual([null, "Not sent yet"]);
+    const source = readFileSync(join(__dirname, "account-statement-pdf-template.tsx"), "utf8");
+    expect(source).toMatch(/row.notSent/);
+  });
+
+  it("F1: a not-sent row prints no late text, even if the read carried days late", () => {
+    const m = buildAccountStatementPdfModel(
+      statement({ openInvoices: [invoice(1, { notSentYet: true, daysLate: 30 })] }),
+    );
+    expect(m.invoices[0]).toMatchObject({ notSent: "Not sent yet", late: null });
   });
 });
 

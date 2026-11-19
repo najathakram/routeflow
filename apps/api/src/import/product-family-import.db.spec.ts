@@ -87,7 +87,13 @@ describeDb("SA-823 PR-2: family import columns (real Postgres)", () => {
         },
         { provide: StorageService, useValue: {} },
         { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(true) } },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         {
           provide: EntitlementsService,
           useValue: {

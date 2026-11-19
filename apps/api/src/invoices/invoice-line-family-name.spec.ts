@@ -196,7 +196,11 @@ describe("the PDF's item rows", () => {
         },
         {
           provide: SystemConfigService,
-          useValue: { get: jest.fn().mockResolvedValue(null), set: jest.fn() },
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+            set: jest.fn(),
+          },
         },
       ],
     }).compile();
@@ -247,7 +251,10 @@ describe("InvoicesService.findOne (staff page, buyer portal, mobile all read thi
           },
         }),
       },
-      systemConfig: { get: jest.fn().mockResolvedValue(null) },
+      systemConfig: {
+        get: jest.fn().mockResolvedValue(null),
+        getAll: jest.fn().mockResolvedValue({}),
+      },
     });
     return service;
   };

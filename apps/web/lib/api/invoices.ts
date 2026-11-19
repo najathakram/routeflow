@@ -9,7 +9,13 @@ import type {
   ToCollectState,
 } from "@routeflow/types";
 import type { InvoiceSendLock, InvoiceSendState } from "@/lib/invoice-send-state";
-import { isPostDeliveryOrderStatus, type DiscountTaxBaseValue } from "@routeflow/types";
+import {
+  isAlreadyBilledRunError,
+  isPostDeliveryOrderStatus,
+  RUN_SEND_FAILED_PREFIX,
+  RUN_UNFINALIZED_PREFIX,
+  type DiscountTaxBaseValue,
+} from "@routeflow/types";
 import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import { isRecordPaymentLocalRefusal } from "@/lib/duplicate-payment-ref";
@@ -905,18 +911,12 @@ export function usePaymentDetail(id: string) {
 
 // ─── Recurring invoices ───────────────────────────────────────────────────────
 
-/**
- * REG-B106: mirrors `RUN_UNFINALIZED_ERROR` in
- * `apps/api/src/recurring-invoices/recurring-invoices.service.ts`. A `lastError` starting
- * with this text means the invoice WAS created (the cycle is billed) and only the run's
- * bookkeeping failed — so that failure must never be offered as a retry: re-running would
- * bill the same cycle twice.
- */
-export const RUN_UNFINALIZED_PREFIX = "The invoice was created but the run could not be finalized";
+// REG-B106 / B1251: the "already billed" prefixes are declared once in @routeflow/types (a re-run would bill twice).
+export { RUN_SEND_FAILED_PREFIX, RUN_UNFINALIZED_PREFIX };
 
 /** True when a FAILED cycle produced no invoice, so "Run Now" is a safe retry. */
 export function isRetryableRunFailure(lastError?: string | null): boolean {
-  return !!lastError && !lastError.startsWith(RUN_UNFINALIZED_PREFIX);
+  return !!lastError && !isAlreadyBilledRunError(lastError);
 }
 
 export function useRecurringInvoices(customerId?: string) {
@@ -1100,6 +1100,10 @@ export interface InvoiceSettings {
   hideBarcodes?: boolean;
   /** Owner ruling 2026-11-04: true = no Per piece column on the invoice page, PDF or email. Absent/false = shown. */
   hidePerPiece?: boolean;
+  /** true = no Amount Paid line or payments list on printed invoices. Absent/false = shown. */
+  hideAmountPaid?: boolean;
+  /** true = no Balance Due line on printed invoices. Absent/false = shown. */
+  hideBalanceDue?: boolean;
   /** Tenant-wide deposit default (0–100). null/absent = no tenant deposit policy;
    *  a customer's own `defaultDepositPercent` still wins when set. */
   depositDefaultPercent?: number | null; // GET: null when never set; PATCH: a number (0 clears), never null

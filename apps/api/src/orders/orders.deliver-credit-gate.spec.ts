@@ -124,7 +124,13 @@ describe("OrdersService.changeStatus — B585 credit check at delivery", () => {
         { provide: RouteFlowGateway, useValue: perm() },
         { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(0.1) } },
         { provide: InvoicesService, useValue: perm() },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: NotificationsService, useValue: perm() },
         { provide: InventoryService, useValue: perm() },
         { provide: SellingRestrictionsService, useValue: perm() },

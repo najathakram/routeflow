@@ -208,7 +208,11 @@ describeDb("W-965 a delivery billed after its month is LOCKED, real Postgres", (
         { provide: InvoicePdfService, useValue: { getOrGenerate: jest.fn() } },
         {
           provide: SystemConfigService,
-          useValue: { get: jest.fn().mockResolvedValue(null), set: jest.fn() },
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+            set: jest.fn(),
+          },
         },
         { provide: RegulatedLedgerService, useValue: ledger }, // the REAL ledger writer
         {
