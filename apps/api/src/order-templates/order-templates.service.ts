@@ -716,6 +716,10 @@ export class OrderTemplatesService {
             (held ? " (customer prices unavailable; will retry once)" : ""),
           err instanceof Error ? err.stack : String(err),
         );
+        // B340: the order tx committed (placed) or a concurrent run placed it (replayed) before this threw, so
+        // the order EXISTS: it is not "failed" and gets no "not placed" notice (same test as the ban notice below).
+        if (ctx.placed || ctx.replayed)
+          return { outcome: ctx.placed ? "created" : "skipped", ban: ctx.ban };
         return { outcome: pricesDown ? "held" : "failed", ban: ctx.ban };
       } finally {
         // A replay means today's order exists (a manual run placed it; that path sends no ban

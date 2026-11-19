@@ -243,6 +243,33 @@ describe("OrderTemplatesService.generateDailyOrders: customer prices unavailable
     expect(summary()).toContain("1 failed");
   });
 
+  // The order tx committed (ctx.placed), then the post-commit merge threw a non-contention error: the order EXISTS,
+  // so it is created, never "failed" (no "not placed" notice, and no re-entered duplicate order).
+  it("an order that committed and then threw after the commit counts as created, with no failed notice", async () => {
+    await boot([template("t1", "Weekly", "c1", "Acme Foods")]);
+    createSpy.mockImplementation(async (...args: any[]) => {
+      args[4].placed = true; // createOrderFromTemplate's ctx
+      throw new Error("merge exploded");
+    });
+    await service.generateDailyOrders();
+    expect(createSpy).toHaveBeenCalledTimes(1);
+    expect(sendToUser).not.toHaveBeenCalled();
+    expect(summary()).toContain("1 created, 0 skipped");
+    expect(summary()).toContain("0 failed");
+  });
+
+  it("a replayed order (a manual run placed it first) that then throws counts as skipped, with no failed notice", async () => {
+    await boot([template("t1", "Weekly", "c1", "Acme Foods")]);
+    createSpy.mockImplementation(async (...args: any[]) => {
+      args[4].replayed = true;
+      throw new Error("after replay");
+    });
+    await service.generateDailyOrders();
+    expect(sendToUser).not.toHaveBeenCalled();
+    expect(summary()).toContain("0 created, 1 skipped");
+    expect(summary()).toContain("0 failed");
+  });
+
   it("the held path still reads 0 failed", async () => {
     await boot([template("t1", "Weekly", "c1", "Acme Foods")]);
     createSpy.mockRejectedValue(pricesDown());
