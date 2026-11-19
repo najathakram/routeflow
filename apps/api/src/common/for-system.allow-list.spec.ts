@@ -84,6 +84,10 @@ export const ALLOWED: ReadonlyArray<{ file: string; reason: string }> = [
     file: "onboarding/onboarding-lifecycle.service.ts",
     reason: "onboarding: purge expired intake files across businesses",
   },
+  {
+    file: "onboarding/signup-journey.service.ts",
+    reason: "onboarding: signup journey across businesses",
+  },
 ];
 
 export interface Found {
@@ -343,6 +347,12 @@ export const CONVERTED_JOBS: ReadonlyArray<{
     cls: "OnboardingLifecycleService",
     method: "purgeIntakeFilesCron",
     reason: "onboarding: purge expired intake files across businesses",
+  },
+  {
+    file: "onboarding/signup-journey.service.ts",
+    cls: "SignupJourneyService",
+    method: "runCron",
+    reason: "onboarding: signup journey across businesses",
   },
 ];
 

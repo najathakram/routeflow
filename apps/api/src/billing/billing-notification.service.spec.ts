@@ -479,3 +479,64 @@ describe("BillingNotificationService - dunning notices (SA-733r7 PR-B3)", () => 
     expect(create).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("sendOnceToAdmins: the one public door onto the claim (T7)", () => {
+  const build = (_admin: { email: string; name: string }, businessName: string) => ({
+    subject: `Welcome, ${businessName}`,
+    html: "<p>Hi</p>",
+    text: "Hi",
+  });
+
+  it("won and delivered gives sent, with the claim row kept", async () => {
+    const { svc, sendPlatform, create, delete: del } = makeService();
+    const r = await svc.sendOnceToAdmins("t1", "onboarding.welcome", "", build);
+    expect(r).toEqual({ status: "sent", recipients: 1 });
+    expect(create).toHaveBeenCalledWith({
+      data: { tenantId: "t1", milestone: "onboarding.welcome", key: "" },
+    });
+    expect(sendPlatform).toHaveBeenCalledTimes(1);
+    expect(sendPlatform.mock.calls[0][0].subject).toBe("Welcome, Acme Retail");
+    expect(del).not.toHaveBeenCalled();
+  });
+
+  it("a lost claim gives skipped and sends nothing", async () => {
+    const { svc, sendPlatform } = makeService({ createImpl: realUniqueConstraintImpl() });
+    await svc.sendOnceToAdmins("t1", "onboarding.welcome", "", build);
+    sendPlatform.mockClear();
+    const r = await svc.sendOnceToAdmins("t1", "onboarding.welcome", "", build);
+    expect(r).toEqual({ status: "skipped", recipients: 0 });
+    expect(sendPlatform).not.toHaveBeenCalled();
+  });
+
+  it("no admins gives no_recipients and the claim row is released", async () => {
+    const { svc, sendPlatform, delete: del } = makeService({ admins: [] });
+    const r = await svc.sendOnceToAdmins("t1", "onboarding.welcome", "", build);
+    expect(r).toEqual({ status: "no_recipients", recipients: 0 });
+    expect(sendPlatform).not.toHaveBeenCalled();
+    expect(del).toHaveBeenCalledWith({
+      where: {
+        tenantId_milestone_key: { tenantId: "t1", milestone: "onboarding.welcome", key: "" },
+      },
+    });
+  });
+
+  it("none delivered gives failed and the claim row is released", async () => {
+    const { svc, delete: del } = makeService({
+      sendPlatformImpl: async () => ({ delivered: false, transport: "none" }),
+    });
+    const r = await svc.sendOnceToAdmins("t1", "onboarding.welcome", "", build);
+    expect(r).toEqual({ status: "failed", recipients: 0 });
+    expect(del).toHaveBeenCalledTimes(1);
+  });
+
+  it("a throw from the delivery gives failed and the claim row STAYS (at most once)", async () => {
+    const { svc, delete: del } = makeService({
+      sendPlatformImpl: async () => {
+        throw new Error("transport exploded");
+      },
+    });
+    const r = await svc.sendOnceToAdmins("t1", "onboarding.welcome", "", build);
+    expect(r).toEqual({ status: "failed", recipients: 0 });
+    expect(del).not.toHaveBeenCalled();
+  });
+});

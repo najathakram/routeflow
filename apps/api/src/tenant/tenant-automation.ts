@@ -190,6 +190,9 @@ export const TENANT_JOBS: Readonly<Record<string, TenantJobSpec>> = {
   "onboarding.refreshAutoChecks": PLATFORM("white-glove onboarding checklist (platform-side)"),
   "onboarding.sendReminders": PLATFORM("white-glove onboarding reminders (platform-side)"),
   "onboarding.purgeIntakeFiles": PLATFORM("white-glove onboarding intake file retention"),
+  "onboarding.signupJourney": PLATFORM(
+    "signup welcome email (platform-side): claims once per business, writes no tenant data",
+  ),
 };
 
 /** The spec's shape: `{ [jobName]: class }`, derived from `TENANT_JOBS` so the two cannot disagree. */

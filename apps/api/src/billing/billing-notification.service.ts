@@ -198,6 +198,20 @@ export class BillingNotificationService {
     }
   }
 
+  /** The public door onto `sendIfClaimed` for a sender outside this file: one claim, then one mail per account admin. */
+  sendOnceToAdmins(
+    tenantId: string,
+    milestone: string,
+    key: string,
+    build: (
+      admin: AdminContact,
+      businessName: string,
+      dateFor: (d: Date) => string,
+    ) => BillingEmailTemplate,
+  ): Promise<RfInvoiceDeliveryResult> {
+    return this.sendIfClaimed(tenantId, milestone, key, build);
+  }
+
   /**
    * RouteFlow's own invoice to a manual-pay tenant's admins (manual invoices due). `manual` is a
    * super-admin resend: no claim, the caller's cooldown is the guard. Every other kind is claim-keyed

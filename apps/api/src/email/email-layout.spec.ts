@@ -483,3 +483,42 @@ describe("the layout guard in EmailService (never RouteFlow's name on a tenant's
     jest.restoreAllMocks();
   });
 });
+
+describe("footerLink: an optional real link in the footer (T13)", () => {
+  const STOP = "https://app.test/email-stop#t=abc.def";
+  const link = { label: "Stop these setup emails", url: STOP };
+
+  it("renders an anchor with the exact href in the footer, and `label: url` in the text part", () => {
+    const { html, text } = layout({ footerLink: link });
+    expect(html).toContain(`<a href="${STOP}"`);
+    expect(html).toContain(">Stop these setup emails</a>");
+    expect(text).toContain(`Stop these setup emails: ${STOP}`);
+    // in the footer band, after the reason line, not in the body
+    expect(html.indexOf(STOP)).toBeGreaterThan(html.indexOf("this address signed up"));
+    expect(text.indexOf("Stop these setup emails")).toBeGreaterThan(text.indexOf("--\n"));
+  });
+
+  it("without the part, no anchor is added and the output is what it was", () => {
+    const plain = layout({ cta: undefined });
+    expect(plain.html).not.toContain("Stop these setup emails");
+    expect(plain.text).not.toContain("Stop these setup emails");
+    expect(layout({ cta: undefined, footerLink: undefined })).toEqual(plain);
+  });
+
+  it("a non-http link renders no anchor (the label stays out of an href)", () => {
+    const { html } = layout({ footerLink: { label: "Stop", url: "javascript:alert(1)" } });
+    expect(html).not.toContain("javascript:");
+  });
+
+  it("routeflowFragmentMail passes the part through", () => {
+    const m = routeflowFragmentMail({
+      subject: "S",
+      heading: "H",
+      bodyHtml: "<p>Body</p>",
+      why: "Because.",
+      footerLink: link,
+    });
+    expect(m.html).toContain(`<a href="${STOP}"`);
+    expect(m.text).toContain(`Stop these setup emails: ${STOP}`);
+  });
+});

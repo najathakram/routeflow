@@ -32,6 +32,7 @@ const FILES: Record<string, Role> = {
   "email/owner-alert.service.ts": "layout",
   "onboarding/onboarding-intake.service.ts": "layout",
   "onboarding/onboarding-lifecycle.service.ts": "layout",
+  "onboarding/signup-journey.templates.ts": "layout",
   "platform-admin/platform-admin.service.ts": "layout",
   "tenants/tenants.service.ts": "layout",
   // Built on the layout: a tenant's own mail (its look)

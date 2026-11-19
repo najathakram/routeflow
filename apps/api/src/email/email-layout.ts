@@ -202,6 +202,14 @@ ${preheader}
 const footerLine = (text: string) =>
   `<p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:18px;color:${BRAND_STEEL};text-align:center;">${escapeHtml(text)}</p>`;
 
+/** The optional footer link: a real anchor under the reason line; nothing when absent or not http(s). */
+function footerLinkHtml(link: { label: string; url: string } | undefined): string {
+  if (!link) return "";
+  const href = safeLinkHref(link.url, "footerLinkHtml");
+  if (!href) return "";
+  return `<p style="margin:8px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:18px;color:${BRAND_STEEL};text-align:center;"><a href="${escapeHtml(href)}" style="color:${BRAND_STEEL};">${escapeHtml(link.label)}</a></p>`;
+}
+
 /** What a look contributes to the shell: header row, bar and button colours, the "Sent with" line. */
 function lookParts(look: EmailLook): {
   headerHtml: string;
@@ -277,6 +285,11 @@ export function renderEmailLayout(params: {
   cta?: { label: string; url: string };
   /** Why this person got the email, said in the footer. */
   footerNote: string;
+  /**
+   * An optional second footer line that is a real link ("Stop these setup emails"). The visible text is the
+   * label, never the URL; the text part carries `label: url`. A non-http(s) URL renders no anchor.
+   */
+  footerLink?: { label: string; url: string };
 }): { html: string; text: string } {
   const { look } = params;
   const { headerHtml, barBg, buttonColor, sentWith } = lookParts(look);
@@ -289,11 +302,14 @@ export function renderEmailLayout(params: {
     heading: params.heading,
     preheader: params.preheader,
     bodyHtml: `${params.bodyHtml}${cta}`,
-    footerHtml: `${footerLine(params.footerNote)}${sentWith}`,
+    footerHtml: `${footerLine(params.footerNote)}${footerLinkHtml(params.footerLink)}${sentWith}`,
   });
   const textParts = [params.heading, ...params.bodyText];
   if (params.cta) textParts.push(`${params.cta.label}: ${params.cta.url}`);
-  const text = `${textParts.join("\n\n")}\n\n--\n${params.footerNote}${look.kind === "tenant" ? "\nSent with RouteFlow" : ""}`;
+  const linkText = params.footerLink
+    ? `\n${params.footerLink.label}: ${params.footerLink.url}`
+    : "";
+  const text = `${textParts.join("\n\n")}\n\n--\n${params.footerNote}${linkText}${look.kind === "tenant" ? "\nSent with RouteFlow" : ""}`;
   return { html, text };
 }
 

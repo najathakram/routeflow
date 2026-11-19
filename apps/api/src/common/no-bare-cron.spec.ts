@@ -51,6 +51,7 @@ const EXPECTED_NAMES = [
   "onboarding.refreshAutoChecks",
   "onboarding.sendReminders",
   "onboarding.purgeIntakeFiles",
+  "onboarding.signupJourney",
   "mailbox-alert.sweepPending",
   "email.pruneDeliveries",
   "counter.parkSweep",
@@ -153,7 +154,8 @@ describe("no bare @Cron in apps/api/src (T2, R2)", () => {
     // billing.dunningDiscovery (SA-733r M2), 31 -> 35.
     // SA-788 (b) added billing.addonInvariants (the daily add-on invariant), 35 -> 36.
     // R25 added billing.warnBillablePilotsEnding (owner email 7 days before a billable free period ends), 36 -> 37.
-    expect(declared).toBe(37);
+    // Welcome emails PR-1 added onboarding.signupJourney (the welcome tick, dark: it passes a closed gate), 37 -> 38.
+    expect(declared).toBe(38);
     // A site that does not match the full `(expr, "name")` shape would be invisible to the name
     // assertions below, so pin the two counts together.
     expect(wellFormed).toBe(declared);

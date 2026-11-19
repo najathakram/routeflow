@@ -9,7 +9,7 @@ import { emailParagraph, htmlToPlainText, renderEmailLayout } from "./email-layo
 export type BuiltEmail = { subject: string; html: string; text: string };
 
 /** "Save this for later" line: where to sign in and which Workspace ID to type. */
-function signIn(webUrl: string, workspaceId: string) {
+export function signIn(webUrl: string, workspaceId: string) {
   const loginUrl = `${webUrl.replace(/\/$/, "")}/login`;
   return {
     html: emailParagraph(
@@ -163,6 +163,8 @@ export function routeflowFragmentMail(p: {
   bodyHtml: string;
   cta?: { label: string; url: string };
   why: string;
+  /** A real link in the footer (see `renderEmailLayout`). */
+  footerLink?: { label: string; url: string };
 }): BuiltEmail {
   const { html, text } = renderEmailLayout({
     look: { kind: "routeflow" },
@@ -172,6 +174,7 @@ export function routeflowFragmentMail(p: {
     bodyText: [htmlToPlainText(p.bodyHtml)],
     cta: p.cta,
     footerNote: p.why,
+    footerLink: p.footerLink,
   });
   return { subject: p.subject, html, text };
 }
