@@ -3,9 +3,9 @@
  */
 // A raw backspace byte (0x08) typed where a regex word boundary (backslash + b) was meant makes the
 // pattern match a literal backspace, so the check silently never fires. This pin fails when any
-// tracked TEXT file under the marketing roots holds a control byte 0x00-0x08 (tab, LF, CR and the
-// other 0x09-0x0D bytes are normal text). Binary assets (png, woff2, ...) legitimately hold such
-// bytes and are skipped by the explicit text-extension list below. Only git-tracked files are
+// tracked TEXT file under the marketing roots holds a control byte 0x00-0x08, 0x0B, 0x0C or
+// 0x0E-0x1F (tab, LF and CR are normal text). Binary assets (png, woff2, ...) legitimately hold
+// such bytes and are skipped by the explicit text-extension list below. Only git-tracked files are
 // scanned (files deleted in the working tree are skipped).
 import * as fs from "fs";
 import * as path from "path";
@@ -35,14 +35,15 @@ export interface ControlByteHit {
   byte: number;
 }
 
-/** Every byte 0x00-0x08 in the buffer, with its 0-based offset and 1-based line. */
+/** Every control byte but tab, LF and CR in the buffer, with its 0-based offset and 1-based line */
 export function findControlBytes(buf: Buffer): ControlByteHit[] {
   const hits: ControlByteHit[] = [];
   let line = 1;
   for (let i = 0; i < buf.length; i++) {
     const b = buf[i];
-    if (b <= 0x08) hits.push({ offset: i, line, byte: b });
-    else if (b === 0x0a) line++;
+    if (b <= 0x1f && b !== 0x09 && b !== 0x0a && b !== 0x0d)
+      hits.push({ offset: i, line, byte: b });
+    if (b === 0x0a) line++;
   }
   return hits;
 }
@@ -58,9 +59,12 @@ const trackedTextFiles = (root: string): string[] =>
     .filter((f) => f && TEXT_EXT.has(path.extname(f).toLowerCase()))
     .filter((f) => fs.existsSync(path.join(REPO, f)));
 
+export const hitLabel = (h: ControlByteHit) =>
+  `byte 0x${h.byte.toString(16).padStart(2, "0")} at offset ${h.offset} (line ${h.line})`;
+
 const describeHits = (file: string) =>
   findControlBytes(fs.readFileSync(path.join(REPO, file)))
-    .map((h) => `${file}: byte 0x0${h.byte} at offset ${h.offset} (line ${h.line})`)
+    .map((h) => `${file}: ${hitLabel(h)}`)
     .join("\n");
 
 describe("no control bytes in the marketing text files", () => {
@@ -70,7 +74,7 @@ describe("no control bytes in the marketing text files", () => {
     expect(files.length).toBeGreaterThan(0);
   });
 
-  it("no tracked text file holds a control byte 0x00-0x08 (a raw 0x08 is a broken word boundary)", () => {
+  it("no tracked text file holds a control byte (a raw 0x08 is a broken word boundary)", () => {
     const offenders = byRoot
       .flatMap(({ files }) => files)
       .filter((f) => !PENDING_ON_MASTER.includes(f))
@@ -85,12 +89,20 @@ describe("no control bytes in the marketing text files", () => {
     }
   });
 
-  it("the detector flags 0x00-0x08 and ignores tab, LF, CR and plain text", () => {
-    const hits = findControlBytes(Buffer.from("a\nb\u0008c\u0000d", "latin1"));
-    expect(hits).toEqual([
-      { offset: 3, line: 2, byte: 8 },
-      { offset: 5, line: 2, byte: 0 },
+  it("the detector flags 0x00-0x08, 0x0B, 0x0C, 0x0E-0x1F; tab, LF, CR and text pass", () => {
+    const buf = Buffer.from("a\nb\u0008c\u0000d\u000be\u000cf\u000eg\u001fh", "latin1");
+    expect(findControlBytes(buf)).toEqual([
+      { offset: 3, line: 2, byte: 0x08 },
+      { offset: 5, line: 2, byte: 0x00 },
+      { offset: 7, line: 2, byte: 0x0b },
+      { offset: 9, line: 2, byte: 0x0c },
+      { offset: 11, line: 2, byte: 0x0e },
+      { offset: 13, line: 2, byte: 0x1f },
     ]);
-    expect(findControlBytes(Buffer.from("a\tb\r\nc\u000b\u000c plain text", "latin1"))).toEqual([]);
+    expect(findControlBytes(Buffer.from("a\tb\r\nc plain text", "latin1"))).toEqual([]);
+  });
+
+  it("a hit names its byte in two-digit hex", () => {
+    expect(hitLabel({ offset: 7, line: 2, byte: 0x0b })).toBe("byte 0x0b at offset 7 (line 2)");
   });
 });

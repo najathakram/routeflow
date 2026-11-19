@@ -13,6 +13,7 @@ const SRC = join(__dirname, "..");
 /** B1's and B1b's source files, relative to `apps/api/src`. */
 const FILES = [
   "common/brand.ts",
+  "common/brand-host.ts",
   "email/email-layout.ts",
   "email/routeflow-mail.ts",
   "email/email.service.ts",

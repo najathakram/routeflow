@@ -1,4 +1,5 @@
 B1b before/after render comparison (before = tree at ed056134b^, after = tree at HEAD bb0c76219)
+Re-recorded 2026-11-19: the after side at 8cb10501ba, run twice, is byte-identical to b1b-after.json.
 Method: the same render harness (apps/api/src/testing/render-platform-mail.ts, plus a #meta capture
 of every field of a sent mail that is not subject/html/text: to, from, layout, headers; the meta
 capture is a scratch-only patch and is not in the repo harness) ran under Jest against a git export
