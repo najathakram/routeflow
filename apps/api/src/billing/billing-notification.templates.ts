@@ -2,7 +2,12 @@ import { fromCents, roundMoney } from "@routeflow/pricing";
 import { escapeHtml, safeLinkHref } from "../common/html-escape";
 import { webBaseUrl } from "../config/web-base-url";
 import { API_BILLING_PORTAL_RETURN_PATH, billingReturnUrl } from "./billing-return-paths";
-import { brandHeaderHtml, renderBrandButton, renderBrandedEmail } from "../email/email-layout";
+import {
+  brandHeaderHtml,
+  htmlToPlainText,
+  renderBrandButton,
+  renderBrandedEmail,
+} from "../email/email-layout";
 export { escapeHtml };
 // N3 (2026-09-16): billing-lifecycle email templates to the tenant admin — trial ending,
 // downgrade scheduled/applied, upgrade confirmed, cancelled, suspended.
@@ -88,7 +93,7 @@ export function trialEndingTemplate(params: {
       ${ctaButtonHtml(upgradeUrl, "Choose a plan")}
     `,
   });
-  const text = `Hi ${params.adminName},\n\n${headline}.\n${bodyLine.replace(/<[^>]+>/g, "")}\n\nChoose a plan: ${upgradeUrl}`;
+  const text = `Hi ${params.adminName},\n\n${headline}.\n${htmlToPlainText(bodyLine)}\n\nChoose a plan: ${upgradeUrl}`;
   return { subject: `${headline} — ${params.businessName}`, html, text };
 }
 

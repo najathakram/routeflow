@@ -2625,3 +2625,44 @@ describe("EmailService.sendInvoice - Amount Paid / Balance Due switches (R6a, T1
     expect(flagged.html).toContain("Balance Due");
   });
 });
+
+// B460 (SA-1167 R2): the subject is made header-safe at the send seam, once, for every template. The seam
+// is two entries: the public send() (tenant mail) and sendPlatform() (the billing and account mail).
+describe("EmailService — one-line subject at the send seam (B460)", () => {
+  const HOSTILE = "Trial ended — Acme & Co\r\nBcc: x@acme.test";
+  const SAFE = "Trial ended — Acme & Co Bcc: x@acme.test";
+
+  it("sendPlatform hands the transport a one-line subject", async () => {
+    const sendMail = jest.fn().mockResolvedValue({ messageId: "m1" });
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({ smtpHost: "smtp.example.com", smtpUser: "u", smtpPass: "p" });
+    const res = await svc.sendPlatform({ to: "a@acme.test", subject: HOSTILE, html: "<p>x</p>" });
+    expect(res.delivered).toBe(true);
+    expect(sendMail).toHaveBeenCalledTimes(1);
+    expect(sendMail.mock.calls[0][0].subject).toBe(SAFE);
+  });
+
+  it("send() passes a one-line subject down the transport chain", async () => {
+    const svc = makeService();
+    const chain = jest
+      .spyOn(svc as any, "sendUnrecorded")
+      .mockResolvedValue({ delivered: true, transport: "smtp" });
+    await svc.send({ to: "a@acme.test", subject: HOSTILE, html: "<p>x</p>" });
+    expect(chain).toHaveBeenCalledTimes(1);
+    expect((chain.mock.calls[0][0] as any).subject).toBe(SAFE);
+  });
+
+  it("a recorded send (delivery context) gets the same one-line subject", async () => {
+    const svc = makeService();
+    const chain = jest
+      .spyOn(svc as any, "sendUnrecorded")
+      .mockResolvedValue({ delivered: true, transport: "smtp" });
+    await svc.send({
+      to: "a@acme.test",
+      subject: HOSTILE,
+      html: "<p>x</p>",
+      delivery: { tenantId: "t1", kind: "INVOICE", entityType: "Invoice", entityId: "i1" } as any,
+    });
+    expect((chain.mock.calls[0][0] as any).subject).toBe(SAFE);
+  });
+});
