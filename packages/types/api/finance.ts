@@ -181,7 +181,8 @@ export interface RecurringInvoice {
   /**
    * F13/#612: failure text of the last run. A value starting with
    * `RUN_UNFINALIZED_PREFIX` (see `apps/web/lib/api/invoices.ts`) means the invoice WAS
-   * created and only the run bookkeeping failed — never offer that as a retry.
+   * created and only the run bookkeeping failed — never offer that as a retry. B1251: the same holds for a value
+   * starting with `RUN_SEND_FAILED_PREFIX` (the invoice exists as a draft; only its auto-send email failed).
    */
   lastError?: string | null;
   items: RecurringInvoiceItem[];

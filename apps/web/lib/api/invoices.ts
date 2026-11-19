@@ -914,9 +914,19 @@ export function usePaymentDetail(id: string) {
  */
 export const RUN_UNFINALIZED_PREFIX = "The invoice was created but the run could not be finalized";
 
+/**
+ * B1251: mirrors `RUN_SEND_FAILED_ERROR` in the same API file. The invoice WAS created (a DRAFT) and only its
+ * auto-send email failed: the cycle is billed, so this is not a retry either; the operator sends the draft.
+ */
+export const RUN_SEND_FAILED_PREFIX = "The invoice was created but could not be emailed";
+
 /** True when a FAILED cycle produced no invoice, so "Run Now" is a safe retry. */
 export function isRetryableRunFailure(lastError?: string | null): boolean {
-  return !!lastError && !lastError.startsWith(RUN_UNFINALIZED_PREFIX);
+  return (
+    !!lastError &&
+    !lastError.startsWith(RUN_UNFINALIZED_PREFIX) &&
+    !lastError.startsWith(RUN_SEND_FAILED_PREFIX)
+  );
 }
 
 export function useRecurringInvoices(customerId?: string) {

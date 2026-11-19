@@ -42,6 +42,12 @@ export const RUN_INTERRUPTED_ERROR = "Generation was interrupted before the invo
  * the schedule is never given back and operator surfaces must not offer a re-run — the web
  * card keys its "use Run Now to retry" hint off this exact text.
  */
+/**
+ * B1251: prefix of the lastError recorded when the invoice WAS created (and linked) but the auto-send email failed, so
+ * it stays a DRAFT. Like RUN_UNFINALIZED_ERROR the cycle is ALREADY BILLED: the schedule is never given back and the
+ * screens must not offer a re-run; the operator opens the invoice and sends it.
+ */
+export const RUN_SEND_FAILED_ERROR = "The invoice was created but could not be emailed";
 export const RUN_UNFINALIZED_ERROR = "The invoice was created but the run could not be finalized";
 
 @Injectable()
@@ -618,6 +624,7 @@ export class RecurringInvoicesService {
     // email going out — despite the "Auto-send generated invoices to customer" setting.
     // Failures (no email on file, email not configured, send error) are logged and leave
     // the invoice as a DRAFT for the operator to send manually — never a dishonest SENT.
+    let sendFailure: string | null = null;
     if (ri.autoSend) {
       try {
         await this.invoicesService.sendEmail(invoice.id);
@@ -626,6 +633,7 @@ export class RecurringInvoicesService {
         this.logger.warn(
           `Recurring invoice ${invoice.id} generated but auto-send email failed (${reason}) — left as DRAFT.`,
         );
+        sendFailure = String(reason); // B1251: the run is recorded as FAILED below, never SUCCESS
       }
     }
 
@@ -638,9 +646,20 @@ export class RecurringInvoicesService {
 
       // REG-B106: only now — invoice created and linked — is the cycle a success. Never
       // carries nextRunAt (the claim above is the single schedule write on this path).
+      // B1251: unless the auto-send email failed — the invoice is then a DRAFT nobody was told about, so the run is
+      // FAILED with the not-emailed text (still billed: no retry offered, no schedule change).
       await this.prisma.forTenant().recurringInvoice.update({
         where: { id: ri.id },
-        data: { lastRunStatus: RUN_STATUS_SUCCESS, lastError: null },
+        data:
+          sendFailure === null
+            ? { lastRunStatus: RUN_STATUS_SUCCESS, lastError: null }
+            : {
+                lastRunStatus: RUN_STATUS_FAILED,
+                lastError: `${RUN_SEND_FAILED_ERROR} (invoice ${invoice.id}): ${sendFailure}`.slice(
+                  0,
+                  500,
+                ),
+              },
       });
     } catch (err) {
       // REG-B106: the invoice EXISTS here — committed, and already emailed when autoSend is
