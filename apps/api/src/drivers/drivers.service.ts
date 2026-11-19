@@ -40,10 +40,18 @@ export interface DriverRowProfile {
  * A spec pins that no other file calls driver.create / driver.upsert.
  */
 export async function ensureDriverRow(
-  tx: { driver: { upsert: (args: any) => Promise<any> } },
+  tx: {
+    driver: { upsert: (args: any) => Promise<any> };
+    customer: { findFirst: (args: any) => Promise<any> };
+  },
   user: { id: string; username: string; tenantId?: string | null },
   profile: DriverRowProfile = {},
 ) {
+  // A buyer's login (a Customer row points at it) never drives: a Driver row would block that customer's delete or merge on
+  // Driver_userId_fkey. Judged on the link, not the role, so CUSTOMER -> OPERATOR -> DRIVER and the driver permit cannot get round it.
+  // It throws inside the caller's transaction, so the user write rolls back with it.
+  const buyer = await tx.customer.findFirst({ where: { userId: user.id }, select: { id: true } });
+  if (buyer) throw new BadRequestException("A customer login cannot be made a driver.");
   return tx.driver.upsert({
     // the unique userId plus the tenant (K-10: a tx upsert is keyed on the tenant id; a user belongs to one tenant)
     where: { userId: user.id, tenantId: user.tenantId ?? null },

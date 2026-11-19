@@ -13,6 +13,7 @@ import { UserRole } from "@prisma/client";
 import { readdirSync, readFileSync, statSync } from "fs";
 import { join } from "path";
 import { API_ERROR_CODES } from "@routeflow/types";
+import { ensureDriverRow } from "../drivers/drivers.service";
 import { UsersService } from "./users.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
@@ -183,5 +184,29 @@ describe("B862 inventory pin (K1, K5e)", () => {
     const src = readFileSync(join(SRC, "drivers", "drivers.service.ts"), "utf8");
     expect(DRIVER_WRITE.test(src)).toBe(true);
     expect(DRIVER_WRITE.test(withoutWriter(src))).toBe(false);
+  });
+});
+
+describe("ensureDriverRow refuses a buyer's login (B862)", () => {
+  const user = { id: "u-buyer", username: "pat", tenantId: "t1" };
+
+  it("a user that a Customer row points at gets no Driver row", async () => {
+    const tx = {
+      driver: { upsert: jest.fn() },
+      customer: { findFirst: jest.fn().mockResolvedValue({ id: "c1" }) },
+    };
+    await expect(ensureDriverRow(tx as never, user)).rejects.toMatchObject({ status: 400 });
+    expect(tx.customer.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: "u-buyer" } }),
+    );
+    expect(tx.driver.upsert).not.toHaveBeenCalled();
+  });
+
+  it("a user with no Customer row still gets its row", async () => {
+    const tx = {
+      driver: { upsert: jest.fn().mockResolvedValue({ id: "d1" }) },
+      customer: { findFirst: jest.fn().mockResolvedValue(null) },
+    };
+    await expect(ensureDriverRow(tx as never, user)).resolves.toEqual({ id: "d1" });
   });
 });

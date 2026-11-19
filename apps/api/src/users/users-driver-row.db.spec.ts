@@ -63,6 +63,7 @@ describeDb("users: the Driver row follows the role (B862, SA-1171)", () => {
       await prisma.routeRun.deleteMany({ where: { tenantId } });
       await prisma.route.deleteMany({ where: { tenantId } }); // the 409 case makes a route
       await prisma.driver.deleteMany({ where: { tenantId } });
+      await prisma.customer.deleteMany({ where: { tenantId } });
       await prisma.passwordResetToken.deleteMany({ where: { user: { tenantId } } });
       await prisma.user.deleteMany({ where: { tenantId } });
       await prisma.tenant.delete({ where: { id: tenantId } });
@@ -118,6 +119,38 @@ describeDb("users: the Driver row follows the role (B862, SA-1171)", () => {
     expect((await prisma.user.findUniqueOrThrow({ where: { id: u.id } })).role).toBe(
       UserRole.CUSTOMER,
     );
+    expect(await rows(u.id)).toHaveLength(0);
+  });
+
+  /** A buyer's login: a CUSTOMER user with its Customer row, moved to OPERATOR (legal, SA-1050 A5-2). */
+  const mkBuyerNowOperator = async () => {
+    const u = await mkUser(UserRole.CUSTOMER);
+    await prisma.customer.create({
+      data: {
+        tenantId,
+        userId: u.id,
+        businessName: `Acme buyer ${u.username}`,
+        contactName: "Pat",
+      },
+    });
+    await update(u.id, { role: UserRole.OPERATOR });
+    return u;
+  };
+
+  it("(f) a buyer's login moved to OPERATOR, then to DRIVER: 400, no Driver row, role stays OPERATOR", async () => {
+    const u = await mkBuyerNowOperator();
+    await expect(update(u.id, { role: UserRole.DRIVER })).rejects.toMatchObject({ status: 400 });
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: u.id } })).role).toBe(
+      UserRole.OPERATOR,
+    );
+    expect(await rows(u.id)).toHaveLength(0);
+  });
+
+  it("(g) the same login with the driver permit enabled: 400 and no Driver row", async () => {
+    const u = await mkBuyerNowOperator();
+    await expect(
+      ctx.run(tenantId, () => users.toggleDriverPermit(u.id, UserRole.TENANT_ADMIN)),
+    ).rejects.toMatchObject({ status: 400 });
     expect(await rows(u.id)).toHaveLength(0);
   });
 
