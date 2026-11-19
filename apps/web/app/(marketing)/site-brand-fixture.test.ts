@@ -142,14 +142,17 @@ describe("the home page: reversed symbol and official name", () => {
     const still = html.match(/<image href="([^"]*)"/g) ?? [];
     expect(still).toHaveLength(1);
     expect(still[0]).toBe(`<image href="${FIXTURE.symbolOnDark}"`);
-    // the light-surface symbol is not drawn on the dark disc (it is used elsewhere, on light bands),
-    // and no typed mark is left
+    // the light-surface symbol is drawn on no dark surface (the hub disc, and the dark closing band
+    // below), and no typed mark is left
     const hub = html.slice(
       html.indexOf('<template id="brand-symbol">'),
       html.indexOf('<h2 class="rfw-title">'),
     );
     expect(hub).toContain(FIXTURE.symbolOnDark);
     expect(hub).not.toContain(FIXTURE.symbol);
+    // the closing band is dark too: its mark is the dark-surface symbol
+    expect(html).toContain(`<img class="end-mark" src="${FIXTURE.symbolOnDark}"`);
+    expect(html).not.toContain(`<img class="end-mark" src="${FIXTURE.symbol}"`);
     expect(html).not.toContain('class="mk"');
   });
 
