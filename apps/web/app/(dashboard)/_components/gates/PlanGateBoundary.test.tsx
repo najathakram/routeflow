@@ -248,7 +248,7 @@ describe("PlanGateBoundary (B449)", () => {
       expect(screen.getByText("Supplier bills isn't on the Lite plan.")).toBeInTheDocument();
     });
 
-    it("SA-1087 IN-3: a product insights page shows the lock /analytics shows, naming Analytics", () => {
+    it("SA-1087 as amended (UXG-R8 C1): a product insights page shows the analytics lock, naming Product insights", () => {
       render(
         <PlanGateBoundary
           planGateKey="flag.analytics"
@@ -260,8 +260,8 @@ describe("PlanGateBoundary (B449)", () => {
           <GatedPage onMount={jest.fn()} />
         </PlanGateBoundary>,
       );
-      expect(mockSetTitle).toHaveBeenCalledWith("Analytics");
-      expect(screen.getByText("Analytics isn't on the Lite plan.")).toBeInTheDocument();
+      expect(mockSetTitle).toHaveBeenCalledWith("Product insights");
+      expect(screen.getByText("Product insights isn't on the Lite plan.")).toBeInTheDocument();
       expect(screen.queryByTestId("gated-page-content")).not.toBeInTheDocument();
     });
 

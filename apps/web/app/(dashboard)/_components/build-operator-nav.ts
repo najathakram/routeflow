@@ -1,7 +1,14 @@
 import { BadgePercent, Handshake, MapPin, ShieldCheck, Store, Truck } from "lucide-react";
 import { driverNavItemVisible } from "@/lib/portal-routing";
 import { matchPlanGatedRoute, modeGatedVisible, planFlagVisible } from "@/lib/plan-gated-nav";
-import { CUSTOMER_NAV, DRIVER_NAV, OPERATOR_NAV, type NavEntry, type NavLeaf } from "./nav-config";
+import {
+  CUSTOMER_NAV,
+  DRIVER_NAV,
+  INSIGHTS_LEAF,
+  OPERATOR_NAV,
+  type NavEntry,
+  type NavLeaf,
+} from "./nav-config";
 
 /**
  * Everything the sidebar needs to decide which entries exist. The dashboard layout reads these
@@ -18,6 +25,8 @@ export type OperatorNavContext = {
   counterEnabled: boolean;
   regulatedLoading: boolean;
   regulatedSections: ReadonlyArray<{ id: string; name: string }> | undefined;
+  /** useInsightsAccess(): may this viewer open Product insights? (the same predicate as every other entry to it) */
+  insightsAccess: boolean;
   plan: { flags: readonly string[] | undefined; resolved: boolean; failed: boolean };
   modes?: Readonly<Record<string, string>>;
 };
@@ -134,6 +143,16 @@ function filterPlanGatedNav(
   }, []);
 }
 
+/** Product insights is added, never removed: only a viewer who may use it gets the leaf (last child of Reports & analytics). */
+function withInsights(entries: NavEntry[], insightsAccess: boolean): NavEntry[] {
+  if (!insightsAccess) return entries;
+  return entries.map((entry): NavEntry =>
+    entry.kind === "group" && entry.label === "Reports & analytics"
+      ? { ...entry, children: [...entry.children, INSIGHTS_LEAF] }
+      : entry,
+  );
+}
+
 export function buildOperatorNav(ctx: OperatorNavContext): NavEntry[] {
   const { role, counterEnabled, addonsLoading, hasSalesAgents, regulatedLoading } = ctx;
   const isStaff = role !== "CUSTOMER" && role !== "DRIVER";
@@ -234,7 +253,7 @@ export function buildOperatorNav(ctx: OperatorNavContext): NavEntry[] {
   // Lite-L2 (WP8/R4.3): hide gated leaves before the Reports & analytics-relative inject index
   // is computed, so Regulated Items still lands in the right spot even when that group is hidden
   // (reports and analytics are both in PLAN_GATED_NAV).
-  base = filterPlanGatedNav(base, ctx.plan, ctx.modes);
+  base = filterPlanGatedNav(withInsights(base, ctx.insightsAccess), ctx.plan, ctx.modes);
 
   if (inject.length === 0) return base;
 

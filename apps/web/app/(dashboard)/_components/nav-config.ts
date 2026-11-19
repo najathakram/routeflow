@@ -16,6 +16,7 @@ import {
   Package,
   Receipt,
   RotateCcw,
+  ScanSearch,
   Settings,
   ShoppingCart,
   Truck,
@@ -107,7 +108,9 @@ export const OPERATOR_NAV: NavEntry[] = [
     ],
   },
   // Reports and Analytics (app-wide: Revenue, Products & Inventory, Customers, Operations) share one
-  // group (UX guide improvement 3); Analytics keeps the one sidebar entry for product insights (SA-1087).
+  // group (UX guide improvement 3). Product insights (SA-1087, as amended by UXG-R8) is NOT here: it is
+  // INSIGHTS_LEAF below, which buildOperatorNav appends only when the viewer may use it, so the default menu
+  // never offers it by accident.
   {
     kind: "group",
     label: "Reports & analytics",
@@ -119,6 +122,14 @@ export const OPERATOR_NAV: NavEntry[] = [
   },
   { kind: "leaf", label: "Settings", href: "/settings", icon: Settings },
 ];
+
+/** The Product insights entry: the last child of Reports & analytics, added by buildOperatorNav when insightsAccess is true. */
+export const INSIGHTS_LEAF: NavLeaf = {
+  kind: "leaf",
+  label: "Product insights",
+  href: "/insights",
+  icon: ScanSearch,
+};
 
 /** Customer nav — orders, invoices, returns and their own account only */
 export const CUSTOMER_NAV: NavEntry[] = [
@@ -164,7 +175,5 @@ export function defaultOpenGroup(nav: NavEntry[], pathname: string): string | nu
 /** The sidebar label for the operator route `pathname` sits under (the one active-entry rule, see nav-index), so
  *  a lock card can name the feature the person actually clicked. */
 export function navLabelForPath(rawPathname: string): string | null {
-  // SA-1087: the product insights pages are part of Analytics, which has the one sidebar entry.
-  const path = /^\/insights(\/|$)/.test(rawPathname) ? "/analytics" : rawPathname;
-  return activeNavLeaf(OPERATOR_NAV, path)?.label ?? null;
+  return activeNavLeaf([...OPERATOR_NAV, INSIGHTS_LEAF], rawPathname)?.label ?? null;
 }

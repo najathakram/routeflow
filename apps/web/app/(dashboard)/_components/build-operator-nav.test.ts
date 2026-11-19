@@ -19,6 +19,7 @@ import {
   PackageCheck,
   Receipt,
   RotateCcw,
+  ScanSearch,
   Settings,
   ShieldCheck,
   ShoppingCart,
@@ -39,6 +40,7 @@ const ctx = (over: Partial<OperatorNavContext> = {}): OperatorNavContext => ({
   counterEnabled: false,
   regulatedLoading: false,
   regulatedSections: [],
+  insightsAccess: false,
   // undefined flags = nothing gated off (full plan); [] = a LITE plan with no flags.
   plan: { flags: undefined, resolved: true, failed: false },
   modes: undefined,
@@ -396,5 +398,45 @@ describe("buildOperatorNav: Shipments waits for the add-ons answer (recorded beh
     expect(holders(buildOperatorNav(ctx({ routesAccess: false, deliveryAccess: false })))).toEqual([
       "Orders",
     ]);
+  });
+});
+
+describe("Product insights in Reports & analytics (UXG-R8 T11, SA-1087 as amended)", () => {
+  const reports = (nav: NavEntry[]) => {
+    const g = nav.find((e) => e.kind === "group" && e.label === "Reports & analytics");
+    return g && g.kind === "group" ? g.children.map((c) => c.label) : null;
+  };
+
+  it("ends the group when the viewer may use insights and the plan has analytics", () => {
+    const nav = buildOperatorNav(ctx({ insightsAccess: true }));
+    expect(reports(nav)).toEqual(["Reports", "Analytics", "Product insights"]);
+    const leaf = nav
+      .flatMap((e) => (e.kind === "group" ? e.children : []))
+      .find((c) => c.href === "/insights");
+    expect(leaf?.icon).toBe(ScanSearch);
+  });
+
+  it("is absent without insights access (REPORTS denied, super admin, no role)", () => {
+    expect(reports(buildOperatorNav(ctx({ insightsAccess: false })))).toEqual([
+      "Reports",
+      "Analytics",
+    ]);
+  });
+
+  it("is absent when the plan has no analytics, even with access", () => {
+    const nav = buildOperatorNav(
+      ctx({
+        insightsAccess: true,
+        plan: { flags: ["flag.reports"], resolved: true, failed: false },
+      }),
+    );
+    expect(reports(nav)).toEqual(["Reports"]);
+  });
+
+  it("is never in a customer or driver menu", () => {
+    for (const role of ["CUSTOMER", "DRIVER"])
+      expect(hrefs(buildOperatorNav(ctx({ role, insightsAccess: true })))).not.toContain(
+        "/insights",
+      );
   });
 });

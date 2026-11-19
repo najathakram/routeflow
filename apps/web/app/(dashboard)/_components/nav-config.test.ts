@@ -1,4 +1,11 @@
-import { CUSTOMER_NAV, DRIVER_NAV, OPERATOR_NAV, defaultOpenGroup } from "./nav-config";
+import {
+  CUSTOMER_NAV,
+  DRIVER_NAV,
+  OPERATOR_NAV,
+  defaultOpenGroup,
+  navLabelForPath,
+  INSIGHTS_LEAF,
+} from "./nav-config";
 import { PLAN_GATED_NAV, matchPlanGatedRoute } from "@/lib/plan-gated-nav";
 
 const warehouse = () => {
@@ -84,5 +91,23 @@ describe("customer and driver nav: settings entry is My account (REG-B1013)", ()
   });
   it("the operator nav keeps Settings", () => {
     expect(leaf(OPERATOR_NAV)).toMatchObject({ label: "Settings" });
+  });
+});
+
+describe("navLabelForPath (UXG-R8 T12)", () => {
+  it("names Product insights on its own pages, not Analytics (SA-1087 as amended)", () => {
+    expect(navLabelForPath("/insights")).toBe("Product insights");
+    expect(navLabelForPath("/insights/abc")).toBe("Product insights");
+    expect(navLabelForPath("/analytics/products")).toBe("Analytics");
+  });
+});
+
+describe("Product insights is added, never removed (UXG-R8-A2 F2)", () => {
+  it("the default menu holds no /insights leaf: a new reader of OPERATOR_NAV cannot show it by accident", () => {
+    expect(hrefs(OPERATOR_NAV)).not.toContain("/insights");
+  });
+
+  it("INSIGHTS_LEAF is the one leaf buildOperatorNav adds", () => {
+    expect(INSIGHTS_LEAF).toMatchObject({ label: "Product insights", href: "/insights" });
   });
 });
