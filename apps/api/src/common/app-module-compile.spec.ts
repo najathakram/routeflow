@@ -9,7 +9,7 @@
 // dependency anywhere in the tree (not just around `AddonGuard`) fails here instead of in prod.
 //
 // Only genuinely external I/O is stubbed: `PrismaService` (real Postgres via `pg.Pool`) and the
-// "invoices" Bull queue (real Redis via bull's own `ioredis` client, constructed eagerly — see
+// "product-import" Bull queue (real Redis via bull's own `ioredis` client, constructed eagerly — see
 // bull/lib/queue.js's `getRedisVersion(this.client)` call right after construction). Everything
 // else in the graph — including `RedisThrottlerStorage`'s own `new Redis(...)` — resolves
 // against the jest-wide `ioredis` -> `test/__mocks__/ioredis.js` moduleNameMapper (see that

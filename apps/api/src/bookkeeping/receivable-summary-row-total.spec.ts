@@ -18,8 +18,7 @@ jest.mock("@anthropic-ai/sdk", () => ({
 // Mock invoice-pdf.service.ts to avoid loading @react-pdf/renderer (ESM-only)
 jest.mock("../invoices/invoice-pdf.service", () => ({
   InvoicePdfService: jest.fn().mockImplementation(() => ({
-    generateInvoice: jest.fn(),
-    getPresignedUrl: jest.fn(),
+    getOrGenerate: jest.fn(),
   })),
 }));
 
@@ -40,12 +39,12 @@ import { createMockPrisma } from "../testing/prisma-mock";
 describe("BookkeepingService.getReceivableSummary: credit row Total (SA-1163 W-1218)", () => {
   let service: BookkeepingService;
   let prisma: ReturnType<typeof createMockPrisma>;
-  let invoiceService: { getPresignedUrl: jest.Mock };
+  let invoiceService: { getOrGenerate: jest.Mock };
   let recordAiUsage: jest.Mock;
 
   beforeEach(async () => {
     prisma = createMockPrisma();
-    invoiceService = { getPresignedUrl: jest.fn() };
+    invoiceService = { getOrGenerate: jest.fn() };
     recordAiUsage = jest.fn();
     mockAnthropicCreate.mockReset();
 

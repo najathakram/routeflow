@@ -18,8 +18,7 @@ jest.mock("@anthropic-ai/sdk", () => ({
 }));
 jest.mock("../invoices/invoice-pdf.service", () => ({
   InvoicePdfService: jest.fn().mockImplementation(() => ({
-    generateInvoice: jest.fn(),
-    getPresignedUrl: jest.fn(),
+    getOrGenerate: jest.fn(),
   })),
 }));
 jest.mock("../vendor-bills/vendor-bills.service", () => ({
@@ -53,7 +52,7 @@ describe("B331: AR aging counts days past due on the tenant's calendar day", () 
         },
         BookkeepingService,
         { provide: PrismaService, useValue: prisma },
-        { provide: InvoicePdfService, useValue: { getPresignedUrl: jest.fn() } },
+        { provide: InvoicePdfService, useValue: { getOrGenerate: jest.fn() } },
         { provide: StorageService, useValue: {} },
         { provide: VendorBillsService, useValue: {} },
         {

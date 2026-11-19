@@ -5,8 +5,7 @@ import { PlatformConfigService } from "../platform-admin/platform-config.service
 // Mock invoice-pdf.service.ts to avoid loading @react-pdf/renderer (ESM-only)
 jest.mock("../invoices/invoice-pdf.service", () => ({
   InvoicePdfService: jest.fn().mockImplementation(() => ({
-    generateInvoice: jest.fn(),
-    getPresignedUrl: jest.fn(),
+    getOrGenerate: jest.fn(),
   })),
 }));
 
@@ -44,7 +43,7 @@ describe("BookkeepingService.bulkMarkPaid", () => {
         },
         BookkeepingService,
         { provide: PrismaService, useValue: prisma },
-        { provide: InvoicePdfService, useValue: { getPresignedUrl: jest.fn() } },
+        { provide: InvoicePdfService, useValue: { getOrGenerate: jest.fn() } },
         {
           provide: StorageService,
           useValue: {
