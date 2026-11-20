@@ -364,6 +364,50 @@ describe("EmailService — attachments threaded to every transport", () => {
     } as any);
     expect((sendSpy.mock.calls[0][0] as any).subject).toBe("Invoice INV-1");
   });
+
+  // B1372 (SA-1177 K2): a sent invoice an edit turned back into a draft is re-issued as the updated copy, never silently.
+  const changedLine = (n: string) =>
+    `Invoice ${n} changed since we last sent it. This is the updated copy.`;
+  const base = {
+    to: "buyer@example.com",
+    customerName: "Acme Buyer",
+    invoiceNumber: "INV-1",
+    invoiceId: "inv-1",
+    issueDate: "Jan 1, 2026",
+    dueDate: "Jan 31, 2026",
+    total: 100,
+    items: [],
+  };
+
+  it("B1372 K2: the completion email names each invoice that changed since it was last sent (html and text)", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+    await svc.sendInvoice({
+      ...base,
+      completion: { orderNumber: "ORD-7" },
+      changedSinceSent: ["INV-1", "INV-1-R1"],
+    } as any);
+    const sent = sendSpy.mock.calls[0][0] as any;
+    for (const n of ["INV-1", "INV-1-R1"]) {
+      expect(sent.html).toContain(changedLine(n));
+      expect(sent.text).toContain(changedLine(n));
+    }
+  });
+
+  it("B1372 K2: nothing changed since the last send (or a reminder): no changed line", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+    await svc.sendInvoice({ ...base, changedSinceSent: [] } as any);
+    await svc.sendInvoice({ ...base, isReminder: true, changedSinceSent: ["INV-1"] } as any);
+    for (const [sent] of sendSpy.mock.calls as any[]) {
+      expect(sent.html).not.toContain("changed since we last sent it");
+      expect(sent.text).not.toContain("changed since we last sent it");
+    }
+  });
 });
 
 /**

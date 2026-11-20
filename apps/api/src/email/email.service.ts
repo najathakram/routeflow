@@ -1152,6 +1152,11 @@ export class EmailService {
      * same invoice body (lines, paid now, balance). Absent = today's invoice email, unchanged.
      */
     completion?: { orderNumber: string };
+    /**
+     * B1372 (SA-1177 K2): the numbers of the invoices in this email that were emailed before and changed since. Each gets
+     * one line under the intro: "Invoice {n} changed since we last sent it. This is the updated copy." Absent/empty = none.
+     */
+    changedSinceSent?: string[];
     /** I-120: the order's other invoices' PDFs, one attachment each, beside `attachment`. */
     extraAttachments?: { filename: string; content: Buffer; contentType: string }[];
   }) {
@@ -1691,6 +1696,8 @@ export class EmailService {
       isReminder?: boolean;
       /** I-120: the completion email's intro (see sendInvoice's doc). */
       completion?: { orderNumber: string };
+      /** B1372 K2: see sendInvoice's doc; a reminder never passes it. */
+      changedSinceSent?: string[];
       /** Tenant's `invoice.hideOriginalPrice` — see sendInvoice's doc. */
       hideOriginalPrice?: boolean;
       /** Tenant's `invoice.hidePerPiece` — see sendInvoice's doc. */
@@ -1711,6 +1718,12 @@ export class EmailService {
       new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
 
     const showPerPiece = !params.hidePerPiece && params.items.some((i) => !!i.perBaseUnit);
+    // B1372 K2: a sent invoice an edit turned back into a draft is re-issued as the updated copy, never silently
+    const changedLines = params.isReminder
+      ? []
+      : (params.changedSinceSent ?? []).map(
+          (n) => `Invoice ${n} changed since we last sent it. This is the updated copy.`,
+        );
     const itemRows = params.items
       .map((it) => {
         // F03/R9 — mirrors the web invoice detail renderer and the PDF: name the
@@ -1846,6 +1859,7 @@ export class EmailService {
           <p style="margin:0 0 24px;font-size:15px;color:#374151;">
             ${params.completion ? "Your order is complete. Your invoice is attached." : params.isReminder ? "This is a reminder that the following invoice is outstanding." : "Please find your invoice details below."}
           </p>
+          ${changedLines.map((line) => `<p style="margin:0 0 24px;font-size:15px;color:#374151;" data-changed-since-sent>${escapeHtml(line)}</p>`).join("")}
 
           <!-- Invoice meta -->
           <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
@@ -1923,6 +1937,7 @@ export class EmailService {
           ? "This is a reminder that the following invoice is outstanding."
           : "Please find your invoice details below.",
     );
+    bodyText.push(...changedLines);
     bodyText.push(
       [
         `Invoice No. ${params.invoiceNumber}`,
