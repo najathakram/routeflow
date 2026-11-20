@@ -8,13 +8,14 @@
 import * as fs from "fs";
 import * as path from "path";
 import { BRAND } from "@routeflow/types/brand";
-import { STATIC_SITE_PAGE_NAMES } from "@/lib/static-site-page";
+import { STATIC_SITE_PAGE_NAMES, type StaticSitePage } from "@/lib/static-site-page";
 import { readServedSitePage } from "@/lib/read-site-page";
 import { SITE_EMAIL } from "@/components/site-frame/site-frame-nav";
 import { site } from "./lib/site";
 
 const WEB = path.resolve(__dirname, "../..");
-const pageHtml = (page: string): string => readServedSitePage(page, { websiteId: undefined });
+const pageHtml = (page: StaticSitePage): string =>
+  readServedSitePage(page, { websiteId: undefined });
 
 /** The visible text of a page: tags, scripts and styles removed. */
 function visibleText(html: string): string {
@@ -49,6 +50,7 @@ describe("the served pages", () => {
 
   it.each([...STATIC_SITE_PAGE_NAMES])("%s links only the brand mailboxes", (page) => {
     const addresses = [...pageHtml(page).matchAll(/mailto:([^"?\s>]+)/g)].map((m) => m[1]);
+    expect(addresses.length).toBeGreaterThan(0);
     for (const address of addresses) expect([BRAND.email, BRAND.securityEmail]).toContain(address);
   });
 

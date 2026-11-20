@@ -22,14 +22,17 @@ for (const { w, h } of SCREENS) {
     await page.goto("/pricing", { waitUntil: "load" });
     await page.evaluate(() => document.fonts.ready);
 
-    const cards = await page.evaluate(() =>
-      [...document.querySelectorAll(".pgrid .pcard")].map((card) => {
+    const all = await page.evaluate(() =>
+      [...document.querySelectorAll(".pgrid--4 .pcard")].map((card) => {
         const btn = card.querySelector(".pbtn");
         const pfor = card.querySelector(".pfor");
         const list = card.querySelector(".checks");
+        const box = card.getBoundingClientRect();
+        const shown = getComputedStyle(card).display !== "none" && box.width > 0 && box.height > 0;
         const top = (el: Element | null) =>
           el ? Math.round(el.getBoundingClientRect().top * 100) / 100 : null;
         return {
+          shown,
           cardTop: top(card),
           btnTop: top(btn),
           forTop: top(pfor),
@@ -37,8 +40,16 @@ for (const { w, h } of SCREENS) {
         };
       }),
     );
+    if (all.length === 0) throw new Error("no plan cards found on /pricing");
+    const cards = all.filter((c) => c.shown);
 
-    if (cards.length === 0) throw new Error("no plan cards found on /pricing");
+    if (w < 900) {
+      // Phones read the plan table instead of the four cards, so there is nothing to measure here.
+      expect(cards, "no plan card is shown on a phone").toHaveLength(0);
+      await expect(page.locator(".pl-wrap")).toBeVisible();
+      return;
+    }
+    expect(cards.length, "the four plan cards are shown").toBeGreaterThanOrEqual(4);
     const problems: string[] = [];
     const rows = new Map<number, number[]>();
     cards.forEach((c, i) => {

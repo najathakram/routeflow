@@ -61,8 +61,14 @@ describe("sync-site-port tokenise", () => {
     const old = b.formerly;
     const allowed = [`${old}Shell`, `${old.toLowerCase()}-v4`, `/brand/${old.toLowerCase()}-mark`];
     expect(allowed).toHaveLength(3);
-    for (const id of allowed) {
-      expect(tokenise(`<p>${id} and ${b.name}.</p>`, b)).toBe(`<p>${id} and {{brand:name}}.</p>`);
+    // Once under the live name, and once with the previous name as the brand's name: only then does an
+    // allowed identifier hold the name, so the tokeniser's allow-list strip is what lets it through.
+    for (const brand of [b, { ...b, name: b.formerly }]) {
+      for (const id of allowed) {
+        expect(tokenise(`<p>${id} and ${brand.name}.</p>`, brand)).toBe(
+          `<p>${id} and {{brand:name}}.</p>`,
+        );
+      }
     }
   });
 
