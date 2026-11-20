@@ -11,6 +11,8 @@ Base: `rebrand/rovio-site` with every W2 lane landed (2.1b is done with `site.cs
   - The fix: make the cards in a row equal height with no empty band above the button. Use `align-items:stretch` (the card is already a flex column with `.pcard` at `site.css:103` with `.pbtn{margin-top:auto}` at `:188`) or subgrid rows.
   - Red first: e2e 89 T46a (the gap between a card's last content block and its button is at most 32 px, at 1440x900 and 393x844), plus a new 93 case: every `.pcard` in one `.pgrid` row has the same bottom (+-1 px) on `/pricing` and home `#pricing`. Red today on the shortest card.
   - The pricing markup was done in 2.3-pricing; edit no html.
+  - The 2.3-pricing review (2026-11-20) found that stretching alone may leave an empty band above the Starter button. Give the css half its best fix and run T46a. If T46a stays red only because of markup (for example the button sits after a long list), stop and report; the markup half goes back to a pricing follow-up. Grant: this lane may edit e2e 89's T46a case only, so that it measures the gap from the card's last text line, not its last block box.
+- **`.band-line` (from the 2.3-pricing review, 2026-11-20).** 2.3-pricing put the class `band-line` on pricing's top band (`band-white band-line`) in place of an inline border. This lane adds the rule `.band-line{border-bottom:1px solid var(--rf-line)}` to `site.css`, next to the band classes at `:79-81`. Red first, in a 93 case: on `/pricing` at 1440x900 and 393x844, the top band's `borderBottomWidth` is 1px and `borderBottomColor` equals the page's `--rf-line` token (read at test time). Red today: no line.
 
 ## 2. Red first
 | T | File · red now |
