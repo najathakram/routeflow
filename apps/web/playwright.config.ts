@@ -870,11 +870,11 @@ export default defineConfig({
       dependencies: [],
       use: { ...devices["Desktop Chrome"] },
     },
-    // Site waves 2-3 (specs 88-93): one spec file per lane, signed out, `dependencies: []`, no
+    // Site waves 2-3 (specs 88-94): one spec file per lane, signed out, `dependencies: []`, no
     // storage state. Same convention as "site-proof": lanes add spec files, never edit this entry.
     {
       name: "site-waves",
-      testMatch: /(8[89]|9[0-3])-site-w[23]-[a-z0-9-]+\.spec\.ts/,
+      testMatch: /(8[89]|9[0-4])-site-w[23]-[a-z0-9-]+\.spec\.ts/,
       dependencies: [],
       use: { ...devices["Desktop Chrome"] },
     },
