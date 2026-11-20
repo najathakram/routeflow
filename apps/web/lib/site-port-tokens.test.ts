@@ -50,10 +50,20 @@ describe("sync-site-port tokenise", () => {
     expect(renderSitePage(out, b)).toBe(snippet);
   });
 
-  it("whole words only: an identifier that starts with the name is left intact", () => {
+  it("an identifier that starts with the name, and is not allow-listed, throws", () => {
     const b = loadBrand();
-    const html = `<p>${b.name}Shell and ${b.name}.</p>`;
-    expect(tokenise(html, b)).toBe(`<p>${b.name}Shell and {{brand:name}}.</p>`);
+    expect(() => tokenise(`<p>${b.name}Shell and ${b.name}.</p>`, b)).toThrow(/cannot tokenise/);
+  });
+
+  it("the allow-listed identifiers pass untouched next to a bare name, which is tokenised", () => {
+    const b = loadBrand();
+    // the three identifiers the tokeniser allows, spelled from the previous name the identifiers carry
+    const old = b.formerly;
+    const allowed = [`${old}Shell`, `${old.toLowerCase()}-v4`, `/brand/${old.toLowerCase()}-mark`];
+    expect(allowed).toHaveLength(3);
+    for (const id of allowed) {
+      expect(tokenise(`<p>${id} and ${b.name}.</p>`, b)).toBe(`<p>${id} and {{brand:name}}.</p>`);
+    }
   });
 
   it("a name inside a host or path it cannot tokenise throws instead of corrupting", () => {

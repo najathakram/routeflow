@@ -2,6 +2,7 @@
 // boxes that go with it. Reads the rendered text, the way a visitor does.
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { BRAND } from "@routeflow/types/brand";
 import PrivacyPage from "./privacy/page";
 import TermsPage from "./terms/page";
 import { addLegalDays, formatLegalDate, isBeforeLegalDay } from "./lib/legal-dates";
@@ -118,7 +119,7 @@ describe("Privacy: driver location and the smaller lines", () => {
   it("L3: the demo booking line points at Data retention", () => {
     const { text } = render(PrivacyPage);
     expect(text).toContain(
-      "We keep demo booking records as described in “Data retention” below. If you become a RouteFlow Tenant, the same section applies to your account data.",
+      `We keep demo booking records as described in “Data retention” below. If you become a ${BRAND.name} Tenant, the same section applies to your account data.`,
     );
     expect(text).not.toContain("Demo booking records are retained for 12 months");
   });
@@ -138,7 +139,7 @@ describe("Privacy: dates and notice box", () => {
     const { text } = render(PrivacyPage);
     expect(text).toContain(`Effective date: ${formatLegalDate(day)}`);
     expect(text).toContain(`Updated ${formatLegalDate(day)}.`);
-    expect(text).toContain("It now describes what RouteFlow does today");
+    expect(text).toContain(`It now describes what ${BRAND.name} does today`);
   });
   it("N2: the box is still up on day 89 and gone on day 90", () => {
     const day = publishDay(PrivacyPage);

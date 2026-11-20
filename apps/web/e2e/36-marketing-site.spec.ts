@@ -20,7 +20,19 @@
  * (playwright.config.ts).
  */
 import { test, expect, devices, type BrowserContext, type Page, webkit } from "@playwright/test";
+import * as fs from "fs";
+import * as path from "path";
 import { wheelBox } from "./helpers/site-proof";
+
+// The everyday name and the title separator come from the brand file, never typed here.
+const BRAND_FILE = JSON.parse(
+  fs.readFileSync(path.resolve(__dirname, "../../../packages/types/brand/brand.json"), "utf8"),
+) as { name: string; titleSeparator: string };
+const escapeRe = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const NAME_RE = escapeRe(BRAND_FILE.name);
+/** A ready-made page title: "<page><separator><name>". */
+const titled = (page: string): RegExp =>
+  new RegExp(`${escapeRe(page)}${escapeRe(BRAND_FILE.titleSeparator)}${NAME_RE}`);
 
 // The pages that wear the site header and footer, with their one h1.
 const H1_BY_ROUTE: Record<string, string> = {
@@ -758,9 +770,9 @@ test.describe("T16 — W8: head, share image and sitemap", () => {
       const attr = (selector: string, name: string) =>
         page.locator(selector).first().getAttribute(name);
 
-      // "Company | RouteFlow" on the ready-made pages, "Privacy Policy · RouteFlow" on the React ones.
+      // "Company | Name" on the ready-made pages, "Privacy Policy · Name" on the React ones.
       const title = await page.title();
-      expect(title, `${route} title`).toMatch(/\S (·|\|) RouteFlow$/);
+      expect(title, `${route} title`).toMatch(new RegExp(`\\S (·|\\|) ${NAME_RE}$`));
 
       expect(
         await attr('meta[name="description"]', "content"),
@@ -842,15 +854,15 @@ test.describe("T17 — W8 / S5: heading order on the public pages", () => {
 test.describe("T19 — ready-made pages are served, linked and clean", () => {
   const PAGES: Array<[string, RegExp, boolean]> = [
     ["/", /We make wholesalers’ lives easier/, true],
-    ["/pricing", /Pricing \| RouteFlow/, true],
-    ["/product", /Product \| RouteFlow/, true],
+    ["/pricing", titled("Pricing"), true],
+    ["/product", titled("Product"), true],
     ["/landing", /Software for wholesalers and distributors/, false],
-    ["/getting-started", /Getting started \| RouteFlow/, true],
-    ["/does-and-doesnt", /What it does and doesn’t do \| RouteFlow/, true],
-    ["/data-in-and-out", /Data in and out \| RouteFlow/, true],
-    ["/security", /Security and your data \| RouteFlow/, true],
-    ["/company", /Company \| RouteFlow/, true],
-    ["/contact", /Contact \| RouteFlow/, true],
+    ["/getting-started", titled("Getting started"), true],
+    ["/does-and-doesnt", titled("What it does and doesn’t do"), true],
+    ["/data-in-and-out", titled("Data in and out"), true],
+    ["/security", titled("Security and your data"), true],
+    ["/company", titled("Company"), true],
+    ["/contact", titled("Contact"), true],
   ];
 
   for (const [route, title, indexable] of PAGES) {

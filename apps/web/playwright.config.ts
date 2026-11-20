@@ -874,7 +874,7 @@ export default defineConfig({
     // storage state. Same convention as "site-proof": lanes add spec files, never edit this entry.
     {
       name: "site-waves",
-      testMatch: /(8[89]|9[0-4])-site-w[23]-[a-z0-9-]+\.spec\.ts/,
+      testMatch: /(8[89]|9[0-5])-site-w[234]-[a-z0-9-]+\.spec\.ts/,
       dependencies: [],
       use: { ...devices["Desktop Chrome"] },
     },
