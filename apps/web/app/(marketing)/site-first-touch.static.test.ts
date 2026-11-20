@@ -1,3 +1,6 @@
+/**
+ * @jest-environment-options {"url": "http://localhost:3001/"}
+ */
 // The site keeps the first visit's source (sessionStorage key rf_first_touch, written once per tab, never overwritten).
 // jsdom: the served js/site.js text is loaded and run, once per case, against a fresh location and referrer.
 // FT1-FT7 behaviour, FT8 static (no cookie, no network). FT9 is e2e spec 94.
@@ -72,6 +75,19 @@ describe("site first touch", () => {
     const { firstSeenAt, ...rest } = stored()!;
     expect(firstSeenAt).toEqual(expect.any(String));
     expect(rest).toEqual({ fbclid: "zz", landingPath: "/pricing" });
+  });
+
+  it("FT4c a same-site referrer on a non-default port (localhost:3001) writes nothing", () => {
+    expect(window.location.host).toBe("localhost:3001");
+    view("/pricing", "http://localhost:3001/");
+    expect(window.sessionStorage.getItem(KEY)).toBeNull();
+  });
+
+  it("FT4d a referrer on another port (localhost:3000) is cross-site: referrerHost is the hostname", () => {
+    view("/pricing", "http://localhost:3000/");
+    const { firstSeenAt, ...rest } = stored()!;
+    expect(firstSeenAt).toEqual(expect.any(String));
+    expect(rest).toEqual({ referrerHost: "localhost", landingPath: "/pricing" });
   });
 
   it("FT5 no tags and no referrer writes nothing", () => {
