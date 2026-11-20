@@ -32,11 +32,55 @@ export type ParityChange = {
 
 export const parityKey = (route: string, cls: string): string => `${route}|${cls}`;
 
+export type ParityBrand = { name: string; formerly: string };
+
+/** The whole-word pattern of scripts/lib/site-port-tokens.cjs:29-32, built with its escapeRe (:7). */
+export function brandPatternSource(value: string): string {
+  const { escapeRe } = require("../../../../scripts/lib/site-port-tokens.cjs") as {
+    escapeRe: (text: string) => string;
+  };
+  return `(?<![\\w.@/])${escapeRe(value)}(?!\\w|\\.\\w)`;
+}
+
+/**
+ * The name becomes {{brand:name}}; the previous name, only when it differs, becomes
+ * {{brand:formerly}}. A page that still shows the previous name then differs from the baseline.
+ */
+export function normaliseBrand(text: string, brand: ParityBrand): string {
+  let out = text.replace(new RegExp(brandPatternSource(brand.name), "g"), "{{brand:name}}");
+  if (brand.formerly !== brand.name) {
+    out = out.replace(new RegExp(brandPatternSource(brand.formerly), "g"), "{{brand:formerly}}");
+  }
+  return out;
+}
+
+/** Collapse whitespace, normalise the names, then cut at 100 (the cut no longer depends on the name). */
+export function normaliseRow(raw: string, brand: ParityBrand): string {
+  return normaliseBrand(raw.replace(/\s+/g, " ").trim(), brand).trim().slice(0, 100);
+}
+
+/** The brand as the file holds it now; never typed here. */
+function readBrand(): ParityBrand {
+  const file = path.join(__dirname, "../../../../packages/types/brand/brand.json");
+  const b = JSON.parse(fs.readFileSync(file, "utf8")) as ParityBrand;
+  return { name: b.name, formerly: b.formerly };
+}
+
 /** Everything reachable on the page now. Runs inside the browser. */
 export async function captureParity(page: import("@playwright/test").Page): Promise<string[]> {
-  return page.evaluate(() => {
-    const norm = (s: string | null | undefined) =>
-      (s || "").replace(/\s+/g, " ").trim().slice(0, 100);
+  const brand = readBrand();
+  const pats = {
+    name: brandPatternSource(brand.name),
+    formerly: brand.formerly !== brand.name ? brandPatternSource(brand.formerly) : "",
+  };
+  return page.evaluate((p) => {
+    // Mirrors normaliseRow above: collapse, then the tokens, then the cut at 100.
+    const norm = (s: string | null | undefined) => {
+      let t = (s || "").replace(/\s+/g, " ").trim();
+      t = t.replace(new RegExp(p.name, "g"), "{{brand:name}}");
+      if (p.formerly) t = t.replace(new RegExp(p.formerly, "g"), "{{brand:formerly}}");
+      return t.trim().slice(0, 100);
+    };
     const rows = new Set<string>();
     const labelOf = (el: Element) =>
       norm(el.getAttribute("aria-label")) ||
@@ -71,7 +115,7 @@ export async function captureParity(page: import("@playwright/test").Page): Prom
       rows.add(`details|${norm(d.querySelector("summary")?.textContent)}`);
     }
     return Array.from(rows).sort();
-  });
+  }, pats);
 }
 
 export function readParityFile(file: string): ParityFile {
