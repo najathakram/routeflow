@@ -5,25 +5,33 @@ import {
 } from "@routeflow/types";
 
 /**
- * SA-1193 K6 (B1377): fixed words for the columns a product import skipped because the account lacks what they need.
- * Built from `requires` only, never from a server sentence. Every key of the union needs a name (the type enforces it).
+ * SA-1193 K6 + A1-2 (B1377): fixed sentences for the columns a product import skipped because the account lacks what
+ * they need. The sentence is ours, never a server sentence. The add-on's NAME is the server's `label`, the name the
+ * billing page shows for it (A1-2), so this file types no add-on name (pinned by a grep in the panel's test).
+ * Every key of the union needs a sentence (the type enforces it).
  */
-export const IMPORT_REQUIREMENT_NAME: Record<ImportColumnRequirement, string> = {
-  MSRP: "the MSRP add-on",
-  TOBACCO_DEALER: "the Tobacco dealer add-on",
-  FORECASTING: "Forecasting",
+const NAME_IN_SENTENCE: Record<ImportColumnRequirement, (label: string) => string> = {
+  MSRP: (label) => `the ${label} add-on`,
+  TOBACCO_DEALER: (label) => `the ${label} add-on`,
+  FORECASTING: (label) => label,
 };
+
+/** An older server sent no `label`: say only what is true without a name. */
+const NO_NAME = "an add-on";
 
 /**
  * A next step only where one is true today. Forecasting is a self-serve add-on on the Plan & billing page. MSRP and the
- * Tobacco dealer add-on are managed by RouteFlow (read-only on that page) and the app has no contact link, so they get none.
+ * Tobacco add-on are managed by RouteFlow (read-only on that page) and the app has no contact link, so they get none.
  */
 export const IMPORT_REQUIREMENT_NEXT_STEP: Partial<
-  Record<ImportColumnRequirement, { before: string; label: string; href: string; after: string }>
+  Record<
+    ImportColumnRequirement,
+    { before: (label: string) => string; linkText: string; href: string; after: string }
+  >
 > = {
   FORECASTING: {
-    before: "You can add Forecasting in ",
-    label: "Plan & billing",
+    before: (label) => `You can add ${label} in `,
+    linkText: "Plan & billing",
     href: "/settings/billing",
     after: ".",
   },
@@ -41,7 +49,8 @@ function quoteList(headers: string[]): string {
 
 export interface SkippedColumnsNotice {
   title: string;
-  lines: { requires: ImportColumnRequirement; text: string }[];
+  /** `label` is undefined when an older server sent none: the line has no name and no next step. */
+  lines: { requires: ImportColumnRequirement; label: string | undefined; text: string }[];
   footer: string;
 }
 
@@ -53,12 +62,13 @@ export function skippedColumnsNotice(
   if (!skipped || skipped.length === 0) return null;
   const one = skipped.length === 1;
   const lines = IMPORT_COLUMN_REQUIREMENT_VALUES.flatMap((requires) => {
-    const headers = skipped.filter((s) => s.requires === requires).map((s) => s.column);
-    if (headers.length === 0) return [];
+    const mine = skipped.filter((s) => s.requires === requires);
+    if (mine.length === 0) return [];
+    const headers = mine.map((s) => s.column);
+    const label = mine.find((s) => typeof s.label === "string" && s.label.trim() !== "")?.label;
     const verb = headers.length === 1 ? "needs" : "need";
-    return [
-      { requires, text: `${quoteList(headers)} ${verb} ${IMPORT_REQUIREMENT_NAME[requires]}.` },
-    ];
+    const name = label ? NAME_IN_SENTENCE[requires](label) : NO_NAME;
+    return [{ requires, label, text: `${quoteList(headers)} ${verb} ${name}.` }];
   });
   return {
     title: done
