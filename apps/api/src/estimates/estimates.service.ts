@@ -420,7 +420,7 @@ export class EstimatesService {
         // H5: a typed override is money - cents, like every other written price
         const overridePrice = i.unitPrice != null ? roundMoney(Number(i.unitPrice)) : null;
 
-        const isSpecialTier = isSpecialPrice(tierForProduct, listPrice, layer?.price);
+        const specialPrice = isSpecialPrice(tierForProduct, listPrice, layer?.price);
 
         if (overridePrice != null) {
           // The staff-override rule every sale path uses (@routeflow/pricing), judged against the CUSTOMER's price:
@@ -430,7 +430,7 @@ export class EstimatesService {
             overridePrice,
             baselinePrice: tierPrice,
             listPrice,
-            isSpecialTier,
+            isSpecialTier: specialPrice,
             hasReason: true,
           });
           if ("refused" in d) throw new BadRequestException("A reason is required for this price");
@@ -444,7 +444,7 @@ export class EstimatesService {
               ? PriceType.MANUAL
               : PriceType[d.priceType];
           originalPrice = d.originalPrice;
-        } else if (isSpecialTier) {
+        } else if (specialPrice) {
           unitPrice = tierPrice;
           // S19 R2: the customer's own price above the unit's list is the sticky upsell's twin
           priceType = layer?.aboveList ? PriceType.MANUAL : PriceType.SPECIAL;

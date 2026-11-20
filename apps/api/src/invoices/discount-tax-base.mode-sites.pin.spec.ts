@@ -192,6 +192,9 @@ const MODE_SITES: Record<string, string[]> = {
   ],
   "apps/api/src/estimates/estimates.service.ts": [
     "newDocumentDiscountMode()",
+    // #4386: a draft edit re-prices on the quote's OWN mode, never the new-document one (red:
+    // estimates.discount-mode-sites.spec.ts, "update(): a draft edit keeps the quote's OWN mode").
+    "discountModeOf(held)",
     "discountModeOf(est)",
     "discountModeOf(est)",
   ],

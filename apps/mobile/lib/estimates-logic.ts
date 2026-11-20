@@ -58,7 +58,8 @@ export interface LineAmountInput {
   qty: number;
   boxes?: number;
   pieces?: number;
-  unitsPerBox?: number;
+  /** Null on an unboxed line (the shared EstimateItem shape). */
+  unitsPerBox?: number | null;
 }
 
 /**

@@ -253,6 +253,15 @@ describe("Estimates: typed prices, draft edit, back to draft", () => {
       expect(prisma.estimateItem.deleteMany).not.toHaveBeenCalled();
       expect(prisma.estimateItem.createMany).not.toHaveBeenCalled();
     });
+
+    it("WS8: a FAMILY product on an edited draft is refused before any write", async () => {
+      prisma.product.findMany.mockResolvedValue([{ ...WIDGET, kind: "FAMILY" }]);
+      await expect(
+        service.update("est-1", { items: [{ productId: "p1", qty: 1 }] }, NO_PRICE_RIGHTS),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.estimate.updateMany).not.toHaveBeenCalled();
+      expect(prisma.estimateItem.createMany).not.toHaveBeenCalled();
+    });
   });
 
   describe("revertToDraft()", () => {

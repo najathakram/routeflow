@@ -30,7 +30,13 @@ const GUARDED: Record<string, { calls: number; sites: number; why: string }> = {
     sites: 0,
     why: "a door ADD_ITEM is refused at filing time, before it can reach approval",
   },
-  "estimates/estimates.service.ts": { calls: 1, sites: 2, why: "estimate create/update line load" },
+  "estimates/estimates.service.ts": {
+    calls: 1,
+    sites: 3,
+    // #4386 added update()'s estimateItem.createMany (red: estimates.edit-draft.spec.ts, "WS8: a FAMILY product on an
+    // edited draft is refused before any write").
+    why: "create (nested items.create) and update (estimateItem.createMany) take every line through priceEstimate, where the one guard call runs; convert (nested invoice items.create) copies the quote's own lines, guarded when they were written",
+  },
   "invoices/manual-invoice-context.ts": {
     calls: 1,
     sites: 0,

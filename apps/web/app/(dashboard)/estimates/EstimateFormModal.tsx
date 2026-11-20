@@ -34,6 +34,7 @@ import {
   customerLinePrice,
   customerTierFor,
   type InvoiceTotalsLine,
+  withinStaffOverrideTolerance,
 } from "@routeflow/pricing";
 import { newDocumentDiscountBase } from "@/lib/discount-tax-base";
 import { useCustomerPriceLayer } from "@/lib/api/useCustomerPriceLayer";
@@ -433,12 +434,11 @@ export function CreateEstimateModal({
         if (li.tempId !== tempId) return li;
         const n = Number(text);
         const unitPrice = text.trim() !== "" && Number.isFinite(n) && n >= 0 ? n : 0;
-        const priceType: LinePriceType =
-          Math.abs(unitPrice - li.tierPrice) < 0.005
-            ? li.basePriceType
-            : unitPrice < li.listPrice
-              ? "DISCOUNTED"
-              : "MANUAL";
+        const priceType: LinePriceType = withinStaffOverrideTolerance(unitPrice, li.tierPrice)
+          ? li.basePriceType
+          : unitPrice < li.listPrice
+            ? "DISCOUNTED"
+            : "MANUAL";
         return { ...li, priceText: text, unitPrice, priceTyped: true, priceType };
       }),
     );

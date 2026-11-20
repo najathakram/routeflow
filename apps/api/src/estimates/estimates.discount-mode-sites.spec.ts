@@ -130,4 +130,46 @@ describe("SA-1153 estimate rows 2 and 3 (cutover set)", () => {
       expect(dark).toBe("LEGACY_POST_TAX"); // ... which is LEGACY
     });
   });
+
+  describe("update(): a draft edit keeps the quote's OWN mode (#4386)", () => {
+    const edit = async (createdAt: Date) => {
+      prisma.estimate.updateMany.mockClear();
+      (prisma as any).systemConfig.findFirst.mockResolvedValue({ value: "10" });
+      prisma.customer.findUnique.mockResolvedValue({
+        id: "cust-1",
+        pricingTier: 1,
+        isTaxExempt: false,
+      });
+      prisma.product.findMany.mockResolvedValue([
+        { id: "p1", name: "Widget", pricePerUnit: 100, unitsPerBox: null, kind: "STANDARD" },
+      ]);
+      prisma.estimate.findUnique.mockResolvedValue({
+        ...quote(createdAt),
+        status: "DRAFT",
+        items: [
+          {
+            id: "line-1",
+            productId: "p1",
+            description: "Widget",
+            qty: 1,
+            unitPrice: 100,
+            priceType: "STANDARD",
+            boxes: null,
+            pieces: null,
+          },
+        ],
+      });
+      await service.update("est-1", { notes: "Call first" }, { tenantId: "t1" } as never);
+      const d = prisma.estimate.updateMany.mock.calls[0][0].data;
+      return { tax: d.taxAmount, total: d.total };
+    };
+
+    it("a draft made BEFORE the cutover, edited NOW: its tax equals the cutover-null run", async () => {
+      expectFixtureDiscriminates();
+      const dark = await underCutover(null, () => edit(BEFORE));
+      expect(await edit(AFTER)).not.toEqual(dark); // 1: a draft made AFTER is priced on the PRE_TAX base
+      expect(await edit(BEFORE)).toEqual(dark); // 2: the BEFORE draft keeps its LEGACY tax (not the new-document mode)
+      expect(await edit(AFTER)).toMatchObject({ tax: fixtureTotals("PRE_TAX").tax });
+    });
+  });
 });
