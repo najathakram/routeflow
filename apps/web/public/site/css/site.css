@@ -25,8 +25,10 @@ ul,ol{padding:0;list-style:none}
 .sprite{position:absolute;width:0;height:0;overflow:hidden}
 
 /* ---------- header ---------- */
+/* The header's height, defined once; every header offset in the site css reads it (SA-1199 A1). */
+:root{--rf-header-h:68px}
 .site-header{position:sticky;top:0;z-index:50;background:var(--rf-white);box-shadow:var(--rf-ring);transition:background-color .25s}
-.nav{display:flex;align-items:center;gap:36px;height:68px}
+.nav{display:flex;align-items:center;gap:36px;height:var(--rf-header-h)}
 .brand{display:inline-flex;align-items:center;gap:10px;text-decoration:none;font-weight:650;font-size:20px;letter-spacing:-.02em}
 .brand img{width:30px;height:30px}
 .nav-links{display:flex;gap:6px;margin-right:auto}
@@ -140,7 +142,7 @@ h3{font-size:var(--rf-h4);line-height:1.15;font-weight:650;letter-spacing:-.02em
   .nav-links,.nav-signin,.nav>nav{display:none}
   .nav{gap:12px}
   .menu-btn{display:grid;place-items:center}
-  .mobile-menu{position:fixed;inset:68px 0 0;background:var(--rf-white);padding:8px 24px 24px;z-index:49;overflow:auto;display:block;visibility:hidden;opacity:0;transform:translateY(-8px);transition:opacity .2s,transform .2s,visibility 0s .2s}
+  .mobile-menu{position:fixed;inset:var(--rf-header-h) 0 0;background:var(--rf-white);padding:8px 24px 24px;z-index:49;overflow:auto;display:block;visibility:hidden;opacity:0;transform:translateY(-8px);transition:opacity .2s,transform .2s,visibility 0s .2s}
   .mobile-menu.open{visibility:visible;opacity:1;transform:none;transition:opacity .2s,transform .2s}
   .mobile-menu a{display:flex;align-items:center;min-height:48px;font-size:22px;font-weight:600;letter-spacing:-.02em;text-decoration:none;border-bottom:1px solid var(--rf-line)}
   .mobile-menu .btn{margin-top:16px;width:100%}

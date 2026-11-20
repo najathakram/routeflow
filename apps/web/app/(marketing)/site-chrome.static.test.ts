@@ -167,20 +167,28 @@ describe("chrome.js is the one home of the page chrome", () => {
   });
 });
 
-// SA-1199 P5 / SA-1200 A1 L4: no typed header height. The header's height is read live (chrome.js) and the test reads
-// the live nav rect; a literal copy of the header rule's height (with or without px, and N.0px or N.5px too) or a
-// literal rootMargin in those files is a typed header size. The number comes from the header rule in site.css.
-describe("no typed header height (SA-1199 P5)", () => {
-  const siteCss = fs.readFileSync(path.join(SITE, "css/site.css"), "utf8");
-  const headerHeights = [
-    ...new Set(
-      [...siteCss.matchAll(/(?:^|[}\s,])(?:\.site-header )?\.nav\{([^}]*)\}/g)]
-        .map((m) => (m[1] as string).match(/(?:^|;)height:(\d+)(?:\.\d+)?px/)?.[1])
-        .filter((n): n is string => !!n),
+// SA-1199 P5 / A1 (SA-1200 A1 L4 folded in): no typed header height. The header's height is read live (chrome.js) and
+// the test reads the live nav rect; a literal copy of the header height (with or without px, and N.0px or N.5px too) or
+// a literal rootMargin in those files is a typed header size. The number comes from the --rf-header-h definition.
+const CSS_DIR = path.join(SITE, "css");
+const cssFiles = fs
+  .readdirSync(CSS_DIR)
+  .filter((f) => f.endsWith(".css"))
+  .sort();
+const headerHeights = [
+  ...new Set(
+    cssFiles.flatMap((f) =>
+      [
+        ...fs
+          .readFileSync(path.join(CSS_DIR, f), "utf8")
+          .matchAll(/--rf-header-h:(\d+)(?:\.\d+)?px/g),
+      ].map((m) => m[1] as string),
     ),
-  ];
-  it("finds the header rule's height in site.css (a pin that found nothing would pass on anything)", () => {
-    expect(headerHeights.length).toBeGreaterThan(0);
+  ),
+];
+describe("no typed header height (SA-1199 P5)", () => {
+  it("finds the header height's one definition (a pin that found nothing would pass on anything)", () => {
+    expect(headerHeights.length).toBe(1);
   });
   const H = headerHeights[0] as string;
   // SA-1196 A4-1 also forbids a typed 56, the pill's bottom edge inside the header; it is not a header rule, so it is
@@ -219,6 +227,48 @@ describe("no typed header height (SA-1199 P5)", () => {
     }
     expect(strip(chrome())).toMatch(/head\.getBoundingClientRect\(\)\.height/);
     expect(strip(chrome())).toMatch(/rootMargin:\s*"-"\s*\+\s*headH/);
+  });
+});
+
+// SA-1199 A1: every header offset in the site css reads --rf-header-h. A header-offset declaration (top, inset,
+// scroll-margin-top, --hx-bar) or a calc(100vh|100svh - …) carrying a px literal equal to the header height is a typed
+// copy. Width and font declarations are out of scope (an icon or a type size may equal it by chance).
+describe("no typed header offset in the site css (SA-1199 A1)", () => {
+  const H = headerHeights[0] as string;
+  const LIT = `(?<![\\d.])${H}(?:\\.\\d+)?px`;
+  const OFFSET_PROPS = new Set(["top", "inset", "scroll-margin-top", "--hx-bar"]);
+  const offsetHits = (css: string) => {
+    const hits: string[] = [];
+    for (const m of css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([\w-]+)\s*:\s*([^;{}]+)/g)) {
+      const [decl, prop, value] = [m[0], m[1] as string, m[2] as string];
+      if (OFFSET_PROPS.has(prop) && new RegExp(LIT).test(value)) hits.push(decl);
+      else if (new RegExp(`calc\\(\\s*100s?vh\\s*-\\s*${LIT}`).test(value)) hits.push(decl);
+    }
+    return hits;
+  };
+  it("self-check: a planted typed offset is caught, a width or a font size is not", () => {
+    expect(offsetHits(`.x{scroll-margin-top:${H}px}`)).toHaveLength(1);
+    expect(offsetHits(`.x{position:sticky;top:${H}.5px}`)).toHaveLength(1);
+    expect(offsetHits(`.x{inset:${H}px 0 0}`)).toHaveLength(1);
+    expect(offsetHits(`.x{--hx-bar:${H}px}`)).toHaveLength(1);
+    expect(offsetHits(`.x{height:calc(100svh - ${H}px)}`)).toHaveLength(1);
+    expect(offsetHits(`.x{width:${H}px;font-size:clamp(40px,4.5vw,${H}px)}`)).toHaveLength(0);
+    expect(offsetHits(`.x{top:1${H}px;top:var(--rf-header-h)}`)).toHaveLength(0);
+  });
+  it("every stylesheet under public/site/css reads the header height for its header offsets", () => {
+    expect(cssFiles.length).toBeGreaterThan(0);
+    for (const f of cssFiles) {
+      const hits = offsetHits(fs.readFileSync(path.join(CSS_DIR, f), "utf8"));
+      expect({ f, hits }).toEqual({ f, hits: [] });
+    }
+  });
+  it("the offsets the rule names read var(--rf-header-h)", () => {
+    const css = (f: string) => fs.readFileSync(path.join(CSS_DIR, f), "utf8");
+    expect(css("site.css")).toMatch(/\.mobile-menu\{[^}]*inset:var\(--rf-header-h\) 0 0/);
+    expect(css("home.css")).toMatch(
+      /\.jr-pin\{position:sticky;top:var\(--rf-header-h\);height:calc\(100vh - var\(--rf-header-h\)\);height:calc\(100svh - var\(--rf-header-h\)\)/,
+    );
+    expect(css("home-up.css")).toMatch(/\.hx-up\{--hx-bar:var\(--rf-header-h\)/);
   });
 });
 

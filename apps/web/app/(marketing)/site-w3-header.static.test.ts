@@ -164,7 +164,9 @@ describe("F08: the open phone menu shows Sign in and the trial button in one scr
     const row = num(/\.mobile-menu a\{[^}]*min-height:(\d+)px/);
     const gap = num(/\.mobile-menu \.btn\{[^}]*margin-top:(\d+)px/);
     const padTop = num(/\.mobile-menu\{[^}]*padding:(\d+)px/);
-    const top = num(/\.mobile-menu\{[^}]*inset:(\d+)px/);
+    // The menu opens under the header: its inset is the header height token (SA-1199 A1), read from its definition.
+    expect(css).toMatch(/\.mobile-menu\{[^}]*inset:var\(--rf-header-h\) 0 0/);
+    const top = num(/--rf-header-h:(\d+)px/);
     expect(row).toBeGreaterThanOrEqual(44);
     expect(top + padTop + links * row + gap).toBeLessThanOrEqual(height);
   });
@@ -238,7 +240,10 @@ describe("the header stays put", () => {
   it("is sticky at the top with a fixed 68 px bar, and nothing in the stylesheet changes the bar's height", () => {
     const css = read("css/site.css");
     expect(css).toMatch(/\.site-header\{position:sticky;top:0;/);
-    expect(css).toMatch(/\.nav\{[^}]*height:68px/);
+    // SA-1199 A1: the height is defined once (--rf-header-h) and the bar reads it.
+    expect(css.match(/--rf-header-h:/g) ?? []).toHaveLength(1);
+    expect(css).toMatch(/:root\{--rf-header-h:68px\}/);
+    expect(css).toMatch(/\.nav\{[^}]*height:var\(--rf-header-h\)/);
     expect(css).not.toMatch(/\.site-header\.scrolled\{[^}]*(height|padding)/);
   });
 });
