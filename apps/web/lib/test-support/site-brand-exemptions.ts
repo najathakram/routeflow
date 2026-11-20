@@ -31,12 +31,6 @@ export interface Exemption {
 export const EXEMPT: Exemption[] = [
   // 62 hex in style/fill stay until W3 (the home colour pass).
   { path: "public/site/home.html", scope: "hex", liftedBy: "W3", lane: "2.3-home" },
-  { path: "public/site/product.html", scope: "hex", liftedBy: "W3", lane: "2.3-inner" },
-  { path: "public/site/security.html", scope: "hex", liftedBy: "W3", lane: "2.3-inner" },
-  // Not in the delta's table: the same lane and the same pattern (--pc/--pi tile colours).
-  { path: "public/site/getting-started.html", scope: "hex", liftedBy: "W3", lane: "2.3-inner" },
-  { path: "public/site/does-and-doesnt.html", scope: "hex", liftedBy: "W3", lane: "2.3-inner" },
-  { path: "public/site/data-in-and-out.html", scope: "hex", liftedBy: "W3", lane: "2.3-inner" },
 ];
 
 /** The rows that cover a file: the one matcher (T35, T45 and the staleness check all use it). */
