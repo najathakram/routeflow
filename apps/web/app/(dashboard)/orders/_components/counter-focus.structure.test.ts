@@ -42,7 +42,7 @@ const ALLOWED: Record<string, { count: number; why: string }> = {
 /** Files whose AUTOFOCUS is allowed: the scan field on mount and the line note's own field. */
 const AUTOFOCUS_ALLOWED: Record<string, number> = {
   "CounterSaleScreen.tsx": 1,
-  "CounterLineRow.tsx": 1,
+  // B1373: the line's note autofocus is LineItemRow's `noteAutoFocus` now (pinned below), not an autoFocus in this file
   "CounterDatePicker.tsx": 1, // W-1188: the typed-date field takes the cursor when the picker opens (the dialog's only text field)
   "CounterDayClose.tsx": 1, // R7b 2.3: the Keep button of the "Keep your count for later?" confirm is the default
 };
@@ -81,6 +81,11 @@ describe("counter scan focus has one owner (SA-762r)", () => {
     const src = stripComments(fs.readFileSync(path.join(DIR, file), "utf8"));
     const uses = (src.match(/\bautoFocus\b/g) ?? []).length;
     expect(uses).toBe(AUTOFOCUS_ALLOWED[file] ?? 0);
+  });
+
+  it("B1373: the till line opens its note with the cursor in it, through the shared row's noteAutoFocus", () => {
+    const src = stripComments(fs.readFileSync(path.join(DIR, "CounterLineRow.tsx"), "utf8"));
+    expect(src).toMatch(/\bnoteAutoFocus\b/);
   });
 
   it("the screen re-arms through useCounterScanFocus, not a timer of its own", () => {

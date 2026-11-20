@@ -5,6 +5,12 @@ import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 import { LINE_UNDO_MS } from "./useCounterLineUndo";
 
+/** B1373: a till line shows its quantity in the order row's number field (no "× N" text). */
+const qtyOf = (line: HTMLElement) =>
+  Number(
+    (within(line).getByRole("spinbutton", { name: /Set quantity of/ }) as HTMLInputElement).value,
+  );
+
 /**
  * POS UX review folds: typed quantity editor, single-line note, payment column scroll, undo bar live region + pause, receipt targets. The API is
  * mocked at the module boundary exactly as CounterSaleScreen.test.tsx does. RTL cannot measure pixels, so the layout and
@@ -89,7 +95,9 @@ async function buildCart() {
   await scan("COLA");
   await scan("WATER");
   await waitFor(() => expect(screen.getByText(/Water/)).toBeInTheDocument());
-  for (let i = 0; i < 3; i++) click("Add a piece to Water");
+  // B1373: there is no one-tap piece stepper on a boxed line: open the loose-pieces field and type 3
+  fireEvent.click(within(lineOf("Water")).getByRole("button", { name: /^\+ .*: add extra / }));
+  fireEvent.change(piecesField(), { target: { value: "3" } });
 }
 const itemNames = () =>
   within(screen.getByRole("list", { name: "Items" }))
@@ -102,39 +110,34 @@ const lineOf = (name: string) =>
   within(screen.getByRole("list", { name: "Items" }))
     .getAllByRole("listitem")
     .find((li) => li.textContent?.includes(name))!;
+/** The boxed line's whole-boxes field and its opt-in loose-pieces field (the order row's controls). */
+const boxesField = () =>
+  within(lineOf("Water")).getByTitle(/^Number of whole /) as HTMLInputElement;
+const piecesField = () =>
+  within(lineOf("Water")).getByRole("spinbutton", { name: /^Extra / }) as HTMLInputElement;
 
 describe("typed quantity editor (steppers stay)", () => {
-  it("a plain line: type a number, Enter commits; blur commits; the steppers are still there", async () => {
+  it("a plain line: a typed number commits as it is typed; Enter hands the cursor back to the scan box; the steppers are still there", async () => {
     await buildCart(); // Cola x2
     expect(screen.getByRole("button", { name: "Add one Cola" })).toBeInTheDocument();
     const input = qtyInput("Cola");
     expect(input.type).toBe("number");
-    expect(input.className).toMatch(/min-h-\[44px\]/);
+    expect(input).toHaveClass("max-lg:h-11"); // the 44 px touch floor below lg
     fireEvent.change(input, { target: { value: "5" } });
-    fireEvent.keyDown(input, { key: "Enter" });
-    expect(lineOf("Cola")).toHaveTextContent("× 5");
+    expect(qtyOf(lineOf("Cola"))).toBe(5);
     expect(screen.getByTestId("running-total")).toHaveTextContent("$27.50"); // 5 x 2.50 + 15.00
+    qtyInput("Cola").focus();
+    fireEvent.keyDown(qtyInput("Cola"), { key: "Enter" });
+    await waitFor(() => expect(screen.getByLabelText("Scan or search items")).toHaveFocus());
     fireEvent.change(qtyInput("Cola"), { target: { value: "3" } });
-    fireEvent.blur(qtyInput("Cola"));
-    expect(lineOf("Cola")).toHaveTextContent("× 3");
+    expect(qtyOf(lineOf("Cola"))).toBe(3);
   });
 
-  it("Escape reverts the typed value", async () => {
+  it("0, negative or empty reverts (it never removes the line; x does)", async () => {
     await buildCart();
-    const input = qtyInput("Cola");
-    fireEvent.change(input, { target: { value: "9" } });
-    fireEvent.keyDown(input, { key: "Escape" });
-    expect(qtyInput("Cola").value).toBe("2");
-    fireEvent.blur(qtyInput("Cola"));
-    expect(lineOf("Cola")).toHaveTextContent("× 2");
-  });
-
-  it("0, negative, fractional or empty reverts (it never removes the line; x does)", async () => {
-    await buildCart();
-    for (const bad of ["0", "-3", "1.5", ""]) {
+    for (const bad of ["0", "-3", ""]) {
       fireEvent.change(qtyInput("Cola"), { target: { value: bad } });
-      fireEvent.blur(qtyInput("Cola"));
-      expect(lineOf("Cola")).toHaveTextContent("× 2");
+      expect(qtyOf(lineOf("Cola"))).toBe(2);
       expect(qtyInput("Cola").value).toBe("2");
     }
     expect(screen.getByRole("button", { name: "Remove Cola" })).toBeInTheDocument();
@@ -142,7 +145,7 @@ describe("typed quantity editor (steppers stay)", () => {
 
   it("Tab from the Boxes field of a boxed line is natural (never redirected), even with a draft", async () => {
     await buildCart();
-    const boxes = screen.getByLabelText("Boxes of Water") as HTMLInputElement;
+    const boxes = boxesField();
     boxes.focus();
     fireEvent.change(boxes, { target: { value: "2" } });
     expect(fireEvent.keyDown(boxes, { key: "Tab" })).toBe(true);
@@ -150,32 +153,24 @@ describe("typed quantity editor (steppers stay)", () => {
 
   it("a boxed line has box and piece inputs, normalized through normalizeBoxesPieces (42 pcs -> 3 boxes + 6 pcs)", async () => {
     await buildCart(); // Water 1 box + 3 pcs
-    const boxes = screen.getByLabelText("Boxes of Water") as HTMLInputElement;
-    const pieces = screen.getByLabelText("Pieces of Water") as HTMLInputElement;
-    expect([boxes.value, pieces.value]).toEqual(["1", "3"]);
-    fireEvent.change(pieces, { target: { value: "30" } });
-    fireEvent.blur(pieces);
-    expect(lineOf("Water")).toHaveTextContent("3 boxes + 6 pcs");
-    expect((screen.getByLabelText("Boxes of Water") as HTMLInputElement).value).toBe("3");
-    expect((screen.getByLabelText("Pieces of Water") as HTMLInputElement).value).toBe("6");
+    expect([boxesField().value, piecesField().value]).toEqual(["1", "3"]);
+    fireEvent.change(piecesField(), { target: { value: "30" } });
+    expect(boxesField().value).toBe("3");
+    expect(piecesField().value).toBe("6");
     expect(screen.getByTestId("running-total")).toHaveTextContent("$47.00");
   });
 
   it("a boxed line typed down to nothing (0 boxes, 0 pieces) reverts the last edit", async () => {
     await buildCart(); // Water 1 box + 3 pcs
-    fireEvent.change(screen.getByLabelText("Pieces of Water"), { target: { value: "0" } });
-    fireEvent.blur(screen.getByLabelText("Pieces of Water"));
-    expect(lineOf("Water")).toHaveTextContent("1 box");
-    fireEvent.change(screen.getByLabelText("Boxes of Water"), { target: { value: "0" } });
-    fireEvent.blur(screen.getByLabelText("Boxes of Water"));
-    expect(lineOf("Water")).toHaveTextContent("1 box");
-    expect((screen.getByLabelText("Boxes of Water") as HTMLInputElement).value).toBe("1");
+    fireEvent.change(piecesField(), { target: { value: "0" } });
+    expect([boxesField().value, piecesField().value]).toEqual(["1", "0"]);
+    fireEvent.change(boxesField(), { target: { value: "0" } });
+    expect(boxesField().value).toBe("1");
   });
 
   it("the typed quantity rides the ring (qty only for a plain line)", async () => {
     await buildCart();
     fireEvent.change(qtyInput("Cola"), { target: { value: "4" } });
-    fireEvent.blur(qtyInput("Cola"));
     click("Exact");
     click("Complete & show receipt");
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
@@ -183,15 +178,16 @@ describe("typed quantity editor (steppers stay)", () => {
   });
 });
 
-describe("line note is a single-line input", () => {
-  it("is an <input> capped at 200, keeps a leading space while typing, trims on the wire", async () => {
+describe("line note field", () => {
+  it("is capped at 200, keeps a leading space while typing, Enter closes it, trims on the wire", async () => {
     await buildCart();
     click("Add a note to Cola");
-    const box = screen.getByLabelText("Note for Cola") as HTMLInputElement;
-    expect(box.tagName).toBe("INPUT");
+    const box = screen.getByLabelText("Note for Cola") as HTMLTextAreaElement;
     expect(box.maxLength).toBe(200);
     fireEvent.change(box, { target: { value: " no ice" } });
-    expect((screen.getByLabelText("Note for Cola") as HTMLInputElement).value).toBe(" no ice");
+    expect((screen.getByLabelText("Note for Cola") as HTMLTextAreaElement).value).toBe(" no ice");
+    fireEvent.keyDown(box, { key: "Enter" }); // Enter closes (no new line)
+    expect((screen.getByLabelText("Note for Cola") as HTMLTextAreaElement).value).toBe(" no ice");
     click("Exact");
     click("Complete & show receipt");
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));

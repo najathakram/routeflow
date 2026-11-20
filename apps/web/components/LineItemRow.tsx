@@ -157,6 +157,46 @@ export interface LineItemRowProps {
   /** W-1187 PR-2b: the row's id inside a `SortableLines` list; absent = no drag handle (the scan screen). */
   moveId?: string;
 
+  // ── B1373: the counter sale lists its lines through this row. Every prop below is optional and its default is the
+  // order builder's behaviour, so CreateOrderModal and vendor bills are unchanged. ──
+  /** Every control on the line is disabled (the counter: an unknown sale outcome, or the sale POST in flight). */
+  locked?: boolean;
+  /** False = no inline "Price:" box under the price (the counter edits a price only through its own dialog). */
+  inlinePrice?: boolean;
+  /** Keys in the note field (the counter: Enter closes the note and hands focus back to its scan box). */
+  onNoteKeyDown?: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
+  /** The note field gained focus (the counter records the text Escape puts back). */
+  onNoteFocus?: () => void;
+  /** The note field lost focus (the counter closes the note when focus goes nowhere, and re-arms its scan field). */
+  onNoteBlur?: (e: React.FocusEvent<HTMLTextAreaElement>) => void;
+  /**
+   * The id of the element that says why "+" cannot add (the counter's "this line is full"): "+" is off and described by it.
+   * Absent (default): "+" follows the line's lock only.
+   */
+  increaseBlockedBy?: string;
+  /** Opening the note puts the cursor in it (the counter: the next keys are the note, never the scan box). */
+  noteAutoFocus?: boolean;
+  /** The note's character cap (the counter's wire note is shorter than the order's). */
+  noteMaxLength?: number;
+  /** The tenant hides the original (struck) price: a discounted or special line shows only the price it sells at. */
+  hideOriginalPrice?: boolean;
+  /**
+   * Where the row turns from the two-column grid (info | actions, qty | total) into one flex line. Default `sm` (the order
+   * modal); `lg` for a row that lives in a narrow column at tablet widths (the till's cart beside its payment panel).
+   */
+  flexFrom?: "sm" | "lg";
+  /** The note and remove icons are full 44 px targets below `lg` (the counter is a touch till), like the qty steppers. */
+  touchTargets?: boolean;
+  /** Accessible names that say which line a control belongs to. Absent = the row's titles. */
+  labels?: {
+    remove?: string;
+    note?: string;
+    decrease?: string;
+    increase?: string;
+    qty?: string;
+    price?: string;
+  };
+
   // ── Read-only / order-detail variant (order-ui-redesign-spec.md §6.1) ──
   // Reserved, unused: the read-only row shipped as the sibling `LineItemRowReadOnly`
   // (this row takes 14 required edit callbacks, so a prop variant would force no-ops on
@@ -222,7 +262,22 @@ export function LineItemRow({
   onSetQty,
   rowRef,
   moveId,
+  locked = false,
+  inlinePrice = true,
+  noteMaxLength = 2000,
+  onNoteKeyDown,
+  onNoteFocus,
+  onNoteBlur,
+  increaseBlockedBy,
+  noteAutoFocus = false,
+  hideOriginalPrice = false,
+  touchTargets = false,
+  flexFrom = "sm",
+  labels,
 }: LineItemRowProps) {
+  const iconTarget = touchTargets
+    ? "max-lg:inline-flex max-lg:min-h-11 max-lg:min-w-11 max-lg:items-center max-lg:justify-center"
+    : "";
   const mv = useCartRowMove(moveId);
   const setDragNode = mv.setNodeRef;
   const rootRef = React.useCallback(
@@ -232,7 +287,7 @@ export function LineItemRow({
     },
     [rowRef, setDragNode],
   );
-  const qtyLocked = !!pendingUnit;
+  const qtyLocked = !!pendingUnit || locked;
   // F08: set when a typed quantity below 1 was raised to 1, so the row says so (cleared by the next valid quantity).
   const [qtyBelowMin, setQtyBelowMin] = React.useState(false);
   const showQtyNote = qtyBelowMin && !li.unitsPerBox; // only the plain (unit-sold) stepper can type a 0
@@ -241,19 +296,22 @@ export function LineItemRow({
   // F15/Q12: a pack line's price is per PACK, so its suffix is the same pack word as the toggle and the qty
   // (not the product's stored unit, e.g. "case" beside a "Box" toggle). A named-unit or single-unit line keeps its own unit.
   const priceUnit = li.unitsPerBox && li.unitsPerBox > 1 && !li.unitLabel ? w.pack.lower : li.unit;
+  // a locked line's History is off too (a "Use" could not apply while the sale is in flight)
   const historyButton = customerPriceHistory && !li.isUnlisted && (
-    <PriceHistoryButton
-      customerId={customerPriceHistory.customerId}
-      customerName={customerPriceHistory.customerName}
-      productId={li.productId || null}
-      productName={li.productName}
-      unitHint={li.unitLabel ?? (li.unitsPerBox && li.unitsPerBox > 1 ? "case" : li.unit)}
-      packHint={li.unitsPerBox ?? null}
-      onUsePrice={customerPriceHistory.onUsePrice}
-      excludeOrderId={customerPriceHistory.excludeOrderId}
-      focusSelector="[data-line-price-input]"
-      label="History"
-    />
+    <fieldset disabled={locked} className="contents">
+      <PriceHistoryButton
+        customerId={customerPriceHistory.customerId}
+        customerName={customerPriceHistory.customerName}
+        productId={li.productId || null}
+        productName={li.productName}
+        unitHint={li.unitLabel ?? (li.unitsPerBox && li.unitsPerBox > 1 ? "case" : li.unit)}
+        packHint={li.unitsPerBox ?? null}
+        onUsePrice={customerPriceHistory.onUsePrice}
+        excludeOrderId={customerPriceHistory.excludeOrderId}
+        focusSelector="[data-line-price-input]"
+        label="History"
+      />
+    </fieldset>
   );
   return (
     <li
@@ -266,11 +324,13 @@ export function LineItemRow({
         // the boxed controls no longer squeeze the info column to ~40px at 390px. From `sm`
         // up it is the original single flex row — the grid-placement classes on the
         // children are inert inside a flex container.
-        "grid grid-cols-[minmax(0,1fr)_auto] gap-x-2 gap-y-2 px-3 py-2.5 sm:flex sm:items-start sm:gap-3",
+        "grid grid-cols-[minmax(0,1fr)_auto] gap-x-2 gap-y-2 px-3 py-2.5",
+        // B1373: a narrow column (the till's cart beside its payment panel at 768) keeps the grid up to lg.
+        flexFrom === "lg" ? "lg:flex lg:items-start lg:gap-3" : "sm:flex sm:items-start sm:gap-3",
         // F9: the modal scrolls the added row `nearest`; this keeps it clear of the sticky footer and the docked draft bar.
         "scroll-mb-40",
         // Row 731: from `sm` the row is a flex line; while the qty-0 note shows it wraps so the note takes a line of its own.
-        showQtyNote ? "sm:flex-wrap" : "",
+        showQtyNote ? (flexFrom === "lg" ? "lg:flex-wrap" : "sm:flex-wrap") : "",
         mv.rowClass,
         category ? "border-l-2 border-l-amber-300 bg-amber-50/30" : "",
         highlighted ? "ring-2 ring-brand-500" : "",
@@ -307,7 +367,13 @@ export function LineItemRow({
           {(li.noteOpen || li.note?.trim()) && (
             <textarea
               rows={2}
-              maxLength={2000}
+              maxLength={noteMaxLength}
+              disabled={locked}
+              onKeyDown={onNoteKeyDown}
+              onFocus={onNoteFocus}
+              onBlur={onNoteBlur}
+              autoFocus={noteAutoFocus && !!li.noteOpen}
+              aria-label={labels?.note ? `Note for ${li.productName}` : undefined}
               value={li.note ?? ""}
               onChange={(e) => onSetNote(e.target.value)}
               placeholder="Flavor or note for this item (prints on invoice)"
@@ -331,18 +397,29 @@ export function LineItemRow({
                 onTapPrice ? "cursor-pointer" : "",
               )}
               onClick={qtyLocked ? undefined : onTapPrice}
+              onKeyDown={
+                onTapPrice
+                  ? (e) => {
+                      if (qtyLocked || (e.key !== "Enter" && e.key !== " ")) return;
+                      e.preventDefault();
+                      onTapPrice();
+                    }
+                  : undefined
+              }
               aria-disabled={onTapPrice && qtyLocked ? true : undefined}
+              aria-label={onTapPrice ? labels?.price : undefined}
               role={onTapPrice ? "button" : undefined}
               tabIndex={onTapPrice ? 0 : undefined}
             >
               {li.priceType === "SPECIAL" ? (
                 <>
                   {/* above its list (a tier over Retail) the lower list is not struck; the pill stays */}
-                  {!isAboveListLine({ unitPrice: li.unitPrice, originalPrice: li.listPrice }) && (
-                    <span className="text-xs text-navy/70 line-through">
-                      {formatMoney(li.listPrice)}
-                    </span>
-                  )}
+                  {!hideOriginalPrice &&
+                    !isAboveListLine({ unitPrice: li.unitPrice, originalPrice: li.listPrice }) && (
+                      <span className="text-xs text-navy/70 line-through">
+                        {formatMoney(li.listPrice)}
+                      </span>
+                    )}
                   <span className="text-xs font-medium text-emerald-600">
                     {formatMoney(li.unitPrice)} / {priceUnit}
                   </span>
@@ -352,9 +429,11 @@ export function LineItemRow({
                 </>
               ) : li.priceType === "DISCOUNTED" ? (
                 <>
-                  <span className="text-xs text-navy/70 line-through">
-                    {formatMoney(li.listPrice)}
-                  </span>
+                  {!hideOriginalPrice && (
+                    <span className="text-xs text-navy/70 line-through">
+                      {formatMoney(li.listPrice)}
+                    </span>
+                  )}
                   <span className="text-xs font-medium text-amber-600">
                     {formatMoney(li.unitPrice)} / {priceUnit}
                   </span>
@@ -382,7 +461,12 @@ export function LineItemRow({
                 <>
                   <Pencil aria-label="Change price" className="h-3 w-3 text-navy/50" />
                   {active && (
-                    <span className="text-[10px] text-navy/50 underline sm:hidden">
+                    <span
+                      className={cn(
+                        "text-[10px] text-navy/50 underline",
+                        flexFrom === "lg" ? "lg:hidden" : "sm:hidden",
+                      )}
+                    >
                       Tap to change
                     </span>
                   )}
@@ -422,7 +506,7 @@ export function LineItemRow({
           )}
           {/* One-time discount input (only when no special price already applied). #2696 (b): when
               the price is tap-to-edit (onTapPrice), the sheet owns the price — no inline box. */}
-          {li.priceType !== "SPECIAL" && !onTapPrice && (
+          {inlinePrice && li.priceType !== "SPECIAL" && !onTapPrice && (
             <div className="mt-1 flex items-center gap-1 flex-wrap">
               <span className="text-[10px] text-navy/70">
                 {li.unitsPerBox && li.unitsPerBox > 1 ? `${w.pack.one} price:` : "Price:"}
@@ -462,7 +546,13 @@ export function LineItemRow({
           {(li.noteOpen || li.note?.trim()) && (
             <textarea
               rows={2}
-              maxLength={2000}
+              maxLength={noteMaxLength}
+              disabled={locked}
+              onKeyDown={onNoteKeyDown}
+              onFocus={onNoteFocus}
+              onBlur={onNoteBlur}
+              autoFocus={noteAutoFocus && !!li.noteOpen}
+              aria-label={labels?.note ? `Note for ${li.productName}` : undefined}
               value={li.note ?? ""}
               onChange={(e) => onSetNote(e.target.value)}
               placeholder="Flavor or note for this item (prints on invoice)"
@@ -483,9 +573,11 @@ export function LineItemRow({
           disabled={qtyLocked}
           aria-busy={qtyLocked}
           aria-label={
-            qtyLocked
+            pendingUnit
               ? "Line quantity controls, locked while the selling unit loads"
-              : "Line quantity controls"
+              : qtyLocked
+                ? "Line quantity controls, locked"
+                : "Line quantity controls"
           }
           className="col-start-1 row-start-2 m-0 flex min-w-0 flex-col gap-0.5 border-0 p-0 sm:min-w-[190px]"
         >
@@ -500,6 +592,7 @@ export function LineItemRow({
               title={pillLabel(w.pack.one) === w.pack.one ? undefined : w.pack.one}
               className={cn(
                 "max-w-[104px] truncate whitespace-nowrap px-1.5 py-0.5 transition-colors",
+                touchTargets && "max-lg:min-h-11",
                 (li.sellBy ?? "case") === "case"
                   ? "bg-brand-500 text-white"
                   : "bg-white text-navy/70 hover:bg-surface-raised",
@@ -515,6 +608,7 @@ export function LineItemRow({
               title={pillLabel(w.base.one) === w.base.one ? undefined : w.base.one}
               className={cn(
                 "max-w-[104px] truncate whitespace-nowrap border-l border-surface-border px-1.5 py-0.5 transition-colors",
+                touchTargets && "max-lg:min-h-11",
                 li.sellBy === "unit"
                   ? "bg-brand-500 text-white"
                   : "bg-white text-navy/70 hover:bg-surface-raised",
@@ -532,7 +626,10 @@ export function LineItemRow({
                 value={li.qty}
                 onChange={(e) => onSetUnitQty(parseInt(e.target.value, 10) || 0)}
                 onFocus={(e) => e.target.select()}
-                className="w-16 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+                className={cn(
+                  "w-16 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500",
+                  touchTargets && "w-20 max-lg:min-h-11",
+                )}
                 title={`Total ${w.base.lowerOther}`}
               />
               <span
@@ -549,6 +646,7 @@ export function LineItemRow({
               unitsPerBox={li.unitsPerBox}
               words={w}
               disabled={qtyLocked}
+              touchTargets={touchTargets}
               onSetBoxes={onSetBoxes}
               onSetPieces={onSetPieces}
             />
@@ -571,9 +669,11 @@ export function LineItemRow({
           disabled={qtyLocked}
           aria-busy={qtyLocked}
           aria-label={
-            qtyLocked
+            pendingUnit
               ? "Line quantity controls, locked while the selling unit loads"
-              : "Line quantity controls"
+              : qtyLocked
+                ? "Line quantity controls, locked"
+                : "Line quantity controls"
           }
           className="col-start-1 row-start-2 m-0 flex min-w-0 flex-wrap items-center gap-1 border-0 p-0"
         >
@@ -584,7 +684,8 @@ export function LineItemRow({
               setQtyBelowMin(false);
               onQtyDelta(-1);
             }}
-            disabled={li.qty <= 1}
+            disabled={li.qty <= 1 || qtyLocked}
+            aria-label={labels?.decrease}
             className="flex h-6 w-6 items-center justify-center rounded border border-surface-border text-sm text-navy/70 hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-30 transition-colors max-lg:h-11 max-lg:w-11 max-lg:text-lg"
           >
             −
@@ -603,16 +704,22 @@ export function LineItemRow({
                 onSetQty(typed);
               }}
               onFocus={(e) => e.target.select()}
-              aria-label="Quantity"
+              aria-label={labels?.qty ?? "Quantity"}
               aria-describedby={qtyBelowMin ? qtyNoteId : undefined}
-              className="h-6 w-10 max-lg:h-11 max-lg:w-14 max-lg:text-base rounded border border-surface-border bg-white px-1 text-center text-sm font-semibold text-navy [appearance:textfield] focus:outline-none focus:ring-1 focus:ring-brand-500 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+              className={cn(
+                "h-6 w-10 max-lg:h-11 max-lg:w-14 max-lg:text-base rounded border border-surface-border bg-white px-1 text-center text-sm font-semibold text-navy [appearance:textfield] focus:outline-none focus:ring-1 focus:ring-brand-500 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none",
+                // the till caps a line at 100,000 pieces: a six-digit count must fit
+                touchTargets && "w-20 max-lg:w-20",
+              )}
             />
           ) : (
             <span className="w-8 text-center text-sm font-semibold text-navy">{li.qty}</span>
           )}
           <button
             type="button"
-            disabled={qtyLocked}
+            disabled={qtyLocked || !!increaseBlockedBy}
+            aria-label={labels?.increase}
+            aria-describedby={increaseBlockedBy}
             onClick={() => {
               setQtyBelowMin(false);
               onQtyDelta(1);
@@ -645,8 +752,12 @@ export function LineItemRow({
         <button
           type="button"
           onClick={onToggleNoteOpen}
+          disabled={locked}
+          aria-label={labels?.note}
+          aria-expanded={labels?.note ? !!(li.noteOpen || li.note?.trim()) : undefined}
           className={cn(
-            "shrink-0 rounded p-1 transition-colors hover:bg-surface-raised",
+            "shrink-0 rounded p-1 transition-colors hover:bg-surface-raised disabled:opacity-40",
+            iconTarget,
             li.note?.trim() ? "text-brand-500" : "text-navy/30 hover:text-navy",
           )}
           title="Add flavor / note"
@@ -656,7 +767,12 @@ export function LineItemRow({
         <button
           type="button"
           onClick={onRemove}
-          className="shrink-0 rounded p-1 text-navy/30 hover:bg-surface-raised hover:text-danger transition-colors"
+          disabled={locked}
+          aria-label={labels?.remove}
+          className={cn(
+            "shrink-0 rounded p-1 text-navy/30 hover:bg-surface-raised hover:text-danger transition-colors disabled:opacity-40",
+            iconTarget,
+          )}
           title="Remove"
         >
           <X className="h-3.5 w-3.5" />

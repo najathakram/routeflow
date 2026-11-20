@@ -4,6 +4,12 @@ import { apiClient } from "@/lib/api-client";
 import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
+/** B1373: a till line shows its quantity in the order row's number field (no "× N" text). */
+const qtyOf = (line: HTMLElement) =>
+  Number(
+    (within(line).getByRole("spinbutton", { name: /Set quantity of/ }) as HTMLInputElement).value,
+  );
+
 /**
  * Counter sale scan path (B1206-B1208). The API is mocked at apiClient (the lowest seam), so the
  * screen resolves a scan through the REAL shared ladder (`resolveProductByCode`).
@@ -126,6 +132,30 @@ const scan = async (text: string) => {
     expect((screen.getByLabelText("Scan or search items") as HTMLInputElement).value).toBe(""),
   );
 };
+/** B1373: the first line's whole boxes and loose pieces (the order row's fields; the pieces field shows only once used). */
+const boxesPieces = () => {
+  const li = lines()[0];
+  const pieces = within(li).queryByRole("spinbutton", {
+    name: /^Extra /,
+  }) as HTMLInputElement | null;
+  return [
+    (within(li).getByTitle(/^Number of whole /) as HTMLInputElement).value,
+    pieces?.value ?? "0",
+  ];
+};
+const typePieces = (n: number) => {
+  const li = lines()[0];
+  if (!within(li).queryByRole("spinbutton", { name: /^Extra / })) {
+    fireEvent.click(within(li).getByRole("button", { name: /^\+ .*: add extra / }));
+  }
+  fireEvent.change(within(li).getByRole("spinbutton", { name: /^Extra / }), {
+    target: { value: String(n) },
+  });
+};
+const typeBoxes = (n: number) =>
+  fireEvent.change(within(lines()[0]).getByTitle(/^Number of whole /), {
+    target: { value: String(n) },
+  });
 const deferred = <T,>() => {
   let resolve!: (v: T) => void;
   const promise = new Promise<T>((r) => (resolve = r));
@@ -155,9 +185,9 @@ describe("B1206: a FIFO scan queue (no scan is dropped)", () => {
 
     await waitFor(() => expect(lines()).toHaveLength(2));
     expect(lines()[0]).toHaveTextContent("Sample Cola");
-    expect(lines()[0]).toHaveTextContent("× 3");
+    expect(qtyOf(lines()[0])).toBe(3);
     expect(lines()[1]).toHaveTextContent("Sample Chips");
-    expect(lines()[1]).toHaveTextContent("× 1");
+    expect(qtyOf(lines()[1])).toBe(1);
     expect(screen.getByTestId("running-total")).toHaveTextContent("$11.50");
   });
 });
@@ -218,7 +248,7 @@ describe("B1208: the scanned level decides the line", () => {
     renderTill(<CounterSaleScreen />);
     await scan("400500600028");
     await waitFor(() => expect(lines()).toHaveLength(1));
-    expect(lines()[0]).toHaveTextContent("0 boxes + 1 pcs");
+    expect(boxesPieces()).toEqual(["0", "1"]);
     expect(screen.getByTestId("running-total")).toHaveTextContent("$1.25");
 
     fireEvent.click(screen.getByRole("button", { name: "$20" }));
@@ -233,41 +263,38 @@ describe("B1208: the scanned level decides the line", () => {
     renderTill(<CounterSaleScreen />);
     await scan("400500600028");
     await scan("400500600028");
-    await waitFor(() => expect(lines()[0]).toHaveTextContent("0 boxes + 2 pcs"));
+    await waitFor(() => expect(boxesPieces()).toEqual(["0", "2"]));
     expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50");
     await scan("400500600011");
-    await waitFor(() => expect(lines()[0]).toHaveTextContent("1 box + 2 pcs"));
+    await waitFor(() => expect(boxesPieces()).toEqual(["1", "2"]));
     expect(screen.getByTestId("running-total")).toHaveTextContent("$32.50");
   });
 
   it("a BOX-code scan is one whole box at 30.00", async () => {
     renderTill(<CounterSaleScreen />);
     await scan("400500600011");
-    await waitFor(() => expect(lines()[0]).toHaveTextContent("1 box"));
+    await waitFor(() => expect(boxesPieces()).toEqual(["1", "0"]));
     expect(screen.getByTestId("running-total")).toHaveTextContent("$30.00");
   });
 
-  it("a box/piece stepper on the till line adjusts the split and the price; it never steps to zero", async () => {
+  it("typed boxes and pieces on the till line adjust the split and the price; it never goes to zero", async () => {
+    // B1373: the order row types boxes and loose pieces (no one-tap box/piece stepper buttons)
     renderTill(<CounterSaleScreen />);
     await scan("400500600011"); // 1 box = 30.00
     await waitFor(() => expect(lines()).toHaveLength(1));
-    fireEvent.click(screen.getByRole("button", { name: "Add a piece to Sample Cola 24pk" }));
-    expect(lines()[0]).toHaveTextContent("1 box + 1 pcs");
+    typePieces(1);
+    expect(boxesPieces()).toEqual(["1", "1"]);
     expect(screen.getByTestId("running-total")).toHaveTextContent("$31.25");
-    fireEvent.click(screen.getByRole("button", { name: "Remove a box from Sample Cola 24pk" }));
-    expect(lines()[0]).toHaveTextContent("0 boxes + 1 pcs");
+    typeBoxes(0);
+    expect(boxesPieces()).toEqual(["0", "1"]);
     expect(screen.getByTestId("running-total")).toHaveTextContent("$1.25");
-    // the last piece cannot be stepped away (the × button removes a line)
-    expect(
-      screen.getByRole("button", { name: "Remove a piece from Sample Cola 24pk" }),
-    ).toBeDisabled();
+    // the last piece cannot be typed away (the × button removes a line)
+    typePieces(0);
+    expect(boxesPieces()).toEqual(["0", "1"]);
+    expect(screen.getByTestId("running-total")).toHaveTextContent("$1.25");
     // 23 more pieces roll over into a box
-    for (let i = 0; i < 23; i += 1) {
-      fireEvent.click(screen.getByRole("button", { name: "Add a piece to Sample Cola 24pk" }));
-    }
-    expect(lines()[0]).toHaveTextContent("1 box");
-    // loose pieces would read "+ 3 pcs"; the stepper's own "1 Box (24 pcs)" label is not a leftover
-    expect(lines()[0]).not.toHaveTextContent(/\+ \d+ pcs/);
+    typePieces(24);
+    expect(boxesPieces()).toEqual(["1", "0"]);
     expect(screen.getByTestId("running-total")).toHaveTextContent("$30.00");
   });
 
@@ -277,7 +304,7 @@ describe("B1208: the scanned level decides the line", () => {
     await scan("200000000001");
     await waitFor(() => expect(lines()).toHaveLength(1));
     fireEvent.click(screen.getByRole("button", { name: "Add one Sample Cola" }));
-    expect(lines()[0]).toHaveTextContent("× 2");
+    expect(qtyOf(lines()[0])).toBe(2);
     expect(screen.getByTestId("running-total")).toHaveTextContent("$5.00");
     fireEvent.click(screen.getByRole("button", { name: "Remove one Sample Cola" }));
     expect(screen.getByRole("button", { name: "Remove one Sample Cola" })).toBeDisabled();
@@ -294,7 +321,7 @@ describe("B1206 extra: the SAME code scanned twice quickly counts both", () => {
     await scan("200000000001");
     reply.resolve(COLA);
     await waitFor(() => expect(lines()).toHaveLength(1));
-    await waitFor(() => expect(lines()[0]).toHaveTextContent("× 2"));
+    await waitFor(() => expect(qtyOf(lines()[0])).toBe(2));
     expect(screen.getByTestId("running-total")).toHaveTextContent("$5.00");
   });
 
@@ -308,8 +335,8 @@ describe("B1206 extra: the SAME code scanned twice quickly counts both", () => {
     await scan("200000000002");
     reply.resolve(COLA);
     await waitFor(() => expect(lines()).toHaveLength(2));
-    expect(lines()[0]).toHaveTextContent("× 1");
-    expect(lines()[1]).toHaveTextContent("× 4");
+    expect(qtyOf(lines()[0])).toBe(1);
+    expect(qtyOf(lines()[1])).toBe(4);
   });
 });
 
@@ -329,7 +356,7 @@ describe("D5: a 1-3 digit entry is a code FIRST when a product matches it exactl
     await scan("3");
     expect(screen.getByTestId("pending-qty")).toHaveTextContent("×3");
     await scan("200000000001");
-    await waitFor(() => expect(lines()[0]).toHaveTextContent("× 3"));
+    await waitFor(() => expect(qtyOf(lines()[0])).toBe(3));
     expect(screen.queryByTestId("pending-qty")).toBeNull();
   });
 
@@ -473,8 +500,8 @@ describe("B1208 nit: a UNIT multiplier at or over the pack size is labelled norm
     await scan("30"); // a quantity for the next scan
     await scan("400500600028");
     await waitFor(() => expect(lines()).toHaveLength(1));
-    expect(lines()[0]).toHaveTextContent("1 box + 6 pcs");
-    expect(lines()[0]).not.toHaveTextContent("30 pcs");
+    expect(boxesPieces()).toEqual(["1", "6"]);
+    expect(boxesPieces()).not.toEqual(["0", "30"]);
     expect(screen.getByTestId("running-total")).toHaveTextContent("$37.50"); // 30.00 + 6 x 1.25
 
     fireEvent.click(screen.getByRole("button", { name: "$50" }));
@@ -611,7 +638,7 @@ describe("scan queue: edge cases around the picker and removal", () => {
     fireEvent.click(screen.getByRole("button", { name: "Remove Sample Cola" }));
     colaReply.resolve(COLA);
     await waitFor(() => expect(lines()).toHaveLength(1));
-    expect(lines()[0]).toHaveTextContent("× 1");
+    expect(qtyOf(lines()[0])).toBe(1);
     expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50");
   });
 });

@@ -122,7 +122,7 @@ describe("counter line note: focus and the g-shortcuts", () => {
     expect(push).not.toHaveBeenCalled();
     expect(screen.queryByText("Discard this sale?")).toBeNull(); // typing opens no dialog either
     // the cart is still there
-    expect(screen.getByText(/Cola · /)).toBeInTheDocument();
+    expect(screen.getByRole("spinbutton", { name: "Set quantity of Cola" })).toBeInTheDocument();
   });
 
   // SA-1138 A1 (was: g then i from the page opened Discard / navigated): on the till every printable key is a scan key, so a g
@@ -140,7 +140,7 @@ describe("counter line note: focus and the g-shortcuts", () => {
     expect(screen.queryByText("Discard this sale?")).toBeNull();
     expect(navigate).not.toHaveBeenCalled();
     expect(push).not.toHaveBeenCalled();
-    expect(screen.getByText(/Cola · /)).toBeInTheDocument();
+    expect(screen.getByRole("spinbutton", { name: "Set quantity of Cola" })).toBeInTheDocument();
   });
 
   it("an empty cart: g then i from the page does not navigate either", () => {
@@ -168,8 +168,12 @@ describe("counter line note: the scan field is re-armed (SA-762r #8)", () => {
     const note = await openNote(user);
     await user.type(note, "gift wrap{Enter}");
 
-    expect(screen.queryByLabelText("Note for Cola")).toBeNull();
-    expect(screen.getByTestId("line-note")).toHaveTextContent("gift wrap");
+    // B1373: a line that HAS a note keeps its field on show (the order row's way); Enter closed the editing state
+    expect(screen.getByLabelText("Note for Cola")).toHaveValue("gift wrap");
+    expect(screen.getByRole("button", { name: "Edit the note on Cola" })).toHaveAttribute(
+      "aria-expanded",
+      "true", // its field stays on show while the note has text, so the toggle reads expanded,
+    );
     const scanField = screen.getByLabelText("Scan or search items");
     await waitFor(() => expect(scanField).toHaveFocus());
     await user.keyboard("0123");
@@ -186,21 +190,25 @@ describe("counter line note: the scan field is re-armed (SA-762r #8)", () => {
     note = await screen.findByLabelText("Note for Cola");
     await user.type(note, " extra{Escape}");
 
-    expect(screen.queryByLabelText("Note for Cola")).toBeNull();
-    expect(screen.getByTestId("line-note")).toHaveTextContent(/^cold$/);
+    expect(screen.getByLabelText("Note for Cola")).toHaveValue("cold");
+    expect(screen.getByRole("button", { name: "Edit the note on Cola" })).toHaveAttribute(
+      "aria-expanded",
+      "true", // as above: a note with text keeps its field on show,
+    );
     await waitFor(() => expect(screen.getByLabelText("Scan or search items")).toHaveFocus());
   });
 
-  it("Clear note puts focus on the scan field (it was <body> when the note field unmounted)", async () => {
+  it("emptying the note and closing it puts focus on the scan field (it was <body> when the note field unmounted)", async () => {
+    // B1373: there is no Clear note button; the clerk empties the field, and closing an empty note removes it
     const user = userEvent.setup();
     renderWithProviders(counter());
     await scan("COLA");
     const note = await openNote(user);
     await user.type(note, "cold");
-    await user.click(screen.getByRole("button", { name: "Clear the note on Cola" }));
+    await user.clear(note);
+    await user.keyboard("{Enter}");
 
     expect(screen.queryByLabelText("Note for Cola")).toBeNull();
-    expect(screen.queryByTestId("line-note")).toBeNull();
     await waitFor(() => expect(screen.getByLabelText("Scan or search items")).toHaveFocus());
   });
 

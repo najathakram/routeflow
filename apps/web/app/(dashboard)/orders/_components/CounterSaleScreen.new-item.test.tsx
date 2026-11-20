@@ -5,6 +5,12 @@ import { apiClient } from "@/lib/api-client";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 import { installScanClock } from "@/test-utils/scan-clock";
 
+/** B1373: a till line shows its quantity in the order row's number field (no "× N" text). */
+const qtyOf = (line: HTMLElement) =>
+  Number(
+    (within(line).getByRole("spinbutton", { name: /Set quantity of/ }) as HTMLInputElement).value,
+  );
+
 /**
  * W-1042 (SA-1062 MUSTs 9-14a): a new item at the counter. Nothing opens by itself: an unknown scan's miss line and the
  * live list's "No items match." each carry a Create button. A new item needs EDIT_LINE_PRICE and a price above $0; a
@@ -185,11 +191,11 @@ describe("W-1042 the miss line", () => {
 });
 
 describe("W-1042 the live list", () => {
-  it('"No items match." carries Create "<typed>" and the typed text goes to the name', async () => {
+  it('B1373: "No products found." carries the Create new product row and the typed text goes to the name', async () => {
     renderWithProviders(<CounterSaleScreen />);
     fireEvent.change(field(), { target: { value: "fresh pie" } });
-    await screen.findByText("No items match.");
-    const btn = screen.queryByRole("button", { name: 'Create "fresh pie"' });
+    await screen.findByText("No products found.");
+    const btn = screen.queryByRole("option", { name: 'Create new product: "fresh pie"' });
     expect(btn).not.toBeNull();
     fireEvent.click(btn!);
     await screen.findByRole("heading", { name: "New product" });
@@ -197,12 +203,13 @@ describe("W-1042 the live list", () => {
     expect(skuInput().value).toBe("");
   });
 
-  it("R9 guard: a price-denied operator gets no Create button under No items match", async () => {
+  it("R9 guard: a price-denied operator gets no Create row under No products found", async () => {
     mockRole = "OPERATOR";
     mockDenied = ["PRICING"];
     renderWithProviders(<CounterSaleScreen />);
     fireEvent.change(field(), { target: { value: "fresh pie" } });
-    await screen.findByText("No items match.");
+    await screen.findByText("No products found.");
+    expect(screen.queryByRole("option", { name: /^Create/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /^Create/ })).toBeNull();
   });
 });
@@ -221,11 +228,11 @@ describe("W-1042 save, then scan again", () => {
     expect(posts).toHaveLength(1);
     expect(posts[0]).toMatchObject({ name: "Fresh Pie", sku: MISS, pricePerUnit: "4.5" });
     expect(lines()[0]).toHaveTextContent("Fresh Pie");
-    expect(lines()[0]).not.toHaveTextContent("× 2");
+    expect(qtyOf(lines()[0])).not.toBe(2);
     expect(openDialog()).toBeNull();
     await waitFor(() => expect(document.activeElement).toBe(field()));
     submitScan(MISS);
-    await waitFor(() => expect(lines()[0]).toHaveTextContent("× 2"));
+    await waitFor(() => expect(qtyOf(lines()[0])).toBe(2));
     expect(lines()).toHaveLength(1);
   });
 

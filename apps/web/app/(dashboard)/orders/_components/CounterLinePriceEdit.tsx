@@ -48,6 +48,13 @@ export interface CounterLinePriceEditProps {
    */
   openWith?: { value: number } | null;
   onReset?: () => void;
+  /**
+   * B1373: false = no "Change price" button of its own; the line's price itself (LineItemRow's tap-to-change price)
+   * opens the dialog through `openRequest`. Default true.
+   */
+  trigger?: boolean;
+  /** B1373: each new number opens the dialog empty, exactly as the "Change price" button does. 0 / absent = nothing. */
+  openRequest?: number;
   /** called when the dialog closes (Apply, Cancel, Escape): the screen refocuses its scan field here */
   onClosed?: () => void;
 }
@@ -116,6 +123,8 @@ export function CounterLinePriceEdit({
   openWith = null,
   onReset,
   onClosed,
+  trigger = true,
+  openRequest = 0,
 }: CounterLinePriceEditProps) {
   const [open, setOpen] = React.useState(false);
   const [mode, setMode] = React.useState<PriceEditMode>("set");
@@ -162,6 +171,17 @@ export function CounterLinePriceEdit({
     disarm();
     setOpen(true);
   }, [openWith, disarm]);
+
+  // B1373: the line's own price opened the dialog (the same empty "Set price" start as the button).
+  React.useEffect(() => {
+    if (openRequest <= 0 || live.current.locked || !live.current.canEditPrices) return;
+    setMode("set");
+    setValue("");
+    setReason("");
+    setError(null);
+    disarm();
+    setOpen(true);
+  }, [openRequest, disarm]);
 
   if (!canEditPrices) return null;
 
@@ -213,17 +233,19 @@ export function CounterLinePriceEdit({
   return (
     <>
       <span className="inline-flex items-center gap-2">
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          className="min-h-[44px] min-w-[44px] lg:min-h-0 lg:min-w-0"
-          aria-label={`Change price for ${name}`}
-          disabled={locked}
-          onClick={openDialog}
-        >
-          Change price
-        </Button>
+        {trigger && (
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            className="min-h-[44px] min-w-[44px] lg:min-h-0 lg:min-w-0"
+            aria-label={`Change price for ${name}`}
+            disabled={locked}
+            onClick={openDialog}
+          >
+            Change price
+          </Button>
+        )}
         {edited && onReset && (
           <Button
             type="button"
