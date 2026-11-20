@@ -30,6 +30,8 @@ describe('parseInvoiceLayout (T1, guard: master\'s `=== "true"` rule)', () => {
       hidePerPiece: "invoice.hidePerPiece",
       hideAmountPaid: "invoice.hideAmountPaid",
       hideBalanceDue: "invoice.hideBalanceDue",
+      // SA-1197 (Q9): a SHOW key on the same parse, so absent = off
+      showAccountBalance: "invoice.showAccountBalance",
     });
   });
 });
@@ -51,6 +53,7 @@ describe("readInvoiceLayout (T2)", () => {
       hidePerPiece: false,
       hideAmountPaid: false,
       hideBalanceDue: false,
+      showAccountBalance: false,
     });
   });
 });

@@ -32,6 +32,7 @@ export const SEND_SNAPSHOT_INCLUDE = {
       contactName: true,
       email: true,
       phone: true,
+      isWalkIn: true, // SA-1197 C7: the account block fails closed without it (never hashed: fingerprintContent picks its fields)
       addresses: { orderBy: BILL_TO_ADDRESS_ORDER }, // #2088: the fingerprint reads the same first row
     },
   },

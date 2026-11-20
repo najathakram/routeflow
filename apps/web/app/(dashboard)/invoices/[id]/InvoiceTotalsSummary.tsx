@@ -1,4 +1,5 @@
 import { cn } from "@routeflow/ui/web";
+import type { InvoiceAccountRow } from "@routeflow/types";
 import { fmt } from "@/lib/formatting";
 
 export interface InvoiceTotalsSummaryProps {
@@ -20,6 +21,8 @@ export interface InvoiceTotalsSummaryProps {
   isDraft?: boolean;
   /** W-1185: the lines/units count, already formatted ("12 lines · 30 boxes · 6 pcs"). Not money. */
   itemCount?: string;
+  /** SA-1197: the server's account rows, printed as given under Balance due (never summed here, L-119). */
+  accountBlock?: ReadonlyArray<InvoiceAccountRow>;
 }
 
 /**
@@ -43,6 +46,7 @@ export function InvoiceTotalsSummary({
   balanceDue,
   isDraft = false,
   itemCount,
+  accountBlock = [],
 }: InvoiceTotalsSummaryProps) {
   return (
     <div className="w-72 space-y-1.5 text-sm">
@@ -117,6 +121,23 @@ export function InvoiceTotalsSummary({
         <span>Balance due</span>
         <span className="money">{fmt(balanceDue)}</span>
       </div>
+      {/* SA-1197: the customer's open balance, smaller and neutral so Balance due stays the one big figure. */}
+      {accountBlock.length > 0 && (
+        <div data-testid="invoice-account-block" className="mt-2 space-y-0.5 text-xs text-navy/70">
+          {accountBlock.map((row) =>
+            row.amount == null ? (
+              <p key={row.kind} className="pt-1 font-semibold">
+                {row.label}
+              </p>
+            ) : (
+              <div key={row.kind} className="flex justify-between">
+                <span>{row.label}</span>
+                <span className="money">{fmt(row.amount)}</span>
+              </div>
+            ),
+          )}
+        </div>
+      )}
     </div>
   );
 }

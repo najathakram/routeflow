@@ -663,6 +663,8 @@ export class SettingsController {
       // R6a: only the string "true" hides the Amount Paid / Balance Due lines of the invoice PDF and email.
       hideAmountPaid: layout.hideAmountPaid,
       hideBalanceDue: layout.hideBalanceDue,
+      // SA-1197: the account block, absent = off (the same parse: only "true" turns it on).
+      showAccountBalance: layout.showAccountBalance,
       // WP-D1: absent/unset -> null (no tenant deposit default). Row 652: the web clears the field by sending 0, so a
       // stored "0" is also "no tenant default" (every reader treats it as no deposit; the form shows both as blank).
       depositDefaultPercent:
@@ -695,6 +697,9 @@ export class SettingsController {
     }
     if (dto.hideBalanceDue !== undefined) {
       await this.svc.set(INVOICE_LAYOUT_KEYS.hideBalanceDue, String(dto.hideBalanceDue));
+    }
+    if (dto.showAccountBalance !== undefined) {
+      await this.svc.set(INVOICE_LAYOUT_KEYS.showAccountBalance, String(dto.showAccountBalance));
     }
     if (dto.depositDefaultPercent !== undefined) {
       await this.svc.set("invoice.depositDefaultPercent", String(dto.depositDefaultPercent));

@@ -7,6 +7,7 @@ import { withFamilyNames } from "./invoice-line-name";
 import { invoiceItemQtyFields } from "./invoice-pdf-item";
 import { CREDIT_NOTE_METHOD, splitConfirmed } from "./payment-predicates";
 import type { InvoiceEmailAttachment } from "./invoice-attachment";
+import { accountBlockRows, type InvoiceAccountBalance } from "../customers/invoice-account-balance";
 
 /**
  * The email body's inputs for `InvoicesService.deliverEmail`, moved out of the service verbatim (the service is on the
@@ -56,10 +57,15 @@ export function buildInvoiceEmailPayload(
     hidePerPiece?: boolean;
     hideAmountPaid?: boolean; // R6a: the invoice email only; the reminder keeps both lines
     hideBalanceDue?: boolean;
+    /** SA-1197 C4: the send's one account read (the same object the PDF got); absent = nothing to print. */
+    account?: InvoiceAccountBalance;
   },
 ) {
   const { totalPaid, creditApplied, advanceApplied, creditNoteNumbers, balanceDue } =
     emailPaidBasis(inv);
+  const accountRows = ctx.account
+    ? accountBlockRows(ctx.account, { hideBalanceDue: !!ctx.hideBalanceDue })
+    : [];
   return {
     to: ctx.recipientEmail,
     customerName: inv.customer?.businessName ?? "Customer",
@@ -100,6 +106,7 @@ export function buildInvoiceEmailPayload(
     depositAmount: computeDepositFields(inv, 0, new Date().toISOString().slice(0, 10))
       .depositAmount,
     depositDueDate: inv.depositDueDate ? formatDate(inv.depositDueDate) : null,
+    ...(accountRows.length > 0 ? { accountRows } : {}), // SA-1197 T18: absent when nothing prints
   };
 }
 

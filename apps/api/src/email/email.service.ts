@@ -52,6 +52,7 @@ import {
   type PerBaseUnitPrice,
 } from "@routeflow/pricing";
 import { sellerDisplayName } from "../common/seller-display-name";
+import type { InvoiceAccountRow } from "@routeflow/types";
 
 // F6-001: SSRF guard — block private/loopback/metadata IPs as SMTP hosts.
 // Tenants control smtpHost; without this guard they could point it at
@@ -1131,6 +1132,8 @@ export class EmailService {
     /** R6a: the tenant's `invoice.hideAmountPaid` / `invoice.hideBalanceDue`: true leaves that line out of the invoice email (a reminder ignores both). */
     hideAmountPaid?: boolean;
     hideBalanceDue?: boolean;
+    /** SA-1197: the server's account rows (accountBlockRows), printed as given under Balance Due; a reminder prints none. */
+    accountRows?: InvoiceAccountRow[];
     /**
      * Row 401: a counter sale paid at the till is settled when it is rung, so the body prints no Due Date and no
      * Terms (the caller decides with `isPaidAtSale`, the rule the invoice page follows). Absent/false = both show.
@@ -1705,6 +1708,8 @@ export class EmailService {
       /** R6a: see sendInvoice's doc; a reminder ignores both. */
       hideAmountPaid?: boolean;
       hideBalanceDue?: boolean;
+      /** SA-1197: see sendInvoice's doc. */
+      accountRows?: InvoiceAccountRow[];
       /** Row 401: no Due Date / Terms rows for a paid-at-sale counter invoice — see sendInvoice's doc. */
       hideTerms?: boolean;
       /** Deposit schedule (display-only, derived server-side) — null/absent renders nothing. */
@@ -1836,6 +1841,17 @@ export class EmailService {
                 <td colspan="${footSpan}" style="padding:8px 12px;font-size:14px;font-weight:700;color:#1D2A3D;text-align:right;">Total</td>
                 <td style="padding:8px 12px;font-size:15px;font-weight:700;color:#1D2A3D;text-align:right;">${fmt(params.total)}</td>
               </tr>`;
+    // SA-1197: the account block under Balance Due, neutral (never the danger or success colour), smaller; the rows and their
+    // words are the server's (accountBlockRows, C5/C12). A reminder prints none (C13).
+    const accountRows = params.isReminder ? [] : (params.accountRows ?? []);
+    const accountRowsHtml = accountRows
+      .map(
+        (r) => `<tr>
+                <td colspan="${footSpan}" style="padding:6px 12px;font-size:12px;font-weight:${r.kind === "heading" ? 700 : 500};color:#4b5563;text-align:right;">${escapeHtml(r.label)}</td>
+                <td style="padding:6px 12px;font-size:13px;font-weight:600;color:#4b5563;text-align:right;">${r.amount == null ? "" : fmt(r.amount)}</td>
+              </tr>`,
+      )
+      .join("");
     const totalsFooter =
       params.balanceDue != null
         ? `${itemCountRow}${dropBalance ? totalRow : ""}${amountPaidRow}${creditAppliedRow}${advanceAppliedRow}${
@@ -1846,7 +1862,7 @@ export class EmailService {
                 <td colspan="${footSpan}" style="padding:12px;font-size:14px;font-weight:700;color:#1D2A3D;text-align:right;">Balance Due</td>
                 <td style="padding:12px;font-size:16px;font-weight:700;color:${params.balanceDue > 0 ? "#dc2626" : "#16a34a"};text-align:right;">${fmt(params.balanceDue)}</td>
               </tr>`
-          }`
+          }${accountRowsHtml}`
         : `${itemCountRow}<tr style="background:#f9fafb;">
                 <td colspan="${footSpan}" style="padding:12px;font-size:14px;font-weight:700;color:#1D2A3D;text-align:right;">Amount Due</td>
                 <td style="padding:12px;font-size:16px;font-weight:700;color:#1D2A3D;text-align:right;">${fmt(params.total)}</td>
@@ -1968,6 +1984,9 @@ export class EmailService {
       totalsLines.push(`Advance applied: ${fmt(params.advanceApplied)}`);
     if (params.balanceDue == null) totalsLines.push(`Amount Due: ${fmt(params.total)}`);
     else if (!dropBalance) totalsLines.push(`Balance Due: ${fmt(params.balanceDue)}`);
+    if (params.balanceDue != null)
+      for (const r of accountRows)
+        totalsLines.push(r.amount == null ? r.label : `${r.label}: ${fmt(r.amount)}`);
     if (totalsLines.length > 0) bodyText.push(totalsLines.join("\n"));
     if (params.pdfUrl) bodyText.push(`Download PDF: ${params.pdfUrl}`);
     bodyText.push(

@@ -48,7 +48,8 @@ describe("W-702 the email snapshot (SA-860)", () => {
 
   it("R7: the email path builds the PDF, the payload and the fingerprint from the one snapshot", () => {
     const deliver = region("private async deliverEmail(", "this.gateway.emitInvoiceUpdated(");
-    expect(deliver).toMatch(/getOrGenerate\(id, \{ variant, model: snapshot \}\)/);
+    // SA-1197 C4: the send also hands the PDF its ONE account read, the same object the payload gets
+    expect(deliver).toMatch(/getOrGenerate\(id, \{ variant, model: snapshot, account \}\)/);
     expect(deliver).toMatch(/buildInvoiceEmailPayload\(snapshot,/);
     expect(deliver).toMatch(/fingerprintOfSnapshot\([\s\S]*snapshot/);
     // exactly one dry-run/snapshot read, and no second invoice read for the document

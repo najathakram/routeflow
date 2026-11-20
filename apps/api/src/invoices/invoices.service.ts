@@ -34,6 +34,7 @@ import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 import { PrismaService } from "../prisma/prisma.service";
 import { statusFromPayments } from "./invoice-status";
 import { readInvoiceLayout } from "./invoice-layout";
+import * as acct from "../customers/invoice-account-balance"; // SA-1197: the invoice account block
 import { voidPaymentInTx } from "./payment-void-tx";
 import { TENANT_ZONE_SELECT, configuredZone, tenantTimeZone } from "../common/tenant-time-zone";
 import { givenPaidInstant, paidInstantOf, settledInstantOf } from "../common/paid-instant";
@@ -2910,6 +2911,7 @@ export class InvoicesService {
         customer: {
           select: {
             id: true,
+            isWalkIn: true, // SA-1197 C7: the account block fails closed without it
             businessName: true,
             contactName: true,
             phone: true,
@@ -2976,10 +2978,8 @@ export class InvoicesService {
       // A customer must never see an upsell's base price on their invoice.
       redactUpsellForCustomer(inv);
     }
-    // Rides the invoice payload (not /settings/invoice, which is operator-only)
-    // so CUSTOMER viewers of this same document honor the tenant's
-    // hide-original-price preference too.
-    const { hideOriginalPrice, hidePerPiece } = await readInvoiceLayout(this.systemConfig);
+    // Rides the payload (/settings/invoice is staff-only), so a CUSTOMER viewer honours the layout too.
+    const layout = await readInvoiceLayout(this.systemConfig); // + SA-1197: the account block's switch
     stampHandedOverBy(inv.order, user); // row 342: staff only (`invoiceDetailFor` drops `order` for a buyer)
     await iGate.stampOverrideNames(this.prisma.forTenant(), inv.items, user); // row 510: staff only
     const db = this.prisma.forTenant();
@@ -2996,8 +2996,9 @@ export class InvoicesService {
         invoiceLinesInOrder(await du.itemsWithDisplayUnits(db, inv, this.entitlements)),
       ), // SA-1058; #2717 M3 + SA-827; the order reads the stored text, the family name composes after it
       payments: withNoLongerFits(inv).payments, // W-769: each row's derived noLongerFits flag
-      hideOriginalPrice,
-      hidePerPiece,
+      hideOriginalPrice: layout.hideOriginalPrice,
+      hidePerPiece: layout.hidePerPiece,
+      accountBlock: await acct.detailAccountBlock(this.prisma, inv, layout), // SA-1197: staff only until PR-2
       ...listRowFlags(inv), // row 401 paidAtSale + SA-1026 toCollect
       pendingMirror: await resolvePendingMirror(this.featureConfig, inv.tenantId, inv, inv.order),
       // F3: the server's default PDF stage (a shipment invoice is FINAL); clients read it, never re-derive.
@@ -3576,11 +3577,13 @@ export class InvoicesService {
       snapshot,
       variant,
     ); // #2088: what this email shows
+    const layout = await readInvoiceLayout(this.systemConfig); // R6a: the Paid / Balance Due switches; SA-1197 the account block
+    const account = await acct.readInvoiceAccountBalance(this.prisma, snapshot, layout); // SA-1197 C4: ONE read, PDF + email
 
     // Get PDF URL (non-blocking) + its attachment; `variant` picks DRAFT vs FINAL.
     let pdfUrl: string | undefined, attachment: InvoiceEmailAttachment | undefined;
     try {
-      pdfUrl = await this.pdfService.getOrGenerate(id, { variant, model: snapshot });
+      pdfUrl = await this.pdfService.getOrGenerate(id, { variant, model: snapshot, account });
       if (pdfUrl) {
         const dl = this.storage.download.bind(this.storage);
         attachment = await buildInvoiceEmailAttachment(dl, this.logger, id, inv.invoiceNumber);
@@ -3591,15 +3594,14 @@ export class InvoicesService {
       );
     }
 
-    // F03/R9: the SAME tenant setting findOneOrThrow and the PDF read: the email renders the same item table as the
-    // PDF attached to it, so it honours the hide-original-price preference too. The payload (the F03/R8/B421 paid
-    // basis, the item table, the deposit schedule) is built in invoice-email-payload.ts (the service is on the ratchet).
-    const layout = await readInvoiceLayout(this.systemConfig); // R6a: the invoice email's Paid / Balance Due switches ride it
+    // F03/R9: the email honours the same layout as the PDF attached to it (read once above). The payload (the F03/R8/B421
+    // paid basis, the item table, the deposit schedule) is built in invoice-email-payload.ts (the service is on the ratchet).
     const emailPayload = buildInvoiceEmailPayload(snapshot, {
       recipientEmail,
       pdfUrl,
       attachment,
       ...layout,
+      account,
     });
     const parts = [this.prisma, this.pdfService, this.storage, this.logger, opts] as const;
     Object.assign(emailPayload, await completionEmailParts(...parts)); // I-120: COUNTER_COMPLETE only

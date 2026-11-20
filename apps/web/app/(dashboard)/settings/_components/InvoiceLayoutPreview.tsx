@@ -1,4 +1,5 @@
 import * as React from "react";
+import { INVOICE_ACCOUNT_LABELS } from "@routeflow/types";
 
 // A fixed sample of the invoice PDF, so a flip of the layout switches shows at once. The totals mirror the PDF's order and
 // words (guarded by apps/api/src/invoices/invoice-pdf-template.labels.spec.ts).
@@ -9,6 +10,7 @@ export interface InvoiceLayoutFlags {
   hidePerPiece?: boolean;
   hideAmountPaid?: boolean;
   hideBalanceDue?: boolean;
+  showAccountBalance?: boolean;
 }
 
 const BARS = [2, 1, 3, 1, 2, 2, 1, 3, 1, 1, 2, 3, 1, 2, 1, 3, 2, 1];
@@ -18,6 +20,11 @@ const TOTALS = [
   ["Amount Paid", "$15.00"],
   ["Balance Due", "$25.00"],
 ] as const;
+// SA-1197: a fixed sample of the account block (the real one is the server's figures, never added on a screen).
+const SAMPLE_OTHERS = "$30.00";
+const SAMPLE_OPEN = "$55.00";
+const sampleDay = () =>
+  new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 
 export function InvoiceLayoutPreview({ layout }: { layout: InvoiceLayoutFlags }) {
   const showOriginal = !layout.hideOriginalPrice;
@@ -81,6 +88,35 @@ export function InvoiceLayoutPreview({ layout }: { layout: InvoiceLayoutFlags })
             </div>
           ))}
         </dl>
+        {layout.showAccountBalance ? (
+          <div data-testid="preview-account" className="space-y-0.5 text-xs text-navy/70">
+            {layout.hideBalanceDue ? null : (
+              <p className="font-semibold">
+                {INVOICE_ACCOUNT_LABELS.heading.replace("{date}", sampleDay())}
+              </p>
+            )}
+            <dl className="space-y-0.5">
+              {(layout.hideBalanceDue
+                ? [
+                    [
+                      INVOICE_ACCOUNT_LABELS.openBalanceOn.replace("{date}", sampleDay()),
+                      SAMPLE_OPEN,
+                    ],
+                  ]
+                : [
+                    [INVOICE_ACCOUNT_LABELS.others, SAMPLE_OTHERS],
+                    [INVOICE_ACCOUNT_LABELS.thisInvoice, "$25.00"],
+                    [INVOICE_ACCOUNT_LABELS.openBalance, SAMPLE_OPEN],
+                  ]
+              ).map(([label, amount]) => (
+                <div key={label} className="flex justify-between">
+                  <dt>{label}</dt>
+                  <dd className="money">{amount}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        ) : null}
       </div>
       <p className="mt-2 text-xs text-navy/70">
         Sample. Your invoices use your own items and amounts.
