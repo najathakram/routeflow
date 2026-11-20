@@ -319,8 +319,12 @@ function isAnnualStripeBilled(
   } | null,
 ): boolean {
   if (mode !== "STRIPE" || !sub?.stripeSubId) return false;
-  const interval = sub.billingInterval ?? (sub.cycle === "ANNUAL" ? "year" : "month");
-  return interval !== "month";
+  return billingIntervalOf(sub) !== "month";
+}
+
+/** The billing interval: `billingInterval` (a Stripe checkout stamps it; `cycle` stays MONTHLY), else the cycle. */
+function billingIntervalOf(sub: { billingInterval?: string | null; cycle?: unknown }): string {
+  return sub.billingInterval ?? (sub.cycle === "ANNUAL" ? "year" : "month");
 }
 
 /**
@@ -1393,6 +1397,7 @@ export class SubscriptionMutationService {
     sub: Parameters<SubscriptionMutationService["previewRepricedAddons"]>[0]["priorSub"] & {
       priceOverrideMonthly?: unknown;
       cycle?: unknown;
+      billingInterval?: string | null;
     },
     tenant: Parameters<typeof inclusionCatalogFor>[2],
     fromKey: string,
@@ -1402,7 +1407,7 @@ export class SubscriptionMutationService {
     const { def } = await targetVersionFor(this.catalog, pinned, toKey);
     const override = priceOverrideOf(sub);
     const monthly = override ?? (def.monthlyPrice != null ? Number(def.monthlyPrice) : null);
-    const price = sub.cycle === "ANNUAL" ? null : monthly; // #4393 L-4: an annual payer does not pay it monthly
+    const price = billingIntervalOf(sub) === "month" ? monthly : null; // #4393 L-4/N-1: annual is not paid monthly
     const addons = await this.previewRepricedAddons({
       tenantId,
       priorSub: sub,

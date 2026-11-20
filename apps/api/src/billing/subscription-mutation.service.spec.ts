@@ -4240,6 +4240,28 @@ describe("B1371 — downgrade preview, schedule and notice carry no seat consequ
     );
   });
 
+  // #4393 read A2 N-1: a Stripe annual checkout stamps billingInterval "year" and leaves cycle at MONTHLY.
+  it("PIN: a card-paid annual tenant (billingInterval year, cycle MONTHLY) also gets no plan price", async () => {
+    const { periodEnd } = activePeriod();
+    const { svc, billingNotification } = make({
+      sub: {
+        planKey: "BUSINESS",
+        cycle: "MONTHLY",
+        billingInterval: "year",
+        stripeSubId: "sub_1",
+        periodEnd,
+      },
+    });
+    await svc.downgrade("t1", "STARTER", [], "admin");
+    expect(billingNotification.notifyDowngradeScheduled).toHaveBeenCalledWith(
+      "t1",
+      expect.any(String),
+      expect.any(String),
+      periodEnd,
+      expect.objectContaining({ newMonthlyPrice: null }),
+    );
+  });
+
   it("PIN: with no customers over and no add-ons the notice still goes, with empty details", async () => {
     const { periodEnd } = activePeriod();
     const { svc, billingNotification, tx } = make({
