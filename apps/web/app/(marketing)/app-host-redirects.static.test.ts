@@ -56,10 +56,28 @@ interface Loaded {
   memTree: { ok?: Route[]; error?: string };
   faviconRoot: { ok?: string[]; error?: string };
   faviconRules: { ok?: Rule[]; error?: string };
+  noFaviconRules: { ok?: Rule[]; error?: string };
+  rootMeta: { ok?: string[]; error?: string };
+  nestedSitemap: { ok?: string[]; error?: string };
+  groupedIcon: { ok?: string[]; error?: string };
+  slotApple: { ok?: string[]; error?: string };
+  rootGenerator: { ok?: string[]; error?: string };
+  notMetadata: { ok?: string[]; error?: string };
+  served: { ok?: Record<string, string>; error?: string };
   faviconMarketing: { ok?: string[]; error?: string };
   faviconElsewhere: { ok?: string[]; error?: string };
-  fixedValues: string[];
 }
+
+// Root metadata files that Next serves at an exact path (no hash, no dynamic segment).
+const ROOT_META = {
+  "manifest.webmanifest": null,
+  "manifest.json": null,
+  "icon1.png": null,
+  "apple-icon2.png": null,
+  "favicon.ico": null,
+  "robots.ts": null,
+  "sitemap.xml": null,
+};
 
 // An in-memory app tree (nested objects; a file is null): an @slot, a nested route group, route.tsx,
 // test files that are not routes, and every metadata name.
@@ -118,14 +136,22 @@ function load(): Loaded {
     ` routes: l.listAppRoutes(),` +
     ` memTree: attempt(() => l.listAppRoutes("/mem", mk(${JSON.stringify(MEM_TREE)}))),` +
     ` faviconRoot: attempt(() => l.placeStays(faviconRoutes())),` +
-    ` faviconRules: attempt(() => m.buildAppHostRedirects(MAIN, alias, faviconRoutes())),` +
+    // No public/ entry: only the derivation can keep /favicon.ico on the main host.
+    ` faviconRules: attempt(() => m.buildAppHostRedirects(MAIN, alias, faviconRoutes(), [])),` +
+    ` noFaviconRules: attempt(() => m.buildAppHostRedirects(MAIN, alias, [], [])),` +
+    ` rootMeta: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk(${JSON.stringify(ROOT_META)})))),` +
+    ` nestedSitemap: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ x: { "sitemap.ts": null } })))),` +
+    ` groupedIcon: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "(marketing)": { "icon.png": null } })))),` +
+    ` slotApple: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "@slot": { "apple-icon2.png": null } })))),` +
+    ` rootGenerator: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "icon.tsx": null })))),` +
+    ` notMetadata: attempt(() => l.listAppRoutes("/mem", mk({ "favicon.png": null, "twitter-image.svg": null, "robots.json": null, "icon.gif": null })).map((r) => r.file)),` +
+    ` served: attempt(() => Object.fromEntries(l.listAppRoutes("/mem", mk(${JSON.stringify(ROOT_META)})).map((r) => [r.file, r.path]))),` +
     ` faviconMarketing: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "(marketing)": { x: { "favicon.ico": null } } })))),` +
     ` faviconElsewhere: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ a: { "favicon.ico": null } })))),` +
-    ` fixedValues: Object.values(l.FIXED_ROOT_ADDRESS ?? {}),` +
     ` failClosed: {` +
     `  dynamicInMarketing: tryIt([{ path: "/[x]", file: "(marketing)/[x]/page.tsx", group: "(marketing)", metadata: false }]),` +
     `  metadataInMarketing: tryIt([{ path: "/a/icon", file: "(marketing)/a/icon.png", group: "(marketing)", metadata: true }]),` +
-    `  hashedAtRoot: tryIt([{ path: "/icon", file: "icon.png", group: "", metadata: true }]),` +
+    `  hashedAtRoot: tryIt([{ path: "/icon", file: "icon.tsx", group: "", metadata: true }]),` +
     `  fixedAtRoot: tryIt([{ path: "/robots.txt", file: "robots.ts", group: "", metadata: true }, { path: "/sitemap.xml", file: "sitemap.ts", group: "", metadata: true }]),` +
     `  dynamicElsewhere: tryIt([{ path: "/a/[x]", file: "a/[x]/page.tsx", group: "a", metadata: false }]),` +
     ` },` +
@@ -260,8 +286,8 @@ describe("K5 2: census, every app route goes to the old host in one 307 hop", ()
   it("fails closed on a dynamic segment or a hashed metadata file in a place that stays", () => {
     const fc = cfg.failClosed;
     expect(fc.dynamicInMarketing.error).toMatch(/dynamic segment/);
-    expect(fc.metadataInMarketing.error).toMatch(/hashed address/);
-    expect(fc.hashedAtRoot.error).toMatch(/hashed address/);
+    expect(fc.metadataInMarketing.error).toMatch(/app root/);
+    expect(fc.hashedAtRoot.error).toMatch(/generated/);
     expect(fc.fixedAtRoot.ok).toEqual(["/robots.txt", "/sitemap.xml"]);
     expect(fc.dynamicElsewhere.ok).toEqual([]);
   });
@@ -300,14 +326,14 @@ describe("K5 2: census, every app route goes to the old host in one 307 hop", ()
         ["(shop)/(inner)/y/page.tsx", "/y", "(shop)", false],
         ["@modal/x/page.tsx", "/x", "@modal", false],
         ["api/z/route.tsx", "/api/z", "api", false],
-        ["apple-icon.png", "/apple-icon", "", true],
+        ["apple-icon.png", "/apple-icon.png", "", true],
         ["favicon.ico", "/favicon.ico", "", true],
-        ["icon.png", "/icon", "", true],
-        ["manifest.webmanifest", "/manifest", "", true],
-        ["opengraph-image.png", "/opengraph-image", "", true],
+        ["icon.png", "/icon.png", "", true],
+        ["manifest.webmanifest", "/manifest.webmanifest", "", true],
+        ["opengraph-image.png", "/opengraph-image.png", "", true],
         ["robots.ts", "/robots.txt", "", true],
         ["sitemap.ts", "/sitemap.xml", "", true],
-        ["twitter-image.png", "/twitter-image", "", true],
+        ["twitter-image.png", "/twitter-image.png", "", true],
       ].sort(),
     );
   });
@@ -316,13 +342,46 @@ describe("K5 2: census, every app route goes to the old host in one 307 hop", ()
     expect(cfg.faviconRoot).toEqual({ ok: ["/favicon.ico"] });
     expect(cfg.faviconRules.error).toBeUndefined();
     const at = new URL("/favicon.ico", `https://${MAIN_HOST}`);
+    // The rules were built with no public/ entry, so only the derivation keeps it here...
     expect(hopOf(cfg.faviconRules.ok!, at)).toBeNull();
-    expect([...cfg.fixedValues].sort()).toEqual(["/favicon.ico", "/robots.txt", "/sitemap.xml"]);
+    // ...and without the derivation the same address crosses (the check is not vacuous).
+    expect(hopOf(cfg.noFaviconRules.ok!, at)?.next.origin).toBe(OLD_ORIGIN);
   });
 
   it("a favicon anywhere but the app root fails closed", () => {
-    expect(cfg.faviconMarketing.error).toMatch(/favicon/);
-    expect(cfg.faviconElsewhere.error).toMatch(/favicon/);
+    expect(cfg.faviconMarketing.error).toMatch(/app root/);
+    expect(cfg.faviconElsewhere.error).toMatch(/app root/);
+  });
+
+  it("root metadata is derived at the exact path Next serves, numbered variants included", () => {
+    expect(cfg.rootMeta.error).toBeUndefined();
+    expect([...(cfg.rootMeta.ok ?? [])].sort()).toEqual(
+      [
+        "/manifest.webmanifest",
+        "/manifest.json",
+        "/icon1.png",
+        "/apple-icon2.png",
+        "/favicon.ico",
+        "/robots.txt",
+        "/sitemap.xml",
+      ].sort(),
+    );
+    expect(cfg.served.ok).toMatchObject({
+      "manifest.json": "/manifest.json",
+      "icon1.png": "/icon1.png",
+      "robots.ts": "/robots.txt",
+    });
+  });
+
+  it("anything nested, grouped, in a slot, or generated fails closed at config load", () => {
+    expect(cfg.nestedSitemap.error).toMatch(/app root/);
+    expect(cfg.groupedIcon.error).toMatch(/app root/);
+    expect(cfg.slotApple.error).toMatch(/app root/);
+    expect(cfg.rootGenerator.error).toMatch(/generated/);
+  });
+
+  it("the extensions are Next's own: favicon.png, twitter-image.svg, robots.json are not metadata", () => {
+    expect(cfg.notMetadata).toEqual({ ok: [] });
   });
 
   it("finds the app routes", () => {
