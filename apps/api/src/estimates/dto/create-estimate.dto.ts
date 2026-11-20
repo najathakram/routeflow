@@ -58,3 +58,26 @@ export class CreateEstimateDto {
   @IsOptional() @IsString() notes?: string;
   @IsOptional() @IsString() terms?: string;
 }
+
+/** A line on a draft edit: `id` names the stored line it re-sends (an unchanged re-sent price is no new authoring). */
+export class UpdateEstimateItemDto extends CreateEstimateItemDto {
+  @IsOptional() @IsString() id?: string;
+}
+
+/**
+ * PATCH /estimates/:id — edit a DRAFT. Every field is optional; `items`, when sent, replaces the lines (at least one).
+ * An empty `notes` / `terms` / `expiresAt` clears it.
+ */
+export class UpdateEstimateDto {
+  @IsOptional() @IsString() customerId?: string;
+  @IsOptional() @IsString() issueDate?: string;
+  @IsOptional() @IsString() expiresAt?: string;
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => UpdateEstimateItemDto)
+  items?: UpdateEstimateItemDto[];
+  @IsOptional() @IsString() notes?: string;
+  @IsOptional() @IsString() terms?: string;
+}

@@ -179,9 +179,10 @@ export const COPIERS: Copier[] = [
   {
     id: "C4",
     file: "estimates/estimates.service.ts",
-    fn: "create",
+    // The one line builder for an estimate (create and the draft edit); `nested`: its outer return is not a line.
+    fn: "priceEstimate",
     target: "EstimateItem",
-    anchor: { via: "prop", name: "items" },
+    anchor: { via: "return", nested: true },
     carried:
       "description productId qty unitPrice subtotal priceType originalPrice boxes pieces unitsPerBox",
     gaps: {
@@ -457,6 +458,9 @@ export const NOT_A_COPIER: Record<string, string> = {
   "invoices/invoices.service.ts::update":
     "replace-all from the edit request (the client side is C16)",
   "invoices/invoices.service.ts::runCreation": "consumes C1's output",
+  "estimates/estimates.service.ts::create": "writes C4's lines (priceEstimate) from the request",
+  "estimates/estimates.service.ts::update":
+    "draft edit replace-all from the request, through C4's builder (priceEstimate)",
   "estimates/estimates.service.ts::convertToInvoice":
     "consumes C5's builder (buildManualInvoiceLines)",
   "invoices/invoices.service.ts::reconcileOrderDraftInvoiceLocked": "consumes C1's output",
