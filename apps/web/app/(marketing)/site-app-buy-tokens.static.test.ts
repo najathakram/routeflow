@@ -56,6 +56,12 @@ describe("T21: the product pictures' colours are palette or status values", () =
     expect(bad.map((d) => `${d.name}: ${d.value}`)).toEqual([]);
   });
 
+  it("the primary of the operator and buyer pictures is one token (buttons are ink)", () => {
+    const value = (name: string) => picture().find((d) => d.name === name)?.value;
+    expect(value("--app-p")).toBe("var(--rf-ink)");
+    expect(value("--buy-p")).toBe(value("--app-p"));
+  });
+
   it("the checker goes red on a literal and on a job token (fixtures)", () => {
     const ok = paletteTokens();
     const passes = (v: string) => {

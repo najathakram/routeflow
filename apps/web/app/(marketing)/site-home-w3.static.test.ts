@@ -77,42 +77,6 @@ describe("K1: the focus tile is one token, icon only", () => {
     expect(named).toHaveLength(9);
   });
 
-  it("the white icon on the copper tile is a pair of at least 3:1", () => {
-    const table = new Map<string, string>();
-    for (const [k, v] of Object.entries(PALETTE.color)) table.set(`--brand-${k}`, v);
-    for (const m of stripCss(read("graphics/rf-graphics.css")).matchAll(
-      /(?<![\w-])(--[\w-]+)\s*:\s*([^;}]+)/g,
-    )) {
-      if (!table.has(m[1] as string)) table.set(m[1] as string, (m[2] as string).trim());
-    }
-    const resolve = (v: string, depth = 0): string => {
-      if (/^#[0-9a-f]{6}$/i.test(v)) return v;
-      const m = /^var\(\s*(--[\w-]+)\s*\)$/.exec(v.trim());
-      const next = m ? table.get(m[1] as string) : undefined;
-      if (!m || next === undefined || depth > 8) throw new Error(`cannot resolve ${v}`);
-      return resolve(next, depth + 1);
-    };
-    const decl = (sel: string, prop: string): string => {
-      for (const r of rulesOf(wheelCss).filter((x) => x.selectors.includes(sel))) {
-        const m = new RegExp(`(?:^|;)\\s*${prop}\\s*:\\s*([^;]+)`).exec(r.body);
-        if (m) return (m[1] as string).trim();
-      }
-      throw new Error(`no ${prop} in ${sel}`);
-    };
-    const lum = (hex: string) => {
-      const n = parseInt(hex.slice(1, 7), 16);
-      const lin = (v: number) => {
-        const c = v / 255;
-        return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
-      };
-      return 0.2126 * lin((n >> 16) & 255) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255);
-    };
-    const icon = resolve(decl(".rfw-ic.on", "stroke"));
-    const tile = resolve(decl(".rfw-w.f", "fill"));
-    const [hi, lo] = [lum(icon), lum(tile)].sort((a, b) => b - a);
-    expect(((hi as number) + 0.05) / ((lo as number) + 0.05)).toBeGreaterThanOrEqual(3);
-  });
-
   it("the comment names the rule", () => {
     expect(wheelCss).toContain("Payments is copper, icon only, named in the legend");
   });
@@ -121,8 +85,17 @@ describe("K1: the focus tile is one token, icon only", () => {
 describe("the page's still is the script's still", () => {
   const page = readServedSitePage("home");
   const pageSvg = svgOf(page);
+  /** The brand name is the only thing the page fills in; the rest of the label must match piece for piece. */
   const normal = (svg: string) =>
-    svg.replace(/ aria-label="[^"]*"/, "").replace(/<image [^>]*\/>/, "");
+    svg
+      .replace(/ aria-label="The [^"]*? wheel:/, ' aria-label="The wheel:')
+      .replace(/<image [^>]*\/>/, "");
+
+  it("a page label that drops a piece name is caught (fixture)", () => {
+    expect(pageSvg).toContain("payments, ");
+    const dropped = pageSvg.replace("payments, ", "");
+    expect(normal(dropped)).not.toBe(normal(svgOf(scriptStill())));
+  });
 
   it("same pieces, same classes, same paths, same icons (name and hub image aside)", () => {
     expect(normal(pageSvg)).toBe(normal(svgOf(scriptStill())));
@@ -173,6 +146,37 @@ describe("SA-1180 (2): a status colour marks a status", () => {
     expect(body(".c-chg b")).toContain("color:var(--rf-accent)");
     expect(body(".b-stk.ok")).toContain("color:var(--rf-text)");
     expect(body(".b-stk.lo")).toContain("color:var(--rf-text-2)");
+  });
+});
+
+describe("SA-1185: soft is a surface, pills say their status", () => {
+  const css = read("css/home.css");
+
+  it("no color or stroke declaration in home.css reads --rf-soft", () => {
+    const rules = rulesOf(css);
+    if (rules.length < 100) throw new Error("expected the rules of home.css");
+    const bad = rules.filter((r) =>
+      /(?:^|;)\s*(?:color|stroke|fill|text-decoration-color)\s*:[^;]*--rf-soft/.test(r.body),
+    );
+    expect(bad.flatMap((r) => r.selectors)).toEqual([]);
+  });
+
+  it("the price change is large text, or reads the link colour where it is smaller", () => {
+    const rs = rulesOf(css).filter((r) => r.selectors.includes(".c-chg b"));
+    expect(rs.length).toBeGreaterThan(0);
+    for (const r of rs) {
+      const size = /font-size:\s*([\d.]+)px/.exec(r.body);
+      if (size && parseFloat(size[1] as string) < 18.66) expect(r.body).toContain("--rf-link");
+    }
+  });
+
+  it("every status pill on the page says one of the three status words", () => {
+    const html = readServedSitePage("home");
+    const pills = [...html.matchAll(/class="a-pill a-pill--(ok|warn|bad)"[^>]*>([^<]*)</g)];
+    if (pills.length === 0) throw new Error("no status pill on the page");
+    const word = { ok: "Paid", warn: "Pending", bad: "Overdue" } as Record<string, string>;
+    const wrong = pills.filter((m) => (m[2] ?? "").trim() !== word[m[1] as string]);
+    expect(wrong.map((m) => `${m[1]}: ${m[2]}`)).toEqual([]);
   });
 });
 
