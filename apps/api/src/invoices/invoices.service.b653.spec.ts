@@ -219,4 +219,26 @@ describe("InvoicesService — B653 (email qty fields)", () => {
       }),
     );
   });
+
+  // B1372 (SA-1177 K2): the email of an invoice that was emailed before and changed since names it; a first email does not.
+  it("B1372 K2: emailed before and changed since: sendInvoice gets changedSinceSent with its number", async () => {
+    mockInvoice([UNIT_ITEM]);
+    prisma.auditLog.findFirst.mockResolvedValue({
+      createdAt: new Date("2026-11-01T10:00:00Z"),
+      meta: { to: "buyer@acme.test", fp: "v1:before-the-edit" },
+    });
+    await service.sendEmail("inv-b653");
+    expect(mockEmailService.sendInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({ changedSinceSent: ["INV-2004"] }),
+    );
+  });
+
+  it("B1372 K2: never emailed before: changedSinceSent is empty", async () => {
+    mockInvoice([UNIT_ITEM]);
+    prisma.auditLog.findFirst.mockResolvedValue(null);
+    await service.sendEmail("inv-b653");
+    expect(mockEmailService.sendInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({ changedSinceSent: [] }),
+    );
+  });
 });

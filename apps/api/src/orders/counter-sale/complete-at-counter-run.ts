@@ -35,6 +35,12 @@ const NOT_STARTED = new Set(["PENDING", "SKIPPED"]);
 /** SA-913 (b): the one copy an emptied stop is skipped with */
 export const COMPLETED_AT_COUNTER_SKIP_REASON = "Completed at counter";
 const STOP_STARTED_MESSAGE = "The driver has started this stop. Finish it on the route.";
+/**
+ * B1372 K4.2: the shipped refusal names the next step. A literal because the API never value-imports `@routeflow/types`
+ * (no-runtime-workspace-imports.spec.ts); counter-shipped-copy-parity.spec.ts pins it to the shared copy.
+ */
+export const COUNTER_COMPLETE_SHIPPED_MESSAGE =
+  "This order is with the carrier. To hand it over here, first Unmark shipped, then switch it to Store pickup.";
 
 function activeRun(order: RunOrder): Run {
   const run = order.routeRunStop?.routeRun ?? order.routeRun ?? null;
@@ -56,7 +62,7 @@ export function completeAtCounterRunRefusal(
   if (shipped) {
     return new ConflictException({
       code: API_ERROR_CODES.COUNTER_COMPLETE_SHIPPED,
-      message: "This order has shipped with the carrier.",
+      message: COUNTER_COMPLETE_SHIPPED_MESSAGE, // B1372 K4.2: names the next step
     });
   }
   const run = activeRun(order);

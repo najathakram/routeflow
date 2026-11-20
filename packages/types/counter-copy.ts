@@ -21,6 +21,13 @@ export const COUNTER_COPY = {
   takeOffRun: "Take off run and complete",
 } as const;
 
+/**
+ * B1372 (SA-1177 K4.2): the api's 409 COUNTER_COMPLETE_SHIPPED message, one copy. It names the next step: an unmark keeps
+ * `shippedAt`, so the switch to Store pickup is what lets the counter take the order.
+ */
+export const COUNTER_COMPLETE_SHIPPED_MESSAGE =
+  "This order is with the carrier. To hand it over here, first Unmark shipped, then switch it to Store pickup.";
+
 /** SA-913 R8: the run confirm's sentence, naming the driver the api sent with COUNTER_COMPLETE_ON_RUN. */
 export function onDriverRunCopy(driverName: unknown): string {
   const who = typeof driverName === "string" && driverName ? `${driverName}'s` : "a delivery";
@@ -50,7 +57,7 @@ export function counterCompleteRefusalCopy(
   switch (body?.code) {
     // I-120 R8/R9 (owner 7a, SA-913), all refused before any write
     case API_ERROR_CODES.COUNTER_COMPLETE_SHIPPED:
-      return "Nothing changed. This order has shipped with the carrier.";
+      return `Nothing changed. ${COUNTER_COMPLETE_SHIPPED_MESSAGE}`;
     case API_ERROR_CODES.COUNTER_COMPLETE_ON_RUN:
       // W-778: a question the clerk can answer with "Take off run and complete", not an error, so it never says "Nothing changed."
       return onDriverRunCopy(body.driverName);

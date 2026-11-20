@@ -158,12 +158,25 @@ export async function quoteExcludedInvoiceIds(
       message: "That order isn't this customer's.",
     });
   }
+  return (await editRevertedInvoicesFor(db, order, featureConfig)).map((inv) => inv.id);
+}
+
+/**
+ * B1372 (SA-1177 K2): the invoices an items edit of `order` would turn back into drafts, by the edit's own routing rule and
+ * selection (one copy: the Returns quote above and the order read's `editRevertsSentInvoices` both read it). `[]` when the
+ * edit re-syncs in place (`resyncsInPlace`: out for delivery, partly or fully delivered, or with the carrier).
+ */
+export async function editRevertedInvoicesFor(
+  db: RevertSetDb,
+  order: CarrierOrder & { id: string; status: string },
+  featureConfig: Parameters<typeof carrierEditGuard>[0]["featureConfig"],
+): Promise<EditRevertCandidate[]> {
   const guard = await carrierEditGuard(
     { featureConfig, prisma: { forTenant: () => db } as any },
     order,
   );
   if (resyncsInPlace(order.status, guard)) return [];
-  return (await selectEditRevertedInvoices(db, orderId)).map((inv) => inv.id);
+  return selectEditRevertedInvoices(db, order.id);
 }
 
 /**

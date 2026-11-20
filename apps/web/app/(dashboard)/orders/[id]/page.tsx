@@ -70,6 +70,7 @@ import { LicenseGuardModal } from "../_components/LicenseGuardModal";
 import { CancelOrderButton } from "./CancelOrderButton";
 import { OrderShipmentSection } from "./_components/OrderShipmentSection";
 import { UnmarkShippedConfirm } from "./UnmarkShippedConfirm";
+import { useSentInvoiceEditConfirm } from "./_components/SentInvoiceEditConfirm";
 import { orderHasFinalInvoice } from "@/lib/unmark-shipped";
 import { orderActionAccess } from "./order-action-access";
 import { ShippedOrderExits } from "./ShippedOrderExits";
@@ -333,6 +334,7 @@ export default function OrderDetailPage() {
     localErrorToast: (e) => overpay.ownsToast(e) || stale.ownsToast(e),
   });
   const savingItems = updateItems.isPending;
+  const sentEdit = useSentInvoiceEditConfirm(order?.editRevertsSentInvoices, isEditing); // B1372 K2
   const saveLatchRef = React.useRef(false);
   const [focusFirstQty, setFocusFirstQty] = React.useState(false);
   const [editItems, setEditItems] = React.useState<EditItemState[]>([]);
@@ -652,6 +654,7 @@ export default function OrderDetailPage() {
     // id). F30/R10 (B198) made the flag explicit-only, so omitting it would merge
     // too; sending false states the intent at the call site rather than relying on
     // the server default.
+    if (sentEdit.ask(() => handleSaveItems())) return; // B1372 K2: an already-sent invoice turns back into a draft
     saveLatchRef.current = true;
     const onSaved = () => {
       markLinesSaved(); // r5 N10: bring the saved lines into view once the editor closes
@@ -1607,7 +1610,7 @@ export default function OrderDetailPage() {
                                 doPublish();
                               }
                             };
-                            saveThenPublish();
+                            if (!sentEdit.ask(saveThenPublish)) saveThenPublish(); // B1372 K2
                           }}
                           disabled={layerBlocked}
                           loading={updateItems.isPending || updateStatus.isPending}
@@ -2144,6 +2147,7 @@ export default function OrderDetailPage() {
         }}
       />
 
+      {sentEdit.dialog}
       <UnmarkShippedConfirm
         open={showUnmarkConfirm}
         onClose={() => setShowUnmarkConfirm(false)}

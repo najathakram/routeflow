@@ -23,7 +23,7 @@ const operator = {
 function serviceReturning(order: object) {
   const findUnique = jest.fn().mockResolvedValue(order);
   const service = Object.assign(Object.create(OrdersService.prototype), {
-    prisma: { forTenant: () => ({ order: { findUnique } }) },
+    prisma: { forTenant: () => ({ order: { findUnique }, invoice: { findMany: async () => [] } }) },
   }) as OrdersService;
   return { service, findUnique };
 }

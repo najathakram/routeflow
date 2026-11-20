@@ -28,7 +28,17 @@ export interface OrderEditItemsLockField {
   editItemsLocked: boolean;
 }
 
+/**
+ * B1372 (SA-1177 K2): the field `GET /orders/:id` adds (staff reads; `[]` for a customer or driver): the numbers of the
+ * already-sent invoices that saving an items edit now turns back into drafts. Non-empty = the web confirms before it
+ * saves. Computed with the edit's own routing rule and revert selection; a client never re-derives it.
+ */
+export interface OrderEditRevertsSentField {
+  editRevertsSentInvoices: string[];
+}
+
 /** Every gate field `GET /orders/:id` adds for the web's action bar (the read's `satisfies` names this one type). */
 export type OrderReadGateFields = OrderCancelBlockedField &
   OrderFulfillPathLockField &
-  OrderEditItemsLockField;
+  OrderEditItemsLockField &
+  OrderEditRevertsSentField;

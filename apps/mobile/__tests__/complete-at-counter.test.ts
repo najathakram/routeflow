@@ -166,7 +166,7 @@ describe("pickupCompleteErrorCopy: R8/R9 refusals (mobile)", () => {
   });
   it("the three refusals", () => {
     expect(pickupCompleteErrorCopy(refusal({ code: "COUNTER_COMPLETE_SHIPPED" }))).toBe(
-      "Nothing changed. This order has shipped with the carrier.",
+      "Nothing changed. This order is with the carrier. To hand it over here, first Unmark shipped, then switch it to Store pickup.",
     );
     expect(
       pickupCompleteErrorCopy(refusal({ code: "COUNTER_COMPLETE_ON_RUN", driverName: "Sam" })),

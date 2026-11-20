@@ -40,6 +40,7 @@ function ordersService(role: string) {
     prisma: {
       forTenant: () => ({
         order: { findUnique },
+        invoice: { findMany: async () => [] }, // B1372 K2: no sent invoice an edit would revert
         customer: { findFirst: jest.fn().mockResolvedValue({ id: "c-1" }) },
         driver: { findFirst: jest.fn().mockResolvedValue({ id: "d-1" }) },
       }),

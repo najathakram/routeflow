@@ -5,7 +5,7 @@
  * call site changes. A pure read: no transaction, no lock, no write.
  */
 
-import { ForbiddenException, NotFoundException } from "@nestjs/common";
+import { ForbiddenException, Logger, NotFoundException } from "@nestjs/common";
 import { attachPaymentCreditNotes, ORDER_INVOICES_SELECT } from "./order-payment-credit-notes";
 import { attachInvoicesNeedReview } from "./order-invoices-review";
 import { attachOrderToCollect } from "./order-to-collect";
@@ -28,6 +28,7 @@ import { tenantSafeParentView } from "../products/product-parent";
 import * as rGate from "./order-restriction-gate";
 import * as flags from "./offline/review-flags";
 import * as carrierGuard from "./order-carrier-guard";
+import { editRevertedInvoicesFor } from "../invoices/order-edit-revert-set";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import type { OrdersService } from "./orders.service";
 
@@ -161,6 +162,7 @@ export async function findOneImpl(self: OrdersService, id: string, user: JwtPayl
     cancelBlockedReason: await carrierGuard.carrierBlocked(self, order),
     fulfillPathLocked: fulfillPathLocked(order), // row 673: the PATCH's own predicate
     editItemsLocked: await walkInSaleLocked(self.prisma.forTenant(), order), // W-861: the edit's own predicate
+    editRevertsSentInvoices: await editRevertsSentInvoices(self, order, user), // B1372 K2: the edit's own revert set
   } satisfies OrderReadGateFields);
   Object.assign(order, { discountTaxBase: discountModeOf(order) }); // SA-1141 R7: the footers read the mode, never the clock
   await attachInvoiceStages(self.featureConfig, order); // fold 4: each invoice's pdfVariant
@@ -175,3 +177,27 @@ export async function findOneImpl(self: OrdersService, id: string, user: JwtPayl
   stampHandedOverBy(order, user); // row 342: staff only; the display name is built once, here
   return orderFor(user, order); // customer-facing fields only for the customer
 }
+
+/** B1372 (SA-1177 K2): the invoice numbers an items edit would turn back into drafts. Staff reads only (a customer or driver read pays no reads). */
+export async function editRevertsSentInvoices(
+  self: OrdersService,
+  order: Parameters<typeof editRevertedInvoicesFor>[1],
+  user: JwtPayload,
+): Promise<string[]> {
+  if (user.role === UserRole.CUSTOMER || user.role === UserRole.DRIVER) return [];
+  try {
+    const reverted = await editRevertedInvoicesFor(
+      self.prisma.forTenant(),
+      order,
+      self.featureConfig,
+    );
+    return reverted.map((inv) => inv.invoiceNumber);
+  } catch (err) {
+    // Advisory only: the confirm's list failing to load never breaks the order page (the edit's own revert still runs).
+    findOneLog.warn(
+      `editRevertsSentInvoices, order ${order.id}: ${(err as Error)?.message ?? err}`,
+    );
+    return [];
+  }
+}
+const findOneLog = new Logger("OrderFindOne");
