@@ -1,3 +1,4 @@
+import { Logger } from "@nestjs/common";
 import { editRevertedInvoicesFor } from "../invoices/order-edit-revert-set";
 import { editRevertsSentInvoices } from "./order-find-one";
 
@@ -71,5 +72,15 @@ describe("editRevertsSentInvoices on the order read (B1372 K2)", () => {
     const d = db([{ id: "a" }]);
     expect(await editRevertsSentInvoices(self(d), order("CONFIRMED"), { role } as any)).toEqual([]);
     expect(d.invoice.findMany).not.toHaveBeenCalled();
+  });
+
+  it("a failed read never breaks the order page: [] and a logged warn", async () => {
+    const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    const d = db([{ id: "a" }]);
+    d.invoice.findMany.mockRejectedValueOnce(new Error("db down"));
+    const role = "OPERATOR";
+    expect(await editRevertsSentInvoices(self(d), order("CONFIRMED"), { role } as any)).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("db down"));
+    warn.mockRestore();
   });
 });

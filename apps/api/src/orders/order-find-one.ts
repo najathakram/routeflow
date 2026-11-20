@@ -5,7 +5,7 @@
  * call site changes. A pure read: no transaction, no lock, no write.
  */
 
-import { ForbiddenException, NotFoundException } from "@nestjs/common";
+import { ForbiddenException, Logger, NotFoundException } from "@nestjs/common";
 import { attachPaymentCreditNotes, ORDER_INVOICES_SELECT } from "./order-payment-credit-notes";
 import { attachInvoicesNeedReview } from "./order-invoices-review";
 import { attachOrderToCollect } from "./order-to-collect";
@@ -185,10 +185,19 @@ export async function editRevertsSentInvoices(
   user: JwtPayload,
 ): Promise<string[]> {
   if (user.role === UserRole.CUSTOMER || user.role === UserRole.DRIVER) return [];
-  const reverted = await editRevertedInvoicesFor(
-    self.prisma.forTenant(),
-    order,
-    self.featureConfig,
-  );
-  return reverted.map((inv) => inv.invoiceNumber);
+  try {
+    const reverted = await editRevertedInvoicesFor(
+      self.prisma.forTenant(),
+      order,
+      self.featureConfig,
+    );
+    return reverted.map((inv) => inv.invoiceNumber);
+  } catch (err) {
+    // Advisory only: the confirm's list failing to load never breaks the order page (the edit's own revert still runs).
+    findOneLog.warn(
+      `editRevertsSentInvoices, order ${order.id}: ${(err as Error)?.message ?? err}`,
+    );
+    return [];
+  }
 }
+const findOneLog = new Logger("OrderFindOne");
