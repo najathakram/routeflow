@@ -71,6 +71,7 @@ import { useDriveMode } from "@/lib/drive-mode";
 import { useTenantFeatures } from "@/lib/tenant-features";
 import { SkipToContentLink } from "@/components/SkipToContentLink";
 import { useNoShellScroll } from "@/lib/use-no-shell-scroll";
+import { useInsightsAccess } from "@/components/insights/use-insights-access";
 import { RouteGuard } from "./_components/gates/RouteGuard";
 import { activeNavLeaf, navShortcuts, navShortcutTargets } from "./_components/nav-index";
 import { buildOperatorNav } from "./_components/build-operator-nav";
@@ -927,6 +928,8 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     { active: true },
     { enabled: isStaff },
   );
+  // The same predicate as every other way into product insights; the menu entry follows it.
+  const insightsAccess = useInsightsAccess();
   const navStructure = React.useMemo(
     () =>
       buildOperatorNav({
@@ -939,6 +942,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         counterEnabled,
         regulatedLoading,
         regulatedSections,
+        insightsAccess,
         plan: {
           flags: subscriptionStatus?.flags,
           resolved: subscriptionResolved,
@@ -951,6 +955,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       hasSalesAgents,
       regulatedSections,
       regulatedLoading,
+      insightsAccess,
       routesAccess,
       deliveryAccess,
       addonsLoading,

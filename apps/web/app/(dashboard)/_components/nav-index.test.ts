@@ -12,6 +12,7 @@ const ctx = (over: Partial<OperatorNavContext> = {}): OperatorNavContext => ({
   counterEnabled: true,
   regulatedLoading: false,
   regulatedSections: [],
+  insightsAccess: false,
   plan: { flags: undefined, resolved: true, failed: false },
   modes: undefined,
   ...over,

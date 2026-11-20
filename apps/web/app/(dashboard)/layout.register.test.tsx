@@ -8,6 +8,9 @@ import { resetCounterLandingForTests } from "@/lib/counter-device-pref";
 import { setImpersonation, clearImpersonation } from "@/lib/impersonation";
 import DashboardLayout from "./layout";
 
+// UXG-R8: the shell feeds the menu its Product insights access, off here; layout.insights-leaf.test.tsx pins that wiring.
+jest.mock("@/components/insights/use-insights-access", () => ({ useInsightsAccess: () => false }));
+
 /**
  * POS-7: the counter "register look" and the per-device "open the counter" preference, proven on the REAL
  * rendered shell (L-205). Only the data hooks the shell reads are stubbed. Register mode = a route-derived flag
