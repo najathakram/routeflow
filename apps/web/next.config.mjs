@@ -1,7 +1,8 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildContentSecurityPolicy } from "./csp.mjs";
+import { listAppRoutes, placeStays } from "./lib/app-route-paths.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -38,7 +39,12 @@ export function readSiteHosts() {
       "utf8",
     ),
   );
-  return { origin: brand.origin, oldOrigin: brand.oldOrigin };
+  return {
+    origin: brand.origin,
+    oldOrigin: brand.oldOrigin,
+    // Optional: the short domain, named only on switch day. Absent means no rule.
+    ...(brand.shortOrigin ? { shortOrigin: brand.shortOrigin } : {}),
+  };
 }
 
 // The installed phone app's web view only allows the old host; it must never be sent to another one.
@@ -92,6 +98,103 @@ export function buildSiteHostRedirects({ origin, oldOrigin }, aliases) {
   ];
 }
 
+const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * The paths that stay on the main host, derived and never typed: the public paths, every alias or
+ * raw page address that ends on one, /_next/, every top-level entry of public/, every (marketing)
+ * route, the app-root robots and sitemap, and /.well-known/. A new app route is outside this set, so it is sent to the old host
+ * without anyone listing it; a new page joins SITE_PAGES and stays.
+ * @param {Array<{ source: string, destination: string }>} aliases
+ * @returns {{ exact: string[], prefixes: string[] }}
+ */
+export function deriveStays(aliases, routes = listAppRoutes()) {
+  const publicPaths = new Set(PUBLIC_PATHS);
+  // By place (lib/app-route-paths.mjs): every (marketing) route and the app-root robots and sitemap.
+  const exact = new Set([...PUBLIC_PATHS, ...placeStays(routes)]);
+  for (const alias of aliases) {
+    if (publicPaths.has(alias.destination.replace(/#.*$/, ""))) exact.add(alias.source);
+  }
+  const prefixes = new Set(["/_next/", "/.well-known/"]);
+  for (const entry of readdirSync(path.join(__dirname, "public"), { withFileTypes: true })) {
+    exact.add(`/${entry.name}`);
+    if (entry.isDirectory()) prefixes.add(`/${entry.name}/`);
+  }
+  return { exact: [...exact], prefixes: [...prefixes] };
+}
+
+/**
+ * Temporary redirects on the main host: every path outside the stays set goes to the same path and
+ * query on the old host, where the app lives. One catch-all rule, no `missing` list (the presence
+ * cookies and the phone shell belong to the old host). An alias that ends on an app path (such as
+ * /sign-in) gets its own rule to the old host's final path (one hop), placed before the catch-all.
+ * Like the old-host rules it exists only while the two hosts differ.
+ * @param {{ origin: string, oldOrigin: string }} hosts
+ * @param {Array<{ source: string, destination: string }>} aliases
+ */
+export function buildAppHostRedirects({ origin, oldOrigin }, aliases) {
+  const to = new URL(origin);
+  const from = new URL(oldOrigin);
+  if (to.host === from.host) return [];
+  return appPathRules(to.hostname, from.origin, aliases);
+}
+
+/** The stays set as one regex body (exact names end the path, prefixes start it). */
+function staysPattern(aliases) {
+  const { exact, prefixes } = deriveStays(aliases);
+  return [
+    ...exact.map((p) => `${escapeRegex(p.slice(1))}/?$`),
+    ...prefixes.map((p) => escapeRegex(p.slice(1))),
+  ].join("|");
+}
+
+/** Rules for one host: app-ending aliases, then every path outside stays, to the old origin (307). */
+function appPathRules(hostname, oldOrigin, aliases) {
+  const has = [{ type: "host", value: hostname.replace(/\./g, "\\.") }];
+  const publicPaths = new Set(PUBLIC_PATHS);
+  return [
+    ...aliases
+      .filter((alias) => !publicPaths.has(alias.destination.replace(/#.*$/, "")))
+      .map((alias) => ({
+        source: alias.source,
+        has,
+        destination: `${oldOrigin}${alias.destination}`,
+        permanent: false,
+      })),
+    {
+      source: `/:path((?!(?:${staysPattern(aliases)})).*)`,
+      has,
+      destination: `${oldOrigin}/:path`,
+      permanent: false,
+    },
+  ];
+}
+
+/**
+ * The short domain (bare and www). Paths outside the stays set go straight to the old host (307,
+ * like the main host's rule); paths inside it are a 301 to the same path and query on the main
+ * host. Both come from the one stays set, so they never overlap. The host comes from brand.json's
+ * optional `shortOrigin`; absent, or the same host as the main one, there is no rule.
+ * @param {{ origin: string, oldOrigin: string, shortOrigin?: string }} hosts
+ * @param {Array<{ source: string, destination: string }>} aliases
+ */
+export function buildShortHostRedirects({ origin, oldOrigin, shortOrigin }, aliases) {
+  if (!shortOrigin) return [];
+  const to = new URL(origin);
+  const bare = new URL(shortOrigin).hostname.replace(/^www\./, "");
+  if (bare === to.hostname || `www.${bare}` === to.hostname) return [];
+  const stays = staysPattern(aliases);
+  return [bare, `www.${bare}`].flatMap((host) => [
+    ...appPathRules(host, new URL(oldOrigin).origin, aliases),
+    {
+      source: `/:path((?=(?:${stays})).*)`,
+      has: [{ type: "host", value: host.replace(/\./g, "\\.") }],
+      destination: `${to.origin}/:path`,
+      statusCode: 301,
+    },
+  ]);
+}
+
 // The old marketing site's pages and addresses a visitor might guess, sent to the closest page of
 // the new site (owner order, "no old look left anywhere"). The first eight are permanent, so search
 // engines move the old addresses across; the last four stay temporary. A next.config redirect is
@@ -120,10 +223,15 @@ const RAW_PAGE_ALIASES = Object.entries(SITE_PAGES).map(([page, destination]) =>
   destination,
 }));
 
+/** The aliases every host rule is built from (the legacy addresses and the raw page files). */
+export const HOST_ALIASES = [...LEGACY_ALIASES, ...RAW_PAGE_ALIASES];
+
 /** The whole redirect list for a pair of hosts (redirects() reads them from the brand seam). */
 export function buildRedirects(hosts) {
   return [
-    ...buildSiteHostRedirects(hosts, [...LEGACY_ALIASES, ...RAW_PAGE_ALIASES]),
+    ...buildSiteHostRedirects(hosts, HOST_ALIASES),
+    ...buildAppHostRedirects(hosts, HOST_ALIASES),
+    ...buildShortHostRedirects(hosts, HOST_ALIASES),
     {
       source: "/route-runs/:id",
       destination: "/routes/:id",

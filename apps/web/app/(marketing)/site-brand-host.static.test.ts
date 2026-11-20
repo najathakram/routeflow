@@ -122,7 +122,9 @@ function follow(
 const BROWSER = "Mozilla/5.0 (Windows NT 10.0) Chrome/120.0 Safari/537.36";
 const pathOf = (destination: string) =>
   destination.replace(/^https:\/\/[^/]+/, "").replace(/#.*$/, "") || "/";
-const hostRules = cfg.split.filter((r) => r.has?.some((h) => h.type === "host"));
+const hostRules = cfg.split.filter((r) =>
+  r.has?.some((h) => h.type === "host" && h.value === OLD_HOST),
+);
 
 describe("T31: one page list", () => {
   it("SITE_PAGES holds the same pages as STATIC_SITE_PAGE_NAMES and the same routes as STATIC_SITE_PATHS", () => {
