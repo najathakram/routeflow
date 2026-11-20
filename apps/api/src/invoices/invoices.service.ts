@@ -3603,9 +3603,9 @@ export class InvoicesService {
     });
     const parts = [this.prisma, this.pdfService, this.storage, this.logger, opts] as const;
     Object.assign(emailPayload, await completionEmailParts(...parts)); // I-120: COUNTER_COMPLETE only
-    const first = { id, invoiceNumber: inv.invoiceNumber, fingerprint }; // B1372 K2: "changed since we last sent it"
-    const by = [this.prisma, this.featureConfig, first, opts?.withInvoiceIds] as const;
-    Object.assign(emailPayload, { changedSinceSent: await changedSinceSentNumbers(...by) });
+    const ids = [id, ...(opts?.withInvoiceIds ?? [])]; // B1372 K2/N1: changed since sent, content only
+    const changedSinceSent = await changedSinceSentNumbers(this.prisma, ids);
+    Object.assign(emailPayload, { changedSinceSent });
     const sendResult = await this.emailService.sendInvoice(emailPayload);
 
     // R5: the email server was configured but the actual send did NOT succeed
@@ -3916,7 +3916,7 @@ export class InvoicesService {
   async revertLinkedInvoicesForOrderEdit(
     orderId: string,
     tx?: any,
-    opts?: { lockRows?: boolean; preflightOnly?: boolean },
+    opts?: { lockRows?: boolean; preflightOnly?: boolean; requireAck?: boolean }, // B1372 N2: requireAck
   ): Promise<string[]> {
     const db = tx ?? this.prisma.forTenant();
     const reverted = await revertLinkedInvoicesToDraft(db, orderId, opts);

@@ -193,6 +193,7 @@ import { currentTaxRate } from "../common/tax-rate";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { dueStamp } from "../invoices/invoice-due-dates";
+import { sentRevertNeedsAck } from "../invoices/order-edit-revert-set"; // B1372 N2
 import {
   decrementStockForSale,
   restoreStockForReopen,
@@ -2240,13 +2241,13 @@ export class OrdersService implements OnApplicationBootstrap {
         // delivered-line lock, unit checks): refuse first, write after. Lock order Order -> Invoice, NOWAIT on the
         // invoice rows (409 INVOICE_BUSY, retryable); the paid-mirror refusal is re-counted under that lock, because
         // the pre-tx preflight is advisory. Any later refusal in this tx rolls the revert back with the edit.
+        const revertOpts = { lockRows: true, requireAck: sentRevertNeedsAck(user, dto, opts) };
         const carrierLocked = await carrierGuard.carrierRevertUnderLock(
           tx,
           orderId,
           carrier,
           postDeliveryEdit,
-          () =>
-            this.invoicesService.revertLinkedInvoicesForOrderEdit(orderId, tx, { lockRows: true }),
+          () => this.invoicesService.revertLinkedInvoicesForOrderEdit(orderId, tx, revertOpts),
         );
 
         // Customer/Driver path: replace items by productId. A4: a DRIVER diff payload skips this branch

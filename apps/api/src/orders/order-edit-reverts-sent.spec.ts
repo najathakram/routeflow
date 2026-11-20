@@ -1,4 +1,5 @@
 import { Logger } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { editRevertedInvoicesFor } from "../invoices/order-edit-revert-set";
 import { editRevertsSentInvoices } from "./order-find-one";
 
@@ -74,13 +75,39 @@ describe("editRevertsSentInvoices on the order read (B1372 K2)", () => {
     expect(d.invoice.findMany).not.toHaveBeenCalled();
   });
 
-  it("a failed read never breaks the order page: [] and a logged warn", async () => {
+  it("a failed DATABASE read never breaks the order page: [] and a logged warn", async () => {
     const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
     const d = db([{ id: "a" }]);
-    d.invoice.findMany.mockRejectedValueOnce(new Error("db down"));
+    const dbDown = new Prisma.PrismaClientKnownRequestError("db down", {
+      code: "P1001",
+      clientVersion: "test",
+    });
+    d.invoice.findMany.mockRejectedValueOnce(dbDown);
     const role = "OPERATOR";
     expect(await editRevertsSentInvoices(self(d), order("CONFIRMED"), { role } as any)).toEqual([]);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("db down"));
     warn.mockRestore();
+  });
+
+  it("an unknown database error is tolerated the same way", async () => {
+    const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    const d = db([{ id: "a" }]);
+    const unknown = new Prisma.PrismaClientUnknownRequestError("connection reset", {
+      clientVersion: "test",
+    });
+    d.invoice.findMany.mockRejectedValueOnce(unknown);
+    const role = "OPERATOR";
+    expect(await editRevertsSentInvoices(self(d), order("CONFIRMED"), { role } as any)).toEqual([]);
+    warn.mockRestore();
+  });
+
+  // #4387 read A nit: a defect (a TypeError, e.g. a missing mock or a renamed field) is never hidden as "nothing reverts".
+  it("PIN: a TypeError still throws", async () => {
+    const d = db([{ id: "a" }]);
+    d.invoice.findMany.mockRejectedValueOnce(new TypeError("x is not a function"));
+    const role = "OPERATOR";
+    await expect(
+      editRevertsSentInvoices(self(d), order("CONFIRMED"), { role } as any),
+    ).rejects.toBeInstanceOf(TypeError);
   });
 });

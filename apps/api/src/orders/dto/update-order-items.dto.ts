@@ -149,6 +149,14 @@ export class UpdateOrderItemsDto extends RestrictionAckDto {
   expectedRevisionNumber?: number;
 
   /**
+   * B1372 N2 (SA-1177 A2 K3): the staff editor saw the "this turns sent invoices back into drafts" confirm and went on.
+   * Without it, a staff edit whose revert set holds a sent invoice is 409 ORDER_EDIT_REVERTS_SENT_INVOICE, nothing written.
+   */
+  @IsOptional()
+  @IsBoolean()
+  ackSentRevert?: boolean;
+
+  /**
    * B297 row 352 — BUYER edit only: the client names every existing line with `items[].orderItemId`, so an
    * entry without one is a NEW line. Absent = a legacy client: the server falls back to the product's only
    * line when exactly one exists (one release), and 409s `ORDER_EDIT_NEEDS_LINE_IDS` when two or more could be meant.

@@ -191,6 +191,7 @@ describeDb("SA-1060 A-4 - the order edit's capture matches the quote, real Postg
             items: [{ productId: f.productId, boxes: 0, pieces: 3 }],
             returnKey: key,
           },
+          ackSentRevert: true, // B1372 N2: the staff confirmed the SENT invoice turns back into a draft
         },
         staff(),
       ),
