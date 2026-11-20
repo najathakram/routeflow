@@ -29,5 +29,9 @@
   { "key": "/|phone", "row": "details|What is RouteFlow?", "kind": "removed", "req": "R11" },
   { "key": "/|phone", "row": "details|What is RouteFlow for?", "kind": "added", "req": "R11" },
   { "key": "/|phone", "row": "id|rfwsd", "kind": "removed", "req": "R18" },
-  { "key": "/|phone", "row": "id|brand-symbol", "kind": "added", "req": "R22" }
+  { "key": "/|phone", "row": "id|brand-symbol", "kind": "added", "req": "R22" },
+  { "key": "/pricing|desktop", "row": "a|#plans|Skip to plans", "kind": "added", "req": "R12" },
+  { "key": "/pricing|desktop", "row": "id|plans", "kind": "added", "req": "R12" },
+  { "key": "/pricing|phone", "row": "a|#plans|Skip to plans", "kind": "added", "req": "R12" },
+  { "key": "/pricing|phone", "row": "id|plans", "kind": "added", "req": "R12" }
 ]
