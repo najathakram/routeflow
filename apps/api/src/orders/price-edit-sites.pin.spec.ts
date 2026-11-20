@@ -49,7 +49,7 @@ const ASSERT_COUNTS: Record<string, number> = {
   "orders/unit-line-build.ts": 1, // a unit line's new override (create + unit-line-edit)
   "orders/replace-all-line-build.ts": 1, // replace-all repriced line + the create auto-merge's new line
   "invoices/invoice-line-override.ts": 1, // invoice line create / edit, pack and unit
-  "estimates/estimates.service.ts": 1, // estimate create: a typed catalog price under list (rule 5)
+  "estimates/estimates.service.ts": 1, // estimate create + draft edit (priceEstimate): a typed catalog price off the customer price (rule 5)
   "recurring-invoices/recurring-invoices.service.ts": 1, // template create + update: a catalog price moved off the baseline (rule 6)
 };
 
@@ -64,7 +64,7 @@ const CUSTOM_ASSERT_COUNTS: Record<string, number> = {
   "orders/custom-line-authoring.ts": 1, // staff full replace (new lines); moved out of orders.service.ts (SA-065)
   "invoices/invoices.service.ts": 1, // direct invoice create
   "invoices/invoice-edit-plan.ts": 1, // invoice edit (new / re-priced custom lines); moved out of invoices.service.ts (SA-065)
-  "estimates/estimates.service.ts": 1, // estimate create
+  "estimates/estimates.service.ts": 1, // estimate create + draft edit, through priceEstimate
   "recurring-invoices/recurring-invoices.service.ts": 1, // template create + update, through one private method
 };
 
@@ -73,7 +73,7 @@ const COMPUTE_COUNTS: Record<string, number> = {
   "orders/orders.service.ts": 2, // create, updateOrderItems (each once, before its transaction)
   "invoices/invoice-line-override.ts": 1, // loadOverride: invoice create and edit
   "returns/inline-returns-quote.service.ts": 1, // priceInlineReturn: the quote and the capture's credit price
-  "estimates/estimates.service.ts": 1, // create
+  "estimates/estimates.service.ts": 1, // priceEstimate (create + draft edit)
   "recurring-invoices/recurring-invoices.service.ts": 1, // assertAuthoredPricesAllowed (template create + update)
 };
 
@@ -158,6 +158,7 @@ describe("SA-1034: price-edit capability is checked at every override site", () 
       code(read(file)).match(new RegExp(`\\n  async ${method}\\(([\\s\\S]*?)\\) \\{`))?.[1] ?? "";
     for (const [file, method] of [
       ["estimates/estimates.service.ts", "create"],
+      ["estimates/estimates.service.ts", "update"],
       ["recurring-invoices/recurring-invoices.service.ts", "create"],
       ["recurring-invoices/recurring-invoices.service.ts", "update"],
     ]) {

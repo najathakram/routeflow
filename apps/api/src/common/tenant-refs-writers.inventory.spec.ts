@@ -70,10 +70,20 @@ const TABLE: Record<string, Row> = {
   ]),
   [f("invoices/invoices.service.ts", "InvoicesService.create")]: G(["productIds"], { seen: false }),
   [f("invoices/invoices.service.ts", "InvoicesService.update")]: G(["productIds"], { seen: false }),
-  [f("estimates/estimates.service.ts", "EstimatesService.create")]: G([
-    "customerIds",
-    "productIds",
-  ]),
+  // Create and the draft edit price their lines through priceEstimate, which proves both kinds before any write.
+  [f("estimates/estimates.service.ts", "EstimatesService.create")]: G(
+    ["customerIds", "productIds"],
+    {
+      via: f("estimates/estimates.service.ts", "EstimatesService.priceEstimate"),
+    },
+  ),
+  [f("estimates/estimates.service.ts", "EstimatesService.update")]: G(
+    ["customerIds", "productIds"],
+    {
+      via: f("estimates/estimates.service.ts", "EstimatesService.priceEstimate"),
+      seen: false,
+    },
+  ),
   [f("recurring-invoices/recurring-invoices.service.ts", "RecurringInvoicesService.create")]: G([
     "customerIds",
     "productIds",
@@ -433,7 +443,9 @@ describe("tenant-ref writers inventory (681, SA-936 MUST 6)", () => {
     it("a `via` writer with one holder actually calls it", () => {
       for (const [key, row] of Object.entries(TABLE)) {
         if (row.kind !== "GUARDED" || typeof row.via !== "string") continue;
-        expect(callsAny(fnByKey(key), [row.via.split("::")[1]])).toBe(true);
+        // A method holder is keyed "Class.method"; its call reads `this.method(`.
+        const holder = row.via.split("::")[1];
+        expect(callsAny(fnByKey(key), [holder.slice(holder.lastIndexOf(".") + 1)])).toBe(true);
       }
     });
 

@@ -289,8 +289,8 @@ describe("copier contract mutation proofs (each must turn the spec red)", () => 
       /fx\.ts::sneaky/,
     ));
   it("(b) dropping a real copier entry -> its function is an unregistered write site", () =>
-    expect(evaluate(realWorld(COPIERS.filter((c) => c.id !== "C4"))).join()).toMatch(
-      /estimates\.service\.ts::create: writes a sales-line model/,
+    expect(evaluate(realWorld(COPIERS.filter((c) => c.id !== "C2"))).join()).toMatch(
+      /invoices\.service\.ts::duplicate: writes a sales-line model/,
     ));
   it("(b) a renamed function -> red", () =>
     expect(evaluate(world({}, fx.replace("copy", "copy2"))).join()).toMatch(/copier not found/));
