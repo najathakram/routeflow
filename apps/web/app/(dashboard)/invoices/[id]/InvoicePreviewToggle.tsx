@@ -22,7 +22,7 @@ export function InvoicePreviewToggle({
 }) {
   return (
     <div className="inline-flex items-center gap-1.5">
-      <span id="invoice-preview-as" className="text-xs text-navy/70">
+      <span id="invoice-preview-as" className="whitespace-nowrap text-xs text-navy/70">
         Preview as:
       </span>
       <div
