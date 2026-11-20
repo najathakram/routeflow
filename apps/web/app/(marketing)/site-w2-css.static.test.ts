@@ -9,6 +9,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { readServedSitePage } from "@/lib/read-site-page";
+import { STATIC_SITE_PAGE_NAMES } from "@/lib/static-site-page";
 
 const WEB = path.resolve(__dirname, "../..");
 const read = (rel: string) => fs.readFileSync(path.join(WEB, rel), "utf8");
@@ -213,6 +214,11 @@ describe("D-4: one focus token, set by the band, never a list of selectors", () 
     for (const f of files) {
       expect({ f, hit: read(f).includes("--ring-c") }).toEqual({ f, hit: false });
     }
+    // The landing page's own inline style, as a visitor gets it.
+    expect([...STATIC_SITE_PAGE_NAMES]).toContain("landing");
+    const landing = readServedSitePage("landing", { websiteId: undefined });
+    expect(landing.length).toBeGreaterThan(5000);
+    expect(landing.includes("--ring-c")).toBe(false);
   });
 
   it("no rule recolours the ring by naming a panel under :focus-visible", () => {
@@ -222,9 +228,11 @@ describe("D-4: one focus token, set by the band, never a list of selectors", () 
 
   it("outside :root only the two dark panels set --rf-focus, to the on-panel accent", () => {
     const setters: Array<{ sel: string; value: string }> = [];
+    const GRAPHICS = "public/site/graphics/rf-graphics.css";
     for (const f of CSS_FILES()) {
       for (const r of rulesOf(strip(read(f)))) {
-        if (r.selectors.includes(":root")) continue;
+        // Only the token file's own bare :root rule may set it; a :root anywhere else, alone or in a list, is a setter.
+        if (f === GRAPHICS && r.selectors.length === 1 && r.selectors[0] === ":root") continue;
         const v = r.decls["--rf-focus"];
         if (v !== undefined) for (const sel of r.selectors) setters.push({ sel, value: v });
       }
@@ -288,6 +296,15 @@ describe("T21: the box art tokens read the palette", () => {
   it("the top is a lighter warm tint that is no palette value", () => {
     const top = resolve("--rf-box-top");
     expect(Object.values(PALETTE).map((v) => v.toUpperCase())).not.toContain(top);
+    // The one typed tint is the value ux-spec section 3 gives, read from that line, not typed here.
+    const spec = fs.readFileSync(
+      path.resolve(WEB, "../../.claude/pipeline/2026-11-11-rovio-rebrand/ux-spec.md"),
+      "utf8",
+    );
+    const line = spec.split("\n").find((l) => l.startsWith("Art roles:"));
+    const want = /--rf-box-top:\s*(#[0-9a-fA-F]{6})/.exec(line ?? "")?.[1];
+    if (!want) throw new Error("ux-spec section 3 has no Art roles line with --rf-box-top");
+    expect(top).toBe(want.toUpperCase());
     expect(lum(top)).toBeGreaterThan(lum(resolve("--rf-box-front")));
     const [r, g, b] = [1, 3, 5].map((i) => parseInt(top.slice(i, i + 2), 16));
     expect((r as number) > (g as number) && (g as number) > (b as number)).toBe(true);
@@ -306,13 +323,13 @@ describe("T21: the box art tokens read the palette", () => {
 
 describe("font: the frame pages and the scene already have the fallback face", () => {
   it("every page that links rf-graphics.css also links site.css, which holds both faces", () => {
-    const dir = path.join(WEB, "public/site");
-    const pages = fs.readdirSync(dir).filter((f) => f.endsWith(".html"));
-    const text = (f: string) => fs.readFileSync(path.join(dir, f), "utf8");
-    const linking = pages.filter((f) => text(f).includes("graphics/rf-graphics.css"));
+    const served = (page: string) => readServedSitePage(page, { websiteId: undefined });
+    const linking = [...STATIC_SITE_PAGE_NAMES].filter((n) =>
+      served(n).includes("graphics/rf-graphics.css"),
+    );
     expect(linking.length).toBeGreaterThan(5);
-    for (const f of linking) {
-      expect({ f, site: text(f).includes("/site/css/site.css") }).toEqual({ f, site: true });
+    for (const n of linking) {
+      expect({ n, site: served(n).includes("/site/css/site.css") }).toEqual({ n, site: true });
     }
     expect(read("components/site-frame/SiteFrame.tsx")).toContain('href="/site/css/site.css"');
     const css = read("public/site/css/site.css");
