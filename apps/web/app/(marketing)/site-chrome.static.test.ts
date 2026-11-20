@@ -7,13 +7,29 @@ import * as fs from "fs";
 import * as path from "path";
 import { JSDOM } from "jsdom";
 import { SCRIPT_GZIP_KB } from "../../e2e/helpers/site-speed-budget";
+import { readServedSitePage } from "@/lib/read-site-page";
+import {
+  ANALYTICS_SRC,
+  FIRST_TOUCH_SRC,
+  STATIC_SITE_PAGE_NAMES,
+  type StaticSitePage,
+} from "@/lib/static-site-page";
 
 const WEB = path.resolve(__dirname, "../..");
 const SITE = path.join(WEB, "public/site");
 const JS = path.join(SITE, "js");
 
-const pages = fs.readdirSync(SITE).filter((f) => f.endsWith(".html"));
-const html = (page: string) => fs.readFileSync(path.join(SITE, page), "utf8");
+// The page list is the served-page list; the directory listing must agree with it, so a missing or an extra file fails.
+const pages = STATIC_SITE_PAGE_NAMES.map((p) => `${p}.html`);
+// The page as the route serves it (no visit-count site ID), read through the one seam.
+const html = (page: string) =>
+  readServedSitePage(page.replace(/\.html$/, "") as StaticSitePage, { websiteId: undefined });
+// Scripts the renderer adds to every served page; the speed budget counts them apart from a page's own scripts.
+const RENDERER_SCRIPTS: string[] = [FIRST_TOUCH_SRC, ANALYTICS_SRC];
+const ownScriptSrcs = (page: string) =>
+  [...html(page).matchAll(/<script\b[^>]*\bsrc="([^"]*)"/g)]
+    .map((m) => m[1] as string)
+    .filter((src) => !RENDERER_SCRIPTS.includes(src));
 // A page whose script budget is 0 (SA-1187 K1: landing links no script of its own) takes no chrome.js (SA-1196 A2).
 // The exemption is read from that budget row, never typed as a second list.
 const noScriptPages = pages.filter(
@@ -38,6 +54,11 @@ const GENERIC = new Set(["open"]);
 describe("chrome.js is the one home of the page chrome", () => {
   it("finds the ten ready-made pages", () => {
     expect(pages.length).toBe(10);
+    const onDisk = fs
+      .readdirSync(SITE)
+      .filter((f) => f.endsWith(".html"))
+      .sort();
+    expect(onDisk).toEqual([...pages].sort());
   });
 
   it("every chrome page loads /site/js/chrome.js exactly once, and a no-script page loads no script", () => {
@@ -48,8 +69,8 @@ describe("chrome.js is the one home of the page chrome", () => {
       expect({ page, tags: tags.length }).toEqual({ page, tags: 1 });
     }
     for (const page of noScriptPages) {
-      const tags = html(page).match(/<script\b[^>]*\bsrc=/g) ?? [];
-      expect({ page, tags: tags.length }).toEqual({ page, tags: 0 });
+      // "no script of its own": the renderer's first-touch and visit-count scripts are not the page's.
+      expect({ page, own: ownScriptSrcs(page) }).toEqual({ page, own: [] });
     }
   });
 
