@@ -8,6 +8,14 @@
  */
 import { test, expect, type Page } from "@playwright/test";
 import { blockAnalytics, frames, nonEmpty } from "./helpers/site-proof";
+import {
+  overlapFaults,
+  overlapRatios,
+  parseRgb,
+  scrubOff,
+  scrubSettled,
+  type TriggerLike,
+} from "./helpers/site-overlap";
 
 test.beforeEach(async ({ context }) => {
   await blockAnalytics(context);
@@ -244,8 +252,9 @@ test("T47 the invoice box of the problem picture sits inside its frame @1440x900
 });
 
 /**
- * What T47 measures at one beat: the big line against the two headings of the problem picture (the phone's sender line
- * and the invoice's "Invoice" heading), each heading against its own box. Returns one string per fault.
+ * What T47 measures at one beat: each problem-picture heading against its own box (the phone's sender line and the
+ * invoice's "Invoice" heading), and the opacities and overlap of the big line against each heading, as data. The pass
+ * or fail of the overlap is decided in node by overlapFaults (SA-1190 K1), not here.
  */
 type BeatSample = { name: string; bigOpacity: number; artOpacity: number; overlap: boolean };
 
@@ -259,7 +268,6 @@ async function problemBeat(page: Page): Promise<{ faults: string[]; samples: Bea
     const big = q(".pb-big");
     const bb = big.getBoundingClientRect();
     const bigOpacity = Number(getComputedStyle(big).opacity);
-    // once the picture itself has faded (the timeline's last beat) the big line takes its place by design
     const artOpacity = Number(getComputedStyle(q(".pb-art")).opacity);
     const out: string[] = [];
     const samples: Array<{
@@ -286,23 +294,100 @@ async function problemBeat(page: Page): Promise<{ faults: string[]; samples: Bea
       if (headEl.scrollWidth > headEl.clientWidth + 1) out.push(name + " heading is clipped");
       const hit = bb.left < h.right && bb.right > h.left && bb.top < h.bottom && bb.bottom > h.top;
       samples.push({ name, bigOpacity, artOpacity, overlap: hit });
-      if (hit && bigOpacity > 0.05 && artOpacity > 0.5)
-        out.push(
-          name +
-            " heading is under the big line (opacity " +
-            bigOpacity +
-            ", picture " +
-            artOpacity +
-            ")",
-        );
     }
     return { faults: out, samples };
   });
 }
 
-async function problemFaults(page: Page): Promise<string[]> {
-  return (await problemBeat(page)).faults;
+/** Every fault at one beat: the structural ones, and K1 for the invoice heading (3:1 at 1440, 4.5:1 at 393). */
+async function beatFaults(page: Page, k: string, floor: number): Promise<string[]> {
+  const colours = await roles(page);
+  const ink = parseRgb(colours.ink);
+  const white = parseRgb(colours.white);
+  const beat = await problemBeat(page);
+  const out = beat.faults.map((f) => `beat ${k}: ${f}`);
+  for (const sm of beat.samples) {
+    let note = "";
+    if (sm.name === "invoice" && sm.overlap) {
+      const r = overlapRatios(sm.artOpacity, sm.bigOpacity, ink, white);
+      note = `, INVOICE ratio ${r.invoice.toFixed(2)}, line ratio ${r.line.toFixed(2)}`;
+      for (const f of overlapFaults(sm.artOpacity, sm.bigOpacity, floor, ink, white))
+        out.push(`beat ${k}: ${f}`);
+    }
+    console.log(
+      `T47 beat ${k} ${sm.name}: big opacity ${sm.bigOpacity}, picture opacity ${sm.artOpacity}, overlap ${sm.overlap}${note}`,
+    );
+  }
+  return out;
 }
+
+/** Wait until every scrubbed trigger has caught up; on timeout, say which ones are off. */
+async function settle(page: Page): Promise<void> {
+  const src = String(scrubOff);
+  try {
+    await page.waitForFunction(
+      (s) => {
+        const st = (window as unknown as { ScrollTrigger?: { getAll(): unknown[] } }).ScrollTrigger;
+        if (!st) return false;
+        const fn = new Function("return " + s)() as (t: unknown[]) => unknown[];
+        return fn(st.getAll()).length === 0;
+      },
+      src,
+      { timeout: 20_000 },
+    );
+  } catch (e) {
+    const off = await page.evaluate((s) => {
+      const st = (window as unknown as { ScrollTrigger?: { getAll(): unknown[] } }).ScrollTrigger;
+      if (!st) return null;
+      const fn = new Function("return " + s)() as (t: unknown[]) => unknown[];
+      return fn(st.getAll());
+    }, src);
+    throw new Error(
+      "the scrubbed triggers did not catch up in 20 s: " +
+        (off ? JSON.stringify(off) : "window.ScrollTrigger is missing") +
+        " (" +
+        String(e) +
+        ")",
+    );
+  }
+}
+
+test("T47 settle check: scrub-only, and it names the trigger that lags (no browser)", () => {
+  const once = {
+    vars: { scrub: undefined },
+    progress: 0.3,
+    animation: { progress: () => 1 },
+    trigger: { id: "once" },
+  };
+  const caught = {
+    vars: { scrub: 0.8 },
+    progress: 0.5,
+    animation: { progress: () => 0.5 },
+    trigger: { className: "pb-pin" },
+  };
+  const lag = { ...caught, animation: { progress: () => 0.2 } };
+  // the former check: every trigger. A play-once trigger never tracks the scroll, so it never succeeded.
+  const former = (ts: TriggerLike[]) =>
+    ts.every((t) => !t.animation || Math.abs(t.animation.progress() - t.progress) < 0.005);
+  expect(former([once, caught])).toBe(false);
+  expect(scrubSettled([once, caught])).toBe(true);
+  expect(scrubSettled([once, lag])).toBe(false);
+  expect(scrubOff([once, lag])).toEqual([{ trigger: ".pb-pin", progress: 0.5, animation: 0.2 }]);
+});
+
+test("T47 overlap rule K1 over the composited opacities (no browser)", () => {
+  const ink = parseRgb("#0E1726");
+  const white = parseRgb("#FFFFFF");
+  // the reviewer's window at a phone: 4.39 is under 4.5
+  expect(overlapFaults(0.72, 0.3, 4.5, ink, white)).not.toEqual([]);
+  expect(overlapFaults(0.72, 0.3, 3, ink, white)).toEqual([]);
+  expect(overlapFaults(0.72, 0.15, 4.5, ink, white)).toEqual([]);
+  // both layers shown at once
+  expect(overlapFaults(0.5, 0.5, 3, ink, white)).not.toEqual([]);
+  // the line has taken over; both below 0.5 is a transition beat
+  expect(overlapFaults(0.3, 0.7, 4.5, ink, white)).toEqual([]);
+  expect(overlapFaults(0.4, 0.4, 4.5, ink, white)).toEqual([]);
+});
 
 test("T47 when home-up.js fails to load, the big line paints over neither heading @1440x900", async ({
   page,
@@ -319,45 +404,51 @@ test("T47 when home-up.js fails to load, the big line paints over neither headin
     if (!s) throw new Error("no #problem section");
     window.scrollTo(0, s.getBoundingClientRect().top + window.scrollY);
   });
-  expect(await problemFaults(page)).toEqual([]);
+  expect(await beatFaults(page, "no-script", 3)).toEqual([]);
 });
 
-test("T47 from first paint to settle, at every beat of the pinned section @1440x900", async ({
-  page,
-}) => {
-  test.setTimeout(180_000);
-  await open(page, 1440, 900);
-  const top = await page.evaluate(() => {
-    const s = document.querySelector("#problem") as HTMLElement | null;
-    if (!s) throw new Error("no #problem section");
-    return s.getBoundingClientRect().top + window.scrollY;
+for (const { w, h, floor } of [
+  { w: 1440, h: 900, floor: 3 },
+  { w: 393, h: 844, floor: 4.5 },
+]) {
+  test(`T47 from first paint to settle, at every beat of the problem section @${w}x${h}`, async ({
+    page,
+  }) => {
+    test.setTimeout(180_000);
+    await open(page, w, h);
+    // the pin runs 170% of the window on a desktop; a phone has no pin, so the section's own height is the run
+    const { top, run } = await page.evaluate(
+      ([vh, desk]) => {
+        const s = document.querySelector("#problem") as HTMLElement | null;
+        if (!s) throw new Error("no #problem section");
+        return {
+          top: s.getBoundingClientRect().top + window.scrollY,
+          run: desk ? 1.7 * vh : s.offsetHeight,
+        };
+      },
+      [h, w >= 900] as [number, boolean],
+    );
+    const beats: string[] = [];
+    const faults: string[] = [];
+    // before the section, eleven even steps through it, and past its end
+    const steps = [
+      -0.5 * h,
+      ...Array.from({ length: 11 }, (_, i) => (i * run) / 10),
+      run + 0.3 * h,
+    ];
+    for (const dy of steps) {
+      const y = Math.max(0, Math.round(top + dy));
+      await page.evaluate((yy) => window.scrollTo(0, yy), y);
+      await page.waitForFunction((yy) => Math.abs(window.scrollY - yy) <= 1, y);
+      // the pin scrubs (0.8 s), so wait until every scrubbed trigger's animation has caught up with its scroll progress
+      await settle(page);
+      // one frame, so the layout has taken the settled state
+      await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
+      const k = (dy / h).toFixed(2);
+      beats.push(k);
+      faults.push(...(await beatFaults(page, k, floor)));
+    }
+    expect(beats.length).toBeGreaterThanOrEqual(12);
+    expect(faults).toEqual([]);
   });
-  const beats: string[] = [];
-  const faults: string[] = [];
-  // the pin runs 170% of the window; sample before it, every tenth of it, and past its end
-  const steps = [-0.5, ...Array.from({ length: 11 }, (_, i) => (i * 1.7) / 10), 1.7 + 0.3];
-  for (const k of steps) {
-    const y = Math.max(0, Math.round(top + k * 900));
-    await page.evaluate((yy) => window.scrollTo(0, yy), y);
-    await page.waitForFunction((yy) => Math.abs(window.scrollY - yy) <= 1, y);
-    // the pin scrubs (0.8 s), so wait until every scroll trigger's animation has caught up with its scroll progress
-    await page.waitForFunction(() => {
-      const st = (window as unknown as { ScrollTrigger?: { getAll(): any[] } }).ScrollTrigger;
-      if (!st) return false;
-      return st
-        .getAll()
-        .every((t) => !t.animation || Math.abs(t.animation.progress() - t.progress) < 0.005);
-    });
-    // one frame, so the layout has taken the settled state
-    await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
-    beats.push(String(k.toFixed(2)));
-    const beat = await problemBeat(page);
-    for (const sm of beat.samples)
-      console.log(
-        `T47 beat ${k.toFixed(2)} ${sm.name}: big opacity ${sm.bigOpacity}, picture opacity ${sm.artOpacity}, overlap ${sm.overlap}`,
-      );
-    for (const f of beat.faults) faults.push("beat " + k.toFixed(2) + ": " + f);
-  }
-  expect(beats.length).toBeGreaterThanOrEqual(12);
-  expect(faults).toEqual([]);
-});
+}
