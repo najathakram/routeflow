@@ -58,11 +58,6 @@
     d.addEventListener("keydown", function (e) { if (e.key === "Escape") setOpen(false); });
     W.addEventListener("resize", function () { if (W.innerWidth > 1080) setOpen(false); });
   }
-  /* Phones: while the hero button is on screen, the header offers Pricing instead of a second Start free trial. */
-  var heroBtn = $(".hx-cta .btn"), siteHead = $(".site-header");
-  if (heroBtn && siteHead && "IntersectionObserver" in W) {
-    new W.IntersectionObserver(function (es) { siteHead.classList.toggle("hero-btn-in", es[es.length - 1].isIntersecting); }, { rootMargin: "-68px 0px 0px 0px" }).observe(heroBtn);
-  }
   /* The header turns dark over a dark section. A thin strip at header height decides; no scroll reads. */
   var darks = $$(".pb, .end");
   if (header && darks.length && "IntersectionObserver" in W) {

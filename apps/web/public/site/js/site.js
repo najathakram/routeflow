@@ -45,6 +45,20 @@
     window.addEventListener("resize", function () { if (window.innerWidth > 1080) setOpen(false); });
   }
 
+  /* Phones: while any other trial button is on screen, the header offers Pricing instead of a second one.
+     The wheel's button keeps its own signal (rfw-go-in, read by site.css). */
+  (function () {
+    var head = $(".site-header");
+    var btns = $$('a.btn[href^="/signup"]').filter(function (b) { return !b.closest(".site-header, #mobile-menu, .rfw"); });
+    if (!head || !btns.length || !("IntersectionObserver" in window)) return;
+    var seen = new Set();
+    var io = new IntersectionObserver(function (en) {
+      en.forEach(function (e) { if (e.isIntersecting) seen.add(e.target); else seen.delete(e.target); });
+      head.classList.toggle("hero-btn-in", seen.size > 0);
+    }, { rootMargin: "-68px 0px 0px 0px" });
+    btns.forEach(function (b) { io.observe(b); });
+  })();
+
   /* Sticky mobile CTA (landing) */
   var sticky = $(".sticky-cta"), heroEl = $(".hero");
   if (sticky && heroEl && "IntersectionObserver" in window) new IntersectionObserver(function (en) { sticky.classList.toggle("show", !en[0].isIntersecting); }).observe(heroEl);
