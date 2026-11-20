@@ -13,6 +13,11 @@ Base: `rebrand/rovio-site` with every W2 lane landed (2.1b is done with `site.cs
   - The pricing markup was done in 2.3-pricing; edit no html.
   - The 2.3-pricing review (2026-11-20) found that stretching alone may leave an empty band above the Starter button. Give the css half its best fix and run T46a. If T46a stays red only because of markup (for example the button sits after a long list), stop and report; the markup half goes back to a pricing follow-up. Grant: this lane may edit e2e 89's T46a case only, so that it measures the gap from the card's last text line, not its last block box.
 - **`.band-line` (from the 2.3-pricing review, 2026-11-20).** 2.3-pricing put the class `band-line` on pricing's top band (`band-white band-line`) in place of an inline border. This lane adds the rule `.band-line{border-bottom:1px solid var(--rf-line)}` to `site.css`, next to the band classes at `:79-81`. Red first, in a 93 case: on `/pricing` at 1440x900 and 393x844, the top band's `borderBottomWidth` is 1px and `borderBottomColor` equals the page's `--rf-line` token (read at test time). Red today: no line.
+- **SA-1186 K5, the empty heading dot (`local-assets/lead-2026-11-14/sa/SA-1186-2-3-home-review-backlog.md`).**
+  - The problem: `.uc-t h3::before{…background:var(--pc)}` at `home-up.css:43`. No page sets `--pc` any more, so each of home's 4 use-case headings draws an empty 10px dot and its gap.
+  - The fix: delete `.uc-t h3::before`, plus any `gap` or `display:flex` on `.uc-t h3` that exists only for the dot. Observe and report what you removed.
+  - The class guard, in the same commit, red first: a static check that every `var(--x)` read in `home.css`, `home-up.css` and `home-color.css` names a property declared on the site (or set inline in `home.html`), unless it has a fallback. Red today: `--pc`.
+  - Order: this lands before or with 2.3-home's merge into the rebrand branch. If this lane cannot, 2.3-home takes a one-line grant for it instead.
 
 ## 2. Red first
 | T | File · red now |
