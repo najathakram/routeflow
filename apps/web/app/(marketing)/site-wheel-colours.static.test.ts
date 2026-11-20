@@ -201,11 +201,11 @@ describe("the still's text labels are AA (4.5:1) on their own tile", () => {
   const hex = (selector: string, prop: string) =>
     resolveColour(ruleValue(wheelCss, selector, prop), table);
 
-  // the label rules and the tile each sits on: a label is on the bone tiles only; the focus tile has its icon and no
-  // label (SA-1183 K1), and that pair (3:1) is held in site-home-w3.static.test.ts
+  // the label rules and the tile each sits on: a label is on the outer tiles only; the focus tile is the `.f` one
   const PAIRS: Array<[string, string, string, string]> = [
     ["a label on the first bone", ".rfw-lb", ".rfw-w", "fill"],
     ["a label on the second bone", ".rfw-lb", ".rfw-w.g", "fill"],
+    ["the label on the focus tile", ".rfw-lb.on", ".rfw-w.f", "fill"],
   ];
 
   it.each(PAIRS)("%s", (_name, label, tile, prop) => {
