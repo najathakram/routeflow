@@ -196,12 +196,10 @@ describe("T43 site weight budget (gzip)", () => {
         expect(kb(w.htmlGz)).toBeLessThanOrEqual(HTML_GZIP_KB);
       });
 
-      if (kind !== "landing") {
-        const cap = SCRIPT_GZIP_KB[kind];
-        rule("scripts", page, `${page}: script gzip <= ${cap} KB`, () => {
-          expect(kb(w.scriptGz)).toBeLessThanOrEqual(cap);
-        });
-      }
+      const cap = SCRIPT_GZIP_KB[kind];
+      rule("scripts", page, `${page}: script gzip <= ${cap} KB`, () => {
+        expect(kb(w.scriptGz)).toBeLessThanOrEqual(cap);
+      });
 
       rule("img-size", page, `${page}: every img has width and height`, () => {
         // a <template> image is only a decode source for the wheel hub, never laid out

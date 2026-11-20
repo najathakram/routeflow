@@ -10,7 +10,7 @@ export const GZIP_TOTAL_KB = { home: 175, inner: 115, landing: 45 } as const;
 /** T43: the html alone, gzip KB, every page. */
 export const HTML_GZIP_KB = 20;
 /** T43: all linked scripts together, gzip KB. */
-export const SCRIPT_GZIP_KB = { home: 90, inner: 57 } as const;
+export const SCRIPT_GZIP_KB = { home: 90, inner: 57, landing: 2 } as const;
 /** T43: one raster icon (png/jpg/webp), gzip KB. */
 export const RASTER_ICON_GZIP_KB = 15;
 /** T43: the one Geist woff2, gzip KB. */

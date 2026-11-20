@@ -36,3 +36,35 @@ test("FT9 the first visit's source is kept through later views", async ({ page }
   await page.goto("/pricing?utm_source=other&gclid=abc", { waitUntil: "load" });
   expect(await read()).toBe(first);
 });
+
+// SA-1184 K2: capture reaches home and landing too (the renderer adds the script to every page).
+test("FT9b home ad click: /?utm_source=x, then /pricing, then sign-up keeps the record", async ({
+  page,
+}) => {
+  const read = () => page.evaluate(() => window.sessionStorage.getItem("rf_first_touch"));
+  await page.goto("/?utm_source=x", { waitUntil: "load" });
+  const first = await read();
+  expect(first, "home writes the record").not.toBeNull();
+  const rec = JSON.parse(first as string) as Record<string, string>;
+  expect(rec.utm_source).toBe("x");
+  expect(rec.landingPath).toBe("/");
+  await page.goto("/pricing", { waitUntil: "load" });
+  expect(await read()).toBe(first);
+  await page.goto("/signup", { waitUntil: "load" });
+  expect(await read()).toBe(first);
+});
+
+test("FT9c landing ad click: /landing?gclid=y, then its one CTA, then sign-up keeps the record", async ({
+  page,
+}) => {
+  const read = () => page.evaluate(() => window.sessionStorage.getItem("rf_first_touch"));
+  await page.goto("/landing?gclid=y", { waitUntil: "load" });
+  const first = await read();
+  expect(first, "landing writes the record").not.toBeNull();
+  const rec = JSON.parse(first as string) as Record<string, string>;
+  expect(rec.gclid).toBe("y");
+  expect(rec.landingPath).toBe("/landing");
+  await page.locator('a[href="/signup"]').first().click();
+  await page.waitForURL((u) => u.pathname === "/signup");
+  expect(await read()).toBe(first);
+});
