@@ -43,6 +43,21 @@ export function pageSubLine(html: string, name: string): string {
   return m[1].split(name).join(MARK);
 }
 
+/** The page is served with this as the brand name: each place the file holds the name token shows it, a typed name does not. */
+const SENTINEL = "ZZSENTINELNAMEZZ";
+const NAME_TOKEN = SENTINEL;
+const servedWithSentinel = () =>
+  readServedSitePage("home", { brand: { ...BRAND, name: SENTINEL } });
+
+/** The wheel still's sub line of the page served with the sentinel name: the file must carry the name token (once), not a name. */
+export function rawPageSubLine(file: string): string {
+  const scene = file.indexOf('data-scene="wheel"');
+  if (scene < 0) throw new Error("home: no wheel scene found");
+  const m = /<p class="rfw-sub">([^<]*)<[/]p>/.exec(file.slice(scene));
+  if (!m) throw new Error("home: the wheel still has no sub line");
+  return m[1];
+}
+
 const markers = (s: string) => s.split(MARK).length - 1;
 
 /** The whole check on two sub lines: one marker each, the rest equal. Returns "" when they agree. */
@@ -72,7 +87,22 @@ describe("K14a: the wheel's sub line is one string in home.html and rf-wheel-up.
     expect(compareSubLines(pageSubLine(home, BRAND.name), scriptSubLine(src))).toBe("");
   });
 
+  it("the raw home.html sub line holds the name token exactly once, never a typed name", () => {
+    const raw = rawPageSubLine(servedWithSentinel());
+    expect(raw.split(NAME_TOKEN).length - 1).toBe(1);
+    expect(raw.replace(NAME_TOKEN, "")).not.toContain(BRAND.name);
+  });
+
   describe("the comparison goes red when it should", () => {
+    it("the raw check goes red when the name is typed into the line, or the token is doubled", () => {
+      const raw = rawPageSubLine(servedWithSentinel());
+      const typed = raw.replace(NAME_TOKEN, BRAND.name);
+      expect(typed.split(NAME_TOKEN).length - 1).toBe(0);
+      const doubled = raw.replace(NAME_TOKEN, NAME_TOKEN + " " + NAME_TOKEN);
+      expect(doubled.split(NAME_TOKEN).length - 1).toBe(2);
+      expect(() => rawPageSubLine("<p>nothing</p>")).toThrow(/no wheel scene/);
+    });
+
     const page = pageSubLine(home, BRAND.name);
     const script = scriptSubLine(src);
     const flip = (s: string, at: number) =>

@@ -106,18 +106,19 @@ describe("the wheel wears its colours at rest", () => {
     if (!m) throw new Error(`--rf-wh-${name} is not typed in rf-graphics.css`);
     return m[1];
   };
-  const INK = "#0E1726";
-  const WHITE = "#FFFFFF";
-  // the focus role points at the palette's copper (var(--brand-copper)), so the value comes from the palette file
-  const COPPER = (
+  // ink, white and the focus role (var(--brand-copper)) all come from the palette file, never typed here (L-072)
+  const {
+    ink: INK,
+    white: WHITE,
+    copper: COPPER,
+  } = (
     JSON.parse(
       fs.readFileSync(
         path.resolve(__dirname, "../../../../packages/types/brand/palette.json"),
         "utf8",
       ),
     ) as { color: Record<string, string> }
-  ).color.copper;
-
+  ).color;
   it("keeps the fifteen pieces and one resting focus piece", () => {
     expect(js.match(/{ k: "[a-z]+", t: "/g)).toHaveLength(15);
     expect(js).toMatch(/const REST_FOCUS = "payments";/);
@@ -131,6 +132,7 @@ describe("the wheel wears its colours at rest", () => {
     for (const ink of [role("sell"), role("sell-2")]) {
       expect(ratio(WHITE, ink)).toBeGreaterThanOrEqual(4.5);
     }
+    // the canvas draws icons only, which need 3:1; the still's text labels need 4.5:1 (site-wheel-colours)
     expect(ratio(WHITE, COPPER)).toBeGreaterThanOrEqual(3);
   });
 

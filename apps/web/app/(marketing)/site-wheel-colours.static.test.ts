@@ -144,3 +144,96 @@ describe("rf-wheel-up.js types no colour and draws flat", () => {
     expect(src).toContain("naturalWidth");
   });
 });
+
+// ─── the still's text labels (AA, 4.5:1) ─────────────────────────────────────
+// The still the script builds (staticHTML) names a piece with a text label on its own tile. Text needs 4.5:1
+// against that tile; the canvas draws icons only, which need 3:1 (site-color-and-life). Every colour here is
+// read from rf-graphics.css and palette.json, resolving var() chains; nothing is typed.
+
+const lin = (v: number) => {
+  const c = v / 255;
+  return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+};
+const lum = (hex: string) => {
+  const n = parseInt(hex.slice(1, 7), 16);
+  return 0.2126 * lin((n >> 16) & 255) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255);
+};
+export const contrast = (a: string, b: string) => {
+  const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+};
+
+/** Every `--x:value` of a stylesheet (the first definition wins), with the palette's `--brand-<key>` added. */
+function tokenTable(css: string): Map<string, string> {
+  const t = new Map<string, string>();
+  for (const [k, v] of Object.entries(PALETTE.color)) t.set(`--brand-${k}`, v);
+  for (const m of stripCss(css).matchAll(/(?<![\w-])(--[\w-]+)\s*:\s*([^;}]+)/g)) {
+    if (!t.has(m[1])) t.set(m[1], m[2].trim());
+  }
+  return t;
+}
+
+/** A colour value (a hex or var() chain) resolved to a hex through the table; throws on anything else. */
+export function resolveColour(value: string, table: Map<string, string>, depth = 0): string {
+  const v = value.trim();
+  if (/^#[0-9a-f]{6}$/i.test(v)) return v;
+  const m = /^var\(\s*(--[\w-]+)\s*\)$/.exec(v);
+  if (!m || depth > 8) throw new Error(`cannot resolve the colour "${value}"`);
+  const next = table.get(m[1]);
+  if (next === undefined) throw new Error(`${m[1]} is not defined`);
+  return resolveColour(next, table, depth + 1);
+}
+
+/** The value of `prop` in the rule whose selector is exactly `selector` in the stripped stylesheet. */
+export function ruleValue(css: string, selector: string, prop: string): string {
+  const esc = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const rule = new RegExp(`(?:^|\\})\\s*${esc}\\s*\\{([^}]*)\\}`, "g");
+  for (const m of stripCss(css).matchAll(rule)) {
+    const d = new RegExp(`(?:^|;)\\s*${prop}\\s*:\\s*([^;]+)`).exec(m[1]);
+    if (d) return d[1].trim();
+  }
+  throw new Error(`no rule "${selector}" with ${prop}`);
+}
+
+describe("the still's text labels are AA (4.5:1) on their own tile", () => {
+  const wheelCss = read("graphics/rf-wheel-up.css");
+  const table = tokenTable(read("graphics/rf-graphics.css"));
+  const hex = (selector: string, prop: string) =>
+    resolveColour(ruleValue(wheelCss, selector, prop), table);
+
+  // the label rules and the tile each sits on: a label is on the outer tiles only; the focus tile is the `.f` one
+  const PAIRS: Array<[string, string, string, string]> = [
+    ["a label on the first bone", ".rfw-lb", ".rfw-w", "fill"],
+    ["a label on the second bone", ".rfw-lb", ".rfw-w.g", "fill"],
+    ["the label on the focus tile", ".rfw-lb.on", ".rfw-w.f", "fill"],
+  ];
+
+  it.each(PAIRS)("%s", (_name, label, tile, prop) => {
+    const text = hex(label, prop);
+    const fill = hex(tile, "fill");
+    const r = contrast(text, fill);
+    // the ratio is on the log of a pass, so a drift towards the floor is visible
+    console.log(`still label ${label} ${text} on ${tile} ${fill}: ${r.toFixed(2)}:1`);
+    expect(r).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("the resolver reads the real files and goes red on white over the old copper (4.19:1)", () => {
+    expect(hex(".rfw-w", "fill").toLowerCase()).not.toBe(PALETTE.color.white.toLowerCase());
+    expect(contrast(PALETTE.color.white, PALETTE.color.copper)).toBeLessThan(4.5);
+    expect(() => resolveColour("var(--nope)", table)).toThrow(/not defined/);
+    expect(() => ruleValue(wheelCss, ".rfw-nothing", "fill")).toThrow(/no rule/);
+  });
+});
+
+describe("D-3: the focus ring on the canvas is 3 px and ink", () => {
+  const src = read("graphics/rf-wheel-up.js");
+  it("the ring is drawn at 3 x dpr in the ink role, for the tile in focus", () => {
+    const line = src
+      .split("\n")
+      .find((l) => l.includes("if (focusI === w.i) { ctx.beginPath(); trace(tx, ty, n);"));
+    if (!line) throw new Error("no focus ring line found in rf-wheel-up.js");
+    expect(line).toContain("ctx.lineWidth = 3 * dpr");
+    expect(line).toContain("ctx.strokeStyle = css(C.ink)");
+    expect(src).toMatch(/\bink: [^,]*--rf-ink\b|"ink"/);
+  });
+});

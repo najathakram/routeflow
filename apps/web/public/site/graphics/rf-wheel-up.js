@@ -14,8 +14,10 @@
   const lerp = (a, b, t) => a + (b - a) * t;
   let symSrc = "";
   const ADD = "If you deliver";
-  /* The name comes from the page (og:site_name), never typed here; with no page (a headless load) it is empty. */
-  const NAME = (typeof document !== "undefined" && (document.querySelector('meta[property="og:site_name"]') || { getAttribute: () => "" }).getAttribute("content")) || "";
+  /* The name comes from the page (og:site_name), never typed here; with no page (a headless load) it is empty. It only ever goes into
+     markup, so it is escaped once, here. An empty name never builds a sentence: mount() leaves the page's own still as it is. */
+  const esc = (t) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  const NAME = esc(((typeof document !== "undefined" && (document.querySelector('meta[property="og:site_name"]') || { getAttribute: () => "" }).getAttribute("content")) || "").trim());
   const WHEEL = NAME ? "The " + NAME + " wheel" : "The wheel";
   /* At rest, and again when it is whole, the focus tile is Payments. */
   const REST_FOCUS = "payments";
@@ -213,6 +215,7 @@
   let registered = false;
   function mount(el, opts) {
     if (el._rfw) return el._rfw;
+    if (!NAME) return null;
     opts = opts || {};
     const g = root.gsap, ST = root.ScrollTrigger;
     const saved = { html: el.innerHTML, cls: el.getAttribute("class") || "" };
@@ -380,8 +383,8 @@
         if (p.c > 0.02 && st > 0.05) { ctx.beginPath(); ctx.moveTo(tx[0], ty[0]); for (let j = 1; j < w.rim; j++) ctx.lineTo(tx[j], ty[j]); ctx.lineJoin = "miter"; ctx.lineWidth = 1.25 * dpr; ctx.strokeStyle = css(C.white, 0.42 * p.c); ctx.stroke(); }
         if (focusI === w.i) { ctx.beginPath(); trace(tx, ty, n); ctx.lineWidth = 3 * dpr; ctx.strokeStyle = css(C.ink); ctx.stroke(); }
         { const SR = w.mid + (outer ? 56 : 42); proj(ux * (SR * rg + sl), uy * (SR * rg + sl), zT - q * (SR - w.mid) * rg); w.sx = px; w.sy = py; }
-        /* Only the plate tilts; the icon stands centred on it. The piece the object stands on lets it have the spot. A piece's name is
-           never painted: the legend, the 15 buttons and the name pill carry it. */
+        /* Only the plate tilts; the icon stands centred on it. A piece's name is never painted: the legend, the 15 buttons and the
+           name pill carry it. */
         {
           proj(ux * (w.mid * rg + sl), uy * (w.mid * rg + sl), zT);
           const sc = K * pp, ax = px, ay = py, sq = 0.62 + 0.38 * ct;
@@ -444,7 +447,7 @@
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       const zo = cam.zO, zi = cam.zI, zh = cam.zH;
       const spo = (S.spO + Sp.o.x) * RAD, spi = (S.spI + Sp.i.x) * RAD;
-      /* The stage with the soft neutral shadows the stack casts on the floor, then the soft shadow of the lifted piece. */
+      /* The flat stage, then the pieces: nothing is cast. */
       stage(ctx, W, H);
       plates(OW, spo, zo, THO, true);
       plates(IW, spi, zi, THI, false);
@@ -579,7 +582,7 @@
     });
     /* The legend carries every name while the wheel is open; the first stop's words take its place as they leave. */
     hide(hx[0], S0 - HOLD);
-    /* The ring brings the first stop to the front and the object drops onto it. The pieces stay apart. */
+    /* The ring brings the first stop to the front. The pieces stay apart. */
     T.to(S, { spO: TURN[0], duration: 0.8, ease: IO }, T_SEEN + 0.05);
     T.to(S, { wS: 1, duration: 0.5, ease: IO }, S0 - HOLD - 0.3);
     /* Each stop: its words and its screen card arrive, then hold, while the other pieces stay apart. Showing or hiding a layer
@@ -598,15 +601,15 @@
       T.set(both, { visibility: "hidden" }, i < STORY.length - 1 ? L + STOP + 0.05 : C0 - 0.05);
       T.to(P[n], { w: 0, duration: 0.3, ease: IO }, L + HOLD - 0.22);
     };
-    /* Orders to inventory: the object stands at the front and the ring turns one piece under it. */
+    /* Orders to inventory: the ring turns one piece to the front. */
     const stepAt = (i) => stopAt(i) + HOLD - 0.22, HOP = stepAt(0);
     T.to(S, { spO: TURN[1], duration: 0.6, ease: IO }, HOP);
-    /* Inventory to payments: the ring swings the money round to the front, and the check drops onto it. */
+    /* Inventory to payments: the ring swings the money round to the front. */
     const LAST = stepAt(1);
     T.to(S, { spO: TURN[2], duration: 0.85, ease: IO }, LAST);
     /* Back together, along the same paths with the same curve run backward: the rings finish their turn, the slices close in from
-       the back around to the front, the core comes down and the hub seats last, with weight. The colour holds until it is whole,
-       then leaves, so it ends as calm as it began. */
+       the back around to the front, the core comes down and the hub seats last, with weight. The focus colour leaves the stops as the pieces close up and
+       comes back on Payments (the piece in focus at rest) once the wheel is whole. */
     T.to(S, { spO: 360, spI: -360, duration: 3.1, ease: HOME }, C0 - 0.1);
     T.to(S, { wE: 1, duration: 2.8, ease: IO }, C0 + 0.3);
     T.to(S, { lift: 0, duration: 2.7, ease: HOME }, C0 + 0.05);

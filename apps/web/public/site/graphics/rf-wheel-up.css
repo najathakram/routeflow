@@ -71,7 +71,7 @@
 .rfw-w.g{fill:var(--rf-wh-work-2);stroke:var(--rf-wh-work-2)}
 .rfw-w.i{fill:var(--rf-wh-sell);stroke:var(--rf-wh-sell)}
 .rfw-w.i.g{fill:var(--rf-wh-sell-2);stroke:var(--rf-wh-sell-2)}
-.rfw-w.f{fill:var(--rf-wh-focus);stroke:var(--rf-wh-focus)}
+.rfw-w.f{fill:var(--rf-wh-focus-wall);stroke:var(--rf-wh-focus-wall)}
 .rfw-ln{fill:none;stroke:var(--rf-line);stroke-width:22;stroke-linejoin:round}
 .rfw-hub{fill:var(--rf-panel)}
 .rfw-lb{fill:var(--rf-text);font-size:31px;font-weight:600;letter-spacing:-.01em;text-anchor:middle}
