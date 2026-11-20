@@ -277,7 +277,7 @@
           tl.fromTo(l, { opacity: 0.16 }, { opacity: 1 }, i * 1.1)
             .fromTo(objs[i], { opacity: 0.1, y: 28, scale: 0.94 }, { opacity: 1, y: 0, scale: 1 }, i * 1.1);
         });
-        tl.to($(".pb-lines", s), { opacity: 0, duration: 0.45, ease: "power1.in" }, 3.5)
+        tl.to($(".pb-lines", s), { opacity: 0, duration: 0.45, ease: "power1.in" }, 3.3)
           .to($(".pb-art", s), { opacity: 0.08, duration: 0.8, ease: "power1.inOut" }, 3.5)
           .fromTo(big, { opacity: 0, scale: 1.22 }, { opacity: 1, scale: 1, duration: 1.2, ease: "power3.out" }, 3.75)
           .to({}, { duration: 0.5 });

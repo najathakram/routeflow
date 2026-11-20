@@ -28,10 +28,7 @@ export interface Exemption {
   lane: string;
 }
 
-export const EXEMPT: Exemption[] = [
-  // 62 hex in style/fill stay until W3 (the home colour pass).
-  { path: "public/site/home.html", scope: "hex", liftedBy: "W3", lane: "2.3-home" },
-];
+export const EXEMPT: Exemption[] = [];
 
 /** The rows that cover a file: the one matcher (T35, T45 and the staleness check all use it). */
 export const exemptionFor = (file: string, rows: Exemption[] = EXEMPT): Exemption[] =>

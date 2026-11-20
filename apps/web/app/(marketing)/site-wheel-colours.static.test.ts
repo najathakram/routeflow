@@ -6,6 +6,7 @@
 // brand mark and the 3D object are gone. A sweep that finds nothing throws (L-202).
 import * as fs from "fs";
 import * as path from "path";
+import * as vm from "vm";
 
 const SITE = path.resolve(__dirname, "../../public/site");
 const read = (file: string) => fs.readFileSync(path.join(SITE, file), "utf8");
@@ -201,12 +202,47 @@ describe("the still's text labels are AA (4.5:1) on their own tile", () => {
   const hex = (selector: string, prop: string) =>
     resolveColour(ruleValue(wheelCss, selector, prop), table);
 
-  // the label rules and the tile each sits on: a label is on the outer tiles only; the focus tile is the `.f` one
+  // the label rules and the tile each sits on: a label is on the bone tiles only; the focus tile has its icon and
+  // no label (SA-1183 K1, SA-1185)
   const PAIRS: Array<[string, string, string, string]> = [
     ["a label on the first bone", ".rfw-lb", ".rfw-w", "fill"],
     ["a label on the second bone", ".rfw-lb", ".rfw-w.g", "fill"],
-    ["the label on the focus tile", ".rfw-lb.on", ".rfw-w.f", "fill"],
   ];
+
+  /** The still the script builds, run without a page. */
+  const stillHtml = (): string => {
+    const ctx: Record<string, unknown> = {};
+    vm.createContext(ctx);
+    vm.runInContext(read("graphics/rf-wheel-up.js"), ctx);
+    return (ctx.RFWheel as { staticHTML: () => string }).staticHTML();
+  };
+  /** The focus piece's markup: from its outline to the next piece's (a piece starts at its `rfw-ln` path). */
+  const focusPiece = (html: string): string => {
+    const hit = html.split('<path class="rfw-ln"').filter((p) => / f" /.test(p));
+    if (hit.length !== 1) throw new Error(`expected one focus piece, found ${hit.length}`);
+    return hit[0] as string;
+  };
+
+  const hasLabel = (piece: string): boolean => /<text class="rfw-lb/.test(piece);
+
+  it("the focus piece carries no label text (named in the legend)", () => {
+    expect(hasLabel(focusPiece(stillHtml()))).toBe(false);
+  });
+
+  it("the absent check goes red when the label is put back (fixture)", () => {
+    const put =
+      focusPiece(stillHtml()) + '<text class="rfw-lb" y="54"><tspan x="0">Payments</tspan></text>';
+    expect(hasLabel(put)).toBe(true);
+  });
+
+  // non-text, at least 3:1: the white icon on the copper tile
+  it("the icon on the focus tile holds 3:1", () => {
+    const icon = hex(".rfw-ic.on", "stroke");
+    const tile = hex(".rfw-w.f", "fill");
+    const r = contrast(icon, tile);
+    console.log(`focus icon ${icon} on ${tile}: ${r.toFixed(2)}:1`);
+    expect(r).toBeGreaterThanOrEqual(3);
+  });
 
   it.each(PAIRS)("%s", (_name, label, tile, prop) => {
     const text = hex(label, prop);
