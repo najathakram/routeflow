@@ -108,7 +108,7 @@ h3{font-size:var(--rf-h4);line-height:1.15;font-weight:650;letter-spacing:-.02em
 .pprice small{font-size:17px;font-weight:500;letter-spacing:-.01em;margin-left:8px;color:var(--rf-text-2)}
 .pcard.featured .pprice small,.pcard.featured .pfor,.pcard.featured .pfrom,.pcard.featured .pyear{color:var(--rf-on-panel-2)}
 .pfor{font-size:17px;color:var(--rf-text-2);min-height:3.1em}
-.pcard .checks{margin-top:auto;padding-top:22px;gap:12px}
+.pcard .checks{margin-top:22px;gap:12px}
 .pcard .checks li{font-size:17px}
 .pcard.featured .checks .ico{color:var(--rf-accent-on-panel)}
 .pcard b{font-weight:650}

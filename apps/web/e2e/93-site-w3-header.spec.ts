@@ -185,7 +185,6 @@ for (const { route, scope } of [
           name: (c.querySelector("h2,h3")?.textContent ?? "plan").trim(),
           top: Math.round(c.getBoundingClientRect().top + scrollY),
           bottom: c.getBoundingClientRect().bottom + scrollY,
-          btn: (c.querySelector(".pbtn")?.getBoundingClientRect().bottom ?? NaN) + scrollY,
         }));
     }, scope);
     nonEmpty(cards, `plan cards on ${route}`);
@@ -197,13 +196,52 @@ for (const { route, scope } of [
       const lo = Math.min(...row.map((c) => c.bottom));
       const hi = Math.max(...row.map((c) => c.bottom));
       if (hi - lo > 1) bad.push(row.map((c) => `${c.name} ${c.bottom.toFixed(0)}`).join(", "));
-      const bl = Math.min(...row.map((c) => c.btn));
-      const bh = Math.max(...row.map((c) => c.btn));
-      if (!(bh - bl <= 1))
-        bad.push(`buttons: ${row.map((c) => `${c.name} ${c.btn.toFixed(0)}`).join(", ")}`);
     }
     expect(bad).toEqual([]);
   });
+}
+
+// SA-1189 K3: no empty band anywhere inside a plan card (the leftover space of a row sits under the shorter cards).
+for (const { route, scope } of [
+  { route: "/pricing", scope: "#pricing" },
+  { route: "/", scope: "#pricing" },
+] as const) {
+  for (const { w, h } of [
+    { w: 1440, h: 900 },
+    { w: 393, h: 844 },
+  ] as const) {
+    test(`K3 no gap over 32px between blocks inside a plan card: ${route} ${scope} @${w}x${h}`, async ({
+      page,
+    }) => {
+      await open(page, route, w, h);
+      const gaps = await page.evaluate((root) => {
+        const base = document.querySelector(root);
+        if (!base) throw new Error(`no ${root}`);
+        const shown = (el: Element) => {
+          const s = getComputedStyle(el);
+          const r = el.getBoundingClientRect();
+          return s.display !== "none" && s.visibility !== "hidden" && r.width > 0 && r.height > 0;
+        };
+        const out: { where: string; gap: number }[] = [];
+        for (const card of Array.from(base.querySelectorAll(".pcard")).filter(shown)) {
+          const name = (card.querySelector("h2,h3")?.textContent ?? "plan").trim();
+          const kids = Array.from(card.children).filter(shown);
+          for (let i = 1; i < kids.length; i++) {
+            const prev = kids[i - 1] as Element;
+            const next = kids[i] as Element;
+            out.push({
+              where: `${name}: ${prev.className || prev.tagName} to ${next.className || next.tagName}`,
+              gap: next.getBoundingClientRect().top - prev.getBoundingClientRect().bottom,
+            });
+          }
+        }
+        return out;
+      }, scope);
+      nonEmpty(gaps, `blocks inside plan cards on ${route}`);
+      const bad = gaps.filter((g) => g.gap > 32);
+      expect(bad, bad.map((g) => `${g.where} ${g.gap.toFixed(0)}px`).join("; ")).toEqual([]);
+    });
+  }
 }
 
 for (const { w, h } of [

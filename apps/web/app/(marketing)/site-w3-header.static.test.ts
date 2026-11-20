@@ -170,17 +170,18 @@ describe("F08: the open phone menu shows Sign in and the trial button in one scr
 describe("P01 and the band line", () => {
   const css = read("css/site.css");
 
-  it("the plan cards of a row stretch to one height, with the leftover space above the list", () => {
+  it("the plan cards of a row stretch to one height, with the leftover space below the button (SA-1189 K2)", () => {
     expect(css).toMatch(/\.pgrid\{[^}]*align-items:stretch/);
     expect(css).not.toMatch(/\.pgrid\{[^}]*align-items:start/);
-    expect(css).toMatch(/\.pcard \.checks\{[^}]*margin-top:auto/);
+    expect(css).toMatch(/\.pcard \.checks\{[^}]*margin-top:22px/);
+    expect(css).not.toMatch(/\.pcard \.checks\{[^}]*(margin-top:auto|padding-top)/);
     expect(css).toMatch(/\.pbtn\{[^}]*margin-top:0/);
     // the gap from a list's last text to its button stays under 32 px with the half-leading (the e2e measures it)
     expect(Number(css.match(/\.pcard \.checks\{margin-bottom:(\d+)px/)?.[1])).toBeLessThanOrEqual(
       23,
     );
-    // home's cards hold a .pm meter, not a list: it takes the leftover space
-    expect(read("css/home-up.css")).toMatch(/\.pm\{[^}]*margin:auto 0/);
+    // home's cards hold a .pm meter, not a list: it does not push itself apart from the text above it either
+    expect(read("css/home-up.css")).not.toMatch(/\.pm\{[^}]*margin:auto/);
   });
 
   it("band-line closes a band with the one-pixel line, next to the band roles", () => {
