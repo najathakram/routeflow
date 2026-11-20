@@ -59,6 +59,7 @@ Master has no spec above 85 today; re-check before naming (bug-id clash trap, th
 | W2 | **2.1b**, **2.2**, **S2** | step 0 done | 2.1b: site/mobile/home/home-up css (band role rules in `site.css`, tints out of `mobile.css`, the P04 glow) · 2.2: `rf-wheel-up.*` · S2: `home.html`, `js/*` comments (`prices.js` comments only), the one-key `symbolOnDark` grant in `packages/types/brand/*`; its `product.html:303` note is deleted (owner-box item 2 decided, owner box 2026-11-19 ~20:22Z) |
 | W2-last | 2.1b-last (one commit; owns T21) | 2.1b and 2.2 landed | `rf-graphics.css` aliases + `landing.html` token block |
 | W2 close | coordinator | all W2 landed | verification only (no new ledger rows), whole web Jest |
+| W2c | **FT** (first-touch writer, `briefs/W2c-first-touch.md`, lead order 2026-11-19 from SA-1179) | W2 close green | `js/site.js` (one first-touch block), its static test, `e2e/94-site-w2-first-touch.spec.ts`. The W3 header lane (also `js/site.js`) starts after FT lands; the other W3 lanes do not wait |
 | W3 | **2.3-home**, **2.3-pricing**, **2.3-inner**, **header** | W2 close green | 2.3-home: `home.html`, `home.css`, `home-color.css` · 2.3-pricing: `pricing.html` · 2.3-inner: 7 inner html, `product`, `company`, `does`, `start` and `color-deep` css, the six `prices.js` script tags · header: `SiteFrameHeader.tsx`, `site-frame.css`, `site.css`, `mobile.css`, `js/site.js`, all of `home-up.css`, `js/home-up.js:64` (that toggle only) |
 | W3 close | coordinator | all W3 landed | verification only (no new ledger rows), whole web Jest, then Docker 1 |
 
