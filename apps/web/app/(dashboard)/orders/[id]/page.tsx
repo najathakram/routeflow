@@ -287,7 +287,8 @@ export default function OrderDetailPage() {
   // Opens the guard modal on a REGULATED_AUTH_REQUIRED 409; other errors fall
   // through to the global mutation toast.
   const guardError = (retry: () => void) => (err: unknown) => {
-    if (overpay.capture(err) || stale.capture(err) || rw.handle(err, retry)) return;
+    if (overpay.capture(err) || stale.capture(err) || sentEdit.capture(err, retry)) return; // B1372 N2
+    if (rw.handle(err, retry)) return;
     const restricted = parseSellingRestricted(err);
     if (restricted) {
       setRestrictedBlock(restricted);
@@ -331,7 +332,7 @@ export default function OrderDetailPage() {
     if (n > 0) toast({ title: "Someone else changed this order — re-check it", variant: "error" });
   });
   const updateItems = useUpdateOrderItems({
-    localErrorToast: (e) => overpay.ownsToast(e) || stale.ownsToast(e),
+    localErrorToast: (e) => overpay.ownsToast(e) || stale.ownsToast(e) || sentEdit.ownsToast(e),
   });
   const savingItems = updateItems.isPending;
   const sentEdit = useSentInvoiceEditConfirm(order?.editRevertsSentInvoices, isEditing); // B1372 K2
@@ -672,6 +673,7 @@ export default function OrderDetailPage() {
         items: updates,
         replaceAll: false,
         expectedRevisionNumber: stale.expected(), // row 372: the revision this editor loaded
+        ...sentEdit.ack(), // B1372 N2: the confirmed revert
         ...(feeChanged ? { shippingFee: editShippingFee } : {}),
         // Credit-note selection: only sent when the operator actually touched
         // the picker — undefined on the wire leaves the server's stored
@@ -1586,6 +1588,7 @@ export default function OrderDetailPage() {
                                     // lines. Mirrors handleSaveItems.
                                     replaceAll: false,
                                     expectedRevisionNumber: stale.expected(), // row 372 MF4
+                                    ...sentEdit.ack(), // B1372 N2
                                     ...(feeChanged ? { shippingFee: editShippingFee } : {}),
                                     // Same dual-path threading as handleSaveItems — the
                                     // line payload is shared (buildItemUpdates) but this

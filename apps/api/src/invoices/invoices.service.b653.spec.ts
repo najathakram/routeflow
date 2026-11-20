@@ -37,6 +37,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { InvoiceStatus } from "@prisma/client";
+import { invoiceFingerprintOf } from "./invoice-send-state";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 describe("InvoicesService — B653 (email qty fields)", () => {
@@ -230,6 +231,21 @@ describe("InvoicesService — B653 (email qty fields)", () => {
     await service.sendEmail("inv-b653");
     expect(mockEmailService.sendInvoice).toHaveBeenCalledWith(
       expect.objectContaining({ changedSinceSent: ["INV-2004"] }),
+    );
+  });
+
+  // B1372 N1 (SA-1177 A2 K2): "changed" means the CONTENT changed. The stage is not content: a draft emailed and then
+  // sent final with the same lines is the same invoice.
+  it("B1372 N1: emailed as a draft, then sent final with the same lines: changedSinceSent is empty", async () => {
+    mockInvoice([UNIT_ITEM]);
+    const draftFp = await invoiceFingerprintOf(prisma as never, {}, "inv-b653", "draft");
+    prisma.auditLog.findFirst.mockResolvedValue({
+      createdAt: new Date("2026-11-01T10:00:00Z"),
+      meta: { to: "buyer@acme.test", fp: draftFp },
+    });
+    await service.sendEmail("inv-b653", undefined, "final");
+    expect(mockEmailService.sendInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({ changedSinceSent: [] }),
     );
   });
 

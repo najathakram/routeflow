@@ -394,6 +394,8 @@ export const API_ERROR_CODES = {
   BUYER_EDIT_INPUT_NOT_ALLOWED: "BUYER_EDIT_INPUT_NOT_ALLOWED",
   /** SA-1144: a pre-delivery edit of an order whose invoice holds payments or is closed (PAID, PARTIAL, WRITTEN_OFF). 400. */
   ORDER_EDIT_INVOICE_HAS_PAYMENTS: "ORDER_EDIT_INVOICE_HAS_PAYMENTS",
+  /** B1372 N2 (SA-1177 A2 K3): a staff items edit would turn a SENT / VIEWED / OVERDUE invoice back into a draft and the request did not confirm it (`ackSentRevert`). 409 naming `invoiceNumbers`, nothing written. */
+  ORDER_EDIT_REVERTS_SENT_INVOICE: "ORDER_EDIT_REVERTS_SENT_INVOICE",
   /** B692: a manual PARTIALLY_DELIVERED names what was delivered per line (or the order already has delivery data). 409. */
   ORDER_PD_NEEDS_QUANTITIES: "ORDER_PD_NEEDS_QUANTITIES",
   /** B692: a delivered / partly-delivered order whose delivery quantities were never recorded is not cancelled blind. 409. */

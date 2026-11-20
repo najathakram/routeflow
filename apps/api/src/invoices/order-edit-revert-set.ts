@@ -1,6 +1,6 @@
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
 import { SETTLE_ADJUSTED_PAYMENT_WHERE } from "./settle-adjusted-payment";
-import { InvoiceStatus } from "@prisma/client";
+import { InvoiceStatus, UserRole } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { lockRowsNoWait } from "../common/db-locks";
 import { carrierEditGuard, resyncsInPlace, type CarrierOrder } from "../orders/order-carrier-guard";
@@ -166,6 +166,27 @@ export async function quoteExcludedInvoiceIds(
  * selection (one copy: the Returns quote above and the order read's `editRevertsSentInvoices` both read it). `[]` when the
  * edit re-syncs in place (`resyncsInPlace`: out for delivery, partly or fully delivered, or with the carrier).
  */
+/**
+ * B1372 (SA-1177 K2, N2): ONE predicate for who meets the "this edit turns sent invoices back into drafts" confirm. The order
+ * read lists the set for these roles only (`editRevertsSentInvoices`), and the edit transaction refuses an unconfirmed revert
+ * for the same roles (`sentRevertNeedsAck`). A buyer or a driver never sees the confirm, so neither is ever asked for it.
+ */
+export function seesSentRevertConfirm(role: string | null | undefined): boolean {
+  return role != null && role !== UserRole.CUSTOMER && role !== UserRole.DRIVER;
+}
+
+/**
+ * B1372 N2: true when this items edit must carry `ackSentRevert` before it may revert a sent invoice: a staff editor (the
+ * confirm's roles) who did not confirm. Never for the create path's own auto-merge (no confirm is shown there).
+ */
+export function sentRevertNeedsAck(
+  user: { role?: string | null } | null | undefined,
+  dto: { ackSentRevert?: boolean },
+  opts?: { isCreateMerge?: boolean },
+): boolean {
+  return seesSentRevertConfirm(user?.role) && !opts?.isCreateMerge && dto.ackSentRevert !== true;
+}
+
 export async function editRevertedInvoicesFor(
   db: RevertSetDb,
   order: CarrierOrder & { id: string; status: string },
@@ -211,11 +232,13 @@ export async function editRevertedInvoicesFor(
  * display helpers are named only by the owning services (invoice-unit-display-only.spec.ts, G1).
  * `opts.preflightOnly` (row 586, SA-814a item 4): only the payment-block throw, nothing written, so a caller outside
  * a transaction can refuse a paid mirror early without committing a revert a later binding 409 cannot undo.
+ * `opts.requireAck` (B1372 N2): the editor did not confirm the revert (`sentRevertNeedsAck`), so a non-empty set is a 409
+ * naming the invoices, read under the row lock and thrown before any write (the confirm is enforced where the state is true).
  */
 export async function revertLinkedInvoicesToDraft(
   db: any,
   orderId: string,
-  opts?: { lockRows?: boolean; preflightOnly?: boolean },
+  opts?: { lockRows?: boolean; preflightOnly?: boolean; requireAck?: boolean },
 ): Promise<string[]> {
   // SA-1144 (Decision 1): under the caller's tx the order's invoices are locked FIRST (the lock `recordPayment` takes), and both
   // sets are read from the locked rows, so a final payment cannot land between the read and the commit.
@@ -250,6 +273,14 @@ export async function revertLinkedInvoicesToDraft(
             `Put the extra items on a new order.`
           : `Invoice ${first.invoiceNumber} has payments recorded, so this order's items can't change here. ` +
             `Remove its payments first, or put the extra items on a new order.`,
+    });
+  }
+  if (opts?.requireAck && !opts.preflightOnly && linked.length > 0) {
+    const invoiceNumbers = linked.map((inv) => inv.invoiceNumber);
+    throw new ConflictException({
+      code: API_ERROR_CODES.ORDER_EDIT_REVERTS_SENT_INVOICE,
+      message: `This edit turns invoice ${invoiceNumbers.join(", ")} back into a draft. Confirm to continue.`,
+      invoiceNumbers,
     });
   }
   const reverted: string[] = [];

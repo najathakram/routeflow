@@ -23,7 +23,8 @@ function collectSourceFiles(dir: string, out: string[] = []): string[] {
       collectSourceFiles(full, out);
       continue;
     }
-    if (!entry.name.endsWith(".ts") || entry.name.endsWith(".spec.ts")) continue;
+    // B1372 follow-up: .tsx too (the PDF templates compile into dist like any .ts); specs never ship.
+    if (!/\.tsx?$/.test(entry.name) || /\.spec\.tsx?$/.test(entry.name)) continue;
     out.push(full);
   }
   return out;
@@ -62,6 +63,12 @@ export function runtimeTypesImports(source: string): string[] {
 describe("no runtime import from @routeflow/types in the API (compiled-API boot guard)", () => {
   it("walks real files", () => {
     expect(collectSourceFiles(SRC_ROOT).length).toBeGreaterThan(100);
+  });
+
+  it("walks the .tsx sources too (the PDF templates), and never a spec", () => {
+    const files = collectSourceFiles(SRC_ROOT);
+    expect(files.filter((f) => f.endsWith(".tsx")).length).toBeGreaterThan(0);
+    expect(files.filter((f) => /\.spec\.tsx?$/.test(f))).toEqual([]);
   });
 
   it("every import of @routeflow/types in a non-spec file is type-only", () => {

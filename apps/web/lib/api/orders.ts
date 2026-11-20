@@ -584,6 +584,8 @@ export function useUpdateOrderItems(options?: LocalErrorToastOption) {
       inlineReturn?: InlineReturnLinesRequest;
       /** Row 372: the `revisionNumber` the editor loaded; behind the server's latest it is 409 ORDER_REVISION_STALE. */
       expectedRevisionNumber?: number;
+      /** B1372 N2: the staff confirmed the edit turns a sent invoice back into a draft (else 409 ORDER_EDIT_REVERTS_SENT_INVOICE). */
+      ackSentRevert?: boolean;
     } & RestrictionAck
   >({
     meta: {

@@ -339,35 +339,35 @@ export async function readSendState(
 
 /**
  * B1372 (SA-1177 K2, owner box Q2 "Warn, re-send at hand-over"): the numbers of the invoices in THIS email that were emailed
- * before and now show something else (`decideSendState`'s "changedSinceSent", the state the detail read reports). The email
- * then says so: an edit turned a sent invoice back into a draft, and the hand-over or delivery issue is the updated copy.
- * `first` is the invoice being sent (its fingerprint is the one this send records); `others` are a completion email's other
- * invoices, all attached as FINAL. Best-effort: a failed read never stops the email, it only leaves the line out.
+ * before and whose CONTENT differs now. The email then says so: an edit turned a sent invoice back into a draft, and the
+ * hand-over or delivery issue is the updated copy. `ids` = the invoice being sent, then a completion email's others.
+ * N1 (SA-1177 A2 K2): the stage is not content. The shared fingerprint hashes `variant` (#2088's detail read keeps that), so
+ * a recorded `fp` is compared with this invoice's fingerprint at BOTH stages: a draft emailed and then sent final with the
+ * same lines matches its "draft" copy and is unchanged. Only a tracked `v1:` record is compared (an older or untracked send
+ * cannot be checked). Best-effort: a failed read never stops the email, it only leaves the line out.
  */
 export async function changedSinceSentNumbers(
   prisma: PrismaLike,
-  featureConfig: any,
-  first: { id: string; invoiceNumber: string; fingerprint: string },
-  others: string[] = [],
+  ids: string[],
 ): Promise<string[]> {
   const db = prisma.forTenant();
   const tenantId = prisma.getTenantId();
   const changed: string[] = [];
   try {
-    const firstRow = await lastEmailRow(db, tenantId, first.id);
-    if (firstRow && decideSendState(firstRow, first.fingerprint, null).state === "changedSinceSent")
-      changed.push(first.invoiceNumber);
-    for (const id of others) {
+    for (const id of ids) {
       const last = await lastEmailRow(db, tenantId, id);
-      if (!last) continue;
-      const now = await invoiceFingerprintOf(prisma, featureConfig, id, "final");
-      if (decideSendState(last, now, null).state !== "changedSinceSent") continue;
-      const row = await db.invoice.findUnique({ where: { id }, select: { invoiceNumber: true } });
-      if (row?.invoiceNumber) changed.push(row.invoiceNumber);
+      const sent = last ? metaOf(last).fp : null;
+      if (!sent?.startsWith(`${FINGERPRINT_VERSION}:`)) continue;
+      const inv = await db.invoice.findUnique({ where: { id }, include: FINGERPRINT_INCLUDE });
+      if (!inv) continue;
+      const same = ["draft", "final"].some(
+        (variant) => invoiceFingerprint({ ...inv, variant }) === sent,
+      );
+      if (!same && inv.invoiceNumber) changed.push(inv.invoiceNumber);
     }
   } catch (err) {
     logger.warn(
-      `invoice ${first.id}: the changed-since-sent check failed, the email goes without it: ${
+      `invoice ${ids[0]}: the changed-since-sent check failed, the email goes without it: ${
         err instanceof Error ? err.message : String(err)
       }`,
     );

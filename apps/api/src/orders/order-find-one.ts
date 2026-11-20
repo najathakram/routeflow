@@ -11,7 +11,7 @@ import { attachInvoicesNeedReview } from "./order-invoices-review";
 import { attachOrderToCollect } from "./order-to-collect";
 import { discountModeOf } from "../common/discount-tax-mode";
 import { attachRevisionNumber } from "./order-revisions";
-import { UserRole } from "@prisma/client";
+import { Prisma, UserRole } from "@prisma/client";
 import { walkInSaleLocked } from "./replace-after-delivery";
 import { computeEditWindow } from "./edit-window";
 import { ORDER_LINE_ORDER_BY } from "./line-position";
@@ -28,7 +28,7 @@ import { tenantSafeParentView } from "../products/product-parent";
 import * as rGate from "./order-restriction-gate";
 import * as flags from "./offline/review-flags";
 import * as carrierGuard from "./order-carrier-guard";
-import { editRevertedInvoicesFor } from "../invoices/order-edit-revert-set";
+import { editRevertedInvoicesFor, seesSentRevertConfirm } from "../invoices/order-edit-revert-set";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import type { OrdersService } from "./orders.service";
 
@@ -184,7 +184,7 @@ export async function editRevertsSentInvoices(
   order: Parameters<typeof editRevertedInvoicesFor>[1],
   user: JwtPayload,
 ): Promise<string[]> {
-  if (user.role === UserRole.CUSTOMER || user.role === UserRole.DRIVER) return [];
+  if (!seesSentRevertConfirm(user.role)) return []; // B1372 N2: the same roles the edit tx asks to confirm
   try {
     const reverted = await editRevertedInvoicesFor(
       self.prisma.forTenant(),
@@ -193,7 +193,12 @@ export async function editRevertsSentInvoices(
     );
     return reverted.map((inv) => inv.invoiceNumber);
   } catch (err) {
-    // Advisory only: the confirm's list failing to load never breaks the order page (the edit's own revert still runs).
+    // Advisory only: a DATABASE failure loading the confirm's list never breaks the order page (the edit's own revert still
+    // runs, and N2 enforces the confirm there). Anything else is a defect and is rethrown, never hidden as "nothing reverts".
+    const dbError =
+      err instanceof Prisma.PrismaClientKnownRequestError ||
+      err instanceof Prisma.PrismaClientUnknownRequestError;
+    if (!dbError) throw err;
     findOneLog.warn(
       `editRevertsSentInvoices, order ${order.id}: ${(err as Error)?.message ?? err}`,
     );

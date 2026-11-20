@@ -401,7 +401,7 @@ describeDb(
 
     it("case 9 (guard): a SENT invoice with no payment: a per-line cut is accepted and the invoice reverts to DRAFT", async () => {
       const { o, lines } = await pendingOrder({ status: "SENT" });
-      await edit(o.id, { items: [{ id: lines[0].id, action: "CANCEL" }] });
+      await edit(o.id, { items: [{ id: lines[0].id, action: "CANCEL" }], ackSentRevert: true }); // B1372 N2
       const after = await snapshot(o.id);
       expect(after.lines.map((l) => l.status).sort()).toEqual(["CANCELLED", "PENDING"]);
       expect(after.invoices[0].status).toBe("DRAFT");
@@ -1009,7 +1009,7 @@ describeDb(
         where: { invoiceId: { in: invoiceIds.slice(-1) } },
         data: { status: "VOID" },
       });
-      await edit(o.id, { items: [{ id: lines[0].id, action: "CANCEL" }] });
+      await edit(o.id, { items: [{ id: lines[0].id, action: "CANCEL" }], ackSentRevert: true }); // B1372 N2
       expect((await snapshot(o.id)).invoices[0].status).toBe("DRAFT");
     }, 60_000);
   },
