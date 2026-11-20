@@ -319,6 +319,46 @@ for (const route of ["/pricing", "/"] as const) {
   }
 }
 
+// SA-1200 A1-2 option A: each plan card's button sits right after its own list. The gap from the list's border box
+// bottom to the button's top is the designed one, read from the page's own computed style (the wrapper's row-gap, the
+// list's margin-bottom, the button's margin-top), +-1px. This is what catches a hole between a list and its button (the
+// 249px band that a whole-card subgrid left under a shorter list). The list is ul.checks on /pricing and the .pm meter on "/".
+for (const route of ["/pricing", "/"] as const) {
+  for (const w of PLAN_ALIGN_WIDTHS) {
+    test(`A the button sits right after its own list: ${route} @${w}x900`, async ({ page }) => {
+      await open(page, route, w, 900);
+      const listSel = route === "/" ? ".pm" : "ul.checks";
+      const read = await page.evaluate((sel) => {
+        const cards = Array.from(document.querySelectorAll("#pricing .pgrid--4 .pcard")).filter(
+          (c) => c.getBoundingClientRect().height > 0,
+        );
+        return cards.map((c) => {
+          const list = c.querySelector(sel);
+          const btn = c.querySelector(".pbtn");
+          if (!list || !btn) throw new Error(`no ${sel} or .pbtn in a plan card`);
+          const wrap = btn.parentElement as Element;
+          const px = (v: string) => parseFloat(v) || 0;
+          const designed =
+            px(getComputedStyle(wrap).rowGap) +
+            px(getComputedStyle(list).marginBottom) +
+            px(getComputedStyle(btn).marginTop);
+          return {
+            name: (c.querySelector("h2,h3")?.textContent ?? "plan").trim(),
+            actual: btn.getBoundingClientRect().top - list.getBoundingClientRect().bottom,
+            designed,
+          };
+        });
+      }, listSel);
+      nonEmpty(read, `plan cards on ${route}`);
+      expect(read.length).toBe(4);
+      const bad = read
+        .filter((c) => Math.abs(c.actual - c.designed) > 1)
+        .map((c) => `${c.name} gap ${c.actual.toFixed(1)}px, designed ${c.designed.toFixed(1)}px`);
+      expect(bad, bad.join("; ")).toEqual([]);
+    });
+  }
+}
+
 // SA-1200 A1 M2: settleMotion waits a floor first, so a tween that a delayed call creates later is still seen. The
 // fixture starts a CSS animation at 60ms (like the hero's gsap.delayedCall(0.06)) and makes animation frames fast
 // (about 4ms), so ten quiet frames alone take less than 60ms: only the floor keeps the wait from returning before the
