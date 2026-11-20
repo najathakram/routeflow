@@ -102,7 +102,7 @@ describe("S19b C-3: estimate add from the customer layer", () => {
       expect(within(dialog).queryByText(/checking this customer/i)).not.toBeInTheDocument(),
     );
     await addWidget(user, dialog);
-    expect(await within(dialog).findByText(/\$33\.00\/each/)).toBeInTheDocument();
+    expect(await within(dialog).findByDisplayValue("33.00")).toBeInTheDocument();
     expect(within(dialog).queryByText(/\$36\.00/)).not.toBeInTheDocument();
   });
 
@@ -113,7 +113,7 @@ describe("S19b C-3: estimate add from the customer layer", () => {
       expect(within(dialog).queryByText(/checking this customer/i)).not.toBeInTheDocument(),
     );
     await addWidget(user, dialog);
-    expect(await within(dialog).findByText(/\$45\.00\/each/)).toBeInTheDocument();
+    expect(await within(dialog).findByDisplayValue("45.00")).toBeInTheDocument();
     expect(within(dialog).queryByText("TIER")).not.toBeInTheDocument();
     expect(within(dialog).getByText("MANUAL")).toBeInTheDocument();
   });
@@ -122,7 +122,7 @@ describe("S19b C-3: estimate add from the customer layer", () => {
     flagOn = false;
     const { user, dialog } = await openAndPickCustomer();
     await addWidget(user, dialog);
-    expect(await within(dialog).findByText(/\$36\.00\/each/)).toBeInTheDocument();
+    expect(await within(dialog).findByDisplayValue("36.00")).toBeInTheDocument();
     expect(layerCalls()).toHaveLength(0);
   });
 
@@ -182,7 +182,7 @@ describe("W-745: the estimate dialog fails closed on a failed customer-price rea
       within(dialog).queryByText(/couldn't load this customer's prices/i),
     ).not.toBeInTheDocument();
     await addWidget(user, dialog);
-    expect(await within(dialog).findByText(/\$36\.00\/each/)).toBeInTheDocument();
+    expect(await within(dialog).findByDisplayValue("36.00")).toBeInTheDocument();
   });
 });
 
@@ -197,7 +197,7 @@ describe("W-1093: the struck list price on a TIER line", () => {
     PRODUCT.priceTier3 = 48;
     const { user, dialog } = await openAndPickCustomer();
     await addWidget(user, dialog);
-    expect(await within(dialog).findByText(/\$48\.00\/each/)).toBeInTheDocument();
+    expect(await within(dialog).findByDisplayValue("48.00")).toBeInTheDocument();
     expect(within(dialog).getByText("TIER")).toBeInTheDocument();
     expect(within(dialog).queryByText("$42.00")).not.toBeInTheDocument();
   });
@@ -206,7 +206,7 @@ describe("W-1093: the struck list price on a TIER line", () => {
     flagOn = false;
     const { user, dialog } = await openAndPickCustomer();
     await addWidget(user, dialog);
-    expect(await within(dialog).findByText(/\$36\.00\/each/)).toBeInTheDocument();
+    expect(await within(dialog).findByDisplayValue("36.00")).toBeInTheDocument();
     expect(within(dialog).getByText("$42.00")).toBeInTheDocument();
   });
 });

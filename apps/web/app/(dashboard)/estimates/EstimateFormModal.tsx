@@ -3,10 +3,18 @@
 import * as React from "react";
 import { X, Trash2, Search, ChevronRight } from "lucide-react";
 import { Button, Modal, useToast } from "@routeflow/ui/web";
+import { WriteButton } from "@/lib/read-only-gate";
+import { usePriceEditAllowed } from "@/lib/api/my-permissions";
+import { PRICE_RIGHTS_COPY } from "@/lib/price-rights-copy";
 import { countNoun } from "@/lib/plural";
 import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
-import { useCreateEstimate } from "@/lib/api/estimates";
-import { useCustomers, useCustomerPrices } from "@/lib/api/customers";
+import {
+  useCreateEstimate,
+  useUpdateEstimate,
+  type CreateEstimateItem,
+  type Estimate,
+} from "@/lib/api/estimates";
+import { useCustomer, useCustomers, useCustomerPrices } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
 import { displayProductName } from "@/lib/product-display";
 import {
@@ -35,20 +43,33 @@ import { apiClient } from "@/lib/api-client";
 import { useTierLabels } from "@/lib/api/tier-labels";
 import { tierLabel } from "@/lib/tier-label";
 import { fmt } from "@/lib/formatting";
+import type { PriceType } from "@routeflow/types";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { defaultExpiryDate, defaultIssueDate } from "./estimate-date-defaults";
 
 // ─── Estimate Line Item ───────────────────────────────────────────────────────
 
+/** The price types an estimate line can show (PROMO is never written on a quote). */
+type LinePriceType = Exclude<PriceType, "PROMO">;
+
 interface EstimateLineItem {
   tempId: string;
+  /** A draft edit: the stored line this row came from (sent back so an unchanged price needs no price rights). */
+  heldId?: string;
+  /** "" for a custom (unlisted) line. */
   productId: string;
   productName: string;
   unit: string;
   listPrice: number;
   tierPrice: number;
-  discountedPrice?: number;
   unitPrice: number;
-  priceType: "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL";
+  /** What the price box shows while it is being typed. */
+  priceText: string;
+  /** The price was typed (or held as typed): it is sent, and the server judges it against the customer's price. */
+  priceTyped: boolean;
+  /** The price type the customer's own price gives (before any typed price). */
+  basePriceType: LinePriceType;
+  priceType: LinePriceType;
   qty: number;
   unitsPerBox?: number;
   boxes?: number;
@@ -66,6 +87,34 @@ function toTotalsLine(li: EstimateLineItem): InvoiceTotalsLine {
   };
 }
 
+const priceText = (n: number) => (Number.isFinite(n) ? n.toFixed(2) : "");
+
+/** A stored estimate line as a form row (a draft edit). */
+function heldLine(it: Estimate["items"][number]): EstimateLineItem {
+  const unitPrice = Number(it.unitPrice);
+  const priceType: LinePriceType = it.priceType ?? "STANDARD";
+  const upb = it.unitsPerBox ? Number(it.unitsPerBox) : undefined;
+  return {
+    tempId: it.id,
+    heldId: it.id,
+    productId: it.productId ?? "",
+    productName: it.description,
+    unit: it.product?.unit ?? "each",
+    listPrice: Number(it.originalPrice ?? unitPrice),
+    tierPrice: unitPrice,
+    unitPrice,
+    priceText: priceText(unitPrice),
+    // A held override (or a custom line) keeps its typed price; a tier-priced line is re-priced on save.
+    priceTyped: !it.productId || priceType === "DISCOUNTED" || priceType === "MANUAL",
+    basePriceType: priceType === "SPECIAL" ? "SPECIAL" : "STANDARD",
+    priceType,
+    qty: Number(it.qty),
+    unitsPerBox: upb,
+    boxes: upb ? Number(it.boxes ?? 0) : undefined,
+    pieces: upb ? Number(it.pieces ?? 0) : undefined,
+  };
+}
+
 interface SelectedEstimateCustomer {
   id: string;
   businessName: string;
@@ -73,19 +122,27 @@ interface SelectedEstimateCustomer {
   pricingTier?: number;
 }
 
-// ─── Create Estimate modal ────────────────────────────────────────────────────
+// ─── Estimate form modal (new, or edit a draft) ───────────────────────────────
 
 export function CreateEstimateModal({
   isOpen,
   onClose,
   onSuccess,
+  estimate,
 }: {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: (id: string) => void;
+  /** A DRAFT to edit; absent = a new estimate. */
+  estimate?: Estimate;
 }) {
   const { toast } = useToast();
   const createEstimate = useCreateEstimate();
+  const updateEstimate = useUpdateEstimate();
+  const saving = createEstimate.isPending || updateEstimate.isPending;
+  const priceEditAllowed = usePriceEditAllowed();
+  // A draft edit reads its customer's tier (the estimate only carries the name).
+  const heldCustomerQuery = useCustomer(isOpen && estimate ? estimate.customerId : "");
   const { data: tierLabels } = useTierLabels();
 
   // Customer search
@@ -112,6 +169,7 @@ export function CreateEstimateModal({
   const [issueDate, setIssueDate] = React.useState(defaultIssueDate());
   const [expiryDate, setExpiryDate] = React.useState(() => defaultExpiryDate(issueDate));
   const [notes, setNotes] = React.useState("");
+  const [terms, setTerms] = React.useState("");
   const [errors, setErrors] = React.useState<Record<string, string>>({});
 
   // Customer per-product tier overrides
@@ -128,7 +186,12 @@ export function CreateEstimateModal({
   // W-745 (SA-868/884): the one shared gate. The customer is the picked row (its tier is read); a customer-price read that
   // failed with no data blocks the pick (it would drop every per-product override); a PLAN_GATE 403 is an empty read.
   const pricingGate = customerPricingGate({
-    customerQuery: selectedCustomer ? { data: selectedCustomer } : {},
+    // A draft edit's customer is not priced until its tier is read.
+    customerQuery: !selectedCustomer
+      ? {}
+      : selectedCustomer.pricingTier === undefined && selectedCustomer.id === estimate?.customerId
+        ? heldCustomerQuery
+        : { data: selectedCustomer },
     customerPricesQuery: selectedCustomer ? customerPricesQuery : {},
     priceLayer,
     productIds: lineItems.map((li) => li.productId),
@@ -170,22 +233,50 @@ export function CreateEstimateModal({
     return productGroups.rows.slice(0, 10);
   }, [productGroups, debouncedProductSearch]);
 
-  // Reset on open
+  // Reset on open: blank for a new estimate, the draft as stored for an edit.
   React.useEffect(() => {
     if (isOpen) {
-      setSelectedCustomer(null);
       setCustomerSearch("");
       setDebouncedCustomerSearch("");
       setProductSearch("");
       setDebouncedProductSearch("");
-      setLineItems([]);
-      const today = defaultIssueDate();
-      setIssueDate(today);
-      setExpiryDate(defaultExpiryDate(today));
-      setNotes("");
       setErrors({});
+      if (estimate) {
+        setSelectedCustomer({
+          id: estimate.customerId,
+          businessName: estimate.customer?.businessName ?? "",
+          contactName: estimate.customer?.contactName,
+        });
+        setLineItems(estimate.items.map(heldLine));
+        const issued = (estimate.issueDate ?? estimate.createdAt ?? "").slice(0, 10);
+        setIssueDate(issued || defaultIssueDate());
+        setExpiryDate((estimate.expiresAt ?? "").slice(0, 10));
+        setNotes(estimate.notes ?? "");
+        setTerms(estimate.terms ?? "");
+      } else {
+        setSelectedCustomer(null);
+        setLineItems([]);
+        const today = defaultIssueDate();
+        setIssueDate(today);
+        setExpiryDate(defaultExpiryDate(today));
+        setNotes("");
+        setTerms("");
+      }
     }
+    // Only on open: a refetch of the estimate while the form is open must not wipe what is being typed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
+
+  // The draft's customer tier, once read.
+  const heldTier = (heldCustomerQuery.data as { pricingTier?: number } | undefined)?.pricingTier;
+  React.useEffect(() => {
+    if (heldTier === undefined) return;
+    setSelectedCustomer((c) =>
+      c && c.id === estimate?.customerId && c.pricingTier === undefined
+        ? { ...c, pricingTier: heldTier }
+        : c,
+    );
+  }, [heldTier, estimate?.customerId]);
 
   // Add line item (from search or barcode)
   const addLineItem = (product: any) => {
@@ -227,6 +318,9 @@ export function CreateEstimateModal({
         listPrice,
         tierPrice,
         unitPrice: tierPrice,
+        priceText: priceText(tierPrice),
+        priceTyped: false,
+        basePriceType: priceType,
         priceType,
         qty: upb ? upb : 1,
         unitsPerBox: upb,
@@ -332,6 +426,24 @@ export function CreateEstimateModal({
     );
   };
 
+  // A typed unit price. Shown as typed; the server judges it against the customer's price on save.
+  const setPrice = (tempId: string, text: string) => {
+    setLineItems((prev) =>
+      prev.map((li) => {
+        if (li.tempId !== tempId) return li;
+        const n = Number(text);
+        const unitPrice = text.trim() !== "" && Number.isFinite(n) && n >= 0 ? n : 0;
+        const priceType: LinePriceType =
+          Math.abs(unitPrice - li.tierPrice) < 0.005
+            ? li.basePriceType
+            : unitPrice < li.listPrice
+              ? "DISCOUNTED"
+              : "MANUAL";
+        return { ...li, priceText: text, unitPrice, priceTyped: true, priceType };
+      }),
+    );
+  };
+
   const setQty = (tempId: string, value: number) => {
     setLineItems((prev) =>
       prev.map((li) => (li.tempId === tempId ? { ...li, qty: Math.max(0, value) } : li)),
@@ -353,53 +465,91 @@ export function CreateEstimateModal({
     if (!issueDate) errs.issueDate = "Issue date is required.";
     if (!expiryDate) errs.expiryDate = "Expiry date is required.";
     if (lineItems.length === 0) errs.items = "Add at least one product.";
+    else if (lineItems.some((li) => !/^\d+(\.\d{0,2})?$/.test(li.priceText.trim())))
+      errs.items = "Enter a price (like 12.50) for every line.";
     if (Object.keys(errs).length > 0) {
       setErrors(errs);
       return;
     }
     setErrors({});
 
-    const dto = {
-      customerId: selectedCustomer!.id,
-      issueDate,
-      expiresAt: expiryDate,
-      notes: notes.trim() || undefined,
-      items: lineItems.map((li) => ({
-        productId: li.productId,
-        description: li.productName,
-        qty: li.qty,
-        ...(li.unitsPerBox ? { boxes: li.boxes ?? 0, pieces: li.pieces ?? 0 } : {}),
-        ...(li.priceType === "DISCOUNTED" && li.discountedPrice != null
-          ? { unitPrice: li.discountedPrice }
-          : {}),
-      })),
-    };
+    const items: CreateEstimateItem[] = lineItems.map((li) => ({
+      // A draft edit names the stored line, so an unchanged price is not a new override.
+      ...(estimate && li.heldId ? { id: li.heldId } : {}),
+      ...(li.productId ? { productId: li.productId } : {}),
+      description: li.productName,
+      qty: li.qty,
+      ...(li.unitsPerBox ? { boxes: li.boxes ?? 0, pieces: li.pieces ?? 0 } : {}),
+      // Only a typed price is sent; an untouched line is priced by the server at the customer's price.
+      ...(li.priceTyped || !li.productId ? { unitPrice: li.unitPrice } : {}),
+    }));
+    const onError = (err: unknown) =>
+      toast({
+        title: estimate ? "Couldn't save the estimate" : "Couldn't create the estimate",
+        description: genericToastCopy(err),
+        variant: "error",
+      });
 
-    createEstimate.mutate(dto, {
-      onSuccess: (est) => {
-        toast({ title: "Estimate created", description: est.estimateNumber, variant: "success" });
-        onClose();
-        onSuccess(est.id);
+    if (estimate) {
+      updateEstimate.mutate(
+        {
+          id: estimate.id,
+          dto: {
+            customerId: selectedCustomer!.id,
+            issueDate,
+            expiresAt: expiryDate,
+            notes: notes.trim(),
+            terms: terms.trim(),
+            items,
+          },
+        },
+        {
+          onSuccess: () => {
+            toast({
+              title: "Estimate saved",
+              description: estimate.estimateNumber,
+              variant: "success",
+            });
+            onClose();
+            onSuccess(estimate.id);
+          },
+          onError,
+        },
+      );
+      return;
+    }
+
+    createEstimate.mutate(
+      {
+        customerId: selectedCustomer!.id,
+        issueDate,
+        expiresAt: expiryDate,
+        notes: notes.trim() || undefined,
+        terms: terms.trim() || undefined,
+        items,
       },
-      onError: () => {
-        toast({
-          title: "Failed to create estimate",
-          description: "Please try again.",
-          variant: "error",
-        });
+      {
+        onSuccess: (est) => {
+          toast({ title: "Estimate created", description: est.estimateNumber, variant: "success" });
+          onClose();
+          onSuccess(est.id);
+        },
+        onError,
       },
-    });
+    );
   }
 
   return (
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="New estimate"
-      description="Create an estimate for a customer."
+      title={estimate ? `Edit ${estimate.estimateNumber}` : "New estimate"}
+      description={
+        estimate ? "Change this draft, then save." : "Create an estimate for a customer."
+      }
       footer={
         <>
-          <Button variant="secondary" onClick={onClose} disabled={createEstimate.isPending}>
+          <Button variant="secondary" onClick={onClose} disabled={saving}>
             Cancel
           </Button>
           <PriceLayerNotice
@@ -411,14 +561,14 @@ export function CreateEstimateModal({
             unconfirmed={priceBlocked || pricingGate.blockPick}
             className="mr-auto self-center text-xs text-amber-700"
           />
-          <Button
+          <WriteButton
             type="submit"
             form="create-estimate-form"
-            loading={createEstimate.isPending}
+            loading={saving}
             disabled={priceBlocked}
           >
-            Create estimate
-          </Button>
+            {estimate ? "Save changes" : "Create estimate"}
+          </WriteButton>
         </>
       }
     >
@@ -703,9 +853,27 @@ export function CreateEstimateModal({
                       )}
                     </div>
                     <div className="mt-0.5 flex items-center gap-2 text-xs text-navy/70">
-                      <span>
-                        {fmt(li.unitPrice)}/{li.unit}
-                      </span>
+                      {priceEditAllowed ? (
+                        <span className="flex items-center gap-1">
+                          <span aria-hidden>$</span>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            aria-label={"Price for " + li.productName}
+                            value={li.priceText}
+                            onChange={(e) => setPrice(li.tempId, e.target.value)}
+                            className="h-7 w-20 rounded border border-surface-border bg-white px-1.5 text-right text-xs text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          />
+                          <span>/{li.unit}</span>
+                        </span>
+                      ) : (
+                        <span title={PRICE_RIGHTS_COPY}>
+                          {fmt(li.unitPrice)}/{li.unit}
+                        </span>
+                      )}
+                      {li.priceType === "DISCOUNTED" && (
+                        <span className="line-through">{fmt(li.listPrice)}</span>
+                      )}
                       {li.priceType === "SPECIAL" &&
                         !isAboveListLine({
                           unitPrice: li.unitPrice,
@@ -798,6 +966,21 @@ export function CreateEstimateModal({
             placeholder="Additional notes…"
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
+            className="w-full resize-none rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+        </div>
+
+        {/* Terms */}
+        <div>
+          <label htmlFor="estimate-terms" className="mb-1.5 block text-sm font-medium text-navy/80">
+            Terms <span className="text-navy/70">(optional)</span>
+          </label>
+          <textarea
+            id="estimate-terms"
+            rows={2}
+            placeholder="Payment terms, delivery, validity…"
+            value={terms}
+            onChange={(e) => setTerms(e.target.value)}
             className="w-full resize-none rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
         </div>
