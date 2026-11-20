@@ -14,6 +14,8 @@
  * (near the icon), in canvas pixels; the colour is the most common one in an 11 px square (getImageData).
  */
 import { test, expect, type Page } from "@playwright/test";
+import * as fs from "fs";
+import * as path from "path";
 import {
   BEATS,
   SIZES,
@@ -23,7 +25,10 @@ import {
   nonEmpty,
   openHomeNoSnap,
   scrollWheelTo,
+  settle,
   sizeName,
+  waitForArrival,
+  waitForWheel,
 } from "./helpers/site-proof";
 
 test.describe.configure({ mode: "parallel" });
@@ -44,6 +49,15 @@ type Tile = {
   ir: number;
 };
 type Roles = Record<"work" | "work2" | "sell" | "sell2" | "focus" | "workWall" | "sellWall", Rgb>;
+
+/** The palette file's colours (packages/types/brand/palette.json): the icon colours come from here, never typed. */
+const PALETTE = (
+  JSON.parse(
+    fs.readFileSync(path.resolve(__dirname, "../../../packages/types/brand/palette.json"), "utf8"),
+  ) as { color: Record<string, string> }
+).color;
+const rgbKey = (hex: string) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(",");
+const ICON_KEYS = [rgbKey(PALETTE.white), rgbKey(PALETTE.ink)];
 
 const TOL = 6;
 const near = (a: Rgb, b: Rgb, tol = TOL) =>
@@ -78,7 +92,7 @@ async function roles(page: Page): Promise<Roles> {
 /** The sample point and pixel of each of the 15 tiles, after two frames so the canvas holds the settled pose. */
 async function tilePixels(page: Page): Promise<Array<Tile & { px: Rgb }>> {
   await frames(page, 2);
-  const out = await page.evaluate(() => {
+  const out = await page.evaluate((iconKeys) => {
     const el = document.querySelector(".rfw") as HTMLElement & {
       _rfw?: { tiles?: () => unknown[] };
     };
@@ -96,14 +110,14 @@ async function tilePixels(page: Page): Promise<Array<Tile & { px: Rgb }>> {
       for (let i = 0; i < d.length; i += 4) {
         const k = d[i] + "," + d[i + 1] + "," + d[i + 2];
         // the icon is drawn in white or in ink: leave those two out so the tile fill is what is counted
-        if (k === "255,255,255" || k === "14,23,38") continue;
+        if (iconKeys.includes(k)) continue;
         seen.set(k, (seen.get(k) ?? 0) + 1);
       }
       const best = [...seen.entries()].sort((m, n) => n[1] - m[1])[0];
       const top = best ? best[0].split(",").map(Number) : [-1, -1, -1];
       return { ...t, px: top };
     });
-  });
+  }, ICON_KEYS);
   nonEmpty(out, "wheel tiles");
   expect(out, "the wheel has 15 tiles").toHaveLength(15);
   return out as Array<Tile & { px: Rgb }>;
@@ -247,8 +261,13 @@ test.describe("T19 the tile colours", () => {
       values.push(v);
       shares.push(`${sizeName(size)}: ${v.toFixed(4)}`);
     }
-    // the same share everywhere: the spread is within 0.02 of the wheel's width
-    expect(Math.max(...values) - Math.min(...values), shares.join("; ")).toBeLessThanOrEqual(0.02);
+    // T19b reads "equal (±2%)": relative, every size within 2% of the mean share (the values are logged on a pass too)
+    const mean = values.reduce((a, b) => a + b, 0) / values.length;
+    const worst = Math.max(...values.map((v) => Math.abs(v - mean) / mean));
+    console.log(
+      `T19 gap share (mean ${mean.toFixed(4)}, worst ${(worst * 100).toFixed(2)}% off): ${shares.join("; ")}`,
+    );
+    expect(worst, shares.join("; ")).toBeLessThanOrEqual(0.02);
   });
 });
 
@@ -357,4 +376,85 @@ test.describe("P06 P07 the tile in focus keeps its icon; the card row's label", 
     expect(labels).toContain("Stock value (cost)");
     expect(labels).not.toContain("Stock Value (cost)");
   });
+});
+
+// ─── K1: the hub's mark is the page's own image ──────────────────────────────
+
+/** Pixels in a 40 px box at the hub's centre (the mean of the outer ring's icon points) that differ from the box's most common colour. */
+async function hubMarkPixels(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const el = document.querySelector(".rfw") as HTMLElement & {
+      _rfw: { tiles(): Array<{ o: boolean; ix: number; iy: number }> };
+    };
+    const outer = el._rfw.tiles().filter((t) => t.o);
+    if (outer.length === 0) throw new Error("no outer tiles to find the hub from");
+    const cx = Math.round(outer.reduce((a, t) => a + t.ix, 0) / outer.length);
+    const cy = Math.round(outer.reduce((a, t) => a + t.iy, 0) / outer.length);
+    const cv = document.querySelector<HTMLCanvasElement>("canvas.rfw-cv")!;
+    const ctx = cv.getContext("2d")!;
+    const r = 20;
+    const d = ctx.getImageData(cx - r, cy - r, 2 * r, 2 * r).data;
+    const seen = new Map<string, number>();
+    for (let i = 0; i < d.length; i += 4) {
+      const k = d[i] + "," + d[i + 1] + "," + d[i + 2];
+      seen.set(k, (seen.get(k) ?? 0) + 1);
+    }
+    const disc = [...seen.entries()]
+      .sort((a, b) => b[1] - a[1])[0][0]
+      .split(",")
+      .map(Number);
+    let n = 0;
+    for (let i = 0; i < d.length; i += 4)
+      if (
+        Math.abs(d[i] - disc[0]) + Math.abs(d[i + 1] - disc[1]) + Math.abs(d[i + 2] - disc[2]) >
+        60
+      )
+        n++;
+    return n;
+  });
+}
+
+test.describe("K1 the hub is drawn from #brand-symbol, and not at all without it", () => {
+  for (const size of [
+    { w: 1440, h: 900 },
+    { w: 393, h: 844 },
+  ]) {
+    test(`K1 the hub mark is drawn at rest, and with the template removed nothing is drawn and nothing throws @${size.w}x${size.h}`, async ({
+      page,
+    }) => {
+      test.setTimeout(240_000);
+      const errors: string[] = [];
+      page.on("pageerror", (e) => errors.push(e.message));
+      await openHomeNoSnap(page, size);
+      await scrollWheelTo(page, 0);
+      await frames(page, 3);
+      const withMark = await hubMarkPixels(page);
+      console.log(`K1 hub mark pixels with the template: ${withMark}`);
+      expect(withMark, "pixels that are not the hub disc, at its centre").toBeGreaterThanOrEqual(
+        30,
+      );
+
+      // no template: the wheel re-mounts with no image to draw
+      await page.evaluate(() => {
+        const el = document.querySelector(".rfw") as HTMLElement & { _rfw: { destroy(): void } };
+        const api = (window as unknown as { RFWheel: { mount(e: Element, o: object): unknown } })
+          .RFWheel;
+        el._rfw.destroy();
+        // destroy() puts the page's own markup back, template included; take it out
+        const tp = el.querySelector("#brand-symbol");
+        if (!tp) throw new Error("the page has no #brand-symbol template to remove");
+        tp.remove();
+        api.mount(el, { refreshPriority: 0, scrub: 0.7, snap: false, top: null, copy: ".hx-copy" });
+      });
+      await waitForWheel(page);
+      await waitForArrival(page);
+      await settle(page);
+      await scrollWheelTo(page, 0);
+      await frames(page, 3);
+      const without = await hubMarkPixels(page);
+      console.log(`K1 hub mark pixels without the template: ${without}`);
+      expect(without, "no mark is drawn without the template").toBe(0);
+      expect(errors, "no page error").toEqual([]);
+    });
+  }
 });
