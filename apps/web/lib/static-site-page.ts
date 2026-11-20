@@ -24,6 +24,7 @@ export { STATIC_SITE_PAGES, STATIC_SITE_PAGE_NAMES, type StaticSitePage };
 STATIC_SITE_PAGES satisfies Record<string, (typeof STATIC_SITE_PATHS)[number]>;
 
 export const ANALYTICS_SRC = "/site/analytics.js";
+export const FIRST_TOUCH_SRC = "/site/js/first-touch.js";
 
 const BRAND_TOKEN = /\{\{brand:([^{}]*)\}\}/g;
 
@@ -101,4 +102,14 @@ export function withVisitCount(html: string, page: StaticSitePage, websiteId: st
   const at = html.lastIndexOf("</body>");
   if (at < 0) throw new Error(`public/site/${page}.html has no </body> to add the visit count to`);
   return html.slice(0, at) + tags + html.slice(at);
+}
+
+/** The first-touch script, deferred, just before </head> on every page (no site ID needed). A page that has it
+ *  already is returned as it is; a page with no </head> throws, so capture is never silently lost. */
+export function withFirstTouch(html: string): string {
+  if (html.includes(FIRST_TOUCH_SRC)) return html;
+  const at = html.indexOf("</head>");
+  if (at < 0)
+    throw new Error("withFirstTouch: the page has no </head> to add the first-touch script to");
+  return html.slice(0, at) + `<script defer src="${FIRST_TOUCH_SRC}"></script>` + html.slice(at);
 }

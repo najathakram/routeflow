@@ -2,25 +2,21 @@
  * @jest-environment-options {"url": "http://localhost:3001/"}
  */
 // The site keeps the first visit's source (sessionStorage key rf_first_touch, written once per tab, never overwritten).
-// jsdom: the served js/site.js text is loaded and run, once per case, against a fresh location and referrer.
+// jsdom: the served js/first-touch.js text is loaded and run, once per case, against a fresh location and referrer.
 // FT1-FT7 behaviour, FT8 static (no cookie, no network). FT9 is e2e spec 94.
 import fs from "node:fs";
 import path from "node:path";
 
 const SITE = path.resolve(__dirname, "../../public/site");
-const SRC = fs.readFileSync(path.join(SITE, "js/site.js"), "utf8");
+const SRC = fs.readFileSync(path.join(SITE, "js/first-touch.js"), "utf8");
 const KEY = "rf_first_touch";
-const START = "/* first-touch:start */";
-const END = "/* first-touch:end */";
-
+/** The file is the block alone (SA-1184 K1); an empty or missing file is red for every case. */
 function block(): string {
-  const a = SRC.indexOf(START);
-  const b = SRC.indexOf(END);
-  if (a < 0 || b < a) throw new Error("site.js has no first-touch block");
-  return SRC.slice(a, b + END.length);
+  if (!SRC.includes(KEY)) throw new Error("first-touch.js does not hold the first-touch block");
+  return SRC;
 }
 
-/** Load the page at `url` with `referrer`, then run the served site.js text. */
+/** Load the page at `url` with `referrer`, then run the served first-touch.js text. */
 function view(url: string, referrer = ""): void {
   block(); // every case needs the block to exist, so a missing block is red for all of them
   window.history.pushState({}, "", url);
@@ -108,20 +104,29 @@ describe("site first touch", () => {
     expect(window.sessionStorage.getItem(KEY)).toBeNull();
   });
 
-  it("FT7 sessionStorage.setItem throws: the rest of the page script still runs and no error escapes", () => {
+  it("FT7 sessionStorage.setItem throws: no error escapes", () => {
     jest.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
       throw new Error("blocked");
     });
-    (window as unknown as { dataLayer?: unknown }).dataLayer = undefined;
     expect(() => view("/pricing?utm_source=test")).not.toThrow();
-    expect(Array.isArray((window as unknown as { dataLayer?: unknown }).dataLayer)).toBe(true);
   });
 
-  it("FT8 the block holds no cookie, network or beacon call", () => {
+  it("K3 a non-http referrer (android-app, about) writes no referrerHost", () => {
+    view("/pricing?utm_source=test", "android-app://com.example.mail/");
+    expect(stored()).not.toHaveProperty("referrerHost");
+    window.sessionStorage.clear();
+    view("/pricing", "android-app://com.example.mail/");
+    expect(window.sessionStorage.getItem(KEY)).toBeNull();
+    view("/pricing", "about:blank");
+    expect(window.sessionStorage.getItem(KEY)).toBeNull();
+  });
+
+  it("FT8 the file holds no cookie, network or beacon call", () => {
     const b = block();
     for (const bad of ["document.cookie", "fetch(", "XMLHttpRequest", "sendBeacon"]) {
       expect(b).not.toContain(bad);
     }
     expect(b).toContain(KEY);
+    expect(b).not.toContain("gsap");
   });
 });
