@@ -13,6 +13,7 @@ import { buildReminderEmailPayload } from "./invoice-email-payload";
 import { LINE_NAME_PRODUCT_SELECT } from "./invoice-line-name";
 import { assertReminderIssued, assertReminderOwes } from "./invoice-balance-sql";
 import { CONFIRMED_PAYMENT } from "./payment-predicates";
+import { readInvoiceLayout } from "./invoice-layout";
 
 /**
  * The payment-reminder email and the recipient rule it shares with `deliverEmail` — moved verbatim out of
@@ -103,8 +104,7 @@ export async function sendReminder(deps: ReminderEmailDeps, id: string, override
 
   // F03/R9: see sendEmail's matching comment — the reminder renders the same item
   // table, so it honours the same hide-original-price setting.
-  const hideOriginalPrice = (await deps.systemConfig.get("invoice.hideOriginalPrice")) === "true";
-  const hidePerPiece = (await deps.systemConfig.get("invoice.hidePerPiece")) === "true";
+  const { hideOriginalPrice, hidePerPiece } = await readInvoiceLayout(deps.systemConfig);
 
   const reminderPayload = buildReminderEmailPayload(inv, {
     recipientEmail,

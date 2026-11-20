@@ -53,7 +53,13 @@ describe("ProductsService — code release wiring (SA-603a)", () => {
           },
         },
         { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(false) } },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(true) } },
         { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         {

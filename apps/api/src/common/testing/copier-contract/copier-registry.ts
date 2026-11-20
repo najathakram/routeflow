@@ -103,7 +103,7 @@ const R510_STAMP =
 
 const ORDER_FRESH = "deliveredQty invoicedQty overrideReason overriddenBy status";
 const MERGE = {
-  file: "orders/orders.service.ts",
+  file: "orders/order-merge-fold.ts", // SA-1162: moved out of orders.service.ts
   target: "OrderItem" as const,
   anchor: { via: "delegate", model: "orderItem" } as Anchor,
   carried:
@@ -179,9 +179,10 @@ export const COPIERS: Copier[] = [
   {
     id: "C4",
     file: "estimates/estimates.service.ts",
-    fn: "create",
+    // The one line builder for an estimate (create and the draft edit); `nested`: its outer return is not a line.
+    fn: "priceEstimate",
     target: "EstimateItem",
-    anchor: { via: "prop", name: "items" },
+    anchor: { via: "return", nested: true },
     carried:
       "description productId qty unitPrice subtotal priceType originalPrice boxes pieces unitsPerBox",
     gaps: {
@@ -303,8 +304,8 @@ export const COPIERS: Copier[] = [
       notes: "unverified",
     },
   },
-  { id: "C9a", fn: "mergeAllPendingForCustomer", ...MERGE },
-  { id: "C9b", fn: "forceConsolidateCustomer", ...MERGE },
+  { id: "C9a", fn: "mergeAllPendingForCustomerImpl", ...MERGE },
+  { id: "C9b", fn: "forceConsolidateCustomerImpl", ...MERGE },
   {
     // W-1187: the unlisted (catalog-free) loser line both merges append, one literal shared by C9a and C9b (it was
     // inline in each). Written from the loser line's own columns; never boxed, never a catalog line.
@@ -457,6 +458,9 @@ export const NOT_A_COPIER: Record<string, string> = {
   "invoices/invoices.service.ts::update":
     "replace-all from the edit request (the client side is C16)",
   "invoices/invoices.service.ts::runCreation": "consumes C1's output",
+  "estimates/estimates.service.ts::create": "writes C4's lines (priceEstimate) from the request",
+  "estimates/estimates.service.ts::update":
+    "draft edit replace-all from the request, through C4's builder (priceEstimate)",
   "estimates/estimates.service.ts::convertToInvoice":
     "consumes C5's builder (buildManualInvoiceLines)",
   "invoices/invoices.service.ts::reconcileOrderDraftInvoiceLocked": "consumes C1's output",

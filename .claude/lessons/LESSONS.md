@@ -26,19 +26,26 @@
 - **Lesson:** **A ratchet file's line count is meaningful only on the merge result. The lane gate reports that count from a merge-tree of the branch with current master (no worktree needed), and it is read again when the reads are ordered, with the window's other members added.**
 - **Guard:** the lead's combined check measures it for window members; `size-ratchet.spec.ts` fails the merged tree.
 
+### L-391 · 2026-11-16 · process · a verbatim move or rename runs the full api jest and a grep of the specs for the old path before the reads (#4321)
+
+- **Symptom:** a verbatim lift of one service method into its own file passed a gate sized to the touched folders and both reads, then went red in CI: a census spec in another folder names the files allowed to write a field by path, and the moved code was no longer at the listed path.
+- **Root cause:** "size the gate to the delta" counts the folders a diff edits, and a move edits two files while a pin elsewhere names the old one; nothing in the move's own tests reads that path.
+- **Lesson:** **A move or a rename is never sized to the delta: run the whole api jest, and grep every spec and script for the old path and the old symbol before the reads are ordered. A census or allow-list that names files by path is edited in the same PR as the move.**
+- **Guard:** `apps/api/src/products/variant-name-writers-census.spec.ts` (its allowed list now names the new file); the grep step is a lane habit with no script yet.
+
+### L-393 · 2026-11-19 · deploy · the health commit equals the last merge that changed apps/api or packages, not the last merge (windows 51 to 56)
+
+- **Symptom:** after a web-only merge, a close check compared the API health commit to the merge commit and read a stall: both API hosts still reported the earlier merge.
+- **Root cause:** a web-only or docs-only merge does not rebuild the API; its status goes green in the same second it is created, so the health commit never moves.
+- **Lesson:** **A close check compares the health commit to the last merge that touched `apps/api` or `packages/`, and reads the other merges by their own service statuses.**
+- **Guard:** none in the repo (lead tooling); the window close script carries the rule.
+
 ### L-379 · 2026-11-12 · process · a hold or fix order is issued only after the reviewer's verdict and browser evidence are posted; the order carries their board comment ids (#4302)
 
 - **Symptom:** a hold and a one-case fix order for #4302 went out from an interim reading, before the reader's FAIL (board 6819958479) and the browser evidence (6819958939, which found more than the reader's MUST) were posted. It cost a round.
 - **Root cause:** the order was written from a partial read; nothing required it to name the evidence it rested on.
 - **Lesson:** **An order that holds a PR or tells a lane what to fix names the board comment ids of the verdict and of the browser evidence it rests on, and is not sent until both are posted. A fix scoped from an interim read is re-scoped when the evidence lands.**
 - **Guard:** owed, NOT BUILT YET: a required field in the lead's order template holding the board comment ids of the verdict and of its evidence. No file in the repo carries it today.
-
-### L-359 · 2026-10-30 · process · a train is pushed only after the CI-equivalent verify; type-checks plus one test file is not a gate, and CI is read by its closing Failed line
-
-- **Symptom:** a 13-member train pushed after clean merges, api and web type-checks and one test file went red in CI in three members (a web suite pinning an older unit rule, an api spec expecting another warning code, a writer-inventory spec). The first read of the log took one lane's "passed" counts for the whole api.
-- **Root cause:** each member's PASS was read at its own head; master-wide pins only fail on the merged tree, and the pre-push verify was skipped. A workspace's log holds several test lanes, so one lane's counts are not its result.
-- **Lesson:** **Run the CI Verify equivalent in the train tree (`FULL_VERIFY=1 npm run verify`) through the heavy slot and read it to the end before pushing a train; with a T1 member add the full DB lanes. Read CI by the closing `Failed:` line, never by one lane's counts.**
-- **Guard:** the train PR body states the command and the counts. Cf. [[L-353]]. A DB spec that needs a built artifact (the api dist) ships with the CI step that builds it, and a job that shows 0 steps after a few seconds has failed, not queued. The pre-check also runs `api-error-codes-parity` and `permission-coverage`: a member's bare error-code string in a web file passed every member read and went red only on the merged tree, because that spec scans web and api alike.
 
 ### L-337 · 2026-10-22 · process · merge only through a gate that lists EVERY check run at the exact head sha, required or not
 
@@ -56,6 +63,13 @@
 
 ## tooling
 
+### L-395 · 2026-11-19 · tooling · a guard that matches file names read from `+++ b/` diff headers decodes git's C-quoting (or takes names from `-z` output), and withholds any name git quoted (#4363)
+
+- **Symptom:** the push guard printed, or failed to match, a path whose name held unusual bytes: git writes such a name in double quotes with octal escapes, and the `b/` prefix then sits inside the quotes.
+- **Root cause:** the header parser took the bytes after `+++ ` as the name, so a quoted name was matched, and echoed, in its escaped form.
+- **Lesson:** **Take names from NUL-separated output (`-z`) where git offers it; where only a header line exists, decode the quoting (octal bytes, backslash escapes, the prefix inside the quotes) before matching, and never print a name git quoted. A guard's output names shas and counts, not the text it matched.**
+- **Guard:** `scripts/leak-check.self-test.mjs` cases for quoted and variant file names in hook and range mode (red before the round-1 fix); `parseHeaderPath` in `scripts/leak-check.mjs`.
+
 ### L-388 · 2026-11-15 · tooling · `gh run list --json conclusion` is the empty string, not null, while a run is in progress; map it to a marker explicitly and key timers by run id plus attempt (#4324)
 
 - **Symptom:** a window's hang guard cancelled a healthy rerun of #4324: the lead's script read a tab-split row, the in-progress conclusion was `""`, and the field after it shifted.
@@ -70,14 +84,14 @@
 - **Lesson:** **Before reading a type-check count in a new tree, build the workspace packages that publish `dist/`. A count far above baseline with TS2307 on a package name is a missing build, not a member defect. After a `packages/*` change lands or is edited, rebuild `dist/` in every tree that tests against it: web specs import the built `dist`, so a stale one fails silently with wrong money figures, not an error (archived L-176).**
 - **Guard:** the train check script runs the package builds first, then api and web check-types.
 
-### L-329 · 2026-10-21 · tooling · an Expo web export can reuse a shared Metro cache and bake another build's EXPO_PUBLIC_* values; export with --clear and assert the bundle
-
-- **Symptom:** a phone proof build for #3553 from a fresh worktree, with `EXPO_PUBLIC_API_URL` and `EXPO_PUBLIC_BUILD_SHA` exported, came out pointing at another lane's API (`localhost:3000`) with an empty build sha.
-- **Root cause:** Metro's transform cache is shared across worktrees on one machine, and a cached transform with an earlier inlined env was reused. The export itself succeeded with no warning.
-- **Lesson:** **Every Expo web export used for a proof or a deploy runs `npx expo export --platform web --clear`, then greps `dist/_expo/static/js/web/*.js` for the exact API base URL and the full build sha before any capture. A substring check like "3310" is not proof: grep the whole value.**
-- **Guard:** none automatic; the sign-in screen's `build <sha7>` (`lib/build-info.ts`) is the on-screen check. Cf. [[L-265]] (stale build output in a proof).
-
 ## testing
+
+### L-396 · 2026-11-19 · testing · a change to a hook, or to a file a hook calls, runs every `*-script.spec.ts` that builds a hook fixture; a by-path review run misses them (#4363, fix round 2)
+
+- **Symptom:** a push guard added as the first step of `.husky/pre-push` passed its own self-test and the by-path review runs, then CI Verify went red with 11 failures in two specs that drive the real hook in a temp repo.
+- **Root cause:** each fixture copies only the files the hook used to call, so the new checker was missing and every push in them was refused; those specs were not in the by-path set.
+- **Lesson:** **Before the read, list the specs that copy or run `.husky/*` (grep the hook name in `apps/api/src/common/*-script.spec.ts`) and run them with the hook change. A fixture that copies a hook must copy everything the hook calls, and a missing file refuses with a plain message, not a node stack.**
+- **Guard:** the fixtures in `pre-push-trunk-script.spec.ts` and `skip-verify-audit-script.spec.ts` copy the checker and its lib, and each spec has a missing-checker case; `scripts/registry-root.self-test.mjs` lists the fixture. Cf. [[L-322]], [[L-323]].
 
 ### L-387 · 2026-11-15 · testing · a test helper is not named `use*`: the web lint reads it as a hook and fails the PR (#4340)
 
@@ -92,6 +106,13 @@
 - **Root cause:** the predicate was never itself tested, and a scan that finds nothing in a skipped file looks identical to a clean file. Separately, a row label written with two quoted pieces was a type error that plain `tsc` never reports, because it skips specs.
 - **Lesson:** **Give every scan's walk a row that asserts the named edge files ARE scanned (a helper called `*-spec.ts`, a `.tsx` file) and the excluded kinds are not; escape the dots in a file-name predicate. A spec type error is judged only by `npm run check-types -w apps/api` (the ratchet), and prettier rewrites quoted keys, so a row meant to test a quoted-key spelling tests nothing: label it as a label.**
 - **Guard:** the walk row in `apps/api/src/billing/billing-return-paths.spec.ts` (db-spec.ts and smtp-spec.ts scanned, no `*.spec.ts(x)`, at least seven `.tsx` files).
+
+### L-392 · 2026-11-19 · testing · a raw control byte typed into a regex literal makes a negative pin pass whatever the code holds (#4349, B1313)
+
+- **Symptom:** twelve `not.toMatch` pins in ten spec files, and one till inventory pin, held a raw backspace byte (0x08) where a word boundary was meant, so each matched nothing and passed on any tree; three raw NUL bytes sat in a script as separators.
+- **Root cause:** an editor or paste turned `\b` into the control character, the pin still read as a regex, and a negative assertion over a pattern that cannot match is always green.
+- **Lesson:** **Write a boundary as the two-character escape, never a typed byte, and give every negative pin a probe that makes it match the thing it forbids (L-377). A source scan for control bytes (0x00 to 0x08, 0x0B, 0x0C, 0x0E to 0x1F, 0x7F) over every tracked text file, asserting it scanned files and with no exception list, is the standing guard.**
+- **Guard:** the twelve pins were fixed in #4349 with a red then green probe each; the standing scan is owed (B1364).
 
 ### L-377 · 2026-11-12 · testing · a pin ships with a red probe the builder watched fail; a regex with a stray control byte matches nothing and passes whatever the tree holds (#4303)
 
@@ -200,13 +221,6 @@
 - **Lesson:** **Every code path that makes a browser an operator (sign-in, impersonation, any future switch) calls the one helper that sets the presence cookie, and every exit path clears it unless the browser holds operator tokens of its own. Test it through the real guard with no mocks of the helpers.**
 - **Guard:** `lib/impersonation.presence.test.ts` (5 tests, real guard and helpers). Open: the automatic exits in `lib/api-client.ts` clear the tokens but not the cookie (see the register). Cf. [[L-369]].
 
-### L-371 · 2026-11-06 · domain · a default and a backfill reach rows that exist and rows created; a row moved into a role gets the role's defaults from the code that moves it (SA-1050 A-5)
-
-- **Symptom:** a migration appended `BAD_DEBT` to every existing OPERATOR's deny list and set a column default for new rows, yet an admin moving a DRIVER or CUSTOMER to OPERATOR left that row at `{}`: an operator with write-offs on by default.
-- **Root cause:** a column default and a one-time backfill are keyed on a row existing or being created, not on a row changing into the audience; `updateUser` changed the role and nothing else.
-- **Lesson:** **When a default belongs to a role, apply it in the one service method that moves a row into the role, in the same update that changes the role, decided by the server and never the DTO. Write a red case for each source role and guards for a move out, a same-role save and a self edit; pin the API literal to the shared source of the default set.**
-- **Guard:** `OPERATOR_DEFAULT_DENIED_GROUPS` (`auth/permissions/operator-default-denied.ts`) pinned to the OFF set of `GROUP_INTRODUCED` in `permission-groups-contract.spec.ts`; `users-operator-entry.db.spec.ts` A5-1 to A5-7 (the two source-role rows were red on the unfixed service; two guard rows were added after a mutant survived). Cf. [[L-301]].
-
 ### L-370 · 2026-11-06 · domain · a capture gate on a diagnostic is keyed by every field the reader groups by, under one global budget and a bounded map; a coarser key hides the second site (B1285)
 
 - **Symptom:** the dark tenant-context guard captured one stack per second per `kind|model|op`; one hot call site (1,000 reads) took the second's capture and a second site under the same key never reached the log, though the counter stayed true. Scheduled jobs logged no job name at all.
@@ -307,13 +321,6 @@
 
 ## security
 
-### L-372 · 2026-11-06 · security · a rotation resets every stored copy of the secret, a derived hash included, and an output scan covers every exit that holds the secret in scope (#4232)
-
-- **Symptom:** (review notes on #4232; nothing leaked) the invite rotation cleared the code and its expiry but not `inviteTokenHash`; and the "no digest in the output" scan ran on the dry run, the no-backup refusal, the stale refusal and the committed apply, not on the compare-and-swap refusal, the one path with a planned digest beside the message.
-- **Root cause:** the rotation was written against today's columns: the hash column is empty and unread, and in this codebase a NULL expiry counts as live, so a later backfill would bring a rotated link back. The scan list was the paths the author thought of.
-- **Lesson:** **The SET of a rotation names every column that can resolve the secret (code, hash, expiry) and a row asserts each; sequence a hash backfill after any pending rotation. An output scan lists every exit that has the secret in scope, refusals first. A plan file that holds digests is mode 0600, expires in 24 h and is rewritten as spent after the commit.**
-- **Guard:** `ef87ea532f` (plan file 0600, 24 h limit, spent plan holds no digest); P-1 to P-4 in `common/portal-invite-census.db.spec.ts`. Open: B1291 (the CAS refusal scan), B1292 (the hash). Cf. [[L-188]].
-
 ### L-328 · 2026-10-21 · security · a same-origin form POST under `Referrer-Policy: no-referrer` sends `Origin: null`; an Origin-equals-Host check then refuses every login
 
 - **Symptom:** after the control dashboard set `Referrer-Policy: no-referrer`, every login was refused with 403, although the page and the form were on the same host.
@@ -329,6 +336,13 @@
 - **Guard:** none yet; propose a lint/review checklist item flagging `token`/`code`/`secret`-named query params on any new route. Restored 2026-11-01 (it was archived on 2026-10-31 for room): this is a rule about RouteFlow's own routes, and the agent privacy rules cover what an agent does with URLs, not what the app puts in them.
 
 ## web
+
+### L-394 · 2026-11-19 · web · a scroll snap with inertia on reads its speed from the scrub's catch-up, not the hand, and throws a stopped scroll to a far beat; keep inertia off and drive the snap with real wheel input (#4367)
+
+- **Symptom:** on the home wheel a flick that stopped inside the come-apart was thrown to the far end of the wheel about 1.5 s later (T9: 600 to 1118, then 1698).
+- **Root cause:** with `inertia` on, ScrollTrigger's snap takes its velocity from the scrubbed timeline catching up to the page, which keeps moving after the hand has stopped, so it snapped to a beat in the direction of that stale speed.
+- **Lesson:** **A snap on a scrubbed timeline sets `inertia: false` and lets `snapTo` settle on the nearest beat; a snap is proved with real wheel input and the snap switched on, because a test that sets `scrollTo` never feels the speed. A script writes the scroll position only after the person has stopped (a scroll-end wait), or it cancels their scroll.**
+- **Guard:** `apps/web/e2e/84-site-proof-wheel.spec.ts` T9 (real wheel input, snap on; seen red at the middle commit with inertia on); the comment beside `snap` in `public/site/graphics/rf-wheel-up.js`. Cf. [[L-381]], [[L-392]] (the same PR repaired another raw-control-byte pin).
 
 ### L-382 · 2026-11-13 · web · a reveal reached at rest is recorded as played at once; one played-list serves every reveal path (B1324)
 
@@ -358,13 +372,6 @@
 - **Lesson:** **A guard that asks whether a person is typing asks one shared predicate, and that predicate excludes a field inside a closing dialog. Add no timer, no key timing and no new focus owner for it. Test it with a harness that emulates the exit animation (jsdom has none), at start delays on both sides of the animation, and with both line endings.**
 - **Guard:** `insideClosingDialog` in `lib/refocus-scanner.ts` (read by `isTextEntryElement`); `refocus-scanner.test.ts` and `CounterSaleScreen.escape-scan.test.tsx` (removing the predicate turns 18 tests red). Open: Change the price with a code that starts in lowercase (`CounterLinePriceEdit.tsx:252`). Cf. [[L-353]].
 
-### L-373 · 2026-11-06 · web · a percentage padding resolves against the parent's width; size a centred box with min(max, 100% - gutter) and fixed padding, and make the source scan read every spelling (#4234)
-
-- **Symptom:** on a wide screen the home founder card grew to 1,640 px and its text sat in a narrow strip, with about 360 px of padding per side; the no-JS hero had the same shape.
-- **Root cause:** the side padding was a percentage half-gap, `(100% - 1200px)/2`, and a percentage padding resolves against the parent's width, not the box's own width.
-- **Lesson:** **A centred box on a page grid is `width: min(<grid>, 100% - <gutter>)` with a centring margin and a fixed clamp padding, never a percentage half-gap. A static scan for the bad shape normalises whitespace, covers the equivalent spellings (`calc(50% - N)`, a custom property holding the half-gap) and walks the whole stylesheet tree.**
-- **Guard:** `site-founder-card-width.static.test.ts` (card width; a scan of `css/` and `graphics/` for one spelling). Open: B1294 (the other spellings). Cf. [[L-364]].
-
 ### L-385 · 2026-11-15 · web · one exported predicate says whether a key starts a scan run; each screen decides only where the scan goes (#4320, B1310, B1314)
 
 - **Symptom:** a scan whose code began with a lowercase letter or punctuation, typed while a button, a drag handle or the page held focus, lost its leading keys; on the order builder its ending Enter reopened the date picker; on the till a leading `g` was taken by the g-then-x shortcut.
@@ -380,13 +387,6 @@
 - **Root cause:** the Verify job's `timeout-minutes: 30` was set when the suite was smaller; each landing grew it, the earlier trains sat a few minutes under the limit, and the next, larger train crossed it. `cancelled` looks like a manual or concurrency cancel; only the check-run annotation ("exceeded the maximum execution time") says it was the limit. For the local chain, `&&` stops at the first non-zero exit, so a load flake in the middle silently skips the tail.
 - **Lesson:** **Size a hosted job's `timeout-minutes` from the measured duration of its slowest stage chain plus about 50% headroom, and re-measure when a train grows the suite. Read a `cancelled` job by its annotations before calling it red: a timeout is a one-line CI config fix, not a code defect. Read a failed local verify by which step stopped the chain, and run every step after it by hand before accepting the verify.**
 - **Guard:** Verify timeout raised 30 to 45 in `ci.yml` (train Y); no automatic check yet. Cf. [[L-357]], [[L-363]].
-
-### L-361 · 2026-10-31 · deploy · a window script reads the watchdog deadline from the log line of the pid it started, and reads that log with `grep -a`
-
-- **Symptom:** a window script took its "time left" from the last deadline line in the watchdog log. The log is appended by every run, so the tail could hold the previous run's deadline, already in the past; acting on it flips the repo private while a deploy is still building. A plain `grep` on the same log also printed "Binary file matches" and no deadline at all.
-- **Root cause:** the log is shared by every watchdog run and holds bytes that grep treats as binary; "the newest line" was assumed to mean "my watchdog's line".
-- **Lesson:** **Start the watchdog, keep its pid, and read the deadline only from the log line that names that pid; read the log with `grep -a`; if no line for the pid appears, stop and ask instead of falling back to the tail.**
-- **Guard:** none automatic; the window script is owed this change. Cf. [[L-357]].
 
 ### L-360 · 2026-10-30 · deploy · a landing is deployed only when every service status on the merge commit is SUCCESS; the repo has more than api and web
 

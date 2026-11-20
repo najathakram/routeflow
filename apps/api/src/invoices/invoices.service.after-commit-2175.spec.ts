@@ -71,6 +71,7 @@ describe("InvoicesService — #2175 realtime emits leave the transaction only af
   };
   const mockSystemConfig = {
     get: jest.fn().mockResolvedValue(null),
+    getAll: jest.fn().mockResolvedValue({}),
     set: jest.fn().mockResolvedValue(undefined),
   };
   const mockMessaging = {

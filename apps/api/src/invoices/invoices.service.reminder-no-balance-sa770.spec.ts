@@ -42,7 +42,10 @@ describe("InvoicesService.sendReminder — refuses an invoice with no balance du
       prisma,
       emailService: email,
       pdfService: pdf,
-      systemConfig: { get: jest.fn().mockResolvedValue(null) },
+      systemConfig: {
+        get: jest.fn().mockResolvedValue(null),
+        getAll: jest.fn().mockResolvedValue({}),
+      },
     });
   });
 

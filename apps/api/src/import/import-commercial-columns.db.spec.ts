@@ -136,7 +136,13 @@ describeDb(
           // import-commercial-columns.spec.ts, not here.
           { provide: StorageService, useValue: {} },
           { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(true) } },
-          { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+          {
+            provide: SystemConfigService,
+            useValue: {
+              get: jest.fn().mockResolvedValue(null),
+              getAll: jest.fn().mockResolvedValue({}),
+            },
+          },
           {
             provide: EntitlementsService,
             useValue: {

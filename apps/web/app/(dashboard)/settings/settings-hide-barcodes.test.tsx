@@ -82,7 +82,7 @@ describe("Settings > Invoicing: Show barcodes on invoices (SA-1031 W-R1)", () =>
     expect(original.compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(
       screen.getByText(
-        "Prints each product's barcode and code on its line. Turn off to print invoices without them.",
+        "Prints each product's barcode and code on its line in the PDF. Turn off to print invoices without them.",
       ),
     ).toBeInTheDocument();
   });

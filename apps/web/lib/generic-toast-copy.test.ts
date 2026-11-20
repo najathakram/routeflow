@@ -582,6 +582,8 @@ describe("genericToastCopy: codes users rely on", () => {
       ["ORDER_BELOW_RETURN_CREDIT", /can't drop below the credit already issued.*returns/],
       ["UNIT_AWARE_LINE_UNVERIFIABLE", /lines couldn't be verified.*Ask an admin/],
       ["CHANGE_REQUEST_PACK_CHANGED", /pack size changed.*Decline it and re-add/],
+      // SA-1173 T2: the approver's sentence, never the buyer cart copy
+      ["CHANGE_REQUEST_SPLIT_MISMATCH", /quantity and box count don't match.*decline it./],
       ["INVOICE_CHANGED_CONCURRENTLY", /invoice changed.*Refresh and try again/],
       [
         "INVOICE_TAX_STATE_STALE",
@@ -1021,5 +1023,26 @@ describe("WP11 feature-change refusals (B986): fixed sentence by code, never the
     });
     expect(copy).toEqual(expect.any(String));
     expect(copy).not.toMatch(/developer words|row_id/);
+  });
+});
+
+describe("genericToastCopy: UXG B14 stops without a map position", () => {
+  const body = {
+    code: API_ERROR_CODES.ROUTE_STOPS_NOT_PLACED,
+    count: 2,
+    names: ["Acme Deli", "Acme Market"],
+  };
+  it("names the stops from the STRUCTURED fields, never the message or the generic sentence", () => {
+    const want =
+      "2 stops have no map position (Acme Deli, Acme Market). Check their addresses, then optimize again.";
+    expect(codedToastCopy(err(400, body))).toBe(want);
+    expect(genericToastCopy(err(400, body))).toBe(want);
+    expect(genericToastCopy(err(400, body))).not.toContain(RAW);
+  });
+  it("an uncoded 400 is still the generic sentence", () => {
+    expect(codedToastCopy(err(400))).toBeNull();
+    expect(genericToastCopy(err(400))).toBe(
+      "Some details aren't valid. Check what you entered and try again.",
+    );
   });
 });

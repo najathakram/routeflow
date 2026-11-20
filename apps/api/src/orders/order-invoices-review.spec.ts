@@ -130,6 +130,7 @@ function harness(
   const client = {
     orderItem: { findMany: orderItemFindMany },
     invoiceItem: { findMany: invoiceItemFindMany },
+    invoice: { findMany: async () => [] }, // B1372 K2: no sent invoice an edit would revert
     order: { findUnique: jest.fn().mockResolvedValue(order) },
     customer: {
       findFirst: jest.fn().mockResolvedValue({ id: opts.customerId ?? "c-1" }),

@@ -168,3 +168,25 @@ describe("the item payload carries the selling unit (W-1185)", () => {
     }
   });
 });
+
+describe("buildInvoiceEmailPayload - R6a switches (T10c)", () => {
+  const ctx = { recipientEmail: "a@example.com", pdfUrl: undefined, attachment: undefined };
+
+  it("carries hideAmountPaid / hideBalanceDue (false when absent) to the invoice email", () => {
+    const none = buildInvoiceEmailPayload(inv, { ...ctx, hideOriginalPrice: false });
+    expect(none).toMatchObject({ hideAmountPaid: false, hideBalanceDue: false });
+    const both = buildInvoiceEmailPayload(inv, {
+      ...ctx,
+      hideOriginalPrice: false,
+      hideAmountPaid: true,
+      hideBalanceDue: true,
+    });
+    expect(both).toMatchObject({ hideAmountPaid: true, hideBalanceDue: true });
+  });
+
+  it("the reminder payload never carries them (it exists to ask for the balance)", () => {
+    const r = buildReminderEmailPayload(inv, { ...ctx, hideOriginalPrice: false });
+    expect(r).not.toHaveProperty("hideAmountPaid");
+    expect(r).not.toHaveProperty("hideBalanceDue");
+  });
+});

@@ -15,6 +15,7 @@ import {
 import { useRouter } from "next/navigation";
 import { fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { describeRunFailure } from "@/lib/reason-copy";
+import { isAlreadyBilledRunError } from "@routeflow/types";
 import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -196,16 +197,19 @@ export default function RecurringInvoicesPage() {
               )}
 
               <div className="mt-4 flex items-center gap-2">
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  leftIcon={<Zap className="h-3.5 w-3.5" />}
-                  onClick={() => handleRunNow(ri)}
-                  loading={runNow.isPending}
-                  className="flex-1"
-                >
-                  Run now
-                </Button>
+                {/* B1251: an already-billed last run (invoice exists) must not be re-run: it would bill the cycle twice. */}
+                {!isAlreadyBilledRunError(ri.lastError) && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    leftIcon={<Zap className="h-3.5 w-3.5" />}
+                    onClick={() => handleRunNow(ri)}
+                    loading={runNow.isPending}
+                    className="flex-1"
+                  >
+                    Run now
+                  </Button>
+                )}
                 <Button
                   size="sm"
                   variant="secondary"

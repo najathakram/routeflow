@@ -183,11 +183,9 @@ apps/web/app/(dashboard)/customers/_components/walk-in-protection.tsx | UserStat
 apps/web/app/(dashboard)/dashboard/page.tsx | OrderStatus | 2 | pending:B5 | object {PENDING,CONFIRMED,OUT_FOR_DELIVERY,PARTIALLY_D…
 apps/web/app/(dashboard)/dashboard/page.tsx | UserRole | 1 | pending:B5 | chain {OPERATOR,SUPER_ADMIN,TENANT_ADMIN}
 apps/web/app/(dashboard)/dispatch/page.tsx | RouteRunStatus | 1 | pending:B5 | union {IN_PROGRESS,COMPLETED,CANCELLED,SCHEDULED}
-apps/web/app/(dashboard)/estimates/page.tsx | PriceType | 1 | pending:B6 | union {STANDARD,SPECIAL,DISCOUNTED,MANUAL}
 apps/web/app/(dashboard)/finance/commissions/[id]/page.tsx | CommissionAdjustmentKind | 1 | pending:B5 | object {CLAWBACK,RATE_CHANGE,REASSIGNMENT,MANUAL}
 apps/web/app/(dashboard)/finance/commissions/[id]/page.tsx | CommissionStatementLineKind | 1 | pending:B5 | object {CLAIM,ADJUSTMENT,CARRYFORWARD}
 apps/web/app/(dashboard)/finance/payments/[id]/page.tsx | PaymentStatus | 1 | pending:B5 | union {PAID,DRAFT,VOID}
-apps/web/app/(dashboard)/finance/payments/page.tsx | PaymentStatus | 1 | pending:B5 | union {PAID,DRAFT,VOID}
 apps/web/app/(dashboard)/finance/reports/page.tsx | EstimateStatus | 1 | pending:B5 | array {,DRAFT,SENT,ACCEPTED,DECLINED}
 apps/web/app/(dashboard)/finance/reports/page.tsx | InvoiceStatus | 2 | pending:B5 | array+object {,DRAFT,SENT,PAID,OVERDUE,PARTIAL,VOID}
 apps/web/app/(dashboard)/finance/reports/page.tsx | TxnStatus | 1 | pending:B5 | object {PAID,PARTIAL,UNPAID}
@@ -312,7 +310,6 @@ packages/types/api/fulfilment.ts | FulfillPath | 1 | pending:B3 | union {ROUTE,S
 packages/types/api/inline-returns.ts | ReturnStatus | 1 | pending:B3 | union {RECEIVED,REFUNDED,REJECTED,CANCELLED}
 packages/types/api/messaging-delivery.ts | NotificationEvent | 1 | subset | array {STAFF_NEW_ORDER,BUYER_ORDER_EDITED,BUYER_ORDER_CANCELLED}: the three emails the office gets about a customer order (SA-1063), the one list the rules card and EMAIL_KIND_VALUES share
 packages/types/api/messaging-matrix.ts | MessageChannel | 1 | pending:B3 | array {EMAIL,WHATSAPP,SMS,PORTAL}
-packages/types/api/misc.ts | PriceType | 1 | pending:B6 | union {STANDARD,SPECIAL,DISCOUNTED}
 packages/types/api/permissions.ts | OperatorPermissionGroup | 1 | pending:B3 | object {ORDERS,DISPATCH,CUSTOMERS,CATALOG,PRICING,REGU…
 packages/types/api/permissions.ts | UserRole | 1 | pending:B3 | union {SUPER_ADMIN,TENANT_ADMIN,OPERATOR,DRIVER,CUSTO…
 packages/types/api/products.ts | OrderStatus | 1 | pending:B3 | union {PENDING,CONFIRMED,OUT_FOR_DELIVERY,PARTIALLY_D…

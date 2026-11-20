@@ -72,7 +72,13 @@ describeDb("Supplier credit draws — real Postgres, parked first writer", () =>
             recordAiUsage: jest.fn(),
           },
         },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         {
           provide: DuplicateMatchService,
           useValue: {
@@ -262,7 +268,7 @@ describeDb("Supplier credit draws — real Postgres, parked first writer", () =>
     const w = await seedWorld("a", { credit: false });
     // Y is a draft that owes 1,000 and drew nothing (no credit existed yet). The credit then
     // appears, and two bills reach for it at once: a NEW bill (parked, holding the credit) and an
-    // edit of Y that re-draws. (Two concurrent creates would collide on nextBillNumber instead.)
+    // edit of Y that re-draws. (Two concurrent creates now take their numbers one after the other under the vendor-bill-number lock, B844.)
     const y = await createBill(A, w, 50, 20);
     await addCredit(w);
     const [first, second] = await race(

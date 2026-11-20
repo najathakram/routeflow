@@ -116,6 +116,17 @@ const itemNames = () =>
     .map((li) => li.textContent ?? "")
     .filter((t) => t !== "No items yet.");
 
+/** B1373: the first line's quantity is the value of the order row's number field (no "× N" text). */
+const firstQty = () =>
+  Number(
+    (
+      within(document.querySelector('ul[aria-label="Items"] > li') as HTMLElement).getByRole(
+        "spinbutton",
+        { name: /Set quantity of/ },
+      ) as HTMLInputElement
+    ).value,
+  );
+
 /** every focus position in the picker, from the DOM: the grid plus each enabled button outside the grid */
 const positions = (picker: HTMLElement): HTMLElement[] => {
   const dialog = picker.closest('[role="dialog"]') as HTMLElement;
@@ -260,8 +271,8 @@ describe("T5 an Alt-coded scan is never kept (stated limit)", () => {
       fireEvent.submit(scanBox().closest("form")!);
       await waitFor(() => expect(itemNames()).toHaveLength(1));
       expect(resolved).toEqual([KNOWN]);
-      expect(itemNames()[0]).toContain("× 1");
-      expect(itemNames()[0]).not.toContain("× 123"); // x1, never the Alt-code's x123
+      expect(firstQty()).toBe(1);
+      expect(firstQty()).not.toBe(123); // x1, never the Alt-code's x123
       cleanup();
     }
   });

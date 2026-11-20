@@ -34,7 +34,11 @@ import {
   lockInvoiceForCredit,
   lockOrderCreditSettle,
 } from "./credit-note-locks";
-import { SOURCE_DELETED_MESSAGE, hasSourceDeletedMarker } from "./sourced-credit-guard";
+import {
+  SOURCE_DELETED_MESSAGE,
+  assertNoSourceGoneRestore,
+  hasSourceDeletedMarker,
+} from "./sourced-credit-guard";
 import {
   loadLineCredits,
   countCreditableInvoices,
@@ -1482,29 +1486,6 @@ export class CreditNotesService {
   }
 
   /**
-   * B949: refuse (409 CREDIT_NOTE_SOURCE_GONE) when any of these payments would restore money to a note carrying the
-   * SOURCE_DELETED marker. Callers run it over the WHOLE payment list BEFORE the first restore so the operation is refused
-   * atomically (the tx would roll back anyway, but nothing is even attempted). The way out is the note's own void.
-   */
-  private async refuseSourceGoneRestores(
-    tx: any,
-    payments: ReadonlyArray<{ creditNoteId: string | null }>,
-  ): Promise<void> {
-    const ids = [...new Set(payments.map((p) => p.creditNoteId).filter(Boolean) as string[])];
-    for (const id of ids) {
-      if (!(await hasSourceDeletedMarker(tx, id))) continue;
-      const cn = await tx.creditNote.findFirst({
-        where: { id },
-        select: { creditNoteNumber: true },
-      });
-      throw cnConflict(
-        API_ERROR_CODES.CREDIT_NOTE_SOURCE_GONE,
-        `Credit note ${cn?.creditNoteNumber ?? id} came from a deleted invoice. Void that credit note first, then try again.`,
-      );
-    }
-  }
-
-  /**
    * Inverse of applyCreditInTx: give (part of) an applied credit back to the wallet.
    * Deletes (or shrinks) the CREDIT_NOTE InvoicePayment, decrements amountUsed,
    * reverts APPLIED→ISSUED when the credit is no longer fully consumed, and
@@ -1530,8 +1511,7 @@ export class CreditNotesService {
     await lockInvoiceForCredit(tx, this.prisma.getTenantId(), payment.invoiceId);
     // B949: the backstop of the pre-pass below. A restore would hand a SOURCE_DELETED note's money back as SPENDABLE wallet
     // credit with no provenance; every path that restores refuses, before it writes any RESTORE (an operation such as an order cancel may already have written its own claim in the same transaction; the refusal rolls the whole transaction back).
-    if (payment.creditNoteId !== opts.voidingNoteId)
-      await this.refuseSourceGoneRestores(tx, [payment]);
+    if (payment.creditNoteId !== opts.voidingNoteId) await assertNoSourceGoneRestore(tx, [payment]);
 
     if (restore >= payAmt - 0.001) {
       await tx.invoicePayment.delete({ where: { id: payment.id } });
@@ -1760,7 +1740,7 @@ export class CreditNotesService {
       },
       orderBy: { createdAt: "desc" },
     });
-    await this.refuseSourceGoneRestores(tx, pays); // B949: before the first restore
+    await assertNoSourceGoneRestore(tx, pays); // B949: before the first restore
     for (const p of pays) await this.restoreCreditFromPaymentInTx(tx, tz, p);
   }
 
@@ -1821,7 +1801,7 @@ export class CreditNotesService {
       orderBy: { createdAt: "desc" },
     });
 
-    await this.refuseSourceGoneRestores(tx, payments); // B949: before the first restore
+    await assertNoSourceGoneRestore(tx, payments); // B949: before the first restore
     const byNote = new Map<string, { creditNoteNumber: string; amount: number }>();
     for (const p of payments) {
       const restored = await this.restoreCreditFromPaymentInTx(tx, tz, p);
@@ -2019,7 +1999,7 @@ export class CreditNotesService {
         .sort(
           (a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
         );
-      await this.refuseSourceGoneRestores(tx, creditPays); // B949: before the first restore
+      await assertNoSourceGoneRestore(tx, creditPays); // B949: before the first restore
       for (const p of creditPays) {
         if (!(excess > 0.001)) break;
         const restored = await this.restoreCreditFromPaymentInTx(tx, tz, p, excess);
@@ -2135,7 +2115,7 @@ export class CreditNotesService {
               "This credit note has no active application to that invoice",
             );
 
-          await this.refuseSourceGoneRestores(tx, payments); // B949: before the first restore
+          await assertNoSourceGoneRestore(tx, payments); // B949: before the first restore
           let restored = 0;
           for (const p of payments) {
             restored = roundMoney(restored + (await this.restoreCreditFromPaymentInTx(tx, tz, p)));

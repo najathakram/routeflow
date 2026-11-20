@@ -1,6 +1,8 @@
 "use client";
 
 import * as React from "react";
+import { AddDriverModal } from "../drivers/_components/AddDriverModal";
+import { useCreateDriver } from "@/lib/api/drivers";
 import { useForm, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { API_ERROR_CODES } from "@routeflow/types";
@@ -90,6 +92,7 @@ import { SettingsHub } from "./_components/SettingsHub";
 import { SendingDomainCard } from "./_components/SendingDomainCard";
 import { MailboxCard } from "./_components/MailboxCard";
 import { StripeConnectCard } from "./_components/StripeConnectCard";
+import { InvoiceLayoutCard } from "./_components/InvoiceLayoutCard";
 import { InvoiceNumberingCard, INVOICE_TERMS_OPTIONS } from "./_components/InvoiceNumberingCard";
 import GoHighLevelSettingsTab from "./_components/GoHighLevelSettingsTab";
 import { FulfillmentSettingsTab } from "./_components/FulfillmentSettingsTab";
@@ -577,10 +580,13 @@ function AddUserModal({
   isOpen,
   onClose,
   onCreated,
+  onPickDriver,
 }: {
   isOpen: boolean;
   onClose: () => void;
   onCreated: (tempPassword: string) => void;
+  /** B862 / SA-1171 K2: a driver needs a driver profile, so picking Driver continues in the Drivers add form. */
+  onPickDriver: (prefill: { contactName: string; email: string; username: string }) => void;
 }) {
   const createOperator = useCreateOperator();
   // Fleet-off (no routes / delivery addon): there are no drivers to add, so no DRIVER role option.
@@ -597,12 +603,25 @@ function AddUserModal({
     formState: { errors, isSubmitting, touchedFields },
   } = useForm<AddUserFormValues>({
     resolver: zodResolver(addUserSchema),
-    defaultValues: { role: "DRIVER" },
+    defaultValues: { role: "OPERATOR" },
   });
 
   React.useEffect(() => {
     if (!fleet) setValue("role", "OPERATOR");
   }, [fleet, setValue]);
+
+  // Picking Driver carries what was typed into the Drivers add form (the one place a driver is created).
+  const pickedRole = watch("role");
+  const nameTyped = watch("name") ?? "";
+  const emailTyped = watch("email") ?? "";
+  const usernameTyped = watch("username") ?? "";
+  React.useEffect(() => {
+    if (pickedRole !== "DRIVER") return;
+    onPickDriver({ contactName: nameTyped, email: emailTyped, username: usernameTyped });
+    reset();
+    onClose();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires once per pick, with the values at that moment
+  }, [pickedRole]);
 
   const nameValue = watch("name") ?? "";
   React.useEffect(() => {
@@ -949,6 +968,11 @@ function UserManagementTab() {
   const isAdmin = isAccountAdmin(viewer);
   const changeStatus = useChangeUserStatus();
   const [isAddOpen, setIsAddOpen] = React.useState(false);
+  const [isAddDriverOpen, setIsAddDriverOpen] = React.useState(false);
+  const [driverPrefill, setDriverPrefill] = React.useState<
+    { contactName: string; email: string; username: string } | undefined
+  >(undefined);
+  const createDriver = useCreateDriver();
   const [editingUser, setEditingUser] = React.useState<AppUser | null>(null);
   const { toast } = useToast();
 
@@ -1074,6 +1098,16 @@ function UserManagementTab() {
         isOpen={isAddOpen}
         onClose={() => setIsAddOpen(false)}
         onCreated={handleCreated}
+        onPickDriver={(prefill) => {
+          setDriverPrefill(prefill);
+          setIsAddDriverOpen(true);
+        }}
+      />
+      <AddDriverModal
+        isOpen={isAddDriverOpen}
+        onClose={() => setIsAddDriverOpen(false)}
+        initial={driverPrefill}
+        onCreateDriver={async (data) => (await createDriver.mutateAsync(data)).tempPassword}
       />
 
       <EditUserModal
@@ -2714,69 +2748,6 @@ function InvoicingTab() {
     );
   };
 
-  const handleHideBarcodesChange = (checked: boolean) => {
-    updateSettings.mutate(
-      { hideBarcodes: !checked },
-      {
-        onSuccess: () =>
-          toast({
-            title: "Invoice settings saved",
-            description: "Barcode display updated.",
-            variant: "success",
-          }),
-        onError: (err) =>
-          isReadOnlyRefusal(err) ||
-          toast({
-            title: "Failed to save",
-            description: "Could not update invoice settings.",
-            variant: "error",
-          }),
-      },
-    );
-  };
-
-  const handleHidePerPieceChange = (checked: boolean) => {
-    updateSettings.mutate(
-      { hidePerPiece: !checked },
-      {
-        onSuccess: () =>
-          toast({
-            title: "Invoice settings saved",
-            description: "Per piece column updated.",
-            variant: "success",
-          }),
-        onError: (err) =>
-          isReadOnlyRefusal(err) ||
-          toast({
-            title: "Failed to save",
-            description: "Could not update invoice settings.",
-            variant: "error",
-          }),
-      },
-    );
-  };
-
-  const handleHideOriginalPriceChange = (checked: boolean) => {
-    updateSettings.mutate(
-      { hideOriginalPrice: !checked },
-      {
-        onSuccess: () =>
-          toast({
-            title: "Invoice settings saved",
-            description: "Original price display updated successfully.",
-            variant: "success",
-          }),
-        onError: (err) =>
-          isReadOnlyRefusal(err) ||
-          toast({
-            title: "Failed to save",
-            description: "Could not update invoice settings.",
-            variant: "error",
-          }),
-      },
-    );
-  };
-
   // Deposit % is free text, so — like customers/[id]/page.tsx's
   // defaultDepositPercent field — it must NOT PATCH per keystroke: typing "50"
   // would persist 5 first and the server value would fight the field
@@ -2893,68 +2864,6 @@ function InvoicingTab() {
             </div>
           </div>
 
-          <div className="flex items-center gap-4 rounded-lg border border-surface-border bg-surface-raised p-4">
-            <div className="flex-1 space-y-1">
-              <p className="text-sm font-semibold text-navy">
-                Show original price on discounted lines
-              </p>
-              <p className="text-xs text-navy/70">
-                When off, invoices show only the final unit price — no struck-through original price
-                or badge.
-              </p>
-            </div>
-            <label className="inline-flex shrink-0 cursor-pointer items-center">
-              <input
-                type="checkbox"
-                aria-label="Show original price on discounted lines"
-                checked={!invoiceSettings?.hideOriginalPrice}
-                onChange={(e) => handleHideOriginalPriceChange(e.target.checked)}
-                disabled={isLoading || updateSettings.isPending}
-                className="h-4 w-4 rounded border-surface-border"
-              />
-            </label>
-          </div>
-
-          <div className="flex items-center gap-4 rounded-lg border border-surface-border bg-surface-raised p-4">
-            <div className="flex-1 space-y-1">
-              <p className="text-sm font-semibold text-navy">Show barcodes on invoices</p>
-              <p className="text-xs text-navy/70">
-                Prints each product&apos;s barcode and code on its line. Turn off to print invoices
-                without them.
-              </p>
-            </div>
-            <label className="inline-flex shrink-0 cursor-pointer items-center">
-              <input
-                type="checkbox"
-                aria-label="Show barcodes on invoices"
-                checked={!invoiceSettings?.hideBarcodes}
-                onChange={(e) => handleHideBarcodesChange(e.target.checked)}
-                disabled={isLoading || updateSettings.isPending}
-                className="h-4 w-4 rounded border-surface-border"
-              />
-            </label>
-          </div>
-
-          <div className="flex items-center gap-4 rounded-lg border border-surface-border bg-surface-raised p-4">
-            <div className="flex-1 space-y-1">
-              <p className="text-sm font-semibold text-navy">Show price per piece on invoices</p>
-              <p className="text-xs text-navy/70">
-                Adds a Per piece column beside pack lines, on the invoice page, the PDF and the
-                email. Turn off to print invoices without it.
-              </p>
-            </div>
-            <label className="inline-flex shrink-0 cursor-pointer items-center">
-              <input
-                type="checkbox"
-                aria-label="Show price per piece on invoices"
-                checked={!invoiceSettings?.hidePerPiece}
-                onChange={(e) => handleHidePerPieceChange(e.target.checked)}
-                disabled={isLoading || updateSettings.isPending}
-                className="h-4 w-4 rounded border-surface-border"
-              />
-            </label>
-          </div>
-
           <div className="border-t border-surface-border pt-4">
             <p className="mb-3 text-sm font-semibold text-navy">Deposits</p>
             <div className="space-y-4">
@@ -3018,6 +2927,13 @@ function InvoicingTab() {
           </div>
         </div>
       </Card>
+
+      <InvoiceLayoutCard
+        settings={invoiceSettings}
+        pending={updateSettings.isPending ? updateSettings.variables : undefined}
+        onToggle={updateSettings.mutate}
+        disabled={isLoading || updateSettings.isPending}
+      />
 
       <InvoiceNumberingCard />
 

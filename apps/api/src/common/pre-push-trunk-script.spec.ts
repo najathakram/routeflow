@@ -29,7 +29,8 @@ function git(cwd: string, ...args: string[]) {
 }
 
 /** Fixture repo on master, bare origin carrying master + feat/x + feat/y, the real hook installed. */
-function fixture() {
+function fixture(opts: { withChecker?: boolean } = {}) {
+  const withChecker = opts.withChecker ?? true;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rf-b1298-work-"));
   const remote = fs.mkdtempSync(path.join(os.tmpdir(), "rf-b1298-remote-"));
   git(remote, "init", "-q", "--bare");
@@ -49,6 +50,17 @@ function fixture() {
     path.join(REPO_ROOT, "scripts", "push-guard.mjs"),
     path.join(dir, "scripts", "push-guard.mjs"),
   );
+  if (withChecker) {
+    // The hook runs the REAL G0 leak checker first (fail-closed). It needs its lib and a patterns file
+    // in the fixture's git-common-dir; the pattern is a dummy that matches nothing.
+    fs.mkdirSync(path.join(dir, "scripts", "lib"), { recursive: true });
+    for (const f of ["leak-check.mjs", path.join("lib", "leak-patterns.mjs")]) {
+      fs.copyFileSync(path.join(REPO_ROOT, "scripts", f), path.join(dir, "scripts", f));
+    }
+    const common = path.resolve(dir, git(dir, "rev-parse", "--git-common-dir").trim());
+    fs.mkdirSync(path.join(common, "info"), { recursive: true });
+    fs.writeFileSync(path.join(common, "info", "leak-patterns"), "zz-fixture-never-matches-9f3\n");
+  }
   for (const stub of ["size-ratchet-gate.mjs", "test-tamper-check.mjs", "skip-verify-audit.mjs"]) {
     fs.writeFileSync(path.join(dir, "scripts", stub), "process.exit(0);\n");
   }
@@ -177,6 +189,25 @@ describe("B1298: pre-push trunk rule judges the pushed refs", () => {
       expect(res.out).not.toContain(NOTHING_TO_VERIFY);
       expect(res.out).toContain("SKIP_VERIFY=1");
     }),
+    HOOK_TIMEOUT,
+  );
+
+  it(
+    "a fixture without scripts/leak-check.mjs refuses the push with a clear message and creates nothing",
+    () => {
+      const fx = fixture({ withChecker: false });
+      try {
+        onFeature(fx);
+        const before = remoteRefs(fx);
+        const res = push(fx, ["origin", "HEAD:refs/heads/feat/new"]);
+        expect(res.status).not.toBe(0);
+        expect(res.out).toContain("leak-check: scripts/leak-check.mjs is missing");
+        expect(remoteRefs(fx)).toEqual(before);
+      } finally {
+        fs.rmSync(fx.dir, { recursive: true, force: true });
+        fs.rmSync(fx.remote, { recursive: true, force: true });
+      }
+    },
     HOOK_TIMEOUT,
   );
 });

@@ -317,13 +317,14 @@ describe("PickupCompleteService.complete: Complete at counter (I-120, SA-861)", 
 
   // SA-861 R8/R9, owner 7a 2026-10-23 (D-2026-10-23-counter-complete-and-real-money): Q1 = A, Q2 = A. Each refusal is
   // judged from the row and the request BEFORE any write.
-  it("R9 (Q2 = A) a SHIP order already shipped with the carrier is refused: 'This order has shipped with the carrier.'", async () => {
+  it("R9 (Q2 = A) a SHIP order already shipped with the carrier is refused: B1372 K4.2: the 409 names the next step", async () => {
     order = orderRow("CONFIRMED", { fulfillPath: "SHIP", shippedAt: new Date(500) });
     const e = await errorOf(run());
     expect(e.getStatus()).toBe(409);
     expect(e.getResponse()).toMatchObject({
       code: "COUNTER_COMPLETE_SHIPPED",
-      message: "This order has shipped with the carrier.",
+      message:
+        "This order is with the carrier. To hand it over here, first Unmark shipped, then switch it to Store pickup.",
     });
     expect(calls).toEqual([]);
   });

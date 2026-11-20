@@ -3,6 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
+import { getBuyerAccessToken } from "@/lib/buyer-auth";
 import { Merge, Loader2, CheckCircle, AlertCircle, KeyRound, ChevronRight } from "lucide-react";
 
 export default function BuyerSettingsPage() {
@@ -20,7 +21,7 @@ export default function BuyerSettingsPage() {
     setError(null);
 
     try {
-      const token = typeof window !== "undefined" ? localStorage.getItem("buyerToken") : null;
+      const token = getBuyerAccessToken();
       const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000";
       const res = await fetch(`${apiBase}/buyer/auth/merge-request`, {
         method: "POST",

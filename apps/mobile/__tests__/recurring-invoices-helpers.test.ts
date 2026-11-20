@@ -98,6 +98,39 @@ describe("REG-B106 lastRunOutcome", () => {
   });
 });
 
+// B1251: the two "already billed" failures never show the raw server text on mobile (the web card maps them
+// through describeRunFailure), and they never offer a re-run (the invoice exists; a second run bills the cycle twice).
+// This is a pure logic-lib mapping, not a screen redesign, so the 10-24 no-old-native ruling does not block it.
+describe("B1251 already-billed run failures on mobile", () => {
+  const failed = (lastError: string) => ({
+    lastRunAt: "2026-07-01T00:00:00Z",
+    lastRunStatus: "FAILED" as const,
+    lastError,
+  });
+  it.each([
+    "The invoice was created but could not be emailed (invoice inv-1): SMTP 550 mailbox full",
+    "The invoice was created but the run could not be finalized (invoice inv-1): P2002 unique constraint",
+  ])("maps %s to a fixed sentence with no raw detail", (raw) => {
+    const out = logic.lastRunOutcome(failed(raw));
+    expect(out?.label).toBe("Last run failed");
+    expect(out?.detail).toMatch(/Don't run it again/);
+    expect(out?.detail).not.toMatch(/SMTP|P2002|inv-1/);
+  });
+  it("keeps the raw detail for a failure that created no invoice", () => {
+    expect(logic.lastRunOutcome(failed("Customer not found"))?.detail).toBe("Customer not found");
+  });
+  it("hides Generate now while the last run is already billed, not otherwise", () => {
+    expect(
+      logic.recurringActionFlags(
+        true,
+        "The invoice was created but could not be emailed (invoice x): y",
+      ).canRunNow,
+    ).toBe(false);
+    expect(logic.recurringActionFlags(true, "Customer not found").canRunNow).toBe(true);
+    expect(logic.recurringActionFlags(true).canRunNow).toBe(true);
+  });
+});
+
 // B646 / SA-135: a boxed product's template qty counts BOXES at the per-box price. The mobile form
 // carries the same hint as the web form (the web label is covered by a Playwright capture).
 describe("RECURRING_QTY_BOXES_HINT (B646)", () => {

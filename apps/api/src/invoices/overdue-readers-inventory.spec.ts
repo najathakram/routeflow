@@ -9,7 +9,7 @@
  * Source scan, comments excluded; `*.spec.ts` skipped. Paths are relative to apps/api/src.
  */
 jest.mock("@anthropic-ai/sdk", () => ({ __esModule: true, default: jest.fn() }));
-jest.mock("../bookkeeping/invoice.service", () => ({ InvoiceService: jest.fn() }));
+jest.mock("../invoices/invoice-pdf.service", () => ({ InvoicePdfService: jest.fn() }));
 jest.mock("../vendor-bills/vendor-bills.service", () => ({ VendorBillsService: jest.fn() }));
 jest.mock("../storage/compress.util", () => ({ compressDocument: jest.fn() }));
 
@@ -44,7 +44,7 @@ const USES_CLASSIFIER: Record<string, string> = {
     "the invoice email's and the reminder's balance due: emailPaidBasis (confirmedBalance), the one copy since W-680 (it was inline in sendEmail/sendReminder)",
   "invoices/invoice-kpi-summary.ts": "KPI tiles: per-invoice balance (confirmedBalance)",
   "customers/customer-statement.ts":
-    "statement overdueAmount (row 309), buyer's and operator's: classifyInvoiceBalance in the statement's tenant zone, one zone lookup per statement. CLAMPED since SA-1078 PR-1 (it was the signed net, row 326): the statement's outstandingAmount (the open balance) is summarizeOpenInvoices(...).unpaidTotal, the sum of each open invoice's clamped balance, so an overpaid open invoice adds 0 and the rows add up to the total, and overdueAmount (also clamped) can no longer read above it; the ledger's per-invoice signed runningBalance is untouched",
+    "statement overdueAmount (row 309), buyer's and operator's: classifyInvoiceBalance in the statement's tenant zone, one zone lookup per statement. CLAMPED since SA-1078 PR-1 (it was the signed net, row 326): the statement's outstandingAmount (the open balance) is statementOutstandingAmount, a status-free running roundMoney sum of classifyInvoiceBalance(...).balanceDue over the open-balance set the caller passes (SA-1164 22:24Z; it equals summarizeOpenInvoices(...).unpaidTotal on issued rows), the sum of each open invoice's clamped balance, so an overpaid open invoice adds 0 and the rows add up to the total, and overdueAmount (also clamped) can no longer read above it; the ledger's per-invoice signed runningBalance is untouched",
   "customers/account-statement.ts":
     "SA-1078 account statement: each open row's unpaid is classifyInvoiceBalance's clamped balanceDue; openBalance and overdue come from customer-statement.ts's statementOutstandingAmount / statementOverdueAmount, so the rows add up to the total",
   "bookkeeping/bookkeeping.service.ts":
@@ -346,15 +346,20 @@ describe("SA-770 — BALANCE_CLAMPED readers behave (overpaid adds 0; a genuinel
     }
   });
 
-  // SA-1078 S21: BOTH statement builders take their total from summarizeOpenInvoices, through the one
-  // statementOutstandingAmount helper; a raw `total - paid` reduce coming back fails here.
-  it("customers: both statement builders take outstandingAmount from summarizeOpenInvoices", () => {
+  // SA-1078 S21 (SA-1164 22:24Z): BOTH statement builders take their total from the one statementOutstandingAmount helper, a
+  // status-free roundMoney sum of the classifier's clamped balanceDue; a raw `total - paid` reduce coming back fails here.
+  it("customers: both statement builders take outstandingAmount from the clamped classifier sum", () => {
     const src = stripComments(
       fs.readFileSync(path.join(SRC_ROOT, "customers/customer-statement.ts"), "utf8"),
     );
     const helper = src.match(/function statementOutstandingAmount\([\s\S]*?\n\}/)?.[0] ?? "";
-    expect(helper).toMatch(/\bsummarizeOpenInvoices\(/);
-    expect(helper).toMatch(/\.unpaidTotal\b/);
+    expect(helper).toMatch(/\bclassifyInvoiceBalance\(/);
+    expect(helper).toMatch(/\.balanceDue\b/);
+    expect(helper).toMatch(/\broundMoney\(/);
+    // never the gross: no amountPaid, no `total -`, no `- <something>paid` (the netting reduce S1-S3 removed)
+    expect(helper).not.toMatch(/amountPaid/);
+    expect(helper).not.toMatch(/\btotal\b\)?\s*-/); // also `Number(inv.total) - ...`
+    expect(helper).not.toMatch(/-\s*\w*[Pp]aid\b/);
     expect(src.match(/\bstatementOutstandingAmount\(/g)?.length).toBe(3); // the definition and the two builders
     expect(src.match(/const outstanding = statementOutstandingAmount\(/g)?.length).toBe(2);
   });

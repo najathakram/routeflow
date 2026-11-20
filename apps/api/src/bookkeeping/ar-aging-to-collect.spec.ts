@@ -20,11 +20,10 @@ jest.mock("@anthropic-ai/sdk", () => ({
   default: jest.fn(() => ({ messages: { create: mockAnthropicCreate } })),
 }));
 
-// Mock invoice.service.ts to avoid loading @react-pdf/renderer (ESM-only)
-jest.mock("./invoice.service", () => ({
-  InvoiceService: jest.fn().mockImplementation(() => ({
-    generateInvoice: jest.fn(),
-    getPresignedUrl: jest.fn(),
+// Mock invoice-pdf.service.ts to avoid loading @react-pdf/renderer (ESM-only)
+jest.mock("../invoices/invoice-pdf.service", () => ({
+  InvoicePdfService: jest.fn().mockImplementation(() => ({
+    getOrGenerate: jest.fn(),
   })),
 }));
 
@@ -34,7 +33,7 @@ jest.mock("../vendor-bills/vendor-bills.service", () => ({
 }));
 
 import { BookkeepingService } from "./bookkeeping.service";
-import { InvoiceService } from "./invoice.service";
+import { InvoicePdfService } from "../invoices/invoice-pdf.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { StorageService } from "../storage/storage.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -74,12 +73,12 @@ const MOCK_INVOICE = {
 describe("BookkeepingService AR aging: To collect (SA-1026 A-G11)", () => {
   let service: BookkeepingService;
   let prisma: ReturnType<typeof createMockPrisma>;
-  let invoiceService: { getPresignedUrl: jest.Mock };
+  let invoiceService: { getOrGenerate: jest.Mock };
   let recordAiUsage: jest.Mock;
 
   beforeEach(async () => {
     prisma = createMockPrisma();
-    invoiceService = { getPresignedUrl: jest.fn() };
+    invoiceService = { getOrGenerate: jest.fn() };
     recordAiUsage = jest.fn();
     mockAnthropicCreate.mockReset();
 
@@ -95,7 +94,7 @@ describe("BookkeepingService AR aging: To collect (SA-1026 A-G11)", () => {
         },
         BookkeepingService,
         { provide: PrismaService, useValue: prisma },
-        { provide: InvoiceService, useValue: invoiceService },
+        { provide: InvoicePdfService, useValue: invoiceService },
         {
           provide: StorageService,
           useValue: {

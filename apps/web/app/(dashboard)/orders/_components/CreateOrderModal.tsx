@@ -5,24 +5,22 @@ import { flushSync } from "react-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { X, AlertTriangle, ChevronRight, Plus, Minus } from "lucide-react";
+import { X, AlertTriangle, Plus, Minus } from "lucide-react";
 import { Modal, Textarea, Button, cn, useToast } from "@routeflow/ui/web";
 import { useQuery } from "@tanstack/react-query";
 import { useCustomers, useCustomerPrices, useCustomer } from "@/lib/api/customers";
 import { customerPricingGate } from "@/lib/customer-pricing-gate";
-import { countNoun } from "@/lib/plural";
 import { formatMoney } from "@/lib/format";
 import { orderBuilderTotals } from "@/lib/order-builder-totals";
 import { PENDING, TotalsSummary } from "@/components/money/TotalsSummary";
 import { useProducts } from "@/lib/api/products";
 import { useNewOrderLineStock } from "@/lib/api/stock-availability";
 import {
-  attachParent,
-  groupSearchRows,
-  isFamilyProduct,
-  isGroupExpanded,
-  pickerProductName,
-} from "@/lib/product-search-groups";
+  ProductSearchList,
+  productSearchNavRows,
+  type ProductNavRow,
+} from "@/components/ProductSearchList";
+import { groupSearchRows, isFamilyProduct, isGroupExpanded } from "@/lib/product-search-groups";
 import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import { createFieldScanRun } from "@/lib/scan-run";
 import { dialogOpenBesides } from "./counter-scan-guard";
@@ -1260,30 +1258,14 @@ export function CreateOrderModal({
   // key, so a wedge scan + Enter still takes handleProductSearchEnter (barcode path).
   const productListOpen =
     !!productSearch && (filteredProducts.length > 0 || debouncedProductSearch.length > 0);
-  // One flat, ordered row list for the listbox: each product, its variants while expanded, then the
-  // trailing "Create new product" row — so every visible option has an id and an Arrow stop.
-  type ProductNavRow =
-    { kind: "product"; p: any } | { kind: "variant"; v: any } | { kind: "create" };
-  const productNavRows: ProductNavRow[] = [];
-  const productRowIndex = new Map<string, number>();
-  const variantRowIndex = new Map<string, number>();
-  for (const p of filteredProducts as any[]) {
-    productRowIndex.set(p.id, productNavRows.length);
-    productNavRows.push({ kind: "product", p });
-    // Same expansion rule as the rendered list (B1215: a variant-only hit opens its family by itself).
-    if (
-      p.variants?.length > 0 &&
-      isGroupExpanded(expandedParentId, productGroups.expandedIds, p.id)
-    ) {
-      for (const v of p.variants) {
-        variantRowIndex.set(v.id, productNavRows.length);
-        // The keyboard pick names the variant under its parent exactly like the click does (attachParent).
-        productNavRows.push({ kind: "variant", v: attachParent(v, p) });
-      }
-    }
-  }
-  const createProductRowIndex = productNavRows.length;
-  productNavRows.push({ kind: "create" });
+  // B1373: the shared ProductSearchList's one flat row order (products, open variants, then "Create new product").
+  const productSearchIndex = productSearchNavRows(
+    filteredProducts,
+    expandedParentId,
+    productGroups.expandedIds,
+    true,
+  );
+  const { rows: productNavRows, productRowIndex } = productSearchIndex;
   const openCreateProduct = () => {
     const prefill = newProductPrefill(debouncedProductSearch);
     setCreateProductInitialName(prefill.name);
@@ -2956,148 +2938,19 @@ export function CreateOrderModal({
                   first Tab from the search reaches result 1, like the customer search (PKG-4 F10). */}
               {productSearch &&
                 (filteredProducts.length > 0 || debouncedProductSearch.length > 0) && (
-                  <ul
-                    id={productNav.listId}
-                    role="listbox"
-                    aria-label="Products"
+                  <ProductSearchList
+                    products={filteredProducts}
+                    index={productSearchIndex}
+                    nav={productNav}
+                    expandedParentId={expandedParentId}
+                    autoExpandedIds={productGroups.expandedIds}
+                    isAdded={(id) => lineItems.some((li) => li.productId === id)}
+                    onToggleGroup={(p, isExpanded) => setExpandedParentId(isExpanded ? "" : p.id)}
+                    onPick={addPicked}
+                    showEmpty={debouncedProductSearch.length > 0}
+                    create={{ term: debouncedProductSearch, onCreate: openCreateProduct }}
                     className="absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-lg border border-surface-border bg-white shadow-dropdown"
-                  >
-                    {filteredProducts.length === 0 && debouncedProductSearch.length > 0 && (
-                      <li role="status" className="px-3 py-2 text-sm text-navy/70">
-                        No products found.
-                      </li>
-                    )}
-                    {filteredProducts.map((p: any) => {
-                      const pi = productRowIndex.get(p.id) ?? -1; // the flat nav index, shared with variant rows
-                      const hasVariants = p.variants?.length > 0;
-                      const isExpanded = isGroupExpanded(
-                        expandedParentId,
-                        productGroups.expandedIds,
-                        p.id,
-                      );
-                      const alreadyAdded = lineItems.some((li) => li.productId === p.id);
-                      return (
-                        <React.Fragment key={p.id}>
-                          <li role="presentation">
-                            <button
-                              type="button"
-                              role="option"
-                              id={productNav.optionId(pi)}
-                              aria-selected={pi === productNav.highlight}
-                              onMouseEnter={() => productNav.setHighlight(pi)}
-                              onClick={() => {
-                                if (hasVariants) {
-                                  setExpandedParentId(isExpanded ? "" : p.id);
-                                } else {
-                                  // Already-added rows increment qty (addLineItem's
-                                  // repeat path) — the old no-op left the search
-                                  // text + open dropdown for the operator to
-                                  // clean up by hand, reading as "choosing does
-                                  // nothing". Scan of the same code has always
-                                  // incremented; clicking now matches it.
-                                  addPicked(p);
-                                }
-                              }}
-                              className={cn(
-                                "flex w-full items-center justify-between px-3 py-2.5 text-left text-sm text-navy hover:bg-surface-raised",
-                                pi === productNav.highlight && "bg-surface-raised",
-                                alreadyAdded && !hasVariants && "opacity-40",
-                              )}
-                            >
-                              <div className="flex items-center gap-1.5 min-w-0">
-                                {hasVariants && (
-                                  <ChevronRight
-                                    className={cn(
-                                      "h-3.5 w-3.5 shrink-0 text-navy/70 transition-transform",
-                                      isExpanded && "rotate-90",
-                                    )}
-                                  />
-                                )}
-                                <span className="font-medium truncate">{p.name}</span>
-                                {p.sku && (
-                                  <span className="text-xs text-navy/70 shrink-0">{p.sku}</span>
-                                )}
-                                {hasVariants && (
-                                  <span className="ml-1 text-[10px] text-navy/70 shrink-0">
-                                    {countNoun(p.variants.length, "variant")}
-                                  </span>
-                                )}
-                                {!hasVariants && (
-                                  <span className="ml-1 text-xs text-navy/70 shrink-0">
-                                    {p.unit}
-                                  </span>
-                                )}
-                              </div>
-                              {!hasVariants && (
-                                <span className="text-xs font-medium text-navy/70 shrink-0 ml-2">
-                                  {formatMoney(p.pricePerUnit)}
-                                </span>
-                              )}
-                            </button>
-                          </li>
-                          {/* Expanded variants */}
-                          {hasVariants &&
-                            isExpanded &&
-                            p.variants.map((v: any) => {
-                              const vi = variantRowIndex.get(v.id) ?? -1;
-                              const variantAdded = lineItems.some((li) => li.productId === v.id);
-                              return (
-                                <li key={v.id} role="presentation" className="bg-surface-raised/50">
-                                  <button
-                                    type="button"
-                                    role="option"
-                                    id={productNav.optionId(vi)}
-                                    aria-selected={vi === productNav.highlight}
-                                    onMouseEnter={() => productNav.setHighlight(vi)}
-                                    onClick={() => addPicked(attachParent(v, p))}
-                                    className={cn(
-                                      "flex w-full items-center justify-between pl-8 pr-3 py-2 text-left text-sm text-navy hover:bg-surface-raised",
-                                      vi === productNav.highlight && "bg-surface-raised",
-                                      variantAdded && "opacity-40",
-                                    )}
-                                  >
-                                    <div className="flex items-center gap-1.5 min-w-0">
-                                      <span className="font-medium truncate">
-                                        {pickerProductName(v, p)}
-                                      </span>
-                                      {v.sku && (
-                                        <span className="text-xs text-navy/70 shrink-0">
-                                          {v.sku}
-                                        </span>
-                                      )}
-                                      <span className="text-xs text-navy/70 shrink-0">
-                                        {v.unit}
-                                      </span>
-                                    </div>
-                                    <span className="text-xs font-medium text-navy/70 shrink-0 ml-2">
-                                      {formatMoney(v.pricePerUnit)}
-                                    </span>
-                                  </button>
-                                </li>
-                              );
-                            })}
-                        </React.Fragment>
-                      );
-                    })}
-                    <li role="presentation" className="border-t border-surface-border">
-                      <button
-                        type="button"
-                        role="option"
-                        id={productNav.optionId(createProductRowIndex)}
-                        aria-selected={createProductRowIndex === productNav.highlight}
-                        onMouseEnter={() => productNav.setHighlight(createProductRowIndex)}
-                        className={cn(
-                          "flex w-full items-center gap-2 px-3 py-2.5 text-sm text-brand-500 hover:bg-surface-raised font-medium",
-                          createProductRowIndex === productNav.highlight && "bg-surface-raised",
-                        )}
-                        onClick={openCreateProduct}
-                      >
-                        <Plus className="h-3.5 w-3.5" />
-                        Create new product
-                        {debouncedProductSearch ? `: "${debouncedProductSearch}"` : ""}
-                      </button>
-                    </li>
-                  </ul>
+                  />
                 )}
               <BarcodeScannerButton
                 inputRef={productSearchRef}

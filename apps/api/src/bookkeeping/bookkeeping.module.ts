@@ -1,10 +1,7 @@
 import { Module } from "@nestjs/common";
-import { BullModule } from "@nestjs/bull";
 import { ConfigModule } from "@nestjs/config";
 import { BookkeepingService } from "./bookkeeping.service";
 import { BookkeepingController } from "./bookkeeping.controller";
-import { InvoiceService } from "./invoice.service";
-import { InvoiceProcessor } from "./invoice.processor";
 import { AuthModule } from "../auth/auth.module";
 import { StorageModule } from "../storage/storage.module";
 import { VendorBillsModule } from "../vendor-bills/vendor-bills.module";
@@ -18,6 +15,8 @@ import { PlatformAdminModule } from "../platform-admin/platform-admin.module";
 // Supplies AddonGuard + AddonService for the extract-items @RequireAddon("ocr") gate
 // (EntitlementsModule does not export them).
 import { BillingModule } from "../billing/billing.module";
+// B444/B1023: InvoicePdfService, the tenant-correct PDF renderer.
+import { InvoicesModule } from "../invoices/invoices.module";
 
 @Module({
   imports: [
@@ -30,10 +29,9 @@ import { BillingModule } from "../billing/billing.module";
     EntitlementsModule,
     PlatformAdminModule,
     BillingModule,
-    BullModule.registerQueue({ name: "invoices" }),
+    InvoicesModule,
   ],
   controllers: [BookkeepingController],
-  providers: [BookkeepingService, InvoiceService, InvoiceProcessor],
-  exports: [InvoiceService],
+  providers: [BookkeepingService],
 })
 export class BookkeepingModule {}

@@ -79,6 +79,7 @@ describeDb("billing-state writers lock the Order row first (SA-760 R-1)", () => 
   };
   const mockSystemConfig = {
     get: jest.fn().mockResolvedValue(null),
+    getAll: jest.fn().mockResolvedValue({}),
     set: jest.fn().mockResolvedValue(undefined),
   };
   const mockCreditNotes = {

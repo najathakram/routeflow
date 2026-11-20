@@ -5,11 +5,15 @@ import { Loader2 } from "lucide-react";
 import { Button, Modal } from "@routeflow/ui/web";
 import {
   useBuyerProducts,
+  useBuyerActiveOrder,
+  useBuyerCartQuote,
   useBuyerPromotions,
   toPromotionRules,
   type BuyerOrderTemplate,
 } from "@/lib/api/buyer";
+import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { liveTemplateItems, priceReorderReview } from "@/lib/buyer-reorder-review";
+import { CartQuoteSummary } from "./CartQuoteSummary";
 
 function fmt(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -90,6 +94,24 @@ function ReviewBody({
   const pricedCount = review.lines.length - review.unresolvedCount;
   const ready = !loading && !failed && pricedCount > 0;
 
+  // SA-1172 (B304): the server's own figure for what this reorder bills (its submit body, the live lines). The reorder runs
+  // the merge sweep, so the row reads "Total for these items" unless the buyer is known to have no open order.
+  const { activeSeller } = useBuyerAuth();
+  const activeOrder = useBuyerActiveOrder();
+  const quoteItems = React.useMemo(
+    () => liveTemplateItems(template).map((i) => ({ productId: i.productId, qty: i.qty })),
+    [template],
+  );
+  const { quote, busy: quoteBusy } = useBuyerCartQuote(
+    activeSeller?.tenant.slug ?? "",
+    quoteItems,
+    undefined,
+    // a line the review could not resolve may be one generateOrder skips (hidden or inactive); create() checks restrictions
+    // only after the quote hook, so such a cart would be overstated: show the fallback instead
+    ready && review.unresolvedCount === 0,
+  );
+  const noOpenOrder = activeOrder.isSuccess && !activeOrder.data;
+
   return (
     <div className="space-y-4">
       <p className="text-sm text-navy/70">
@@ -140,24 +162,17 @@ function ReviewBody({
           </ul>
           <div className="space-y-1 text-sm">
             {pricedCount > 0 && (
-              <>
-                <div className="flex justify-between border-t border-surface-border pt-3">
-                  <span className="font-semibold text-navy">Estimated total</span>
-                  <span className="text-lg font-bold tabular-nums text-navy">
-                    {fmt(review.subtotal)}
-                  </span>
-                </div>
-                <p className="text-xs text-navy/60">
-                  Tax is added when the order is placed. Your seller confirms the final total.
-                </p>
-              </>
-            )}
-            {review.unresolvedCount > 0 && (
-              <p className="text-xs text-navy/60">
-                {review.unresolvedCount === 1
-                  ? "1 item isn't priced here and is left out of this estimate. It may also be left out of the order; your seller confirms."
-                  : `${review.unresolvedCount} items aren't priced here and are left out of this estimate. They may also be left out of the order; your seller confirms.`}
-              </p>
+              <div className="border-t border-surface-border pt-3">
+                <CartQuoteSummary
+                  quote={quote}
+                  busy={quoteBusy}
+                  merging={!noOpenOrder}
+                  clientSubtotal={review.subtotal}
+                  savings={0}
+                  unresolvedCount={review.unresolvedCount}
+                  subtotalLabel="Subtotal"
+                />
+              </div>
             )}
           </div>
         </>

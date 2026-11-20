@@ -14,12 +14,13 @@ import { createMockPrisma } from "../testing/prisma-mock";
 describe("SettingsController — PATCH/GET /settings/route depot", () => {
   let controller: SettingsController;
   let store: Record<string, string>;
-  let svc: { get: jest.Mock; set: jest.Mock };
+  let svc: { get: jest.Mock; getAll: jest.Mock; set: jest.Mock };
 
   beforeEach(async () => {
     store = {};
     svc = {
       get: jest.fn(async (k: string) => store[k] ?? null),
+      getAll: jest.fn().mockResolvedValue({}),
       set: jest.fn(async (k: string, v: string) => {
         store[k] = v;
       }),
@@ -81,7 +82,11 @@ describe("SettingsController — PATCH/GET /settings/route depot", () => {
 describe("SettingsController — PATCH /settings/route over HTTP (real RolesGuard)", () => {
   let app: INestApplication;
   let role = "OPERATOR";
-  const svc = { get: jest.fn(async () => null), set: jest.fn(async () => undefined) };
+  const svc = {
+    get: jest.fn(async () => null),
+    getAll: jest.fn().mockResolvedValue({}),
+    set: jest.fn(async () => undefined),
+  };
 
   beforeAll(async () => {
     const mod = await Test.createTestingModule({

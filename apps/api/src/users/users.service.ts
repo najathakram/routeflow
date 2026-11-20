@@ -19,6 +19,8 @@ import { User, UserRole, UserStatus } from "@prisma/client";
 import * as crypto from "crypto";
 import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
+import { AddonService } from "../billing/addon.service";
+import { ensureDriverRow, retireDriverRow } from "../drivers/drivers.service";
 import { EmailService } from "../email/email.service";
 import { AppConfig } from "../config/configuration";
 import { ListUsersDto } from "./dto/list-users.dto";
@@ -45,7 +47,30 @@ export class UsersService {
     private readonly configService: ConfigService<AppConfig>,
     // SA-778: records a refused support-session identity edit. Optional so a bare unit module still builds.
     @Optional() private readonly audit?: AuditService,
+    // B862 / SA-1171 K3: read only, to log what the route add-on gate WOULD decide at the two driver-row sites.
+    @Optional() private readonly addons?: AddonService,
   ) {}
+
+  /**
+   * B862 / SA-1171 K3: the add-on gate on the two driver-row sites that predate it (role edit to DRIVER, driver permit)
+   * ships DARK: one structured log line when ANY-of the three route add-ons is off, and the write goes ahead. It flips to
+   * refusing only in a separate diff, after the owner runs report-addon-gate-blast-radius.mjs (CLAUDE.md). Never throws.
+   */
+  private async observeDriverRowGate(site: string, tenantId: string | null | undefined) {
+    if (!this.addons || !tenantId) return;
+    try {
+      const held = await Promise.all(
+        ["recurring_routes", "order_delivery", "developer_mode"].map((k) =>
+          this.addons!.hasAddon(tenantId, k),
+        ),
+      );
+      if (!held.some(Boolean)) {
+        this.logger.warn(`driver-row gate would refuse site=${site} tenant=${tenantId}`);
+      }
+    } catch {
+      /* observe only: a failed read never blocks the write */
+    }
+  }
 
   /**
    * SA-1096: the ONE rule for issuing a set-password link to an account: it has an address, is ACTIVE and is not
@@ -259,6 +284,13 @@ export class UsersService {
   }
 
   async createOperator(dto: CreateOperatorDto) {
+    // B862 / SA-1171 K2: a driver account needs a driver profile, so it is created from the Drivers page (one writer).
+    if (dto.role === UserRole.DRIVER) {
+      throw new BadRequestException({
+        code: API_ERROR_CODES.DRIVER_VIA_DRIVERS_PAGE,
+        message: "Add a driver from the Drivers page.",
+      });
+    }
     const [existingEmail, existingUsername] = await Promise.all([
       this.prisma.forTenant().user.findFirst({ where: { email: dto.email } }),
       this.prisma.forTenant().user.findFirst({ where: { username: dto.username } }),
@@ -404,6 +436,13 @@ export class UsersService {
       throw new ForbiddenException("Cannot change the role of the tenant admin.");
     }
 
+    // B862: a CUSTOMER login is a buyer's account, never a driver. Handing it the DRIVER role would give it a Driver row
+    // (ensureDriverRow), and a later customer delete or merge would then fail on Driver_userId_fkey. The list excludes
+    // CUSTOMER, so only a direct API call reaches this. CUSTOMER -> OPERATOR stays allowed (SA-1050 A5-2 pins it).
+    if (user.role === UserRole.CUSTOMER && dto.role === UserRole.DRIVER) {
+      throw new BadRequestException("A customer login cannot be made a driver.");
+    }
+
     // Only allow OPERATOR or DRIVER roles when changing role
     if (
       dto.role &&
@@ -450,6 +489,9 @@ export class UsersService {
       }
     }
     const roleChanged = !!dto.role && dto.role !== previousRole;
+    if (roleChanged && dto.role === UserRole.DRIVER) {
+      await this.observeDriverRowGate("updateUser", user.tenantId);
+    }
 
     // SA-1050 A-5: a row that ENTERS the operator role starts without the groups the owner keeps off by default.
     // The server decides this from the stored row, never from the DTO; a row that already denies every one of them
@@ -483,6 +525,12 @@ export class UsersService {
       changeToken,
       fromEmail,
     } = await this.prisma.tenantTransaction(async (tx) => {
+      // B862 / SA-1171 K4: off DRIVER. A driver with an open run is refused (no silent unassign: the Drivers page moves
+      // the run first); otherwise the row goes INACTIVE so the picker stops listing someone who no longer drives. A
+      // dual-role person (canActAsDriver) keeps their row.
+      if (roleChanged && previousRole === UserRole.DRIVER && !user.canActAsDriver) {
+        await retireDriverRow(tx, userId);
+      }
       const row = await tx.user.update({
         where: { id: userId },
         data,
@@ -498,6 +546,9 @@ export class UsersService {
         },
       });
       if (emailWritten || roleChanged) await revokeUserLinkTokens(tx, userId);
+      // B862 / SA-1171 K1: a user who becomes a DRIVER gets their Driver row in this same transaction (one writer).
+      if (roleChanged && dto.role === UserRole.DRIVER)
+        await ensureDriverRow(tx, { ...row, tenantId: user.tenantId });
       // The hold's row is written AFTER the burn above, so a role change in the same edit cannot burn it. It burns the
       // user's older change rows itself: a newer request supersedes an older one.
       let changeToken: string | null = null;
@@ -765,35 +816,24 @@ export class UsersService {
 
     const newValue = !user.canActAsDriver;
 
-    // Auto-create Driver record if enabling and no driver record exists
-    if (newValue) {
-      const existingDriver = await this.prisma.forTenant().driver.findFirst({
-        where: { userId: user.id },
+    // One transaction, one writer (SA-1171 K1): enabling writes the Driver row with the flag, and a concurrent double
+    // toggle upserts the same row instead of failing on the unique userId.
+    if (newValue) await this.observeDriverRowGate("toggleDriverPermit", user.tenantId);
+    return this.prisma.tenantTransaction(async (tx) => {
+      if (newValue) await ensureDriverRow(tx, user);
+      return tx.user.update({
+        where: { id: userId },
+        data: { canActAsDriver: newValue },
+        select: {
+          id: true,
+          username: true,
+          email: true,
+          role: true,
+          status: true,
+          isAdmin: true,
+          canActAsDriver: true,
+        },
       });
-      if (!existingDriver) {
-        await this.prisma.forTenant().driver.create({
-          data: {
-            userId: user.id,
-            contactName: user.username,
-            phone: "",
-            status: "ACTIVE",
-          },
-        });
-      }
-    }
-
-    return this.prisma.forTenant().user.update({
-      where: { id: userId },
-      data: { canActAsDriver: newValue },
-      select: {
-        id: true,
-        username: true,
-        email: true,
-        role: true,
-        status: true,
-        isAdmin: true,
-        canActAsDriver: true,
-      },
     });
   }
 

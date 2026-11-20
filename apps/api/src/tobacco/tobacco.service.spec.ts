@@ -11,12 +11,16 @@ const D = (n: number | string) => new Prisma.Decimal(n);
 describe("TobaccoService", () => {
   let service: TobaccoService;
   let prisma: ReturnType<typeof createMockPrisma>;
-  let systemConfig: { get: jest.Mock; set: jest.Mock };
+  let systemConfig: { get: jest.Mock; getAll: jest.Mock; set: jest.Mock };
   let audit: { log: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
-    systemConfig = { get: jest.fn().mockResolvedValue(null), set: jest.fn() };
+    systemConfig = {
+      get: jest.fn().mockResolvedValue(null),
+      getAll: jest.fn().mockResolvedValue({}),
+      set: jest.fn(),
+    };
     audit = { log: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({

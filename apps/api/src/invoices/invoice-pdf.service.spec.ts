@@ -37,10 +37,13 @@ jest.mock("@react-pdf/renderer", () => ({
 
 import { readFileSync } from "fs";
 import { join } from "path";
+import { NotFoundException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { baseUnitSuffix } from "@routeflow/pricing";
 import { InvoicePdfService, invoicePdfStorageKey } from "./invoice-pdf.service";
 import { promoNote, qtyCellText, showOriginalPrice } from "./invoice-pdf-item";
+import { pdfTotalsVisibility } from "./invoice-pdf-totals-visibility";
+import { buildInvoiceEmailPayload } from "./invoice-email-payload";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -68,6 +71,7 @@ async function makeService(
   storage: any,
   hideOriginalPrice: string | null,
   hidePerPiece: string | null = null,
+  extraConfig: Record<string, string> = {},
 ) {
   const systemConfig = {
     get: jest.fn(async (key: string) =>
@@ -77,6 +81,12 @@ async function makeService(
           ? hidePerPiece
           : null,
     ),
+    getAll: jest.fn(async () => {
+      const all: Record<string, string> = {};
+      if (hideOriginalPrice != null) all["invoice.hideOriginalPrice"] = hideOriginalPrice;
+      if (hidePerPiece != null) all["invoice.hidePerPiece"] = hidePerPiece;
+      return { ...all, ...extraConfig };
+    }),
     set: jest.fn().mockResolvedValue(undefined),
   };
   (prisma.systemConfig.findFirst as jest.Mock).mockResolvedValue(
@@ -319,6 +329,148 @@ describe("InvoicePdfService.generateAndUpload — hide-original-price setting (T
   });
 });
 
+// R6a (T10b): the Paid / Balance Due switches ride the template props from the one layout read.
+describe("InvoicePdfService.generateAndUpload - Paid / Balance Due switches (R6a, T10b)", () => {
+  const paymentRows = [
+    {
+      id: "p-cash",
+      amount: 50,
+      status: "PAID",
+      method: "CASH",
+      paidAt: new Date(),
+      creditNote: null,
+    },
+    {
+      id: "p-credit",
+      amount: 40,
+      status: "PAID",
+      method: "CREDIT_NOTE",
+      paidAt: new Date(),
+      creditNote: { creditNoteNumber: "CN-7", reason: "Return" },
+    },
+    {
+      id: "p-adv",
+      amount: 20,
+      status: "PAID",
+      method: "ADVANCE",
+      paidAt: new Date(),
+      creditNote: null,
+    },
+  ];
+
+  async function render(extraConfig: Record<string, string>) {
+    mockCapturedInvoice = null;
+    const prisma = createMockPrisma();
+    const row = (args: any) => ({
+      ...baseInvoiceFixture({ subtotal: 200, total: 200 }),
+      payments: paymentRows.filter((p) => matchesStatus(p.status, args?.include?.payments?.where)),
+    });
+    prisma.invoice.findUnique.mockImplementation(async (args: any) => row(args));
+    prisma.tenantConfig.findUnique.mockResolvedValue(TENANT_CONFIG as any);
+    const service = await makeService(prisma, makeStorage(), null, null, extraConfig);
+    await service.generateAndUpload("inv-1");
+    return { props: mockCapturedInvoice, source: row({}) };
+  }
+
+  it("passes the two switches to the template props (absent = false)", async () => {
+    const off = (await render({})).props;
+    expect([off.hideAmountPaid, off.hideBalanceDue]).toEqual([false, false]);
+    const on = (
+      await render({ "invoice.hideAmountPaid": "true", "invoice.hideBalanceDue": "true" })
+    ).props;
+    expect([on.hideAmountPaid, on.hideBalanceDue]).toEqual([true, true]);
+  });
+
+  // The Lead's pin: a switch hides LINES only, it never changes a figure.
+  it("a switch hides lines only: total, paid, credit, advance and balance are identical across all 4 combinations, in the PDF props and the email payload", async () => {
+    const combos = [
+      [false, false],
+      [true, false],
+      [false, true],
+      [true, true],
+    ] as const;
+    const figures: unknown[] = [];
+    const visibility: unknown[] = [];
+    for (const [paid, balance] of combos) {
+      const cfg: Record<string, string> = {};
+      if (paid) cfg["invoice.hideAmountPaid"] = "true";
+      if (balance) cfg["invoice.hideBalanceDue"] = "true";
+      const { props, source } = await render(cfg);
+      const email = buildInvoiceEmailPayload(
+        { ...source, customer: { businessName: "Acme" } },
+        {
+          recipientEmail: "a@example.com",
+          pdfUrl: undefined,
+          attachment: undefined,
+          hideOriginalPrice: false,
+          hideAmountPaid: paid,
+          hideBalanceDue: balance,
+        },
+      );
+      figures.push({
+        pdf: {
+          total: Number(props.total),
+          totalPaid: props.totalPaid,
+          creditApplied: props.creditApplied,
+          advanceApplied: props.advanceApplied,
+          payments: props.payments.length,
+        },
+        email: {
+          total: email.total,
+          totalPaid: email.totalPaid,
+          creditApplied: email.creditApplied,
+          advanceApplied: email.advanceApplied,
+          balanceDue: email.balanceDue,
+        },
+      });
+      visibility.push(
+        pdfTotalsVisibility({
+          hideAmountPaid: props.hideAmountPaid,
+          hideBalanceDue: props.hideBalanceDue,
+          totalPaid: props.totalPaid,
+          paymentCount: props.payments.length,
+        }),
+      );
+    }
+    expect(figures[0]).toEqual({
+      pdf: { total: 200, totalPaid: 50, creditApplied: 40, advanceApplied: 20, payments: 3 },
+      email: { total: 200, totalPaid: 50, creditApplied: 40, advanceApplied: 20, balanceDue: 90 },
+    });
+    for (const f of figures) expect(f).toEqual(figures[0]);
+    // only the visible rows differ; both on = today's output
+    expect(visibility).toEqual([
+      {
+        amountPaidRow: true,
+        balanceDueRow: true,
+        paymentHistory: true,
+        statusBadge: true,
+        paidDate: true,
+      },
+      {
+        amountPaidRow: false,
+        balanceDueRow: true,
+        paymentHistory: false,
+        statusBadge: true,
+        paidDate: false,
+      },
+      {
+        amountPaidRow: true,
+        balanceDueRow: false,
+        paymentHistory: true,
+        statusBadge: true,
+        paidDate: true,
+      },
+      {
+        amountPaidRow: false,
+        balanceDueRow: false,
+        paymentHistory: false,
+        statusBadge: true,
+        paidDate: false,
+      },
+    ]);
+  });
+});
+
 /**
  * The stored key is deterministic per invoice, so the `pdfUrl` pointer only needs writing
  * when it differs from what is already stored. A repeat render must not write the row
@@ -539,5 +691,30 @@ describe("invoice-pdf-template — qtyCellText wiring (B653)", () => {
     expect(at).toBeGreaterThan(-1);
     const call = src.slice(at, src.indexOf("})", at) + 2);
     expect(call).toMatch(/unitLabel:\s*item\.unitLabel/);
+  });
+});
+
+describe("InvoicePdfService.generateAndUpload — tenant scope (REG-B188)", () => {
+  beforeEach(() => {
+    mockCapturedInvoice = null;
+    jest.clearAllMocks();
+  });
+
+  it("REG-B188: the renderer reads the invoice only through forTenant(); another tenant's id is NotFound", async () => {
+    const prisma = createMockPrisma();
+    // The root client would return the other tenant's row; the tenant-scoped client does not see it.
+    const rootFind = prisma.invoice.findUnique;
+    rootFind.mockResolvedValue(baseInvoiceFixture({ id: "inv-other-tenant" }) as any);
+    const scopedFind = jest.fn().mockResolvedValue(null);
+    (prisma as any).forTenant = jest.fn().mockReturnValue({ invoice: { findUnique: scopedFind } });
+    const storage = makeStorage();
+    const service = await makeService(prisma, storage, null);
+
+    await expect(service.getOrGenerate("inv-other-tenant")).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(scopedFind).toHaveBeenCalledTimes(1);
+    expect(rootFind).not.toHaveBeenCalled();
+    expect(storage.upload).not.toHaveBeenCalled();
   });
 });

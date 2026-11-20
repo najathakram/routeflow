@@ -184,7 +184,7 @@ describe("POS stack: re-price x line row x Undo x checkout", () => {
     click("Edit the note on Cola");
     pickAcme();
     await waitFor(() => expect(colaRow()).toHaveTextContent("$2.00"));
-    expect(screen.getByTestId("line-note")).toHaveTextContent("no ice");
+    expect(screen.getByLabelText("Note for Cola")).toHaveValue("no ice"); // B1373: a noted line keeps its field on show
     click("Exact");
     fireEvent.click(completeBtn());
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
@@ -205,7 +205,7 @@ describe("POS stack: re-price x line row x Undo x checkout", () => {
     await waitFor(() => expect(total()).toHaveTextContent("$4.00"));
     click("Undo"); // the re-price note's Undo (no line is removed)
     await waitFor(() => expect(total()).toHaveTextContent("$5.00"));
-    expect(screen.getByTestId("line-note")).toHaveTextContent("no ice");
+    expect(screen.getByLabelText("Note for Cola")).toHaveValue("no ice"); // B1373: a noted line keeps its field on show
   });
 
   it("the receipt shows a line's note as muted text under the line", async () => {

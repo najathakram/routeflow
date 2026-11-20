@@ -122,7 +122,13 @@ describe("B1234: delivered lines of a PARTIALLY_DELIVERED order are locked (upda
             revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue([]),
           },
         },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: NotificationsService, useValue: {} },
         { provide: InventoryService, useValue: {} },
         {

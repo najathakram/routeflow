@@ -10,6 +10,10 @@ import {
 } from "@routeflow/types";
 import { BUYER_QTY_SPLIT_MISMATCH_COPY } from "./buyer-cart-line";
 import { READ_ONLY_SENTENCE } from "@routeflow/types/read-only-copy";
+import {
+  routeStopsNotPlacedFromBody,
+  routeStopsNotPlacedSentence,
+} from "@routeflow/types/route-stops-not-placed";
 import { regulatedAuthCopy } from "@routeflow/types/regulated-auth-copy";
 import {
   CREDIT_NOTE_ERROR_COPY,
@@ -209,6 +213,8 @@ const CODE_COPY: Record<string, string> = {
     "This order's total can't drop below the credit already issued or held against its returns. Raise the total, or deal with the return credit first.",
   [API_ERROR_CODES.UNIT_AWARE_LINE_UNVERIFIABLE]:
     "This invoice's lines couldn't be verified, so it can't be edited. Ask an admin.",
+  [API_ERROR_CODES.CHANGE_REQUEST_SPLIT_MISMATCH]:
+    "This request's quantity and box count don't match, so it can't be applied: decline it.",
   [API_ERROR_CODES.CHANGE_REQUEST_PACK_CHANGED]:
     "The pack size changed, so a change request was filed. Decline it and re-add the item to the next order.",
   [API_ERROR_CODES.MERGE_ALREADY_DECIDED]:
@@ -507,6 +513,9 @@ function taxStateStaleCopy(data: Record<string, unknown>): string {
     : INVOICE_TAX_STATE_STALE_COPY.ISSUED;
 }
 
+/** On-screen time for a toast whose message is two sentences (for example the optimize refusal); the default is 4 s. */
+export const LONG_TOAST_MS = 10_000;
+
 export function codedToastCopy(err: unknown): string | null {
   const refusal = safeTextErrorCopy(err);
   if (refusal) return refusal;
@@ -527,6 +536,9 @@ export function codedToastCopy(err: unknown): string | null {
     return CUSTOMER_CODE_COPY[code];
   if (code === API_ERROR_CODES.INVOICE_TAX_STATE_STALE) return taxStateStaleCopy(data);
   if (code === API_ERROR_CODES.INSUFFICIENT_STOCK) return STOCK_COPY;
+  // UXG B14: optimize refused because stops have no map position; count and names come from STRUCTURED fields.
+  const unplaced = routeStopsNotPlacedFromBody(data, API_ERROR_CODES.ROUTE_STOPS_NOT_PLACED);
+  if (unplaced) return routeStopsNotPlacedSentence(unplaced.count, unplaced.names);
   // B986: coded refusals whose server sentence tells the user what to fix; the numbers come from STRUCTURED fields.
   if (code === API_ERROR_CODES.ALLOCATIONS_EXCEED_PAYMENT) return allocationsCopy(data);
   if (code === API_ERROR_CODES.UNLINKED_ITEMS) return unlinkedCopy(data);

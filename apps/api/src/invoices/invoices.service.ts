@@ -33,6 +33,7 @@ import { randomUUID } from "crypto";
 import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 import { PrismaService } from "../prisma/prisma.service";
 import { statusFromPayments } from "./invoice-status";
+import { readInvoiceLayout } from "./invoice-layout";
 import { voidPaymentInTx } from "./payment-void-tx";
 import { TENANT_ZONE_SELECT, configuredZone, tenantTimeZone } from "../common/tenant-time-zone";
 import { givenPaidInstant, paidInstantOf, settledInstantOf } from "../common/paid-instant";
@@ -115,6 +116,7 @@ import {
   recordInvoiceEmailed,
   assertOrderInvoiceUnlockedFor,
   sendFieldsFor,
+  changedSinceSentNumbers,
   type SendEmailArgs,
 } from "./invoice-send-state";
 import { resolveInvoiceVariant } from "./invoice-stage";
@@ -2977,8 +2979,7 @@ export class InvoicesService {
     // Rides the invoice payload (not /settings/invoice, which is operator-only)
     // so CUSTOMER viewers of this same document honor the tenant's
     // hide-original-price preference too.
-    const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
-    const hidePerPiece = (await this.systemConfig.get("invoice.hidePerPiece")) === "true"; // owner ruling 2026-11-04
+    const { hideOriginalPrice, hidePerPiece } = await readInvoiceLayout(this.systemConfig);
     stampHandedOverBy(inv.order, user); // row 342: staff only (`invoiceDetailFor` drops `order` for a buyer)
     await iGate.stampOverrideNames(this.prisma.forTenant(), inv.items, user); // row 510: staff only
     const db = this.prisma.forTenant();
@@ -3593,17 +3594,18 @@ export class InvoicesService {
     // F03/R9: the SAME tenant setting findOneOrThrow and the PDF read: the email renders the same item table as the
     // PDF attached to it, so it honours the hide-original-price preference too. The payload (the F03/R8/B421 paid
     // basis, the item table, the deposit schedule) is built in invoice-email-payload.ts (the service is on the ratchet).
-    const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
-    const hidePerPiece = (await this.systemConfig.get("invoice.hidePerPiece")) === "true";
+    const layout = await readInvoiceLayout(this.systemConfig); // R6a: the invoice email's Paid / Balance Due switches ride it
     const emailPayload = buildInvoiceEmailPayload(snapshot, {
       recipientEmail,
       pdfUrl,
       attachment,
-      hideOriginalPrice,
-      hidePerPiece,
+      ...layout,
     });
     const parts = [this.prisma, this.pdfService, this.storage, this.logger, opts] as const;
     Object.assign(emailPayload, await completionEmailParts(...parts)); // I-120: COUNTER_COMPLETE only
+    const first = { id, invoiceNumber: inv.invoiceNumber, fingerprint }; // B1372 K2: "changed since we last sent it"
+    const by = [this.prisma, this.featureConfig, first, opts?.withInvoiceIds] as const;
+    Object.assign(emailPayload, { changedSinceSent: await changedSinceSentNumbers(...by) });
     const sendResult = await this.emailService.sendInvoice(emailPayload);
 
     // R5: the email server was configured but the actual send did NOT succeed
@@ -3918,7 +3920,10 @@ export class InvoicesService {
   ): Promise<string[]> {
     const db = tx ?? this.prisma.forTenant();
     const reverted = await revertLinkedInvoicesToDraft(db, orderId, opts);
-    for (const id of reverted) await du.clearIssueDisplayUnits(db, id); // SA-827 rule 5 / B1275: a DRAFT renders live
+    for (const id of reverted) {
+      await du.clearIssueDisplayUnits(db, id); // SA-827 rule 5 / B1275: a DRAFT renders live
+      await this.commissionEngine.syncInvoiceCommissionSafe(id, db); // B1372 K5a: a DRAFT targets zero, as the manual revert
+    }
     return reverted;
   }
 

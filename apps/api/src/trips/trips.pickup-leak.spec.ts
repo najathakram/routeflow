@@ -40,7 +40,10 @@ describe("TripsService — PICKUP orders are not routable", () => {
         TripsService,
         { provide: PrismaService, useValue: prisma },
         { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue("k") } },
-        { provide: SystemConfigService, useValue: { get: jest.fn(), set: jest.fn() } },
+        {
+          provide: SystemConfigService,
+          useValue: { get: jest.fn(), getAll: jest.fn().mockResolvedValue({}), set: jest.fn() },
+        },
       ],
     }).compile();
     service = mod.get(TripsService);

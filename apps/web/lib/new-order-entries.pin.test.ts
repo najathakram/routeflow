@@ -21,7 +21,7 @@ const ENTRIES: ReadonlyArray<[string, string, string]> = [
   ],
   ["palette New Order", "components/CommandPalette.tsx", '"New Order"'],
   ["palette New counter sale", "components/CommandPalette.tsx", "/orders/counter-sale"],
-  ["g t", "lib/nav-shortcuts.ts", "/orders/counter-sale"],
+  ["g t", "app/(dashboard)/_components/nav-index.ts", '"/orders/counter-sale": "t"'],
   [
     "settings index",
     "app/(dashboard)/settings/_components/settings-index.ts",

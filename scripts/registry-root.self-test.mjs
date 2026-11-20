@@ -64,6 +64,7 @@ const FIXTURES = [
   "scripts/campaign/plane-intake.self-test.mjs",
   "scripts/campaign/plane-sync.self-test.mjs",
   "scripts/campaign/plane-triage.self-test.mjs",
+  "scripts/leak-check.self-test.mjs",
   "scripts/registry-root.self-test.mjs",
   "scripts/verify-turbo.self-test.mjs",
   "tools/ops-monitor/test/collector.test.mjs",

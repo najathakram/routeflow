@@ -17,7 +17,7 @@ jest.mock("../common/db-locks", () => ({
 
 import { NotFoundException } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
-import { RecurringInvoicesService } from "./recurring-invoices.service";
+import { RecurringInvoicesService, RUN_SEND_FAILED_ERROR } from "./recurring-invoices.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { AuditService } from "../audit/audit.service";
@@ -168,6 +168,31 @@ describe("RecurringInvoicesService (auto-send honesty, R5)", () => {
     ).resolves.toBeDefined();
     // The invoice is left generated (DRAFT) and the cycle was still claimed (nextRunAt advanced).
     expect(prisma.recurringInvoice.updateMany).toHaveBeenCalled();
+  });
+
+  // B1251: the invoice exists as a DRAFT and was NOT emailed, so the cycle is not a clean SUCCESS. It records FAILED with
+  // the "created but not emailed" text (a prefix the screens read as already billed: never offered as a retry).
+  it("B1251: a failed auto-send records the run as FAILED with the not-emailed text, never SUCCESS", async () => {
+    invoices.sendEmail.mockRejectedValueOnce({ response: { code: "EMAIL_NOT_CONFIGURED" } });
+    await (service as any).generateInvoiceFromTemplate(template(true));
+    const writes = prisma.recurringInvoice.update.mock.calls.map((c: any) => c[0].data);
+    expect(writes.some((d: any) => d.lastRunStatus === "SUCCESS")).toBe(false);
+    const failed = writes.find((d: any) => d.lastRunStatus === "FAILED");
+    expect(failed.lastError.startsWith(RUN_SEND_FAILED_ERROR)).toBe(true);
+    expect(failed.lastError).toContain("inv-1");
+    expect(failed.lastError).toContain("EMAIL_NOT_CONFIGURED");
+    // The cycle is billed: the schedule is never given back (no nextRunAt in any write).
+    expect(writes.every((d: any) => !("nextRunAt" in d))).toBe(true);
+    // The invoice is still linked to its template.
+    expect(prisma.invoice.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { recurringInvoiceId: "ri-1" } }),
+    );
+  });
+
+  it("B1251: a delivered auto-send still records SUCCESS", async () => {
+    await (service as any).generateInvoiceFromTemplate(template(true));
+    const writes = prisma.recurringInvoice.update.mock.calls.map((c: any) => c[0].data);
+    expect(writes).toContainEqual({ lastRunStatus: "SUCCESS", lastError: null });
   });
 });
 

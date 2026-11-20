@@ -3,16 +3,16 @@
 {"id":"B396","batch":"F51","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B397","batch":"F51","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B398","batch":"F51","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B399","batch":"F51","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B400","batch":"F51","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B401","batch":"F51","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B399","batch":"F51","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"SA-1167 class A-prime; no fix sha, spec names the id at e81c81f146: apps/api/src/billing/subscription-mutation.service.spec.ts (fixed in e81c81f1464576c2c86dd62c1f0a0ec7d4679943)","sha":"e81c81f1464576c2c86dd62c1f0a0ec7d4679943"}
+{"id":"B400","batch":"F51","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"SA-1167 class A-prime; no fix sha, spec names the id at e81c81f146: apps/api/src/billing/subscription-mutation.service.spec.ts (fixed in e81c81f1464576c2c86dd62c1f0a0ec7d4679943)","sha":"e81c81f1464576c2c86dd62c1f0a0ec7d4679943"}
+{"id":"B401","batch":"F51","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"SA-1167 class A-prime; no fix sha, spec names the id at e81c81f146: apps/api/src/platform-admin/platform-admin.service.spec.ts (fixed in e81c81f1464576c2c86dd62c1f0a0ec7d4679943)","sha":"e81c81f1464576c2c86dd62c1f0a0ec7d4679943"}
 {"id":"B402","batch":"F51","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B855","batch":"F51","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B856","batch":"F51","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B857","batch":"F51","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Re-check 2026-11-09 at 27d8125e17: a407d5267d (#2166): usePlanOptions.ts catalog-driven list; admin/tenants/[id]/page.tsx:389 and :889 use usePlanOptions/withCurrentPlan. fixed in a407d5267d (fixed in a407d5267dd24d12ed7ee1f7e3583fbab3634d12)","sha":"a407d5267dd24d12ed7ee1f7e3583fbab3634d12"}
-{"id":"B863","batch":"F51","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B864","batch":"F51","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B865","batch":"F51","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B863","batch":"F51","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"SA-1169 C1 class A: spec apps/api/src/billing/billing-cron.service.spec.ts:1580 pins the fix (fixed in 9c5e4b45567bc59e1e9e90e622b35448806b0791)","sha":"9c5e4b45567bc59e1e9e90e622b35448806b0791"}
+{"id":"B864","batch":"F51","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"SA-1169 C1 class A': spec apps/api/src/billing/mrr-paying-predicate.parity.spec.ts:85 pins the fix (fixed in 9c5e4b45567bc59e1e9e90e622b35448806b0791)","sha":"9c5e4b45567bc59e1e9e90e622b35448806b0791"}
+{"id":"B865","batch":"F51","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"SA-1169 C1 class A': spec apps/api/src/billing/addon-ledger.spec.ts:52 pins the fix (fixed in 9c5e4b45567bc59e1e9e90e622b35448806b0791)","sha":"9c5e4b45567bc59e1e9e90e622b35448806b0791"}
 {"id":"B866","batch":"F51","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B868","batch":"F51","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B869","batch":"F51","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}

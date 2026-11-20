@@ -49,7 +49,13 @@ describe("SA-322 reorder gate — dark shape (allow + would-deny warn) and enfor
           useValue: { presignedUrl: jest.fn(), presignedUrls: jest.fn().mockResolvedValue([]) },
         },
         { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(false) } },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: EntitlementAuthority, useValue: authority },
         { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         {

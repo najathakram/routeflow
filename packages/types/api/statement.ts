@@ -2,7 +2,7 @@
 //
 // SA-1078 (W-1096). One read answers "what does this customer owe us, on which invoices, what was paid and what was
 // not". Every figure is the server's, in dollars rounded to the cent; the screens never add, net or clamp. The API
-// imports this type-only (L-261), and the numbers come from `summarizeOpenInvoices`, so `openBalance` is the sum of
+// imports this type-only (L-261), and the numbers come from `statementOutstandingAmount`, so `openBalance` is the sum of
 // the `unpaid` column and equals the figure the customer page shows.
 //
 // Routes: `GET /customers/:id/account-statement` (staff) and `GET /buyer/account-statement` (the buyer's own view,
@@ -10,7 +10,7 @@
 
 import type { ToCollectState } from "./enums";
 
-/** One invoice that still owes. Oldest first. Overpaid, exactly-paid, draft, void and written-off invoices are not rows. */
+/** One invoice that still owes. Oldest first. Overpaid, exactly-paid, void and written-off invoices are not rows; a draft is a row only on a delivered or refused order. */
 export interface AccountStatementInvoice {
   id: string;
   invoiceNumber: string;
@@ -23,8 +23,13 @@ export interface AccountStatementInvoice {
   credit: number;
   /** total − paid − credit, clamped at 0 and rounded to the cent */
   unpaid: number;
-  /** whole days past the due date in the tenant's zone; 0 when due today, not yet due or no due date */
+  /** whole days past the due date in the tenant's zone; 0 when due today, not yet due, no due date, or a not-sent DRAFT (SA-1164 22:42Z D3e) */
   daysLate: number;
+  /**
+   * true only on a delivered, unsent DRAFT invoice (SA-1164 22:05Z): the row counts toward the open balance but the customer
+   * cannot open it yet. Absent on every issued invoice. The buyer screens say "Not sent yet" and show no open link.
+   */
+  notSentYet?: boolean;
   /** staff route only */
   toCollect?: ToCollectState;
 }

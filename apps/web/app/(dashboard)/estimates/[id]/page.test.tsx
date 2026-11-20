@@ -214,14 +214,14 @@ describe("EstimateDetailPage — REG-B394 convert navigates to returned invoice 
   });
 });
 
-// rt-b15: PIN-B15 — pin the two ACCEPTED-only render sites (header action bar
-// + sidebar summary card) so a future edit can't silently drop one.
+// rt-b15: PIN-B15 — pin the ACCEPTED convert control: the sidebar duplicate was removed on purpose
+// (2026-11-19 estimates UX walk), so exactly one remains, in the header action bar.
 describe("EstimateDetailPage — PIN-B15 ACCEPTED convert control count (rt-b15)", () => {
   beforeEach(() => jest.clearAllMocks());
 
-  it("PIN-B15 ACCEPTED renders exactly 2 convert controls", () => {
+  it("PIN-B15 ACCEPTED renders exactly 1 convert control", () => {
     renderEstimatePage({ status: "ACCEPTED" as EstimateStatus });
 
-    expect(screen.getAllByRole("button", { name: /convert to invoice/i })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: /convert to invoice/i })).toHaveLength(1);
   });
 });

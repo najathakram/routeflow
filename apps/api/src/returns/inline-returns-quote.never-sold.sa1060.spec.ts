@@ -62,7 +62,10 @@ describe("SA-1060 PR-2: a never-sold chunk carries no sales tax and is flagged",
         { provide: PrismaService, useValue: prisma },
         {
           provide: SystemConfigService,
-          useValue: { get: jest.fn().mockResolvedValue(tenantTaxRatePercent) },
+          useValue: {
+            get: jest.fn().mockResolvedValue(tenantTaxRatePercent),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
         },
       ],
     }).compile();

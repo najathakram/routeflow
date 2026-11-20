@@ -80,7 +80,10 @@ describe("SA-078(b) — reconcile rebuild carries the PRIOR InvoiceItem's unitsP
           useValue: { sendInvoice: jest.fn(), isEmailConfigured: jest.fn() },
         },
         { provide: InvoicePdfService, useValue: { getOrGenerate: jest.fn() } },
-        { provide: SystemConfigService, useValue: { get: jest.fn(), set: jest.fn() } },
+        {
+          provide: SystemConfigService,
+          useValue: { get: jest.fn(), getAll: jest.fn().mockResolvedValue({}), set: jest.fn() },
+        },
         {
           provide: RegulatedLedgerService,
           useValue: {

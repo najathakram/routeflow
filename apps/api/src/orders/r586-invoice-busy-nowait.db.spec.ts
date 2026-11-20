@@ -72,6 +72,7 @@ describeDb(
       // The REAL revert (with its NOWAIT Invoice row lock), bound to the real Prisma service.
       const realRevert = InvoicesService.prototype.revertLinkedInvoicesForOrderEdit.bind({
         prisma,
+        commissionEngine: { syncInvoiceCommissionSafe: async () => undefined }, // B1372 K5a: the revert re-syncs
       } as any);
       orders = Object.assign(Object.create(OrdersService.prototype), {
         prisma,

@@ -840,6 +840,43 @@ describe("UsersService", () => {
     });
   });
 
+  describe("updateUser — a CUSTOMER login never becomes a DRIVER (B862)", () => {
+    it("PATCH role DRIVER on a CUSTOMER user is a 400 and nothing is written (no Driver row, no update)", async () => {
+      const role = "DRIVER";
+      prisma.user.findUnique.mockResolvedValue({
+        id: "u-cust",
+        username: "acme_buyer",
+        email: "buyer@acme.example",
+        role: "CUSTOMER",
+      } as any);
+
+      await expect(
+        service.updateUser("u-cust", { role } as any, "acme_admin", "TENANT_ADMIN" as any),
+      ).rejects.toMatchObject({ status: 400 });
+      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(prisma.driver.upsert).not.toHaveBeenCalled();
+      expect(prisma.driver.create).not.toHaveBeenCalled();
+    });
+
+    it("a CUSTOMER user edited without a role change is untouched by the refusal", async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: "u-cust",
+        username: "acme_buyer",
+        email: "buyer@acme.example",
+        role: "CUSTOMER",
+      } as any);
+      prisma.user.update.mockResolvedValue({ id: "u-cust", role: "CUSTOMER" } as any);
+      await expect(
+        service.updateUser(
+          "u-cust",
+          { role: "CUSTOMER" } as any,
+          "acme_admin",
+          "TENANT_ADMIN" as any,
+        ),
+      ).resolves.toBeDefined();
+    });
+  });
+
   describe("updateUser — role-change notice", () => {
     it("names the old role, new role, and who changed it", async () => {
       prisma.user.findUnique.mockResolvedValue({

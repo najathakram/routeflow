@@ -80,6 +80,7 @@ describe("one pairing helper for the buyer, staff and driver edits (row 373b)", 
       "invoices/invoices.service.ts",
       "order-templates/order-templates.service.ts",
       "orders/merge-unlisted-lines.ts", // W-1187: the merges' one unlisted-line append (a loser line moved, nothing to pair)
+      "orders/order-merge-fold.ts", // SA-1162: the customer merge pair, moved verbatim (loser lines carried, nothing to pair)
       "orders/orders.service.ts",
       "orders/unit-line-edit.ts",
     ]);

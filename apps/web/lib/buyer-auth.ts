@@ -33,9 +33,10 @@ interface BuyerAuthResponse {
   buyer: BuyerUser;
 }
 
-// Legacy pre-NEW-m2-1/RF-077 key — still written by the Google OAuth callback
-// (for unmigrated readers) and read as a fallback by getBuyerAccessToken().
-const LEGACY_BUYER_ACCESS = "buyerAccessToken";
+// Legacy pre-NEW-m2-1/RF-077 keys. Nothing writes or reads them any more (B139: a copy that
+// outlived sign-out kept the buyer signed in); buyerLogout() removes them once for browsers that
+// still hold them.
+const LEGACY_BUYER_KEYS = ["buyerAccessToken", "buyerRefreshToken"] as const;
 
 function parseJwtPayload(token: string): Record<string, unknown> | null {
   try {
@@ -47,17 +48,13 @@ function parseJwtPayload(token: string): Record<string, unknown> | null {
 }
 
 /**
- * Canonical accessor for the buyer access token — the namespaced key first,
- * falling back to the legacy pre-NEW-m2-1 key so sessions written by older
- * code paths keep working. ALL buyer token reads must go through this: the
- * A5 seller-list outage came from call sites still reading the legacy
- * literal ("buyerAccessToken"), which plain email/password login never
- * writes — only the Google OAuth callback backfilled it, so password logins
- * on a fresh device saw no sellers and could never reach a dashboard.
+ * Canonical accessor for the buyer access token (the namespaced key only). ALL buyer token
+ * reads must go through this: the A5 seller-list outage came from call sites still reading the
+ * legacy literal ("buyerAccessToken"), which plain email/password login never writes.
  */
 export function getBuyerAccessToken(): string | null {
   if (typeof window === "undefined") return null;
-  return localStorage.getItem(BUYER_KEYS.accessToken) ?? localStorage.getItem(LEGACY_BUYER_ACCESS);
+  return localStorage.getItem(BUYER_KEYS.accessToken);
 }
 
 export function getStoredBuyer(): BuyerUser | null {
@@ -172,6 +169,7 @@ export async function buyerLogout(): Promise<void> {
   localStorage.removeItem(BUYER_KEYS.accessToken);
   localStorage.removeItem(BUYER_KEYS.refreshToken);
   localStorage.removeItem(BUYER_KEYS.activeSeller);
+  LEGACY_BUYER_KEYS.forEach((k) => localStorage.removeItem(k)); // B139
   clearBuyerSubmitKey(); // B1094: the next buyer on this browser must not inherit this one's key
   Object.keys(localStorage)
     .filter(

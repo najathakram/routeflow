@@ -38,7 +38,9 @@ describe("OrdersService.findOne product parent", () => {
       ],
     });
     const service = Object.assign(Object.create(OrdersService.prototype), {
-      prisma: { forTenant: () => ({ order: { findUnique } }) },
+      prisma: {
+        forTenant: () => ({ order: { findUnique }, invoice: { findMany: async () => [] } }),
+      },
     }) as OrdersService;
     const result: any = await service.findOne("o-1", operator);
     expect(result.lineItems[0].product.parent).toEqual({ name: "Own family" });
@@ -59,7 +61,10 @@ describe("OrdersService.findOne product parent", () => {
     });
     const getTenantId = jest.fn().mockReturnValue("t-1");
     const service = Object.assign(Object.create(OrdersService.prototype), {
-      prisma: { forTenant: () => ({ order: { findUnique } }), getTenantId },
+      prisma: {
+        forTenant: () => ({ order: { findUnique }, invoice: { findMany: async () => [] } }),
+        getTenantId,
+      },
     }) as OrdersService;
     const result: any = await service.findOne("o-1", operator);
     expect(getTenantId).toHaveBeenCalled();
@@ -76,7 +81,10 @@ describe("OrdersService.findOne product parent", () => {
       lineItems: [line("own", { name: "Own family", tenantId: "t-1" })],
     });
     const service = Object.assign(Object.create(OrdersService.prototype), {
-      prisma: { forTenant: () => ({ order: { findUnique } }), getTenantId: () => null },
+      prisma: {
+        forTenant: () => ({ order: { findUnique }, invoice: { findMany: async () => [] } }),
+        getTenantId: () => null,
+      },
     }) as OrdersService;
     const result: any = await service.findOne("o-1", operator);
     expect(result.lineItems[0].product.parent).toBeNull();

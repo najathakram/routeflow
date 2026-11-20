@@ -110,7 +110,10 @@ describe("an order switched to PICKUP never loads on a route and never rides a t
         { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue("k") } },
         { provide: StorageService, useValue: {} },
         { provide: FeatureConfigService, useValue: { getEffectiveMode: jest.fn() } },
-        { provide: SystemConfigService, useValue: { get: jest.fn(), set: jest.fn() } },
+        {
+          provide: SystemConfigService,
+          useValue: { get: jest.fn(), getAll: jest.fn().mockResolvedValue({}), set: jest.fn() },
+        },
       ],
     }).compile();
     routes = mod.get(RoutesService);

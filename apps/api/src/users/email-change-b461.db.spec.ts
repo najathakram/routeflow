@@ -203,6 +203,7 @@ describeDb("B461: a login-email change waits for the new address (real database)
       await prisma.refreshToken.deleteMany({ where: { user: { tenantId: id } } });
       await prisma.passwordResetToken.deleteMany({ where: { user: { tenantId: id } } });
       await prisma.auditLog.deleteMany({ where: { tenantId: id } });
+      await prisma.driver.deleteMany({ where: { tenantId: id } }); // a DRIVER user now has a Driver row (B862)
       await prisma.user.deleteMany({ where: { tenantId: id } }); // token rows cascade
       await prisma.tenant.deleteMany({ where: { id } });
     }

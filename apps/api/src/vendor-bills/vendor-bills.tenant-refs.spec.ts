@@ -42,7 +42,13 @@ describe("VendorBillsService.saveProductMapping — tenant refs (681 site 8)", (
             recordAiUsage: jest.fn(),
           },
         },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: DuplicateMatchService, useValue: {} },
         { provide: StorageService, useValue: { upload: jest.fn(), presignedUrl: jest.fn() } },
         { provide: InventoryService, useValue: {} },

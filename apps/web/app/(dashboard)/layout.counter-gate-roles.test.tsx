@@ -123,7 +123,7 @@ afterEach(() => {
 
 const openHelp = () => {
   press("?");
-  return screen.queryAllByText("Go to Counter sale");
+  return screen.queryAllByText("Go to Counter");
 };
 
 describe("g t and its help entry with cached counter data (W20-L2)", () => {

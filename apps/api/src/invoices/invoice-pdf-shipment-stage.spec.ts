@@ -69,7 +69,13 @@ async function variantFor(opts: {
           presignedUrl: jest.fn().mockResolvedValue("https://cdn.example.com/x.pdf"),
         },
       },
-      { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+      {
+        provide: SystemConfigService,
+        useValue: {
+          get: jest.fn().mockResolvedValue(null),
+          getAll: jest.fn().mockResolvedValue({}),
+        },
+      },
       {
         provide: FeatureConfigService,
         useValue: { getEffectiveMode: jest.fn().mockResolvedValue(opts.mode) },

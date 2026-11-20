@@ -30,6 +30,237 @@
       "guarded": "the phone rise offset; now read from the css and required to stay under the h2+.sub gap, inside @media screen",
       "bug": "B1324",
       "replacedBy": "T9"
+    },
+    {
+      "file": "site-mobile-pass.static.test.ts",
+      "pin": "expect(wheel).toContain(\"((small ? 11 : 10.5) * dpr) / 31\")",
+      "guarded": "the phone label size floor (11 px) in the wheel's canvas text",
+      "bug": "B1321",
+      "replacedBy": "T5"
+    },
+    {
+      "file": "site-mobile-pass.static.test.ts",
+      "pin": "expect(wheel).toContain(\"shy = small && fitN < floor\")",
+      "guarded": "a phone's side name was dropped when it would not fit at 11 px",
+      "bug": "B1321",
+      "replacedBy": "T5"
+    },
+    {
+      "file": "site-mobile-pass.static.test.ts",
+      "pin": "expect(wheel).toContain(\"if (!shy)\")",
+      "guarded": "the icon stayed drawn when a name was left out",
+      "bug": "B1321",
+      "replacedBy": "T5"
+    },
+    {
+      "file": "site-mobile-pass.static.test.ts",
+      "pin": "expect(wheel).toContain(\"vis * (outer ? 1 - p.n * shown * (1 - flat) : 1)\")",
+      "guarded": "the outer icon's fade followed the name's fade on a phone",
+      "bug": "B1321",
+      "replacedBy": "T5"
+    },
+    {
+      "file": "site-mobile-pass.static.test.ts",
+      "pin": "expect(wheel).toContain(\"drop = small && room / Math.max(1, ...ls.map(wid)) < floor11;\")",
+      "guarded": "a side name that would not fit at 11 px was left out and the icon stayed",
+      "bug": "B1321",
+      "replacedBy": "T5"
+    },
+    {
+      "file": "site-mobile-pass.static.test.ts",
+      "pin": "expect(wheel).toContain(\"if (!drop) for (let j = 0; j < ls.length; j++) ctx.fillText(\")",
+      "guarded": "the side-name draw loop was skipped when the name was dropped",
+      "bug": "B1321",
+      "replacedBy": "T5"
+    },
+    {
+      "file": "site-mobile-pass.static.test.ts",
+      "pin": "expect(wheel).toContain(\"brief && tile.clientHeight < 520 ? 2.7 : 1.7\")",
+      "guarded": "on a short screen the names waited until the pieces settled",
+      "bug": "B1321",
+      "replacedBy": "T5"
+    },
+    {
+      "file": "site-mobile-pass.static.test.ts",
+      "pin": "expect(wheel).toContain(\"at + late\")",
+      "guarded": "the short-screen name delay was added to the beat time",
+      "bug": "B1321",
+      "replacedBy": "T5"
+    },
+    {
+      "file": "site-mobile-pass.static.test.ts",
+      "pin": "expect(wheel).toContain(\"p.nd = false;\")",
+      "guarded": "each piece recorded whether its own name was drawn",
+      "bug": "B1321",
+      "replacedBy": "T5"
+    },
+    {
+      "file": "site-mobile-pass.static.test.ts",
+      "pin": "expect(wheel).toContain(\"p.nd = name > 0.55 && shown === 1;\")",
+      "guarded": "a piece's drawn-name flag followed the name's alpha",
+      "bug": "B1321",
+      "replacedBy": "T5"
+    },
+    {
+      "file": "site-mobile-pass.static.test.ts",
+      "pin": "expect(wheel).toContain(\"shown = shy ? 0 : 1;\")",
+      "guarded": "the drawn-name flag was cleared when the phone name was left out",
+      "bug": "B1321",
+      "replacedBy": "T5"
+    },
+    {
+      "file": "site-mobile-pass.static.test.ts",
+      "pin": "expect(wheel).toContain(\"shown = drop ? 0 : 1;\")",
+      "guarded": "the drawn-name flag was cleared when the side name was dropped",
+      "bug": "B1321",
+      "replacedBy": "T5"
+    },
+    {
+      "file": "site-mobile-pass.static.test.ts",
+      "pin": "expect(wheel).toContain('tip.classList.toggle(\"on\", !P[i].nd)')",
+      "guarded": "the hover label was off for a piece whose name was drawn",
+      "bug": "B1321",
+      "replacedBy": "T5"
+    },
+    {
+      "file": "site-mobile-pass.static.test.ts",
+      "pin": "expect(wheel).toContain('if (tipI >= 0) tip.classList.toggle(\"on\", !P[tipI].nd);')",
+      "guarded": "the label followed the drawn-name flag while a piece was up",
+      "bug": "B1321",
+      "replacedBy": "T5"
+    },
+    {
+      "file": "site-mobile-pass.static.test.ts",
+      "pin": "expect(wheel).toContain(\"const brief = small;\")",
+      "guarded": "a window 500 px or taller drew the names exactly as before (the short-screen flag was the phone flag)",
+      "bug": "B1321",
+      "replacedBy": "T3"
+    },
+    {
+      "file": "site-mobile-pass.static.test.ts",
+      "pin": "expect(wheel).toContain(\"roomy = vis > low + 36\")",
+      "guarded": "the phone wheel sat above the browser bar with room for the hint",
+      "bug": "B1321",
+      "replacedBy": "T3"
+    },
+    {
+      "file": "site-mobile-pass.static.test.ts",
+      "pin": "expect(wheel).toContain(\"hintAt(room)\")",
+      "guarded": "the hint was placed by the room left under the phone wheel",
+      "bug": "B1321",
+      "replacedBy": "T3"
+    },
+    {
+      "file": "site-motion-always.static.test.ts",
+      "pin": "expect(wheel).toContain(\"nq = 1;\")",
+      "guarded": "phone wheel names were upright (no squash)",
+      "bug": "B1321",
+      "replacedBy": "T5"
+    },
+    {
+      "file": "site-motion-always.static.test.ts",
+      "pin": "expect(wheel).toContain(\"const wc = {}, wid = (t) => wc[t] || (wc[t] = ctx.measureText(t).width);\",)",
+      "guarded": "a name's width cache used one measure per text",
+      "bug": "B1321",
+      "replacedBy": "T5"
+    },
+    {
+      "file": "site-motion-always.static.test.ts",
+      "pin": "expect(wheel).toContain(\"Math.min(ax - x0, x1 - ax)\")",
+      "guarded": "a name was fitted to its piece's half-width",
+      "bug": "B1321",
+      "replacedBy": "T5"
+    },
+    {
+      "file": "site-motion-always.static.test.ts",
+      "pin": "expect(wheel).toContain(\"room / Math.max(1, ...w.lines.map(wid))\")",
+      "guarded": "a name's size was fitted to the room over its widest line",
+      "bug": "B1321",
+      "replacedBy": "T5"
+    },
+    {
+      "file": "site-motion-always.static.test.ts",
+      "pin": "expect(wheel).toContain(\"for (const k in wc) delete wc[k];\")",
+      "guarded": "the width cache was cleared when fonts changed",
+      "bug": "B1321",
+      "replacedBy": "T5"
+    },
+    {
+      "file": "site-motion-always.static.test.ts",
+      "pin": "expect(wheel).toContain(\"const room = 2 * hw * 0.88\")",
+      "guarded": "the room for a name was the piece's real width on its rows",
+      "bug": "B1321",
+      "replacedBy": "T5"
+    },
+    {
+      "file": "site-motion-always.static.test.ts",
+      "pin": "expect(wheel).toContain(\"hw = Math.min(hw, ax - l, r - ax)\")",
+      "guarded": "the room was clamped to the piece's edges around the icon",
+      "bug": "B1321",
+      "replacedBy": "T5"
+    },
+    {
+      "file": "site-motion-always.static.test.ts",
+      "pin": "expect(wheel).toContain(\"ctx.fillStyle = ctx.strokeStyle = css(mix(INK, w.ink, p.c)); } /* the icon keeps\",)",
+      "guarded": "the icon kept the piece's own ink after a white name",
+      "bug": "B1321",
+      "replacedBy": "T5"
+    },
+    {
+      "file": "site-motion-always.static.test.ts",
+      "pin": "expect(wheel).toContain(\"const nt = phone && w.d.n && w.d.n.length > 9;\")",
+      "guarded": "a long phone note wrapped to two lines",
+      "bug": "B1321",
+      "replacedBy": "T5"
+    },
+    {
+      "file": "site-motion-always.static.test.ts",
+      "pin": "expect(wheel).toContain(\"lines2(w.d.n)\")",
+      "guarded": "the wrapped note used a two-line splitter",
+      "bug": "B1321",
+      "replacedBy": "T5"
+    },
+    {
+      "file": "site-motion-always.static.test.ts",
+      "pin": "expect(wheel).toContain(\"const lf = lum(f), ld = lum(mix(INK, w.ink, p.c));\")",
+      "guarded": "ink turned white when white read better than the piece's dark ink",
+      "bug": "B1321",
+      "replacedBy": "T5"
+    },
+    {
+      "file": "site-motion-always.static.test.ts",
+      "pin": "expect(wheel).toContain(\"lit = 1.05 / (lf + 0.05) > (Math.max(lf, ld) + 0.05) / (Math.min(lf, ld) + 0.05);\",)",
+      "guarded": "the white-ink contrast test",
+      "bug": "B1321",
+      "replacedBy": "T5"
+    },
+    {
+      "file": "site-motion-always.static.test.ts",
+      "pin": "expect(wheel).toContain('ctx.shadowColor = \"rgba(0,0,0,0.34)\"')",
+      "guarded": "white ink carried a soft shadow",
+      "bug": "B1321",
+      "replacedBy": "T5"
+    },
+    {
+      "file": "site-motion-always.static.test.ts",
+      "pin": "expect(wheel).toContain(\"uy < 0 ? 0.6 * cx : (x1 - x0) * 0.82\")",
+      "guarded": "the two back core names shared one size",
+      "bug": "B1321",
+      "replacedBy": "T5"
+    },
+    {
+      "file": "site-motion-always.static.test.ts",
+      "pin": "expect(wheel).toContain(\"Math.max(...list.map((v) => wid(v.d.t)))\")",
+      "guarded": "the front core name fitted its piece",
+      "bug": "B1321",
+      "replacedBy": "T5"
+    },
+    {
+      "file": "site-phone-and-motion.static.test.ts",
+      "pin": "expect(wheel).toContain(\"((phone ? 13 : 12) * dpr) / 31\")",
+      "guarded": "phone wheel labels had a size floor above 12 px",
+      "bug": "B1321",
+      "replacedBy": "T5"
     }
   ]
 }

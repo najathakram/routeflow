@@ -81,7 +81,7 @@ describe("Settings > Invoicing: Show price per piece on invoices", () => {
     await perPieceBox();
     expect(
       screen.getByText(
-        "Adds a Per piece column beside pack lines, on the invoice page, the PDF and the email. Turn off to print invoices without it.",
+        "Adds a Per piece column beside pack lines, on the invoice page, the PDF, the email and reminders. Turn off to print invoices without it.",
       ),
     ).toBeInTheDocument();
   });

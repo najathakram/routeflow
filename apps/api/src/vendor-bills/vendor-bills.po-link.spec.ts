@@ -134,7 +134,13 @@ describe("VendorBillsService — PO-linked bills (units/PO step 7)", () => {
             recordAiUsage: jest.fn(),
           },
         },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         {
           provide: DuplicateMatchService,
           useValue: {
@@ -206,8 +212,8 @@ describe("VendorBillsService — PO-linked bills (units/PO step 7)", () => {
     it("refuses a PO that already has a bill (one bill per PO)", async () => {
       prisma.purchaseOrder.findUnique.mockResolvedValue(po());
       prisma.vendorBill.findFirst
-        .mockResolvedValueOnce(null) // nextBillNumber
-        .mockResolvedValueOnce({ billNumber: "BILL-2026-0007" });
+        .mockResolvedValueOnce({ billNumber: "BILL-2026-0007" }) // the PO already has a bill (read first, inside the tx)
+        .mockResolvedValueOnce(null); // nextBillNumber
       const err: any = await service
         .create({ supplierId: "sup-1", purchaseOrderId: "po-1", items: [billLine()] })
         .catch((e) => e);

@@ -32,9 +32,11 @@ export interface AddDriverModalProps {
   isOpen: boolean;
   onClose: () => void;
   onCreateDriver: (data: DriverFormValues) => Promise<string>;
+  /** B862: fields carried over from Add User when the admin picks Driver there (name, email, username). */
+  initial?: Partial<Pick<DriverFormValues, "contactName" | "email" | "username">>;
 }
 
-export function AddDriverModal({ isOpen, onClose, onCreateDriver }: AddDriverModalProps) {
+export function AddDriverModal({ isOpen, onClose, onCreateDriver, initial }: AddDriverModalProps) {
   const [tempPassword, setTempPassword] = React.useState<string | null>(null);
   const [copied, setCopied] = React.useState(false);
   const [apiError, setApiError] = React.useState<string | null>(null);
@@ -49,6 +51,11 @@ export function AddDriverModal({ isOpen, onClose, onCreateDriver }: AddDriverMod
   } = useForm<DriverFormValues>({
     resolver: zodResolver(driverSchema),
   });
+
+  // B862: a hand-off from Add User opens this form already holding what the admin typed there.
+  React.useEffect(() => {
+    if (isOpen && initial) reset({ ...initial });
+  }, [isOpen, initial, reset]);
 
   // Auto-suggest username from name (only if user hasn't manually edited it)
   const nameValue = watch("contactName") ?? "";

@@ -3,19 +3,15 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { CounterLineRow } from "./CounterLineRow";
 import type { SaleLine } from "./counter-sale-scan";
 import { setLineQty } from "./counter-sale-line-edit";
-import {
-  QTY_NEGATIVE_COPY,
-  QTY_NOT_A_NUMBER_COPY,
-  QTY_NOT_WHOLE_COPY,
-  QTY_TOO_LARGE_COPY,
-  QTY_ZERO_COPY,
-} from "./counter-qty-refusal";
+import { QTY_TOO_LARGE_COPY } from "./counter-qty-refusal";
 
 /**
- * CQ-12: a typed quantity the screen refuses (0, negative, letters, a fraction) snaps back AND says why, in the row. What is
- * accepted is unchanged: the row asks `setLineQty` (the real rule) and only words the refusal.
+ * CQ-12 (B1373: the order row's number field): a typed quantity the screen refuses snaps back (the field shows the line's
+ * quantity). The row asks `setLineQty` (the real rule); a typed 0 or less is said by the order row's own "at least 1" note,
+ * and the cap alone is said by the till's refusal line. The field commits live on change (no blur step).
  */
 const base: SaleLine = { tempId: "t1", productId: "p1", name: "Cola", unitPrice: 2.5, qty: 3 };
+const AT_LEAST_ONE = "Quantity must be at least 1. Remove the line to drop it.";
 
 function mount() {
   const onQty = jest.fn((_id: string, typed: { qty?: string }) => setLineQty(base, typed) !== null);
@@ -33,32 +29,26 @@ function mount() {
   );
   return { onQty, field: screen.getByRole("spinbutton", { name: "Set quantity of Cola" }) };
 }
-const type = (field: HTMLElement, v: string) => {
-  fireEvent.change(field, { target: { value: v } });
-  fireEvent.blur(field);
-};
+const type = (field: HTMLElement, v: string) => fireEvent.change(field, { target: { value: v } });
 
 describe("CounterLineRow typed quantity refusals (CQ-12)", () => {
   it.each([
-    ["0", QTY_ZERO_COPY],
-    ["-2", QTY_NEGATIVE_COPY],
-    ["1.5", QTY_NOT_WHOLE_COPY],
-    ["abc", QTY_NOT_A_NUMBER_COPY], // a number field reports letters as ""
-  ])("%j: the field snaps back to 3 and explains itself", (v, copy) => {
-    const { field } = mount();
+    ["0", "0"],
+    ["-2", "-2"],
+  ])("%j: the line is refused, the field snaps back to 3 and the row says why", (v, sent) => {
+    const { field, onQty } = mount();
     type(field, v);
-    expect(screen.getByRole("alert")).toHaveTextContent(copy);
+    expect(onQty).toHaveBeenLastCalledWith("t1", { qty: sent });
+    expect(screen.getByRole("status")).toHaveTextContent(AT_LEAST_ONE);
     expect(field).toHaveValue(3);
-    expect(field).toHaveAttribute("aria-invalid", "true");
   });
 
   it("the message goes as soon as the clerk types again, and an accepted value shows none", () => {
     const { field, onQty } = mount();
     type(field, "0");
-    expect(screen.getByRole("alert")).toBeInTheDocument();
-    fireEvent.change(field, { target: { value: "4" } });
-    expect(screen.queryByRole("alert")).toBeNull();
-    fireEvent.blur(field);
+    expect(screen.getByRole("status")).toBeInTheDocument();
+    type(field, "4");
+    expect(screen.queryByRole("status")).toBeNull();
     expect(onQty).toHaveBeenLastCalledWith("t1", { qty: "4" });
     expect(screen.queryByRole("alert")).toBeNull();
   });
@@ -78,10 +68,10 @@ describe("CounterLineRow typed quantity refusals (CQ-12)", () => {
       </ul>,
     );
     const field = screen.getByRole("spinbutton", { name: "Set quantity of Cola" });
-    fireEvent.change(field, { target: { value: "5" } });
-    fireEvent.blur(field);
+    type(field, "5");
     expect(onQty).toHaveBeenCalled();
     expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
     expect(field).toHaveValue(3);
   });
 
@@ -102,20 +92,7 @@ describe("CounterLineRow typed quantity refusals (CQ-12)", () => {
         />
       </ul>,
     );
-    type(screen.getByRole("spinbutton", { name: "Boxes of Cola" }), "9000");
+    type(screen.getByTitle(/^Number of whole box/), "9000");
     expect(screen.getByRole("alert")).toHaveTextContent(QTY_TOO_LARGE_COPY);
-  });
-
-  it("1e3 gets the generic whole-number line, not 'at least 1'", () => {
-    const { field } = mount();
-    type(field, "1e3");
-    expect(screen.getByRole("alert")).toHaveTextContent("Enter a whole number from 1.");
-  });
-
-  it("Escape drops the draft and any message", () => {
-    const { field } = mount();
-    type(field, "0");
-    fireEvent.keyDown(field, { key: "Escape" });
-    expect(screen.queryByRole("alert")).toBeNull();
   });
 });

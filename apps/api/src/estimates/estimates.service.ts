@@ -11,10 +11,13 @@ import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   computeLineSubtotal,
+  decideStaffOverride,
   getTierPrice,
   isSpecialPrice,
   round4,
   roundMoney,
+  withinStaffOverrideTolerance,
+  type DiscountTaxBase,
 } from "@routeflow/pricing";
 import { loadMsrpMap } from "../common/msrp";
 import { discountModeOf, newDocumentDiscountMode } from "../common/discount-tax-mode";
@@ -45,7 +48,11 @@ import {
 } from "../common/money-invariants.util";
 import { assertNoUnitAwareLines } from "../orders/unit-aware-guard";
 import { customerPricing } from "../orders/units-prices-v2";
-import { CreateEstimateDto } from "./dto/create-estimate.dto";
+import {
+  CreateEstimateDto,
+  CreateEstimateItemDto,
+  UpdateEstimateDto,
+} from "./dto/create-estimate.dto";
 import { priceEditAllowedFor } from "../auth/permissions/price-edit";
 import { stampInvoicePositions } from "../invoices/invoice-line-position";
 import { assertCustomPricesAllowed, assertPriceEditAllowed } from "../orders/staff-override";
@@ -57,6 +64,40 @@ export const TERMINAL_ESTIMATE_STATUSES = [
   "CONVERTED",
   "DECLINED",
 ] as const satisfies readonly EstimateStatus[];
+
+/** A line as a create or draft-edit request sends it; `id` names the held line an edit re-sends. */
+type EstimateLineInput = CreateEstimateItemDto & { id?: string };
+
+/** A draft's stored line, as the price-rights check reads it (a re-sent, unchanged price is no new authoring). */
+interface HeldEstimateLine {
+  id: string;
+  productId: string | null;
+  unitPrice: number;
+}
+
+/** The one refusal for editing an estimate that is not a draft. */
+const notDraftRefusal = (status: string) =>
+  new BadRequestException(
+    `${status.charAt(0)}${status.slice(1).toLowerCase()} estimates cannot be edited. Move the estimate back to draft first.`,
+  );
+
+/**
+ * B79: issueDate is optional and, unlike expiresAt, has no legacy loose-parse behavior to preserve — validate the shape
+ * before touching the DB so a malformed value 400s instead of writing Invalid Date or a misparsed date.
+ */
+function parseIssueDate(value: string | null | undefined): Date | undefined {
+  if (value == null) return undefined;
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new BadRequestException("issueDate must be YYYY-MM-DD");
+  }
+  const d = new Date(`${value}T00:00:00.000Z`);
+  // The regex alone accepts an out-of-range day/month (e.g. "2026-02-31"), which Date's day-rollover then silently
+  // turns into "2026-03-03" instead of failing — round-trip through ISO and compare to catch that class.
+  if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== value) {
+    throw new BadRequestException("issueDate must be YYYY-MM-DD");
+  }
+  return d;
+}
 
 @Injectable()
 export class EstimatesService {
@@ -133,52 +174,200 @@ export class EstimatesService {
   }
 
   async create(dto: CreateEstimateDto, actor: JwtPayload) {
-    // B79: issueDate is optional and, unlike expiresAt, has no legacy loose-parse
-    // behavior to preserve — validate the shape before touching the DB so a
-    // malformed value 400s instead of writing Invalid Date or a misparsed date.
-    let issueDate: Date | undefined;
-    if (dto.issueDate != null) {
-      if (typeof dto.issueDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(dto.issueDate)) {
-        throw new BadRequestException("issueDate must be YYYY-MM-DD");
-      }
-      issueDate = new Date(`${dto.issueDate}T00:00:00.000Z`);
-      // The regex alone accepts an out-of-range day/month (e.g. "2026-02-31"),
-      // which Date's day-rollover then silently turns into "2026-03-03" instead
-      // of failing — round-trip through ISO and compare to catch that class.
-      if (
-        Number.isNaN(issueDate.getTime()) ||
-        issueDate.toISOString().slice(0, 10) !== dto.issueDate
-      ) {
-        throw new BadRequestException("issueDate must be YYYY-MM-DD");
-      }
-    }
+    const issueDate = parseIssueDate(dto.issueDate);
+    const priced = await this.priceEstimate(dto.customerId, dto.items ?? [], actor, [], {
+      discount: Number((dto as any).discount ?? 0),
+      discountBase: newDocumentDiscountMode(), // SA-1141 R3: a new quote is stamped now
+    });
 
+    try {
+      return await this.prisma.forTenant().estimate.create({
+        data: {
+          estimateNumber: await this.nextEstNumber(),
+          customerId: dto.customerId,
+          status: "DRAFT",
+          subtotal: priced.subtotal,
+          taxAmount: priced.tax,
+          discount: priced.discount,
+          total: priced.total,
+          issueDate,
+          expiresAt: dto.expiresAt
+            ? new Date(dto.expiresAt)
+            : dto.expiryDate
+              ? new Date(dto.expiryDate)
+              : null,
+          notes: dto.notes,
+          terms: dto.terms,
+          items: { create: priced.itemsData },
+        },
+        include: { customer: { select: { id: true, businessName: true } }, items: true },
+      });
+    } catch (err: any) {
+      // B277 pin (cause-ruling.md §2 D5): reserveNext is already collision-guarded,
+      // so this is a zero-risk consistency catch — same shape as convertToInvoice's
+      // P2002 catch below, applied to the estimate number instead of the invoice one.
+      // The try also spans `items: { create: itemsData }`, so only a P2002 whose
+      // constraint actually names estimateNumber is a number conflict; anything
+      // else propagates untouched, and every P2002 leaves a log line.
+      if (err?.code === "P2002") {
+        this.logger.warn(
+          `Estimate create failed customer=${dto.customerId} code=P2002 target=${describeUniqueViolation(err)}`,
+        );
+        if (uniqueViolationOn(err, "Estimate_tenantId_estimateNumber_key", { exact: true }))
+          throw new ConflictException("Estimate number conflict — please retry.");
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Edit a DRAFT estimate: customer, dates, notes, terms and (replace-all) lines. The lines are priced by the SAME
+   * `priceEstimate` create runs, so a draft edit and a fresh quote store the same price for the same input. Omitted
+   * `items` re-prices the held lines as they stand (a customer change moves their tier prices). Only a DRAFT is
+   * editable: a sent or accepted quote goes back to draft first (`revertToDraft`), a converted or void one never.
+   */
+  async update(id: string, dto: UpdateEstimateDto, actor: JwtPayload) {
+    const held = await this.prisma.forTenant().estimate.findUnique({
+      where: { id },
+      include: { items: true },
+    });
+    if (!held) throw new NotFoundException("Estimate not found");
+    if (held.status !== "DRAFT") throw notDraftRefusal(held.status);
+
+    const issueDate = dto.issueDate !== undefined ? parseIssueDate(dto.issueDate) : undefined;
+    const customerId = dto.customerId ?? held.customerId;
+    // A held price was judged against its customer. Under a new customer every held typed price is a new price for
+    // them, so no line counts as unchanged and the price-rights checks run again (#4386 read A, M1).
+    const heldLines: HeldEstimateLine[] =
+      customerId !== held.customerId
+        ? []
+        : held.items.map((it: any) => ({
+            id: it.id,
+            productId: it.productId ?? null,
+            unitPrice: Number(it.unitPrice),
+          }));
+    // No `items`: the held lines as they stand. A held typed price (DISCOUNTED / MANUAL, or a custom line) is re-sent
+    // as typed; a tier-priced line is re-priced at the (possibly new) customer's tier, exactly as create would.
+    const items: EstimateLineInput[] =
+      dto.items ??
+      held.items.map((it: any) => ({
+        id: it.id,
+        productId: it.productId ?? undefined,
+        description: it.description,
+        qty: Number(it.qty),
+        boxes: it.boxes ?? undefined,
+        pieces: it.pieces ?? undefined,
+        ...(!it.productId || it.priceType === "DISCOUNTED" || it.priceType === "MANUAL"
+          ? { unitPrice: Number(it.unitPrice) }
+          : {}),
+      }));
+    const priced = await this.priceEstimate(customerId, items, actor, heldLines, {
+      discount: Number(held.discount ?? 0),
+      discountBase: discountModeOf(held), // a draft edit keeps the quote's own discount mode
+    });
+
+    const header = {
+      customerId,
+      subtotal: priced.subtotal,
+      taxAmount: priced.tax,
+      discount: priced.discount,
+      total: priced.total,
+      ...(issueDate !== undefined ? { issueDate } : {}),
+      ...(dto.expiresAt !== undefined
+        ? { expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null }
+        : {}),
+      ...(dto.notes !== undefined ? { notes: dto.notes.trim() || null } : {}),
+      ...(dto.terms !== undefined ? { terms: dto.terms.trim() || null } : {}),
+    };
+    await this.prisma.tenantTransaction(async (tx) => {
+      // The claim is the authority: a draft sent (or edited) between the read above and here is refused, never
+      // silently overwritten with lines priced for a document the customer has already seen.
+      const claimed = await tx.estimate.updateMany({
+        where: { id, status: "DRAFT" },
+        data: header,
+      });
+      if (claimed.count !== 1) {
+        const now = await tx.estimate.findFirst({ where: { id }, select: { status: true } });
+        if (!now) throw new NotFoundException("Estimate not found");
+        throw notDraftRefusal(now.status);
+      }
+      await tx.estimateItem.deleteMany({ where: { estimateId: id } });
+      await tx.estimateItem.createMany({
+        data: priced.itemsData.map((it) => ({ ...it, estimateId: id })),
+      });
+    });
+    return this.findOne(id);
+  }
+
+  /**
+   * Bring a SENT or ACCEPTED estimate back to DRAFT so it can be revised and sent again. A CONVERTED estimate has an
+   * invoice and stays converted; a DECLINED one is also how a void is stored today, so it stays closed (duplicate it
+   * to quote again).
+   */
+  async revertToDraft(id: string) {
+    await this.claimTransition(
+      id,
+      "DRAFT",
+      (status) => `${status} estimates cannot be moved back to draft`,
+      ["DRAFT", ...TERMINAL_ESTIMATE_STATUSES],
+    );
+    return this.findOne(id);
+  }
+
+  /**
+   * The ONE line-pricing path for an estimate (create and draft edit). `held` are the draft's stored lines on an edit:
+   * a line re-sent with its held id, product and price is no new authoring (SA-1034: "a resubmitted, unchanged line is
+   * no authoring"), so neither price-rights check runs for it.
+   */
+  private async priceEstimate(
+    customerId: string,
+    items: EstimateLineInput[],
+    actor: JwtPayload,
+    held: HeldEstimateLine[],
+    /** The quote's discount and its discount mode: a new quote is stamped now, a draft edit keeps its own. */
+    totalsOpts: { discount: number; discountBase: DiscountTaxBase },
+  ) {
     // 681 (R5-5): the estimate stores its customer and each item's productId; prove both in this tenant (one 404 for
     // foreign or missing) before any policy read and before the write.
     await assertRefsInTenant(this.prisma, {
-      customerIds: [dto.customerId],
-      productIds: (dto.items ?? []).map((i: any) => i.productId),
+      customerIds: [customerId],
+      productIds: items.map((i) => i.productId),
     });
     const customer = await this.prisma
       .forTenant()
-      .customer.findUnique({ where: { id: dto.customerId } });
+      .customer.findUnique({ where: { id: customerId } });
     if (!customer) throw new NotFoundException("Customer not found");
 
     const tenantId = this.prisma.getTenantId();
-    const items: any[] = dto.items ?? [];
-    // SA-1034 rules 4-5: a custom estimate line, and a typed catalog price under list, are staff-typed prices. The
-    // capability is read once here, before the write, and only when a line types a price. The actor is required: the controller is the only caller.
-    const needsPriceRights = items.some((i) => !i.productId || i.unitPrice != null);
+    const heldById = new Map(held.map((h) => [h.id, h]));
+    const unchanged = (i: EstimateLineInput) => {
+      const h = i.id ? heldById.get(i.id) : undefined;
+      return (
+        !!h &&
+        h.productId === (i.productId ?? null) &&
+        i.unitPrice != null &&
+        withinStaffOverrideTolerance(Number(i.unitPrice), h.unitPrice)
+      );
+    };
+    const authoring = items.filter((i) => !unchanged(i));
+    // A custom line has no product to price it: its typed price is required (it would otherwise write NaN).
+    if (items.some((i) => !i.productId && i.unitPrice == null)) {
+      throw new BadRequestException("A custom line needs a price");
+    }
+    // SA-1034 rules 4-5: a custom estimate line, and a typed catalog price off the customer's price, are staff-typed
+    // prices. The capability is read once here, before the write, and only when a NEW or changed line types a price.
+    // The actor is required: the controller is the only caller.
+    const needsPriceRights = authoring.some((i) => !i.productId || i.unitPrice != null);
     const priceEditAllowed =
       !needsPriceRights ||
-      (await priceEditAllowedFor(this.prisma, actor, "EstimatesService.create"));
-    assertCustomPricesAllowed(items, priceEditAllowed);
+      (await priceEditAllowedFor(this.prisma, actor, "EstimatesService.priceEstimate"));
+    assertCustomPricesAllowed(authoring, priceEditAllowed);
     // H5: a quote is taxed the way an invoice is - the tenant rate and the customer's exempt flag, today.
     const taxRate = await configuredTaxRateFraction(this.prisma);
     const isTaxExempt = !!customer.isTaxExempt;
 
     // Load products for items that reference a product
-    const productIds = items.filter((i: any) => i.productId).map((i: any) => i.productId);
+    const productIds = items.map((i) => i.productId).filter((p): p is string => !!p);
     const products =
       productIds.length > 0
         ? await this.prisma.forTenant().product.findMany({
@@ -193,16 +382,16 @@ export class EstimatesService {
     const customerPrices =
       productIds.length > 0
         ? await this.prisma.forTenant().customerPrice.findMany({
-            where: { customerId: dto.customerId, productId: { in: productIds } },
+            where: { customerId, productId: { in: productIds } },
           })
         : [];
     // S19: tier maps + (flag.units_prices_v2 only) the customer's typed pack prices; flag off = master's values.
     const svc = { prisma: this.prisma, entitlements: this.entitlements };
-    const pc = await customerPricing(svc, dto.customerId, productIds, customer, customerPrices);
+    const pc = await customerPricing(svc, customerId, productIds, customer, customerPrices);
     const { defaultTier, cpMap } = pc;
 
     let subtotal = 0;
-    const itemsData = items.map((i: any) => {
+    const itemsData = items.map((i) => {
       const product = i.productId ? productMap.get(i.productId) : null;
       // B645 / line-units-callsites ratchet: read this ONCE and reuse it below
       // (qty resolution, computeLineSubtotal, and the B645 snapshot on the
@@ -224,19 +413,38 @@ export class EstimatesService {
 
       if (product) {
         // Resolve tier: per-product override > customer default tier
-        const tierForProduct = cpMap.get(i.productId) ?? defaultTier;
+        const tierForProduct = cpMap.get(product.id) ?? defaultTier;
         const layer = pc.layer(product);
         const tierPrice = layer?.price ?? getTierPrice(product, tierForProduct);
         const listPrice = layer?.listPrice ?? Number(product.pricePerUnit);
         // H5: a typed override is money - cents, like every other written price
         const overridePrice = i.unitPrice != null ? roundMoney(Number(i.unitPrice)) : null;
 
-        if (overridePrice != null && overridePrice < listPrice) {
-          assertPriceEditAllowed(priceEditAllowed); // SA-1034 rule 5: a typed price under list is a staff price override
-          unitPrice = overridePrice;
-          priceType = PriceType.DISCOUNTED;
-          originalPrice = listPrice;
-        } else if (isSpecialPrice(tierForProduct, listPrice, layer?.price)) {
+        const specialPrice = isSpecialPrice(tierForProduct, listPrice, layer?.price);
+
+        if (overridePrice != null) {
+          // The staff-override rule every sale path uses (@routeflow/pricing), judged against the CUSTOMER's price:
+          // within half a cent of it is that price (no override); below list is DISCOUNTED, at or above list MANUAL.
+          // SA-1182: a quote asks no override reason; the reason is judged at convert, where the price binds.
+          const d = decideStaffOverride({
+            overridePrice,
+            baselinePrice: tierPrice,
+            listPrice,
+            isSpecialTier: specialPrice,
+            hasReason: true,
+          });
+          if ("refused" in d) throw new BadRequestException("A reason is required for this price");
+          const overridden = d.priceType === "DISCOUNTED" || d.priceType === "MANUAL";
+          // SA-1034 rule 5: a typed price off the customer's price is a staff price override (a held one re-sent is not).
+          if (overridden && !unchanged(i)) assertPriceEditAllowed(priceEditAllowed);
+          unitPrice = d.unitPrice;
+          // S19 R2: the customer's own price above the unit's list, echoed back, stays the sticky upsell's twin.
+          priceType =
+            layer?.aboveList && d.priceType === "SPECIAL"
+              ? PriceType.MANUAL
+              : PriceType[d.priceType];
+          originalPrice = d.originalPrice;
+        } else if (specialPrice) {
           unitPrice = tierPrice;
           // S19 R2: the customer's own price above the unit's list is the sticky upsell's twin
           priceType = layer?.aboveList ? PriceType.MANUAL : PriceType.SPECIAL;
@@ -280,59 +488,19 @@ export class EstimatesService {
     });
 
     subtotal = roundMoney(subtotal);
-    // B451 gap 4: `discount` is not a declared field on CreateEstimateDto - no current caller sends one, and the
-    // global ValidationPipe's forbidNonWhitelisted 400s a request that does. Read via `as any` only so this stays
-    // defense-in-depth (via the shared guard below) if it is ever added to the DTO, not a live input path.
-    // `taxAmount` is no longer an input at all (H5): it is computed, below.
-    const discount = (dto as any).discount ?? 0;
+    // B451 gap 4: `discount` is not a declared input today (no caller sends one); a draft edit keeps the held value.
+    // `taxAmount` is never an input (H5): it is computed, below.
+    const discount = roundMoney(Number(totalsOpts.discount ?? 0));
     // H5: the invoice rule - each line's subtotal x the rate, summed unrounded, rounded once; $0 when exempt.
     const taxed = sumInvoiceTotalsStrict(
       itemsData.map((it) => ({ subtotal: it.subtotal, taxRate })),
-      { discount, isTaxExempt, discountBase: newDocumentDiscountMode() }, // SA-1141 R3: a new quote is stamped 'now'
+      { discount, isTaxExempt, discountBase: totalsOpts.discountBase }, // SA-1141 R3: a new quote is stamped now
     );
     const tax = taxed.regularTax;
     const total = roundMoney(subtotal - discount + tax);
 
     assertMoneyInvariantsOrThrow({ subtotal, discount, tax, total });
-
-    try {
-      return await this.prisma.forTenant().estimate.create({
-        data: {
-          estimateNumber: await this.nextEstNumber(),
-          customerId: dto.customerId,
-          status: "DRAFT",
-          subtotal,
-          taxAmount: tax,
-          discount,
-          total,
-          issueDate,
-          expiresAt: dto.expiresAt
-            ? new Date(dto.expiresAt)
-            : dto.expiryDate
-              ? new Date(dto.expiryDate)
-              : null,
-          notes: dto.notes,
-          terms: dto.terms,
-          items: { create: itemsData },
-        },
-        include: { customer: { select: { id: true, businessName: true } }, items: true },
-      });
-    } catch (err: any) {
-      // B277 pin (cause-ruling.md §2 D5): reserveNext is already collision-guarded,
-      // so this is a zero-risk consistency catch — same shape as convertToInvoice's
-      // P2002 catch below, applied to the estimate number instead of the invoice one.
-      // The try also spans `items: { create: itemsData }`, so only a P2002 whose
-      // constraint actually names estimateNumber is a number conflict; anything
-      // else propagates untouched, and every P2002 leaves a log line.
-      if (err?.code === "P2002") {
-        this.logger.warn(
-          `Estimate create failed customer=${dto.customerId} code=P2002 target=${describeUniqueViolation(err)}`,
-        );
-        if (uniqueViolationOn(err, "Estimate_tenantId_estimateNumber_key", { exact: true }))
-          throw new ConflictException("Estimate number conflict — please retry.");
-      }
-      throw err;
-    }
+    return { itemsData, subtotal, discount, tax, total };
   }
 
   async findAll(
@@ -377,7 +545,9 @@ export class EstimatesService {
       where: { id },
       include: {
         customer: { select: { id: true, businessName: true, contactName: true } },
-        items: { include: { product: { select: { id: true, ...LINE_NAME_PRODUCT_SELECT } } } },
+        items: {
+          include: { product: { select: { id: true, unit: true, ...LINE_NAME_PRODUCT_SELECT } } },
+        },
       },
     });
     if (!est) throw new NotFoundException("Estimate not found");

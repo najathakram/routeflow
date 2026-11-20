@@ -100,7 +100,13 @@ describe("OrderTemplatesService.generateDailyOrders — removed customer (B131)"
           provide: TenantContextService,
           useValue: { run: jest.fn((_id: string, fn: () => unknown) => fn()) },
         },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue("10") } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue("10"),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: OrdersService, useValue: {} },
         { provide: AuthorizationGuardService, useValue: {} },
         { provide: NotificationsService, useValue: {} },
@@ -203,7 +209,13 @@ describe("OrderTemplatesService.create — removed customer (B131)", () => {
           provide: TenantContextService,
           useValue: { run: jest.fn((_id: string, fn: () => unknown) => fn()) },
         },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue("10") } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue("10"),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: OrdersService, useValue: {} },
         { provide: AuthorizationGuardService, useValue: {} },
         { provide: NotificationsService, useValue: {} },

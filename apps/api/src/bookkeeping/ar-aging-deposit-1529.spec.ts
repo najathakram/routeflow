@@ -21,11 +21,10 @@ jest.mock("@anthropic-ai/sdk", () => ({
   default: jest.fn(() => ({ messages: { create: mockAnthropicCreate } })),
 }));
 
-// Mock invoice.service.ts to avoid loading @react-pdf/renderer (ESM-only)
-jest.mock("./invoice.service", () => ({
-  InvoiceService: jest.fn().mockImplementation(() => ({
-    generateInvoice: jest.fn(),
-    getPresignedUrl: jest.fn(),
+// Mock invoice-pdf.service.ts to avoid loading @react-pdf/renderer (ESM-only)
+jest.mock("../invoices/invoice-pdf.service", () => ({
+  InvoicePdfService: jest.fn().mockImplementation(() => ({
+    getOrGenerate: jest.fn(),
   })),
 }));
 
@@ -35,7 +34,7 @@ jest.mock("../vendor-bills/vendor-bills.service", () => ({
 }));
 
 import { BookkeepingService } from "./bookkeeping.service";
-import { InvoiceService } from "./invoice.service";
+import { InvoicePdfService } from "../invoices/invoice-pdf.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { StorageService } from "../storage/storage.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -75,12 +74,12 @@ const MOCK_INVOICE = {
 describe("BookkeepingService.getArAgingInvoices — deposit visibility (#1529 / SA-517)", () => {
   let service: BookkeepingService;
   let prisma: ReturnType<typeof createMockPrisma>;
-  let invoiceService: { getPresignedUrl: jest.Mock };
+  let invoiceService: { getOrGenerate: jest.Mock };
   let recordAiUsage: jest.Mock;
 
   beforeEach(async () => {
     prisma = createMockPrisma();
-    invoiceService = { getPresignedUrl: jest.fn() };
+    invoiceService = { getOrGenerate: jest.fn() };
     recordAiUsage = jest.fn();
     mockAnthropicCreate.mockReset();
 
@@ -96,7 +95,7 @@ describe("BookkeepingService.getArAgingInvoices — deposit visibility (#1529 / 
         },
         BookkeepingService,
         { provide: PrismaService, useValue: prisma },
-        { provide: InvoiceService, useValue: invoiceService },
+        { provide: InvoicePdfService, useValue: invoiceService },
         {
           provide: StorageService,
           useValue: {
@@ -227,6 +226,47 @@ describe("BookkeepingService.getArAgingInvoices — deposit visibility (#1529 / 
     // Buckets/totals unchanged: every row is current by dueDate; the total is Σ balances.
     expect(result.totals.current).toBe(900 + 1000 + 400 + 1000 + 1000);
     expect(result.totals.total).toBe(result.totals.current);
+  });
+
+  it("SA-1164 F3: a counted DRAFT's past-due deposit is never late: not in depositOverdue, row flag false", async () => {
+    zone(null);
+    const pastDeposit = {
+      dueDate: future,
+      depositPercent: 50,
+      depositDueDate: new Date("2026-09-10T00:00:00.000Z"),
+    };
+    prisma.invoice.findMany.mockResolvedValue([
+      inv("inv-sent", { ...pastDeposit }),
+      inv("inv-draft", { ...pastDeposit, status: "DRAFT" }),
+    ]);
+    const result: any = await service.getArAgingInvoices();
+    expect(result.buckets.current).toHaveLength(2);
+    expect(result.depositOverdue).toEqual({ count: 1, outstanding: 500 });
+    expect(result.buckets.current.find((e: any) => e.id === "inv-draft").depositOverdue).toBe(
+      false,
+    );
+  });
+
+  it("SA-1164 F2: the Customer Balance Summary counts a past-due delivered DRAFT in balance but never in overdue", async () => {
+    zone(null);
+    const past = new Date("2026-08-01T00:00:00.000Z");
+    prisma.invoice.findMany.mockResolvedValue([
+      inv("inv-sent", {
+        dueDate: past,
+        total: 100,
+        customer: { id: "cust-1", businessName: "Acme" },
+      }),
+      inv("inv-draft", {
+        status: "DRAFT",
+        dueDate: past,
+        total: 40,
+        customer: { id: "cust-1", businessName: "Acme" },
+      }),
+    ]);
+    const row = ((await service.getCustomerBalanceSummary()) as any).data[0];
+    expect(row.balance).toBe(140);
+    expect(row.overdue).toBe(100);
+    expect(row.invoiceCount).toBe(2);
   });
 
   it("#1529: a row with no deposit carries depositAmount null and depositOverdue false", async () => {

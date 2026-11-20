@@ -5,7 +5,7 @@
  * throws the coded CUSTOMER_PRICES_UNAVAILABLE 503. The cron must not just log it (the day's standing order would be lost
  * silently): the tenant loop re-attempts each such template ONCE after a short backoff, and if it still fails it tells the
  * tenant's operators the order was held and needs "Generate now", and counts it as skipped. Any other error is unchanged:
- * logged, not retried, not announced.
+ * logged, not retried, and (B340) announced to the operators as failed.
  */
 // @LeaderCron wraps the tick in a Postgres advisory lock (common/cron-lock.ts). There is no database here,
 // so the lock is a PASS-THROUGH that still runs the body (same mock as order-templates.removed-customer.spec.ts).
@@ -74,7 +74,13 @@ describe("OrderTemplatesService.generateDailyOrders: customer prices unavailable
           provide: TenantContextService,
           useValue: { run: jest.fn((_id: string, fn: () => unknown) => fn()) },
         },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue("10") } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue("10"),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: OrdersService, useValue: {} },
         { provide: AuthorizationGuardService, useValue: {} },
         { provide: NotificationsService, useValue: { sendToUser, sendToCustomer } },
@@ -180,20 +186,94 @@ describe("OrderTemplatesService.generateDailyOrders: customer prices unavailable
     expect(summary()).toContain("0 created, 2 skipped");
   });
 
-  it("any other error is logged only: not retried, not announced", async () => {
+  // B340: any other failure is not retried, but it is no longer silent: one notice per failed template per run
+  // (to the tenant's operators, like a held one) and the run summary counts it.
+  it("any other error is not retried, but the operators get one notice and the summary counts it failed", async () => {
     await boot([template("t1", "Weekly", "c1", "Acme Foods")]);
-    createSpy.mockRejectedValue(new Error("boom"));
+    createSpy.mockRejectedValue(new Error("Product p9 not found"));
     await service.generateDailyOrders();
     expect(createSpy).toHaveBeenCalledTimes(1);
     expect(pauseSpy).not.toHaveBeenCalled();
-    expect(sendToUser).not.toHaveBeenCalled();
+    expect(sendToUser).toHaveBeenCalledTimes(2); // one per operator
+    const body = sendToUser.mock.calls[0][1].body as string;
+    expect(body).toContain("Acme Foods");
+    expect(body).toContain("Weekly");
+    expect(body).toMatch(/failed|not placed/i);
+    expect(body).toContain("Generate now");
+    expect(body).not.toContain("p9"); // the internal error text never reaches the notice
+    expect(sendToCustomer).not.toHaveBeenCalled();
+    expect(summary()).toContain("0 created, 0 skipped");
+    expect(summary()).toContain("1 failed");
   });
 
-  it("a different 503 (not the customer-prices code) is not retried either", async () => {
+  it("a different 503 (not the customer-prices code) is not retried, and counts as failed", async () => {
     await boot([template("t1", "Weekly", "c1", "Acme Foods")]);
     createSpy.mockRejectedValue(new ServiceUnavailableException("busy"));
     await service.generateDailyOrders();
     expect(createSpy).toHaveBeenCalledTimes(1);
+    expect(sendToUser).toHaveBeenCalledTimes(2);
+    expect(summary()).toContain("1 failed");
+  });
+
+  it("one notice per failed template: two failing templates and one good one", async () => {
+    await boot([
+      template("t1", "Weekly", "c1", "Acme Foods"),
+      template("t2", "Daily", "c2", "Beta Mart"),
+      template("t3", "Monthly", "c3", "Gamma Deli"),
+    ]);
+    createSpy.mockImplementation(async (t: { id: string }) => {
+      if (t.id !== "t3") throw new Error("boom");
+      return { id: "o-t3" };
+    });
+    await service.generateDailyOrders();
+    expect(sendToUser.mock.calls.filter((c) => /Acme Foods/.test(c[1].body))).toHaveLength(2);
+    expect(sendToUser.mock.calls.filter((c) => /Beta Mart/.test(c[1].body))).toHaveLength(2);
+    expect(sendToUser.mock.calls.filter((c) => /Gamma Deli/.test(c[1].body))).toHaveLength(0);
+    expect(summary()).toContain("1 created, 0 skipped");
+    expect(summary()).toContain("2 failed");
+  });
+
+  it("held first, then a different failure on the retry: one failed notice, not a held one", async () => {
+    await boot([template("t1", "Weekly", "c1", "Acme Foods")]);
+    createSpy.mockRejectedValueOnce(pricesDown()).mockRejectedValueOnce(new Error("boom"));
+    await service.generateDailyOrders();
+    expect(createSpy).toHaveBeenCalledTimes(2);
+    expect(sendToUser).toHaveBeenCalledTimes(2);
+    expect(sendToUser.mock.calls[0][1].body).not.toMatch(/prices could not be loaded/i);
+    expect(summary()).toContain("1 failed");
+  });
+
+  // The order tx committed (ctx.placed), then the post-commit merge threw a non-contention error: the order EXISTS,
+  // so it is created, never "failed" (no "not placed" notice, and no re-entered duplicate order).
+  it("an order that committed and then threw after the commit counts as created, with no failed notice", async () => {
+    await boot([template("t1", "Weekly", "c1", "Acme Foods")]);
+    createSpy.mockImplementation(async (...args: any[]) => {
+      args[4].placed = true; // createOrderFromTemplate's ctx
+      throw new Error("merge exploded");
+    });
+    await service.generateDailyOrders();
+    expect(createSpy).toHaveBeenCalledTimes(1);
     expect(sendToUser).not.toHaveBeenCalled();
+    expect(summary()).toContain("1 created, 0 skipped");
+    expect(summary()).toContain("0 failed");
+  });
+
+  it("a replayed order (a manual run placed it first) that then throws counts as skipped, with no failed notice", async () => {
+    await boot([template("t1", "Weekly", "c1", "Acme Foods")]);
+    createSpy.mockImplementation(async (...args: any[]) => {
+      args[4].replayed = true;
+      throw new Error("after replay");
+    });
+    await service.generateDailyOrders();
+    expect(sendToUser).not.toHaveBeenCalled();
+    expect(summary()).toContain("0 created, 1 skipped");
+    expect(summary()).toContain("0 failed");
+  });
+
+  it("the held path still reads 0 failed", async () => {
+    await boot([template("t1", "Weekly", "c1", "Acme Foods")]);
+    createSpy.mockRejectedValue(pricesDown());
+    await service.generateDailyOrders();
+    expect(summary()).toContain("0 failed");
   });
 });

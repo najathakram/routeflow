@@ -1,3 +1,5 @@
+import * as fs from "fs";
+import * as path from "path";
 import { act, renderHook } from "@testing-library/react";
 import { OPERATOR_NAV } from "./nav-config";
 import { useOpenNavGroups } from "./use-open-nav-groups";
@@ -116,4 +118,27 @@ describe("useOpenNavGroups: only clicks are remembered (UXG-R2 amendment 2026-11
     h.rerender({ pathname: "/dashboard" });
     expect(h.result.current.isOpen("Finance")).toBe(false);
   });
+});
+
+describe("useOpenNavGroups: one rule for which entry holds the page (UXG-R8 T2)", () => {
+  it("multi: /ordersx is no page of any entry, so Orders is not shown open", () => {
+    const h = setup("multi", "/ordersx");
+    expect(h.result.current.isOpen("Orders")).toBe(false);
+  });
+
+  it("multi: the longest leaf decides the group (Counter lives under Orders)", () => {
+    const h = setup("multi", "/orders/counter-sale");
+    expect(h.result.current.isOpen("Orders")).toBe(true);
+    expect(h.result.current.isOpen("Finance")).toBe(false);
+  });
+});
+
+describe("the nav files hold one active-entry rule (UXG-R8 T3)", () => {
+  const read = (rel: string) => fs.readFileSync(path.resolve(__dirname, rel), "utf8");
+  it.each(["./use-open-nav-groups.ts", "./nav-config.ts", "../layout.tsx"])(
+    "%s has no pathname.startsWith( of its own",
+    (rel) => {
+      expect(read(rel)).not.toContain("pathname.startsWith(");
+    },
+  );
 });

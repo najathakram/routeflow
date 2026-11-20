@@ -104,7 +104,7 @@ describeDb(
       orders = Object.assign(Object.create(OrdersService.prototype), { prisma });
       invoices = Object.assign(Object.create(RealInvoicesService.prototype), {
         prisma,
-        systemConfig: { get: async () => null },
+        systemConfig: { get: async () => null, getAll: async () => ({}) },
       });
       tenantId = (await raw.tenant.create({ data: { slug, name: `Row342 ${slug}` } })).id;
       await raw.tenantConfig.create({ data: { tenantId, timezone: "America/New_York" } });

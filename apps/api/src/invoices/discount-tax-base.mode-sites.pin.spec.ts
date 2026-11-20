@@ -192,6 +192,9 @@ const MODE_SITES: Record<string, string[]> = {
   ],
   "apps/api/src/estimates/estimates.service.ts": [
     "newDocumentDiscountMode()",
+    // #4386: a draft edit re-prices on the quote's OWN mode, never the new-document one (red:
+    // estimates.discount-mode-sites.spec.ts, "update(): a draft edit keeps the quote's OWN mode").
+    "discountModeOf(held)",
     "discountModeOf(est)",
     "discountModeOf(est)",
   ],
@@ -216,12 +219,9 @@ const MODE_SITES: Record<string, string[]> = {
   "apps/api/src/invoices/stored-tax-state.ts": ["discountModeOf(invoice)"],
   "apps/api/src/order-templates/order-templates.service.ts": ["newDocumentDiscountMode()"],
   "apps/api/src/orders/order-find-one.ts": ["discountModeOf(order)"], // SA-1160: findOne moved here verbatim
+  "apps/api/src/orders/order-merge-fold.ts": ["discountModeOf(winner)", "discountModeOf(winner)"], // SA-1162: the merge pair moved here verbatim
   "apps/api/src/orders/order-totals.ts": ["discountModeOf(order)"],
-  "apps/api/src/orders/orders.service.ts": [
-    "discountModeOf(winner)",
-    "discountModeOf(winner)",
-    "newDocumentDiscountMode()",
-  ],
+  "apps/api/src/orders/orders.service.ts": ["newDocumentDiscountMode()"],
   "apps/web/lib/discount-tax-base.ts": [
     "DISCOUNT_PRE_TAX_FROM",
     "discountTaxBaseOf({ createdAt: now }, DISCOUNT_PRE_TAX_FROM)",

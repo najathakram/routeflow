@@ -39,13 +39,19 @@ describe("taxRateFractionFrom", () => {
 // (deferred PR-1b item — see inline-returns-quote.service.ts's fallbackTaxRate).
 describe("currentTaxRate", () => {
   it("reads settings.taxRate through SystemConfigService.get and converts percent→fraction", async () => {
-    const systemConfig = { get: jest.fn().mockResolvedValue("8") } as any;
+    const systemConfig = {
+      get: jest.fn().mockResolvedValue("8"),
+      getAll: jest.fn().mockResolvedValue({}),
+    } as any;
     await expect(currentTaxRate(systemConfig)).resolves.toBe(0.08);
     expect(systemConfig.get).toHaveBeenCalledWith("settings.taxRate");
   });
 
   it("returns 0 for an unconfigured tenant (no surprise charge)", async () => {
-    const systemConfig = { get: jest.fn().mockResolvedValue(null) } as any;
+    const systemConfig = {
+      get: jest.fn().mockResolvedValue(null),
+      getAll: jest.fn().mockResolvedValue({}),
+    } as any;
     await expect(currentTaxRate(systemConfig)).resolves.toBe(0);
   });
 });

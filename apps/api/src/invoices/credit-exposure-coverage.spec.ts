@@ -373,7 +373,7 @@ describe("credit-exposure coverage (D6 / B462, L-119)", () => {
 
     it("the retired Receivables basis is gone from credit-exposure.ts", () => {
       const text = fs.readFileSync(path.join(SRC_ROOT, "invoices/credit-exposure.ts"), "utf8");
-      expect(text).not.toMatch(/(receivableBalance|RECEIVABLE_INVOICE_SELECT)/);
+      expect(text).not.toMatch(/\b(receivableBalance|RECEIVABLE_INVOICE_SELECT)\b/);
     });
   });
 

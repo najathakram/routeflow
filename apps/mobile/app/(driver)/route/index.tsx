@@ -33,6 +33,7 @@ import { startLocationTracking, stopLocationTracking } from "../../../lib/locati
 import { useRunSettlementStore } from "../../../store/runSettlementStore";
 import { shouldForceSettlement, type CollectionEntry } from "../../../lib/run-settlement";
 import { sumStopOrders } from "../../../lib/run-money";
+import { optimizeUnplacedCopy } from "../../../lib/route-optimize-error";
 import { buildGoogleMapsLegs, type GmapsPoint } from "../../../lib/gmaps-export";
 
 /**
@@ -324,7 +325,10 @@ function TodaysRoute({ run, onOpenStop }: { run: RouteRun; onOpenStop: (id: stri
     optimize.mutate(
       { id: run.id, originLat: loc.lat, originLng: loc.lng },
       {
-        onError: (err) => showToast(err.message ?? "Optimization failed. Please try again."),
+        onError: (err) =>
+          showToast(
+            optimizeUnplacedCopy(err) ?? err.message ?? "Optimization failed. Please try again.",
+          ),
       },
     );
   };

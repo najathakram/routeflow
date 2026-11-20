@@ -72,7 +72,11 @@ export function useCreateDriver() {
     }
   >({
     mutationFn: (dto) => apiClient.post("/drivers", dto).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["drivers"] }),
+    // A driver is also a user: Settings -> Add User hands off here, and its list reads ["users"] (B862 review N1).
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["users"] });
+      return qc.invalidateQueries({ queryKey: ["drivers"] });
+    },
   });
 }
 

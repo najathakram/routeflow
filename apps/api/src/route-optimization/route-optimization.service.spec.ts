@@ -28,7 +28,7 @@ describe("RouteOptimizationService", () => {
         { provide: ConfigService, useValue: { get: configGet } },
         {
           provide: SystemConfigService,
-          useValue: { get: systemConfigGet, set: jest.fn() },
+          useValue: { get: systemConfigGet, getAll: async () => ({}), set: jest.fn() },
         },
         { provide: RouteFlowGateway, useValue: { emitRouteProgress: jest.fn() } },
       ],

@@ -1,1 +1,6 @@
-[]
+[
+  { "key": "/|desktop", "row": "id|sy-h", "kind": "removed", "req": "R8" },
+  { "key": "/|desktop", "row": "id|sy-ph", "kind": "added", "req": "R8" },
+  { "key": "/|phone", "row": "id|sy-h", "kind": "removed", "req": "R8" },
+  { "key": "/|phone", "row": "id|sy-ph", "kind": "added", "req": "R8" }
+]

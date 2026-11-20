@@ -10,9 +10,9 @@
  *  (a) a fresh scan posted twice at once  -> exactly one bill, the loser 409 SCAN_ALREADY_POSTED;
  *  (b) a scan whose bill was VOIDed, re-posted twice at once -> exactly one new live bill, loser 409.
  *
- * `nextBillNumber` is stubbed to hand out distinct numbers: it is a read-then-write outside the transaction,
- * so two concurrent creates can collide on the bill number (P2002) before either reaches the claim. That is a
- * separate defect reported on its own; stubbing it keeps this spec about the scan claim alone.
+ * `nextBillNumber` is stubbed to hand out distinct numbers, so this spec takes no `vendor-bill-number` lock and
+ * stays about the scan claim alone. The number race itself (B844: the number is now read inside the creating
+ * transaction under that lock) is pinned by vendor-bills.bill-number-b844.db.spec.ts.
  *
  * Collected only by `jest.db.config.js` (`.db.spec.ts$`), run via `npm run local:test:db`.
  * `requireLocalDatabaseUrl()` refuses any non-local host. SAFETY: every tenant is a throwaway
@@ -99,7 +99,13 @@ describeDb("vendor bill ↔ invoice scan claim — real Postgres race (B710 / SA
             recordAiUsage: jest.fn(),
           },
         },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         {
           provide: DuplicateMatchService,
           useValue: {

@@ -183,6 +183,7 @@ import {
   tenderAmount,
 } from "@/lib/counter-part-pay";
 import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
+import { isFamilyProduct } from "@/lib/product-search-groups";
 
 interface PickedCustomer {
   id: string;
@@ -965,17 +966,19 @@ export function CounterSaleScreen() {
     focusPaymentControl(section.querySelector<HTMLElement>('[role="radio"][tabindex="0"]'));
   };
 
+  // B1373: the quantity field the clerk typed in since it took focus (Tab out of it re-arms the scan box)
+  const typedQtyRef = React.useRef<HTMLInputElement | null>(null);
   // A scanner may end a read with CR+LF (or a double Enter): the empty Enter only counts after a human pause.
   const lastScanActivityRef = React.useRef(Number.NEGATIVE_INFINITY);
   // W-852: the live match list under the scan field; a row (click, or Enter on the highlighted one) lands through scan.pick.
   const pickLive = (product: any) => {
     lastScanActivityRef.current = performance.now();
     if (lineLocked || saleInFlight()) return;
+    if (isFamilyProduct(product)) return; // a family is a header, never a line (a family with no live variants can show)
     setScanText("");
     scan.pick(product);
     refocus();
   };
-  const live = useCounterLiveMatches({ text: scanText, enabled: !lineLocked, onPick: pickLive });
   const newItem = useCounterNewItem({
     allowed: mayEditPrices && !lineLocked,
     add: addProduct,
@@ -984,6 +987,15 @@ export function CounterSaleScreen() {
       scan.dismissMessage();
       setScanText("");
     },
+  });
+  const addedIds = React.useMemo(() => new Set(lines.map((l) => l.productId)), [lines]);
+  const live = useCounterLiveMatches({
+    text: scanText,
+    enabled: !lineLocked,
+    onPick: pickLive,
+    // a read-only session gets no create row (the old empty-state button was a WriteButton)
+    onCreate: readOnlyGate.readOnly ? undefined : newItem.open,
+    addedIds,
   });
   // W-1186: an unknown scan opens the New product window straight away, barcode filled in (the regular order does the same);
   // a buzz on phones that have one. A clerk who cannot set prices keeps the miss line (newItem.open is undefined for them).
@@ -1944,7 +1956,7 @@ export function CounterSaleScreen() {
             ) : null}
           </div>
           {/* W-852: in the page flow (not a floating panel) so the fixed payment bar at 390 never covers a row. */}
-          <CounterLiveMatches live={live} onPick={pickLive} onCreate={newItem.open} />
+          <CounterLiveMatches live={live} onPick={pickLive} />
           {/* The multiply tip lives under the field: in the placeholder it was cut off at 390px. */}
           <p id="counter-scan-hint" className="-mt-1 text-xs text-navy/70" data-testid="scan-hint">
             Type a quantity first to multiply.
@@ -2040,6 +2052,29 @@ export function CounterSaleScreen() {
             sortable={lineMove.sortable}
             onMove={lineMove.onMove}
             enabled={lineMove.enabled}
+            // B1373: a line's quantity fields are the order row's (typed live). Enter hands the cursor back to the scan box;
+            // so does Tab out of a line's LAST quantity field after the clerk typed in it (a plain Tab moves on normally).
+            onFocus={(e) => {
+              if ((e.target as HTMLElement) !== typedQtyRef.current) typedQtyRef.current = null;
+            }}
+            onChange={(e) => {
+              const t = e.target as HTMLElement;
+              if (t instanceof HTMLInputElement && t.type === "number") typedQtyRef.current = t;
+            }}
+            onKeyDown={(e) => {
+              const t = e.target as HTMLElement;
+              if (!(t instanceof HTMLInputElement) || t.type !== "number") return;
+              const fields = t.closest("li")?.querySelectorAll('input[type="number"]');
+              const tabOut =
+                e.key === "Tab" &&
+                !e.shiftKey &&
+                typedQtyRef.current === t &&
+                fields?.[fields.length - 1] === t;
+              if (e.key !== "Enter" && !tabOut) return;
+              e.preventDefault();
+              typedQtyRef.current = null;
+              refocusFromActive();
+            }}
           >
             {lines.length === 0 ? (
               <li className="p-3 text-sm text-navy/60">No items yet.</li>
@@ -2063,9 +2098,9 @@ export function CounterSaleScreen() {
                 onPriceReset={resetPrice}
                 onPriceClosed={refocus}
                 onNoteClosed={refocus}
-                onQtyEnter={refocusFromActive}
                 hideOriginalPrice={settings?.hideOriginalPrice === true}
                 moveId={l.tempId}
+                active={l.tempId === lines[lines.length - 1]?.tempId}
               />
             ))}
           </CartMovableList>

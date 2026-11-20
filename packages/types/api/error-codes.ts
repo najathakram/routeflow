@@ -391,6 +391,8 @@ export const API_ERROR_CODES = {
   ORDER_CHANGED_DURING_EDIT: "ORDER_CHANGED_DURING_EDIT",
   ORDER_EDIT_NEEDS_LINE_IDS: "ORDER_EDIT_NEEDS_LINE_IDS",
   ORDER_EDIT_DELIVERED_LINES: "ORDER_EDIT_DELIVERED_LINES",
+  /** SA-1161: a CUSTOMER edit carrying a field outside the buyer edit lists. 400, buyer-safe text, nothing written. */
+  BUYER_EDIT_INPUT_NOT_ALLOWED: "BUYER_EDIT_INPUT_NOT_ALLOWED",
   /** SA-1144: a pre-delivery edit of an order whose invoice holds payments or is closed (PAID, PARTIAL, WRITTEN_OFF). 400. */
   ORDER_EDIT_INVOICE_HAS_PAYMENTS: "ORDER_EDIT_INVOICE_HAS_PAYMENTS",
   /** B692: a manual PARTIALLY_DELIVERED names what was delivered per line (or the order already has delivery data). 409. */
@@ -878,6 +880,11 @@ export const API_ERROR_CODES = {
    */
   QTY_SPLIT_MISMATCH: "QTY_SPLIT_MISMATCH",
   /**
+   * 409 at the stop (approve a customer ADD_ITEM): the request carries a quantity and a box split that disagree, so merging
+   * it would bill the split's quantity. Nothing is written and the request stays open: the approver declines it (SA-1173 K2).
+   */
+  CHANGE_REQUEST_SPLIT_MISMATCH: "CHANGE_REQUEST_SPLIT_MISMATCH",
+  /**
    * 503 from create(): the order WAS saved but its credit-note sync exhausted its retries. The body carries
    * `orderId`: open that order and apply the credits there; a replay of the key never applies them.
    */
@@ -1114,6 +1121,8 @@ export const API_ERROR_CODES = {
   RETURN_CANCEL_RETRY: "RETURN_CANCEL_RETRY",
   /** 409 from DELETE /routes/:id and DELETE /route-runs/:id: the route or run holds delivery records (POD, signatures, payments); deactivate it instead (SA-842). Nothing was written. */
   ROUTE_HAS_DELIVERY_EVIDENCE: "ROUTE_HAS_DELIVERY_EVIDENCE",
+  /** 400 from POST /routes/:id/optimize and /route-runs/:id/optimize: some stops have no map position; body carries `count` and `names`. Nothing was written (UXG B14). */
+  ROUTE_STOPS_NOT_PLACED: "ROUTE_STOPS_NOT_PLACED",
   /** 400 from POST /auth/confirm-email-change: the link is unknown, used, expired, replaced by a newer request, burned by an account change, or the email moved since the request. One answer for all of them; nothing was written (B461, SA-1116). */
   EMAIL_CHANGE_LINK_INVALID: "EMAIL_CHANGE_LINK_INVALID",
   /** 409 from POST /auth/confirm-email-change: the new address now belongs to another account of the business. Nothing was written (B461, SA-1116). */
@@ -1122,6 +1131,10 @@ export const API_ERROR_CODES = {
   EMAIL_CHANGE_ACCOUNT_INACTIVE: "EMAIL_CHANGE_ACCOUNT_INACTIVE",
   /** 400 from POST /auth/verify-email: the sign-up link is validly signed but past its 24h expiry. Get a new one from POST /public/tenants/resend-verification (B2). */
   VERIFICATION_LINK_EXPIRED: "VERIFICATION_LINK_EXPIRED",
+  /** 400 from POST /users/operator: a driver account is created from the Drivers page (it needs a driver profile), never from Add User. Nothing was written (B862, SA-1171 K2). */
+  DRIVER_VIA_DRIVERS_PAGE: "DRIVER_VIA_DRIVERS_PAGE",
+  /** 409 from PATCH /users/:id: the person is a driver with an open run, so their role cannot move off Driver yet. Nothing was written (B862, SA-1171 K4). */
+  DRIVER_HAS_OPEN_RUN: "DRIVER_HAS_OPEN_RUN",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

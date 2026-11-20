@@ -163,6 +163,15 @@ const itemNames = () =>
   Array.from(document.querySelectorAll('ul[aria-label="Items"] > li'))
     .map((li) => li.textContent ?? "")
     .filter((t) => t !== "No items yet.");
+/** B1373: a line's quantity is the value of the order row's number field (no "× N" text). */
+const qtyOfLine = (name: string) => {
+  const li = Array.from(document.querySelectorAll('ul[aria-label="Items"] > li')).find((l) =>
+    l.textContent?.includes(name),
+  ) as HTMLElement;
+  return Number(
+    (within(li).getByRole("spinbutton", { name: /Set quantity of/ }) as HTMLInputElement).value,
+  );
+};
 const advance = (ms: number) =>
   act(() => {
     jest.advanceTimersByTime(ms);
@@ -288,7 +297,7 @@ describe("a scan that starts while a dialog is closing is looked up once, whole"
             expect(itemNames().filter((n) => n.includes("Cola"))).toHaveLength(1),
           );
           expect(resolved).toEqual([code]); // one lookup, the whole code: no suffix lookup
-          expect(itemNames().find((n) => n.includes("Cola"))).toContain("× 1");
+          expect(qtyOfLine("Cola")).toBe(1);
           expect(scanBox().value).toBe("");
           // nothing a person would have typed is left in the dying field
           expect(

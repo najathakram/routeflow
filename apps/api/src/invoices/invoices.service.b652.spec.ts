@@ -58,6 +58,7 @@ describe("InvoicesService — B652 unit-line partial billing", () => {
   };
   const mockSystemConfig = {
     get: jest.fn().mockResolvedValue(null),
+    getAll: jest.fn().mockResolvedValue({}),
     set: jest.fn().mockResolvedValue(undefined),
   };
   const mockMessaging = {

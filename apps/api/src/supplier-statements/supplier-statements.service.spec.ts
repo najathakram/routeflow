@@ -102,7 +102,13 @@ describe("SupplierStatementsService", () => {
             recordAiUsage,
           },
         },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: DuplicateMatchService, useValue: duplicateMatch },
         { provide: StorageService, useValue: storage },
       ],
@@ -132,7 +138,13 @@ describe("SupplierStatementsService", () => {
             recordAiUsage,
           },
         },
-        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            getAll: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: DuplicateMatchService, useValue: duplicateMatch },
         { provide: StorageService, useValue: storage },
       ],

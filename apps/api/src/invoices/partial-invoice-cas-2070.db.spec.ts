@@ -93,6 +93,7 @@ describeDb("partial invoices: concurrent partials never over-bill a line (#2070,
   };
   const mockSystemConfig = {
     get: jest.fn().mockResolvedValue(null),
+    getAll: jest.fn().mockResolvedValue({}),
     set: jest.fn().mockResolvedValue(undefined),
   };
   const mockCreditNotes = {

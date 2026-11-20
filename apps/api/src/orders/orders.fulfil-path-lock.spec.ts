@@ -72,6 +72,7 @@ describe("row 673: fulfillPathLocked, the one fulfil-path predicate", () => {
         },
         return: { count: jest.fn().mockResolvedValue(0) },
         orderRevision: { findFirst: jest.fn().mockResolvedValue(null) },
+        invoice: { findMany: async () => [] }, // B1372 K2: no sent invoice an edit would revert
       };
       const self: any = {
         prisma: { forTenant: () => db, getTenantId: () => "t1" },

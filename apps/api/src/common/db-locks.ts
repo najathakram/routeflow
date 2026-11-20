@@ -122,6 +122,8 @@ export const LOCK_FAMILIES = [
   "stock-count",
   "stock-count-product",
   "payment-ref",
+  // B844: `<tenantId>` serialises the BILL-YYYY-NNNN mint with the insert (xact lock, vendor-bills create).
+  "vendor-bill-number",
 ] as const;
 export type LockFamily = (typeof LOCK_FAMILIES)[number];
 /**
