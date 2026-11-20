@@ -1279,6 +1279,41 @@ describe("ImportService — commercial columns (B858/B859)", () => {
         expect(productsService.update.mock.calls[0][1]).not.toHaveProperty("msrp");
       });
 
+      // #4394 read A L1: the reorder skip on the UPDATE path (the SA-322 twin pins create only).
+      it("K5 5: an existing product's reorder 5/20 is never touched by skipped Reorder Point/Qty cells (preview and run)", async () => {
+        denyAll();
+        const existing = {
+          id: "prod-1",
+          name: "Widget",
+          sku: "SKU-1",
+          unitsPerBox: null,
+          pricePerUnit: 10,
+          reorderPoint: 5,
+          reorderQty: 20,
+        };
+        prisma.product.findFirst.mockImplementation(async (args: any) =>
+          args?.where?.sku === "SKU-1" ? existing : null,
+        );
+        const csv = "Item Name,SKU,Rate,Reorder Point,Reorder Qty\nWidget,SKU-1,12,8,40\n";
+
+        const preview: any = await service.importProducts(Buffer.from(csv), "user-1", {
+          dryRun: true,
+        });
+        expect(preview.skippedColumns).toEqual([
+          { column: "Reorder Point", requires: "FORECASTING" },
+          { column: "Reorder Qty", requires: "FORECASTING" },
+        ]);
+        expect(preview.rows[0].action).toBe("update");
+        expect(preview.rows[0].changes).not.toHaveProperty("reorderPoint");
+        expect(preview.rows[0].changes).not.toHaveProperty("reorderQty");
+
+        await service.importProducts(Buffer.from(csv), "user-1");
+        expect(productsService.update).toHaveBeenCalledTimes(1);
+        const dto = productsService.update.mock.calls[0][1];
+        expect(dto).not.toHaveProperty("reorderPoint");
+        expect(dto).not.toHaveProperty("reorderQty");
+      });
+
       it("K1: a skipped gate and an OUTAGE at another gate: the outage still refuses the whole file", async () => {
         productsService.assertMsrpAllowed.mockRejectedValue(new ForbiddenException("msrp"));
         const outage = new Error("connect ECONNREFUSED");
