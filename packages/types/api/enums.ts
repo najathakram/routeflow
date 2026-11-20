@@ -18,6 +18,7 @@ export const ESTIMATE_STATUS_VALUES = [
   "ACCEPTED",
   "DECLINED",
   "CONVERTED",
+  "VOID",
 ] as const;
 export type EstimateStatus = (typeof ESTIMATE_STATUS_VALUES)[number];
 

@@ -22,6 +22,8 @@ export function estimatePillFor(status: EstimateStatus): { variant: PillVariant;
       return { variant: "red", label: "Declined" };
     case "CONVERTED":
       return { variant: "purple", label: "Converted" };
+    case "VOID":
+      return { variant: "gray", label: "Void" };
     default:
       return { variant: "gray", label: status };
   }
@@ -48,7 +50,7 @@ export function estimateActionFlags(status: EstimateStatus): EstimateActionFlags
     canSend: status === "DRAFT",
     canAcceptDecline: status === "SENT",
     canConvert: status === "ACCEPTED",
-    canVoid: status !== "CONVERTED" && status !== "DECLINED",
+    canVoid: status !== "CONVERTED" && status !== "DECLINED" && status !== "VOID",
   };
 }
 
