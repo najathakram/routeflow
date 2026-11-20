@@ -33,6 +33,7 @@ import { realpathSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveReportDbUrl } from "./lib/report-db-url.mjs";
+import { roundMoney } from "@routeflow/pricing";
 const require = createRequire(import.meta.url);
 const { isTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
 
@@ -66,7 +67,7 @@ export function seatExtraMode(row) {
 }
 
 const iso = (d) => (d ? new Date(d).toISOString() : null);
-const money = (n) => Math.round(Number(n ?? 0) * 100) / 100;
+const money = (n) => roundMoney(Number(n ?? 0));
 const minIso = (xs) => xs.filter(Boolean).sort()[0] ?? null;
 
 export function summarizeItem1(rows, now = new Date()) {
