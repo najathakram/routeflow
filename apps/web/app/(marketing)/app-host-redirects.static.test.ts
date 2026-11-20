@@ -56,10 +56,35 @@ interface Loaded {
   memTree: { ok?: Route[]; error?: string };
   faviconRoot: { ok?: string[]; error?: string };
   faviconRules: { ok?: Rule[]; error?: string };
+  noFaviconRules: { ok?: Rule[]; error?: string };
+  rootMeta: { ok?: string[]; error?: string };
+  nestedSitemap: { ok?: string[]; error?: string };
+  groupedIcon: { ok?: string[]; error?: string };
+  slotApple: { ok?: string[]; error?: string };
+  sitemapGen: { ok?: string[]; error?: string };
+  sitemapConst: { ok?: string[]; error?: string };
+  iconGen: { ok?: string[]; error?: string };
+  iconPlain: { ok?: string[]; error?: string };
+  ogPlain: { ok?: string[]; error?: string };
+  helpersOk: { ok?: unknown; error?: string };
+  helpersMissing: { ok?: unknown; error?: string };
+  helpersNoSegment: { ok?: unknown; error?: string };
+  notMetadata: { ok?: string[]; error?: string };
+  served: { ok?: Record<string, string>; error?: string };
   faviconMarketing: { ok?: string[]; error?: string };
   faviconElsewhere: { ok?: string[]; error?: string };
-  fixedValues: string[];
 }
+
+// Root metadata files that Next serves at an exact path (no hash, no dynamic segment).
+const ROOT_META = {
+  "manifest.webmanifest": null,
+  "manifest.json": null,
+  "icon1.png": null,
+  "apple-icon2.png": null,
+  "favicon.ico": null,
+  "robots.ts": null,
+  "sitemap.xml": null,
+};
 
 // An in-memory app tree (nested objects; a file is null): an @slot, a nested route group, route.tsx,
 // test files that are not routes, and every metadata name.
@@ -100,6 +125,7 @@ function load(): Loaded {
     // An in-memory directory reader: a tree is nested objects, a file is null. Nothing touches disk.
     `const mk = (tree) => (dir) => { let n = tree; for (const p of dir.split(/[\\\\/]/).filter(Boolean).slice(1)) n = n[p]; return Object.entries(n).map(([name, v]) => ({ name, isDirectory: () => v !== null })); };` +
     `const attempt = (fn) => { try { return { ok: fn() }; } catch (e) { return { error: e.message }; } };` +
+    `const src = (map) => (p) => map[p.split(/[\\\\/]/).pop()] ?? "";` +
     `const faviconRoutes = () => l.listAppRoutes("/mem", mk({ "favicon.ico": null }));` +
     `const MAIN = ${JSON.stringify(MAIN)}; const SAME = ${JSON.stringify(SAME)};` +
     `const BARE = { origin: "https://new.test", oldOrigin: "https://old.test" };` +
@@ -116,16 +142,30 @@ function load(): Loaded {
     ` expectedRest: [...m.buildSiteHostRedirects(MAIN, m.HOST_ALIASES), ...m.buildRedirects(SAME)],` +
     ` siteHostPorted: m.buildSiteHostRedirects(MAIN, alias),` +
     ` routes: l.listAppRoutes(),` +
-    ` memTree: attempt(() => l.listAppRoutes("/mem", mk(${JSON.stringify(MEM_TREE)}))),` +
+    ` memTree: attempt(() => l.listAppRoutes("/mem", mk(${JSON.stringify(MEM_TREE)}), src({}))),` +
     ` faviconRoot: attempt(() => l.placeStays(faviconRoutes())),` +
-    ` faviconRules: attempt(() => m.buildAppHostRedirects(MAIN, alias, faviconRoutes())),` +
+    // No public/ entry: only the derivation can keep /favicon.ico on the main host.
+    ` faviconRules: attempt(() => m.buildAppHostRedirects(MAIN, alias, faviconRoutes(), [])),` +
+    ` noFaviconRules: attempt(() => m.buildAppHostRedirects(MAIN, alias, [], [])),` +
+    ` rootMeta: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk(${JSON.stringify(ROOT_META)}), src({})))),` +
+    ` nestedSitemap: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ x: { "sitemap.ts": null } })))),` +
+    ` groupedIcon: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "(marketing)": { "icon.png": null } })))),` +
+    ` slotApple: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "@slot": { "apple-icon2.png": null } })))),` +
+    ` sitemapGen: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "sitemap.ts": null }), src({ "sitemap.ts": "export async function generateSitemaps() { return []; }" })))),` +
+    ` sitemapConst: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "sitemap.ts": null }), src({ "sitemap.ts": "export const generateSitemaps = async () => [];" })))),` +
+    ` iconGen: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "icon.tsx": null }), src({ "icon.tsx": "export function generateImageMetadata() { return []; } export default function Icon() {}" })))),` +
+    ` iconPlain: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "icon.tsx": null }), src({ "icon.tsx": "export default function Icon() {}" })))),` +
+    ` ogPlain: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "opengraph-image.tsx": null }), src({ "opengraph-image.tsx": "export default function Og() {}" })))),` +
+    ` helpersOk: attempt(() => l.assertNextHelpers(l.NEXT_HELPERS)),` +
+    ` helpersMissing: attempt(() => l.assertNextHelpers({ ...l.NEXT_HELPERS, normalizeMetadataRoute: undefined })),` +
+    ` helpersNoSegment: attempt(() => l.assertNextHelpers({ ...l.NEXT_HELPERS, isGroupSegment: undefined })),` +
+    ` notMetadata: attempt(() => l.listAppRoutes("/mem", mk({ "favicon.png": null, "twitter-image.svg": null, "robots.json": null, "icon.gif": null })).map((r) => r.file)),` +
+    ` served: attempt(() => Object.fromEntries(l.listAppRoutes("/mem", mk(${JSON.stringify(ROOT_META)}), src({})).map((r) => [r.file, r.path]))),` +
     ` faviconMarketing: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "(marketing)": { x: { "favicon.ico": null } } })))),` +
     ` faviconElsewhere: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ a: { "favicon.ico": null } })))),` +
-    ` fixedValues: Object.values(l.FIXED_ROOT_ADDRESS ?? {}),` +
     ` failClosed: {` +
     `  dynamicInMarketing: tryIt([{ path: "/[x]", file: "(marketing)/[x]/page.tsx", group: "(marketing)", metadata: false }]),` +
     `  metadataInMarketing: tryIt([{ path: "/a/icon", file: "(marketing)/a/icon.png", group: "(marketing)", metadata: true }]),` +
-    `  hashedAtRoot: tryIt([{ path: "/icon", file: "icon.png", group: "", metadata: true }]),` +
     `  fixedAtRoot: tryIt([{ path: "/robots.txt", file: "robots.ts", group: "", metadata: true }, { path: "/sitemap.xml", file: "sitemap.ts", group: "", metadata: true }]),` +
     `  dynamicElsewhere: tryIt([{ path: "/a/[x]", file: "a/[x]/page.tsx", group: "a", metadata: false }]),` +
     ` },` +
@@ -260,8 +300,7 @@ describe("K5 2: census, every app route goes to the old host in one 307 hop", ()
   it("fails closed on a dynamic segment or a hashed metadata file in a place that stays", () => {
     const fc = cfg.failClosed;
     expect(fc.dynamicInMarketing.error).toMatch(/dynamic segment/);
-    expect(fc.metadataInMarketing.error).toMatch(/hashed address/);
-    expect(fc.hashedAtRoot.error).toMatch(/hashed address/);
+    expect(fc.metadataInMarketing.error).toMatch(/app root/);
     expect(fc.fixedAtRoot.ok).toEqual(["/robots.txt", "/sitemap.xml"]);
     expect(fc.dynamicElsewhere.ok).toEqual([]);
   });
@@ -300,14 +339,14 @@ describe("K5 2: census, every app route goes to the old host in one 307 hop", ()
         ["(shop)/(inner)/y/page.tsx", "/y", "(shop)", false],
         ["@modal/x/page.tsx", "/x", "@modal", false],
         ["api/z/route.tsx", "/api/z", "api", false],
-        ["apple-icon.png", "/apple-icon", "", true],
+        ["apple-icon.png", "/apple-icon.png", "", true],
         ["favicon.ico", "/favicon.ico", "", true],
-        ["icon.png", "/icon", "", true],
-        ["manifest.webmanifest", "/manifest", "", true],
-        ["opengraph-image.png", "/opengraph-image", "", true],
+        ["icon.png", "/icon.png", "", true],
+        ["manifest.webmanifest", "/manifest.webmanifest", "", true],
+        ["opengraph-image.png", "/opengraph-image.png", "", true],
         ["robots.ts", "/robots.txt", "", true],
         ["sitemap.ts", "/sitemap.xml", "", true],
-        ["twitter-image.png", "/twitter-image", "", true],
+        ["twitter-image.png", "/twitter-image.png", "", true],
       ].sort(),
     );
   });
@@ -316,13 +355,59 @@ describe("K5 2: census, every app route goes to the old host in one 307 hop", ()
     expect(cfg.faviconRoot).toEqual({ ok: ["/favicon.ico"] });
     expect(cfg.faviconRules.error).toBeUndefined();
     const at = new URL("/favicon.ico", `https://${MAIN_HOST}`);
+    // The rules were built with no public/ entry, so only the derivation keeps it here...
     expect(hopOf(cfg.faviconRules.ok!, at)).toBeNull();
-    expect([...cfg.fixedValues].sort()).toEqual(["/favicon.ico", "/robots.txt", "/sitemap.xml"]);
+    // ...and without the derivation the same address crosses (the check is not vacuous).
+    expect(hopOf(cfg.noFaviconRules.ok!, at)?.next.origin).toBe(OLD_ORIGIN);
   });
 
   it("a favicon anywhere but the app root fails closed", () => {
-    expect(cfg.faviconMarketing.error).toMatch(/favicon/);
-    expect(cfg.faviconElsewhere.error).toMatch(/favicon/);
+    expect(cfg.faviconMarketing.error).toMatch(/app root/);
+    expect(cfg.faviconElsewhere.error).toMatch(/app root/);
+  });
+
+  it("root metadata is derived at the exact path Next serves, numbered variants included", () => {
+    expect(cfg.rootMeta.error).toBeUndefined();
+    expect([...(cfg.rootMeta.ok ?? [])].sort()).toEqual(
+      [
+        "/manifest.webmanifest",
+        "/manifest.json",
+        "/icon1.png",
+        "/apple-icon2.png",
+        "/favicon.ico",
+        "/robots.txt",
+        "/sitemap.xml",
+      ].sort(),
+    );
+    expect(cfg.served.ok).toMatchObject({
+      "manifest.json": "/manifest.json",
+      "icon1.png": "/icon1.png",
+      "robots.ts": "/robots.txt",
+    });
+  });
+
+  it("anything nested, grouped, or in a slot fails closed at config load", () => {
+    expect(cfg.nestedSitemap.error).toMatch(/app root/);
+    expect(cfg.groupedIcon.error).toMatch(/app root/);
+    expect(cfg.slotApple.error).toMatch(/app root/);
+  });
+
+  it("a root generator is derived unless its source exports generateImageMetadata or generateSitemaps", () => {
+    expect(cfg.sitemapGen.error).toMatch(/generateSitemaps/);
+    expect(cfg.sitemapConst.error).toMatch(/generateSitemaps/);
+    expect(cfg.iconGen.error).toMatch(/generateImageMetadata/);
+    expect(cfg.iconPlain).toEqual({ ok: ["/icon"] });
+    expect(cfg.ogPlain).toEqual({ ok: ["/opengraph-image"] });
+  });
+
+  it("the Next helpers are asserted, and a missing one throws", () => {
+    expect(cfg.helpersOk.error).toBeUndefined();
+    expect(cfg.helpersMissing.error).toMatch(/normalizeMetadataRoute/);
+    expect(cfg.helpersNoSegment.error).toMatch(/isGroupSegment/);
+  });
+
+  it("the extensions are Next's own: favicon.png, twitter-image.svg, robots.json are not metadata", () => {
+    expect(cfg.notMetadata).toEqual({ ok: [] });
   });
 
   it("finds the app routes", () => {
