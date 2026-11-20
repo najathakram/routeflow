@@ -15,6 +15,7 @@ import { BUYER_PRESENCE_COOKIE, OP_PRESENCE_COOKIE } from "@/lib/presence-cookie
 
 const { pathToRegexp } = require("next/dist/compiled/path-to-regexp");
 const { checkCustomRoutes } = require("next/dist/lib/load-custom-routes");
+const { tryToParsePath } = require("next/dist/lib/try-to-parse-path");
 
 const WEB_ROOT = path.resolve(__dirname, "../..");
 
@@ -52,7 +53,32 @@ interface Loaded {
   publicPaths: string[];
   routes: Route[];
   failClosed: Record<string, { ok?: string[]; error?: string }>;
+  memTree: { ok?: Route[]; error?: string };
+  faviconRoot: { ok?: string[]; error?: string };
+  faviconRules: { ok?: Rule[]; error?: string };
+  faviconMarketing: { ok?: string[]; error?: string };
+  faviconElsewhere: { ok?: string[]; error?: string };
+  fixedValues: string[];
 }
+
+// An in-memory app tree (nested objects; a file is null): an @slot, a nested route group, route.tsx,
+// test files that are not routes, and every metadata name.
+const MEM_TREE = {
+  "@modal": { x: { "page.tsx": null } },
+  "(shop)": {
+    "(inner)": { y: { "page.tsx": null, "page.test.tsx": null, "page.fleet.test.tsx": null } },
+  },
+  api: { z: { "route.tsx": null, "route.test.ts": null } },
+  "(marketing)": { "opengraph-image": { "route.tsx": null } },
+  "favicon.ico": null,
+  "icon.png": null,
+  "apple-icon.png": null,
+  "manifest.webmanifest": null,
+  "robots.ts": null,
+  "sitemap.ts": null,
+  "opengraph-image.png": null,
+  "twitter-image.png": null,
+};
 
 interface Route {
   path: string;
@@ -71,6 +97,10 @@ function load(): Loaded {
     `const m = await import(${url});` +
     `const l = await import(${libUrl});` +
     `const tryIt = (routes) => { try { return { ok: l.placeStays(routes) }; } catch (e) { return { error: e.message }; } };` +
+    // An in-memory directory reader: a tree is nested objects, a file is null. Nothing touches disk.
+    `const mk = (tree) => (dir) => { let n = tree; for (const p of dir.split(/[\\\\/]/).filter(Boolean).slice(1)) n = n[p]; return Object.entries(n).map(([name, v]) => ({ name, isDirectory: () => v !== null })); };` +
+    `const attempt = (fn) => { try { return { ok: fn() }; } catch (e) { return { error: e.message }; } };` +
+    `const faviconRoutes = () => l.listAppRoutes("/mem", mk({ "favicon.ico": null }));` +
     `const MAIN = ${JSON.stringify(MAIN)}; const SAME = ${JSON.stringify(SAME)};` +
     `const BARE = { origin: "https://new.test", oldOrigin: "https://old.test" };` +
     `const alias = [{ source: "/sign-in", destination: "/login" }];` +
@@ -86,6 +116,12 @@ function load(): Loaded {
     ` expectedRest: [...m.buildSiteHostRedirects(MAIN, m.HOST_ALIASES), ...m.buildRedirects(SAME)],` +
     ` siteHostPorted: m.buildSiteHostRedirects(MAIN, alias),` +
     ` routes: l.listAppRoutes(),` +
+    ` memTree: attempt(() => l.listAppRoutes("/mem", mk(${JSON.stringify(MEM_TREE)}))),` +
+    ` faviconRoot: attempt(() => l.placeStays(faviconRoutes())),` +
+    ` faviconRules: attempt(() => m.buildAppHostRedirects(MAIN, alias, faviconRoutes())),` +
+    ` faviconMarketing: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "(marketing)": { x: { "favicon.ico": null } } })))),` +
+    ` faviconElsewhere: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ a: { "favicon.ico": null } })))),` +
+    ` fixedValues: Object.values(l.FIXED_ROOT_ADDRESS ?? {}),` +
     ` failClosed: {` +
     `  dynamicInMarketing: tryIt([{ path: "/[x]", file: "(marketing)/[x]/page.tsx", group: "(marketing)", metadata: false }]),` +
     `  metadataInMarketing: tryIt([{ path: "/a/icon", file: "(marketing)/a/icon.png", group: "(marketing)", metadata: true }]),` +
@@ -237,8 +273,56 @@ describe("K5 2: census, every app route goes to the old host in one 307 hop", ()
   });
 
   it("Next's own route check accepts every built redirect, each source under 4096 characters", () => {
-    expect(() => checkCustomRoutes(cfg.withShort, "redirect")).not.toThrow();
-    for (const rule of cfg.withShort) expect(rule.source.length).toBeLessThan(4096);
+    // checkCustomRoutes calls process.exit on a bad route instead of throwing.
+    const exit = jest.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("exit");
+    });
+    try {
+      expect(() => checkCustomRoutes(cfg.withShort, "redirect")).not.toThrow();
+      expect(exit).not.toHaveBeenCalled();
+    } finally {
+      exit.mockRestore();
+    }
+    // The built regex, not the source text, is what Next measures.
+    for (const rule of cfg.withShort) {
+      const built = tryToParsePath(rule.source).regexStr;
+      expect(built).toBeDefined();
+      expect(built!.length).toBeLessThan(4096);
+    }
+  });
+
+  it("the in-memory tree pins the walker: slot, nested group, route.tsx, tests, every metadata name", () => {
+    const got = (cfg.memTree.ok ?? []).map((e) => [e.file, e.path, e.group, e.metadata]);
+    expect(cfg.memTree.error).toBeUndefined();
+    expect(got.sort()).toEqual(
+      [
+        ["(marketing)/opengraph-image/route.tsx", "/opengraph-image", "(marketing)", false],
+        ["(shop)/(inner)/y/page.tsx", "/y", "(shop)", false],
+        ["@modal/x/page.tsx", "/x", "@modal", false],
+        ["api/z/route.tsx", "/api/z", "api", false],
+        ["apple-icon.png", "/apple-icon", "", true],
+        ["favicon.ico", "/favicon.ico", "", true],
+        ["icon.png", "/icon", "", true],
+        ["manifest.webmanifest", "/manifest", "", true],
+        ["opengraph-image.png", "/opengraph-image", "", true],
+        ["robots.ts", "/robots.txt", "", true],
+        ["sitemap.ts", "/sitemap.xml", "", true],
+        ["twitter-image.png", "/twitter-image", "", true],
+      ].sort(),
+    );
+  });
+
+  it("a root favicon is derived into STAY and matches no crossing rule", () => {
+    expect(cfg.faviconRoot).toEqual({ ok: ["/favicon.ico"] });
+    expect(cfg.faviconRules.error).toBeUndefined();
+    const at = new URL("/favicon.ico", `https://${MAIN_HOST}`);
+    expect(hopOf(cfg.faviconRules.ok!, at)).toBeNull();
+    expect([...cfg.fixedValues].sort()).toEqual(["/favicon.ico", "/robots.txt", "/sitemap.xml"]);
+  });
+
+  it("a favicon anywhere but the app root fails closed", () => {
+    expect(cfg.faviconMarketing.error).toMatch(/favicon/);
+    expect(cfg.faviconElsewhere.error).toMatch(/favicon/);
   });
 
   it("finds the app routes", () => {
