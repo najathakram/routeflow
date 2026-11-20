@@ -27,6 +27,8 @@ async function open(page: Page, route: string, w: number, h: number): Promise<vo
 test("T48a at 390x844, while another trial button is on screen, the header pill is not", async ({
   page,
 }) => {
+  // Every scroll step settles (SA-1200 A1 M2: a 150ms floor, then 10 calm frames), about 0.3s a step over the whole page.
+  test.setTimeout(180_000);
   await open(page, "/", 390, 844);
   const { total, step } = await page.evaluate(() => ({
     total: document.documentElement.scrollHeight - innerHeight,
@@ -308,6 +310,15 @@ for (const route of ["/pricing", "/"] as const) {
       }, listSel);
       nonEmpty(read, `plan cards on ${route}`);
       expect(read.length).toBe(4);
+      if (w === 1100) {
+        // The uneven width is what gives this row teeth (a planted no-subgrid moves the longer card's list). If the
+        // descriptions all wrap alike here (other fonts, a copy edit), the row would pass on anything: re-measure the width.
+        const heights = read.map((c) => Math.round(c.forHeight));
+        expect(
+          new Set(heights).size > 1,
+          "descriptions wrap alike @1100: " + heights.join(", "),
+        ).toBe(true);
+      }
       const tops = read.map((c) => c.list);
       const msg =
         "list tops: " +

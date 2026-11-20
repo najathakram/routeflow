@@ -66,7 +66,10 @@ describe("chrome.js is the one home of the page chrome", () => {
     expect(chromePages.length).toBe(9);
     expect(noScriptPages).toEqual(["landing.html"]);
     for (const page of chromePages) {
-      const tags = html(page).match(/<script\b[^>]*\bsrc="\/site\/js\/chrome\.js"[^>]*>/g) ?? [];
+      // Through the DOM, so a second tag with other quoting is counted too (SA-1200 A1 L2).
+      const tags = Array.from(
+        new JSDOM(html(page)).window.document.querySelectorAll("script[src]"),
+      ).filter((el) => el.getAttribute("src") === "/site/js/chrome.js");
       expect({ page, tags: tags.length }).toEqual({ page, tags: 1 });
     }
     for (const page of noScriptPages) {
@@ -180,8 +183,11 @@ describe("no typed header height (SA-1199 P5)", () => {
     expect(headerHeights.length).toBeGreaterThan(0);
   });
   const H = headerHeights[0] as string;
+  // SA-1196 A4-1 also forbids a typed 56, the pill's bottom edge inside the header; it is not a header rule, so it is
+  // named here, not derived.
+  const PILL_BOTTOM = "56";
   const TYPED = new RegExp(
-    `(?<![\\w.])-?(?:${headerHeights.join("|")})(?:\\.\\d+)?(?:px)?(?![\\w.])` +
+    `(?<![\\w.])-?(?:${[...headerHeights, PILL_BOTTOM].join("|")})(?:\\.\\d+)?(?:px)?(?![\\w.])` +
       `|rootMargin\\s*:\\s*["'\`]\\s*-?\\d`,
   );
   const typedHits = (src: string) =>
@@ -199,6 +205,7 @@ describe("no typed header height (SA-1199 P5)", () => {
     expect(typedHits(`const headerH = ${H};`)).toHaveLength(1);
     expect(typedHits(`const headerH = "${H}.0px";`)).toHaveLength(1);
     expect(typedHits(`const headerH = "${H}.5px";`)).toHaveLength(1);
+    expect(typedHits("if (r.bottom <= 56) return;")).toHaveLength(1);
     expect(typedHits('{ rootMargin: "-" + headH + "px 0px 0px 0px" },')).toHaveLength(0);
     expect(typedHits(`viewport 1${H} and 0.${H} and x1${H}`)).toHaveLength(0);
   });

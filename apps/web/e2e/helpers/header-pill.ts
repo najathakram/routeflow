@@ -142,11 +142,11 @@ export async function settleMotion(
         let calm = 0;
         let b: { el: Element; why: string } | null = null;
         while (calm < (quiet as number)) {
+          await frame();
           b = busy();
           if (b) calm = 0;
           else calm += 1;
           if (performance.now() - t0 >= (cap as number)) break;
-          await frame();
         }
         if (calm < (quiet as number)) {
           return b ? describe(b.el) + " (" + b.why + ")" : "no calm run of frames before the cap";
