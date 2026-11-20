@@ -86,11 +86,8 @@ export interface PlanChange {
   effectiveAt: string | null;
   keepsRenewalAt: string | null;
   warning?: string;
-  /** TRUE only when the DOWNGRADE seat-cap check found users over the target plan's cap,
-   *  i.e. the one case where committing really does deactivate staff accounts. Never infer
-   *  that consequence from `warning` being non-empty — `warning` also carries unrelated
-   *  copy (a revoked cancellation, "not prorated", sales hand-off), and keying the
-   *  acknowledgement on it demands consent to a consequence that will not happen. */
+  /** B1371: always false. There is no seat limit on any plan, so a downgrade never deactivates
+   *  staff accounts and needs no acknowledgement. Kept for one release, then removed. */
   seatAckRequired: boolean;
   /** The tenant's CURRENT plan key, normalized past legacy aliases, so the chooser can
    *  mark the plan they are on without re-deriving it from a stored (possibly aliased)

@@ -54,6 +54,17 @@ export function isStripeResourceMissing(err: unknown): boolean {
   return e?.code === "resource_missing" || e?.statusCode === 404;
 }
 
+/**
+ * B1371 / SA-1175 K8: there is no seat limit on any plan, so SEAT_EXTRA grants nothing. Every entry point that could
+ * start billing it (`enableAddon` in every mode, `uncompAddon`, #4393 read A L-1) refuses it first, before any read,
+ * lock, Stripe call, price or row write.
+ */
+function refuseRetiredSeatExtra(addonKey: string): void {
+  if (addonCodeOf(addonKey) === "SEAT_EXTRA") {
+    throw new BadRequestException("Extra seats is retired: every plan includes unlimited users.");
+  }
+}
+
 /** SA-693: the explicit comp choice of an admin enable (see `enableAddon`). */
 export interface EnableAddonOptions {
   /** Grant free on purpose: isComp true, price 0, no Stripe item, nothing booked. */
@@ -297,11 +308,7 @@ export class AddonService {
     // on purpose: no Stripe item even on a subscribed tenant (a price id that rides along is ignored),
     // price 0, nothing booked. `uncomp` is the internal re-entry of `uncompAddon`'s billed branch: it
     // may re-activate (bill) a row that is currently an ACTIVE comp, which a plain enable refuses.
-    // B1371 / SA-1175 K8: there is no seat limit on any plan, so SEAT_EXTRA grants nothing. Refused in every
-    // mode (billed, comp, uncomp) before the lock, any Stripe call or any row write.
-    if (addonCodeOf(addonKey) === "SEAT_EXTRA") {
-      throw new BadRequestException("Extra seats is retired: every plan includes unlimited users.");
-    }
+    refuseRetiredSeatExtra(addonKey); // B1371 K8: every mode (billed, comp, uncomp), first
     const comp = opts?.comp === true;
     const uncomp = opts?.uncomp === true;
     if (comp) stripePriceId = undefined;
@@ -667,6 +674,7 @@ export class AddonService {
    * takes no lock (see `disableAddon`).
    */
   async uncompAddon(tenantId: string, addonKey: string, stripePriceId?: string, actorId?: string) {
+    refuseRetiredSeatExtra(addonKey); // B1371 K8 (#4393 L-1): the MANUAL branch never reaches enableAddon
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
       select: { id: true, slug: true, name: true, planVersionId: true },

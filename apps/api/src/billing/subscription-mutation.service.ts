@@ -1392,6 +1392,7 @@ export class SubscriptionMutationService {
     tenantId: string,
     sub: Parameters<SubscriptionMutationService["previewRepricedAddons"]>[0]["priorSub"] & {
       priceOverrideMonthly?: unknown;
+      cycle?: unknown;
     },
     tenant: Parameters<typeof inclusionCatalogFor>[2],
     fromKey: string,
@@ -1400,7 +1401,8 @@ export class SubscriptionMutationService {
     const pinned = await inclusionCatalogFor(this.catalog, sub as never, tenant);
     const { def } = await targetVersionFor(this.catalog, pinned, toKey);
     const override = priceOverrideOf(sub);
-    const price = override ?? (def.monthlyPrice != null ? Number(def.monthlyPrice) : null);
+    const monthly = override ?? (def.monthlyPrice != null ? Number(def.monthlyPrice) : null);
+    const price = sub.cycle === "ANNUAL" ? null : monthly; // #4393 L-4: an annual payer does not pay it monthly
     const addons = await this.previewRepricedAddons({
       tenantId,
       priorSub: sub,

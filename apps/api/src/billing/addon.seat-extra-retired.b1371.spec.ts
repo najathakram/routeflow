@@ -123,6 +123,28 @@ describe("B1371 K8 enableAddon refuses SEAT_EXTRA", () => {
   });
 });
 
+// #4393 read A L-1: uncomping a legacy SEAT_EXTRA comp on a MANUAL tenant priced it and wrote the
+// "add to their next manual invoice" notice without passing through enableAddon. K8 says every mode.
+describe("B1371 K8 uncompAddon refuses SEAT_EXTRA", () => {
+  it.each([
+    ["MANUAL tenant", true],
+    ["Stripe tenant", false],
+  ])("%s: refused before any read, lock, price or notice; the comp stays", async (_n, manual) => {
+    const { svc, store, prisma, create } = make({
+      manual,
+      rows: [row({ isComp: true, priceSnapshot: 0, stripeItemId: null })],
+    });
+    await expect(svc.uncompAddon("t1", "SEAT_EXTRA", "price_x")).rejects.toThrow(
+      "Extra seats is retired: every plan includes unlimited users.",
+    );
+    expect(prisma.tenant.findUnique).not.toHaveBeenCalled();
+    expect(mockWithAdvisoryLock).not.toHaveBeenCalled();
+    expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+    expect(store.rows[0]).toMatchObject({ isComp: true, priceSnapshot: 0 });
+  });
+});
+
 describe("B1371 K12 disableAddon", () => {
   it("SEAT_EXTRA with a Stripe item: del with proration none, row inactive, one delta emit", async () => {
     const { svc, del, store, events } = make({ rows: [row()] });
@@ -165,12 +187,7 @@ describe("B1371 K12 disableAddon", () => {
   });
 });
 
-describe("B1371 census: callers of AddonService.enableAddon", () => {
-  const ALLOWED = [
-    "platform-admin/platform-admin.controller.ts",
-    "billing/addon.service.ts",
-    "billing/business-profile-apply.service.ts",
-  ];
+describe("B1371 census: callers of AddonService.enableAddon and .uncompAddon", () => {
   function walk(dir: string, out: string[] = []): string[] {
     for (const f of readdirSync(dir)) {
       const p = join(dir, f);
@@ -179,14 +196,34 @@ describe("B1371 census: callers of AddonService.enableAddon", () => {
     }
     return out;
   }
-  it("only the reviewed callers call it (a new one is red until reviewed against K8)", () => {
+  /** Call sites per file, any receiver (#4393 read A L-5), comment lines skipped. */
+  function callSites(method: string): Record<string, number> {
     const root = join(__dirname, "..");
-    const hits = walk(root)
-      // subscription-mutation's own `this.enableAddon` / `this.mutations.enableAddon` is a different method
-      .filter((p) => !p.endsWith("subscription-mutation.service.ts"))
-      .filter((p) => /\b(addonService|addons|this)\.enableAddon\(/.test(readFileSync(p, "utf8")))
-      .map((p) => relative(root, p).replace(/\\/g, "/"))
-      .sort();
-    expect(hits).toEqual([...ALLOWED].sort());
+    const call = new RegExp(`\\.${method}\\(`, "g");
+    const sites: Record<string, number> = {};
+    for (const p of walk(root)) {
+      // subscription-mutation's own enableAddon is a different method (the tenant path, refused by
+      // isSelfServiceAddon), and so is its injected handle `this.mutations.enableAddon`.
+      if (p.endsWith("subscription-mutation.service.ts")) continue;
+      const n = readFileSync(p, "utf8")
+        .split("\n")
+        .filter((l) => !/^\s*(\*|\/\/|\/\*)/.test(l))
+        .reduce(
+          (k, l) => k + (l.replace(/\.mutations\.enableAddon\(/g, "").match(call)?.length ?? 0),
+          0,
+        );
+      if (n > 0) sites[relative(root, p).replace(/\\/g, "/")] = n;
+    }
+    return sites;
+  }
+  it("enableAddon: only the 3 reviewed call sites (a new one is red until reviewed against K8)", () => {
+    expect(callSites("enableAddon")).toEqual({
+      "billing/addon.service.ts": 1,
+      "billing/business-profile-apply.service.ts": 1,
+      "platform-admin/platform-admin.controller.ts": 1,
+    });
+  });
+  it("uncompAddon: only the platform-admin call site (L-1: refused for SEAT_EXTRA)", () => {
+    expect(callSites("uncompAddon")).toEqual({ "platform-admin/platform-admin.controller.ts": 1 });
   });
 });

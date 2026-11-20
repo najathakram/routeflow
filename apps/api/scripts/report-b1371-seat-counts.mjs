@@ -2,9 +2,11 @@
  * READ-ONLY counts for B1371 (SA-1175 R1 M1, A1): what the downgrade seat cut-off did and would still do, before the
  * fix that deletes it merges.
  *
- *   --item 1  Scheduled downgrades (`downgradeEffectiveAt` in the future) whose active team is over the target plan's
- *             `seatsIncluded`, read from the version the cron would apply (the tenant's pin when it lists the plan, else
- *             the published one), and the EARLIEST such date. Merge before it, or the lead tells the owner.
+ *   --item 1  Scheduled downgrades (any `downgradeEffectiveAt`, the cron's own filter: it applies every one due at
+ *             or before now, so an OVERDUE row not yet swept is the most imminent cut-off) whose active team is over
+ *             the target plan's `seatsIncluded`, read from the version the cron would apply (the tenant's pin when it
+ *             lists the plan, else the published one), how many are already due (`overdue`), and the EARLIEST such
+ *             date, overdue ones included. Merge before it, or the lead tells the owner.
  *   --item 2  Record-only (owner: "Leave them off"): past cut-offs, i.e. applied scheduled PLAN_CHANGED events with a
  *             SEAT_FREED in the same transaction (same `createdAt`), the seats freed, and the OPERATOR/DRIVER users
  *             still INACTIVE whose `updatedAt` falls within 5 minutes after it (SEAT_FREED carries no user ids).
@@ -67,12 +69,13 @@ const iso = (d) => (d ? new Date(d).toISOString() : null);
 const money = (n) => Math.round(Number(n ?? 0) * 100) / 100;
 const minIso = (xs) => xs.filter(Boolean).sort()[0] ?? null;
 
-export function summarizeItem1(rows) {
+export function summarizeItem1(rows, now = new Date()) {
   const lab = labeller();
   const over = rows.filter((r) => r.cap != null && r.team > r.cap);
   const detail = over.map((r) => ({
     tenant: lab(r.tenantId),
     effectiveAt: iso(r.effectiveAt),
+    overdue: new Date(r.effectiveAt) <= now, // #4393 read A M-1: due, waiting for the next sweep
     team: r.team,
     seatsIncluded: r.cap,
     over: r.team - r.cap,
@@ -81,6 +84,7 @@ export function summarizeItem1(rows) {
   return {
     scheduled: rows.length,
     overSeats: detail.length,
+    overdue: detail.filter((d) => d.overdue).length,
     wouldDeactivate: detail.reduce((n, d) => n + d.wouldDeactivate, 0),
     earliestEffectiveAt: minIso(detail.map((d) => d.effectiveAt)),
     detail,
@@ -171,6 +175,28 @@ export function selfTest() {
     "2026-12-01T00:00:00.000Z",
     "item 1 earliest counts only the over-seat rows",
   );
+  // #4393 read A M-1: an over-seat row already due (past effectiveAt, not yet swept) is counted and is the earliest.
+  const s1o = summarizeItem1(
+    [
+      {
+        tenantId: "t-1",
+        effectiveAt: "2026-12-01T00:00:00Z",
+        team: 5,
+        cap: 3,
+        nonAdminNotRetained: 4,
+      },
+      {
+        tenantId: "t-4",
+        effectiveAt: "2026-11-19T00:00:00Z",
+        team: 6,
+        cap: 3,
+        nonAdminNotRetained: 3,
+      },
+    ],
+    new Date("2026-11-20T12:00:00Z"),
+  );
+  eq([s1o.overSeats, s1o.overdue, s1o.wouldDeactivate], [2, 1, 7], "item 1 overdue counts");
+  eq(s1o.earliestEffectiveAt, "2026-11-19T00:00:00.000Z", "item 1 earliest includes overdue");
   const s2 = summarizeItem2([
     { tenantId: "t-1", at: "2026-10-01T02:00:00Z", seatsFreed: 3, stillInactive: 2 },
     { tenantId: "t-1", at: "2026-11-01T02:00:00Z", seatsFreed: 1, stillInactive: 1 },
@@ -210,7 +236,7 @@ export function selfTest() {
   );
   eq([s3.holders, s3.monthly, s3.maySeatsRideInPlanQuantity], [4, 45, 1], "item 3 totals");
   eq(s3.earliestRenewal, "2026-11-28T00:00:00.000Z", "item 3 earliest priced renewal");
-  for (const s of [s1, s2, s3])
+  for (const s of [s1, s1o, s2, s3])
     if (/t-\d/.test(JSON.stringify(s))) throw new Error("a summary leaked a tenant id");
   return "self-test ok";
 }
@@ -232,7 +258,7 @@ const ITEM_SQL = {
                              JOIN "PlanVersion" v ON v.id = d."planVersionId"
                             WHERE v.status = 'PUBLISHED' AND d."planKey" = s."downgradeToPlanKey"
                             ORDER BY v.version DESC LIMIT 1) dpub ON true
-       WHERE s."downgradeEffectiveAt" > now() AND s."downgradeToPlanKey" IS NOT NULL
+       WHERE s."downgradeEffectiveAt" IS NOT NULL AND s."downgradeToPlanKey" IS NOT NULL
          AND t.status = 'ACTIVE' AND t."deletedAt" IS NULL
        ORDER BY s."downgradeEffectiveAt"`,
   2: `SELECT e."tenantId", t.slug, e."createdAt" AS at,

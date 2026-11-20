@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 /**
  * B1371 (SA-1175 R1 M1): the owner-run, READ-ONLY seat counts before the cut-off is deleted
@@ -43,6 +44,36 @@ describe("report-b1371-seat-counts.mjs (B1371 M1)", () => {
     const r = run(args as string[]);
     expect(r.status).toBe(2);
     expect(r.out).toContain(msg);
+  });
+
+  // #4393 read A M-1: the cron applies every downgrade due at or before now (billing-cron.service.ts
+  // `downgradeEffectiveAt: { not: null, lte: now }`), so item 1 must not drop the overdue, unswept ones.
+  it("item 1 reads every scheduled downgrade, overdue ones included (the cron's own filter)", () => {
+    const src = readFileSync(SCRIPT, "utf8");
+    expect(src).not.toMatch(/"downgradeEffectiveAt"\s*>\s*now\(\)/);
+    expect(src).toContain(
+      `s."downgradeEffectiveAt" IS NOT NULL AND s."downgradeToPlanKey" IS NOT NULL`,
+    );
+  });
+
+  it("item 1 counts an over-seat downgrade already due as overdue, and its date is the earliest", () => {
+    const probe = [
+      `import(${JSON.stringify(pathToFileURL(SCRIPT).href)}).then((m) => {`,
+      `  const s = m.summarizeItem1([`,
+      `    { tenantId: "t-1", effectiveAt: "2026-12-01T00:00:00Z", team: 5, cap: 3, nonAdminNotRetained: 2 },`,
+      `    { tenantId: "t-2", effectiveAt: "2026-11-19T00:00:00Z", team: 6, cap: 3, nonAdminNotRetained: 3 },`,
+      `  ], new Date("2026-11-20T12:00:00Z"));`,
+      `  console.log(JSON.stringify(s));`,
+      `});`,
+    ].join("\n");
+    const res = spawnSync(process.execPath, ["--input-type=module", "-e", probe], {
+      encoding: "utf8",
+      timeout: 60_000,
+    });
+    const s = JSON.parse(res.stdout.trim());
+    expect([s.overSeats, s.overdue, s.wouldDeactivate]).toEqual([2, 1, 5]);
+    expect(s.earliestEffectiveAt).toBe("2026-11-19T00:00:00.000Z");
+    expect(s.detail.map((d: { overdue: boolean }) => d.overdue)).toEqual([false, true]);
   });
 
   it("is read-only: the session is read-only and the SQL never writes", () => {

@@ -4224,6 +4224,22 @@ describe("B1371 — downgrade preview, schedule and notice carry no seat consequ
     );
   });
 
+  // #4393 read A L-4: an ANNUAL payer is billed 10x monthly per year, so "$59 a month" is not what they pay.
+  it("PIN: an ANNUAL subscriber's notice states no plan price (never the monthly price as 'a month')", async () => {
+    const { periodEnd } = activePeriod();
+    const { svc, billingNotification } = make({
+      sub: { planKey: "BUSINESS", cycle: "ANNUAL", periodEnd },
+    });
+    await svc.downgrade("t1", "STARTER", [], "admin");
+    expect(billingNotification.notifyDowngradeScheduled).toHaveBeenCalledWith(
+      "t1",
+      expect.any(String),
+      expect.any(String),
+      periodEnd,
+      { newMonthlyPrice: null, addons: [], customerNote: null },
+    );
+  });
+
   it("PIN: with no customers over and no add-ons the notice still goes, with empty details", async () => {
     const { periodEnd } = activePeriod();
     const { svc, billingNotification, tx } = make({

@@ -132,8 +132,8 @@ export class AuthService {
     // admin pending email verification" (TenantsService.register). That's not
     // true in general — INACTIVE is the SAME status an admin sets via
     // UsersService.changeStatus (apps/web settings page) to deactivate ANY
-    // staff member, and the same status BillingCronService's seat-cap
-    // enforcement writes on a plan downgrade. Surfacing EMAIL_NOT_VERIFIED (and
+    // staff member (a plan downgrade no longer writes it: B1371, no seat
+    // limit on any plan). Surfacing EMAIL_NOT_VERIFIED (and
     // a "Resend verification email" affordance) to a deactivated staff member
     // handed them a path back to ACTIVE via TenantsService.resendVerification +
     // verifyEmailAndLogin below — a self-reactivation hole caught in review.
