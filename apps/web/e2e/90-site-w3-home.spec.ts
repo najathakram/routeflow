@@ -311,23 +311,32 @@ function t47Read(): ProblemRead {
     }
     throw new Error("no painted background above a text of the problem section");
   };
-  // the nearest block-level ancestor, by computed display; a span or other inline tag that the stylesheet made a block
-  // or a flex item is still its paragraph's line layout, so the climb passes it
-  const inlineTags = " span a b i em strong s u small sub sup code mark abbr cite q label ";
+  // SA-1191 A4: "the block" is the nearest ancestor, or the element itself, whose tag is block-level by default in
+  // HTML. This is the record's closed list, copied exactly; CSS display is ignored, so a span styled display:block is
+  // not a block and an h2 is.
+  const blockTags =
+    " address article aside blockquote dd div dl dt figcaption figure footer h1 h2 h3 h4 h5 h6 header li main nav ol p pre section table td th ul ";
   const blocks: Element[] = [];
-  const blockId = (el: Element): number => {
-    let found: Element = sec;
-    for (let e: Element | null = el; e; e = e.parentElement) {
-      const d = getComputedStyle(e).display;
-      if (d.indexOf("inline") === 0 || d === "contents") continue;
-      if (inlineTags.indexOf(" " + e.tagName.toLowerCase() + " ") >= 0) continue;
-      found = e;
-      break;
-    }
-    const at = blocks.indexOf(found);
+  const blockOf = (el: Element): Element => {
+    for (let e: Element | null = el; e; e = e.parentElement)
+      if (blockTags.indexOf(" " + e.tagName.toLowerCase() + " ") >= 0) return e;
+    return sec;
+  };
+  const blockId = (block: Element): number => {
+    const at = blocks.indexOf(block);
     if (at >= 0) return at;
-    blocks.push(found);
+    blocks.push(block);
     return blocks.length - 1;
+  };
+  // A4 guard: the text's element, or one between it and its block, is absolute, fixed or transformed
+  const isPlaced = (el: Element, block: Element): boolean => {
+    for (let e: Element | null = el; e; e = e.parentElement) {
+      const cs = getComputedStyle(e);
+      if (cs.position === "absolute" || cs.position === "fixed" || cs.transform !== "none")
+        if (e !== block || e === el) return true;
+      if (e === block) break;
+    }
+    return false;
   };
   const texts: TextRead[] = [];
   const walker = document.createTreeWalker(sec, NodeFilter.SHOW_TEXT);
@@ -342,11 +351,13 @@ function t47Read(): ProblemRead {
       .map(box);
     if (rects.length === 0) continue; // display:none, or collapsed: nothing painted
     const cs = getComputedStyle(el);
+    const block = blockOf(el);
     texts.push({
       name: name.slice(0, 28),
       inArt: !!el.closest(".pb-art"),
       inBig: !!el.closest(".pb-big"),
-      block: blockId(el),
+      block: blockId(block),
+      placed: isPlaced(el, block),
       color: cs.color,
       backdrop: paint(el),
       opacity: chain(el),
@@ -366,6 +377,7 @@ function t47Read(): ProblemRead {
     inArt: first.inArt,
     inBig: true,
     block: first.block,
+    placed: first.placed,
     color: first.color,
     backdrop: first.backdrop,
     opacity: first.opacity,
@@ -752,6 +764,7 @@ test("T47 geometry and the judge over a page read (no browser)", () => {
       inArt: false,
       inBig: true,
       block: 0,
+      placed: true,
       color: css(white),
       backdrop: css(ink),
       opacity: l,
@@ -765,6 +778,7 @@ test("T47 geometry and the judge over a page read (no browser)", () => {
         inArt: true,
         inBig: false,
         block: 2,
+        placed: false,
         color: css(ink),
         backdrop: css(white),
         opacity: p,
@@ -827,11 +841,13 @@ test("T47 geometry and the judge over a page read (no browser)", () => {
     rect: Rect,
     block: number = 1,
     name: string = "Prices in your head.",
+    placed: boolean = false,
   ): ProblemRead["texts"][number] => ({
     name,
     inArt: false,
     inBig: false,
     block,
+    placed,
     color: css(white),
     backdrop: css(ink),
     opacity,
@@ -882,6 +898,22 @@ test("T47 geometry and the judge over a page read (no browser)", () => {
   expect(crossesBetween(R(100, 100, 560, 167), 1, R(100, 130, 600, 197), 1)).toBe(0);
   // two blocks sharing 3 px by 3 px: a crossing, in both directions
   expect(crossesBetween(R(100, 100, 200, 167), 1, R(197, 164, 300, 231), 3)).toBe(2);
+  // SA-1191 A4: placed text is not the author's flow. Inside one block, a text that is position:absolute (or fixed, or
+  // transformed) crossing its sibling by 3 px by 3 px is a crossing; the same two rects in plain flow are not
+  const placedPair = (placed: boolean) =>
+    judgeRead(
+      {
+        ...make(0.04, 1, R(100, 700, 600, 780)),
+        texts: [
+          heading(1, R(100, 100, 200, 167), 1, "Orders in texts."),
+          heading(1, R(197, 164, 300, 231), 1, "Prices in your head.", placed),
+        ],
+      },
+      tok,
+      { cross: true },
+    ).cross.length;
+  expect(placedPair(false)).toBe(0);
+  expect(placedPair(true)).toBe(2);
   // 1 px wide by 40 px high: antialiasing, not a crossing
   expect(crossesBetween(R(100, 100, 200, 167), 1, R(199, 120, 300, 160), 3)).toBe(0);
   // a descender graze: 6 px on a 70 px rect, under a quarter of it, between two blocks: a crossing

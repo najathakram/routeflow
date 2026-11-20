@@ -177,11 +177,16 @@ export type TextRead = {
   inArt: boolean;
   inBig: boolean;
   /**
-   * The nearest block-level ancestor of the text, as an id within one read: texts that share it are one block's own line
-   * layout (the spans of a heading, consecutive lines of one paragraph). Author-blockified inline tags (a span styled
-   * display:block or a flex item) are not blocks of their own: the page read climbs past them.
+   * The text's block, as an id within one read (SA-1191 A4): the nearest ancestor, or the element itself, whose tag is
+   * block-level by default in HTML, from the closed list in the page read. CSS display is ignored. Texts that share it
+   * are one block's own line layout (the spans of a heading, consecutive lines of one paragraph).
    */
   block: number;
+  /**
+   * SA-1191 A4 guard: the text, or an element between it and its block, is position absolute or fixed, or has a transform
+   * other than none. Moved or placed text can collide without the author choosing it, so it has no same-block exemption.
+   */
+  placed: boolean;
   color: string;
   /** the nearest painted ancestor's background: the picture's card, or the panel when nothing in the picture is painted */
   backdrop: string;
@@ -321,8 +326,9 @@ export function roleFaults(read: ProblemRead, tokens: Tokens): string[] {
  * SA-1191 A2-d and A3, text over text. For each text E in .pb (the line and every text found by query, not only the
  * picture's) whose solo contrast is at or above its floor, no other text with effective opacity above SEEN may cross E's
  * glyph rects. A text already below its floor alone is in its own fade and is not held (as E1).
- * A3: texts of one block (same `block`) are that block's own line layout and never cross each other. Between blocks, glyph
- * rects crossing by 2 px or more in both width and height count; 2 px only absorbs antialiasing. No height fraction.
+ * A3 and A4: texts of one block (same `block`) are that block's own line layout and never cross each other, unless either
+ * is `placed` (absolute, fixed or transformed). Between blocks, glyph rects crossing by 2 px or more in both width and
+ * height count; 2 px only absorbs antialiasing. No height fraction.
  */
 export function crossFaults(read: ProblemRead): string[] {
   const out: string[] = [];
@@ -344,7 +350,8 @@ export function crossFaults(read: ProblemRead): string[] {
     const floor = floorFor(e.fontPx, e.weight);
     if (solo < floor) continue;
     for (const f of all) {
-      if (f === e || f.block === e.block || f.opacity <= SEEN) continue;
+      if (f === e || f.opacity <= SEEN) continue;
+      if (f.block === e.block && !e.placed && !f.placed) continue;
       if (e.rects.some((a) => f.rects.some((b) => crosses(a, b))))
         out.push(
           `"${e.name}" (${fmt(solo)} alone, floor ${floor}, opacity ${e.opacity.toFixed(3)}) is crossed by "${f.name}" (opacity ${f.opacity.toFixed(3)})`,
