@@ -158,6 +158,7 @@
 .pp-l s{color:var(--rf-text-2);text-decoration-color:var(--rf-text);text-decoration-thickness:2px}
 .pp-l em{font-style:normal;font-weight:700;color:var(--rf-text);margin-left:4px}
 .pp-t{border-bottom:0;font-weight:700}
+@media (min-width:1181px) and (max-width:1439.98px){.pb-art{height:520px}}
 .pb-big{margin-top:clamp(56px,7vw,110px);font-size:clamp(40px,6.2vw,100px);line-height:1.02;letter-spacing:-.04em;font-weight:650;text-align:center;color:var(--rf-white);text-wrap:balance}
 
 /* ---------- 3. Sell ---------- */
