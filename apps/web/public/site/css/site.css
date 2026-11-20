@@ -7,8 +7,6 @@
 :root{
   --ink:var(--rf-text);--line:var(--rf-line);--white:var(--rf-white);
   --r:var(--rf-r-card);--ease:cubic-bezier(.2,.7,.2,1);
-  /* The focus ring: copper holds 3:1 or more on white, bone and ink alike; an ink band raises it to copper light. */
-  --ring-c:var(--rf-accent);
 }
 *{box-sizing:border-box}
 html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
@@ -19,7 +17,7 @@ button{font:inherit}
 a,button,summary{-webkit-tap-highlight-color:transparent}
 h1,h2,h3,p,ul,ol,figure{margin:0}
 ul,ol{padding:0;list-style:none}
-:focus-visible{outline:3px solid var(--ring-c);outline-offset:3px;border-radius:8px}
+:focus-visible{outline:3px solid var(--rf-focus);outline-offset:3px;border-radius:8px}
 .skip{position:absolute;left:-999px;top:8px;background:var(--rf-white);padding:10px 16px;border-radius:12px;z-index:100}
 .skip:focus{left:8px}
 .wrap{width:min(1200px,100% - 48px);margin-inline:auto}

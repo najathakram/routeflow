@@ -9,12 +9,17 @@
 import * as fs from "fs";
 import * as path from "path";
 import { readServedSitePage } from "@/lib/read-site-page";
+import { STATIC_SITE_PAGE_NAMES, type StaticSitePage } from "@/lib/static-site-page";
 
 const WEB = path.resolve(__dirname, "../..");
 const read = (rel: string) => fs.readFileSync(path.join(WEB, rel), "utf8");
 const strip = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, "");
 const SITE = strip(read("public/site/css/site.css"));
 const MOBILE = strip(read("public/site/css/mobile.css"));
+/** palette.json, read at test time: no colour is typed in this file. */
+const PALETTE = JSON.parse(
+  fs.readFileSync(path.resolve(WEB, "../../packages/types/brand/palette.json"), "utf8"),
+).color as Record<string, string>;
 
 type Rule = { selectors: string[]; decls: Record<string, string> };
 /** Top-level rules and the rules inside @media / @supports, with comments stripped. */
@@ -96,7 +101,7 @@ describe("font: a matched fallback face, so a swap shifts nothing", () => {
 
   it("the shared font line of rf-graphics.css is the one the pin keeps", () => {
     expect(read("public/site/graphics/rf-graphics.css")).toContain(
-      '--rf-font:"Geist",system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;',
+      '--rf-font:"Geist","Geist Fallback",system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;',
     );
   });
 });
@@ -182,10 +187,38 @@ describe("P14: the plan-table header cells share a baseline", () => {
   });
 });
 
-describe("D-4: one ring token, set by the band, never a list of selectors", () => {
-  it("the global ring reads --ring-c and the root sets it to the accent token", () => {
-    expect(declOf(SITE, ":focus-visible", "outline")).toEqual(["3px solid var(--ring-c)"]);
-    expect(declOf(SITE, ":root", "--ring-c")).toEqual(["var(--rf-accent)"]);
+describe("D-4: one focus token, set by the band, never a list of selectors", () => {
+  const CSS_FILES = (): string[] => {
+    const out: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of fs.readdirSync(path.join(WEB, dir), { withFileTypes: true })) {
+        const rel = `${dir}/${e.name}`;
+        if (e.isDirectory()) walk(rel);
+        else if (e.name.endsWith(".css")) out.push(rel);
+      }
+    };
+    walk("public/site");
+    out.push("components/site-frame/site-frame.css");
+    return out;
+  };
+  const graphics = strip(read("public/site/graphics/rf-graphics.css"));
+
+  it("the global ring reads --rf-focus, and the root sets it to the accent token", () => {
+    expect(declOf(SITE, ":focus-visible", "outline")).toEqual(["3px solid var(--rf-focus)"]);
+    expect(declOf(graphics, ":root", "--rf-focus")).toEqual(["var(--rf-accent)"]);
+  });
+
+  it("the retired --ring-c is named nowhere in the site css", () => {
+    const files = CSS_FILES();
+    expect(files.length).toBeGreaterThan(10);
+    for (const f of files) {
+      expect({ f, hit: read(f).includes("--ring-c") }).toEqual({ f, hit: false });
+    }
+    // The landing page's own inline style, as a visitor gets it.
+    expect([...STATIC_SITE_PAGE_NAMES]).toContain("landing");
+    const landing = readServedSitePage("landing", { websiteId: undefined });
+    expect(landing.length).toBeGreaterThan(5000);
+    expect(landing.includes("--ring-c")).toBe(false);
   });
 
   it("no rule recolours the ring by naming a panel under :focus-visible", () => {
@@ -193,22 +226,107 @@ describe("D-4: one ring token, set by the band, never a list of selectors", () =
     expect(sels.filter((s) => s.includes(":focus-visible"))).toEqual([":focus-visible"]);
   });
 
-  it("no rule sets the ring to copper light: one ring colour holds on ink and on a white card inside ink", () => {
-    const all = [
-      SITE,
-      MOBILE,
-      strip(read("public/site/css/home.css")),
-      strip(read("public/site/css/home-up.css")),
-    ];
-    for (const css of all) {
-      for (const r of rulesOf(css)) {
-        if (r.selectors.includes(":root")) continue;
-        expect({ sel: r.selectors, ring: r.decls["--ring-c"] }).toEqual({
-          sel: r.selectors,
-          ring: undefined,
-        });
+  it("outside :root only the two dark panels set --rf-focus, to the on-panel accent", () => {
+    const setters: Array<{ sel: string; value: string }> = [];
+    const GRAPHICS = "public/site/graphics/rf-graphics.css";
+    for (const f of CSS_FILES()) {
+      for (const r of rulesOf(strip(read(f)))) {
+        // Only the token file's own bare :root rule may set it; a :root anywhere else, alone or in a list, is a setter.
+        if (f === GRAPHICS && r.selectors.length === 1 && r.selectors[0] === ":root") continue;
+        const v = r.decls["--rf-focus"];
+        if (v !== undefined) for (const sel of r.selectors) setters.push({ sel, value: v });
       }
     }
-    expect(declOf(SITE, ":root", "--ring-c")).toEqual(["var(--rf-accent)"]);
+    expect(setters.map((x) => x.sel).sort()).toEqual([".end", ".pb"]);
+    for (const x of setters) expect(x.value).toBe("var(--rf-accent-on-panel)");
+  });
+
+  it("the roles hold 3:1: the accent on white and bone, the on-panel accent on the panel", () => {
+    const lum = (hex: string) => {
+      const [r, g, b] = [1, 3, 5].map((i) => {
+        const v = parseInt(hex.slice(i, i + 2), 16) / 255;
+        return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * (r as number) + 0.7152 * (g as number) + 0.0722 * (b as number);
+    };
+    const ratio = (x: string, y: string) => {
+      const [hi, lo] = [lum(x), lum(y)].sort((m, n) => n - m);
+      return ((hi as number) + 0.05) / ((lo as number) + 0.05);
+    };
+    expect(ratio(PALETTE.copper as string, PALETTE.white as string)).toBeGreaterThanOrEqual(3);
+    expect(ratio(PALETTE.copper as string, PALETTE.bone as string)).toBeGreaterThanOrEqual(3);
+    expect(ratio(PALETTE["copper-light"] as string, PALETTE.ink as string)).toBeGreaterThanOrEqual(
+      3,
+    );
+  });
+});
+
+describe("T21: the box art tokens read the palette", () => {
+  const css = strip(read("public/site/graphics/rf-graphics.css"));
+  const decls = new Map<string, string>();
+  for (const m of css.matchAll(/(--[a-z0-9-]+)\s*:\s*([^;}]+)/g)) {
+    if (!decls.has(m[1] as string)) decls.set(m[1] as string, (m[2] as string).trim());
+  }
+  /** Follow var(--x) links to a typed hex, or to a palette key through --brand-<key>. */
+  const resolve = (name: string, seen = new Set<string>()): string => {
+    if (seen.has(name)) throw new Error(`cycle at ${name}`);
+    seen.add(name);
+    const brand = /^--brand-(.+)$/.exec(name);
+    if (brand) return (PALETTE[brand[1] as string] ?? "").toUpperCase();
+    const v = decls.get(name);
+    if (v === undefined) throw new Error(`${name} is not declared`);
+    const ref = /^var\((--[a-z0-9-]+)\)$/.exec(v);
+    if (ref) return resolve(ref[1] as string, seen);
+    if (/^#[0-9a-f]{6}$/i.test(v)) return v.toUpperCase();
+    throw new Error(`${name}: ${v} is neither a var nor a six digit hex`);
+  };
+  const lum = (hex: string) => {
+    const [r, g, b] = [1, 3, 5].map((i) => {
+      const v = parseInt(hex.slice(i, i + 2), 16) / 255;
+      return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * (r as number) + 0.7152 * (g as number) + 0.0722 * (b as number);
+  };
+
+  it("the front is copper light and the side is copper, read from palette.json", () => {
+    expect(resolve("--rf-box-front")).toBe((PALETTE["copper-light"] as string).toUpperCase());
+    expect(resolve("--rf-box-side")).toBe((PALETTE.copper as string).toUpperCase());
+  });
+
+  it("the top is a lighter warm tint that is no palette value", () => {
+    const top = resolve("--rf-box-top");
+    expect(Object.values(PALETTE).map((v) => v.toUpperCase())).not.toContain(top);
+    // ux-spec section 3, the one typed tint: the top has no palette value, so it is pinned here.
+    expect(top).toBe("#EACBB3");
+    expect(lum(top)).toBeGreaterThan(lum(resolve("--rf-box-front")));
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(top.slice(i, i + 2), 16));
+    expect((r as number) > (g as number) && (g as number) > (b as number)).toBe(true);
+  });
+
+  it("no art role is built from a retired name, and each one is declared", () => {
+    const retired =
+      /--rf-(?:brand-\d+|on-navy|link-on-navy|tint|ink-[23]|sun|coral|mint|ok|sh-(?:card|sample|win))(?![\w-])/;
+    const roles = ["--rf-road", "--rf-pill-bg", "--rf-pill-fg", "--rf-cargo", "--rf-cargo-mark"];
+    for (const n of [...roles, "--rf-disc-a", "--rf-disc-b", "--rf-disc-c"]) {
+      expect(decls.has(n)).toBe(true);
+      expect(retired.test(decls.get(n) as string)).toBe(false);
+    }
+  });
+});
+
+describe("font: the frame pages and the scene already have the fallback face", () => {
+  it("every page that links rf-graphics.css also links site.css, which holds both faces", () => {
+    const served = (page: StaticSitePage) => readServedSitePage(page, { websiteId: undefined });
+    const linking = [...STATIC_SITE_PAGE_NAMES].filter((n) =>
+      served(n).includes("graphics/rf-graphics.css"),
+    );
+    expect(linking.length).toBeGreaterThan(5);
+    for (const n of linking) {
+      expect({ n, site: served(n).includes("/site/css/site.css") }).toEqual({ n, site: true });
+    }
+    expect(read("components/site-frame/SiteFrame.tsx")).toContain('href="/site/css/site.css"');
+    const css = read("public/site/css/site.css");
+    expect(() => faceOf(css, "Geist")).not.toThrow();
+    expect(() => faceOf(css, "Geist Fallback")).not.toThrow();
   });
 });

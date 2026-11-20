@@ -40,7 +40,7 @@ inside the block stay exactly as they are today and are not repeated here.
   --rf-btn:var(--rf-ink);--rf-btn-press:var(--rf-ink-press);--rf-btn-fg:var(--rf-white);
   --rf-panel:var(--rf-ink);--rf-on-panel:var(--rf-white);--rf-on-panel-2:var(--rf-bone);
   --rf-soft:var(--rf-bone);
-  --rf-link:var(--rf-copper-dark);--rf-link-on-panel:var(--rf-copper-light);--rf-focus:var(--rf-copper-dark);
+  --rf-link:var(--rf-copper-dark);--rf-link-on-panel:var(--rf-copper-light);--rf-focus:var(--rf-accent);
   --rf-accent:var(--rf-copper);--rf-accent-on-panel:var(--rf-copper-light);
   /* Status: Paid, Pending, Overdue and nothing else. */
   --rf-paid-bg:#DDF3E6;--rf-paid:#12714A;--rf-pending-bg:#FFEFC7;--rf-pending:#8A5A00;--rf-overdue-bg:#FBE0DC;--rf-overdue:#A1261D;
@@ -58,7 +58,8 @@ Retired names (zero references may remain, R14): `--rf-brand-900/700/500/300/100
 `--rf-mint(-soft)`, `--rf-ok`, `--rf-sh-card/sample/win`, `--pc-*`, `--fld-*`, `--k-bg/--k-ink/--k-dot`
 tint pairs, and the `--navy`, `--navy-d`, `--sun`, `--tint` aliases. Each use is re-pointed by hand to a
 job: this is the audit that stops copper leaking into fills that used to be mid-blue (E17).
-Art roles: `--rf-box-top:#EACBB3; --rf-box-front:#D69062; --rf-box-side:#B5683A` (E23).
+Focus (SA-1180 item 1): one token. `--rf-focus` is the accent everywhere; only the dark panels `.pb` and `.end` (no white card holds a control inside them) set `--rf-focus:var(--rf-accent-on-panel)`; `site.css` `:focus-visible` reads `var(--rf-focus)`, and `--ring-c` is retired. Font (SA-1180 item 4): `--rf-font:"Geist","Geist Fallback",system-ui,…`.
+Art roles: `--rf-box-top:#EACBB3; --rf-box-front:var(--rf-copper-light); --rf-box-side:var(--rf-copper)` (E23; front and side read the palette, the top is the one typed tint).
 App pictures (D7): rail and primary `--rf-ink`, canvas `--rf-bone`, lines `--rf-line`, text `--rf-ink` /
 `--rf-steel`, status from the status tokens. No teal, no emerald.
 
@@ -160,7 +161,7 @@ owner. They bind WP1.2 (brand-neutral, owner ruling 2026-11-12: it ships to mast
 |---|---|---|---|
 | Names in a legend, none on the canvas | Canvas names failed at both widths (phone walker could name no part) | Still text where the eye rests | **Pair a 16 px icon with each name in both layouts**, the stacked phone legend and the under-600 px one included (replaces "names as running text joined by ' · '"). Tile clockwise order in every list. Keep the per-stop heading and "What each part does". Accept: on a phone re-walk a person names 3 parts once the wheel opens. |
 | Start free trial in the wheel's end state | Desktop end state is a dead end today (B1323) | Lands where the eye is as the wheel closes | **Move the existing `.sy-go` button, never add a second.** Fade with opacity only (`autoAlpha` drops it from the tab order); on `focusin` call `goTo("one")`. In reading order right after the 15 tile buttons: ≤ 2 Tabs from the last tile. On phone the header pill steps aside while it shows (no viewport with two "Start free trial"). |
-| Focus ring | Today's 3 px `--b500` ring at 3 px offset (~8.4:1) was clear on every control | Copper needs a new brand colour, so it waits | **Phase 1 ships today's ring unchanged** (3 px, 3 px offset, `--b500`) and draws a 3 px `--b500` stroke on the focused tile's top face for `:focus-visible` only (today focus looks like hover). Phase 2 changes only the colour, keeps 3 px / 3 px, and drives the ink-surface ring from the panel token (copper-dark on ink is ~2.8:1), never the hand-kept selector list in `site.css:22`. |
+| Focus ring | Today's 3 px `--b500` ring at 3 px offset (~8.4:1) was clear on every control | Copper needs a new brand colour, so it waits | **Phase 1 ships today's ring unchanged** (3 px, 3 px offset, `--b500`) and draws a 3 px `--b500` stroke on the focused tile's top face for `:focus-visible` only (today focus looks like hover). Phase 2 changes only the colour, keeps 3 px / 3 px, and drives the ink-surface ring from the panel token (copper-dark on ink is ~2.8:1), never the hand-kept selector list in `site.css:22`. Landed as `--rf-focus` (accent; `.pb` and `.end` set the on-panel accent), 3:1 or better on white, bone and ink. |
 
 Motion items apple-design asks WP1.2 to take (with the placements, at most these three): the snap starts
 from rest after a flick (`rf-wheel-up.js:671`: use inertia and `power2.out`); phone scrub `.7` trails the

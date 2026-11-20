@@ -82,26 +82,8 @@ describe("T14a: the contract block of rf-graphics.css", () => {
     "--rf-wh-sell-2": "#27364C",
     "--rf-wh-sell-wall": "#04070D",
   };
-  /** Old names kept as aliases with their old values until lanes 2.1a/2.1b repaint (they delete them). */
-  const LEGACY_TYPED = new Set([
-    "--rf-ink-2",
-    "--rf-ink-3",
-    "--rf-tint",
-    "--rf-brand-900",
-    "--rf-brand-700",
-    "--rf-brand-500",
-    "--rf-brand-300",
-    "--rf-brand-100",
-    "--rf-sun",
-    "--rf-sun-soft",
-    "--rf-coral",
-    "--rf-coral-soft",
-    "--rf-mint",
-    "--rf-mint-soft",
-    "--rf-ok",
-    "--rf-on-navy",
-    "--rf-link-on-navy",
-  ]);
+  /** The old names are gone (lane 2.1b-last): nothing typed in the block may be a legacy alias. */
+  const LEGACY_TYPED = new Set<string>();
 
   it("has both markers, in order, once each (tools/build-landing.cjs inlines the block)", () => {
     expect(css.match(/\/\*tokens:start\*\//g)).toHaveLength(1);
@@ -163,7 +145,7 @@ describe("T14a: the contract block of rf-graphics.css", () => {
       "--rf-soft": "var(--rf-bone)",
       "--rf-link": "var(--rf-copper-dark)",
       "--rf-link-on-panel": "var(--rf-copper-light)",
-      "--rf-focus": "var(--rf-copper-dark)",
+      "--rf-focus": "var(--rf-accent)",
       "--rf-accent": "var(--rf-copper)",
       "--rf-accent-on-panel": "var(--rf-copper-light)",
       "--rf-ring": "0 0 0 1px var(--rf-line)",
@@ -176,7 +158,7 @@ describe("T14a: the contract block of rf-graphics.css", () => {
 
   it("keeps the type scale, corner and font lines as they were", () => {
     expect(block).toContain(
-      '--rf-font:"Geist",system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;',
+      '--rf-font:"Geist","Geist Fallback",system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;',
     );
     expect(block).toContain("--rf-h1:clamp(44px,5vw,72px);--rf-h1-tr:-.04em;");
     expect(block).toContain(
