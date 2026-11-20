@@ -64,6 +64,6 @@ describe("CounterLineRow stock note", () => {
     expect(screen.getByTestId("line-stock")).toHaveAttribute("data-level", "out");
     expect(screen.getByRole("button", { name: "Remove Cola" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Add a note to Cola" })).toBeEnabled();
-    expect(screen.getByLabelText("Quantity of Cola")).toBeEnabled();
+    expect(screen.getByLabelText("Set quantity of Cola")).toBeEnabled();
   });
 });

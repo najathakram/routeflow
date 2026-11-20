@@ -178,7 +178,7 @@ describe("counter sale: nothing changes while the sale request is in flight", ()
     expect(btn("Add one Cola")).toBeDisabled();
     expect(screen.getByLabelText("Set quantity of Cola")).toBeDisabled();
     expect(btn("Add a note to Cola")).toBeDisabled();
-    expect(btn("Change price for Cola")).toBeDisabled(); // the admin's price control
+    expect(screen.queryByRole("button", { name: "Change price for Cola" })).toBeNull(); // the admin price control is withdrawn (B1373)
     expect(screen.getByLabelText("Find a customer")).toBeDisabled();
     expect(screen.getByLabelText("Scan or search items")).toBeDisabled();
     expect(btn("Complete & show receipt")).toBeDisabled();
@@ -192,7 +192,7 @@ describe("counter sale: nothing changes while the sale request is in flight", ()
     fireEvent.blur(screen.getByLabelText("Set quantity of Cola"));
     await new Promise((r) => setTimeout(r, 30));
     expect(itemCount()).toBe(1);
-    expect(screen.getByText(/Cola · × 1/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Set quantity of Cola")).toHaveValue(1);
     expect(screen.queryByText("Acme Co")).toBeNull(); // still the walk-in
     expect(screen.queryByRole("option", { name: "Acme Co" })).toBeNull();
 
@@ -214,7 +214,7 @@ describe("counter sale: nothing changes while the sale request is in flight", ()
 
     // and they work again: a step, a note, a second scan
     fireEvent.click(btn("Add one Cola"));
-    expect(screen.getByText(/Cola · × 2/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Set quantity of Cola")).toHaveValue(2);
     await scan("WATER", "Water");
     expect(itemCount()).toBe(2);
     fireEvent.click(btn("Ship this order instead"));

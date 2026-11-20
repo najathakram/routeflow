@@ -86,14 +86,16 @@ describe("CounterSaleScreen: the per-line cap on a scan (W-833)", () => {
     expect(screen.getByRole("spinbutton", { name: "Set quantity of Cola" })).toHaveValue(100000);
   });
 
-  it("says why once, and the full line's + names its reason", async () => {
+  it("says why once, and the full line says it is full while a + tap changes nothing", async () => {
+    // B1373: the order row's + is not disabled at the cap (the till's step refuses it); the visible hint is the reason
     await fillLine();
     await scan("COLA");
     expect(screen.getAllByText(CAP)).toHaveLength(1);
-    const plus = screen.getByRole("button", { name: "Add one Cola" });
-    expect(plus).toBeDisabled();
-    const hint = screen.getByTestId("counter-line-full");
-    expect(plus).toHaveAttribute("aria-describedby", hint.id);
+    expect(screen.getByTestId("counter-line-full")).toHaveTextContent(
+      "This line is full. The most is 100,000 pieces.",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Add one Cola" }));
+    expect(screen.getByRole("spinbutton", { name: "Set quantity of Cola" })).toHaveValue(100000);
   });
 
   it("a typed quantity over the cap shows its refusal once (no second copy under Amount due)", async () => {

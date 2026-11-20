@@ -141,6 +141,15 @@ const editBtn = (name: string) => screen.getByRole("button", { name: `Change pri
 const lineOf = (name: string) =>
   screen.getByRole("button", { name: `Remove ${name}` }).closest("li") as HTMLElement;
 
+/** B1373: the struck list price of a line (the order row's line-through span) and its loose-pieces entry. */
+const struckOf = (li: HTMLElement) => li.querySelector(".line-through");
+const addPieces = (name: string, n: number) => {
+  fireEvent.click(within(lineOf(name)).getByRole("button", { name: /^\+ .*: add extra / }));
+  fireEvent.change(within(lineOf(name)).getByRole("spinbutton", { name: /^Extra / }), {
+    target: { value: String(n) },
+  });
+};
+
 /** Opens the dialog for `name`, picks a mode, types the number (and a reason) and presses Apply. */
 async function editPrice(
   name: string,
@@ -216,8 +225,8 @@ describe("POS-5 price edit: the cart and totals", () => {
     await scan("COLA");
     await tenPercentOffCola();
     const li = lineOf("Cola");
-    expect(within(li).getByTestId("line-original-total")).toHaveTextContent("$10.00");
-    expect(within(li).getByTestId("line-net-total")).toHaveTextContent("$9.00");
+    expect(struckOf(li)).toHaveTextContent("$10.00");
+    expect(within(li).getByTestId("line-total")).toHaveTextContent("$9.00");
     expect(within(li).getByTestId("line-price-chip")).toHaveTextContent("10% off");
     expect(screen.getByTestId("running-discounts")).toHaveTextContent("Discount−$1.00");
     // CQ-08: the panel reads like the receipt: Subtotal at the system prices (10.00), then Discount, then the total
@@ -234,7 +243,7 @@ describe("POS-5 price edit: the cart and totals", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reset price" }));
     expect(screen.queryByTestId("running-discounts")).toBeNull();
     expect(screen.queryByTestId("line-price-chip")).toBeNull();
-    expect(screen.queryByTestId("line-original-total")).toBeNull();
+    expect(struckOf(lineOf("Cola"))).toBeNull();
     expect(screen.queryByRole("button", { name: "Reset price" })).toBeNull();
     expect(total()).toHaveTextContent("$10.00");
     await waitFor(() => expect(screen.getByLabelText("Scan or search items")).toHaveFocus());
@@ -282,9 +291,7 @@ describe("POS-5 price edit: the cart and totals", () => {
   it("a boxed line (1 box + 3 pcs): 10% off is a 21.60 BOX price and the total is computeLineSubtotal, never qty x price", async () => {
     renderTill(<CounterSaleScreen />);
     await scan("WATER");
-    for (let i = 0; i < 3; i++) {
-      fireEvent.click(screen.getByRole("button", { name: "Add a piece to Water" }));
-    }
+    addPieces("Water", 3);
     await waitFor(() => expect(total()).toHaveTextContent("$30.00")); // 24 + 3 x (24/12)
     fireEvent.click(editBtn("Water"));
     await screen.findByRole("dialog", { name: "Change the price for Water" });
@@ -296,7 +303,8 @@ describe("POS-5 price edit: the cart and totals", () => {
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(total()).toHaveTextContent("$27.00"); // 21.60 + 3 x 1.80, not 15 x 21.60
-    expect(within(lineOf("Water")).getByTestId("line-original-total")).toHaveTextContent("$30.00");
+    expect(struckOf(lineOf("Water"))).toHaveTextContent("$24.00");
+    expect(within(lineOf("Water")).getByTestId("line-total")).toHaveTextContent("$27.00"); // 21.60 + 3 x 1.80
     expect(screen.getByTestId("running-discounts")).toHaveTextContent("−$3.00");
   });
 });
@@ -352,7 +360,8 @@ describe("POS-5 price edit: the dialog on the screen", () => {
     fireEvent.click(screen.getByRole("radio", { name: "Card" }));
     fireEvent.click(completeBtn());
     await screen.findByTestId("counter-outcome-unknown");
-    expect(editBtn("Cola")).toBeDisabled();
+    // B1373: a locked line offers no Change price target at all (the order row's tap-to-edit price is withdrawn)
+    expect(screen.queryByRole("button", { name: "Change price for Cola" })).toBeNull();
     expect(screen.getByRole("button", { name: "Reset price" })).toBeDisabled();
   });
 });
@@ -487,9 +496,7 @@ describe("POS-5 price edit: the estimate matches the server, so 'next sale' rese
     mutateAsync.mockResolvedValue(saleResponse(serverTotal));
     renderTill(<CounterSaleScreen />);
     await scan("WATER");
-    for (let i = 0; i < 3; i++) {
-      fireEvent.click(screen.getByRole("button", { name: "Add a piece to Water" }));
-    }
+    addPieces("Water", 3);
     await editPrice("Water", { mode: "Percent off", label: "Percent off", value: "10" });
     await waitFor(() => expect(total()).toHaveTextContent(`$${serverTotal.toFixed(2)}`));
     expect(serverTotal).toBe(29.23); // 27.00 + 2.23 tax
@@ -554,8 +561,8 @@ describe("POS-5 price edit: a customer pick keeps the edited price (POS-2 surviv
     await waitFor(() => expect(total()).toHaveTextContent("$9.00")); // cola kept 5.00, juice re-priced to 4.00
     const li = lineOf("Cola");
     // row 322d: the struck figure is the LIST total (10.00), the receipt's reference, not the customer's tier total (8.00)
-    expect(within(li).getByTestId("line-original-total")).toHaveTextContent("$10.00");
-    expect(within(li).getByTestId("line-net-total")).toHaveTextContent("$5.00");
+    expect(struckOf(li)).toHaveTextContent("$10.00");
+    expect(within(li).getByTestId("line-total")).toHaveTextContent("$5.00");
     // ...and the chip is measured from that same list: 5.00 is 50% off 10.00 (it was 37.5% off the tier's 8.00)
     expect(within(li).getByTestId("line-price-chip")).toHaveTextContent(/^50% off$/);
     expect(within(lineOf("Juice")).queryByTestId("line-price-chip")).toBeNull();
@@ -593,10 +600,8 @@ describe("POS-5 price edit: a customer pick keeps the edited price (POS-2 surviv
     await editPrice("Cola", { mode: "Percent off", label: "Percent off", value: "10" }); // 9.00
     await pickAcme(); // tier 2 price is 8.00: 9.00 is now ABOVE it, but still below the 10.00 list
     const li = lineOf("Cola");
-    await waitFor(() =>
-      expect(within(li).getByTestId("line-original-total")).toHaveTextContent("$10.00"),
-    );
-    expect(within(li).getByTestId("line-net-total")).toHaveTextContent("$9.00");
+    await waitFor(() => expect(struckOf(li)).toHaveTextContent("$10.00"));
+    expect(within(li).getByTestId("line-total")).toHaveTextContent("$9.00");
     // struck -> net -> chip -> Discounts agree: 9.00 is 10% off the 10.00 list, which is 1.00 off
     expect(within(li).getByTestId("line-price-chip")).toHaveTextContent(/^10% off$/);
     expect(screen.getByTestId("running-discounts")).toHaveTextContent("−$1.00");

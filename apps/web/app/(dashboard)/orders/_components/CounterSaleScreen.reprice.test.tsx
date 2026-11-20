@@ -1,5 +1,5 @@
 import * as React from "react";
-import { renderWithProviders, screen, waitFor, fireEvent } from "@/test-utils/render";
+import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-utils/render";
 import { apiClient } from "@/lib/api-client";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
@@ -150,9 +150,12 @@ describe("CounterSaleScreen: re-price when a customer is picked (POS-2)", () => 
   it("a boxed line with loose pieces re-prices through the box proration, never qty x price", async () => {
     renderWithProviders(<CounterSaleScreen />);
     await scan("WATER");
-    for (let i = 0; i < 3; i++) {
-      fireEvent.click(screen.getByRole("button", { name: "Add a piece to Water" }));
-    }
+    // B1373: no one-tap piece stepper on a boxed line: open the loose-pieces field and type 3
+    const line = screen.getByRole("button", { name: "Remove Water" }).closest("li") as HTMLElement;
+    fireEvent.click(within(line).getByRole("button", { name: /^\+ .*: add extra / }));
+    fireEvent.change(within(line).getByRole("spinbutton", { name: /^Extra / }), {
+      target: { value: "3" },
+    });
     await waitFor(() => expect(total()).toHaveTextContent("$15.00")); // 1 box + 3 pcs at 12/box
     pickAcme();
     await waitFor(() => expect(total()).toHaveTextContent("$11.25")); // 9 + 3 x (9/12)

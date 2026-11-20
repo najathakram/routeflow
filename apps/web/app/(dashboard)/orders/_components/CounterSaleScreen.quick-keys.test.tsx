@@ -165,7 +165,9 @@ describe("QuickKeysGrid: a tap is the scan add path", () => {
     renderTill(<CounterSaleScreen />);
     fireEvent.click(await colaKey());
     fireEvent.click(await colaKey());
-    await waitFor(() => expect(screen.getByText(/Sample Cola · × 2/)).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByLabelText("Set quantity of Sample Cola")).toHaveValue(2),
+    );
     expect(lines()).toHaveLength(1);
     expect(total()).toHaveTextContent("$5.00");
   });
@@ -267,7 +269,7 @@ describe("QuickKeysGrid: frozen carts ignore taps", () => {
     fireEvent.click(key);
     await new Promise((r) => setTimeout(r, 30));
     expect(lines()).toHaveLength(1);
-    expect(screen.getByText(/Sample Cola · × 1/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Set quantity of Sample Cola")).toHaveValue(1);
   });
 
   it("while the sale request is in flight a tap adds nothing", async () => {
@@ -284,7 +286,7 @@ describe("QuickKeysGrid: frozen carts ignore taps", () => {
     );
     fireEvent.click(screen.getByTestId("quick-key-p-cola"));
     await new Promise((r) => setTimeout(r, 30));
-    expect(screen.getByText(/Sample Cola · × 1/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Set quantity of Sample Cola")).toHaveValue(1);
     resolveSale({
       orderId: "o1",
       orderNumber: "ORD-1",

@@ -233,13 +233,14 @@ for (const vp of VIEWPORTS) {
           page.getByRole("button", { name: `Add one ${nameA}`, exact: true }),
         ).toBeVisible();
 
-        // note (single-line input)
+        // note (B1373: the order row's note; opening it puts the cursor in it, Enter closes it back to the scan box)
         await page.getByRole("button", { name: `Add a note to ${nameA}`, exact: true }).click();
         const noteBox = page.getByLabel(`Note for ${nameA}`);
-        expect(await noteBox.evaluate((el) => el.tagName)).toBe("INPUT");
+        await expect(noteBox).toBeFocused();
         await noteBox.fill("smoke note");
-        await page.getByRole("button", { name: `Edit the note on ${nameA}`, exact: true }).click();
-        await expect(page.getByTestId("line-note")).toHaveText("smoke note");
+        await noteBox.press("Enter");
+        await expect(page.getByLabel("Scan or search items")).toBeFocused();
+        await expect(noteBox).toHaveValue("smoke note");
 
         // remove + Undo
         const totalEl = page.getByTestId("running-total");
@@ -580,8 +581,9 @@ test.describe("R7b till: change due note and the keyboard path to pay", () => {
     await scanField.fill(String(boxed.sku));
     await scanField.press("Enter");
     const row = page.getByRole("list", { name: "Items" }).getByRole("listitem").first();
-    await expect(row).toContainText(`of ${Number(boxed.unitsPerBox)}`, { timeout: 15_000 });
-    await expect(page.getByTestId("line-unit-price")).toContainText("each");
+    // B1373: the order row's words: "1 <pack> = N <pieces>", the pack price, then the price of one piece
+    await expect(row).toContainText(` = ${Number(boxed.unitsPerBox)} `, { timeout: 15_000 });
+    await expect(row.getByText(/^\$[\d.,]+ \/ \S+/)).toHaveCount(2);
   });
 });
 
