@@ -27,8 +27,18 @@ function importFailureCopy(err: unknown): string {
 import { Upload, AlertCircle, CheckCircle2, ChevronDown, ChevronUp, Download } from "lucide-react";
 import { downloadCsv } from "@/lib/export";
 import { cn, useToast } from "@routeflow/ui/web";
+import Link from "next/link";
+import {
+  IMPORT_REQUIREMENT_NEXT_STEP,
+  IMPORT_SKIPPED_COLUMNS_TOAST,
+  skippedColumnsNotice,
+} from "@/lib/import-skipped-columns-copy";
 import type { ImportColumnAlias } from "@routeflow/types";
-import type { ImportFamilyRowInfo, ImportFamilySummary } from "@routeflow/types";
+import type {
+  ImportFamilyRowInfo,
+  ImportFamilySummary,
+  ImportSkippedColumn,
+} from "@routeflow/types";
 import { apiClient } from "@/lib/api-client";
 
 interface ImportRowPlan {
@@ -100,6 +110,8 @@ export interface ImportCsvResult {
   skippedRows: { row: number; label: string; reason: string }[];
   warnings: string[];
   unknownColumns: string[];
+  /** SA-1193: product headers not imported because the account lacks what they need (absent on contacts and older servers). */
+  skippedColumns?: ImportSkippedColumn[];
   dryRun: boolean;
   /** SA-823: the family block of a file with a Family column. */
   families?: ImportFamilySummary;
@@ -142,6 +154,14 @@ function summarize(
     parts.push(`${result.imported} imported`);
   }
   return parts.join(", ") || "Done";
+}
+
+/** The toast after an apply: the counts, plus one fixed line when columns were skipped (SA-1193 K6). */
+function appliedDescription(result: ImportCsvResult): string {
+  const counts = summarize(result);
+  return result.skippedColumns && result.skippedColumns.length > 0
+    ? `${counts}. ${IMPORT_SKIPPED_COLUMNS_TOAST}`
+    : counts;
 }
 
 const ACTION_STYLES: Record<ImportRowPlan["action"], string> = {
@@ -402,6 +422,49 @@ function ResultTable({ result, testIdPrefix }: { result: ImportCsvResult; testId
   );
 }
 
+/** SA-1193 K6: one warning notice for every skipped gated column, from `requires` in fixed words; Import stays enabled. */
+function SkippedColumnsNotice({
+  result,
+  done,
+  testIdPrefix,
+}: {
+  result: ImportCsvResult;
+  done: boolean;
+  testIdPrefix: string;
+}) {
+  const notice = skippedColumnsNotice(result.skippedColumns, done);
+  if (!notice) return null;
+  return (
+    <div
+      data-testid={`${testIdPrefix}-skipped-columns`}
+      className="rounded-lg border border-warning/30 bg-warning-bg/50 px-3 py-2 text-xs text-warning"
+    >
+      <p className="font-medium">{notice.title}</p>
+      <ul className="mt-0.5 space-y-0.5">
+        {notice.lines.map((l) => {
+          const next = IMPORT_REQUIREMENT_NEXT_STEP[l.requires];
+          return (
+            <li key={l.requires}>
+              {l.text}
+              {next && (
+                <>
+                  {" "}
+                  {next.before}
+                  <Link href={next.href} className="font-medium underline">
+                    {next.label}
+                  </Link>
+                  {next.after}
+                </>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      <p className="mt-0.5">{notice.footer}</p>
+    </div>
+  );
+}
+
 export function ImportCsvPanel({
   endpoint,
   title,
@@ -484,7 +547,11 @@ export function ImportCsvPanel({
       } else {
         setFinal(data);
         onImported?.(data);
-        toast({ title: `${title} imported`, description: summarize(data), variant: "success" });
+        toast({
+          title: `${title} imported`,
+          description: appliedDescription(data),
+          variant: "success",
+        });
       }
     } catch (err: any) {
       const refusal = importRefusalCopy(err?.response?.data?.code);
@@ -534,7 +601,7 @@ export function ImportCsvPanel({
           latest.current.onImported?.(result);
           latest.current.toast({
             title: `${latest.current.title} imported`,
-            description: summarize(result),
+            description: appliedDescription(result),
             variant: "success",
           });
           return;
@@ -765,6 +832,8 @@ export function ImportCsvPanel({
           </span>
         </div>
       )}
+
+      {active && <SkippedColumnsNotice result={active} done={!!final} testIdPrefix={prefix} />}
 
       {active?.families && (
         <FamilyBlock summary={active.families} done={!!final} testIdPrefix={prefix} />

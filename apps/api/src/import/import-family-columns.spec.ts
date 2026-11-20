@@ -1,5 +1,5 @@
 import { Test } from "@nestjs/testing";
-import { BadRequestException, ConflictException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException } from "@nestjs/common";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { ImportService } from "./import.service";
@@ -921,6 +921,29 @@ describe("ImportService.importProducts: Family / Variant name columns (SA-823 PR
         reason: "Set Tobacco to Yes to add this to a tobacco family.",
       });
     });
+
+    it("SA-1193 K7: the same row when the Tobacco column was SKIPPED (no add-on) names the add-on, never 'Set Tobacco to Yes'", async () => {
+      productsService.assertCanFlagTobacco.mockRejectedValue(
+        new ForbiddenException("tobacco_dealer add-on required"),
+      );
+      rows.push(mk({ id: "fam", name: "Acme Cola", kind: "FAMILY" }));
+      rows.push(
+        mk({
+          id: "kid",
+          name: "Classic",
+          kind: "VARIANT",
+          parentProductId: "fam",
+          isTobacco: true,
+          trackedCategoryId: "cat-t",
+        }),
+      );
+      const r = await run(csv("Mint,,,6,Acme Cola,Mint,,Yes"), true);
+      expect(r.skippedColumns).toEqual([{ column: "Tobacco", requires: "TOBACCO_DEALER" }]);
+      expect(byRow(r, 1)).toMatchObject({
+        action: "skip",
+        reason: "This is a tobacco family. Adding to it needs the Tobacco dealer add-on.",
+      });
+    });
   });
 
   it("SHOULD-1: a failed cleanup remove() is reported as could not be removed, never as deactivated", async () => {
@@ -1134,6 +1157,21 @@ describe("ImportService.importProducts: Family / Variant name columns (SA-823 PR
       expect(r.queued).toBeUndefined();
       expect(r.rows).toHaveLength(IMPORT_FAMILY_SYNC_MAX_ROWS + 1);
       expect(jobs.enqueue).not.toHaveBeenCalled();
+    });
+
+    it("SA-1193 K5 6: preview, queued apply and the job's own run carry the SAME skippedColumns", async () => {
+      productsService.assertCanFlagTobacco.mockRejectedValue(
+        new ForbiddenException("tobacco_dealer add-on required"),
+      );
+      const file = regroupFile(IMPORT_FAMILY_SYNC_MAX_ROWS + 1);
+      const expected = [{ column: "Tobacco", requires: "TOBACCO_DEALER" }];
+      const preview: any = await apply(file, { dryRun: true });
+      const queued: any = await apply(file);
+      const jobRun: any = await service.importProducts(file, "user-1", { fileName: "f.csv" });
+      expect(queued.queued).toBeDefined();
+      expect(preview.skippedColumns).toEqual(expected);
+      expect(queued.skippedColumns).toEqual(expected);
+      expect(jobRun.skippedColumns).toEqual(expected);
     });
 
     it("an apply at the threshold runs inside the request", async () => {
