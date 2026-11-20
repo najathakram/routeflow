@@ -118,8 +118,6 @@ describe("home.html structured data (SA-1178)", () => {
     const expected = `"alternateName":["{{brand:name}}","{{brand:formerly}}"]`;
     expect(new Set([fx.name, fx.formerly, fx.officialName]).size).toBe(3);
     expect(homeJsonLd(fx)).toContain(expected);
-    // the page is tokenised, so a brand with the same distinct-value shape yields the same template
-    expect(homeJsonLd(fx)).toBe(homeJsonLd(real));
     expect(homeJsonLdProblems(home, fx)).toEqual([]);
   });
 

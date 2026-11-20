@@ -126,16 +126,22 @@ describe("the pages", () => {
     const alt = page === "home" ? ": " : ". ";
     expect(html).toContain(`content="${esc(FIXTURE.name)}${alt}${esc(FIXTURE.shareLine)}"`);
     expect(html).not.toContain(FIXTURE.shareLine);
-    // formerly is a different string from name; the only place it may appear is home's structured
-    // data alternateName, so it is absent once that script is taken out
-    const withoutLd = html.replace(/<script type="application\/ld\+json">[^<]*<\/script>/, "");
-    expect(withoutLd).not.toContain(FIXTURE.formerly);
+    // formerly is a different string from name; the only place it may appear is the alternateName
+    // arrays of home's structured data. On home each ld+json is parsed, those arrays are checked and
+    // removed, and the rest of the page (the remaining JSON included) must not hold it; every other
+    // page is checked whole.
+    let rest = html;
     if (page === "home") {
-      const ld = html.match(/<script type="application\/ld\+json">([^<]*)<\/script>/)?.[1] ?? "";
-      for (const node of JSON.parse(ld)["@graph"] as Array<{ alternateName?: string[] }>) {
-        expect(node.alternateName).toEqual([FIXTURE.name, FIXTURE.formerly]);
-      }
+      rest = html.replace(/<script type="application\/ld\+json">([^<]*)<\/script>/g, (_m, raw) => {
+        const ld = JSON.parse(raw) as { "@graph"?: Array<{ alternateName?: string[] }> };
+        for (const node of ld["@graph"] ?? []) {
+          expect(node.alternateName).toEqual([FIXTURE.name, FIXTURE.formerly]);
+          delete node.alternateName;
+        }
+        return JSON.stringify(ld);
+      });
     }
+    expect(rest).not.toContain(FIXTURE.formerly);
   });
 });
 
