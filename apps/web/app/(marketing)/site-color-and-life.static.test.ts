@@ -99,34 +99,44 @@ describe("text stays readable on every band (AA, 4.5:1)", () => {
 
 describe("the wheel wears its colours at rest", () => {
   const js = read("graphics/rf-wheel-up.js");
-  const colours = [...js.matchAll(/{ k: "[a-z]+", t: "[^"]+"[^}]*?c: "(#[0-9a-f]{6})"/g)].map(
-    (m) => m[1],
-  );
-  const tint = (c: string, k: number) =>
-    "#" +
-    [1, 3, 5]
-      .map((i) =>
-        Math.round(255 - (255 - parseInt(c.slice(i, i + 2), 16)) * k)
-          .toString(16)
-          .padStart(2, "0"),
-      )
-      .join("");
+  const graphics = read("graphics/rf-graphics.css");
+  // The wheel roles are typed once, in rf-graphics.css; the script reads them at mount (T17/T19 are e2e 88).
+  const role = (name: string) => {
+    const m = graphics.match(new RegExp(`--rf-wh-${name}:(#[0-9A-Fa-f]{6})`));
+    if (!m) throw new Error(`--rf-wh-${name} is not typed in rf-graphics.css`);
+    return m[1];
+  };
+  const INK = "#0E1726";
+  const WHITE = "#FFFFFF";
+  // the focus role points at the palette's copper (var(--brand-copper)), so the value comes from the palette file
+  const COPPER = (
+    JSON.parse(
+      fs.readFileSync(
+        path.resolve(__dirname, "../../../../packages/types/brand/palette.json"),
+        "utf8",
+      ),
+    ) as { color: Record<string, string> }
+  ).color.copper;
 
-  it("reads the fifteen piece colours and a rest tint", () => {
-    expect(colours).toHaveLength(15);
-    expect(js).toMatch(/const REST_TINT = 0.4;/);
-    expect(js).toContain("Math.max(p.c, outer ? REST_TINT : REST_TINT + 0.1)");
+  it("keeps the fifteen pieces and one resting focus piece", () => {
+    expect(js.match(/{ k: "[a-z]+", t: "/g)).toHaveLength(15);
+    expect(js).toMatch(/const REST_FOCUS = "payments";/);
+    expect(js).toContain("Math.max(p.w, w.d.k === REST_FOCUS ? restF : 0, focusI === w.i ? 1 : 0)");
   });
 
-  it("the navy label and icon stay AA on every piece at rest (outer 0.4, core 0.5)", () => {
-    colours.forEach((c, i) => {
-      expect(ratio("#0f1b2d", tint(c, i < 10 ? 0.4 : 0.5))).toBeGreaterThanOrEqual(4.5);
-    });
+  it("the icon stays readable on every tile at rest: ink on bone, white on ink, white on copper", () => {
+    for (const bone of [role("work"), role("work-2")]) {
+      expect(ratio(INK, bone)).toBeGreaterThanOrEqual(4.5);
+    }
+    for (const ink of [role("sell"), role("sell-2")]) {
+      expect(ratio(WHITE, ink)).toBeGreaterThanOrEqual(4.5);
+    }
+    expect(ratio(WHITE, COPPER)).toBeGreaterThanOrEqual(3);
   });
 
-  it("the still dial (no script) paints the same tint", () => {
+  it("the still dial (no script) wears the same two tones a ring and the copper piece", () => {
     expect(js).toContain(
-      'style="fill:${pastel(d.c, inner ? 0.5 : 0.4)};stroke:${pastel(d.c, inner ? 0.5 : 0.4)}"',
+      'class="rfw-w ${inner ? "i" : "o"}${i % 2 ? " g" : ""}${d.k === REST_FOCUS ? " f" : ""}"',
     );
   });
 });
@@ -184,7 +194,9 @@ describe("the wash and the van stay out of the way", () => {
     expect(js).not.toContain("WASH");
     expect(js).not.toContain("washed(");
     expect(js).toContain("c.fillStyle = stageBg; c.fillRect(0, 0, W, H);");
-    expect(read("graphics/rf-wheel-up.css")).toMatch(/\.rfw-tile\{[^}]*background:#fff\}/);
+    expect(read("graphics/rf-wheel-up.css")).toMatch(
+      /\.rfw-tile\{[^}]*background:var\(--rf-white\)\}/,
+    );
   });
 
   it("the van's drive-in is clipped by its band, and it only takes the corner where the rows leave room", () => {
