@@ -185,7 +185,10 @@ describe("SA-1185: soft is a surface, pills say their status", () => {
       if (w !== undefined) weight = w === "bold" ? 700 : Number(w);
       const raw =
         /font-size:\s*([^;]+)/.exec(body)?.[1] ??
-        (short ? /(?:^|\s)([\d.]+(?:px|rem|em))(?=[\s/])/.exec(short)?.[1] : undefined);
+        (short
+          ? /(?:^|\s)(clamp\([^)]*\)|[\d.]+(?:px|rem|em))(?=[\s/])/.exec(short)?.[1]
+          : undefined);
+      if (raw === undefined && short) throw new Error("cannot read the size in font: " + short);
       if (raw === undefined) continue;
       const size = px(raw);
       if (size === null) throw new Error("cannot read the size " + raw);

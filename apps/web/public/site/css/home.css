@@ -410,7 +410,7 @@
   .js-motion .hx--shot .win{transform:perspective(2000px) rotateX(16deg) scale(.9)}
   .js-motion .hx--shot .a-scrim,.js-motion .hx--shot .a-mod{opacity:0}
   .js-motion .pb-pin{position:relative;min-height:100vh;display:flex;flex-direction:column;justify-content:center;padding:88px 0 40px}
-  .js-motion .pb-big{position:absolute;inset:0;margin:auto;height:fit-content;width:min(1100px,100% - 48px);pointer-events:none}
+  .js-motion .pb-big{position:absolute;inset:0;margin:auto;height:fit-content;width:min(1100px,100% - 48px);opacity:0;pointer-events:none}
   .js-motion .sl-pin{min-height:100vh;display:flex;align-items:center}
   .js-motion .sl-pin .sl-a{width:min(1200px,100% - 48px);padding:88px 0 32px}
   .js-motion .jr-pin{height:100vh;min-height:680px;padding:clamp(84px,11vh,112px) 0 clamp(20px,3vh,36px);display:flex;flex-direction:column;overflow:hidden}
