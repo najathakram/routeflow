@@ -214,29 +214,41 @@ for (const { route, scope } of [
       page,
     }) => {
       await open(page, route, w, h);
-      const gaps = await page.evaluate((root) => {
-        const base = document.querySelector(root);
-        if (!base) throw new Error(`no ${root}`);
-        const shown = (el: Element) => {
-          const s = getComputedStyle(el);
-          const r = el.getBoundingClientRect();
-          return s.display !== "none" && s.visibility !== "hidden" && r.width > 0 && r.height > 0;
-        };
-        const out: { where: string; gap: number }[] = [];
-        for (const card of Array.from(base.querySelectorAll(".pcard")).filter(shown)) {
-          const name = (card.querySelector("h2,h3")?.textContent ?? "plan").trim();
-          const kids = Array.from(card.children).filter(shown);
-          for (let i = 1; i < kids.length; i++) {
-            const prev = kids[i - 1] as Element;
-            const next = kids[i] as Element;
-            out.push({
-              where: `${name}: ${prev.className || prev.tagName} to ${next.className || next.tagName}`,
-              gap: next.getBoundingClientRect().top - prev.getBoundingClientRect().bottom,
-            });
+      const gaps = await page.evaluate(
+        ({ root, phone }) => {
+          const base = document.querySelector(root);
+          if (!base) throw new Error(`no ${root}`);
+          const shown = (el: Element) => {
+            const s = getComputedStyle(el);
+            const r = el.getBoundingClientRect();
+            return s.display !== "none" && s.visibility !== "hidden" && r.width > 0 && r.height > 0;
+          };
+          const out: { where: string; gap: number }[] = [];
+          // Under 900px the four-card grid is hidden (css/site.css .pgrid--4); phones show the .pl list. There the
+          // plan list is the card and its rows (one per plan, .plp is the price cell) are the blocks between gaps.
+          const cards = Array.from(base.querySelectorAll(phone ? ".pl" : ".pcard")).filter(shown);
+          for (const card of cards) {
+            const name = (
+              card.querySelector("h2,h3")?.textContent ??
+              card.getAttribute("aria-label") ??
+              "plan"
+            ).trim();
+            const kids = (
+              phone ? Array.from(card.querySelectorAll("tr")) : Array.from(card.children)
+            ).filter(shown);
+            for (let i = 1; i < kids.length; i++) {
+              const prev = kids[i - 1] as Element;
+              const next = kids[i] as Element;
+              out.push({
+                where: `${name}: ${prev.className || prev.tagName} to ${next.className || next.tagName}`,
+                gap: next.getBoundingClientRect().top - prev.getBoundingClientRect().bottom,
+              });
+            }
           }
-        }
-        return out;
-      }, scope);
+          return out;
+        },
+        { root: scope, phone: w < 900 },
+      );
       nonEmpty(gaps, `blocks inside plan cards on ${route}`);
       const bad = gaps.filter((g) => g.gap > 32);
       expect(bad, bad.map((g) => `${g.where} ${g.gap.toFixed(0)}px`).join("; ")).toEqual([]);
