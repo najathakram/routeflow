@@ -410,7 +410,9 @@
   .js-motion .hx--shot .win{transform:perspective(2000px) rotateX(16deg) scale(.9)}
   .js-motion .hx--shot .a-scrim,.js-motion .hx--shot .a-mod{opacity:0}
   .js-motion .pb-pin{position:relative;min-height:100vh;display:flex;flex-direction:column;justify-content:center;padding:88px 0 40px}
-  .js-motion .pb-big{position:absolute;inset:0;margin:auto;height:fit-content;width:min(1100px,100% - 48px);opacity:0;pointer-events:none}
+  /* The big line takes the place of the three lines it replaces: the grid's left column, so its box never reaches the
+     picture in the right column. It scales in from its right edge, so that stays true while it grows. */
+  .js-motion .pb-big{position:absolute;inset:0 auto 0 calc((100% - min(1200px,100% - 48px)) / 2);margin:auto 0;height:fit-content;width:calc((min(1200px,100% - 48px) - 48px) * 11 / 20);font-size:clamp(36px,4.6vw,76px);text-align:left;transform-origin:100% 50%;opacity:0;pointer-events:none}
   .js-motion .sl-pin{min-height:100vh;display:flex;align-items:center}
   .js-motion .sl-pin .sl-a{width:min(1200px,100% - 48px);padding:88px 0 32px}
   .js-motion .jr-pin{height:100vh;min-height:680px;padding:clamp(84px,11vh,112px) 0 clamp(20px,3vh,36px);display:flex;flex-direction:column;overflow:hidden}
@@ -430,6 +432,7 @@
 /* ---------- small laptops and tablets on their side: the desk and the delivery step need their room ---------- */
 @media (min-width:900px) and (max-width:1180px){
   .pb-grid{grid-template-columns:.85fr 1.15fr}
+  @media (min-height:600px){.js-motion .pb-big{width:calc((min(1200px,100% - 48px) - 48px) * 17 / 40)}}
   .pb-art{height:480px}
   .pb-paper{width:60%;padding:18px 18px 14px;font-size:14px}
   .js-motion .jr-p{width:92vw}
