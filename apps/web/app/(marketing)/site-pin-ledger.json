@@ -3,7 +3,7 @@
   "definition": "A literal pin is one expect(...).toContain(...) or .toMatch(...) call (.not included) whose argument is a string literal, a template literal without ${}, or a regex literal. Identifier arguments and interpolated templates are not counted. Counted at base 5fc866853 (WP0, review S12).",
   "baseline": {
     "site-anchor-landing.static.test.ts": 4,
-    "site-color-and-life.static.test.ts": 29,
+    "site-color-and-life.static.test.ts": 30,
     "site-founder-card-width.static.test.ts": 8,
     "site-mobile-pass.static.test.ts": 41,
     "site-motion-always.static.test.ts": 42,
