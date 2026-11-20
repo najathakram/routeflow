@@ -64,10 +64,10 @@ const favicon = STATIC_METADATA_IMAGES.favicon;
 const isFaviconName = (name) =>
   favicon.extensions.some((ext) => name === `${favicon.filename}.${ext}`);
 
-// A generator that Next serves under an id instead of at its plain path: an export (function,
-// const, let, var or export list) named generateImageMetadata or generateSitemaps.
-const MULTI_EXPORT =
-  /\bexport\s+(?:async\s+)?(?:function\s*\*?|const|let|var)\s*(generateImageMetadata|generateSitemaps)\b|\bexport\s*\{[^}]*\b(generateImageMetadata|generateSitemaps)\b[^}]*\}/;
+// A generator that Next serves under an id instead of at its plain path. Any mention of
+// generateImageMetadata or generateSitemaps in a root metadata source fails closed, whatever the
+// export shape (function, const, let, var, export list, destructuring, re-export).
+const MULTI_EXPORT = /\b(generateImageMetadata|generateSitemaps)\b/;
 
 /** The path Next serves a metadata file at (groups and slots removed; a hash is kept). */
 function servedPath(file) {
