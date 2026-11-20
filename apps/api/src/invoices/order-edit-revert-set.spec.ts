@@ -59,4 +59,12 @@ describe("selectEditRevertedInvoices (#2178)", () => {
       "dep",
     ]);
   });
+
+  // B1372 K5b (SA-1177, expected red): the case table says a deposit request stays SENT when a regulated -R# sibling
+  // exists, but the selection above reverts it (nonVoidCount 2). The fix shape is with the SA; when it lands this test
+  // passes, `it.failing` turns red, and the sibling half of the legacy pin above changes with it.
+  it.failing("K5b: a deposit request stays SENT when a regulated -R# sibling exists", async () => {
+    const d = db({ linked: [{ id: "dep", depositPercent: 30 }], nonVoidCount: 2 });
+    expect(await selectEditRevertedInvoices(d as any, "o1")).toEqual([]);
+  });
 });
