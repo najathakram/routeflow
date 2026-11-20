@@ -19,11 +19,17 @@ export type TriggerOff = { trigger: string; progress: number; animation: number 
  * toggleActions) are not tied to the scroll, so their animation progress never tracks the trigger's and they are skipped.
  * Self-contained: it is passed into the page as source text.
  */
-export function scrubOff(triggers: TriggerLike[], tolerance: number = 0.005): TriggerOff[] {
+export function scrubOff(
+  triggers: TriggerLike[],
+  tolerance: number = 0.005,
+  scope: { contains(n: unknown): boolean } | null = null,
+): TriggerOff[] {
   const off: TriggerOff[] = [];
   for (const t of triggers) {
     const scrub = t.vars ? t.vars.scrub : undefined;
     if (!scrub || !t.animation) continue;
+    // with a scope (the section under test), a trigger whose element is outside it is another section's scene
+    if (scope && !(t.trigger && scope.contains(t.trigger))) continue;
     const a = t.animation.progress();
     if (Math.abs(a - t.progress) < tolerance) continue;
     const el = t.trigger || null;
@@ -38,8 +44,12 @@ export function scrubOff(triggers: TriggerLike[], tolerance: number = 0.005): Tr
 }
 
 /** True when every scrubbed trigger has caught up. */
-export function scrubSettled(triggers: TriggerLike[], tolerance: number = 0.005): boolean {
-  return scrubOff(triggers, tolerance).length === 0;
+export function scrubSettled(
+  triggers: TriggerLike[],
+  tolerance: number = 0.005,
+  scope: { contains(n: unknown): boolean } | null = null,
+): boolean {
+  return scrubOff(triggers, tolerance, scope).length === 0;
 }
 
 // ─── overlap readability (SA-1190, K1/K2) ────────────────────────────────────

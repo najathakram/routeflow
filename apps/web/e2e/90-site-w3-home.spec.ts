@@ -300,7 +300,7 @@ async function problemBeat(page: Page): Promise<{ faults: string[]; samples: Bea
 }
 
 /** Every fault at one beat: the structural ones, and K1 for the invoice heading (3:1 at 1440, 4.5:1 at 393). */
-async function beatFaults(page: Page, k: string, floor: number): Promise<string[]> {
+async function beatFaults(page: Page, w: number, k: string, floor: number): Promise<string[]> {
   const colours = await roles(page);
   const ink = parseRgb(colours.ink);
   const white = parseRgb(colours.white);
@@ -315,33 +315,43 @@ async function beatFaults(page: Page, k: string, floor: number): Promise<string[
         out.push(`beat ${k}: ${f}`);
     }
     console.log(
-      `T47 beat ${k} ${sm.name}: big opacity ${sm.bigOpacity}, picture opacity ${sm.artOpacity}, overlap ${sm.overlap}${note}`,
+      `T47 beat ${w} ${k} ${sm.name}: big opacity ${sm.bigOpacity}, picture opacity ${sm.artOpacity}, overlap ${sm.overlap}${note}`,
     );
   }
   return out;
 }
 
 /** Wait until every scrubbed trigger has caught up; on timeout, say which ones are off. */
-async function settle(page: Page): Promise<void> {
-  const src = String(scrubOff);
+async function settle(page: Page, sectionSel: string): Promise<void> {
+  const arg = { src: String(scrubOff), sel: sectionSel };
   try {
     await page.waitForFunction(
-      (s) => {
+      (a) => {
         const st = (window as unknown as { ScrollTrigger?: { getAll(): unknown[] } }).ScrollTrigger;
-        if (!st) return false;
-        const fn = new Function("return " + s)() as (t: unknown[]) => unknown[];
-        return fn(st.getAll()).length === 0;
+        const scope = document.querySelector(a.sel);
+        if (!st || !scope) return false;
+        const fn = new Function("return " + a.src)() as (
+          t: unknown[],
+          tol: number,
+          sc: Element,
+        ) => unknown[];
+        return fn(st.getAll(), 0.005, scope).length === 0;
       },
-      src,
+      arg,
       { timeout: 20_000 },
     );
   } catch (e) {
-    const off = await page.evaluate((s) => {
+    const off = await page.evaluate((a) => {
       const st = (window as unknown as { ScrollTrigger?: { getAll(): unknown[] } }).ScrollTrigger;
-      if (!st) return null;
-      const fn = new Function("return " + s)() as (t: unknown[]) => unknown[];
-      return fn(st.getAll());
-    }, src);
+      const scope = document.querySelector(a.sel);
+      if (!st || !scope) return null;
+      const fn = new Function("return " + a.src)() as (
+        t: unknown[],
+        tol: number,
+        sc: Element,
+      ) => unknown[];
+      return fn(st.getAll(), 0.005, scope);
+    }, arg);
     throw new Error(
       "the scrubbed triggers did not catch up in 20 s: " +
         (off ? JSON.stringify(off) : "window.ScrollTrigger is missing") +
@@ -373,6 +383,23 @@ test("T47 settle check: scrub-only, and it names the trigger that lags (no brows
   expect(scrubSettled([once, caught])).toBe(true);
   expect(scrubSettled([once, lag])).toBe(false);
   expect(scrubOff([once, lag])).toEqual([{ trigger: ".pb-pin", progress: 0.5, animation: 0.2 }]);
+
+  // the scope is the section under test: another section's scrubbed scene that lags is not this section's business
+  const inside = { id: "in" };
+  const outside = { id: "out" };
+  const scope = { contains: (n: unknown) => n === inside };
+  const pin = { ...caught, trigger: inside };
+  const pinLag = { ...pin, animation: { progress: () => 0.2 } };
+  const elsewhere = {
+    vars: { scrub: 0.8 },
+    progress: 0,
+    animation: { progress: () => 0.5156 },
+    trigger: outside,
+  };
+  // the unscoped scrub-only check waits forever on the lagging scene elsewhere (the timeout seen on the slot)
+  expect(scrubSettled([pin, elsewhere])).toBe(false);
+  expect(scrubSettled([pin, elsewhere], 0.005, scope)).toBe(true);
+  expect(scrubSettled([pinLag, elsewhere], 0.005, scope)).toBe(false);
 });
 
 test("T47 overlap rule K1 over the composited opacities (no browser)", () => {
@@ -404,7 +431,7 @@ test("T47 when home-up.js fails to load, the big line paints over neither headin
     if (!s) throw new Error("no #problem section");
     window.scrollTo(0, s.getBoundingClientRect().top + window.scrollY);
   });
-  expect(await beatFaults(page, "no-script", 3)).toEqual([]);
+  expect(await beatFaults(page, 1440, "no-script", 3)).toEqual([]);
 });
 
 for (const { w, h, floor } of [
@@ -441,12 +468,12 @@ for (const { w, h, floor } of [
       await page.evaluate((yy) => window.scrollTo(0, yy), y);
       await page.waitForFunction((yy) => Math.abs(window.scrollY - yy) <= 1, y);
       // the pin scrubs (0.8 s), so wait until every scrubbed trigger's animation has caught up with its scroll progress
-      await settle(page);
+      await settle(page, "#problem");
       // one frame, so the layout has taken the settled state
       await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
       const k = (dy / h).toFixed(2);
       beats.push(k);
-      faults.push(...(await beatFaults(page, k, floor)));
+      faults.push(...(await beatFaults(page, w, k, floor)));
     }
     expect(beats.length).toBeGreaterThanOrEqual(12);
     expect(faults).toEqual([]);
