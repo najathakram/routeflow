@@ -195,7 +195,6 @@ describe("T15 static: colour only through tokens; every band is white, bone or i
     ],
     "public/site/css/product.css": [".pd-how", ".pd-who", ".pd-deep"],
     "public/site/css/home-color.css": [
-      ".home .sl",
       ".home .jr",
       ".home .st",
       ".home .ct",
