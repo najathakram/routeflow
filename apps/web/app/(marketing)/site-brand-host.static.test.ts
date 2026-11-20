@@ -122,7 +122,9 @@ function follow(
 const BROWSER = "Mozilla/5.0 (Windows NT 10.0) Chrome/120.0 Safari/537.36";
 const pathOf = (destination: string) =>
   destination.replace(/^https:\/\/[^/]+/, "").replace(/#.*$/, "") || "/";
-const hostRules = cfg.split.filter((r) => r.has?.some((h) => h.type === "host"));
+const hostRules = cfg.split.filter((r) =>
+  r.has?.some((h) => h.type === "host" && h.value === OLD_HOST),
+);
 
 describe("T31: one page list", () => {
   it("SITE_PAGES holds the same pages as STATIC_SITE_PAGE_NAMES and the same routes as STATIC_SITE_PATHS", () => {
@@ -166,6 +168,17 @@ describe("T30: the values differ (switch day)", () => {
     expect(rules[0].has).toEqual([{ type: "host", value: OLD_HOST }]);
     expect(rules[0].permanent).toBe(false);
     expect(rules[0].destination).toBe(`https://${NEW_HOST}${source === "/" ? "" : source}`);
+  });
+
+  it("every host rule's missing list is exactly the shell header and the two presence cookies", () => {
+    expect(hostRules.length).toBeGreaterThan(0);
+    for (const rule of hostRules) {
+      expect(rule.missing).toEqual([
+        { type: "header", key: "user-agent", value: `.*${SHELL_UA_PRODUCT}.*` },
+        { type: "cookie", key: OP_PRESENCE_COOKIE },
+        { type: "cookie", key: BUYER_PRESENCE_COOKIE },
+      ]);
+    }
   });
 
   it("the installed phone app is never redirected", () => {
