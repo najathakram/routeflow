@@ -61,7 +61,14 @@ interface Loaded {
   nestedSitemap: { ok?: string[]; error?: string };
   groupedIcon: { ok?: string[]; error?: string };
   slotApple: { ok?: string[]; error?: string };
-  rootGenerator: { ok?: string[]; error?: string };
+  sitemapGen: { ok?: string[]; error?: string };
+  sitemapConst: { ok?: string[]; error?: string };
+  iconGen: { ok?: string[]; error?: string };
+  iconPlain: { ok?: string[]; error?: string };
+  ogPlain: { ok?: string[]; error?: string };
+  helpersOk: { ok?: unknown; error?: string };
+  helpersMissing: { ok?: unknown; error?: string };
+  helpersNoSegment: { ok?: unknown; error?: string };
   notMetadata: { ok?: string[]; error?: string };
   served: { ok?: Record<string, string>; error?: string };
   faviconMarketing: { ok?: string[]; error?: string };
@@ -118,6 +125,7 @@ function load(): Loaded {
     // An in-memory directory reader: a tree is nested objects, a file is null. Nothing touches disk.
     `const mk = (tree) => (dir) => { let n = tree; for (const p of dir.split(/[\\\\/]/).filter(Boolean).slice(1)) n = n[p]; return Object.entries(n).map(([name, v]) => ({ name, isDirectory: () => v !== null })); };` +
     `const attempt = (fn) => { try { return { ok: fn() }; } catch (e) { return { error: e.message }; } };` +
+    `const src = (map) => (p) => map[p.split(/[\\\\/]/).pop()] ?? "";` +
     `const faviconRoutes = () => l.listAppRoutes("/mem", mk({ "favicon.ico": null }));` +
     `const MAIN = ${JSON.stringify(MAIN)}; const SAME = ${JSON.stringify(SAME)};` +
     `const BARE = { origin: "https://new.test", oldOrigin: "https://old.test" };` +
@@ -134,24 +142,30 @@ function load(): Loaded {
     ` expectedRest: [...m.buildSiteHostRedirects(MAIN, m.HOST_ALIASES), ...m.buildRedirects(SAME)],` +
     ` siteHostPorted: m.buildSiteHostRedirects(MAIN, alias),` +
     ` routes: l.listAppRoutes(),` +
-    ` memTree: attempt(() => l.listAppRoutes("/mem", mk(${JSON.stringify(MEM_TREE)}))),` +
+    ` memTree: attempt(() => l.listAppRoutes("/mem", mk(${JSON.stringify(MEM_TREE)}), src({}))),` +
     ` faviconRoot: attempt(() => l.placeStays(faviconRoutes())),` +
     // No public/ entry: only the derivation can keep /favicon.ico on the main host.
     ` faviconRules: attempt(() => m.buildAppHostRedirects(MAIN, alias, faviconRoutes(), [])),` +
     ` noFaviconRules: attempt(() => m.buildAppHostRedirects(MAIN, alias, [], [])),` +
-    ` rootMeta: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk(${JSON.stringify(ROOT_META)})))),` +
+    ` rootMeta: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk(${JSON.stringify(ROOT_META)}), src({})))),` +
     ` nestedSitemap: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ x: { "sitemap.ts": null } })))),` +
     ` groupedIcon: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "(marketing)": { "icon.png": null } })))),` +
     ` slotApple: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "@slot": { "apple-icon2.png": null } })))),` +
-    ` rootGenerator: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "icon.tsx": null })))),` +
+    ` sitemapGen: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "sitemap.ts": null }), src({ "sitemap.ts": "export async function generateSitemaps() { return []; }" })))),` +
+    ` sitemapConst: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "sitemap.ts": null }), src({ "sitemap.ts": "export const generateSitemaps = async () => [];" })))),` +
+    ` iconGen: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "icon.tsx": null }), src({ "icon.tsx": "export function generateImageMetadata() { return []; } export default function Icon() {}" })))),` +
+    ` iconPlain: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "icon.tsx": null }), src({ "icon.tsx": "export default function Icon() {}" })))),` +
+    ` ogPlain: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "opengraph-image.tsx": null }), src({ "opengraph-image.tsx": "export default function Og() {}" })))),` +
+    ` helpersOk: attempt(() => l.assertNextHelpers(l.NEXT_HELPERS)),` +
+    ` helpersMissing: attempt(() => l.assertNextHelpers({ ...l.NEXT_HELPERS, normalizeMetadataRoute: undefined })),` +
+    ` helpersNoSegment: attempt(() => l.assertNextHelpers({ ...l.NEXT_HELPERS, isGroupSegment: undefined })),` +
     ` notMetadata: attempt(() => l.listAppRoutes("/mem", mk({ "favicon.png": null, "twitter-image.svg": null, "robots.json": null, "icon.gif": null })).map((r) => r.file)),` +
-    ` served: attempt(() => Object.fromEntries(l.listAppRoutes("/mem", mk(${JSON.stringify(ROOT_META)})).map((r) => [r.file, r.path]))),` +
+    ` served: attempt(() => Object.fromEntries(l.listAppRoutes("/mem", mk(${JSON.stringify(ROOT_META)}), src({})).map((r) => [r.file, r.path]))),` +
     ` faviconMarketing: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "(marketing)": { x: { "favicon.ico": null } } })))),` +
     ` faviconElsewhere: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ a: { "favicon.ico": null } })))),` +
     ` failClosed: {` +
     `  dynamicInMarketing: tryIt([{ path: "/[x]", file: "(marketing)/[x]/page.tsx", group: "(marketing)", metadata: false }]),` +
     `  metadataInMarketing: tryIt([{ path: "/a/icon", file: "(marketing)/a/icon.png", group: "(marketing)", metadata: true }]),` +
-    `  hashedAtRoot: tryIt([{ path: "/icon", file: "icon.tsx", group: "", metadata: true }]),` +
     `  fixedAtRoot: tryIt([{ path: "/robots.txt", file: "robots.ts", group: "", metadata: true }, { path: "/sitemap.xml", file: "sitemap.ts", group: "", metadata: true }]),` +
     `  dynamicElsewhere: tryIt([{ path: "/a/[x]", file: "a/[x]/page.tsx", group: "a", metadata: false }]),` +
     ` },` +
@@ -287,7 +301,6 @@ describe("K5 2: census, every app route goes to the old host in one 307 hop", ()
     const fc = cfg.failClosed;
     expect(fc.dynamicInMarketing.error).toMatch(/dynamic segment/);
     expect(fc.metadataInMarketing.error).toMatch(/app root/);
-    expect(fc.hashedAtRoot.error).toMatch(/generated/);
     expect(fc.fixedAtRoot.ok).toEqual(["/robots.txt", "/sitemap.xml"]);
     expect(fc.dynamicElsewhere.ok).toEqual([]);
   });
@@ -373,11 +386,24 @@ describe("K5 2: census, every app route goes to the old host in one 307 hop", ()
     });
   });
 
-  it("anything nested, grouped, in a slot, or generated fails closed at config load", () => {
+  it("anything nested, grouped, or in a slot fails closed at config load", () => {
     expect(cfg.nestedSitemap.error).toMatch(/app root/);
     expect(cfg.groupedIcon.error).toMatch(/app root/);
     expect(cfg.slotApple.error).toMatch(/app root/);
-    expect(cfg.rootGenerator.error).toMatch(/generated/);
+  });
+
+  it("a root generator is derived unless its source exports generateImageMetadata or generateSitemaps", () => {
+    expect(cfg.sitemapGen.error).toMatch(/generateSitemaps/);
+    expect(cfg.sitemapConst.error).toMatch(/generateSitemaps/);
+    expect(cfg.iconGen.error).toMatch(/generateImageMetadata/);
+    expect(cfg.iconPlain).toEqual({ ok: ["/icon"] });
+    expect(cfg.ogPlain).toEqual({ ok: ["/opengraph-image"] });
+  });
+
+  it("the Next helpers are asserted, and a missing one throws", () => {
+    expect(cfg.helpersOk.error).toBeUndefined();
+    expect(cfg.helpersMissing.error).toMatch(/normalizeMetadataRoute/);
+    expect(cfg.helpersNoSegment.error).toMatch(/isGroupSegment/);
   });
 
   it("the extensions are Next's own: favicon.png, twitter-image.svg, robots.json are not metadata", () => {
