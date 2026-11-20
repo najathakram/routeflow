@@ -704,7 +704,9 @@ export function LineItemRow({
                 onSetQty(typed);
               }}
               onFocus={(e) => e.target.select()}
-              aria-label={labels?.qty ?? "Quantity"}
+              // pinned KEEP literal (unit-vocabulary.pins): the order path's name; the till names its own line
+              aria-label="Quantity"
+              {...(labels?.qty ? { "aria-label": labels.qty } : null)}
               aria-describedby={qtyBelowMin ? qtyNoteId : undefined}
               className={cn(
                 "h-6 w-10 max-lg:h-11 max-lg:w-14 max-lg:text-base rounded border border-surface-border bg-white px-1 text-center text-sm font-semibold text-navy [appearance:textfield] focus:outline-none focus:ring-1 focus:ring-brand-500 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none",
