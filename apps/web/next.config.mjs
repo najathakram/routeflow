@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildContentSecurityPolicy } from "./csp.mjs";
+import { listAppRoutes, placeStays } from "./lib/app-route-paths.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -101,15 +102,16 @@ const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**
  * The paths that stay on the main host, derived and never typed: the public paths, every alias or
- * raw page address that ends on one, /_next/, every top-level entry of public/, the metadata
- * routes and /.well-known/. A new app route is outside this set, so it is sent to the old host
+ * raw page address that ends on one, /_next/, every top-level entry of public/, every (marketing)
+ * route, the app-root robots and sitemap, and /.well-known/. A new app route is outside this set, so it is sent to the old host
  * without anyone listing it; a new page joins SITE_PAGES and stays.
  * @param {Array<{ source: string, destination: string }>} aliases
  * @returns {{ exact: string[], prefixes: string[] }}
  */
-export function deriveStays(aliases) {
+export function deriveStays(aliases, routes = listAppRoutes()) {
   const publicPaths = new Set(PUBLIC_PATHS);
-  const exact = new Set([...PUBLIC_PATHS, "/robots.txt", "/sitemap.xml"]);
+  // By place (lib/app-route-paths.mjs): every (marketing) route and the app-root robots and sitemap.
+  const exact = new Set([...PUBLIC_PATHS, ...placeStays(routes)]);
   for (const alias of aliases) {
     if (publicPaths.has(alias.destination.replace(/#.*$/, ""))) exact.add(alias.source);
   }

@@ -50,13 +50,27 @@ interface Loaded {
   bareShortIsMainWww: Rule[];
   siteHostPorted: Rule[];
   publicPaths: string[];
+  routes: Route[];
+  failClosed: Record<string, { ok?: string[]; error?: string }>;
+}
+
+interface Route {
+  path: string;
+  file: string;
+  group: string;
+  metadata: boolean;
 }
 
 // Nothing is written: the config is imported in a child process and its output read from stdout.
 function load(): Loaded {
   const url = JSON.stringify(pathToFileURL(path.join(WEB_ROOT, "next.config.mjs")).href);
+  const libUrl = JSON.stringify(
+    pathToFileURL(path.join(WEB_ROOT, "lib", "app-route-paths.mjs")).href,
+  );
   const script =
     `const m = await import(${url});` +
+    `const l = await import(${libUrl});` +
+    `const tryIt = (routes) => { try { return { ok: l.placeStays(routes) }; } catch (e) { return { error: e.message }; } };` +
     `const MAIN = ${JSON.stringify(MAIN)}; const SAME = ${JSON.stringify(SAME)};` +
     `const BARE = { origin: "https://new.test", oldOrigin: "https://old.test" };` +
     `const alias = [{ source: "/sign-in", destination: "/login" }];` +
@@ -71,6 +85,14 @@ function load(): Loaded {
     ` bareShortIsMainWww: m.buildRedirects({ ...BARE, shortOrigin: "https://www.new.test" }),` +
     ` expectedRest: [...m.buildSiteHostRedirects(MAIN, m.HOST_ALIASES), ...m.buildRedirects(SAME)],` +
     ` siteHostPorted: m.buildSiteHostRedirects(MAIN, alias),` +
+    ` routes: l.listAppRoutes(),` +
+    ` failClosed: {` +
+    `  dynamicInMarketing: tryIt([{ path: "/[x]", file: "(marketing)/[x]/page.tsx", group: "(marketing)", metadata: false }]),` +
+    `  metadataInMarketing: tryIt([{ path: "/a/icon", file: "(marketing)/a/icon.png", group: "(marketing)", metadata: true }]),` +
+    `  hashedAtRoot: tryIt([{ path: "/icon", file: "icon.png", group: "", metadata: true }]),` +
+    `  fixedAtRoot: tryIt([{ path: "/robots.txt", file: "robots.ts", group: "", metadata: true }, { path: "/sitemap.xml", file: "sitemap.ts", group: "", metadata: true }]),` +
+    `  dynamicElsewhere: tryIt([{ path: "/a/[x]", file: "a/[x]/page.tsx", group: "a", metadata: false }]),` +
+    ` },` +
     ` publicPaths: [...Object.values(m.SITE_PAGES), "/privacy", "/terms"] }));`;
   return JSON.parse(
     execFileSync(process.execPath, ["--input-type=module", "-e", script], {
@@ -127,28 +149,19 @@ function follow(rules: Rule[], host: string, url: string) {
 const isAppRule = (r: Rule) => r.has?.some((h) => h.value === escDots(MAIN_HOST));
 const isShortRule = (r: Rule) => r.has?.some((h) => SHORT_HOSTS.map(escDots).includes(h.value));
 
-// Every page.tsx and route.ts outside (marketing) and site-page, as the path it serves.
-function appRoutes(): string[] {
-  const root = path.join(WEB_ROOT, "app");
-  const out: string[] = [];
-  const walk = (dir: string, segments: string[]) => {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (entry.isDirectory()) {
-        if (segments.length === 0 && ["(marketing)", "site-page"].includes(entry.name)) continue;
-        if (entry.name.startsWith("@")) continue;
-        const seg = /^\(.*\)$/.test(entry.name)
-          ? []
-          : [entry.name.startsWith("[") ? "x1" : entry.name];
-        walk(path.join(dir, entry.name), [...segments, ...seg]);
-      } else if (entry.name === "page.tsx" || entry.name === "route.ts") {
-        out.push(`/${segments.join("/")}`);
-      }
-    }
-  };
-  walk(root, []);
-  if (out.length === 0) throw new Error("census found no app route: the sweep is broken");
-  return out.sort();
-}
+// Every route the one walker (lib/app-route-paths.mjs) finds, sorted into three sides by its place:
+// STAY (a (marketing) route, an app-root metadata route, or a pinned shadowed page), EXEMPT (only
+// site-page, the rewrite target) and CROSS (everything else). A new folder exemption is red.
+const fill = (p: string) => p.replace(/\[[^\]]+\]/g, "x1");
+const ENTRIES = cfg.routes;
+if (ENTRIES.length === 0) throw new Error("census found no app route: the sweep is broken");
+const PINNED_STAY = ["/getting-started"];
+const isPlaceStay = (e: Route) => e.group === "(marketing)" || (e.group === "" && e.metadata);
+const EXEMPT = ENTRIES.filter((e) => e.group === "site-page");
+const STAY = ENTRIES.filter((e) => isPlaceStay(e) || PINNED_STAY.includes(e.path));
+const CROSS = ENTRIES.filter((e) => !STAY.includes(e) && !EXEMPT.includes(e));
+const appRoutes = () => ENTRIES.map((e) => fill(e.path)).sort();
+const crossPaths = () => CROSS.map((e) => fill(e.path)).sort();
 
 const PUBLIC_DIR_ENTRIES = fs.readdirSync(path.join(WEB_ROOT, "public"));
 
@@ -160,20 +173,61 @@ describe("K5 1: equal hosts", () => {
 });
 
 describe("K5 2: census, every app route goes to the old host in one 307 hop", () => {
-  // An app page whose path the stays rule keeps on the main host is served by the site (its
-  // beforeFiles rewrite shadows the page; today: the dashboard's /getting-started). The skip is the
-  // stays rule itself: a route no host-crossing rule matches.
   const staysOnMain = (route: string) => {
     const at = new URL(route, `https://${MAIN_HOST}`);
     const hop = hopOf(cfg.all, at);
     return hop === null || hop.next.host === at.host;
   };
-  const SHADOWED = appRoutes().filter(staysOnMain);
-  const ROUTES = appRoutes().filter((r) => !staysOnMain(r));
+  const ROUTES = crossPaths();
 
-  it("the only app routes left out are exactly the ones the stays rule keeps", () => {
-    expect(SHADOWED).toEqual(["/getting-started"]);
+  it("the walker sees the route.tsx files and the metadata routes the old census missed", () => {
+    expect(ENTRIES.some((e) => e.file.endsWith("route.tsx"))).toBe(true);
+    expect(ENTRIES.map((e) => e.path)).toEqual(
+      expect.arrayContaining(["/opengraph-image", "/robots.txt", "/sitemap.xml"]),
+    );
+    expect(ENTRIES.some((e) => /\.test\./.test(e.file))).toBe(false);
+  });
+
+  it("the pin carries intent: STAY stays, EXEMPT is only site-page, CROSS crosses", () => {
+    expect([...new Set(EXEMPT.map((e) => e.group))]).toEqual(["site-page"]);
+    expect(EXEMPT.length).toBeGreaterThan(0);
+    expect(STAY.length + EXEMPT.length + CROSS.length).toBe(ENTRIES.length);
+    expect(STAY.map((e) => e.path).sort()).toEqual(
+      expect.arrayContaining([
+        "/opengraph-image",
+        "/privacy",
+        "/terms",
+        "/robots.txt",
+        "/sitemap.xml",
+      ]),
+    );
+    // No (marketing) route keeps the old host.
+    for (const e of ENTRIES.filter((x) => x.group === "(marketing)")) {
+      expect(staysOnMain(fill(e.path))).toBe(true);
+    }
+    for (const e of STAY) expect(staysOnMain(fill(e.path))).toBe(true);
+    for (const e of CROSS)
+      expect({ path: e.path, crosses: !staysOnMain(fill(e.path)) }).toEqual({
+        path: e.path,
+        crosses: true,
+      });
+  });
+
+  it("the shadowed page is pinned to exactly /getting-started", () => {
+    const shadowed = ENTRIES.filter((e) => !isPlaceStay(e) && e.group !== "site-page").filter((e) =>
+      staysOnMain(fill(e.path)),
+    );
+    expect(shadowed.map((e) => e.path)).toEqual(PINNED_STAY);
     expect(cfg.publicPaths).toContain("/getting-started");
+  });
+
+  it("fails closed on a dynamic segment or a hashed metadata file in a place that stays", () => {
+    const fc = cfg.failClosed;
+    expect(fc.dynamicInMarketing.error).toMatch(/dynamic segment/);
+    expect(fc.metadataInMarketing.error).toMatch(/hashed address/);
+    expect(fc.hashedAtRoot.error).toMatch(/hashed address/);
+    expect(fc.fixedAtRoot.ok).toEqual(["/robots.txt", "/sitemap.xml"]);
+    expect(fc.dynamicElsewhere.ok).toEqual([]);
   });
 
   it("no host rule's destination carries a query (Next merges the source query itself)", () => {
@@ -224,6 +278,7 @@ describe("K5 3: the stays samples match no host-crossing rule", () => {
     "/favicon.ico",
     "/.well-known/x",
     "/pricing/",
+    "/opengraph-image",
     ...PUBLIC_DIR_ENTRIES.map((name) => `/${name}`),
   ];
 
@@ -275,8 +330,7 @@ describe("K5 5: no loop", () => {
   });
 
   it.each(SHORT_HOSTS)("%s: every app path ends after one host change, on the old host", (host) => {
-    for (const source of appRoutes()) {
-      if (cfg.publicPaths.includes(source)) continue;
+    for (const source of crossPaths()) {
       const { hostChanges, at } = follow(cfg.withShort, host, `${source}?next=/x`);
       expect({ source, hostChanges }).toEqual({ source, hostChanges: 1 });
       expect(at.origin).toBe(OLD_ORIGIN);
@@ -368,7 +422,7 @@ describe("the short domain", () => {
   it("the 301 rule matches no app path, on its own", () => {
     const moved = short.filter((r) => r.statusCode === 301);
     expect(moved).toHaveLength(2);
-    const routes = appRoutes().filter((r) => !cfg.publicPaths.includes(r));
+    const routes = crossPaths();
     expect(routes).toContain("/login");
     for (const rule of moved) {
       for (const route of [...routes, "/sign-in"]) {
