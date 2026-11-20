@@ -326,7 +326,7 @@ describe("renderSitePage escaping", () => {
 
 describe("first-touch tag on every served page", () => {
   const TAG = `<script defer src="${FIRST_TOUCH_SRC}"></script>`;
-  const count = (html: string) => html.split(FIRST_TOUCH_SRC).length - 1;
+  const count = (html: string) => html.split(TAG).length - 1;
 
   it("every served page has exactly one tag, with no site ID", () => {
     for (const page of STATIC_SITE_PAGE_NAMES) {
@@ -344,6 +344,13 @@ describe("first-touch tag on every served page", () => {
     const once = withFirstTouch("<html><head><title>a</title></head><body></body></html>");
     expect(once).toContain(`${TAG}</head>`);
     expect(withFirstTouch(once)).toBe(once);
+  });
+
+  it("a preload link or a comment naming the path does not stop the script tag", () => {
+    const page = `<html><head><link rel="preload" href="${FIRST_TOUCH_SRC}" as="script"><!-- ${FIRST_TOUCH_SRC} --></head><body></body></html>`;
+    const out = withFirstTouch(page);
+    expect(count(out)).toBe(1);
+    expect(withFirstTouch(out)).toBe(out);
   });
 
   it("a page with no </head> throws", () => {
