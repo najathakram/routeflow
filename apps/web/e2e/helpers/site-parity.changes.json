@@ -51,5 +51,9 @@
   { "key": "/data-in-and-out|phone", "row": "id|brand-tokens", "kind": "added", "req": "R14" },
   { "key": "/security|phone", "row": "id|brand-tokens", "kind": "added", "req": "R14" },
   { "key": "/privacy|phone", "row": "id|brand-tokens", "kind": "added", "req": "R14" },
-  { "key": "/terms|phone", "row": "id|brand-tokens", "kind": "added", "req": "R14" }
+  { "key": "/terms|phone", "row": "id|brand-tokens", "kind": "added", "req": "R14" },
+  { "key": "/pricing|desktop", "row": "a|#plans|Skip to plans", "kind": "added", "req": "R12" },
+  { "key": "/pricing|desktop", "row": "id|plans", "kind": "added", "req": "R12" },
+  { "key": "/pricing|phone", "row": "a|#plans|Skip to plans", "kind": "added", "req": "R12" },
+  { "key": "/pricing|phone", "row": "id|plans", "kind": "added", "req": "R12" }
 ]
