@@ -209,8 +209,7 @@
 //                    value-import this package), PARKED_REVERSALS_UNRESOLVED and PARKED_REVERSAL_UNRESOLVABLE (the 409s of the regulated
 //                    report and the parked-reversal resolver), REGULATED_POD_REQUIRED (the 400s of the regulated proof-of-delivery guard).
 //   B987-E1 — import and statement/payment refusals that now carry a code and structured fields (status and message unchanged):
-//                    IMPORT_COLUMN_NEEDS_ENTITLEMENT — `body.code` of the import 403 when a CSV column needs an entitlement the tenant lacks;
-//                    body carries `requires` (MSRP | TOBACCO_DEALER | FORECASTING) and `column` (the user's own header, capped at 120).
+//                    (IMPORT_COLUMN_NEEDS_ENTITLEMENT retired by SA-1193: a gated column is now skipped and named in `skippedColumns`.)
 //                    INSIGHT_WINDOW_INVALID — `body.code` of the products export's 400 when its from/to window is refused; body carries
 //                    `reason` (NOT_A_DAY | TO_NOT_A_DAY | FROM_NOT_A_DAY | BAD_GRAIN | TO_BEFORE_FROM | WINDOW_TOO_LONG | TOO_MANY_BUCKETS)
 //                    and numeric params (maxMonths, buckets, maxBuckets) or a validated grain; the message is unchanged. Opt-in: other
@@ -637,7 +636,6 @@ export const API_ERROR_CODES = {
   PARKED_REVERSALS_UNRESOLVED: "PARKED_REVERSALS_UNRESOLVED",
   PARKED_REVERSAL_UNRESOLVABLE: "PARKED_REVERSAL_UNRESOLVABLE",
   REGULATED_POD_REQUIRED: "REGULATED_POD_REQUIRED",
-  IMPORT_COLUMN_NEEDS_ENTITLEMENT: "IMPORT_COLUMN_NEEDS_ENTITLEMENT",
   INSIGHT_WINDOW_INVALID: "INSIGHT_WINDOW_INVALID",
   STATEMENT_APPLY_DISCARDED: "STATEMENT_APPLY_DISCARDED",
   STATEMENT_APPLY_NOT_MATCHED: "STATEMENT_APPLY_NOT_MATCHED",

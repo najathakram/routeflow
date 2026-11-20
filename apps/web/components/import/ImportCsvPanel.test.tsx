@@ -117,11 +117,12 @@ describe("ImportCsvPanel", () => {
     expect(screen.getByTestId("products-import-button")).toBeDisabled();
   });
 
+  // SA-1193: a gated column no longer answers 403 (it is skipped and named); the generic 403 fallback stays for role refusals.
   it("renders a blocking gate error on a 403 and does not show a preview table", async () => {
     post.mockRejectedValueOnce({
       response: {
         status: 403,
-        data: { message: 'Column "MSRP" needs the MSRP plan flag; remove the column or enable it' },
+        data: { message: "Only an admin can import products" },
       },
     });
     render(
@@ -138,7 +139,7 @@ describe("ImportCsvPanel", () => {
     fireEvent.click(screen.getByTestId("products-preview-button"));
 
     const gate = await screen.findByTestId("products-gate-error");
-    expect(gate).toHaveTextContent('Column "MSRP" needs the MSRP plan flag');
+    expect(gate).toHaveTextContent("Only an admin can import products");
     expect(screen.queryByTestId("products-results-table")).not.toBeInTheDocument();
     expect(screen.getByTestId("products-import-button")).toBeDisabled();
   });

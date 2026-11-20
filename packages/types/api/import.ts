@@ -208,3 +208,16 @@ export interface ImportFamilySummary {
   /** Families this run created whose cleanup failed: they were NOT removed and need removing in the product editor (apply only). */
   cleanupFailed: { name: string }[];
 }
+
+/**
+ * SA-1193 (B1377): what a gated product-import column needs. A file whose gated column the tenant lacks imports
+ * without that column, and the result names it. A future gated column adds one value here and one copy key on the web.
+ */
+export const IMPORT_COLUMN_REQUIREMENT_VALUES = ["MSRP", "TOBACCO_DEALER", "FORECASTING"] as const;
+export type ImportColumnRequirement = (typeof IMPORT_COLUMN_REQUIREMENT_VALUES)[number];
+
+/** One header of the file that was not imported, as the file wrote it, and what it needs. */
+export interface ImportSkippedColumn {
+  column: string;
+  requires: ImportColumnRequirement;
+}

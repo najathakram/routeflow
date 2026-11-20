@@ -35,6 +35,9 @@ export const IMPORT_FAMILY_NAME_ONLY_REASON =
   "Add the product's id, SKU or barcode to move it into a family.";
 export const IMPORT_FAMILY_CLASS_REASON = "A family's items must share their regulated category.";
 export const IMPORT_FAMILY_TOBACCO_HINT = "Set Tobacco to Yes to add this to a tobacco family.";
+/** SA-1193 K7: the same row when the Tobacco column was skipped (no add-on): "Set Tobacco to Yes" would be a false fix. */
+export const IMPORT_FAMILY_TOBACCO_ADDON_REASON =
+  "This is a tobacco family. Adding to it needs the Tobacco dealer add-on.";
 
 /** The family a row groups under: an existing container (`id` set) or one this import creates (`id` null). */
 export interface FamilyTarget {
@@ -239,7 +242,10 @@ export class ProductFamilyImportService {
    * matches), the family (SA-823 section 2 a-d), the variant label, and the in-file guards (a duplicate label skips BOTH rows;
    * the first row of a family sets its regulated class). The preview and the apply run this same method.
    */
-  async planRows(rows: FamilyRowInput[]): Promise<FamilyPlan> {
+  async planRows(
+    rows: FamilyRowInput[],
+    opts: { tobaccoColumnSkipped?: boolean } = {},
+  ): Promise<FamilyPlan> {
     const tenantId = this.tenant();
     const db = this.prisma.forTenant().product;
     const plan: FamilyPlan = { decisions: new Map(), newFamilies: new Map(), created: new Map() };
@@ -308,7 +314,11 @@ export class ProductFamilyImportService {
         const plainIntoTobacco =
           !d.existing && ref.isTobacco && !cls.isTobacco && r.values.isTobacco !== true;
         plan.decisions.set(r.index, {
-          skip: plainIntoTobacco ? IMPORT_FAMILY_TOBACCO_HINT : IMPORT_FAMILY_CLASS_REASON,
+          skip: plainIntoTobacco
+            ? opts.tobaccoColumnSkipped
+              ? IMPORT_FAMILY_TOBACCO_ADDON_REASON
+              : IMPORT_FAMILY_TOBACCO_HINT
+            : IMPORT_FAMILY_CLASS_REASON,
         });
         continue;
       }
