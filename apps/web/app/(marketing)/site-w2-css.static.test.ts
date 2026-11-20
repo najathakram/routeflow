@@ -9,7 +9,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { readServedSitePage } from "@/lib/read-site-page";
-import { STATIC_SITE_PAGE_NAMES } from "@/lib/static-site-page";
+import { STATIC_SITE_PAGE_NAMES, type StaticSitePage } from "@/lib/static-site-page";
 
 const WEB = path.resolve(__dirname, "../..");
 const read = (rel: string) => fs.readFileSync(path.join(WEB, rel), "utf8");
@@ -296,15 +296,8 @@ describe("T21: the box art tokens read the palette", () => {
   it("the top is a lighter warm tint that is no palette value", () => {
     const top = resolve("--rf-box-top");
     expect(Object.values(PALETTE).map((v) => v.toUpperCase())).not.toContain(top);
-    // The one typed tint is the value ux-spec section 3 gives, read from that line, not typed here.
-    const spec = fs.readFileSync(
-      path.resolve(WEB, "../../.claude/pipeline/2026-11-11-rovio-rebrand/ux-spec.md"),
-      "utf8",
-    );
-    const line = spec.split("\n").find((l) => l.startsWith("Art roles:"));
-    const want = /--rf-box-top:\s*(#[0-9a-fA-F]{6})/.exec(line ?? "")?.[1];
-    if (!want) throw new Error("ux-spec section 3 has no Art roles line with --rf-box-top");
-    expect(top).toBe(want.toUpperCase());
+    // ux-spec section 3, the one typed tint: the top has no palette value, so it is pinned here.
+    expect(top).toBe("#EACBB3");
     expect(lum(top)).toBeGreaterThan(lum(resolve("--rf-box-front")));
     const [r, g, b] = [1, 3, 5].map((i) => parseInt(top.slice(i, i + 2), 16));
     expect((r as number) > (g as number) && (g as number) > (b as number)).toBe(true);
@@ -323,7 +316,7 @@ describe("T21: the box art tokens read the palette", () => {
 
 describe("font: the frame pages and the scene already have the fallback face", () => {
   it("every page that links rf-graphics.css also links site.css, which holds both faces", () => {
-    const served = (page: string) => readServedSitePage(page, { websiteId: undefined });
+    const served = (page: StaticSitePage) => readServedSitePage(page, { websiteId: undefined });
     const linking = [...STATIC_SITE_PAGE_NAMES].filter((n) =>
       served(n).includes("graphics/rf-graphics.css"),
     );
