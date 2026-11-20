@@ -46,6 +46,14 @@ describe("editRevertedInvoicesFor (B1372 K2)", () => {
     const d = db([{ id: "dep", depositPercent: 30 }], 1);
     expect(await editRevertedInvoicesFor(d as any, order("PENDING"), routeMode)).toEqual([]);
   });
+
+  // SA-1181 interim for B1374: while the fence reverts a sent deposit request that has a regulated -R# sibling, the
+  // confirm names it, so staff are warned before that revert too.
+  it("a sent deposit request with a regulated -R# sibling is reverted, so the confirm names it", async () => {
+    const d = db([{ id: "dep", depositPercent: 30 }], 2);
+    const got = await editRevertedInvoicesFor(d as any, order("PENDING"), routeMode);
+    expect(got.map((i) => i.invoiceNumber)).toEqual(["INV-dep"]);
+  });
 });
 
 describe("editRevertsSentInvoices on the order read (B1372 K2)", () => {
