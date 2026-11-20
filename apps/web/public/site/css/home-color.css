@@ -15,7 +15,6 @@
 .home #sell .kick,.home #journey .kick,.home #counter .kick{background:var(--rf-white);box-shadow:var(--rf-ring)}
 
 /* ---------- bands: white and bone, alternating ---------- */
-.home .sl{background:var(--rf-soft)}
 .home .jr{background:var(--rf-soft)}
 .home .st{background:var(--rf-white)}
 .home .ct{background:var(--rf-soft)}

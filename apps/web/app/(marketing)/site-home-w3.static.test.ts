@@ -13,9 +13,6 @@ import { readServedSitePage } from "@/lib/read-site-page";
 const SITE = path.resolve(__dirname, "../../public/site");
 const read = (file: string) => fs.readFileSync(path.join(SITE, file), "utf8");
 const stripCss = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, "");
-const PALETTE = JSON.parse(
-  fs.readFileSync(path.resolve(__dirname, "../../../../packages/types/brand/palette.json"), "utf8"),
-) as { color: Record<string, string> };
 
 type Rule = { selectors: string[]; body: string };
 /** Every rule with a body of declarations, inside @media and @supports too. */
@@ -119,8 +116,8 @@ describe("the page's still is the script's still", () => {
 
 describe("SA-1180 (2): a status colour marks a status", () => {
   const css = read("css/home.css");
-  /** The selectors of the status marks (Paid, Pending, Overdue): a pill each, and the due mark on a store's list. */
-  const STATUS_MARKS = [".a-pill--ok", ".a-pill--warn", ".a-pill--bad", ".sp-m b.due"];
+  /** The selectors of the status marks (Paid, Pending, Overdue): a pill each, . */
+  const STATUS_MARKS = [".a-pill--ok", ".a-pill--warn", ".a-pill--bad"];
   const STATUS = /var\(--rf-(?:paid|pending|overdue)(?:-bg)?\)/;
 
   it("no paid, pending or overdue token outside the status marks", () => {
@@ -161,13 +158,41 @@ describe("SA-1185: soft is a surface, pills say their status", () => {
     expect(bad.flatMap((r) => r.selectors)).toEqual([]);
   });
 
+  /** A CSS length as px: px, rem and em (16px), clamp() by its smallest bound; null when it cannot be read. */
+  const px = (v: string): number | null => {
+    const t = v.trim();
+    const c = /^clamp\(\s*([^,]+),/.exec(t);
+    if (c) return px(c[1] as string);
+    const m = /^([\d.]+)(px|rem|em)$/.exec(t);
+    return m ? parseFloat(m[1] as string) * (m[2] === "px" ? 1 : 16) : null;
+  };
+  const largeText = (size: number, weight: number) =>
+    size >= 24 || (size >= 18.66 && weight >= 700);
+
   it("the price change is large text, or reads the link colour where it is smaller", () => {
     const rs = rulesOf(css).filter((r) => r.selectors.includes(".c-chg b"));
     expect(rs.length).toBeGreaterThan(0);
-    for (const r of rs) {
-      const size = /font-size:\s*([\d.]+)px/.exec(r.body);
-      if (size && parseFloat(size[1] as string) < 18.66) expect(r.body).toContain("--rf-link");
+    const weights = rs.flatMap((r) =>
+      [...r.body.matchAll(/font-weight:\s*(\d+)/g)].map((m) => Number(m[1])),
+    );
+    const weight = weights.length ? (weights[weights.length - 1] as number) : 400;
+    const sized = rs.filter((r) => /font-size:/.test(r.body));
+    expect(sized.length).toBeGreaterThan(0);
+    for (const r of sized) {
+      const raw = /font-size:\s*([^;]+)/.exec(r.body)?.[1] as string;
+      const size = px(raw);
+      if (size === null) throw new Error("cannot read the size " + raw);
+      if (!largeText(size, weight)) expect(r.body).toContain("--rf-link");
     }
+  });
+
+  it("the large-text rule reads rem, em and clamp, and the weight (fixtures)", () => {
+    expect(px("1rem")).toBe(16);
+    expect(px("clamp(1.2rem,2vw,30px)")).toBeCloseTo(19.2);
+    expect(largeText(22, 700)).toBe(true);
+    expect(largeText(22, 400)).toBe(false);
+    expect(largeText(16, 700)).toBe(false);
+    expect(largeText(24, 400)).toBe(true);
   });
 
   it("every status pill on the page says one of the three status words", () => {
@@ -177,6 +202,25 @@ describe("SA-1185: soft is a surface, pills say their status", () => {
     const word = { ok: "Paid", warn: "Pending", bad: "Overdue" } as Record<string, string>;
     const wrong = pills.filter((m) => (m[2] ?? "").trim() !== word[m[1] as string]);
     expect(wrong.map((m) => `${m[1]}: ${m[2]}`)).toEqual([]);
+  });
+});
+
+describe("K2: a home section takes its surface from its band class", () => {
+  it("no background rule for .sl in home.css or home-color.css", () => {
+    const files = ["css/home.css", "css/home-color.css"].map((f) => rulesOf(read(f)));
+    if (files.some((r) => r.length < 20)) throw new Error("expected rules in both files");
+    const bad = files
+      .flat()
+      .filter(
+        (r) =>
+          r.selectors.some((x) => /^(?:\.home )?\.sl$/.test(x)) &&
+          /(?:^|;)\s*background(?:-color)?\s*:/.test(r.body),
+      );
+    expect(bad.flatMap((r) => r.selectors)).toEqual([]);
+  });
+
+  it("the section is still bone through its class", () => {
+    expect(readServedSitePage("home")).toMatch(/<section class="sl band-bone" id="sell"/);
   });
 });
 

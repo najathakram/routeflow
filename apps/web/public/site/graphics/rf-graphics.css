@@ -52,7 +52,7 @@
   --app-canvas:var(--rf-bone);--app-sunken:var(--rf-bone);--app-line:var(--rf-line);--app-line-2:var(--rf-line);
   --app-rail:var(--rf-ink);--app-on:var(--rf-copper-light);--app-p:var(--rf-ink);--app-deep:var(--rf-copper-dark);--app-soft:var(--rf-bone);
   --buy-rail:var(--rf-ink);--buy-on:var(--rf-copper-light);--buy-p:var(--rf-ink);--buy-deep:var(--rf-copper-dark);--buy-soft:var(--rf-bone);--buy-200:var(--rf-line);
-  --ios-5:#e5e5ea;--ios-6:#f2f2f7;
+  --ios-5:var(--rf-line);--ios-6:var(--rf-bone);
 }
 @media (prefers-contrast:more){:root{--app-ink-2:var(--app-ink);--app-ink-3:var(--app-ink);--app-line:var(--rf-steel);--app-line-2:var(--rf-steel)}}
 .rf-on-blue{--rf-text:var(--rf-white);--rf-road:rgba(255,255,255,.42);--rf-disc-a:rgba(255,255,255,.13);--rf-disc-b:rgba(255,255,255,.13);--rf-disc-c:rgba(255,255,255,.13);--rf-pill-bg:var(--rf-white);--rf-pill-fg:var(--rf-ink);--rf-cargo:var(--rf-white);--rf-cargo-mark:var(--rf-ink)}
