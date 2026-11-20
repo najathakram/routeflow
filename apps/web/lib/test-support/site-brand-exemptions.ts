@@ -29,8 +29,6 @@ export interface Exemption {
 }
 
 export const EXEMPT: Exemption[] = [
-  // 62 hex in style/fill stay until W3 (the home colour pass).
-  { path: "public/site/home.html", scope: "hex", liftedBy: "W3", lane: "2.3-home" },
   { path: "public/site/product.html", scope: "hex", liftedBy: "W3", lane: "2.3-inner" },
   { path: "public/site/security.html", scope: "hex", liftedBy: "W3", lane: "2.3-inner" },
   // Not in the delta's table: the same lane and the same pattern (--pc/--pi tile colours).
