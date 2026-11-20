@@ -106,7 +106,10 @@ test.describe("T46b three key presses to the first plan (F04)", () => {
       );
       if (!a) return null;
       const target = document.getElementById("plans");
-      return { text: a.textContent?.trim(), target: !!target && target.matches(".pbtn") };
+      return {
+        text: a.textContent?.trim(),
+        target: !!target && target === document.querySelector(".pgrid--4 .pbtn"),
+      };
     });
     expect(link, "the wide page has a skip link to #plans").not.toBeNull();
     expect(link?.text).toBe("Skip to plans");
@@ -148,7 +151,7 @@ for (const { w, h } of SCREENS) {
         return { sel: b.sel, found: !!el, ...(el ? bg(el) : { colour: "", image: "" }) };
       });
       const top = document.querySelector("main > section#pricing");
-      const line = top ? getComputedStyle(top).borderBottomWidth : "";
+      const line = !!top && top.classList.contains("band-line");
       const sections = document.querySelectorAll("main > section").length;
       const panels = Array.from(document.querySelectorAll(".pcard.featured, .cta-band")).map(
         (el) => ({ cls: el.className, ...bg(el) }),
@@ -166,7 +169,8 @@ for (const { w, h } of SCREENS) {
         problems.push(`${b.sel}: ${r.colour}, wanted ${b.role} ${colours[b.role]}`);
       if (r.image !== "none") problems.push(`${b.sel}: background-image ${r.image} (flat only)`);
     });
-    if (parseFloat(seen.line) < 1) problems.push(`the top band has no one-pixel line below it`);
+    // The drawn one-pixel line is the header lane's rule, measured in its spec 93; here only the class is checked.
+    if (!seen.line) problems.push(`the top band lacks the band-line class`);
     nonEmpty(seen.panels, "ink panels");
     for (const p of seen.panels) {
       if (p.colour !== colours.ink)
