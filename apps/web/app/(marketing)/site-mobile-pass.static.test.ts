@@ -127,7 +127,7 @@ describe("mobile.css is arrangement, colour and life, not a claim", () => {
     expect(html).toContain(
       '<p class="risk-h">14 days free. <span class="nb">No card needed.</span></p>',
     );
-    expect(css).toContain(".nb{white-space:nowrap}");
+    expect(read("css/site.css")).toContain(".nb{white-space:nowrap}");
   });
 });
 
@@ -168,7 +168,7 @@ describe("the first screen on a phone", () => {
 
   it("three thin brand rings sit in the hero's right margin, no repeat, behind the text", () => {
     expect(css).toContain("background-repeat:no-repeat");
-    expect(css).toContain("background-size:76px 76px,auto,auto");
+    expect(css).toContain("background-size:76px 76px;");
     for (const hex of ["%234caed9", "%236261af", "%23ffc933"]) expect(css).toContain(hex);
   });
 

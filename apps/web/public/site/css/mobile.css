@@ -1,8 +1,7 @@
 /* Phones and small tablets (under 900 px) only: the page is linked with media="(max-width:899.98px)", so nothing here can reach the desktop look.
    Type: headings balance, paragraphs never end on one stranded word, one steady spacing from label to headline to text to button.
-   Colour: a little more, only the wheel's own piece colours, soft and behind the text (the navy ink stays AA on every tint).
-   Life: headings rise into place as they arrive. Taps give a soft coloured flash; nothing moves the page. */
-:root{--mb-sky:76,174,217;--mb-gold:255,201,51;--mb-indigo:98,97,175;--mb-coral:229,106,93}
+   Colour: none of its own; every band takes its colour from a role class in site.css.
+   Life: headings rise into place as they arrive; nothing moves the page. */
 
 /* ---------- the first screen on an upright phone: a tighter hero, so the whole wheel and its hint sit above the browser bar ---------- */
 @media (max-width:599.98px){
@@ -13,14 +12,13 @@
 }
 
 /* ---------- type ---------- */
-.nb{white-space:nowrap}
 :where(p,li,figcaption,dd,summary,.sub,.lede,.hx-lede){text-wrap:pretty}
 .hx-note,.pd-note,.cta-band p,h1,h2,h3,.h3,.risk-h,.pb-lines,.pb-big,.fd-q,.sy-ph,.co-q,.inc-label{text-wrap:balance}
 /* label, headline, text and button sit the same distance apart on every page */
 h1+.sub,h2+.sub,h1+.lede,h2+.lede{margin-top:12px}
 .home .hx .kick,.home #sell .kick,.home #journey .kick,.home #stores .kick,.home #counter .kick,.home #use-cases .kick{margin-bottom:14px}
 /* the counter section reads title, then one clear line, then the small print under it (the print was heavier than the line) */
-.home .ct-note{margin-top:14px;font-size:16px;line-height:1.5;font-weight:400;color:var(--ink-2)}
+.home .ct-note{margin-top:14px;font-size:16px;line-height:1.5;font-weight:400;color:var(--rf-text-2)}
 /* the closing call fits on one line and the box title on balanced lines */
 .home .end h2{font-size:clamp(32px,9.6vw,52px)}
 .home .risk-h{font-size:clamp(24px,7vw,30px);line-height:1.12}
@@ -31,19 +29,12 @@ h1+.sub,h2+.sub,h1+.lede,h2+.lede{margin-top:12px}
 .footer-grid ul{display:grid;gap:0}
 .footer-grid li{margin:0}
 
-/* ---------- the pricing page: one alignment all the way down (left, as on the home page), a soft indigo top and a labelled pill ---------- */
+/* ---------- the pricing page: one alignment all the way down (left, as on the home page), the labelled pill is in site.css ---------- */
 body:has(.pg-top) .section-head.center,body:has(.pg-top) .section-head.center .lede,.pg-notes{text-align:left;margin-inline:0}
-.section.pg-top{background:linear-gradient(180deg,#eceefb 0,#f6f7fd 70%,#fff 100%)}
-.pg-top .eyebrow{display:inline-flex;align-items:center;gap:9px;padding:6px 16px 6px 13px;border-radius:999px;font-size:15px;line-height:1.2;background:#dad9f7;color:#312f78;margin-bottom:14px}
-.pg-top .eyebrow::before{content:"";flex:none;width:10px;height:10px;border-radius:50%;background:#6261af}
-body:has(.pg-top) .section.alt:not(.pg-top){background:#e3f5f4}
 
-/* ---------- colour ---------- */
-.home .hx-up .hx-over{background-image:url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 200 200%27 fill=%27none%27%3E%3Ccircle cx=%27100%27 cy=%27100%27 r=%2796%27 stroke=%27%234caed9%27 stroke-opacity=%27.34%27 stroke-width=%272%27/%3E%3Ccircle cx=%27100%27 cy=%27100%27 r=%2770%27 stroke=%27%236261af%27 stroke-opacity=%27.26%27 stroke-width=%272%27/%3E%3Ccircle cx=%27100%27 cy=%27100%27 r=%2744%27 stroke=%27%23ffc933%27 stroke-opacity=%27.5%27 stroke-width=%272%27/%3E%3C/svg%3E"),radial-gradient(70% 60% at 100% 0%,rgba(var(--mb-sky),.2),transparent 72%),radial-gradient(60% 48% at 0% 6%,rgba(var(--mb-gold),.18),transparent 72%);background-repeat:no-repeat;background-size:76px 76px,auto,auto;background-position:right 8px top 318px,0 0,0 0}
-.home #pricing{background:linear-gradient(180deg,#eceefb 0,#f6f7fd 55%,#fff 100%)}
-.home .pl-wrap{box-shadow:0 0 0 1px rgba(16,38,77,.06),0 14px 30px -18px rgba(16,38,77,.28)}
-.home .risk{background-image:radial-gradient(70% 90% at 100% 0%,rgba(var(--mb-sky),.28),transparent 70%),radial-gradient(60% 80% at 0% 100%,rgba(var(--mb-coral),.2),transparent 70%)}
-a,button,summary{-webkit-tap-highlight-color:rgba(var(--mb-sky),.22)}
+/* ---------- three thin rings in the hero margin (the glow that sat under them is gone) ---------- */
+.home .hx-up .hx-over{background-image:url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 200 200%27 fill=%27none%27%3E%3Ccircle cx=%27100%27 cy=%27100%27 r=%2796%27 stroke=%27%234caed9%27 stroke-opacity=%27.34%27 stroke-width=%272%27/%3E%3Ccircle cx=%27100%27 cy=%27100%27 r=%2770%27 stroke=%27%236261af%27 stroke-opacity=%27.26%27 stroke-width=%272%27/%3E%3Ccircle cx=%27100%27 cy=%27100%27 r=%2744%27 stroke=%27%23ffc933%27 stroke-opacity=%27.5%27 stroke-width=%272%27/%3E%3C/svg%3E");background-repeat:no-repeat;background-size:76px 76px;background-position:right 8px top 318px}
+
 
 /* ---------- life ---------- */
 /* Screen only (this file is also linked for print at narrow page widths). The rise stays under the smallest gap from a heading to the next

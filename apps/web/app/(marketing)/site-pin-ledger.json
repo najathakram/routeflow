@@ -4,7 +4,7 @@
   "baseline": {
     "site-anchor-landing.static.test.ts": 4,
     "site-color-and-life.static.test.ts": 29,
-    "site-founder-card-width.static.test.ts": 7,
+    "site-founder-card-width.static.test.ts": 8,
     "site-mobile-pass.static.test.ts": 41,
     "site-motion-always.static.test.ts": 42,
     "site-phone-and-motion.static.test.ts": 11
