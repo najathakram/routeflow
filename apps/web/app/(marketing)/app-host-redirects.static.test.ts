@@ -156,6 +156,7 @@ function load(): Loaded {
     ` groupedIcon: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "(marketing)": { "icon.png": null } })))),` +
     ` slotApple: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "@slot": { "apple-icon2.png": null } })))),` +
     ` sitemapGen: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "sitemap.ts": null }), src({ "sitemap.ts": "export async function generateSitemaps() { return []; }" })))),` +
+    ` sitemapStar: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "sitemap.ts": null }), src({ "sitemap.ts": 'export * from "./gen";' })))),` +
     ` sitemapConst: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "sitemap.ts": null }), src({ "sitemap.ts": "export const generateSitemaps = async () => [];" })))),` +
     ` iconGen: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "icon.tsx": null }), src({ "icon.tsx": "export function generateImageMetadata() { return []; } export default function Icon() {}" })))),` +
     ` sitemapDestructured: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "sitemap.ts": null }), src({ "sitemap.ts": "export const { generateSitemaps } = mod;" })))),` +
@@ -408,6 +409,7 @@ describe("K5 2: census, every app route goes to the old host in one 307 hop", ()
     expect(cfg.sitemapList.error).toMatch(/generateSitemaps/);
     expect(cfg.sitemapLet.error).toMatch(/generateSitemaps/);
     expect(cfg.iconVar.error).toMatch(/generateImageMetadata/);
+    expect(cfg.sitemapStar.error).toMatch(/export \*/);
     expect(cfg.iconPlain).toEqual({ ok: ["/icon"] });
     expect(cfg.ogPlain).toEqual({ ok: ["/opengraph-image"] });
   });
