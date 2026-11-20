@@ -13,6 +13,8 @@ import {
   STATIC_SITE_PAGE_NAMES,
   visitCountTags,
   withVisitCount,
+  withFirstTouch,
+  FIRST_TOUCH_SRC,
   type StaticSitePage,
 } from "./static-site-page";
 import { UMAMI_SCRIPT_SRC, umamiAllowedPath } from "./umami-tag";
@@ -319,5 +321,58 @@ describe("renderSitePage escaping", () => {
     expect(renderSitePage("{{brand:name}}", evil, null)).toBe(
       "a&amp;b&lt;c&gt;&quot;d&quot;&#39;e&#39;",
     );
+  });
+});
+
+describe("first-touch tag on every served page", () => {
+  const TAG = `<script defer src="${FIRST_TOUCH_SRC}"></script>`;
+  const count = (html: string) => html.split(TAG).length - 1;
+
+  it("every served page has exactly one tag, with no site ID", () => {
+    for (const page of STATIC_SITE_PAGE_NAMES) {
+      expect(count(readServedSitePage(page, { websiteId: undefined }))).toBe(1);
+    }
+  });
+
+  it("every served page still has exactly one tag with a site ID", () => {
+    for (const page of STATIC_SITE_PAGE_NAMES) {
+      expect(count(readServedSitePage(page, { websiteId: FAKE_ID }))).toBe(1);
+    }
+  });
+
+  it("the tag sits just before </head>, and a second call adds nothing", () => {
+    const once = withFirstTouch("<html><head><title>a</title></head><body></body></html>");
+    expect(once).toContain(`${TAG}</head>`);
+    expect(withFirstTouch(once)).toBe(once);
+  });
+
+  it("a preload link or a comment naming the path does not stop the script tag", () => {
+    const page = `<html><head><link rel="preload" href="${FIRST_TOUCH_SRC}" as="script"><!-- ${FIRST_TOUCH_SRC} --></head><body></body></html>`;
+    const out = withFirstTouch(page);
+    expect(count(out)).toBe(1);
+    expect(withFirstTouch(out)).toBe(out);
+  });
+
+  it("a page with no </head> throws", () => {
+    expect(() => withFirstTouch("<body>x</body>")).toThrow(/<\/head>/);
+  });
+});
+
+describe("the first-touch key lives in one file", () => {
+  it("rf_first_touch appears in exactly one file under public/site: js/first-touch.js", () => {
+    const hits: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (
+          /\.(js|html|css|json|svg)$/.test(e.name) &&
+          fs.readFileSync(p, "utf8").includes("rf_first_touch")
+        )
+          hits.push(path.relative(SITE_ROOT, p).split(path.sep).join("/"));
+      }
+    };
+    walk(SITE_ROOT);
+    expect(hits).toEqual(["js/first-touch.js"]);
   });
 });

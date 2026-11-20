@@ -4,7 +4,12 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadBrand, type Brand } from "@routeflow/types/brand";
-import { renderSitePage, withVisitCount, type StaticSitePage } from "@/lib/static-site-page";
+import {
+  renderSitePage,
+  withFirstTouch,
+  withVisitCount,
+  type StaticSitePage,
+} from "@/lib/static-site-page";
 
 export interface ServedPageOptions {
   /** Brand to fill the tokens from. Default: the real one (tests pass a fixture or mock loadBrand). */
@@ -26,10 +31,10 @@ export function readSitePageFile(page: StaticSitePage): string {
   throw new Error(`public/site/${page}.html not found from ${process.cwd()}`);
 }
 
-/** The page as served: file, brand tokens filled, then the visit-count tags. */
+/** The page as served: file, brand tokens filled, then the first-touch script, then the visit-count tags. */
 export function readServedSitePage(page: StaticSitePage, opts: ServedPageOptions = {}): string {
   // Written out in full so Next inlines it at build time, as in UmamiScript.
   const websiteId = "websiteId" in opts ? opts.websiteId : process.env.NEXT_PUBLIC_UMAMI_WEBSITE_ID;
   const filled = renderSitePage(readSitePageFile(page), opts.brand ?? loadBrand());
-  return withVisitCount(filled, page, websiteId);
+  return withVisitCount(withFirstTouch(filled), page, websiteId);
 }
