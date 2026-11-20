@@ -142,6 +142,39 @@ describe("chrome.js is the one home of the page chrome", () => {
   });
 });
 
+// SA-1199 P5: no typed header height. The header's height is read live (chrome.js) and the test reads the live nav
+// rect; a literal 68 or 56 (with or without px) or a literal rootMargin in those files is a typed header size.
+describe("no typed header height (SA-1199 P5)", () => {
+  const TYPED = /(?<![\w.])-?(?:68|56)(?:px)?(?![\w.])|rootMargin\s*:\s*["'`]\s*-?\d/;
+  const typedHits = (src: string) =>
+    strip(src)
+      .split("\n")
+      .filter((l) => TYPED.test(l));
+  const FILES = [
+    path.join(JS, "chrome.js"),
+    path.join(WEB, "e2e/93-site-w3-header.spec.ts"),
+    path.join(WEB, "e2e/helpers/header-pill.ts"),
+  ];
+
+  it("self-check: a planted typed rootMargin and a typed 56 are caught", () => {
+    expect(typedHits('{ rootMargin: "-68px 0px 0px 0px" },')).toHaveLength(1);
+    expect(typedHits("const headerH = 56;")).toHaveLength(1);
+    expect(typedHits('{ rootMargin: "-" + headH + "px 0px 0px 0px" },')).toHaveLength(0);
+    expect(typedHits("viewport 1568 and 0.568 and x156")).toHaveLength(0);
+  });
+
+  it("chrome.js, spec 93 and the pill helper type no header height, and chrome.js reads it live", () => {
+    for (const f of FILES) {
+      expect({ f: path.basename(f), hits: typedHits(fs.readFileSync(f, "utf8")) }).toEqual({
+        f: path.basename(f),
+        hits: [],
+      });
+    }
+    expect(strip(chrome())).toMatch(/head\.getBoundingClientRect\(\)\.height/);
+    expect(strip(chrome())).toMatch(/rootMargin:\s*"-"\s*\+\s*headH/);
+  });
+});
+
 describe("the sync script copies every script and stylesheet under public/site", () => {
   const script = fs.readFileSync(path.resolve(WEB, "../../scripts/sync-site-port.mjs"), "utf8");
   // Named exemptions: files that are not copied from the design source.

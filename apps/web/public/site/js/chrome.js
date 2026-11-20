@@ -69,6 +69,8 @@
       head.classList.remove("hero-btn-in");
       return;
     }
+    /* "In view" is geometry: below the header's bottom edge. The header height is read live, once, never typed. */
+    var headH = head.getBoundingClientRect().height;
     var seen = new Set();
     var io = new IntersectionObserver(
       function (en) {
@@ -78,7 +80,7 @@
         });
         head.classList.toggle("hero-btn-in", seen.size > 0);
       },
-      { rootMargin: "-68px 0px 0px 0px" },
+      { rootMargin: "-" + headH + "px 0px 0px 0px" },
     );
     btns.forEach(function (b) {
       io.observe(b);

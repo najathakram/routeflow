@@ -9,7 +9,7 @@ import * as path from "path";
 import { test, expect, type Page } from "@playwright/test";
 import { SCRIPT_GZIP_KB } from "./helpers/site-speed-budget";
 import { emptyBands } from "./helpers/empty-bands";
-import { readPill } from "./helpers/header-pill";
+import { readPillSettled } from "./helpers/header-pill";
 import { blockAnalytics, nonEmpty } from "./helpers/site-proof";
 
 test.beforeEach(async ({ context }) => {
@@ -37,10 +37,7 @@ test("T48a at 390x844, while another trial button is on screen, the header pill 
   let withoutOthers = 0;
   for (let y = 0; y <= total + step; y += step) {
     await page.evaluate((top) => window.scrollTo({ top, behavior: "instant" }), Math.min(y, total));
-    await page.evaluate(
-      () => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))),
-    );
-    const read = await readPill(page); // judged against the live header box (SA-1196 A4-1)
+    const read = await readPillSettled(page); // settle, then poll (SA-1199 P3), live header box
     const state = { others: read.others, pill: read.pillShown };
     if (state.others > 0) {
       withOthers++;
@@ -94,13 +91,7 @@ test.describe("T48e", () => {
               behavior: "instant",
             });
           }, at);
-          await page.evaluate(
-            () =>
-              new Promise<void>((r) =>
-                requestAnimationFrame(() => requestAnimationFrame(() => r())),
-              ),
-          );
-          const read = await readPill(page); // judged against the live header box (SA-1196 A4-1)
+          const read = await readPillSettled(page); // settle, then poll (SA-1199 P3), live header box
           const state = { others: read.others, pill: read.pillShown };
           // Record the state this reading checked (A4-2), so the closing row can prove both were seen.
           SEEN_STATES.add(state.others === 0 ? STATE_SHOWN : STATE_HIDDEN);
