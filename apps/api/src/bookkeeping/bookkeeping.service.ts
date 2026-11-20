@@ -48,7 +48,7 @@ import {
 import { ListTransactionsDto } from "./dto/list-transactions.dto";
 import { RecordPaymentDto } from "./dto/record-payment.dto";
 import { BulkMarkPaidDto } from "../vendor-bills/dto/bulk-mark-paid.dto";
-import { InvoiceService } from "./invoice.service";
+import { InvoicePdfService } from "../invoices/invoice-pdf.service";
 import { StorageService } from "../storage/storage.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { PlatformConfigService } from "../platform-admin/platform-config.service";
@@ -87,7 +87,7 @@ import { assertOrderReviewed } from "../orders/offline/order-review-gate";
 export class BookkeepingService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly invoiceService: InvoiceService,
+    private readonly invoicePdfService: InvoicePdfService,
     private readonly storage: StorageService,
     private readonly vendorBillsService: VendorBillsService,
     private readonly platformConfig: PlatformConfigService,
@@ -390,9 +390,9 @@ export class BookkeepingService implements OnModuleInit {
     });
   }
 
-  async getPdfUrl(id: string): Promise<{ url: string } | null> {
-    const url = await this.invoiceService.getPresignedUrl(id);
-    if (!url) return null;
+  /** B444/B1023: `id` is an Invoice id; the file is the tenant renderer's (forTenant(), so another tenant's id is a 404). */
+  async getPdfUrl(id: string): Promise<{ url: string }> {
+    const url = await this.invoicePdfService.getOrGenerate(id);
     return { url };
   }
 

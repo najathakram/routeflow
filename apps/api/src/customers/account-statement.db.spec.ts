@@ -11,7 +11,7 @@
  * `qa-sa1078-<run>-<n>-<label>` slug approved by `assertTestTenant`; `afterAll` deletes exactly the rows THIS run
  * created, in FK order. Each test seeds its own tenant, so no expectation depends on a sibling.
  */
-jest.mock("../bookkeeping/invoice.service", () => ({ InvoiceService: jest.fn() }));
+jest.mock("../invoices/invoice-pdf.service", () => ({ InvoicePdfService: jest.fn() }));
 jest.mock("../vendor-bills/vendor-bills.service", () => ({ VendorBillsService: jest.fn() }));
 jest.mock("../storage/compress.util", () => ({ compressDocument: jest.fn() }));
 

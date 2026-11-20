@@ -9,7 +9,7 @@
  * Source scan, comments excluded; `*.spec.ts` skipped. Paths are relative to apps/api/src.
  */
 jest.mock("@anthropic-ai/sdk", () => ({ __esModule: true, default: jest.fn() }));
-jest.mock("../bookkeeping/invoice.service", () => ({ InvoiceService: jest.fn() }));
+jest.mock("../invoices/invoice-pdf.service", () => ({ InvoicePdfService: jest.fn() }));
 jest.mock("../vendor-bills/vendor-bills.service", () => ({ VendorBillsService: jest.fn() }));
 jest.mock("../storage/compress.util", () => ({ compressDocument: jest.fn() }));
 
