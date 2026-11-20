@@ -43,11 +43,11 @@ describe("activeLeafHref (web nav, two items active at once)", () => {
   });
 });
 
-describe("layout.tsx wires the top-level leaves through activeLeafHref", () => {
+describe("layout.tsx wires the menu through activeNavLeaf (UXG-R8)", () => {
   const layout = fs.readFileSync(path.resolve(__dirname, "../layout.tsx"), "utf8");
 
-  it("imports activeLeafHref and no longer highlights a leaf with a bare startsWith(entry.href)", () => {
-    expect(layout).toMatch(/activeLeafHref/);
+  it("imports activeNavLeaf and no longer highlights a leaf with a bare startsWith(entry.href)", () => {
+    expect(layout).toMatch(/activeNavLeaf/);
     expect(layout).not.toMatch(/pathname\.startsWith\(entry\.href\)/);
   });
 });
