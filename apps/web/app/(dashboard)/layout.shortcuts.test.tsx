@@ -5,7 +5,7 @@ import { I18nProvider } from "@/lib/i18n";
 import { createTestQueryClient } from "@/test-utils/render";
 import DashboardLayout from "./layout";
 
-// UXG-R8: the shell feeds the menu its Product insights access; the rule itself is pinned in use-insights-access's own tests.
+// UXG-R8: the shell feeds the menu its Product insights access, off here; layout.insights-leaf.test.tsx pins that wiring.
 jest.mock("@/components/insights/use-insights-access", () => ({ useInsightsAccess: () => false }));
 
 /**
