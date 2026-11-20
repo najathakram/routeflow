@@ -255,6 +255,8 @@ interface Opts {
   txTenantStatus?: string;
   /** ACTIVE TENANT_ADMIN/OPERATOR/DRIVER count, as the DOWNGRADE seat warning reads it. */
   activeTeam?: number;
+  /** B1371: what MeterService.customersUsed would count (absent = no meter wired). */
+  customersUsed?: number;
   /**
    * The tenant's PINNED catalog version (`getVersionForTenant`) — what billing-cron
    * `applyScheduledDowngrades` prices and caps a scheduled downgrade from (grandfathering).
@@ -426,6 +428,15 @@ function make(opts: Opts = {}) {
     billingNotification,
     planTransition,
     scheduledPrice as any,
+    undefined, // dunning
+    undefined, // autoLocks
+    undefined, // cardFirst
+    undefined, // ownerAlerts
+    undefined, // authority
+    undefined, // preview
+    opts.customersUsed == null
+      ? undefined
+      : ({ customersUsed: jest.fn().mockResolvedValue(opts.customersUsed) } as any),
   );
   return {
     svc,
@@ -1737,6 +1748,7 @@ describe("SubscriptionMutationService downgrade / add-ons", () => {
       expect.any(String),
       expect.any(String),
       periodEnd,
+      expect.objectContaining({ customerNote: null }),
     );
   });
 
@@ -2274,7 +2286,7 @@ describe("SubscriptionMutationService.planChangePreview (REG-B58 T2)", () => {
     expect(preview?.proratedNow).toBeNull();
   });
 
-  it("REG-B58 T2 DOWNGRADE over the target seat cap warns with the counts", async () => {
+  it("B1371 (supersedes the seat warning): DOWNGRADE with the team over the target seats warns of nothing and needs no acknowledgement", async () => {
     const { periodStart, periodEnd } = activePeriod();
     const { svc } = make({
       tenantStatus: "ACTIVE",
@@ -2284,10 +2296,9 @@ describe("SubscriptionMutationService.planChangePreview (REG-B58 T2)", () => {
     const preview: any = await (svc as any).planChangePreview("t1", "STARTER", "MONTHLY");
     expect(preview).toBeDefined();
     expect(preview?.action).toBe("DOWNGRADE");
-    // The tenant has to see BOTH numbers before this is committable (the web half gates the
-    // commit button on this warning): "8 active users" vs. the plan's "3 seats".
-    expect(preview?.warning).toMatch(/8 active users/);
-    expect(preview?.warning).toMatch(/3 seats/);
+    // There is no seat limit on any plan: a downgrade never touches a login.
+    expect(preview.seatAckRequired).toBe(false);
+    expect(preview.warning ?? "").not.toMatch(/deactivated|Contact support|active users|seats/i);
   });
 
   it("REG-B58 T2 DOWNGRADE within the target seat cap carries no warning", async () => {
@@ -2303,7 +2314,7 @@ describe("SubscriptionMutationService.planChangePreview (REG-B58 T2)", () => {
     expect(preview?.warning).toBeUndefined();
   });
 
-  it("REG-B58 T2 DOWNGRADE seat warning reads the tenant's PINNED version, not the published one", async () => {
+  it("B1371 (supersedes the pinned seat warning): a team over the PINNED seats still warns of nothing, and the pinned version is still the one read", async () => {
     const { periodStart, periodEnd } = activePeriod();
     const { svc, cat } = make({
       tenantStatus: "ACTIVE",
@@ -2322,10 +2333,8 @@ describe("SubscriptionMutationService.planChangePreview (REG-B58 T2)", () => {
     });
     const preview: any = await svc.planChangePreview("t1", "STARTER", "MONTHLY");
     expect(preview.action).toBe("DOWNGRADE");
-    // Published (25) would have said "no warning"; the sweep the tenant will actually get is
-    // priced off the pinned cap (3), so the warning must fire and quote THAT number.
-    expect(preview.warning).toMatch(/8 active users/);
-    expect(preview.warning).toMatch(/3 seats/);
+    expect(preview.seatAckRequired).toBe(false);
+    expect(preview.warning).toBeUndefined();
     expect(cat.getVersionForTenant).toHaveBeenCalledWith("v-pinned");
   });
 
@@ -2475,7 +2484,7 @@ describe("SubscriptionMutationService.planChangePreview — pending cancellation
     expect(preview.warning).toBeUndefined();
   });
 
-  it("DOWNGRADE with a cancellation armed warns, and still carries the seat warning alongside it", async () => {
+  it("DOWNGRADE with a cancellation armed warns, and carries no seat warning even with the team over the seats (B1371)", async () => {
     const { periodStart, periodEnd } = activePeriod();
     const { svc } = make({
       tenantStatus: "ACTIVE",
@@ -2491,9 +2500,8 @@ describe("SubscriptionMutationService.planChangePreview — pending cancellation
     const preview = await svc.planChangePreview("t1", "STARTER", "MONTHLY");
     expect(preview.action).toBe("DOWNGRADE");
     expect(preview.warning).toMatch(/cancellation is pending/i);
-    // Composed, not traded: losing the seat warning here would drop the "your staff will be
-    // deactivated" notice the web half gates the commit button on.
-    expect(preview.warning).toMatch(/8 active users/);
+    expect(preview.warning).not.toMatch(/8 active users|deactivated/i);
+    expect(preview.seatAckRequired).toBe(false);
   });
 
   it("DOWNGRADE with NO cancellation armed and within the seat cap carries no warning", async () => {
@@ -2968,7 +2976,7 @@ describe("SubscriptionMutationService.planChangePreview — seatAckRequired (rou
     expect(preview.warning).not.toMatch(/deactivated/i);
   });
 
-  it("PIN: DOWNGRADE OVER the target cap sets seatAckRequired true", async () => {
+  it("PIN (B1371 supersedes seatAckRequired true): DOWNGRADE with the team over the target seats keeps seatAckRequired false", async () => {
     const { periodStart, periodEnd } = activePeriod();
     const { svc } = make({
       tenantStatus: "ACTIVE",
@@ -2977,8 +2985,8 @@ describe("SubscriptionMutationService.planChangePreview — seatAckRequired (rou
     });
     const preview = await svc.planChangePreview("t1", "STARTER", "MONTHLY");
     expect(preview.action).toBe("DOWNGRADE");
-    expect(preview.seatAckRequired).toBe(true);
-    expect(preview.warning).toMatch(/8 active users/);
+    expect(preview.seatAckRequired).toBe(false);
+    expect(preview.warning).toBeUndefined();
   });
 
   it("PIN: a DOWNGRADE within the cap with nothing armed is false, never undefined", async () => {
@@ -4073,5 +4081,162 @@ describe("#2583 subscribe()/upgrade() book on the shared paying predicate", () =
       ).rejects.toBeInstanceOf(NotFoundException);
       expect(h.prisma.$transaction).not.toHaveBeenCalled();
     });
+  });
+});
+
+// B1371: no plan has a seat limit. A downgrade moves price, add-ons and the customer allowance and never touches a
+// login, so the preview and the schedule notice say exactly that, and say the customer allowance when it applies.
+describe("B1371 — downgrade preview, schedule and notice carry no seat consequence", () => {
+  const SENTENCE = (n: number, plan: string, cap: number) =>
+    `You have ${n} customers. ${plan} includes ${cap}. Your current customers stay as they are. ` +
+    `Once you add one past ${cap}, you have 7 days. After that, a new customer needs a Customer pack or a bigger plan.`;
+
+  /** v7 with customer allowances: STARTER 250, TEAM 1000, BUSINESS 5000, ENTERPRISE unlimited; packs add 100. */
+  function catalogWithCustomers(over: { starter?: number | null } = {}) {
+    const v = catalog() as any;
+    const cap: Record<string, number | null> = {
+      STARTER: over.starter === undefined ? 250 : over.starter,
+      TEAM: 1000,
+      BUSINESS: 5000,
+      ENTERPRISE: null,
+    };
+    return {
+      ...v,
+      definitions: v.definitions.map((d: any) => ({ ...d, customersIncluded: cap[d.planKey] })),
+      addonSkus: v.addonSkus.map((s: any) =>
+        s.sku === "CUSTOMER_PACK_100"
+          ? { ...s, meteredKey: "CUSTOMERS", capacityPerUnit: 100 }
+          : s.sku === "BUYER_PORTAL"
+            ? { ...s, includedAtPlan: "BUSINESS" }
+            : s,
+      ),
+    };
+  }
+  const downSub = () => {
+    const { periodStart, periodEnd } = activePeriod();
+    return { planKey: "BUSINESS", cycle: "MONTHLY", periodStart, periodEnd };
+  };
+
+  it("PIN: a team over the target seats - seatAckRequired false and no deactivation or support text", async () => {
+    const { svc } = make({ tenantStatus: "ACTIVE", sub: downSub(), activeTeam: 8 });
+    const p: any = await svc.planChangePreview("t1", "STARTER", "MONTHLY");
+    expect(p.action).toBe("DOWNGRADE");
+    expect(p.seatAckRequired).toBe(false);
+    expect(p.warning ?? "").not.toMatch(/deactivat|Contact support|seat|login/i);
+  });
+
+  it("PIN: 312 customers to a plan that includes 250 - the exact K3 line", async () => {
+    const { svc } = make({
+      tenantStatus: "ACTIVE",
+      sub: downSub(),
+      catalog: catalogWithCustomers(),
+      customersUsed: 312,
+    });
+    const p: any = await svc.planChangePreview("t1", "STARTER", "MONTHLY");
+    expect(p.warning).toBe(SENTENCE(312, "Starter", 250));
+    expect(p.seatAckRequired).toBe(false);
+  });
+
+  it("PIN: within the allowance, or an unlimited target, carries no customer line", async () => {
+    const within = make({
+      tenantStatus: "ACTIVE",
+      sub: downSub(),
+      catalog: catalogWithCustomers(),
+      customersUsed: 250,
+    });
+    expect(((await within.svc.planChangePreview("t1", "STARTER", "MONTHLY")) as any).warning).toBe(
+      undefined,
+    );
+    const unlimited = make({
+      tenantStatus: "ACTIVE",
+      sub: downSub(),
+      catalog: catalogWithCustomers({ starter: null }),
+      customersUsed: 99999,
+    });
+    expect(
+      ((await unlimited.svc.planChangePreview("t1", "STARTER", "MONTHLY")) as any).warning,
+    ).toBe(undefined);
+  });
+
+  it("PIN: active Customer packs raise the allowance (250 + 2 x 100 = 450), and the line names that cap", async () => {
+    const pack = { id: "a1", addonKey: "CUSTOMER_PACK_100", sku: "CUSTOMER_PACK_100", quantity: 2 };
+    const under = make({
+      tenantStatus: "ACTIVE",
+      sub: downSub(),
+      catalog: catalogWithCustomers(),
+      customersUsed: 312,
+      priorAddons: [pack],
+    });
+    expect(((await under.svc.planChangePreview("t1", "STARTER", "MONTHLY")) as any).warning).toBe(
+      undefined,
+    );
+    const over = make({
+      tenantStatus: "ACTIVE",
+      sub: downSub(),
+      catalog: catalogWithCustomers(),
+      customersUsed: 500,
+      priorAddons: [pack],
+    });
+    expect(((await over.svc.planChangePreview("t1", "STARTER", "MONTHLY")) as any).warning).toBe(
+      SENTENCE(500, "Starter", 450),
+    );
+  });
+
+  it("PIN: downgrade() accepts retainedUserIds and writes [] to the row and the event", async () => {
+    const { periodEnd } = activePeriod();
+    const { svc, tx, events } = make({ sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodEnd } });
+    await svc.downgrade("t1", "STARTER", ["u1"], "admin");
+    expect(tx.tenantSubscription.update.mock.calls[0][0].data.retainedUserIds).toEqual([]);
+    const ev = events.emit.mock.calls.find(
+      (c: any[]) => c[1] === BILLING_EVENTS.PLAN_DOWNGRADE_SCHEDULED,
+    );
+    expect(ev[2].retainedUserIds).toEqual([]);
+  });
+
+  it("PIN: the schedule notice carries the new price, the add-ons that start billing and the customer sentence", async () => {
+    const { periodEnd } = activePeriod();
+    const { svc, billingNotification } = make({
+      sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodEnd, externalPayment: true },
+      catalog: catalogWithCustomers(),
+      customersUsed: 312,
+      priorAddons: [
+        {
+          id: "a2",
+          addonKey: "BUYER_PORTAL",
+          sku: "BUYER_PORTAL",
+          quantity: 1,
+          priceSnapshot: 0,
+          stripeItemId: null,
+        },
+      ],
+    });
+    await svc.downgrade("t1", "STARTER", ["u1"], "admin");
+    expect(billingNotification.notifyDowngradeScheduled).toHaveBeenCalledWith(
+      "t1",
+      expect.any(String),
+      "Starter",
+      periodEnd,
+      {
+        newMonthlyPrice: 59,
+        addons: [{ name: "Buyer portal", monthlyPrice: 49 }],
+        customerNote: SENTENCE(312, "Starter", 250),
+      },
+    );
+  });
+
+  it("PIN: with no customers over and no add-ons the notice still goes, with empty details", async () => {
+    const { periodEnd } = activePeriod();
+    const { svc, billingNotification, tx } = make({
+      sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodEnd },
+    });
+    await svc.downgrade("t1", "STARTER", [], "admin");
+    expect(tx.tenantSubscription.update).toHaveBeenCalled();
+    expect(billingNotification.notifyDowngradeScheduled).toHaveBeenCalledWith(
+      "t1",
+      expect.any(String),
+      expect.any(String),
+      periodEnd,
+      { newMonthlyPrice: 59, addons: [], customerNote: null },
+    );
   });
 });

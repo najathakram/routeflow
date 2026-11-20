@@ -36,12 +36,12 @@ describe("public site sentences the code backs", () => {
     expect(html).not.toMatch(/stop the order/i);
   });
 
-  // plan-catalog-v11.definitions.ts: logins differ too (3 / 10 / 25), and logins over the limit can be switched off on downgrade.
-  it("home, pricing, product: plans differ by customers and logins, not customers alone", () => {
+  // B1371 (SA-1175 R1 K7): no plan limits logins (entitlements caps.seats is null) and a downgrade never turns one off.
+  it("home, pricing, product: plans differ by customers only, never by logins", () => {
     for (const name of ["home", "pricing", "product"]) {
       const html = page(name);
-      expect(html).toMatch(/The plans differ by how many customers and logins they include\./);
-      expect(html).not.toMatch(/differ by how many customers they include/);
+      expect(html).toMatch(/The plans differ by how many customers they include\./);
+      expect(html).not.toMatch(/customers and logins/i);
     }
   });
 

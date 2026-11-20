@@ -27,19 +27,12 @@ const money = (n: number | null | undefined) =>
 const SALES_CONTACT_HREF = "mailto:hello@routeflow.info?subject=Enterprise%20plan%20enquiry";
 
 function planLine(p: PlanDef): string[] {
-  const caps: string[] = [];
-  caps.push(
-    p.seatsIncluded == null
-      ? "Unlimited users"
-      : `${p.seatsIncluded} user${p.seatsIncluded === 1 ? "" : "s"}`,
-  );
-  caps.push(
-    p.routesConcurrent == null
-      ? "Unlimited routes"
-      : `${p.routesConcurrent} route${p.routesConcurrent === 1 ? "" : "s"}/day`,
-  );
-  caps.push(p.scansIncluded == null ? "Unlimited AI scans" : `${p.scansIncluded} AI scans/mo`);
-  return caps;
+  // Only what is enforced: no plan limits seats, and routes and scans are not capped.
+  return [
+    p.customersIncluded == null
+      ? "Unlimited customers"
+      : `${p.customersIncluded} customers included`,
+  ];
 }
 
 export default function ChoosePlanPage() {
@@ -56,12 +49,8 @@ export default function ChoosePlanPage() {
   const [cycle, setCycle] = React.useState<Cycle>("MONTHLY");
   const [selected, setSelected] = React.useState<string | null>(null);
   const [preview, setPreview] = React.useState<QuoteResult | null>(null);
-  // Acknowledgement of a downgrade's seat consequence — reset whenever the quote changes.
-  const [ackDowngrade, setAckDowngrade] = React.useState(false);
-
   const applyPreview = React.useCallback((q: QuoteResult) => {
     setPreview(q);
-    setAckDowngrade(false);
   }, []);
 
   // A failed quote must leave NO preview behind: a stale one still carries the previous
@@ -119,13 +108,6 @@ export default function ChoosePlanPage() {
     sub.cycle === cycle &&
     !sub.cancelAtPeriodEnd &&
     sub.downgradeToPlanKey == null;
-  // A DOWNGRADE that the server flagged as over-cap deactivates staff accounts at period end —
-  // it is only committable once the tenant has acknowledged that. Keyed on the server's own
-  // seat signal, never on `warning` being non-empty: that field also carries unrelated copy
-  // (a revoked cancellation, say), which would demand consent to a false consequence.
-  const needsDowngradeAck =
-    changeAction === "DOWNGRADE" && preview?.change?.seatAckRequired === true;
-
   const commit = () => {
     // CONTACT_SALES commits nowhere: its control is a link to sales, so this is only
     // reached if something else calls commit() — post nothing.
@@ -201,9 +183,7 @@ export default function ChoosePlanPage() {
     <div className="mx-auto max-w-5xl space-y-6 p-6">
       <div className="text-center">
         <h1 className="text-2xl font-bold text-slate-900">Choose your plan</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Start small, add modules and seats as you grow.
-        </p>
+        <p className="mt-1 text-sm text-slate-500">Start small. Add customers as you grow.</p>
         <div className="mt-4 inline-flex rounded-full bg-slate-100 p-1 text-sm">
           {(["MONTHLY", "ANNUAL"] as Cycle[]).map((c) => (
             <button
@@ -296,8 +276,8 @@ export default function ChoosePlanPage() {
 
       {recommended && recommended !== currentPlanKey && (
         <p className="text-center text-xs text-slate-400">
-          &ldquo;Fits your usage&rdquo; marks the cheapest plan that covers your current users,
-          routes and AI scans. It is a hint, not advice to change.
+          &ldquo;Fits your usage&rdquo; marks the cheapest plan that covers your current customers.
+          It is a hint, not advice to change.
         </p>
       )}
 
@@ -345,17 +325,6 @@ export default function ChoosePlanPage() {
             {preview.change?.warning && (
               <p className="text-xs text-amber-600">{preview.change.warning}</p>
             )}
-            {needsDowngradeAck && (
-              <label className="flex items-start gap-2 pt-1 text-xs text-slate-600">
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  checked={ackDowngrade}
-                  onChange={(e) => setAckDowngrade(e.target.checked)}
-                />
-                <span>I understand these users will be deactivated</span>
-              </label>
-            )}
           </div>
           <Button
             className="mt-4 w-full"
@@ -368,8 +337,7 @@ export default function ChoosePlanPage() {
               // A quote in flight means `preview` (plan, cycle, action) is stale — committing
               // it would buy the previous selection.
               quote.isPending ||
-              changeAction === "NOOP" ||
-              (needsDowngradeAck && !ackDowngrade)
+              changeAction === "NOOP"
             }
           >
             {isCommitting ? (

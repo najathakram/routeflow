@@ -3,6 +3,8 @@ import { PrismaService } from "../prisma/prisma.service";
 import { accountAdminsOf } from "./account-admins";
 import { resolveZone } from "../common/tenant-time-zone";
 import { EmailService } from "../email/email.service";
+import { roundMoney } from "@routeflow/pricing";
+import type { DowngradeNoticeDetails } from "./downgrade-customer-note";
 import {
   trialEndingTemplate,
   downgradeScheduledTemplate,
@@ -25,6 +27,8 @@ import {
 // Every public method here NEVER throws — a notification failure (claim error, missing
 // admin, send failure) is logged and swallowed so the caller's business action (plan
 // change, cancellation, suspension) always succeeds regardless of email outcome.
+
+const usd = (n: number): string => `$${roundMoney(n).toFixed(2)}`;
 
 const isUniqueViolation = (e: unknown): boolean =>
   !!e && typeof e === "object" && (e as { code?: string }).code === "P2002";
@@ -251,19 +255,40 @@ export class BillingNotificationService {
     fromPlanName: string,
     toPlanName: string,
     effectiveAt: Date,
+    /** B1371 K9: what the downgrade changes besides the date. Never logins: no plan has a seat limit. */
+    details?: DowngradeNoticeDetails,
   ): Promise<void> {
     // Fix round (finding 3): key includes toPlanName — a CORRECTED downgrade to a different
     // target plan at the SAME effective date (e.g. SCALE→LITE re-scheduled to SCALE→STARTER
     // before the first one applies) must not be suppressed as "already sent".
     const key = `${toPlanName}@${effectiveAt.toISOString()}`;
-    await this.sendIfClaimed(tenantId, "DOWNGRADE_SCHEDULED", key, (admin, businessName, dateFor) =>
-      downgradeScheduledTemplate({
-        businessName,
-        adminName: admin.name,
-        fromPlanName,
-        toPlanName,
-        effectiveAt: dateFor(effectiveAt),
-      }),
+    await this.sendIfClaimed(
+      tenantId,
+      "DOWNGRADE_SCHEDULED",
+      key,
+      (admin, businessName, dateFor) => {
+        const when = dateFor(effectiveAt);
+        const detailLines: string[] = [];
+        if (details?.newMonthlyPrice != null) {
+          detailLines.push(
+            `From ${when}, ${toPlanName} is ${usd(details.newMonthlyPrice)} a month.`,
+          );
+        }
+        for (const a of details?.addons ?? []) {
+          detailLines.push(
+            `${a.name} isn't included in ${toPlanName}. From ${when}, it's billed at ${usd(a.monthlyPrice)} a month.`,
+          );
+        }
+        if (details?.customerNote) detailLines.push(details.customerNote);
+        return downgradeScheduledTemplate({
+          businessName,
+          adminName: admin.name,
+          fromPlanName,
+          toPlanName,
+          effectiveAt: when,
+          detailLines,
+        });
+      },
     );
   }
 

@@ -82,7 +82,7 @@ describe("UX guide B10 choose-plan current plan", () => {
     expect(within(card("Growth")).getByText("Fits your usage")).toBeInTheDocument();
     expect(screen.queryByText("Best fit")).toBeNull();
     expect(
-      screen.getByText(/cheapest plan that covers your current users, routes and AI scans/i),
+      screen.getByText(/cheapest plan that covers your current customers/i),
     ).toBeInTheDocument();
   });
 

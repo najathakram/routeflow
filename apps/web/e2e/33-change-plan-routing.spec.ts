@@ -268,13 +268,13 @@ test.describe("Choose-plan routing (F18 / B58)", () => {
 
     const commitButton = page.getByRole("button", { name: /Schedule downgrade/i });
     await expect(commitButton).toBeVisible();
+    // B1371: no plan has a seat limit, so the downgrade confirm has no acknowledgement checkbox.
+    await expect(page.getByRole("checkbox")).toHaveCount(0);
     await commitButton.click();
 
     await expect.poll(() => hits.downgrade).toBe(1);
     // The exact payload matters, not just the URL: an empty `retainedUserIds`
-    // is the deliberate contract (server default too — settings-billing.controller.ts),
-    // meaning "keep only admins" if the tenant ends up over the new seat cap. The
-    // seat warning + its acknowledgement gate live server-side / on the page, not here.
+    // is the deliberate contract (server default too — settings-billing.controller.ts).
     expect(hits.downgradeBody).toEqual({ targetPlanKey: "STARTER", retainedUserIds: [] });
     expect(hits.subscribe).toBe(0);
     expect(hits.upgrade).toBe(0);

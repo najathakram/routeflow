@@ -1,9 +1,8 @@
 /**
- * F03 slice 2 (SA-1096), real Postgres: a scheduled downgrade that is over the new seat cap deactivates the people
- * it frees, and burns exactly THEIR live set-password / reset links in the same transaction. The cron's unit spec
- * mocks the transaction, so a burn aimed at the wrong people (the whole tenant instead of the freed list) passes
- * there. Here the real sweep runs over one admin, one retained operator, two freed people and a bystander in another
- * tenant: only the freed two lose their links.
+ * B1371, real Postgres (was F03 slice 2 / SA-1096, the seat-cap sweep): there is no seat limit on any plan, so a
+ * scheduled downgrade over the target plan's old `seatsIncluded` never deactivates anyone and never burns a
+ * set-password / reset link. The real sweep runs over one admin, one retained operator, two other staff and a
+ * bystander in another tenant: everyone stays ACTIVE and keeps their live link.
  *
  * The advisory cron lock is a pass-through (the sweep is invoked directly). Real PlanCatalogService and
  * BillingEventService; meters, notifications and the snapshot hook are stubbed. The tenant is pinned to its own
@@ -35,7 +34,7 @@ const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs")
 const SPEC = "billing-cron-seat-cap-links.db.spec.ts";
 const hash = (s: string) => createHash("sha256").update(s).digest("hex");
 
-describeDb("a seat-cap downgrade burns the freed people's links and only theirs", () => {
+describeDb("a downgrade over the old seat count switches nobody off and burns no link", () => {
   let pool: Pool;
   let prisma: PrismaClient;
   let cron: BillingCronService;
@@ -152,7 +151,7 @@ describeDb("a seat-cap downgrade burns the freed people's links and only theirs"
   const liveLinks = (userId: string) =>
     prisma.passwordResetToken.count({ where: { userId, usedAt: null } });
 
-  it("S12: over the cap, the freed operators and drivers lose their links; the admin, the retained and another tenant keep theirs", async () => {
+  it("S12 (B1371): a downgrade over the old seat count keeps every login ACTIVE and every live link", async () => {
     const t = await mkTenant("a");
     const other = await mkTenant("b");
     const admin = await mkUser(t, "admin", UserRole.TENANT_ADMIN);
@@ -177,13 +176,14 @@ describeDb("a seat-cap downgrade burns the freed people's links and only theirs"
 
     const status = async (id: string) =>
       (await prisma.user.findUniqueOrThrow({ where: { id } })).status;
-    expect(await status(freedOp)).toBe("INACTIVE");
-    expect(await status(freedDriver)).toBe("INACTIVE");
+    // B1371: no seat limit, so nobody is switched off and nobody's link is burned.
+    expect(await status(freedOp)).toBe("ACTIVE");
+    expect(await status(freedDriver)).toBe("ACTIVE");
     expect(await status(retained)).toBe("ACTIVE");
     expect(await status(admin)).toBe("ACTIVE");
 
-    expect(await liveLinks(freedOp)).toBe(0);
-    expect(await liveLinks(freedDriver)).toBe(0);
+    expect(await liveLinks(freedOp)).toBe(1);
+    expect(await liveLinks(freedDriver)).toBe(1);
     expect(await liveLinks(retained)).toBe(1);
     expect(await liveLinks(admin)).toBe(1);
     expect(await liveLinks(bystander)).toBe(1);

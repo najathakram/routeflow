@@ -1075,7 +1075,7 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
     kind: "limit",
     area: "platform",
     label: "Seat limit",
-    description: "How many user seats the plan includes before an extra pack is needed.",
+    description: "Not limited: every plan includes unlimited users.",
     gate: {
       via: "none",
       state: "none",

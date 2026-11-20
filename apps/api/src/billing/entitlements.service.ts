@@ -4,6 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { resolvePlanVersionId } from "./plan-version-pin";
 import { FeatureOverrideService } from "./feature-override.service";
+import { meterCapacity } from "./addon-capacity";
 import {
   addonSkuCode,
   effectivePlanFlags,
@@ -232,14 +233,6 @@ export class EntitlementsService {
         : null;
     const activeCodes: string[] = [];
     const flags = new Set<string>(effectivePlanFlags(def, version.id, published));
-    const capacity: Record<string, number> = {
-      SEATS: 0,
-      ROUTES: 0,
-      SCANS: 0,
-      MSGS: 0,
-      CUSTOMERS: 0,
-    };
-
     // An addon SKU introduced in a LATER catalog version than the tenant's
     // pinned one (e.g. MSRP, first published in v9) has no row in the pinned
     // catalog — without a fallback, enabling that addon would grant nothing
@@ -264,10 +257,12 @@ export class EntitlementsService {
         continue;
       }
       for (const flag of meta.grantsFlags) flags.add(flag);
-      if (meta.meteredKey && meta.capacityPerUnit) {
-        capacity[meta.meteredKey] += addon.quantity * meta.capacityPerUnit;
-      }
     }
+    // B1371: one capacity sum, shared with the downgrade preview's customer line (addon-capacity.ts).
+    const capacity = meterCapacity(
+      tenant.addons,
+      (code) => skuByCode.get(code) ?? publishedSkuByCode.get(code),
+    );
 
     const cap = (included: number | null, meter: string): number | null =>
       included == null ? null : included + capacity[meter];
@@ -281,7 +276,7 @@ export class EntitlementsService {
       flags: [...flags],
       addons: [...new Set(activeCodes)],
       caps: {
-        seats: cap(def.seatsIncluded ?? null, "SEATS"),
+        seats: null, // B1371: no seat limit on any plan
         routes: cap(def.routesConcurrent ?? null, "ROUTES"),
         scans: cap(def.scansIncluded ?? null, "SCANS"),
         msgs: cap(def.msgsIncluded ?? null, "MSGS"),

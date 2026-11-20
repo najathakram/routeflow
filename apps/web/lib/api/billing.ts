@@ -28,6 +28,8 @@ export interface PlanDef {
   routesConcurrent: number | null;
   scansIncluded: number | null;
   msgsIncluded: number;
+  /** Customers the plan includes; null = unlimited (Enterprise). */
+  customersIncluded?: number | null;
   featureFlags: string[];
   sortOrder: number;
 }
