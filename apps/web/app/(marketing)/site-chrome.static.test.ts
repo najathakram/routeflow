@@ -2,16 +2,24 @@
  * @jest-environment node
  */
 // SA-1196 K1/A1: the page chrome (analytics hook, header shadow, phone menu, phones header pill, sticky
-// mobile CTA) lives in one file, js/chrome.js, loaded once by every ready-made page. No other script
+// mobile CTA) lives in one file, js/chrome.js, loaded once by the nine chrome pages (landing takes none). No other script
 // keeps a copy. The tokens are read from chrome.js itself. Every scan asserts it found its targets (L-202).
 import * as fs from "fs";
 import * as path from "path";
+import { SCRIPT_GZIP_KB } from "../../e2e/helpers/site-speed-budget";
 
 const WEB = path.resolve(__dirname, "../..");
 const SITE = path.join(WEB, "public/site");
 const JS = path.join(SITE, "js");
 
 const pages = fs.readdirSync(SITE).filter((f) => f.endsWith(".html"));
+const html = (page: string) => fs.readFileSync(path.join(SITE, page), "utf8");
+// A page whose script budget is 0 (SA-1187 K1: landing links no script of its own) takes no chrome.js (SA-1196 A2).
+// The exemption is read from that budget row, never typed as a second list.
+const noScriptPages = pages.filter(
+  (f) => SCRIPT_GZIP_KB[f.replace(/\.html$/, "") as keyof typeof SCRIPT_GZIP_KB] === 0,
+);
+const chromePages = pages.filter((f) => !noScriptPages.includes(f));
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
 const chrome = () => fs.readFileSync(path.join(JS, "chrome.js"), "utf8");
 
@@ -32,22 +40,25 @@ describe("chrome.js is the one home of the page chrome", () => {
     expect(pages.length).toBe(10);
   });
 
-  it("every page loads /site/js/chrome.js exactly once", () => {
-    expect(pages.length).toBeGreaterThan(0);
-    for (const page of pages) {
-      const html = fs.readFileSync(path.join(SITE, page), "utf8");
-      const tags = html.match(/<script\b[^>]*\bsrc="\/site\/js\/chrome\.js"[^>]*>/g) ?? [];
+  it("every chrome page loads /site/js/chrome.js exactly once, and a no-script page loads no script", () => {
+    expect(chromePages.length).toBe(9);
+    expect(noScriptPages).toEqual(["landing.html"]);
+    for (const page of chromePages) {
+      const tags = html(page).match(/<script\b[^>]*\bsrc="\/site\/js\/chrome\.js"[^>]*>/g) ?? [];
       expect({ page, tags: tags.length }).toEqual({ page, tags: 1 });
+    }
+    for (const page of noScriptPages) {
+      const tags = html(page).match(/<script\b[^>]*\bsrc=/g) ?? [];
+      expect({ page, tags: tags.length }).toEqual({ page, tags: 0 });
     }
   });
 
   it("chrome.js runs before site.js and home-up.js where a page has them", () => {
     let ordered = 0;
-    for (const page of pages) {
-      const html = fs.readFileSync(path.join(SITE, page), "utf8");
-      const at = html.indexOf("/site/js/chrome.js");
+    for (const page of chromePages) {
+      const at = html(page).indexOf("/site/js/chrome.js");
       for (const later of ["/site/js/site.js", "/site/js/home-up.js"]) {
-        const i = html.indexOf(later);
+        const i = html(page).indexOf(later);
         if (i < 0) continue;
         expect({ page, found: at >= 0 }).toEqual({ page, found: true });
         ordered++;
