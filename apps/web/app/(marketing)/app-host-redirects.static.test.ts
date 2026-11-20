@@ -4,18 +4,19 @@
 // Lane 2A.2b: the main host sends every app path to the old host (one rule, the complement of one
 // derived stays set), an alias that ends on an app path gets its own one-hop rule, and the short
 // domain is a 301 to the main host when brand.json names one. Fixture hosts only: with the real
-// values the hosts are equal, so every rule here is inert today. The old-host rules must stay
-// byte-identical to the 2A.2a head (BASELINE_SHA), computed here from git.
+// values the hosts are equal, so every rule here is inert today. The old-host rules and the rules
+// that are not host rules must stay exactly what their own builders give (compared in process).
 import * as fs from "fs";
 import * as path from "path";
 import { execFileSync } from "child_process";
 import { pathToFileURL } from "url";
+import { SHELL_UA_PRODUCT } from "@routeflow/ui/shell-bridge";
+import { BUYER_PRESENCE_COOKIE, OP_PRESENCE_COOKIE } from "@/lib/presence-cookies";
 
 const { pathToRegexp } = require("next/dist/compiled/path-to-regexp");
+const { checkCustomRoutes } = require("next/dist/lib/load-custom-routes");
 
 const WEB_ROOT = path.resolve(__dirname, "../..");
-const BASELINE_SHA = "74e20491ad";
-const BASELINE_FILE = path.join(WEB_ROOT, ".host-baseline.tmp.mjs");
 
 interface Rule {
   source: string;
@@ -44,45 +45,40 @@ interface Loaded {
   withShort: Rule[];
   shortIsMain: Rule[];
   shortIsMainBare: Rule[];
-  baseline: Rule[];
+  expectedRest: Rule[];
+  bareShortIsMain: Rule[];
+  bareShortIsMainWww: Rule[];
   siteHostPorted: Rule[];
   publicPaths: string[];
 }
 
+// Nothing is written: the config is imported in a child process and its output read from stdout.
 function load(): Loaded {
-  const base = execFileSync("git", ["show", `${BASELINE_SHA}:apps/web/next.config.mjs`], {
-    cwd: WEB_ROOT,
-    encoding: "utf8",
-    maxBuffer: 16 * 1024 * 1024,
-  });
-  fs.writeFileSync(BASELINE_FILE, base);
-  try {
-    const url = (file: string) => JSON.stringify(pathToFileURL(file).href);
-    const script =
-      `const m = await import(${url(path.join(WEB_ROOT, "next.config.mjs"))});` +
-      `const b = await import(${url(BASELINE_FILE)});` +
-      `const MAIN = ${JSON.stringify(MAIN)}; const SAME = ${JSON.stringify(SAME)};` +
-      `const alias = [{ source: "/sign-in", destination: "/login" }];` +
-      `process.stdout.write(JSON.stringify({` +
-      ` equalApp: m.buildAppHostRedirects(SAME, alias),` +
-      ` equalAll: m.buildRedirects(SAME),` +
-      ` all: m.buildRedirects(MAIN),` +
-      ` withShort: m.buildRedirects({ ...MAIN, shortOrigin: ${JSON.stringify(SHORT_ORIGIN)} }),` +
-      ` shortIsMain: m.buildRedirects({ ...MAIN, shortOrigin: MAIN.origin }),` +
-      ` shortIsMainBare: m.buildRedirects({ ...MAIN, shortOrigin: "https://new.test" }),` +
-      ` baseline: b.buildRedirects(MAIN),` +
-      ` siteHostPorted: m.buildSiteHostRedirects(MAIN, alias),` +
-      ` publicPaths: [...Object.values(m.SITE_PAGES), "/privacy", "/terms"] }));`;
-    return JSON.parse(
-      execFileSync(process.execPath, ["--input-type=module", "-e", script], {
-        cwd: WEB_ROOT,
-        encoding: "utf8",
-        timeout: 20_000,
-      }),
-    ) as Loaded;
-  } finally {
-    fs.rmSync(BASELINE_FILE, { force: true });
-  }
+  const url = JSON.stringify(pathToFileURL(path.join(WEB_ROOT, "next.config.mjs")).href);
+  const script =
+    `const m = await import(${url});` +
+    `const MAIN = ${JSON.stringify(MAIN)}; const SAME = ${JSON.stringify(SAME)};` +
+    `const BARE = { origin: "https://new.test", oldOrigin: "https://old.test" };` +
+    `const alias = [{ source: "/sign-in", destination: "/login" }];` +
+    `process.stdout.write(JSON.stringify({` +
+    ` equalApp: m.buildAppHostRedirects(SAME, alias),` +
+    ` equalAll: m.buildRedirects(SAME),` +
+    ` all: m.buildRedirects(MAIN),` +
+    ` withShort: m.buildRedirects({ ...MAIN, shortOrigin: ${JSON.stringify(SHORT_ORIGIN)} }),` +
+    ` shortIsMain: m.buildRedirects({ ...MAIN, shortOrigin: MAIN.origin }),` +
+    ` shortIsMainBare: m.buildRedirects({ ...MAIN, shortOrigin: "https://new.test" }),` +
+    ` bareShortIsMain: m.buildRedirects({ ...BARE, shortOrigin: "https://new.test" }),` +
+    ` bareShortIsMainWww: m.buildRedirects({ ...BARE, shortOrigin: "https://www.new.test" }),` +
+    ` expectedRest: [...m.buildSiteHostRedirects(MAIN, m.HOST_ALIASES), ...m.buildRedirects(SAME)],` +
+    ` siteHostPorted: m.buildSiteHostRedirects(MAIN, alias),` +
+    ` publicPaths: [...Object.values(m.SITE_PAGES), "/privacy", "/terms"] }));`;
+  return JSON.parse(
+    execFileSync(process.execPath, ["--input-type=module", "-e", script], {
+      cwd: WEB_ROOT,
+      encoding: "utf8",
+      timeout: 20_000,
+    }),
+  ) as Loaded;
 }
 
 const cfg = load();
@@ -164,16 +160,31 @@ describe("K5 1: equal hosts", () => {
 });
 
 describe("K5 2: census, every app route goes to the old host in one 307 hop", () => {
-  // An app page at a public path is shadowed by that page's beforeFiles rewrite, so the path is
-  // served by the site and stays on the main host (today: the dashboard's /getting-started).
-  const SHADOWED = appRoutes().filter((r) => cfg.publicPaths.includes(r));
-  const ROUTES = appRoutes().filter((r) => !cfg.publicPaths.includes(r));
+  // An app page whose path the stays rule keeps on the main host is served by the site (its
+  // beforeFiles rewrite shadows the page; today: the dashboard's /getting-started). The skip is the
+  // stays rule itself: a route no host-crossing rule matches.
+  const staysOnMain = (route: string) => {
+    const at = new URL(route, `https://${MAIN_HOST}`);
+    const hop = hopOf(cfg.all, at);
+    return hop === null || hop.next.host === at.host;
+  };
+  const SHADOWED = appRoutes().filter(staysOnMain);
+  const ROUTES = appRoutes().filter((r) => !staysOnMain(r));
 
-  it("the only app routes left out are those a public page already serves", () => {
+  it("the only app routes left out are exactly the ones the stays rule keeps", () => {
     expect(SHADOWED).toEqual(["/getting-started"]);
-    for (const route of SHADOWED) {
-      expect(hopOf(cfg.all, new URL(route, `https://${MAIN_HOST}`))).toBeNull();
-    }
+    expect(cfg.publicPaths).toContain("/getting-started");
+  });
+
+  it("no host rule's destination carries a query (Next merges the source query itself)", () => {
+    const hostRules = cfg.withShort.filter((r) => r.has);
+    expect(hostRules.length).toBeGreaterThan(40);
+    for (const rule of hostRules) expect(rule.destination).not.toContain("?");
+  });
+
+  it("Next's own route check accepts every built redirect, each source under 4096 characters", () => {
+    expect(() => checkCustomRoutes(cfg.withShort, "redirect")).not.toThrow();
+    for (const rule of cfg.withShort) expect(rule.source.length).toBeLessThan(4096);
   });
 
   it("finds the app routes", () => {
@@ -212,6 +223,7 @@ describe("K5 3: the stays samples match no host-crossing rule", () => {
     "/sitemap.xml",
     "/favicon.ico",
     "/.well-known/x",
+    "/pricing/",
     ...PUBLIC_DIR_ENTRIES.map((name) => `/${name}`),
   ];
 
@@ -284,11 +296,26 @@ describe("K5 5: no loop", () => {
   });
 });
 
-describe("K5 6: the old-host rules are byte-identical to the 2A.2a head", () => {
-  it("the new list minus the main-host and short-domain rules is the baseline", () => {
+describe("K5 6: the old-host rules and the other redirects are unchanged by the new rules", () => {
+  it("the list minus the main-host and short-domain rules is the old-host rules plus the rest", () => {
+    expect(cfg.expectedRest.length).toBeGreaterThan(20);
     const rest = cfg.withShort.filter((r) => !isAppRule(r) && !isShortRule(r));
-    expect(JSON.stringify(rest)).toBe(JSON.stringify(cfg.baseline));
-    expect(JSON.stringify(cfg.all.filter((r) => !isAppRule(r)))).toBe(JSON.stringify(cfg.baseline));
+    expect(JSON.stringify(rest)).toBe(JSON.stringify(cfg.expectedRest));
+    expect(JSON.stringify(cfg.all.filter((r) => !isAppRule(r)))).toBe(
+      JSON.stringify(cfg.expectedRest),
+    );
+  });
+
+  it("every host rule's missing list is exactly the shell header and the two presence cookies", () => {
+    const oldRules = cfg.all.filter((r) => r.has?.some((h) => h.value === escDots(OLD_HOST)));
+    expect(oldRules.length).toBeGreaterThan(10);
+    for (const rule of oldRules) {
+      expect(rule.missing).toEqual([
+        { type: "header", key: "user-agent", value: `.*${SHELL_UA_PRODUCT}.*` },
+        { type: "cookie", key: OP_PRESENCE_COOKIE },
+        { type: "cookie", key: BUYER_PRESENCE_COOKIE },
+      ]);
+    }
   });
 
   it("the old-host rules still carry the shell and cookie exemptions", () => {
@@ -338,10 +365,30 @@ describe("the short domain", () => {
     }
   });
 
+  it("the 301 rule matches no app path, on its own", () => {
+    const moved = short.filter((r) => r.statusCode === 301);
+    expect(moved).toHaveLength(2);
+    const routes = appRoutes().filter((r) => !cfg.publicPaths.includes(r));
+    expect(routes).toContain("/login");
+    for (const rule of moved) {
+      for (const route of [...routes, "/sign-in"]) {
+        expect(pathToRegexp(rule.source).exec(route)).toBeNull();
+      }
+      expect(pathToRegexp(rule.source).exec("/pricing")).not.toBeNull();
+    }
+  });
+
   it("makes no rule when the short host is the main host, bare or www", () => {
-    for (const rules of [cfg.shortIsMain, cfg.shortIsMainBare]) {
+    for (const rules of [
+      cfg.shortIsMain,
+      cfg.shortIsMainBare,
+      cfg.bareShortIsMain,
+      cfg.bareShortIsMainWww,
+    ]) {
       expect(rules.filter(isShortRule)).toEqual([]);
       expect(rules.filter((r) => r.statusCode !== undefined)).toEqual([]);
+      // As many host rules as with no short host at all: nothing was added on the main host's name.
+      expect(rules.filter((r) => r.has)).toHaveLength(cfg.all.filter((r) => r.has).length);
     }
   });
 

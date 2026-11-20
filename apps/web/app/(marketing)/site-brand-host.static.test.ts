@@ -170,17 +170,6 @@ describe("T30: the values differ (switch day)", () => {
     expect(rules[0].destination).toBe(`https://${NEW_HOST}${source === "/" ? "" : source}`);
   });
 
-  it("every host rule's missing list is exactly the shell header and the two presence cookies", () => {
-    expect(hostRules.length).toBeGreaterThan(0);
-    for (const rule of hostRules) {
-      expect(rule.missing).toEqual([
-        { type: "header", key: "user-agent", value: `.*${SHELL_UA_PRODUCT}.*` },
-        { type: "cookie", key: OP_PRESENCE_COOKIE },
-        { type: "cookie", key: BUYER_PRESENCE_COOKIE },
-      ]);
-    }
-  });
-
   it("the installed phone app is never redirected", () => {
     expect(hostRules.length).toBeGreaterThan(0);
     for (const rule of hostRules) {

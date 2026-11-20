@@ -221,13 +221,15 @@ const RAW_PAGE_ALIASES = Object.entries(SITE_PAGES).map(([page, destination]) =>
   destination,
 }));
 
+/** The aliases every host rule is built from (the legacy addresses and the raw page files). */
+export const HOST_ALIASES = [...LEGACY_ALIASES, ...RAW_PAGE_ALIASES];
+
 /** The whole redirect list for a pair of hosts (redirects() reads them from the brand seam). */
 export function buildRedirects(hosts) {
-  const hostAliases = [...LEGACY_ALIASES, ...RAW_PAGE_ALIASES];
   return [
-    ...buildSiteHostRedirects(hosts, hostAliases),
-    ...buildAppHostRedirects(hosts, hostAliases),
-    ...buildShortHostRedirects(hosts, hostAliases),
+    ...buildSiteHostRedirects(hosts, HOST_ALIASES),
+    ...buildAppHostRedirects(hosts, HOST_ALIASES),
+    ...buildShortHostRedirects(hosts, HOST_ALIASES),
     {
       source: "/route-runs/:id",
       destination: "/routes/:id",
