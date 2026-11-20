@@ -223,7 +223,7 @@ h2+.lede,.section-head h2+.lede{margin-top:18px}
 @media (max-width:359.98px){.site-header .brand span{display:none}}
 
 /* ---------- phone header: one trial button on screen ----------
-   js/site.js puts hero-btn-in on the header while any other trial button is on screen; the header then offers Pricing in place of a
+   js/chrome.js puts hero-btn-in on the header while any other trial button is on screen; the header then offers Pricing in place of a
    second one. The wheel's own button keeps its own signal (rfw-go-in). An open menu has its own trial button, so the pill steps aside. */
 @media (max-width:899.98px){
   .js .site-header.hero-btn-in .nav-price{display:inline-flex}

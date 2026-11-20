@@ -1,5 +1,5 @@
-/* The page chrome, one file for every page: the analytics hook, the header shadow, the phone menu, the phones header pill,
-   and the sticky mobile CTA. Page motion lives in js/site.js and js/home-up.js, never here.
+/* The page chrome, one file for every page: the analytics hook, the header shadow, the phone menu, and the phones header pill.
+   Page motion lives in js/site.js and js/home-up.js, never here.
    Each block runs only when its element is on the page, so a page without a header or a menu gets only the hook. */
 (function () {
   "use strict";
@@ -63,7 +63,12 @@
     var btns = $$('a.btn[href^="/signup"]').filter(function (b) {
       return !b.closest(".site-header, #mobile-menu, .rfw");
     });
-    if (!head || !btns.length || !("IntersectionObserver" in window)) return;
+    if (!head) return;
+    if (!btns.length || !("IntersectionObserver" in window)) {
+      /* Nothing to watch: the header may start with the class in its markup, and it must not stay hidden. */
+      head.classList.remove("hero-btn-in");
+      return;
+    }
     var seen = new Set();
     var io = new IntersectionObserver(
       function (en) {
@@ -79,12 +84,4 @@
       io.observe(b);
     });
   })();
-
-  /* Sticky mobile CTA */
-  var sticky = $(".sticky-cta"),
-    heroEl = $(".hero");
-  if (sticky && heroEl && "IntersectionObserver" in window)
-    new IntersectionObserver(function (en) {
-      sticky.classList.toggle("show", !en[0].isIntersecting);
-    }).observe(heroEl);
 })();

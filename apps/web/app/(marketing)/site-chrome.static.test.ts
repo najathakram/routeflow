@@ -1,11 +1,11 @@
 /**
  * @jest-environment node
  */
-// SA-1196 K1/A1: the page chrome (analytics hook, header shadow, phone menu, phones header pill, sticky
-// mobile CTA) lives in one file, js/chrome.js, loaded once by the nine chrome pages (landing takes none). No other script
+// SA-1196 K1/A1/A3: the page chrome (analytics hook, header shadow, phone menu, phones header pill) lives in one file, js/chrome.js, loaded once by the nine chrome pages (landing takes none). No other script
 // keeps a copy. The tokens are read from chrome.js itself. Every scan asserts it found its targets (L-202).
 import * as fs from "fs";
 import * as path from "path";
+import { JSDOM } from "jsdom";
 import { SCRIPT_GZIP_KB } from "../../e2e/helpers/site-speed-budget";
 
 const WEB = path.resolve(__dirname, "../..");
@@ -33,7 +33,7 @@ function chromeTokens(): string[] {
   return [...found];
 }
 
-const GENERIC = new Set(["open", "show"]);
+const GENERIC = new Set(["open"]);
 
 describe("chrome.js is the one home of the page chrome", () => {
   it("finds the ten ready-made pages", () => {
@@ -70,16 +70,15 @@ describe("chrome.js is the one home of the page chrome", () => {
 
   it("the tokens are found in chrome.js, and no other script keeps them", () => {
     const tokens = chromeTokens();
-    // the pill, the header shadow, the menu and the sticky CTA toggles
-    for (const t of ["hero-btn-in", "scrolled", "open", "menu-open", "show"])
-      expect(tokens).toContain(t);
+    // the pill, the header shadow and the menu toggles
+    for (const t of ["hero-btn-in", "scrolled", "open", "menu-open"]) expect(tokens).toContain(t);
     const others = fs.readdirSync(JS).filter((f) => f.endsWith(".js") && f !== "chrome.js");
     expect(others.length).toBeGreaterThan(0);
     for (const file of others) {
       const src = strip(fs.readFileSync(path.join(JS, file), "utf8"));
       for (const t of tokens) {
-        // Named exemption: "open" and "show" are plain words other motion blocks toggle on their own elements
-        // (use-case and founder cards). The menu and sticky CTA they serve are keyed by selector below.
+        // Named exemption: "open" is a plain word other motion blocks toggle on their own elements
+        // (use-case and founder cards). The menu it serves is keyed by selector below.
         if (GENERIC.has(t)) continue;
         const re = new RegExp(String.raw`classList\.(?:toggle|add|remove)\(\s*["']${t}["']`);
         expect({ file, token: t, has: re.test(src) }).toEqual({ file, token: t, has: false });
@@ -87,7 +86,7 @@ describe("chrome.js is the one home of the page chrome", () => {
       // the analytics hook and the menu/CTA hooks are chrome too
       expect({ file, hook: /\[data-track\]/.test(src) }).toEqual({ file, hook: false });
       expect({ file, menu: /["']#mobile-menu["']/.test(src) }).toEqual({ file, menu: false });
-      expect({ file, cta: /["']\.sticky-cta["']/.test(src) }).toEqual({ file, cta: false });
+      expect({ file, menuBtn: /["'].menu-btn["']/.test(src) }).toEqual({ file, menuBtn: false });
     }
   });
 
@@ -114,10 +113,27 @@ describe("chrome.js is the one home of the page chrome", () => {
 
   it("every chrome block is guarded on its element being present", () => {
     const src = strip(chrome());
-    for (const sel of ['".site-header"', '".menu-btn"', '"#mobile-menu"', '".sticky-cta"']) {
-      expect(src).toContain(sel);
-    }
+    // each block reads its element, then runs only when it is there
+    expect(src).toMatch(/var header = \$\("\.site-header"\);\s*if \(header\)/);
+    expect(src).toMatch(
+      /btn = \$\("\.menu-btn"\),\s*menu = \$\("#mobile-menu"\);\s*if \(btn && menu\)/,
+    );
+    expect(src).toMatch(/if \(!head\) return;/);
     expect(src).toContain("IntersectionObserver");
+    // the root selectors are read from chrome.js (every unscoped $("...") or $$("...") lookup), never typed here.
+    // One with no element on any chrome page is dead code.
+    const roots = [
+      ...new Set(
+        [...src.matchAll(/\$\$?\(\s*(["'])((?:(?!\1).)+)\1\s*\)/g)].map((m) => m[2] as string),
+      ),
+    ];
+    expect(roots).toEqual(expect.arrayContaining([".site-header", ".menu-btn", "#mobile-menu"]));
+    const docs = chromePages.map((page) => new JSDOM(html(page)).window.document);
+    expect(docs.length).toBe(9);
+    for (const root of roots) {
+      const hits = docs.filter((d) => d.querySelector(root)).length;
+      expect({ root, hits: hits > 0 }).toEqual({ root, hits: true });
+    }
   });
 });
 
@@ -138,7 +154,16 @@ describe("the sync script copies every script and stylesheet under public/site",
   it("js/ and css/ files are in the copy list", () => {
     const files = [...walk(JS, "js/"), ...walk(path.join(SITE, "css"), "css/")];
     expect(files.length).toBeGreaterThan(10);
-    const missing = files.filter((f) => !EXEMPT.has(f) && !script.includes(`"${f}"`));
+    // the string entries of the copy-list array only: a name in a comment or elsewhere does not count
+    const list = /for \(const rel of \[([^\]]*)\]/.exec(script)?.[1] ?? "";
+    const listed = new Set(
+      list
+        .split("\n")
+        .map((l) => /^\s*"([^"]+)",?\s*(?:\/\/.*)?$/.exec(l)?.[1])
+        .filter((x): x is string => !!x),
+    );
+    expect(listed.size).toBeGreaterThan(10);
+    const missing = files.filter((f) => !EXEMPT.has(f) && !listed.has(f));
     expect(missing).toEqual([]);
   });
 });

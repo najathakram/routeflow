@@ -4,7 +4,11 @@
  * with a self-check), P01 (plan cards of a row end together) and the top band's line. Signed out, desktop Chrome,
  * against a running stack. Each test gathers every problem and asserts once; a sweep that finds nothing throws (L-202).
  */
+import * as fs from "fs";
+import * as path from "path";
 import { test, expect, type Page } from "@playwright/test";
+import { SCRIPT_GZIP_KB } from "./helpers/site-speed-budget";
+import { emptyBands } from "./helpers/empty-bands";
 import { blockAnalytics, nonEmpty } from "./helpers/site-proof";
 
 test.beforeEach(async ({ context }) => {
@@ -74,6 +78,77 @@ test("T48a at 390x844, while another trial button is on screen, the header pill 
   expect(withoutOthers, "some sample had none (the positive control ran)").toBeGreaterThan(0);
   expect(bad).toEqual([]);
 });
+
+// SA-1196 A3-1: on every chrome page the header pill shows exactly when no watched trial button is in view (a page with
+// no watched button keeps it for good: chrome.js fails open). The pages are read from disk the way
+// app/(marketing)/site-chrome.static.test.ts reads them: every public/site page whose script budget is not 0 (landing).
+const SITE_DIR = path.resolve(__dirname, "../public/site");
+const CHROME_ROUTES = fs
+  .readdirSync(SITE_DIR)
+  .filter((f) => f.endsWith(".html"))
+  .map((f) => f.replace(/\.html$/, ""))
+  .filter((name) => SCRIPT_GZIP_KB[name as keyof typeof SCRIPT_GZIP_KB] !== 0)
+  .map((name) => (name === "home" ? "/" : "/" + name));
+
+test("the chrome pages are found", () => {
+  expect(CHROME_ROUTES.length).toBe(9);
+});
+
+for (const route of CHROME_ROUTES) {
+  test(
+    "T48e at 393x844 the header pill shows exactly when no watched trial button is in view: " +
+      route,
+    async ({ page }) => {
+      await open(page, route, 393, 844);
+      const bad: string[] = [];
+      for (const at of ["load", "end"] as const) {
+        await page.evaluate((where) => {
+          window.scrollTo({
+            top: where === "end" ? document.documentElement.scrollHeight : 0,
+            behavior: "instant",
+          });
+        }, at);
+        await page.evaluate(
+          () =>
+            new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))),
+        );
+        const state = await page.evaluate((pill) => {
+          const inView = (el: Element) => {
+            const s = getComputedStyle(el);
+            const r = el.getBoundingClientRect();
+            return (
+              s.display !== "none" &&
+              s.visibility !== "hidden" &&
+              r.width > 0 &&
+              r.height > 0 &&
+              r.bottom > 68 &&
+              r.top < innerHeight
+            );
+          };
+          const wheelLive = !!document.querySelector(".rfw.rfw-go-on.rfw-go-in");
+          const others = Array.from(document.querySelectorAll('a.btn[href^="/signup"]')).filter(
+            (b) =>
+              !b.closest(".site-header, #mobile-menu") &&
+              (wheelLive || !b.closest(".rfw")) &&
+              inView(b),
+          );
+          const head = document.querySelector(pill);
+          return { others: others.length, pill: !!head && inView(head) };
+        }, HEADER_PILL);
+        if (state.pill !== (state.others === 0)) {
+          bad.push(
+            at +
+              ": " +
+              state.others +
+              " watched button(s) in view, pill " +
+              (state.pill ? "shown" : "hidden"),
+          );
+        }
+      }
+      expect(bad).toEqual([]);
+    },
+  );
+}
 
 // ─── T48b ───────────────────────────────────────────────────────────────────
 
@@ -210,48 +285,27 @@ for (const { route, scope } of [
     { w: 1440, h: 900 },
     { w: 393, h: 844 },
   ] as const) {
-    test(`K3 no gap over 32px between blocks inside a plan card: ${route} ${scope} @${w}x${h}`, async ({
+    test(`K3 no empty band over 32px inside a plan: ${route} ${scope} @${w}x${h}`, async ({
       page,
     }) => {
       await open(page, route, w, h);
-      const gaps = await page.evaluate(
-        ({ root, phone }) => {
-          const base = document.querySelector(root);
-          if (!base) throw new Error(`no ${root}`);
-          const shown = (el: Element) => {
-            const s = getComputedStyle(el);
-            const r = el.getBoundingClientRect();
-            return s.display !== "none" && s.visibility !== "hidden" && r.width > 0 && r.height > 0;
-          };
-          const out: { where: string; gap: number }[] = [];
-          // Under 900px the four-card grid is hidden (css/site.css .pgrid--4); phones show the .pl list. There the
-          // plan list is the card and its rows (one per plan, .plp is the price cell) are the blocks between gaps.
-          const cards = Array.from(base.querySelectorAll(phone ? ".pl" : ".pcard")).filter(shown);
-          for (const card of cards) {
-            const name = (
-              card.querySelector("h2,h3")?.textContent ??
-              card.getAttribute("aria-label") ??
-              "plan"
-            ).trim();
-            const kids = (
-              phone ? Array.from(card.querySelectorAll("tr")) : Array.from(card.children)
-            ).filter(shown);
-            for (let i = 1; i < kids.length; i++) {
-              const prev = kids[i - 1] as Element;
-              const next = kids[i] as Element;
-              out.push({
-                where: `${name}: ${prev.className || prev.tagName} to ${next.className || next.tagName}`,
-                gap: next.getBoundingClientRect().top - prev.getBoundingClientRect().bottom,
-              });
+      // One row definition, scoped by breakpoint (SA-1196 A3-2): each plan card at 900 and up; under 900 the grid is hidden
+      // (css/site.css .pgrid--4) and the phone plan block, .pl-wrap through .pl-more (the notes and the trial button
+      // where a page has them), is one scope. Both go through the same empty-band helper.
+      const bands = await emptyBands(
+        page,
+        w < 900
+          ? {
+              name: "phone plan block",
+              union: [".pl-wrap", ".pg-notes", ".pl-why", ".pl-more", ".pl-go"]
+                .map((s) => scope + " " + s)
+                .join(", "),
             }
-          }
-          return out;
-        },
-        { root: scope, phone: w < 900 },
+          : { each: scope + " .pcard" },
       );
-      nonEmpty(gaps, `blocks inside plan cards on ${route}`);
-      const bad = gaps.filter((g) => g.gap > 32);
-      expect(bad, bad.map((g) => `${g.where} ${g.gap.toFixed(0)}px`).join("; ")).toEqual([]);
+      nonEmpty(bands, "plan blocks on " + route);
+      const bad = bands.filter((g) => g.gap > 32);
+      expect(bad, bad.map((g) => g.where + " " + g.gap.toFixed(0) + "px").join("; ")).toEqual([]);
     });
   }
 }
