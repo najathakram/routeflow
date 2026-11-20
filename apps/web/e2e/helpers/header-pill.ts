@@ -19,6 +19,13 @@ export const HEADER_PILL = '.site-header .nav a[href^="/signup"].btn';
 const WATCHED = 'a.btn[href^="/signup"]';
 /** Hard cap on the settle wait; on timeout it throws, never passes silently. */
 export const SETTLE_CAP_MS = 5000;
+/**
+ * Floor before the first look at the page, above the home hero's gsap.delayedCall(0.06) plus a frame: a tween that has
+ * not been created yet is invisible to the busy test (SA-1200 A1 M2).
+ */
+export const SETTLE_FLOOR_MS = 150;
+/** Consecutive animation frames with nothing animating before the page counts as settled (SA-1200 A1 M2). */
+export const SETTLE_QUIET_FRAMES = 10;
 /** How long the pill state may take to agree with the in-view count after settle. */
 export const AGREE_POLL_MS = 2000;
 
@@ -83,12 +90,17 @@ export async function readPill(page: Page): Promise<PillReading> {
 /**
  * SA-1199 P3: wait until the watched buttons and the pill (and their ancestors up to body) run no animation: every
  * `getAnimations()` is empty or finished, and gsap has no active tween on them (the hero tween targets the `.hx-cta`
- * wrapper, so ancestors count). Then two animation frames. Hard cap SETTLE_CAP_MS: on timeout it throws and names the
- * element still animating.
+ * wrapper, so ancestors count). First a floor of SETTLE_FLOOR_MS (a tween created by a delayed call is not there yet),
+ * then SETTLE_QUIET_FRAMES consecutive animation frames with nothing animating; any animation seen resets the count.
+ * Hard cap SETTLE_CAP_MS, counted from the start: on timeout it throws and names the element still animating.
+ * The two selectors default to the pill and the watched buttons; a fixture page may pass its own.
  */
-export async function settleMotion(page: Page): Promise<void> {
+export async function settleMotion(
+  page: Page,
+  selectors: { pill?: string; watched?: string } = {},
+): Promise<void> {
   const stuck = await page.evaluate(
-    ([pillSelector, watchedSelector, cap]) => {
+    ([pillSelector, watchedSelector, cap, floor, quiet]) => {
       const describe = (el: Element) =>
         el.tagName.toLowerCase() +
         (el.id ? "#" + el.id : "") +
@@ -126,18 +138,29 @@ export async function settleMotion(page: Page): Promise<void> {
       const frame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
       return (async () => {
         const t0 = performance.now();
-        let b = busy();
-        while (b && performance.now() - t0 < (cap as number)) {
-          await frame();
+        await new Promise<void>((r) => setTimeout(r, floor as number));
+        let calm = 0;
+        let b: { el: Element; why: string } | null = null;
+        while (calm < (quiet as number)) {
           b = busy();
+          if (b) calm = 0;
+          else calm += 1;
+          if (performance.now() - t0 >= (cap as number)) break;
+          await frame();
         }
-        if (b) return describe(b.el) + " (" + b.why + ")";
-        await frame();
-        await frame();
+        if (calm < (quiet as number)) {
+          return b ? describe(b.el) + " (" + b.why + ")" : "no calm run of frames before the cap";
+        }
         return null;
       })();
     },
-    [HEADER_PILL, WATCHED, SETTLE_CAP_MS] as const,
+    [
+      selectors.pill ?? HEADER_PILL,
+      selectors.watched ?? WATCHED,
+      SETTLE_CAP_MS,
+      SETTLE_FLOOR_MS,
+      SETTLE_QUIET_FRAMES,
+    ] as const,
   );
   if (stuck) throw new Error(`motion did not settle within ${SETTLE_CAP_MS}ms: ${stuck}`);
 }

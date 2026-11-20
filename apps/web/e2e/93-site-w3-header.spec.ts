@@ -9,7 +9,7 @@ import * as path from "path";
 import { test, expect, type Page } from "@playwright/test";
 import { SCRIPT_GZIP_KB } from "./helpers/site-speed-budget";
 import { emptyBands } from "./helpers/empty-bands";
-import { readPillSettled } from "./helpers/header-pill";
+import { readPillSettled, settleMotion } from "./helpers/header-pill";
 import { blockAnalytics, nonEmpty } from "./helpers/site-proof";
 
 test.beforeEach(async ({ context }) => {
@@ -277,53 +277,73 @@ for (const { route, scope } of [
   }
 }
 
-// SA-1200 K1: the card rows come from the grid (css/site.css, .pgrid--4 .pcard subgrid), so a row reads across: the price
-// and the button of the four cards sit at one top. Two widths, both four columns (the grid is two columns at 1080 and under):
-// 1440, where every description wraps to 2 lines, and a width where the descriptions wrap unevenly. The uneven width is
-// computed, not measured: text column = (w - 96) / 4 - 48 = 203px at 1100; the longest description (50 characters, 17px,
-// about 8.5px a character) needs about 425px, which is over two lines of 203px, so it takes 3 lines while the others take 2.
-// UNPROVEN until a browser run: change PLAN_ALIGN_WIDTHS here, nowhere else, if the descriptions do not wrap unevenly.
+// SA-1200 K1 / A1 M1: the card rows come from the grid (css/site.css, .pgrid--4 .pcard subgrid), so a row reads across: the
+// lists of the four cards start at one top. Only the list tops are pinned. The prices cannot see a wrapping description
+// (every card's price row is as tall as its tallest card either way), and the buttons sit under a list of a different
+// length, so neither is a row-alignment fact. Two widths, both four columns (the grid is two columns at 1080 and under):
+// 1440, where every description wraps to 2 lines, and 1100, where they wrap unevenly. Measured (A1): the wrap is
+// 3-2-2-2 lines from 1084 to 1108 and 2-2-2-2 from 1120, so 1100 is uneven (Starter's .pfor takes 3 lines, the others 2)
+// and 1440 is even. Without the grid rows (a planted no-subgrid) Starter's list starts lower at 1100 and this goes red.
+// "List top": the first li of ul.checks on /pricing. Home has no li (its cards hold a .pm meter, not a list), so on "/" the
+// .pm block's top is the list top.
 const PLAN_ALIGN_WIDTHS = [1440, 1100] as const;
 for (const route of ["/pricing", "/"] as const) {
   for (const w of PLAN_ALIGN_WIDTHS) {
-    test(`K1 the prices and buttons of a plan row share one top: ${route} @${w}x900`, async ({
-      page,
-    }) => {
+    test(`K1 the lists of a plan row start at one top: ${route} @${w}x900`, async ({ page }) => {
       await open(page, route, w, 900);
-      const read = await page.evaluate(() => {
+      const listSel = route === "/" ? ".pm" : "ul.checks > li:first-child";
+      const read = await page.evaluate((sel) => {
         const cards = Array.from(document.querySelectorAll("#pricing .pgrid--4 .pcard")).filter(
           (c) => c.getBoundingClientRect().height > 0,
         );
-        const top = (c: Element, sel: string) => {
+        return cards.map((c) => {
           const el = c.querySelector(sel);
           if (!el) throw new Error(`no ${sel} in a plan card`);
-          return el.getBoundingClientRect().top + scrollY;
-        };
-        return cards.map((c) => ({
-          name: (c.querySelector("h2,h3")?.textContent ?? "plan").trim(),
-          price: top(c, ".pprice"),
-          button: top(c, ".pbtn"),
-          forHeight: c.querySelector(".pfor")?.getBoundingClientRect().height ?? 0,
-        }));
-      });
+          return {
+            name: (c.querySelector("h2,h3")?.textContent ?? "plan").trim(),
+            list: el.getBoundingClientRect().top + scrollY,
+            forHeight: c.querySelector(".pfor")?.getBoundingClientRect().height ?? 0,
+          };
+        });
+      }, listSel);
       nonEmpty(read, `plan cards on ${route}`);
       expect(read.length).toBe(4);
-      const bad: string[] = [];
-      for (const key of ["price", "button"] as const) {
-        const tops = read.map((c) => c[key]);
-        if (Math.max(...tops) - Math.min(...tops) > 1) {
-          bad.push(
-            `${key} tops: ` +
-              read
-                .map((c) => `${c.name} ${c[key].toFixed(1)} (text ${c.forHeight.toFixed(0)}px)`)
-                .join(", "),
-          );
-        }
-      }
-      expect(bad).toEqual([]);
+      const tops = read.map((c) => c.list);
+      const msg =
+        "list tops: " +
+        read
+          .map((c) => `${c.name} ${c.list.toFixed(1)} (text ${c.forHeight.toFixed(0)}px)`)
+          .join(", ");
+      expect(Math.max(...tops) - Math.min(...tops) <= 1, msg).toBe(true);
     });
   }
 }
+
+// SA-1200 A1 M2: settleMotion waits a floor first, so a tween that a delayed call creates later is still seen. The
+// fixture starts a CSS animation at 60ms (like the hero's gsap.delayedCall(0.06)) and makes animation frames fast
+// (about 4ms), so ten quiet frames alone take less than 60ms: only the floor keeps the wait from returning before the
+// animation exists. Without the floor this goes red; with it the animation is running when the wait ends or is over.
+test("settleMotion waits past a tween that starts at 60ms", async ({ page }) => {
+  await page.setContent(`<div id="fx" style="width:20px;height:20px"></div>`);
+  await page.evaluate(() => {
+    window.requestAnimationFrame = (cb) => window.setTimeout(() => cb(performance.now()), 0);
+    const el = document.getElementById("fx") as HTMLElement;
+    (window as unknown as { __started: boolean }).__started = false;
+    window.setTimeout(() => {
+      el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 600 });
+      (window as unknown as { __started: boolean }).__started = true;
+    }, 60);
+  });
+  await settleMotion(page, { watched: "#fx", pill: "#fx-none" });
+  const got = await page.evaluate(() => ({
+    started: (window as unknown as { __started: boolean }).__started,
+    running: (document.getElementById("fx") as HTMLElement)
+      .getAnimations()
+      .filter((a) => a.playState !== "finished").length,
+  }));
+  expect(got.started, "the fixture animation was created before the wait ended").toBe(true);
+  expect(got.running, "nothing is still animating after settleMotion").toBe(0);
+});
 
 for (const { w, h } of [
   { w: 1440, h: 900 },

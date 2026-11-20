@@ -366,8 +366,8 @@
     var setStep = function (i) { steps.forEach(function (li, k) { li.classList.toggle("on", k === i); }); };
     var goTo = function (i) { if (i === cur) return; cur = i; setStep(i); tl.tweenTo(L[i], { duration: 0.8, ease: "power1.inOut", overwrite: true }); };
     var idx = function (p) { return p < 1 / 3 ? 0 : p < 2 / 3 ? 1 : 2; };
-    /* start and end match the CSS sticky range: the section's top at the header, its bottom at the screen's bottom. */
-    ST.create({ trigger: s, start: "top 68px", end: "bottom bottom", onUpdate: function (x) { goTo(idx(x.progress)); }, onRefresh: function (x) { goTo(idx(x.progress)); } });
+    /* start and end match the CSS sticky range: the section's top at the header (its height read live), its bottom at the screen's bottom. */
+    ST.create({ trigger: s, start: function () { var h = $(".site-header"); return "top " + (h ? h.getBoundingClientRect().height : 0) + "px"; }, end: "bottom bottom", onUpdate: function (x) { goTo(idx(x.progress)); }, onRefresh: function (x) { goTo(idx(x.progress)); } });
   }
 
   /* ---------- the real Orders screen: wide screens only, after the pain and the answer ---------- */

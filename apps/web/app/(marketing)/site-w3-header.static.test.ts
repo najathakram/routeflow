@@ -198,9 +198,14 @@ describe("P01 and the band line", () => {
     expect(css).toMatch(
       /@supports \(grid-template-rows:subgrid\)\{\.pgrid--4 \.pcard\{[^}]*grid-template-rows:subgrid/,
     );
+    // SA-1200 A1 L1: under subgrid the base 3.1em reserve on .pfor no longer applies either
+    const supportsBlock = css.match(
+      /@supports \(grid-template-rows:subgrid\)\{(?:[^{}]|\{[^}]*\})*\}/,
+    );
+    expect(supportsBlock?.[0]).toMatch(/\.pgrid--4 \.pfor\{min-height:0\}/);
   });
 
-  it("the card spans as many rows as the card has children, on / and /pricing (SA-1200 K1)", () => {
+  it("the card spans as many rows as the card has children, on / and /pricing; the last child wraps the list and the button (SA-1200 A1 H1)", () => {
     const span = Number(css.match(/\.pgrid--4 \.pcard\{[^}]*grid-row:span (\d+)/)?.[1]);
     expect(span).toBeGreaterThan(0);
     const counts: number[] = [];
@@ -208,7 +213,17 @@ describe("P01 and the band line", () => {
       const doc = new JSDOM(readServedSitePage(page, { websiteId: undefined })).window.document;
       const cards = Array.from(doc.querySelectorAll(".pgrid--4 > .pcard"));
       expect(cards.length).toBe(4);
-      for (const c of cards) counts.push(c.children.length);
+      for (const c of cards) {
+        counts.push(c.children.length);
+        // the last row is one wrapper holding exactly the list (or meter) and the button, so a shorter card's
+        // leftover sits under its button and never between its list and its button
+        const last = c.children[c.children.length - 1] as Element;
+        expect(last.tagName).toBe("DIV");
+        expect(last.className).toBe("pfoot");
+        expect(last.children.length).toBe(2);
+        expect(last.children[0]?.matches(page === "home" ? ".pm" : "ul.checks")).toBe(true);
+        expect(last.children[1]?.matches("a.pbtn")).toBe(true);
+      }
     }
     expect(counts).toEqual(Array(8).fill(span));
   });

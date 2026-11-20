@@ -26,9 +26,10 @@ const html = (page: string) =>
   readServedSitePage(page.replace(/\.html$/, "") as StaticSitePage, { websiteId: undefined });
 // Scripts the renderer adds to every served page; the speed budget counts them apart from a page's own scripts.
 const RENDERER_SCRIPTS: string[] = [FIRST_TOUCH_SRC, ANALYTICS_SRC];
+// The src is read through the DOM, so any quoting (double, single, none) is seen (SA-1200 A1 L2).
 const ownScriptSrcs = (page: string) =>
-  [...html(page).matchAll(/<script\b[^>]*\bsrc="([^"]*)"/g)]
-    .map((m) => m[1] as string)
+  Array.from(new JSDOM(html(page)).window.document.querySelectorAll("script[src]"))
+    .map((el) => el.getAttribute("src") as string)
     .filter((src) => !RENDERER_SCRIPTS.includes(src));
 // A page whose script budget is 0 (SA-1187 K1: landing links no script of its own) takes no chrome.js (SA-1196 A2).
 // The exemption is read from that budget row, never typed as a second list.
@@ -163,10 +164,26 @@ describe("chrome.js is the one home of the page chrome", () => {
   });
 });
 
-// SA-1199 P5: no typed header height. The header's height is read live (chrome.js) and the test reads the live nav
-// rect; a literal 68 or 56 (with or without px) or a literal rootMargin in those files is a typed header size.
+// SA-1199 P5 / SA-1200 A1 L4: no typed header height. The header's height is read live (chrome.js) and the test reads
+// the live nav rect; a literal copy of the header rule's height (with or without px, and N.0px or N.5px too) or a
+// literal rootMargin in those files is a typed header size. The number comes from the header rule in site.css.
 describe("no typed header height (SA-1199 P5)", () => {
-  const TYPED = /(?<![\w.])-?(?:68|56)(?:px)?(?![\w.])|rootMargin\s*:\s*["'`]\s*-?\d/;
+  const siteCss = fs.readFileSync(path.join(SITE, "css/site.css"), "utf8");
+  const headerHeights = [
+    ...new Set(
+      [...siteCss.matchAll(/(?:^|[}\s,])(?:\.site-header )?\.nav\{([^}]*)\}/g)]
+        .map((m) => (m[1] as string).match(/(?:^|;)height:(\d+)(?:\.\d+)?px/)?.[1])
+        .filter((n): n is string => !!n),
+    ),
+  ];
+  it("finds the header rule's height in site.css (a pin that found nothing would pass on anything)", () => {
+    expect(headerHeights.length).toBeGreaterThan(0);
+  });
+  const H = headerHeights[0] as string;
+  const TYPED = new RegExp(
+    `(?<![\\w.])-?(?:${headerHeights.join("|")})(?:\\.\\d+)?(?:px)?(?![\\w.])` +
+      `|rootMargin\\s*:\\s*["'\`]\\s*-?\\d`,
+  );
   const typedHits = (src: string) =>
     strip(src)
       .split("\n")
@@ -179,9 +196,11 @@ describe("no typed header height (SA-1199 P5)", () => {
 
   it("self-check: a planted typed rootMargin and a typed 56 are caught", () => {
     expect(typedHits('{ rootMargin: "-68px 0px 0px 0px" },')).toHaveLength(1);
-    expect(typedHits("const headerH = 56;")).toHaveLength(1);
+    expect(typedHits(`const headerH = ${H};`)).toHaveLength(1);
+    expect(typedHits(`const headerH = "${H}.0px";`)).toHaveLength(1);
+    expect(typedHits(`const headerH = "${H}.5px";`)).toHaveLength(1);
     expect(typedHits('{ rootMargin: "-" + headH + "px 0px 0px 0px" },')).toHaveLength(0);
-    expect(typedHits("viewport 1568 and 0.568 and x156")).toHaveLength(0);
+    expect(typedHits(`viewport 1${H} and 0.${H} and x1${H}`)).toHaveLength(0);
   });
 
   it("chrome.js, spec 93 and the pill helper type no header height, and chrome.js reads it live", () => {
