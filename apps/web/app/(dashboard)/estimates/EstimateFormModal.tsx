@@ -834,9 +834,10 @@ export function CreateEstimateModal({
               {lineItems.map((li) => (
                 <div
                   key={li.tempId}
-                  className="flex items-center gap-2 rounded-lg bg-surface-raised p-2"
+                  className="flex flex-wrap items-center gap-2 rounded-lg bg-surface-raised p-2 sm:flex-nowrap"
                 >
-                  <div className="flex-1 min-w-0">
+                  {/* Narrow screens: name and price on one line, qty, total and remove on the next. */}
+                  <div className="w-full min-w-0 sm:w-auto sm:flex-1">
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-medium text-navy truncate">
                         {li.productName}
@@ -884,7 +885,7 @@ export function CreateEstimateModal({
 
                   {/* Box/Pieces or Qty */}
                   {li.unitsPerBox ? (
-                    <div className="flex items-center gap-1">
+                    <div className="ml-auto flex items-center gap-1 sm:ml-0">
                       <input
                         type="number"
                         min="0"
@@ -903,7 +904,7 @@ export function CreateEstimateModal({
                       <span className="text-[10px] text-navy/70">pcs</span>
                     </div>
                   ) : (
-                    <div className="flex items-center gap-1">
+                    <div className="ml-auto flex items-center gap-1 sm:ml-0">
                       <button
                         type="button"
                         onClick={() => setQty(li.tempId, li.qty - 1)}
