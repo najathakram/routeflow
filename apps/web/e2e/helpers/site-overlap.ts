@@ -176,6 +176,12 @@ export type TextRead = {
   name: string;
   inArt: boolean;
   inBig: boolean;
+  /**
+   * The nearest block-level ancestor of the text, as an id within one read: texts that share it are one block's own line
+   * layout (the spans of a heading, consecutive lines of one paragraph). Author-blockified inline tags (a span styled
+   * display:block or a flex item) are not blocks of their own: the page read climbs past them.
+   */
+  block: number;
   color: string;
   /** the nearest painted ancestor's background: the picture's card, or the panel when nothing in the picture is painted */
   backdrop: string;
@@ -312,11 +318,11 @@ export function roleFaults(read: ProblemRead, tokens: Tokens): string[] {
 }
 
 /**
- * SA-1191 A2-d, text over text. For each text E in .pb (the line and every text found by query, not only the picture's)
- * whose solo contrast is at or above its floor, no other text with effective opacity above SEEN may cross E's glyph rects.
- * A text already below its floor alone is in its own fade and is not held (as E1). Two texts cross when their glyph rects
- * share at least 2 px of width and a quarter of the shorter rect's height: the line boxes of tight leading overlap by a
- * sliver without any glyph touching, which is not a crossing.
+ * SA-1191 A2-d and A3, text over text. For each text E in .pb (the line and every text found by query, not only the
+ * picture's) whose solo contrast is at or above its floor, no other text with effective opacity above SEEN may cross E's
+ * glyph rects. A text already below its floor alone is in its own fade and is not held (as E1).
+ * A3: texts of one block (same `block`) are that block's own line layout and never cross each other. Between blocks, glyph
+ * rects crossing by 2 px or more in both width and height count; 2 px only absorbs antialiasing. No height fraction.
  */
 export function crossFaults(read: ProblemRead): string[] {
   const out: string[] = [];
@@ -326,7 +332,7 @@ export function crossFaults(read: ProblemRead): string[] {
   const crosses = (a: Rect, b: Rect): boolean => {
     const w = Math.min(a.right, b.right) - Math.max(a.left, b.left);
     const h = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
-    return w >= 2 && h >= 0.25 * Math.min(a.bottom - a.top, b.bottom - b.top);
+    return w >= 2 && h >= 2;
   };
   for (const e of all) {
     const solo = overlapRatios(e.opacity, 0, {
@@ -338,7 +344,7 @@ export function crossFaults(read: ProblemRead): string[] {
     const floor = floorFor(e.fontPx, e.weight);
     if (solo < floor) continue;
     for (const f of all) {
-      if (f === e || f.opacity <= SEEN) continue;
+      if (f === e || f.block === e.block || f.opacity <= SEEN) continue;
       if (e.rects.some((a) => f.rects.some((b) => crosses(a, b))))
         out.push(
           `"${e.name}" (${fmt(solo)} alone, floor ${floor}, opacity ${e.opacity.toFixed(3)}) is crossed by "${f.name}" (opacity ${f.opacity.toFixed(3)})`,

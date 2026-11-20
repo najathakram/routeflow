@@ -311,6 +311,24 @@ function t47Read(): ProblemRead {
     }
     throw new Error("no painted background above a text of the problem section");
   };
+  // the nearest block-level ancestor, by computed display; a span or other inline tag that the stylesheet made a block
+  // or a flex item is still its paragraph's line layout, so the climb passes it
+  const inlineTags = " span a b i em strong s u small sub sup code mark abbr cite q label ";
+  const blocks: Element[] = [];
+  const blockId = (el: Element): number => {
+    let found: Element = sec;
+    for (let e: Element | null = el; e; e = e.parentElement) {
+      const d = getComputedStyle(e).display;
+      if (d.indexOf("inline") === 0 || d === "contents") continue;
+      if (inlineTags.indexOf(" " + e.tagName.toLowerCase() + " ") >= 0) continue;
+      found = e;
+      break;
+    }
+    const at = blocks.indexOf(found);
+    if (at >= 0) return at;
+    blocks.push(found);
+    return blocks.length - 1;
+  };
   const texts: TextRead[] = [];
   const walker = document.createTreeWalker(sec, NodeFilter.SHOW_TEXT);
   for (let n = walker.nextNode(); n; n = walker.nextNode()) {
@@ -328,6 +346,7 @@ function t47Read(): ProblemRead {
       name: name.slice(0, 28),
       inArt: !!el.closest(".pb-art"),
       inBig: !!el.closest(".pb-big"),
+      block: blockId(el),
       color: cs.color,
       backdrop: paint(el),
       opacity: chain(el),
@@ -346,6 +365,7 @@ function t47Read(): ProblemRead {
     name: "the big line",
     inArt: first.inArt,
     inBig: true,
+    block: first.block,
     color: first.color,
     backdrop: first.backdrop,
     opacity: first.opacity,
@@ -731,6 +751,7 @@ test("T47 geometry and the judge over a page read (no browser)", () => {
       name: "the big line",
       inArt: false,
       inBig: true,
+      block: 0,
       color: css(white),
       backdrop: css(ink),
       opacity: l,
@@ -743,6 +764,7 @@ test("T47 geometry and the judge over a page read (no browser)", () => {
         name: "Invoice",
         inArt: true,
         inBig: false,
+        block: 2,
         color: css(ink),
         backdrop: css(white),
         opacity: p,
@@ -800,10 +822,16 @@ test("T47 geometry and the judge over a page read (no browser)", () => {
     "the sender heading is rgb(14, 23, 38), not the steel token",
   ]);
   // A2-d: text over text. The line crossing a heading that is readable alone is a fault; a heading in its own fade is not
-  const heading = (opacity: number, rect: Rect): ProblemRead["texts"][number] => ({
-    name: "Prices in your head.",
+  const heading = (
+    opacity: number,
+    rect: Rect,
+    block: number = 1,
+    name: string = "Prices in your head.",
+  ): ProblemRead["texts"][number] => ({
+    name,
     inArt: false,
     inBig: false,
+    block,
     color: css(white),
     backdrop: css(ink),
     opacity,
@@ -833,13 +861,31 @@ test("T47 geometry and the judge over a page read (no browser)", () => {
   expect(judgeRead(crossing(1, 0.04, R(100, 440, 560, 520)), tok, { cross: true }).cross).toEqual(
     [],
   );
-  // leading slivers are not crossings; clear of the line is not a crossing; the rule is off unless asked for
-  expect(judgeRead(crossing(1, 0.4, R(100, 478, 560, 560)), tok, { cross: true }).cross).toEqual(
-    [],
-  );
+  // clear of the line is not a crossing; the rule is off unless asked for
   expect(judgeRead(crossing(1, 0.4, R(700, 440, 900, 520)), tok, { cross: true }).cross).toEqual(
     [],
   );
+  // SA-1191 A3: what counts as a crossing. Two readable headings (the line is below SEEN, so it joins nothing); the
+  // rects are the two rects under test. Texts of one block are its own line layout; between blocks 2 x 2 px counts.
+  const pair = (a: Rect, blockA: number, b: Rect, blockB: number) => ({
+    ...make(0.04, 1, R(100, 700, 600, 780)),
+    texts: [
+      heading(1, a, blockA, "Orders in texts."),
+      heading(1, b, blockB, "Prices in your head."),
+    ],
+  });
+  const crossesBetween = (a: Rect, blockA: number, b: Rect, blockB: number) =>
+    judgeRead(pair(a, blockA, b, blockB), tok, { cross: true }).cross.length;
+  // one block, leading of 1.12 on 60px type: the content boxes of consecutive lines share a 6 px sliver
+  expect(crossesBetween(R(100, 100, 560, 167), 1, R(100, 161, 600, 228), 1)).toBe(0);
+  // one block, a deep overlap: still the block's own layout, chosen by the author
+  expect(crossesBetween(R(100, 100, 560, 167), 1, R(100, 130, 600, 197), 1)).toBe(0);
+  // two blocks sharing 3 px by 3 px: a crossing, in both directions
+  expect(crossesBetween(R(100, 100, 200, 167), 1, R(197, 164, 300, 231), 3)).toBe(2);
+  // 1 px wide by 40 px high: antialiasing, not a crossing
+  expect(crossesBetween(R(100, 100, 200, 167), 1, R(199, 120, 300, 160), 3)).toBe(0);
+  // a descender graze: 6 px on a 70 px rect, under a quarter of it, between two blocks: a crossing
+  expect(crossesBetween(R(100, 100, 560, 170), 1, R(100, 164, 560, 234), 3)).toBe(2);
   expect(judgeRead(crossing(1, 0.4, R(100, 440, 560, 520)), tok).cross).toEqual([]);
   // the calibration: a window no fault beat falls in is reported
   expect(
